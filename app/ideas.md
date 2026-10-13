@@ -4,7 +4,7 @@ One line each. A line with a screen name points at the board it improves. Marks:
 
 ## Start
 
-- Put Atlas on GitHub, in a private repository
+- Put Atlas on GitHub, in a private repository (done 13 Oct, public: github.com/atlas-maps-app/Atlas)
 - Places on every continent
 
 ## Map
