@@ -1,6 +1,6 @@
 # Atlas
 
-A maps app that pushes the limits of what a maps app can be. Its screens were designed as boards on a claude.ai Design canvas, fed by real open data and drawn on Atlas's own map engine. The boards are the spec; the app itself is the work ahead. Everything here runs on this Mac; `cache/` and `google/` stay out of git.
+A maps app that pushes the limits of what a maps app can be. Its screens were designed as boards on a claude.ai Design canvas, fed by real open data and drawn on Atlas's own map engine. The boards are the spec; the app itself is the work ahead. Everything here runs on this Mac and is pushed to https://github.com/atlas-maps-app/Atlas (public); `cache/` and `google/` stay out of git.
 
 ## The brief
 
