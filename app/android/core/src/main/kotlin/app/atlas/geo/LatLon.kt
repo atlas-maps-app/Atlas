@@ -1,6 +1,7 @@
 package app.atlas.geo
 
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -28,10 +29,10 @@ data class BBox(val west: Double, val south: Double, val east: Double, val north
     fun union(o: BBox) = BBox(min(west, o.west), min(south, o.south), max(east, o.east), max(north, o.north))
     fun extend(p: LatLon) = BBox(min(west, p.lon), min(south, p.lat), max(east, p.lon), max(north, p.lat))
 
-    /** Grows the box by [metres] on every side. */
+    /** Grows the box by at least [metres] on every side (the longitude margin is sized at the poleward edge). */
     fun buffer(metres: Double): BBox {
         val dLat = Geo.metresToDegreesLat(metres)
-        val dLon = Geo.metresToDegreesLon(metres, center.lat)
+        val dLon = Geo.metresToDegreesLon(metres, max(abs(south), abs(north)) + dLat)
         return BBox(west - dLon, south - dLat, east + dLon, north + dLat)
     }
 

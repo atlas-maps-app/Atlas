@@ -1,0 +1,24 @@
+{
+  "meta": {"decimal": ".", "sentence": "。", "list": "、"},
+  "phrases": {
+    "unit.m.other": "{n}メートル",
+    "unit.km.other": "{n}キロメートル",
+    "unit.ft.other": "{n}フィート",
+    "unit.inch.other": "{n}インチ",
+    "unit.mi.other": "{n}マイル",
+    "unit.mi.quarter": "4分の1マイル",
+    "unit.mi.half": "半マイル",
+    "unit.mi.three_quarters": "4分の3マイル",
+    "unit.nmi.other": "{n}海里",
+    "unit.cable.other": "{n}ケーブル",
+    "unit.t.other": "{n}トン",
+    "unit.min.other": "{n}分",
+    "unit.h.other": "{n}時間",
+    "unit.kmh.other": "時速{n}キロ",
+    "unit.mph.other": "時速{n}マイル",
+    "unit.kn.other": "{n}ノット",
+    "unit.yd.other": "{n}ヤード",
+    "unit.nmi.half": "半海里",
+    "unit.percent.other": "{n}パーセント"
+  }
+}

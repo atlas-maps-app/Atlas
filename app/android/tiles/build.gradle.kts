@@ -19,4 +19,6 @@ tasks.test {
     // Shared fixtures (real OpenFreeMap tiles, OSM extracts) live in app/android/testdata; the repo's data/ is one level up.
     systemProperty("atlas.testdata", rootProject.file("testdata").absolutePath)
     systemProperty("atlas.repo", rootProject.file("../..").absolutePath)
+    // Tests against the real OpenFreeMap run only with -Datlas.online=true.
+    providers.systemProperty("atlas.online").orNull?.let { systemProperty("atlas.online", it) }
 }

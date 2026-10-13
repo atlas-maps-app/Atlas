@@ -1,0 +1,968 @@
+1	(Unknown Operator)
+2	Elektrobay (UK)
+3	POD Point (UK)
+5	ChargePoint
+6	Nissan US Dealer Network
+7	Nissan UK Dealer Network
+8	Chargemaster
+9	Blink Charging
+11	EVSE LLC WebNet
+12	RechargeAccess
+13	PETROL
+14	Shorepower
+15	eVgo Network
+16	Elektromotive (UK)
+18	TIWAG Tiroler Wasserkraft AG (AT)
+19	Zero Carbon World
+20	Charge Your Car
+21	Mobie.pt
+22	ESB Ecars
+23	Tesla (Tesla-only charging)
+24	Electric Highway (UK)
+25	Total Energies (UK)
+26	AeroVironment
+28	WEL Networks Ltd
+29	e-Laad
+31	Clipper Creek
+32	BP Pulse (UK)
+33	SDEY (Fr)
+34	Westar Energy ElectroGo
+35	ThePluginCompany (Belgium)
+36	Blue Corner (Belgium)
+38	Lidl
+39	SemaConnect
+41	MAGNE Charge
+42	EATON
+43	AVCON
+44	(Private Residence/Individual)
+45	(Business Owner at Location)
+46	E.ON (DE)
+47	Shell Recharge Solutions (NL)
+48	RWE Mobility/Essent
+49	EV-Point
+50	Volta Charging
+51	Sun Country Highway
+52	Enovos
+53	Autolib (Paris)
+54	ZE-MO (Be)
+55	e-totem
+56	Auto Bleue
+57	The REV Project (UWA - Australia)
+59	Shell Recharge Solutions (US)
+60	Source East (UK)
+61	Vitaemobility
+62	KiWhi Pass
+63	Greenflux
+64	Ultra-Fast
+65	UWAG
+66	Drehstromnetz
+67	ElectroDrive
+68	Empora
+69	ladenetz.de
+70	Eşarj (TR)
+71	Plugged In Midlands (UK)
+72	RheinEnergie AG
+73	EVBox
+74	FastNed
+76	ELMO
+77	Ecoplug
+78	Essent (NL)
+79	Mobib (Belgium)
+80	Enel X
+81	Silfi (Italy)
+82	E-moving (Italy)
+83	Ecospazio (Italy)
+84	Green Land Mobility (Italy)
+85	FORTISIS
+86	EnBW (D)
+87	EVbility (Italy)
+88	Greenway
+89	flo
+90	Circuit Electrique
+91	Repsol - Ibil (ES)
+92	MobecPoint (Es)
+93	E-Car
+94	BeCharged
+95	Helsingin Energia
+96	ChargeLounge
+97	Park & Charge (CH)
+98	Park & Charge (D)
+99	Vlotte
+100	ZenCar
+101	ChargeIT mobility
+102	Orka Náttúrunnar
+103	Allego BV
+104	RWE / Npower
+105	Innogy SE (RWE eMobility)
+106	Ladefoxx
+107	OpConnect
+108	Vattenfall InCharge
+109	EWR gmbh e-mobile
+110	EVite (ch)
+111	Hong Kong EV Power
+112	MisterGreen, The Fast Charger Network
+113	Sähköinenliikenne (fi)
+114	Power Station (BE)
+115	ČEZ
+116	G2mobility
+118	AGSM Electrify Verona (IT)
+119	Plug-In North Central Washington
+120	JuicePoint
+121	EnerCity
+122	Harz Energie
+123	Stadtwerke Lübeck
+124	Osterholzer Stadtwerke
+125	SWB / EWE
+126	VR Schneller-Strom-tanken
+127	EWE
+128	LSW Energie
+129	BS Energie
+130	Stadtwerke Wernigerode
+131	Stadtwerke Northeim  SWN
+132	Stadtwerke Göttingen
+133	Rauman Energia
+134	Stadtwerke Verden
+135	Manx Electricity Authority
+136	VIRTA
+137	EVS Energieversorgung Sylt
+138	SUN Stadtwerke Union Nordhessen
+139	Schleswiger Stadtwerke
+140	EAM
+141	ElectroDrive Salzburg
+142	TANKE Wien Energie
+143	Stadtwerke Rinteln
+144	Versorgungsbetriebe Hann. Münden
+145	EWI  Energiewerke Isernhagen
+146	Stadtwerke Hameln
+147	Stadtwerke Neumünster (SWN).
+148	Stadtwerke Haldensleben  SWH
+149	Stadtwerke Soest
+150	The GeniePoint Network ( EQUANS EV Solutions )
+151	Stadtwerke Grevesmühlen
+152	Städtische Werke Magdeburg
+153	Stadtwerke Strahlsund
+154	Stadtwerke Rostock
+155	Stadtwerke Leipzig SWL
+156	Shell Recharge Solutions (DE)
+157	Shell Recharge Solutions (BE)
+158	Stadtwerke Dessau
+159	Stadtwerke Wittenberg
+160	StromTicket
+161	Stadtwerke Halle
+162	Stadtwerke Clausthal-Zellerfeld
+163	GGEW
+164	Neogy
+165	Mainova
+166	Stadtwerke Wolfenbüttel
+167	Nissan DE Freistrom
+169	Stadtwerke Uetersen
+170	Stadtwerke Elmshorn
+171	EEW Duderstadt
+172	ENEWA
+173	ChargeNow
+174	TOTAL Nl PlugToDrive
+175	TOTAL Be PlugToDrive
+176	ZEAG Energie
+177	Nuon
+178	EVnetNL
+179	Ecotap
+180	Alfen
+181	eNovates
+182	Latvenergo (LV)
+183	Wirtschaftsbetriebe Stadt Nienburg
+184	ElectroDrive/Mark-E (DE)
+185	CLEVER
+186	Azra Network
+187	ELMŰ
+188	OVAG Energie
+189	E-Wald
+190	PRE (cz)
+191	inChaNet
+192	E.ON (CZ)
+193	VSE
+194	RAC Electric Highway/ChargeStar
+195	Werraenergie
+196	Nomadpower
+197	FLOW Charging
+198	Recharge (Formerly Fortum Charge & Drive)
+199	EDP MOP
+200	PRIOE
+201	München Umland
+202	Charge & Drive (Fortum - NO)
+203	Osprey Charging
+204	GardaUno
+205	Estonteca
+206	LIVE Barcelona
+207	Endesa
+208	eDrop
+209	Estabanell Energia
+210	GIC
+211	sofos
+212	Amersam
+213	Izivia (Sodetrel)
+214	be emobil
+215	Charge & Fuel
+216	Enspirion
+217	RCS (Revitalize Charging Solutions)
+218	Galactico.pl
+219	Energieversorgung Buching-Trauchgau
+220	Stromnetz Hamburg
+221	Evmapa (CZ)
+222	ETOP
+223	Schnell Laden Berlin
+224	Naturenergie (DE)
+225	Stadtwerke Münster
+226	Green Frontiers (lk)
+227	chargeNET (lk)
+228	Spark EV (lk)
+229	ChargeNet NZ
+231	Vibrate
+232	electric-driving.colruytgroup.com
+233	Vector (NZ)
+234	N-ERGIE
+235	Stadtwerke Düsseldorf AG
+1235	Belib’
+1236	ORES
+1237	Viesgo (Spain)
+1238	emma
+1239	Polyfazer (CZ)
+1240	Pfalzwerke
+1241	EZO (IE)
+1242	GE WattStation (No longer active)
+2241	EWB
+2242	RhönEnergie
+2243	eins
+2244	ubitricity
+2245	Schwabencard
+2246	Slovenské elektrárne
+2247	Iberdrola | BP Pulse (ES)
+3247	Grønn Kontakt
+3248	Tank & Rast
+3249	Umeå Energi
+3250	RPSnet
+3251	E.ON (DK)
+3252	NRG EVgo
+3253	SMATRICS Netz
+3254	Evd Dormagen
+3255	SODO
+3256	USEDA (FR)
+3257	Révéo (FR)
+3258	Elektro Ljublana
+3259	ZSE Drive
+3260	Energie der Eifel
+3261	Be Energised (has-to-be)
+3262	SDE76 (FR)
+3263	DEWA
+3264	EE-Mobil
+3265	REWAG
+3266	PlugSurfing
+3267	Duferco Energie
+3268	Belorusneft
+3269	Stromtreter
+3271	e-Charge (Romania)
+3272	EVPass (CH)
+3273	Swisscharge (CH)
+3274	MOVE (CH)
+3275	Renault
+3276	EDP
+3277	Syane
+3278	Urbener Energía
+3279	Fenie Energía (Spain)
+3280	Plug n Roll
+3281	Effia
+3282	Emobitaly (Italy)
+3283	MELIB (ES)
+3284	autoPilDYK
+3285	Kelag AG
+3286	Lenenergo
+3287	Ella
+3288	Jersey Electricity Evolve
+3289	MVM Partner Zrt.
+3290	State Grid Corporation of China (SGCC)
+3291	Evway
+3292	Badenova (DE)
+3293	Revolta Egypt
+3294	EAC e-charge
+3295	evcharge.online
+3296	InstaVolt Ltd
+3297	Entega
+3298	EO Charging
+3299	Ionity
+3300	YPF
+3301	МОЭСК (Russia)
+3302	Easypark
+3303	Avacon
+3304	Celsia
+3305	AMB (Àrea metropolitana de Barcelona)
+3306	Trenčiansky samosprávny kraj
+3307	NKM mobiliti
+3308	SIEL
+3309	echargenet - State Grid Corportation of China
+3310	Chargestar (AU)
+3311	Elen
+3312	EDF
+3313	GOFAST (Gotthard Fastcharge)
+3314	Easy4You
+3315	Chargeplace Scotland
+3316	Drive Eco
+3317	Queensland Electric Super Highway
+3318	Electrify America
+3319	E-Mobi
+3320	da emobil
+3321	Chargy (LU)
+3322	Parking Energy
+3323	ZES
+3324	Zunder
+3325	EWP : Energie und Wasser Potsdam GmbH
+3326	Alfapower (UK)
+3327	Be Charge (Italy)
+3328	ZapGrid
+3329	SpotLink – e.motion
+3330	Repower (Italy)
+3331	BLUETORINO
+3332	Driwe
+3333	AAE
+3334	Gnrgy
+3335	RedePiloto
+3338	chargEV
+3339	Chargefox
+3340	Veolia
+3341	Evolt Network (Swarco E.Connect)
+3342	Ekomobil
+3343	Incharge (SE)
+3344	YASNO E-mobility
+3345	Char.gy
+3346	Noodoe EV
+3347	Seom
+3348	Level2.ee
+3349	City EV
+3350	ЕВН (EVN) (Macedonia)
+3351	EVL (de)
+3352	Axpo Energy Solutions Italia
+3353	Plugit
+3354	K Lataus
+3355	Motolataus
+3356	Hubsta
+3357	ESB Energy (UK)
+3358	Putevi Srbije / ЈП Путеви Србије / Roads of Serbia
+3359	E.ON (HU)
+3360	CNR (Compagnie Nationale du Rhône)
+3361	Toka Energy
+3362	Autoenterprise / АвтоЭнтерпрайз
+3363	Midgard Electric
+3364	Copec Voltex
+3365	NBP eCharge Network
+3366	Tonik Energy
+3367	Sharz.Net
+3368	Elocity
+3369	Comfortcharge
+3370	Enerhub
+3371	Wenea
+3372	EV Connect
+3373	Webasto
+3374	ChargeGrid
+3375	Petro-Canada
+3376	SAEV
+3377	eTecnic
+3378	MOL
+3379	Freshmile
+3380	SDEG 16 (Syndicat Départemental d'Electricité et de Gaz de la Charente)
+3382	Wroom
+3383	AlterBase - Sorégies (FR)
+3384	Hrvatski Telekom
+3385	BC Hydro
+3386	GridCars
+3387	Last Mile Solutions
+3388	NRMA
+3389	EVGateway
+3390	Electroukraine
+3391	EB Charging
+3392	Shell Recharge Solutions (UK)
+3393	Joju Ltd
+3394	Eneco
+3395	Optimum Way
+3396	Orlencharge
+3397	PGE Nowa Energia
+3398	Evie
+3399	EV Energy Group (FCN)
+3400	Electrify Canada
+3401	Electromaps
+3402	GoCharge (IE)
+3403	E.ON Drive
+3404	Grupo ICE
+3405	Enercharge
+3406	Electric Highway Tasmania
+3407	MObiVE
+3408	eborn
+3409	pass pass électrique
+3410	Alizé Liberté
+3411	La Borne
+3412	Sydego
+3413	EcoCharge77
+3414	Elinta Charge
+3415	ejoin
+3416	IVY
+3418	evconnect.ro (Romania)
+3419	EV-Mag
+3420	plugpoint.ro
+3421	Rompetrol
+3422	eondrive.ro
+3423	Westfalen Weser Netz
+3424	EV Direct
+3425	OlifeEnergy
+3426	Blink Charging (Europe)
+3427	EVziiin
+3428	EV Loader
+3429	Q1 Autostrom
+3430	GridServe
+3431	Continente Plug&Charge
+3432	Volthero
+3433	Sonol-evi (Israel)
+3434	EVEdge (Israel)
+3435	Afcon (IL)
+3436	Tata Power
+3437	Elli (Volkswagen Group Charging GmbH)
+3438	NRG4YOU
+3439	Voltrun
+3440	HeraRicarica Pubblica
+3441	Blue Marble Charging
+3442	e-VOLTT
+3443	BIGGIE Energie
+3444	eways
+3445	EDP Smart
+3446	EV Dot
+3447	TotalEnergies (FR)
+3448	ZEN (Zero Emission Network)/PROVIRIDIS
+3449	ePower
+3450	GO+EAuto
+3451	Greenway Polska (PL)
+3452	TAURON Nowe Technologie
+3453	PKP Mobility
+3454	ZEF Energy
+3455	Aral pulse
+3456	Manaseer
+3457	ION (Jordan)
+3458	JoPetrol
+3459	ACCIONA - Cargacoches
+3460	PEA Volta
+3461	Enex E-Pro
+3462	TEA.
+3463	AIMove (IT)
+3464	ALDI SÜD (DE)
+3466	Next Step Mobility (DE)
+3467	Mobiliti.hu
+3471	MFG EV Power
+3472	eVISO
+3473	Vend Electric
+3474	Cogeser Energia (Italia)
+3475	Zepto
+3476	Motionbox
+3477	Gyorstöltők
+3478	ElpeFuture
+3479	Monta
+3480	ESPH
+3481	Be.EV
+3482	EV Oasis
+3483	POBAD International
+3484	R3
+3485	Stations-e
+3486	Emfree
+3487	МГТС
+3488	Jule
+3489	Electra
+3490	Métropolis
+3491	NRGincharge
+3492	MER
+3493	SWTCH - Charge Everywhere
+3494	Go ToU
+3495	Qovoltis
+3496	Dragon Charging
+3497	EcoFactor Network
+3498	DEI Blue
+3499	Mercadona
+3500	Evergo
+3501	Protergia Charge
+3502	EV Point Moldova
+3503	Free To X
+3504	Leap24 (NL)
+3505	EVduty
+3506	ABC Lataus (FI)
+3507	Electro.Cars (RU)
+3508	Shell Recharge (ES) (Cable Energia)
+3509	Connected Kerb
+3510	Circle K
+3511	Believ
+3512	Sigeif (FR)
+3513	Electric 55 Charging (FR)
+3514	Ze-Watt (FR)
+3515	EZ-Charge
+3516	Applegreen Electric
+3517	Jom Charge
+3518	ParkEasy
+3519	ELMotion
+3520	Polyfazer (RO)
+3521	Saiel (IT)
+3522	Sperto (DK)
+3523	Porsche Smart Mobility GmbH
+3524	Electric Vehicle Institute
+3525	Acea (IT)
+3526	EV Range Charging Network
+3527	OpenLoop
+3528	Zero (Meridian Energy)
+3529	Jolt
+3530	Hikotron
+3531	Paz (Israel)
+3532	e-Mobilita Brno (cz)
+3533	E-Way (San Marino)
+3534	Tesla (including non-tesla)
+3535	EVerse
+3536	Kople
+3537	Scottish Power
+3538	Power Dot
+3539	Zeon Charging
+3540	Zoko
+3541	Lad Opp
+3542	EVCS
+3544	Kiwi EV
+3545	Z Energy
+3546	Thundergrid
+3547	Counties Energy
+3548	CloudCharge
+3549	Ather Grid Point (India)
+3550	PowerDot (Es)
+3551	ECPoints
+3552	BarterGo (ES)
+3553	Electro-EMT
+3554	EV Highway (Horizon Power)
+3555	LiFe (Raw Charging) (UK)
+3556	Place To Plug
+3557	GALP Electric
+3558	Nissan (ES) Dealer Network
+3559	Telepark (Empark)
+3560	GET Electric (AU)
+3561	Şarjon (TR)
+3562	Roam Charging (UK)
+3563	Tupinambá
+3564	EZVolt
+3565	Zletric
+3566	Copel
+3567	Celesc
+3568	NeoEnergia
+3569	ATM.EV
+3571	TotalEnergies (ES)
+3572	Digavel (ES)
+3573	Naturgy (ES)
+3574	We Drive Solar
+3575	Chargebay (AU)
+3576	Procredit
+3577	B:SM (ES)
+3578	Weev
+3579	E-Flux
+3580	Recharge Alaska
+3581	Zest Charging
+3582	Reev (DE)
+3583	Eranovum (ES)
+3584	CEPSA (ES)
+3585	Orion Telekom (Serbia)
+3586	POWY
+3587	evyve
+3588	Atlante
+3589	Yawatt (Es)
+3590	Optimile
+3591	Shell Recharge (Malaysia)
+3592	РусГидро (Russia)
+3593	BP EV Charging (NZ)
+3594	e-Vadea
+3595	Engie
+3596	Neste Lataus
+3597	UTE (Uruguay)
+3598	Maxol
+3599	EG Group EV Point (UK)
+3600	OnCharge (TR)
+3601	En Yakıt (TR)
+3602	Powerşarj
+3603	WAT Mobilite
+3604	GioEV (TR)
+3605	Clenergy
+3606	Electro Transport Plus (RU)
+3607	Rivian Adventure Network
+3608	OESTE Movilidad (ES)
+3609	Everty
+3610	Rexcharge (Malaysia)
+3611	Polenergia eMobility
+3612	SureCharge (FM Conway) (UK)
+3613	Plug N Go Ltd
+3614	Drax Energy Solutions Limited
+3615	Silverstone Green Energy
+3616	EVN (Bulgaria)
+3617	Rivian Waypoints L2 Network
+3618	Powerflex
+3619	AmpUp
+3620	Livingston Charge Port
+3621	Chargelab
+3622	Exploren
+3623	EVUp (AU)
+3624	Elanga (AU)
+3625	Ampol AmpCharge
+3626	WA EV Network (AU)
+3627	EVX (AU)
+3628	CV Charging Vehicles
+3629	Project EV
+3630	EV Georgia
+3631	e-space (GE)
+3632	PowerGo
+3633	Rosseti (RU
+3634	Punkt-E
+3635	Seven (IL)
+3636	Ekoen
+3637	APCOA Parking
+3638	Electrifly
+3639	IECharge (FR)
+3640	Ouest Charge
+3641	EVzen (FR)
+3642	Маланка (Belarus)
+3643	EVPower (PT)
+3644	Moon Power
+3645	Helexia (PT)
+3646	Sunenergy (PT)
+3647	Ecoinside (PT)
+3648	eVaz Energy (PT)
+3649	Maksu (PT)
+3650	it Charge (RU)
+3651	Dream Energy
+3652	Avia (FR)
+3653	Энергия Москвы
+3654	SDET (FR)
+3655	EdgeControl (IL)
+3656	Sitronics Electro (RU)
+3657	NEXTCHARGE
+3658	Smart Charge (AU)
+3659	BP Pulse (AU)
+3660	ChargeSini
+3661	Bump (FR)
+3662	EVSpots (RO)
+3663	EVPower (MY)
+3664	PLN (Indonesia)
+3665	Hyundai Indonesia
+3666	Shell Recharge Indonesia
+3667	Plug Charging
+3668	Voltron (Indonesia)
+3669	Starvo (Indonesia)
+3670	CitiPark (UK)
+3671	eMallorca (ES)
+3672	Westmorland Family
+3673	Fuuse
+3674	DriveEnergy (RU)
+3675	E-Way (RU)
+3676	ZEVS (RU)
+3677	Fastvolt
+3678	Charge My Ride (Malta)
+3679	U-Power
+3680	Amperio (DE)
+3681	Emeo (SK)
+3682	Яндекс.Заправки (RU)
+3683	НЭСК (RU)
+3684	Renewing (PT)
+3685	Factor Energia (PT)
+3686	UnitCharge (RU)
+3687	Charge My Street (UK)
+3688	Ignitis UAB (LT)
+3689	Unipark [Stova] (LT)
+3690	Inbalance grid (LT)
+3691	LAKD (LT)
+3692	Eldrive Lithuania (LT)
+3693	EVCE (PT)
+3694	Universal EV Charging
+3695	Graviti Energy
+3696	Red E Charge
+3697	7-Charge (7-Eleven)
+3698	Touch (RU)
+3699	ЭЗС СК
+3700	EV-Time (RU)
+3701	my.eCars (RU)
+3702	Portal Energy (RU)
+3703	Ev2Go (RU)
+3704	Electrico.es
+3705	Terpel Voltex (Columbia)
+3706	СтавЭС (RU)
+3707	Chargepoly (FR)
+3708	Orkubú Vestfjarða
+3709	Shell EV Charging Solutions France
+3710	WeCharge (BR)
+3711	Go Electric E-Mobility (BR)
+3712	Trugo (TR)
+3713	Salzburg AG
+3714	Kaufland eCharge
+3716	WeVolt (AU)
+3717	ToraŞarj (TR)
+3718	ChargeN'Go
+3719	SolarHub Charge (AU)
+3720	Ewiva (IT)
+3721	SFA Sustainability Services
+3723	Flash Charging
+3724	Wave Charging
+3725	EV Match
+3726	BR Super Carga
+3727	Kilowatt.ma
+3728	a2a emoving (IT)
+3729	Caltrans (USA)
+3730	Holtoltsek.hu
+3731	Hotoltsek (HU)
+3732	GSS Power (ES)
+3733	Francis Energy
+3734	ChargeUp (NovaCharge)
+3735	G-Charge (Gersan Elektrik)
+3736	BladecoCharge (TR)
+3737	Blink Charging (UK)
+3738	Trojan Energy
+3739	Flowbird (UK)
+3740	ElectRoad (UK)
+3741	ChargerQuest
+3742	Infinity EV (Egypt)
+3743	Sha7en (Egypt)
+3744	IKARUS (Egypt)
+3745	EVStart (CA)
+3746	Justplugin (NL)
+3747	Smart Charge by Sainsbury's (UK)
+3748	AmbuEnergy
+3749	FPL EVolution
+3750	Plenoil (ES)
+3751	Petroo (TR)
+3752	Jet Charge (UK)
+3753	Astor Şarj (TR)
+3754	Smappee
+3755	E-Charge50 (FR)
+3756	On the Run (CA)
+3757	Loop
+3758	Chargecloud (DE)
+3759	Evology Parking
+3760	DCC Energy
+3761	Lakeland Solutions
+3762	Hyperfuel
+3763	OKQ8 (SE)
+3764	EVcore (SE)
+3765	ChargeNode (SE)
+3766	Northe (SE)
+3767	Elevat/MasterCharge (EU)
+3768	Greencar (Montenegro)
+3769	Pogo Charge (GB)
+3770	L'electra (ES)
+3771	Yellotmob (Brasil)
+3772	Ferrovial (ES)
+3773	PCharge
+3774	Enerstock
+3775	Chargehub
+3776	DC Handal
+3777	Relux Electric (India)
+3778	Shell Recharge (IN)
+3779	Statiq (IN)
+3780	ChargeMod (IN)
+3781	EVTECH (IL)
+3782	Rubicon E-Mobility
+3784	Toger (TR)
+3785	Vilalta Greenergy (ES)
+3786	Umbrella eMobility (ES)
+3787	GTIS Charging (SK)
+3788	BP Pulse (US)
+3789	Electric Era (US)
+3790	Gai Charge
+3791	OK (DK)
+3792	EVIO (PT)
+3793	eparking (Finland)
+3794	Elektro Profi Mobility (HU)
+3796	BürgerLadenetz (DE)
+3797	Source (GB)
+3798	REMO Mobility (ES)
+3799	Curb (Hungary)
+3800	CURB (HU)
+3801	DV Parking (HU)
+3802	Elsewedy Plug (EG)
+3803	TAQA Volt (EG)
+3804	KRB Intra (cz)
+3805	EV Eletroposto (Brasil)
+3806	Gofar (az)
+3807	Otopriz (Türkiye)
+3808	MobilityPlus
+3809	Qwello
+3810	Pinergy (IE)
+3811	Rede Graal (BR)
+3812	GEV Top Up (IE)
+3813	Amazônia Eletrovias
+3814	Powered by E.ON Drive & Clever
+3815	ECharge (Kosovo)
+3816	ChargeGuru
+3817	JIO BP Pulse (India)
+3818	Chargezone (India)
+3819	Elbud (PL)
+3820	Sunfuel Electric (IN)
+3821	EESL (IN)
+3822	VAPT (BR)
+3823	Electrip
+3824	Rove Charging (US)
+3825	Kwik Charge (Kwik Trip)
+3826	EV Expert
+3827	Mercedes-Benz High-Power Charging (US)
+3828	Xobolt (IN)
+3829	Volttic (IN)
+3830	Incharge (BR)
+3831	IONNA
+3832	Hypercharge Networks
+3833	BHEL (IN)
+3834	Powerbank (IN)
+3835	iCharge (AL)
+3836	ADZE ŞARJ (TR)
+3837	Karm (EG)
+3838	Vijaya Power (IN)
+3839	Creluz (BR)
+3840	e-motum (FR)
+3841	Flyelectric (IT)
+3842	Arnold Clark Dealer Network (UK)
+3843	Voltrelli (RO)
+3844	Powerland (BE)
+3845	ForEV
+3847	Zeta Uno (BR)
+3848	Renoch (IN)
+3849	Wheels Drive (IN)
+3850	Bolt.Earth (IN)
+3851	Rebolt (IN)
+3852	CNFL (CR)
+3853	Coopelesca (CR)
+3854	Coopeguanacaste (CR)
+3855	ELCO (CR)
+3856	CREV (CR)
+3857	Lumicle (TR)
+3858	Adani Gas-EV (TR)
+3859	Time Park (NO)
+3860	Joulepoint (IN)
+3861	Enefit Volt (EE)
+3862	Enefit (LT)
+3863	ViaLynk - Lynkwell
+3864	ChargeSmart EV
+3865	TurnOnGreen
+3866	Hwisel EV
+3867	InCharge (US)
+3868	Eleport
+3869	Alexela (EE)
+3870	Team Energy (AM)
+3871	5 Şarj (TR)
+3872	Otojet
+3873	RST Charge Point
+3874	EI Charge (MY)
+3875	GO EC (IN)
+3876	Green Charge Georgia (GE)
+3877	Stuart Energy (LT)
+3878	Vibra (BR)
+3879	Netpark (BR)
+3880	Ballenoil (ES)
+3881	Irving Oil
+3882	EV Plug (IL)
+3883	Electra (EG)
+3884	Tap Electric
+3885	ChargeBay (US)
+3886	Shell Recharge (TR)
+3887	UGV Chargers (SK)
+3888	Brite (IE)
+3889	emovili Fast (ES)
+3890	NorthCharge (CA)
+3891	eCarUp (CH)
+3892	Citywatt (DE)
+3893	Da-Tene (GE)
+3894	LKW - Liechtensteiner Kraftwerke (LI)
+3895	Tulay EV Charging (JO)
+3896	justCharge
+3897	Gremo na elektriko (SI)
+3898	EV24
+3899	Greems (IL)
+3900	AC Mobility (PH)
+3901	DOE Philippines (PH)
+3902	EvoXCharge (PH)
+3903	Galaxy Charge (PH)
+3904	InterCharge (PH)
+3905	Solarius (PH)
+3906	V-Green (PH)
+3907	WeCharge Hyperfast (PH)
+3908	iPlanet (IT)
+3909	AddaVolt (PH)
+3910	Petron (PH)
+3911	SEAcharge (PH)
+3912	Shell Recharge (PH)
+3913	SM Supermalls (PH)
+3914	Voltgo (TR)
+3915	eStation (IE)
+3916	Basic Recharge (PH)
+3917	ParkNCharge (PH)
+3918	Global Electric Transport (GET) (PH)
+3919	Boost+ (PH)
+3920	Ona Electric Mobility (EG)
+3921	Gentari Go (MY)
+3922	EVPower (MY)
+3923	TNB Electron (MY)
+3924	chargeEV (MY)
+3925	Rexharge (MY)
+3926	CHARGE+
+3927	Certa (IE)
+3928	Migrol (CH)
+3929	Hydra Charging (IN)
+3930	GC Movilidad Electrica (ES)
+3931	Enertec (SI)
+3932	E-lektra (AZ)
+3933	iVolt (AZ)
+3934	TOK (AZ)
+3935	GoFar (AZ)
+3936	Charge (AZ)
+3937	Sigma (AZ)
+3938	ENRG (AZ)
+3939	Azpetrol (AZ)
+3940	Azerishig VEP (AZ)
+3941	Electrify AZE (AZ)
+3942	Touch Station (AZ)
+3943	iHunt EV (RO)
+3944	Mobilize (FR)
+3945	BonpreuEsclat
+3946	BMM Energy (UK)
+3947	UEnergia (ES)
+3948	Revel
+3949	CEL TODA Navarra (ES)
+3950	Terpel Voltex (PA)
+3951	ENSA Grupo EPM (PA)
+3952	La Casa de las Baterías (PA)
+3953	Greenspace E-mobility (PA)
+3954	Crece Energia (ES)
+3955	Pavapark (ES)
+3956	AENA EV (ES)
+3957	eDrive BPCL (IN)
+3958	Eve Move (UY)
+3959	eOne (UY)
+3960	Carrefour (ES)
+3961	NES Charge (UY)
+3962	DMC Mobility
+3963	UMT EV Charge (UY)
+3964	Shell Recharge (AR)
+3965	YPF (AR)
+3966	Chargebox (AR)
+3967	Stop N Top (IE)
+3968	Autel Energy (US)
+3969	Walmart
+3970	EVO Oman
+3971	HUBCO Green (PK)
+3972	Charge_iN by Mahindra
+3973	EarthtronEV (IN)
+3974	EPEC (AR)
+3975	Interparking (ES)
+3976	Tryk (IN)
+3977	E-Fusion (RO)
+3978	مپنا - empana (IR)
+3979	ایکس ویژن - XV Go (IR)
+3980	تسلا شارژ - teslacharge (IR)
+3981	DCharge (PH)
+3982	Quarker (PH)
+3983	ICAPIA
+3985	Voltspot (BG)
+3986	TriCharge (BR)
+3987	PowerStation Charging (US)
+3988	Asynio
+3989	E-Fill Electric (IN)
+3990	HP Charge (IN)
+3991	MegaPlug (EG)
+3992	Elektrum Drive
+3993	Ignitis On

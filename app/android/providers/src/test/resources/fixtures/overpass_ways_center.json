@@ -1,0 +1,307 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.4 2390de5a",
+  "osm3s": {
+    "timestamp_osm_base": "2026-10-13T17:27:20Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+
+{
+  "type": "way",
+  "id": 99205257,
+  "center": {
+    "lat": 52.3745627,
+    "lon": 4.8839192
+  },
+  "tags": {
+    "alt_name:es": "Westerkerk",
+    "amenity": "place_of_worship",
+    "building": "church",
+    "denomination": "protestant",
+    "height": "35.2",
+    "name": "Westerkerk",
+    "name:ar": "كنيسه ويستيركيرك",
+    "name:en": "Westerkerk",
+    "name:nl": "Westerkerk",
+    "name:ru": "Церковь Вестеркерк",
+    "name:uk": "Вестеркерк",
+    "name:zh": "西教堂",
+    "opening_hours": "Mo-Fr 11:00-15:00",
+    "phone": "+31 20 6247766",
+    "ref:bag": "0363100012164998",
+    "religion": "christian",
+    "source": "BAG",
+    "source:date": "2014-02-11",
+    "source:height": "3DBAG",
+    "source:height:date": "2025-09-03",
+    "start_date": "1990",
+    "tourism": "attraction",
+    "website": "https://www.westerkerk.nl/",
+    "wheelchair": "yes",
+    "wikidata": "Q1130722",
+    "wikimedia_commons": "Category:Westerkerk (Amsterdam)",
+    "wikipedia": "nl:Westerkerk (Amsterdam)"
+  }
+},
+{
+  "type": "relation",
+  "id": 3581108,
+  "center": {
+    "lat": 52.3724791,
+    "lon": 4.8855972
+  },
+  "tags": {
+    "building": "yes",
+    "height": "15.9",
+    "ref:bag": "0363100012172302",
+    "source": "BAG",
+    "source:date": "2014-02-11",
+    "source:height": "3DBAG",
+    "source:height:date": "2025-09-03",
+    "start_date": "1005",
+    "type": "multipolygon"
+  }
+},
+{
+  "type": "relation",
+  "id": 3581111,
+  "center": {
+    "lat": 52.3727542,
+    "lon": 4.8839189
+  },
+  "tags": {
+    "building": "yes",
+    "ref:bag": "0363100012169022",
+    "source": "BAG",
+    "source:date": "2014-02-11",
+    "start_date": "1005",
+    "type": "multipolygon"
+  }
+},
+{
+  "type": "relation",
+  "id": 3581112,
+  "center": {
+    "lat": 52.3731047,
+    "lon": 4.8866211
+  },
+  "tags": {
+    "building": "apartments",
+    "ref:bag": "0363100012164993",
+    "source": "BAG",
+    "source:date": "2014-02-11",
+    "start_date": "1005",
+    "type": "multipolygon"
+  }
+},
+{
+  "type": "relation",
+  "id": 3579779,
+  "center": {
+    "lat": 52.3748920,
+    "lon": 4.8825414
+  },
+  "tags": {
+    "building": "house",
+    "height": "11.8",
+    "ref:bag": "0363100012172863",
+    "source": "BAG",
+    "source:date": "2014-02-11",
+    "source:height": "3DBAG",
+    "source:height:date": "2025-09-03",
+    "start_date": "1005",
+    "type": "multipolygon"
+  }
+},
+{
+  "type": "relation",
+  "id": 3580415,
+  "center": {
+    "lat": 52.3762742,
+    "lon": 4.8861544
+  },
+  "tags": {
+    "building": "yes",
+    "height": "17.9",
+    "ref:bag": "0363100012176477",
+    "source": "BAG",
+    "source:date": "2014-02-11",
+    "source:height": "3DBAG",
+    "source:height:date": "2025-09-03",
+    "start_date": "1790",
+    "type": "multipolygon"
+  }
+},
+{
+  "type": "relation",
+  "id": 3580418,
+  "center": {
+    "lat": 52.3757616,
+    "lon": 4.8855959
+  },
+  "tags": {
+    "building": "apartments",
+    "height": "16",
+    "ref:bag": "0363100012172430",
+    "source": "BAG",
+    "source:date": "2014-02-11",
+    "source:height": "3DBAG",
+    "source:height:date": "2025-09-03",
+    "start_date": "1005",
+    "type": "multipolygon"
+  }
+},
+{
+  "type": "relation",
+  "id": 3580424,
+  "center": {
+    "lat": 52.3755113,
+    "lon": 4.8867230
+  },
+  "tags": {
+    "building": "apartments",
+    "ref:bag": "0363100012176422",
+    "source": "BAG",
+    "source:date": "2014-02-11",
+    "start_date": "1880",
+    "type": "multipolygon"
+  }
+},
+{
+  "type": "relation",
+  "id": 3580425,
+  "center": {
+    "lat": 52.3751749,
+    "lon": 4.8873423
+  },
+  "tags": {
+    "building": "house",
+    "height": "13.3",
+    "ref:bag": "0363100012177011",
+    "source": "BAG",
+    "source:date": "2014-02-11",
+    "source:height": "3DBAG",
+    "source:height:date": "2025-09-03",
+    "start_date": "1005",
+    "type": "multipolygon"
+  }
+},
+{
+  "type": "relation",
+  "id": 3580429,
+  "center": {
+    "lat": 52.3759595,
+    "lon": 4.8850201
+  },
+  "tags": {
+    "building": "apartments",
+    "height": "16.1",
+    "ref:bag": "0363100012172928",
+    "source": "BAG",
+    "source:date": "2014-02-11",
+    "source:height": "3DBAG",
+    "source:height:date": "2025-09-03",
+    "start_date": "1005",
+    "type": "multipolygon"
+  }
+},
+{
+  "type": "relation",
+  "id": 3580480,
+  "center": {
+    "lat": 52.3737557,
+    "lon": 4.8866482
+  },
+  "tags": {
+    "building": "commercial",
+    "height": "28.9",
+    "name": "De Zonnewijser",
+    "ref:bag": "0363100012165020",
+    "source": "BAG",
+    "source:date": "2014-02-11",
+    "source:height": "3DBAG",
+    "source:height:date": "2025-09-03",
+    "start_date": "1897",
+    "type": "multipolygon"
+  }
+},
+{
+  "type": "relation",
+  "id": 3580482,
+  "center": {
+    "lat": 52.3747515,
+    "lon": 4.8870528
+  },
+  "tags": {
+    "building": "yes",
+    "height": "18.5",
+    "ref:bag": "0363100012167643",
+    "source": "BAG",
+    "source:date": "2014-02-11",
+    "source:height": "3DBAG",
+    "source:height:date": "2025-09-03",
+    "start_date": "1005",
+    "type": "multipolygon"
+  }
+},
+{
+  "type": "relation",
+  "id": 3580483,
+  "center": {
+    "lat": 52.3749520,
+    "lon": 4.8849464
+  },
+  "tags": {
+    "building": "commercial",
+    "height": "18.5",
+    "ref:bag": "0363100012172364",
+    "source": "BAG",
+    "source:date": "2014-02-11",
+    "source:height": "3DBAG",
+    "source:height:date": "2025-09-03",
+    "start_date": "1745",
+    "type": "multipolygon"
+  }
+},
+{
+  "type": "relation",
+  "id": 3580484,
+  "center": {
+    "lat": 52.3749387,
+    "lon": 4.8861625
+  },
+  "tags": {
+    "building": "apartments",
+    "height": "19.2",
+    "ref:bag": "0363100012176427",
+    "source": "BAG",
+    "source:date": "2014-02-11",
+    "source:height": "3DBAG",
+    "source:height:date": "2025-09-03",
+    "start_date": "1904",
+    "type": "multipolygon"
+  }
+},
+{
+  "type": "relation",
+  "id": 3580485,
+  "center": {
+    "lat": 52.3747609,
+    "lon": 4.8860629
+  },
+  "tags": {
+    "building": "commercial",
+    "height": "16.6",
+    "ref:bag": "0363100012169068",
+    "source": "BAG",
+    "source:date": "2014-02-11",
+    "source:height": "3DBAG",
+    "source:height:date": "2025-09-03",
+    "start_date": "1725",
+    "type": "multipolygon"
+  }
+}
+
+  ]
+}

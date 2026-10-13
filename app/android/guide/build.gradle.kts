@@ -6,8 +6,9 @@ kotlin { jvmToolchain(17) }
 
 dependencies {
     api(project(":core"))
+    // The phrase tables (osrm-text-instructions and Atlas's own) are JSON resources, read as a tree; no compiler plugin needed.
+    implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
-    testImplementation(libs.kotlinx.coroutines.test)
 }
 
 tasks.test {

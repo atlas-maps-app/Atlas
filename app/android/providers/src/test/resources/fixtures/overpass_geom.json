@@ -1,0 +1,2052 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.4 2390de5a",
+  "osm3s": {
+    "timestamp_osm_base": "2026-10-13T17:28:21Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+
+{
+  "type": "way",
+  "id": 616023805,
+  "bounds": {
+    "minlat": 52.3720392,
+    "minlon": 4.8749212,
+    "maxlat": 52.3722774,
+    "maxlon": 4.8758530
+  },
+  "geometry": [
+    { "lat": 52.3722774, "lon": 4.8758530 },
+    { "lat": 52.3722756, "lon": 4.8758470 },
+    { "lat": 52.3722698, "lon": 4.8758283 },
+    { "lat": 52.3722672, "lon": 4.8758196 },
+    { "lat": 52.3722574, "lon": 4.8757870 },
+    { "lat": 52.3722369, "lon": 4.8757191 },
+    { "lat": 52.3722344, "lon": 4.8757106 },
+    { "lat": 52.3722304, "lon": 4.8756969 },
+    { "lat": 52.3721957, "lon": 4.8755689 },
+    { "lat": 52.3721585, "lon": 4.8754224 },
+    { "lat": 52.3720392, "lon": 4.8749212 }
+  ],
+  "tags": {
+    "cycleway:right": "shared_lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lanes": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Rozengracht",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "sidewalk:right:surface": "paving_stones",
+    "smoothness": "good",
+    "surface": "asphalt",
+    "zone:traffic": "NL:urban"
+  }
+},
+{
+  "type": "way",
+  "id": 616023820,
+  "bounds": {
+    "minlat": 52.3721085,
+    "minlon": 4.8757564,
+    "maxlat": 52.3721687,
+    "maxlon": 4.8760388
+  },
+  "geometry": [
+    { "lat": 52.3721085, "lon": 4.8757564 },
+    { "lat": 52.3721234, "lon": 4.8758271 },
+    { "lat": 52.3721282, "lon": 4.8758518 },
+    { "lat": 52.3721337, "lon": 4.8758724 },
+    { "lat": 52.3721439, "lon": 4.8759189 },
+    { "lat": 52.3721516, "lon": 4.8759577 },
+    { "lat": 52.3721687, "lon": 4.8760388 }
+  ],
+  "tags": {
+    "bicycle": "use_sidepath",
+    "foot": "use_sidepath",
+    "highway": "tertiary",
+    "lanes": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Rozengracht",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "sidewalk:right:surface": "paving_stones",
+    "smoothness": "good",
+    "surface": "asphalt",
+    "zone:traffic": "NL:urban"
+  }
+},
+{
+  "type": "way",
+  "id": 616023837,
+  "bounds": {
+    "minlat": 52.3722774,
+    "minlon": 4.8758530,
+    "maxlat": 52.3723415,
+    "maxlon": 4.8760815
+  },
+  "geometry": [
+    { "lat": 52.3723415, "lon": 4.8760815 },
+    { "lat": 52.3723092, "lon": 4.8759549 },
+    { "lat": 52.3722849, "lon": 4.8758767 },
+    { "lat": 52.3722774, "lon": 4.8758530 }
+  ],
+  "tags": {
+    "cycleway:left": "no",
+    "cycleway:right": "shared_lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lanes": "2",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Rozengracht",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "sidewalk:right:surface": "paving_stones",
+    "smoothness": "good",
+    "surface": "asphalt",
+    "zone:traffic": "NL:urban"
+  }
+},
+{
+  "type": "way",
+  "id": 38297088,
+  "bounds": {
+    "minlat": 52.3710433,
+    "minlon": 4.8795702,
+    "maxlat": 52.3711516,
+    "maxlon": 4.8796447
+  },
+  "geometry": [
+    { "lat": 52.3710433, "lon": 4.8796447 },
+    { "lat": 52.3711516, "lon": 4.8795702 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "bridge:name": "Batavus Droogstoppelbrug",
+    "highway": "residential",
+    "layer": "1",
+    "lit": "yes",
+    "loc_ref": "111",
+    "maxspeed": "30",
+    "maxweight": "3.5",
+    "name": "Lauriergracht",
+    "sidewalk": "both",
+    "smoothness": "intermediate",
+    "surface": "paving_stones",
+    "wikidata": "Q37298501",
+    "wikimedia_commons": "Category:Brug 111, Batavus Droogstoppelbrug",
+    "wikipedia": "nl:Batavus Droogstoppelbrug"
+  }
+},
+{
+  "type": "way",
+  "id": 65421584,
+  "bounds": {
+    "minlat": 52.3723736,
+    "minlon": 4.8762117,
+    "maxlat": 52.3724316,
+    "maxlon": 4.8764729
+  },
+  "geometry": [
+    { "lat": 52.3724316, "lon": 4.8764729 },
+    { "lat": 52.3723736, "lon": 4.8762117 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "cycleway:left": "no",
+    "cycleway:right": "shared_lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lanes": "2",
+    "layer": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Rozengracht",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "sidewalk:right:surface": "paving_stones",
+    "smoothness": "good",
+    "surface": "asphalt",
+    "zone:traffic": "NL:urban"
+  }
+},
+{
+  "type": "way",
+  "id": 65421587,
+  "bounds": {
+    "minlat": 52.3722013,
+    "minlon": 4.8761813,
+    "maxlat": 52.3722584,
+    "maxlon": 4.8764077
+  },
+  "geometry": [
+    { "lat": 52.3722013, "lon": 4.8761813 },
+    { "lat": 52.3722584, "lon": 4.8764077 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "cycleway:left": "no",
+    "cycleway:right": "lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lanes": "1",
+    "layer": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Rozengracht",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "sidewalk:right:surface": "paving_stones",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 65421596,
+  "bounds": {
+    "minlat": 52.3723415,
+    "minlon": 4.8760815,
+    "maxlat": 52.3723736,
+    "maxlon": 4.8762117
+  },
+  "geometry": [
+    { "lat": 52.3723736, "lon": 4.8762117 },
+    { "lat": 52.3723525, "lon": 4.8761290 },
+    { "lat": 52.3723415, "lon": 4.8760815 }
+  ],
+  "tags": {
+    "cycleway:left": "no",
+    "cycleway:right": "shared_lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lanes": "2",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Rozengracht",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "sidewalk:right:surface": "paving_stones",
+    "smoothness": "good",
+    "surface": "asphalt",
+    "zone:traffic": "NL:urban"
+  }
+},
+{
+  "type": "way",
+  "id": 226907711,
+  "bounds": {
+    "minlat": 52.3724316,
+    "minlon": 4.8764729,
+    "maxlat": 52.3725484,
+    "maxlon": 4.8772723
+  },
+  "geometry": [
+    { "lat": 52.3725484, "lon": 4.8772723 },
+    { "lat": 52.3725465, "lon": 4.8772050 },
+    { "lat": 52.3725410, "lon": 4.8770229 },
+    { "lat": 52.3724722, "lon": 4.8766741 },
+    { "lat": 52.3724455, "lon": 4.8765532 },
+    { "lat": 52.3724316, "lon": 4.8764729 }
+  ],
+  "tags": {
+    "cycleway:left": "no",
+    "cycleway:right": "shared_lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lanes": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Rozengracht",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "sidewalk:right:surface": "paving_stones",
+    "smoothness": "good",
+    "surface": "asphalt",
+    "zone:traffic": "NL:urban"
+  }
+},
+{
+  "type": "way",
+  "id": 730331427,
+  "bounds": {
+    "minlat": 52.3722584,
+    "minlon": 4.8764077,
+    "maxlat": 52.3725484,
+    "maxlon": 4.8772723
+  },
+  "geometry": [
+    { "lat": 52.3722584, "lon": 4.8764077 },
+    { "lat": 52.3722702, "lon": 4.8764631 },
+    { "lat": 52.3723451, "lon": 4.8767475 },
+    { "lat": 52.3724361, "lon": 4.8770818 },
+    { "lat": 52.3725251, "lon": 4.8772295 },
+    { "lat": 52.3725484, "lon": 4.8772723 }
+  ],
+  "tags": {
+    "cycleway:left": "no",
+    "cycleway:oneway": "yes",
+    "cycleway:right": "lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lanes": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Rozengracht",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "sidewalk:right:surface": "paving_stones",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 1115176507,
+  "bounds": {
+    "minlat": 52.3704937,
+    "minlon": 4.8777236,
+    "maxlat": 52.3710087,
+    "maxlon": 4.8796685
+  },
+  "geometry": [
+    { "lat": 52.3704937, "lon": 4.8777236 },
+    { "lat": 52.3705527, "lon": 4.8779303 },
+    { "lat": 52.3706341, "lon": 4.8782436 },
+    { "lat": 52.3706405, "lon": 4.8782618 },
+    { "lat": 52.3707143, "lon": 4.8785451 },
+    { "lat": 52.3709976, "lon": 4.8796308 },
+    { "lat": 52.3710087, "lon": 4.8796685 }
+  ],
+  "tags": {
+    "highway": "residential",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "3.5",
+    "name": "Lauriergracht",
+    "oneway": "no",
+    "sidewalk": "right",
+    "surface": "paving_stones",
+    "width": "2.5"
+  }
+},
+{
+  "type": "way",
+  "id": 1163466766,
+  "bounds": {
+    "minlat": 52.3721687,
+    "minlon": 4.8760388,
+    "maxlat": 52.3722013,
+    "maxlon": 4.8761813
+  },
+  "geometry": [
+    { "lat": 52.3721687, "lon": 4.8760388 },
+    { "lat": 52.3721843, "lon": 4.8761132 },
+    { "lat": 52.3722013, "lon": 4.8761813 }
+  ],
+  "tags": {
+    "cycleway:left": "no",
+    "cycleway:right": "lane",
+    "highway": "tertiary",
+    "lanes": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Rozengracht",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "sidewalk:right:surface": "paving_stones",
+    "smoothness": "good",
+    "surface": "asphalt",
+    "zone:traffic": "NL:urban"
+  }
+},
+{
+  "type": "way",
+  "id": 38297127,
+  "bounds": {
+    "minlat": 52.3724104,
+    "minlon": 4.8827286,
+    "maxlat": 52.3724232,
+    "maxlon": 4.8831093
+  },
+  "geometry": [
+    { "lat": 52.3724104, "lon": 4.8831093 },
+    { "lat": 52.3724232, "lon": 4.8827286 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "highway": "residential",
+    "lane_markings": "no",
+    "lanes": "2",
+    "layer": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "7.5",
+    "name": "Reesluis",
+    "sidewalk": "both",
+    "sidewalk:both:surface": "paving_stones",
+    "smoothness": "intermediate",
+    "surface": "paving_stones",
+    "wikidata": "Q15881185",
+    "wikimedia_commons": "Category:Brug 64, Reesluis",
+    "wikipedia": "nl:Reesluis",
+    "zone:maxspeed": "NL:30"
+  }
+},
+{
+  "type": "way",
+  "id": 65421585,
+  "bounds": {
+    "minlat": 52.3725484,
+    "minlon": 4.8772723,
+    "maxlat": 52.3739261,
+    "maxlon": 4.8827968
+  },
+  "geometry": [
+    { "lat": 52.3725484, "lon": 4.8772723 },
+    { "lat": 52.3728356, "lon": 4.8784239 },
+    { "lat": 52.3729118, "lon": 4.8787286 },
+    { "lat": 52.3732217, "lon": 4.8799673 },
+    { "lat": 52.3732780, "lon": 4.8802020 },
+    { "lat": 52.3733182, "lon": 4.8803635 },
+    { "lat": 52.3736097, "lon": 4.8815332 },
+    { "lat": 52.3736878, "lon": 4.8818469 },
+    { "lat": 52.3739022, "lon": 4.8826959 },
+    { "lat": 52.3739261, "lon": 4.8827968 }
+  ],
+  "tags": {
+    "access:lanes:backward": "no|yes",
+    "access:lanes:forward": "no|yes",
+    "cycleway": "lane",
+    "cycleway:surface": "asphalt",
+    "cycleway:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "embedded_rails": "tram",
+    "highway": "tertiary",
+    "lanes": "4",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Rozengracht",
+    "psv:lanes:backward": "yes|none",
+    "psv:lanes:forward": "yes|none",
+    "sidewalk": "both",
+    "sidewalk:right:surface": "paving_stones",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 191481523,
+  "bounds": {
+    "minlat": 52.3733062,
+    "minlon": 4.8887120,
+    "maxlat": 52.3733195,
+    "maxlon": 4.8890172
+  },
+  "geometry": [
+    { "lat": 52.3733062, "lon": 4.8890172 },
+    { "lat": 52.3733195, "lon": 4.8887120 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "bridge:name": "Huiszittenbrug",
+    "cycleway:right": "shared_lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "layer": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 191481525,
+  "bounds": {
+    "minlat": 52.3731922,
+    "minlon": 4.8889846,
+    "maxlat": 52.3731994,
+    "maxlon": 4.8891464
+  },
+  "geometry": [
+    { "lat": 52.3731994, "lon": 4.8889846 },
+    { "lat": 52.3731981, "lon": 4.8890034 },
+    { "lat": 52.3731922, "lon": 4.8891464 }
+  ],
+  "tags": {
+    "cycleway:left": "no",
+    "cycleway:right": "lane",
+    "cycleway:right:lane": "exclusive",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 221585820,
+  "bounds": {
+    "minlat": 52.3785511,
+    "minlon": 4.8779881,
+    "maxlat": 52.3785943,
+    "maxlon": 4.8781586
+  },
+  "geometry": [
+    { "lat": 52.3785511, "lon": 4.8781586 },
+    { "lat": 52.3785671, "lon": 4.8780932 },
+    { "lat": 52.3785824, "lon": 4.8780317 },
+    { "lat": 52.3785943, "lon": 4.8779881 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "cycleway:right": "track",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:right:width": "1.40",
+    "highway": "unclassified",
+    "lanes": "1",
+    "layer": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "7.5",
+    "name": "Marnixplein",
+    "oneway": "yes",
+    "surface": "asphalt",
+    "zone:traffic": "NL:urban"
+  }
+},
+{
+  "type": "way",
+  "id": 225114002,
+  "bounds": {
+    "minlat": 52.3784803,
+    "minlon": 4.8779298,
+    "maxlat": 52.3785003,
+    "maxlon": 4.8780088
+  },
+  "geometry": [
+    { "lat": 52.3785003, "lon": 4.8779298 },
+    { "lat": 52.3784803, "lon": 4.8780088 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "cycleway:right": "lane",
+    "cycleway:right:lane": "exclusive",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:right:width": "1.40",
+    "highway": "unclassified",
+    "lanes": "1",
+    "layer": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "7.5",
+    "name": "Marnixplein",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "surface": "asphalt",
+    "zone:traffic": "NL:urban"
+  }
+},
+{
+  "type": "way",
+  "id": 617470762,
+  "bounds": {
+    "minlat": 52.3784563,
+    "minlon": 4.8782925,
+    "maxlat": 52.3784710,
+    "maxlon": 4.8783552
+  },
+  "geometry": [
+    { "lat": 52.3784710, "lon": 4.8782925 },
+    { "lat": 52.3784563, "lon": 4.8783552 }
+  ],
+  "tags": {
+    "bicycle": "use_sidepath",
+    "bridge": "yes",
+    "embedded_rails": "tram",
+    "foot": "use_sidepath",
+    "highway": "unclassified",
+    "lanes": "2",
+    "layer": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "7.5",
+    "name": "Marnixplein",
+    "oneway": "yes",
+    "oneway:psv": "no",
+    "surface": "asphalt",
+    "zone:traffic": "NL:urban"
+  }
+},
+{
+  "type": "way",
+  "id": 801047610,
+  "bounds": {
+    "minlat": 52.3784697,
+    "minlon": 4.8780088,
+    "maxlat": 52.3784803,
+    "maxlon": 4.8782925
+  },
+  "geometry": [
+    { "lat": 52.3784803, "lon": 4.8780088 },
+    { "lat": 52.3784697, "lon": 4.8780977 },
+    { "lat": 52.3784755, "lon": 4.8782213 },
+    { "lat": 52.3784710, "lon": 4.8782925 }
+  ],
+  "tags": {
+    "bicycle": "use_sidepath",
+    "bridge": "yes",
+    "foot": "use_sidepath",
+    "highway": "unclassified",
+    "lanes": "1",
+    "layer": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "7.5",
+    "name": "Marnixplein",
+    "oneway": "yes",
+    "surface": "asphalt",
+    "zone:traffic": "NL:urban"
+  }
+},
+{
+  "type": "way",
+  "id": 1209332968,
+  "bounds": {
+    "minlat": 52.3784963,
+    "minlon": 4.8781586,
+    "maxlat": 52.3785511,
+    "maxlon": 4.8783811
+  },
+  "geometry": [
+    { "lat": 52.3784963, "lon": 4.8783811 },
+    { "lat": 52.3785511, "lon": 4.8781586 }
+  ],
+  "tags": {
+    "bicycle": "use_sidepath",
+    "bridge": "yes",
+    "foot": "use_sidepath",
+    "highway": "unclassified",
+    "lanes": "1",
+    "layer": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "7.5",
+    "name": "Marnixplein",
+    "oneway": "yes",
+    "surface": "asphalt",
+    "zone:traffic": "NL:urban"
+  }
+},
+{
+  "type": "way",
+  "id": 191481512,
+  "bounds": {
+    "minlat": 52.3739261,
+    "minlon": 4.8827968,
+    "maxlat": 52.3740014,
+    "maxlon": 4.8829178
+  },
+  "geometry": [
+    { "lat": 52.3740014, "lon": 4.8829178 },
+    { "lat": 52.3739928, "lon": 4.8828789 },
+    { "lat": 52.3739447, "lon": 4.8828197 },
+    { "lat": 52.3739261, "lon": 4.8827968 }
+  ],
+  "tags": {
+    "cycleway:left": "no",
+    "cycleway:right": "lane",
+    "cycleway:right:lane": "exclusive",
+    "highway": "tertiary",
+    "lanes": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Rozengracht",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 191481522,
+  "bounds": {
+    "minlat": 52.3733303,
+    "minlon": 4.8870740,
+    "maxlat": 52.3733493,
+    "maxlon": 4.8873010
+  },
+  "geometry": [
+    { "lat": 52.3733493, "lon": 4.8870740 },
+    { "lat": 52.3733303, "lon": 4.8873010 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "cycleway:right": "shared_lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lane_markings": "no",
+    "lanes": "2",
+    "layer": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 191481534,
+  "bounds": {
+    "minlat": 52.3739016,
+    "minlon": 4.8829094,
+    "maxlat": 52.3739657,
+    "maxlon": 4.8832030
+  },
+  "geometry": [
+    { "lat": 52.3739016, "lon": 4.8829094 },
+    { "lat": 52.3739657, "lon": 4.8832030 }
+  ],
+  "tags": {
+    "alt_name": "Nieuwe Wercksbrug",
+    "bridge": "yes",
+    "bridge:name": "Nieuwe-Wercksbrug",
+    "cycleway:left": "no",
+    "cycleway:right": "lane",
+    "cycleway:right:lane": "exclusive",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lanes": "1",
+    "layer": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Nieuwe-Wercksbrug",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 191481537,
+  "bounds": {
+    "minlat": 52.3731994,
+    "minlon": 4.8886842,
+    "maxlat": 52.3732153,
+    "maxlon": 4.8889846
+  },
+  "geometry": [
+    { "lat": 52.3732153, "lon": 4.8886842 },
+    { "lat": 52.3731994, "lon": 4.8889846 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "bridge:name": "Huiszittenbrug",
+    "cycleway:left": "no",
+    "cycleway:right": "lane",
+    "cycleway:right:lane": "exclusive",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "layer": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 191481543,
+  "bounds": {
+    "minlat": 52.3740469,
+    "minlon": 4.8849140,
+    "maxlat": 52.3740516,
+    "maxlon": 4.8851566
+  },
+  "geometry": [
+    { "lat": 52.3740469, "lon": 4.8851566 },
+    { "lat": 52.3740516, "lon": 4.8849140 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "cycleway:right": "lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:width": "2",
+    "highway": "tertiary",
+    "lane_markings": "no",
+    "layer": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Niek Engelschmanbrug",
+    "oneway": "yes",
+    "sidewalk:left": "no",
+    "sidewalk:right": "separate",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 191481550,
+  "bounds": {
+    "minlat": 52.3739451,
+    "minlon": 4.8849065,
+    "maxlat": 52.3739510,
+    "maxlon": 4.8851480
+  },
+  "geometry": [
+    { "lat": 52.3739510, "lon": 4.8849065 },
+    { "lat": 52.3739451, "lon": 4.8851480 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "cycleway:right": "lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:width": "2",
+    "highway": "tertiary",
+    "lane_markings": "no",
+    "layer": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Niek Engelschmanbrug",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "sidewalk:right:surface": "paving_stones",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 191481551,
+  "bounds": {
+    "minlat": 52.3740014,
+    "minlon": 4.8829178,
+    "maxlat": 52.3740774,
+    "maxlon": 4.8832117
+  },
+  "geometry": [
+    { "lat": 52.3740774, "lon": 4.8832117 },
+    { "lat": 52.3740014, "lon": 4.8829178 }
+  ],
+  "tags": {
+    "alt_name": "Nieuwe Wercksbrug",
+    "bridge": "yes",
+    "bridge:name": "Nieuwe-Wercksbrug",
+    "cycleway:left": "no",
+    "cycleway:right": "lane",
+    "cycleway:right:lane": "exclusive",
+    "highway": "tertiary",
+    "lanes": "1",
+    "layer": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Nieuwe-Wercksbrug",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 191481552,
+  "bounds": {
+    "minlat": 52.3733303,
+    "minlon": 4.8873010,
+    "maxlat": 52.3733740,
+    "maxlon": 4.8874503
+  },
+  "geometry": [
+    { "lat": 52.3733303, "lon": 4.8873010 },
+    { "lat": 52.3733425, "lon": 4.8873545 },
+    { "lat": 52.3733476, "lon": 4.8873696 },
+    { "lat": 52.3733659, "lon": 4.8874240 },
+    { "lat": 52.3733740, "lon": 4.8874503 }
+  ],
+  "tags": {
+    "cycleway:right": "shared_lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lane_markings": "no",
+    "lanes": "2",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 191481565,
+  "bounds": {
+    "minlat": 52.3739481,
+    "minlon": 4.8832030,
+    "maxlat": 52.3739852,
+    "maxlon": 4.8849065
+  },
+  "geometry": [
+    { "lat": 52.3739657, "lon": 4.8832030 },
+    { "lat": 52.3739758, "lon": 4.8832736 },
+    { "lat": 52.3739835, "lon": 4.8833344 },
+    { "lat": 52.3739852, "lon": 4.8833983 },
+    { "lat": 52.3739850, "lon": 4.8834483 },
+    { "lat": 52.3739514, "lon": 4.8845462 },
+    { "lat": 52.3739481, "lon": 4.8846334 },
+    { "lat": 52.3739514, "lon": 4.8847412 },
+    { "lat": 52.3739510, "lon": 4.8849065 }
+  ],
+  "tags": {
+    "cycleway:left": "no",
+    "cycleway:right": "lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:width": "2",
+    "highway": "tertiary",
+    "lanes": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Westermarkt",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "sidewalk:right:surface": "paving_stones",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 191481576,
+  "bounds": {
+    "minlat": 52.3740655,
+    "minlon": 4.8833471,
+    "maxlat": 52.3741105,
+    "maxlon": 4.8847309
+  },
+  "geometry": [
+    { "lat": 52.3740655, "lon": 4.8847309 },
+    { "lat": 52.3740733, "lon": 4.8846370 },
+    { "lat": 52.3741089, "lon": 4.8835116 },
+    { "lat": 52.3741105, "lon": 4.8834603 },
+    { "lat": 52.3741076, "lon": 4.8834083 },
+    { "lat": 52.3740994, "lon": 4.8833471 }
+  ],
+  "tags": {
+    "bicycle": "use_sidepath",
+    "highway": "tertiary",
+    "lanes": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Westermarkt",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "sidewalk:right:surface": "paving_stones",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 195159165,
+  "bounds": {
+    "minlat": 52.3734315,
+    "minlon": 4.8853282,
+    "maxlat": 52.3739798,
+    "maxlon": 4.8869312
+  },
+  "geometry": [
+    { "lat": 52.3739798, "lon": 4.8853282 },
+    { "lat": 52.3739691, "lon": 4.8853891 },
+    { "lat": 52.3739521, "lon": 4.8854680 },
+    { "lat": 52.3739317, "lon": 4.8855451 },
+    { "lat": 52.3739053, "lon": 4.8856300 },
+    { "lat": 52.3738694, "lon": 4.8857251 },
+    { "lat": 52.3738294, "lon": 4.8858094 },
+    { "lat": 52.3736124, "lon": 4.8861960 },
+    { "lat": 52.3735697, "lon": 4.8862851 },
+    { "lat": 52.3735269, "lon": 4.8863954 },
+    { "lat": 52.3735084, "lon": 4.8864557 },
+    { "lat": 52.3734776, "lon": 4.8865972 },
+    { "lat": 52.3734554, "lon": 4.8867163 },
+    { "lat": 52.3734475, "lon": 4.8867838 },
+    { "lat": 52.3734315, "lon": 4.8869312 }
+  ],
+  "tags": {
+    "cycleway": "shared_lane",
+    "cycleway:surface": "asphalt",
+    "cycleway:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "embedded_rails": "tram",
+    "highway": "tertiary",
+    "lanes": "4",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "sidewalk": "right",
+    "sidewalk:right:surface": "paving_stones",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 311909139,
+  "bounds": {
+    "minlat": 52.3733740,
+    "minlon": 4.8873146,
+    "maxlat": 52.3734432,
+    "maxlon": 4.8874503
+  },
+  "geometry": [
+    { "lat": 52.3733740, "lon": 4.8874503 },
+    { "lat": 52.3733914, "lon": 4.8874233 },
+    { "lat": 52.3734148, "lon": 4.8873827 },
+    { "lat": 52.3734432, "lon": 4.8873146 }
+  ],
+  "tags": {
+    "cycleway:right": "shared_lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lane_markings": "no",
+    "lanes": "2",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 311909140,
+  "bounds": {
+    "minlat": 52.3732733,
+    "minlon": 4.8874503,
+    "maxlat": 52.3733740,
+    "maxlon": 4.8885352
+  },
+  "geometry": [
+    { "lat": 52.3733740, "lon": 4.8874503 },
+    { "lat": 52.3733589, "lon": 4.8876080 },
+    { "lat": 52.3733537, "lon": 4.8876634 },
+    { "lat": 52.3732874, "lon": 4.8883489 },
+    { "lat": 52.3732829, "lon": 4.8883925 },
+    { "lat": 52.3732733, "lon": 4.8885352 }
+  ],
+  "tags": {
+    "cycleway": "shared_lane",
+    "cycleway:surface": "asphalt",
+    "cycleway:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "embedded_rails": "tram",
+    "highway": "tertiary",
+    "lanes": "4",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "sidewalk": "right",
+    "sidewalk:right:surface": "paving_stones",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 461635506,
+  "bounds": {
+    "minlat": 52.3734432,
+    "minlon": 4.8870882,
+    "maxlat": 52.3734658,
+    "maxlon": 4.8873146
+  },
+  "geometry": [
+    { "lat": 52.3734432, "lon": 4.8873146 },
+    { "lat": 52.3734658, "lon": 4.8870882 }
+  ],
+  "tags": {
+    "bridge": "yes",
+    "cycleway:right": "shared_lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lane_markings": "no",
+    "lanes": "2",
+    "layer": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 580936067,
+  "bounds": {
+    "minlat": 52.3740774,
+    "minlon": 4.8832117,
+    "maxlat": 52.3740994,
+    "maxlon": 4.8833471
+  },
+  "geometry": [
+    { "lat": 52.3740994, "lon": 4.8833471 },
+    { "lat": 52.3740904, "lon": 4.8833017 },
+    { "lat": 52.3740774, "lon": 4.8832117 }
+  ],
+  "tags": {
+    "cycleway:left": "no",
+    "cycleway:right": "lane",
+    "cycleway:right:lane": "exclusive",
+    "highway": "tertiary",
+    "lanes": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Westermarkt",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 580936070,
+  "bounds": {
+    "minlat": 52.3740516,
+    "minlon": 4.8847309,
+    "maxlat": 52.3740655,
+    "maxlon": 4.8849140
+  },
+  "geometry": [
+    { "lat": 52.3740516, "lon": 4.8849140 },
+    { "lat": 52.3740517, "lon": 4.8848955 },
+    { "lat": 52.3740655, "lon": 4.8847309 }
+  ],
+  "tags": {
+    "cycleway:right": "lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:width": "2",
+    "highway": "tertiary",
+    "lane_markings": "no",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Westermarkt",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 730326734,
+  "bounds": {
+    "minlat": 52.3732153,
+    "minlon": 4.8885352,
+    "maxlat": 52.3732733,
+    "maxlon": 4.8886842
+  },
+  "geometry": [
+    { "lat": 52.3732733, "lon": 4.8885352 },
+    { "lat": 52.3732620, "lon": 4.8885591 },
+    { "lat": 52.3732348, "lon": 4.8886165 },
+    { "lat": 52.3732153, "lon": 4.8886842 }
+  ],
+  "tags": {
+    "cycleway:right": "shared_lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 730326735,
+  "bounds": {
+    "minlat": 52.3732733,
+    "minlon": 4.8885352,
+    "maxlat": 52.3733195,
+    "maxlon": 4.8887120
+  },
+  "geometry": [
+    { "lat": 52.3733195, "lon": 4.8887120 },
+    { "lat": 52.3733101, "lon": 4.8886568 },
+    { "lat": 52.3732856, "lon": 4.8885760 },
+    { "lat": 52.3732733, "lon": 4.8885352 }
+  ],
+  "tags": {
+    "cycleway:right": "shared_lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 730328477,
+  "bounds": {
+    "minlat": 52.3734315,
+    "minlon": 4.8869312,
+    "maxlat": 52.3734658,
+    "maxlon": 4.8870882
+  },
+  "geometry": [
+    { "lat": 52.3734658, "lon": 4.8870882 },
+    { "lat": 52.3734385, "lon": 4.8869685 },
+    { "lat": 52.3734315, "lon": 4.8869312 }
+  ],
+  "tags": {
+    "cycleway:right": "shared_lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lane_markings": "no",
+    "lanes": "2",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 730328479,
+  "bounds": {
+    "minlat": 52.3739798,
+    "minlon": 4.8851566,
+    "maxlat": 52.3740469,
+    "maxlon": 4.8853282
+  },
+  "geometry": [
+    { "lat": 52.3739798, "lon": 4.8853282 },
+    { "lat": 52.3739974, "lon": 4.8852908 },
+    { "lat": 52.3740363, "lon": 4.8852037 },
+    { "lat": 52.3740469, "lon": 4.8851566 }
+  ],
+  "tags": {
+    "cycleway:right": "lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:width": "2",
+    "highway": "tertiary",
+    "lane_markings": "no",
+    "lanes": "2",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "oneway": "yes",
+    "sidewalk:left": "no",
+    "sidewalk:right": "separate",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 730328480,
+  "bounds": {
+    "minlat": 52.3739451,
+    "minlon": 4.8851480,
+    "maxlat": 52.3739798,
+    "maxlon": 4.8853282
+  },
+  "geometry": [
+    { "lat": 52.3739451, "lon": 4.8851480 },
+    { "lat": 52.3739475, "lon": 4.8851752 },
+    { "lat": 52.3739717, "lon": 4.8852898 },
+    { "lat": 52.3739798, "lon": 4.8853282 }
+  ],
+  "tags": {
+    "cycleway:right": "lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:width": "2",
+    "highway": "tertiary",
+    "lane_markings": "no",
+    "lanes": "2",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 730328482,
+  "bounds": {
+    "minlat": 52.3733493,
+    "minlon": 4.8869312,
+    "maxlat": 52.3734315,
+    "maxlon": 4.8870740
+  },
+  "geometry": [
+    { "lat": 52.3734315, "lon": 4.8869312 },
+    { "lat": 52.3734144, "lon": 4.8869591 },
+    { "lat": 52.3733493, "lon": 4.8870740 }
+  ],
+  "tags": {
+    "cycleway:right": "shared_lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lane_markings": "no",
+    "lanes": "2",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 730331428,
+  "bounds": {
+    "minlat": 52.3739016,
+    "minlon": 4.8827968,
+    "maxlat": 52.3739261,
+    "maxlon": 4.8829094
+  },
+  "geometry": [
+    { "lat": 52.3739261, "lon": 4.8827968 },
+    { "lat": 52.3739199, "lon": 4.8828255 },
+    { "lat": 52.3739016, "lon": 4.8829094 }
+  ],
+  "tags": {
+    "cycleway:left": "no",
+    "cycleway:oneway": "yes",
+    "cycleway:right": "lane",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lanes": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Rozengracht",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 7371585,
+  "bounds": {
+    "minlat": 52.3726046,
+    "minlon": 4.8907166,
+    "maxlat": 52.3727210,
+    "maxlon": 4.8920248
+  },
+  "geometry": [
+    { "lat": 52.3727210, "lon": 4.8920248 },
+    { "lat": 52.3727198, "lon": 4.8919395 },
+    { "lat": 52.3727148, "lon": 4.8917245 },
+    { "lat": 52.3727108, "lon": 4.8915499 },
+    { "lat": 52.3727045, "lon": 4.8914161 },
+    { "lat": 52.3726974, "lon": 4.8913288 },
+    { "lat": 52.3726770, "lon": 4.8911570 },
+    { "lat": 52.3726191, "lon": 4.8907953 },
+    { "lat": 52.3726046, "lon": 4.8907166 }
+  ],
+  "tags": {
+    "access:conditional": "delivery@(07:00-11:00)",
+    "highway": "cycleway",
+    "lit": "yes",
+    "maxweight": "120",
+    "mofa": "designated",
+    "moped": "designated",
+    "name": "Paleisstraat",
+    "smoothness": "horrible",
+    "surface": "paving_stones",
+    "surface:colour": "grey",
+    "traffic_sign": "NL:G12a"
+  }
+},
+{
+  "type": "way",
+  "id": 23045736,
+  "bounds": {
+    "minlat": 52.3726046,
+    "minlon": 4.8906997,
+    "maxlat": 52.3729337,
+    "maxlon": 4.8907166
+  },
+  "geometry": [
+    { "lat": 52.3726046, "lon": 4.8907166 },
+    { "lat": 52.3726788, "lon": 4.8907132 },
+    { "lat": 52.3727360, "lon": 4.8907109 },
+    { "lat": 52.3729337, "lon": 4.8906997 }
+  ],
+  "tags": {
+    "highway": "tertiary",
+    "lanes": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Nieuwezijds Voorburgwal",
+    "oneway": "yes",
+    "smoothness": "good",
+    "surface": "sett",
+    "surface:colour": "grey"
+  }
+},
+{
+  "type": "way",
+  "id": 34203253,
+  "bounds": {
+    "minlat": 52.3727006,
+    "minlon": 4.8920248,
+    "maxlat": 52.3727289,
+    "maxlon": 4.8928894
+  },
+  "geometry": [
+    { "lat": 52.3727006, "lon": 4.8928894 },
+    { "lat": 52.3727130, "lon": 4.8927823 },
+    { "lat": 52.3727131, "lon": 4.8927768 },
+    { "lat": 52.3727240, "lon": 4.8925845 },
+    { "lat": 52.3727284, "lon": 4.8924994 },
+    { "lat": 52.3727289, "lon": 4.8924098 },
+    { "lat": 52.3727275, "lon": 4.8923186 },
+    { "lat": 52.3727234, "lon": 4.8921161 },
+    { "lat": 52.3727210, "lon": 4.8920248 }
+  ],
+  "tags": {
+    "access:conditional": "delivery@(07:00-11:00)",
+    "highway": "cycleway",
+    "lit": "yes",
+    "maxweight": "120",
+    "mofa": "designated",
+    "moped": "designated",
+    "name": "Dam",
+    "smoothness": "intermediate",
+    "surface": "sett",
+    "surface:colour": "grey",
+    "traffic_sign": "NL:G12a"
+  }
+},
+{
+  "type": "way",
+  "id": 1230909992,
+  "bounds": {
+    "minlat": 52.3730549,
+    "minlon": 4.8894809,
+    "maxlat": 52.3731764,
+    "maxlon": 4.8896381
+  },
+  "geometry": [
+    { "lat": 52.3731764, "lon": 4.8894809 },
+    { "lat": 52.3731666, "lon": 4.8895094 },
+    { "lat": 52.3731550, "lon": 4.8895361 },
+    { "lat": 52.3731415, "lon": 4.8895604 },
+    { "lat": 52.3731266, "lon": 4.8895821 },
+    { "lat": 52.3731247, "lon": 4.8895843 },
+    { "lat": 52.3731102, "lon": 4.8896010 },
+    { "lat": 52.3730926, "lon": 4.8896167 },
+    { "lat": 52.3730741, "lon": 4.8896291 },
+    { "lat": 52.3730549, "lon": 4.8896381 }
+  ],
+  "tags": {
+    "cycleway:left": "no",
+    "cycleway:right": "separate",
+    "highway": "tertiary",
+    "lanes": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "sidewalk:right:surface": "paving_stones",
+    "smoothness": "good"
+  }
+},
+{
+  "type": "way",
+  "id": 1231865533,
+  "bounds": {
+    "minlat": 52.3729337,
+    "minlon": 4.8906895,
+    "maxlat": 52.3731789,
+    "maxlon": 4.8906997
+  },
+  "geometry": [
+    { "lat": 52.3729337, "lon": 4.8906997 },
+    { "lat": 52.3731167, "lon": 4.8906895 },
+    { "lat": 52.3731789, "lon": 4.8906946 }
+  ],
+  "tags": {
+    "cycleway:right": "lane",
+    "highway": "tertiary",
+    "lanes": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Nieuwezijds Voorburgwal",
+    "oneway": "yes",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 7371201,
+  "bounds": {
+    "minlat": 52.3741566,
+    "minlon": 4.8909481,
+    "maxlat": 52.3748481,
+    "maxlon": 4.8915489
+  },
+  "geometry": [
+    { "lat": 52.3748481, "lon": 4.8915489 },
+    { "lat": 52.3747737, "lon": 4.8914843 },
+    { "lat": 52.3746393, "lon": 4.8913680 },
+    { "lat": 52.3746095, "lon": 4.8913403 },
+    { "lat": 52.3745567, "lon": 4.8912910 },
+    { "lat": 52.3744206, "lon": 4.8911754 },
+    { "lat": 52.3743512, "lon": 4.8911157 },
+    { "lat": 52.3741566, "lon": 4.8909481 }
+  ],
+  "tags": {
+    "cycleway:left": "separate",
+    "highway": "tertiary",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Nieuwezijds Voorburgwal",
+    "oneway": "yes",
+    "smoothness": "good",
+    "surface": "paving_stones",
+    "surface:colour": "red"
+  }
+},
+{
+  "type": "way",
+  "id": 7371612,
+  "bounds": {
+    "minlat": 52.3748481,
+    "minlon": 4.8915489,
+    "maxlat": 52.3776902,
+    "maxlon": 4.8955249
+  },
+  "geometry": [
+    { "lat": 52.3776902, "lon": 4.8955249 },
+    { "lat": 52.3776653, "lon": 4.8954995 },
+    { "lat": 52.3776459, "lon": 4.8954832 },
+    { "lat": 52.3775049, "lon": 4.8953704 },
+    { "lat": 52.3774124, "lon": 4.8952748 },
+    { "lat": 52.3773123, "lon": 4.8951716 },
+    { "lat": 52.3772229, "lon": 4.8950743 },
+    { "lat": 52.3771887, "lon": 4.8950247 },
+    { "lat": 52.3771636, "lon": 4.8949870 },
+    { "lat": 52.3771370, "lon": 4.8949382 },
+    { "lat": 52.3771000, "lon": 4.8948800 },
+    { "lat": 52.3769699, "lon": 4.8946864 },
+    { "lat": 52.3769516, "lon": 4.8946586 },
+    { "lat": 52.3769341, "lon": 4.8946299 },
+    { "lat": 52.3769173, "lon": 4.8946002 },
+    { "lat": 52.3769011, "lon": 4.8945695 },
+    { "lat": 52.3768856, "lon": 4.8945378 },
+    { "lat": 52.3768708, "lon": 4.8945053 },
+    { "lat": 52.3768566, "lon": 4.8944715 },
+    { "lat": 52.3768292, "lon": 4.8944057 },
+    { "lat": 52.3768189, "lon": 4.8943809 },
+    { "lat": 52.3768074, "lon": 4.8943565 },
+    { "lat": 52.3767952, "lon": 4.8943331 },
+    { "lat": 52.3767831, "lon": 4.8943099 },
+    { "lat": 52.3767149, "lon": 4.8941569 },
+    { "lat": 52.3767068, "lon": 4.8941425 },
+    { "lat": 52.3766223, "lon": 4.8939924 },
+    { "lat": 52.3764528, "lon": 4.8937219 },
+    { "lat": 52.3764089, "lon": 4.8936541 },
+    { "lat": 52.3764017, "lon": 4.8936425 },
+    { "lat": 52.3762787, "lon": 4.8934476 },
+    { "lat": 52.3762057, "lon": 4.8933332 },
+    { "lat": 52.3761390, "lon": 4.8932282 },
+    { "lat": 52.3761104, "lon": 4.8931870 },
+    { "lat": 52.3760819, "lon": 4.8931499 },
+    { "lat": 52.3760457, "lon": 4.8931053 },
+    { "lat": 52.3759777, "lon": 4.8930236 },
+    { "lat": 52.3758914, "lon": 4.8929063 },
+    { "lat": 52.3757986, "lon": 4.8927668 },
+    { "lat": 52.3757423, "lon": 4.8926870 },
+    { "lat": 52.3756291, "lon": 4.8925258 },
+    { "lat": 52.3751781, "lon": 4.8918676 },
+    { "lat": 52.3751650, "lon": 4.8918482 },
+    { "lat": 52.3751514, "lon": 4.8918296 },
+    { "lat": 52.3751374, "lon": 4.8918118 },
+    { "lat": 52.3751230, "lon": 4.8917950 },
+    { "lat": 52.3751082, "lon": 4.8917792 },
+    { "lat": 52.3750930, "lon": 4.8917643 },
+    { "lat": 52.3750775, "lon": 4.8917504 },
+    { "lat": 52.3749479, "lon": 4.8916348 },
+    { "lat": 52.3748481, "lon": 4.8915489 }
+  ],
+  "tags": {
+    "cycleway:left": "separate",
+    "highway": "tertiary",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Nieuwezijds Voorburgwal",
+    "oneway": "yes",
+    "sidewalk": "separate",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 7371678,
+  "bounds": {
+    "minlat": 52.3732726,
+    "minlon": 4.8897163,
+    "maxlat": 52.3743739,
+    "maxlon": 4.8902827
+  },
+  "geometry": [
+    { "lat": 52.3743739, "lon": 4.8902827 },
+    { "lat": 52.3743432, "lon": 4.8902602 },
+    { "lat": 52.3742977, "lon": 4.8902299 },
+    { "lat": 52.3740211, "lon": 4.8900886 },
+    { "lat": 52.3733634, "lon": 4.8897517 },
+    { "lat": 52.3733113, "lon": 4.8897314 },
+    { "lat": 52.3732726, "lon": 4.8897163 }
+  ],
+  "tags": {
+    "cyclestreet": "yes",
+    "highway": "residential",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Spuistraat",
+    "oneway": "yes",
+    "oneway:bicycle": "yes",
+    "sidewalk": "both",
+    "surface": "asphalt",
+    "zone:maxspeed": "NL:30"
+  }
+},
+{
+  "type": "way",
+  "id": 33441173,
+  "bounds": {
+    "minlat": 52.3743739,
+    "minlon": 4.8902827,
+    "maxlat": 52.3773724,
+    "maxlon": 4.8944679
+  },
+  "geometry": [
+    { "lat": 52.3773724, "lon": 4.8944679 },
+    { "lat": 52.3773427, "lon": 4.8944059 },
+    { "lat": 52.3773090, "lon": 4.8943390 },
+    { "lat": 52.3772574, "lon": 4.8942459 },
+    { "lat": 52.3770907, "lon": 4.8939346 },
+    { "lat": 52.3770021, "lon": 4.8937750 },
+    { "lat": 52.3768910, "lon": 4.8935844 },
+    { "lat": 52.3767741, "lon": 4.8933918 },
+    { "lat": 52.3765857, "lon": 4.8931144 },
+    { "lat": 52.3763871, "lon": 4.8928340 },
+    { "lat": 52.3761874, "lon": 4.8925506 },
+    { "lat": 52.3759915, "lon": 4.8922720 },
+    { "lat": 52.3757546, "lon": 4.8919657 },
+    { "lat": 52.3755098, "lon": 4.8916469 },
+    { "lat": 52.3752707, "lon": 4.8913358 },
+    { "lat": 52.3750246, "lon": 4.8910379 },
+    { "lat": 52.3748457, "lon": 4.8908123 },
+    { "lat": 52.3746821, "lon": 4.8906234 },
+    { "lat": 52.3745390, "lon": 4.8904558 },
+    { "lat": 52.3744898, "lon": 4.8903999 },
+    { "lat": 52.3744339, "lon": 4.8903397 },
+    { "lat": 52.3743739, "lon": 4.8902827 }
+  ],
+  "tags": {
+    "bicycle": "yes",
+    "cyclestreet": "yes",
+    "highway": "residential",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Spuistraat",
+    "oneway": "yes",
+    "surface": "asphalt",
+    "zone:maxspeed": "NL:30"
+  }
+},
+{
+  "type": "way",
+  "id": 311909136,
+  "bounds": {
+    "minlat": 52.3731764,
+    "minlon": 4.8891464,
+    "maxlat": 52.3731922,
+    "maxlon": 4.8894809
+  },
+  "geometry": [
+    { "lat": 52.3731922, "lon": 4.8891464 },
+    { "lat": 52.3731764, "lon": 4.8894809 }
+  ],
+  "tags": {
+    "cycleway:right": "lane",
+    "cycleway:right:lane": "exclusive",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lanes": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "sidewalk:right:surface": "paving_stones",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 448392752,
+  "bounds": {
+    "minlat": 52.3731789,
+    "minlon": 4.8904715,
+    "maxlat": 52.3732856,
+    "maxlon": 4.8906946
+  },
+  "geometry": [
+    { "lat": 52.3731789, "lon": 4.8906946 },
+    { "lat": 52.3731905, "lon": 4.8906886 },
+    { "lat": 52.3732016, "lon": 4.8906810 },
+    { "lat": 52.3732124, "lon": 4.8906719 },
+    { "lat": 52.3732226, "lon": 4.8906614 },
+    { "lat": 52.3732323, "lon": 4.8906496 },
+    { "lat": 52.3732394, "lon": 4.8906395 },
+    { "lat": 52.3732413, "lon": 4.8906364 },
+    { "lat": 52.3732497, "lon": 4.8906221 },
+    { "lat": 52.3732540, "lon": 4.8906137 },
+    { "lat": 52.3732580, "lon": 4.8906051 },
+    { "lat": 52.3732618, "lon": 4.8905961 },
+    { "lat": 52.3732677, "lon": 4.8905799 },
+    { "lat": 52.3732699, "lon": 4.8905728 },
+    { "lat": 52.3732729, "lon": 4.8905630 },
+    { "lat": 52.3732772, "lon": 4.8905454 },
+    { "lat": 52.3732806, "lon": 4.8905274 },
+    { "lat": 52.3732832, "lon": 4.8905090 },
+    { "lat": 52.3732849, "lon": 4.8904903 },
+    { "lat": 52.3732856, "lon": 4.8904715 }
+  ],
+  "tags": {
+    "highway": "tertiary",
+    "lanes": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Nieuwezijds Voorburgwal",
+    "oneway": "yes",
+    "smoothness": "good",
+    "surface": "sett",
+    "surface:colour": "grey"
+  }
+},
+{
+  "type": "way",
+  "id": 560668890,
+  "bounds": {
+    "minlat": 52.3732726,
+    "minlon": 4.8890172,
+    "maxlat": 52.3733062,
+    "maxlon": 4.8897163
+  },
+  "geometry": [
+    { "lat": 52.3732726, "lon": 4.8897163 },
+    { "lat": 52.3732807, "lon": 4.8896189 },
+    { "lat": 52.3732924, "lon": 4.8893388 },
+    { "lat": 52.3732977, "lon": 4.8891893 },
+    { "lat": 52.3733062, "lon": 4.8890172 }
+  ],
+  "tags": {
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "highway": "tertiary",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "oneway": "yes",
+    "sidewalk": "right",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 730322425,
+  "bounds": {
+    "minlat": 52.3732332,
+    "minlon": 4.8903167,
+    "maxlat": 52.3738779,
+    "maxlon": 4.8907884
+  },
+  "geometry": [
+    { "lat": 52.3738779, "lon": 4.8907884 },
+    { "lat": 52.3736550, "lon": 4.8906864 },
+    { "lat": 52.3733750, "lon": 4.8905513 },
+    { "lat": 52.3733625, "lon": 4.8905459 },
+    { "lat": 52.3733503, "lon": 4.8905391 },
+    { "lat": 52.3733384, "lon": 4.8905309 },
+    { "lat": 52.3733269, "lon": 4.8905215 },
+    { "lat": 52.3733158, "lon": 4.8905107 },
+    { "lat": 52.3733052, "lon": 4.8904988 },
+    { "lat": 52.3732951, "lon": 4.8904857 },
+    { "lat": 52.3732856, "lon": 4.8904715 },
+    { "lat": 52.3732801, "lon": 4.8904623 },
+    { "lat": 52.3732748, "lon": 4.8904528 },
+    { "lat": 52.3732698, "lon": 4.8904429 },
+    { "lat": 52.3732650, "lon": 4.8904326 },
+    { "lat": 52.3732605, "lon": 4.8904221 },
+    { "lat": 52.3732531, "lon": 4.8904026 },
+    { "lat": 52.3732467, "lon": 4.8903822 },
+    { "lat": 52.3732412, "lon": 4.8903611 },
+    { "lat": 52.3732367, "lon": 4.8903393 },
+    { "lat": 52.3732332, "lon": 4.8903167 }
+  ],
+  "tags": {
+    "cycleway:left": "separate",
+    "highway": "tertiary",
+    "lanes": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Nieuwezijds Voorburgwal",
+    "oneway": "yes",
+    "sidewalk": "separate",
+    "smoothness": "good",
+    "surface": "sett",
+    "surface:colour": "grey"
+  }
+},
+{
+  "type": "way",
+  "id": 1230912591,
+  "bounds": {
+    "minlat": 52.3732286,
+    "minlon": 4.8898772,
+    "maxlat": 52.3732575,
+    "maxlon": 4.8903167
+  },
+  "geometry": [
+    { "lat": 52.3732332, "lon": 4.8903167 },
+    { "lat": 52.3732317, "lon": 4.8903051 },
+    { "lat": 52.3732299, "lon": 4.8902844 },
+    { "lat": 52.3732289, "lon": 4.8902635 },
+    { "lat": 52.3732286, "lon": 4.8902425 },
+    { "lat": 52.3732293, "lon": 4.8902216 },
+    { "lat": 52.3732307, "lon": 4.8901782 },
+    { "lat": 52.3732328, "lon": 4.8901348 },
+    { "lat": 52.3732355, "lon": 4.8900915 },
+    { "lat": 52.3732387, "lon": 4.8900484 },
+    { "lat": 52.3732426, "lon": 4.8900053 },
+    { "lat": 52.3732470, "lon": 4.8899624 },
+    { "lat": 52.3732520, "lon": 4.8899197 },
+    { "lat": 52.3732575, "lon": 4.8898772 }
+  ],
+  "tags": {
+    "highway": "tertiary",
+    "lanes": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "oneway": "yes",
+    "sidewalk": "separate",
+    "smoothness": "good",
+    "surface": "sett",
+    "surface:colour": "grey"
+  }
+},
+{
+  "type": "way",
+  "id": 1230912592,
+  "bounds": {
+    "minlat": 52.3732575,
+    "minlon": 4.8897163,
+    "maxlat": 52.3732726,
+    "maxlon": 4.8898772
+  },
+  "geometry": [
+    { "lat": 52.3732575, "lon": 4.8898772 },
+    { "lat": 52.3732627, "lon": 4.8898318 },
+    { "lat": 52.3732726, "lon": 4.8897163 }
+  ],
+  "tags": {
+    "access:lanes": "no|no|yes",
+    "cycleway:right:surface": "asphalt",
+    "cycleway:right:surface:colour": "red",
+    "cycleway:width": "2.00",
+    "embedded_rails": "tram",
+    "highway": "tertiary",
+    "lanes": "3",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Raadhuisstraat",
+    "oneway": "yes",
+    "psv:lanes": "|yes|",
+    "sidewalk": "right",
+    "sidewalk:right:surface": "paving_stones",
+    "smoothness": "good",
+    "surface": "asphalt"
+  }
+},
+{
+  "type": "way",
+  "id": 1230912593,
+  "bounds": {
+    "minlat": 52.3738779,
+    "minlon": 4.8907884,
+    "maxlat": 52.3741566,
+    "maxlon": 4.8909481
+  },
+  "geometry": [
+    { "lat": 52.3741566, "lon": 4.8909481 },
+    { "lat": 52.3741361, "lon": 4.8909337 },
+    { "lat": 52.3740344, "lon": 4.8908669 },
+    { "lat": 52.3739401, "lon": 4.8908186 },
+    { "lat": 52.3738779, "lon": 4.8907884 }
+  ],
+  "tags": {
+    "cycleway:left": "separate",
+    "highway": "tertiary",
+    "lanes": "1",
+    "lit": "yes",
+    "maxspeed": "30",
+    "maxweight": "120",
+    "name": "Nieuwezijds Voorburgwal",
+    "oneway": "yes",
+    "smoothness": "good",
+    "surface": "paving_stones",
+    "surface:colour": "red"
+  }
+}
+
+  ]
+}

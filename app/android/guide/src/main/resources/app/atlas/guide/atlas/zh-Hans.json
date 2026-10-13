@@ -1,0 +1,24 @@
+{
+  "meta": {"decimal": ".", "sentence": "。", "list": "、"},
+  "phrases": {
+    "unit.m.other": "{n}米",
+    "unit.km.other": "{n}公里",
+    "unit.ft.other": "{n}英尺",
+    "unit.inch.other": "{n}英寸",
+    "unit.mi.other": "{n}英里",
+    "unit.mi.quarter": "四分之一英里",
+    "unit.mi.half": "半英里",
+    "unit.mi.three_quarters": "四分之三英里",
+    "unit.nmi.other": "{n}海里",
+    "unit.cable.other": "{n}链",
+    "unit.t.other": "{n}吨",
+    "unit.min.other": "{n}分钟",
+    "unit.h.other": "{n}小时",
+    "unit.kmh.other": "每小时{n}公里",
+    "unit.mph.other": "每小时{n}英里",
+    "unit.kn.other": "{n}节",
+    "unit.yd.other": "{n}码",
+    "unit.nmi.half": "半海里",
+    "unit.percent.other": "百分之{n}"
+  }
+}

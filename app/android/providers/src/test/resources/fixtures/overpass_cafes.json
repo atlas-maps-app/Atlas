@@ -1,0 +1,336 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.4 2390de5a",
+  "osm3s": {
+    "timestamp_osm_base": "2026-10-13T17:26:21Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+
+{
+  "type": "node",
+  "id": 2468154212,
+  "lat": 52.3723311,
+  "lon": 4.8833056,
+  "tags": {
+    "addr:city": "Amsterdam",
+    "addr:housenumber": "341",
+    "addr:postcode": "1016HK",
+    "addr:street": "Prinsengracht",
+    "air_conditioning": "no",
+    "amenity": "cafe",
+    "changing_table": "no",
+    "check_date": "2025-11-22",
+    "check_date:diet:vegan": "2025-11-22",
+    "check_date:smoking": "2025-11-22",
+    "diet:vegan": "no",
+    "diet:vegetarian": "yes",
+    "indoor_seating": "yes",
+    "name": "De Hoek",
+    "opening_hours": "Tu-Fr 07:30-16:00; Sa-Su 09:00-15:30",
+    "outdoor_seating": "yes",
+    "payment:cash": "yes",
+    "phone": "+31 20 625 3872",
+    "smoking": "outside",
+    "wheelchair": "no"
+  }
+},
+{
+  "type": "node",
+  "id": 2721938717,
+  "lat": 52.3723378,
+  "lon": 4.8837461,
+  "tags": {
+    "addr:city": "Amsterdam",
+    "addr:housenumber": "19-H",
+    "addr:postcode": "1016DM",
+    "addr:street": "Reestraat",
+    "amenity": "cafe",
+    "name": "Pluk",
+    "source": "BAG",
+    "source:date": "2014-02-11",
+    "wheelchair": "no"
+  }
+},
+{
+  "type": "node",
+  "id": 2721947639,
+  "lat": 52.3723007,
+  "lon": 4.8842435,
+  "tags": {
+    "addr:city": "Amsterdam",
+    "addr:housenumber": "7-H",
+    "addr:postcode": "1016DM",
+    "addr:street": "Reestraat",
+    "amenity": "cafe",
+    "name": "Ree7",
+    "source": "BAG",
+    "source:date": "2014-02-11"
+  }
+},
+{
+  "type": "node",
+  "id": 1590664278,
+  "lat": 52.3769511,
+  "lon": 4.8820991,
+  "tags": {
+    "amenity": "cafe",
+    "name": "Tom's bread & more"
+  }
+},
+{
+  "type": "node",
+  "id": 2720974480,
+  "lat": 52.3732872,
+  "lon": 4.8795734,
+  "tags": {
+    "addr:city": "Amsterdam",
+    "addr:housenumber": "92-H",
+    "addr:postcode": "1016NG",
+    "addr:street": "Rozengracht",
+    "amenity": "cafe",
+    "cuisine": "teahouse",
+    "description:en": "Tea culture club",
+    "diet:vegan": "yes",
+    "email": "hi@moychay.nl",
+    "indoor_seating": "yes",
+    "int_name:ru": "Мой чай",
+    "name": "Moychay",
+    "opening_hours": "Mo 13:00-20:00; Tu-Fr 11:00-20:00; Sa-Su 11:00-20:30",
+    "outdoor_seating": "limited",
+    "phone": "+31 6 25395868",
+    "shop": "tea",
+    "source": "BAG",
+    "source:date": "2014-02-11",
+    "takeaway": "yes",
+    "website": "https://moychay.nl"
+  }
+},
+{
+  "type": "node",
+  "id": 6700113385,
+  "lat": 52.3765805,
+  "lon": 4.8822562,
+  "tags": {
+    "addr:city": "Amsterdam",
+    "addr:housenumber": "13H",
+    "addr:postcode": "1015SB",
+    "addr:street": "Tweede Egelantiersdwarsstraat",
+    "amenity": "cafe",
+    "name": "NU koffie & delicatessen",
+    "opening_hours": "Mo-Fr 08:00-17:00; Sa, Su 09:00-17:00",
+    "website": "https://delicatessen.nu/"
+  }
+},
+{
+  "type": "node",
+  "id": 10920278785,
+  "lat": 52.3746927,
+  "lon": 4.8813723,
+  "tags": {
+    "addr:city": "Amsterdam",
+    "addr:housenumber": "49",
+    "addr:postcode": "1016KD",
+    "addr:street": "Bloemgracht",
+    "amenity": "cafe",
+    "cuisine": "coffee_shop",
+    "name": "Kafenion",
+    "opening_hours": "Mo-Fr 08:00-19:00; Sa-Su 09:00-19:30"
+  }
+},
+{
+  "type": "node",
+  "id": 11536511023,
+  "lat": 52.3765356,
+  "lon": 4.8821675,
+  "tags": {
+    "addr:city": "Amsterdam",
+    "addr:housenumber": "18A",
+    "addr:postcode": "1015SC",
+    "addr:street": "Tweede Egelantiersdwarsstraat",
+    "amenity": "cafe",
+    "cuisine": "dessert",
+    "internet_access": "no",
+    "name": "Cheesy Cakes",
+    "outdoor_seating": "yes",
+    "website": "https://www.cheesycakes.nl/"
+  }
+},
+{
+  "type": "node",
+  "id": 1147560517,
+  "lat": 52.3739094,
+  "lon": 4.8834369,
+  "tags": {
+    "amenity": "cafe",
+    "level": "0",
+    "name": "Café Kalkhoven",
+    "opening_hours": "Tu-Sa 09:00-24:00; Su 10:00-24:00",
+    "toilets": "yes",
+    "toilets:wheelchair": "no",
+    "website": "https://www.cafekalkhoven.nl",
+    "wheelchair": "no"
+  }
+},
+{
+  "type": "node",
+  "id": 2720971344,
+  "lat": 52.3760284,
+  "lon": 4.8838771,
+  "tags": {
+    "addr:city": "Amsterdam",
+    "addr:housenumber": "2",
+    "addr:postcode": "1015SP",
+    "addr:street": "Nieuwe Leliestraat",
+    "amenity": "cafe",
+    "check_date": "2025-03-17",
+    "indoor_seating": "yes",
+    "name": "Café Wester",
+    "outdoor_seating": "yes",
+    "source": "BAG",
+    "source:date": "2014-02-11",
+    "wheelchair": "yes"
+  }
+},
+{
+  "type": "node",
+  "id": 2721823575,
+  "lat": 52.3737037,
+  "lon": 4.8825670,
+  "tags": {
+    "addr:city": "Amsterdam",
+    "addr:housenumber": "1A-H",
+    "addr:postcode": "1016LP",
+    "addr:street": "Rozengracht",
+    "amenity": "cafe",
+    "check_date": "2018-07-20",
+    "cuisine": "coffee_shop",
+    "source": "BAG",
+    "source:date": "2014-02-11"
+  }
+},
+{
+  "type": "node",
+  "id": 2722191434,
+  "lat": 52.3732041,
+  "lon": 4.8877414,
+  "tags": {
+    "addr:city": "Amsterdam",
+    "addr:housenumber": "17-H",
+    "addr:postcode": "1016DB",
+    "addr:street": "Raadhuisstraat",
+    "amenity": "cafe",
+    "check_date": "2025-12-05",
+    "name": "Cafe Perdu",
+    "source": "BAG",
+    "source:date": "2014-02-11"
+  }
+},
+{
+  "type": "node",
+  "id": 4485079889,
+  "lat": 52.3734462,
+  "lon": 4.8879869,
+  "tags": {
+    "addr:city": "Amsterdam",
+    "addr:housenumber": "18",
+    "addr:postcode": "1016DE",
+    "addr:street": "Raadhuisstraat",
+    "amenity": "cafe",
+    "brand": "Bagels & Beans",
+    "brand:wikidata": "Q13433690",
+    "check_date": "2025-12-05",
+    "contact:facebook": "https://www.facebook.com/BagelsBeansRaadhuisstraatAmsterdam",
+    "cuisine": "coffee_shop",
+    "indoor_seating": "yes",
+    "name": "Bagels & Beans",
+    "not:brand:wikidata": "Q5140923",
+    "opening_hours": "Mo-Fr 08:00-18:00; Sa,Su 09:00-18:00",
+    "operator": "Bagels & Beans",
+    "outdoor_seating": "yes",
+    "phone": "+31 20 638 0788",
+    "takeaway": "yes",
+    "website": "https://www.bagelsbeans.nl/",
+    "wheelchair": "no"
+  }
+},
+{
+  "type": "node",
+  "id": 6662347488,
+  "lat": 52.3742271,
+  "lon": 4.8827201,
+  "tags": {
+    "addr:city": "Amsterdam",
+    "addr:housenumber": "178",
+    "addr:street": "Prinsengracht",
+    "amenity": "cafe",
+    "check_date": "2025-03-17",
+    "indoor_seating": "yes",
+    "name": "Teds",
+    "outdoor_seating": "no"
+  }
+},
+{
+  "type": "node",
+  "id": 7487205751,
+  "lat": 52.3754325,
+  "lon": 4.8833470,
+  "tags": {
+    "amenity": "cafe"
+  }
+},
+{
+  "type": "node",
+  "id": 9141449091,
+  "lat": 52.3753517,
+  "lon": 4.8840924,
+  "tags": {
+    "amenity": "cafe",
+    "check_date": "2025-03-17",
+    "indoor_seating": "yes",
+    "name": "Lunchcafé Dialoog",
+    "opening_hours": "Mo-Su 08:30+",
+    "outdoor_seating": "yes"
+  }
+},
+{
+  "type": "node",
+  "id": 12620462078,
+  "lat": 52.3756810,
+  "lon": 4.8856024,
+  "tags": {
+    "amenity": "cafe",
+    "name": "Sandro",
+    "wheelchair": "limited"
+  }
+},
+{
+  "type": "node",
+  "id": 12620469982,
+  "lat": 52.3751621,
+  "lon": 4.8871242,
+  "tags": {
+    "amenity": "cafe",
+    "name": "'t Hotel"
+  }
+},
+{
+  "type": "node",
+  "id": 12672791013,
+  "lat": 52.3750948,
+  "lon": 4.8838787,
+  "tags": {
+    "amenity": "cafe",
+    "diet:vegan": "yes",
+    "diet:vegetarian": "yes",
+    "indoor_seating": "yes",
+    "name": "Museum Cafe",
+    "outdoor_seating": "no",
+    "payment:cash": "no",
+    "payment:credit_cards": "yes",
+    "payment:debit_cards": "yes"
+  }
+}
+
+  ]
+}
