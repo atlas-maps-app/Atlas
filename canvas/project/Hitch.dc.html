@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Atlas — Hitchhiking</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800;900&amp;family=Permanent+Marker&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:Geist,system-ui,sans-serif;color:#15181C;background:#CFC6B4}
+a{color:#15181C}a:hover{color:#000}
+</style>
+</helmet>
+<div style="width: 412px; height: 915px; position: relative; overflow: hidden; border-radius: 40px; background: linear-gradient(180deg, #BFD6E6 0, #E9E1CF 240px, #CFC6B4 380px); font-family: Geist, system-ui, sans-serif; color: #15181C">
+<div style="position: absolute; left: 0; right: 0; top: 330px; height: 100px; background: #5A5D63"></div>
+<div style="position: absolute; left: 0; right: 0; top: 378px; height: 4px; background: repeating-linear-gradient(90deg, #F2E6B0 0 34px, transparent 34px 60px)"></div>
+<a href="Main.dc.html" aria-label="Back" style="position: absolute; left: 16px; top: 42px; width: 44px; height: 44px; border-radius: 22px; background: rgba(255,255,255,0.85); color: #15181C; display: flex; align-items: center; justify-content: center"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg></a>
+<span aria-label="Spots from Hitchmap, open data" style="position: absolute; right: 16px; top: 48px; height: 32px; padding: 0 10px; border-radius: 16px; background: rgba(255,255,255,0.85); display: flex; align-items: center; font-size: 12px; font-weight: 700; color: #464C5A">open spot data</span>
+
+<div aria-label="Your sign: Boston, via I-95 north" style="position: absolute; left: 60px; top: 104px; width: 292px; height: 184px; transform: rotate(-3deg); background: linear-gradient(135deg, #C9A06A, #B8894F 60%, #C49A62); box-shadow: 0 16px 28px rgba(60,40,10,0.35), inset 0 0 0 1px rgba(80,50,20,0.3); border-radius: 4px 10px 6px 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px">
+<span style="position: absolute; left: 0; right: 0; top: 50%; height: 2px; background: rgba(80,50,20,0.25)"></span>
+<span style="font-family: 'Permanent Marker', cursive; font-size: 64px; line-height: 1; color: #1A1206; letter-spacing: 0.02em">BOSTON</span>
+<span style="font-family: 'Permanent Marker', cursive; font-size: 24px; color: #1A1206">I-95 N ↑</span>
+<span style="position: absolute; right: -12px; bottom: -18px; width: 60px; height: 60px; border-radius: 30px; background: #F2C94C; box-shadow: 0 4px 10px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; transform: rotate(8deg)"><svg width="34" height="34" viewBox="0 0 24 24" fill="#8A5A00"><path d="M9 21V11l-2 1V8.5c0-1 .6-1.8 1.5-2.2L11 5V3a1.5 1.5 0 0 1 3 0v6l4 1.5c1.2.4 2 1.6 1.8 2.9L19 21z"></path></svg></span>
+</div>
+
+<div style="position: absolute; left: 16px; right: 16px; top: 448px; display: flex; flex-direction: column; gap: 8px">
+<a href="Route.dc.html" style="height: 82px; border-radius: 22px; background: #FFFDF6; display: flex; align-items: center; gap: 12px; padding: 0 14px; text-decoration: none; color: #15181C; box-shadow: 0 4px 12px rgba(60,40,10,0.12)">
+<svg width="28" height="28" viewBox="0 0 24 24" fill="#15181C" style="transform: rotate(30deg)" aria-label="Ahead-right"><path d="M12 2.5l6 16-6-3.5-6 3.5z"></path></svg>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 4px"><span style="font-size: 16px; font-weight: 800">On-ramp, gas station</span><span style="display: flex; gap: 8px; align-items: center; font-size: 12px; color: #5A5347; font-variant-numeric: tabular-nums"><span style="display: flex; align-items: center; gap: 3px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path></svg>~12′ wait</span><span style="color: #C98A00; letter-spacing: 1px">●●●●○</span><span>safe to stop</span></span></div>
+<span style="font-size: 17px; font-weight: 900; font-variant-numeric: tabular-nums">1.8 km</span>
+</a>
+<div style="height: 82px; border-radius: 22px; background: #FFFDF6; display: flex; align-items: center; gap: 12px; padding: 0 14px; box-shadow: 0 4px 12px rgba(60,40,10,0.12)">
+<svg width="28" height="28" viewBox="0 0 24 24" fill="#15181C" style="transform: rotate(-20deg)" aria-label="Ahead-left"><path d="M12 2.5l6 16-6-3.5-6 3.5z"></path></svg>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 4px"><span style="font-size: 16px; font-weight: 800">Rest stop exit 24</span><span style="display: flex; gap: 8px; align-items: center; font-size: 12px; color: #5A5347; font-variant-numeric: tabular-nums"><span>~25′ wait</span><span style="color: #C98A00; letter-spacing: 1px">●●●○○</span><span>trucks</span></span></div>
+<span style="font-size: 17px; font-weight: 900; font-variant-numeric: tabular-nums">6 km</span>
+</div>
+<div style="height: 64px; border-radius: 20px; background: #FFF1EF; box-shadow: inset 0 0 0 1.5px #E8A8A2; display: flex; align-items: center; gap: 10px; padding: 0 14px">
+<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#A8241D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4L2.8 20h18.4L12 4z"></path><path d="M12 10v4.5M12 17.2v.3"></path></svg>
+<span style="font-size: 13px; font-weight: 700; color: #7A1A14">No walking on the highway itself — stand at the ramp.</span>
+</div>
+</div>
+
+<div style="position: absolute; left: 16px; right: 16px; top: 698px; height: 96px; border-radius: 18px; background: rgba(255,255,255,0.92); padding: 10px 14px; box-sizing: border-box; display: flex; flex-direction: column; gap: 6px" role="img" aria-label="Typical wait at the on-ramp by hour: shortest 7 to 9 in the morning, about 8 minutes; now about 12 minutes">
+<div style="display: flex; justify-content: space-between; align-items: baseline"><span style="font-size: 12px; font-weight: 800; letter-spacing: 0.12em; color: #5A5F6C">WAIT AT THE ON-RAMP</span><span style="font-size: 12px; font-weight: 800; color: #1E7A46">best 7–9 · ~8′</span></div>
+<div style="flex-grow: 1; display: flex; align-items: flex-end; gap: 3px"><span style="flex: 1; height: 52px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 49px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 45px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 39px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 28px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 18px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 11px; border-radius: 2px; background: #2E9E5A"></span><span style="flex: 1; height: 10px; border-radius: 2px; background: #2E9E5A"></span><span style="flex: 1; height: 11px; border-radius: 2px; background: #2E9E5A"></span><span style="flex: 1; height: 15px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 18px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 20px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 19px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 18px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 16px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 15px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 14px; border-radius: 2px; background: #15181C"></span><span style="flex: 1; height: 15px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 18px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 23px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 31px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 39px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 44px; border-radius: 2px; background: #C9CCD1"></span><span style="flex: 1; height: 49px; border-radius: 2px; background: #C9CCD1"></span></div>
+<div style="display: flex; justify-content: space-between; font-size: 10px; color: #676D7C; font-variant-numeric: tabular-nums"><span>0</span><span>6</span><span>12</span><span>now</span><span>24</span></div>
+</div>
+<div style="position: absolute; left: 24px; right: 24px; top: 806px; text-align: center; font-size: 10px; color: #5A5F6C">Spots and waits: Hitchmap, open data (ODbL) · always share your trip</div>
+<div style="position: absolute; left: 16px; right: 16px; bottom: 28px; display: flex; gap: 8px">
+<button style="flex-grow: 1; height: 56px; border: 0; border-radius: 28px; background: #15181C; color: #fff; display: flex; align-items: center; justify-content: center; gap: 8px; font: 700 15px Geist, sans-serif"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="8.5" r="3.2"></circle><path d="M3 19a6 6 0 0 1 12 0"></path><path d="M17 8v6M14 11h6"></path></svg>Share my trip live</button>
+<button aria-label="Photo of the licence plate" style="width: 56px; height: 56px; border: 0; border-radius: 28px; background: #FFFDF6; color: #15181C; display: flex; align-items: center; justify-content: center"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="2.5" y="7" width="19" height="10" rx="2"></rect><path d="M6 12h2M10 12h2M14 12h4"></path></svg></button>
+<button aria-label="Share a ride instead (split costs)" style="width: 56px; height: 56px; border: 0; border-radius: 28px; background: #FFFDF6; color: #15181C; display: flex; align-items: center; justify-content: center"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M5 13l1.6-4.2A2 2 0 0 1 8.5 7.5h7a2 2 0 0 1 1.9 1.3L19 13"></path><rect x="3.5" y="13" width="17" height="5" rx="1.5"></rect></svg></button>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":412,"height":915}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

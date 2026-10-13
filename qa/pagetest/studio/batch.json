@@ -1,0 +1,94 @@
+[
+ {
+  "op": "set",
+  "collection": "requests",
+  "doc_id": "r30mainwell",
+  "data": {
+   "at": "2026-10-08T23:30:00Z",
+   "kind": "improve",
+   "page": "Map · Home, search & place",
+   "pageId": "map_home",
+   "screen": "Main",
+   "status": "new",
+   "text": "Does well: These icons and how they show up on the map.",
+   "foldedFrom": "studio/screennotes Main.well (2026-10-07T16:05:12Z)"
+  }
+ },
+ {
+  "op": "update",
+  "collection": "requests",
+  "doc_id": "lky14d5hgwrq2vwp985j",
+  "data": {
+   "note": "Does well: Sorted by nutri score per category at a glance is useful"
+  },
+  "if_version": 14
+ },
+ {
+  "op": "update",
+  "collection": "studio",
+  "doc_id": "good",
+  "data": {
+   "from": "The Good tab: the board follows it",
+   "intro": "What makes a screen good here. Each good one is good for its own reason, and each can still get better.",
+   "share": [
+    {
+     "screens": [
+      "Ramen",
+      "Pantry",
+      "Find",
+      "Compare"
+     ],
+     "text": "The sign, the ticket, the clock, the window. Its readings are the data.",
+     "title": "A real thing from the place carries the answer"
+    },
+    {
+     "screens": [
+      "Sort",
+      "Compare"
+     ],
+     "text": "It ends in a sentence or a button that settles it.",
+     "title": "One question, answered at a glance"
+    },
+    {
+     "screens": [
+      "Cafe",
+      "Carte"
+     ],
+     "text": "Empty space stays empty. Calm and warm are allowed, never required.",
+     "title": "Rich but calm",
+     "hold": true
+    },
+    {
+     "screens": [
+      "Ramen",
+      "Stroll"
+     ],
+     "text": "Your gate, your pace, your table at 19:30; never about the app.",
+     "title": "About you and the moment",
+     "hold": true
+    },
+    {
+     "screens": [
+      "Compare",
+      "Sort"
+     ],
+     "text": "What is missing is one small question, not the screen.",
+     "title": "Honest in a few words",
+     "hold": true
+    },
+    {
+     "screens": [],
+     "text": "How it looks and what it does for you; neither traded for the other.",
+     "title": "Both sides worked out",
+     "hold": true
+    },
+    {
+     "screens": [],
+     "text": "Visuals at a glance when they add value. No lines of text",
+     "title": "Visuals instead of text"
+    }
+   ]
+  },
+  "if_version": 29
+ }
+]

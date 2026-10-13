@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Atlas — Time machine</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800;900&family=Instrument+Serif:ital@0;1&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:Geist,system-ui,sans-serif;color:#2A1E10;background:#F4EAD6}
+a{color:#2A1E10}a:hover{opacity:.9}
+</style>
+</helmet>
+<div style="width: 412px; height: 915px; position: relative; overflow: hidden; border-radius: 40px; font-family: Geist, system-ui, sans-serif; color: #2A1E10; background: #F4EAD6">
+<img src="/_blob/2ccdb2889f59d6fef25ff7527793177d" alt="The city today: glass towers across the river, a dense grid, the park" style="position: absolute; left: 0; top: 0; width: 412px; height: 540px">
+<div style="position: absolute; left: 0; top: 0; width: 206px; height: 540px; overflow: hidden"><img src="/_blob/ac6658ec16fd79dd1e369b59abac8429" alt="The same view in 1906: low brick blocks, the old bridge, no towers" style="position: absolute; left: 0; top: 0; width: 412px; height: 540px; filter: contrast(1.05)"><div style="position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0) 55%, rgba(60,40,20,0.35))"></div></div>
+<div aria-hidden="true" style="position: absolute; left: 204px; top: 0; width: 4px; height: 540px; background: #F4EAD6; box-shadow: 0 0 10px rgba(0,0,0,0.4)"></div>
+<button aria-label="Drag to compare 1906 and today" style="position: absolute; left: 182px; top: 300px; width: 48px; height: 48px; border: 0; border-radius: 24px; background: radial-gradient(circle at 35% 30%, #F6D98A, #B98A36 70%, #7A5A20); box-shadow: 0 6px 14px rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2A1E10" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l-6 6 6 6M15 6l6 6-6 6"></path></svg></button>
+<span style="position: absolute; left: 16px; top: 100px; height: 30px; padding: 0 12px; border-radius: 15px; background: rgba(42,30,16,0.8); color: #F4EAD6; display: flex; align-items: center; font-family: 'Instrument Serif', serif; font-size: 20px">1906</span>
+<span style="position: absolute; right: 16px; top: 100px; height: 30px; padding: 0 12px; border-radius: 15px; background: rgba(255,255,255,0.9); color: #14161B; display: flex; align-items: center; font-family: 'Instrument Serif', serif; font-size: 20px">2026</span>
+<span style="position: absolute; left: 100px; top: 196px; height: 24px; padding: 0 8px; border-radius: 12px; background: rgba(42,30,16,0.85); color: #F4EAD6; font-size: 11px; font-weight: 800; display: flex; align-items: center">ferry until 1958</span>
+<div style="position: absolute; left: 16px; right: 16px; top: 42px; display: flex; align-items: center; gap: 10px"><a href="Main.dc.html" aria-label="Back" style="width: 44px; height: 44px; border-radius: 22px; background: rgba(255,255,255,0.9); color: #14161B; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg></a><span style="font-family: 'Instrument Serif', serif; font-style: italic; font-size: 32px; line-height: 1; flex-grow: 1; color: #fff; text-shadow: 0 2px 8px rgba(0,0,0,0.5)">Time machine</span></div>
+
+<div style="position: absolute; left: 0; right: 0; top: 520px; bottom: 0; border-radius: 28px 28px 0 0; background: #F4EAD6; padding: 18px 16px 0; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px">
+<div style="position: relative; height: 56px; margin: 0 16px" role="slider" aria-label="Year" aria-valuemin="1906" aria-valuemax="2030" aria-valuenow="1906">
+<div style="position: absolute; left: 0; right: 0; top: 14px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, #8A6A40, #C9A26A 80%, #E8D8B8); box-shadow: inset 0 1px 2px rgba(0,0,0,0.3)"></div><span aria-hidden="true" style="position: absolute; left: -12px; top: 6px; width: 24px; height: 24px; border-radius: 12px; background: radial-gradient(circle at 35% 30%, #F6D98A, #B98A36 70%, #7A5A20); box-shadow: 0 3px 8px rgba(0,0,0,0.35)"></span>
+<span style="position: absolute; left: 0%; top: 34px; transform: translateX(-50%); font-size: 12px; font-weight: 800; color: #2A1E10">1906</span><span style="position: absolute; left: 0%; top: 10px; width: 2px; height: 16px; background: #6B4A20; transform: translateX(-1px)"></span><span style="position: absolute; left: 35%; top: 34px; transform: translateX(-50%); font-size: 12px; font-weight: 800; color: #2A1E10">1958</span><span style="position: absolute; left: 35%; top: 10px; width: 2px; height: 16px; background: #6B4A20; transform: translateX(-1px)"></span><span style="position: absolute; left: 80%; top: 34px; transform: translateX(-50%); font-size: 12px; font-weight: 800; color: #2A1E10">2026</span><span style="position: absolute; left: 80%; top: 10px; width: 2px; height: 16px; background: #6B4A20; transform: translateX(-1px)"></span><span style="position: absolute; left: 100%; top: 34px; transform: translateX(-50%); font-size: 12px; font-weight: 800; color: #8A6A40">2030</span><span style="position: absolute; left: 100%; top: 10px; width: 2px; height: 16px; background: #6B4A20; transform: translateX(-1px)"></span>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="height: 64px; border-radius: 18px; background: #fff; display: flex; align-items: center; gap: 12px; padding: 0 14px"><span style="font-family: 'Instrument Serif', serif; font-size: 22px; width: 52px; color: #8A6A40">1906</span><span style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 14px; font-weight: 800">Hill St water tower opens</span><span style="font-size: 12px; color: #7A6A50">still standing · open Sundays</span></span></div>
+<div style="height: 64px; border-radius: 18px; background: #fff; display: flex; align-items: center; gap: 12px; padding: 0 14px"><span style="font-family: 'Instrument Serif', serif; font-size: 22px; width: 52px; color: #8A6A40">1958</span><span style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 14px; font-weight: 800">Last ferry across the river</span><span style="font-size: 12px; color: #7A6A50">the pier is now the sunset spot</span></span></div>
+<div style="height: 64px; border-radius: 18px; background: rgba(255,255,255,0.6); border: 1.5px dashed #C9A26A; box-sizing: border-box; display: flex; align-items: center; gap: 12px; padding: 0 14px"><span style="font-family: 'Instrument Serif', serif; font-size: 22px; width: 52px; color: #8A6A40">2030</span><span style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 14px; font-weight: 800">Tram T4 under construction</span><span style="font-size: 12px; color: #7A6A50">Kent Ave · stop outside the park</span></span></div>
+</div>
+<span style="text-align: center; font-size: 10px; color: #8A7A60">Past: OpenHistoricalMap · planned: OpenStreetMap construction tags</span>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":412,"height":915}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

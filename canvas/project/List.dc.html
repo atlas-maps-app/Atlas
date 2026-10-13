@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Atlas — Shopping list</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Caveat:wght@500;600;700&amp;family=Courier+Prime:wght@400;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:Geist,system-ui,sans-serif;color:#14161B;background:#E9ECEE}
+a{color:#2E5BFF}a:hover{color:#1F45D6}
+</style>
+</helmet>
+<div style="width: 412px; height: 915px; position: relative; overflow: hidden; border-radius: 40px; background: linear-gradient(90deg, #E4E8EB, #F2F4F5 45%, #E6EAED); font-family: Geist, system-ui, sans-serif; color: #14161B">
+<div style="position: absolute; right: 14px; top: 180px; width: 14px; height: 300px; border-radius: 7px; background: linear-gradient(90deg, #B9C0C7, #F4F6F8 45%, #9DA5AE); box-shadow: -3px 4px 8px rgba(0,0,0,0.15)"></div>
+
+<a href="Pantry.dc.html" aria-label="Back to the pantry" style="position: absolute; left: 16px; top: 44px; width: 44px; height: 44px; border-radius: 22px; background: rgba(255,255,255,0.8); color: #14161B; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg></a>
+<button aria-label="Share the list" style="position: absolute; right: 16px; top: 44px; width: 44px; height: 44px; border: 0; border-radius: 22px; background: rgba(255,255,255,0.8); color: #14161B; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08)"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="9" cy="8.5" r="3.2"></circle><path d="M3 19a6 6 0 0 1 12 0"></path><path d="M17 8v6M14 11h6"></path></svg></button>
+
+<div style="position: absolute; left: 34px; top: 84px; width: 300px; height: 334px; transform: rotate(-2deg); background-color: #FFFEF6; background-image: repeating-linear-gradient(180deg, transparent 0 35px, #C9D8EA 35px 36px); box-shadow: 0 10px 22px rgba(0,0,0,0.14); padding: 30px 18px 0 22px; box-sizing: border-box; font-family: Caveat, cursive; color: #1F3E86">
+<span style="position: absolute; left: 132px; top: -14px; width: 36px; height: 36px; border-radius: 18px; background: radial-gradient(circle at 35% 30%, #FF9A76, #E8622C 60%, #B8441B); box-shadow: 0 4px 6px rgba(0,0,0,0.3)"></span>
+<div style="display: flex; flex-direction: column">
+<div style="height: 36px; display: flex; align-items: center; gap: 10px; font-size: 27px; font-weight: 600"><span style="flex-grow: 1">sourdough</span><svg width="22" height="22" viewBox="0 0 26 24" fill="none" stroke="#A96F2E" stroke-width="2" stroke-linejoin="round" aria-label="bakery"><path d="M3 15c0-5 5-8 10-8s10 3 10 8c0 2-2 3-10 3S3 17 3 15z"></path><path d="M9 9l2 4M13 8v5M17 9l-2 4"></path></svg><span style="width: 22px; height: 22px; border-radius: 11px; background: #14161B; color: #fff; font: 700 11px Geist, sans-serif; display: flex; align-items: center; justify-content: center">1</span></div>
+<div style="height: 36px; display: flex; align-items: center; gap: 10px; font-size: 27px; font-weight: 600"><span style="flex-grow: 1">saffron</span><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1B6F8A" stroke-width="2" aria-label="world foods"><ellipse cx="12" cy="5" rx="8" ry="2.5"></ellipse><path d="M4 5v14c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"></path></svg><span style="width: 22px; height: 22px; border-radius: 11px; background: #14161B; color: #fff; font: 700 11px Geist, sans-serif; display: flex; align-items: center; justify-content: center">2</span></div>
+<div style="height: 36px; display: flex; align-items: center; gap: 10px; font-size: 27px; font-weight: 600"><span style="flex-grow: 1">limes</span><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2F6B34" stroke-width="2" aria-label="produce"><circle cx="12" cy="13" r="7"></circle><path d="M12 6c1-2 3-3 5-3"></path></svg><span style="width: 22px; height: 22px; border-radius: 11px; background: #14161B; color: #fff; font: 700 11px Geist, sans-serif; display: flex; align-items: center; justify-content: center">2</span></div>
+<div style="height: 36px; display: flex; align-items: center; gap: 10px; font-size: 27px; font-weight: 600"><span style="flex-grow: 1">feta</span><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#B8861B" stroke-width="2" stroke-linejoin="round" aria-label="cheese"><path d="M3 16l11-9 7 5v6H3z"></path><path d="M3 16h18"></path></svg><span style="width: 22px; height: 22px; border-radius: 11px; background: #14161B; color: #fff; font: 700 11px Geist, sans-serif; display: flex; align-items: center; justify-content: center">3</span></div>
+<div style="height: 36px; display: flex; align-items: center; gap: 10px; font-size: 27px; font-weight: 600"><span style="flex-grow: 1">oat milk</span><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2E5BFF" stroke-width="2" stroke-linejoin="round" aria-label="supermarket"><path d="M7 8l3-5h4l3 5v13H7z"></path><path d="M7 12h10"></path></svg><span style="width: 22px; height: 22px; border-radius: 11px; background: #14161B; color: #fff; font: 700 11px Geist, sans-serif; display: flex; align-items: center; justify-content: center">3</span></div>
+<div style="height: 36px; display: flex; align-items: center; gap: 10px; font-size: 27px; font-weight: 600"><span style="flex-grow: 1; text-decoration: line-through; text-decoration-thickness: 2px; color: #8A9AC4">eggs</span><span style="font: 600 12px Geist, sans-serif; color: #8A9AC4">at home</span></div>
+<div style="height: 36px; display: flex; align-items: center; gap: 6px; font-size: 25px; color: #8A9AC4">+ <input type="text" aria-label="Add an item" placeholder="add…" style="flex-grow: 1; min-width: 0; border: 0; outline: none; background: transparent; font: 600 25px Caveat, cursive; color: #1F3E86"></div>
+</div>
+</div>
+
+<div style="position: absolute; left: 16px; right: 16px; top: 440px; height: 48px; border-radius: 24px; background: rgba(255,255,255,0.85); display: flex; padding: 4px; gap: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.06)" role="group" aria-label="Plan by">
+<button aria-pressed="true" style="flex-grow: 1; border: 0; border-radius: 20px; background: #14161B; color: #fff; display: flex; align-items: center; justify-content: center; gap: 6px; font: 600 14px Geist, sans-serif"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="18" r="2"></circle><circle cx="19" cy="6" r="2"></circle><path d="M7 18h6a3 3 0 0 0 0-6h-2a3 3 0 0 1 0-6h6"></path></svg>Fewest stops</button>
+<button style="flex-grow: 1; border: 0; border-radius: 20px; background: transparent; color: #14161B; display: flex; align-items: center; justify-content: center; gap: 6px; font: 600 14px Geist, sans-serif"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.3-4.1 5.9-.9z"></path></svg>Best</button>
+<button style="flex-grow: 1; border: 0; border-radius: 20px; background: transparent; color: #14161B; display: flex; align-items: center; justify-content: center; gap: 6px; font: 600 14px Geist, sans-serif"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 12V4h8l10 10-8 8z"></path><circle cx="7.5" cy="8.5" r="1.5"></circle></svg>Cheapest</button>
+</div>
+
+<div style="position: absolute; left: 44px; width: 324px; top: 498px; filter: drop-shadow(0 8px 14px rgba(0,0,0,0.16))">
+<div style="background: #FFFFFF; padding: 14px 18px 12px; box-sizing: border-box; display: flex; flex-direction: column; gap: 6px; font-family: 'Courier Prime', monospace; color: #1D1D1D; font-size: 14px">
+<div style="display: flex; flex-direction: column; align-items: center; gap: 2px"><span style="font-weight: 700; font-size: 16px; letter-spacing: 0.2em">YOUR RUN</span><span style="font-size: 12px; color: #555; font-variant-numeric: tabular-nums">3 STOPS · 1.2 KM · 18 MIN</span></div>
+<span style="border-top: 1.5px dashed #999"></span>
+<div style="display: flex; flex-direction: column; gap: 2px"><div style="display: flex; gap: 6px"><b>1</b><b style="flex-grow: 1">FERNWOOD BAKERY</b><span style="font-variant-numeric: tabular-nums">4′</span></div><div style="display: flex; gap: 6px; padding-left: 16px; font-size: 13px"><span style="flex-grow: 1">sourdough</span><span style="font-weight: 700; color: #B03A3A; font-variant-numeric: tabular-nums">closes 19:30</span></div></div>
+<div style="display: flex; flex-direction: column; gap: 2px"><div style="display: flex; gap: 6px"><b>2</b><b style="flex-grow: 1">BAZAAR SPICE &amp; CO</b><span style="font-variant-numeric: tabular-nums">6′</span></div><div style="padding-left: 16px; font-size: 13px">saffron, limes</div></div>
+<div style="display: flex; flex-direction: column; gap: 2px"><div style="display: flex; gap: 6px"><b>3</b><b style="flex-grow: 1">GREENCART</b><span style="font-variant-numeric: tabular-nums">5′</span></div><div style="padding-left: 16px; font-size: 13px">feta, oat milk</div></div>
+<span style="border-top: 1.5px dashed #999"></span>
+<div style="display: flex; font-weight: 700; font-size: 15px"><span style="flex-grow: 1">EST. BASKET</span><span style="font-variant-numeric: tabular-nums">$21.40</span></div>
+<div style="display: flex; font-size: 12px; color: #555"><span style="flex-grow: 1">open prices · 4/5 known</span><span style="font-variant-numeric: tabular-nums">done ~19:40</span></div>
+<svg width="288" height="16" viewBox="0 0 288 30" preserveAspectRatio="none" aria-hidden="true"><g fill="#1D1D1D"><rect x="40" width="2" height="30"></rect><rect x="45" width="1" height="30"></rect><rect x="49" width="3" height="30"></rect><rect x="55" width="1" height="30"></rect><rect x="58" width="2" height="30"></rect><rect x="63" width="4" height="30"></rect><rect x="70" width="1" height="30"></rect><rect x="73" width="2" height="30"></rect><rect x="78" width="1" height="30"></rect><rect x="82" width="3" height="30"></rect><rect x="88" width="2" height="30"></rect><rect x="93" width="1" height="30"></rect><rect x="96" width="4" height="30"></rect><rect x="103" width="1" height="30"></rect><rect x="107" width="2" height="30"></rect><rect x="112" width="3" height="30"></rect><rect x="118" width="1" height="30"></rect><rect x="121" width="2" height="30"></rect><rect x="126" width="1" height="30"></rect><rect x="130" width="4" height="30"></rect><rect x="137" width="2" height="30"></rect><rect x="142" width="1" height="30"></rect><rect x="145" width="3" height="30"></rect><rect x="151" width="1" height="30"></rect><rect x="155" width="2" height="30"></rect><rect x="160" width="4" height="30"></rect><rect x="167" width="1" height="30"></rect><rect x="170" width="2" height="30"></rect><rect x="175" width="3" height="30"></rect><rect x="181" width="1" height="30"></rect><rect x="185" width="2" height="30"></rect><rect x="190" width="1" height="30"></rect><rect x="194" width="3" height="30"></rect><rect x="200" width="2" height="30"></rect><rect x="205" width="1" height="30"></rect><rect x="208" width="4" height="30"></rect><rect x="215" width="1" height="30"></rect><rect x="218" width="2" height="30"></rect><rect x="223" width="3" height="30"></rect><rect x="229" width="1" height="30"></rect><rect x="232" width="2" height="30"></rect><rect x="237" width="1" height="30"></rect><rect x="241" width="3" height="30"></rect><rect x="246" width="2" height="30"></rect></g></svg>
+</div>
+<div style="height: 12px; background: linear-gradient(135deg, #FFFFFF 50%, transparent 50%) 0 0 / 12px 12px repeat-x, linear-gradient(225deg, #FFFFFF 50%, transparent 50%) 0 0 / 12px 12px repeat-x"></div>
+</div>
+
+<a href="Route.dc.html" style="position: absolute; left: 16px; right: 16px; bottom: 26px; height: 56px; border-radius: 28px; background: #2E5BFF; color: #fff; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="13" cy="4.5" r="1.7"></circle><path d="M10 21l2.2-6.5L10 12l1-4.5 3.2 2.5 3 .8M12.2 14.5L15 21"></path></svg>Go · 18′</a>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":412,"height":915}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

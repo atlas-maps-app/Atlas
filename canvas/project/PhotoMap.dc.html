@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Atlas — Photo map</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800;900&family=Instrument+Serif:ital@0;1&family=Stardos+Stencil:wght@700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:Geist,system-ui,sans-serif;color:#1F2A1E;background:#E8EEE6}
+a{color:#1F2A1E}a:hover{opacity:.9}
+</style>
+</helmet>
+<div style="width: 412px; height: 915px; position: relative; overflow: hidden; border-radius: 40px; font-family: Geist, system-ui, sans-serif; color: #1F2A1E; background: #E8EEE6">
+<div style="position: absolute; left: 16px; right: 16px; top: 42px; display: flex; align-items: center; gap: 10px"><a href="Kit.dc.html" aria-label="Back" style="width: 44px; height: 44px; border-radius: 22px; background: #fff; color: #1F2A1E; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg></a><span style="font-family: 'Instrument Serif', serif; font-style: italic; font-size: 34px; line-height: 1; flex-grow: 1">Photo map</span><span style="height: 34px; padding: 0 12px; border-radius: 17px; background: #E1F2EA; color: #12663A; display: flex; align-items: center; font-size: 12px; font-weight: 800">calibrated</span></div>
+<div style="position: absolute; left: 16px; top: 98px"><svg width="380" height="380" viewBox="0 0 380 380" role="img" aria-label="Photo of the trailhead map board, calibrated: your blue dot moves on the photo">
+<defs><linearGradient id="wd" x1="0" x2="1"><stop offset="0" stop-color="#6B4A2A"></stop><stop offset=".5" stop-color="#8C6238"></stop><stop offset="1" stop-color="#5E4024"></stop></linearGradient>
+<filter id="photo"><feTurbulence type="fractalNoise" baseFrequency="1.2" numOctaves="1" seed="4" result="n"></feTurbulence><feColorMatrix type="saturate" values="0" in="n" result="g"></feColorMatrix><feBlend in="SourceGraphic" in2="g" mode="multiply"></feBlend></filter></defs>
+<rect width="380" height="380" rx="18" fill="#4E5E42"></rect>
+<g transform="translate(34 30) skewY(-3) skewX(2)" filter="url(#photo)">
+<rect x="0" y="0" width="300" height="300" rx="6" fill="url(#wd)"></rect>
+<rect x="14" y="14" width="272" height="236" rx="3" fill="#EFE6CC"></rect>
+<path d="M14 190c40-10 70 20 110 6s60-40 100-30 40 20 62 10v68H14z" fill="#9CC3C0"></path>
+<path d="M190 60l24-30 22 24 18-12 20 22" fill="none" stroke="#6E5A3A" stroke-width="2"></path>
+<path d="M60 220C80 170 60 130 110 110S190 90 214 44" fill="none" stroke="#C8322A" stroke-width="4" stroke-dasharray="7 4"></path>
+<path d="M60 220C120 200 160 180 200 150S250 110 262 72" fill="none" stroke="#2E5BFF" stroke-width="4" stroke-dasharray="7 4"></path>
+<path d="M110 110C140 130 170 126 200 150" fill="none" stroke="#F2C230" stroke-width="4" stroke-dasharray="7 4"></path>
+<circle cx="60" cy="220" r="7" fill="#C8322A" stroke="#fff" stroke-width="2"></circle>
+<text x="72" y="236" font-family="Stardos Stencil, serif" font-size="11" font-weight="700" fill="#5A3A1A">YOU ARE HERE</text>
+<text x="150" y="36" font-family="Stardos Stencil, serif" font-size="14" font-weight="700" fill="#5A3A1A" text-anchor="middle">STONEWOOD TRAILS</text>
+<rect x="14" y="258" width="272" height="30" fill="#5E4024"></rect><text x="150" y="278" text-anchor="middle" font-family="Stardos Stencil, serif" font-size="11" font-weight="700" fill="#EFE6CC">RED 7 KM · BLUE 9 KM · YELLOW 3 KM</text>
+</g>
+<g><circle cx="98" cy="246" r="13" fill="none" stroke="#FFD24A" stroke-width="3"></circle><text x="98" y="251" text-anchor="middle" font-family="Geist, sans-serif" font-size="12" font-weight="900" fill="#FFD24A">1</text></g>
+<g><circle cx="248" cy="77" r="13" fill="none" stroke="#FFD24A" stroke-width="3"></circle><text x="248" y="82" text-anchor="middle" font-family="Geist, sans-serif" font-size="12" font-weight="900" fill="#FFD24A">2</text></g>
+<circle cx="150" cy="160" r="26" fill="#2E7BFF" opacity=".18"></circle><circle cx="150" cy="160" r="9" fill="#2E7BFF" stroke="#fff" stroke-width="3"></circle>
+</svg></div>
+<div style="position: absolute; left: 16px; right: 16px; top: 494px; display: flex; gap: 8px"><div style="flex: 1; border-radius: 16px; background: #fff; padding: 10px; display: flex; flex-direction: column; gap: 4px"><span style="width: 22px; height: 22px; border-radius: 11px; background: #1E9E5A; color: #fff; font-size: 12px; font-weight: 900; display: flex; align-items: center; justify-content: center">1</span><span style="font-size: 13px; font-weight: 800; line-height: 1.2">Photograph the board</span><span style="font-size: 11px; color: #5A6A5A">done</span></div><div style="flex: 1; border-radius: 16px; background: #fff; padding: 10px; display: flex; flex-direction: column; gap: 4px"><span style="width: 22px; height: 22px; border-radius: 11px; background: #1E9E5A; color: #fff; font-size: 12px; font-weight: 900; display: flex; align-items: center; justify-content: center">2</span><span style="font-size: 13px; font-weight: 800; line-height: 1.2">Tap two places you know</span><span style="font-size: 11px; color: #5A6A5A">trailhead · summit</span></div><div style="flex: 1; border-radius: 16px; background: #fff; padding: 10px; display: flex; flex-direction: column; gap: 4px"><span style="width: 22px; height: 22px; border-radius: 11px; background: #1E9E5A; color: #fff; font-size: 12px; font-weight: 900; display: flex; align-items: center; justify-content: center">3</span><span style="font-size: 13px; font-weight: 800; line-height: 1.2">Walk: your dot moves on it</span><span style="font-size: 11px; color: #5A6A5A">±12 m</span></div></div>
+<div style="position: absolute; left: 16px; right: 16px; top: 606px; height: 76px; border-radius: 20px; background: #fff; display: flex; align-items: center; gap: 12px; padding: 0 14px">
+<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#1E9E5A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l5-2 6 2 5-2v14l-5 2-6-2-5 2z"></path><path d="M9 4v14M15 6v14"></path></svg><span style="flex-grow: 1; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 14px; font-weight: 800">Any paper map works</span><span style="font-size: 12px; color: #5A6A5A">park boards, old guidebooks, a friend's sketch</span></span>
+</div>
+<div style="position: absolute; left: 16px; right: 16px; top: 694px; display: flex; gap: 8px">
+<button style="flex: 1; height: 52px; border: 1.5px solid #CFD8CC; border-radius: 26px; background: #fff; color: #1F2A1E; font: 800 13px Geist, sans-serif">Straighten photo</button>
+<button style="flex: 1; height: 52px; border: 0; border-radius: 26px; background: #1F2A1E; color: #fff; font: 800 13px Geist, sans-serif">Navigate on it</button>
+</div>
+<span style="position: absolute; left: 18px; top: 764px; font-size: 12px; font-weight: 800; letter-spacing: 0.12em; color: #5A6A5A">YOUR PHOTO MAPS · 3</span>
+<div style="position: absolute; left: 16px; right: 16px; top: 786px; display: flex; gap: 8px"><div style="flex: 1; min-width: 0; height: 62px; border-radius: 14px; background: #fff; display: flex; align-items: center; gap: 7px; padding: 0 7px; overflow: hidden"><span style="width: 32px; height: 40px; border-radius: 6px; background: linear-gradient(135deg, #F2C75C, #E8622C); box-shadow: inset 0 0 0 3px #fff, 0 1px 3px rgba(0,0,0,0.2); flex-shrink: 0"></span><span style="display: flex; flex-direction: column; line-height: 1.2; min-width: 0"><span style="font-size: 12px; font-weight: 800; white-space: nowrap">Harbor Day</span><span style="font-size: 11px; color: #5A6A5A; white-space: nowrap">festival</span></span></div><div style="flex: 1; min-width: 0; height: 62px; border-radius: 14px; background: #fff; display: flex; align-items: center; gap: 7px; padding: 0 7px; overflow: hidden"><span style="width: 32px; height: 40px; border-radius: 6px; background: linear-gradient(135deg, #E8EEF6, #7FA7D8); box-shadow: inset 0 0 0 3px #fff, 0 1px 3px rgba(0,0,0,0.2); flex-shrink: 0"></span><span style="display: flex; flex-direction: column; line-height: 1.2; min-width: 0"><span style="font-size: 12px; font-weight: 800; white-space: nowrap">Ski area</span><span style="font-size: 11px; color: #5A6A5A; white-space: nowrap">2025 plan</span></span></div><div style="flex: 1; min-width: 0; height: 62px; border-radius: 14px; background: #fff; display: flex; align-items: center; gap: 7px; padding: 0 7px; overflow: hidden"><span style="width: 32px; height: 40px; border-radius: 6px; background: linear-gradient(135deg, #B9D4A8, #6A9A5A); box-shadow: inset 0 0 0 3px #fff, 0 1px 3px rgba(0,0,0,0.2); flex-shrink: 0"></span><span style="display: flex; flex-direction: column; line-height: 1.2; min-width: 0"><span style="font-size: 12px; font-weight: 800; white-space: nowrap">Old zoo</span><span style="font-size: 11px; color: #5A6A5A; white-space: nowrap">park board</span></span></div></div>
+<span style="position: absolute; left: 16px; right: 16px; bottom: 26px; text-align: center; font-size: 10px; color: #6A7A6A">Kept on the phone · idea from the open-source Trail Sense app</span>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":412,"height":915}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

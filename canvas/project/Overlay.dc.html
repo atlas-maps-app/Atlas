@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Atlas — Overlays</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800;900&family=Geist+Mono:wght@500;700&family=Instrument+Serif:ital@0;1&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:Geist,system-ui,sans-serif;color:#14161B;background:#F4F1EA}
+a{color:#14161B}a:hover{opacity:.9}
+</style>
+</helmet>
+<div style="width: 412px; height: 915px; position: relative; overflow: hidden; border-radius: 40px; font-family: Geist, system-ui, sans-serif; color: #14161B; background: #F4F1EA">
+<img src="/_blob/7fb3a66d42f06273be4e7ca7eb3318c1" alt="3D blocks with kerbs coloured by parking rules; grey dashed kerbs are not surveyed yet" style="position: absolute; left: 0; top: 0; width: 412px; height: 915px">
+<div style="position: absolute; left: 0; right: 0; top: 0; height: 170px; background: linear-gradient(180deg, rgba(244,241,234,0.95), rgba(244,241,234,0))"></div>
+<span aria-label="This grey kerb is selected" style="position: absolute; left: 118px; top: 396px; width: 30px; height: 30px; border-radius: 15px; border: 3px solid #FFD24A; box-shadow: 0 0 0 6px rgba(255,210,74,0.35)"></span>
+<div style="position: absolute; left: 16px; right: 16px; top: 42px; display: flex; align-items: center; gap: 10px"><a href="Quests.dc.html" aria-label="Back" style="width: 44px; height: 44px; border-radius: 22px; background: #fff; color: #14161B; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg></a><span style="font-family: 'Instrument Serif', serif; font-style: italic; font-size: 32px; line-height: 1; flex-grow: 1">Overlays</span><span style="height: 34px; padding: 0 12px; border-radius: 17px; background: #fff; display: flex; align-items: center; font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums">72% known</span></div>
+<div style="position: absolute; left: 16px; right: 0; top: 98px; display: flex; gap: 6px; overflow: hidden" role="group" aria-label="Choose an overlay"><button aria-pressed="true" style="height: 34px; padding: 0 12px; border: 0; border-radius: 17px; background: #14161B; color: #fff; font: 800 12px Geist, sans-serif; white-space: nowrap; box-shadow: 0 3px 10px rgba(20,22,27,0.14)">Parking</button><button aria-pressed="false" style="height: 34px; padding: 0 12px; border: 0; border-radius: 17px; background: rgba(255,255,255,0.95); color: #14161B; font: 800 12px Geist, sans-serif; white-space: nowrap; box-shadow: 0 3px 10px rgba(20,22,27,0.14)">Sidewalks</button><button aria-pressed="false" style="height: 34px; padding: 0 12px; border: 0; border-radius: 17px; background: rgba(255,255,255,0.95); color: #14161B; font: 800 12px Geist, sans-serif; white-space: nowrap; box-shadow: 0 3px 10px rgba(20,22,27,0.14)">Lighting</button><button aria-pressed="false" style="height: 34px; padding: 0 12px; border: 0; border-radius: 17px; background: rgba(255,255,255,0.95); color: #14161B; font: 800 12px Geist, sans-serif; white-space: nowrap; box-shadow: 0 3px 10px rgba(20,22,27,0.14)">Surfaces</button><button aria-pressed="false" style="height: 34px; padding: 0 12px; border: 0; border-radius: 17px; background: rgba(255,255,255,0.95); color: #14161B; font: 800 12px Geist, sans-serif; white-space: nowrap; box-shadow: 0 3px 10px rgba(20,22,27,0.14)">+ 6</button></div>
+<div style="position: absolute; left: 0; right: 0; bottom: 0; height: 300px; border-radius: 30px 30px 0 0; background: #fff; box-shadow: 0 -10px 30px rgba(20,22,27,0.16); padding: 10px 16px 0; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px">
+<div style="align-self: center; width: 40px; height: 5px; border-radius: 3px; background: #D5D8DE"></div>
+<div style="display: flex; justify-content: space-between"><span style="display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 800; color: #464C5A"><span style="width: 18px; height: 6px; border-radius: 3px; background: #1E9E5A"></span>free</span><span style="display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 800; color: #464C5A"><span style="width: 18px; height: 6px; border-radius: 3px; background: #2E6BFF"></span>paid</span><span style="display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 800; color: #464C5A"><span style="width: 18px; height: 6px; border-radius: 3px; background: #8E3CF7"></span>residents</span><span style="display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 800; color: #464C5A"><span style="width: 18px; height: 6px; border-radius: 3px; background: #E0463A"></span>none</span><span style="display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 800; color: #464C5A"><span style="width: 18px; height: 6px; border-radius: 3px; background: #9AA2AE; background-image: repeating-linear-gradient(90deg, #9AA2AE 0 4px, transparent 4px 7px); background-color: transparent"></span>unknown</span></div>
+<span style="font-size: 18px; font-weight: 900">Mill St, this side: how do cars park?</span>
+<div style="display: flex; gap: 8px"><button style="flex: 1; height: 78px; border: 0; border-radius: 16px; background: #F4F5F7; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; font: 800 11px Geist, sans-serif; color: #14161B"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#14161B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="8" rx="2"></rect></svg>Along the kerb</button><button style="flex: 1; height: 78px; border: 0; border-radius: 16px; background: #F4F5F7; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; font: 800 11px Geist, sans-serif; color: #14161B"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#14161B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18l6-12M10 18l6-12M16 18l4-8"></path></svg>Angled</button><button style="flex: 1; height: 78px; border: 0; border-radius: 16px; background: #F4F5F7; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; font: 800 11px Geist, sans-serif; color: #14161B"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#14161B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6v12M12 6v12M18 6v12"></path></svg>Head-in</button><button style="flex: 1; height: 78px; border: 0; border-radius: 16px; background: #F4F5F7; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; font: 800 11px Geist, sans-serif; color: #14161B"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#14161B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"></circle><path d="M6 6l12 12"></path></svg>No parking</button></div>
+<span style="text-align: center; font-size: 10px; color: #8A8F98">Your answer goes to OpenStreetMap and colours the kerb for everyone · overlays idea from StreetComplete</span>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":412,"height":915}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

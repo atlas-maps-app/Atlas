@@ -1,0 +1,31 @@
+# Atlas is under local git only (GitHub waits for the owner's yes).
+.DS_Store
+.claude/.cc-writes/
+
+# Data too big for git: records of the one real day that cannot be fetched again, and downloads the fetchers remake (README: Data)
+data/live/rec_*/
+data/transit/*.zip
+data/traffic/flat_wide.json
+data/regions/*/raw.json
+data/regions/*/dem*.json
+
+# The optional Google module and the two boards made from its data stay out of git (owner, 9 Oct 2026)
+google/
+canvas/project/EatGoogle.dc.html
+canvas/project/HouseCards.dc.html
+
+# Everything generated and remakeable (delete the folder any time; the scripts make it again)
+cache/
+canvas/_deleted/
+qa/pagetest/runner
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.pb
+*.zip
+*.mp4
+*.mov
+
+# The owner's own instructions file stays on this Mac
+Instructions.rtf

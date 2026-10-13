@@ -1,0 +1,32 @@
+{
+ "way": 266616341,
+ "wall": [
+  112.3,
+  268.6
+ ],
+ "front": [
+  52.3757278,
+  4.8846622
+ ],
+ "street": "Leliegracht",
+ "street_m": 10.4,
+ "ahn_nap": 1.21,
+ "ahn_cells": 55,
+ "bag": {
+  "pand": "0363100012169058",
+  "bouwjaar": 1673,
+  "status": "Pand in gebruik",
+  "use": "kantoorfunctie",
+  "units": [
+   {
+    "address": "Leliegracht 49",
+    "postcode": "1016GT",
+    "city": "Amsterdam",
+    "use": "kantoorfunctie",
+    "area": 266,
+    "vbo": "0363010000722450"
+   }
+  ]
+ },
+ "fetched": "2026-10-06"
+}

@@ -1,0 +1,277 @@
+{
+ "fetched": "2026-10-06",
+ "aisles": [
+  {
+   "key": "bread",
+   "name": "Bread",
+   "cat": "en:breads",
+   "total": 205,
+   "items": [
+    {
+     "code": "8718907314244",
+     "name": "Fries Roggebrood",
+     "brand": "Albert Heijn",
+     "grade": "a",
+     "qty": "56 gram",
+     "img": "https://images.openfoodfacts.org/images/products/871/890/731/4244/front_nl.14.200.jpg",
+     "bytes": 11159
+    },
+    {
+     "code": "8718907521116",
+     "name": "Waldkorn",
+     "brand": "Waldkorn",
+     "grade": "a",
+     "qty": "",
+     "img": "https://images.openfoodfacts.org/images/products/871/890/752/1116/front_nl.11.200.jpg",
+     "bytes": 6053
+    },
+    {
+     "code": "2244429002698",
+     "name": "Vloerbrood Volkoren Heel",
+     "brand": "Albert Heijn",
+     "grade": "a",
+     "qty": "1 gram",
+     "img": "https://images.openfoodfacts.org/images/products/224/442/900/2698/front_en.3.200.jpg",
+     "bytes": 6400
+    },
+    {
+     "code": "8710400043928",
+     "name": "Allinson volkoren",
+     "brand": "Albert Heijn",
+     "grade": "d",
+     "qty": "385 g",
+     "img": "https://images.openfoodfacts.org/images/products/871/040/004/3928/front_nl.7.200.jpg",
+     "bytes": 14505
+    }
+   ]
+  },
+  {
+   "key": "cheese",
+   "name": "Cheese",
+   "cat": "en:cheeses",
+   "total": 157,
+   "items": [
+    {
+     "code": "8718906515789",
+     "name": "AH Biologisch Cottage Cheese",
+     "brand": "AH Biologisch",
+     "grade": "b",
+     "qty": "200 gram",
+     "img": "https://images.openfoodfacts.org/images/products/871/890/651/5789/front_nl.21.200.jpg",
+     "bytes": 10261
+    },
+    {
+     "code": "8710400000303",
+     "name": "Kruiden roomkaas",
+     "brand": "Albert Heijn",
+     "grade": "e",
+     "qty": "125 g",
+     "img": "https://images.openfoodfacts.org/images/products/871/040/000/0303/front_en.18.200.jpg",
+     "bytes": 5619
+    },
+    {
+     "code": "8710400031840",
+     "name": "smeerkaas naturel",
+     "brand": "Albert Heijn",
+     "grade": "e",
+     "qty": "100 g",
+     "img": "https://images.openfoodfacts.org/images/products/871/040/003/1840/front_nl.11.200.jpg",
+     "bytes": 9450
+    },
+    {
+     "code": "3176582069302",
+     "name": "Camembert de Printemps",
+     "brand": "CF&R",
+     "grade": "d",
+     "qty": "250 g",
+     "img": "https://images.openfoodfacts.org/images/products/317/658/206/9302/front_nl.11.200.jpg",
+     "bytes": 11845
+    }
+   ]
+  },
+  {
+   "key": "dairy",
+   "name": "Milk & yoghurt",
+   "cat": "en:dairies",
+   "total": 244,
+   "items": [
+    {
+     "code": "5201054015681",
+     "name": "FAGE Total 0%",
+     "brand": "Fage",
+     "grade": "a",
+     "qty": "170 g",
+     "img": "https://images.openfoodfacts.org/images/products/520/105/401/5681/front_nl.48.200.jpg",
+     "bytes": 6582
+    },
+    {
+     "code": "8711399022680",
+     "name": "Naturel",
+     "brand": "Boer’n Yoghurt",
+     "grade": "a",
+     "qty": "",
+     "img": "https://images.openfoodfacts.org/images/products/871/139/902/2680/front_nl.4.200.jpg",
+     "bytes": 9959
+    },
+    {
+     "code": "8710400514107",
+     "name": "Gepasteuriseerde halfvolle melk",
+     "brand": "De Zaanse Hoeve",
+     "grade": "b",
+     "qty": "1 L",
+     "img": "https://images.openfoodfacts.org/images/products/871/040/051/4107/front_nl.40.200.jpg",
+     "bytes": 4504
+    },
+    {
+     "code": "8718907249294",
+     "name": "Houdbare halfvolle melk",
+     "brand": "Albert Heijn",
+     "grade": "b",
+     "qty": "500 ml",
+     "img": "https://images.openfoodfacts.org/images/products/871/890/724/9294/front_nl.7.200.jpg",
+     "bytes": 5787
+    }
+   ]
+  },
+  {
+   "key": "spreads",
+   "name": "On your bread",
+   "cat": "en:spreads",
+   "total": 163,
+   "items": [
+    {
+     "code": "8718907855273",
+     "name": "hummus zongedroogde tomaat",
+     "brand": "Albert Heijn Terra",
+     "grade": "b",
+     "qty": "175g",
+     "img": "https://images.openfoodfacts.org/images/products/871/890/785/5273/front_en.3.200.jpg",
+     "bytes": 9861
+    },
+    {
+     "code": "8710472003097",
+     "name": "Opgroeien Zonder Palmolie",
+     "brand": "The Flower Farm",
+     "grade": "c",
+     "qty": "375g",
+     "img": "https://images.openfoodfacts.org/images/products/871/047/200/3097/front_en.13.200.jpg",
+     "bytes": 9264
+    },
+    {
+     "code": "8718907369589",
+     "name": "Bloemenhoning",
+     "brand": "Albert Heijn",
+     "grade": "e",
+     "qty": "",
+     "img": "https://images.openfoodfacts.org/images/products/871/890/736/9589/front_nl.27.200.jpg",
+     "bytes": 6063
+    },
+    {
+     "code": "8718907826051",
+     "name": "Lekker op brood",
+     "brand": "Albert Heijn",
+     "grade": "c",
+     "qty": "5 gram",
+     "img": "https://images.openfoodfacts.org/images/products/871/890/782/6051/front_nl.3.200.jpg",
+     "bytes": 10973
+    }
+   ]
+  },
+  {
+   "key": "drinks",
+   "name": "Drinks",
+   "cat": "en:beverages",
+   "total": 229,
+   "items": [
+    {
+     "code": "8718907384698",
+     "name": "Water koolzuurhoudend",
+     "brand": "Albert Heijn",
+     "grade": "a",
+     "qty": "1,5 l",
+     "img": "https://images.openfoodfacts.org/images/products/871/890/738/4698/front_nl.9.200.jpg",
+     "bytes": 4852
+    },
+    {
+     "code": "8718907384575",
+     "name": "Natuurlijk mineraal water",
+     "brand": "Albert Heijn",
+     "grade": "a",
+     "qty": "",
+     "img": "https://images.openfoodfacts.org/images/products/871/890/738/4575/front_fr.19.200.jpg",
+     "bytes": 4563
+    },
+    {
+     "code": "8718907615518",
+     "name": "Cranberry drink",
+     "brand": "Albert Heijn",
+     "grade": "e",
+     "qty": "1000 ml",
+     "img": "https://images.openfoodfacts.org/images/products/871/890/761/5518/front_nl.6.200.jpg",
+     "bytes": 4453
+    },
+    {
+     "code": "8718907826150",
+     "name": "Plantaardig alternatief voor halfvolle melk",
+     "brand": "Albert Heijn Terra",
+     "grade": "b",
+     "qty": "1L",
+     "img": "https://images.openfoodfacts.org/images/products/871/890/782/6150/front_en.4.200.jpg",
+     "bytes": 8396
+    }
+   ]
+  },
+  {
+   "key": "koek",
+   "name": "Biscuits & cakes",
+   "cat": "en:biscuits-and-cakes",
+   "total": 160,
+   "items": [
+    {
+     "code": "8718906907911",
+     "name": "Mini Stroopwafels",
+     "brand": "Albert Heijn",
+     "grade": "e",
+     "qty": "300 gram",
+     "img": "https://images.openfoodfacts.org/images/products/871/890/690/7911/front_nl.4.200.jpg",
+     "bytes": 8389
+    },
+    {
+     "code": "8719153034634",
+     "name": "Cranberry-chocolade koekjes",
+     "brand": "Smaakt",
+     "grade": "e",
+     "qty": "6 gram",
+     "img": "https://images.openfoodfacts.org/images/products/871/915/303/4634/front_nl.4.200.jpg",
+     "bytes": 6256
+    },
+    {
+     "code": "8710434181030",
+     "name": "Jodekoek Original",
+     "brand": "Lotus",
+     "grade": "e",
+     "qty": "372 g.",
+     "img": "https://images.openfoodfacts.org/images/products/871/043/418/1030/front_en.36.200.jpg",
+     "bytes": 6603
+    },
+    {
+     "code": "8718907792202",
+     "name": "Roomboterkoeken",
+     "brand": "Albert Heijn",
+     "grade": "e",
+     "qty": "360 gram",
+     "img": "https://images.openfoodfacts.org/images/products/871/890/779/2202/front_nl.7.200.jpg",
+     "bytes": 7496
+    }
+   ]
+  }
+ ],
+ "prices_amsterdam": {
+  "locations": 10,
+  "prices": 11
+ },
+ "prices_nl": {
+  "locations": 111,
+  "prices_top100": 250
+ }
+}

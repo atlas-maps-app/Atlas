@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Atlas — Store and rent</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800;900&amp;family=Geist+Mono:wght@700&amp;family=Instrument+Serif&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:Geist,system-ui,sans-serif;color:#15181C;background:#E4E7EA}
+a{color:#15181C}a:hover{color:#000}
+</style>
+</helmet>
+<div style="width: 412px; height: 915px; position: relative; overflow: hidden; border-radius: 40px; background: #E4E7EA; font-family: Geist, system-ui, sans-serif; color: #15181C">
+<div style="position: absolute; left: 16px; right: 16px; top: 42px; display: flex; align-items: center; gap: 10px">
+<a href="Main.dc.html" aria-label="Back" style="width: 44px; height: 44px; border-radius: 22px; background: #fff; color: #15181C; display: flex; align-items: center; justify-content: center"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg></a>
+<span style="font-family: 'Instrument Serif', serif; font-size: 32px; line-height: 1; flex-grow: 1">Store &amp; rent</span>
+</div>
+
+<div style="position: absolute; left: 16px; right: 16px; top: 104px; height: 390px; border-radius: 10px; background: linear-gradient(180deg, #9AA3AD, #7E8892); padding: 8px; box-sizing: border-box; box-shadow: 0 14px 26px rgba(20,30,40,0.3); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(3, minmax(0, 1fr)); gap: 6px" role="group" aria-label="What do you need to store or rent?">
+<button aria-pressed="true" aria-label="Bags and luggage, 6 lockers free" style="border: 0; border-radius: 4px; background: linear-gradient(180deg, #E9EEF3, #C9D1D9); box-shadow: inset 0 0 0 2px #1E9E5A, inset 0 -3px 0 rgba(0,0,0,0.12); position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #15181C">
+<span style="position: absolute; left: 8px; top: 6px; font: 700 10px 'Geist Mono', monospace; color: #5A6070">01</span>
+<span style="position: absolute; right: 8px; top: 8px; width: 8px; height: 8px; border-radius: 4px; background: #1E9E5A; box-shadow: 0 0 6px #1E9E5A"></span>
+<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="5" y="7" width="14" height="13" rx="2"></rect><path d="M9 7V4.5h6V7M9 11v6M15 11v6"></path></svg>
+<span style="font-size: 12px; font-weight: 800">Bags</span>
+<span style="position: absolute; right: 10px; top: 46%; width: 4px; height: 26px; border-radius: 2px; background: #6B7580"></span>
+</button>
+<button aria-label="Bikes" style="border: 0; border-radius: 4px; background: linear-gradient(180deg, #E9EEF3, #C9D1D9); box-shadow: inset 0 -3px 0 rgba(0,0,0,0.12); position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #15181C"><span style="position: absolute; left: 8px; top: 6px; font: 700 10px 'Geist Mono', monospace; color: #5A6070">02</span><span style="position: absolute; right: 10px; top: 46%; width: 4px; height: 26px; border-radius: 2px; background: #6B7580"></span><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="6" cy="16" r="3.5"></circle><circle cx="18" cy="16" r="3.5"></circle><path d="M6 16l3.5-7h5.5M9.5 9L12 16h-6M15 9l3 7"></path></svg><span style="font-size: 12px; font-weight: 800">Bikes</span></button>
+<button aria-label="Scooters" style="border: 0; border-radius: 4px; background: linear-gradient(180deg, #E9EEF3, #C9D1D9); box-shadow: inset 0 -3px 0 rgba(0,0,0,0.12); position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #15181C"><span style="position: absolute; left: 8px; top: 6px; font: 700 10px 'Geist Mono', monospace; color: #5A6070">03</span><span style="position: absolute; right: 10px; top: 46%; width: 4px; height: 26px; border-radius: 2px; background: #6B7580"></span><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="5" cy="18" r="2.5"></circle><circle cx="19" cy="18" r="2.5"></circle><path d="M5 18h11l2-12h3M16 18l-1-6"></path></svg><span style="font-size: 12px; font-weight: 800">Scooters</span></button>
+<button aria-label="Cars and car share" style="border: 0; border-radius: 4px; background: linear-gradient(180deg, #E9EEF3, #C9D1D9); box-shadow: inset 0 -3px 0 rgba(0,0,0,0.12); position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #15181C"><span style="position: absolute; left: 8px; top: 6px; font: 700 10px 'Geist Mono', monospace; color: #5A6070">04</span><span style="position: absolute; right: 10px; top: 46%; width: 4px; height: 26px; border-radius: 2px; background: #6B7580"></span><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M5 13l1.6-4.2A2 2 0 0 1 8.5 7.5h7a2 2 0 0 1 1.9 1.3L19 13"></path><rect x="3.5" y="13" width="17" height="5" rx="1.5"></rect><path d="M6.5 18v2M17.5 18v2"></path></svg><span style="font-size: 12px; font-weight: 800">Cars</span></button>
+<button aria-label="Boats and kayaks" style="border: 0; border-radius: 4px; background: linear-gradient(180deg, #E9EEF3, #C9D1D9); box-shadow: inset 0 -3px 0 rgba(0,0,0,0.12); position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #15181C"><span style="position: absolute; left: 8px; top: 6px; font: 700 10px 'Geist Mono', monospace; color: #5A6070">05</span><span style="position: absolute; right: 10px; top: 46%; width: 4px; height: 26px; border-radius: 2px; background: #6B7580"></span><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 15c4 3 16 3 20 0l-2-2H4z"></path><path d="M6 4l12 16"></path><path d="M4 2l3 3M17 19l3 3"></path></svg><span style="font-size: 12px; font-weight: 800">Kayaks</span></button>
+<button aria-label="Tools and things (library of things)" style="border: 0; border-radius: 4px; background: linear-gradient(180deg, #E9EEF3, #C9D1D9); box-shadow: inset 0 -3px 0 rgba(0,0,0,0.12); position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #15181C"><span style="position: absolute; left: 8px; top: 6px; font: 700 10px 'Geist Mono', monospace; color: #5A6070">06</span><span style="position: absolute; right: 10px; top: 46%; width: 4px; height: 26px; border-radius: 2px; background: #6B7580"></span><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 20l9-9M13 5l6 6-3 3-6-6z"></path></svg><span style="font-size: 12px; font-weight: 800">Tools</span></button>
+<button aria-label="Camping gear" style="border: 0; border-radius: 4px; background: linear-gradient(180deg, #E9EEF3, #C9D1D9); box-shadow: inset 0 -3px 0 rgba(0,0,0,0.12); position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #15181C"><span style="position: absolute; left: 8px; top: 6px; font: 700 10px 'Geist Mono', monospace; color: #5A6070">07</span><span style="position: absolute; right: 10px; top: 46%; width: 4px; height: 26px; border-radius: 2px; background: #6B7580"></span><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M2 20L12 4l10 16z"></path><path d="M12 4v16M9 20l3-5 3 5"></path></svg><span style="font-size: 12px; font-weight: 800">Camping</span></button>
+<button aria-label="Skis and snowboards" style="border: 0; border-radius: 4px; background: linear-gradient(180deg, #E9EEF3, #C9D1D9); box-shadow: inset 0 -3px 0 rgba(0,0,0,0.12); position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #15181C"><span style="position: absolute; left: 8px; top: 6px; font: 700 10px 'Geist Mono', monospace; color: #5A6070">08</span><span style="position: absolute; right: 10px; top: 46%; width: 4px; height: 26px; border-radius: 2px; background: #6B7580"></span><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 21L15 3M9 21L19 3M4 18l3 2M8 18l3 2"></path></svg><span style="font-size: 12px; font-weight: 800">Skis</span></button>
+<button aria-label="Cameras and electronics" style="border: 0; border-radius: 4px; background: linear-gradient(180deg, #E9EEF3, #C9D1D9); box-shadow: inset 0 -3px 0 rgba(0,0,0,0.12); position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #15181C"><span style="position: absolute; left: 8px; top: 6px; font: 700 10px 'Geist Mono', monospace; color: #5A6070">09</span><span style="position: absolute; right: 10px; top: 46%; width: 4px; height: 26px; border-radius: 2px; background: #6B7580"></span><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle></svg><span style="font-size: 12px; font-weight: 800">Gear</span></button>
+</div>
+
+<div style="position: absolute; left: 16px; right: 16px; top: 512px; display: flex; flex-direction: column; gap: 8px">
+<a href="Route.dc.html" style="height: 80px; border-radius: 22px; background: #fff; display: flex; align-items: center; gap: 12px; padding: 0 14px; text-decoration: none; color: #15181C">
+<span style="width: 48px; height: 48px; border-radius: 12px; background: #E7F4EC; color: #1E7A46; font: 900 18px 'Geist Mono', monospace; display: flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums">6</span>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 16px; font-weight: 800">Station lockers</span><span style="font-size: 12px; color: #464C5A; font-variant-numeric: tabular-nums">24/7 · $8 a day · fits a suitcase</span></div>
+<span style="font-size: 17px; font-weight: 900; font-variant-numeric: tabular-nums">3′</span>
+</a>
+<div style="height: 80px; border-radius: 22px; background: #fff; display: flex; align-items: center; gap: 12px; padding: 0 14px">
+<span style="width: 48px; height: 48px; border-radius: 12px; background: #F1EEE8; display: flex; align-items: center; justify-content: center"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6B4A2E" stroke-width="2" stroke-linecap="round"><path d="M4 9h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9z"></path><path d="M17 10.5h1.5a2.5 2.5 0 0 1 0 5H17"></path></svg></span>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 16px; font-weight: 800">Café keeps bags</span><span style="font-size: 12px; color: #464C5A; font-variant-numeric: tabular-nums">→ 21:00 · $5 · staffed</span></div>
+<span style="font-size: 17px; font-weight: 900; font-variant-numeric: tabular-nums">5′</span>
+</div>
+<div style="height: 80px; border-radius: 22px; background: #fff; display: flex; align-items: center; gap: 12px; padding: 0 14px">
+<span style="width: 48px; height: 48px; border-radius: 12px; background: #FFF1D6; display: flex; align-items: center; justify-content: center"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#8A5A00" stroke-width="2" stroke-linejoin="round"><path d="M3 11l9-7 9 7"></path><path d="M6 9.5V20M18 9.5V20"></path></svg></span>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 16px; font-weight: 800">Rain shelter</span><span style="font-size: 12px; color: #464C5A">free · benches · lit at night</span></div>
+<span style="font-size: 17px; font-weight: 900; font-variant-numeric: tabular-nums">70 m</span>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":412,"height":915}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,277 @@
+{
+ "v": 3,
+ "attachments": {},
+ "boards": {
+  "Bergen.dc.html": {
+   "h": 915,
+   "is_interactive": true,
+   "page": "traditions",
+   "radius": 40,
+   "title": "Bergen — the Norwegian wooden town: painted timber, steep tiled gables, Bryggen on its harbour",
+   "w": 412,
+   "x": 492,
+   "y": 0
+  },
+  "CanalKit.dc.html": {
+   "h": 915,
+   "is_interactive": true,
+   "page": "amsterdam",
+   "radius": 40,
+   "title": "On the Leliesluis, from the Amsterdam tradition — chimneys, tile courses, lit ridges",
+   "w": 412,
+   "x": 492,
+   "y": 0
+  },
+  "Dunes.dc.html": {
+   "h": 915,
+   "is_interactive": true,
+   "page": "regions",
+   "radius": 40,
+   "title": "Zuid-Kennemerland — real relief from AHN, national park, beach and sea",
+   "w": 412,
+   "x": 1476,
+   "y": 0
+  },
+  "HartenstraatKit.dc.html": {
+   "h": 915,
+   "is_interactive": true,
+   "page": "amsterdam",
+   "radius": 40,
+   "title": "Hartenstraat, from the Amsterdam tradition — hoist beams under the old gables",
+   "w": 412,
+   "x": 1476,
+   "y": 0
+  },
+  "LivingHow.dc.html": {
+   "h": 1500,
+   "page": "start",
+   "radius": 24,
+   "title": "Example",
+   "w": 2380,
+   "x": 640,
+   "y": 0
+  },
+  "LivingLooks.dc.html": {
+   "h": 915,
+   "is_interactive": true,
+   "page": "amsterdam",
+   "radius": 40,
+   "title": "The living map, new looks — walls and roofs from building tags; homes keep their varied brick",
+   "w": 412,
+   "x": 0,
+   "y": 0
+  },
+  "NottingHill.dc.html": {
+   "h": 915,
+   "is_interactive": true,
+   "page": "traditions",
+   "radius": 40,
+   "title": "Notting Hill — the London terrace: stucco and stock brick, sash windows, chimney stacks on the party walls",
+   "w": 412,
+   "x": 984,
+   "y": 0
+  },
+  "ParisCloseKit.dc.html": {
+   "h": 915,
+   "is_interactive": true,
+   "page": "regions",
+   "radius": 40,
+   "title": "Paris up close, from the Paris tradition — stacks and pots on the party walls, zinc seams",
+   "w": 412,
+   "x": 492,
+   "y": 1275
+  },
+  "ParisKit.dc.html": {
+   "h": 915,
+   "is_interactive": true,
+   "page": "regions",
+   "radius": 40,
+   "title": "Paris, from the Paris tradition — mansards and their chimney stacks along the party walls",
+   "w": 412,
+   "x": 492,
+   "y": 0
+  },
+  "ParisWalkDetail.dc.html": {
+   "h": 915,
+   "is_interactive": true,
+   "page": "regions",
+   "radius": 40,
+   "title": "Paris at street level, second pass — cut-stone quays in sun and shade, Notre-Dame’s windows",
+   "w": 412,
+   "x": 492,
+   "y": 2550
+  },
+  "Port.dc.html": {
+   "h": 915,
+   "is_interactive": true,
+   "page": "regions",
+   "radius": 40,
+   "title": "Port of Rotterdam — cranes by crane:type, tanks, turbines in the real wind",
+   "w": 412,
+   "x": 984,
+   "y": 0
+  },
+  "PortClose.dc.html": {
+   "h": 915,
+   "is_interactive": true,
+   "page": "regions",
+   "radius": 40,
+   "title": "Port up close — quay cranes over the water, gantries on their runways, the hour’s tide",
+   "w": 412,
+   "x": 984,
+   "y": 1275
+  },
+  "SanGimignano.dc.html": {
+   "h": 915,
+   "is_interactive": true,
+   "page": "traditions",
+   "radius": 40,
+   "title": "San Gimignano — the Tuscan tradition: stone, brick and warm plaster under terracotta, shutters, the towers",
+   "w": 412,
+   "x": 0,
+   "y": 0
+  },
+  "Schiphol.dc.html": {
+   "h": 915,
+   "is_interactive": true,
+   "page": "regions",
+   "radius": 40,
+   "title": "Schiphol — runways from their ref, motorways by their lanes",
+   "w": 412,
+   "x": 0,
+   "y": 0
+  },
+  "SchipholClose.dc.html": {
+   "h": 915,
+   "is_interactive": true,
+   "page": "regions",
+   "radius": 40,
+   "title": "Schiphol up close — the control tower at its mapped height, glazed piers, looks from building tags",
+   "w": 412,
+   "x": 0,
+   "y": 1275
+  },
+  "Tags.dc.html": {
+   "h": 1970,
+   "page": "start",
+   "radius": 24,
+   "title": "Tags around a place",
+   "w": 2380,
+   "x": 640,
+   "y": 1620
+  },
+  "WestermarktKit.dc.html": {
+   "h": 915,
+   "is_interactive": true,
+   "page": "amsterdam",
+   "radius": 40,
+   "title": "Westermarkt, from the Amsterdam tradition — the Westerkerk in brick",
+   "w": 412,
+   "x": 984,
+   "y": 0
+  }
+ },
+ "createdOnFiles": {
+  "at": "2026-10-07T15:45:04Z",
+  "v": 1
+ },
+ "designSystems": [],
+ "launch": {
+  "page": "start",
+  "view": "canvas"
+ },
+ "notes": {
+  "eng_amsterdam-0": {
+   "kind": "title1",
+   "maxW": 1888,
+   "page": "amsterdam",
+   "text": "Amsterdam around the Westerkerk: only what OpenStreetMap says, lit by the real sun",
+   "w": 240,
+   "x": 0,
+   "y": -260
+  },
+  "regionsA": {
+   "kind": "title1",
+   "maxW": 1888,
+   "page": "regions",
+   "text": "The same rules beyond the city: only what OpenStreetMap says, real weather, real ground",
+   "w": 240,
+   "x": 0,
+   "y": -260
+  },
+  "regionsB": {
+   "kind": "title1",
+   "maxW": 1888,
+   "page": "regions",
+   "text": "Up close: at the living map’s distance, every wall and roof from its tags",
+   "w": 240,
+   "x": 0,
+   "y": 1015
+  },
+  "regionsC": {
+   "kind": "title1",
+   "maxW": 1888,
+   "page": "regions",
+   "text": "At street level: the same data and real weather, seen standing on the quay",
+   "w": 240,
+   "x": 0,
+   "y": 2290
+  },
+  "start-what": {
+   "fill": "gray",
+   "page": "start",
+   "size": 40,
+   "text": "The engine\n\nHow Atlas draws the map from open data: OpenStreetMap, real ground, real weather, the real sun.\n\nEngine work happens here. Atlas — Main keeps the versions the app uses.",
+   "w": 520,
+   "x": 0,
+   "y": 0
+  },
+  "tradA": {
+   "kind": "title1",
+   "maxW": 1888,
+   "page": "traditions",
+   "text": "One kit, many building traditions: each place drawn from the same light and materials, and a short profile of how its people build. What is mapped always wins; the rest is guessed in real OSM values and marked",
+   "w": 240,
+   "x": 0,
+   "y": -260
+  }
+ },
+ "order": [
+  "LivingLooks.dc.html",
+  "CanalKit.dc.html",
+  "WestermarktKit.dc.html",
+  "HartenstraatKit.dc.html",
+  "Schiphol.dc.html",
+  "ParisKit.dc.html",
+  "Port.dc.html",
+  "Dunes.dc.html",
+  "SchipholClose.dc.html",
+  "ParisCloseKit.dc.html",
+  "PortClose.dc.html",
+  "ParisWalkDetail.dc.html",
+  "SanGimignano.dc.html",
+  "Bergen.dc.html",
+  "NottingHill.dc.html",
+  "LivingHow.dc.html",
+  "Tags.dc.html"
+ ],
+ "pages": [
+  {
+   "id": "start",
+   "name": "Start here"
+  },
+  {
+   "id": "amsterdam",
+   "name": "Amsterdam"
+  },
+  {
+   "id": "regions",
+   "name": "Regions"
+  },
+  {
+   "id": "traditions",
+   "name": "Traditions"
+  }
+ ],
+ "title": "Atlas — Engine"
+}

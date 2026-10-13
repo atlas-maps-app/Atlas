@@ -1,0 +1,22 @@
+{
+ "way": 266616442,
+ "front": [
+  52.374865,
+  4.884415
+ ],
+ "ahn_nap": 0.82,
+ "ahn_cells": 45,
+ "ahn": "AHN dtm_05m via PDOK WCS",
+ "bag": {
+  "address": "Westermarkt 6",
+  "postcode": "1016DK",
+  "city": "Amsterdam",
+  "use": "winkelfunctie",
+  "area": 271,
+  "vbo": "0363010000865971",
+  "pand": "0363100012172422",
+  "bouwjaar": 1624,
+  "status": "Pand in gebruik"
+ },
+ "fetched": "2026-10-06"
+}

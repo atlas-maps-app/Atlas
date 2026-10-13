@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Atlas — Fuel</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800;900&family=VT323&family=Instrument+Serif:ital@0;1&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:Geist,system-ui,sans-serif;color:#2A2520;background:#EDE6DA}
+a{color:#2A2520}a:hover{opacity:.9}
+</style>
+</helmet>
+<div style="width: 412px; height: 915px; position: relative; overflow: hidden; border-radius: 40px; font-family: Geist, system-ui, sans-serif; color: #2A2520; background: #EDE6DA">
+<div style="position: absolute; left: 16px; right: 16px; top: 42px; display: flex; align-items: center; gap: 10px"><a href="Main.dc.html" aria-label="Back" style="width: 44px; height: 44px; border-radius: 22px; background: #fff; color: #2A2520; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg></a><nav aria-label="Fuel, charge, park or bike" style="flex-grow: 1; height: 44px; border-radius: 22px; background: rgba(20,22,27,0.08); padding: 4px; box-sizing: border-box; display: flex; gap: 4px"><a href="Pump.dc.html" aria-current="page" style="flex: 1; height: 36px; border-radius: 18px; background: #14161B; color: #FFFFFF; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 5px; font-size: 12px; font-weight: 800"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v16M3 21h13M6.5 7h6v4h-6z"></path><path d="M15 9h2a2 2 0 0 1 2 2v6a1.5 1.5 0 0 0 3 0V8l-3-3"></path></svg>Fuel</a><a href="Plugs.dc.html" style="flex: 1; height: 36px; border-radius: 18px; background: transparent; color: #14161B; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 5px; font-size: 12px; font-weight: 800"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4.5 13.5H11L10 22l8.5-11.5H12z"></path></svg>Charge</a><a href="Park.dc.html" style="flex: 1; height: 36px; border-radius: 18px; background: transparent; color: #14161B; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 5px; font-size: 12px; font-weight: 800"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="3"></rect><path d="M10 17V8h3a2.5 2.5 0 0 1 0 5h-3"></path></svg>Park</a><a href="BikeFix.dc.html" style="flex: 1; height: 36px; border-radius: 18px; background: transparent; color: #14161B; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 5px; font-size: 12px; font-weight: 800"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4.5 4.5 0 0 0-5.9 5.9L3 18l3 3 5.8-5.8a4.5 4.5 0 0 0 5.9-5.9l-2.8 2.8-2.9-.3-.3-2.9z"></path></svg>Bike</a></nav></div>
+
+<div style="position: absolute; left: 16px; right: 16px; top: 100px; height: 48px; display: flex; align-items: center; gap: 12px">
+<svg width="64" height="40" viewBox="0 0 64 40" role="img" aria-label="Fuel gauge: a quarter tank">
+<path d="M6 36A26 26 0 0 1 58 36" fill="none" stroke="#2A2520" stroke-width="3" stroke-linecap="round"></path>
+<path d="M6 36A26 26 0 0 1 10.6 21.2" fill="none" stroke="#C8322A" stroke-width="5"></path>
+<g stroke="#2A2520" stroke-width="2"><path d="M32 10v5M13.6 17.6l3.5 3.5M50.4 17.6l-3.5 3.5"></path></g>
+<text x="4" y="30" font-family="Geist, sans-serif" font-size="8" font-weight="900" fill="#2A2520">E</text><text x="56" y="30" font-family="Geist, sans-serif" font-size="8" font-weight="900" fill="#2A2520">F</text>
+<path d="M32 36L18 22" stroke="#C8322A" stroke-width="3" stroke-linecap="round"></path><circle cx="32" cy="36" r="4" fill="#2A2520"></circle>
+</svg>
+<span style="flex-grow: 1; display: flex; flex-direction: column"><span style="font-size: 16px; font-weight: 800">¼ tank · 180 km</span><span style="font-size: 12px; color: #6B6358">40 L to fill · prices live</span></span>
+<button aria-label="Filter: stations with car wash, air, shop" style="width: 44px; height: 44px; border: 0; border-radius: 22px; background: #fff; display: flex; align-items: center; justify-content: center"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2A2520" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4"></path></svg></button>
+</div>
+
+<div style="position: absolute; left: 16px; right: 16px; top: 160px; height: 230px; border-radius: 28px; background: linear-gradient(180deg, #D8423A, #B32B24); box-shadow: 0 16px 30px rgba(179,43,36,0.3), inset 0 2px 0 rgba(255,255,255,0.3); padding: 12px; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px">
+<div role="img" aria-label="{{dispAria}}" style="height: 138px; border-radius: 16px; background: linear-gradient(180deg, #F4EEE2, #DCD3C2); padding: 8px; box-sizing: border-box">
+<div style="height: 100%; border-radius: 10px; background: #1B1F24; box-shadow: inset 0 3px 10px rgba(0,0,0,0.6); padding: 4px 14px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-around">
+<div style="display: flex; align-items: center; justify-content: space-between"><span style="font-size: 11px; font-weight: 800; letter-spacing: 0.14em; color: #9A8A6A">TO PAY €</span><span style="font-family: VT323, monospace; font-size: 40px; line-height: 1; color: #FFB547; text-shadow: 0 0 8px rgba(255,181,71,0.6)">{{pay}}</span></div>
+<div style="display: flex; align-items: center; justify-content: space-between"><span style="font-size: 11px; font-weight: 800; letter-spacing: 0.14em; color: #9A8A6A">LITRES</span><span style="font-family: VT323, monospace; font-size: 30px; line-height: 1; color: #FFB547; opacity: 0.85">{{litres}}</span></div>
+<div style="display: flex; align-items: center; justify-content: space-between"><span style="font-size: 11px; font-weight: 800; letter-spacing: 0.14em; color: #9A8A6A">€ / LITRE</span><span style="font-family: VT323, monospace; font-size: 30px; line-height: 1; color: #FFB547; opacity: 0.85">{{perL}}</span></div>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px" role="group" aria-label="Fuel type">
+<button onClick="{{gr.e10.pick}}" aria-pressed="{{gr.e10.cur}}" aria-label="E10" style="height: 58px; border: 0; border-radius: 12px; background: #F4EEE2; box-shadow: {{gr.e10.sh}}; cursor: pointer; transition: box-shadow 0.2s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font: 900 13px Geist, sans-serif; color: #2A2520"><span style="width: 26px; height: 6px; border-radius: 3px; background: #2E9E4A"></span>E10</button>
+<button onClick="{{gr.s95.pick}}" aria-pressed="{{gr.s95.cur}}" aria-label="95" style="height: 58px; border: 0; border-radius: 12px; background: #F4EEE2; box-shadow: {{gr.s95.sh}}; cursor: pointer; transition: box-shadow 0.2s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font: 900 13px Geist, sans-serif; color: #2A2520"><span style="width: 26px; height: 6px; border-radius: 3px; background: #2E9E4A"></span>95</button>
+<button onClick="{{gr.s98.pick}}" aria-pressed="{{gr.s98.cur}}" aria-label="98" style="height: 58px; border: 0; border-radius: 12px; background: #F4EEE2; box-shadow: {{gr.s98.sh}}; cursor: pointer; transition: box-shadow 0.2s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font: 900 13px Geist, sans-serif; color: #2A2520"><span style="width: 26px; height: 6px; border-radius: 3px; background: #1F5FA8"></span>98</button>
+<button onClick="{{gr.diesel.pick}}" aria-pressed="{{gr.diesel.cur}}" aria-label="Diesel" style="height: 58px; border: 0; border-radius: 12px; background: #F4EEE2; box-shadow: {{gr.diesel.sh}}; cursor: pointer; transition: box-shadow 0.2s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font: 900 12px Geist, sans-serif; color: #2A2520"><span style="width: 26px; height: 6px; border-radius: 3px; background: #1B1F24"></span>Diesel</button>
+<button onClick="{{gr.lpg.pick}}" aria-pressed="{{gr.lpg.cur}}" aria-label="LPG" style="height: 58px; border: 0; border-radius: 12px; background: #F4EEE2; box-shadow: {{gr.lpg.sh}}; cursor: pointer; transition: box-shadow 0.2s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font: 900 13px Geist, sans-serif; color: #2A2520"><span style="width: 26px; height: 6px; border-radius: 3px; background: #F2A71B"></span>LPG</button>
+<button onClick="{{gr.adblue.pick}}" aria-pressed="{{gr.adblue.cur}}" aria-label="AdBlue" style="height: 58px; border: 0; border-radius: 12px; background: #F4EEE2; box-shadow: {{gr.adblue.sh}}; cursor: pointer; transition: box-shadow 0.2s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font: 900 11px Geist, sans-serif; color: #2A2520"><span style="width: 26px; height: 6px; border-radius: 3px; background: #2E7BC4"></span>AdBlue</button>
+</div>
+</div>
+
+<div style="position: absolute; left: 16px; right: 16px; top: 406px; display: flex; flex-direction: column; gap: 8px" aria-label="Stations, best value first">
+<a href="Route.dc.html" aria-label="{{st.nordoil.aria}}" style="height: 76px; border-radius: 22px; background: {{st.nordoil.bg}}; text-decoration: none; color: #2A2520; display: flex; align-items: center; gap: 12px; padding: 0 12px; box-shadow: {{st.nordoil.ring}}; opacity: {{st.nordoil.op}}; transition: opacity 0.2s ease;"><span aria-hidden="true" style="width: 92px; height: 44px; border-radius: 10px; background: #1B1F24; color: #FFD27A; display: flex; align-items: flex-start; justify-content: center; padding-top: 5px; box-sizing: border-box; font-family: VT323, monospace; font-size: 30px; white-space: nowrap; line-height: 1; box-shadow: inset 0 -2px 0 rgba(255,255,255,0.08); flex-shrink: 0">{{st.nordoil.main}}<span style="font-size: 18px; line-height: 1.1">{{st.nordoil.sup}}</span></span><span style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px"><span style="display: flex; align-items: center; gap: 6px"><span style="font-size: 16px; font-weight: 800">Nordoil</span><span style="height: 20px; padding: 0 7px; border-radius: 10px; background: {{st.nordoil.tb}}; color: {{st.nordoil.tc}}; font-size: 11px; font-weight: 800; display: flex; align-items: center">{{st.nordoil.tag}}</span></span><span style="font-size: 12px; color: #6B6358">Kent Ave · on your way</span><span style="display: flex; gap: 6px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6B6358" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9h11a3 3 0 1 0-3-3M3 13h15a3 3 0 1 1-3 3M3 17h7"></path></svg><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6B6358" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 17h14l-1.5-5h-11zM7 12l1.5-4h7L17 12"></path><path d="M8 4v1M12 3v1M16 4v1"></path><circle cx="8" cy="18.5" r="1.3"></circle><circle cx="16" cy="18.5" r="1.3"></circle></svg><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6B6358" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8l1.5-4h13L20 8M4 8h16v12H4zM9 20v-6h6v6"></path></svg><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6B6358" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></span></span><span style="font-size: 15px; font-weight: 900; font-variant-numeric: tabular-nums; flex-shrink: 0">1.2 km</span></a>
+<div aria-label="{{st.freeway.aria}}" style="height: 76px; border-radius: 22px; background: {{st.freeway.bg}}; text-decoration: none; color: #2A2520; display: flex; align-items: center; gap: 12px; padding: 0 12px; box-shadow: {{st.freeway.ring}}; opacity: {{st.freeway.op}}; transition: opacity 0.2s ease;"><span aria-hidden="true" style="width: 92px; height: 44px; border-radius: 10px; background: #1B1F24; color: #FFD27A; display: flex; align-items: flex-start; justify-content: center; padding-top: 5px; box-sizing: border-box; font-family: VT323, monospace; font-size: 30px; white-space: nowrap; line-height: 1; box-shadow: inset 0 -2px 0 rgba(255,255,255,0.08); flex-shrink: 0">{{st.freeway.main}}<span style="font-size: 18px; line-height: 1.1">{{st.freeway.sup}}</span></span><span style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px"><span style="display: flex; align-items: center; gap: 6px"><span style="font-size: 16px; font-weight: 800">Freeway</span><span style="height: 20px; padding: 0 7px; border-radius: 10px; background: {{st.freeway.tb}}; color: {{st.freeway.tc}}; font-size: 11px; font-weight: 800; display: flex; align-items: center">{{st.freeway.tag}}</span></span><span style="font-size: 12px; color: #6B6358">Harbor Rd · +9 min detour</span><span style="display: flex; gap: 6px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6B6358" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9h11a3 3 0 1 0-3-3M3 13h15a3 3 0 1 1-3 3M3 17h7"></path></svg><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6B6358" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8l1.5-4h13L20 8M4 8h16v12H4zM9 20v-6h6v6"></path></svg><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6B6358" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3s5 5.5 5 9.5a5 5 0 0 1-10 0C7 8.5 12 3 12 3z"></path><path d="M9.5 13h5"></path></svg></span></span><span style="font-size: 15px; font-weight: 900; font-variant-numeric: tabular-nums; flex-shrink: 0">4.8 km</span></div>
+<div aria-label="{{st.voltrol.aria}}" style="height: 76px; border-radius: 22px; background: {{st.voltrol.bg}}; text-decoration: none; color: #2A2520; display: flex; align-items: center; gap: 12px; padding: 0 12px; box-shadow: {{st.voltrol.ring}}; opacity: {{st.voltrol.op}}; transition: opacity 0.2s ease;"><span aria-hidden="true" style="width: 92px; height: 44px; border-radius: 10px; background: #1B1F24; color: #FFD27A; display: flex; align-items: flex-start; justify-content: center; padding-top: 5px; box-sizing: border-box; font-family: VT323, monospace; font-size: 30px; white-space: nowrap; line-height: 1; box-shadow: inset 0 -2px 0 rgba(255,255,255,0.08); flex-shrink: 0">{{st.voltrol.main}}<span style="font-size: 18px; line-height: 1.1">{{st.voltrol.sup}}</span></span><span style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px"><span style="display: flex; align-items: center; gap: 6px"><span style="font-size: 16px; font-weight: 800">Voltrol</span><span style="height: 20px; padding: 0 7px; border-radius: 10px; background: {{st.voltrol.tb}}; color: {{st.voltrol.tc}}; font-size: 11px; font-weight: 800; display: flex; align-items: center">{{st.voltrol.tag}}</span></span><span style="font-size: 12px; color: #6B6358">Linden St · closest</span><span style="display: flex; gap: 6px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6B6358" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9h11a3 3 0 1 0-3-3M3 13h15a3 3 0 1 1-3 3M3 17h7"></path></svg><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6B6358" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 17h14l-1.5-5h-11zM7 12l1.5-4h7L17 12"></path><path d="M8 4v1M12 3v1M16 4v1"></path><circle cx="8" cy="18.5" r="1.3"></circle><circle cx="16" cy="18.5" r="1.3"></circle></svg><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6B6358" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8l1.5-4h13L20 8M4 8h16v12H4zM9 20v-6h6v6"></path></svg><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6B6358" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="5" r="1.8"></circle><circle cx="16" cy="5" r="1.8"></circle><path d="M6 21v-6H5l1-6h4l1 6h-1v6M14 21v-5h-1.5L14 9h4l1.5 7H18v5"></path></svg><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6B6358" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></span></span><span style="font-size: 15px; font-weight: 900; font-variant-numeric: tabular-nums; flex-shrink: 0">0.4 km</span></div>
+</div>
+
+<div style="position: absolute; left: 16px; right: 16px; top: 666px; height: 142px; border-radius: 22px; background: #fff; padding: 12px 14px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px" role="img" aria-label="Price through the day: highest overnight, cheapest from 19 to 21 hours, about 6 cents less than now">
+<div style="display: flex; align-items: baseline; gap: 8px"><span style="font-size: 12px; font-weight: 800; letter-spacing: 0.12em; color: #6B6358; flex-grow: 1">TODAY · E10</span><span style="font-size: 13px; font-weight: 800; color: #12663A">19–21 h · −6¢</span></div>
+<div style="height: 80px; display: flex; align-items: flex-end; gap: 3px"><span style="flex: 1; height: 80px; border-radius: 3px 3px 0 0; background: #C8322A"></span><span style="flex: 1; height: 80px; border-radius: 3px 3px 0 0; background: #C8322A"></span><span style="flex: 1; height: 80px; border-radius: 3px 3px 0 0; background: #C8322A"></span><span style="flex: 1; height: 80px; border-radius: 3px 3px 0 0; background: #C8322A"></span><span style="flex: 1; height: 80px; border-radius: 3px 3px 0 0; background: #C8322A"></span><span style="flex: 1; height: 80px; border-radius: 3px 3px 0 0; background: #C8322A"></span><span style="flex: 1; height: 70px; border-radius: 3px 3px 0 0; background: #C8322A"></span><span style="flex: 1; height: 61px; border-radius: 3px 3px 0 0; background: #C9BFAE"></span><span style="flex: 1; height: 51px; border-radius: 3px 3px 0 0; background: #C9BFAE"></span><span style="flex: 1; height: 56px; border-radius: 3px 3px 0 0; background: #C9BFAE"></span><span style="flex: 1; height: 42px; border-radius: 3px 3px 0 0; background: #C9BFAE"></span><span style="flex: 1; height: 47px; border-radius: 3px 3px 0 0; background: #C9BFAE"></span><span style="flex: 1; height: 56px; border-radius: 3px 3px 0 0; background: #C9BFAE"></span><span style="flex: 1; height: 42px; border-radius: 3px 3px 0 0; background: #C9BFAE"></span><span style="flex: 1; height: 37px; border-radius: 3px 3px 0 0; background: #C9BFAE; box-shadow: 0 0 0 2px #2A2520"></span><span style="flex: 1; height: 47px; border-radius: 3px 3px 0 0; background: #C9BFAE"></span><span style="flex: 1; height: 32px; border-radius: 3px 3px 0 0; background: #C9BFAE"></span><span style="flex: 1; height: 37px; border-radius: 3px 3px 0 0; background: #C9BFAE"></span><span style="flex: 1; height: 28px; border-radius: 3px 3px 0 0; background: #C9BFAE"></span><span style="flex: 1; height: 23px; border-radius: 3px 3px 0 0; background: #1E9E5A"></span><span style="flex: 1; height: 23px; border-radius: 3px 3px 0 0; background: #1E9E5A"></span><span style="flex: 1; height: 32px; border-radius: 3px 3px 0 0; background: #C9BFAE"></span><span style="flex: 1; height: 80px; border-radius: 3px 3px 0 0; background: #C8322A"></span><span style="flex: 1; height: 80px; border-radius: 3px 3px 0 0; background: #C8322A"></span></div>
+<div style="display: flex; justify-content: space-between; font-size: 10px; font-weight: 700; color: #9A9086; font-variant-numeric: tabular-nums"><span>0</span><span>6</span><span>12</span><span>now</span><span>18</span><span>24</span></div>
+</div>
+
+<a href="Route.dc.html" style="position: absolute; left: 16px; right: 16px; bottom: 28px; height: 56px; border-radius: 28px; background: #2A2520; color: #fff; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 15px; font-weight: 800"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v16M3 21h13M6.5 7h6v4h-6z"></path><path d="M15 9h2a2 2 0 0 1 2 2v6a1.5 1.5 0 0 0 3 0V8l-3-3"></path></svg>{{cta}}<span style="color: #7CFFB2; font-variant-numeric: tabular-nums">{{ctaSave}}</span></a>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":412,"height":915}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { grade: 'e10' };
+  }
+  renderVals() {
+    const G = {
+      e10: { name: 'E10', L: 40, best: 'nordoil', cta: 'Nordoil on the way', save: '−2.80',
+        st: { nordoil: [1.679, 'save 2.80', 'good'], freeway: [1.659, 'save 1.10', 'good'], voltrol: [1.749, 'avg', 'avg'] } },
+      s95: { name: 'Super 95', L: 40, best: 'nordoil', cta: 'Nordoil on the way', save: '−2.80',
+        st: { nordoil: [1.719, 'save 2.80', 'good'], freeway: [1.699, 'save 1.10', 'good'], voltrol: [1.789, 'avg', 'avg'] } },
+      s98: { name: 'Super 98', L: 40, best: 'nordoil', cta: 'Nordoil on the way', save: '−2.00',
+        st: { nordoil: [1.839, 'save 2.00', 'good'], freeway: [1.829, 'not worth it', 'meh'], voltrol: [1.889, 'avg', 'avg'] } },
+      diesel: { name: 'Diesel', L: 40, best: 'nordoil', cta: 'Nordoil on the way', save: '−1.60',
+        st: { nordoil: [1.629, 'save 1.60', 'good'], freeway: [1.599, 'save 0.30', 'good'], voltrol: [1.669, 'avg', 'avg'] } },
+      lpg: { name: 'LPG', L: 40, best: 'freeway', cta: 'Freeway · the only LPG near', save: '',
+        st: { nordoil: [null, 'no LPG', 'none'], freeway: [0.999, 'only LPG', 'good'], voltrol: [null, 'no LPG', 'none'] } },
+      adblue: { name: 'AdBlue', L: 10, best: 'freeway', cta: 'Freeway · AdBlue at the pump', save: '−6.41',
+        st: { nordoil: [null, 'no AdBlue', 'none'], freeway: [0.849, 'at the pump', 'good'], voltrol: [1.49, '10 L cans', 'avg'] } }
+    };
+    const NAMES = { nordoil: 'Nordoil, Kent Ave', freeway: 'Freeway, Harbor Road', voltrol: 'Voltrol, Linden Street' };
+    const TAG = { good: ['#E1F2EA', '#12663A'], avg: ['#EEE8DC', '#6B6358'], meh: ['#FBEBD3', '#8A5A00'], none: ['#EEE8DC', '#9A9086'] };
+    const k = this.state.grade;
+    const g = G[k];
+    const st = {};
+    Object.keys(g.st).forEach((id) => {
+      const row = g.st[id];
+      const p = row[0];
+      const txt = p === null ? '—' : p.toFixed(3);
+      const best = id === g.best;
+      st[id] = {
+        main: p === null ? '—' : txt.slice(0, -1), sup: p === null ? '' : txt.slice(-1),
+        tag: row[1], tb: TAG[row[2]][0], tc: TAG[row[2]][1],
+        op: p === null ? 0.5 : 1,
+        bg: best ? '#FFFFFF' : 'rgba(255,255,255,0.7)',
+        ring: best ? '0 0 0 2px #C8322A' : 'none',
+        aria: NAMES[id] + (p === null ? ': ' + row[1] : ', ' + g.name + ' ' + txt + ' per litre, ' + row[1])
+      };
+    });
+    const bp = g.st[g.best][0];
+    const gr = {};
+    Object.keys(G).forEach((id) => {
+      const on = id === k;
+      gr[id] = {
+        cur: on ? 'true' : 'false',
+        sh: on ? '0 0 0 2px #FFE08A, 0 0 14px rgba(255,224,138,0.9)' : 'inset 0 -3px 0 rgba(0,0,0,0.15)',
+        pick: () => this.setState({ grade: id })
+      };
+    });
+    return {
+      st: st, gr: gr,
+      pay: (bp * g.L).toFixed(2), litres: g.L.toFixed(2), perL: bp.toFixed(3),
+      dispAria: 'Pump display for the best pick: ' + (bp * g.L).toFixed(2) + ' euros for ' + g.L + ' litres of ' + g.name + ' at ' + bp.toFixed(3) + ' per litre',
+      cta: g.cta, ctaSave: g.save
+    };
+  }
+}
+</script>
+</body>
+</html>

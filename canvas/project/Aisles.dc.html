@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Atlas — Supermarkets</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&amp;family=Overpass:wght@700;800;900&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:Geist,system-ui,sans-serif;color:#14161B;background:#F4F5F3}
+a{color:#2E5BFF}a:hover{color:#1F45D6}
+</style>
+</helmet>
+<div style="width: 412px; height: 915px; position: relative; overflow: hidden; border-radius: 40px; background: #F4F5F3; font-family: Geist, system-ui, sans-serif; color: #14161B">
+<div style="position: absolute; left: 0; top: 0; width: 412px; height: 40px; background: #DCE0E3; display: flex; justify-content: space-around; align-items: center">
+<span style="width: 120px; height: 10px; border-radius: 5px; background: #FFFFFF; box-shadow: 0 0 14px rgba(255,255,255,0.95), 0 6px 20px rgba(255,255,255,0.8)"></span>
+<span style="width: 120px; height: 10px; border-radius: 5px; background: #FFFFFF; box-shadow: 0 0 14px rgba(255,255,255,0.95), 0 6px 20px rgba(255,255,255,0.8)"></span>
+</div>
+<span style="position: absolute; left: 110px; top: 40px; width: 2px; height: 40px; background: #9AA0A8"></span>
+<span style="position: absolute; left: 300px; top: 40px; width: 2px; height: 40px; background: #9AA0A8"></span>
+<div style="position: absolute; left: 56px; top: 78px; width: 300px; height: 84px; border-radius: 10px; background: linear-gradient(180deg, #2A6FB0, #1F5F99); box-shadow: 0 10px 18px rgba(20,40,70,0.25), inset 0 0 0 3px #1A5286, inset 0 0 0 5px #6FA2D2; display: flex; align-items: center; gap: 12px; padding: 0 18px; color: #fff">
+<span style="width: 52px; height: 52px; border-radius: 26px; background: #fff; color: #1F5F99; font-family: Overpass, sans-serif; font-weight: 900; font-size: 30px; display: flex; align-items: center; justify-content: center">1</span>
+<div style="display: flex; flex-direction: column; gap: 2px"><span style="font-family: Overpass, sans-serif; font-weight: 800; font-size: 25px; line-height: 1; letter-spacing: 0.01em">Supermarkets</span><span style="font-size: 13px; color: #CFE0F2; font-variant-numeric: tabular-nums">12 open · 4 brands</span></div>
+</div>
+<a href="Pantry.dc.html" aria-label="Back to the pantry" style="position: absolute; left: 14px; top: 94px; width: 34px; height: 52px; border-radius: 17px; background: rgba(255,255,255,0.9); color: #14161B; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.1)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg></a>
+<a href="List.dc.html" aria-label="Your list" style="position: absolute; right: 14px; top: 94px; width: 34px; height: 52px; border-radius: 17px; background: rgba(255,255,255,0.9); color: #14161B; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.1)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11"></path><circle cx="5" cy="6" r="1"></circle><circle cx="5" cy="12" r="1"></circle><circle cx="5" cy="18" r="1"></circle></svg></a>
+
+<div style="position: absolute; left: 16px; right: 0; top: 186px; display: flex; gap: 8px; overflow: hidden" role="group" aria-label="Brands">
+<button aria-pressed="true" style="height: 52px; padding: 0 14px 0 6px; border: 0; border-radius: 26px; background: #14161B; color: #fff; display: flex; align-items: center; gap: 8px; font: 600 14px Geist, sans-serif; flex-shrink: 0">
+<span style="width: 40px; height: 40px; border-radius: 12px; background: #1E9E5A; display: flex; align-items: center; justify-content: center"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h2l2.5 11h11l2-8H7"></path><circle cx="9" cy="20" r="1.4" fill="#fff"></circle><circle cx="17" cy="20" r="1.4" fill="#fff"></circle><path d="M12 7c2-3 5-3 6-2-1 2-3 3-6 2z" fill="#B8F36A" stroke="none"></path></svg></span>Greencart 4</button>
+<button style="height: 52px; padding: 0 14px 0 6px; border: 0; border-radius: 26px; background: #fff; color: #14161B; display: flex; align-items: center; gap: 8px; font: 600 14px Geist, sans-serif; flex-shrink: 0; box-shadow: 0 0 0 1px #E3E5E8">
+<span style="width: 40px; height: 40px; border-radius: 20px; background: #0F2F5C; display: flex; align-items: center; justify-content: center"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M3 14c3-3 6 3 9 0s6 3 9 0M3 18c3-3 6 3 9 0s6 3 9 0"></path><path d="M12 4v7M9 7h6"></path></svg></span>Harbor 3</button>
+<button style="height: 52px; padding: 0 14px 0 6px; border: 0; border-radius: 26px; background: #fff; color: #14161B; display: flex; align-items: center; gap: 8px; font: 600 14px Geist, sans-serif; flex-shrink: 0; box-shadow: 0 0 0 1px #E3E5E8">
+<span style="width: 40px; height: 40px; border-radius: 20px; background: #F28C28; color: #fff; font: 900 20px Overpass, sans-serif; display: flex; align-items: center; justify-content: center">K</span>Kora 3</button>
+<button style="height: 52px; padding: 0 14px 0 6px; border: 0; border-radius: 26px; background: #fff; color: #14161B; display: flex; align-items: center; gap: 8px; font: 600 14px Geist, sans-serif; flex-shrink: 0; box-shadow: 0 0 0 1px #E3E5E8">
+<span style="width: 40px; height: 40px; border-radius: 10px; background: #C8322A; display: flex; align-items: center; justify-content: center"><svg width="22" height="22" viewBox="0 0 24 24" fill="#fff"><path d="M12 2l2 8 8 2-8 2-2 8-2-8-8-2 8-2z"></path></svg></span>Nordby 2</button>
+</div>
+
+<div style="position: absolute; left: 16px; right: 16px; top: 256px; display: flex; gap: 8px" role="group" aria-label="Supermarket filters">
+<button aria-label="Open Sunday" aria-pressed="true" style="height: 40px; padding: 0 12px 0 10px; border: 0; border-radius: 20px; background: #E4EAFF; color: #1F3FC7; display: flex; align-items: center; gap: 6px; font: 700 13px Geist, sans-serif"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15" rx="2.5"></rect><path d="M3.5 10h17M8 3v4M16 3v4"></path></svg>Sun</button>
+<button aria-label="Self-checkout" aria-pressed="true" style="width: 40px; height: 40px; border: 0; border-radius: 20px; background: #E4EAFF; color: #1F3FC7; display: flex; align-items: center; justify-content: center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7V5h3M17 5h3v2M20 17v2h-3M7 19H4v-2M8 9v6M11 9v6M14 9v6M17 9v6"></path></svg></button>
+<button aria-label="Delivery" aria-pressed="false" style="width: 40px; height: 40px; border: 0; border-radius: 20px; background: #fff; color: #464C5A; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 1px #E3E5E8"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="6" cy="17" r="2.5"></circle><circle cx="18" cy="17" r="2.5"></circle><path d="M8.5 17h7M14 7h3l3 7M4 10h7v4"></path></svg></button>
+<button aria-label="Parking" aria-pressed="false" style="width: 40px; height: 40px; border: 0; border-radius: 20px; background: #fff; color: #464C5A; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 1px #E3E5E8; font: 800 15px Geist, sans-serif">P</button>
+<button aria-label="Step-free" aria-pressed="false" style="width: 40px; height: 40px; border: 0; border-radius: 20px; background: #fff; color: #464C5A; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 1px #E3E5E8"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="4.5" r="1.6"></circle><path d="M10 7.5v6h6l2.5 5M10 10.5h5M7.5 11.2A5.2 5.2 0 1 0 14.3 18"></path></svg></button>
+<button aria-label="Short checkout lines now" aria-pressed="false" style="width: 40px; height: 40px; border: 0; border-radius: 20px; background: #fff; color: #464C5A; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 1px #E3E5E8"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="8.5" r="3.2"></circle><path d="M3 19a6 6 0 0 1 12 0"></path><path d="M16 12l2 2 4-4"></path></svg></button>
+</div>
+
+<div style="position: absolute; left: 16px; right: 16px; top: 312px; display: flex; gap: 16px; font-size: 14px; font-weight: 600; color: #676D7C">
+<span style="color: #14161B; border-bottom: 2px solid #14161B; padding-bottom: 3px">Nearest</span><span>Biggest</span><span>Open latest</span><span>Cheapest</span>
+</div>
+
+<div style="position: absolute; left: 16px; right: 16px; top: 352px; display: flex; flex-direction: column; gap: 12px">
+<a href="Route.dc.html" style="height: 112px; border-radius: 6px; background: #FFFFFF; box-shadow: 0 2px 0 #D5D8DC, 0 6px 14px rgba(20,22,27,0.08); overflow: hidden; display: flex; flex-direction: column; text-decoration: none; color: #14161B">
+<span style="height: 8px; background: #1E9E5A"></span>
+<div style="flex-grow: 1; display: flex; align-items: center; gap: 12px; padding: 0 14px">
+<span style="width: 44px; height: 44px; border-radius: 12px; background: #1E9E5A; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h2l2.5 11h11l2-8H7"></path><circle cx="9" cy="20" r="1.4" fill="#fff"></circle><circle cx="17" cy="20" r="1.4" fill="#fff"></circle></svg></span>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 4px">
+<span style="font-size: 17px; font-weight: 700">Greencart Bedford</span>
+<span style="display: flex; gap: 8px; font-size: 12px; color: #464C5A; font-variant-numeric: tabular-nums"><span>→ 23:00</span><span>1,850 m²</span><span>★ 4.3</span></span>
+<svg width="90" height="12" viewBox="0 0 90 12" aria-hidden="true"><path d="M0 0v12M3 0v12M5 0v12M9 0v12M12 0v12M15 0v12M19 0v12M21 0v12M25 0v12M28 0v12M31 0v12M35 0v12M38 0v12M41 0v12M44 0v12M48 0v12M51 0v12M54 0v12M58 0v12M61 0v12M64 0v12M68 0v12M71 0v12M74 0v12M78 0v12M81 0v12M85 0v12M88 0v12" stroke="#14161B" stroke-width="1.2"></path></svg>
+</div>
+<div style="display: flex; flex-direction: column; align-items: flex-end; line-height: 1"><span style="font-size: 38px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums">4<span style="font-size: 22px">′</span></span><span style="font-size: 11px; color: #676D7C">walk</span></div>
+</div>
+</a>
+<div style="height: 112px; border-radius: 6px; background: #FFE45C; box-shadow: 0 2px 0 #D8BE2E, 0 6px 14px rgba(20,22,27,0.08); overflow: hidden; display: flex; flex-direction: column">
+<span style="height: 8px; background: #F28C28"></span>
+<div style="flex-grow: 1; display: flex; align-items: center; gap: 12px; padding: 0 14px">
+<span style="width: 44px; height: 44px; border-radius: 22px; background: #F28C28; color: #fff; font: 900 22px Overpass, sans-serif; display: flex; align-items: center; justify-content: center; flex-shrink: 0">K</span>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 4px">
+<span style="font-size: 17px; font-weight: 700">Kora Market</span>
+<span style="display: flex; gap: 8px; font-size: 12px; color: #3A3520; font-variant-numeric: tabular-nums"><span>→ 22:00</span><span style="font-weight: 700">cheapest basket</span></span>
+<div aria-label="Lines are short now" style="display: flex; align-items: flex-end; gap: 2px; height: 12px"><span style="width: 6px; height: 4px; background: #3A3520; opacity: 0.4"></span><span style="width: 6px; height: 6px; background: #3A3520; opacity: 0.4"></span><span style="width: 6px; height: 10px; background: #3A3520; opacity: 0.4"></span><span style="width: 6px; height: 5px; background: #1E7A46"></span><span style="width: 6px; height: 8px; background: #3A3520; opacity: 0.4"></span><span style="width: 6px; height: 12px; background: #3A3520; opacity: 0.4"></span></div>
+</div>
+<div style="display: flex; flex-direction: column; align-items: flex-end; line-height: 1"><span style="font-size: 38px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums">7<span style="font-size: 22px">′</span></span><span style="font-size: 11px; color: #3A3520">walk</span></div>
+</div>
+</div>
+<div style="height: 112px; border-radius: 6px; background: #FFFFFF; box-shadow: 0 2px 0 #D5D8DC, 0 6px 14px rgba(20,22,27,0.08); overflow: hidden; display: flex; flex-direction: column">
+<span style="height: 8px; background: #0F2F5C"></span>
+<div style="flex-grow: 1; display: flex; align-items: center; gap: 12px; padding: 0 14px">
+<span style="width: 44px; height: 44px; border-radius: 22px; background: #0F2F5C; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M3 14c3-3 6 3 9 0s6 3 9 0M3 18c3-3 6 3 9 0s6 3 9 0"></path><path d="M12 4v7M9 7h6"></path></svg></span>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 4px">
+<span style="font-size: 17px; font-weight: 700">Harbor Foods Kent</span>
+<span style="display: flex; gap: 8px; font-size: 12px; color: #464C5A; font-variant-numeric: tabular-nums"><span>→ 24/7</span><span>3,200 m²</span><span>P 40</span></span>
+<svg width="90" height="12" viewBox="0 0 90 12" aria-hidden="true"><path d="M0 0v12M2 0v12M6 0v12M9 0v12M11 0v12M15 0v12M18 0v12M22 0v12M24 0v12M27 0v12M31 0v12M34 0v12M36 0v12M40 0v12M43 0v12M47 0v12M50 0v12M52 0v12M56 0v12M59 0v12M63 0v12M65 0v12M69 0v12M72 0v12M76 0v12M79 0v12M83 0v12M86 0v12" stroke="#14161B" stroke-width="1.2"></path></svg>
+</div>
+<div style="display: flex; flex-direction: column; align-items: flex-end; line-height: 1"><span style="font-size: 38px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums">11<span style="font-size: 22px">′</span></span><span style="font-size: 11px; color: #676D7C">walk</span></div>
+</div>
+</div>
+<div style="height: 112px; border-radius: 6px; background: #FFFFFF; box-shadow: 0 2px 0 #D5D8DC, 0 6px 14px rgba(20,22,27,0.08); overflow: hidden; display: flex; flex-direction: column; opacity: 0.6">
+<span style="height: 8px; background: #C8322A"></span>
+<div style="flex-grow: 1; display: flex; align-items: center; gap: 12px; padding: 0 14px">
+<span style="width: 44px; height: 44px; border-radius: 10px; background: #C8322A; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><svg width="22" height="22" viewBox="0 0 24 24" fill="#fff"><path d="M12 2l2 8 8 2-8 2-2 8-2-8-8-2 8-2z"></path></svg></span>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 4px">
+<span style="font-size: 17px; font-weight: 700">Nordby Driggs</span>
+<span style="display: flex; gap: 8px; font-size: 12px; color: #464C5A; font-variant-numeric: tabular-nums"><span>→ 21:00</span><span>920 m²</span></span>
+</div>
+<div style="display: flex; flex-direction: column; align-items: flex-end; line-height: 1"><span style="font-size: 38px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums">13<span style="font-size: 22px">′</span></span><span style="font-size: 11px; color: #676D7C">walk</span></div>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":412,"height":915}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

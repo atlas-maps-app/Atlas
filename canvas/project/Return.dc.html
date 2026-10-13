@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Atlas — Bottle return</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800;900&amp;family=Geist+Mono:wght@500;700&amp;family=Instrument+Serif&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:Geist,system-ui,sans-serif;color:#15181C;background:#E8EFEA}
+a{color:#1E7A46}a:hover{color:#145A33}
+</style>
+</helmet>
+<div style="width: 412px; height: 915px; position: relative; overflow: hidden; border-radius: 40px; background: #E8EFEA; font-family: Geist, system-ui, sans-serif; color: #15181C">
+<div style="position: absolute; left: 16px; right: 16px; top: 42px; display: flex; align-items: center; gap: 10px">
+<a href="Bins.dc.html" aria-label="Back" style="width: 44px; height: 44px; border-radius: 22px; background: #fff; color: #15181C; display: flex; align-items: center; justify-content: center"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg></a>
+<span style="font-family: 'Instrument Serif', serif; font-size: 32px; line-height: 1; flex-grow: 1">Bottle return</span>
+<span style="height: 32px; padding: 0 10px; border-radius: 16px; background: #1E7A46; color: #fff; display: flex; align-items: center; font-size: 13px; font-weight: 800">5¢</span>
+</div>
+
+<div style="position: absolute; left: 60px; top: 100px; width: 292px; height: 420px; border-radius: 18px 18px 8px 8px; background: linear-gradient(90deg, #DDE3E0, #F7F9F8 40%, #CED6D2); box-shadow: 0 16px 30px rgba(20,40,30,0.25), inset 0 0 0 2px #B9C4BE" role="img" aria-label="Reverse vending machine, working">
+<div style="position: absolute; left: 0; right: 0; top: 0; height: 56px; border-radius: 18px 18px 0 0; background: #1E7A46; display: flex; align-items: center; justify-content: center; gap: 10px; color: #fff">
+<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 7a6 6 0 1 1-1 7"></path><path d="M4 12l3 2 2-3"></path></svg>
+<span style="font-size: 18px; font-weight: 900; letter-spacing: 0.1em">RETURN</span>
+<span style="width: 10px; height: 10px; border-radius: 5px; background: #7CFFB0; box-shadow: 0 0 8px #7CFFB0"></span>
+</div>
+<div style="position: absolute; left: 36px; top: 84px; width: 220px; height: 64px; border-radius: 8px; background: #0E1A12; box-shadow: inset 0 2px 8px rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; font-family: 'Geist Mono', monospace; color: #7CFFB0; text-shadow: 0 0 8px rgba(124,255,176,0.6)">
+<span style="font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums">{{count}}</span>
+<span style="font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums">{{total}}</span>
+</div>
+<div style="position: absolute; left: 86px; top: 176px; width: 120px; height: 120px; border-radius: 60px; background: radial-gradient(circle, #111 38%, #2A2F2C 40%, #3A423E 62%, #8E9A94 64%, #C9D3CE 70%); box-shadow: inset 0 4px 10px rgba(0,0,0,0.6), 0 2px 0 rgba(255,255,255,0.8)">
+<svg width="120" height="120" viewBox="0 0 120 120" aria-hidden="true"><g stroke="#3A423E" stroke-width="2"><path d="M60 60L60 16M60 60L91 29M60 60L104 60M60 60L91 91M60 60L60 104M60 60L29 91M60 60L16 60M60 60L29 29"></path></g><circle cx="60" cy="60" r="8" fill="#7CFFB0" opacity=".6"></circle></svg>
+</div>
+<div style="position: absolute; left: 36px; top: 322px; right: 36px; display: flex; gap: 10px">
+<button aria-label="Print the receipt" style="flex-grow: 1; height: 50px; border: 0; border-radius: 25px; background: #1E7A46; color: #fff; box-shadow: 0 4px 0 #145A33; font: 800 14px Geist, sans-serif; display: flex; align-items: center; justify-content: center; gap: 6px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"></path><path d="M9 8h6M9 12h6"></path></svg>Receipt</button>
+<button aria-label="Donate the refund" style="width: 50px; height: 50px; border: 0; border-radius: 25px; background: #fff; color: #C8322A; box-shadow: 0 4px 0 #B9C4BE; display: flex; align-items: center; justify-content: center"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.4 4.3 4.3 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z"></path></svg></button>
+</div>
+<span style="position: absolute; left: 110px; top: 392px; width: 72px; height: 8px; border-radius: 4px; background: #1A1F1C; box-shadow: inset 0 2px 3px rgba(0,0,0,0.7)"></span>
+</div>
+
+<div style="position: absolute; left: 16px; right: 16px; top: 540px; height: 76px; border-radius: 24px; background: #fff; display: flex; align-items: center; gap: 10px; padding: 0 12px" aria-label="Count what you are bringing">
+<svg width="26" height="30" viewBox="0 0 20 26" fill="none" stroke="#5A6070" stroke-width="1.8" aria-label="Cans"><rect x="3" y="3" width="14" height="20" rx="3"></rect><path d="M3 7h14M3 19h14"></path></svg>
+<button onClick="{{lessCans}}" aria-label="One can fewer" style="width: 36px; height: 36px; border: 0; border-radius: 18px; background: #F1EEE8; font: 800 18px Geist, sans-serif; color: #15181C">−</button>
+<span style="width: 30px; text-align: center; font-size: 18px; font-weight: 900; font-variant-numeric: tabular-nums">{{cans}}</span>
+<button onClick="{{moreCans}}" aria-label="One can more" style="width: 36px; height: 36px; border: 0; border-radius: 18px; background: #F1EEE8; font: 800 18px Geist, sans-serif; color: #15181C">+</button>
+<span style="flex-grow: 1"></span>
+<svg width="20" height="30" viewBox="0 0 16 28" fill="none" stroke="#1E7A46" stroke-width="1.8" stroke-linejoin="round" aria-label="Bottles"><path d="M6 2h4v5c3 2 4 4 4 7v12H2V14c0-3 1-5 4-7z"></path></svg>
+<button onClick="{{lessBottles}}" aria-label="One bottle fewer" style="width: 36px; height: 36px; border: 0; border-radius: 18px; background: #F1EEE8; font: 800 18px Geist, sans-serif; color: #15181C">−</button>
+<span style="width: 30px; text-align: center; font-size: 18px; font-weight: 900; font-variant-numeric: tabular-nums">{{bottles}}</span>
+<button onClick="{{moreBottles}}" aria-label="One bottle more" style="width: 36px; height: 36px; border: 0; border-radius: 18px; background: #F1EEE8; font: 800 18px Geist, sans-serif; color: #15181C">+</button>
+</div>
+
+<div style="position: absolute; left: 16px; right: 16px; top: 632px; display: flex; flex-direction: column; gap: 8px">
+<a href="Route.dc.html" style="height: 70px; border-radius: 20px; background: #fff; display: flex; align-items: center; gap: 12px; padding: 0 14px; text-decoration: none; color: #15181C">
+<span style="width: 12px; height: 12px; border-radius: 6px; background: #1E9E5A; box-shadow: 0 0 0 4px rgba(30,158,90,0.2)"></span>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 16px; font-weight: 800">Greencart</span><span style="font-size: 12px; color: #464C5A; font-variant-numeric: tabular-nums">3 machines · all working · → 23:00</span></div>
+<span style="font-size: 17px; font-weight: 900; font-variant-numeric: tabular-nums">4′</span>
+</a>
+<div style="height: 70px; border-radius: 20px; background: #fff; display: flex; align-items: center; gap: 12px; padding: 0 14px">
+<span style="width: 12px; height: 12px; border-radius: 6px; background: #F2A71B; box-shadow: 0 0 0 4px rgba(242,167,27,0.2)"></span>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 16px; font-weight: 800">Kora Market</span><span style="font-size: 12px; color: #8A5A00; font-variant-numeric: tabular-nums">full, reported 20′ ago</span></div>
+<span style="font-size: 17px; font-weight: 900; font-variant-numeric: tabular-nums">7′</span>
+</div>
+<div style="height: 70px; border-radius: 20px; background: #fff; display: flex; align-items: center; gap: 12px; padding: 0 14px">
+<span style="width: 12px; height: 12px; border-radius: 6px; background: #5A6070"></span>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 16px; font-weight: 800">Redemption centre</span><span style="font-size: 12px; color: #464C5A; font-variant-numeric: tabular-nums">big bags counted by hand · Sat</span></div>
+<span style="font-size: 17px; font-weight: 900; font-variant-numeric: tabular-nums">1.1 km</span>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":412,"height":915}}'>
+class Component extends DCLogic {
+constructor(props) {
+super(props);
+this.state = { cans: 18, bottles: 6 };
+}
+renderVals() {
+const { cans, bottles } = this.state;
+const n = cans + bottles;
+return {
+cans, bottles,
+count: String(n),
+total: '$' + (n * 0.05).toFixed(2),
+moreCans: () => this.setState({ cans: cans + 1 }),
+lessCans: () => this.setState({ cans: Math.max(0, cans - 1) }),
+moreBottles: () => this.setState({ bottles: bottles + 1 }),
+lessBottles: () => this.setState({ bottles: Math.max(0, bottles - 1) })
+};
+}
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+{
+  "id": "no_timber",
+  "name": "Norwegian wooden town",
+  "says": "a Norwegian town house",
+  "says_by": {"wood": "a Norwegian wooden house"},
+  "summary": "Painted timber boards (white, Falu red, ochre, yellow), steep red-tiled gables, white window frames; plastered blocks in the centre",
+  "floor_h": 3.0,
+  "levels": {"default": 2, "apartments": 4, "commercial": 4, "office": 5, "retail": 3},
+  "walls": {
+    "home": [["wood", "#ECE8DE", 5], ["wood", "#8E3226", 3], ["wood", "#C99242", 2], ["wood", "#E2C46E", 2], ["wood", "#C9C6BC", 1], ["wood", "#7F96A3", 1], ["wood", "#86906E", 1]],
+    "apartments": [["plaster", "#E6E1D6", 3], ["plaster", "#D9CDB6", 2], ["plaster", "#C9BFAE", 1], ["brick", "#9C5A45", 2], ["plaster", "#E3D3A9", 1]],
+    "default": [["plaster", "#E2DDD2", 3], ["plaster", "#D6CAB3", 2], ["brick", "#9A5946", 2], ["wood", "#ECE8DE", 1]],
+    "worship": [["stone", "#A8A397", 2], ["brick", "#93533F", 1]],
+    "monument": [["stone", "#B1AB9E", 1], ["wood", "#8E3226", 1]],
+    "modern": [["plaster", "#E9E6DF", 2], ["concrete", "#BEBAB1", 1], ["glass", "#93ABBC", 1]],
+    "shed": [["wood", "#8E3226", 2], ["wood", "#ECE8DE", 1], ["wood", "#6F675C", 1]],
+    "industrial": [["metal", "#A9AFB4", 1], ["wood", "#8E3226", 1]]
+  },
+  "roof": {
+    "home": {"shapes": [["gabled", 5], ["hipped", 1]], "material": "roof_tiles", "colours": ["#8C3B2A", "#93412E", "#3F4044", "#7E3627"], "pitch": 0.8},
+    "default": {"shapes": [["gabled", 2], ["hipped", 2], ["flat", 1]], "material": "roof_tiles", "colours": ["#8C3B2A", "#3F4146", "#5C5F63"], "pitch": 0.7},
+    "worship": {"shapes": [["gabled", 1]], "material": "slate", "colours": ["#4C5258"], "pitch": 1.0},
+    "modern": {"shapes": [["flat", 1]], "material": "tar_paper", "colours": ["#56585C"]},
+    "shed": {"shapes": [["gabled", 1]], "material": "roof_tiles", "colours": ["#8C3B2A", "#3F4146"], "pitch": 0.6}
+  },
+  "windows": {"bay": 2.1, "w": 0.42, "h": 0.56, "top": 0.22, "frame": "#F3F1EA", "glass": "dark", "bars": true, "kinds": ["home", "hotel", "retail", "office", "monument", "school", "default"]},
+  "shutters": null,
+  "eaves": 0.35,
+  "boards": {"materials": ["wood"], "spacing": 0.2, "corner": "#F1EEE6"},
+  "chimneys": {"share": 0.45, "kind": "plain", "colour": "#6E6A64"},
+  "cornice": false
+}

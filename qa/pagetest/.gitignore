@@ -1,0 +1,4 @@
+# made by build.sh, mkharness.py and the suites
+runner
+plan/out/
+plan/shots/

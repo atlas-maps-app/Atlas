@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Atlas — Cafés</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Caveat:wght@500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:Geist,system-ui,sans-serif;color:#F2F0E6;background:#8A5A33}
+a{color:#F4E48A}a:hover{color:#FFF3B0}
+</style>
+</helmet>
+<div style="width: 412px; height: 915px; position: relative; overflow: hidden; border-radius: 40px; background: linear-gradient(135deg, #9A6739, #7A4D2A 50%, #8E5C33); font-family: Caveat, cursive; color: #F2F0E6">
+<div style="position: absolute; left: 12px; top: 12px; right: 12px; bottom: 12px; border-radius: 30px; background-color: #2B302C; background-image: radial-gradient(ellipse at 20% 15%, rgba(255,255,255,0.07), rgba(255,255,255,0) 40%), radial-gradient(ellipse at 80% 60%, rgba(255,255,255,0.05), rgba(255,255,255,0) 45%), radial-gradient(ellipse at 40% 90%, rgba(255,255,255,0.04), rgba(255,255,255,0) 40%); box-shadow: inset 0 0 30px rgba(0,0,0,0.6), inset 0 0 0 2px rgba(0,0,0,0.4)"></div>
+
+<div style="position: absolute; left: 28px; right: 28px; top: 40px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; align-items: center; gap: 10px">
+<a href="Menus.dc.html" aria-label="Back to the table" style="width: 44px; height: 44px; border-radius: 22px; box-shadow: inset 0 0 0 2px rgba(242,240,230,0.55); color: #F2F0E6; display: flex; align-items: center; justify-content: center"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg></a>
+<span style="flex-grow: 1"></span>
+<a href="Order.dc.html" aria-label="Your order" style="width: 44px; height: 44px; border-radius: 22px; box-shadow: inset 0 0 0 2px rgba(242,240,230,0.55); color: #F2F0E6; display: flex; align-items: center; justify-content: center"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="1.5"></rect><path d="M8 8h8M8 12h8M8 16h5"></path></svg></a>
+</div>
+
+<div style="display: flex; flex-direction: column; align-items: center">
+<span style="font-size: 54px; font-weight: 700; line-height: 0.9; text-shadow: 0 0 1px rgba(255,255,255,0.6), 0 0 6px rgba(255,255,255,0.12)">Coffee &amp; Co.</span>
+<svg width="220" height="18" viewBox="0 0 220 18" fill="none" aria-hidden="true"><path d="M4 10C50 4 120 14 216 6" stroke="#F4E48A" stroke-width="3" stroke-linecap="round" opacity=".8"></path><path d="M30 14C80 10 140 16 190 12" stroke="#F4E48A" stroke-width="1.5" stroke-linecap="round" opacity=".45"></path></svg>
+<span style="font-size: 22px; color: #CFE8C9; font-variant-numeric: tabular-nums">86 open now</span>
+</div>
+
+<div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 16px; font-size: 26px; font-weight: 600">
+<span style="position: relative; color: #F4E48A; padding: 0 8px">Coffee<svg style="position: absolute; left: -6px; top: -4px" width="92" height="44" viewBox="0 0 92 44" fill="none"><path d="M10 26C4 12 40 2 70 6s22 22 0 30-58 4-62-8" stroke="#F4E48A" stroke-width="2" stroke-linecap="round"></path></svg></span>
+<span style="opacity: 0.8">Tea</span>
+<span style="opacity: 0.8">Bubble tea</span>
+<span style="opacity: 0.8">Bakery</span>
+<span style="opacity: 0.8">Brunch</span>
+</div>
+
+<div style="display: flex; justify-content: space-between" role="group" aria-label="Café filters">
+<button aria-label="Wi-Fi" aria-pressed="true" style="width: 46px; height: 46px; border: 0; background: transparent; color: #F4E48A; display: flex; align-items: center; justify-content: center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.8 16a5 5 0 0 1 6.4 0"></path><circle cx="12" cy="19.3" r=".9"></circle></svg></button>
+<button aria-label="Quiet right now" aria-pressed="true" style="width: 46px; height: 46px; border: 0; background: transparent; color: #F4E48A; display: flex; align-items: center; justify-content: center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M16 9.5l5 5M21 9.5l-5 5"></path></svg></button>
+<button aria-label="Outdoor seating" aria-pressed="false" style="width: 46px; height: 46px; border: 0; background: transparent; color: rgba(242,240,230,0.55); display: flex; align-items: center; justify-content: center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 18 0H3z"></path><path d="M12 12v6.5a2 2 0 0 1-4 0"></path></svg></button>
+<button aria-label="Plant milk" aria-pressed="false" style="width: 46px; height: 46px; border: 0; background: transparent; color: rgba(242,240,230,0.55); display: flex; align-items: center; justify-content: center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 19c0-8 5-13.5 14-14 0 9-5 14-13 14"></path><path d="M5 19l7.5-7.5"></path></svg></button>
+<button aria-label="Open early" aria-pressed="false" style="width: 46px; height: 46px; border: 0; background: transparent; color: rgba(242,240,230,0.55); display: flex; align-items: center; justify-content: center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 18h18M6.5 18a5.5 5.5 0 0 1 11 0M12 5v4M4.8 9.8l1.6 1.6M19.2 9.8l-1.6 1.6"></path></svg></button>
+<button aria-label="Takeaway cups" aria-pressed="false" style="width: 46px; height: 46px; border: 0; background: transparent; color: rgba(242,240,230,0.55); display: flex; align-items: center; justify-content: center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 7h12l-1.5 14h-9z"></path><path d="M5 7l1-3h12l1 3M8 12h8"></path></svg></button>
+</div>
+
+<svg width="356" height="10" viewBox="0 0 356 10" aria-hidden="true"><path d="M2 5C80 2 200 8 354 4" stroke="rgba(242,240,230,0.35)" stroke-width="1.5" fill="none" stroke-linecap="round"></path></svg>
+
+<div style="display: flex; flex-direction: column; gap: 12px">
+<div style="display: flex; flex-direction: column">
+<div style="display: flex; align-items: baseline; gap: 8px; font-size: 30px; font-weight: 700; line-height: 1.05"><span>Low Tide Coffee</span><svg width="18" height="18" viewBox="0 0 24 24" fill="#F4E48A" aria-label="Just opened"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg><span style="flex-grow: 1; border-bottom: 2px dotted rgba(242,240,230,0.4); transform: translateY(-6px)"></span><span style="font-size: 26px; font-variant-numeric: tabular-nums">4′</span></div>
+<span style="font-size: 20px; color: rgba(242,240,230,0.72)">★ 4.8 · wifi · quiet now</span>
+</div>
+<div style="display: flex; flex-direction: column">
+<div style="display: flex; align-items: baseline; gap: 8px; font-size: 30px; font-weight: 700; line-height: 1.05"><span>Kettle &amp; Crane</span><span style="flex-grow: 1; border-bottom: 2px dotted rgba(242,240,230,0.4); transform: translateY(-6px)"></span><span style="font-size: 26px; font-variant-numeric: tabular-nums">6′</span></div>
+<span style="font-size: 20px; color: rgba(242,240,230,0.72)">★ 4.6 · wifi · 12 seats free</span>
+</div>
+<div style="display: flex; flex-direction: column">
+<div style="display: flex; align-items: baseline; gap: 8px; font-size: 30px; font-weight: 700; line-height: 1.05"><span>Moss &amp; Milk</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#CFE8C9" stroke-width="2.4" stroke-linecap="round" aria-label="Plant milk only"><path d="M5 19c0-8 5-13.5 14-14 0 9-5 14-13 14"></path></svg><span style="flex-grow: 1; border-bottom: 2px dotted rgba(242,240,230,0.4); transform: translateY(-6px)"></span><span style="font-size: 26px; font-variant-numeric: tabular-nums">9′</span></div>
+<span style="font-size: 20px; color: rgba(242,240,230,0.72)">★ 4.7 · wifi · roastery</span>
+</div>
+<div style="display: flex; flex-direction: column; opacity: 0.55">
+<div style="display: flex; align-items: baseline; gap: 8px; font-size: 30px; font-weight: 700; line-height: 1.05"><span>Tea Leaf Society</span><span style="flex-grow: 1; border-bottom: 2px dotted rgba(242,240,230,0.4); transform: translateY(-6px)"></span><span style="font-size: 26px; font-variant-numeric: tabular-nums">10′</span></div>
+</div>
+</div>
+</div>
+
+<div style="position: absolute; left: 40px; right: 40px; bottom: 36px; height: 92px; transform: rotate(-1.5deg); border: 2.5px solid rgba(244,228,138,0.75); border-radius: 12px; display: flex; align-items: center; gap: 12px; padding: 0 16px">
+<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#F4E48A" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 9h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9z"></path><path d="M17 10.5h1.5a2.5 2.5 0 0 1 0 5H17M8 3.5c0 1.5 1 1.5 1 3M12 3.5c0 1.5 1 1.5 1 3"></path></svg>
+<div style="flex-grow: 1; display: flex; flex-direction: column">
+<span style="font-size: 20px; color: #F4E48A">today’s special</span>
+<span style="font-size: 26px; font-weight: 700; line-height: 1">Fernwood — brunch till 3</span>
+</div>
+<a href="Eat.dc.html" aria-label="Show on map" style="color: #F2F0E6; display: flex"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":412,"height":915}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+{
+  "lists": {
+    "t1": [
+      "Bar",
+      "Menus",
+      "Carte",
+      "Ramen",
+      "Order",
+      "Cafe",
+      "Aisles",
+      "List",
+      "Pantry",
+      "Compare",
+      "Refill"
+    ],
+    "t2": [
+      "Stroll",
+      "Errands",
+      "Season",
+      "Scan",
+      "Help"
+    ],
+    "t3": [],
+    "t4": [],
+    "t5": []
+  },
+  "tiers": [
+    {
+      "id": "t1",
+      "name": "S"
+    },
+    {
+      "id": "t2",
+      "name": "A"
+    },
+    {
+      "id": "t3",
+      "name": "B"
+    },
+    {
+      "id": "t4",
+      "name": "C"
+    },
+    {
+      "id": "t5",
+      "name": "D"
+    }
+  ]
+}

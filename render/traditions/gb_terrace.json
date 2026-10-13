@@ -1,0 +1,28 @@
+{
+  "id": "gb_terrace",
+  "name": "London terrace",
+  "says": "a London terraced house",
+  "summary": "Stucco fronts in white, cream and pale colours, or London stock brick above a stucco ground floor; sash windows in white; slate roofs, chimney stacks with pots on the party walls",
+  "floor_h": 3.2,
+  "levels": {"default": 4, "terrace": 4, "house": 3},
+  "walls": {
+    "home": [["plaster", "#EEE9DE", 5], ["plaster", "#EADFC6", 2], ["brick", "#B49A76", 4], ["brick", "#A3805F", 2], ["plaster", "#E7CCC6", 1], ["plaster", "#C6D6E0", 1], ["plaster", "#EBDDA8", 1], ["plaster", "#CFDFCB", 1]],
+    "default": [["brick", "#B19774", 3], ["plaster", "#ECE6DA", 3], ["brick", "#9C6F55", 1]],
+    "worship": [["stone", "#BDB6A6", 1], ["brick", "#A5795C", 1]],
+    "modern": [["brick", "#A08468", 2], ["concrete", "#BEBAB1", 1], ["glass", "#93ABBC", 1]],
+    "school": [["brick", "#A27552", 1]],
+    "shed": [["brick", "#9C7A5E", 1]]
+  },
+  "roof": {
+    "home": {"shapes": [["gabled", 4], ["hipped", 1], ["flat", 1]], "material": "slate", "colours": ["#4B535B", "#555D64", "#474D53"], "pitch": 0.6, "terrace_across": true},
+    "default": {"shapes": [["flat", 2], ["gabled", 1]], "material": "slate", "colours": ["#4E565E", "#5F646A"], "pitch": 0.55},
+    "worship": {"shapes": [["gabled", 1]], "material": "slate", "colours": ["#4B535B"], "pitch": 1.0},
+    "modern": {"shapes": [["flat", 1]], "material": "tar_paper", "colours": ["#56585C"]}
+  },
+  "windows": {"bay": 2.3, "w": 0.42, "h": 0.62, "top": 0.16, "frame": "#F4F2EC", "glass": "dark", "bars": true, "kinds": ["home", "hotel", "retail", "office", "school", "default"]},
+  "shutters": null,
+  "base_band": {"materials": ["brick"], "h": 3.3, "colour": "#ECE6DA"},
+  "eaves": 0.15,
+  "chimneys": {"share": 0.9, "kind": "party", "colour": "#8C7258", "pots": "#A65E3E"},
+  "cornice": true
+}

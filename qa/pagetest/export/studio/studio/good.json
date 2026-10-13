@@ -1,0 +1,112 @@
+{
+  "bar": [
+    "artful",
+    "prachtig",
+    "minimal",
+    "with character",
+    "made with care and love"
+  ],
+  "examples": [
+    {
+      "line": "",
+      "screen": "Bar"
+    },
+    {
+      "line": "",
+      "screen": "Menus"
+    },
+    {
+      "line": "",
+      "screen": "Aisles"
+    },
+    {
+      "line": "",
+      "screen": "Refill"
+    },
+    {
+      "line": "",
+      "screen": "Stroll"
+    },
+    {
+      "line": "",
+      "screen": "Errands"
+    }
+  ],
+  "from": "TheBar.dc.html on the canvas, 7 Oct 2026",
+  "intro": "What makes a screen good here. On 6 October every screen was sorted by eye: 133 are good, each for its own reason, and each can still get better. Eight of them:",
+  "made": [
+    {
+      "text": "Agents that know nothing else: a few words, the screen, a bare wrapper.",
+      "title": "Envision, on a blank sheet"
+    },
+    {
+      "text": "The candidates and our good screens for that job, one line on what is good in each.",
+      "title": "Merge with the good ones"
+    },
+    {
+      "text": "A real place, real data, the facts checked.",
+      "title": "Make it real"
+    }
+  ],
+  "prefs": {
+    "by": "rank",
+    "n": 6,
+    "perCat": true,
+    "skipFolders": true
+  },
+  "rule": "A screen goes on the canvas only when it looks better than the one it replaces and adds something. Nothing unnecessary: one thing removed before one is added. Nothing is ever finished.",
+  "share": [
+    {
+      "screens": [
+        "Sweets",
+        "DisruptionCraft",
+        "PostParcels",
+        "Fly"
+      ],
+      "text": "The sign, the ticket, the clock, the window. Its readings are the data; 84 of the 133 do this.",
+      "title": "A real thing from the place carries the answer"
+    },
+    {
+      "screens": [
+        "PostParcels",
+        "DisruptionCraft"
+      ],
+      "text": "It ends in a sentence or a button that settles it.",
+      "title": "One question, answered at a glance"
+    },
+    {
+      "screens": [
+        "Main",
+        "Late"
+      ],
+      "text": "Empty space stays empty. Calm and warm are allowed, never required.",
+      "title": "Rich but calm"
+    },
+    {
+      "screens": [
+        "Fly",
+        "PlaceLiving"
+      ],
+      "text": "Your gate, your pace, your table at 19:30; never about the app.",
+      "title": "About you and the moment"
+    },
+    {
+      "screens": [
+        "OffRouteLiving",
+        "PlaceLiving"
+      ],
+      "text": "What is missing is one small question, not the screen.",
+      "title": "Honest in a few words"
+    },
+    {
+      "screens": [],
+      "text": "How it looks and what it does for you; neither traded for the other.",
+      "title": "Both sides worked out"
+    },
+    {
+      "screens": [],
+      "text": "Visuals at a glance when they add value. No lines of text",
+      "title": "Visuals instead of text"
+    }
+  ]
+}
