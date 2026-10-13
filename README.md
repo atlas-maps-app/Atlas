@@ -30,6 +30,10 @@ Each page owns its facts; the others link to it or show a copy made by a script.
 | Studio | https://claude.ai/artifact/91R7EDZTwhvELNpH6nvfSB | screen ratings, envisioning words, the Good tab, the Inbox (your requests and ideas) | `studio/studio.html` (`studio/README.md`) |
 
 
+## Licence
+
+The code, the boards and the notes are under the MIT licence (`LICENSE`): use it, change it, fork it. The data in `data/` keeps the terms of its sources: the OpenStreetMap extracts are © OpenStreetMap contributors under the ODbL, and the other open datasets (PDOK, Open-Meteo, Wikidata, NDW, OVapi, Open Food Facts) carry their own open licences; the sources are listed in `render/README.md` and in the studio's Sources tab.
+
 ## Every session
 
 Tokens are the budget: the boards and the two pages are big, the databases are small.

@@ -23,5 +23,5 @@ Still open, taken by building: which open-source offline router, and which voice
 One line each, by tab, in [ideas.md](ideas.md). New ideas come in through the Studio's Inbox (Add an idea); they are moved here when they are taken up. The planned screens and the open to-dos the pages carried are there too, with the categories the boards cover.
 
 
-- An idea is one plain line. What it is and how it is done is figured out when it is built.
+- An idea is one plain line. What it is and how it is done is figured out when it is built. When it is built, the line is purged from ideas.md, not marked done.
 - Before any workflow over many files or agents: the agent count and a token estimate
