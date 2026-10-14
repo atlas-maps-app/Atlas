@@ -20,6 +20,7 @@ TERRAIN = {'dunes', 'sangimignano'}          # regions drawn on their real groun
 TOWNS = {'sangimignano'}          # of those, towns: squares and parks in the ground, trees and lamps kept, every building down to the slope
 RELIEF = {'port', 'schiphol', 'bergen'}   # flat drawing, with the real relief shown as light and shade
 GENERALISE = {'grachten': 0.8, 'grachten_home': 0.7, 'grachten_eat': 0.6, 'paris': 0.9, 'schiphol': 0.6, 'port': 0.6, 'dunes': 0.5, 'paris_close': 0.3, 'schiphol_close': 0.4, 'port_close': 0.4, 'paris_walk': 0.0, 'nottinghill_close': 0.15, 'sangimignano_close': 0.2, 'bergen_close': 0.2}       # metres: footprint detail below this is not visible at the zoom shown
+POWER_NEAR, POWER_FAR = 1200.0, 2000.0      # metres from the camera: power lines and their pylons are drawn whole up to NEAR, fade out by FAR (far views stay calm; 14 Oct 2026)
 PALETTE = {          # region-wide generic looks for guessed colours: the honest default where building:colour is not mapped
     'paris': dict(old=['#D9CDB4', '#E2D7C1', '#D4C6AA', '#DDD2BC', '#CFC2A6'], plaster=['#E8E0D0', '#EEE7D9'], new=['#CFC8BC', '#C8C2B8', '#D8D2C6']),
     'schiphol': dict(old=['#9C8E80', '#8F8780'], plaster=['#E6E2DA'], new=['#B8B6B1', '#A9A7A2', '#C4C2BD', '#9FA3A8', '#8E949A']),
@@ -859,6 +860,8 @@ def draw_items(S, cam, th, far, defs):
             if far(*a) and far(*b): continue
             c = cam.cam(((a[0] + b[0]) / 2, H, (a[1] + b[1]) / 2))
             if c[2] < 5: continue
+            fade = 1.0 if c[2] <= POWER_NEAR else (POWER_FAR - c[2]) / (POWER_FAR - POWER_NEAR)
+            if fade <= 0: continue
             s = cam.focal / c[2]; segs = []
             for off in (-6, 0, 6):
                 dx, dz = b[0] - a[0], b[1] - a[1]; Lg = math.hypot(dx, dz) or 1; nx, nz = -dz / Lg * off, dx / Lg * off
@@ -866,7 +869,8 @@ def draw_items(S, cam, th, far, defs):
                 if all(q): segs.append('M' + 'L'.join('%.1f %.1f' % p for p in q))
             p0, p1 = cam.proj((a[0], 0, a[1])), cam.proj((a[0], H + 2, a[1]))
             tw = '<path d="M%.1f %.1fL%.1f %.1f" stroke="%s" stroke-width="%.2f"/>' % (p0[0], p0[1], p1[0], p1[1], '#6E747C' if not night else '#1A1E26', max(0.5, 1.4 * s)) if p0 and p1 else ''
-            items.append((c[2], 'svg', tw + ('<path d="%s" fill="none" stroke="%s" stroke-width=".45" opacity=".8"/>' % (''.join(segs), '#4A4F57' if not night else '#1A1E26') if segs else '')))
+            body = tw + ('<path d="%s" fill="none" stroke="%s" stroke-width=".45" opacity=".8"/>' % (''.join(segs), '#4A4F57' if not night else '#1A1E26') if segs else '')
+            items.append((c[2], 'svg', body if fade >= 1 else '<g opacity="%.2f">%s</g>' % (fade, body)))
     return items
 
 def view_moments(S, name, cfg):
