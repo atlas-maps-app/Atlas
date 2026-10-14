@@ -4,7 +4,7 @@ Start here. The brief is in the [README](../README.md); the boards are the spec:
 
 Everything about the app is decided here, in its code and in this file. Nothing sits in between: no plan page, no procedure. A decision is written down the day it is made, under Decisions.
 
-The code is `android/`: a Kotlin and Jetpack Compose project that builds from the command line (its README says how, and which versions it stands on). It has one blank screen so far.
+The code is `android/`: a Kotlin and Jetpack Compose project that builds from the command line and on GitHub (its README says how, which versions it stands on, and what each module is).
 
 ## The order
 

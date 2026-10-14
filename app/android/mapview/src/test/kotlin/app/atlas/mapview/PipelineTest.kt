@@ -88,7 +88,8 @@ class PipelineTest {
             waitFor(what = "the cover's scenes") { pipeline.pending == 0 }
             for (id in cover) assertNotNull("$id", pipeline.cache.get(id, "day"))
             assertEquals(cover.size, pipeline.built)
-            assertTrue(changes.get() >= cover.size)
+            // onChange runs just after a job leaves the list, so the last one may land a moment after pending reads 0.
+            waitFor(what = "a change per scene") { changes.get() >= cover.size }
             val reads = tiles.reads
             assertEquals(0, pipeline.want(cover, Look.DAY, "day"))
             assertEquals(reads, tiles.reads)
@@ -178,7 +179,8 @@ class PipelineTest {
             assertTrue(f.frame.stats.triangles > 1000)
             assertEquals(f.wanted, f.drawnTiles)
             assertFalse(f.fading)
-            assertTrue(frames.get() >= f.number.toInt())
+            // onFrame runs just after the frame is published, so the last call may land a moment later.
+            waitFor(what = "an onFrame per frame") { frames.get() >= f.number.toInt() }
         } finally {
             loop.close()
             pipeline.close()
