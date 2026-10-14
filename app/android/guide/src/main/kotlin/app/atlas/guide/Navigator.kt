@@ -86,7 +86,9 @@ class Navigator(
 
     /** Takes the next location fix (about once a second) and returns where things stand and what to say, play or feel now. */
     @Synchronized
-    fun update(fix: Fix): Guidance {
+    fun update(fix: Fix): Guidance = follow(fix.sane())
+
+    private fun follow(fix: Fix): Guidance {
         val m = matcher.match(fix)
         lastAlong = m.along
         val dt = lastTime?.let { Duration.between(it, fix.time).toMillis() / 1000.0 }?.coerceIn(0.05, 30.0) ?: 1.0
@@ -96,7 +98,7 @@ class Navigator(
         speed = if (speed.isNaN()) raw else speed + (1 - exp(-dt / tau)) * (raw - speed)
 
         if (!m.offRoute) stepIndex = stepAfter(m)
-        eta.update(index, m.along, fix.time, speed, onRoute = !m.offRoute && !m.coarse)
+        eta.update(index, m.along, fix.time, speed, onRoute = !m.offRoute && !m.coarse, accuracy = fix.accuracy)
         val remaining = (index.length - m.along).coerceAtLeast(0.0)
         val cues = ArrayList<Cue>()
 
@@ -172,11 +174,29 @@ class Navigator(
      */
     @Synchronized
     fun replaceRoute(newRoute: Route, newDestination: LatLon? = destination) {
+        val oldAlong = lastAlong
+        // Warnings told and not yet reached: the new route passing the same place as soon does not tell them again.
+        // Those already passed are forgotten, so a new route that comes by them again warns again.
+        val told = HashMap<String, Pair<Double, Boolean>>()
+        for (c in callouts) {
+            val ahead = c.along - oldAlong
+            val second = c.id + "/2" in calloutsDone
+            if (ahead >= -5 && (c.id in calloutsDone || second)) told.putIfAbsent(carryKey(c), ahead to second)
+        }
         index = RouteIndex(newRoute, profile.defaultSpeed)
         destination = newDestination
         matcher.reset(index)
-        announcer.replace(index)
+        announcer.replace(index, oldAlong)
         callouts = Callouts.build(index, settings, phrasebook, profile)
+        calloutsDone.clear()
+        for (c in callouts) {
+            if (told.isEmpty()) break
+            // Only the first pass of the new route by that place: a later one (on the way back) warns again.
+            val (ahead, second) = told.remove(carryKey(c)) ?: continue
+            if (!sameApproach(ahead, c.along)) continue
+            calloutsDone += c.id
+            if (second) calloutsDone += c.id + "/2"
+        }
         calloutReach = reachOf(callouts)
         calloutStart = 0
         lastAlong = 0.0
@@ -256,8 +276,12 @@ class Navigator(
 
     private fun nearEnd(fix: Fix, m: Match): Boolean {
         if (m.coarse) return false
-        val end = index.line.points.lastOrNull() ?: return false
-        return Geo.distance(fix.location, end) <= arriveRadius(fix)
+        val pts = index.line.points
+        val end = pts.lastOrNull() ?: return false
+        val r = arriveRadius(fix)
+        if (Geo.distance(fix.location, end) > r) return false
+        // A round trip ends where it starts: there, only someone who got round most of it has arrived.
+        return Geo.distance(fix.location, pts.first()) > r || m.along >= index.length / 2
     }
 
     private fun reachedEnd(fix: Fix, m: Match, remaining: Double): Boolean {
@@ -294,22 +318,25 @@ class Navigator(
         while (calloutStart < callouts.size && callouts[calloutStart].along < along - PASSED_M) calloutStart++
         val due = ArrayList<Callout>()
         val ids = ArrayList<String>()
+        var dark: Boolean? = null
         for (k in calloutStart until callouts.size) {
             val c = callouts[k]
             val d = c.along - along
             if (d < -5) continue
             if (d > calloutReach) break
-            if (c.whenDark && Sun.position(fix.time, fix.location).altitudeDeg > CIVIL_DUSK) continue
             val firstDone = c.id in calloutsDone
-            val secondId = c.id + "/2"
-            if (!firstDone && d <= c.lead.at(v)) {
-                due += c
+            val first = !firstDone && d <= c.lead.at(v)
+            val second = firstDone && c.second != null && d <= c.second.at(v) && c.id + "/2" !in calloutsDone
+            if (!first && !second) continue
+            // The sun is worked out once per fix, and only when an after-dark warning is due.
+            if (c.whenDark && !(dark ?: (Sun.position(fix.time, fix.location).altitudeDeg <= CIVIL_DUSK).also { dark = it })) continue
+            due += c
+            if (first) {
                 ids += c.id
                 // Found already inside the close warning's range: one warning, not two in a row.
-                if (c.second != null && d <= c.second.at(v)) ids += secondId
-            } else if (firstDone && c.second != null && secondId !in calloutsDone && d <= c.second.at(v)) {
-                due += c
-                ids += secondId
+                if (c.second != null && d <= c.second.at(v)) ids += c.id + "/2"
+            } else {
+                ids += c.id + "/2"
             }
         }
         if (due.isEmpty()) return
@@ -359,6 +386,9 @@ class Navigator(
 
     private companion object {
         const val REROUTE_RETRY_S = 30L
+
+        /** What a warning is about, the same on any route past the same place: its place id and its words. */
+        fun carryKey(c: Callout): String = c.id.substringBefore('#') + '\u0000' + c.text(0.0)
 
         /** How far ahead any of [callouts] can be due: the longest lead at the fastest speed it allows. */
         fun reachOf(callouts: List<Callout>): Double =

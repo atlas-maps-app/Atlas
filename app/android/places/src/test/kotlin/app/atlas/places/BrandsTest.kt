@@ -97,4 +97,19 @@ class BrandsTest {
         println("brands with a logo: $withLogo of ${Brands.all().size}")
         for (b in Brands.all()) if (b.logoSlug != null) assertNotNull(b.id, b.logo)
     }
+
+    @Test
+    fun otherTagsKeepTheirListValues() {
+        // "cuisine=burger;pizza;seafood" used to come back as cuisine=burger, the rest dropped
+        assertEquals(
+            mapOf("cuisine" to "burger;pizza;seafood", "official_name" to "Les 3 Brasseurs"),
+            Brands.otherTags("cuisine=burger;pizza;seafood;official_name=Les 3 Brasseurs"),
+        )
+        assertEquals(mapOf("cuisine" to "coffee_shop", "takeaway" to "yes"), Brands.otherTags("cuisine=coffee_shop;takeaway=yes"))
+        assertEquals(emptyMap<String, String>(), Brands.otherTags(""))
+        val shoes = Brands.byId("3hermanos-02b23f")!!
+        assertEquals("women;men;children", shoes.otherTags["shoes"])
+        assertEquals("women;men;children", shoes.tags["shoes"])
+        assertEquals("burger;pizza;seafood", Brands.byId("3brasseurs-17e7d6")!!.tags["cuisine"])
+    }
 }

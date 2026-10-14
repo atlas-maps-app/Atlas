@@ -109,6 +109,18 @@ class WeatherTest {
     }
 
     @Test
+    fun aForecastThatCameIsShownEvenWhenItCannotBeKept() = runBlocking {
+        // The cache folder cannot be written (here it is a file): keeping fails, but the forecast that arrived stands.
+        val notAFolder = tmp.newFile("full")
+        Mock().use { m ->
+            m.fixture("meteo_forecast.json")
+            val f = Weather(testHttp(), notAFolder, base = m.base) { fetched }.forecast(amsterdam)
+            assertEquals(48, f.hours.size)
+            assertFalse(f.kept)
+        }
+    }
+
+    @Test
     fun dailyDatesSurviveAClockChange() {
         // Asked on 27 March 2026 in Amsterdam (UTC+1); summer time starts on the 29th, so later days begin at 22:00 UTC.
         val midnights = listOf("2026-03-27T23:00:00Z", "2026-03-28T23:00:00Z", "2026-03-29T22:00:00Z", "2026-03-30T22:00:00Z").map { Instant.parse(it).epochSecond }

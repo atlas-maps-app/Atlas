@@ -371,4 +371,31 @@ class OpeningHoursTest {
         // dated rules still look up to a year ahead
         assertEquals(t("2027-12-25T10:00"), oh("Dec 25 10:00-12:00").status(t("2026-12-25T13:00")).changesAt)
     }
+
+    @Test
+    fun wholeYearSelectorsStillMakeAWeeklyPlaque() {
+        // "Jan-Dec" and "week 01-53" select every day: the door-plaque table used to come out empty
+        for (v in listOf("Jan-Dec Mo-Fr 08:00-17:00", "week 01-53 Mo-Fr 08:00-17:00", "Dec-Nov Mo-Fr 08:00-17:00")) {
+            val week = oh(v).weekTable()
+            assertEquals(v, listOf(OpenSpan(480, 1020, OpenState.OPEN)), week[0])
+            assertTrue(v, week[5].isEmpty())
+        }
+        // a season is still a dated rule
+        assertTrue(oh("Apr-Oct Mo-Fr 08:00-17:00").weekTable()[0].isEmpty())
+    }
+
+    @Test
+    fun the29thOfFebruaryInACommonYear() {
+        // a range ending on 29 February ends on the 28th in a common year; it used to drop the whole range
+        val winter = "Mo-Su 10:00-18:00; Nov 01-Feb 29 off"
+        assertEquals(false, open(winter, "2027-02-28T12:00"))
+        assertEquals(false, open(winter, "2026-11-15T12:00"))
+        assertEquals(true, open(winter, "2027-03-01T12:00"))
+        assertEquals(false, open(winter, "2028-02-29T12:00"))
+        // a range from 29 February starts on 1 March; the day alone does not exist
+        assertEquals(true, open("Feb 29-Mar 05 10:00-12:00", "2027-03-01T11:00"))
+        assertEquals(false, open("Feb 29 10:00-12:00", "2027-03-01T11:00"))
+        assertEquals(false, open("Feb 29 10:00-12:00", "2027-02-28T11:00"))
+        assertEquals(true, open("Feb 29 10:00-12:00", "2028-02-29T11:00"))
+    }
 }

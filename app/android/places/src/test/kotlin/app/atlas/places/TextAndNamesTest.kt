@@ -94,4 +94,17 @@ class TextAndNamesTest {
         assertEquals(AddressStyle.BRITISH, Localise.styleFor("ie"))
         assertEquals(AddressStyle.STREET_FIRST, Localise.styleFor(null))
     }
+
+    @Test
+    fun compatibilityFormsAndLanguageSubtags() {
+        assertEquals("cafe", Text.fold("ｃａｆｅ"))
+        assertEquals("fish", Text.fold("ﬁsh"))
+        assertEquals("istanbul", Text.fold("İstanbul"))
+        assertTrue(Presets.search("ｃａｆｅ").first().preset.id == "amenity/cafe")
+        // a script subtag is tried before the bare language
+        val t = mapOf("name" to "台北101", "name:zh-Hant" to "臺北101", "name:zh" to "台北101大楼")
+        assertEquals("臺北101", Localise.name(t, "zh-Hant-TW"))
+        assertEquals("台北101大楼", Localise.name(t, "zh-CN"))
+        assertEquals("台北101大楼", Localise.name(t, "ZH"))
+    }
 }

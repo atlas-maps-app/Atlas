@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The window behind Compose and the splash screen; Compose itself takes its colours from AtlasTheme. -->
+    <color name="atlas_paper">#FFF2EEE6</color>
+    <color name="atlas_ink">#FF14161B</color>
+    <color name="atlas_blue">#FF2E5BFF</color>
+    <color name="atlas_icon_background">#FFF4F1EA</color>
+</resources>

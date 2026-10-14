@@ -7,12 +7,15 @@ object Text {
     private val marks = Regex("\\p{Mn}+")
     private val spaces = Regex("[\\s\\p{P}]+")
 
-    /** Lower case, accents removed, "ß" as "ss", punctuation as single spaces: "Café-Bar" -> "cafe bar". */
+    /**
+     * Lower case, accents removed, compatibility forms unfolded (full-width letters, ligatures), "ß" as "ss",
+     * punctuation as single spaces: "Café-Bar" -> "cafe bar", "ｃａｆｅ" -> "cafe".
+     */
     fun fold(s: String): String {
         if (s.isEmpty()) return s
         var ascii = true
         for (c in s) if (c.code >= 128) { ascii = false; break }
-        val base = if (ascii) s.lowercase() else Normalizer.normalize(s.lowercase(), Normalizer.Form.NFD).replace(marks, "")
+        val base = if (ascii) s.lowercase() else Normalizer.normalize(s, Normalizer.Form.NFKD).lowercase().replace(marks, "")
         val sb = StringBuilder(base.length)
         for (c in base) {
             when (c) {

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="search_title">Zoeken</string>
+    <string name="search_hint">Zoek of vraag</string>
+    <string name="search_categories">Soorten plekken</string>
+    <string name="search_footer">Zoeken gebeurt op de telefoon, over namen, tags en merken uit OpenStreetMap.</string>
+    <string name="query_title">A bij B</string>
+    <string name="query_text">Zoek plekken op wat er dichtbij is: een café binnen 200 m van een fietsstation.</string>
+    <string name="place_route">Route</string>
+    <string name="place_osm">Op OpenStreetMap</string>
+    <string name="place_tags">%1$d tags</string>
+    <string name="place_loading">Deze plek opzoeken…</string>
+    <string name="place_not_found">Deze plek staat niet op de telefoon en er is geen verbinding om haar op te zoeken.</string>
+    <string name="brands_title">Merken</string>
+    <string name="brands_chains">Ketens</string>
+    <string name="brands_independent">Zelfstandig</string>
+    <string name="brands_none">Hier in de buurt niets in de kaart</string>
+    <string name="brands_branches">%1$s, %2$d in de buurt</string>
+    <plurals name="brand_branches_near">
+        <item quantity="one">%d vestiging in de buurt</item>
+        <item quantity="other">%d vestigingen in de buurt</item>
+    </plurals>
+    <string name="category_title">In de buurt</string>
+    <string name="whatshere_title">Wat is hier</string>
+    <string name="whatshere_coordinates">Coördinaten</string>
+    <string name="whatshere_nearby">In de buurt</string>
+</resources>

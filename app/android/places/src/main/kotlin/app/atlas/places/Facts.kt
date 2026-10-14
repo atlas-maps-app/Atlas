@@ -3,6 +3,7 @@ package app.atlas.places
 import app.atlas.model.Place
 import java.time.LocalDateTime
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
 
@@ -208,14 +209,17 @@ object Facts {
                 st.isOpen -> FactState.YES
                 else -> FactState.NO
             }
-            // when it next opens or closes: "18:00" today or tomorrow, "Mon 07:00" further on; for hours that do not
-            // say, their comment ("by appointment")
+            // when it next opens or closes: "18:00" today or tomorrow, "Mon 07:00" within the week, "1 Jun 07:00" later
+            // (a weekday alone would read as the coming one); for hours that do not say, their comment ("by appointment")
             val at = st.changesAt?.takeIf { !st.openEnd }
+            val locale = Locale.forLanguageTag(Langs.resolve(lang))
             val value = when {
                 st.unknown && st.comment != null -> st.comment
                 at == null -> st.comment
+                at.toLocalDate().isAfter(now.toLocalDate().plusDays(6)) ->
+                    DateTimeFormatter.ofPattern("d MMM", locale).format(at) + " " + clock(at)
                 at.toLocalDate().isAfter(now.toLocalDate().plusDays(1)) ->
-                    at.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.forLanguageTag(Langs.resolve(lang))) + " " + clock(at)
+                    at.dayOfWeek.getDisplayName(TextStyle.SHORT, locale) + " " + clock(at)
                 else -> clock(at)
             }
             add(FactKind.OPENING_HOURS, "opening_hours", state, value)

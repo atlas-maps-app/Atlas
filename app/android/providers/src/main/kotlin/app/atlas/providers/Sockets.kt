@@ -41,7 +41,10 @@ object Sockets {
     /** True if any socket there is DC. */
     fun hasDc(tags: Map<String, String>): Boolean = of(tags).any { it.type in DC }
 
-    /** Power as OSM writes it, in kW: "50 kW", "22", "11000 W", "3,7 kW", "350 kW". */
+    /**
+     * Power as OSM writes it, in kW: "50 kW", "22", "11000 W", "3,7 kW", "350 kW". A bare number is kW, unless it is
+     * over a thousand: no charger gives megawatts unlabelled, so "22000" is watts.
+     */
     fun parseKw(s: String?): Double? {
         if (s.isNullOrBlank()) return null
         val m = POWER.find(s.trim()) ?: return null
@@ -49,7 +52,8 @@ object Sockets {
         return when (m.groupValues[2].lowercase(Locale.ROOT)) {
             "w" -> n / 1000.0
             "mw" -> n * 1000.0
-            else -> n
+            "kw" -> n
+            else -> if (n > 1000) n / 1000.0 else n
         }
     }
 
@@ -84,12 +88,37 @@ object Sockets {
         else -> false
     }
 
-    /** True if the charger in [tags] has a socket for [connectors] with at least [minKw] (when its power is known). */
+    /**
+     * True if the charger in [tags] has a socket for [connectors] that gives at least [minKw]: its own output when
+     * tagged, else as [unlabelledKw] judges it from the station's output and the kind of socket.
+     */
     fun accepts(tags: Map<String, String>, connectors: Set<String>, minKw: Double = 0.0): Boolean {
         val sockets = of(tags)
         if (sockets.isEmpty()) return connectors.isEmpty() && (minKw <= 0 || (maxKw(tags) ?: 0.0) >= minKw)
-        return sockets.any { s -> (connectors.isEmpty() || fits(connectors, s.type)) && (minKw <= 0 || (s.kw ?: maxKw(tags) ?: 0.0) >= minKw) }
+        val station = if (minKw > 0) parseKw(tags["charging_station:output"]) else null
+        return sockets.any { s -> (connectors.isEmpty() || fits(connectors, s.type)) && (minKw <= 0 || (s.kw ?: unlabelledKw(s.type, station)) >= minKw) }
     }
+
+    /**
+     * The power a socket of [type] with no output of its own is taken to give: the station's output [stationKw] where
+     * tagged, but never more than that kind of socket gives (a type 2 socket never gives 50 kW); without it, what that
+     * kind of socket usually gives (an unlabelled CCS socket is an ordinary 50 kW charger, not the fastest there is).
+     */
+    fun unlabelledKw(type: String, stationKw: Double?): Double {
+        val (usual, most) = POWER_BY_KIND[type] ?: return stationKw ?: 0.0
+        return if (stationKw != null) minOf(stationKw, most) else usual
+    }
+
+    // Usual and highest power by kind of socket, in kW.
+    private val POWER_BY_KIND: Map<String, Pair<Double, Double>> = mapOf(
+        "type1" to (7.4 to 19.2), "type2" to (11.0 to 43.0), "type2_cable" to (22.0 to 43.0), "type3a" to (3.7 to 22.0),
+        "type3c" to (11.0 to 22.0), "schuko" to (2.3 to 3.7), "typee" to (2.3 to 3.7), "typec" to (2.3 to 2.3), "bs1363" to (2.3 to 3.0),
+        "as3112" to (2.3 to 3.6), "cee_blue" to (3.7 to 3.7), "cee_red_16a" to (11.0 to 11.0), "cee_red_32a" to (22.0 to 22.0),
+        "cee_red_63a" to (43.0 to 43.0), "gb_ac" to (7.0 to 27.7), "tesla_destination" to (11.0 to 22.0), "tesla_roadster" to (16.8 to 16.8),
+        "chademo" to (50.0 to 400.0), "type2_combo" to (50.0 to 400.0), "type1_combo" to (50.0 to 400.0), "gb_dc" to (60.0 to 250.0),
+        "chaoji" to (120.0 to 900.0), "tesla_supercharger" to (120.0 to 250.0), "tesla_supercharger_ccs" to (120.0 to 250.0),
+        "nacs" to (50.0 to 325.0), "mcs" to (750.0 to 3750.0),
+    )
 
     /** Open Charge Map connection type ids, from its reference data, to OSM socket names. */
     val OCM: Map<Int, String> = mapOf(

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tab_map">Kaart</string>
+    <string name="tab_go">Ga</string>
+    <string name="tab_soon">Straks</string>
+    <string name="tab_local">Lokaal</string>
+    <string name="tab_mine">Mijn</string>
+
+    <string name="kit_back">Terug</string>
+    <string name="kit_close">Sluiten</string>
+    <string name="kit_sheet_expand">Meer tonen</string>
+    <string name="kit_sheet_collapse">Minder tonen</string>
+    <string name="kit_departure_time">Tijd</string>
+    <string name="kit_departure_to">Naar</string>
+    <string name="kit_departure_platform">Sp</string>
+    <string name="kit_open_until">open tot %1$s</string>
+    <string name="kit_open_24_7">altijd open</string>
+    <string name="kit_open">open</string>
+    <string name="kit_closes_in">sluit over %1$d min</string>
+    <string name="kit_closed_opens">dicht · opent %1$s</string>
+    <string name="kit_closed">dicht</string>
+    <string name="kit_hours_unknown">openingstijden onbekend</string>
+    <string name="kit_mic">Spreek</string>
+    <string name="kit_mic_unavailable">Geen spraakherkenning op deze telefoon</string>
+    <string name="kit_offline">Offline</string>
+    <string name="kit_loading">Zoeken…</string>
+    <string name="kit_retry">Opnieuw</string>
+</resources>

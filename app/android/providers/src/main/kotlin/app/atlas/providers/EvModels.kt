@@ -73,7 +73,7 @@ data class EvModel(
 }
 
 /**
- * The open EV vehicle catalogue bundled with Atlas: 2,341 cars, vans and motorbikes merged from Open EV Data
+ * The open EV vehicle catalogue bundled with Atlas: 2,294 battery-electric cars, vans and motorbikes merged from Open EV Data
  * (KilowattApp, MIT with attribution; consumption and 876 measured charging curves) and the OpenEV Data dataset
  * (CDLA-Permissive-2.0; newer models, weights and drag). Built by `providers/tools/build_ev_models.py`.
  */

@@ -4,6 +4,8 @@ import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
 import app.atlas.model.Place
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -14,6 +16,7 @@ import java.time.Instant
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * A charger source that works from a whole file it downloads now and then (a national register), indexed on the phone
@@ -64,40 +67,59 @@ abstract class DownloadedChargers(
 
     override suspend fun status(ids: List<String>): Map<String, ChargerStatus> = index().status(ids)
 
+    // When an automatic refresh last failed, and why: the kept copy serves until RETRY_AFTER has passed.
+    @Volatile
+    private var failure: Pair<Instant, String>? = null
+
     /**
      * The chargers: in memory, else from the cache, refreshed first when stale and [autoDownload] allows.
-     * Throws [ProviderException] when there is nothing yet and nothing may be downloaded.
+     * Callers that find the data stale together share one download; after a failed one the kept copy serves for
+     * [RETRY_AFTER] before the server is asked again. Throws [ProviderException] when there is nothing yet.
      */
     suspend fun index(): ChargerIndex {
-        val now = clock()
-        val m = meta()
-        val stale = m == null || java.time.Duration.between(m.fetched, now).toMillis() > maxAge.inWholeMilliseconds
-        if (stale && autoDownload) {
+        if (autoDownload && isStale() && !resting()) {
             try {
-                refresh()
+                lock.withLock { if (isStale()) fetch(force = false) }
+                failure = null
             } catch (e: IOException) {
+                currentCoroutineContext().ensureActive()
+                failure = clock() to (e.message ?: e.javaClass.simpleName)
                 // Offline or the server is down: the kept copy, however old, is better than nothing.
                 loaded ?: readCache() ?: throw e
             }
         }
-        return loaded ?: readCache() ?: throw ProviderException(id, "${info.name}: nothing downloaded yet")
+        return loaded ?: readCache()
+            ?: throw ProviderException(id, "${info.name}: nothing downloaded yet" + (failure?.let { " (the last try failed: ${it.second})" } ?: ""))
     }
 
     /**
      * Fetches the file if it changed since the last time (or always with [force]) and rebuilds the index.
      * Returns true when new data arrived, false when the server said it was unchanged.
      */
-    suspend fun refresh(force: Boolean = false): Boolean = lock.withLock {
+    suspend fun refresh(force: Boolean = false): Boolean = lock.withLock { fetch(force) }
+
+    private fun isStale(): Boolean {
+        val m = meta() ?: return true
+        return java.time.Duration.between(m.fetched, clock()).toMillis() > maxAge.inWholeMilliseconds
+    }
+
+    private fun resting(): Boolean =
+        failure?.let { (at, _) -> java.time.Duration.between(at, clock()).toMillis() < RETRY_AFTER.inWholeMilliseconds } == true
+
+    /** [refresh] with the lock held. */
+    private suspend fun fetch(force: Boolean): Boolean {
         val url = sourceUrl()
-        val old = meta()?.takeIf { it.url == url && !force && (loaded != null || dataFile?.exists() == true) }
+        // Ask conditionally only with a copy to fall back on: a cache file that no longer reads must come again whole.
+        val kept = if (force) null else loaded ?: readCache()
+        val old = meta()?.takeIf { it.url == url && kept != null }
         val request = http.request(url).header("Accept", "*/*").apply {
             old?.etag?.let { header("If-None-Match", it) }
             old?.lastModified?.let { header("If-Modified-Since", it) }
         }.build()
-        val result = http.exchange(request, DOWNLOAD_TIMEOUT) { response ->
+        val result = http.exchange(request, DOWNLOAD_TIMEOUT, DOWNLOAD_STALL) { response ->
             when {
                 response.code == 304 -> null
-                !response.isSuccessful -> throw HttpException(response.code, url, response.body.string().take(300))
+                !response.isSuccessful -> throw HttpException(response.code, url, response.errorBody())
                 else -> {
                     val builder = ChargerIndex.Builder(info)
                     response.body.byteStream().use { parse(it, region, builder::add) }
@@ -108,15 +130,15 @@ abstract class DownloadedChargers(
         val now = clock()
         if (result == null) {
             // A 304 only answers a conditional request; without a kept copy it cannot stand for the data.
-            val kept = old ?: throw ProviderException(id, "${info.name} answered 304 to an unconditional request")
-            writeMeta(kept.copy(fetched = now))
-            return@withLock false
+            val unchanged = old ?: throw ProviderException(id, "${info.name} answered 304 to an unconditional request")
+            writeMeta(unchanged.copy(fetched = now))
+            return false
         }
         val (index, etag, lastModified) = result
         loaded = index
         writeCache(index)
         writeMeta(Meta(url, etag, lastModified, now))
-        true
+        return true
     }
 
     /** Builds the index from a file already on disk (a pack, or a test fixture) in the source's own format. */
@@ -175,7 +197,13 @@ abstract class DownloadedChargers(
         /** National files are big and some servers are slow (NDW sends about 70 kB/s): allow a long read. */
         val DOWNLOAD_TIMEOUT: Duration = 15.minutes
 
+        /** But a download that stops moving for this long has lost its connection, and fails rather than hang. */
+        val DOWNLOAD_STALL: Duration = 60.seconds
+
         /** Live status files (NDW) are refreshed several times a day upstream. */
         val LIVE_MAX_AGE: Duration = 3.hours
+
+        /** After a failed automatic refresh, how long the kept copy serves before the server is asked again. */
+        val RETRY_AFTER: Duration = 5.minutes
     }
 }

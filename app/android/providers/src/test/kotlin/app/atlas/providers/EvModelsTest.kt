@@ -11,8 +11,8 @@ class EvModelsTest {
 
     @Test
     fun theBundledCatalogueLoads() {
-        assertEquals(2341, ev.all.size)
-        assertEquals(1321, ev.all.count { it.source == "kw" })
+        assertEquals(2294, ev.all.size)
+        assertEquals(1320, ev.all.count { it.source == "kw" })
         assertTrue(ev.all.all { it.batteryKwh > 0 && it.consumption > 0 })
         assertTrue(ev.all.count { it.curve.isNotEmpty() && !it.curveIsDefault } >= 800)
         assertTrue(ev.makes().contains("Tesla"))
@@ -54,7 +54,7 @@ class EvModelsTest {
     @Test
     fun newerModelsComeFromOpenEvDataWithPhysics() {
         val oed = ev.all.filter { it.source == "oed" }
-        assertTrue(oed.size > 1000)
+        assertTrue(oed.size > 900)
         assertTrue(oed.all { it.consumptionEstimated })
         val truck = ev.search("tesla cybertruck 2024").first()
         assertEquals("oed", truck.source)
@@ -76,6 +76,22 @@ class EvModelsTest {
         val years = tesla.map { it.year ?: 0 }
         assertEquals(years.sortedDescending(), years)
         assertTrue(ev.ofMake("No Such Make").isEmpty())
+    }
+
+    @Test
+    fun everyModelIsABatteryCarTheRouterCanPlanWith() {
+        // OpenEV Data lists plug-in hybrids among its cars (a Chery "PHEV" at 49 kWh/100 km, an EREV at 3.5): the router
+        // would plan charging stops for a car with a petrol tank. And one upstream typo (81.1 kWh/100 km) is left out.
+        assertTrue(ev.all.none { Regex("""\b(phev|hybrid|erev)\b""", RegexOption.IGNORE_CASE).containsMatchIn("${it.model} ${it.variant}") })
+        assertTrue(ev.search("tiggo 8 pro").isEmpty())
+        assertTrue(ev.search("exeed sterra es").isEmpty())
+        for (m in ev.all) {
+            val (lo, hi) = if (m.kind == "motorbike" || m.kind == "microcar") 3.0 to 20.0 else 6.0 to 45.0
+            assertTrue("${m.title}: ${m.consumption} kWh/100 km", m.consumption in lo..hi)
+            // A DC port with no DC power, or the reverse, would hide every fast charger from the router.
+            assertEquals(m.title, m.dcPorts.isNotEmpty(), (m.maxDcKw ?: 0.0) > 0)
+            assertTrue(m.title, m.connectors.isNotEmpty())
+        }
     }
 
     @Test

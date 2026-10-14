@@ -27,7 +27,11 @@ sealed class TagFilter {
     /** Every key the filter reads (key regexes are left out). */
     abstract fun keys(): Set<String>
 
-    /** The Overpass QL tag selectors when the filter is a plain conjunction, e.g. `[amenity=cafe][!fee]`; else null. */
+    /**
+     * The Overpass QL tag selectors when the filter is a plain conjunction, e.g. `[amenity=cafe][!fee]`; else null.
+     * They select at least what [matches] accepts: on keys whose values are `;` lists by convention (cuisine, sport…)
+     * an equality becomes a list-aware regex, since Overpass compares whole values.
+     */
     open fun toOverpass(): String? = null
 
     override fun toString() = toText()
@@ -45,7 +49,8 @@ sealed class TagFilter {
         override fun matches(tags: Map<String, String>) = tags[key]?.let { anyPart(it) { p -> p == value } } ?: false
         override fun toText() = "${quoteKey(key)}=${quoteValue(value)}"
         override fun keys() = setOf(key)
-        override fun toOverpass() = "[${ql(key)}=${ql(value)}]"
+        override fun toOverpass() =
+            if (key in listKeys) "[${ql(key)}~${ql(listPattern(regexLiteral(value)))}]" else "[${ql(key)}=${ql(value)}]"
     }
 
     /** Not [Equals]: true too when the key is missing, as Overpass `[k!=v]`. */
@@ -75,7 +80,14 @@ sealed class TagFilter {
         }
         override fun toText() = "${quoteKey(key)}${if (negate) "!~" else "~"}${quoteValue(pattern)}"
         override fun keys() = setOf(key)
-        override fun toOverpass() = "[${ql(key)}${if (negate) "!~" else "~"}${ql(pattern)},i]"
+        override fun toOverpass(): String? {
+            if (negate || key !in listKeys || ('^' !in pattern && '$' !in pattern)) {
+                return "[${ql(key)}${if (negate) "!~" else "~"}${ql(pattern)},i]"
+            }
+            // an anchored pattern on a list key must match one part: only plain word lists can be said that way
+            val words = literalAlternatives(pattern) ?: return null
+            return "[${ql(key)}~${ql(listPattern(words.sorted().joinToString("|") { regexLiteral(it) }))},i]"
+        }
     }
 
     /** Some key matches [keyPattern] and, when given, its value matches [valuePattern]. */
@@ -142,7 +154,8 @@ sealed class TagFilter {
         override fun toOverpass(): String? = when (part) {
             is Has -> "[!${ql(part.key)}]"
             is Equals -> "[${ql(part.key)}!=${ql(part.value)}]"
-            is Matches -> "[${ql(part.key)}${if (part.negate) "~" else "!~"}${ql(part.pattern)},i]"
+            is NotEquals -> Equals(part.key, part.value).toOverpass()
+            is Matches -> if (part.negate) Matches(part.key, part.pattern).toOverpass() else "[${ql(part.key)}!~${ql(part.pattern)},i]"
             else -> null
         }
     }
@@ -204,6 +217,23 @@ sealed class TagFilter {
         internal fun quote(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
         private fun ql(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+        /** Keys whose values are `;` lists by convention ("italian;pizza"); Overpass needs a list-aware regex for them. */
+        internal val listKeys = setOf(
+            "cuisine", "sport", "vending", "beauty", "clothes", "shoes", "healthcare:speciality", "produce", "crop", "trade",
+            "social_facility:for", "school", "massage", "repair", "service:bicycle", "craft",
+        )
+
+        /** A POSIX regex for one `;` part of a value matching [alternatives] (already a regex). */
+        private fun listPattern(alternatives: String) = "(^|;) *($alternatives) *(;|$)"
+
+        /** [s] as a POSIX extended regex that matches only itself. */
+        internal fun regexLiteral(s: String): String = buildString(s.length + 4) {
+            for (c in s) {
+                if (c in "\\.^$|?*+()[]{}") append('\\')
+                append(c)
+            }
+        }
 
         /** A number as the parser reads it back: no exponent, no trailing zeros ("4.2", "150", "0.00001"). */
         internal fun formatNumber(d: Double): String =

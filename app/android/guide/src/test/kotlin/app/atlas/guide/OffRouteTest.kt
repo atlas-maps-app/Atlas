@@ -187,6 +187,85 @@ class OffRouteTest {
         assertTrue("$missing of 60 turns had no moment-to-turn cue", missing <= 2)
     }
 
+    @Test fun aMissedTurnMetAgainOnTheNewRouteIsToldAgain() {
+        // straight on past the left onto Singel; no U-turn, so the new route goes left round the block and back to it
+        val r = Sketch(Mode.CAR, speed = 13.9).leg(90.0, 1200.0, "Raadhuisstraat").leg(0.0, 800.0, "Singel").route(arrive = Turn.RIGHT)
+        val nav = Navigator(r, GuideSettings(mode = Mode.CAR))
+        val first = drive(nav, Simulator(r, speed = 13.9, detours = listOf(Detour(1199.0, 0.0, 300.0))).fixes(), untilEnd = true)
+        assertTrue(first.texts.contains("Turn left onto Singel"))
+        val from = first.reroutes.first().second.from
+        val corner = r.line.pointAt(1200.0)
+        val past = Geo.distance(from.location, corner)
+        val loop = Sketch(Mode.CAR, origin = from.location, speed = 13.9).leg(0.0, 100.0, "Herengracht").leg(270.0, past + 100.0, "Keizersgracht")
+            .leg(180.0, 100.0, "Prinsengracht").leg(90.0, 100.0, "Raadhuisstraat").leg(0.0, 800.0, "Singel").route(arrive = Turn.RIGHT)
+        nav.replaceRoute(loop)
+        val second = drive(nav, Simulator(loop, speed = 13.9, start = from.time.plusSeconds(1)).fixes())
+        // the same left at the same corner: its moment to turn is told again, with its sound, and not in the chain only
+        val now = second.said.single { it.id == "step:4:now" }
+        assertEquals("Turn left onto Singel", now.text)
+        assertTrue("told ${now.toGo} m before", now.toGo in 90.0..130.0)
+        assertTrue(second.cues.any { it.first == now.t && it.second == Cue.Earcon(EarconKind.TURN_LEFT, -0.7f) })
+        assertEquals(1, second.arrivals)
+    }
+
+    @Test fun aRerouteOnTheWaySaysNoApproachTwice() {
+        // the app finds a better route while you drive: the same left lies ahead, its approach already told
+        val r = Sketch(Mode.CAR, speed = 13.9).leg(90.0, 1200.0, "Raadhuisstraat").leg(0.0, 800.0, "Singel").route(arrive = Turn.RIGHT)
+        val nav = Navigator(r, GuideSettings(mode = Mode.CAR))
+        val fixes = Simulator(r, speed = 13.9).fixes().toList()
+        val before = drive(nav, fixes.take(62).asSequence())
+        assertEquals("In 400 metres, turn left onto Singel", before.texts.last())
+        val here = nav.state!!.snapped
+        val rest = Sketch(Mode.CAR, origin = here, speed = 13.9).leg(90.0, Geo.distance(here, r.line.pointAt(1200.0)), "Raadhuisstraat")
+            .leg(0.0, 800.0, "Singel").route(arrive = Turn.RIGHT)
+        nav.replaceRoute(rest)
+        val after = drive(nav, Simulator(rest, speed = 13.9, start = fixes[61].time.plusSeconds(1)).fixes())
+        assertEquals(listOf("New route. In 300 metres, turn left onto Singel", "Turn left onto Singel"), after.texts.take(2))
+    }
+
+    @Test fun takingTheWrongBranchOfAShallowForkIsCaughtSoon() {
+        // a motorway exit parts from the route at 10 to 20 degrees: the course never differs by 45
+        for ((angle, within) in listOf(10.0 to 450.0, 15.0 to 350.0, 20.0 to 300.0)) {
+            val r = Sketch(Mode.CAR, speed = 25.0).leg(Leg(90.0, 6000.0, null, ref = "A10")).route()
+            val d = drive(Navigator(r, GuideSettings(mode = Mode.CAR)), Simulator(r, speed = 25.0, detours = listOf(Detour(2000.0, angle, 1500.0))).fixes(), untilEnd = true)
+            assertEquals(1, d.texts.count { it.startsWith("Off route") })
+            val past = Geo.distance(d.reroutes.first().second.from.location, r.line.pointAt(2000.0))
+            assertTrue("$angle°: caught $past m past the fork", past <= within)
+        }
+    }
+
+    @Test fun aRoundTripDoesNotEndWhereItStarts() {
+        // a walk round the block and back to the door: standing at the start, the walker is at its end too
+        val r = Sketch(Mode.WALK, speed = 1.4).leg(90.0, 300.0, "Westerstraat").leg(0.0, 300.0, "Prinsengracht")
+            .leg(270.0, 300.0, "Bloemgracht").leg(180.0, 300.0, "Marnixstraat").route()
+        for (seed in 1L..12L) {
+            val fixes = Simulator(r, speed = 1.4, noise = 5.0, seed = seed).fixes().toList()
+            val still = (0 until 5).map { i -> fixes[0].copy(time = fixes[0].time.minusSeconds(5L - i), speed = 0.0, bearing = null) }
+            val d = drive(Navigator(r, GuideSettings(mode = Mode.WALK)), (still + fixes).asSequence())
+            assertEquals("seed $seed: ${d.texts.take(2)}", "Head east on Westerstraat", d.texts.first())
+            assertEquals(1, d.arrivals)
+            assertTrue("seed $seed arrived after ${d.states.last().along} m", d.states.size > still.size + fixes.size - 20)
+        }
+    }
+
+    @Test fun faultyFixesAreTakenAsUnknownNotAsDetours() {
+        // a receiver that reports NaN for speed and course, or for the position itself, now and then
+        val r = straight(Mode.CAR, 13.9, 3000.0)
+        val fixes = Simulator(r, speed = 13.9).fixes().toList().mapIndexed { i, f ->
+            when (i) {
+                in 50..55 -> f.copy(speed = Double.NaN, bearing = Double.NaN)
+                in 80..82 -> f.copy(speed = -1.0, accuracy = Double.NaN)
+                120 -> f.copy(location = app.atlas.geo.LatLon(Double.NaN, Double.NaN))
+                else -> f
+            }
+        }
+        val d = drive(Navigator(r, GuideSettings(mode = Mode.CAR)), fixes.asSequence())
+        assertEquals(d.toString(), 0, d.reroutes.size)
+        assertEquals(d.states[119].along, d.states[120].along, 0.0)
+        assertTrue(d.states.all { !it.speed.isNaN() && !it.remainingTime.isNaN() })
+        assertEquals(1, d.arrivals)
+    }
+
     @Test fun aRouteThatDoublesBackIsFollowedLegByLeg() {
         // out along a street and back on the other side of it, 12 m apart
         val sk = Sketch(Mode.WALK, speed = 1.4).leg(90.0, 400.0, "Westerstraat").leg(180.0, 12.0, null).leg(270.0, 400.0, "Westerstraat")

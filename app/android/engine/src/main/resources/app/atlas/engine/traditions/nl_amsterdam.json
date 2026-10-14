@@ -1,0 +1,40 @@
+{
+  "id": "nl_amsterdam",
+  "name": "Amsterdam canal town",
+  "says": "an Amsterdam canal house",
+  "says_by": {"plaster": "an Amsterdam canal house, plastered", "concrete": "an Amsterdam postwar block", "glass": "an Amsterdam modern front"},
+  "atlas_note": "Roof tile colours warmed to the terracotta of the Main board (engine port, 13 October 2026); the prototype drew them dark #4A3E3A #56504C #3E4248. Flat bitumen roofs darkened to the board's slate greys (prototype #7E7A74 #8C8882 #6E6A66).",
+  "summary": "Old brick in dark reds and browns, a few plastered fronts, narrow gables with a hoist beam, white cornices on the oldest; newer brick lighter",
+  "floor_h": 3.1,
+  "levels": {"default": 3},
+  "walls": {
+    "home": {"before:1900": [["brick", "#6E3B2E", 14], ["brick", "#7A4434", 14], ["brick", "#5C3A30", 14], ["brick", "#8A5040", 14], ["brick", "#6A4A3C", 14], ["brick", "#7E5242", 14], ["plaster", "#E8E2D4", 6], ["plaster", "#EFE9DC", 6], ["plaster", "#D9D2C2", 6]],
+             "default": [["brick", "#9C6A52", 1], ["brick", "#8F7F74", 1], ["brick", "#B08A6A", 1], ["brick", "#8C8A86", 1], ["brick", "#A9876E", 1]]},
+    "office": {"before:1900": [["brick", "#6E3B2E", 1], ["brick", "#7A4434", 1], ["brick", "#8A5040", 1], ["brick", "#7E5242", 1], ["plaster", "#E8E2D4", 1]],
+               "before:1960": [["brick", "#8E5A46", 1]], "default": [["brick", "#8E5A46", 2], ["concrete", "#BEBAB1", 1], ["glass", "#93ABBC", 1]]},
+    "hotel": {"before:1900": [["brick", "#6E3B2E", 1], ["brick", "#7A4434", 1], ["brick", "#8A5040", 1], ["plaster", "#E8E2D4", 1]], "default": [["brick", "#8E5A46", 2], ["concrete", "#BEBAB1", 1]]},
+    "retail": {"before:1900": [["brick", "#6E3B2E", 1], ["brick", "#7A4434", 1], ["brick", "#8A5040", 1], ["brick", "#7E5242", 1], ["plaster", "#EFE9DC", 1]], "default": [["concrete", "#BEBAB1", 1], ["brick", "#9C6A52", 1]]},
+    "school": {"before:1940": [["brick", "#8E5A46", 1]], "default": [["brick", "#A27A62", 1]]},
+    "worship": [["brick", "#74402F", 1]],
+    "monument": [["brick", "#74402F", 1]],
+    "industrial": {"before:1940": [["brick", "#8E5A46", 1]], "default": [["metal", "#9AA1A7", 2], ["metal", "#5B6066", 1]]},
+    "shed": [["wood", "#7A624C", 1]],
+    "default": {"before:1900": [["brick", "#6E3B2E", 1], ["brick", "#7A4434", 1], ["brick", "#5C3A30", 1], ["brick", "#8A5040", 1], ["plaster", "#E8E2D4", 1]],
+                "default": [["brick", "#9C6A52", 1], ["brick", "#8F7F74", 1], ["brick", "#B08A6A", 1], ["brick", "#A9876E", 1]]}
+  },
+  "roof": {
+    "worship": {"shapes": [["gabled", 1]], "material": "slate", "colours": ["#535C66"], "pitch": 1.0},
+    "industrial": {"shapes": [["flat", 1]], "material": "metal", "colours": ["#A4A9AD"]},
+    "default": {"shapes": [["flat", 1]], "material": "tar_paper", "colours": ["#4C4E55", "#55575E", "#45474D", "#5E5F64", "#6A6762"]}
+  },
+  "rules": [
+    {"when": {"kind": ["home", "office", "retail", "hotel", "monument", "school"], "year": {"to": 1900, "unknown": false}, "narrow": 11, "min_h": 8},
+     "roof": {"shape": "gabled", "orient": "along", "pitch": 1.1, "roof_h_range": [3.0, 5.0], "material": "roof_tiles", "colours": ["#A9553A", "#9E4E35", "#B25E3F", "#A35A44", "#58595F"]}}
+  ],
+  "windows": null,
+  "shutters": null,
+  "eaves": 0,
+  "chimneys": {"share": 0.35, "kind": "plain", "colour": "#6E4A3E"},
+  "cornice": {"before": 1800},
+  "hoist": {"before": 1850}
+}

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="shop_groceries">Boodschappen</string>
+    <string name="shop_need_water">Water</string>
+    <string name="shop_need_food">Eten</string>
+    <string name="shop_need_toilet">Toilet</string>
+    <string name="shop_nearest">Dichtstbij</string>
+    <string name="shop_none">Niets in kaart gebracht in de buurt</string>
+</resources>

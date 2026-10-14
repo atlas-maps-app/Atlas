@@ -9,7 +9,7 @@ import java.time.Instant
 enum class Side {
     LEFT, RIGHT, AHEAD, UNKNOWN;
 
-    /** −1 for left, 1 for right, 0 otherwise: the pan of a sound about it. */
+    /** The pan of a sound about it: −0.7 for left, 0.7 for right (clearly to one side, still heard by both ears), 0 otherwise. */
     val pan: Float get() = when (this) { LEFT -> -0.7f; RIGHT -> 0.7f; else -> 0f }
 }
 

@@ -309,6 +309,8 @@ def build_categories(src):
 
 # ------------------------------------------------------------------------------------------------------------- brands
 
+# 'other tags' joins k=v pairs with ';'; a value can be a ';' list itself (cuisine=burger;pizza), so Brands.kt reads a
+# part without '=' as the continuation of the value before it. Keys never hold ';' or '='.
 BRAND_COLUMNS = ['id', 'name', 'brand', 'wikidata', 'key=value', 'countries', 'not in', 'spread', 'logo', 'colour', 'text colour',
                  'match names', 'other tags']
 WANTED_TREES = {'brands/amenity/' + v for v in 'fast_food restaurant cafe fuel charging_station bank pharmacy bar'.split()} | \

@@ -63,7 +63,8 @@ class JsonStream(private val reader: Reader) : Closeable {
     /** A string, or the literal text of a number or boolean. */
     fun nextString(): String = when (peek()) {
         Token.STRING -> { peeked = null; readQuoted() }
-        Token.NUMBER, Token.BOOLEAN -> { peeked = null; readLiteral() }
+        Token.NUMBER -> { peeked = null; readLiteral().also(::checkNumber) }
+        Token.BOOLEAN -> { peeked = null; readLiteral().also(::checkBoolean) }
         else -> throw syntax("Expected a string but was ${peek()}")
     }
 
@@ -74,18 +75,14 @@ class JsonStream(private val reader: Reader) : Closeable {
     }
 
     fun nextLong(): Long = when (peek()) {
-        Token.NUMBER -> { peeked = null; readLiteral().let { it.toLongOrNull() ?: number(it).toLong() } }
+        Token.NUMBER -> { peeked = null; readLiteral().let { checkNumber(it); it.toLongOrNull() ?: it.toDouble().toLong() } }
         Token.STRING -> { peeked = null; readQuoted().trim().let { it.toLongOrNull() ?: it.toDoubleOrNull()?.toLong() } ?: throw syntax("Not a number") }
         else -> throw syntax("Expected a number but was ${peek()}")
     }
 
     fun nextBoolean(): Boolean {
         expect(Token.BOOLEAN)
-        return when (val lit = readLiteral()) {
-            "true" -> true
-            "false" -> false
-            else -> throw syntax("Expected true or false but was $lit")
-        }
+        return readLiteral().also(::checkBoolean) == "true"
     }
 
     fun nextNull() {
@@ -111,7 +108,9 @@ class JsonStream(private val reader: Reader) : Closeable {
                 Token.END_ARRAY -> { endArray(); level-- }
                 Token.NAME -> nextName()
                 Token.STRING -> { peeked = null; skipQuoted() }
-                Token.NUMBER, Token.BOOLEAN, Token.NULL -> { peeked = null; readLiteral() }
+                Token.NUMBER -> { peeked = null; checkNumber(readLiteral()) }
+                Token.BOOLEAN -> { peeked = null; checkBoolean(readLiteral()) }
+                Token.NULL -> nextNull()
                 Token.END -> throw syntax("Unexpected end of input")
             }
         } while (level > 0)
@@ -134,7 +133,7 @@ class JsonStream(private val reader: Reader) : Closeable {
             JsonArray(l)
         }
         Token.STRING -> JsonPrimitive(nextString())
-        Token.NUMBER -> { peeked = null; readLiteral().let { n -> n.toLongOrNull()?.let { JsonPrimitive(it) } ?: JsonPrimitive(number(n)) } }
+        Token.NUMBER -> { peeked = null; readLiteral().let { n -> checkNumber(n); n.toLongOrNull()?.let { JsonPrimitive(it) } ?: JsonPrimitive(n.toDouble()) } }
         Token.BOOLEAN -> JsonPrimitive(nextBoolean())
         Token.NULL -> { nextNull(); JsonNull }
         else -> throw syntax("Expected a value but was ${peek()}")
@@ -306,12 +305,43 @@ class JsonStream(private val reader: Reader) : Closeable {
     }
 
     /** A number literal; a malformed one ("1.2.3", "-", "12abc") is a syntax error like any other, not a crash. */
-    private fun number(literal: String): Double =
-        try {
-            literal.toDouble()
-        } catch (_: NumberFormatException) {
-            throw syntax("Not a number: ${literal.take(40)}")
+    private fun number(literal: String): Double {
+        checkNumber(literal)
+        return literal.toDouble()
+    }
+
+    private fun checkBoolean(literal: String) {
+        if (literal != "true" && literal != "false") throw syntax("Expected true or false but was ${literal.take(40)}")
+    }
+
+    /**
+     * JSON's number grammar, `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`, checked by hand: Java's parser alone would
+     * also take "1d", "0x10" and "-Infinity".
+     */
+    private fun checkNumber(s: String) {
+        var i = 0
+        val n = s.length
+        fun digits(): Int {
+            val start = i
+            while (i < n && s[i] in '0'..'9') i++
+            return i - start
         }
+        if (i < n && s[i] == '-') i++
+        when {
+            i < n && s[i] == '0' -> i++
+            digits() == 0 -> throw syntax("Not a number: ${s.take(40)}")
+        }
+        if (i < n && s[i] == '.') {
+            i++
+            if (digits() == 0) throw syntax("Not a number: ${s.take(40)}")
+        }
+        if (i < n && (s[i] == 'e' || s[i] == 'E')) {
+            i++
+            if (i < n && (s[i] == '+' || s[i] == '-')) i++
+            if (digits() == 0) throw syntax("Not a number: ${s.take(40)}")
+        }
+        if (i != n) throw syntax("Not a number: ${s.take(40)}")
+    }
 
     private fun syntax(message: String) = IOException("JSON: $message")
 

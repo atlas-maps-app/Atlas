@@ -87,7 +87,9 @@ class MapMatcher(index: RouteIndex, private val profile: ModeProfile) {
     fun tolerance(accuracy: Double): Double =
         (profile.offRouteM + (accuracy - 10.0).coerceAtLeast(0.0)).coerceAtMost(profile.offRouteM * 3)
 
-    fun match(fix: Fix): Match {
+    fun match(fix: Fix): Match = matchSane(fix.sane())
+
+    private fun matchSane(fix: Fix): Match {
         val line = index.line
         if (fix.accuracy > coarseAccuracy && line.points.size >= 2) return held(fix)
         val p = fix.location
@@ -103,7 +105,7 @@ class MapMatcher(index: RouteIndex, private val profile: ModeProfile) {
 
         val lastSeg = (line.points.size - 2).coerceAtLeast(0)
         val (a, b) = when {
-            !acquired -> 0 to lastSeg
+            !acquired -> acquisitionWindow(p, tol, lastSeg)
             offRoute -> line.segmentAt((along - 100).coerceAtLeast(0.0)) to lastSeg
             else -> {
                 val reach = max(speed * elapsed, moved ?: 0.0)
@@ -122,8 +124,13 @@ class MapMatcher(index: RouteIndex, private val profile: ModeProfile) {
         val inside = best.offset <= tol
         // Heading away from the route counts as a mismatch too: going straight on past a turn keeps the old leg's bearing,
         // but the way back to the route is behind you. GPS noise moves the fix sideways while the heading stays along.
-        val away = heading != null && best.offset > 1.0 && abs(Geo.turnAngle(Geo.bearing(best.point, p), heading)) < AWAY_DEG
-        val mismatch = if (delta != null) delta > 45 || away else best.offset > 1.5 * tol
+        val awayAngle = if (heading != null && best.offset > 1.0) abs(Geo.turnAngle(Geo.bearing(best.point, p), heading)) else 180.0
+        val away = awayAngle < AWAY_DEG
+        // Well beyond the tolerance, a course that still leads further out is enough, however slight the angle: the
+        // wrong branch of a motorway fork parts from the route at 10 to 20 degrees. Noise puts a fix this far out only
+        // for a moment, and with the course along the route, not away from it.
+        val diverging = best.offset > 1.5 * tol && awayAngle < DIVERGING_DEG
+        val mismatch = if (delta != null) delta > 45 || away || diverging else best.offset > 1.5 * tol
 
         var became = false
         var rejoined = false
@@ -201,6 +208,17 @@ class MapMatcher(index: RouteIndex, private val profile: ModeProfile) {
         )
     }
 
+    /**
+     * Where to look for the first match: the start of the route when the fix lies near it, else the whole route (the
+     * app restarted during a trip). A round trip ends where it starts, and the first fix must not land on its end.
+     */
+    private fun acquisitionWindow(p: LatLon, tol: Double, lastSeg: Int): Pair<Int, Int> {
+        val line = index.line
+        val head = line.segmentAt(minOf(line.length / 2, max(ACQUIRE_HEAD_M, 4 * tol)))
+        val near = line.snap(p, 0, head) ?: return 0 to lastSeg
+        return if (near.offset <= tol) 0 to head else 0 to lastSeg
+    }
+
     private fun degenerate(fix: Fix, tol: Double, speed: Double): Match {
         lastFix = fix
         val pt = index.line.points.firstOrNull() ?: fix.location
@@ -269,5 +287,26 @@ class MapMatcher(index: RouteIndex, private val profile: ModeProfile) {
         const val LEG_CHECK_DEG = 45.0
         /** A heading within this many degrees of the direction from the route to the fix is heading away from it. */
         const val AWAY_DEG = 60.0
+        /** Beyond 1.5 tolerances, a heading within this many degrees of straight away is still leaving (5° of slant). */
+        const val DIVERGING_DEG = 85.0
+        /** The first fix is looked for this far along the start of the route before the rest of it. */
+        const val ACQUIRE_HEAD_M = 200.0
     }
+}
+
+/**
+ * The fix without what a faulty receiver may report: a NaN, infinite or negative speed and a NaN bearing are dropped
+ * (as unknown), an unusable accuracy reads as the usual 10 m, and a position that is not a number makes the fix coarse.
+ */
+internal fun Fix.sane(): Fix {
+    val badSpeed = speed?.let { !it.isFinite() || it < 0 } == true
+    val badBearing = bearing?.let { !it.isFinite() } == true
+    val badPlace = !location.lat.isFinite() || !location.lon.isFinite()
+    val badAccuracy = !accuracy.isFinite() || accuracy < 0
+    if (!badSpeed && !badBearing && !badPlace && !badAccuracy) return this
+    return copy(
+        speed = if (badSpeed) null else speed,
+        bearing = if (badBearing) null else bearing,
+        accuracy = if (badPlace) Double.POSITIVE_INFINITY else if (badAccuracy) 10.0 else accuracy,
+    )
 }

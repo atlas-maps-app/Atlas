@@ -33,7 +33,7 @@ their sources' licences and are used only to test this module.
 |---|---|
 | `overpass_*`, `nominatim_*`, `photon_*`, `osm_note*` | ODbL, © OpenStreetMap contributors |
 | `mangrove_*` | CC BY 4.0, the Mangrove reviewers |
-| `ocm_poi.json` | CC BY 4.0, Open Charge Map and its data providers; its four Oplaadpalen.nl POIs are CC BY-NC-SA 4.0 (kept only to test that Atlas drops them) |
+| `ocm_poi.json` | CC BY 4.0, Open Charge Map and its data providers (OCM contributors, PowerGo CC0); no non-commercial data |
 | `ndw_sample.json.gz` | NDW open data (licence not stated by NDW) |
 | `bnetza_head.csv`, `bnetza_page.html` | CC BY 4.0, Bundesnetzagentur.de |
 | `afdc_*` | U.S. Department of Energy, public data |

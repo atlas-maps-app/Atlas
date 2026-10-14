@@ -55,7 +55,34 @@ object Callouts {
         b.spans()
         b.grades()
         b.lastStops()
-        return b.out.sortedBy { it.along }
+        return distinct(b.out.sortedBy { it.along })
+    }
+
+    /** Two reports of one thing (a crossing mapped on both rails, a hazard on the way and its node) are one warning. */
+    private const val SAME_THING_M = 30.0
+
+    /**
+     * Drops a warning that repeats the one just before it (same kind and words within [SAME_THING_M]), and gives a later
+     * pass by the same place its own id ("lock@…#2"): a round trip through a lock warns on the way out and on the way back.
+     */
+    private fun distinct(sorted: List<Callout>): List<Callout> {
+        val out = ArrayList<Callout>(sorted.size)
+        val texts = HashMap<Callout, String>()
+        fun words(c: Callout) = texts.getOrPut(c) { c.text(0.0) }
+        val passes = HashMap<String, Int>()
+        for (c in sorted) {
+            var dup = false
+            for (k in out.indices.reversed()) {
+                val o = out[k]
+                if (c.along - o.along > SAME_THING_M) break
+                if (o.kind == c.kind && o.priority >= c.priority && words(o) == words(c)) { dup = true; break }
+            }
+            if (dup) continue
+            val n = (passes[c.id] ?: 0) + 1
+            passes[c.id] = n
+            out += if (n == 1) c else Callout("${c.id}#$n", c.along, c.kind, c.priority, c.lead, c.second, c.pan, c.whenDark, c.text)
+        }
+        return out
     }
 
     private class Builder(val index: RouteIndex, val settings: GuideSettings, val book: Phrasebook, val profile: ModeProfile) {
@@ -514,5 +541,7 @@ object Callouts {
     }
 
     /** A maxspeed value as a number in its own unit ("50", "30 mph", "5 knots"); null for none/signals/walk. */
-    fun parseSpeed(s: String): Double? = Regex("""^\s*(\d+(?:\.\d+)?)""").find(s)?.groupValues?.get(1)?.toDoubleOrNull()
+    fun parseSpeed(s: String): Double? = SPEED.find(s)?.groupValues?.get(1)?.toDoubleOrNull()
+
+    private val SPEED = Regex("""^\s*(\d+(?:\.\d+)?)""")
 }

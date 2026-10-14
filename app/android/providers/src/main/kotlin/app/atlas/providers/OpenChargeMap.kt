@@ -3,7 +3,6 @@ package app.atlas.providers
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.geo.PolylineCodec
-import app.atlas.geo.Shapes
 import app.atlas.model.Place
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -43,18 +42,19 @@ class OpenChargeMap(
 
     /**
      * A real corridor search: OCM takes the line as an encoded polyline and a distance. The line is simplified to a
-     * tenth of the corridor, and a route still too long for one request line is asked in consecutive pieces.
+     * tenth of the corridor (and the distance widened to match), and a route still too long for one request line is
+     * asked in consecutive pieces; what comes back is held to the corridor around the original line.
      */
     override suspend fun along(points: List<LatLon>, corridorM: Double, filters: ChargerFilters): List<Place> {
         if (points.isEmpty()) return emptyList()
-        val line = if (points.size > 2) Shapes.simplify(points, corridorM / 10) else points
-        val seen = LinkedHashMap<String, Place>()
-        for (piece in pieces(line)) {
+        val line = RequestLine.of(points, corridorM / 10)
+        val found = ArrayList<Place>()
+        for (piece in pieces(line.points)) {
             val url = query(filters).addQueryParameter("polyline", PolylineCodec.encode(piece))
-                .addQueryParameter("distance", tagNumber(corridorM / 1000.0)).addQueryParameter("distanceunit", "km").build()
-            for (p in fetch(url)) if (filters.accepts(p)) seen.putIfAbsent(p.extra["charger:id"] ?: p.key, p)
+                .addQueryParameter("distance", tagNumber((corridorM + line.extraM) / 1000.0)).addQueryParameter("distanceunit", "km").build()
+            fetch(url).filterTo(found, filters::accepts)
         }
-        return seen.values.take(filters.maxResults)
+        return inCorridor(points, corridorM, found)
     }
 
     override suspend fun status(ids: List<String>): Map<String, ChargerStatus> {
@@ -199,14 +199,18 @@ class OpenChargeMap(
             }
             poi.str("UsageCost")?.trim()?.takeIf { it.isNotEmpty() }?.let { cost ->
                 tags["charge"] = cost
-                if (FREE.containsMatchIn(cost)) tags["fee"] = "no" else tags.putIfAbsent("fee", "yes")
+                // "Free" with a price beside it is free parking, not free charging.
+                if (FREE.containsMatchIn(cost) && !PRICE.containsMatchIn(cost)) tags["fee"] = "no" else tags.putIfAbsent("fee", "yes")
             }
             val sockets = poi.arr("Connections").mapNotNull { it.asObject() }.mapNotNull { c ->
                 val type = Sockets.OCM[c.int("ConnectionTypeID") ?: 0] ?: return@mapNotNull null
                 val kw = c.dbl("PowerKW")?.takeIf { it > 0 } ?: run {
                     val amps = c.dbl("Amps")
                     val volts = c.dbl("Voltage")
-                    if (amps != null && volts != null) amps * volts * (if (c.int("CurrentTypeID") == 20) 1.732 else 1.0) / 1000.0 else null
+                    if (amps == null || volts == null) null
+                    // Three-phase (CurrentTypeID 20) records give the line voltage (400 V) or the phase voltage (230 V).
+                    else if (c.int("CurrentTypeID") == 20) amps * volts * (if (volts < 300) 3.0 else Math.sqrt(3.0)) / 1000.0
+                    else amps * volts / 1000.0
                 }
                 Socket(type, (c.int("Quantity") ?: 1).coerceAtLeast(1), kw)
             }
@@ -254,6 +258,7 @@ class OpenChargeMap(
         }
 
         private val FREE = Regex("""(?i)\b(free|gratis|kostenlos|gratuit)\b""")
+        private val PRICE = Regex("""(?i)[€£${'$'}]\s*\d|\d\s*(€|eur\b|usd\b|gbp\b|ct\b|cents?\b|p\b)|(/|\bper\b)\s*(kwh|min|minute|h|hour|uur|stunde)\b""")
 
         private fun quantity(c: JsonObject) = (c.int("Quantity") ?: 1).coerceAtLeast(1)
 

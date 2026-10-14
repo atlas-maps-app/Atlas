@@ -95,4 +95,29 @@ class HolidaysTest {
         assertTrue(custom.isHoliday(d("2026-10-19")))
         assertFalse(custom.isHoliday(d("2026-10-20")))
     }
+
+    @Test
+    fun aYearsListHoldsItsOwnDatesOnly() {
+        // 1 January 2028 is a Saturday: its observed Friday is a holiday of 2027, not of 2028
+        assertTrue("2027-12-31" in dates("US", 2027))
+        assertTrue(dates("US", 2028).all { it.startsWith("2028-") })
+        assertTrue(PublicHolidays.forCountry("US")!!.isHoliday(d("2027-12-31")))
+        assertFalse(PublicHolidays.forCountry("US")!!.isHoliday(d("2028-12-29")))
+    }
+
+    @Test
+    fun britishSubstitutesSkipTheHolidayAfter() {
+        fun named(year: Int, sub: String? = null) = PublicHolidays.list("GB", year, sub).map { "${it.date} ${it.name}" }
+        // Christmas 2022 on a Sunday: Boxing Day keeps Monday 26, Christmas moves to Tuesday 27
+        val y22 = named(2022)
+        assertTrue(y22.toString(), "2022-12-26 Boxing Day" in y22 && "2022-12-27 Christmas Day (substitute day)" in y22)
+        assertFalse(y22.toString(), y22.any { it.startsWith("2022-12-26 Christmas") })
+        // Scotland, 1 January 2023 on a Sunday: 2 January keeps its Monday, New Year moves to Tuesday 3
+        val sct23 = named(2023, "GB-SCT")
+        assertTrue(sct23.toString(), "2023-01-02 2nd January" in sct23 && "2023-01-03 New Year's Day (substitute day)" in sct23)
+        // Scotland, 1 January 2022 on a Saturday: Monday 3 and Tuesday 4 are off
+        assertEquals(listOf("2022-01-01", "2022-01-02", "2022-01-03", "2022-01-04"), dates("GB", 2022, "GB-SCT").filter { it < "2022-02" })
+        // England 2022: Monday 3 January for New Year
+        assertTrue("2022-01-03" in dates("GB", 2022))
+    }
 }

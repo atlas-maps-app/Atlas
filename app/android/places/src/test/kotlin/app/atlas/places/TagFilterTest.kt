@@ -166,4 +166,31 @@ class TagFilterTest {
         assertEquals("k>100000000000000000000", TagFilter.Compare("k", CompareOp.GT, 1e20).toText())
         assertTrue(TagFilter.KeyMatches("^diet:").matches(mapOf("diet:vegan" to "yes")))
     }
+
+    @Test
+    fun overpassSelectsAtLeastWhatTheFilterMatches() {
+        // Overpass compares whole values: cuisine=pizza must still find "italian;pizza"
+        assertEquals("[\"cuisine\"~\"(^|;) *(pizza) *(;|$)\"]", TagFilter.parse("cuisine=pizza").toOverpass())
+        assertEquals("[\"sport\"~\"(^|;) *(climbing|skateboard) *(;|$)\",i]", TagFilter.parse("sport~^(skateboard|climbing)$").toOverpass())
+        // main keys stay exact, so Overpass can use its index
+        assertEquals("[\"amenity\"=\"cafe\"]", TagFilter.parse("amenity=cafe").toOverpass())
+        assertEquals("[\"amenity\"~\"^(bar|pub)$\",i]", TagFilter.parse("amenity~^(bar|pub)$").toOverpass())
+        // an anchored pattern on a list key that is not a word list cannot be said: no selector rather than too few
+        assertNull(TagFilter.parse("cuisine~^ital.*$").toOverpass())
+        assertEquals("[\"cuisine\"~\"ital\",i]", TagFilter.parse("cuisine~ital").toOverpass())
+        // regex characters in a value are escaped, quotes and backslashes are escaped for QL
+        assertEquals("[\"cuisine\"~\"(^|;) *(a\\\\.b) *(;|$)\"]", TagFilter.Equals("cuisine", "a.b").toOverpass())
+        // negations
+        assertEquals("[\"cuisine\"!=\"pizza\"]", TagFilter.parse("not cuisine=pizza").toOverpass())
+        assertEquals("[\"cuisine\"~\"(^|;) *(pizza) *(;|$)\"]", TagFilter.parse("not cuisine!=pizza").toOverpass())
+        assertEquals(TagFilter.parse("sport~^(skateboard|climbing)$").toOverpass(), TagFilter.parse("not sport!~^(skateboard|climbing)$").toOverpass())
+        assertEquals("[\"amenity\"=\"cafe\"][\"cuisine\"~\"(^|;) *(cake) *(;|$)\"]", TagFilter.parse("amenity=cafe and cuisine=cake").toOverpass())
+        // the selector's regex agrees with the filter on every part of a list
+        val pattern = Regex("(^|;) *(pizza) *(;|$)")
+        for (v in listOf("pizza", "italian;pizza", "pizza; italian", "italian; pizza ;kebab")) {
+            assertTrue(v, TagFilter.parse("cuisine=pizza").matches(mapOf("cuisine" to v)))
+            assertTrue(v, pattern.containsMatchIn(v))
+        }
+        assertFalse(pattern.containsMatchIn("pizzeria;italian"))
+    }
 }

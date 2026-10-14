@@ -42,6 +42,7 @@ class Simulator(
         require(interval > 0) { "interval must be positive" }
         require(speed == null || speed > 0) { "speed must be positive" }
         require(correlation in 0.0..0.999) { "correlation must be in 0..1" }
+        require(route.points.isNotEmpty()) { "the route has no points" }
     }
 
     private val index = RouteIndex(route, speed ?: 10.0)

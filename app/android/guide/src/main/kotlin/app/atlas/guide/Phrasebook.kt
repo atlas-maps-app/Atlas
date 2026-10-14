@@ -241,7 +241,13 @@ class Phrasebook private constructor(
         else if (step.ref != null && step.street == null) "motorway" else null
 
     private fun arrive(step: Step, ctx: StepContext): Instr {
-        val modifier = when (ctx.arrivalSide) { Side.LEFT -> "left"; Side.RIGHT -> "right"; Side.AHEAD -> "straight"; else -> "default" }
+        // The arrival side is the final destination's; a via point has only its own maneuver's side, if any.
+        val side = if (step.maneuver.type != ManeuverType.WAYPOINT) ctx.arrivalSide else when {
+            step.maneuver.turn.left -> Side.LEFT
+            step.maneuver.turn.right -> Side.RIGHT
+            else -> Side.UNKNOWN
+        }
+        val modifier = when (side) { Side.LEFT -> "left"; Side.RIGHT -> "right"; Side.AHEAD -> "straight"; else -> "default" }
         val key = when {
             ctx.short && ctx.upcoming -> "short-upcoming"
             ctx.short -> "short"

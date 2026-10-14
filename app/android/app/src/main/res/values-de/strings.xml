@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tab_map">Karte</string>
+    <string name="tab_go">Los</string>
+    <string name="tab_soon">Bald</string>
+    <string name="tab_local">Lokal</string>
+    <string name="tab_mine">Meins</string>
+
+    <string name="kit_back">Zurück</string>
+    <string name="kit_close">Schließen</string>
+    <string name="kit_sheet_expand">Mehr zeigen</string>
+    <string name="kit_sheet_collapse">Weniger zeigen</string>
+    <string name="kit_departure_time">Zeit</string>
+    <string name="kit_departure_to">Nach</string>
+    <string name="kit_departure_platform">Gl</string>
+    <string name="kit_open_until">geöffnet bis %1$s</string>
+    <string name="kit_open_24_7">rund um die Uhr</string>
+    <string name="kit_open">geöffnet</string>
+    <string name="kit_closes_in">schließt in %1$d Min.</string>
+    <string name="kit_closed_opens">geschlossen · öffnet %1$s</string>
+    <string name="kit_closed">geschlossen</string>
+    <string name="kit_hours_unknown">Öffnungszeiten unbekannt</string>
+    <string name="kit_mic">Sprechen</string>
+    <string name="kit_mic_unavailable">Keine Spracherkennung auf diesem Telefon</string>
+    <string name="kit_offline">Offline</string>
+    <string name="kit_loading">Suche…</string>
+    <string name="kit_retry">Erneut</string>
+</resources>

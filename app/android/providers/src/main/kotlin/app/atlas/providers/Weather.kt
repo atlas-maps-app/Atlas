@@ -210,7 +210,11 @@ class Weather(
         val now = clock()
         val json = res.json().asObject() ?: throw ProviderException(ID, "Open-Meteo answered something unexpected")
         val forecast = parseForecast(json, now)
-        keep(at, res.text, now)
+        // A full or read-only disk loses only the offline copy, never the forecast that came.
+        try {
+            keep(at, res.text, now)
+        } catch (_: IOException) {
+        }
         return forecast
     }
 

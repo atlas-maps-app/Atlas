@@ -89,7 +89,9 @@ data class OpenSpan(val start: Int, val end: Int, val state: OpenState, val comm
  * specification allows (years, months, dates and Easter, weeks, nth weekdays, holidays, times past midnight, sun
  * times, open ends, additional and fallback rules, comments). Rules are evaluated as opening_hours.js does: a later
  * dated rule replaces earlier ones for its days, `,` adds to them, `off` closes only what it selects, and `||`
- * fills only what no earlier rule covered. Hours that run past midnight belong to the day they start on.
+ * fills only what no earlier rule covered. Hours that run past midnight belong to the day they start on. One
+ * deliberate leniency: a `;` rule with times but no days or dates adds to the rules before it, since data such as
+ * `Mo-Fr 08:00-12:00; 14:00-18:00` means both shifts (the specification would let it replace every day's hours).
  */
 class OpeningHours private constructor(val raw: String, internal val rules: List<Rule>) {
     private val comments: List<String> = rules.mapNotNull { it.comment }.distinct()
@@ -149,8 +151,9 @@ class OpeningHours private constructor(val raw: String, internal val rules: List
 
     /**
      * Seven lists, Monday to Sunday, of open and unknown spans, each owned by the day it starts on (ends may pass
-     * 1440). Without [weekOf] it is the plain weekly pattern: dated rules, holidays and nth weekdays left out, as a
-     * door plaque shows it. With [weekOf] it is that real week (Monday to Sunday), holidays and dates included.
+     * 1440). Without [weekOf] it is the plain weekly pattern: dated rules (other than `Jan-Dec` and `week 01-53`),
+     * holidays and nth weekdays left out, as a door plaque shows it; seasonal hours then need [weekOf]. With [weekOf]
+     * it is that real week (Monday to Sunday), holidays and dates included.
      */
     fun weekTable(weekOf: LocalDate? = null, context: OpeningHoursContext = OpeningHoursContext.Default): List<List<OpenSpan>> {
         val eval = Evaluation(DateContext(context, generic = weekOf == null))

@@ -2,7 +2,6 @@ package app.atlas.providers
 
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
-import app.atlas.geo.Shapes
 import app.atlas.model.Place
 
 /**
@@ -22,9 +21,9 @@ class OsmChargers(private val overpass: Overpass) : ChargerProvider {
 
     override suspend fun along(points: List<LatLon>, corridorM: Double, filters: ChargerFilters): List<Place> {
         if (points.isEmpty()) return emptyList()
-        val line = if (points.size > 2) Shapes.simplify(points, corridorM / 4) else points
-        val ql = OverpassQl.chargers(OverpassArea.Along(line, corridorM), socketsFor(filters), timeoutSeconds = 120)
-        return overpass.places(ql).map(::withId).filter(filters::accepts).take(filters.maxResults)
+        val line = RequestLine.of(points, corridorM / 4)
+        val ql = OverpassQl.chargers(OverpassArea.Along(line.points, corridorM + line.extraM), socketsFor(filters), timeoutSeconds = 120)
+        return inCorridor(points, corridorM, overpass.places(ql).map(::withId).filter(filters::accepts))
     }
 
     override suspend fun status(ids: List<String>): Map<String, ChargerStatus> = emptyMap()

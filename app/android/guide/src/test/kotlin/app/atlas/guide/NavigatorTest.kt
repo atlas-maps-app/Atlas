@@ -317,6 +317,22 @@ class NavigatorTest {
         assertTrue(summary, summary.matches(Regex("""\d+ metres to go, 1 minute, arriving at \d+:\d\d""")))
     }
 
+    @Test fun aViaPointIsNotGivenTheDestinationsSide() {
+        // the destination is on the left; the via point on the way has no side of its own
+        val r = Sketch(Mode.CAR, speed = 13.9).leg(90.0, 1500.0, "Main Street").leg(Leg(90.0, 1500.0, "Main Street", type = ManeuverType.WAYPOINT))
+            .leg(0.0, 1000.0, "Oak Avenue").route(arrive = Turn.LEFT)
+        val d = run(r, GuideSettings(mode = Mode.CAR), 13.9)
+        val via = d.texts.filter { "1st destination" in it }
+        assertEquals(d.toString(), listOf(
+            "Head east on Main Street. In 1.5 kilometres, you will arrive at your 1st destination",
+            "In 400 metres, you will arrive at your 1st destination",
+            "You will arrive at your 1st destination",
+            "You have arrived at your 1st destination",
+        ), via)
+        assertEquals("Your destination is on the left", d.texts[d.texts.size - 2])
+        assertNoDuplicates(d)
+    }
+
     @Test fun joiningOnTheWaySaysNothingOfWhatIsBehind() {
         // the app restarted during the trip: the turn onto Singel and the via point are behind
         val r = Sketch(Mode.WALK, speed = 1.4).leg(90.0, 1200.0, "Raadhuisstraat").leg(0.0, 300.0, "Singel")

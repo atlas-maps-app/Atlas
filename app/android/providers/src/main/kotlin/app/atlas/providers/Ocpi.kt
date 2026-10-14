@@ -28,7 +28,8 @@ object Ocpi {
         val lat = coords.dbl("latitude") ?: return null
         val lon = coords.dbl("longitude") ?: return null
         val id = location.str("id") ?: return null
-        val evses = location.arr("evses").mapNotNull { it.asObject() }.filter { it.str("status") != "REMOVED" }
+        val listed = location.arr("evses").mapNotNull { it.asObject() }
+        val evses = listed.filter { it.str("status") != "REMOVED" }
         val sockets = ArrayList<Socket>()
         val perSocket = LinkedHashMap<String, IntArray>() // available, total
         var available = 0
@@ -72,6 +73,8 @@ object Ocpi {
         extra["charger:id"] = chargerId(source, id)
         if (location.obj("energy_mix")?.bool("is_green_energy") == true) extra["energy:green"] = "yes"
         val state = when {
+            // OCPI keeps an EVSE that was taken away as REMOVED; with every one gone, so is the charger.
+            evses.isEmpty() && listed.isNotEmpty() -> ChargerStatus.State.REMOVED
             evses.isEmpty() -> ChargerStatus.State.UNKNOWN
             available > 0 -> ChargerStatus.State.AVAILABLE
             evses.any { it.str("status") in setOf("CHARGING", "BLOCKED", "RESERVED") } -> ChargerStatus.State.OCCUPIED

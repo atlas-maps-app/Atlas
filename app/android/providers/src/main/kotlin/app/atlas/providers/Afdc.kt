@@ -2,7 +2,6 @@ package app.atlas.providers
 
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
-import app.atlas.geo.Shapes
 import app.atlas.model.Place
 import kotlinx.serialization.json.JsonObject
 import okhttp3.FormBody
@@ -41,11 +40,13 @@ class Afdc(
     override suspend fun along(points: List<LatLon>, corridorM: Double, filters: ChargerFilters): List<Place> {
         if (points.isEmpty()) return emptyList()
         if (points.size == 1) return near(points[0], corridorM, filters)
-        val line = Shapes.simplify(points, corridorM / 10)
-        val wkt = line.joinToString(", ", "LINESTRING(", ")") { "${c(it.lon)} ${c(it.lat)}" }
+        val line = RequestLine.of(points, corridorM / 10)
+        val wkt = line.points.joinToString(", ", "LINESTRING(", ")") { "${c(it.lon)} ${c(it.lat)}" }
         val url = query("nearby-route.json", filters).build()
-        val form = FormBody.Builder().add("route", wkt).add("distance", tagNumber(Math.round(corridorM / METRES_PER_MILE * 100) / 100.0)).build()
-        return stations(url, form).filter(filters::accepts).take(filters.maxResults)
+        // Rounded up to the hundredth of a mile, so the corridor asked for is never narrower than the one wanted.
+        val miles = Math.ceil((corridorM + line.extraM) / METRES_PER_MILE * 100) / 100.0
+        val form = FormBody.Builder().add("route", wkt).add("distance", tagNumber(miles)).build()
+        return inCorridor(points, corridorM, stations(url, form).filter(filters::accepts))
     }
 
     override suspend fun status(ids: List<String>): Map<String, ChargerStatus> {

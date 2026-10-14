@@ -36,6 +36,11 @@ class ChargersTest {
         assertEquals(3.7, Sockets.parseKw("3,7 kW")!!, 1e-9)
         assertEquals(1000.0, Sockets.parseKw("1 MW")!!, 0.0)
         assertNull(Sockets.parseKw("fast"))
+        // Without a unit OSM means kW, but no charger gives megawatts unlabelled: "22000" is watts written bare.
+        assertEquals(22.0, Sockets.parseKw("22")!!, 0.0)
+        assertEquals(350.0, Sockets.parseKw("350")!!, 0.0)
+        assertEquals(22.0, Sockets.parseKw("22000")!!, 0.0)
+        assertEquals(3700.0, Sockets.parseKw("3.7 MW")!!, 1e-9)
         assertTrue(Sockets.accepts(tags, setOf("type2_combo"), 150.0))
         assertFalse(Sockets.accepts(tags, setOf("type1_combo"), 0.0))
         assertTrue(Sockets.fits(setOf("type2"), "type2_cable"))
@@ -51,12 +56,37 @@ class ChargersTest {
     }
 
     @Test
+    fun aSocketWithoutItsOwnPowerIsJudgedByItsKind() {
+        val mixed = mapOf("socket:type2_combo" to "2", "socket:type2_combo:output" to "150 kW", "socket:type2" to "2")
+        // The type 2 socket says nothing; it does not borrow the CCS socket's 150 kW: no AC socket gives 50 kW.
+        assertFalse(Sockets.accepts(mixed, setOf("type2"), 50.0))
+        assertTrue(Sockets.accepts(mixed, setOf("type2"), 11.0))
+        assertTrue(Sockets.accepts(mixed, setOf("type2_combo"), 150.0))
+        // Most OSM chargers carry no output at all: an unlabelled CCS socket counts as an ordinary fast charger
+        // (50 kW), not as nothing and not as the fastest there is.
+        val plain = mapOf("amenity" to "charging_station", "socket:type2_combo" to "2")
+        assertTrue(Sockets.accepts(plain, setOf("type2_combo"), 50.0))
+        assertFalse(Sockets.accepts(plain, setOf("type2_combo"), 150.0))
+        // A station's own output stands for its unlabelled sockets, as far as their kind allows.
+        val station = mapOf("socket:type2" to "4", "socket:type2_combo" to "1", "charging_station:output" to "300 kW")
+        assertTrue(Sockets.accepts(station, setOf("type2_combo"), 150.0))
+        assertFalse(Sockets.accepts(station, setOf("type2"), 50.0))
+        assertEquals(22.0, Sockets.unlabelledKw("type2", 22.0), 0.0)
+        assertEquals(43.0, Sockets.unlabelledKw("type2", 300.0), 0.0)
+    }
+
+    @Test
     fun openChargeMapKeepsOnlyLicensedData() {
         val pois = json("ocm_poi.json").asArray()!!.mapNotNull { it.asObject() }
-        assertEquals(20, pois.size)
+        assertEquals(16, pois.size)
         val places = pois.mapNotNull(OpenChargeMap::toPlace)
-        // The four Oplaadpalen.nl POIs are CC BY-NC-SA: dropped.
         assertEquals(16, places.size)
+        // Oplaadpalen.nl's POIs (data provider 26) are CC BY-NC-SA: dropped. (The recorded ones were taken out of the
+        // fixture for the same reason; this one is a licensed POI relabelled.)
+        val nonCommercial = kotlinx.serialization.json.JsonObject(pois.first() + ("DataProviderID" to kotlinx.serialization.json.JsonPrimitive(26)))
+        assertNull(OpenChargeMap.toPlace(nonCommercial))
+        // A provider Atlas has never checked is dropped too, rather than assumed open.
+        assertNull(OpenChargeMap.toPlace(kotlinx.serialization.json.JsonObject(pois.first() + ("DataProviderID" to kotlinx.serialization.json.JsonPrimitive(9999)))))
         val elsgeest = places.first { it["name"] == "Fastned Elsgeest" }
         assertEquals("FastNed", elsgeest["operator"])
         assertEquals("2", elsgeest["socket:chademo"])
@@ -73,6 +103,19 @@ class ChargersTest {
         assertEquals("yes", powergo["authentication:membership_card"])
         val tesla = places.first { it["name"] == "Tesla Supercharger Heerlen" }
         assertEquals("250", tesla[Sockets.POWER_KW])
+    }
+
+    @Test
+    fun openChargeMapCostsSayWhetherChargingIsFree() {
+        fun fee(cost: String) = OpenChargeMap.toPlace(
+            ProviderJson.parseToJsonElement("""{"ID":9,"DataProviderID":1,"AddressInfo":{"Latitude":52.0,"Longitude":4.0},"UsageCost":"$cost"}""").asObject()!!,
+        )!!["fee"]
+        assertEquals("no", fee("Free"))
+        assertEquals("no", fee("Gratis (alleen klanten)"))
+        // Free parking is not free charging.
+        assertEquals("yes", fee("€0,39/kWh, free parking"))
+        assertEquals("yes", fee("Free parking; 0.45 EUR per kWh"))
+        assertEquals("yes", fee("0,69"))
     }
 
     @Test
@@ -107,8 +150,9 @@ class ChargersTest {
     fun aLongCorridorIsAskedInPiecesThatFitARequestLine() = runBlocking {
         Mock().use { m ->
             m.dispatch { response(Fixtures.text("ocm_poi.json")) }
-            // 3,000 points zigzagging 300 m across a 1 km corridor: simplification keeps nearly all of them.
-            val line = List(3_000) { i -> Geo.destination(LatLon(52.37 - i * 0.0002, 4.89), 90.0, if (i % 2 == 0) 0.0 else 300.0) }
+            // 3,000 points zigzagging 300 m across a 1 km corridor, south past Hoofddorp and Klein Amerika: simplification
+            // keeps nearly all of them.
+            val line = List(3_000) { i -> Geo.destination(LatLon(52.37 - i * 0.0002, 4.7165), 90.0, if (i % 2 == 0) 0.0 else 300.0) }
             val simplified = app.atlas.geo.Shapes.simplify(line, 100.0)
             assertTrue(simplified.size > 2_900)
             val found = OpenChargeMap(testHttp(), Keys.of("ocm" to "k"), base = m.base).along(line, 1_000.0, ChargerFilters(maxResults = 5_000))
@@ -120,9 +164,8 @@ class ChargersTest {
             val joined = pieces.first() + pieces.drop(1).flatMap { it.drop(1) }
             assertEquals(simplified.size, joined.size)
             assertTrue(joined.zip(simplified).all { (a, b) -> Geo.distance(a, b) < 1.5 })
-            // Every piece answered the same chargers: each is returned once.
-            assertEquals(found.map { it.extra["charger:id"] }.distinct().size, found.size)
-            assertEquals(16, found.size)
+            // Every piece answered all 16 chargers; only the two in the corridor come back, once each, in order along it.
+            assertEquals(listOf("ocm:456481", "ocm:19672"), found.map { it.extra["charger:id"] })
         }
     }
 
@@ -156,6 +199,28 @@ class ChargersTest {
             assertEquals("mine", req.headers["X-API-Key"])
             assertEquals(line, PolylineCodec.decode(req.url.queryParameter("polyline")!!))
             assertEquals("5", req.url.queryParameter("distance"))
+        }
+    }
+
+    @Test
+    fun aSimplifiedCorridorIsWidenedAndHeldToTheRoute() = runBlocking {
+        Mock().use { m ->
+            m.dispatch { response(Fixtures.text("ocm_poi.json")) }
+            // Fastned Elsgeest, Klein Amerika, Nieuwerkerk: a route that wobbles 50 m either side between them.
+            val stops = listOf(LatLon(52.2002, 4.4716), LatLon(52.0117, 4.7135), LatLon(51.9784, 4.6229))
+            val route = stops.zipWithNext().flatMap { (a, b) ->
+                List(40) { i -> Geo.destination(Geo.interpolate(a, b, i / 40.0), Geo.bearing(a, b) + 90, if (i % 2 == 0) 50.0 else -50.0) }
+            } + stops.last()
+            val found = OpenChargeMap(testHttp(), Keys.of("ocm" to "k"), base = m.base).along(route, 3_000.0)
+            val req = m.take()
+            val sent = PolylineCodec.decode(req.url.queryParameter("polyline")!!)
+            assertTrue(sent.size < route.size)
+            // The wobble was simplified away, so the corridor asked for is wider by the tolerance: 3 km + 300 m.
+            assertEquals("3.3", req.url.queryParameter("distance"))
+            val sentLine = app.atlas.geo.Polyline(sent)
+            assertTrue(route.all { sentLine.snap(it)!!.offset + 3_000.0 <= 3_300.0 })
+            // Of the 16 chargers the server sent, the three by the route come back, in the order the route passes them.
+            assertEquals(listOf("ocm:24636", "ocm:19672", "ocm:313052"), found.map { it.extra["charger:id"] })
         }
     }
 
@@ -217,6 +282,41 @@ class ChargersTest {
         assertEquals("1/2", p.extra["status:type2_combo"])
         assertEquals("2026-10-13T11:00:00Z", p.extra["status:updated"])
         assertNull(Ocpi.toPlace(ProviderJson.parseToJsonElement("""{"id":"L2","publish":false,"coordinates":{"latitude":1,"longitude":2}}""").asObject()!!, "x"))
+    }
+
+    @Test
+    fun aLocationWhoseEveryEvseWasRemovedIsGone() {
+        val loc = ProviderJson.parseToJsonElement(
+            """{"id":"L3","coordinates":{"latitude":52.3745,"longitude":4.8838},"operator":{"name":"Vattenfall InCharge"},
+            "evses":[{"uid":"1","status":"REMOVED","connectors":[{"standard":"IEC_62196_T2","format":"SOCKET","power_type":"AC_3_PHASE","max_voltage":230,"max_amperage":32}]},
+                     {"uid":"2","status":"REMOVED","connectors":[{"standard":"IEC_62196_T2","format":"SOCKET","power_type":"AC_3_PHASE","max_voltage":230,"max_amperage":32}]}]}""",
+        ).asObject()!!
+        val p = Ocpi.toPlace(loc, "ndw")!!
+        assertEquals("removed", p.extra["status"])
+        assertFalse(ChargerFilters().accepts(p))
+        assertTrue(ChargerFilters(includeNotWorking = true).accepts(p))
+    }
+
+    @Test
+    fun filtersWithABlankOperatorFilterNothingOut() {
+        val unnamed = Place(null, westerkerk, mapOf("amenity" to "charging_station", "socket:type2" to "2"))
+        assertTrue(ChargerFilters(operator = " ").accepts(unnamed))
+        assertFalse(ChargerFilters(operator = "Fastned").accepts(unnamed))
+        assertTrue(ChargerFilters(operator = "fastned").accepts(unnamed.copy(tags = unnamed.tags + ("operator" to "Fastned B.V."))))
+    }
+
+    @Test
+    fun openChargeMapThreePhasePowerFromAmpsAndVolts() {
+        fun kw(volts: Int) = Sockets.maxKw(
+            OpenChargeMap.toPlace(
+                ProviderJson.parseToJsonElement(
+                    """{"ID":10,"DataProviderID":1,"AddressInfo":{"Latitude":52.0,"Longitude":4.0},"Connections":[{"ConnectionTypeID":25,"CurrentTypeID":20,"Amps":32,"Voltage":$volts}]}""",
+                ).asObject()!!,
+            )!!.tags,
+        )!!
+        // 32 A on three phases is 22 kW, whether the record gives the line voltage (400 V) or the phase voltage (230 V).
+        assertEquals(22.0, kw(400), 0.3)
+        assertEquals(22.0, kw(230), 0.3)
     }
 
     @Test
@@ -380,8 +480,52 @@ class ChargersTest {
         val inside = index.all().filter { polyline.snap(it.location)!!.offset <= corridor }
         assertTrue(inside.isNotEmpty())
         assertEquals(inside.map { it.extra["charger:id"] }.toSet(), found.map { it.extra["charger:id"] }.toSet())
+        // In the order the line passes them, as the interface promises.
+        val passed = found.map { polyline.snap(it.location)!!.along }
+        assertEquals(passed.sorted(), passed)
         // One point is a circle.
         assertTrue(index.along(listOf(westerkerk), 300.0).all { Geo.distance(westerkerk, it.location) <= 300.0 })
+    }
+
+    @Test
+    fun aCorridorKeepsChargersAllTheWayAlongNotJustTheFirstFew() = runBlocking {
+        // The EV planner asks with the default filters: a cap meant for one search around a point must not cut a route
+        // short, leaving its second half without a single charger.
+        val places = ArrayList<Place>()
+        NdwChargers.parse(ByteArrayInputStream(Fixtures.bytes("ndw_sample.json.gz")), null) { places.add(it) }
+        val index = ChargerIndex(places, NdwChargers.INFO)
+        val line = listOf(LatLon(52.3732, 4.8930), LatLon(52.3745, 4.8860), LatLon(52.3752, 4.8790))
+        val all = index.along(line, 400.0, ChargerFilters(maxResults = 1_000))
+        val capped = index.along(line, 400.0, ChargerFilters(maxResults = 10))
+        assertTrue(all.size > 10)
+        assertEquals(all, capped)
+        Mock().use { m ->
+            m.fixture("overpass_chargers.json")
+            val osm = OsmChargers(Overpass(testHttp(), listOf(m.url("/i")))).along(line, 1_200.0, ChargerFilters(maxResults = 10))
+            assertTrue(osm.size > 10)
+        }
+    }
+
+    @Test
+    fun corridorFilteringIsExactAndQuickOnALongRoute() {
+        // A 400 km route of 20,000 points winding east and west, and chargers scattered up to 6 km either side of it.
+        val route = List(20_000) { i -> LatLon(50.0 + i * 0.00018, 5.0 + 0.05 * kotlin.math.sin(i / 500.0)) }
+        val rnd = java.util.Random(7)
+        fun scatter(n: Int) = List(n) { k ->
+            val on = route[rnd.nextInt(route.size)]
+            Place(null, LatLon(on.lat + (rnd.nextDouble() - 0.5) * 0.02, on.lon + (rnd.nextDouble() - 0.5) * 0.17), mapOf("amenity" to "charging_station"), source = "t", extra = mapOf("charger:id" to "t:$k"))
+        }
+        val line = app.atlas.geo.Polyline(route)
+        val few = scatter(200)
+        val expected = few.filter { line.snap(it.location)!!.offset <= 2_000.0 }.sortedBy { line.snap(it.location)!!.along }
+        assertTrue(expected.size in 20..180)
+        assertEquals(expected, inCorridor(route, 2_000.0, few))
+        val many = scatter(5_000)
+        val start = System.nanoTime()
+        val kept = inCorridor(route, 2_000.0, many)
+        val ms = (System.nanoTime() - start) / 1_000_000
+        assertTrue(kept.isNotEmpty())
+        assertTrue("5,000 chargers against 20,000 points took $ms ms", ms < 2_000)
     }
 
     @Test

@@ -186,4 +186,17 @@ class FactsTest {
         assertEquals(FactState.UNKNOWN, appt.one(FactKind.OPENING_HOURS).state)
         assertEquals("by appointment", appt.one(FactKind.OPENING_HOURS).value)
     }
+
+    @Test
+    fun aChangeMoreThanAWeekAwayGivesTheDate() {
+        // a weekday alone would read as the coming one: "Tue 10:00" for 1 June
+        val summer = mapOf("amenity" to "ice_cream", "opening_hours" to "Jun-Aug 10:00-18:00")
+        assertEquals("1 Jun 10:00", Facts.of(summer, "en", LocalDateTime.of(2026, 10, 17, 12, 0)).one(FactKind.OPENING_HOURS).value)
+        val nl = Facts.of(summer, "nl", LocalDateTime.of(2026, 10, 17, 12, 0)).one(FactKind.OPENING_HOURS).value!!
+        assertTrue(nl, nl.startsWith("1 jun") && nl.endsWith(" 10:00"))
+        // six days ahead is still a weekday
+        val weekly = mapOf("shop" to "bakery", "opening_hours" to "Su 08:00-12:00")
+        assertEquals("Sun 08:00", Facts.of(weekly, "en", LocalDateTime.of(2026, 10, 12, 13, 0)).one(FactKind.OPENING_HOURS).value)
+        assertEquals("25 Oct 08:00", Facts.of(weekly, "en", LocalDateTime.of(2026, 10, 18, 13, 0)).one(FactKind.OPENING_HOURS).value)
+    }
 }

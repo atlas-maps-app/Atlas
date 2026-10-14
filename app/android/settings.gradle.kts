@@ -21,3 +21,5 @@ include(":core", ":tiles", ":engine", ":places", ":search", ":route", ":guide", 
 include(":mapview")
 // BRouter, the offline router, vendored as Java source (MIT).
 include(":brouter")
+// The pack builder: OSM PBF to the place store and the packs manifest, run by .github/workflows/packs.yml.
+include(":packer")

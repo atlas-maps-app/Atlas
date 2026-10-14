@@ -12,6 +12,13 @@ import kotlin.math.max
 enum class Stage(val bit: Int) { PREPARE(1), APPROACH(2), NOW(4), POST(8) }
 
 /**
+ * Whether a new route that reaches a place [newAlong] metres from its start brings the traveller there about as soon as
+ * the old route would have, which still had [oldAhead] metres to go: then what was told about it still holds.
+ */
+internal fun sameApproach(oldAhead: Double, newAlong: Double): Boolean =
+    oldAhead >= -5 && newAlong <= oldAhead + max(200.0, oldAhead * 0.5)
+
+/**
  * Decides when to speak and what. Each maneuver has up to three stages before it (prepare far ahead, approach, now)
  * whose leads are time-based at the current speed with per-mode floors and ceilings, plus the time the sentence takes
  * to say. Close maneuvers are chained ("then immediately turn right"), long stretches get a sparse "continue for 3 km",
@@ -48,11 +55,13 @@ class Announcer(
     fun spokenStages(i: Int): Int = spoken.getOrElse(i) { 0 }
 
     /**
-     * Switches to [newIndex] after a reroute. Maneuvers of the new route at the same place as an old one keep the stages
-     * already spoken, so a reroute does not repeat the approach you just heard; a maneuver already passed (you went
-     * straight on and the new route brings you back to it) is announced afresh.
+     * Switches to [newIndex] after a reroute; [oldAlong] is where the traveller was on the old route. A maneuver of the
+     * new route at the same place as an old one, reached as soon as the old route would have reached it, keeps the
+     * stages already spoken, so a reroute does not repeat the approach you just heard. A maneuver passed, or whose
+     * moment to turn was already told (you went straight on, and the new route brings you round to it again), is
+     * announced afresh, as is one the new route reaches only by a longer way.
      */
-    fun replace(newIndex: RouteIndex) {
+    fun replace(newIndex: RouteIndex, oldAlong: Double = Double.NaN) {
         val old = index
         val oldSpoken = spoken
         index = newIndex
@@ -62,9 +71,11 @@ class Announcer(
             if (s.maneuver.type == ManeuverType.DEPART) { spoken[i] = ALL; continue }
             for (j in old.steps.indices) {
                 val o = old.steps[j]
-                if (oldSpoken[j] and PASSED == 0 && o.maneuver.type == s.maneuver.type && o.maneuver.turn == s.maneuver.turn &&
-                    Geo.distance(o.location, s.location) < 20
-                ) spoken[i] = oldSpoken[j] and Stage.POST.bit.inv()
+                if (oldSpoken[j] and (PASSED or Stage.NOW.bit) != 0 || o.maneuver.type != s.maneuver.type || o.maneuver.turn != s.maneuver.turn) continue
+                if (Geo.distance(o.location, s.location) >= 20) continue
+                if (!oldAlong.isNaN() && !sameApproach(old.stepAlong[j] - oldAlong, newIndex.stepAlong[i])) continue
+                spoken[i] = oldSpoken[j] and Stage.POST.bit.inv()
+                break
             }
         }
         departed = true

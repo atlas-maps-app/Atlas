@@ -64,17 +64,21 @@ object PublicHolidays {
     fun forCountry(country: String, subdivision: String? = null): HolidayCalendar? {
         val c = normalise(country) ?: return null
         val sub = subdivision?.uppercase()?.let { if ('-' in it) it else "$c-$it" }
-        // a holiday observed on a date of the year before (1 January on a Saturday) sits in the next year's list
-        return HolidayCalendar { date ->
-            list(c, date.year, sub).firstOrNull { it.date == date } ?: list(c, date.year + 1, sub).firstOrNull { it.date == date }
-        }
+        return HolidayCalendar { date -> list(c, date.year, sub).firstOrNull { it.date == date } }
     }
 
-    /** Every public holiday of [country] in [year], in date order. Empty for a country without rules. */
+    /**
+     * Every public holiday of [country] dated in [year], in date order, observed days included: the observed day of
+     * the next New Year (Friday 31 December when 1 January is a Saturday) belongs to the year it falls in. Empty for a
+     * country without rules.
+     */
     fun list(country: String, year: Int, subdivision: String? = null): List<Holiday> {
         val c = normalise(country) ?: return emptyList()
         val sub = subdivision?.uppercase()?.let { if ('-' in it) it else "$c-$it" }
-        return cache.getOrPut("$c/$sub/$year") { compute(c, year, sub).sortedBy { it.date }.distinctBy { it.date to it.name } }
+        return cache.getOrPut("$c/$sub/$year") {
+            (compute(c, year, sub) + compute(c, year + 1, sub)).filter { it.date.year == year }
+                .sortedBy { it.date }.distinctBy { it.date to it.name }
+        }
     }
 
     private fun normalise(country: String): String? = when (val c = country.uppercase()) {
@@ -183,7 +187,9 @@ object PublicHolidays {
         }
         val scotland = sub == "GB-SCT"
         val northernIreland = sub == "GB-NIR"
-        val newYear = fixed(day(1, 1), "New Year's Day")
+        // a holiday the next day keeps its date; the weekend holiday before it moves past it (2 January in Scotland,
+        // Boxing Day after Christmas)
+        val newYear = fixed(day(1, 1), "New Year's Day", if (scotland) setOf(day(1, 2)) else emptySet())
         if (scotland) fixed(day(1, 2), "2nd January", setOf(newYear))
         if (northernIreland) fixed(day(3, 17), "St Patrick's Day")
         add(easter.minusDays(2), "Good Friday", "Good Friday")
@@ -195,7 +201,7 @@ object PublicHolidays {
         if (scotland) add(firstMonday(8), "Summer bank holiday", "Summer bank holiday")
         else add(lastMonday(8), "Summer bank holiday", "Summer bank holiday")
         if (scotland) fixed(day(11, 30), "St Andrew's Day")
-        val christmas = fixed(day(12, 25), "Christmas Day")
+        val christmas = fixed(day(12, 25), "Christmas Day", setOf(day(12, 26)))
         fixed(day(12, 26), "Boxing Day", setOf(christmas))
     }
 

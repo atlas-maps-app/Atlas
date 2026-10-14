@@ -1,7 +1,6 @@
 package app.atlas.providers
 
 import app.atlas.geo.LatLon
-import app.atlas.geo.Shapes
 import app.atlas.model.Place
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -73,13 +72,15 @@ class Overpass(
     }
 
     /**
-     * Ways with their lines within [metres] of the line through [points], for the route module's checks: height, weight,
-     * width and length limits, lorry and hazmat rules, locks and movable bridges. [selectors] narrow or widen it.
+     * Every way with its line within [metres] of the line through [points], for the route module's checks: height,
+     * weight, width and length limits, lorry and hazmat rules, locks and movable bridges. [selectors] narrow or widen it.
+     * The line is simplified for the request and the corridor widened by as much, so a few ways just beyond [metres]
+     * may come too.
      */
     suspend fun restrictionsAlong(points: List<LatLon>, metres: Double = 25.0, selectors: List<String> = RESTRICTION_SELECTORS): List<OsmWay> {
         if (points.isEmpty()) return emptyList()
-        val line = if (points.size > 2) Shapes.simplify(points, metres / 2) else points
-        return ways(OverpassQl.waysWithGeometry(selectors, OverpassArea.Along(line, metres)))
+        val line = RequestLine.of(points, metres / 4)
+        return ways(OverpassQl.waysWithGeometry(selectors, OverpassArea.Along(line.points, metres + line.extraM)))
     }
 
     /** [retryOnRemark] is false when elements were already handed out, so a failed answer must not be repeated elsewhere. */

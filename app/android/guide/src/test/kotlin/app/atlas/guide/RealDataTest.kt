@@ -248,4 +248,21 @@ class RealDataTest {
         assertTrue(heard.isNotEmpty())
         assertEquals(heard.size, heard.toSet().size)
     }
+
+    @Test fun walkingAlongRaadhuisstraatEveryCrossingIsTold() {
+        requireData()
+        // east along Raadhuisstraat towards the Dam: signals, marked and plain crossings, all real
+        val r = route(Mode.WALK, WESTERKERK, LatLon(52.3745, 4.8905))
+        val idx = RouteIndex(r)
+        val crossings = r.hazards.filter { it.kind == "crossing" }.map { idx.alongOf(it.pointIndex) }
+        assertTrue("crossings on the route: $crossings", crossings.size >= 5)
+        val d = drive(Navigator(r, GuideSettings(mode = Mode.WALK), lookup), Simulator(r, speed = 1.4, noise = 5.0, seed = 3).fixes())
+        println("== walk along Raadhuisstraat ${r.distance.toInt()} m, crossings at ${crossings.map { it.toInt() }}\n$d")
+        assertEquals(0, d.reroutes.size)
+        assertEquals(1, d.arrivals)
+        val told = d.said.filter { it.text.startsWith("Crossing ahead") || it.text.startsWith("Zebra crossing") }
+        assertEquals(d.toString(), crossings.size, told.size)
+        // each one shortly before it: a walker hears it some 15 to 40 metres ahead
+        for (a in crossings) assertTrue("crossing at ${a.toInt()} m:\n$d", told.any { a - it.along in -5.0..60.0 })
+    }
 }

@@ -1,6 +1,9 @@
 package app.atlas.providers
 
 import app.atlas.geo.LatLon
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -90,6 +93,59 @@ class DownloadedChargersTest {
             assertEquals(2, m.count)
             m.take()
             assertEquals("\"v1\"", m.take().headers["If-None-Match"])
+        }
+    }
+
+    @Test
+    fun aCacheFileThatNoLongerReadsIsFetchedWholeNotTrustedToA304() = runBlocking {
+        val cache = tmp.newFolder("broken")
+        Mock().use { m ->
+            m.dispatch { req ->
+                if (req.headers["If-None-Match"] != null) response("", 304)
+                else mockwebserver3.MockResponse.Builder().body(okio.Buffer().write(Fixtures.bytes("ndw_sample.json.gz"))).addHeader("ETag", "\"v1\"").build()
+            }
+            val url = m.url("/f.json.gz")
+            // The last download was recorded, but its file was cut short (the phone died while writing it).
+            File(cache, "ndw-chargers.meta").writeText("url=$url\netag=\"v1\"\nfetched=2026-10-13T08:00:00Z\n")
+            File(cache, "ndw-chargers.tsv.gz").writeBytes(byteArrayOf(0x1f, 0x8b.toByte(), 8, 0))
+            val ndw = NdwChargers(testHttp(), cache, url = url) { Instant.parse("2026-10-13T12:00:00Z") }
+            assertTrue("new data, not a 304", ndw.refresh())
+            assertEquals(null, m.take().headers["If-None-Match"])
+            assertTrue(ndw.near(westerkerk, 1_000.0).isNotEmpty())
+        }
+    }
+
+    @Test
+    fun callersThatFindTheDataStaleTogetherDownloadItOnce() = runBlocking {
+        Mock().use { m ->
+            m.dispatch {
+                mockwebserver3.MockResponse.Builder().body(okio.Buffer().write(Fixtures.bytes("ndw_sample.json.gz")))
+                    .addHeader("ETag", "\"v1\"").headersDelay(300, java.util.concurrent.TimeUnit.MILLISECONDS).build()
+            }
+            val ndw = NdwChargers(testHttp(), tmp.newFolder("together"), url = m.url("/f.json.gz"), autoDownload = true)
+            val answers = (1..3).map { async(Dispatchers.Default) { ndw.near(westerkerk, 1_000.0) } }.awaitAll()
+            assertTrue(answers.all { it.isNotEmpty() })
+            assertEquals(1, m.count)
+        }
+    }
+
+    @Test
+    fun aFailedRefreshRestsInsteadOfRetryingOnEveryCall() = runBlocking {
+        val cache = tmp.newFolder("rest")
+        Mock().use { m ->
+            m.enqueueBytes(Fixtures.bytes("ndw_sample.json.gz"))
+            NdwChargers(testHttp(), cache, url = m.url("/f.json.gz")) { Instant.parse("2026-10-13T08:00:00Z") }.refresh()
+        }
+        Mock().use { m ->
+            m.dispatch { response("busy", 503) }
+            var now = Instant.parse("2026-10-13T20:00:00Z")
+            val ndw = NdwChargers(testHttp(), cache, url = m.url("/f.json.gz"), maxAge = 3.hours, autoDownload = true) { now }
+            // Stale and the server is down: the kept copy answers, and the next calls do not knock again at once.
+            repeat(3) { assertTrue(ndw.near(westerkerk, 1_000.0).isNotEmpty()) }
+            assertEquals(1, m.count)
+            now = now.plusSeconds(10 * 60)
+            assertTrue(ndw.near(westerkerk, 1_000.0).isNotEmpty())
+            assertEquals(2, m.count)
         }
     }
 

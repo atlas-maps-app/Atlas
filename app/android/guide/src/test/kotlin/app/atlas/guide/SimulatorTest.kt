@@ -31,6 +31,15 @@ class SimulatorTest {
         assertEquals(0.0, Geo.distance(fixes.last().location, route.points.last()), 0.01)
     }
 
+    @Test fun aRouteWithoutPointsIsRefusedClearly() {
+        val empty = app.atlas.model.Route(Mode.CAR, emptyList(), distance = 0.0, duration = 0.0, steps = emptyList())
+        val e = org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { Simulator(empty, speed = 10.0) }
+        assertEquals("the route has no points", e.message)
+        // a single point is a route you are already at the end of
+        val point = app.atlas.model.Route(Mode.CAR, listOf(WESTERKERK), distance = 0.0, duration = 0.0, steps = emptyList())
+        assertEquals(1 + 2, Simulator(point, speed = 10.0).fixes().count())
+    }
+
     @Test fun withoutASpeedItKeepsThePlannedPace() {
         val sk = Sketch(Mode.CAR, speed = 20.0).leg(90.0, 2000.0, "A")
         val r = sk.route()

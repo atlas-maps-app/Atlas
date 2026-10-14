@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="local_title">Lokaal</string>
+    <string name="local_named_after">Vernoemd naar</string>
+    <string name="local_building">Dit gebouw</string>
+    <string name="local_named_after_text">Naar wie of wat deze straat is vernoemd, uit OpenStreetMap en Wikidata.</string>
+    <string name="local_building_text">Het bouwjaar, de architect, het erfgoed en het vroegere gebruik.</string>
+    <string name="soon_title">Straks</string>
+    <string name="soon_sunrise">Zonsopkomst %1$s</string>
+    <string name="soon_sunset">Zonsondergang %1$s</string>
+    <string name="soon_weather">Weer</string>
+    <string name="globe_title">Aarde</string>
+    <string name="globe_text">De wereldbol, de planeten en de melkweg, met jou erop.</string>
+</resources>

@@ -8,7 +8,8 @@ Inputs (download them first; neither is kept in the repo):
 
 KilowattApp is the base: consumption and measured charging curves. OpenEV Data adds what KilowattApp lacks
 (curb weight, drag coefficient, rated range) to matching models, and newer models KilowattApp does not have; for those,
-consumption is estimated from battery and rated range and flagged.
+consumption is estimated from battery and rated range and flagged. Plug-in and range-extender hybrids (which OpenEV Data
+lists among its cars) and rows whose consumption no such vehicle could have are left out.
 
 Usage: python3 -I build_ev_models.py kw-ev-data.json oed.json out.tsv.gz
 """
@@ -26,6 +27,28 @@ MAKE_ALIASES = {'mercedes benz': 'mercedes', 'mg motor': 'mg', 'opel vauxhall': 
 
 # Rated range overstates highway range; these factors turn battery / rated range into a mixed real-world consumption.
 CYCLE_FACTOR = {'epa': 1.05, 'wltp': 1.2, 'nedc': 1.4, 'cltc': 1.45, 'jc08': 1.5}
+
+# kWh per 100 km a vehicle of each kind can really use; outside it the source is wrong (a typo, or a hybrid's
+# combined range), and the router would plan nonsense with it.
+PLAUSIBLE = {'car': (6, 40), 'van': (8, 45), 'motorbike': (3, 20), 'microcar': (3, 20)}
+
+# OpenEV Data lists some plug-in and range-extender hybrids among its electric cars. Only they have a gearbox.
+HYBRID_GEARBOX = {'dct', 'automatic', 'manual', 'cvt', 'e-cvt'}
+HYBRID_NAME = re.compile(r'\b(phev|hybrid|erev|range extender)\b', re.I)
+
+
+def plausible(row):
+    lo, hi = PLAUSIBLE.get(row['kind'], PLAUSIBLE['car'])
+    try:
+        return lo <= float(row['consumption']) <= hi
+    except ValueError:
+        return False
+
+
+def is_hybrid(v):
+    gearbox = ((v.get('powertrain') or {}).get('transmission') or {}).get('type')
+    name = ' '.join(x for x in ((v.get('model') or {}).get('name'), (v.get('trim') or {}).get('name'), (v.get('variant') or {}).get('name')) if x)
+    return gearbox in HYBRID_GEARBOX or bool(HYBRID_NAME.search(name))
 
 
 def norm(s):
@@ -142,8 +165,13 @@ def main(kw_path, oed_path, out_path):
         # The datasets order words differently ("A6 Avant e-tron" against "A6 e-tron" + "Avant"): match on word sets.
         for words in (tokens(r['model']), tokens(r['model'] + ' ' + r['variant'])):
             index.setdefault((make_key(r['make']), words, r['year']), []).append(r)
-    added = enriched = 0
+    implausible = [r for r in rows if not plausible(r)]
+    rows = [r for r in rows if plausible(r)]
+    added = enriched = hybrids = 0
     for v in json.load(open(oed_path, encoding='utf-8'))['vehicles']:
+        if is_hybrid(v):
+            hybrids += 1
+            continue
         o = oed_row(v)
         if not o['battery_kwh']:
             continue
@@ -163,6 +191,9 @@ def main(kw_path, oed_path, out_path):
             continue
         if not o['consumption'] or not (o['dc_ports'] or o['ac_ports']):
             continue
+        if not plausible(o):
+            implausible.append(o)
+            continue
         rows.append(o)
         added += 1
     rows.sort(key=lambda r: (norm(r['make']), norm(r['model']), r['year'], norm(r['variant'])))
@@ -170,7 +201,9 @@ def main(kw_path, oed_path, out_path):
         f.write('\t'.join(COLUMNS) + '\n')
         for r in rows:
             f.write('\t'.join(str(r[c]).replace('\t', ' ').replace('\n', ' ') for c in COLUMNS) + '\n')
-    print('rows', len(rows), 'kw', len(rows) - added, 'oed added', added, 'enriched', enriched)
+    print('rows', len(rows), 'kw', len(rows) - added, 'oed added', added, 'enriched', enriched, 'hybrids dropped', hybrids)
+    for r in implausible:
+        print('dropped, %s kWh/100 km is not plausible: %s %s %s %s' % (r['consumption'], r['make'], r['model'], r['variant'], r['year']))
 
 
 if __name__ == '__main__':

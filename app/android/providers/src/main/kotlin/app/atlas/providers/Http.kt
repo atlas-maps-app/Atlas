@@ -72,17 +72,20 @@ class Http(
     /** Sends [request] and reads the whole body, whatever the status code. */
     suspend fun execute(request: Request, timeout: Duration? = null): HttpResponse =
         limiter.withPermit(request.url.host) {
-            val call = clientFor(timeout).newCall(request)
+            val call = clientFor(timeout, null).newCall(request)
             call.awaitBody()
         }
 
-    /** Sends [request] and hands the open body stream to [read]; non-2xx answers throw [HttpException] before [read] runs. */
-    suspend fun <T> stream(request: Request, timeout: Duration? = null, read: (InputStream) -> T): T =
+    /**
+     * Sends [request] and hands the open body stream to [read]; non-2xx answers throw [HttpException] before [read] runs.
+     * [timeout] bounds the whole exchange and, unless [stall] is given, each wait for the next bytes too.
+     */
+    suspend fun <T> stream(request: Request, timeout: Duration? = null, stall: Duration? = null, read: (InputStream) -> T): T =
         limiter.withPermit(request.url.host) {
-            val call = clientFor(timeout).newCall(request)
+            val call = clientFor(timeout, stall).newCall(request)
             call.awaitResponse().use { response ->
                 call.readCancellably {
-                    if (!response.isSuccessful) throw HttpException(response.code, request.url.toString(), response.body.string().take(500))
+                    if (!response.isSuccessful) throw HttpException(response.code, request.url.toString(), response.errorBody())
                     read(response.body.byteStream())
                 }
             }
@@ -91,10 +94,11 @@ class Http(
     /**
      * Sends [request] and hands the whole response to [read] on an IO thread, whatever its status: for big downloads
      * that must be streamed and for conditional requests that may answer 304. The response is closed afterwards.
+     * A long download gives a generous [timeout] and a short [stall], so a dead connection fails at once.
      */
-    suspend fun <T> exchange(request: Request, timeout: Duration? = null, read: (Response) -> T): T =
+    suspend fun <T> exchange(request: Request, timeout: Duration? = null, stall: Duration? = null, read: (Response) -> T): T =
         limiter.withPermit(request.url.host) {
-            val call = clientFor(timeout).newCall(request)
+            val call = clientFor(timeout, stall).newCall(request)
             call.awaitResponse().use { response -> call.readCancellably { read(response) } }
         }
 
@@ -116,15 +120,30 @@ class Http(
         return execute(request(url).post(form).build(), timeout)
     }
 
-    private fun clientFor(timeout: Duration?): OkHttpClient =
-        if (timeout == null) client
-        else client.newBuilder()
-            .readTimeout(timeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)
-            .callTimeout(timeout.inWholeMilliseconds + 15_000, TimeUnit.MILLISECONDS)
-            .build()
+    /**
+     * [client] with [timeout] for the whole call and [stall], else [timeout], for each wait between bytes: Overpass,
+     * for one, sends nothing until its answer is ready.
+     */
+    private fun clientFor(timeout: Duration?, stall: Duration?): OkHttpClient =
+        if (timeout == null && stall == null) client
+        else client.newBuilder().apply {
+            (stall ?: timeout)?.let { readTimeout(it.inWholeMilliseconds, TimeUnit.MILLISECONDS) }
+            timeout?.let { callTimeout(it.inWholeMilliseconds + 15_000, TimeUnit.MILLISECONDS) }
+        }.build()
 
     private fun Request.Builder.headers(map: Map<String, String>): Request.Builder = apply { map.forEach { (k, v) -> header(k, v) } }
+
+    companion object {
+        /**
+         * How much of a failed answer's body [HttpException.body] keeps: enough for the reason, which some servers put
+         * past an HTML preamble (Overpass's comes after 500 characters), and never a whole big download.
+         */
+        const val MAX_ERROR_BODY = 4_096
+    }
 }
+
+/** The start of a failed answer's body, read without loading the rest. */
+internal fun Response.errorBody(): String = peekBody(Http.MAX_ERROR_BODY.toLong()).string().take(Http.MAX_ERROR_BODY)
 
 /** A finished HTTP exchange with its whole body. */
 class HttpResponse(val code: Int, val headers: Headers, val body: ByteArray, val url: String, val fromCache: Boolean = false) {
@@ -134,7 +153,7 @@ class HttpResponse(val code: Int, val headers: Headers, val body: ByteArray, val
     fun json(): JsonElement = ProviderJson.parseToJsonElement(text)
 
     /** Throws [HttpException] unless the status is 2xx; returns this for chaining. */
-    fun requireOk(): HttpResponse = if (ok) this else throw HttpException(code, url, text.take(500))
+    fun requireOk(): HttpResponse = if (ok) this else throw HttpException(code, url, text.take(Http.MAX_ERROR_BODY))
 }
 
 /** A server answered with a status other than 2xx. */

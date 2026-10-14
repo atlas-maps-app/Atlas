@@ -173,6 +173,25 @@ class OverpassTest {
     }
 
     @Test
+    fun aBadQueryOnTheRealErrorPageSaysWhatIsWrong() = runBlocking {
+        // overpass-api.de's error page: its sentence starts past the first 500 characters, after the head and the ODbL line.
+        val page = Fixtures.text("overpass_504.html").replace(
+            Regex("""<p><strong style="color:#FF0000">Error</strong>:.*?</p>"""),
+            """<p><strong style="color:#FF0000">Error</strong>: line 2: parse error: Unknown type "nod" </p>""",
+        )
+        assertTrue(page.indexOf("Unknown type") > 500)
+        Mock().use { a ->
+            a.enqueue(page, 400)
+            try {
+                Overpass(testHttp(), listOf(a.url("/i"))).query("nod[amenity]; out;")
+                fail("expected OverpassException")
+            } catch (e: OverpassException) {
+                assertTrue(e.message, e.message!!.contains("line 2: parse error: Unknown type \"nod\""))
+            }
+        }
+    }
+
+    @Test
     fun tooManyRequestsPausesThatHostAndTriesTheNext() = runBlocking {
         Mock().use { a ->
             Mock().use { b ->
@@ -253,11 +272,19 @@ class OverpassTest {
         Mock().use { m ->
             m.fixture("overpass_geom.json")
             val o = Overpass(testHttp(), listOf(m.url("/i")))
-            val ways = o.restrictionsAlong(listOf(LatLon(52.3740, 4.8790), LatLon(52.3745, 4.8838), LatLon(52.3750, 4.8900)), 30.0)
+            val route = listOf(LatLon(52.3740, 4.8790), LatLon(52.3745, 4.8838), LatLon(52.3750, 4.8900))
+            val ways = o.restrictionsAlong(route, 30.0)
             assertEquals(59, ways.size)
             val sent = URLDecoder.decode(m.take().text.removePrefix("data="), "UTF-8")
-            assertTrue(sent, Regex("""way\["maxheight"]\(around:30,52\.374,4\.879,.*52\.375,4\.89\);""").containsMatchIn(sent))
             assertTrue(sent.contains("out tags geom qt;"))
+            // The middle point lies 7 m off the straight line and is simplified away; the corridor asked for must still
+            // reach 30 m from every point of the route itself.
+            val around = Regex("""way\["maxheight"]\(around:([0-9.]+),([^)]*)\);""").find(sent)!!
+            val radius = around.groupValues[1].toDouble()
+            val asked = around.groupValues[2].split(',').map { it.toDouble() }.chunked(2) { LatLon(it[0], it[1]) }
+            assertEquals(2, asked.size)
+            val askedLine = app.atlas.geo.Polyline(asked)
+            assertTrue(sent, route.all { askedLine.snap(it)!!.offset + 30.0 <= radius })
         }
     }
 

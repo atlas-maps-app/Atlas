@@ -35,11 +35,19 @@ object Localise {
 
     private val FALLBACK_KEYS = listOf("brand", "operator", "ref")
 
+    /** "zh-Hant-TW" -> zh-Hant-TW, zh-Hant, zh: the tag, then each shorter prefix. */
     private fun langKeys(lang: String?): List<String> {
         if (lang.isNullOrBlank()) return emptyList()
-        val l = lang.replace('_', '-')
-        val base = l.substringBefore('-').lowercase()
-        return if (base == l) listOf(l) else listOf(l, base)
+        var l = lang.trim().replace('_', '-')
+        val out = ArrayList<String>(3)
+        while (true) {
+            out += l
+            val cut = l.lastIndexOf('-')
+            if (cut <= 0) break
+            l = l.substring(0, cut)
+        }
+        out[out.size - 1] = out.last().lowercase()
+        return out.distinct()
     }
 
     /** The address style of an ISO country code (any case); street first when unknown. */

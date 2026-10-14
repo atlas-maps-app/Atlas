@@ -251,6 +251,75 @@ class CalloutsTest {
         assertEquals(listOf("Warning: height limit 3.9 metres, your truck is 4 metres", "Warning: height limit 3.9 metres, your truck is 4 metres"), d.warnings())
     }
 
+    @Test fun aRoundTripWarnsOnTheWayOutAndOnTheWayBack() {
+        // up the Vecht through a bridge and a lock, and back the same way: both pass the same places
+        val sk = Sketch(Mode.BOAT, speed = 3.0).leg(0.0, 3000.0, "Vecht").leg(180.0, 3000.0, "Vecht")
+        sk.hazard(1000.0, "lock", null, mapOf("vhf_channel" to "20"))
+        sk.hazard(1500.0, "bridge", 9.0)
+        sk.hazard(4500.0, "bridge", 9.0)
+        sk.hazard(5000.0, "lock", null, mapOf("vhf_channel" to "20"))
+        val r = sk.route()
+        val settings = GuideSettings(mode = Mode.BOAT, vehicle = Vehicle(airDraftM = 2.8))
+        val d = said(r, settings, 3.0)
+        assertEquals(2, d.texts.count { it.startsWith("Bridge in 900 metres") })
+        assertEquals(2, d.texts.count { it.startsWith("Lock in 900 metres") })
+        assertTrue(d.first("Bridge").along < 1000)
+        assertTrue(d.said.last { it.text.startsWith("Bridge") }.along > 3000)
+        val ids = Navigator(r, settings).plannedCallouts.map { it.id }
+        assertEquals(ids.size, ids.toSet().size)
+    }
+
+    @Test fun oneThingReportedTwiceIsOneWarning() {
+        // a level crossing mapped on both tracks, 10 m apart, and a toll booth reported twice by the router
+        val sk = Sketch(Mode.CAR, speed = 13.9).leg(90.0, 3000.0, "Spoorlaan")
+        sk.hazard(1000.0, "level_crossing")
+        sk.hazard(1010.0, "level_crossing")
+        sk.hazard(2000.0, "toll")
+        sk.hazard(2000.0, "toll")
+        val d = said(sk.route(), GuideSettings(mode = Mode.CAR), 13.9)
+        assertEquals(listOf("Level crossing ahead", "Toll road ahead"), d.warnings())
+    }
+
+    @Test fun aWarningPassedBeforeARerouteIsGivenAgainOnTheNewRoute() {
+        // the level crossing is told and passed; the driver misses the left and the new route comes round to it again
+        val sk = Sketch(Mode.CAR, speed = 13.9).leg(90.0, 1200.0, "Raadhuisstraat").leg(0.0, 800.0, "Singel")
+        sk.hazard(1150.0, "level_crossing")
+        val r = sk.route(arrive = Turn.RIGHT)
+        val nav = Navigator(r, GuideSettings(mode = Mode.CAR))
+        val first = drive(nav, Simulator(r, speed = 13.9, detours = listOf(Detour(1199.0, 0.0, 300.0))).fixes(), untilEnd = true)
+        assertEquals(1, first.texts.count { it == "Level crossing ahead" })
+        val from = first.reroutes.first().second.from
+        val past = app.atlas.geo.Geo.distance(from.location, r.line.pointAt(1200.0))
+        val loop = Sketch(Mode.CAR, origin = from.location, speed = 13.9).leg(0.0, 100.0, "Herengracht").leg(270.0, past + 100.0, "Keizersgracht")
+            .leg(180.0, 100.0, "Prinsengracht").leg(90.0, 100.0, "Raadhuisstraat").leg(0.0, 800.0, "Singel")
+        loop.hazard(350.0 + past, "level_crossing")
+        val nr = loop.route(arrive = Turn.RIGHT)
+        nav.replaceRoute(nr)
+        val second = drive(nav, Simulator(nr, speed = 13.9, start = from.time.plusSeconds(1)).fixes())
+        assertEquals(second.toString(), 1, second.texts.count { it == "Level crossing ahead" })
+    }
+
+    @Test fun aWarningToldAndStillAheadIsNotRepeatedByAReroute() {
+        // the low bridge was told 2 km ahead; a new route on the way still passes it: only the close-by warning is left
+        val sk = Sketch(Mode.TRUCK, speed = 20.0).leg(Leg(90.0, 8000.0, "B9"))
+        sk.hazard(5000.0, "maxheight", 3.9)
+        val r = sk.route()
+        val settings = GuideSettings(mode = Mode.TRUCK, vehicle = Vehicle(heightM = 4.0))
+        val nav = Navigator(r, settings)
+        val fixes = Simulator(r, speed = 20.0).fixes().toList()
+        val before = drive(nav, fixes.take(161).asSequence())
+        assertEquals(1, before.texts.count { it.startsWith("Warning: height limit") })
+        val here = nav.state!!.snapped
+        val rest = Sketch(Mode.TRUCK, origin = here, speed = 20.0).leg(Leg(90.0, 8000.0 - nav.state!!.along, "B9"))
+            .hazard(5000.0 - nav.state!!.along, "maxheight", 3.9).route()
+        nav.replaceRoute(rest)
+        val after = drive(nav, Simulator(rest, speed = 20.0, start = fixes[160].time.plusSeconds(1)).fixes())
+        val warnings = after.said.filter { it.text.startsWith("Warning: height limit") }
+        assertEquals(after.toString(), 1, warnings.size)
+        assertTrue(warnings.single().id.endsWith("/2"))
+        assertTrue(after.said.indexOf(warnings.single()) > 0)
+    }
+
     @Test fun warningsSpeakDutchGermanAndFrench() {
         val sk = Sketch(Mode.BIKE, speed = 4.5).leg(90.0, 2000.0, "Dijk")
         sk.hazard(500.0, "climb", 6.0, mapOf("length" to "400"))

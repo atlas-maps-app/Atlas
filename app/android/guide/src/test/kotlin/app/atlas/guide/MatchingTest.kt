@@ -120,6 +120,20 @@ class MatchingTest {
         assertTrue(Geo.distance(r.points.first(), r.points.last()) > 2990)
     }
 
+    @Test fun theArrivalTimeIsNotFooledByGpsNoise() {
+        // a walker on plan: a fix wanders further in a second than the walker goes, and must not make the pace look faster
+        val r = Sketch(Mode.WALK, speed = 1.4).leg(90.0, 3000.0, "Westerstraat").route()
+        for (noise in listOf(5.0, 10.0)) {
+            var sum = 0.0
+            for (seed in 1L..5L) {
+                val d = drive(Navigator(r, GuideSettings(mode = Mode.WALK)), Simulator(r, speed = 1.4, noise = noise, seed = seed).fixes())
+                val mid = d.states[d.states.size / 2]
+                sum += mid.remainingTime / ((3000 - mid.along) / 1.4)
+            }
+            assertEquals("$noise m of noise", 1.0, sum / 5, 0.05)
+        }
+    }
+
     @Test fun theArrivalTimeCountsTheChargingStops() {
         // 100 km at 25 m/s with a 30-minute charge at 50 km: the router's duration has it, the steps do not
         val sk = Sketch(Mode.CAR, speed = 25.0, spacing = 500.0).leg(Leg(90.0, 100_000.0, null, ref = "A1"))

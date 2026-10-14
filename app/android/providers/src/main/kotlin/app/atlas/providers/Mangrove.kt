@@ -164,15 +164,16 @@ class Mangrove(private val http: Http, private val base: String = "https://api.m
 
         /**
          * Assigns reviews from a viewport ([near]) to [places]: by the OSM id the writer recorded first, then by Mangrove's
-         * own rule (same name, within the uncertainties). Returns the reviews per place key.
+         * own rule (same name, within the uncertainties), the nearest such place. Returns the reviews per place key.
          */
         fun match(reviews: List<MangroveReview>, places: List<Place>): Map<String, List<MangroveReview>> {
             val byId = places.filter { it.id != null }.associateBy { it.id!! }
             val out = HashMap<String, MutableList<MangroveReview>>()
             for (r in reviews) {
+                // Of several places that fit (two branches of a chain), the nearest one is the one reviewed.
                 val target = r.osmId?.let { byId[it] } ?: r.subject?.let { s ->
-                    places.filter { p -> p.name() != null && Geo.distance(p.location, s.at) <= s.uncertainty + GeoSubject.UNCERTAINTY }
-                        .firstOrNull { p -> GeoSubject.of(p)?.sameAs(s) == true }
+                    places.filter { p -> p.name() != null && GeoSubject.of(p)?.sameAs(s) == true }
+                        .minByOrNull { p -> Geo.distance(p.location, s.at) }
                 }
                 if (target != null) out.getOrPut(target.key) { ArrayList() }.add(r)
             }

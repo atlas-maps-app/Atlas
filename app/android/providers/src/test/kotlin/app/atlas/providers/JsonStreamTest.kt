@@ -53,7 +53,7 @@ class JsonStreamTest {
     @Test
     fun malformedInputFailsClearly() {
         // Every malformed input is an IOException, so callers that fail over on I/O errors (Overpass) catch it.
-        for (bad in listOf("""{"a" 1}""", """[1,,2]""", """{"a":1,}""", """["open""", """{"a":tru}""", """[1.2.3]""", """[-]""", """[12abc]""")) {
+        for (bad in listOf("""{"a" 1}""", """[1,,2]""", """{"a":1,}""", """["open""", """{"a":tru}""", """[1.2.3]""", """[-]""", """[12abc]""", """[01]""", """[1d]""")) {
             try {
                 js(bad).readTree()
                 fail("accepted $bad")
@@ -68,6 +68,25 @@ class JsonStreamTest {
                 fail("accepted 5.2.1")
             } catch (_: IOException) {
             }
+        }
+    }
+
+    @Test
+    fun malformedLiteralsFailOnEveryPathNotJustTheTypedOnes() {
+        // Tags are read as text and skipped values are not read at all: a garbled answer must still fail, so Overpass
+        // fails over to another server instead of handing out "tru" as a tag value.
+        val bad = listOf("tru", "nul", "12abc", "1d", "0x10", "-Infinity", "01", "1.", "-", "1e", ".5")
+        for (lit in bad) {
+            for (read in listOf<(JsonStream) -> Any?>({ it.readStringMap() }, { it.beginObject(); it.nextName(); it.skipValue() }, { it.beginObject(); it.nextName(); it.nextScalarOrNull() })) {
+                try {
+                    read(js("""{"a": $lit}"""))
+                    fail("accepted $lit")
+                } catch (_: IOException) {
+                }
+            }
+        }
+        for (good in listOf("0", "-0", "12", "-2.5e3", "1E+2", "0.25", "true", "false")) {
+            assertEquals(good, js("""{"a": $good}""").readStringMap()["a"])
         }
     }
 

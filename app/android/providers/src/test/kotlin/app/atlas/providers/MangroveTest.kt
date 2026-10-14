@@ -144,6 +144,19 @@ class MangroveTest {
     }
 
     @Test
+    fun aViewportReviewGoesToTheNearestOfTwoBranches() {
+        // Two Albert Heijn branches 40 m apart: both are within the uncertainties, and the review was written at the second.
+        val first = Place(OsmId(OsmType.NODE, 1), LatLon(52.3700, 4.8800), mapOf("shop" to "supermarket", "name" to "Albert Heijn"))
+        val second = Place(OsmId(OsmType.NODE, 2), app.atlas.geo.Geo.destination(first.location, 90.0, 40.0), first.tags)
+        val review = Mangrove.parseReview(
+            ProviderJson.parseToJsonElement(
+                """{"signature":"s","payload":{"sub":"${GeoSubject(app.atlas.geo.Geo.destination(second.location, 90.0, 3.0), "Albert Heijn")}","rating":75,"iat":1760000000}}""",
+            ).asObject()!!,
+        )!!
+        assertEquals(setOf("n2"), Mangrove.match(listOf(review), listOf(first, second)).keys)
+    }
+
+    @Test
     fun batchSummaries() = runBlocking {
         Mock().use { m ->
             m.fixture("mangrove_batch.json")

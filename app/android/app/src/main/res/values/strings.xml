@@ -1,4 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Atlas</string>
+
+    <!-- The bottom bar -->
+    <string name="tab_map">Map</string>
+    <string name="tab_go">Go</string>
+    <string name="tab_soon">Soon</string>
+    <string name="tab_local">Local</string>
+    <string name="tab_mine">Mine</string>
+
+    <!-- The kit -->
+    <string name="kit_back">Back</string>
+    <string name="kit_close">Close</string>
+    <string name="kit_sheet_expand">Show more</string>
+    <string name="kit_sheet_collapse">Show less</string>
+    <string name="kit_departure_time">Time</string>
+    <string name="kit_departure_to">To</string>
+    <string name="kit_departure_platform">Pl</string>
+    <string name="kit_open_until">open until %1$s</string>
+    <string name="kit_open_24_7">open 24/7</string>
+    <string name="kit_open">open</string>
+    <string name="kit_closes_in">closes in %1$d min</string>
+    <string name="kit_closed_opens">closed · opens %1$s</string>
+    <string name="kit_closed">closed</string>
+    <string name="kit_hours_unknown">hours not mapped</string>
+    <string name="kit_mic">Speak</string>
+    <string name="kit_mic_unavailable">No speech recognition on this phone</string>
+    <string name="kit_offline">Offline</string>
+    <string name="kit_loading">Looking…</string>
+    <string name="kit_retry">Try again</string>
 </resources>

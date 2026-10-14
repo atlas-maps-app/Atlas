@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="home_search_hint">Search or ask</string>
+    <string name="home_search">Search</string>
+    <string name="home_near">A near B</string>
+    <string name="home_mic">Search by voice</string>
+    <string name="home_compass">North up</string>
+    <string name="home_3d_on">3D buildings on</string>
+    <string name="home_3d_off">3D buildings off</string>
+    <string name="home_layers">Map layers</string>
+    <string name="home_locate">Show my location</string>
+    <string name="home_follow">Follow my heading</string>
+    <string name="home_globe">Zoom out to the globe</string>
+    <string name="home_weather">%1$s, %2$s</string>
+    <string name="home_weather_kept">kept forecast</string>
+    <string name="home_offline_ready">This area works offline</string>
+    <string name="home_online_only">This area needs a connection; download it in Offline</string>
+    <string name="home_offline_now">No connection</string>
+    <string name="home_moments">%1$d things coming up</string>
+    <string name="home_need_water">Drinking water</string>
+    <string name="home_need_food">Food</string>
+    <string name="home_need_toilet">Toilet</string>
+    <string name="home_wc">WC</string>
+    <string name="home_attribution">© OpenStreetMap</string>
+    <string name="home_results_count">%1$d nearby</string>
+    <string name="home_results_none">Nothing of this kind mapped nearby</string>
+    <string name="home_results_offline">From the map on this phone · online adds hours</string>
+    <string name="home_results_online">From OpenStreetMap, now</string>
+    <string name="home_results_error">Could not ask OpenStreetMap: %1$s</string>
+    <string name="home_results_all">See all</string>
+    <string name="home_close_results">Close the list</string>
+    <string name="home_location_title">Where are you?</string>
+    <string name="home_location_text">Your position stays on this phone. It puts you on the map and gives walking times.</string>
+    <string name="home_location_allow">Allow</string>
+    <string name="home_location_later">Not now</string>
+    <string name="home_location_settings">Open settings</string>
+    <string name="home_moment_rain">Rain at %1$s</string>
+    <string name="home_moment_dry">Dry from %1$s</string>
+    <string name="home_moment_sunset">Sunset %1$s</string>
+    <string name="home_moment_golden">Golden hour %1$s</string>
+    <string name="home_moment_uv">UV %1$d</string>
+    <string name="home_moment_wind">Gusts %1$d km/h at %2$s</string>
+</resources>

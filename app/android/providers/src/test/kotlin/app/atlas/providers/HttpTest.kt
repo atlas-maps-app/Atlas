@@ -15,6 +15,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.util.concurrent.TimeUnit
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -45,6 +47,30 @@ class HttpTest {
                 assertEquals(404, e.code)
                 // The message names the endpoint but never the query, which may hold a key.
                 assertFalse(e.message!!.contains("secret"))
+            }
+        }
+    }
+
+    @Test
+    fun anErrorKeepsEnoughOfItsBodyToSayWhyButNoMore() = runBlocking {
+        Mock().use { m ->
+            val why = "x".repeat(1_500) + "the reason"
+            m.enqueue(why, 400)
+            m.enqueue(why + "y".repeat(5_000_000), 500)
+            val http = testHttp()
+            try {
+                http.text(m.url("/a"))
+                fail()
+            } catch (e: HttpException) {
+                assertTrue(e.body.endsWith("the reason"))
+            }
+            try {
+                http.stream(http.request(m.url("/b")).build()) { fail("read a failed answer") }
+                fail("expected HttpException")
+            } catch (e: HttpException) {
+                assertEquals(500, e.code)
+                assertTrue(e.body.contains("the reason"))
+                assertTrue(e.body.length <= Http.MAX_ERROR_BODY)
             }
         }
     }
@@ -88,6 +114,22 @@ class HttpTest {
                 assertEquals(-1, read)
                 assertTrue("a blocked read ended ${ms} ms after the start", ms < 3_000)
             }
+        }
+    }
+
+    @Test
+    fun aStalledDownloadFailsAtItsStallLimitNotAtTheEndOfItsLongBudget() = runBlocking {
+        Mock().use { m ->
+            // One byte, then silence: a phone that lost its signal mid-download.
+            m.server.enqueue(MockResponse.Builder().body(okio.Buffer().write(ByteArray(10))).throttleBody(1, 5, TimeUnit.SECONDS).build())
+            val http = testHttp()
+            val start = System.nanoTime()
+            try {
+                http.exchange(http.request(m.url("/national.json.gz")).build(), timeout = 15.minutes, stall = 300.milliseconds) { it.body.bytes() }
+                fail("a stalled read must fail")
+            } catch (_: java.io.IOException) {
+            }
+            assertTrue((System.nanoTime() - start) / 1_000_000 < 3_000)
         }
     }
 

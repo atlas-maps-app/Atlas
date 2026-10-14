@@ -115,10 +115,28 @@ object Brands {
             colour = parseColour(col(9)),
             textColour = parseColour(col(10)),
             matchNames = col(11).let { m -> if (m.isEmpty()) emptyList() else m.split('|').filter { it.isNotEmpty() } },
-            otherTags = col(12).let { o ->
-                if (o.isEmpty()) emptyMap() else o.split(';').filter { '=' in it }.associate { it.substringBefore('=') to it.substringAfter('=') }
-            },
+            otherTags = otherTags(col(12)),
         )
+    }
+
+    /**
+     * The "other tags" column: `k=v` pairs joined by ";". A value may itself be a ";" list (`cuisine=burger;pizza`),
+     * so a part without "=" continues the value before it.
+     */
+    internal fun otherTags(s: String): Map<String, String> {
+        if (s.isEmpty()) return emptyMap()
+        val out = LinkedHashMap<String, String>()
+        var key: String? = null
+        for (part in s.split(';')) {
+            val eq = part.indexOf('=')
+            if (eq > 0) {
+                key = part.substring(0, eq)
+                out[key] = part.substring(eq + 1)
+            } else if (key != null && part.isNotEmpty()) {
+                out[key] = out[key] + ";" + part
+            }
+        }
+        return out
     }
 
     private fun splitSet(s: String): Set<String> = if (s.isEmpty()) emptySet() else s.split(',').toSet()

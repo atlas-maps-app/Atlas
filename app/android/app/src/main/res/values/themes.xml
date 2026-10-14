@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Edge to edge on warm paper; Compose draws everything else. -->
+    <style name="Theme.Atlas" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/atlas_paper</item>
+        <item name="android:colorAccent">@color/atlas_blue</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <style name="Theme.Atlas.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/atlas_paper</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.Atlas</item>
+    </style>
+</resources>
