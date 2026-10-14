@@ -14,12 +14,15 @@ android {
         applicationId = "app.atlas"
         minSdk = 29
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1"
+        // A release build on GitHub numbers itself (ATLAS_VERSION_CODE is the workflow's run number, ATLAS_VERSION the tag),
+        // so every alpha installs over the one before.
+        versionCode = System.getenv("ATLAS_VERSION_CODE")?.toIntOrNull() ?: 1
+        versionName = System.getenv("ATLAS_VERSION") ?: "0.1"
     }
 
     // The release key comes from the environment (CI secrets, see .github/workflows/release.yml); without it the
-    // release build is signed with the debug key so it still installs.
+    // release build is signed with the debug key so it still installs. Alphas are debug builds signed with the release
+    // key, so they update one another and a later release.
     val releaseKey = System.getenv("ATLAS_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
     signingConfigs {
         if (releaseKey != null) create("release") {
@@ -31,6 +34,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            if (releaseKey != null) signingConfig = signingConfigs.getByName("release")
+        }
         release {
             isMinifyEnabled = false
             signingConfig = if (releaseKey != null) signingConfigs.getByName("release") else signingConfigs.getByName("debug")

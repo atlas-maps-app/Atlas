@@ -4,6 +4,9 @@
 set -u
 APK=$(ls "$1"/*.apk | head -1); OUT=$2; mkdir -p "$OUT"
 adb wait-for-device
+# The emulator's own launcher sometimes stalls under the software GPU; its "isn't responding" dialog is not Atlas's.
+adb shell settings put global hide_error_dialogs 1 >/dev/null 2>&1
+adb shell settings put global anr_show_background 0 >/dev/null 2>&1
 adb install -r -g "$APK" || exit 1
 adb logcat -c
 SCREENS=$(adb shell am start -W -n app.atlas/.MainActivity --es atlas.screen list >/dev/null 2>&1; sleep 6; adb shell run-as app.atlas cat files/ci_screens.txt 2>/dev/null | tr -d '\r')
@@ -15,6 +18,8 @@ for s in $SCREENS; do
   adb shell dumpsys gfxinfo app.atlas reset >/dev/null 2>&1
   adb shell am start -W -n app.atlas/.MainActivity --es atlas.screen "$s" --ez atlas.ci true > "$OUT/$s.start.txt"
   sleep 12
+  adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1
+  sleep 1
   adb exec-out screencap -p > "$OUT/$s.png"
   adb shell dumpsys gfxinfo app.atlas > "$OUT/$s.gfxinfo.txt"
   if adb logcat -d -b crash | grep -q "app.atlas"; then echo "CRASH on $s"; adb logcat -d -b crash > "$OUT/$s.crash.txt"; FAIL=1; adb logcat -c; fi
