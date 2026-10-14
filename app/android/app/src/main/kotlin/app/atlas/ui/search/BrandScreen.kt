@@ -4,7 +4,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -14,47 +17,106 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
+import app.atlas.mapview.Marker
+import app.atlas.mapview.MarkerStyle
+import app.atlas.model.Place
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.places.Brands
+import app.atlas.places.OpeningHours
+import app.atlas.places.Symbols
+import app.atlas.services.PlaceOrigin
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.AtlasScreen
-import app.atlas.ui.kit.Card
+import app.atlas.ui.kit.Hairline
 import app.atlas.ui.kit.StateMessage
+import app.atlas.ui.kit.SymbolButton
 import app.atlas.ui.kit.rememberHere
+import app.atlas.ui.kit.rememberNow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.time.ZonedDateTime
 
-/** One brand and its branches around you, nearest first. Placeholder for the search package's brand sheet. */
+/** How far around you a brand's branches are looked for. */
+internal const val BRAND_RADIUS_M = 3_000.0
+
+/**
+ * Every branch of one brand on the map, "All 8 on the map": its logo as each pin, and the sheet with the logo, "8
+ * branches · 6 open", the bell and hide, and the branches by walk time with "→ 21:00" or "opens 10:00".
+ */
 @Composable
 fun BrandScreen(args: Dest.Brand, nav: Navigator) {
     val services = LocalServices.current
     val here = rememberHere()
     val brand = remember(args.id) { Brands.byId(args.id) }
-    val branches by produceState<BrandBranches?>(null, args.id, here) {
-        value = BrandsAround.near(services, here, BRANDS_RADIUS_M * 2).chains.firstOrNull { it.brand.id == args.id }
-            ?: brand?.let { BrandBranches(it, emptyList()) }
+    if (brand == null) {
+        AtlasScreen(args.id, onBack = { nav.back() }) { StateMessage("ui-store", stringResource(R.string.brand_unknown), text = args.id) }
+        return
     }
-    AtlasScreen(brand?.name ?: args.id, onBack = { nav.back() }) {
-        if (brand == null) {
-            StateMessage("ui-store", args.id)
-            return@AtlasScreen
+    val found by produceState<Pair<List<Place>, PlaceOrigin?>?>(null, args.id, here) {
+        value = BrandsAround.branches(services, args.id, here, BRAND_RADIUS_M)
+    }
+    val hidden by services.saved.hiddenBrands.collectAsStateWithLifecycle()
+    val alerts by remember { services.settings.flow(BRAND_ALERTS, emptySet()) }.collectAsStateWithLifecycle(emptySet())
+    val branches = found?.first.orEmpty()
+    val now = rememberNow(found)
+    val ctx = remember(here) { HereContext.hours(services, here, ZonedDateTime.now(services.clock).zone) }
+    val open = remember(branches, now) { branches.count { OpeningHours.parseOrNull(it.tags["opening_hours"])?.isOpen(now, ctx) == true } }
+    val markers = remember(branches) {
+        branches.mapIndexed { i, p ->
+            Marker(p.key, p.location, Symbols.symbolFor(p.tags), (brand.colour ?: 0xFF14161B.toInt()).toLong() and 0xFFFFFFFFL, MarkerStyle.BRAND, logo = brand.id, priority = 1_000 - i, place = p)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            BrandLogo(brand, 56.dp)
-            val n = branches?.branches?.size
-            Column {
-                Text(
-                    if (n == null) stringResource(R.string.kit_loading) else pluralStringResource(R.plurals.brand_branches_near, n, n),
-                    style = Atlas.type.bodyStrong,
-                )
+    }
+    val openPlace: (Place) -> Unit = { p -> services.remember(p); nav.go(Dest.Place.of(p)) }
+    val isHidden = brand.id in hidden
+    val bell = brand.id in alerts
+
+    OnTheMap(
+        here = here,
+        markers = markers,
+        fit = remember(branches) { branches.take(12).map { it.location } },
+        onBack = { nav.back() },
+        onPlace = openPlace,
+        onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
+        title = {
+            BrandLogo(brand, 36.dp)
+            Text(brandName(brand), style = Atlas.type.name, color = Atlas.colors.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        },
+    ) {
+        val c = Atlas.colors
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                BrandLogo(brand, 52.dp)
+                Column(Modifier.weight(1f)) {
+                    Text(brandName(brand), style = Atlas.type.headline, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        if (found == null) stringResource(R.string.kit_loading)
+                        else pluralStringResource(R.plurals.brand_branches_open, branches.size, branches.size, open),
+                        style = Atlas.type.caption, color = c.inkSoft,
+                    )
+                }
+                SymbolButton("ui-bell", stringResource(if (bell) R.string.brands_bell_on else R.string.brands_bell), {
+                    services.scope.launch { services.settings.edit { p -> val s = p[BRAND_ALERTS].orEmpty(); p[BRAND_ALERTS] = if (bell) s - brand.id else s + brand.id } }
+                }, size = 44.dp, elevation = 0.dp, background = c.cardMuted, selected = bell)
+                SymbolButton(if (isHidden) "ui-eye" else "ui-eye-off", stringResource(if (isHidden) R.string.brands_show else R.string.brands_hide, brandName(brand)), {
+                    services.scope.launch(Dispatchers.IO) { runCatching { services.saved.hideBrand(brand.id, !isHidden) } }
+                }, size = 44.dp, elevation = 0.dp, background = c.cardMuted, selected = isHidden)
             }
+            found?.second?.let { OriginLine(it, null) }
         }
-        val list = branches?.branches.orEmpty()
-        if (branches != null && list.isEmpty()) StateMessage("ui-store", stringResource(R.string.brands_none), tint = Atlas.colors.inkSoft)
-        if (list.isNotEmpty()) {
-            Card(padding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) {
-                BranchRows(list.take(40), here, onPlace = { services.remember(it); nav.go(Dest.Place.of(it)) })
+        when {
+            found == null -> Unit
+            branches.isEmpty() -> StateMessage("ui-store", stringResource(R.string.brands_none))
+            else -> LazyColumn(Modifier.fillMaxWidth(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp)) {
+                itemsIndexed(branches, key = { _, p -> p.key }) { i, p ->
+                    BranchRow(p, here, now) { openPlace(p) }
+                    if (i < branches.lastIndex) Hairline()
+                }
             }
         }
     }

@@ -235,6 +235,15 @@ sealed interface Dest {
         override fun Content(nav: Navigator) = VehicleScreen(this, nav)
     }
 
+    /** Where to park, lock or charge a two-wheeler around you, for [mode] (a `Mode` name; null: a bike). */
+    data class Twowheel(val mode: String? = null) : Dest {
+        override val route get() = Routes.build("twowheel", "mode" to mode)
+        override val tab get() = Tab.GO
+
+        @Composable
+        override fun Content(nav: Navigator) = app.atlas.ui.go.TwowheelScreen(this, nav)
+    }
+
     // ---- Soon and Local (ui/local) --------------------------------------------------------------------------------
 
     /** The Soon tab: what is coming up near you. */
@@ -395,6 +404,45 @@ sealed interface Dest {
         override fun Content(nav: Navigator) = ChargingRouteScreen(this, nav)
     }
 
+    // ---- Saved places, Ask, map quests and Where to? (ui/search) ------------------------------------------------
+
+    /** Saved places: the notebooks of lists; [id] opens one list. */
+    data class Lists(val id: Int? = null) : Dest {
+        override val route get() = Routes.build("lists", "id" to id)
+        override val tab get() = Tab.SOON
+
+        @Composable
+        override fun Content(nav: Navigator) = app.atlas.ui.search.ListsScreen(this, nav)
+    }
+
+    /** Ask: a whole outing said in one sentence ([text]), read into a timed plan of real places. */
+    data class Ask(val text: String = "") : Dest {
+        override val route get() = Routes.build("ask", "q" to text.ifEmpty { null })
+        override val tab get() = Tab.SOON
+
+        @Composable
+        override fun Content(nav: Navigator) = app.atlas.ui.search.AskScreen(this, nav)
+    }
+
+    /** Map quests around a point (null: here): what nobody has mapped yet, answered as notes for mappers. */
+    data class Quests(val lat: Double? = null, val lon: Double? = null) : Dest {
+        val at: LatLon? get() = if (lat != null && lon != null) LatLon(lat, lon) else null
+        override val route get() = Routes.build("quests", "lat" to lat, "lon" to lon)
+        override val tab get() = Tab.MINE
+
+        @Composable
+        override fun Content(nav: Navigator) = app.atlas.ui.search.QuestsScreen(this, nav)
+    }
+
+    /** Where to?: the wheel of ideas for what to do around here. */
+    data object Where : Dest {
+        override val route get() = "where"
+        override val tab get() = Tab.MAP
+
+        @Composable
+        override fun Content(nav: Navigator) = app.atlas.ui.search.WhereScreen(this, nav)
+    }
+
     companion object {
         /** Reads a destination's arguments back, by route name. Append a line per new destination. */
         private val PARSERS: Map<String, (RouteArgs) -> Dest?> = mapOf(
@@ -416,6 +464,7 @@ sealed interface Dest {
             "navigate" to { a -> a.latLon("to")?.let { Navigate(it.lat, it.lon, a.str("to"), a.str("mode", "WALK"), a.bool("demo")) } },
             "ears" to { _ -> Ears },
             "vehicle" to { a -> Vehicle(a.str("mode", "CAR")) },
+            "twowheel" to { a -> Twowheel(a.str("mode")) },
             "soon" to { _ -> Soon },
             "local" to { a -> Local(a.str("drawer")) },
             "namedafter" to { a -> a.latLon()?.let { NamedAfter(it.lat, it.lon, a.str("id"), a.str("name")) } },
@@ -433,6 +482,10 @@ sealed interface Dest {
             "regionpicker" to { a -> RegionPicker(a.double("lat"), a.double("lon")) },
             "charge" to { a -> Charge(a.double("lat"), a.double("lon")) },
             "chargingroute" to { a -> ChargingRoute(a.double("tolat"), a.double("tolon"), a.str("to")) },
+            "lists" to { a -> Lists(a.int("id")) },
+            "ask" to { a -> Ask(a.str("q", "")) },
+            "quests" to { a -> Quests(a.double("lat"), a.double("lon")) },
+            "where" to { _ -> Where },
         )
 
         /** The destination [route] names, or null when it is unknown, malformed or its arguments are incomplete. */

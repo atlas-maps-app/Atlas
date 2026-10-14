@@ -4,6 +4,7 @@ import android.os.Looper
 import app.atlas.Services
 import app.atlas.geo.LatLon
 import app.atlas.mapview.CameraPosition
+import app.atlas.mapview.HomeView
 import app.atlas.mapview.Follow
 import app.atlas.mapview.MapLayer
 import app.atlas.model.Fix
@@ -62,7 +63,8 @@ class HomeViewModelTest {
     fun startsWhereThePhoneIsAndFocusWins() {
         val s = testServices()
         val vm = HomeViewModel(s, null, null)
-        assertEquals(Services.WESTERKERK, vm.map.camera.target)
+        // At the Westerkerk the first look is the Main board's own view of the canal ring, with you in it.
+        assertEquals(HomeView.camera, vm.map.camera)
         val focus = LatLon(52.3600, 4.8852)
         val vm2 = HomeViewModel(s, focus, 18.0)
         assertEquals(CameraPosition(focus, 18.0, 0.0, HomeViewModel.DEFAULT_PITCH), vm2.map.camera)
@@ -221,13 +223,14 @@ class HomeViewModelTest {
 
     @Test
     fun theStandInViewOfAFirstLaunchIsNotSaved() {
-        // First launch, no fix yet (the location not allowed, or indoors): the map shows the Westerkerk meanwhile. That
-        // view is not kept, so the next launch still goes to the phone's first fix instead of staying in Amsterdam.
+        // First launch, no fix yet (the location not allowed, or indoors): the map shows the board's view of the canal
+        // ring meanwhile. That view is not kept, so the next launch still goes to the phone's first fix instead of
+        // staying in Amsterdam.
         val s = testServices()
         s.location.use(CountingGps())
         until { s.location.last.value == null }
         val vm = HomeViewModel(s, null, null)
-        assertEquals(Services.WESTERKERK, vm.map.camera.target)
+        assertEquals(HomeView.camera, vm.map.camera)
         repeat(5) {
             idle(1_000)
             Thread.sleep(50)

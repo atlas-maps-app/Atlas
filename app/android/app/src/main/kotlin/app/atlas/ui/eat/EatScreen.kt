@@ -1,19 +1,28 @@
 package app.atlas.ui.eat
 
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.res.stringResource
-import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.AtlasScreen
-import app.atlas.ui.kit.NearbyList
-import app.atlas.ui.kit.rememberHere
 
-/** Eat & drink: the places to eat around you. Placeholder for the eat package's table of objects. */
+/**
+ * Eat & drink. [Dest.Eat.kind] picks the screen: none for the table (Menus); "carte", "carte:<cuisine>" for one
+ * cuisine's places; "order" the guest check; "bar"; "cafe"; "late"; "sweets"; "market"; "map" the eat map; and a
+ * cuisine world by its plank ("ramen", "sushi", "izakaya", "soba", "japanese") or as "world:<id>".
+ */
 @Composable
 fun EatScreen(args: Dest.Eat, nav: Navigator) {
-    val here = rememberHere()
-    AtlasScreen(stringResource(R.string.eat_title), onBack = { nav.back() }) {
-        NearbyList("eat", here, onPlace = { nav.go(Dest.Place.of(it)) }, emptySymbol = "ui-utensils")
+    val kind = args.kind?.trim()?.lowercase().orEmpty()
+    when {
+        kind.isEmpty() -> MenusScreen(nav)
+        kind == "carte" -> CarteScreen(nav)
+        kind.startsWith("carte:") -> CuisinePage(kind.removePrefix("carte:"), nav)
+        kind == "order" -> OrderScreen(nav)
+        kind == "bar" -> BarScreen(nav)
+        kind == "cafe" -> CafeScreen(nav)
+        kind == "late" -> LateScreen(nav)
+        kind == "sweets" -> SweetsScreen(nav)
+        kind == "market" -> MarketScreen(nav)
+        kind == "map" -> EatMapScreen(nav)
+        else -> CuisineWorlds.route(kind)?.let { (world, plank) -> WorldScreen(world, plank, nav) } ?: MenusScreen(nav)
     }
 }

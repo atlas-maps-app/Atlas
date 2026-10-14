@@ -6,7 +6,14 @@ import androidx.lifecycle.viewModelScope
 import app.atlas.Services
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
+import app.atlas.engine.Extras
+import app.atlas.geo.TileId
 import app.atlas.mapview.CameraPosition
+import app.atlas.mapview.HomeView
+import app.atlas.model.OsmId
+import app.atlas.model.OsmType
+import app.atlas.model.Place
+import app.atlas.search.PlaceStore
 import app.atlas.mapview.Follow
 import app.atlas.mapview.MapLayer
 import app.atlas.mapview.MapState
@@ -78,10 +85,9 @@ class HomeViewModel(
         when {
             focus != null -> CameraPosition(focus, focusZoom ?: 17.0, 0.0, DEFAULT_PITCH)
             saved != null -> CameraPosition(saved.target, saved.zoom, saved.bearing, saved.pitch)
-            else -> services.location.last.value?.let { CameraPosition(it.location, 16.5, 0.0, DEFAULT_PITCH) }
-                ?: CameraPosition(Services.WESTERKERK, 16.0, 0.0, DEFAULT_PITCH)
+            else -> FirstLook.around(services.location.last.value?.location)
         },
-    )
+    ).apply { time = clock() }
 
     /** The focus of a geo: link, drawn as a pin. */
     val focus: LatLon? = focus
@@ -96,7 +102,8 @@ class HomeViewModel(
 
     val style: StateFlow<MapStyle> = services.settings.data.map { p ->
         val theme = p[SettingsKeys.MAP_THEME]?.let { runCatching { Theme.valueOf(it) }.getOrNull() } ?: Theme.AUTO
-        val layers = p[SettingsKeys.MAP_LAYERS]?.mapNotNull { runCatching { MapLayer.valueOf(it) }.getOrNull() }?.toSet() ?: MapStyle().layers
+        // The board's map: the home's own markers stand for places, so the tiles' points of interest are off until asked for.
+        val layers = p[SettingsKeys.MAP_LAYERS]?.mapNotNull { runCatching { MapLayer.valueOf(it) }.getOrNull() }?.toSet() ?: HomeView.style.layers
         val with3d = if (p[SettingsKeys.MAP_3D] ?: true) layers + MapLayer.BUILDINGS_3D else layers - MapLayer.BUILDINGS_3D
         MapStyle(theme = theme, layers = with3d, language = p[SettingsKeys.NAME_LANGUAGE], calm = true)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, MapStyle(calm = true))
@@ -133,6 +140,24 @@ class HomeViewModel(
         Moments.of(f, location.value?.location ?: cam.target, now, zone)
     }.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /**
+     * The area's highlights on the map before a category is chosen: around you (or, without a fix, where the map
+     * looks), again when either moves on, as time passes (what is open) and as saved places change.
+     */
+    val highlights: StateFlow<List<Highlight>> = combine(
+        location.map { it?.location }.distinctUntilChanged { a, b -> a != null && b != null && Geo.distance(a, b) < HIGHLIGHT_MOVE_M },
+        cameraMoves.debounce(800).map { it.target }.distinctUntilChanged { a, b -> Geo.distance(a, b) < HIGHLIGHT_MOVE_M },
+        minutes,
+        services.saved.lists,
+        services.regionsChanged,
+    ) { you, target, now, lists, _ ->
+        val anchor = you ?: target
+        val saved = lists.flatMap { l -> l.places.map { it.place } }.distinctBy { it.key }
+        withContext(Dispatchers.IO) {
+            runCatching { HomeHighlights.pick(services.placeStores, anchor, now.atZone(zone).toLocalDateTime(), saved) }.getOrDefault(emptyList())
+        }
+    }.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     private val resultsState = MutableStateFlow<CategoryResults?>(null)
     val results: StateFlow<CategoryResults?> = resultsState.asStateFlow()
     private var resultsJob: Job? = null
@@ -157,9 +182,36 @@ class HomeViewModel(
             val fix = services.location.last.filterNotNull().first()
             if (cameraUnset) {
                 cameraUnset = false
-                map.animateTo(map.camera.copy(target = fix.location, zoom = maxOf(map.camera.zoom, 16.0)))
+                val look = FirstLook.around(fix.location)
+                if (look != map.camera) map.animateTo(look)
             }
         }
+        // The light and shadows follow the app's clock (a test's fixed one too), a minute at a time.
+        viewModelScope.launch { minutes.collect { map.time = it } }
+    }
+
+    /**
+     * The real trees of [tile] from the downloaded regions' place stores, for the map's crowns; null where no store
+     * covers it or the tile is too coarse for trees to show.
+     */
+    suspend fun treesFor(tile: TileId): Extras? {
+        if (tile.z < TREE_ZOOM) return null
+        val box = tile.bbox
+        val stores = services.placeStores.stores.filterIsInstance<PlaceStore>()
+        if (stores.isEmpty()) return null
+        val trees = ArrayList<Place>()
+        for (store in stores) {
+            if (store.bounds?.intersects(box) == false) continue
+            for (t in store.trees(box)) {
+                val tags = HashMap<String, String>(4)
+                tags["natural"] = "tree"
+                t.leafType?.let { tags["leaf_type"] = it }
+                t.genus?.let { tags["genus"] = it }
+                t.height?.let { tags["height"] = it.toString() }
+                trees += Place(OsmId(OsmType.NODE, t.id), t.location, tags)
+            }
+        }
+        return if (trees.isEmpty()) null else Extras(trees)
     }
 
     fun onCameraMove(camera: CameraPosition, byUser: Boolean) {
@@ -258,6 +310,8 @@ class HomeViewModel(
 
     companion object {
         const val DEFAULT_PITCH = 50.0
+        private const val TREE_ZOOM = 14
+        private const val HIGHLIGHT_MOVE_M = 150.0
         const val MAX_RESULTS = 60
         private const val WEATHER_MOVE_M = 5_000.0
         private const val WEATHER_MAX_AGE_MS = 30 * 60_000L

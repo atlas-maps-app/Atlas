@@ -263,14 +263,23 @@ class OfflineEvaluator(val source: PlaceSource) {
         }
 
         private fun filterCost(f: TagFilter): Double = when (f) {
-            is TagFilter.Has -> source.estimate(f.key, null).toDouble()
-            is TagFilter.Equals -> source.estimate(f.key, f.value).toDouble()
-            is TagFilter.Compare -> source.estimate(f.key, null).toDouble()
-            is TagFilter.Matches -> if (f.negate) Double.MAX_VALUE else literals(f.pattern)?.sumOf { source.estimate(f.key, it).toDouble() }
-                ?: source.estimate(f.key, null).toDouble()
+            is TagFilter.Has -> keyCost(f.key, null)
+            is TagFilter.Equals -> keyCost(f.key, f.value)
+            is TagFilter.Compare -> keyCost(f.key, null)
+            is TagFilter.Matches -> if (f.negate) Double.MAX_VALUE else literals(f.pattern)?.sumOf { keyCost(f.key, it) }
+                ?: keyCost(f.key, null)
             is TagFilter.And -> f.parts.filter { filterSeedable(it) }.minOfOrNull { filterCost(it) } ?: Double.MAX_VALUE
             is TagFilter.Or -> f.parts.sumOf { if (filterSeedable(it)) filterCost(it) else return Double.MAX_VALUE }
             else -> Double.MAX_VALUE
+        }
+
+        /**
+         * What looking up [key] (= [value]) costs: the places that carry it, or, when no index holds the tag, every
+         * place it reads to find them (a store keeps no index of tags searches rarely filter on).
+         */
+        private fun keyCost(key: String, value: String?): Double {
+            val n = source.estimate(key, value).toDouble()
+            return if (source.indexes(key, value)) n else maxOf(n, source.size.toDouble())
         }
 
         // --------------------------------------------------------------------------------------------- checking
@@ -359,11 +368,15 @@ class OfflineEvaluator(val source: PlaceSource) {
             val words = nameWords.getOrPut(q) { SearchText.words(q.text) }
             if (words.isEmpty()) return 1.0
             val names = SearchText.names(r.tags)
+            // an address point (or a building that is only its address) by its number and street
+            if (names.isEmpty() && r.tags["addr:housenumber"] != null && words.any(Addresses::looksLikeNumber)) {
+                return Addresses.relevance(words, r.tags)
+            }
             val others = ArrayList<String>(6)
             r.tags["operator"]?.let { others += it }
             // a road's or a line's number: "N201", "A10", the night bus "N47"
             r.tags["ref"]?.let { others += it }
-            r.tags["addr:street"]?.let { s -> others += listOfNotNull(s, r.tags["addr:housenumber"]).joinToString(" ") }
+            (r.tags["addr:street"] ?: r.tags["addr:place"])?.let { s -> others += listOfNotNull(s, r.tags["addr:housenumber"]).joinToString(" ") }
             r.preset?.let { Presets.byId(it) }?.let { p -> others += p.name(ctx.lang); if (ctx.lang != "en") others += p.name("en") }
             r.tags["cuisine"]?.let { others += it.replace('_', ' ').replace(';', ' ') }
             return NameMatch.best(words, names, others)
@@ -667,4 +680,11 @@ class OfflineEvaluator(val source: PlaceSource) {
             return if (c.isGroup) Categories.children(id).map { it.id }.toSet() + id else setOf(id)
         }
     }
+}
+
+/** True when [key] (= [value]) is found through an index of this source, rather than by reading its places. */
+internal fun PlaceSource.indexes(key: String, value: String?): Boolean = when (this) {
+    is PlaceStore -> indexes(key, value)
+    is Regions -> stores.all { it.indexes(key, value) }
+    else -> true
 }

@@ -93,17 +93,24 @@ class PlacePackerTest {
     fun keepsWhatRegionImportKeepsAndPlacesIt() {
         val (store, stats) = pack()
         store.use {
-            // cafe, address, church, street, park, neighbourhood, site, loop; not the tree (no name), JOSM node, footway, route
+            // cafe, church, street, park, neighbourhood, site, loop; not the tree (no name), JOSM node, footway, route;
+            // the address point goes to the address table
             val kept = listOf(
-                id(OsmType.NODE, 1), id(OsmType.NODE, 5), id(OsmType.WAY, 100), id(OsmType.WAY, 101), id(OsmType.WAY, 105),
+                id(OsmType.NODE, 1), id(OsmType.WAY, 100), id(OsmType.WAY, 101), id(OsmType.WAY, 105),
                 id(OsmType.RELATION, 200), id(OsmType.RELATION, 201), id(OsmType.RELATION, 203), id(OsmType.RELATION, 204),
             )
             for (k in kept) assertNotNull("$k", store.get(k))
-            for (k in listOf(id(OsmType.NODE, 3), id(OsmType.NODE, 4), id(OsmType.WAY, 107), id(OsmType.RELATION, 202), id(OsmType.RELATION, 205), id(OsmType.WAY, 106))) {
+            for (k in listOf(id(OsmType.NODE, 3), id(OsmType.NODE, 4), id(OsmType.NODE, 5), id(OsmType.WAY, 107), id(OsmType.RELATION, 202), id(OsmType.RELATION, 205), id(OsmType.WAY, 106))) {
                 assertNull("$k", store.get(k))
             }
-            assertEquals(kept.size, store.size)
+            assertEquals(kept.size, store.placeCount)
+            assertEquals(kept.size + 1, store.size)
             assertEquals(kept.size, stats.places)
+            assertEquals(1, stats.addresses)
+            assertEquals(1, store.addressCount)
+            val address = store.addresses(BBox(4.89, 52.37, 4.891, 52.371)).single()
+            assertEquals(mapOf("addr:street" to "Prinsengracht", "addr:housenumber" to "263"), address.tags)
+            assertEquals(52.3704, address.location.lat, 1e-9)
             assertEquals(1, stats.trees)
             assertEquals(1L, stats.unlocated)
             assertEquals(2L, stats.missingNodes)
@@ -169,9 +176,18 @@ class PlacePackerTest {
             assertEquals(OsmId(OsmType.RELATION, 200), store.text("vondelpark", null, null, 5).first().id)
             assertEquals(OsmId(OsmType.WAY, 100), store.text("westerkerk", null, null, 5).first().id)
             assertEquals(OsmId(OsmType.NODE, 1), store.byTag("amenity", "cafe", null, 10).single().id)
-            assertEquals(OsmId(OsmType.NODE, 5), store.byTag("addr:housenumber", "263", null, 10).single().id)
-            // the cafe, the address, and the two sites whose boxes reach in
-            assertEquals(setOf(OsmId(OsmType.NODE, 1), OsmId(OsmType.NODE, 5), OsmId(OsmType.RELATION, 203), OsmId(OsmType.RELATION, 204)), store.inBox(BBox(4.88, 52.369, 4.891, 52.3705), 10).map { it.id }.toSet())
+            // the address point, by its number and by its street and number, under its element's id (which get() does
+            // not look up: no index holds the ids of address points)
+            val address = store.byTag("addr:housenumber", "263", null, 10).single()
+            assertEquals(OsmId(OsmType.NODE, 5), address.id)
+            assertNull(store.get(OsmId(OsmType.NODE, 5)))
+            assertEquals("Prinsengracht", address.tags["addr:street"])
+            assertEquals(address.place.key, store.text("prinsengracht 263", null, null, 5).single { it.category == null }.place.key)
+            // the cafe and the two sites whose boxes reach in, then the address point
+            val inBox = store.inBox(BBox(4.88, 52.369, 4.891, 52.3705), 10).map { it.id }
+            assertEquals(setOf(OsmId(OsmType.NODE, 1), OsmId(OsmType.RELATION, 203), OsmId(OsmType.RELATION, 204), OsmId(OsmType.NODE, 5)), inBox.toSet())
+            assertEquals(OsmId(OsmType.NODE, 5), inBox.last())
+            assertEquals(1, store.addresses(BBox(4.88, 52.369, 4.891, 52.3705)).size)
         }
     }
 
@@ -274,7 +290,8 @@ class PlacePackerTest {
         assertEquals(File(out.parentFile, "test.places.json"), pack.sidecar)
         val side = Json.parseToJsonElement(pack.sidecar.readText()).jsonObject
         assertEquals("2025-10-09T08:53:20Z", side["osm_timestamp"]!!.jsonPrimitive.content)
-        assertEquals(9L, side["places"]!!.jsonPrimitive.long)
+        assertEquals(8L, side["places"]!!.jsonPrimitive.long)
+        assertEquals(1L, side["addresses"]!!.jsonPrimitive.long)
         assertEquals(pack.rawBytes, side["raw_bytes"]!!.jsonPrimitive.long)
         assertEquals("test.places.db.gz", side["file"]!!.jsonPrimitive.content)
 
@@ -282,7 +299,8 @@ class PlacePackerTest {
         PackFiles.gunzip(pack.file, back)
         assertEquals(pack.rawBytes, back.length())
         PlaceStore.open(back).use { s ->
-            assertEquals(9, s.size)
+            assertEquals(8, s.placeCount)
+            assertEquals(1, s.addressCount)
             assertEquals("Testland", s.name)
             assertEquals("2025-10-09T08:53:20Z", s.meta("osm_timestamp"))
             assertEquals("4936", s.meta("osm_sequence"))

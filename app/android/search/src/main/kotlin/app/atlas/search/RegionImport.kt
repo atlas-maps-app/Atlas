@@ -53,7 +53,10 @@ class RegionImport(
                 }
                 progress(Progress(i + 1, tiles.size, w.elements, w.places))
             }
-            return w.finish()
+            val stats = w.finish()
+            // pages written tile by tile are part full: rewritten whole, the store is smaller and faster
+            store.compact()
+            return stats
         }
     }
 

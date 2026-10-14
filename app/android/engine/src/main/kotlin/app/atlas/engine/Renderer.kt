@@ -91,11 +91,12 @@ class Renderer(private val measurer: TextMeasurer = ApproximateMeasurer) {
         val look = tiles.firstOrNull()?.scene?.look ?: Look.DAY
         val theme = look.theme
         fogStart = (camera.distance * theme.fogStart).toFloat()
-        fogRange = max(1f, camera.far.toFloat() - fogStart)
+        fogRange = theme.fogRange?.let { max(1f, (camera.distance * it).toFloat()) } ?: max(1f, camera.far.toFloat() - fogStart)
         fogMax = theme.fogMax
         fogPow = theme.fogPower
         fogColour = theme.fog
         prepareFog()
+        prepareWater(theme)
         calm = (style.calm ?: look.calmAt(camera.zoom)).coerceIn(0f, 1f)
         calmTarget = theme.earth
         groundView = camera.groundPolygon()
@@ -104,6 +105,7 @@ class Renderer(private val measurer: TextMeasurer = ApproximateMeasurer) {
 
         sky(theme)
         for (t in tiles) ground(t)
+        if (theme.glint != null) for (t in tiles) glints(t, theme)
         out.endBatch()
         val tg = System.nanoTime()
         shadows(tiles, theme)
@@ -176,6 +178,53 @@ class Renderer(private val measurer: TextMeasurer = ApproximateMeasurer) {
                 FaceMesh.TWO_SIDED -> if (!front(mesh, f)) override = mesh.faceBack[f]
             }
             emitFace(mesh, f, override, -1f)
+        }
+    }
+
+    /**
+     * The wind streaks of [t]: each seed seen on the screen becomes a soft light streak lying across it, its core lit
+     * (the glint over the water) and its tips and sides the water's own colour, never reaching past its seed's [reach]
+     * on the ground.
+     */
+    private fun glints(t: DrawTile, theme: Theme) {
+        val g = t.scene.glints
+        if (g.count == 0) return
+        val s = t.scene
+        cam.tileMatrix(s.originX, s.originY, s.metresPerUnit, m)
+        val dp = cam.density.coerceAtLeast(0.5f)
+        val focal = cam.focal.toFloat()
+        val water = ScreenWater.water(theme)
+        val core = ScreenWater.glint(theme) ?: return
+        val flatCore = if (rampOn) 0 else Colours.mix(theme.water, theme.glint ?: theme.water, theme.glintAlpha)
+        val z = g.z
+        for (i in 0 until g.count) {
+            val x = g.x[i]; val y = g.y[i]
+            val w = m[8] * x + m[9] * y + m[10] * z + m[11]
+            if (w < near) continue
+            val qx = (m[0] * x + m[1] * y + m[2] * z + m[3]) / w
+            val qy = (m[4] * x + m[5] * y + m[6] * z + m[7]) / w
+            val sz = g.size[i]
+            val half = min((GLINT_HALF_DP[0] + (GLINT_HALF_DP[1] - GLINT_HALF_DP[0]) * sz) * dp, g.reach[i] * focal / w)
+            if (half < 2f * dp) continue
+            val thick = min((GLINT_THICK_DP[0] + (GLINT_THICK_DP[1] - GLINT_THICK_DP[0]) * (1f - sz)) * dp, half * 0.3f)
+            if (qx + half < 0f || qx - half > width || qy + thick < 0f || qy - thick > height) continue
+            if (t.only != null && !t.includes(s.unitX(x), s.unitY(y))) continue
+            val fogT = fog(w)
+            val edge = colourAt(water, qy, fogT)
+            val lit = if (rampOn) screenWater(core, qy, fogT) else shade(flatCore, fogT)
+            out.reserve(6, 18)
+            val a = out.vertex(qx - half, qy, edge)
+            val b = out.vertex(qx + half, qy, edge)
+            val t1 = out.vertex(qx, qy - thick, colourAt(water, qy - thick, fogT))
+            val t2 = out.vertex(qx, qy + thick, colourAt(water, qy + thick, fogT))
+            val p1 = out.vertex(qx - half * 0.45f, qy, lit)
+            val p2 = out.vertex(qx + half * 0.45f, qy, lit)
+            out.index(a); out.index(p1); out.index(t1)
+            out.index(p1); out.index(p2); out.index(t1)
+            out.index(p2); out.index(b); out.index(t1)
+            out.index(a); out.index(t2); out.index(p1)
+            out.index(p1); out.index(t2); out.index(p2)
+            out.index(p2); out.index(t2); out.index(b)
         }
     }
 
@@ -318,7 +367,9 @@ class Renderer(private val measurer: TextMeasurer = ApproximateMeasurer) {
                 var o = rm[k]
                 if (o < 0) {
                     val base = if (override != 0) override else cols[v0 + k]
-                    val colour = if (fogT >= 0f) {
+                    val colour = if (rampOn && (base ushr 24) == ScreenWater.KEY_ALPHA) {
+                        screenWater(base, py[k], if (fogT >= 0f) fogT else fog(sw[k]))
+                    } else if (fogT >= 0f) {
                         if (base != lastIn || lastOut == 0) { lastIn = base; lastOut = shade(base, fogT) }
                         lastOut
                     } else shade(base, fog(sw[k]))
@@ -340,7 +391,7 @@ class Renderer(private val measurer: TextMeasurer = ApproximateMeasurer) {
         var o = remap[k]
         if (o >= 0) return o
         val base = if (override != 0) override else cols[v0 + k]
-        o = out.vertex(px[k], py[k], shade(base, if (fogT >= 0f) fogT else fog(sw[k])))
+        o = out.vertex(px[k], py[k], colourAt(base, py[k], if (fogT >= 0f) fogT else fog(sw[k])))
         remap[k] = o
         return o
     }
@@ -368,10 +419,10 @@ class Renderer(private val measurer: TextMeasurer = ApproximateMeasurer) {
             }
         }
         if (n < 3) return
-        val first = out.vertex(cx[0] / cw[0], cy[0] / cw[0], shade(cc[0], if (fogT >= 0f) fogT else fog(cw[0])))
-        var prev = out.vertex(cx[1] / cw[1], cy[1] / cw[1], shade(cc[1], if (fogT >= 0f) fogT else fog(cw[1])))
+        val first = out.vertex(cx[0] / cw[0], cy[0] / cw[0], colourAt(cc[0], cy[0] / cw[0], if (fogT >= 0f) fogT else fog(cw[0])))
+        var prev = out.vertex(cx[1] / cw[1], cy[1] / cw[1], colourAt(cc[1], cy[1] / cw[1], if (fogT >= 0f) fogT else fog(cw[1])))
         for (k in 2 until n) {
-            val v = out.vertex(cx[k] / cw[k], cy[k] / cw[k], shade(cc[k], if (fogT >= 0f) fogT else fog(cw[k])))
+            val v = out.vertex(cx[k] / cw[k], cy[k] / cw[k], colourAt(cc[k], cy[k] / cw[k], if (fogT >= 0f) fogT else fog(cw[k])))
             out.index(first); out.index(prev); out.index(v)
             prev = v
         }
@@ -396,6 +447,58 @@ class Renderer(private val measurer: TextMeasurer = ApproximateMeasurer) {
         if (depth <= fogStart) return 0f
         val i = ((depth - fogStart) * fogScale).toInt()
         return if (i >= 256) fogCurve[256] else fogCurve[i]
+    }
+
+    // Water coloured down the screen (the theme's ramp), with its veil and wind streaks: set per frame.
+    private var rampOn = false
+    private var waterKey = 0
+    private var glintKey = 0
+    private var rampY0 = 0f
+    private var rampSpan = 1f
+    private var rampR = 0f; private var rampG = 0f; private var rampB = 0f
+    private var rampDr = 0f; private var rampDg = 0f; private var rampDb = 0f
+    private var glintR = 0f; private var glintG = 0f; private var glintB = 0f; private var glintA = 0f
+
+    /** The water ramp of [theme] for this frame: from the horizon (or the top of the view) to its foot. */
+    private fun prepareWater(theme: Theme) {
+        val top = theme.waterTop
+        val bottom = theme.waterBottom
+        rampOn = top != null && bottom != null
+        if (top == null || bottom == null) return
+        waterKey = ScreenWater.key(theme.water)
+        glintKey = theme.glint?.let { ScreenWater.key(it) } ?: 0
+        rampY0 = max(0f, cam.horizonY.toFloat())
+        rampSpan = max(1f, height - rampY0)
+        // The veil of [Theme.water] over the ramp is linear too: mix it into both ends once.
+        val v = theme.waterVeil
+        val w = theme.water
+        fun veiled(c: Int, ch: Int) = ((c shr ch) and 0xFF) * (1 - v) + ((w shr ch) and 0xFF) * v
+        rampR = veiled(top, 16); rampG = veiled(top, 8); rampB = veiled(top, 0)
+        rampDr = veiled(bottom, 16) - rampR; rampDg = veiled(bottom, 8) - rampG; rampDb = veiled(bottom, 0) - rampB
+        val g = theme.glint ?: Colours.WHITE
+        glintR = Colours.red(g).toFloat(); glintG = Colours.green(g).toFloat(); glintB = Colours.blue(g).toFloat()
+        glintA = theme.glintAlpha
+    }
+
+    /** A vertex colour: the screen water's for its keys, else [base] calmed and hazed. */
+    private fun colourAt(base: Int, y: Float, fogT: Float): Int =
+        if (rampOn && (base ushr 24) == ScreenWater.KEY_ALPHA) screenWater(base, y, fogT) else shade(base, fogT)
+
+    /**
+     * Water at screen height [y]: the ramp there (linear in y, so a triangle's colours interpolate exactly as the
+     * gradient runs; past the view's edges it extrapolates, and only off-screen pixels see that), lit by a streak's
+     * glint when [key] is the glint's, then calmed and hazed.
+     */
+    private fun screenWater(key: Int, y: Float, fogT: Float): Int {
+        val t = (y - rampY0) / rampSpan
+        var r = rampR + rampDr * t
+        var g = rampG + rampDg * t
+        var b = rampB + rampDb * t
+        if (key == glintKey) {
+            r += (glintR - r) * glintA; g += (glintG - g) * glintA; b += (glintB - b) * glintA
+        }
+        val c = calmed(Colours.rgb(r, g, b))
+        return if (fogT > 0.004f) Colours.mix(c, fogColour, fogT) else c
     }
 
     // Shaded colours by (colour, haze step): most vertices share a few colours.
@@ -597,38 +700,52 @@ class Renderer(private val measurer: TextMeasurer = ApproximateMeasurer) {
     private var sunDx = 0f
     private var sunDy = -1f
 
-    /** A tree: trunk, then a dark crown, a sunlit one shifted toward the sun, and a highlight. */
+    /**
+     * A tree. A crown a few dp across is one disc (two when it is over [TWO_TONE_DP] across: its shaded tone and its
+     * sunlit top), as the living map draws trees from afar; a larger one stands on its trunk with a dark crown, a
+     * sunlit one shifted toward the sun, and a highlight.
+     */
     private fun tree(s: TileScene, i: Int) {
         val tr = s.trees
         val x = tr.x[i]; val y = tr.y[i]; val h = tr.height[i]
-        val cz = tr.z[i] + h * 0.66f
+        val cz = tr.z[i] + h * 0.65f
         val w = m[8] * x + m[9] * y + m[10] * cz + m[11]
         if (w < near) return
         val qx = (m[0] * x + m[1] * y + m[2] * cz + m[3]) / w
         val qy = (m[4] * x + m[5] * y + m[6] * cz + m[7]) / w
         val rp = tr.radius[i] * cam.focal.toFloat() / w
-        if (rp < 0.5f) return
+        val dp = cam.density.coerceAtLeast(0.5f)
         val fogT = fog(w)
-        if (treesDrawn == 0) sunDirection(s)
-        if (rp > 2.5f) {
-            val wb = m[8] * x + m[9] * y + m[10] * tr.z[i] + m[11]
-            if (wb >= near) {
-                val bx = (m[0] * x + m[1] * y + m[2] * tr.z[i] + m[3]) / wb
-                val by = (m[4] * x + m[5] * y + m[6] * tr.z[i] + m[7]) / wb
-                val hw = max(0.5f, 0.22f * cam.focal.toFloat() / w)
-                out.reserve(4, 6)
-                val col = shade(tr.trunk, fogT)
-                val a = out.vertex(bx - hw, by, col)
-                val b = out.vertex(bx + hw, by, col)
-                val c = out.vertex(qx + hw * 0.7f, qy, col)
-                val d = out.vertex(qx - hw * 0.7f, qy, col)
-                out.index(a); out.index(b); out.index(c); out.index(a); out.index(c); out.index(d)
+        if (rp < SMALL_CROWN_DP * dp) {
+            val r = max(MIN_CROWN_DP * dp, rp)
+            val seg = (r / 1.6f).toInt().coerceIn(6, 16)
+            if (r < TWO_TONE_DP * dp) {
+                disc(qx, qy, r, seg, shade(tr.far[i], fogT))
+            } else {
+                disc(qx, qy, r, seg, shade(tr.dark[i], fogT))
+                disc(qx - r * 0.2f, qy - r * 0.25f, r * 0.62f, seg, shade(tr.mid[i], fogT))
             }
+            treesDrawn++
+            return
+        }
+        if (treesDrawn == 0) sunDirection(s)
+        val wb = m[8] * x + m[9] * y + m[10] * tr.z[i] + m[11]
+        if (wb >= near) {
+            val bx = (m[0] * x + m[1] * y + m[2] * tr.z[i] + m[3]) / wb
+            val by = (m[4] * x + m[5] * y + m[6] * tr.z[i] + m[7]) / wb
+            val hw = max(0.5f, 0.22f * cam.focal.toFloat() / w)
+            out.reserve(4, 6)
+            val col = shade(tr.trunk, fogT)
+            val a = out.vertex(bx - hw, by, col)
+            val b = out.vertex(bx + hw, by, col)
+            val c = out.vertex(qx + hw * 0.7f, qy, col)
+            val d = out.vertex(qx - hw * 0.7f, qy, col)
+            out.index(a); out.index(b); out.index(c); out.index(a); out.index(c); out.index(d)
         }
         val seg = (rp / 1.6f).toInt().coerceIn(6, 20)
         disc(qx, qy, rp, seg, shade(tr.dark[i], fogT))
-        if (rp > 1.2f) disc(qx + sunDx * rp * 0.28f, qy + sunDy * rp * 0.28f, rp * 0.76f, seg, shade(tr.mid[i], fogT))
-        if (rp > 3f) disc(qx + sunDx * rp * 0.5f, qy + sunDy * rp * 0.5f, rp * 0.36f, max(6, seg / 2), shade(tr.light[i], fogT))
+        disc(qx + sunDx * rp * 0.28f, qy + sunDy * rp * 0.28f, rp * 0.76f, seg, shade(tr.mid[i], fogT))
+        disc(qx + sunDx * rp * 0.5f, qy + sunDy * rp * 0.5f, rp * 0.36f, max(6, seg / 2), shade(tr.light[i], fogT))
         treesDrawn++
     }
 
@@ -730,6 +847,17 @@ class Renderer(private val measurer: TextMeasurer = ApproximateMeasurer) {
 
         /** Objects whose bounding sphere spans less than this many pixels are left out. */
         private const val MIN_OBJECT_PX = 0.6f
+
+        /** Crowns under this radius (dp) are drawn as the living map draws trees from afar: a disc or two, no trunk. */
+        const val SMALL_CROWN_DP = 6.5f
+        /** From this radius (dp) a small crown shows its shaded and its sunlit tone. */
+        const val TWO_TONE_DP = 4.2f
+        /** The smallest crown drawn, dp: a tree is never less than a dot. */
+        const val MIN_CROWN_DP = 0.8f
+
+        /** A wind streak's half length and half thickness on the screen, dp: the longer ones are the thinner. */
+        private val GLINT_HALF_DP = floatArrayOf(8f, 22f)
+        private val GLINT_THICK_DP = floatArrayOf(0.8f, 1.5f)
 
         /** Unit circles of 0..24 segments, so discs need no trigonometry per frame. */
         private val CIRCLE_COS = Array(25) { n -> FloatArray(n) { k -> cos(2 * PI * k / n).toFloat() } }

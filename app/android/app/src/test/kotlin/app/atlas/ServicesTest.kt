@@ -1,7 +1,6 @@
 package app.atlas
 
 import app.atlas.services.AndroidLocationSource
-import app.atlas.services.NoVoice
 import app.atlas.testing.testServices
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -38,7 +37,7 @@ class ServicesTest {
         assertNotNull(s.router)
         assertNotNull(s.search)
         assertNotNull(s.places)
-        assertTrue(s.voice is NoVoice)
+        assertTrue(s.voice is app.atlas.ui.go.TtsVoice)
         assertTrue(s.location.isDemo)
         assertEquals(Services.WESTERKERK, s.location.last.value?.location)
         assertTrue(s.regions.regions.value.isEmpty())

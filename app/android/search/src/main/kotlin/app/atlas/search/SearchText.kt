@@ -1,12 +1,6 @@
 package app.atlas.search
 
-import app.atlas.places.Categories
-import app.atlas.places.Cuisine
-import app.atlas.places.Presets
 import app.atlas.places.Text
-
-/** What the full-text index holds for a place, already folded (lower case, no accents, no punctuation). */
-internal class SearchDocument(val name: String, val other: String, val terms: String, val addr: String)
 
 /** The text side of search: which tags hold names, what goes in the index, and folding of queries. */
 internal object SearchText {
@@ -15,7 +9,9 @@ internal object SearchText {
         "brand", "bridge:name", "tunnel:name",
     )
     private val OTHER_KEYS = listOf("operator", "network", "ref", "branch", "artist_name", "subject")
-    private const val MAX_TERMS_PER_LANG = 8
+
+    /** True for keys whose values the text index holds, so a lookup by such a value can start from the index. */
+    fun isTextKey(key: String): Boolean = isNameKey(key) || key in OTHER_KEYS || key in ADDR_KEYS
 
     /** True for keys that hold a name or a translation of one ("name:nl", "alt_name", "brand:fr"). */
     fun isNameKey(key: String): Boolean {
@@ -34,29 +30,27 @@ internal object SearchText {
         return out
     }
 
-    fun document(tags: Map<String, String>, preset: String?, category: String?, langs: List<String>): SearchDocument {
-        val name = LinkedHashSet<String>()
-        for (n in names(tags)) for (part in n.split(';')) Text.fold(part).takeIf { it.isNotEmpty() }?.let { name += it }
-
-        val other = LinkedHashSet<String>()
-        for (k in OTHER_KEYS) tags[k]?.let { v -> for (part in v.split(';')) Text.fold(part).takeIf { it.isNotEmpty() }?.let { other += it } }
-        for (c in Cuisine.values(tags)) {
-            other += Text.fold(c.replace('_', ' '))
-            for (l in langs) other += Text.fold(Cuisine.name(c, l))
+    /**
+     * The text index's line for a place, folded: its names in every language (and brand), its operator, network,
+     * refs and branch, its address, and the [kinds] tokens of its preset, category and cuisines ([KindWords]).
+     */
+    fun indexText(tags: Map<String, String>, kinds: List<String>): String {
+        val parts = LinkedHashSet<String>()
+        for (n in names(tags)) for (part in n.split(';')) Text.fold(part).takeIf { it.isNotEmpty() }?.let { parts += it }
+        for (k in OTHER_KEYS) tags[k]?.let { v -> for (part in v.split(';')) Text.fold(part).takeIf { it.isNotEmpty() }?.let { parts += it } }
+        for (k in ADDR_KEYS) tags[k]?.let { v ->
+            val f = Text.fold(v)
+            if (f.isNotEmpty()) parts += f
+            // a postcode is found typed with or without its space: "1016 gv", "1016gv"
+            if (k == "addr:postcode" && ' ' in f) parts += f.replace(" ", "")
         }
-
-        val terms = LinkedHashSet<String>()
-        preset?.let { Presets.byId(it) }?.let { p ->
-            for (l in langs) {
-                terms += Text.fold(p.name(l))
-                for (t in p.terms(l).take(MAX_TERMS_PER_LANG)) terms += Text.fold(t)
-            }
+        val sb = StringBuilder(64)
+        for (p in parts) {
+            if (sb.isNotEmpty()) sb.append(' ')
+            sb.append(p)
         }
-        category?.let { Categories.byId(it) }?.let { c -> for (l in langs) terms += Text.fold(c.name(l)) }
-
-        val addr = StringBuilder()
-        for (k in ADDR_KEYS) tags[k]?.let { if (addr.isNotEmpty()) addr.append(' '); addr.append(Text.fold(it)) }
-        return SearchDocument(name.joinToString(" "), other.joinToString(" "), terms.joinToString(" "), addr.toString())
+        for (k in kinds) sb.append(' ').append(k)
+        return sb.toString()
     }
 
     private val ADDR_KEYS = listOf("addr:street", "addr:place", "addr:housenumber", "addr:unit", "addr:postcode", "addr:city")
@@ -66,6 +60,37 @@ internal object SearchText {
         val f = Text.fold(s)
         if (f.isEmpty()) return emptyList()
         return f.split(' ').filter { it.isNotEmpty() }
+    }
+
+    /**
+     * The folded words of [s] as the text indexes' tokenizer cuts them: only letters and numbers ("c++" is "c", "☕bar"
+     * is "bar"), so a quoted word in a query is always one token.
+     */
+    fun indexWords(s: String): List<String> {
+        val out = ArrayList<String>()
+        for (w in words(s)) {
+            if (w.all(::isTokenChar)) { out += w; continue }
+            var start = -1
+            for (i in w.indices) {
+                if (isTokenChar(w[i])) {
+                    if (start < 0) start = i
+                } else if (start >= 0) {
+                    out += w.substring(start, i)
+                    start = -1
+                }
+            }
+            if (start >= 0) out += w.substring(start)
+        }
+        return out
+    }
+
+    /** A character the unicode61 tokenizer keeps in a token: a letter or a number (its default categories L*, N*, Co). */
+    private fun isTokenChar(c: Char): Boolean = when (Character.getType(c).toByte()) {
+        Character.UPPERCASE_LETTER, Character.LOWERCASE_LETTER, Character.TITLECASE_LETTER, Character.MODIFIER_LETTER,
+        Character.OTHER_LETTER, Character.DECIMAL_DIGIT_NUMBER, Character.LETTER_NUMBER, Character.OTHER_NUMBER,
+        Character.PRIVATE_USE,
+        -> true
+        else -> false
     }
 }
 

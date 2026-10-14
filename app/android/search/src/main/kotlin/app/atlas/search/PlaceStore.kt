@@ -8,22 +8,30 @@ import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
 import app.atlas.model.OsmId
 import app.atlas.model.Place
-import app.atlas.places.Text
+import app.atlas.places.Presets
 import java.io.Closeable
 import java.io.File
+import java.io.IOException
+import java.time.Instant
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
 /** A tree for the map engine: where it stands, broadleaved or needleleaved, its genus and height when mapped. */
 data class Tree(val id: Long, val location: LatLon, val leafType: String?, val genus: String?, val height: Double?)
 
-/** What an import did, and how long it took. */
-data class ImportStats(val elements: Long, val places: Int, val trees: Int, val skipped: Long, val millis: Long)
+/** What an import did, and how long it took; [addresses] are the address points it kept apart from the places. */
+data class ImportStats(val elements: Long, val places: Int, val trees: Int, val skipped: Long, val millis: Long, val addresses: Int = 0)
+
+/** A store this version of Atlas cannot read: a pack built for another store schema. The region must be downloaded again. */
+class StoreVersionException(message: String) : IOException(message)
 
 /**
  * One region's offline places: an SQLite file (through the bundled driver, so FTS5 and R*Tree are always there) with
- * the places and their tags, a tag index, an R*Tree on their boxes, a full-text index over names, kinds and addresses,
- * and a trigram vocabulary for typos. Fill it with [writer] (or [importOverpass]); read it as a [PlaceSource].
+ * the places and their tags as compact blobs, a lookup table of the kinds and facets searches filter on, an R*Tree
+ * on their boxes, a full-text index over names, kinds and addresses, and a trigram vocabulary for typos. Pure address
+ * points live apart, under their streets, and are found by street and number ([text]), by tag ([byTag]) and by box
+ * ([inBox], [addresses], [nearestAddress]), though not by id ([get]); trees live in a light table of their own
+ * ([trees]). Fill it with [writer] (or [importOverpass]); read it as a [PlaceSource].
  *
  * One connection, guarded by a lock: safe from any thread, one statement at a time.
  */
@@ -31,9 +39,15 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
     internal val lock = ReentrantLock()
     internal val statements = HashMap<String, SQLiteStatement>()
     internal var closed = false
+    internal val dict = Dictionaries(this)
+    internal val vocabulary = Vocabulary(this)
+    private val addressBook = AddressBook(this)
 
     @Volatile
-    private var cachedSize = -1
+    private var cachedPlaces = -1
+
+    @Volatile
+    private var cachedAddresses = -1
 
     @Volatile
     private var cachedBounds: BBox? = null
@@ -41,26 +55,38 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
     @Volatile
     private var boundsKnown = false
 
+    private var kinds: KindWords? = null
+    private var kindLangs: List<String>? = null
+    private var treeKinds: Map<Long, Pair<String?, String?>>? = null
+
     /** The region's name, as given at import. */
     val name: String get() = meta("name") ?: file?.nameWithoutExtension ?: "memory"
 
-    /** The languages whose kind names went into the text index. */
+    /** The languages whose kind names the text index answers to. */
     val languages: List<String> get() = meta("langs")?.split(',')?.filter { it.isNotEmpty() } ?: emptyList()
 
+    /** How many places it holds, its address points included (all that [inBox] finds); [addressCount] counts those. */
     override val size: Int
+        get() = placeCount + addressCount
+
+    /** How many places it holds besides its address points. */
+    val placeCount: Int
         get() {
-            if (cachedSize < 0) cachedSize = locked { long("SELECT count(*) FROM place").toInt() }
-            return cachedSize
+            if (cachedPlaces < 0) cachedPlaces = locked { counted("places", "SELECT count(*) FROM place") }
+            return cachedPlaces
+        }
+
+    /** How many address points it holds besides its places. */
+    val addressCount: Int
+        get() {
+            if (cachedAddresses < 0) cachedAddresses = locked { counted("addresses", "SELECT count(*) FROM address") }
+            return cachedAddresses
         }
 
     override val bounds: BBox?
         get() {
             if (!boundsKnown) {
-                cachedBounds = locked {
-                    stmt("SELECT min(south), min(west), max(north), max(east) FROM place") { st ->
-                        if (st.step() && !st.isNull(0)) BBox(st.getDouble(1), st.getDouble(0), st.getDouble(3), st.getDouble(2)) else null
-                    }
-                }
+                cachedBounds = locked { meta("bounds")?.let(::boundsOf) ?: computedBounds() }
                 boundsKnown = true
             }
             return cachedBounds
@@ -68,10 +94,13 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
 
     // ------------------------------------------------------------------------------------------------- lookups
 
-    override fun get(id: OsmId): PlaceRecord? = locked {
-        stmt("SELECT $COLS FROM place p WHERE p.id = ?1") { st ->
-            st.bindLong(1, StoreSchema.pack(id))
-            if (st.step()) row(st) else null
+    override fun get(id: OsmId): PlaceRecord? {
+        if (id.id !in 0..StoreSchema.MAX_OSM_ID) return null
+        return locked {
+            stmt("SELECT $COLS FROM place p WHERE p.id = ?1") { st ->
+                st.bindLong(1, StoreSchema.pack(id))
+                if (st.step()) row(st) else null
+            }
         }
     }
 
@@ -86,73 +115,105 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
         }
     }
 
+    /** Places whose box meets [box], then the address points in it ([addresses]), at most [limit] in all. */
     override fun inBox(box: BBox, limit: Int): List<PlaceRecord> = locked {
-        stmt(
-            "SELECT $COLS FROM place_rt r JOIN place p ON p.id = r.id " +
-                "WHERE r.south <= ?1 AND r.north >= ?2 AND r.west <= ?3 AND r.east >= ?4 LIMIT ?5",
-        ) { st ->
-            bindBox(st, box, 1)
+        val places = stmt("SELECT $COLS FROM place_rt r JOIN place p ON p.id = r.id WHERE $RT_WHERE LIMIT ?5") { st ->
+            bindRt(st, box, 1)
             st.bindLong(5, limit.toLong())
             rows(st, limit)
         }
+        if (places.size >= limit) places else places + addressBook.inBox(box, limit - places.size)
     }
 
-    override fun byTag(key: String, value: String?, box: BBox?, limit: Int): List<PlaceRecord> = locked {
-        val b = box ?: WORLD
-        if (value == null) {
-            stmt("SELECT $COLS FROM place p WHERE p.id IN (SELECT t.place FROM tag t WHERE t.key = ?5) AND $BOX_WHERE LIMIT ?6") { st ->
-                bindBox(st, b, 1)
-                st.bindText(5, key)
-                st.bindLong(6, limit.toLong())
-                rows(st, limit)
+    override fun byTag(key: String, value: String?, box: BBox?, limit: Int): List<PlaceRecord> {
+        val places = placesByTag(key, value, box, limit)
+        if (!Addresses.isAddressKey(key) || places.size >= limit) return places
+        return places + locked { addressBook.byTag(key, value, box, limit - places.size) }
+    }
+
+    private fun placesByTag(key: String, value: String?, box: BBox?, limit: Int): List<PlaceRecord> = locked {
+        val kid = dict.findKey(key)
+        if (kid < 0) return@locked emptyList()
+        if (TagIndex.holds(key)) {
+            if (value == null) return@locked lookup(kid, null, box, limit)
+            if (TagIndex.holdsValue(key, value)) {
+                val vid = dict.findValue(value)
+                return@locked if (vid < 0) emptyList() else lookup(kid, vid, box, limit)
             }
-        } else if (value.length > StoreSchema.MAX_INDEXED_VALUE) {
-            // indexed as '' (a long value): every long one, checked on the row
-            stmt("SELECT $COLS FROM place p WHERE p.id IN (SELECT t.place FROM tag t WHERE t.key = ?5 AND t.value = '') AND $BOX_WHERE") { st ->
-                bindBox(st, b, 1)
-                st.bindText(5, key)
-                rows(st, Int.MAX_VALUE).filter { r -> r.tags[key]?.let { v -> v == value || v.split(';').any { it.trim() == value } } == true }.take(limit)
+            // a long value, or a key held as present only: its present rows, checked on the place
+            return@locked lookup(kid, TagIndex.PRESENT, box, Int.MAX_VALUE).asSequence().filter { has(it.tags, key, value) }.take(limit).toList()
+        }
+        if (value != null && SearchText.isTextKey(key)) {
+            val words = SearchText.indexWords(value)
+            if (words.isNotEmpty()) {
+                val ids = LinkedHashSet<Long>()
+                textIds(words.joinToString(" AND ") { "\"$it\"" }, box, Int.MAX_VALUE, ids)
+                return@locked byKeys(ids).asSequence().filter { has(it.tags, key, value) }.take(limit).toList()
             }
-        } else {
-            stmt("SELECT $COLS FROM place p WHERE p.id IN (SELECT t.place FROM tag t WHERE t.key = ?5 AND t.value = ?6) AND $BOX_WHERE LIMIT ?7") { st ->
-                bindBox(st, b, 1)
-                st.bindText(5, key)
-                st.bindText(6, value)
+        }
+        scan(kid, box, limit) { has(it.tags, key, value) }
+    }
+
+    /**
+     * True when places with [key] (= [value] when given) are found through an index: the lookup table, or the text
+     * indexes for a name or an address's street, town or postcode. Any other tag is found by reading every place of
+     * the box (or of the store); so is a house number, which no index of the address points holds.
+     */
+    internal fun indexes(key: String, value: String?): Boolean = TagIndex.holds(key) ||
+        (value != null && key != Addresses.HOUSENUMBER && SearchText.isTextKey(key) && SearchText.indexWords(value).isNotEmpty())
+
+    override fun byCategory(ids: Collection<String>, box: BBox?, limit: Int): List<PlaceRecord> =
+        byPseudoKey(StoreSchema.CATEGORY_KEY, ids, box, limit)
+
+    override fun byBrand(ids: Collection<String>, box: BBox?, limit: Int): List<PlaceRecord> =
+        byPseudoKey(StoreSchema.BRAND_KEY, ids, box, limit)
+
+    private fun byPseudoKey(k: Int, ids: Collection<String>, box: BBox?, limit: Int): List<PlaceRecord> {
+        if (ids.isEmpty()) return emptyList()
+        return locked {
+            val vids = ids.map { dict.findValue(it) }.filter { it >= 0 }
+            if (vids.isEmpty()) return@locked emptyList()
+            val where = if (box == null) "" else " AND $BOX_WHERE"
+            stmt("SELECT $COLS FROM place p WHERE p.id IN (SELECT place FROM lookup WHERE k = ?5 AND v IN (SELECT value FROM json_each(?6)))$where LIMIT ?7") { st ->
+                if (box != null) bindBox(st, box, 1)
+                st.bindLong(5, k.toLong())
+                st.bindText(6, vids.joinToString(",", "[", "]"))
                 st.bindLong(7, limit.toLong())
                 rows(st, limit)
             }
         }
     }
 
-    override fun byCategory(ids: Collection<String>, box: BBox?, limit: Int): List<PlaceRecord> = byColumn("category", ids, box, limit)
-
-    override fun byBrand(ids: Collection<String>, box: BBox?, limit: Int): List<PlaceRecord> = byColumn("brand", ids, box, limit)
-
-    /** Places whose preset is one of [ids]. */
-    fun byPreset(ids: Collection<String>, box: BBox? = null, limit: Int = PlaceSource.UNLIMITED): List<PlaceRecord> = byColumn("preset", ids, box, limit)
-
-    private fun byColumn(column: String, ids: Collection<String>, box: BBox?, limit: Int): List<PlaceRecord> {
-        if (ids.isEmpty()) return emptyList()
-        return locked {
-            stmt("SELECT $COLS FROM place p WHERE p.$column IN (SELECT value FROM json_each(?5)) AND $BOX_WHERE LIMIT ?6") { st ->
-                bindBox(st, box ?: WORLD, 1)
-                st.bindText(5, ids.joinToString(",", "[", "]") { jsonString(it) })
-                st.bindLong(6, limit.toLong())
-                rows(st, limit)
-            }
+    /** Places whose preset is one of [ids]: found through the presets' own tags, then checked. */
+    fun byPreset(ids: Collection<String>, box: BBox? = null, limit: Int = PlaceSource.UNLIMITED): List<PlaceRecord> {
+        val want = ids.toSet()
+        val out = LinkedHashMap<Long, PlaceRecord>()
+        for (id in want) {
+            val tag = Presets.byId(id)?.tags?.entries?.firstOrNull { (k, v) -> v != "*" && TagIndex.holds(k) && TagIndex.holdsValue(k, v) }
+            val found = if (tag != null) placesByTag(tag.key, tag.value, box, Int.MAX_VALUE) else locked { scan(-1, box, Int.MAX_VALUE) { it.preset in want } }
+            for (r in found) if (r.preset in want) out[keyOf(r)] = r
+            if (out.size >= limit) break
         }
+        return out.values.take(limit)
     }
 
     override fun estimate(key: String, value: String?): Int = locked {
-        if (value == null) {
-            stmt("SELECT n FROM keystat WHERE key = ?1") { st -> st.bindText(1, key); if (st.step()) st.getLong(0).toInt() else 0 }
-        } else {
-            val v = if (value.length > StoreSchema.MAX_INDEXED_VALUE) "" else value
-            stmt("SELECT n FROM tagstat WHERE key = ?1 AND value = ?2") { st ->
-                st.bindText(1, key); st.bindText(2, v)
-                if (st.step()) st.getLong(0).toInt() else 0
-            }
+        val kid = dict.findKey(key)
+        if (kid < 0) return@locked 0
+        if (value == null) return@locked stat(kid, StoreSchema.ANY_VALUE)
+        val address = if (Addresses.isAddressKey(key)) addressBook.estimate(key, value) else 0
+        val places = when {
+            TagIndex.holds(key) && TagIndex.holdsValue(key, value) -> dict.findValue(value).let { if (it < 0) 0 else stat(kid, it) }
+            TagIndex.holds(key) -> stat(kid, TagIndex.PRESENT)
+            SearchText.isTextKey(key) -> SearchText.indexWords(value).takeIf { it.isNotEmpty() }?.let { words ->
+                stmt("SELECT count(*) FROM place_fts WHERE place_fts MATCH ?1") { st ->
+                    st.bindText(1, words.joinToString(" AND ") { "\"$it\"" })
+                    if (st.step()) st.getLong(0).toInt() else 0
+                }
+            } ?: 0
+            else -> stat(kid, StoreSchema.ANY_VALUE)
         }
+        places + address
     }
 
     override fun estimate(box: BBox): Int {
@@ -165,35 +226,49 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
         return (size * (w * h / area)).toInt().coerceAtLeast(1)
     }
 
-    /** How many places carry [key]=[value] (or [key] at all) inside [box]: exact, for the "all 23" lines. */
+    /** How many places and address points carry [key]=[value] (or [key] at all) inside [box]: exact, for the "all 23" lines. */
     fun count(key: String, value: String?, box: BBox? = null): Int = locked {
-        val b = box ?: WORLD
-        // long values are indexed as '' (present): those are checked on the row
-        if (value != null && value.length > StoreSchema.MAX_INDEXED_VALUE) return@locked byTag(key, value, box).size
-        val sql = if (value == null) {
-            "SELECT count(*) FROM place p WHERE p.id IN (SELECT t.place FROM tag t WHERE t.key = ?5) AND $BOX_WHERE"
+        val address = if (Addresses.isAddressKey(key)) addressBook.count(key, value, box) else 0
+        val kid = dict.findKey(key)
+        if (kid < 0) return@locked address
+        val places = if (TagIndex.holds(key) && (value == null || TagIndex.holdsValue(key, value))) {
+            val vid = value?.let { dict.findValue(it) }
+            if (vid != null && vid < 0) {
+                0
+            } else {
+                val v = if (vid == null) "" else " AND v = ?6"
+                val sql = if (box == null) {
+                    "SELECT count(DISTINCT place) FROM lookup WHERE k = ?5$v"
+                } else {
+                    "SELECT count(*) FROM place p WHERE p.id IN (SELECT place FROM lookup WHERE k = ?5$v) AND $BOX_WHERE"
+                }
+                stmt(sql) { st ->
+                    if (box != null) bindBox(st, box, 1)
+                    st.bindLong(5, kid.toLong())
+                    if (vid != null) st.bindLong(6, vid.toLong())
+                    if (st.step()) st.getLong(0).toInt() else 0
+                }
+            }
         } else {
-            "SELECT count(*) FROM place p WHERE p.id IN (SELECT t.place FROM tag t WHERE t.key = ?5 AND t.value = ?6) AND $BOX_WHERE"
+            placesByTag(key, value, box, Int.MAX_VALUE).size
         }
-        stmt(sql) { st ->
-            bindBox(st, b, 1)
-            st.bindText(5, key)
-            if (value != null) st.bindText(6, value)
-            if (st.step()) st.getLong(0).toInt() else 0
-        }
+        places + address
     }
 
     override fun text(text: String, near: LatLon?, box: BBox?, limit: Int): List<PlaceRecord> {
-        val words = SearchText.words(text)
+        val words = SearchText.indexWords(text)
         if (words.isEmpty()) return emptyList()
         val exact = match(words, fuzzy = false)
         val ids = LinkedHashSet<Long>()
         collect(exact, near, box, limit, ids)
-        if (ids.size < FUZZY_BELOW) {
+        val addresses = locked { addressBook.search(words, near, box, limit) }
+        // an address that answers is a match like a name: no need for near spellings
+        if (ids.size + addresses.size < FUZZY_BELOW) {
             val fuzzy = match(words, fuzzy = true)
             if (fuzzy != exact) collect(fuzzy, near, box, limit, ids)
         }
-        return byKeys(ids)
+        val places = byKeys(ids)
+        return if (addresses.isEmpty()) places else places + addresses
     }
 
     private fun collect(match: String, near: LatLon?, box: BBox?, limit: Int, into: MutableSet<Long>) {
@@ -207,105 +282,125 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
         }
     }
 
+    /** The keys of the places [match] finds, the most important first, at most [limit] (and those in [box]). */
     private fun textIds(match: String, box: BBox?, limit: Int, into: MutableSet<Long>) {
         val sql = if (box == null) {
-            "SELECT rowid FROM place_fts WHERE place_fts MATCH ?1 ORDER BY rank LIMIT ?2"
+            "SELECT rowid FROM place_fts WHERE place_fts MATCH ?1 ORDER BY rowid LIMIT ?2"
         } else {
-            "SELECT f.rowid FROM place_fts f JOIN place p ON p.id = f.rowid WHERE place_fts MATCH ?1 " +
-                "AND p.south <= ?3 AND p.north >= ?4 AND p.west <= ?5 AND p.east >= ?6 ORDER BY f.rank LIMIT ?2"
+            "SELECT f.rowid FROM place_fts f CROSS JOIN place p ON p.id = (f.rowid & ${StoreSchema.KEY_MASK}) " +
+                "WHERE place_fts MATCH ?1 AND (p.lat - ifnull(p.ds, 0)) <= ?3 AND (p.lat + ifnull(p.dn, 0)) >= ?4 " +
+                "AND (p.lon - ifnull(p.dw, 0)) <= ?5 AND (p.lon + ifnull(p.de, 0)) >= ?6 ORDER BY f.rowid LIMIT ?2"
         }
         stmt(sql) { st ->
             st.bindText(1, match)
             st.bindLong(2, limit.toLong())
             if (box != null) bindBox(st, box, 3)
-            while (st.step()) into += st.getLong(0)
+            while (st.step()) into += StoreSchema.keyOfTextRow(st.getLong(0))
         }
-    }
-
-    /** The FTS5 expression for [words]: every word as a prefix, or with its near spellings from the vocabulary. */
-    internal fun match(words: List<String>, fuzzy: Boolean): String = words.withIndex().joinToString(" AND ") { (i, w) ->
-        val last = i == words.size - 1
-        val self = if (w.length >= 2 || last) "\"$w\"*" else "\"$w\""
-        if (!fuzzy) return@joinToString self
-        val alternatives = fuzzyWords(w, prefix = last)
-        if (alternatives.isEmpty()) self else "($self OR ${alternatives.joinToString(" OR ") { "\"$it\"" + if (last) "*" else "" }})"
     }
 
     /**
-     * Words of the vocabulary within Damerau–Levenshtein distance 1 of [word] from 4 letters and 2 from 8 (or, while
-     * [prefix], whose beginning is): found through shared trigrams, then checked exactly. Common words first.
+     * The FTS5 expression for [words]: every word as a prefix (one letter as itself), or with the kinds it names, or,
+     * when [fuzzy], with its near spellings from the vocabulary.
      */
-    fun fuzzyWords(word: String, prefix: Boolean = false, max: Int = 12): List<String> {
-        val k = Text.typosAllowed(word.length)
-        if (k == 0) return emptyList()
-        val grams = Grams.of(word, prefix)
-        if (grams.isEmpty()) return emptyList()
-        val needed = (grams.size - 3 * k).coerceAtLeast(1)
-        val maxLen = if (prefix) Int.MAX_VALUE else word.length + k
-        val found = ArrayList<Triple<String, Int, Long>>()
-        locked {
-            stmt(
-                "SELECT w.w, w.n, count(*) AS c FROM gram g JOIN word w ON w.id = g.word " +
-                    "WHERE g.g IN (SELECT value FROM json_each(?1)) AND w.len BETWEEN ?2 AND ?3 " +
-                    "GROUP BY g.word HAVING c >= ?4 ORDER BY c DESC, abs(w.len - ?5) LIMIT 1000",
-            ) { st ->
-                st.bindText(1, grams.joinToString(",", "[", "]"))
-                st.bindLong(2, (word.length - k).toLong())
-                st.bindLong(3, maxLen.toLong())
-                st.bindLong(4, needed.toLong())
-                st.bindLong(5, word.length.toLong())
-                while (st.step()) {
-                    val w = st.getText(0)
-                    // the word itself, and while typing every word it begins, the plain query finds already
-                    if (w == word || (prefix && w.startsWith(word))) continue
-                    val d = if (prefix) Text.prefixDistance(word, w, k) else Text.distance(word, w, k)
-                    if (d <= k) found += Triple(w, d, st.getLong(1))
+    internal fun match(words: List<String>, fuzzy: Boolean): String {
+        val kinds = kindWords()
+        return words.withIndex().joinToString(" AND ") { (i, w) ->
+            val last = i == words.size - 1
+            val terms = LinkedHashSet<String>()
+            terms += term(w, w.length >= 2)
+            for (t in kinds.tokens(w, prefix = last)) terms += "\"$t\""
+            if (fuzzy) {
+                for (alt in fuzzyWords(w, prefix = last)) {
+                    terms += term(alt, last)
+                    for (t in kinds.tokens(alt, prefix = false, max = FUZZY_KIND_TOKENS)) terms += "\"$t\""
                 }
             }
+            if (terms.size == 1) terms.first() else terms.joinToString(" OR ", "(", ")")
         }
-        // nearest spelling first, then the same first letter (rarely the one mistyped), then the closest length (a typo
-        // rarely adds a syllable), then the commonest
-        return found.sortedWith(
-            compareBy<Triple<String, Int, Long>> { it.second }
-                .thenBy { if (it.first[0] == word[0]) 0 else 1 }
-                .thenBy { kotlin.math.abs(it.first.length - word.length) }
-                .thenByDescending { it.third },
-        ).take(max).map { it.first }
     }
 
-    /** Whether [word] (folded) is in the vocabulary, or begins a word of it when [prefix]. */
+    private fun term(w: String, prefix: Boolean) = if (prefix) "\"$w\"*" else "\"$w\""
+
+    /**
+     * Words of the vocabulary within Damerau–Levenshtein distance 1 of [word] from 4 letters and 2 from 8 (or, while
+     * [prefix], whose beginning is): found through shared trigrams, then checked exactly. Nearest first.
+     */
+    fun fuzzyWords(word: String, prefix: Boolean = false, max: Int = 12): List<String> = locked { vocabulary.near(word, prefix, max) }
+
+    /** Whether [word] (folded) is a word of its places' names, streets or kinds, or begins one when [prefix]. */
     fun knows(word: String, prefix: Boolean = false): Boolean = locked {
-        if (prefix) {
-            stmt("SELECT 1 FROM word WHERE w >= ?1 AND w < ?2 LIMIT 1") { st ->
-                st.bindText(1, word); st.bindText(2, word + '￿')
-                st.step()
+        if (word.isEmpty() || word.any { !it.isLetterOrDigit() }) return@locked false
+        val q = term(word, prefix)
+        fun has(table: String) = stmt("SELECT 1 FROM $table WHERE $table MATCH ?1 LIMIT 1") { st -> st.bindText(1, q); st.step() }
+        has("place_fts") || has("street_fts") || kindWords().knows(word, prefix)
+    }
+
+    /** The words that name the kinds of places this store holds, in [langs]. */
+    internal fun kindWords(langs: List<String> = languages.ifEmpty { DEFAULT_LANGS }): KindWords = locked {
+        kinds?.takeIf { kindLangs == langs } ?: run {
+            val list = ArrayList<Kind>()
+            val cuisine = dict.findKey("cuisine")
+            stmt("SELECT k, v, n FROM stat WHERE k IN (?1, ?2, ?3) AND v > 0") { st ->
+                st.bindLong(1, StoreSchema.PRESET_KEY.toLong())
+                st.bindLong(2, StoreSchema.CATEGORY_KEY.toLong())
+                st.bindLong(3, cuisine.toLong())
+                val rows = ArrayList<IntArray>()
+                while (st.step()) rows += intArrayOf(st.getLong(0).toInt(), st.getLong(1).toInt(), st.getLong(2).toInt())
+                rows
+            }.forEach { (k, v, n) ->
+                val type = when (k) {
+                    StoreSchema.PRESET_KEY -> Kind.PRESET
+                    StoreSchema.CATEGORY_KEY -> Kind.CATEGORY
+                    else -> Kind.CUISINE
+                }
+                list += Kind(type, v, dict.value(v), n)
             }
-        } else {
-            stmt("SELECT 1 FROM word WHERE w = ?1") { st -> st.bindText(1, word); st.step() }
+            KindWords(list, langs).also { kinds = it; kindLangs = langs }
         }
     }
 
     /** Trees in [box], for the map engine. */
     fun trees(box: BBox, limit: Int = PlaceSource.UNLIMITED): List<Tree> = locked {
-        stmt(
-            "SELECT t.id, t.lat, t.lon, t.leaf_type, t.genus, t.height FROM tree_rt r JOIN tree t ON t.id = r.id " +
-                "WHERE r.south <= ?1 AND r.north >= ?2 AND r.west <= ?3 AND r.east >= ?4 LIMIT ?5",
-        ) { st ->
-            bindBox(st, box, 1)
-            st.bindLong(5, limit.toLong())
-            val out = ArrayList<Tree>()
-            while (st.step()) {
-                out += Tree(
-                    st.getLong(0), LatLon(st.getDouble(1), st.getDouble(2)),
-                    if (st.isNull(3)) null else st.getText(3), if (st.isNull(4)) null else st.getText(4),
-                    if (st.isNull(5)) null else st.getDouble(5),
-                )
+        val s = E7.atLeast(box.south)
+        val w = E7.atLeast(box.west)
+        val n = E7.atMost(box.north)
+        val e = E7.atMost(box.east)
+        val ranges = Morton.ranges(s, w, n, e)
+        val kinds = treeKinds()
+        val out = ArrayList<Tree>()
+        var i = 0
+        while (i < ranges.size && out.size < limit) {
+            stmt("SELECT id, kind, height FROM tree WHERE id BETWEEN ?1 AND ?2") { st ->
+                st.bindLong(1, ranges[i])
+                st.bindLong(2, ranges[i + 1])
+                while (out.size < limit && st.step()) {
+                    val code = st.getLong(0)
+                    val lat = Morton.latE7(code)
+                    val lon = Morton.lonE7(code)
+                    if (lat < s || lat > n || lon < w || lon > e) continue
+                    val kind = kinds[st.getLong(1)]
+                    out += Tree(code, LatLon(E7.deg(lat), E7.deg(lon)), kind?.first, kind?.second, if (st.isNull(2)) null else st.getLong(2) / 10.0)
+                }
             }
-            out
+            i += 2
         }
+        out
     }
 
-    /** A stored setting: "name", "langs", "imported", "schema"… */
+    private fun treeKinds(): Map<Long, Pair<String?, String?>> = treeKinds ?: stmt("SELECT id, leaf_type, genus FROM treekind") { st ->
+        val m = HashMap<Long, Pair<String?, String?>>()
+        while (st.step()) m[st.getLong(0)] = st.getTextOrNull(1) to st.getTextOrNull(2)
+        m
+    }.also { treeKinds = it }
+
+    /** The address points in [box] alone: elements that are only an address (a house number on a street). */
+    fun addresses(box: BBox, limit: Int = PlaceSource.UNLIMITED): List<PlaceRecord> = locked { addressBook.inBox(box, limit) }
+
+    /** The address point nearest [p] within [maxDistance] metres, for "what is the address here". */
+    fun nearestAddress(p: LatLon, maxDistance: Double = 100.0): PlaceRecord? = locked { addressBook.nearest(p, maxDistance) }
+
+    /** A stored setting: "name", "langs", "imported", "schema", "places", "addresses"… */
     fun meta(key: String): String? = locked {
         stmt("SELECT value FROM meta WHERE key = ?1") { st -> st.bindText(1, key); if (st.step()) st.getText(0) else null }
     }
@@ -313,9 +408,9 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
     // ------------------------------------------------------------------------------------------------- writing
 
     /**
-     * A writer for this store: add elements or places, then [StoreWriter.finish] to rebuild the vocabulary and the
-     * statistics. Adding an element again replaces it, so importing the same data twice leaves one copy.
-     * [langs] are the languages whose preset and category names go into the text index besides the names themselves.
+     * A writer for this store: add elements or places, then [StoreWriter.finish] to work out the streets, statistics
+     * and vocabulary. Adding an element again replaces it, so importing the same data twice leaves one copy.
+     * [langs] are the languages whose preset and category names the text index answers to besides the names themselves.
      */
     fun writer(langs: List<String> = DEFAULT_LANGS, regionName: String? = null): StoreWriter = StoreWriter(this, langs, regionName)
 
@@ -335,11 +430,11 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
 
     /**
      * True when the presets, categories or brands that classified the places have changed since the import (an app
-     * update): [refresh] then brings the categories, brands, presets, symbols and kind names up to date.
+     * update): [refresh] then brings the categories, brands, presets, symbols and kind tokens up to date.
      */
-    val isStale: Boolean get() = size > 0 && meta("derived") != StoreWriter.fingerprint()
+    val isStale: Boolean get() = placeCount > 0 && meta("derived") != StoreWriter.fingerprint()
 
-    /** Works out every place's category, brand, preset, symbol and indexed kind names again, in batches. */
+    /** Works out every place's category, brand, preset, symbol and indexed kinds again, in batches. */
     fun refresh(langs: List<String> = languages.ifEmpty { DEFAULT_LANGS }): ImportStats = writer(langs).use { w ->
         var after = Long.MIN_VALUE
         while (true) {
@@ -361,14 +456,39 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
 
     /** Empties the store. */
     fun clear() = locked {
-        for (t in listOf("place", "tag", "tagstat", "keystat", "place_rt", "word", "gram", "tree", "tree_rt")) exec("DELETE FROM $t")
-        exec("DELETE FROM place_fts")
+        for (t in StoreSchema.TABLES) {
+            if (t.endsWith("_fts")) exec("INSERT INTO $t($t) VALUES ('delete-all')") else exec("DELETE FROM $t")
+        }
+        exec("DELETE FROM meta WHERE key IN ('places', 'addresses', 'trees', 'bounds')")
+        dict.forget()
+        dict.seed()
         invalidate()
     }
 
+    /**
+     * Rewrites the file without slack (SQLite's VACUUM): smaller, and faster to read. It needs room for a copy, so it
+     * is skipped (false) when the disk is short of it.
+     */
+    fun compact(): Boolean = locked {
+        check(!inTransaction) { "A writer is still open" }
+        val f = file
+        if (f != null) {
+            val free = f.absoluteFile.parentFile?.usableSpace ?: 0L
+            if (free < f.length() + f.length() / 10 + (64L shl 20)) return@locked false
+        }
+        exec("VACUUM")
+        if (f != null) exec("PRAGMA wal_checkpoint(TRUNCATE)")
+        true
+    }
+
     internal fun invalidate() {
-        cachedSize = -1
+        cachedPlaces = -1
+        cachedAddresses = -1
         boundsKnown = false
+        kinds = null
+        treeKinds = null
+        vocabulary.forget()
+        addressBook.forget()
     }
 
     override fun close() = lock.withLock {
@@ -404,6 +524,51 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
 
     internal val inTransaction: Boolean get() = conn.inTransaction()
 
+    private fun counted(metaKey: String, sql: String): Int =
+        if (inTransaction) long(sql).toInt() else meta(metaKey)?.toIntOrNull() ?: long(sql).toInt()
+
+    private fun stat(k: Int, v: Int): Int = stmt("SELECT n FROM stat WHERE k = ?1 AND v = ?2") { st ->
+        st.bindLong(1, k.toLong())
+        st.bindLong(2, v.toLong())
+        if (st.step()) st.getLong(0).toInt() else 0
+    }
+
+    /** Places of the lookup table's rows for key id [k] (and value id [v]), in [box]. */
+    private fun lookup(k: Int, v: Int?, box: BBox?, limit: Int): List<PlaceRecord> {
+        val value = if (v == null) "" else " AND v = ?6"
+        val where = if (box == null) "" else " AND $BOX_WHERE"
+        return stmt("SELECT $COLS FROM place p WHERE p.id IN (SELECT place FROM lookup WHERE k = ?5$value)$where LIMIT ?7") { st ->
+            if (box != null) bindBox(st, box, 1)
+            st.bindLong(5, k.toLong())
+            if (v != null) st.bindLong(6, v.toLong())
+            st.bindLong(7, limit.toLong())
+            rows(st, limit)
+        }
+    }
+
+    /** Places in [box] (or every place) that carry key id [key] (any when -1) and that [accept] keeps, at most [limit]. */
+    private inline fun scan(key: Int, box: BBox?, limit: Int, accept: (PlaceRecord) -> Boolean): List<PlaceRecord> {
+        val sql = if (box == null) "SELECT $COLS FROM place p" else "SELECT $COLS FROM place_rt r JOIN place p ON p.id = r.id WHERE $RT_WHERE"
+        return stmt(sql) { st ->
+            if (box != null) bindRt(st, box, 1)
+            val out = ArrayList<PlaceRecord>()
+            while (out.size < limit && st.step()) {
+                if (key >= 0 && !TagBlob.hasKey(st.getBlob(11), key)) continue
+                val r = row(st)
+                if (accept(r)) out += r
+            }
+            out
+        }
+    }
+
+    private fun has(tags: Map<String, String>, key: String, value: String?): Boolean {
+        val v = tags[key] ?: return false
+        if (value == null || v == value) return true
+        return ';' in v && v.split(';').any { it.trim() == value }
+    }
+
+    private fun keyOf(r: PlaceRecord): Long = r.place.id?.let(StoreSchema::pack) ?: StoreSchema.foreignKey(r.place.key)
+
     private fun rows(st: SQLiteStatement, limit: Int): List<PlaceRecord> {
         val out = ArrayList<PlaceRecord>()
         while (out.size < limit && st.step()) out += row(st)
@@ -412,81 +577,122 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
 
     private fun row(st: SQLiteStatement): PlaceRecord {
         val key = st.getLong(0)
-        val lat = st.getDouble(1)
-        val lon = st.getDouble(2)
-        val south = st.getDouble(3)
-        val west = st.getDouble(4)
-        val north = st.getDouble(5)
-        val east = st.getDouble(6)
-        val tags = TagsJson.read(st.getText(7))
-        val source = st.getText(12)
-        val extra = if (st.isNull(13)) emptyMap() else TagsJson.read(st.getText(13))
-        val box = if (south == north && west == east) null else BBox(west, south, east, north)
-        val place = Place(StoreSchema.unpack(key), LatLon(lat, lon), tags, box, source, extra)
+        val lat = st.getLong(1)
+        val lon = st.getLong(2)
+        val box = if (st.isNull(3)) null else BBox(E7.deg(lon - st.getLong(4)), E7.deg(lat - st.getLong(3)), E7.deg(lon + st.getLong(6)), E7.deg(lat + st.getLong(5)))
+        val tags = TagBlob.decode(st.getBlob(11), dict)
+        var extra = if (st.isNull(12)) emptyMap() else TagBlob.decode(st.getBlob(12), dict)
+        if (!st.isNull(13)) extra = extra + ("timestamp" to Instant.ofEpochSecond(st.getLong(13)).toString())
+        val source = if (st.isNull(14)) "osm" else dict.value(st.getLong(14).toInt())
+        val place = Place(StoreSchema.unpack(key), LatLon(E7.deg(lat), E7.deg(lon)), tags, box, source, extra)
         return PlaceRecord(
             place,
-            category = if (st.isNull(8)) null else st.getText(8),
-            brand = if (st.isNull(9)) null else st.getText(9),
-            preset = if (st.isNull(10)) null else st.getText(10),
-            symbol = st.getText(11),
+            category = if (st.isNull(8)) null else dict.value(st.getLong(8).toInt()),
+            brand = if (st.isNull(9)) null else dict.value(st.getLong(9).toInt()),
+            preset = if (st.isNull(7)) null else dict.value(st.getLong(7).toInt()),
+            symbol = dict.value(st.getLong(10).toInt()),
         )
     }
 
-    private fun bindBox(st: SQLiteStatement, b: BBox, from: Int) {
-        st.bindDouble(from, b.north)
-        st.bindDouble(from + 1, b.south)
-        st.bindDouble(from + 2, b.east)
-        st.bindDouble(from + 3, b.west)
+    /** Binds a box as (north, south, east, west) in 1e-7 degree, for [BOX_WHERE]. */
+    internal fun bindBox(st: SQLiteStatement, b: BBox, from: Int) {
+        st.bindLong(from, E7.atMost(b.north).toLong())
+        st.bindLong(from + 1, E7.atLeast(b.south).toLong())
+        st.bindLong(from + 2, E7.atMost(b.east).toLong())
+        st.bindLong(from + 3, E7.atLeast(b.west).toLong())
+    }
+
+    /** Binds a box as (east, west, north, south) in 1e-7 degree, for [RT_WHERE]. */
+    internal fun bindRt(st: SQLiteStatement, b: BBox, from: Int) {
+        st.bindLong(from, E7.atMost(b.east).toLong())
+        st.bindLong(from + 1, E7.atLeast(b.west).toLong())
+        st.bindLong(from + 2, E7.atMost(b.north).toLong())
+        st.bindLong(from + 3, E7.atLeast(b.south).toLong())
+    }
+
+    private fun boundsOf(s: String): BBox? {
+        val v = s.split(',').mapNotNull { it.toLongOrNull() }
+        if (v.size != 4) return null
+        return BBox(E7.deg(v[0]), E7.deg(v[1]), E7.deg(v[2]), E7.deg(v[3]))
+    }
+
+    private fun computedBounds(): BBox? {
+        var b: BBox? = stmt("SELECT min(lat - ifnull(ds, 0)), min(lon - ifnull(dw, 0)), max(lat + ifnull(dn, 0)), max(lon + ifnull(de, 0)) FROM place") { st ->
+            if (st.step() && !st.isNull(0)) BBox(E7.deg(st.getLong(1)), E7.deg(st.getLong(0)), E7.deg(st.getLong(3)), E7.deg(st.getLong(2))) else null
+        }
+        stmt("SELECT min(west), min(south), max(east), max(north) FROM street_rt") { st ->
+            if (st.step() && !st.isNull(0)) {
+                val a = BBox(E7.deg(st.getLong(0)), E7.deg(st.getLong(1)), E7.deg(st.getLong(2)), E7.deg(st.getLong(3)))
+                b = b?.union(a) ?: a
+            }
+        }
+        return b
     }
 
     private fun setUp() {
+        val version = runCatching { stmt("SELECT value FROM meta WHERE key = 'schema'") { st -> if (st.step()) st.getText(0).toIntOrNull() else null } }.getOrNull()
+        if (version != null && version != StoreSchema.VERSION) {
+            val pack = runCatching { meta("packer") }.getOrNull()
+            if (pack != null) {
+                throw StoreVersionException("${file?.name ?: "This store"} is a pack of store schema $version ($pack); Atlas reads schema ${StoreSchema.VERSION}: download the region again")
+            }
+            // an Overpass region of an older version: emptied, to be imported again
+            for (s in statements.values) runCatching { s.close() }
+            statements.clear()
+            for (t in StoreSchema.TABLES + StoreSchema.OLD_TABLES + "meta") exec("DROP TABLE IF EXISTS $t")
+            exec("VACUUM")
+        }
+        exec("PRAGMA page_size = $PAGE_SIZE")
         exec("PRAGMA journal_mode=WAL")
         exec("PRAGMA synchronous=NORMAL")
         exec("PRAGMA temp_store=MEMORY")
         exec("PRAGMA cache_size=-16000")
-        val version = runCatching { stmt("SELECT value FROM meta WHERE key = 'schema'") { st -> if (st.step()) st.getText(0).toIntOrNull() else null } }.getOrNull()
-        if (version != null && version != StoreSchema.VERSION) {
-            for (s in statements.values) runCatching { s.close() }
-            statements.clear()
-            for (t in StoreSchema.DROP) exec("DROP TABLE IF EXISTS $t")
-        }
         for (sql in StoreSchema.CREATE) exec(sql)
         exec("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', '${StoreSchema.VERSION}')")
-        // ORDER BY rank: names weigh most, then operator and cuisine, then addresses, then kinds.
-        exec("INSERT INTO place_fts(place_fts, rank) VALUES ('rank', 'bm25(10.0, 4.0, 1.5, 3.0)')")
+        dict.seed()
     }
 
     companion object {
         /** The languages a store indexes kind names in when the app does not say: Atlas's four search languages. */
         val DEFAULT_LANGS = listOf("en", "nl", "de", "fr")
 
+        /** The store schema this version reads and writes; a pack's manifest names the schema it was built with. */
+        const val SCHEMA: Int = StoreSchema.VERSION
+
+        private const val PAGE_SIZE = 4096
         private const val FUZZY_BELOW = 5
+        private const val FUZZY_KIND_TOKENS = 8
         private const val REFRESH_BATCH = 5_000
         private const val NEAR_TEXT_METRES = 5_000.0
-        private val WORLD = BBox(-180.0, -90.0, 180.0, 90.0)
 
-        internal const val COLS = "p.id, p.lat, p.lon, p.south, p.west, p.north, p.east, p.tags, p.category, p.brand, p.preset, p.symbol, p.source, p.extra"
-        private const val BOX_WHERE = "p.south <= ?1 AND p.north >= ?2 AND p.west <= ?3 AND p.east >= ?4"
+        internal const val COLS = "p.id, p.lat, p.lon, p.ds, p.dw, p.dn, p.de, p.preset, p.category, p.brand, p.symbol, p.tags, p.extra, p.edited, p.source"
+
+        /** A place's box meets the bound box (north, south, east, west in 1e-7 degree, from parameter 1). */
+        private const val BOX_WHERE = "(p.lat - ifnull(p.ds, 0)) <= ?1 AND (p.lat + ifnull(p.dn, 0)) >= ?2 AND (p.lon - ifnull(p.dw, 0)) <= ?3 AND (p.lon + ifnull(p.de, 0)) >= ?4"
+
+        /** The R*Tree's box meets the bound box (east, west, north, south, from parameter 1). */
+        internal const val RT_WHERE = "r.west <= ?1 AND r.east >= ?2 AND r.south <= ?3 AND r.north >= ?4"
 
         private val driver by lazy { BundledSQLiteDriver() }
 
-        /** Opens (or creates) the store in [file]. */
+        /** Opens (or creates) the store in [file]; a pack of another store schema is refused ([StoreVersionException]). */
         fun open(file: File): PlaceStore {
             file.absoluteFile.parentFile?.mkdirs()
-            return PlaceStore(file, driver.open(file.absolutePath)).also { s -> s.locked { s.setUp() } }
+            return create(file, driver.open(file.absolutePath))
         }
 
         /** A store that lives in memory only, for tests and online results. */
-        fun inMemory(): PlaceStore = PlaceStore(null, driver.open(":memory:")).also { s -> s.locked { s.setUp() } }
+        fun inMemory(): PlaceStore = create(null, driver.open(":memory:"))
 
-        private fun jsonString(s: String): String = buildString {
-            append('"')
-            for (c in s) when (c) {
-                '"' -> append("\\\"")
-                '\\' -> append("\\\\")
-                else -> if (c < ' ') append("\\u%04x".format(c.code)) else append(c)
+        private fun create(file: File?, conn: SQLiteConnection): PlaceStore {
+            val s = PlaceStore(file, conn)
+            try {
+                s.locked { s.setUp() }
+            } catch (e: Throwable) {
+                s.close()
+                throw e
             }
-            append('"')
+            return s
         }
     }
 }

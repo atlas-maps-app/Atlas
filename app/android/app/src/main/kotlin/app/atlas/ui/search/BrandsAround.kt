@@ -47,6 +47,24 @@ object BrandsAround {
         split(places, at, radiusM, origin)
     }
 
+    /**
+     * The branches of brand [id] within [radiusM] of [at], nearest first: from the regions' brand index, else from the
+     * map tiles' labels. The origin says which.
+     */
+    suspend fun branches(services: Services, id: String, at: LatLon, radiusM: Double): Pair<List<Place>, PlaceOrigin?> = withContext(Dispatchers.Default) {
+        val store = services.placeStores
+        val near = compareBy<Place> { Geo.distance(at, it.location) }
+        if (store.size > 0) {
+            val found = runCatching { store.byBrand(listOf(id), BBox.around(at, radiusM)) }.getOrNull().orEmpty()
+                .map { it.place }.filter { Geo.distance(at, it.location) <= radiusM }
+            if (found.isNotEmpty()) return@withContext found.distinctBy { it.key }.sortedWith(near) to PlaceOrigin.STORE
+        }
+        val tiles = services.tiles.value ?: return@withContext emptyList<Place>() to null
+        val found = runCatching { TilePlaces.near(tiles, at, radiusM, TagFilter.Has("name"), 5_000) }.getOrNull()
+            ?: return@withContext emptyList<Place>() to null
+        found.filter { isTrade(it.tags) && Brands.forTags(it.tags)?.id == id }.sortedWith(near) to PlaceOrigin.TILES
+    }
+
     /** Splits [places] within [radiusM] of [at] into chains (most branches first) and named independents (nearest first). */
     fun split(places: List<Place>, at: LatLon, radiusM: Double, origin: PlaceOrigin?): BrandsNearby {
         val byBrand = HashMap<String, MutableList<Place>>()

@@ -17,8 +17,11 @@ class PlaceStoreTest {
     fun importsTheThreeExtracts() {
         val s = store
         println("import: " + Fixtures.importStats)
-        assertTrue("places ${s.size}", s.size > 9000)
         val ams = Fixtures.importStats.getValue("ams")
+        // the address points live apart from the places
+        assertTrue("places ${s.size}", s.size > 3000)
+        assertTrue("addresses ${s.addressCount}", s.addressCount > 7000)
+        assertEquals(ams.addresses.toLong(), s.addressCount.toLong())
         assertTrue("seconds, not minutes: ${ams.millis} ms", ams.millis < 20_000)
         assertTrue(ams.trees > 100)
         val b = s.bounds!!
@@ -123,7 +126,10 @@ class PlaceStoreTest {
             assertEquals(listOf("en"), s.languages)
             assertFalse(s.isStale)
             // as after an app update with new presets: the derived columns are worked out again, nothing is lost
-            s.locked { s.exec("UPDATE place SET category = NULL, symbol = 'x'"); s.exec("UPDATE meta SET value = 'old' WHERE key = 'derived'") }
+            s.locked {
+                s.exec("UPDATE place SET category = NULL, symbol = ${s.dict.internValue("x")}")
+                s.exec("UPDATE meta SET value = 'old' WHERE key = 'derived'")
+            }
             assertTrue(s.isStale)
             s.refresh()
             assertFalse(s.isStale)

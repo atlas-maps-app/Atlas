@@ -5,6 +5,7 @@ import app.atlas.geo.LatLon
 import app.atlas.model.OsmId
 import app.atlas.model.OsmType
 import app.atlas.packer.pbf.PbfReader
+import app.atlas.search.MatchKind
 import app.atlas.search.OverpassImport
 import app.atlas.search.PlaceStore
 import app.atlas.search.SearchContext
@@ -28,6 +29,9 @@ import java.time.Instant
  */
 class RealDataTest {
     companion object {
+        /** Bytes a place (places, address points and trees together) Monaco's store may take: about 15% above today's. */
+        const val MONACO_BYTES_PER_PLACE = 360.0
+
         private lateinit var dir: File
         private lateinit var pack: PlacesPack
         private lateinit var store: PlaceStore
@@ -96,7 +100,10 @@ class RealDataTest {
         assertTrue("${s.places} places", s.places in 4_000..6_000)
         assertEquals(640, s.trees)
         assertEquals(0L, s.unlocated)
-        assertEquals(s.places, store.size)
+        assertEquals(s.places, store.placeCount)
+        // address points added twice (the same number on the same street) are kept once
+        assertTrue(store.addressCount in 1..s.addresses)
+        assertEquals(store.placeCount + store.addressCount, store.size)
         assertEquals("2026-10-13T20:21:31Z", store.meta("osm_timestamp"))
         assertTrue(pack.file.name.endsWith(".gz") && pack.file.length() < pack.rawBytes / 2)
         // everything sits inside the extract's box (relations reach a little beyond, into the sea and France)
@@ -158,7 +165,9 @@ class RealDataTest {
             override fun relation(relation: app.atlas.packer.pbf.PbfRelation) { if (relation.tags.isNotEmpty()) inExtract += OsmId(OsmType.RELATION, relation.id) }
         })
         val world = BBox(-180.0, -90.0, 180.0, 90.0)
-        val ours = store.inBox(world, Int.MAX_VALUE).mapNotNull { it.id }.toSet()
+        // places and address points alike, by their elements' ids
+        val ourRecords = store.inBox(world, Int.MAX_VALUE).filter { it.id != null }.associateBy { it.id!! }
+        val ours = ourRecords.keys
         val overpass = PlaceStore.inMemory()
         var acrossTheAntimeridian = 0
         overpass.writer(regionName = "Monaco (Overpass)").use { w ->
@@ -167,7 +176,8 @@ class RealDataTest {
             json.bufferedReader().use { r -> OverpassImport.read(r) { e -> if (e.bounds.let { it == null || it.west <= it.east }) w.add(e) else acrossTheAntimeridian++ } }
             w.finish()
         }
-        val theirs = overpass.inBox(world, Int.MAX_VALUE).mapNotNull { it.id }.filter { it in inExtract }.toSet()
+        val theirRecords = overpass.inBox(world, Int.MAX_VALUE).filter { it.id != null }.associateBy { it.id!! }
+        val theirs = theirRecords.keys.filter { it in inExtract }.toSet()
         val onlyOurs = ours - theirs
         val onlyTheirs = theirs - ours
         println("Monaco: ${ours.size} places from the PBF, ${theirs.size} from Overpass within the extract; only PBF ${onlyOurs.size} ${onlyOurs.take(8)}, only Overpass ${onlyTheirs.size} ${onlyTheirs.take(8)}")
@@ -175,13 +185,13 @@ class RealDataTest {
         assertTrue("${onlyOurs.size + onlyTheirs.size} differ", onlyOurs.size + onlyTheirs.size <= ours.size / 100)
         // and the shapes agree: ways (whole in Geofabrik's extracts) have Overpass's box, and both pins lie in it,
         // Overpass's at the box's middle, the packer's at the centroid; relations reach beyond the extract, so not them
-        overpass.use { o ->
+        overpass.use {
             var ways = 0
             var moved = 0
             val both = (ours intersect theirs).filter { it.type != OsmType.RELATION }
             for (id in both) {
-                val a = store.get(id)!!
-                val b = o.get(id)!!
+                val a = ourRecords.getValue(id)
+                val b = theirRecords.getValue(id)
                 // the same seven decimals give the same doubles, to the bit; an element edited between the two data
                 // times may have moved
                 if (id.type == OsmType.NODE) {
@@ -246,6 +256,28 @@ class RealDataTest {
         }
     }
 
+    /**
+     * The store's size on a real extract, against the budget of the slim store (schema 2): a regression in what a
+     * place costs fails here. Monaco's store is mostly fixed overhead (the schema's pages, the seeded dictionaries).
+     */
+    @Test
+    fun monacoStaysSmall() {
+        val s = pack.stats
+        val units = s.places + s.addresses + s.trees
+        val perPlace = pack.rawBytes.toDouble() / units
+        println(
+            "Monaco: ${pack.rawBytes} bytes (${pack.file.length()} gzipped) for ${s.places} places, ${s.addresses} address points, " +
+                "${s.trees} trees: ${"%.0f".format(perPlace)} bytes each",
+        )
+        assertTrue("${"%.0f".format(perPlace)} bytes a place", perPlace < MONACO_BYTES_PER_PLACE)
+        assertTrue("${pack.file.length()} bytes gzipped", pack.file.length() < pack.rawBytes * 6 / 10)
+    }
+
+    /**
+     * Luxembourg, when its extract has been downloaded to cache/packs: the pack's size against the slim store's
+     * budget, and the searches of the review (a station, a quarter, a kind in French, pharmacies, addresses) with
+     * their timings, the median of repeated runs.
+     */
     @Test
     fun luxembourgWhenDownloaded() {
         val pbf = File(System.getProperty("atlas.repo"), "cache/packs/luxembourg.osm.pbf")
@@ -253,24 +285,55 @@ class RealDataTest {
         val counts = PbfReader(pbf).count()
         assertTrue(counts.sorted)
         assertTrue(counts.nodes > 3_000_000 && counts.ways > 400_000 && counts.relations > 5_000)
-        PlaceStore.inMemory().use { lux ->
-            val stats = PlacePacker(PackOptions()).pack(pbf, lux, "Luxembourg") { println("luxembourg $it") }
-            assertEquals(counts.nodes, stats.nodes)
-            assertTrue("${stats.places} places", stats.places > 200_000)
-            assertTrue(stats.trees > 50_000)
+        val out = File(dir, "luxembourg.places.db")
+        val built = PlacesPackBuilder.build(pbf, out, PackOptions(), name = "Luxembourg", keepDb = true) { println("luxembourg $it") }
+        val stats = built.stats
+        assertEquals(counts.nodes, stats.nodes)
+        assertTrue("${stats.places} places", stats.places > 100_000)
+        assertTrue("${stats.addresses} address points", stats.addresses > 150_000)
+        assertTrue(stats.trees > 50_000)
+        println("luxembourg: ${built.rawBytes shr 10} KiB store, ${built.file.length() shr 10} KiB gzipped, ${"%.0f".format(built.rawBytes.toDouble() / (stats.places + stats.addresses))} bytes a place")
+        assertTrue("${built.rawBytes} bytes", built.rawBytes < 40L * 1000 * 1000)
+        PlaceStore.open(out).use { lux ->
             val engine = SearchEngine(lux)
             val here = SearchContext(location = LatLon(49.6116, 6.1319), lang = "fr")
-            runBlocking {
-                val gare = engine.search("gare centrale", here)
-                assertTrue(gare.places.take(5).any { (it.hit.record.tags["name"] ?: "").contains("Gare", ignoreCase = true) })
-                val kirchberg = engine.search("kirchberg", here)
-                assertTrue(kirchberg.places.isNotEmpty())
-                report(gare)
-                report(kirchberg)
-                report(engine.search("boulangerie", here))
+            fun timed(text: String): Pair<app.atlas.search.SearchResults, Double> {
+                var r = runBlocking { engine.search(text, here) }
+                val t = DoubleArray(9) {
+                    val s = System.nanoTime()
+                    r = runBlocking { engine.search(text, here) }
+                    (System.nanoTime() - s) / 1e6
+                }
+                t.sort()
+                println("  %-32s %7.1f ms".format("\"$text\"", t[4]))
+                report(r)
+                return r to t[4]
             }
+            val times = ArrayList<Double>()
+            val gare = timed("gare centrale").also { times += it.second }.first
+            assertTrue(gare.places.take(5).any { (it.hit.record.tags["name"] ?: "").contains("Gare", ignoreCase = true) })
+            val kirchberg = timed("kirchberg").also { times += it.second }.first
+            assertTrue(kirchberg.places.isNotEmpty())
+            val bakery = timed("boulangerie").also { times += it.second }.first
+            assertTrue(bakery.items.filterIsInstance<SearchItem.Kind>().any { it.count > 50 })
+            val pharmacies = timed("pharmacies").also { times += it.second }.first
+            assertTrue(pharmacies.places.size >= 5 && pharmacies.places.take(5).all { it.hit.tags["amenity"] == "pharmacy" })
+            val liberte = timed("avenue de la liberte 13").also { times += it.second }.first.places.first()
+            assertEquals(MatchKind.ADDRESS, liberte.match)
+            assertEquals("13", liberte.hit.tags["addr:housenumber"])
+            assertEquals("Avenue de la Liberté", liberte.hit.tags["addr:street"])
+            val royal = timed("15 boulevard royal luxembourg").also { times += it.second }.first.places.first()
+            assertEquals("Boulevard Royal", royal.hit.tags["addr:street"])
+            assertEquals("15", royal.hit.tags["addr:housenumber"])
+            val typo = timed("boulevrd royal 15").also { times += it.second }.first.places.first()
+            assertEquals("Boulevard Royal", typo.hit.tags["addr:street"])
+            val postcode = timed("L-2449").also { times += it.second }.first
+            assertTrue(postcode.places.isNotEmpty() && postcode.places.all { it.hit.tags["addr:postcode"] == "2449" })
             assertTrue(lux.count("amenity", "pharmacy") > 50)
-            assertTrue(lux.count("addr:housenumber", null) > 100_000)
+            assertTrue(lux.count("addr:housenumber", null) > 150_000)
+            // a busy machine (or a CI runner) stretches these; on a quiet laptop they take 10 to 35 ms
+            val budget = if (System.getenv("CI") != null) 450.0 else 150.0
+            assertTrue("slowest median ${times.max()} ms", times.max() < budget)
         }
     }
 }

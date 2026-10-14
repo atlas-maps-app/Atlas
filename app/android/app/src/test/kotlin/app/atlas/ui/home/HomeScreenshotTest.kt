@@ -59,6 +59,7 @@ class HomeScreenshotTest {
         compose.setContent { AtlasRoot(services, BackStackNavigator(listOf(Dest.Home())), dark = false) }
         compose.settle()
         waitForWeather()
+        compose.settleScreen()
         // Every control the board has is there and says what it does.
         for (d in listOf("Search", "A near B", "Search by voice", "North up", "Map layers", "Show my location", "Zoom out to the globe", "Drinking water", "Food", "Toilet")) {
             compose.onNodeWithContentDescription(d, substring = true, useUnmergedTree = true).assertExists()
@@ -143,6 +144,7 @@ class HomeScreenshotTest {
         compose.setContent { AtlasRoot(services, BackStackNavigator(listOf(Dest.Home())), dark = true) }
         compose.waitForIdle()
         waitForWeather()
+        compose.settleScreen()
         capture("home_dark")
     }
 }

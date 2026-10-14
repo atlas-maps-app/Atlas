@@ -67,7 +67,7 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
             a.done()
             val pack = PlacesPackBuilder.build(File(pbf), File(db), options, name, gzip, keep, vacuum) { out("  $it") }
             val s = pack.stats
-            out("${pack.file.name}: ${s.places} places, ${s.trees} trees from ${s.nodes} nodes, ${s.ways} ways, ${s.relations} relations in ${s.millis / 1000} s")
+            out("${pack.file.name}: ${s.places} places, ${s.addresses} address points, ${s.trees} trees from ${s.nodes} nodes, ${s.ways} ways, ${s.relations} relations in ${s.millis / 1000} s")
             out("  ${pack.rawBytes shr 20} MiB store, ${pack.file.length() shr 20} MiB file; OSM data of ${s.header.replicationTime ?: "unknown date"}")
             if (s.unlocated > 0 || s.missingNodes > 0) out("  ${s.unlocated} kept elements without a position, ${s.missingNodes} node references outside the extract")
         }

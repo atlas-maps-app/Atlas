@@ -9,8 +9,8 @@ import java.util.zip.Deflater
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
-/** What a finished store holds, read back from the file itself. */
-data class StoreSummary(val places: Long, val trees: Long, val schema: String?, val meta: Map<String, String>)
+/** What a finished store holds, read back from the file itself: places, trees and address points. */
+data class StoreSummary(val places: Long, val trees: Long, val schema: String?, val meta: Map<String, String>, val addresses: Long = 0)
 
 /** File chores around a pack: sealing a store for shipping, gzip, checksums. */
 object PackFiles {
@@ -64,7 +64,10 @@ object PackFiles {
                 fun count(sql: String): Long = conn.prepare(sql).use { st -> if (st.step()) st.getLong(0) else 0L }
                 val all = LinkedHashMap<String, String>()
                 conn.prepare("SELECT key, value FROM meta ORDER BY key").use { st -> while (st.step()) all[st.getText(0)] = st.getText(1) }
-                return StoreSummary(count("SELECT count(*) FROM place"), count("SELECT count(*) FROM tree"), all["schema"], all)
+                return StoreSummary(
+                    count("SELECT count(*) FROM place"), count("SELECT count(*) FROM tree"), all["schema"], all,
+                    count("SELECT count(*) FROM address"),
+                )
             } finally {
                 conn.close()
             }

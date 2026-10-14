@@ -149,7 +149,7 @@ internal class LabelReader(
             val cls = f.string("class") ?: return@lines
             val (minZ, size, prio) = when (cls) {
                 "motorway", "trunk" -> Triple(13.5f, 12f, 20f)
-                "primary" -> Triple(15.5f, 12f, 21f)
+                "primary" -> Triple(16.2f, 12f, 21f)
                 "secondary", "tertiary" -> Triple(16.6f, 11.5f, 22f)
                 "minor", "busway" -> Triple(17.2f, 11f, 23f)
                 "service", "track" -> Triple(17.8f, 10.5f, 25f)

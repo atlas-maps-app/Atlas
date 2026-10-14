@@ -143,6 +143,7 @@ object Manifest {
             sidecar?.long("raw_bytes")?.let { put("raw_bytes", it) }
             sidecar?.get("schema")?.jsonPrimitive?.intOrNull?.let { put("schema", it) }
             sidecar?.long("places")?.let { put("places", it) }
+            sidecar?.long("addresses")?.let { put("addresses", it) }
             sidecar?.long("trees")?.let { put("trees", it) }
         } else earlier("places")
         return buildJsonObject {

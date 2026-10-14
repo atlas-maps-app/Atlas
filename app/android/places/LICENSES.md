@@ -1,20 +1,51 @@
 # Licences of the data bundled in `:places`
 
-The files under `src/main/resources/atlas/places/` are built by `tools/build_places_data.py` from the pinned
+## Atlas's own symbols: the boards
+
+`board_symbols.json` holds the symbols the Atlas boards draw (`canvas/project/*.dc.html`, `engine/project/*.dc.html`):
+every icon, pin, sign and small illustration on the boards, converted to path data by `tools/board_symbols.py` from the
+catalogue in `cache/look-ref/symbols/` and named by `tools/board_symbol_names.py`. They are Atlas's own drawings and
+come under the repository's MIT licence (`LICENSE` at the repository root):
+
+    MIT License, Copyright (c) 2026 atlas-maps-app
+
+They come first: wherever the boards have a symbol for a meaning, Atlas draws it, and the open sets below fill the rest.
+
+## The open sets and data
+
+The other files under `src/main/resources/atlas/places/` are built by `tools/build_places_data.py` from the pinned
 releases that `tools/fetch_sources.sh` downloads. Each source keeps its licence:
 
 | Bundled file | Source | Licence |
 |---|---|---|
+| `board_symbols.json` (Atlas's symbols, from the boards) | the Atlas boards, `tools/board_symbols.py` | the repository's MIT licence |
 | `presets.json`, `fields.json`, `i18n/*.json`, cuisine names, category names in other languages | [id-tagging-schema](https://github.com/openstreetmap/id-tagging-schema) 7.3.0 | ISC, Copyright (c) iD Contributors |
 | `brands.tsv` (names, Wikidata items, tags, where they trade) | [name-suggestion-index](https://github.com/osmlab/name-suggestion-index) 8.0.20260918 | BSD 3-Clause, Copyright 2026, name-suggestion-index contributors |
 | `logos.json` (brand glyphs) and brand colours where no hand-set colour exists | [simple-icons](https://github.com/simple-icons/simple-icons) 16.35.0 | CC0 1.0 |
-| `symbols.json` `maki-*` | [Maki](https://github.com/mapbox/maki) 8.2.0 | CC0 1.0 |
-| `symbols.json` `temaki-*` | [Temaki](https://github.com/rapideditor/temaki) 5.13.0 | CC0 1.0 |
-| `symbols.json` `pinhead-*` | [Pinhead](https://github.com/waysidemapping/pinhead) 15.25.0 | CC0 1.0 |
-| `ui.json` (Atlas's UI symbols) | [Lucide](https://lucide.dev) 1.56.0 (`lucide-static`), plus Atlas's own drawings in `tools/custom_icons.txt` | ISC (see below) |
+| `symbols.json` `maki-*` (where the boards have no symbol) | [Maki](https://github.com/mapbox/maki) 8.2.0 | CC0 1.0 |
+| `symbols.json` `temaki-*` (where the boards have no symbol) | [Temaki](https://github.com/rapideditor/temaki) 5.13.0 | CC0 1.0 |
+| `symbols.json` `pinhead-*` (where the boards have no symbol) | [Pinhead](https://github.com/waysidemapping/pinhead) 15.25.0 | CC0 1.0 |
+| `ui.json` (UI symbols where the boards have none) | [Lucide](https://lucide.dev) 1.56.0 (`lucide-static`), plus Atlas's own drawings in `tools/custom_icons.txt` | ISC (see below) |
 | `categories.json`, `cuisine.json`, the hand tables in `tools/` | Atlas, from the prototype (`fetch/categories_ams.py`, `render/poi_style.py`) | the repository's MIT licence |
 
 Public holidays (`Holidays.kt`) are computed from rules written for Atlas; no holiday data is bundled.
+
+## MIT licence (Atlas: the board symbols, categories and tables)
+
+Copyright (c) 2026 atlas-maps-app
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit
+persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the
+Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## ISC licence (id-tagging-schema)
 

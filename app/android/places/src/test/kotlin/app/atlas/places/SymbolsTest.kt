@@ -23,18 +23,22 @@ class SymbolsTest {
 
     @Test
     fun iconsHaveViewBoxesAndStyles() {
-        val cafe = Symbols.icon("maki-cafe")!!
+        val cafe = Symbols.original("maki-cafe")!!
         assertEquals(ViewBox(0f, 0f, 15f, 15f), cafe.viewBox)
         assertTrue(cafe.paths.all { it.fill && !it.stroke })
-        val search = Symbols.icon("ui-search")!!
+        val search = Symbols.original("ui-search")!!
         assertEquals(24f, search.viewBox.width)
         assertTrue(search.paths.all { it.stroke && !it.fill })
         assertEquals(2f, search.strokeWidth)
+        // the boards' own drawings stand in for both
+        assertEquals("place.cafe", Symbols.icon("maki-cafe")!!.id)
+        assertEquals("ui.search", Symbols.icon("ui-search")!!.id)
         val logo = Symbols.icon("logo-albertheijn")!!
         assertTrue(logo.paths.all { it.fill })
         assertNull(Symbols.icon("maki-not-a-symbol"))
         assertFalse(Symbols.has("ui-not-a-symbol"))
-        assertTrue(Symbols.icon("maki-cafe") === cafe)
+        assertTrue(Symbols.original("maki-cafe") === cafe)
+        assertTrue(Symbols.icon("maki-cafe") === Symbols.icon("maki-cafe"))
     }
 
     @Test
@@ -42,7 +46,7 @@ class SymbolsTest {
         val missing = uiSet.filter { Symbols.icon("ui-$it") == null }
         assertTrue("missing UI symbols: $missing", missing.isEmpty())
         assertTrue(Symbols.ids("ui").size >= 200)
-        for (id in Symbols.ids("ui")) assertTrue(id, Symbols.icon(id)!!.paths.all { it.stroke })
+        for (id in Symbols.ids("ui")) assertTrue(id, Symbols.original(id)!!.paths.all { it.stroke })
     }
 
     @Test

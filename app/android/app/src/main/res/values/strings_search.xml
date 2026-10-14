@@ -1,27 +1,325 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Search -->
     <string name="search_title">Search</string>
     <string name="search_hint">Search or ask</string>
+    <string name="search_hint_in">Search %1$s</string>
+    <string name="search_clear">Clear</string>
+    <string name="search_every">Every %1$s on the map</string>
+    <string name="search_every_sub">all %1$d · as a list or on the map</string>
+    <string name="search_brand_all">All %1$d %2$s</string>
+    <string name="search_brand_sub">every branch · as a list or on the map</string>
+    <plurals name="search_goods_kinds">
+        <item quantity="one">%d kind of shop sells it</item>
+        <item quantity="other">%d kinds of shop sell it</item>
+    </plurals>
+    <plurals name="search_query_places">
+        <item quantity="one">read as a query · %d place</item>
+        <item quantity="other">read as a query · %d places</item>
+    </plurals>
+    <plurals name="search_plan_steps">
+        <item quantity="one">a plan · %d step</item>
+        <item quantity="other">a plan · %d steps</item>
+    </plurals>
+    <plurals name="search_parts">
+        <item quantity="one">%d part</item>
+        <item quantity="other">%d parts</item>
+    </plurals>
+    <plurals name="search_saved_places">
+        <item quantity="one">%d place saved</item>
+        <item quantity="other">%d places saved</item>
+    </plurals>
+    <plurals name="search_lists_n">
+        <item quantity="one">%d list</item>
+        <item quantity="other">%d lists</item>
+    </plurals>
+    <string name="search_step_free">step-free</string>
+    <string name="search_none_left">None left with these chips on</string>
+    <string name="search_nothing">Nothing here for “%1$s”</string>
+    <string name="search_nothing_text">Try another word, or a kind of place.</string>
+    <string name="search_no_regions">No region on this phone yet</string>
+    <string name="search_no_regions_text">Download this area to search it with no signal.</string>
+    <string name="search_download">Download a region</string>
+    <string name="search_failed">Search failed</string>
+    <string name="search_offline_title">Works offline</string>
+    <string name="search_offline_text">every place in your regions is searchable with no signal</string>
+    <string name="search_recent">Recent · also type coordinates or plus codes</string>
+    <string name="search_recent_clear">Clear</string>
+    <string name="search_recent_none">Nothing yet. Coordinates like 52.3745, 4.8838 and plus codes like 9F469VFP+R4 work too.</string>
+    <string name="search_say">Or just say it</string>
+    <string name="search_say_ask">quiet café with an outlet, then dinner</string>
+    <string name="search_say_near">café 200 m from a bike dock</string>
+    <string name="search_say_needs">step-free toilet, open now</string>
+    <string name="search_to_ask">Ask</string>
+    <string name="search_to_near">A near B</string>
+    <string name="search_to_needs">Needs</string>
     <string name="search_categories">Kinds of places</string>
-    <string name="search_footer">Search runs on the phone over OpenStreetMap names, tags and brands.</string>
+    <string name="search_footer">Search runs on the phone over OpenStreetMap names, tags and brands · typo-tolerant · names in every language mapped, words in English, Dutch, German and French</string>
+
+    <!-- A near B -->
     <string name="query_title">A near B</string>
     <string name="query_text">Ask for places by what is near them: a café within 200 m of a bike dock.</string>
+    <string name="query_hint">wifi café near a bike dock and a park</string>
+    <string name="query_online">Found online in</string>
+    <string name="query_on_phone">Found on the phone in</string>
+    <string name="query_layer">Save as a map layer</string>
+    <string name="query_layer_kept">Kept as a map layer · tap to remove</string>
+    <string name="query_alert">Alert me when something new matches</string>
+    <string name="query_alert_on">Alerts on · tap to stop</string>
+    <string name="query_download">Download this area</string>
+    <string name="query_add">Add to the query</string>
+    <string name="query_add_kicker">With, open, near</string>
+    <string name="query_add_open">open now</string>
+    <string name="query_add_wifi">with wifi</string>
+    <string name="query_add_outlet">with an outlet</string>
+    <string name="query_add_terrace">with a terrace</string>
+    <string name="query_add_stepfree">step-free</string>
+    <string name="query_add_vegetarian">vegetarian</string>
+    <string name="query_add_park">near a park</string>
+    <string name="query_add_bikes">near a bike dock</string>
+    <string name="query_add_stop">near a bus stop</string>
+    <string name="query_dial">Within %1$d m: change</string>
+    <string name="query_dial_away">At least %1$d m away: change</string>
+    <string name="query_dial_title">How near %1$s?</string>
+    <string name="query_dial_set">Set the distance</string>
+    <string name="query_remove">Take “%1$s” out</string>
+    <string name="query_unknown">Not understood: %1$s</string>
+    <string name="query_ql">Overpass QL of this query</string>
+    <string name="query_ql_note">The same query for Overpass, over the area searched: what Atlas sends when it searches online.</string>
+    <string name="query_run_online">Run it online</string>
+    <string name="query_run_offline">Online needs a connection</string>
+    <string name="query_not_read">Not read as a query yet</string>
+    <string name="query_failed">The query failed</string>
+    <string name="query_none">Nothing matches here</string>
+    <string name="query_none_text">Try a longer distance, or fewer chips.</string>
+
+    <!-- Place -->
     <string name="place_route">Route</string>
     <string name="place_osm">On OpenStreetMap</string>
     <string name="place_tags">%1$d tags</string>
-    <string name="place_loading">Finding this place…</string>
     <string name="place_not_found">This place is not on the phone, and there is no connection to look it up.</string>
+    <string name="place_level">Level %1$s</string>
+    <string name="place_share">Share</string>
+    <string name="place_save">Save · hold to choose a list</string>
+    <string name="place_saved">Saved · hold to choose lists</string>
+    <string name="place_save_plain">Save this point</string>
+    <string name="place_saved_plain">Saved · tap to remove</string>
+    <string name="place_call">Call %1$s</string>
+    <string name="place_web">Website</string>
+    <string name="place_menu">Menu</string>
+    <string name="place_mail">E-mail</string>
+    <string name="place_opens">opens %1$s</string>
+    <string name="place_hours">Opening hours</string>
+    <string name="place_hours_week">Show the week</string>
+    <string name="place_hours_unsure">some hours unsure</string>
+    <string name="place_fact_yes">yes</string>
+    <string name="place_fact_no">no</string>
+    <string name="place_fact_limited">in part</string>
+    <string name="place_fact_only">only</string>
+    <string name="place_ratings_offline">Ratings when online</string>
+    <string name="place_ratings_offline_text">Mangrove and your keyed sources are asked only online.</string>
+    <string name="place_ratings_loading">Asking for ratings…</string>
+    <string name="place_ratings_failed">Ratings unavailable</string>
+    <string name="place_ratings_none">No ratings yet</string>
+    <string name="place_ratings_write">write one</string>
+    <plurals name="place_reviews">
+        <item quantity="one">%d review</item>
+        <item quantity="other">%d reviews</item>
+    </plurals>
+    <string name="place_rising">rising</string>
+    <string name="place_ratings_split">%1$s %2$s · %3$s %4$s</string>
+    <string name="place_quest_yes">%1$s Yes</string>
+    <string name="place_quest_no">%1$s No</string>
+    <string name="place_note_sending">Sending the note…</string>
+    <string name="place_note_sent">Thank you: mappers nearby will read your note</string>
+    <string name="place_note_failed">The note did not go: %1$s</string>
+    <string name="place_from_label">Only the map\'s label is known</string>
+    <string name="place_checked">checked %1$s</string>
+    <string name="place_copy">Copy</string>
+    <string name="place_open_osm">Open on openstreetmap.org</string>
+    <string name="place_send_offline">Needs a connection: nothing leaves the phone while offline.</string>
+    <string name="place_note_confirm">Leave this note for mappers?</string>
+    <string name="place_note_note">An anonymous OpenStreetMap note at this place: public at once. Mappers nearby read it and update the map; Atlas edits nothing itself.</string>
+    <string name="place_note_send">Leave the note</string>
+    <string name="place_wiki_built">Built</string>
+    <string name="place_wiki_architect">Architect</string>
+    <string name="place_wiki_style">Style</string>
+    <string name="place_wiki_named">Named after</string>
+    <string name="place_wiki_read">Read on Wikipedia</string>
+    <string name="place_brand_part">Part of %1$s</string>
+    <string name="place_brand_all">Every branch</string>
+    <string name="place_review_card">Write a review</string>
+    <string name="place_review_card_text">Open reviews on Mangrove · signed by this phone, no account</string>
+    <string name="place_review_sending">Publishing…</string>
+    <string name="place_review_sent">Published · thank you</string>
+    <string name="place_review_failed">Not published: %1$s</string>
+    <string name="place_review_title">Review %1$s</string>
+    <string name="place_review_stars">%1$d stars</string>
+    <string name="place_review_hint">One line about it (optional)</string>
+    <string name="place_review_how">How did you have it?</string>
+    <string name="place_review_there">eaten there</string>
+    <string name="place_review_takeaway">takeaway</string>
+    <string name="place_review_delivered">delivered</string>
+    <string name="place_review_next">Review…</string>
+    <string name="place_review_confirm">Publish this review?</string>
+    <string name="place_review_note">Published on Mangrove.reviews under CC BY 4.0: public, signed with this phone\'s own key, and read by MapComplete, CoMaps and others.</string>
+    <string name="place_review_send">Publish</string>
+    <string name="place_sources">Where this comes from</string>
+    <string name="place_source_osm">OpenStreetMap %1$s · © its contributors, ODbL</string>
+    <string name="place_source_label">Only the map\'s label is on the phone: the details come with a region or a connection</string>
+    <string name="place_source_hours">Hours read on the phone, with the country\'s public holidays and the sun</string>
+    <string name="place_source_walk">Walk minutes: the straight line × 1.3 at 4.8 km/h</string>
+    <string name="place_source_wikidata">Wikidata %1$s · CC0</string>
+    <string name="place_source_commons">Photo from Wikimedia Commons · %1$s</string>
+
+    <!-- Lists -->
+    <string name="lists_default">Saved</string>
+    <string name="lists_save_to">Save to</string>
+    <string name="lists_new_hint">A new list</string>
+    <string name="lists_new">Add</string>
+    <string name="lists_title">My lists</string>
+    <string name="lists_new_list">A new list</string>
+    <string name="lists_new_example">Rainy day, Ramen crawl, Date night…</string>
+    <plurals name="lists_places">
+        <item quantity="one">%d place</item>
+        <item quantity="other">%d places</item>
+    </plurals>
+    <plurals name="lists_added_today">
+        <item quantity="one">%d added today</item>
+        <item quantity="other">%d added today</item>
+    </plurals>
+    <string name="lists_added_on">last added %1$s</string>
+    <string name="lists_empty_text">Nothing saved yet. Tap the bookmark on a place to keep it here; hold it to choose a list.</string>
+    <string name="lists_share">Share</string>
+    <string name="lists_export">Export GPX / GeoJSON</string>
+    <string name="lists_export_text">A file for other apps: GPX waypoints for maps and watches, or GeoJSON points with every tag.</string>
+    <string name="lists_delete">Delete the list</string>
+    <string name="lists_delete_q">Delete “%1$s”?</string>
+    <string name="lists_empty">Empty the list</string>
+    <string name="lists_empty_q">Empty “%1$s”?</string>
+    <string name="lists_footer">Lists live on your phone only, with each place as it was saved, so they open offline. Share one as text with links, or export it; nothing syncs.</string>
+
+    <!-- Ask -->
+    <string name="ask_title">Ask</string>
+    <string name="ask_on_phone">on this phone</string>
+    <string name="ask_empty">Say a whole outing</string>
+    <string name="ask_empty_text">“A quiet café with an outlet, then dinner”: Atlas reads it on the phone and plans it with real places.</string>
+    <string name="ask_not_read">Name kinds of places and join them with “then”.</string>
+    <string name="ask_no_region">Ask plans over the regions on this phone. Download this area to plan here.</string>
+    <string name="ask_your_plan">Your plan</string>
+    <string name="ask_say_again">Say it differently</string>
+    <string name="ask_edit">Type it instead</string>
+    <string name="ask_plan_it">Plan it</string>
+    <string name="ask_understood">understood in %1$s</string>
+    <plurals name="ask_places">
+        <item quantity="one">%d place</item>
+        <item quantity="other">%d places</item>
+    </plurals>
+    <string name="ask_none_for">No %1$s found</string>
+    <string name="ask_none_text">none open then within reach · try “closer” off, or other words</string>
+    <string name="ask_walk">%1$s walk</string>
+    <string name="ask_open_then">open then</string>
+    <string name="ask_stay">~%1$d min here</string>
+    <string name="ask_closer">closer together</string>
+    <string name="ask_surely_open">surely open</string>
+    <string name="ask_on_foot">on foot</string>
+    <string name="ask_stops">stops found</string>
+    <string name="ask_until">until</string>
+    <string name="ask_estimates">Walks are the straight line × 1.3 at 4.8 km/h; stays are the usual for each kind of place.</string>
+
+    <!-- Brands -->
     <string name="brands_title">Brands</string>
     <string name="brands_chains">Chains</string>
     <string name="brands_independent">Independent</string>
     <string name="brands_none">None mapped around here</string>
     <string name="brands_branches">%1$s, %2$d nearby</string>
-    <plurals name="brand_branches_near">
-        <item quantity="one">%d branch nearby</item>
-        <item quantity="other">%d branches nearby</item>
+    <plurals name="brand_branches_open">
+        <item quantity="one">%1$d branch · %2$d open</item>
+        <item quantity="other">%1$d branches · %2$d open</item>
     </plurals>
+    <string name="brands_all_on_map">All %1$d on the map</string>
+    <string name="brands_bell">Tell me about this brand (kept on the phone)</string>
+    <string name="brands_bell_on">Watching this brand · tap to stop</string>
+    <string name="brands_from_store">From the region on this phone · OpenStreetMap and the name-suggestion index</string>
+    <string name="brands_from_tiles">From the map\'s labels only · download the region for every branch and its hours</string>
+    <string name="brands_hidden">hidden</string>
+    <string name="brands_hidden_n">%1$d hidden</string>
+    <string name="brands_hidden_show">Show the %1$d hidden brands</string>
+    <string name="brands_hidden_hide">Hide the %1$d hidden brands again</string>
+    <string name="brands_hide">Hide %1$s and its pins</string>
+    <string name="brands_show">Show %1$s again</string>
+    <string name="brand_unknown">Not a brand Atlas knows</string>
+
+    <!-- Category -->
     <string name="category_title">Nearby</string>
+    <string name="category_unknown">Not a kind of place Atlas knows</string>
+    <plurals name="category_open">
+        <item quantity="one">%1$d open now · within %2$s</item>
+        <item quantity="other">%1$d open now · within %2$s</item>
+    </plurals>
+    <string name="category_open_now">Open now</string>
+    <string name="category_none">None mapped around here</string>
+    <string name="category_none_open">None open now</string>
+    <string name="origin_store">From the region on this phone · OpenStreetMap</string>
+    <string name="origin_tiles">From the map\'s labels only · download the region for hours and details</string>
+    <string name="origin_online">From OpenStreetMap online, through Overpass</string>
+    <string name="origin_failed">%1$s · the online answer did not come</string>
+
+    <!-- What's here -->
     <string name="whatshere_title">What’s here</string>
     <string name="whatshere_coordinates">Coordinates</string>
-    <string name="whatshere_nearby">Nearby</string>
+    <string name="whatshere_nearby">Nearest</string>
+    <string name="whatshere_nothing_named">Nothing named is mapped within 150 m.</string>
+    <string name="whatshere_at_spot">At this spot</string>
+    <string name="whatshere_open_place">Open this place</string>
+    <string name="whatshere_levels">Floors</string>
+    <string name="whatshere_height">Height</string>
+    <string name="whatshere_heritage">Heritage</string>
+    <string name="whatshere_note">Leave a note for mappers</string>
+    <string name="whatshere_note_text">Something missing or wrong here? Mappers nearby will fix the map.</string>
+    <string name="whatshere_note_help">Say what you see, as for a neighbour: “The bakery here closed in 2025.” The note is public and anonymous.</string>
+    <string name="whatshere_note_hint">What is missing or wrong here?</string>
+    <string name="whatshere_quests">Questions about the places here</string>
+
+    <!-- Map quests -->
+    <string name="quests_title">Map quests</string>
+    <string name="quests_no_region">Quests need every tag of the places around: download this area, or go online.</string>
+    <string name="quests_done">Nothing left to ask here</string>
+    <string name="quests_done_text">Every place within 400 m has its facts mapped, or you answered already. Thank you.</string>
+    <string name="quests_next">Next around you</string>
+    <string name="quests_only_see">Answer only what you can see from where you stand. A wrong answer is worse than none.</string>
+    <string name="quests_yes">Yes</string>
+    <string name="quests_no">No</string>
+    <string name="quests_skip">Can\'t tell · skip</string>
+    <plurals name="quests_month">
+        <item quantity="one">answer this month from this phone</item>
+        <item quantity="other">answers this month from this phone</item>
+    </plurals>
+    <plurals name="quests_all">
+        <item quantity="one">%d note in all · mappers nearby read them and fix the map</item>
+        <item quantity="other">%d notes in all · mappers nearby read them and fix the map</item>
+    </plurals>
+    <string name="quests_footer">Each answer is an anonymous OpenStreetMap note, shown to you word for word before it goes. Atlas never edits the map itself.</string>
+    <string name="quest_q_wifi">Is there Wi-Fi for guests?</string>
+    <string name="quest_q_terrace">Are there tables outside?</string>
+    <string name="quest_q_wheelchair">Can a wheelchair get in?</string>
+    <string name="quest_q_toilets">Are there toilets for customers?</string>
+    <string name="quest_q_toilets_wheelchair">Is the toilet wheelchair-friendly?</string>
+    <string name="quest_q_takeaway">Can you take food away?</string>
+    <string name="quest_q_lit">Is it lit at night?</string>
+    <string name="quest_q_vegetarian">Is there a vegetarian choice?</string>
+    <string name="quest_q_changing">Is there a baby changing table?</string>
+    <string name="quest_q_reservation">Can you book a table?</string>
+
+    <!-- Where to? -->
+    <string name="where_title">Where to?</string>
+    <string name="where_free">free</string>
+    <string name="where_indoors">indoors</string>
+    <string name="where_spin">Spin</string>
+    <string name="where_tap">Spin the wheel: it lands on a real place near you.</string>
+    <string name="where_another">Another</string>
+    <string name="where_sunset">sunset %1$s</string>
+    <string name="where_nothing">Nothing fits here</string>
+    <string name="where_nothing_text">Try a longer walk, or fewer chips.</string>
+    <string name="where_footer">Ideas from OpenStreetMap around you; greyed wedges have nothing that fits the chips.</string>
 </resources>

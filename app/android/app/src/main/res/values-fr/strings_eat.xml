@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Eat & drink in French: the words on the objects, titles and tabs; everything else falls back to English. -->
+<resources>
+    <string name="eat_title">Manger &amp; boire</string>
+    <string name="eat_meal_breakfast">Petit-déjeuner</string>
+    <string name="eat_meal_lunch">Déjeuner</string>
+    <string name="eat_meal_afternoon">Café</string>
+    <string name="eat_meal_dinner">Dîner</string>
+    <string name="eat_meal_late">Tard</string>
+    <string name="eat_map">Carte</string>
+    <string name="eat_pad">Bloc de commande</string>
+    <string name="eat_ask">Demandez au serveur</string>
+    <string name="eat_now">Maintenant</string>
+    <string name="eat_done">OK</string>
+    <string name="eat_carte">Carte</string>
+    <string name="eat_cafe">Café</string>
+    <string name="eat_late">Tard</string>
+    <string name="eat_bar">BAR</string>
+    <string name="eat_sweets">Douceurs</string>
+    <string name="eat_market">Marché</string>
+    <string name="eat_open_count">ouverts</string>
+    <string name="eat_surprise">Surprends-moi</string>
+    <string name="eat_try_again">Réessayer</string>
+    <string name="eat_closes_at">ferme %1$s</string>
+    <string name="eat_opens_at">ouvre %1$s</string>
+    <string name="eat_la_carte">La Carte</string>
+    <string name="eat_sort_nearest">Proches</string>
+    <string name="eat_sort_most">Nombreux</string>
+    <string name="eat_sort_rated">Mieux notés</string>
+    <string name="eat_sort_az">A–Z</string>
+    <string name="eat_guest_check">Note</string>
+    <string name="eat_order_serve">Servir</string>
+    <string name="eat_bar_title">LE BAR</string>
+    <string name="eat_bar_last_call">dernière tournée %1$s</string>
+    <string name="eat_cafe_title">Café &amp; Cie</string>
+    <string name="eat_cafe_open_now">%1$d ouverts</string>
+    <string name="eat_special">suggestion du jour</string>
+    <string name="eat_late_title">Petite faim</string>
+    <string name="eat_market_days">Jours de marché</string>
+    <string name="eat_tab_trending">Tendance</string>
+    <string name="eat_tab_top">Mieux notés</string>
+    <string name="eat_tab_new">Nouveau</string>
+    <string name="eat_no_ratings_yet">Pas encore d’avis</string>
+    <string name="eat_card_write_one">En écrire un</string>
+</resources>

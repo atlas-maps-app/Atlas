@@ -1,27 +1,325 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Zoeken -->
     <string name="search_title">Zoeken</string>
     <string name="search_hint">Zoek of vraag</string>
+    <string name="search_hint_in">Zoek %1$s</string>
+    <string name="search_clear">Wissen</string>
+    <string name="search_every">Elke %1$s op de kaart</string>
+    <string name="search_every_sub">alle %1$d · als lijst of op de kaart</string>
+    <string name="search_brand_all">Alle %1$d %2$s</string>
+    <string name="search_brand_sub">elke vestiging · als lijst of op de kaart</string>
+    <plurals name="search_goods_kinds">
+        <item quantity="one">%d soort winkel verkoopt het</item>
+        <item quantity="other">%d soorten winkels verkopen het</item>
+    </plurals>
+    <plurals name="search_query_places">
+        <item quantity="one">gelezen als zoekvraag · %d plek</item>
+        <item quantity="other">gelezen als zoekvraag · %d plekken</item>
+    </plurals>
+    <plurals name="search_plan_steps">
+        <item quantity="one">een plan · %d stap</item>
+        <item quantity="other">een plan · %d stappen</item>
+    </plurals>
+    <plurals name="search_parts">
+        <item quantity="one">%d deel</item>
+        <item quantity="other">%d delen</item>
+    </plurals>
+    <plurals name="search_saved_places">
+        <item quantity="one">%d plek bewaard</item>
+        <item quantity="other">%d plekken bewaard</item>
+    </plurals>
+    <plurals name="search_lists_n">
+        <item quantity="one">%d lijst</item>
+        <item quantity="other">%d lijsten</item>
+    </plurals>
+    <string name="search_step_free">drempelvrij</string>
+    <string name="search_none_left">Niets over met deze filters</string>
+    <string name="search_nothing">Niets gevonden voor “%1$s”</string>
+    <string name="search_nothing_text">Probeer een ander woord, of een soort plek.</string>
+    <string name="search_no_regions">Nog geen regio op deze telefoon</string>
+    <string name="search_no_regions_text">Download dit gebied om het zonder bereik te doorzoeken.</string>
+    <string name="search_download">Download een regio</string>
+    <string name="search_failed">Zoeken mislukt</string>
+    <string name="search_offline_title">Werkt offline</string>
+    <string name="search_offline_text">elke plek in je regio\'s is zonder bereik te vinden</string>
+    <string name="search_recent">Recent · ook coördinaten of pluscodes</string>
+    <string name="search_recent_clear">Wissen</string>
+    <string name="search_recent_none">Nog niets. Coördinaten zoals 52.3745, 4.8838 en pluscodes zoals 9F469VFP+R4 werken ook.</string>
+    <string name="search_say">Of zeg het gewoon</string>
+    <string name="search_say_ask">rustig café met een stopcontact, dan eten</string>
+    <string name="search_say_near">café 200 m van een fietsstation</string>
+    <string name="search_say_needs">drempelvrij toilet, nu open</string>
+    <string name="search_to_ask">Vraag</string>
+    <string name="search_to_near">A bij B</string>
+    <string name="search_to_needs">Nodig</string>
     <string name="search_categories">Soorten plekken</string>
-    <string name="search_footer">Zoeken gebeurt op de telefoon, over namen, tags en merken uit OpenStreetMap.</string>
+    <string name="search_footer">Zoeken gebeurt op de telefoon, over namen, tags en merken uit OpenStreetMap · tikfouten mogen · namen in elke gekarteerde taal, woorden in het Nederlands, Engels, Duits en Frans</string>
+
+    <!-- A bij B -->
     <string name="query_title">A bij B</string>
     <string name="query_text">Zoek plekken op wat er dichtbij is: een café binnen 200 m van een fietsstation.</string>
+    <string name="query_hint">café met wifi bij een fietsstation en een park</string>
+    <string name="query_online">Online gevonden in</string>
+    <string name="query_on_phone">Op de telefoon gevonden in</string>
+    <string name="query_layer">Bewaren als kaartlaag</string>
+    <string name="query_layer_kept">Bewaard als kaartlaag · tik om weg te halen</string>
+    <string name="query_alert">Laat het weten als er iets nieuws bij komt</string>
+    <string name="query_alert_on">Meldingen aan · tik om te stoppen</string>
+    <string name="query_download">Download dit gebied</string>
+    <string name="query_add">Toevoegen aan de zoekvraag</string>
+    <string name="query_add_kicker">Met, open, bij</string>
+    <string name="query_add_open">nu open</string>
+    <string name="query_add_wifi">met wifi</string>
+    <string name="query_add_outlet">met een stopcontact</string>
+    <string name="query_add_terrace">met een terras</string>
+    <string name="query_add_stepfree">drempelvrij</string>
+    <string name="query_add_vegetarian">vegetarisch</string>
+    <string name="query_add_park">bij een park</string>
+    <string name="query_add_bikes">bij een fietsstation</string>
+    <string name="query_add_stop">bij een bushalte</string>
+    <string name="query_dial">Binnen %1$d m: wijzigen</string>
+    <string name="query_dial_away">Minstens %1$d m ver: wijzigen</string>
+    <string name="query_dial_title">Hoe dicht bij %1$s?</string>
+    <string name="query_dial_set">Afstand instellen</string>
+    <string name="query_remove">“%1$s” weghalen</string>
+    <string name="query_unknown">Niet begrepen: %1$s</string>
+    <string name="query_ql">Overpass QL van deze zoekvraag</string>
+    <string name="query_ql_note">Dezelfde zoekvraag voor Overpass, over het doorzochte gebied: wat Atlas stuurt als het online zoekt.</string>
+    <string name="query_run_online">Online uitvoeren</string>
+    <string name="query_run_offline">Online vraagt om verbinding</string>
+    <string name="query_not_read">Nog niet als zoekvraag gelezen</string>
+    <string name="query_failed">De zoekvraag mislukte</string>
+    <string name="query_none">Hier past niets</string>
+    <string name="query_none_text">Probeer een grotere afstand, of minder filters.</string>
+
+    <!-- Plek -->
     <string name="place_route">Route</string>
     <string name="place_osm">Op OpenStreetMap</string>
     <string name="place_tags">%1$d tags</string>
-    <string name="place_loading">Deze plek opzoeken…</string>
     <string name="place_not_found">Deze plek staat niet op de telefoon en er is geen verbinding om haar op te zoeken.</string>
+    <string name="place_level">Verdieping %1$s</string>
+    <string name="place_share">Delen</string>
+    <string name="place_save">Bewaren · vasthouden om een lijst te kiezen</string>
+    <string name="place_saved">Bewaard · vasthouden om lijsten te kiezen</string>
+    <string name="place_save_plain">Dit punt bewaren</string>
+    <string name="place_saved_plain">Bewaard · tik om weg te halen</string>
+    <string name="place_call">%1$s bellen</string>
+    <string name="place_web">Website</string>
+    <string name="place_menu">Menukaart</string>
+    <string name="place_mail">E-mail</string>
+    <string name="place_opens">opent %1$s</string>
+    <string name="place_hours">Openingstijden</string>
+    <string name="place_hours_week">Toon de week</string>
+    <string name="place_hours_unsure">sommige tijden onzeker</string>
+    <string name="place_fact_yes">ja</string>
+    <string name="place_fact_no">nee</string>
+    <string name="place_fact_limited">deels</string>
+    <string name="place_fact_only">alleen</string>
+    <string name="place_ratings_offline">Waarderingen als je online bent</string>
+    <string name="place_ratings_offline_text">Mangrove en je bronnen met sleutel worden alleen online gevraagd.</string>
+    <string name="place_ratings_loading">Waarderingen opvragen…</string>
+    <string name="place_ratings_failed">Waarderingen niet beschikbaar</string>
+    <string name="place_ratings_none">Nog geen waarderingen</string>
+    <string name="place_ratings_write">schrijf er een</string>
+    <plurals name="place_reviews">
+        <item quantity="one">%d recensie</item>
+        <item quantity="other">%d recensies</item>
+    </plurals>
+    <string name="place_rising">in opkomst</string>
+    <string name="place_ratings_split">%1$s %2$s · %3$s %4$s</string>
+    <string name="place_quest_yes">%1$s Ja</string>
+    <string name="place_quest_no">%1$s Nee</string>
+    <string name="place_note_sending">Notitie versturen…</string>
+    <string name="place_note_sent">Dank je: mappers in de buurt lezen je notitie</string>
+    <string name="place_note_failed">De notitie ging niet: %1$s</string>
+    <string name="place_from_label">Alleen het label op de kaart is bekend</string>
+    <string name="place_checked">gecontroleerd %1$s</string>
+    <string name="place_copy">Kopiëren</string>
+    <string name="place_open_osm">Openen op openstreetmap.org</string>
+    <string name="place_send_offline">Vraagt om verbinding: offline verlaat niets de telefoon.</string>
+    <string name="place_note_confirm">Deze notitie achterlaten voor mappers?</string>
+    <string name="place_note_note">Een anonieme OpenStreetMap-notitie op deze plek: meteen openbaar. Mappers in de buurt lezen haar en werken de kaart bij; Atlas wijzigt zelf niets.</string>
+    <string name="place_note_send">Notitie achterlaten</string>
+    <string name="place_wiki_built">Gebouwd</string>
+    <string name="place_wiki_architect">Architect</string>
+    <string name="place_wiki_style">Stijl</string>
+    <string name="place_wiki_named">Vernoemd naar</string>
+    <string name="place_wiki_read">Lees op Wikipedia</string>
+    <string name="place_brand_part">Onderdeel van %1$s</string>
+    <string name="place_brand_all">Elke vestiging</string>
+    <string name="place_review_card">Schrijf een recensie</string>
+    <string name="place_review_card_text">Open recensies op Mangrove · ondertekend door deze telefoon, geen account</string>
+    <string name="place_review_sending">Publiceren…</string>
+    <string name="place_review_sent">Gepubliceerd · dank je</string>
+    <string name="place_review_failed">Niet gepubliceerd: %1$s</string>
+    <string name="place_review_title">Recensie van %1$s</string>
+    <string name="place_review_stars">%1$d sterren</string>
+    <string name="place_review_hint">Eén regel erover (mag leeg)</string>
+    <string name="place_review_how">Hoe had je het?</string>
+    <string name="place_review_there">daar gegeten</string>
+    <string name="place_review_takeaway">afgehaald</string>
+    <string name="place_review_delivered">bezorgd</string>
+    <string name="place_review_next">Recensie…</string>
+    <string name="place_review_confirm">Deze recensie publiceren?</string>
+    <string name="place_review_note">Gepubliceerd op Mangrove.reviews onder CC BY 4.0: openbaar, ondertekend met de eigen sleutel van deze telefoon, en gelezen door MapComplete, CoMaps en anderen.</string>
+    <string name="place_review_send">Publiceren</string>
+    <string name="place_sources">Waar dit vandaan komt</string>
+    <string name="place_source_osm">OpenStreetMap %1$s · © de bijdragers, ODbL</string>
+    <string name="place_source_label">Alleen het label op de kaart staat op de telefoon: de details komen met een regio of een verbinding</string>
+    <string name="place_source_hours">Tijden gelezen op de telefoon, met de feestdagen van het land en de zon</string>
+    <string name="place_source_walk">Loopminuten: de rechte lijn × 1,3 bij 4,8 km/u</string>
+    <string name="place_source_wikidata">Wikidata %1$s · CC0</string>
+    <string name="place_source_commons">Foto van Wikimedia Commons · %1$s</string>
+
+    <!-- Lijsten -->
+    <string name="lists_default">Bewaard</string>
+    <string name="lists_save_to">Bewaren in</string>
+    <string name="lists_new_hint">Een nieuwe lijst</string>
+    <string name="lists_new">Toevoegen</string>
+    <string name="lists_title">Mijn lijsten</string>
+    <string name="lists_new_list">Een nieuwe lijst</string>
+    <string name="lists_new_example">Regendag, Ramenroute, Avondje uit…</string>
+    <plurals name="lists_places">
+        <item quantity="one">%d plek</item>
+        <item quantity="other">%d plekken</item>
+    </plurals>
+    <plurals name="lists_added_today">
+        <item quantity="one">%d vandaag erbij</item>
+        <item quantity="other">%d vandaag erbij</item>
+    </plurals>
+    <string name="lists_added_on">laatst erbij %1$s</string>
+    <string name="lists_empty_text">Nog niets bewaard. Tik op de bladwijzer bij een plek om haar hier te bewaren; houd vast om een lijst te kiezen.</string>
+    <string name="lists_share">Delen</string>
+    <string name="lists_export">GPX / GeoJSON exporteren</string>
+    <string name="lists_export_text">Een bestand voor andere apps: GPX-punten voor kaarten en horloges, of GeoJSON-punten met elke tag.</string>
+    <string name="lists_delete">Lijst verwijderen</string>
+    <string name="lists_delete_q">“%1$s” verwijderen?</string>
+    <string name="lists_empty">Lijst leegmaken</string>
+    <string name="lists_empty_q">“%1$s” leegmaken?</string>
+    <string name="lists_footer">Lijsten staan alleen op je telefoon, met elke plek zoals ze bewaard is, dus ze openen offline. Deel er een als tekst met links, of exporteer haar; er wordt niets gesynchroniseerd.</string>
+
+    <!-- Vraag -->
+    <string name="ask_title">Vraag</string>
+    <string name="ask_on_phone">op deze telefoon</string>
+    <string name="ask_empty">Zeg een heel uitje</string>
+    <string name="ask_empty_text">“Een rustig café met een stopcontact, dan eten”: Atlas leest het op de telefoon en plant het met echte plekken.</string>
+    <string name="ask_not_read">Noem soorten plekken en verbind ze met “dan”.</string>
+    <string name="ask_no_region">Vraag plant over de regio\'s op deze telefoon. Download dit gebied om hier te plannen.</string>
+    <string name="ask_your_plan">Je plan</string>
+    <string name="ask_say_again">Zeg het anders</string>
+    <string name="ask_edit">Liever typen</string>
+    <string name="ask_plan_it">Plan het</string>
+    <string name="ask_understood">begrepen in %1$s</string>
+    <plurals name="ask_places">
+        <item quantity="one">%d plek</item>
+        <item quantity="other">%d plekken</item>
+    </plurals>
+    <string name="ask_none_for">Geen %1$s gevonden</string>
+    <string name="ask_none_text">niets open op dat moment binnen bereik · zet “dichter bij elkaar” uit, of kies andere woorden</string>
+    <string name="ask_walk">%1$s lopen</string>
+    <string name="ask_open_then">dan open</string>
+    <string name="ask_stay">~%1$d min hier</string>
+    <string name="ask_closer">dichter bij elkaar</string>
+    <string name="ask_surely_open">zeker open</string>
+    <string name="ask_on_foot">te voet</string>
+    <string name="ask_stops">stops gevonden</string>
+    <string name="ask_until">tot</string>
+    <string name="ask_estimates">Lopen is de rechte lijn × 1,3 bij 4,8 km/u; de tijd per plek is wat gebruikelijk is voor dat soort plek.</string>
+
+    <!-- Merken -->
     <string name="brands_title">Merken</string>
     <string name="brands_chains">Ketens</string>
     <string name="brands_independent">Zelfstandig</string>
     <string name="brands_none">Hier in de buurt niets in de kaart</string>
     <string name="brands_branches">%1$s, %2$d in de buurt</string>
-    <plurals name="brand_branches_near">
-        <item quantity="one">%d vestiging in de buurt</item>
-        <item quantity="other">%d vestigingen in de buurt</item>
+    <plurals name="brand_branches_open">
+        <item quantity="one">%1$d vestiging · %2$d open</item>
+        <item quantity="other">%1$d vestigingen · %2$d open</item>
     </plurals>
+    <string name="brands_all_on_map">Alle %1$d op de kaart</string>
+    <string name="brands_bell">Houd me op de hoogte van dit merk (op de telefoon)</string>
+    <string name="brands_bell_on">Dit merk volgen · tik om te stoppen</string>
+    <string name="brands_from_store">Uit de regio op deze telefoon · OpenStreetMap en de name-suggestion-index</string>
+    <string name="brands_from_tiles">Alleen uit de labels van de kaart · download de regio voor elke vestiging en haar tijden</string>
+    <string name="brands_hidden">verborgen</string>
+    <string name="brands_hidden_n">%1$d verborgen</string>
+    <string name="brands_hidden_show">Toon de %1$d verborgen merken</string>
+    <string name="brands_hidden_hide">Verberg de %1$d merken weer</string>
+    <string name="brands_hide">%1$s en de spelden verbergen</string>
+    <string name="brands_show">%1$s weer tonen</string>
+    <string name="brand_unknown">Geen merk dat Atlas kent</string>
+
+    <!-- Soort -->
     <string name="category_title">In de buurt</string>
+    <string name="category_unknown">Geen soort plek die Atlas kent</string>
+    <plurals name="category_open">
+        <item quantity="one">%1$d nu open · binnen %2$s</item>
+        <item quantity="other">%1$d nu open · binnen %2$s</item>
+    </plurals>
+    <string name="category_open_now">Nu open</string>
+    <string name="category_none">Hier in de buurt niets in de kaart</string>
+    <string name="category_none_open">Nu niets open</string>
+    <string name="origin_store">Uit de regio op deze telefoon · OpenStreetMap</string>
+    <string name="origin_tiles">Alleen uit de labels van de kaart · download de regio voor tijden en details</string>
+    <string name="origin_online">Online uit OpenStreetMap, via Overpass</string>
+    <string name="origin_failed">%1$s · het online antwoord kwam niet</string>
+
+    <!-- Wat is hier -->
     <string name="whatshere_title">Wat is hier</string>
     <string name="whatshere_coordinates">Coördinaten</string>
-    <string name="whatshere_nearby">In de buurt</string>
+    <string name="whatshere_nearby">Dichtstbij</string>
+    <string name="whatshere_nothing_named">Binnen 150 m staat niets met een naam in de kaart.</string>
+    <string name="whatshere_at_spot">Op deze plek</string>
+    <string name="whatshere_open_place">Open deze plek</string>
+    <string name="whatshere_levels">Verdiepingen</string>
+    <string name="whatshere_height">Hoogte</string>
+    <string name="whatshere_heritage">Erfgoed</string>
+    <string name="whatshere_note">Laat een notitie achter voor mappers</string>
+    <string name="whatshere_note_text">Ontbreekt hier iets, of klopt iets niet? Mappers in de buurt passen de kaart aan.</string>
+    <string name="whatshere_note_help">Zeg wat je ziet, zoals tegen een buur: “De bakker hier is in 2025 gesloten.” De notitie is openbaar en anoniem.</string>
+    <string name="whatshere_note_hint">Wat ontbreekt of klopt hier niet?</string>
+    <string name="whatshere_quests">Vragen over de plekken hier</string>
+
+    <!-- Kaartvragen -->
+    <string name="quests_title">Kaartvragen</string>
+    <string name="quests_no_region">Vragen hebben elke tag van de plekken in de buurt nodig: download dit gebied, of ga online.</string>
+    <string name="quests_done">Hier valt niets meer te vragen</string>
+    <string name="quests_done_text">Elke plek binnen 400 m heeft haar feiten in de kaart, of je antwoordde al. Dank je.</string>
+    <string name="quests_next">Hierna in de buurt</string>
+    <string name="quests_only_see">Antwoord alleen wat je ziet vanaf waar je staat. Een fout antwoord is erger dan geen.</string>
+    <string name="quests_yes">Ja</string>
+    <string name="quests_no">Nee</string>
+    <string name="quests_skip">Weet niet · overslaan</string>
+    <plurals name="quests_month">
+        <item quantity="one">antwoord deze maand van deze telefoon</item>
+        <item quantity="other">antwoorden deze maand van deze telefoon</item>
+    </plurals>
+    <plurals name="quests_all">
+        <item quantity="one">%d notitie in totaal · mappers in de buurt lezen ze en passen de kaart aan</item>
+        <item quantity="other">%d notities in totaal · mappers in de buurt lezen ze en passen de kaart aan</item>
+    </plurals>
+    <string name="quests_footer">Elk antwoord is een anonieme OpenStreetMap-notitie, die je woord voor woord ziet voor ze vertrekt. Atlas wijzigt de kaart nooit zelf.</string>
+    <string name="quest_q_wifi">Is er wifi voor gasten?</string>
+    <string name="quest_q_terrace">Staan er tafels buiten?</string>
+    <string name="quest_q_wheelchair">Kan een rolstoel naar binnen?</string>
+    <string name="quest_q_toilets">Is er een toilet voor klanten?</string>
+    <string name="quest_q_toilets_wheelchair">Is het toilet rolstoelvriendelijk?</string>
+    <string name="quest_q_takeaway">Kun je eten meenemen?</string>
+    <string name="quest_q_lit">Is het \'s nachts verlicht?</string>
+    <string name="quest_q_vegetarian">Is er een vegetarische keuze?</string>
+    <string name="quest_q_changing">Is er een verschoontafel?</string>
+    <string name="quest_q_reservation">Kun je een tafel reserveren?</string>
+
+    <!-- Waarheen? -->
+    <string name="where_title">Waarheen?</string>
+    <string name="where_free">gratis</string>
+    <string name="where_indoors">binnen</string>
+    <string name="where_spin">Draai</string>
+    <string name="where_tap">Draai aan het rad: het stopt bij een echte plek bij jou in de buurt.</string>
+    <string name="where_another">Nog een</string>
+    <string name="where_sunset">zonsondergang %1$s</string>
+    <string name="where_nothing">Hier past niets</string>
+    <string name="where_nothing_text">Probeer een langere wandeling, of minder filters.</string>
+    <string name="where_footer">Ideeën uit OpenStreetMap om je heen; grijze vakken hebben niets dat bij de filters past.</string>
 </resources>

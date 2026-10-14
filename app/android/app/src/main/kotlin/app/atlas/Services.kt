@@ -255,6 +255,22 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
     /** Charger sources: OpenStreetMap through Overpass, and Open Charge Map when the user added a key. */
     val chargers: List<ChargerProvider> by lazy { listOf(OsmChargers(overpass), OpenChargeMap(http, keys)) }
 
+    // ---- Search: saved places, Wikidata, Commons, notes (ui/search) ---------------------------------------------
+
+    private val savedLazy = lazy { app.atlas.ui.search.SavedPlaces.open(File(dirs.files, "saved/saved.db"), clock) }
+
+    /** Saved places and their lists, recent searches, queries kept as layers and hidden brands: on the phone only. */
+    val saved: app.atlas.ui.search.SavedPlaces by savedLazy
+
+    /** Wikidata: a place's architect, year, namesake and image, and brand facts. */
+    val wikidata: app.atlas.providers.Wikidata by lazy { app.atlas.providers.Wikidata(http) }
+
+    /** Wikimedia Commons: images with their licences. */
+    val commons: app.atlas.providers.Commons by lazy { app.atlas.providers.Commons(http) }
+
+    /** Anonymous OpenStreetMap notes: "leave a note for mappers" and the place quests. */
+    val osmNotes: app.atlas.providers.OsmNotes by lazy { app.atlas.providers.OsmNotes(http) }
+
     // ---- Routing -------------------------------------------------------------------------------------------------
 
     /** BRouter's segment files: what is on the phone and downloads of more. */
@@ -263,8 +279,10 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
     val brouter: BRouterRouter by lazy {
         dirs.segments.mkdirs()
         val memoryClass = this.context.getSystemService(ActivityManager::class.java)?.memoryClass ?: 64
-        val restrictions = if (config.offline) null else OverpassRestrictionSource({ ql -> overpass.raw(ql) })
-        BRouterRouter(dirs.segments, dirs.profiles, memoryClassMb = memoryClass, restrictions = restrictions)
+        // Road limits for trucks and campers, and bridge clearances and depths for boats (the water router uses this router).
+        val restrictions = if (config.offline) null else OverpassRestrictionSource({ ql -> overpass.raw(ql) }, OverpassRestrictionSource.Scope.BOTH)
+        // Street names for the instructions come from the map tiles (BRouter's data has none).
+        BRouterRouter(dirs.segments, dirs.profiles, memoryClassMb = memoryClass, restrictions = restrictions, namer = app.atlas.ui.go.TileWayNamer({ tiles.value }))
     }
 
     /** Charging stops for the EV planner, from every charger source that is ready, merged. */
@@ -303,8 +321,11 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
     /** A demo position whose fixes carry the app's time, so a fixed test clock and the fixes agree. */
     private fun demoAt(at: LatLon) = DemoLocationSource(at, clock = { clock.instant() })
 
-    /** The voice of the guide; the go package provides the TextToSpeech implementation. */
-    val voice: Voice by lazy { NoVoice() }
+    /** The voice of the guide: the phone's TextToSpeech, earcons and vibrations (the go package's [app.atlas.ui.go.TtsVoice]). */
+    val voice: Voice by lazy { app.atlas.ui.go.TtsVoice.forApp(this.context) }
+
+    /** Routes and guidance: the trip being guided, Ears only, and what the Go tab keeps (the go package). */
+    val go: app.atlas.ui.go.GoHub by lazy { app.atlas.ui.go.GoHub(this) }
 
     /** The offline regions; the mine package provides the full manager. */
     val regions: RegionManager by lazy {
@@ -316,6 +337,7 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         synchronized(tileState) { openPacks.forEach { runCatching { it.close() } } }
         synchronized(openStores) { openStores.values.forEach { runCatching { it.close() } } }
         if (tileCacheLazy.isInitialized()) runCatching { tileCache.close() }
+        if (savedLazy.isInitialized()) runCatching { saved.close() }
     }
 
     companion object {

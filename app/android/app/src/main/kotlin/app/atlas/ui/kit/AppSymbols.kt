@@ -3,33 +3,13 @@ package app.atlas.ui.kit
 import app.atlas.places.Icon
 
 /**
- * The few UI symbols the app needs beyond `:places`' set: the tab bar's map, turn and open book, weather skies, and
- * Atlas's own "A near B" rings. Lucide paths (ISC licence, see LICENSES.md), stroked 2 units on a 24 grid like the rest
- * of the UI set; ids use the same `ui-` prefix, and `:places` is asked only when an id is not here.
+ * The few UI symbols the app needs beyond `:places`' set: weather skies and a few controls as Lucide paths (ISC
+ * licence, see LICENSES.md), stroked 2 units on a 24 grid like the rest of the UI set, and the Main board's own
+ * symbols ([MainSymbols]) for the tab bar, the offline cloud and "A near B". Ids use the same `ui-` prefix (and
+ * `main.` for the board's), and `:places` is asked only when an id is not here.
  */
 object AppSymbols {
     private val icons: Map<String, Icon> = mapOf(
-        "ui-map" to strokedIcon(
-            "ui-map",
-            "M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z",
-            "M15 5.764v15",
-            "M9 3.236v15",
-        ),
-        "ui-corner-up-right" to strokedIcon(
-            "ui-corner-up-right",
-            "m15 14 5-5-5-5",
-            "M4 20v-7a4 4 0 0 1 4-4h12",
-        ),
-        "ui-book-open" to strokedIcon(
-            "ui-book-open",
-            "M12 5v16",
-            "M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z",
-        ),
-        "ui-cloud-check" to strokedIcon(
-            "ui-cloud-check",
-            "m17 15-5.5 5.5L9 18",
-            "M5.516 16.07A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 3.501 7.327",
-        ),
         "ui-cloud-sun" to strokedIcon(
             "ui-cloud-sun",
             "M12 2v2",
@@ -82,19 +62,6 @@ object AppSymbols {
             "M8 14v6",
             "M12 16v6",
         ),
-        "ui-calendar-days" to strokedIcon(
-            "ui-calendar-days",
-            "M8 2v3",
-            "M16 2v3",
-            "M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2z",
-            "M3 9h18",
-            "M8 13h.01",
-            "M12 13h.01",
-            "M16 13h.01",
-            "M8 17h.01",
-            "M12 17h.01",
-            "M16 17h.01",
-        ),
         "ui-rotate-3d" to strokedIcon(
             "ui-rotate-3d",
             "m15.194 13.707 3.814 1.86-1.86 3.814",
@@ -138,18 +105,24 @@ object AppSymbols {
             "M18 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0z",
             "M2 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0z",
         ),
-        // Atlas's own: two places joined, for "A near B" queries.
-        "ui-near" to strokedIcon(
-            "ui-near",
-            "M4 7a3 3 0 1 0 6 0a3 3 0 1 0 -6 0z",
-            "M14 17a3 3 0 1 0 6 0a3 3 0 1 0 -6 0z",
-            "M9.3 9.3L14.7 14.7",
-        ),
     )
 
-    fun icon(id: String): Icon? = icons[id]
+    /**
+     * The ids the boards draw their own way, answered with the board's drawing (Main's tab bar, offline cloud and
+     * A-near-B rings) wherever the app asks for them.
+     */
+    private val board: Map<String, String> = mapOf(
+        "ui-map" to "main.tab-map",
+        "ui-corner-up-right" to "main.tab-go",
+        "ui-calendar-days" to "main.tab-soon",
+        "ui-book-open" to "main.tab-local",
+        "ui-cloud-check" to "main.cloud-check",
+        "ui-near" to "main.near",
+    )
 
-    fun has(id: String): Boolean = id in icons
+    fun icon(id: String): Icon? = icons[id] ?: board[id]?.let { MainSymbols.icon(it)?.copy(id = id) } ?: MainSymbols.icon(id)
 
-    val ids: Set<String> get() = icons.keys
+    fun has(id: String): Boolean = id in icons || id in board || MainSymbols.has(id)
+
+    val ids: Set<String> get() = icons.keys + board.keys + MainSymbols.ids
 }

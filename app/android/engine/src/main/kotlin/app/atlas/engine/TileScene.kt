@@ -32,6 +32,8 @@ class TileScene(
     val pois: List<PoiCandidate>,
     val buildings: List<BuildingInfo>,
     val stats: SceneStats,
+    /** Where wind streaks catch the light on open water. */
+    val glints: GlintSet = GlintSet.EMPTY,
 ) {
     /** Unit Mercator of a scene point. */
     fun unitX(x: Float): Double = originX + x / metresPerUnit
@@ -42,7 +44,7 @@ class TileScene(
     /** Roughly how much memory the scene holds, in bytes: for a scene cache's budget. */
     val bytes: Long by lazy {
         var b = ground.bytes + shadows.bytes + objects.mesh.bytes + 4L * (objects.faceStart.size + objects.centre.size + objects.radius.size + objects.ref.size)
-        b += trees.count * 33L
+        b += trees.count * 33L + glints.count * 16L
         for (l in labels) b += 96L + 2L * l.text.length + 4L * (l.line?.size ?: 0)
         b += pois.size * 96L
         for (i in buildings) b += 128L + 4L * i.footprint.size
@@ -69,6 +71,17 @@ class ObjectSet(
     }
 }
 
+/**
+ * Wind streaks on open water: seeds anchored to the world at the water's level ([z]), each drawn per frame as a soft
+ * light streak lying across the screen, as ripples catch the sky. A streak reaches at most [reach] metres either side
+ * of its seed (so it never leaves the water or crosses a bridge); [size] (0..1) picks its length and thickness.
+ */
+class GlintSet(val count: Int, val x: FloatArray, val y: FloatArray, val z: Float, val reach: FloatArray, val size: FloatArray) {
+    companion object {
+        val EMPTY = GlintSet(0, FloatArray(0), FloatArray(0), 0f, FloatArray(0), FloatArray(0))
+    }
+}
+
 /** Trees: drawn per frame as round crowns facing the camera, shaded toward the sun. */
 class TreeSet(
     val count: Int,
@@ -85,6 +98,8 @@ class TreeSet(
     val trunk: Int,
     /** True for trees that come from OSM (natural=tree), false for the ones planted to fill a wood or park. */
     val mapped: BooleanArray,
+    /** One tone for a crown only a few pixels across, between [dark] and [mid]. */
+    val far: IntArray = mid,
 ) {
     companion object {
         val EMPTY = TreeSet(0, FloatArray(0), FloatArray(0), FloatArray(0), FloatArray(0), FloatArray(0), IntArray(0), IntArray(0), IntArray(0), 0, BooleanArray(0))

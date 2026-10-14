@@ -36,6 +36,15 @@ fun Modifier.softShadow(shape: Shape, colour: Color, elevation: Dp = 12.dp): Mod
     dropShadow(shape, Shadow(radius = elevation, color = colour, offset = DpOffset(0.dp, elevation / 4)))
 
 /**
+ * A CSS `box-shadow: [x] [y] [blur] [spread] [colour]` as the boards write it. CSS blurs with a Gaussian of σ = blur / 2;
+ * Android's blur radius r gives σ = 0.57735 r + 0.5 px, so r ≈ 0.866 × blur.
+ */
+fun Modifier.cssShadow(shape: Shape, y: Dp, blur: Dp, colour: Color, x: Dp = 0.dp, spread: Dp = 0.dp): Modifier =
+    dropShadow(shape, Shadow(radius = blur * CSS_BLUR_TO_RADIUS, color = colour, spread = spread, offset = DpOffset(x, y)))
+
+private const val CSS_BLUR_TO_RADIUS = 0.866f
+
+/**
  * A white card with large radii and a soft shadow, the board's basic surface. [onClick] makes the whole card a button;
  * [onClickLabel] says what it does for accessibility.
  */

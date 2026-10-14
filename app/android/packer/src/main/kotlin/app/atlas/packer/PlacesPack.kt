@@ -14,7 +14,7 @@ data class PlacesPack(val file: File, val sidecar: File, val rawBytes: Long, val
 /** Builds a region's place pack: the store from the extract, sealed with the extract's facts, gzipped. */
 object PlacesPackBuilder {
     /** Tells pack files from different builders apart. */
-    const val VERSION = "atlas-packer/1"
+    const val VERSION = "atlas-packer/2"
 
     /**
      * Builds the store at [out] from [pbf]. With [gzip] it then writes `<out>.gz` and, unless [keepDb], removes
@@ -72,6 +72,7 @@ object PlacesPackBuilder {
         putJsonArray("langs") { for (l in options.langs) add(l) }
         put("places", summary.places)
         put("trees", summary.trees)
+        put("addresses", summary.addresses)
         put("nodes", s.nodes)
         put("ways", s.ways)
         put("relations", s.relations)

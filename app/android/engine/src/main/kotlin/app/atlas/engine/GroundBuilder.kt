@@ -57,6 +57,54 @@ internal class GroundBuilder(
         mb.end()
     }
 
+    /**
+     * Fills a polygon like [fill], its triangles cut into smaller ones (each split evenly, so no edge is longer than
+     * [maxEdge] metres): for colours the renderer computes per vertex from where it lands on the screen.
+     */
+    fun fillFine(rings: List<DoubleArray>, z: Float, colour: Int, maxEdge: Double) {
+        if (rings.isEmpty() || rings[0].size < 6) return
+        var total = 0
+        for (r in rings) total += r.size
+        val flat = DoubleArray(total)
+        val holes = if (rings.size > 1) IntArray(rings.size - 1) else null
+        var o = 0
+        for ((k, r) in rings.withIndex()) {
+            if (k > 0) holes!![k - 1] = o / 2
+            r.copyInto(flat, o)
+            o += r.size
+        }
+        val tris = Earcut.triangulate(flat, holes)
+        if (tris.isEmpty()) return
+        val s = frame.size
+        var idx = IntArray(64)
+        mb.begin()
+        var k = 0
+        while (k < tris.size) {
+            val ax = flat[2 * tris[k]]; val ay = flat[2 * tris[k] + 1]
+            val bx = flat[2 * tris[k + 1]]; val by = flat[2 * tris[k + 1] + 1]
+            val cx = flat[2 * tris[k + 2]]; val cy = flat[2 * tris[k + 2] + 1]
+            k += 3
+            if ((ax < 0 && bx < 0 && cx < 0) || (ay < 0 && by < 0 && cy < 0) || (ax > s && bx > s && cx > s) || (ay > s && by > s && cy > s)) continue
+            val longest = max(hypot(bx - ax, by - ay), max(hypot(cx - bx, cy - by), hypot(ax - cx, ay - cy)))
+            val steps = min(24, max(1, kotlin.math.ceil(longest / maxEdge).toInt()))
+            val count = (steps + 1) * (steps + 2) / 2
+            if (mb.openVertexCount + count > FINE_FACE_VERTICES) { mb.end(); mb.begin() }
+            if (idx.size < count) idx = IntArray(count)
+            var m = 0
+            for (i in 0..steps) for (j in 0..steps - i) {
+                val u = i.toDouble() / steps; val v = j.toDouble() / steps; val w = 1 - u - v
+                idx[m++] = mb.v((ax * w + bx * u + cx * v).toFloat(), (ay * w + by * u + cy * v).toFloat(), z, colour)
+            }
+            for (i in 0 until steps) for (j in 0 until steps - i) {
+                val a = i * (steps + 1) - i * (i - 1) / 2 + j
+                val b = (i + 1) * (steps + 1) - (i + 1) * i / 2 + j
+                mb.tri(idx[a], idx[b], idx[a + 1])
+                if (j < steps - i - 1) mb.tri(idx[b], idx[b + 1], idx[a + 1])
+            }
+        }
+        mb.end()
+    }
+
     private class Area(val rings: List<DoubleArray>, val colour: Int, val area: Double, val z: Float)
 
     /** The layer's polygons [colourOf] gives a colour, at the height [zOf] gives, largest first. */
@@ -161,10 +209,11 @@ internal class GroundBuilder(
         val layer = tile["water"]
         val polys = ArrayList<List<DoubleArray>>()
         val colours = IntList()
+        val open = ScreenWater.water(theme)
         if (layer != null) {
             for (f in layer.features) {
                 if (f.type != GeomType.POLYGON || f.string("brunnel") == "tunnel") continue
-                val colour = if (f.string("class") == "swimming_pool") Colours.mix(theme.water, Colours.WHITE, 0.45f) else theme.water
+                val colour = if (f.string("class") == "swimming_pool") Colours.mix(theme.water, Colours.WHITE, 0.45f) else open
                 val g = frame.geometry(f.geometry, layer.extent, pad)
                 for (poly in frame.polygons(g, layer.extent)) {
                     polys += poly
@@ -182,15 +231,21 @@ internal class GroundBuilder(
             val shore = EdgeGrid(shoreEdges(polys, shared, cuts), SHORE_CELL)
             for (poly in polys) chartWater(poly, shore)
         } else {
-            for ((i, poly) in polys.withIndex()) fill(poly, WATER_Z, colours[i])
+            // Water coloured by the screen needs vertices close enough that its ramp never runs far past the view.
+            val maxEdge = if (ScreenWater.on(theme)) max(RAMP_EDGE_METRES, RAMP_EDGE_DP * mpd) else 0.0
+            for ((i, poly) in polys.withIndex()) {
+                if (maxEdge > 0.0 && colours[i] == open) fillFine(poly, WATER_Z, colours[i], maxEdge) else fill(poly, WATER_Z, colours[i])
+            }
         }
         waterways(tile)
-        // Open water (not pools) gets the light band along its banks and, close up, glints.
-        val open = polys.filterIndexed { i, _ -> colours[i] == theme.water }
-        if (!theme.chart && zoom >= QUAY_ZOOM && open.isNotEmpty() && (theme.waterEdge != null || theme.glint != null)) {
-            val shore = shoreEdges(open, shared, cuts)
-            theme.waterEdge?.let { banks(shore, it) }
-            if (zoom >= GLINT_ZOOM) theme.glint?.let { glints(open, EdgeGrid(shore, SHORE_CELL), it) }
+        // Open water (not pools) gets the light band along its banks; its wind streaks are seeded once the roads are in.
+        val openPolys = polys.filterIndexed { i, _ -> colours[i] == open }
+        val wantBanks = theme.waterEdge != null && zoom >= QUAY_ZOOM
+        val wantGlints = theme.glint != null && zoom >= GLINT_ZOOM
+        if (!theme.chart && openPolys.isNotEmpty() && (wantBanks || wantGlints)) {
+            val shore = shoreEdges(openPolys, shared, cuts)
+            if (wantBanks) theme.waterEdge?.let { banks(shore, it) }
+            if (wantGlints) { glintWater = openPolys; glintShore = shore }
         }
         // Below this zoom a quay is under a pixel tall: not worth its vertices.
         if (zoom >= QUAY_ZOOM) quays(polys, shared, cuts)
@@ -203,7 +258,7 @@ internal class GroundBuilder(
     private fun banks(shore: DoubleArray, edge: Int) {
         val w = max(BANK_METRES, BANK_DP * mpd).toFloat()
         val z = WATER_Z + 0.01f
-        val water = theme.water
+        val water = ScreenWater.water(theme)
         val n = shore.size / 4
         var prevNx = 0f; var prevNy = 0f; var prevBx = Double.NaN; var prevBy = Double.NaN
         for (e in 0 until n) {
@@ -228,22 +283,33 @@ internal class GroundBuilder(
         }
     }
 
+    // What the wind streaks need: the open water and its banks, and what crosses or lies over the water.
+    private var glintWater: List<List<DoubleArray>> = emptyList()
+    private var glintShore = DoubleArray(0)
+    private val crossings = DoubleList()
+    private var crossingHalfWidth = 0.0
+    private val decks = ArrayList<List<DoubleArray>>()
+
     /**
-     * Wind glints: short light strokes on the water, on a jittered grid anchored to the world (so tiles and zooms agree),
-     * running along the nearest bank, clear of the banks themselves.
+     * Seeds for the wind streaks ([GlintSet]): on a jittered grid anchored to the world (so tiles agree), about one per
+     * [GLINT_SPACING_DP] square at the scene's zoom where [GLINT_KEEP] of them stay; each on open water, clear of the
+     * banks, of every street, rail and bridge (which are drawn under the streaks) and of piers and decks, with how far
+     * its streak may reach.
      */
-    private fun glints(polys: List<List<DoubleArray>>, shore: EdgeGrid, colour: Int) {
+    fun glints(): GlintSet {
+        if (glintWater.isEmpty()) return GlintSet.EMPTY
+        val shore = EdgeGrid(glintShore, SHORE_CELL)
+        for (d in decks) for (r in d) forEdges(r) { ax, ay, bx, by -> crossings.add(ax); crossings.add(ay); crossings.add(bx); crossings.add(by) }
+        val all = EdgeGrid(crossings.toArray(), SHORE_CELL)
         val size = frame.size
         val worldM = Mercator.CIRCUMFERENCE
         val k = worldM / frame.metresPerUnit // Mercator metres per scene metre
-        val spacing = floor(GLINT_SPACING * k * 2 + 0.5) / 2
-        val hw = max(0.1, 0.32 * mpd).toFloat()
-        val z = WATER_Z + 0.02f
-        val dir = DoubleArray(2)
+        val spacing = floor(GLINT_SPACING_DP * mpd * k * 2 + 0.5) / 2
+        val limit = GLINT_REACH_DP * mpd
         val ox = frame.id.unitX * worldM
         val oy = frame.id.unitY * worldM
-        var made = 0
-        for (poly in polys) {
+        val xs = FloatList(); val ys = FloatList(); val reach = FloatList(); val sizes = FloatList()
+        for (poly in glintWater) {
             val outer = poly[0]
             var x0 = Double.MAX_VALUE; var y0 = Double.MAX_VALUE; var x1 = -Double.MAX_VALUE; var y1 = -Double.MAX_VALUE
             for (i in 0 until outer.size / 2) {
@@ -253,30 +319,22 @@ internal class GroundBuilder(
             if (x1 <= x0 || y1 <= y0) continue
             val r0 = floor((oy + y0 * k) / spacing).toLong(); val r1 = floor((oy + y1 * k) / spacing).toLong()
             val c0 = floor((ox + x0 * k) / spacing).toLong(); val c1 = floor((ox + x1 * k) / spacing).toLong()
-            mb.begin()
+            if ((r1 - r0 + 1) * (c1 - c0 + 1) > MAX_GLINT_CELLS) continue
             for (row in r0..r1) for (col in c0..c1) {
                 val h = Hash(row * 83_492_791L xor col * 2_654_435_761L xor 0x61D7L)
                 if (h.next() > GLINT_KEEP) continue
                 val x = (col + h.range(0.1, 0.9)) * spacing / k - ox / k
                 val y = (row + h.range(0.1, 0.9)) * spacing / k - oy / k
                 if (x < 0 || y < 0 || x >= size || y >= size || !Rings.contains(poly, x, y)) continue
-                val e = shore.nearest(x, y, GLINT_ALONG)
-                val d = if (e >= 0) shore.lastDistance else GLINT_ALONG
-                val len = h.range(2.2, 5.5)
-                if (d < len * 0.5 + 1.5) continue
-                if (e >= 0) shore.direction(e, dir) else { dir[0] = 0.94; dir[1] = -0.34 }
-                val ux = (dir[0] * len / 2).toFloat(); val uy = (dir[1] * len / 2).toFloat()
-                val nx = (-dir[1]).toFloat() * hw; val ny = dir[0].toFloat() * hw
-                val px = x.toFloat(); val py = y.toFloat()
-                val a = mb.v(px - ux, py - uy, z, colour)
-                val b = mb.v(px + nx, py + ny, z, colour)
-                val c = mb.v(px + ux, py + uy, z, colour)
-                val dd = mb.v(px - nx, py - ny, z, colour)
-                mb.quad(a, b, c, dd)
-                if (++made % 512 == 0) { mb.end(); mb.begin() }
+                if (decks.any { Rings.contains(it, x, y) }) continue
+                var r = shore.distance(x, y, limit)
+                if (r > 0.0) r = min(r, all.distance(x, y, r + crossingHalfWidth) - crossingHalfWidth)
+                r -= GLINT_MARGIN_M
+                if (r < GLINT_MIN_REACH_DP * mpd) continue
+                xs.add(x.toFloat()); ys.add(y.toFloat()); reach.add(r.toFloat()); sizes.add(h.next().toFloat())
             }
-            mb.end()
         }
+        return GlintSet(xs.size, xs.toArray(), ys.toArray(), WATER_Z + 0.02f, reach.toArray(), sizes.toArray())
     }
 
     /**
@@ -336,20 +394,24 @@ internal class GroundBuilder(
             mb.begin()
             for (p in 0 until g.partCount) {
                 val xy = frame.line(g, p, layer.extent)
-                Ribbon.add(mb, xy, xy.size / 2, hw, theme.water, z0 = WATER_Z)
+                Ribbon.add(mb, xy, xy.size / 2, hw, ScreenWater.water(theme), z0 = WATER_Z)
             }
             mb.end()
         }
     }
 
     /**
-     * Quay walls: each bank edge as a face that shows brick and coping on the far bank (facing the camera across the
-     * water) and, seen from behind on the near bank, covers the strip of sunk water the bank hides.
+     * Quay walls: each bank edge as a face that shows, on the far bank (facing the camera across the water), a wet foot
+     * at the waterline, the brick wall and a light coping; seen from behind on the near bank, it covers the strip of
+     * sunk water the bank hides in the bank's own colour.
      */
     private fun quays(polys: List<List<DoubleArray>>, count: Map<Long, Int>, cuts: Pair<DoubleArray, DoubleArray>) {
         if (polys.isEmpty()) return
         val front = theme.quayWall
         val top = theme.quayTop
+        val foot = theme.quayFoot
+        val back = theme.quayBack ?: top
+        val footTop = if (foot != null) WATER_Z + QUAY_FOOT else WATER_Z
         for (poly in polys) for (r in poly) forEdges(r) { ax, ay, bx, by ->
             if ((count[edgeKey(ax, ay, bx, by)] ?: 0) > 1 || isCutEdge(ax, ay, bx, by, cuts)) return@forEdges
             val ex = bx - ax; val ey = by - ay
@@ -358,21 +420,21 @@ internal class GroundBuilder(
             // Toward the water.
             val nx = (-ey / len).toFloat(); val ny = (ex / len).toFloat()
             val mx = ((ax + bx) / 2).toFloat(); val my = ((ay + by) / 2).toFloat()
-            mb.begin(FaceMesh.TWO_SIDED, nx, ny, 0f, mx, my, WATER_Z / 2, back = top)
-            val wall = shading.shade(front, nx, ny, 0f, shading.lambert(nx, ny, 0f) > 0f)
-            val coping = shading.shade(top, nx, ny, 0f, shading.lambert(nx, ny, 0f) > 0f)
-            val a0 = mb.v(ax.toFloat(), ay.toFloat(), WATER_Z, wall)
-            val b0 = mb.v(bx.toFloat(), by.toFloat(), WATER_Z, wall)
-            val b1 = mb.v(bx.toFloat(), by.toFloat(), -0.2f, wall)
-            val a1 = mb.v(ax.toFloat(), ay.toFloat(), -0.2f, wall)
-            mb.quad(a0, b0, b1, a1)
-            val c0 = mb.v(ax.toFloat(), ay.toFloat(), -0.2f, coping)
-            val c1 = mb.v(bx.toFloat(), by.toFloat(), -0.2f, coping)
-            val c2 = mb.v(bx.toFloat(), by.toFloat(), 0f, coping)
-            val c3 = mb.v(ax.toFloat(), ay.toFloat(), 0f, coping)
-            mb.quad(c0, c1, c2, c3)
+            mb.begin(FaceMesh.TWO_SIDED, nx, ny, 0f, mx, my, WATER_Z / 2, back = back)
+            val sunny = shading.lambert(nx, ny, 0f) > 0f
+            val wall = shading.shade(front, nx, ny, 0f, sunny)
+            val coping = shading.shade(top, nx, ny, 0f, sunny)
+            val x0 = ax.toFloat(); val y0 = ay.toFloat(); val x1 = bx.toFloat(); val y1 = by.toFloat()
+            if (foot != null) band(x0, y0, x1, y1, WATER_Z, footTop, foot)
+            band(x0, y0, x1, y1, footTop, COPING_FOOT, wall)
+            band(x0, y0, x1, y1, COPING_FOOT, 0f, coping)
             mb.end()
         }
+    }
+
+    /** One upright band of a quay face, from [z0] to [z1], in [colour]. */
+    private fun band(x0: Float, y0: Float, x1: Float, y1: Float, z0: Float, z1: Float, colour: Int) {
+        mb.quad(mb.v(x0, y0, z0, colour), mb.v(x1, y1, z0, colour), mb.v(x1, y1, z1, colour), mb.v(x0, y0, z1, colour))
     }
 
     private inline fun forEdges(r: DoubleArray, block: (Double, Double, Double, Double) -> Unit) {
@@ -473,7 +535,10 @@ internal class GroundBuilder(
                 }
                 else -> if (f.string("subclass") == "pedestrian") theme.pedestrianArea else null
             }
-        }) fill(a.rings, a.z, a.colour)
+        }) {
+            fill(a.rings, a.z, a.colour)
+            if (a.colour == theme.pier || a.colour == theme.bridgeArea) decks += a.rings
+        }
     }
 
     private class Road(
@@ -527,6 +592,10 @@ internal class GroundBuilder(
                 }
             }
         }
+        // Everything on the ground the wind streaks must keep clear of: drawn under them.
+        for (r in roads) if (!r.tunnel) crossing(r)
+        for (r in rails) if (!r.tunnel) crossing(r)
+        for (r in trams) if (!r.tunnel) crossing(r)
         // Tunnels: faded, under everything else.
         for (r in roads.filter { it.tunnel }.sortedBy { it.rank }) {
             val paint = theme.road(r.key)
@@ -556,6 +625,16 @@ internal class GroundBuilder(
         }
     }
 
+    /** Notes [r]'s centre line (and its half width, casing included) for the wind streaks to keep clear of. */
+    private fun crossing(r: Road) {
+        val n = r.xy.size / 2
+        for (i in 0 until n - 1) {
+            crossings.add(r.xy[2 * i].toDouble()); crossings.add(r.xy[2 * i + 1].toDouble())
+            crossings.add(r.xy[2 * i + 2].toDouble()); crossings.add(r.xy[2 * i + 3].toDouble())
+        }
+        crossingHalfWidth = max(crossingHalfWidth, (halfWidth(r) + casing()).toDouble())
+    }
+
     /** A polyline with points closer than [tolerance] metres to their neighbours' line dropped (Douglas–Peucker). */
     private fun simplify(xy: FloatArray, tolerance: Double): FloatArray {
         val n = xy.size / 2
@@ -577,21 +656,26 @@ internal class GroundBuilder(
         return false
     }
 
+    /**
+     * A street's width in metres (the living map's widths by kind: big roads by two lanes and their edges, the rest as
+     * the canal town's streets are) and the fewest dp it is drawn, so it never vanishes from afar.
+     */
     private fun width(cls: String, sub: String?, service: String?): Pair<Double, Double> = when (cls) {
-        "motorway" -> 22.0 to 1.7
-        "trunk" -> 18.0 to 1.5
-        "primary" -> 14.0 to 1.3
-        "secondary" -> 12.0 to 1.1
-        "tertiary" -> 10.0 to 0.9
-        "busway", "bus_guideway" -> 8.0 to 0.6
-        "minor", "raceway" -> 8.0 to 0.55
-        "service" -> (if (service == "parking_aisle" || service == "driveway") 3.5 else 5.0) to 0.3
+        "motorway" -> 11.0 to 1.7
+        "trunk" -> 9.0 to 1.5
+        "primary" -> 8.0 to 1.3
+        "secondary" -> 9.0 to 1.1
+        "tertiary" -> 7.5 to 0.9
+        "busway", "bus_guideway" -> 6.0 to 0.6
+        "minor", "raceway" -> 5.5 to 0.55
+        "service" -> (if (service == "parking_aisle" || service == "driveway") 3.0 else 3.5) to 0.3
         "track" -> 3.5 to 0.25
         "path" -> when (sub) {
             "pedestrian" -> 5.0 to 0.3
-            "steps" -> 2.5 to 0.2
+            "cycleway" -> 2.4 to 0.2
+            "footway", "sidewalk", "crossing", "steps", "bridleway" -> 2.0 to 0.2
             "platform" -> 3.0 to 0.2
-            else -> 2.5 to 0.2
+            else -> 1.6 to 0.2
         }
         else -> 4.0 to 0.2
     }
@@ -611,23 +695,28 @@ internal class GroundBuilder(
         mb.end()
     }
 
+    /** A railway: its ballast bed, then two rails at gauge, drawn [RAIL_DP] wide however far away they are. */
     private fun rail(r: Road, z0: Float, z: FloatArray? = null) {
         val hw = halfWidth(r)
+        val n = r.xy.size / 2
         mb.begin()
-        Ribbon.add(mb, r.xy, r.xy.size / 2, hw, theme.rail, z, z0 + 0.03f, r.capStart, r.capEnd)
-        if (zoom >= 15) Ribbon.add(mb, r.xy, r.xy.size / 2, hw * 0.38f, theme.railTie, z?.let { lift(it, 0.02f) }, z0 + 0.05f, r.capStart, r.capEnd)
+        Ribbon.add(mb, r.xy, n, hw, theme.rail, z, z0 + 0.03f, r.capStart, r.capEnd)
         mb.end()
+        if (zoom < 14) return
+        rails(r.xy, n, (RAIL_DP / 2 * mpd).toFloat(), theme.railTie, z, z0 + 0.05f)
     }
 
-    /** Tram rails: two thin lines either side of the centre, at gauge 1.435 m. */
+    /** Tram rails: two lines either side of the centre, at gauge 1.435 m, [TRAM_DP] wide. */
     private fun tram(t: Road, z: FloatArray?) {
-        if (zoom < 15) return
-        val n = t.xy.size / 2
-        val hw = max(0.08, 0.35 * mpd / 2).toFloat()
+        if (zoom < 14) return
+        rails(t.xy, t.xy.size / 2, (TRAM_DP / 2 * mpd).toFloat(), theme.tram, z, 0.06f)
+    }
+
+    private fun rails(xy: FloatArray, n: Int, hw: Float, colour: Int, z: FloatArray?, z0: Float) {
         for (side in arrayOf(-0.72f, 0.72f)) {
-            val off = offsetLine(t.xy, n, side)
+            val off = offsetLine(xy, n, side)
             mb.begin()
-            Ribbon.add(mb, off, n, hw, theme.tram, z?.let { lift(it, 0.06f) }, 0.06f, false, false, roundJoins = false)
+            Ribbon.add(mb, off, n, max(0.05f, hw), colour, z?.let { lift(it, z0) }, z0, false, false, roundJoins = false)
             mb.end()
         }
     }
@@ -724,26 +813,43 @@ internal class GroundBuilder(
     fun build(): FaceMesh = mb.build()
 
     companion object {
-        /** Water lies this far below the quays (metres). */
-        const val WATER_Z = -1.2f
+        /** Water lies this far below the quays (metres): the canal town's generic waterline. */
+        const val WATER_Z = -1.5f
+
+        /** A quay's wet foot is this tall (metres); its coping starts this far below the street. */
+        private const val QUAY_FOOT = 0.35f
+        private const val COPING_FOOT = -0.18f
+
+        /** Water coloured by the screen is cut into triangles no longer than this: metres, or dp when that is more. */
+        private const val RAMP_EDGE_METRES = 30.0
+        private const val RAMP_EDGE_DP = 60.0
+        private const val FINE_FACE_VERTICES = 4096
 
         /** The bank band is this wide: metres, or density-independent pixels when that is more. */
         private const val BANK_METRES = 2.2
         private const val BANK_DP = 1.3
 
-        /** Glints from this scene zoom, about one per [GLINT_SPACING] metres square where [GLINT_KEEP] of them stay. */
-        const val GLINT_ZOOM = 16
-        private const val GLINT_SPACING = 11.0
-        private const val GLINT_KEEP = 0.55
+        /** Streaks from this scene zoom, about one per [GLINT_SPACING_DP] square where [GLINT_KEEP] of them stay. */
+        const val GLINT_ZOOM = 13
+        private const val GLINT_SPACING_DP = 11.0
+        private const val GLINT_KEEP = 0.65
+        private const val MAX_GLINT_CELLS = 40_000L
+        /** A streak reaches at most this far (dp at the scene's zoom), stays this far off the banks, and needs this room. */
+        private const val GLINT_REACH_DP = 24.0
+        private const val GLINT_MARGIN_M = 1.0
+        private const val GLINT_MIN_REACH_DP = 3.0
 
-        /** Glints within this many metres of a bank run along it; farther out they follow the wind. */
-        private const val GLINT_ALONG = 60.0
+
 
         /** Protected areas show (tint and outline) below this scene zoom; closer, their land cover speaks for them. */
         const val PARK_EDGE_ZOOM = 14
 
         /** `park` classes drawn as nature (with the Natura 2000 and national network ones, whatever their spelling). */
         val NATURE_PARKS = setOf("national_park", "nature_reserve", "wildlife_refuge", "conservation", "biosphere reserve")
+
+        /** Rails and tram rails are drawn this wide (dp), as fine lines at every distance. */
+        private const val RAIL_DP = 0.7
+        private const val TRAM_DP = 0.9
 
         /** Quay walls from this scene zoom: further out they are under a pixel tall. */
         const val QUAY_ZOOM = 15
@@ -753,8 +859,9 @@ internal class GroundBuilder(
         private const val SHORE_CELL = 70.0
         private const val CHART_FACE_VERTICES = 4096
 
-        val BASE_LANDUSE = setOf("commercial", "industrial", "retail", "railway", "military", "garages", "bus_station", "quarry", "dam")
-        val NOT_DRAWN = setOf("residential", "suburb", "quarter", "neighbourhood", "city", "town", "village")
+        /** Land uses drawn first, under the land cover; residential only where the theme gives it a colour. */
+        val BASE_LANDUSE = setOf("residential", "commercial", "industrial", "retail", "railway", "military", "garages", "bus_station", "quarry", "dam")
+        val NOT_DRAWN = setOf("suburb", "quarter", "neighbourhood", "city", "town", "village")
 
         val CLASS_RANK = mapOf(
             "path" to 0, "track" to 1, "service" to 2, "raceway" to 3, "busway" to 3, "bus_guideway" to 3, "minor" to 4,

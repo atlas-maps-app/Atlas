@@ -10,18 +10,6 @@ import org.junit.Test
 
 class TextToolsTest {
     @Test
-    fun tagsJsonRoundTrips() {
-        val tags = mapOf(
-            "name" to "Café \"De Molen\"", "note" to "line\nbreak\ttab \\ slash", "amenity" to "cafe",
-            "name:ja" to "カフェ", "empty" to "", "control" to "a\u0001b",
-        )
-        assertEquals(tags, TagsJson.read(TagsJson.write(tags)))
-        assertEquals(emptyMap<String, String>(), TagsJson.read("{}"))
-        assertEquals(emptyMap<String, String>(), TagsJson.read(null))
-        assertEquals(mapOf("a" to "1", "b" to "true"), TagsJson.read("""{ "a" : 1 , "b":true, "c": null }"""))
-    }
-
-    @Test
     fun idsPackAndUnpack() {
         for (id in listOf(OsmId(OsmType.NODE, 26973327), OsmId(OsmType.WAY, 99205257), OsmId(OsmType.RELATION, 12011952), OsmId(OsmType.NODE, 13_000_000_000))) {
             assertEquals(id, StoreSchema.unpack(StoreSchema.pack(id)))
@@ -61,14 +49,21 @@ class TextToolsTest {
         assertTrue(SearchText.isNameKey("alt_name"))
         assertFalse(SearchText.isNameKey("name:etymology:wikidata"))
         assertFalse(SearchText.isNameKey("brand:wikidata"))
-        val doc = SearchText.document(
-            mapOf("name" to "Café Molen", "name:en" to "Mill Café", "cuisine" to "coffee_shop;cake", "addr:street" to "Westerstraat", "addr:housenumber" to "12A"),
-            "amenity/cafe", "restaurants", listOf("en", "nl"),
+        val text = SearchText.indexText(
+            mapOf(
+                "name" to "Café Molen", "name:en" to "Mill Café", "cuisine" to "coffee_shop;cake", "operator" to "Molen B.V.",
+                "addr:street" to "Westerstraat", "addr:housenumber" to "12A", "addr:postcode" to "1015 MN", "website" to "https://molen.nl",
+            ),
+            listOf("_p12", "_c3"),
         )
-        assertTrue(doc.name, "cafe molen" in doc.name && "mill cafe" in doc.name)
-        assertTrue(doc.other, "cake" in doc.other)
-        assertTrue(doc.terms, "cafe" in doc.terms)
-        assertEquals("westerstraat 12a", doc.addr)
+        val words = text.split(' ')
+        assertTrue(text, "cafe" in words && "molen" in words && "mill" in words && "westerstraat" in words && "12a" in words)
+        // the postcode with and without its space; the kind tokens last; no website, no cuisine words (they are tokens)
+        assertTrue(text, "1015mn" in words && "mn" in words)
+        assertEquals(listOf("_p12", "_c3"), words.takeLast(2))
+        assertFalse(text, "https" in words || "coffee" in words)
+        assertTrue(SearchText.isTextKey("addr:street") && SearchText.isTextKey("operator") && SearchText.isTextKey("name:fr"))
+        assertFalse(SearchText.isTextKey("cuisine"))
     }
 
     @Test

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="search_title">Recherche</string>
+    <string name="search_hint">Chercher ou demander</string>
+    <string name="search_clear">Effacer</string>
+    <string name="search_every">Tous les %1$s sur la carte</string>
+    <string name="search_every_sub">tous les %1$d · en liste ou sur la carte</string>
+    <string name="search_step_free">sans marche</string>
+    <string name="search_offline_title">Fonctionne hors ligne</string>
+    <string name="search_offline_text">chaque lieu de vos régions se trouve sans réseau</string>
+    <string name="search_recent">Récents · aussi des coordonnées ou des plus codes</string>
+    <string name="search_recent_clear">Effacer</string>
+    <string name="search_say">Ou dites-le simplement</string>
+    <string name="search_say_ask">café calme avec une prise, puis dîner</string>
+    <string name="search_say_near">café à 200 m d’une station de vélos</string>
+    <string name="search_say_needs">toilettes sans marche, ouvertes</string>
+    <string name="search_to_ask">Demander</string>
+    <string name="search_to_near">A près de B</string>
+    <string name="search_to_needs">Besoins</string>
+    <string name="search_categories">Types de lieux</string>
+    <string name="query_title">A près de B</string>
+    <string name="query_download">Télécharger cette zone</string>
+    <string name="place_route">Itinéraire</string>
+    <string name="place_share">Partager</string>
+    <string name="place_web">Site web</string>
+    <string name="place_hours">Horaires</string>
+    <string name="place_copy">Copier</string>
+    <string name="place_sources">D’où cela vient</string>
+    <string name="place_review_card">Écrire un avis</string>
+    <string name="lists_default">Enregistrés</string>
+    <string name="lists_title">Mes listes</string>
+    <string name="lists_share">Partager</string>
+    <string name="ask_title">Demander</string>
+    <string name="ask_on_phone">sur ce téléphone</string>
+    <string name="ask_your_plan">Votre plan</string>
+    <string name="ask_say_again">Le dire autrement</string>
+    <string name="brands_title">Marques</string>
+    <string name="brands_chains">Chaînes</string>
+    <string name="brands_independent">Indépendants</string>
+    <string name="brands_all_on_map">Les %1$d sur la carte</string>
+    <string name="category_open_now">Ouvert</string>
+    <string name="whatshere_title">Qu’y a-t-il ici</string>
+    <string name="whatshere_coordinates">Coordonnées</string>
+    <string name="whatshere_nearby">Au plus près</string>
+    <string name="whatshere_at_spot">À cet endroit</string>
+    <string name="whatshere_note">Laisser une note aux cartographes</string>
+</resources>

@@ -35,9 +35,11 @@ object Palette {
 }
 
 /**
- * Every symbol Atlas draws, offline: CC0 map symbols (`maki-*`, `temaki-*`, `pinhead-*`) for each preset, category and
- * cuisine; Atlas's UI set (`ui-*`, Lucide style, stroked); and brand glyphs (`logo-*`, simple-icons). Each set is a
- * bundled file read on first use; icons are built once and kept.
+ * Every symbol Atlas draws, offline. The boards' own symbols ([BoardSymbols]: `ui.search`, `cat.eat`, `mode.walk`) come
+ * first: [icon] returns the board drawing for a board id or for any older id it stands in for. Behind them are the CC0
+ * map symbols (`maki-*`, `temaki-*`, `pinhead-*`) for each preset, category and cuisine, the Lucide-style UI set
+ * (`ui-*`, stroked), and brand glyphs (`logo-*`, simple-icons). Each set is a bundled file read on first use; icons are
+ * built once and kept.
  */
 object Symbols {
     private val sets = ConcurrentHashMap<String, Map<String, JsonElement>>()
@@ -52,8 +54,14 @@ object Symbols {
     private fun set(file: String): Map<String, JsonElement> =
         sets.getOrPut(file) { (Resources.jsonOrNull(file) as? JsonObject) ?: emptyMap() }
 
-    /** The icon [id] ("maki-cafe", "ui-wheelchair", "logo-albertheijn"), or null when Atlas has no such symbol. */
-    fun icon(id: String): Icon? {
+    /**
+     * The icon [id] ("ui.search", "maki-cafe", "ui-wheelchair", "logo-albertheijn"), or null when Atlas has no such
+     * symbol. The boards' drawing wins wherever the boards have one for [id].
+     */
+    fun icon(id: String): Icon? = BoardSymbols.icon(id) ?: original(id)
+
+    /** The icon [id] from the bundled open sets only (Maki, Temaki, Pinhead, Lucide, simple-icons), never the boards'. */
+    fun original(id: String): Icon? {
         icons[id]?.let { return it }
         val e = set(fileFor(id))[id]?.arr ?: return null
         val vb = ViewBox.parse(e[0].str ?: return null)
@@ -65,10 +73,16 @@ object Symbols {
         return Icon(id, vb, paths).also { icons[id] = it }
     }
 
-    fun has(id: String): Boolean = set(fileFor(id)).containsKey(id)
+    fun has(id: String): Boolean = BoardSymbols.has(id) || set(fileFor(id)).containsKey(id)
 
-    /** Every id in one set: "symbols" (map symbols), "ui" or "logos". */
-    fun ids(set: String = "symbols"): Set<String> = set("$set.json").keys
+    /** True when [id] draws one of the boards' own symbols (itself a board id, or an id one stands in for). */
+    fun isBoard(id: String): Boolean = BoardSymbols.has(id)
+
+    /** The board id that draws [id] ("ui-search" -> "ui.search"), or null when the boards have no symbol for it. */
+    fun boardId(id: String): String? = BoardSymbols.resolve(id)?.id
+
+    /** Every id in one set: "board" (the boards' symbols), "symbols" (map symbols), "ui" or "logos". */
+    fun ids(set: String = "symbols"): Set<String> = if (set == "board") BoardSymbols.ids() else set("$set.json").keys
 
     /**
      * The map symbol for a feature: its id-tagging-schema preset's icon (or the nearest parent preset's), else its

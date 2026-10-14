@@ -37,10 +37,10 @@ object Looks {
             Theme.GRAY -> EngineTheme.GRAY
         }
         if (MapLayer.SHADOWS !in style.layers && theme.shadowOpacity > 0f) theme = theme.copy(shadowOpacity = 0f)
-        val look = Look(theme, light)
+        val look = Look(theme, light, autumn = Look.autumnOf(t))
         val l = look.light
         val key = "${theme.name}|${"%.1f".format(java.util.Locale.ROOT, l.azimuth)}|${"%.1f".format(java.util.Locale.ROOT, l.elevation)}|" +
-            "${if (theme.shadowOpacity > 0f) "s" else "-"}"
+            "${if (theme.shadowOpacity > 0f) "s" else "-"}|${"%.2f".format(java.util.Locale.ROOT, look.autumn)}"
         return ResolvedLook(look, key, theme.night)
     }
 

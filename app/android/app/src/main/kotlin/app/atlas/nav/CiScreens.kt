@@ -33,6 +33,12 @@ object CiScreens {
         "navigate" to Dest.Navigate(CENTRAAL_LAT, CENTRAAL_LON, "Amsterdam Centraal", "BIKE", demo = true),
         "ears" to Dest.Ears,
         "vehicle" to Dest.Vehicle("TRUCK"),
+        // The guidance screens in demo mode, each on a real route from the Westerkerk.
+        "drive" to Dest.Navigate(CENTRAAL_LAT, CENTRAAL_LON, "Amsterdam Centraal", "CAR", demo = true),
+        "truck" to Dest.Navigate(52.38785, 4.63830, "Haarlem", "TRUCK", demo = true),
+        "walk" to Dest.Navigate(CENTRAAL_LAT, CENTRAAL_LON, "Amsterdam Centraal", "WALK", demo = true),
+        "sail" to Dest.Navigate(52.3810, 4.9000, "Het IJ", "BOAT", demo = true),
+        "twowheel" to Dest.Twowheel(),
         "soon" to Dest.Soon,
         "local" to Dest.Local(),
         "namedafter" to Dest.NamedAfter(52.37502, 4.88392, name = "Westermarkt"),
@@ -50,6 +56,19 @@ object CiScreens {
         "regionpicker" to Dest.RegionPicker(LAT, LON),
         "charge" to Dest.Charge(LAT, LON),
         "chargingroute" to Dest.ChargingRoute(51.92250, 4.47917, "Rotterdam"),
+        "lists" to Dest.Lists(),
+        "ask" to Dest.Ask("quiet café with an outlet, then dinner"),
+        "quests" to Dest.Quests(LAT, LON),
+        "where" to Dest.Where,
+        "eatcarte" to Dest.Eat("carte"),
+        "eatorder" to Dest.Eat("order"),
+        "eatbar" to Dest.Eat("bar"),
+        "eatcafe" to Dest.Eat("cafe"),
+        "eatramen" to Dest.Eat("ramen"),
+        "eatlate" to Dest.Eat("late"),
+        "eatsweets" to Dest.Eat("sweets"),
+        "eatmarket" to Dest.Eat("market"),
+        "eatmap" to Dest.Eat("map"),
     )
 
     /** The stack CI opens for [name]: the Map home, with the named screen on top; null for an unknown name. */

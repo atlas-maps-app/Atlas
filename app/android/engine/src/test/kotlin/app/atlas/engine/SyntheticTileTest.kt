@@ -179,7 +179,7 @@ class SyntheticTileTest {
             val mb = MeshBuilder()
             planter.shadows(trees, mb, Colours.BLACK)
             val m = mb.build()
-            val len = kotlin.math.hypot(look.light.shadowDx(0.72f * 12).toDouble(), look.light.shadowDy(0.72f * 12).toDouble())
+            val len = kotlin.math.hypot(look.light.shadowDx(0.7f * 12).toDouble(), look.light.shadowDy(0.7f * 12).toDouble())
             // The strip is the face's last two triangles.
             var area = 0.0
             for (t in m.triangleCount - 2 until m.triangleCount) {

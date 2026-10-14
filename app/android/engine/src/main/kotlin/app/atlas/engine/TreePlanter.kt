@@ -21,9 +21,11 @@ internal class TreePlanter(
     private val theme: Theme,
     private val shading: Shading,
     private val caster: ShadowCaster,
+    /** How far broadleaved crowns have turned ([Look.autumn]). */
+    private val autumn: Float = 0f,
 ) {
     private val xs = FloatList(); private val ys = FloatList(); private val hs = FloatList(); private val rs = FloatList()
-    private val dark = IntList(); private val mid = IntList(); private val lite = IntList()
+    private val dark = IntList(); private val mid = IntList(); private val lite = IntList(); private val far = IntList()
     private val mapped = ArrayList<Boolean>()
     private val size = frame.size
     private val originX = frame.id.unitX
@@ -39,8 +41,8 @@ internal class TreePlanter(
 
     init {
         val l = shading.light
-        val a = sqrt(l.x * l.x + l.y * l.y + 0.49f)
-        sunNx = l.x / a; sunNy = l.y / a; sunNz = 0.7f / a
+        val a = sqrt(l.x * l.x + l.y * l.y + 0.64f)
+        sunNx = l.x / a; sunNy = l.y / a; sunNz = 0.8f / a
         val b = sqrt(l.x * l.x + l.y * l.y + 0.36f)
         hiNx = l.x / b; hiNy = l.y / b; hiNz = 0.6f / b
     }
@@ -175,15 +177,24 @@ internal class TreePlanter(
         return false
     }
 
+    /**
+     * A crown's tones, as the living map shades a tree: its shaded underside (the leaf colour at 70 %, lit by the sky
+     * alone), its sunlit top (the leaf facing up toward the sun) and, for crowns a few pixels across, one tone between
+     * the two. Broadleaved leaves turn toward [Theme.treeAutumn] by [autumn]; needles stay green.
+     */
     private fun add(x: Double, y: Double, h: Double, r: Double, seed: Long, real: Boolean, needle: Boolean) {
         val hash = Hash(seed)
-        val base = BuildingGuesser.jitter(if (needle) Colours.mix(theme.treeMid, theme.treeDark, 0.5f) else theme.treeMid, seed, 0.08)
-        val lit = !theme.night && caster.lit(x + shading.light.x * r, y + shading.light.y * r, 0.75 * h + shading.light.z * r)
+        val green = if (needle) Colours.mix(theme.treeMid, theme.treeDark, 0.5f) else theme.treeMid
+        val leaf = theme.treeAutumn?.takeIf { !needle && autumn > 0f }?.let { Colours.mix(green, it, autumn) } ?: green
+        val base = if (theme.treeAutumn != null) leaf else BuildingGuesser.jitter(leaf, seed, 0.08)
+        val lit = !theme.night
         xs.add(x.toFloat()); ys.add(y.toFloat()); hs.add(h.toFloat()); rs.add((r * hash.range(0.92, 1.08)).toFloat())
-        // Crowns catch the sun on their top side, which the face formula over-brightens: their tones start darker.
-        dark.add(shading.shade(Colours.scale(base, 0.62f), 0f, 0f, 1f, false))
-        mid.add(shading.shade(Colours.scale(base, 0.74f), sunNx, sunNy, sunNz, lit))
+        val under = shading.shade(Colours.scale(base, 0.7f), 0f, 0f, 0.3f, false)
+        val top = shading.shade(base, sunNx, sunNy, sunNz, lit)
+        dark.add(under)
+        mid.add(top)
         lite.add(shading.shade(Colours.scale(Colours.mix(base, theme.treeLight, 0.3f), 0.82f), hiNx, hiNy, hiNz, lit))
+        far.add(Colours.mix(under, top, 0.55f))
         mapped += real
     }
 
@@ -191,7 +202,7 @@ internal class TreePlanter(
         val n = xs.size
         return TreeSet(
             n, xs.toArray(), ys.toArray(), FloatArray(n), hs.toArray(), rs.toArray(), dark.toArray(), mid.toArray(), lite.toArray(),
-            shading.shade(theme.trunk, 0f, 0f, 1f, false), mapped.toBooleanArray(),
+            shading.shade(theme.trunk, 0f, 0f, 1f, false), mapped.toBooleanArray(), far.toArray(),
         )
     }
 
@@ -200,9 +211,9 @@ internal class TreePlanter(
         val l = shading.light
         if (!l.isUp) return
         for (i in 0 until set.count) {
-            val dx = l.shadowDx(0.72f * set.height[i]); val dy = l.shadowDy(0.72f * set.height[i])
+            val dx = l.shadowDx(0.7f * set.height[i]); val dy = l.shadowDy(0.7f * set.height[i])
             val cx = set.x[i] + dx; val cy = set.y[i] + dy
-            val r = set.radius[i] * 0.95f
+            val r = set.radius[i]
             mb.begin(FaceMesh.CULL, 0f, 0f, 1f, set.x[i], set.y[i], 0f)
             val c = mb.v(cx, cy, 0.05f, colour)
             var prev = -1

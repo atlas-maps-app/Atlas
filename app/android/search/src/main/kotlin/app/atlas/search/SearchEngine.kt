@@ -429,9 +429,16 @@ class SearchEngine(
 
     private fun matchKind(words: List<String>, r: PlaceRecord): MatchKind {
         val name = SearchText.names(r.tags).maxOfOrNull { NameMatch.score(words, Text.fold(it)) } ?: 0.0
-        if (name < 0.45 && r.tags["addr:street"] != null) {
-            val addr = listOfNotNull(r.tags["addr:street"], r.tags["addr:housenumber"]).joinToString(" ")
-            if (NameMatch.score(words, Text.fold(addr)) >= 0.45) return MatchKind.ADDRESS
+        val street = r.tags["addr:street"] ?: r.tags["addr:place"]
+        if (name < 0.45 && street != null) {
+            // with a number, the number must be this address's; without, the street's name will do
+            val hn = r.tags["addr:housenumber"]
+            val fit = if (hn != null && words.any(Addresses::looksLikeNumber)) {
+                Addresses.relevance(words, r.tags)
+            } else {
+                NameMatch.score(words, Text.fold(listOfNotNull(street, hn).joinToString(" ")))
+            }
+            if (fit >= 0.45) return MatchKind.ADDRESS
         }
         if (r.tags["highway"] != null && r.id?.type == OsmType.WAY && r.tags["highway"] != "bus_stop") return MatchKind.STREET
         return MatchKind.NAME

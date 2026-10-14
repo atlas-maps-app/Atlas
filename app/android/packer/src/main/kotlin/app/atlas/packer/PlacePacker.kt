@@ -47,6 +47,9 @@ data class PackStats(
 ) {
     val places: Int get() = store.places
     val trees: Int get() = store.trees
+
+    /** Address points, kept apart from the places in the store's address table. */
+    val addresses: Int get() = store.addresses
 }
 
 /**
@@ -83,7 +86,7 @@ class PlacePacker(private val options: PackOptions = PackOptions()) {
             pass.placeRelations()
             pass.locations.clear()
             val imported = w.finish()
-            log("store: ${imported.places} places, ${imported.trees} trees (${seconds(started)} s)")
+            log("store: ${imported.places} places, ${imported.addresses} address points, ${imported.trees} trees (${seconds(started)} s)")
             return PackStats(
                 header, pass.nodes, pass.ways, pass.relationsRead, pass.unlocated, pass.clipped, pass.missingNodes,
                 imported, (System.nanoTime() - started) / 1_000_000,

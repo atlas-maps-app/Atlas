@@ -16,6 +16,22 @@ internal class FloatList(capacity: Int = 64) {
     fun toArray(): FloatArray = a.copyOf(size)
 }
 
+/** A growable double list without boxing. */
+internal class DoubleList(capacity: Int = 64) {
+    private var a = DoubleArray(capacity)
+    var size = 0
+        private set
+
+    fun add(v: Double) {
+        if (size == a.size) a = a.copyOf(maxOf(8, size * 2))
+        a[size++] = v
+    }
+
+    operator fun get(i: Int) = a[i]
+    fun clear() { size = 0 }
+    fun toArray(): DoubleArray = a.copyOf(size)
+}
+
 /** A growable int list without boxing. */
 internal class IntList(capacity: Int = 64) {
     private var a = IntArray(capacity)

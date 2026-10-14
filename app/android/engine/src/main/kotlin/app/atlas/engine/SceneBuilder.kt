@@ -47,6 +47,7 @@ object SceneBuilder {
         checkCancelled()
         ground.transportAreas(tile)
         ground.roads(tile)
+        val glints = ground.glints()
         checkCancelled()
 
         // Objects.
@@ -84,7 +85,7 @@ object SceneBuilder {
 
         // Trees.
         val water = waterPolygons(tile, frame)
-        val planter = TreePlanter(frame, theme, shading, caster)
+        val planter = TreePlanter(frame, theme, shading, caster, look.autumn)
         planter.real(extras)
         planter.procedural(tile, water, TREE_LIMIT)
         val trees = planter.build()
@@ -107,7 +108,7 @@ object SceneBuilder {
             id = id, source = source, look = look, originX = id.unitX, originY = id.unitY, metresPerUnit = frame.metresPerUnit,
             size = frame.size.toFloat(), ground = groundMesh, shadows = shadowMesh,
             objects = ObjectSet(objectMesh, buildings.size, faceStart.toArray(), centre.toArray(), radius.toArray(), ref.toArray()),
-            trees = trees, labels = labels.labels, pois = labels.pois, buildings = infos, stats = stats,
+            trees = trees, labels = labels.labels, pois = labels.pois, buildings = infos, stats = stats, glints = glints,
         )
     }
 

@@ -19,6 +19,8 @@ data class Theme(
     /** Haze begins at this many camera distances of depth and is full at the far edge of the ground. */
     val fogStart: Float = 1.3f,
     val fogPower: Float = 1.1f,
+    /** When set, haze reaches [fogMax] this many camera distances past [fogStart] instead of at the far edge. */
+    val fogRange: Float? = null,
     // Light.
     val ambient: Int,
     val ambientK: Float,
@@ -33,18 +35,30 @@ data class Theme(
     /** Land cover and land use by OpenMapTiles subclass or class. */
     val land: Map<String, Int>,
     val water: Int,
+    /**
+     * When set, open water is coloured down the screen, from [waterTop] at the horizon (or the top of the view) to
+     * [waterBottom] at its foot, with [water] laid over it at [waterVeil]: the boards' sky-lit water.
+     */
+    val waterTop: Int? = null,
+    val waterBottom: Int? = null,
+    val waterVeil: Float = 0f,
     /** Chart look: shallow water near the shore (within 40 m, then 110 m; deep from 140 m). */
     val waterShallow: Int? = null,
     val waterShallow2: Int? = null,
     /** The light band on the water along its banks (null: none), fading into [water] a couple of metres out. */
     val waterEdge: Int? = null,
-    /** Wind glints: short light strokes on the water close up (null: none). */
+    /** Wind glints: soft light streaks on the water (null: none), at [glintAlpha] over a screen-coloured water. */
     val glint: Int? = null,
+    val glintAlpha: Float = 1f,
     /** Protected areas and national parks (the `park` layer): a tint under the land cover, and their outline from afar. */
     val park: Int,
     val parkEdge: Int,
     val quayWall: Int,
     val quayTop: Int,
+    /** The wet band at the foot of a quay wall, where it meets the water (null: none). */
+    val quayFoot: Int? = null,
+    /** What the near bank shows over the strip of sunk water it hides (null: [quayTop]). */
+    val quayBack: Int? = null,
     val roads: Map<String, RoadPaint>,
     val pedestrianArea: Int,
     val bridgeArea: Int,
@@ -74,6 +88,8 @@ data class Theme(
     val treeMid: Int,
     val treeLight: Int,
     val trunk: Int,
+    /** Leaves turning in autumn: [treeMid] moves toward this by the look's autumn share (null: they stay green). */
+    val treeAutumn: Int? = null,
     // Labels.
     val placeLabel: Int,
     val waterLabel: Int,
@@ -90,8 +106,8 @@ data class Theme(
 
         private fun paint(fill: String, casing: String?) = RoadPaint(c(fill), casing?.let { c(it) })
 
-        /** The boards' warm daylight: off-white ground, brick and terracotta, steel-blue canals. */
-        val DAY = Theme(
+        /** The calm daylight the other looks start from: off-white ground, brick and terracotta, steel-blue canals. */
+        private val BASE = Theme(
             name = "day",
             skyTop = c("#9DBDE3"), skyHorizon = c("#F1E8DC"), fog = c("#EEE9E2"), fogMax = 0.8f,
             ambient = c("#93A6CC"), ambientK = 0.62f, sun = c("#FFEBCB"), sunK = 0.8f, skyK = 1.05f,
@@ -135,14 +151,58 @@ data class Theme(
             placeLabel = c("#4D4742"), waterLabel = c("#2F5582"), roadLabel = c("#5E574F"), numberLabel = c("#7A7268"), halo = c("#F7F4EE"),
         )
 
+        /**
+         * The boards' daylight, as the Main board draws it (the living map's sunny moment): sand-grey ground with the
+         * mapped land use over it, streets in their paving colour at their real widths, sky-lit water darkening down the
+         * screen with wind streaks, brick quays, crowns turning with the season, a hard sun and a thin haze far out.
+         */
+        val DAY = BASE.copy(
+            skyTop = c("#7FA6DA"), skyHorizon = c("#DCE7F2"), fog = c("#DFE6EE"), fogMax = 0.22f * 0.85f,
+            fogStart = 0.85f, fogPower = 1.3f, fogRange = 2.2f,
+            ambient = c("#93A6CC"), ambientK = 0.6f, sun = c("#FFEBCB"), sunK = 1f, skyK = 1f, tone = false,
+            shadow = c("#27305A"), shadowOpacity = 0.32f,
+            earth = c("#D6CFC2"),
+            land = BASE.land + mapOf(
+                // The living map's land cover by kind, then the canal town's own areas over it (grass, squares, parking).
+                "residential" to "#E4DFD6", "industrial" to "#D3CEC6", "commercial" to "#E0D8D0", "retail" to "#E4D7D0",
+                "construction" to "#D9CDB9", "railway" to "#D2CCC3", "military" to "#D6D2C6", "brownfield" to "#D7CDBC",
+                "greenfield" to "#CBD3A8", "education" to "#E2DBCF", "school" to "#E2DBCF", "university" to "#E2DBCF",
+                "college" to "#E2DBCF", "kindergarten" to "#E2DBCF", "library" to "#E2DBCF", "farmland" to "#D8D4AC",
+                "farm" to "#D8D4AC", "farmyard" to "#D9CFB8", "meadow" to "#C2D19B", "grassland" to "#BFCF9C",
+                "village_green" to "#B8CC96", "recreation_ground" to "#B8CC96", "cemetery" to "#B4C2A0", "allotments" to "#C7CE9A",
+                "orchard" to "#B6C98C", "golf_course" to "#B1CD8E", "heath" to "#BCAB8C", "scrub" to "#9CB084",
+                "forest" to "#7E9B6B", "wood" to "#7E9B6B", "wetland" to "#A6BBAB", "sand" to "#E4D6B3", "beach" to "#EDE1C1",
+                "dune" to "#E4D6B3", "bare_rock" to "#B1ACA2", "rock" to "#ADA89F", "scree" to "#B5B0A6", "pitch" to "#A3C28C",
+                "track" to "#C98F74", "flowerbed" to "#B9C48F", "playground" to "#D9B48A", "parking" to "#C9C4BA",
+                "park" to "#A9C38A", "garden" to "#A9C38A", "grass" to "#A9C38A",
+            ).mapValues { c(it.value) },
+            water = c("#4F7590"), waterTop = c("#A6BFD4"), waterBottom = c("#2D506C"), waterVeil = 0.12f, waterEdge = null,
+            glint = c("#FFFFFF"), glintAlpha = 0.23f,
+            quayWall = c("#6E5546"), quayTop = c("#B8B0A2"), quayFoot = c("#2C2A22"), quayBack = c("#E4DFD6"),
+            roads = mapOf(
+                // Big roads in asphalt, the rest in the street default (no surface is in the tiles), cycle tracks red.
+                "motorway" to paint("#77777A", null), "trunk" to paint("#77777A", null), "primary" to paint("#77777A", null),
+                "secondary" to paint("#C9C1B4", null), "tertiary" to paint("#C9C1B4", null), "minor" to paint("#C9C1B4", null),
+                "busway" to paint("#C9C1B4", null), "service" to paint("#C9C1B4", null), "track" to paint("#C4C2BC", null),
+                "raceway" to paint("#9B9A99", null), "path" to paint("#C9C1B4", null), "footway" to paint("#C9C1B4", null),
+                "pedestrian" to paint("#DCD3C4", null), "cycleway" to paint("#C98A7A", null), "steps" to paint("#C9C1B4", null),
+                "bridleway" to paint("#C4C2BC", null), "platform" to paint("#CFC6B6", null), "pier" to paint("#A89A86", null),
+                "ferry" to paint("#8FB0D4", null),
+            ),
+            pedestrianArea = c("#DCD3C4"), bridgeArea = c("#CFC6B6"), pier = c("#A89A86"), platform = c("#CFC6B6"),
+            rail = c("#A0978B"), railTie = c("#5E5A56"), tram = c("#6E6A66"),
+            treeMid = c("#4E6B35"), treeAutumn = c("#9C8A36"),
+            placeLabel = c("#3A3F4B"), waterLabel = c("#2F5A84"), halo = c("#FFFFFF"),
+        )
+
         /** Night: dark ground and blue-grey buildings, windows lit warm. */
-        val NIGHT = DAY.copy(
+        val NIGHT = BASE.copy(
             name = "night", night = true,
             skyTop = c("#050814"), skyHorizon = c("#1C2340"), fog = c("#161D36"), fogMax = 0.85f,
             ambient = c("#39456B"), ambientK = 0.5f, sun = c("#000000"), sunK = 0f, tone = false,
             shadow = c("#000000"), shadowOpacity = 0f,
             earth = c("#171B27"),
-            land = DAY.land.mapValues { (k, v) ->
+            land = BASE.land.mapValues { (k, v) ->
                 when (k) {
                     "wood", "forest", "scrub", "grass", "grassland", "meadow", "park", "garden", "village_green", "recreation_ground",
                     "allotments", "golf_course", "cemetery", "pitch", "flowerbed" -> c("#111E22")
@@ -172,13 +232,13 @@ data class Theme(
         )
 
         /** A nautical chart for boats: buff land, pale water deepening from the shore, calm yellow buildings. */
-        val CHART = DAY.copy(
+        val CHART = BASE.copy(
             name = "chart", chart = true,
             skyTop = c("#B9CFE6"), skyHorizon = c("#EEF1EE"), fog = c("#EEF0EC"), fogMax = 0.7f,
             ambient = c("#A9B4C8"), ambientK = 0.7f, sun = c("#FFF4DE"), sunK = 0.55f, skyK = 1.1f,
             shadow = c("#6B5A2E"), shadowOpacity = 0.12f,
             earth = c("#F1E2B2"),
-            land = DAY.land.mapValues { (k, v) ->
+            land = BASE.land.mapValues { (k, v) ->
                 when (k) {
                     "wood", "forest", "scrub", "grass", "grassland", "meadow", "park", "garden", "village_green", "recreation_ground",
                     "allotments", "golf_course", "cemetery", "pitch", "flowerbed" -> c("#D7DB9E")
@@ -188,7 +248,7 @@ data class Theme(
             water = c("#E4F2F9"), waterShallow = c("#A7D3EC"), waterShallow2 = c("#C6E4F3"), waterEdge = null, glint = null,
             park = c("#EADFAE"), parkEdge = c("#B5AE72"),
             quayWall = c("#C8B37C"), quayTop = c("#E6D7A6"),
-            roads = DAY.roads.mapValues { (k, _) ->
+            roads = BASE.roads.mapValues { (k, _) ->
                 when (k) {
                     "motorway", "trunk", "primary" -> paint("#F7EBC7", "#D2BC7E")
                     "ferry" -> paint("#C2185B", null)
@@ -208,13 +268,13 @@ data class Theme(
         )
 
         /** A calm grey look: paper-white buildings, soft shadows, colour kept for water and parks only. */
-        val GRAY = DAY.copy(
+        val GRAY = BASE.copy(
             name = "gray",
             skyTop = c("#DCE3EA"), skyHorizon = c("#F2F2F0"), fog = c("#F0F0EE"), fogMax = 0.78f,
             ambient = c("#C9CCD6"), ambientK = 0.72f, sun = c("#FFF6EC"), sunK = 0.5f, skyK = 1.15f,
             shadow = c("#5A6275"), shadowOpacity = 0.12f,
             earth = c("#F1F0EC"),
-            land = DAY.land.mapValues { (k, v) ->
+            land = BASE.land.mapValues { (k, v) ->
                 when (k) {
                     "wood", "forest", "scrub", "grass", "grassland", "meadow", "park", "garden", "village_green", "recreation_ground",
                     "allotments", "golf_course", "cemetery", "pitch", "flowerbed" -> c("#DCE3D5")
@@ -224,7 +284,7 @@ data class Theme(
             water = c("#C9D7E5"), waterEdge = c("#DCE5EE"), glint = c("#E2E9F1"),
             park = c("#E9ECE4"), parkEdge = c("#C8D2C0"),
             quayWall = c("#C4C6CB"), quayTop = c("#E8E8E4"),
-            roads = DAY.roads.mapValues { (k, v) ->
+            roads = BASE.roads.mapValues { (k, v) ->
                 if (k == "ferry") paint("#B9C9DA", null) else RoadPaint(c("#FFFFFF"), v.casing?.let { c("#DDDCD8") })
             },
             pedestrianArea = c("#F6F6F3"), bridgeArea = c("#ECECE8"), bridgeSide = c("#CFCFCB"), pier = c("#ECECE8"),

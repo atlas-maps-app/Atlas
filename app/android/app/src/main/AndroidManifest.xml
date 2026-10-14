@@ -10,6 +10,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- The guidance notification as a Live Update (Android 16+); not a runtime permission. -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <!-- Mic search; asked for only when the mic is tapped. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
@@ -81,6 +83,12 @@
             Services go here: the go package adds NavigationService (android:foregroundServiceType="location",
             exported="false"), and Android Auto's CarAppService with its NAVIGATION category when it comes.
         -->
+
+        <!-- The go package: a guided trip or Ears only, kept going with the screen off (started only from a visible screen). -->
+        <service
+            android:name=".ui.go.NavigationService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
 
     </application>
 

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Eat & drink in German: the words on the objects, titles and tabs; everything else falls back to English. -->
+<resources>
+    <string name="eat_title">Essen &amp; Trinken</string>
+    <string name="eat_meal_breakfast">Frühstück</string>
+    <string name="eat_meal_lunch">Mittag</string>
+    <string name="eat_meal_afternoon">Kaffee</string>
+    <string name="eat_meal_dinner">Abendessen</string>
+    <string name="eat_meal_late">Spät</string>
+    <string name="eat_map">Karte</string>
+    <string name="eat_pad">Bestellblock</string>
+    <string name="eat_ask">Frag den Kellner</string>
+    <string name="eat_now">Jetzt</string>
+    <string name="eat_done">Fertig</string>
+    <string name="eat_carte">Karte</string>
+    <string name="eat_cafe">Café</string>
+    <string name="eat_late">Spät</string>
+    <string name="eat_bar">BAR</string>
+    <string name="eat_sweets">Süßes</string>
+    <string name="eat_market">Markt</string>
+    <string name="eat_open_count">offen</string>
+    <string name="eat_surprise">Überrasch mich</string>
+    <string name="eat_try_again">Nochmal</string>
+    <string name="eat_closes_at">schließt %1$s</string>
+    <string name="eat_opens_at">öffnet %1$s</string>
+    <string name="eat_la_carte">La Carte</string>
+    <string name="eat_sort_nearest">Nächste</string>
+    <string name="eat_sort_most">Meiste</string>
+    <string name="eat_sort_rated">Beste</string>
+    <string name="eat_sort_az">A–Z</string>
+    <string name="eat_guest_check">Bestellzettel</string>
+    <string name="eat_order_serve">Servieren</string>
+    <string name="eat_bar_title">DIE BAR</string>
+    <string name="eat_bar_last_call">letzte Runde %1$s</string>
+    <string name="eat_cafe_title">Kaffee &amp; Co.</string>
+    <string name="eat_cafe_open_now">%1$d jetzt offen</string>
+    <string name="eat_special">Tagesempfehlung</string>
+    <string name="eat_late_title">Späte Happen</string>
+    <string name="eat_market_days">Markttage</string>
+    <string name="eat_tab_trending">Im Kommen</string>
+    <string name="eat_tab_top">Top bewertet</string>
+    <string name="eat_tab_new">Neu</string>
+    <string name="eat_no_ratings_yet">Noch keine Bewertungen</string>
+    <string name="eat_card_write_one">Schreib eine</string>
+</resources>

@@ -24,38 +24,56 @@ class WaterTest {
     }
 
     @Test
-    fun banksAreLightAndGlintsComeCloseUp() {
-        val z15 = SceneBuilder.build(canal, child(15), Look.DAY, source = source).ground
-        val z16 = SceneBuilder.build(canal, child(16), Look.DAY, source = source).ground
-        val edge = Theme.DAY.waterEdge!!
-        val glint = Theme.DAY.glint!!
-        assertTrue("bank band at z15", z15.colours.count { it == edge } >= 4)
-        assertEquals("no glints at z15", 0, z15.colours.count { it == glint })
-        assertTrue("glints at z16", z16.colours.count { it == glint } >= 8)
-        // The band lies on the water, in the canal, never on land.
-        for (v in 0 until z16.vertexCount) {
-            if (z16.colours[v] != edge && z16.colours[v] != glint) continue
-            assertEquals(GroundBuilder.WATER_Z, z16.z(v), 0.05f)
-        }
+    fun banksAreLightWhereTheLookHasThemAndStreaksLieOnOpenWater() {
+        // The calm grey look keeps a light band along the banks, on the water, never on land.
+        val gray = Look(Theme.GRAY)
+        val edge = Theme.GRAY.waterEdge!!
+        val banded = SceneBuilder.build(canal, child(15), gray, source = source).ground
+        assertTrue("bank band at z15", banded.colours.count { it == edge } >= 4)
+        for (v in 0 until banded.vertexCount) if (banded.colours[v] == edge) assertEquals(GroundBuilder.WATER_Z, banded.z(v), 0.05f)
+        // The boards' daylight has none: its quays meet the water. Its water is coloured by the screen (keyed), and its
+        // wind streaks are seeds on the water, from zoom 13 in.
+        assertEquals(null, Theme.DAY.waterEdge)
+        val day = SceneBuilder.build(canal, child(16), Look.DAY, source = source)
+        assertEquals(0, day.ground.colours.count { it == edge })
+        assertTrue("keyed water", day.ground.colours.count { it == ScreenWater.key(Theme.DAY.water) } >= 3)
+        assertTrue("streaks at z16", day.glints.count >= 8)
+        for (i in 0 until day.glints.count) assertEquals(GroundBuilder.WATER_Z, day.glints.z, 0.05f)
+        val far = SceneBuilder.build(canal, TileId(12, source.x / 4, source.y / 4), Look.DAY, source = TileId(12, source.x / 4, source.y / 4))
+        assertEquals("no streaks below zoom 13", 0, far.glints.count)
         // Not on a chart: its water shades by depth instead.
-        val chart = SceneBuilder.build(canal, child(16), Look.CHART, source = source).ground
-        assertEquals(0, chart.colours.count { it == edge || it == glint })
+        val chart = SceneBuilder.build(canal, child(16), Look.CHART, source = source)
+        assertEquals(0, chart.glints.count)
+        assertEquals(0, chart.ground.colours.count { (it ushr 24) == ScreenWater.KEY_ALPHA })
     }
 
     @Test
-    fun glintsKeepClearOfTheBanks() {
+    fun streaksKeepClearOfTheBanks() {
         val s = SceneBuilder.build(canal, child(17), Look.DAY, source = source)
-        val g = s.ground
+        val g = s.glints
         val k = TileFrame(s.id, source).scale(4096)
         val top = (1500 - TileFrame(s.id, source).transform.top * 4096) * k
         val bottom = (1560 - TileFrame(s.id, source).transform.top * 4096) * k
-        var n = 0
-        for (v in 0 until g.vertexCount) {
-            if (g.colours[v] != Theme.DAY.glint) continue
-            n++
-            assertTrue("a glint at y ${g.y(v)} outside the canal $top..$bottom", g.y(v) > top + 1.0 && g.y(v) < bottom - 1.0)
+        assertTrue(g.count > 0)
+        for (i in 0 until g.count) {
+            // A streak reaches no nearer than a metre to either bank, however it turns on the screen.
+            assertTrue("a streak at y ${g.y[i]} reaching ${g.reach[i]} outside $top..$bottom", g.y[i] - g.reach[i] >= top + 0.99 && g.y[i] + g.reach[i] <= bottom - 0.99)
         }
-        assertTrue(n > 0)
+    }
+
+    @Test
+    fun streaksKeepClearOfBridges() {
+        // A street on a bridge across the canal: no streak may reach onto its deck.
+        val vt = MiniMvt()
+            .layer("water") { polygon(rect(-64, 1500, 4160, 1560), props = mapOf("class" to "river")) }
+            .layer("transportation") { line(intArrayOf(2000, 1400, 2000, 1660), props = mapOf("class" to "minor", "brunnel" to "bridge")) }
+            .build()
+        val s = SceneBuilder.build(vt, child(17), Look.DAY, source = source)
+        val f = TileFrame(s.id, source)
+        val k = f.scale(4096)
+        val bridgeX = (2000 - f.transform.left * 4096) * k
+        assertTrue(s.glints.count > 0)
+        for (i in 0 until s.glints.count) assertTrue(kotlin.math.abs(s.glints.x[i] - bridgeX) - s.glints.reach[i] >= 2.75 + 0.99)
     }
 
     @Test
@@ -70,10 +88,11 @@ class WaterTest {
         val quays = (0 until g.faceCount).filter { g.faceKind[it] == FaceMesh.TWO_SIDED }
         assertTrue(quays.isNotEmpty())
         for (f in quays) assertEquals("a quay at y ${g.faceCentre[3 * f + 1]}", bank, g.faceCentre[3 * f + 1], 0.01f)
-        // The light band lies along the bank only: within a few metres of it.
-        val edge = Theme.DAY.waterEdge!!
+        // The light band (in a look that has one) lies along the bank only: within a few metres of it.
+        val gray = SceneBuilder.build(vt, scene, Look(Theme.GRAY), source = source).ground
+        val edge = Theme.GRAY.waterEdge!!
         var band = 0
-        for (v in 0 until g.vertexCount) if (g.colours[v] == edge) { band++; assertEquals(bank, g.y(v), 0.01f) }
+        for (v in 0 until gray.vertexCount) if (gray.colours[v] == edge) { band++; assertEquals(bank, gray.y(v), 0.01f) }
         assertTrue(band > 0)
     }
 
