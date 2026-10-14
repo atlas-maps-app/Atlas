@@ -1,6 +1,6 @@
 # Atlas, the app
 
-Start here. The brief is in the [README](../README.md); the boards are the spec: the [Main canvas](https://claude.ai/artifact/Dapy8WL82jeyUhqPKPmA5L), every screen as a picture in `cache/pictures/img/`, their stars and your requests in the [Studio](https://claude.ai/artifact/91R7EDZTwhvELNpH6nvfSB). Atlas's own map engine, in Python, is `render/` (its README says how it draws from real data) and the data it draws from is `data/`.
+Start here. The brief is in the [README](../README.md). The boards are the spec: `canvas/project/` (each board's HTML, CSS and SVG are the material the screens are built from), every screen as a picture in `cache/pictures/img/`, and their stars and your requests in the Studio ([WORKING.md](../WORKING.md)). Atlas's own map engine, in Python, is `render/` (its README says how it draws from real data), and the data it draws from is `data/`.
 
 Everything about the app is decided here, in its code and in this file. Nothing sits in between: no plan page, no procedure. A decision is written down the day it is made, under Decisions.
 
