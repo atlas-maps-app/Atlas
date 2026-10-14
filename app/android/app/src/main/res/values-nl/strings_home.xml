@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="home_search_hint">Zoek of vraag</string>
+    <string name="home_search">Zoeken</string>
+    <string name="home_near">A bij B</string>
+    <string name="home_mic">Zoeken met je stem</string>
+    <string name="home_compass">Noorden boven</string>
+    <string name="home_3d_on">3D-gebouwen aan</string>
+    <string name="home_3d_off">3D-gebouwen uit</string>
+    <string name="home_layers">Kaartlagen</string>
+    <string name="home_locate">Toon mijn locatie</string>
+    <string name="home_follow">Volg mijn richting</string>
+    <string name="home_globe">Uitzoomen naar de wereldbol</string>
+    <string name="home_weather">%1$s, %2$s</string>
+    <string name="home_weather_kept">bewaarde verwachting</string>
+    <string name="home_offline_ready">Dit gebied werkt offline</string>
+    <string name="home_online_only">Dit gebied heeft verbinding nodig; download het bij Offline</string>
+    <string name="home_offline_now">Geen verbinding</string>
+    <string name="home_moments">%1$d dingen op komst</string>
+    <string name="home_need_water">Drinkwater</string>
+    <string name="home_need_food">Eten</string>
+    <string name="home_need_toilet">Toilet</string>
+    <string name="home_wc">WC</string>
+    <string name="home_attribution">© OpenStreetMap</string>
+    <string name="home_results_count">%1$d in de buurt</string>
+    <string name="home_results_none">Niets van deze soort in de buurt in kaart gebracht</string>
+    <string name="home_results_offline">Van de kaart op deze telefoon · online komen openingstijden erbij</string>
+    <string name="home_results_online">Van OpenStreetMap, nu</string>
+    <string name="home_results_error">OpenStreetMap gaf geen antwoord: %1$s</string>
+    <string name="home_results_all">Alles</string>
+    <string name="home_close_results">Lijst sluiten</string>
+    <string name="home_location_title">Waar ben je?</string>
+    <string name="home_location_text">Je positie blijft op deze telefoon. Ze zet je op de kaart en geeft looptijden.</string>
+    <string name="home_location_allow">Toestaan</string>
+    <string name="home_location_later">Niet nu</string>
+    <string name="home_location_settings">Instellingen openen</string>
+    <string name="home_moment_rain">Regen om %1$s</string>
+    <string name="home_moment_dry">Droog vanaf %1$s</string>
+    <string name="home_moment_sunset">Zonsondergang %1$s</string>
+    <string name="home_moment_golden">Gouden uur %1$s</string>
+    <string name="home_moment_uv">UV %1$d</string>
+    <string name="home_moment_wind">Windstoten %1$d km/u om %2$s</string>
+</resources>

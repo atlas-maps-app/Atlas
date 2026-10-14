@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="go_title">Go</string>
+    <string name="go_where">Where to?</string>
+    <string name="go_how">How are you going?</string>
+    <string name="go_mode_walk">Walk</string>
+    <string name="go_mode_bike">Bike</string>
+    <string name="go_mode_car">Car</string>
+    <string name="go_mode_transit">Transit</string>
+    <string name="go_mode_truck">Truck</string>
+    <string name="go_mode_boat">Boat</string>
+    <string name="go_route_title">Route</string>
+    <string name="go_from_here">Here</string>
+    <string name="go_pick_destination">Pick a destination</string>
+    <string name="go_start">Go</string>
+    <string name="go_straight">%1$s as the crow flies</string>
+    <string name="go_navigate_title">Navigate</string>
+    <string name="go_ears_title">Ears only</string>
+    <string name="go_ears_text">The world around you by sound, with the screen off.</string>
+    <string name="go_vehicle_title">Your vehicle</string>
+    <string name="go_vehicle_text">Height, width, weight and length decide where the route may go.</string>
+</resources>

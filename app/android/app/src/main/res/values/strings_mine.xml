@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mine_title">Mine</string>
+    <string name="mine_no_account">No account · all on this phone</string>
+    <string name="mine_settings">Settings</string>
+    <string name="mine_settings_title">Your Atlas</string>
+    <string name="mine_units">Units</string>
+    <string name="mine_offline">Offline regions</string>
+    <string name="mine_data">Data sources &amp; keys</string>
+    <string name="mine_privacy">On this phone</string>
+    <string name="mine_privacy_head">No account. No ads. No trackers.</string>
+    <string name="mine_privacy_text">Nothing about you leaves the phone unless you share it.</string>
+    <string name="mine_about">About &amp; licences</string>
+    <string name="mine_about_text">Map data © OpenStreetMap contributors (ODbL). Tiles by OpenFreeMap. Routing by BRouter. Weather by Open-Meteo.com (CC BY 4.0). Reviews by Mangrove (CC BY 4.0). Fonts: Inter and Instrument Serif (OFL). Symbols: Maki, Temaki (CC0) and Lucide (ISC).</string>
+    <string name="mine_welcome">Welcome</string>
+    <string name="mine_welcome_text">Everything works with no signal: maps, routes, places, voice.</string>
+    <string name="mine_layers">Map look</string>
+    <string name="mine_layers_3d">3D buildings</string>
+    <string name="mine_theme_auto">Auto</string>
+    <string name="mine_theme_day">Day</string>
+    <string name="mine_theme_night">Night</string>
+    <string name="mine_weather">Weather</string>
+    <string name="mine_weather_none">No forecast: no connection, and none kept on the phone for here.</string>
+    <string name="mine_weather_kept">Kept forecast from %1$s</string>
+    <string name="mine_regions_none">No regions yet. Add one to use the map with no signal.</string>
+    <string name="mine_region_add">Add a region</string>
+    <string name="mine_region_pick">Take this area offline</string>
+    <string name="mine_region_name">Around here</string>
+    <string name="mine_region_download">Download the map</string>
+    <string name="mine_charge">Charge</string>
+    <string name="mine_charging_route">Charging route</string>
+    <string name="mine_charging_route_text">A route with charging stops, from OpenStreetMap and Open Charge Map.</string>
+    <string name="mine_key_set">key set</string>
+    <string name="mine_key_needed">needs a key</string>
+</resources>

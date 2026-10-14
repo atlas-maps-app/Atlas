@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="home_search_hint">Chercher ou demander</string>
+    <string name="home_search">Chercher</string>
+    <string name="home_near">A près de B</string>
+    <string name="home_mic">Chercher à la voix</string>
+    <string name="home_compass">Nord en haut</string>
+    <string name="home_3d_on">Bâtiments 3D activés</string>
+    <string name="home_3d_off">Bâtiments 3D désactivés</string>
+    <string name="home_layers">Couches de la carte</string>
+    <string name="home_locate">Afficher ma position</string>
+    <string name="home_follow">Suivre ma direction</string>
+    <string name="home_globe">Dézoomer jusqu’au globe</string>
+    <string name="home_need_water">Eau potable</string>
+    <string name="home_need_food">À manger</string>
+    <string name="home_need_toilet">Toilettes</string>
+    <string name="home_location_title">Où êtes-vous ?</string>
+    <string name="home_location_text">Votre position reste sur ce téléphone. Elle vous place sur la carte et donne les temps de marche.</string>
+    <string name="home_location_allow">Autoriser</string>
+    <string name="home_location_later">Plus tard</string>
+    <string name="home_moment_rain">Pluie à %1$s</string>
+    <string name="home_moment_dry">Sec à partir de %1$s</string>
+    <string name="home_moment_sunset">Coucher du soleil %1$s</string>
+</resources>

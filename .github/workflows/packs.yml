@@ -1,0 +1,266 @@
+# Builds Atlas's offline packs and publishes them as GitHub release assets (free hosting that serves HTTP ranges).
+# For each region of app/android/packs/regions.json, from Geofabrik's extract: the map tiles (Planetiler, OpenMapTiles
+# schema, PMTiles, the schema OpenFreeMap serves) and the place store `:search` reads (`packer places`, gzipped SQLite).
+# A run uploads to a dated release packs-YYYYMMDD, then writes packs.json there and to the fixed release packs-latest,
+# which the app reads (PackCatalog in :tiles). A region whose build fails keeps its previous entry in packs.json.
+name: Packs
+
+on:
+  workflow_dispatch:
+    inputs:
+      regions:
+        description: Region ids from app/android/packs/regions.json, comma-separated (empty for all)
+        required: false
+        default: ''
+  schedule:
+    # Monthly, on the 2nd at 02:17 UTC: Geofabrik's extracts of the 1st are out by then.
+    - cron: '17 2 2 * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: packs
+  cancel-in-progress: false
+
+env:
+  PLANETILER_VERSION: 0.10.2
+  PLANETILER_SHA256: f310bd0413e2e4512b27f4046d418664e8e1d3bf31603c2a70e23de06c167e4d
+  GH_REPO: ${{ github.repository }}
+  USER_AGENT: Atlas-packs/1 (+https://github.com/atlas-maps-app/Atlas)
+  RELEASE_NOTES: |
+    Offline packs for Atlas, built by .github/workflows/packs.yml for the regions in app/android/packs/regions.json.
+    packs.json lists every pack with its box, the time its OpenStreetMap data is current to, and its files with sizes
+    and SHA-256 checksums; packs-latest always holds the newest list. A file over 2 GB comes in parts (.000, .001…)
+    to be joined in order.
+
+    Map data © OpenStreetMap contributors, under the Open Database Licence (ODbL 1.0):
+    https://www.openstreetmap.org/copyright. The place stores (*.places.db.gz) are derived databases and are
+    themselves available under the ODbL; the map tiles (*.pmtiles) are produced works. Extracts by Geofabrik
+    (https://download.geofabrik.de). Tiles in the OpenMapTiles schema (© OpenMapTiles, CC-BY 4.0,
+    https://openmaptiles.org), built with Planetiler (Apache-2.0) from OpenStreetMap, OSM water polygons
+    (osmdata.openstreetmap.de, ODbL) and Natural Earth (public domain).
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Regions to build
+        id: plan
+        env:
+          REGIONS: ${{ github.event.inputs.regions }}
+        run: |
+          set -euo pipefail
+          FILE=app/android/packs/regions.json
+          # shellcheck disable=SC2016 # jq's own variables, not the shell's
+          WANT='($ids | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)))'
+          UNKNOWN=$(jq -r --arg ids "${REGIONS:-}" "$WANT - [.regions[].id] | join(\",\")" "$FILE")
+          if [ -n "$UNKNOWN" ]; then echo "::error::Unknown regions: $UNKNOWN"; exit 1; fi
+          MATRIX=$(jq -c --arg ids "${REGIONS:-}" "$WANT as \$want
+            | [.regions[] | select((\$want | length) == 0 or (.id as \$i | \$want | index(\$i) != null))
+               | {id, name, url, bbox: (.bbox | map(tostring) | join(\",\")), clip: (.clip // false)}]" "$FILE")
+          if [ "$(jq length <<< "$MATRIX")" -eq 0 ]; then echo "::error::No regions to build"; exit 1; fi
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "tag=packs-$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          jq -r '.[] | "- \(.id): \(.name) from \(.url)"' <<< "$MATRIX" >> "$GITHUB_STEP_SUMMARY"
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$RELEASE_NOTES" > "$RUNNER_TEMP/notes.md"
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --title "Offline packs ${TAG#packs-}" --notes-file "$RUNNER_TEMP/notes.md" --latest=false --target "$GITHUB_SHA"
+          fi
+
+  sources:
+    # Planetiler's other sources (OSM water polygons, Natural Earth, lake centre lines: about 1 GB), fetched once a
+    # month for every job rather than once per region.
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+    steps:
+      - id: key
+        run: echo "key=planetiler-sources-${PLANETILER_VERSION}-$(date -u +%Y%m)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        id: cache
+        with:
+          path: planetiler/data/sources
+          key: ${{ steps.key.outputs.key }}
+      - uses: actions/setup-java@v6
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Download
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p planetiler && cd planetiler
+          curl -fsSL --retry 5 -o planetiler.jar "https://github.com/onthegomap/planetiler/releases/download/v${PLANETILER_VERSION}/planetiler.jar"
+          echo "${PLANETILER_SHA256}  planetiler.jar" | sha256sum -c -
+          java -Xmx2g -jar planetiler.jar --only-download --download --area=monaco
+          rm -f data/sources/*.osm.pbf planetiler.jar
+          du -sh data/sources/*
+
+  build:
+    needs: [plan, sources]
+    # without the month's sources each job fetches its own
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    name: ${{ matrix.region.id }}
+    runs-on: ubuntu-latest
+    # The runner's limits: 6 hours, 16 GB of memory, 14 GB of disk (more once the preinstalled tools are gone).
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        region: ${{ fromJson(needs.plan.outputs.matrix) }}
+    env:
+      ID: ${{ matrix.region.id }}
+      NAME: ${{ matrix.region.name }}
+      PBF_URL: ${{ matrix.region.url }}
+      BBOX: ${{ matrix.region.bbox }}
+      CLIP: ${{ matrix.region.clip }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          # 21 for Planetiler; the last is the default, 17, for Gradle and the packer
+          java-version: |
+            21
+            17
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Android SDK 37
+        # Gradle configures every module of the build, the Android ones too
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" > /dev/null
+      - name: Build the packer
+        working-directory: app/android
+        run: ./gradlew :packer:installDist --stacktrace
+      - name: Make room
+        run: |
+          set -euo pipefail
+          df -h / /mnt || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/share/powershell
+          sudo docker image prune --all --force > /dev/null 2>&1 || true
+          # work on whichever disk has more room
+          WORK="$RUNNER_TEMP/packs"
+          if [ -d /mnt ] && [ "$(df --output=avail -B1 /mnt | tail -1)" -gt "$(df --output=avail -B1 "$RUNNER_TEMP" | tail -1)" ]; then
+            sudo mkdir -p /mnt/packs && sudo chown "$(id -u):$(id -g)" /mnt/packs && WORK=/mnt/packs
+          fi
+          mkdir -p "$WORK/out" "$WORK/planetiler"
+          echo "WORK=$WORK" >> "$GITHUB_ENV"
+          df -h / /mnt || true
+      - uses: actions/cache/restore@v6
+        id: sources
+        with:
+          path: planetiler/data/sources
+          key: ${{ needs.sources.outputs.key }}
+      - name: Download the extract
+        run: |
+          set -euo pipefail
+          mv planetiler/data "$WORK/planetiler/" 2> /dev/null || true
+          PBF="$WORK/$ID.osm.pbf"
+          for attempt in 1 2; do
+            curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$PBF" "$PBF_URL"
+            curl -fsSL --retry 5 -A "$USER_AGENT" -o "$PBF.md5" "$PBF_URL.md5"
+            # Geofabrik's checksum file names the file as published; compare the sums only
+            if [ "$(cut -d' ' -f1 "$PBF.md5")" = "$(md5sum "$PBF" | cut -d' ' -f1)" ]; then break; fi
+            # the extract may have been replaced between the two downloads
+            if [ "$attempt" = 2 ]; then echo "::error::$PBF_URL does not match its MD5"; exit 1; fi
+            sleep 60
+          done
+          ls -l "$PBF"
+      - name: Places
+        env:
+          JAVA_OPTS: -Xmx10g
+        run: |
+          set -euo pipefail
+          ARGS=(--name "$NAME")
+          if [ "$CLIP" = "true" ]; then ARGS+=(--bbox "$BBOX"); fi
+          app/android/packer/build/install/packer/bin/packer places "$WORK/$ID.osm.pbf" "$WORK/out/$ID.places.db" "${ARGS[@]}"
+          df -h "$WORK"
+      - name: Tiles
+        working-directory: ${{ env.WORK }}/planetiler
+        env:
+          # Planetiler fetches again any source whose size changed upstream (the water polygons do daily): only
+          # without the month's copy
+          DOWNLOAD: ${{ steps.sources.outputs.cache-hit != 'true' }}
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 5 -o planetiler.jar "https://github.com/onthegomap/planetiler/releases/download/v${PLANETILER_VERSION}/planetiler.jar"
+          echo "${PLANETILER_SHA256}  planetiler.jar" | sha256sum -c -
+          ARGS=()
+          if [ "$CLIP" = "true" ]; then ARGS+=("--bounds=$BBOX"); fi
+          if [ "$DOWNLOAD" = "true" ]; then ARGS+=(--download); fi
+          "$JAVA_HOME_21_X64/bin/java" -Xmx8g -jar planetiler.jar \
+            --osm-path="$WORK/$ID.osm.pbf" --output="$WORK/out/$ID.pmtiles" \
+            --force --tmpdir="$WORK/planetiler/tmp" "${ARGS[@]}"
+          rm -rf "$WORK/planetiler/tmp" "$WORK/$ID.osm.pbf"
+          df -h "$WORK"
+      - name: Upload
+        run: |
+          set -euo pipefail
+          # files over 2 GB (GitHub's limit for an asset) go up in parts
+          app/android/packer/build/install/packer/bin/packer manifest "$WORK/out" \
+            "https://github.com/$GH_REPO/releases/download/$TAG" --regions app/android/packs/regions.json
+          rm -f "$WORK/out/packs.json"
+          ls -l "$WORK/out"
+          gh release upload "$TAG" "$WORK"/out/"$ID".* --clobber
+          jq -r '"- \(.id): " + ([.files[] | "\(.kind) \(.bytes / 1048576 | floor) MiB"] | join(", ")) + ", OSM data of \(.osm_timestamp // "?")"' \
+            "$WORK/out/$ID.pack.json" >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    needs: [plan, build]
+    if: ${{ always() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Android SDK 37
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" > /dev/null
+      - name: Build the packer
+        working-directory: app/android
+        run: ./gradlew :packer:installDist --stacktrace
+      - name: packs.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/entries" "$RUNNER_TEMP/previous"
+          gh release download "$TAG" --pattern '*.pack.json' --dir "$RUNNER_TEMP/entries" || true
+          gh release download packs-latest --pattern packs.json --dir "$RUNNER_TEMP/previous" || true
+          ARGS=()
+          if [ -s "$RUNNER_TEMP/previous/packs.json" ]; then ARGS+=(--previous "$RUNNER_TEMP/previous/packs.json"); fi
+          app/android/packer/build/install/packer/bin/packer manifest "$RUNNER_TEMP/entries" \
+            "https://github.com/$GH_REPO/releases/download/$TAG" --regions app/android/packs/regions.json \
+            --out "$RUNNER_TEMP/packs.json" "${ARGS[@]}"
+          if [ "$(jq '.packs | length' "$RUNNER_TEMP/packs.json")" -eq 0 ]; then echo "::error::No pack was built"; exit 1; fi
+          jq -r '.packs[] | "- \(.id): \(.release), OSM data of \(.osm_timestamp // "?")"' "$RUNNER_TEMP/packs.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$RELEASE_NOTES" > "$RUNNER_TEMP/notes.md"
+          gh release upload "$TAG" "$RUNNER_TEMP/packs.json" --clobber
+          if ! gh release view packs-latest > /dev/null 2>&1; then
+            gh release create packs-latest --title "Offline packs: the latest list" --notes-file "$RUNNER_TEMP/notes.md" --latest=false --target "$GITHUB_SHA"
+          fi
+          gh release delete-asset packs-latest packs.json --yes 2> /dev/null || true
+          gh release upload packs-latest "$RUNNER_TEMP/packs.json"
+          gh release edit packs-latest --notes-file "$RUNNER_TEMP/notes.md"

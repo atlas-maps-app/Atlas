@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mine_title">Mijn</string>
+    <string name="mine_no_account">Geen account · alles op deze telefoon</string>
+    <string name="mine_settings">Instellingen</string>
+    <string name="mine_settings_title">Jouw Atlas</string>
+    <string name="mine_units">Eenheden</string>
+    <string name="mine_offline">Offline gebieden</string>
+    <string name="mine_data">Gegevensbronnen &amp; sleutels</string>
+    <string name="mine_privacy">Op deze telefoon</string>
+    <string name="mine_privacy_head">Geen account. Geen reclame. Geen trackers.</string>
+    <string name="mine_privacy_text">Niets over jou verlaat de telefoon, tenzij je het deelt.</string>
+    <string name="mine_about">Over &amp; licenties</string>
+    <string name="mine_about_text">Kaartgegevens © OpenStreetMap-bijdragers (ODbL). Tegels van OpenFreeMap. Routes door BRouter. Weer van Open-Meteo.com (CC BY 4.0). Reviews van Mangrove (CC BY 4.0). Lettertypen: Inter en Instrument Serif (OFL). Symbolen: Maki, Temaki (CC0) en Lucide (ISC).</string>
+    <string name="mine_welcome">Welkom</string>
+    <string name="mine_welcome_text">Alles werkt zonder bereik: kaarten, routes, plekken, stem.</string>
+    <string name="mine_layers">Kaartstijl</string>
+    <string name="mine_layers_3d">3D-gebouwen</string>
+    <string name="mine_theme_auto">Auto</string>
+    <string name="mine_theme_day">Dag</string>
+    <string name="mine_theme_night">Nacht</string>
+    <string name="mine_weather">Weer</string>
+    <string name="mine_weather_none">Geen verwachting: geen verbinding, en niets bewaard voor hier.</string>
+    <string name="mine_weather_kept">Bewaarde verwachting van %1$s</string>
+    <string name="mine_regions_none">Nog geen gebieden. Voeg er een toe om de kaart zonder bereik te gebruiken.</string>
+    <string name="mine_region_add">Gebied toevoegen</string>
+    <string name="mine_region_pick">Dit gebied offline nemen</string>
+    <string name="mine_region_name">Hier in de buurt</string>
+    <string name="mine_region_download">Kaart downloaden</string>
+    <string name="mine_charge">Laden</string>
+    <string name="mine_charging_route">Laadroute</string>
+    <string name="mine_charging_route_text">Een route met laadstops, uit OpenStreetMap en Open Charge Map.</string>
+    <string name="mine_key_set">sleutel ingesteld</string>
+    <string name="mine_key_needed">sleutel nodig</string>
+</resources>

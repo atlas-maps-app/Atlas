@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="shop_groceries">Groceries</string>
+    <string name="shop_need_water">Water</string>
+    <string name="shop_need_food">Food</string>
+    <string name="shop_need_toilet">Toilet</string>
+    <string name="shop_nearest">Nearest</string>
+    <string name="shop_none">None mapped nearby</string>
+</resources>

@@ -1,0 +1,190 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.4 2390de5a",
+  "osm3s": {
+    "timestamp_osm_base": "2026-10-13T17:28:21Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+
+{
+  "type": "node",
+  "id": 14201218701,
+  "lat": 52.3687612,
+  "lon": 4.8707887,
+  "timestamp": "2026-09-20T12:08:33Z",
+  "version": 1,
+  "changeset": 189294583,
+  "user": "PTSB",
+  "uid": 24385209,
+  "tags": {
+    "addr:housenumber": "108k",
+    "addr:postcode": "1053KZ",
+    "addr:street": "Bilderdijkstraat",
+    "amenity": "cafe",
+    "check_date": "2026-09-20",
+    "check_date:opening_hours": "2026-09-20",
+    "cuisine": "greek",
+    "name": "Ikaria Food",
+    "opening_hours": "Mo-Fr 07:30-16:30; Sa-Su 08:00-17:00"
+  }
+},
+{
+  "type": "node",
+  "id": 14008394702,
+  "lat": 52.3635257,
+  "lon": 4.8848158,
+  "timestamp": "2026-07-13T10:57:02Z",
+  "version": 1,
+  "changeset": 185645913,
+  "user": "UnusualWorld",
+  "uid": 21991761,
+  "tags": {
+    "amenity": "restaurant",
+    "check_date": "2026-07-13",
+    "name": "Cozy Amsterdam"
+  }
+},
+{
+  "type": "node",
+  "id": 14023935801,
+  "lat": 52.3637226,
+  "lon": 4.8841678,
+  "timestamp": "2026-07-18T11:15:44Z",
+  "version": 1,
+  "changeset": 185952027,
+  "user": "ePierre",
+  "uid": 555763,
+  "tags": {
+    "addr:housenumber": "99",
+    "addr:street": "Korte Leidsedwarsstraat",
+    "amenity": "restaurant",
+    "check_date": "2026-07-18",
+    "cuisine": "curry;japanese;ramen",
+    "name": "Miko Ramen"
+  }
+},
+{
+  "type": "node",
+  "id": 14026997301,
+  "lat": 52.3708292,
+  "lon": 4.8951887,
+  "timestamp": "2026-07-19T15:15:43Z",
+  "version": 1,
+  "changeset": 186012845,
+  "user": "Adalorganic98",
+  "uid": 19961872,
+  "tags": {
+    "addr:housenumber": "197",
+    "addr:street": "Oudezijds Voorburgwal",
+    "amenity": "restaurant",
+    "name": "Oriole Garden Bistro"
+  }
+},
+{
+  "type": "node",
+  "id": 14047420901,
+  "lat": 52.3666228,
+  "lon": 4.8957336,
+  "timestamp": "2026-07-24T21:12:25Z",
+  "version": 1,
+  "changeset": 186318425,
+  "user": "Adalorganic98",
+  "uid": 19961872,
+  "tags": {
+    "amenity": "restaurant",
+    "cuisine": "indian",
+    "name": "Babal"
+  }
+},
+{
+  "type": "node",
+  "id": 14222147591,
+  "lat": 52.3761571,
+  "lon": 4.8928463,
+  "timestamp": "2026-09-27T11:43:39Z",
+  "version": 1,
+  "changeset": 189625740,
+  "user": "Jens Klein",
+  "uid": 65418,
+  "tags": {
+    "amenity": "cafe",
+    "check_date": "2026-09-27",
+    "cuisine": "greek",
+    "name": "Fournos Greek Coffee Bakery",
+    "payment:cash": "yes",
+    "payment:credit_cards": "yes",
+    "payment:debit_cards": "yes",
+    "website": "https://fournos-amsterdam.com/",
+    "wheelchair": "no"
+  }
+},
+{
+  "type": "node",
+  "id": 14099610801,
+  "lat": 52.3756282,
+  "lon": 4.8959746,
+  "timestamp": "2026-08-16T19:15:54Z",
+  "version": 1,
+  "changeset": 187552785,
+  "user": "MaliMrav",
+  "uid": 17285979,
+  "tags": {
+    "amenity": "restaurant",
+    "check_date": "2026-08-16",
+    "name": "Dutch Pancake Masters"
+  }
+},
+{
+  "type": "node",
+  "id": 14180376374,
+  "lat": 52.3811787,
+  "lon": 4.8855520,
+  "timestamp": "2026-09-14T10:50:32Z",
+  "version": 1,
+  "changeset": 189003785,
+  "user": "ImprovingStepByStep",
+  "uid": 10045345,
+  "tags": {
+    "amenity": "restaurant",
+    "cuisine": "pizza",
+    "name": "Bella Storia"
+  }
+},
+{
+  "type": "node",
+  "id": 14027062001,
+  "lat": 52.3888158,
+  "lon": 4.8877404,
+  "timestamp": "2026-07-19T15:28:12Z",
+  "version": 1,
+  "changeset": 186013380,
+  "user": "Adalorganic98",
+  "uid": 19961872,
+  "tags": {
+    "amenity": "restaurant",
+    "name": "Boon & De Koot"
+  }
+},
+{
+  "type": "node",
+  "id": 13730342901,
+  "lat": 52.3895212,
+  "lon": 4.9098890,
+  "timestamp": "2026-04-14T15:30:15Z",
+  "version": 1,
+  "changeset": 181329230,
+  "user": "camelino",
+  "uid": 23801798,
+  "tags": {
+    "addr:housenumber": "85",
+    "addr:street": "Van der Pekstraat",
+    "amenity": "restaurant",
+    "check_date": "2026-04-14",
+    "cuisine": "balkan",
+    "name": "Mosob Asmara"
+  }
+}
+
+  ]
+}

@@ -1,0 +1,1450 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.11 87bfad18",
+  "osm3s": {
+    "timestamp_osm_base": "2026-06-01T08:52:28Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+
+{
+  "type": "node",
+  "id": 9420507105,
+  "lat": 52.3656481,
+  "lon": 4.8738916,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Vattenfall"
+  }
+},
+{
+  "type": "node",
+  "id": 11993534049,
+  "lat": 52.3688812,
+  "lon": 4.8697896,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-4075"
+  }
+},
+{
+  "type": "node",
+  "id": 11993552683,
+  "lat": 52.3684152,
+  "lon": 4.8701024,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "TotalEnergies",
+    "operator:wikidata": "Q154037",
+    "ref": "TNLP01188"
+  }
+},
+{
+  "type": "node",
+  "id": 12299144083,
+  "lat": 52.3716894,
+  "lon": 4.8709435,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687"
+  }
+},
+{
+  "type": "node",
+  "id": 12925568681,
+  "lat": 52.3755398,
+  "lon": 4.8682728,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity:motorcar": "2",
+    "operator": "TotalEnergies",
+    "operator:wikidata": "Q154037"
+  }
+},
+{
+  "type": "node",
+  "id": 12012673247,
+  "lat": 52.3796579,
+  "lon": 4.8710873,
+  "tags": {
+    "amenity": "charging_station"
+  }
+},
+{
+  "type": "node",
+  "id": 12925568691,
+  "lat": 52.3748186,
+  "lon": 4.8713361,
+  "tags": {
+    "amenity": "charging_station"
+  }
+},
+{
+  "type": "node",
+  "id": 12052988076,
+  "lat": 52.3799216,
+  "lon": 4.8745730,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-0520"
+  }
+},
+{
+  "type": "node",
+  "id": 12052991082,
+  "lat": 52.3799516,
+  "lon": 4.8754046,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "TotalEnergies",
+    "operator:wikidata": "Q154037",
+    "ref": "TNLP010545"
+  }
+},
+{
+  "type": "node",
+  "id": 12096706792,
+  "lat": 52.3815346,
+  "lon": 4.8713624,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687"
+  }
+},
+{
+  "type": "node",
+  "id": 12154933064,
+  "lat": 52.3799379,
+  "lon": 4.8700282,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "TotalEnergies",
+    "operator:wikidata": "Q154037",
+    "ref": "TNLP010938"
+  }
+},
+{
+  "type": "node",
+  "id": 12165122190,
+  "lat": 52.3837762,
+  "lon": 4.8753241,
+  "tags": {
+    "access": "yes",
+    "amenity": "charging_station",
+    "capacity": "2",
+    "fee": "yes",
+    "operator": "TotalEnergies",
+    "operator:wikidata": "Q154037",
+    "ref": "TNLP011520"
+  }
+},
+{
+  "type": "node",
+  "id": 12165134608,
+  "lat": 52.3829517,
+  "lon": 4.8728093,
+  "tags": {
+    "access": "yes",
+    "amenity": "charging_station",
+    "brand": "Alfen",
+    "capacity": "2",
+    "fee": "yes",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-0602"
+  }
+},
+{
+  "type": "node",
+  "id": 12875572382,
+  "lat": 52.3831965,
+  "lon": 4.8742669,
+  "tags": {
+    "access": "yes",
+    "amenity": "charging_station",
+    "brand": "Alfen",
+    "capacity": "2",
+    "fee": "yes",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMP1-3231"
+  }
+},
+{
+  "type": "node",
+  "id": 13016922442,
+  "lat": 52.3824728,
+  "lon": 4.8755412,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687"
+  }
+},
+{
+  "type": "node",
+  "id": 13016947865,
+  "lat": 52.3817909,
+  "lon": 4.8744323,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687"
+  }
+},
+{
+  "type": "node",
+  "id": 4713241171,
+  "lat": 52.3655427,
+  "lon": 4.8784492,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "NUON",
+    "operator:wikidata": "Q513830",
+    "operator:wikipedia": "nl:Vattenfall Nederland",
+    "socket:type2": "2"
+  }
+},
+{
+  "type": "node",
+  "id": 4713241172,
+  "lat": 52.3664425,
+  "lon": 4.8798470,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "8",
+    "operator": "NUON",
+    "operator:wikidata": "Q513830",
+    "operator:wikipedia": "nl:Vattenfall Nederland",
+    "socket:type2": "8"
+  }
+},
+{
+  "type": "node",
+  "id": 4713241173,
+  "lat": 52.3652613,
+  "lon": 4.8798773,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "NUON",
+    "operator:wikidata": "Q513830",
+    "operator:wikipedia": "nl:Vattenfall Nederland",
+    "ref": "EVB-P1521033",
+    "socket:type2": "2"
+  }
+},
+{
+  "type": "node",
+  "id": 4911083231,
+  "lat": 52.3653090,
+  "lon": 4.8837605,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "NUON",
+    "operator:wikidata": "Q513830",
+    "operator:wikipedia": "nl:Vattenfall Nederland",
+    "ref": "EVB-P1518113",
+    "socket:type2": "2"
+  }
+},
+{
+  "type": "node",
+  "id": 12142351488,
+  "lat": 52.3648180,
+  "lon": 4.8881279,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-4389",
+    "website": "https://www.laad-elektrisch.nl/ams/chargepointId/AMS-4389"
+  }
+},
+{
+  "type": "node",
+  "id": 12154034482,
+  "lat": 52.3651517,
+  "lon": 4.8882251,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "covered": "no",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-4391",
+    "website": "https://www.laad-elektrisch.nl/ams/chargepointId/AMS-4391"
+  }
+},
+{
+  "type": "node",
+  "id": 13308363000,
+  "lat": 52.3662901,
+  "lon": 4.8887653,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no"
+  }
+},
+{
+  "type": "node",
+  "id": 4713241170,
+  "lat": 52.3667368,
+  "lon": 4.8767697,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "NUON",
+    "operator:wikidata": "Q513830",
+    "operator:wikipedia": "nl:Vattenfall Nederland",
+    "ref": "EVB-P1525030",
+    "socket:type2": "2"
+  }
+},
+{
+  "type": "node",
+  "id": 4649162576,
+  "lat": 52.3727678,
+  "lon": 4.8883585,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equens"
+  }
+},
+{
+  "type": "node",
+  "id": 11895840553,
+  "lat": 52.3692986,
+  "lon": 4.8870061,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "TotalEnergies"
+  }
+},
+{
+  "type": "node",
+  "id": 11895867326,
+  "lat": 52.3696383,
+  "lon": 4.8870331,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687"
+  }
+},
+{
+  "type": "node",
+  "id": 11895879486,
+  "lat": 52.3711564,
+  "lon": 4.8871775,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687"
+  }
+},
+{
+  "type": "node",
+  "id": 12142372539,
+  "lat": 52.3674262,
+  "lon": 4.8842157,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-4383",
+    "website": "https://www.laad-elektrisch.nl/ams/chargepointId/AMS-4383"
+  }
+},
+{
+  "type": "node",
+  "id": 12142409685,
+  "lat": 52.3670896,
+  "lon": 4.8844158,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "1",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-0569",
+    "website": "https://www.laad-elektrisch.nl/ams/chargepointId/AMS-0569"
+  }
+},
+{
+  "type": "node",
+  "id": 12146363516,
+  "lat": 52.3676091,
+  "lon": 4.8842063,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "covered": "no",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-0568",
+    "website": "https://www.laad-elektrisch.nl/ams/chargepointId/AMS-0568"
+  }
+},
+{
+  "type": "node",
+  "id": 12146375688,
+  "lat": 52.3682383,
+  "lon": 4.8842886,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "1",
+    "operator": "TotalEnergies",
+    "operator:wikidata": "Q154037",
+    "website": "https://preview.page.link/chargeassist.page.link/5rSY"
+  }
+},
+{
+  "type": "node",
+  "id": 12160371420,
+  "lat": 52.3692584,
+  "lon": 4.8848287,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "fee": "no",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-0749",
+    "website": "https://www.laad-elektrisch.nl/ams/chargepointId/AMS-0749"
+  }
+},
+{
+  "type": "node",
+  "id": 12160416137,
+  "lat": 52.3729514,
+  "lon": 4.8851438,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "covered": "no",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-0454",
+    "website": "https://www.laad-elektrisch.nl/ams/chargepointId/AMS-0454"
+  }
+},
+{
+  "type": "node",
+  "id": 13072385882,
+  "lat": 52.3701515,
+  "lon": 4.8889776,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "TotalEnergies"
+  }
+},
+{
+  "type": "node",
+  "id": 11021763591,
+  "lat": 52.3795459,
+  "lon": 4.8807863,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-3690"
+  }
+},
+{
+  "type": "node",
+  "id": 11499831582,
+  "lat": 52.3779155,
+  "lon": 4.8801461,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "brand": "Equans",
+    "capacity": "2",
+    "fee": "yes",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-3968"
+  }
+},
+{
+  "type": "node",
+  "id": 11782481991,
+  "lat": 52.3743057,
+  "lon": 4.8786829,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-4285"
+  }
+},
+{
+  "type": "node",
+  "id": 11782484792,
+  "lat": 52.3745502,
+  "lon": 4.8804304,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687"
+  }
+},
+{
+  "type": "node",
+  "id": 11941606079,
+  "lat": 52.3746961,
+  "lon": 4.8804182,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "TotalEnergies",
+    "operator:wikidata": "Q154037",
+    "ref": "TNLP011129"
+  }
+},
+{
+  "type": "node",
+  "id": 11941611674,
+  "lat": 52.3741907,
+  "lon": 4.8781583,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-4377"
+  }
+},
+{
+  "type": "node",
+  "id": 11941612691,
+  "lat": 52.3749043,
+  "lon": 4.8769181,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-4418"
+  }
+},
+{
+  "type": "node",
+  "id": 11941617180,
+  "lat": 52.3753581,
+  "lon": 4.8768700,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-0575"
+  }
+},
+{
+  "type": "node",
+  "id": 11941618412,
+  "lat": 52.3772815,
+  "lon": 4.8776573,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "TotalEnergies",
+    "operator:wikidata": "Q154037",
+    "ref": "TNLP011391"
+  }
+},
+{
+  "type": "node",
+  "id": 11941622456,
+  "lat": 52.3753909,
+  "lon": 4.8767084,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-0576"
+  }
+},
+{
+  "type": "node",
+  "id": 11941642322,
+  "lat": 52.3768843,
+  "lon": 4.8773871,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-0577"
+  }
+},
+{
+  "type": "node",
+  "id": 11989994076,
+  "lat": 52.3747598,
+  "lon": 4.8768092,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-0574"
+  }
+},
+{
+  "type": "node",
+  "id": 11998486368,
+  "lat": 52.3764802,
+  "lon": 4.8774986,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-2529"
+  }
+},
+{
+  "type": "node",
+  "id": 11998606810,
+  "lat": 52.3782998,
+  "lon": 4.8823041,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-1684"
+  }
+},
+{
+  "type": "node",
+  "id": 11998621629,
+  "lat": 52.3776539,
+  "lon": 4.8797360,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-0578"
+  }
+},
+{
+  "type": "node",
+  "id": 12058876984,
+  "lat": 52.3789908,
+  "lon": 4.8824298,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-3971"
+  }
+},
+{
+  "type": "node",
+  "id": 12105994701,
+  "lat": 52.3748032,
+  "lon": 4.8815512,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687"
+  }
+},
+{
+  "type": "node",
+  "id": 12956897579,
+  "lat": 52.3780767,
+  "lon": 4.8810396,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "panoramax": "1797c8d7-a3d1-4e35-bde3-4ba8ba241f81"
+  }
+},
+{
+  "type": "node",
+  "id": 10997342321,
+  "lat": 52.3785367,
+  "lon": 4.8835243,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equals",
+    "ref": "AMS-3970"
+  }
+},
+{
+  "type": "node",
+  "id": 11727058225,
+  "lat": 52.3788127,
+  "lon": 4.8851959,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "TotalEnergies",
+    "operator:wikidata": "Q154037",
+    "ref": "TNLP010814"
+  }
+},
+{
+  "type": "node",
+  "id": 11763346744,
+  "lat": 52.3779828,
+  "lon": 4.8858589,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Ecotap",
+    "operator:wikidata": "Q123249354"
+  }
+},
+{
+  "type": "node",
+  "id": 12145660071,
+  "lat": 52.3786871,
+  "lon": 4.8887233,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "check_date": "2024-08-30",
+    "covered": "no",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-1270",
+    "website": "https://www.laad-elektrisch.nl/ams/chargepointId/AMS-1270"
+  }
+},
+{
+  "type": "node",
+  "id": 12145672414,
+  "lat": 52.3761362,
+  "lon": 4.8864055,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "covered": "no",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-3718",
+    "website": "https://www.laad-elektrisch.nl/ams/chargepointId/AMS-3718"
+  }
+},
+{
+  "type": "node",
+  "id": 12146375689,
+  "lat": 52.3736957,
+  "lon": 4.8847766,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-4376",
+    "website": "https://www.laad-elektrisch.nl/ams/chargepointId/AMS-4376"
+  }
+},
+{
+  "type": "node",
+  "id": 12146418623,
+  "lat": 52.3777974,
+  "lon": 4.8879137,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-0669",
+    "website": "https://www.laad-elektrisch.nl/ams/chargepointId/AMS-0669"
+  }
+},
+{
+  "type": "node",
+  "id": 12146423746,
+  "lat": 52.3783631,
+  "lon": 4.8884299,
+  "tags": {
+    "amenity": "charging_station",
+    "operator": "TotalEnergies",
+    "operator:wikidata": "Q154037",
+    "ref": "TNLP011845",
+    "website": "https://preview.page.link/chargeassist.page.link/Lh2T"
+  }
+},
+{
+  "type": "node",
+  "id": 3093662994,
+  "lat": 52.3693840,
+  "lon": 4.8951267,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "NUON",
+    "operator:wikidata": "Q513830",
+    "operator:wikipedia": "nl:Vattenfall Nederland",
+    "socket:type2": "2"
+  }
+},
+{
+  "type": "node",
+  "id": 4649162824,
+  "lat": 52.3722609,
+  "lon": 4.8891961,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equens"
+  }
+},
+{
+  "type": "node",
+  "id": 13072523224,
+  "lat": 52.3704406,
+  "lon": 4.8952462,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687"
+  }
+},
+{
+  "type": "node",
+  "id": 13072529666,
+  "lat": 52.3704124,
+  "lon": 4.8954231,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687"
+  }
+},
+{
+  "type": "node",
+  "id": 13105629072,
+  "lat": 52.3698658,
+  "lon": 4.8942813,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-0053"
+  }
+},
+{
+  "type": "node",
+  "id": 3093658989,
+  "lat": 52.3721958,
+  "lon": 4.8959716,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "NUON",
+    "operator:wikidata": "Q513830",
+    "operator:wikipedia": "nl:Vattenfall Nederland",
+    "socket:type2": "2"
+  }
+},
+{
+  "type": "node",
+  "id": 3093661195,
+  "lat": 52.3722237,
+  "lon": 4.8966234,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "NUON",
+    "operator:wikidata": "Q513830",
+    "operator:wikipedia": "nl:Vattenfall Nederland",
+    "socket:type2": "2"
+  }
+},
+{
+  "type": "node",
+  "id": 3095203706,
+  "lat": 52.3715091,
+  "lon": 4.8995319,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "NUON",
+    "operator:wikidata": "Q513830",
+    "operator:wikipedia": "nl:Vattenfall Nederland",
+    "socket:type2": "2"
+  }
+},
+{
+  "type": "node",
+  "id": 4861705513,
+  "lat": 52.3713592,
+  "lon": 4.8993075,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "brand": "Vattenfall InCharge",
+    "brand:wikidata": "Q71041027",
+    "capacity": "2",
+    "name": "Vattenfall InCharge",
+    "operator": "Vattenfall InCharge",
+    "operator:wikidata": "Q71041027",
+    "operator:wikipedia": "nl:Vattenfall Nederland",
+    "socket:type2": "2"
+  }
+},
+{
+  "type": "node",
+  "id": 4861705514,
+  "lat": 52.3707779,
+  "lon": 4.8983225,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "NUON",
+    "operator:wikidata": "Q513830",
+    "operator:wikipedia": "nl:Vattenfall Nederland",
+    "socket:type2": "2"
+  }
+},
+{
+  "type": "node",
+  "id": 6299159385,
+  "lat": 52.3701386,
+  "lon": 4.8964100,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "name": "Amsterdam elektrisch"
+  }
+},
+{
+  "type": "node",
+  "id": 12038338365,
+  "lat": 52.3776873,
+  "lon": 4.8925293,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no"
+  }
+},
+{
+  "type": "node",
+  "id": 12038347425,
+  "lat": 52.3779522,
+  "lon": 4.8928235,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no"
+  }
+},
+{
+  "type": "node",
+  "id": 12038363188,
+  "lat": 52.3779824,
+  "lon": 4.8928525,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no"
+  }
+},
+{
+  "type": "node",
+  "id": 12038365570,
+  "lat": 52.3765319,
+  "lon": 4.8906437,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "motorcar": "yes",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687"
+  }
+},
+{
+  "type": "node",
+  "id": 12038365911,
+  "lat": 52.3772842,
+  "lon": 4.8920857,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "motorcar": "yes"
+  }
+},
+{
+  "type": "node",
+  "id": 12038368063,
+  "lat": 52.3766337,
+  "lon": 4.8903809,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "motorcar": "yes",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687"
+  }
+},
+{
+  "type": "node",
+  "id": 11203266137,
+  "lat": 52.3834368,
+  "lon": 4.8817659,
+  "tags": {
+    "amenity": "charging_station",
+    "brand": "TotalEnergies",
+    "brand:wikidata": "Q154037",
+    "capacity": "2",
+    "fee": "yes",
+    "operator": "TotalEnergies",
+    "operator:wikidata": "Q154037",
+    "ref": "TNLP010322-1"
+  }
+},
+{
+  "type": "node",
+  "id": 11203266138,
+  "lat": 52.3836177,
+  "lon": 4.8817231,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "fee": "yes",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-0680*1"
+  }
+},
+{
+  "type": "node",
+  "id": 11210780900,
+  "lat": 52.3808295,
+  "lon": 4.8815566,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-4690"
+  }
+},
+{
+  "type": "node",
+  "id": 11210878626,
+  "lat": 52.3808541,
+  "lon": 4.8817098,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-4690"
+  }
+},
+{
+  "type": "node",
+  "id": 11211049590,
+  "lat": 52.3799880,
+  "lon": 4.8768269,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "brand": "TotalEnergies",
+    "brand:wikidata": "Q154037",
+    "capacity": "2",
+    "operator": "TotalEnergies",
+    "operator:wikidata": "Q154037",
+    "ref": "TNLP010397-1"
+  }
+},
+{
+  "type": "node",
+  "id": 11235899571,
+  "lat": 52.3806682,
+  "lon": 4.8787213,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687"
+  }
+},
+{
+  "type": "node",
+  "id": 11486880081,
+  "lat": 52.3829673,
+  "lon": 4.8781680,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "brand": "TotalEnergies",
+    "brand:wikidata": "Q154037",
+    "capacity": "2",
+    "operator": "TotalEnergies",
+    "operator:wikidata": "Q154037",
+    "ref": "TNLP010758"
+  }
+},
+{
+  "type": "node",
+  "id": 11499849134,
+  "lat": 52.3818778,
+  "lon": 4.8824101,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687"
+  }
+},
+{
+  "type": "node",
+  "id": 11763386337,
+  "lat": 52.3799289,
+  "lon": 4.8820163,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-3972"
+  }
+},
+{
+  "type": "node",
+  "id": 11763418512,
+  "lat": 52.3820829,
+  "lon": 4.8811078,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-2365",
+    "socket:type2": "2"
+  }
+},
+{
+  "type": "node",
+  "id": 11763437971,
+  "lat": 52.3821085,
+  "lon": 4.8809739,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-3973",
+    "socket:type2": "2"
+  }
+},
+{
+  "type": "node",
+  "id": 11775494942,
+  "lat": 52.3810975,
+  "lon": 4.8800708,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-3975"
+  }
+},
+{
+  "type": "node",
+  "id": 12014990488,
+  "lat": 52.3815917,
+  "lon": 4.8761698,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "TotalEnergies"
+  }
+},
+{
+  "type": "node",
+  "id": 12052961994,
+  "lat": 52.3802134,
+  "lon": 4.8767007,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "TotalEnergies",
+    "operator:wikidata": "Q154037",
+    "ref": "TNLP010805"
+  }
+},
+{
+  "type": "node",
+  "id": 12137472502,
+  "lat": 52.3814395,
+  "lon": 4.8788090,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-1833"
+  }
+},
+{
+  "type": "node",
+  "id": 12149483815,
+  "lat": 52.3832885,
+  "lon": 4.8776380,
+  "tags": {
+    "access": "yes",
+    "amenity": "charging_station",
+    "capacity": "2",
+    "fee": "yes",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-1453"
+  }
+},
+{
+  "type": "node",
+  "id": 12162300580,
+  "lat": 52.3807834,
+  "lon": 4.8764500,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "equans",
+    "operator:wikidata": "Q118687687"
+  }
+},
+{
+  "type": "node",
+  "id": 12165099667,
+  "lat": 52.3826328,
+  "lon": 4.8776415,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-0188"
+  }
+},
+{
+  "type": "node",
+  "id": 13013347564,
+  "lat": 52.3841431,
+  "lon": 4.8781285,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "1",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687"
+  }
+},
+{
+  "type": "node",
+  "id": 11210875816,
+  "lat": 52.3811423,
+  "lon": 4.8836162,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "brand": "TotalEnergies",
+    "brand:wikidata": "Q154037",
+    "capacity": "2",
+    "operator": "TotalEnergies",
+    "operator:wikidata": "Q154037",
+    "ref": "TNLP010610-1"
+  }
+},
+{
+  "type": "node",
+  "id": 11295910193,
+  "lat": 52.3822871,
+  "lon": 4.8841833,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "fee": "yes",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-3714*1"
+  }
+},
+{
+  "type": "node",
+  "id": 11295910194,
+  "lat": 52.3822047,
+  "lon": 4.8840727,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-0054*2"
+  }
+},
+{
+  "type": "node",
+  "id": 11486850890,
+  "lat": 52.3812901,
+  "lon": 4.8846040,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "brand": "TotalEnergies",
+    "brand:wikidata": "Q154037",
+    "capacity": "2",
+    "fee": "yes",
+    "operator": "TotalEnergies",
+    "operator:wikidata": "Q154037",
+    "ref": "TNLP010352",
+    "wheelchair": "yes"
+  }
+},
+{
+  "type": "node",
+  "id": 11763341863,
+  "lat": 52.3799330,
+  "lon": 4.8834056,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-2362"
+  }
+},
+{
+  "type": "node",
+  "id": 11763371839,
+  "lat": 52.3803329,
+  "lon": 4.8847899,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-0581"
+  }
+},
+{
+  "type": "node",
+  "id": 11763402765,
+  "lat": 52.3806781,
+  "lon": 4.8871020,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-3693"
+  }
+},
+{
+  "type": "node",
+  "id": 11992044512,
+  "lat": 52.3840919,
+  "lon": 4.8824406,
+  "tags": {
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Equans",
+    "operator:wikidata": "Q118687687",
+    "ref": "AMS-0594"
+  }
+},
+{
+  "type": "node",
+  "id": 12116880519,
+  "lat": 52.3835206,
+  "lon": 4.8914718,
+  "tags": {
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "TotalEnergies",
+    "operator:wikidata": "Q154037",
+    "ref": "TNLP011506",
+    "website": "https://preview.page.link/chargeassist.page.link/6kJF"
+  }
+}
+
+  ]
+}

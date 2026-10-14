@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="go_title">Ga</string>
+    <string name="go_where">Waarheen?</string>
+    <string name="go_how">Hoe ga je?</string>
+    <string name="go_mode_walk">Lopen</string>
+    <string name="go_mode_bike">Fiets</string>
+    <string name="go_mode_car">Auto</string>
+    <string name="go_mode_transit">OV</string>
+    <string name="go_mode_truck">Vrachtwagen</string>
+    <string name="go_mode_boat">Boot</string>
+    <string name="go_route_title">Route</string>
+    <string name="go_from_here">Hier</string>
+    <string name="go_pick_destination">Kies een bestemming</string>
+    <string name="go_start">Ga</string>
+    <string name="go_straight">%1$s hemelsbreed</string>
+    <string name="go_navigate_title">Navigeren</string>
+    <string name="go_ears_title">Alleen oren</string>
+    <string name="go_ears_text">De wereld om je heen in geluid, met het scherm uit.</string>
+    <string name="go_vehicle_title">Je voertuig</string>
+    <string name="go_vehicle_text">Hoogte, breedte, gewicht en lengte bepalen waar de route mag komen.</string>
+</resources>

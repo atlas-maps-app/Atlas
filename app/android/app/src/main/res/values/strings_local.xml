@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="local_title">Local</string>
+    <string name="local_named_after">Named after</string>
+    <string name="local_building">This building</string>
+    <string name="local_named_after_text">Who or what this street is named after, from OpenStreetMap and Wikidata.</string>
+    <string name="local_building_text">Its year, its architect, its heritage and its former use.</string>
+    <string name="soon_title">Soon</string>
+    <string name="soon_sunrise">Sunrise %1$s</string>
+    <string name="soon_sunset">Sunset %1$s</string>
+    <string name="soon_weather">Weather</string>
+    <string name="globe_title">Earth</string>
+    <string name="globe_text">The globe, the planets and the galaxy, with you on them.</string>
+</resources>

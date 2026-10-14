@@ -1,0 +1,1739 @@
+{
+ "about": "Building traditions the engine draws (generic.trad_look): each with its look, kit parts, places and status; the shared kit of parts; the foundations every place gets. From the Traditions page, retired 13 October 2026.",
+ "traditions": [
+  {
+   "id": "nl_amsterdam",
+   "boards": [
+    "LivingKit",
+    "CanalKit",
+    "WestermarktKit",
+    "HartenstraatKit"
+   ],
+   "kit": [
+    "gables",
+    "hoist",
+    "cornice",
+    "tile_courses",
+    "lit_ridge",
+    "plain_chimneys"
+   ],
+   "look": "Narrow brick fronts in dark reds and browns, a few plastered; steep gables with a hoist beam; white cornices on the oldest; newer brick lighter.",
+   "name": "Dutch canal town",
+   "order": 0,
+   "places": [
+    "Amsterdam",
+    "Leiden",
+    "Delft"
+   ],
+   "region": "Europe",
+   "roof_shape": "steep",
+   "roofs": [
+    "#4A3E3A"
+   ],
+   "status": "drawn",
+   "tags": [
+    "building:material=brick",
+    "roof:shape=gabled",
+    "roof:material=roof_tiles"
+   ],
+   "version": 91,
+   "walls": [
+    "#7A4434",
+    "#5C3A30",
+    "#8A5040",
+    "#E8E2D4"
+   ]
+  },
+  {
+   "id": "fr_paris",
+   "boards": [
+    "ParisKit",
+    "ParisCloseKit",
+    "ParisWalkKit"
+   ],
+   "kit": [
+    "mansard_dormers",
+    "window_styles",
+    "iron_balconies",
+    "party_chimneys",
+    "zinc_seams",
+    "stone_quays"
+   ],
+   "look": "Limestone fronts in several tones, tall French windows with iron balconies, zinc mansards with dormers, chimney stacks with pots along the party walls.",
+   "name": "Paris stone and zinc",
+   "order": 1,
+   "places": [
+    "Paris",
+    "Lyon"
+   ],
+   "region": "Europe",
+   "roof_shape": "mansard",
+   "roofs": [
+    "#737E88"
+   ],
+   "status": "drawn",
+   "tags": [
+    "building:material=limestone",
+    "roof:shape=mansard",
+    "roof:material=metal"
+   ],
+   "version": 91,
+   "walls": [
+    "#DCD0B6",
+    "#D3C4A6",
+    "#E2D8C3"
+   ]
+  },
+  {
+   "id": "it_tuscan",
+   "boards": [
+    "SanGimignano"
+   ],
+   "kit": [
+    "eaves",
+    "tile_courses",
+    "shutters",
+    "capped_chimneys",
+    "towers",
+    "terrain_towns"
+   ],
+   "look": "Stone, Siena brick and warm plaster under low terracotta roofs with deep eaves; shutters at the windows; towers above the roofs.",
+   "name": "Tuscan hill town",
+   "order": 2,
+   "places": [
+    "San Gimignano",
+    "Siena",
+    "Montepulciano"
+   ],
+   "region": "Europe",
+   "roof_shape": "hipped",
+   "roofs": [
+    "#9C5E43"
+   ],
+   "status": "drawn",
+   "tags": [
+    "building:material=stone",
+    "roof:shape=hipped",
+    "roof:material=roof_tiles"
+   ],
+   "version": 89,
+   "walls": [
+    "#B9A482",
+    "#DDBE91",
+    "#B27B56"
+   ]
+  },
+  {
+   "id": "no_timber",
+   "boards": [
+    "Bergen"
+   ],
+   "kit": [
+    "timber_boards",
+    "eaves",
+    "tile_courses",
+    "plain_chimneys",
+    "stone_quays"
+   ],
+   "look": "Painted timber boards in white, Falu red, ochre and yellow; steep tiled gables toward the harbour; white window frames; plastered blocks in the centre.",
+   "name": "Norwegian wooden town",
+   "note": "Bryggen at street level is not built: started on 2 October and not taken further. It waits behind the next map.",
+   "order": 3,
+   "places": [
+    "Bergen",
+    "Ålesund",
+    "Trondheim"
+   ],
+   "region": "Europe",
+   "roof_shape": "steep",
+   "roofs": [
+    "#8C3B2A",
+    "#3F4044"
+   ],
+   "status": "drawn",
+   "tags": [
+    "building:material=wood",
+    "roof:shape=gabled",
+    "roof:material=roof_tiles"
+   ],
+   "version": 89,
+   "walls": [
+    "#ECE8DE",
+    "#8E3226",
+    "#C99242",
+    "#E2C46E"
+   ]
+  },
+  {
+   "id": "gb_terrace",
+   "boards": [
+    "NottingHill"
+   ],
+   "kit": [
+    "stucco_band",
+    "window_styles",
+    "party_chimneys",
+    "cornice",
+    "tile_courses"
+   ],
+   "look": "Stucco fronts in white, cream and pale colours, or London stock brick over a stucco ground floor; white sash windows; slate roofs; chimney stacks with pots on every party wall.",
+   "name": "London terrace",
+   "order": 4,
+   "places": [
+    "London",
+    "Bath",
+    "Edinburgh New Town"
+   ],
+   "region": "Europe",
+   "roof_shape": "gabled",
+   "roofs": [
+    "#4B535B"
+   ],
+   "status": "drawn",
+   "tags": [
+    "building:material=plaster",
+    "roof:material=slate",
+    "roof:orientation=across"
+   ],
+   "version": 89,
+   "walls": [
+    "#EEE9DE",
+    "#B49A76",
+    "#E7CCC6",
+    "#C6D6E0"
+   ]
+  },
+  {
+   "id": "gr_cycladic",
+   "boards": [],
+   "kit": [
+    "flat_parapet",
+    "domes",
+    "rounded_edges",
+    "shutters",
+    "terrain_towns"
+   ],
+   "look": "Whitewashed cubes with softened edges and steps, flat roofs, blue domes on the chapels, blue and green doors and shutters, on cliffs above the sea.",
+   "name": "Cycladic white",
+   "order": 5,
+   "places": [
+    "Oia",
+    "Fira",
+    "Mykonos"
+   ],
+   "region": "Europe",
+   "roof_shape": "dome",
+   "roofs": [
+    "#EFEDE6",
+    "#2E5E9E"
+   ],
+   "status": "next",
+   "tags": [
+    "building:material=plaster",
+    "building:colour=white",
+    "roof:shape=flat"
+   ],
+   "walls": [
+    "#F4F2EC",
+    "#E9E4D8"
+   ]
+  },
+  {
+   "id": "at_alpine",
+   "boards": [],
+   "kit": [
+    "eaves",
+    "wood_balconies",
+    "stucco_band",
+    "shutters",
+    "terrain_towns"
+   ],
+   "look": "A plastered ground floor under dark timber upper floors, wooden balconies along each floor, wide eaves, dark tile or shingle roofs, on steep slopes by a lake.",
+   "name": "Alpine chalet",
+   "order": 6,
+   "places": [
+    "Hallstatt",
+    "Zermatt",
+    "Garmisch"
+   ],
+   "region": "Europe",
+   "roof_shape": "gabled",
+   "roofs": [
+    "#4A4642"
+   ],
+   "status": "next",
+   "tags": [
+    "building:material=wood",
+    "roof:shape=gabled",
+    "roof:material=roof_tiles"
+   ],
+   "walls": [
+    "#EEE9DE",
+    "#6B4A32"
+   ]
+  },
+  {
+   "id": "es_andalusian",
+   "boards": [],
+   "kit": [
+    "window_grilles",
+    "tile_courses",
+    "courtyards",
+    "terrain_towns"
+   ],
+   "look": "Lime-washed walls, Roman tile roofs, wrought-iron window grilles, inner patios.",
+   "name": "Andalusian white village",
+   "order": 7,
+   "places": [
+    "Vejer",
+    "Frigiliana",
+    "Ronda"
+   ],
+   "region": "Europe",
+   "roof_shape": "hipped",
+   "roofs": [
+    "#B5734E"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=plaster",
+    "roof:material=roof_tiles"
+   ],
+   "walls": [
+    "#F5F2EA",
+    "#EFE6D2"
+   ]
+  },
+  {
+   "id": "pt_lisbon",
+   "boards": [],
+   "kit": [
+    "tile_facades",
+    "iron_balconies",
+    "terrain_towns"
+   ],
+   "look": "Pastel or azulejo-tiled fronts, Roman tile roofs, iron balconies, steep streets.",
+   "name": "Portuguese tiles",
+   "order": 8,
+   "places": [
+    "Lisbon",
+    "Porto"
+   ],
+   "region": "Europe",
+   "roof_shape": "hipped",
+   "roofs": [
+    "#B0603F"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=plaster",
+    "roof:material=roof_tiles"
+   ],
+   "walls": [
+    "#E8C9A8",
+    "#9FB8C9",
+    "#E8DFC6"
+   ]
+  },
+  {
+   "id": "de_fachwerk",
+   "boards": [],
+   "kit": [
+    "half_timber",
+    "jetty",
+    "mansard_dormers",
+    "tile_courses"
+   ],
+   "look": "Exposed timber frames over white or ochre infill, steep tile roofs with dormers, upper floors jutting over the street.",
+   "name": "German half-timbered",
+   "order": 9,
+   "places": [
+    "Rothenburg",
+    "Quedlinburg",
+    "Strasbourg"
+   ],
+   "region": "Europe",
+   "roof_shape": "steep",
+   "roofs": [
+    "#9A4A32"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=timber_framing",
+    "roof:material=roof_tiles"
+   ],
+   "walls": [
+    "#EFE6D2",
+    "#5A3A28"
+   ]
+  },
+  {
+   "id": "hanse_brick",
+   "boards": [],
+   "kit": [
+    "stepped_gables",
+    "gables",
+    "hoist",
+    "tile_courses"
+   ],
+   "look": "Red brick Gothic, tall stepped gables to the street, black glazed tiles.",
+   "name": "Hanseatic brick",
+   "order": 10,
+   "places": [
+    "Lübeck",
+    "Gdańsk",
+    "Tallinn"
+   ],
+   "region": "Europe",
+   "roof_shape": "steep",
+   "roofs": [
+    "#3E3A38",
+    "#8E3E2C"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=brick",
+    "roof:shape=gabled"
+   ],
+   "walls": [
+    "#9C4A36",
+    "#7E3A2C"
+   ]
+  },
+  {
+   "id": "cz_baroque",
+   "boards": [],
+   "kit": [
+    "baroque_gables",
+    "mansard_dormers",
+    "cornice"
+   ],
+   "look": "Pastel stucco fronts with baroque gables, red tile roofs with dormers, cornices.",
+   "name": "Central European baroque",
+   "order": 11,
+   "places": [
+    "Prague",
+    "Vienna",
+    "Kraków"
+   ],
+   "region": "Europe",
+   "roof_shape": "hipped",
+   "roofs": [
+    "#A04E36"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=plaster",
+    "roof:material=roof_tiles"
+   ],
+   "walls": [
+    "#E8D9A8",
+    "#D8C2C8",
+    "#C9D6C2"
+   ]
+  },
+  {
+   "id": "it_venetian",
+   "boards": [],
+   "kit": [
+    "funnel_chimneys",
+    "water_doors",
+    "shutters",
+    "stone_quays"
+   ],
+   "look": "Faded stucco in ochre, rose and red, terracotta roofs, funnel chimneys, doors onto the canals.",
+   "name": "Venetian",
+   "order": 12,
+   "places": [
+    "Venice",
+    "Chioggia"
+   ],
+   "region": "Europe",
+   "roof_shape": "hipped",
+   "roofs": [
+    "#A35E40"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=plaster",
+    "roof:material=roof_tiles"
+   ],
+   "walls": [
+    "#D9A07A",
+    "#C8735A",
+    "#E6C7A0"
+   ]
+  },
+  {
+   "id": "ru_wooden",
+   "boards": [],
+   "kit": [
+    "onion_domes",
+    "carved_frames",
+    "timber_boards"
+   ],
+   "look": "Painted log houses with carved window frames; onion domes on the churches.",
+   "name": "Russian wooden",
+   "order": 13,
+   "places": [
+    "Suzdal",
+    "Kizhi",
+    "Irkutsk"
+   ],
+   "region": "Europe",
+   "roof_shape": "onion",
+   "roofs": [
+    "#4E6E5A",
+    "#C9A44A"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=wood",
+    "roof:shape=onion"
+   ],
+   "walls": [
+    "#7A5A3C",
+    "#C9B48C"
+   ]
+  },
+  {
+   "id": "balkan_ottoman",
+   "boards": [],
+   "kit": [
+    "jetty",
+    "eaves",
+    "minarets",
+    "domes"
+   ],
+   "look": "White plaster and dark timber, upper floors jutting over the street, low tile roofs, minarets.",
+   "name": "Balkan and Ottoman",
+   "order": 14,
+   "places": [
+    "Plovdiv",
+    "Mostar",
+    "Safranbolu"
+   ],
+   "region": "Europe",
+   "roof_shape": "hipped",
+   "roofs": [
+    "#9C5A3C"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=plaster",
+    "roof:material=roof_tiles"
+   ],
+   "walls": [
+    "#F0EADC",
+    "#6A4A34"
+   ]
+  },
+  {
+   "id": "ie_cottage",
+   "boards": [],
+   "kit": [
+    "thatch",
+    "plain_chimneys",
+    "gables"
+   ],
+   "look": "Stone or whitewashed cottages, slate or thatch, chimneys at the gables.",
+   "name": "British and Irish rural",
+   "order": 15,
+   "places": [
+    "Cotswolds",
+    "Connemara",
+    "Highlands"
+   ],
+   "region": "Europe",
+   "roof_shape": "gabled",
+   "roofs": [
+    "#4E555C",
+    "#B39A62"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=stone",
+    "roof:material=thatch"
+   ],
+   "walls": [
+    "#CDB98E",
+    "#F2F0EA"
+   ]
+  },
+  {
+   "id": "ma_medina",
+   "boards": [],
+   "kit": [
+    "flat_parapet",
+    "courtyards",
+    "arched_windows",
+    "minarets"
+   ],
+   "look": "Earth-red or blue-washed walls, flat roof terraces, inner courtyards, few windows to the street.",
+   "name": "North African medina",
+   "order": 16,
+   "places": [
+    "Marrakech",
+    "Fez",
+    "Chefchaouen"
+   ],
+   "region": "Middle East & North Africa",
+   "roof_shape": "flat",
+   "roofs": [
+    "#B86A4A"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=plaster",
+    "roof:shape=flat"
+   ],
+   "walls": [
+    "#C2704E",
+    "#6F8FB8",
+    "#E9DCC4"
+   ]
+  },
+  {
+   "id": "arab_gulf",
+   "boards": [],
+   "kit": [
+    "flat_parapet",
+    "mashrabiya",
+    "wind_towers"
+   ],
+   "look": "Coral stone and white plaster, carved wooden window screens, wind towers.",
+   "name": "Gulf and Hejaz",
+   "order": 17,
+   "places": [
+    "Muscat",
+    "Jeddah",
+    "Doha"
+   ],
+   "region": "Middle East & North Africa",
+   "roof_shape": "flat",
+   "roofs": [
+    "#E2D8C2"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=stone",
+    "roof:shape=flat"
+   ],
+   "walls": [
+    "#E8DFC9"
+   ]
+  },
+  {
+   "id": "ir_persian",
+   "boards": [],
+   "kit": [
+    "domes",
+    "vaults",
+    "wind_towers",
+    "courtyards"
+   ],
+   "look": "Adobe walls, domes and vaults, wind towers, tiled mosque domes.",
+   "name": "Persian",
+   "order": 18,
+   "places": [
+    "Yazd",
+    "Isfahan",
+    "Kashan"
+   ],
+   "region": "Middle East & North Africa",
+   "roof_shape": "dome",
+   "roofs": [
+    "#C2A27A",
+    "#3E8FA0"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=adobe",
+    "roof:shape=dome"
+   ],
+   "walls": [
+    "#C9A87C"
+   ]
+  },
+  {
+   "id": "levant_stone",
+   "boards": [],
+   "kit": [
+    "flat_parapet",
+    "arched_windows",
+    "domes"
+   ],
+   "look": "Pale limestone, flat roofs with water tanks, arched windows.",
+   "name": "Levantine stone",
+   "order": 19,
+   "places": [
+    "Jerusalem",
+    "Amman",
+    "Beirut"
+   ],
+   "region": "Middle East & North Africa",
+   "roof_shape": "flat",
+   "roofs": [
+    "#D8CCB0"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=stone",
+    "roof:shape=flat"
+   ],
+   "walls": [
+    "#E3D6B8"
+   ]
+  },
+  {
+   "id": "sahel_earth",
+   "boards": [],
+   "kit": [
+    "toron_beams",
+    "flat_parapet",
+    "buttresses"
+   ],
+   "look": "Smooth mud plaster, wooden beams jutting from the walls, flat roofs, buttressed towers.",
+   "name": "Sahel earthen",
+   "order": 20,
+   "places": [
+    "Djenné",
+    "Timbuktu",
+    "Agadez"
+   ],
+   "region": "Africa",
+   "roof_shape": "flat",
+   "roofs": [
+    "#9C6C46"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=mud",
+    "roof:shape=flat"
+   ],
+   "walls": [
+    "#A7764E"
+   ]
+  },
+  {
+   "id": "za_cape",
+   "boards": [],
+   "kit": [
+    "baroque_gables",
+    "thatch",
+    "flat_parapet"
+   ],
+   "look": "White curved gables and thatch, or brightly painted fronts with flat roofs.",
+   "name": "Cape Dutch and Bo-Kaap",
+   "order": 21,
+   "places": [
+    "Stellenbosch",
+    "Cape Town"
+   ],
+   "region": "Africa",
+   "roof_shape": "gabled",
+   "roofs": [
+    "#7A6A4C",
+    "#9AA0A6"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=plaster",
+    "roof:material=thatch"
+   ],
+   "walls": [
+    "#F3F0E8",
+    "#E86A8A",
+    "#5FA8D3"
+   ]
+  },
+  {
+   "id": "jp_machiya",
+   "boards": [],
+   "kit": [
+    "lattice_fronts",
+    "curved_eaves",
+    "tile_courses",
+    "eaves"
+   ],
+   "look": "Dark timber lattices, grey tile roofs with deep eaves, two low storeys.",
+   "name": "Japanese wooden town",
+   "order": 22,
+   "places": [
+    "Kyoto",
+    "Kanazawa",
+    "Takayama"
+   ],
+   "region": "Asia",
+   "roof_shape": "curved",
+   "roofs": [
+    "#4E5258"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=wood",
+    "roof:material=roof_tiles"
+   ],
+   "walls": [
+    "#5A4434",
+    "#E9E4DA"
+   ]
+  },
+  {
+   "id": "cn_hutong",
+   "boards": [],
+   "kit": [
+    "courtyards",
+    "curved_eaves",
+    "gates",
+    "tile_courses"
+   ],
+   "look": "Grey brick walls round courtyards, curved grey tile roofs, red gates.",
+   "name": "Chinese courtyard",
+   "order": 23,
+   "places": [
+    "Beijing",
+    "Pingyao",
+    "Suzhou"
+   ],
+   "region": "Asia",
+   "roof_shape": "curved",
+   "roofs": [
+    "#5A5E62"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=brick",
+    "roof:material=roof_tiles"
+   ],
+   "walls": [
+    "#8E8E8A"
+   ]
+  },
+  {
+   "id": "kr_hanok",
+   "boards": [],
+   "kit": [
+    "curved_eaves",
+    "courtyards",
+    "stone_bases"
+   ],
+   "look": "Timber frames on stone bases, white walls, curved tile roofs.",
+   "name": "Korean hanok",
+   "order": 24,
+   "places": [
+    "Seoul (Bukchon)",
+    "Jeonju"
+   ],
+   "region": "Asia",
+   "roof_shape": "curved",
+   "roofs": [
+    "#3E4246"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=wood",
+    "roof:material=roof_tiles"
+   ],
+   "walls": [
+    "#EDE6D8",
+    "#7A5A3E"
+   ]
+  },
+  {
+   "id": "sea_shophouse",
+   "boards": [],
+   "kit": [
+    "arcades",
+    "shutters",
+    "tile_courses",
+    "party_chimneys"
+   ],
+   "look": "Pastel shophouse rows with covered five-foot ways, shuttered windows, tile roofs.",
+   "name": "Southeast Asian shophouse",
+   "order": 25,
+   "places": [
+    "Singapore",
+    "George Town",
+    "Hoi An"
+   ],
+   "region": "Asia",
+   "roof_shape": "gabled",
+   "roofs": [
+    "#A85A3C"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=plaster",
+    "roof:material=roof_tiles"
+   ],
+   "walls": [
+    "#E8C27A",
+    "#9CC3B0",
+    "#E4A3A0"
+   ]
+  },
+  {
+   "id": "sea_stilt",
+   "boards": [],
+   "kit": [
+    "stilts",
+    "verandas",
+    "eaves"
+   ],
+   "look": "Timber houses raised on posts, steep roofs, wide verandas.",
+   "name": "Southeast Asian timber",
+   "order": 26,
+   "places": [
+    "Luang Prabang",
+    "Ubud",
+    "rural Thailand"
+   ],
+   "region": "Asia",
+   "roof_shape": "steep",
+   "roofs": [
+    "#5E4A3A"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=wood",
+    "roof:shape=gabled"
+   ],
+   "walls": [
+    "#7A5A3C"
+   ]
+  },
+  {
+   "id": "in_rajasthan",
+   "boards": [],
+   "kit": [
+    "jharokhas",
+    "flat_parapet",
+    "domes"
+   ],
+   "look": "Pink or blue-washed walls, golden sandstone, carved overhanging balconies, flat roofs with domed pavilions.",
+   "name": "Rajasthani",
+   "order": 27,
+   "places": [
+    "Jaipur",
+    "Jodhpur",
+    "Jaisalmer"
+   ],
+   "region": "Asia",
+   "roof_shape": "flat",
+   "roofs": [
+    "#D9C29A"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=sandstone",
+    "roof:shape=flat"
+   ],
+   "walls": [
+    "#D98C78",
+    "#6E95C2",
+    "#D8B26E"
+   ]
+  },
+  {
+   "id": "hima_tibetan",
+   "boards": [],
+   "kit": [
+    "battered_walls",
+    "flat_parapet",
+    "carved_frames"
+   ],
+   "look": "Whitewashed stone with walls leaning inward, flat roofs with dark parapets; carved brick and timber in the Kathmandu valley.",
+   "name": "Himalayan",
+   "order": 28,
+   "places": [
+    "Lhasa",
+    "Leh",
+    "Bhaktapur"
+   ],
+   "region": "Asia",
+   "roof_shape": "flat",
+   "roofs": [
+    "#5A3A2E"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=stone",
+    "roof:shape=flat"
+   ],
+   "walls": [
+    "#F0ECE2",
+    "#8E4A36"
+   ]
+  },
+  {
+   "id": "us_suburban",
+   "boards": [],
+   "kit": [
+    "clapboard",
+    "verandas",
+    "shingle_courses",
+    "gables"
+   ],
+   "look": "Clapboard in white and pale colours, asphalt shingles, front porches, gables.",
+   "name": "North American wooden house",
+   "order": 29,
+   "places": [
+    "New England",
+    "the Midwest",
+    "California"
+   ],
+   "region": "Americas",
+   "roof_shape": "gabled",
+   "roofs": [
+    "#4E5054"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=wood",
+    "roof:material=asphalt_shingle"
+   ],
+   "walls": [
+    "#EEF0F0",
+    "#BFD0D8",
+    "#D9D2BE"
+   ]
+  },
+  {
+   "id": "us_downtown",
+   "boards": [],
+   "kit": [
+    "fire_escapes",
+    "water_towers",
+    "stoops",
+    "cornice"
+   ],
+   "look": "Brownstone stoops, brick walk-ups with fire escapes, flat roofs with water towers, heavy cornices.",
+   "name": "North American downtown",
+   "order": 30,
+   "places": [
+    "New York",
+    "Chicago",
+    "Boston"
+   ],
+   "region": "Americas",
+   "roof_shape": "flat",
+   "roofs": [
+    "#4E4E4E"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=brick",
+    "roof:shape=flat"
+   ],
+   "walls": [
+    "#7A4E3C",
+    "#A0644A"
+   ]
+  },
+  {
+   "id": "latam_colonial",
+   "boards": [],
+   "kit": [
+    "wood_balconies",
+    "courtyards",
+    "tile_courses",
+    "window_grilles"
+   ],
+   "look": "Brightly painted stucco, wooden balconies, Roman tile roofs, courtyards.",
+   "name": "Spanish colonial",
+   "order": 31,
+   "places": [
+    "Cartagena",
+    "Oaxaca",
+    "Antigua"
+   ],
+   "region": "Americas",
+   "roof_shape": "hipped",
+   "roofs": [
+    "#A95E3E"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=plaster",
+    "roof:material=roof_tiles"
+   ],
+   "walls": [
+    "#E9B44C",
+    "#D9604A",
+    "#4E8FB8"
+   ]
+  },
+  {
+   "id": "andes_adobe",
+   "boards": [],
+   "kit": [
+    "stone_bases",
+    "wood_balconies",
+    "tile_courses",
+    "terrain_towns"
+   ],
+   "look": "Adobe or white sillar on Inca stone bases, terracotta roofs, blue balconies.",
+   "name": "Andean adobe",
+   "order": 32,
+   "places": [
+    "Cusco",
+    "Arequipa",
+    "the altiplano"
+   ],
+   "region": "Americas",
+   "roof_shape": "gabled",
+   "roofs": [
+    "#A5603E"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=adobe",
+    "roof:material=roof_tiles"
+   ],
+   "walls": [
+    "#B88A64",
+    "#EDE8DC"
+   ]
+  },
+  {
+   "id": "caribbean_wood",
+   "boards": [],
+   "kit": [
+    "verandas",
+    "shutters",
+    "corrugated_iron"
+   ],
+   "look": "Bright stucco or painted timber, verandas, louvred shutters, tin roofs.",
+   "name": "Caribbean",
+   "order": 33,
+   "places": [
+    "Willemstad",
+    "Havana",
+    "Nassau"
+   ],
+   "region": "Americas",
+   "roof_shape": "hipped",
+   "roofs": [
+    "#C0C4C6"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=plaster",
+    "roof:material=metal"
+   ],
+   "walls": [
+    "#E85A6A",
+    "#4AB0C8",
+    "#F2C94C"
+   ]
+  },
+  {
+   "id": "au_queenslander",
+   "boards": [],
+   "kit": [
+    "stilts",
+    "verandas",
+    "iron_lace",
+    "corrugated_iron"
+   ],
+   "look": "Queenslanders raised on posts with verandas and corrugated iron; terraces with iron lace balconies.",
+   "name": "Australian",
+   "order": 34,
+   "places": [
+    "Brisbane",
+    "Sydney",
+    "Melbourne"
+   ],
+   "region": "Oceania",
+   "roof_shape": "hipped",
+   "roofs": [
+    "#A9AEB2"
+   ],
+   "status": "planned",
+   "tags": [
+    "building:material=wood",
+    "roof:material=metal"
+   ],
+   "walls": [
+    "#EDEDE6",
+    "#D8C9A8"
+   ]
+  },
+  {
+   "id": "modern_global",
+   "boards": [
+    "SchipholClose",
+    "SchipholDetail"
+   ],
+   "kit": [
+    "curtain_walls",
+    "contact_shadows"
+   ],
+   "look": "Glass curtain walls, concrete, flat roofs; drawn from building tags in every tradition through its “modern” entries.",
+   "name": "International modern",
+   "order": 35,
+   "places": [
+    "every city’s newer districts"
+   ],
+   "region": "Everywhere",
+   "roof_shape": "flat",
+   "roofs": [
+    "#56585C"
+   ],
+   "status": "drawn",
+   "tags": [
+    "building:material=glass",
+    "building:material=concrete"
+   ],
+   "version": 78,
+   "walls": [
+    "#93ABBC",
+    "#BEBAB1"
+   ]
+  }
+ ],
+ "kit": [
+  {
+   "id": "gables",
+   "name": "Gables and hips",
+   "order": 0,
+   "status": "done",
+   "what": "Gabled and hipped roofs, the ridge along the house or across it"
+  },
+  {
+   "id": "hoist",
+   "name": "Hoist beams",
+   "order": 1,
+   "status": "done",
+   "what": "The beam under an old gable"
+  },
+  {
+   "id": "cornice",
+   "name": "Cornices",
+   "order": 2,
+   "status": "done",
+   "what": "A light band at the eaves"
+  },
+  {
+   "id": "tile_courses",
+   "name": "Tile and slate courses",
+   "order": 3,
+   "status": "done",
+   "what": "Rows of tiles or slates, seen up close"
+  },
+  {
+   "id": "lit_ridge",
+   "name": "Lit ridges",
+   "order": 4,
+   "status": "done",
+   "what": "The ridge catches the light, as on a model"
+  },
+  {
+   "id": "eaves",
+   "name": "Eaves and verges",
+   "order": 5,
+   "status": "done",
+   "what": "Roofs overhanging the walls, with their shadow on the wall"
+  },
+  {
+   "id": "shutters",
+   "name": "Shutters",
+   "order": 6,
+   "status": "done",
+   "what": "Open shutters beside the windows, in the house’s paint"
+  },
+  {
+   "id": "timber_boards",
+   "name": "Timber boards",
+   "order": 7,
+   "status": "done",
+   "what": "Vertical boards and white corner boards on wooden walls"
+  },
+  {
+   "id": "stucco_band",
+   "name": "Stucco ground floors",
+   "order": 8,
+   "status": "done",
+   "what": "A plastered ground floor under brick or timber"
+  },
+  {
+   "id": "window_styles",
+   "name": "Window styles",
+   "order": 9,
+   "status": "done",
+   "what": "Bays, proportions, frames and glass per tradition: French windows, sashes"
+  },
+  {
+   "id": "mansard_dormers",
+   "name": "Mansards and dormers",
+   "order": 10,
+   "status": "done",
+   "what": "Mansard roofs with dormers over the window bays"
+  },
+  {
+   "id": "zinc_seams",
+   "name": "Zinc seams",
+   "order": 11,
+   "status": "done",
+   "what": "Standing seams on zinc roofs, up close"
+  },
+  {
+   "id": "party_chimneys",
+   "name": "Party-wall stacks",
+   "order": 12,
+   "status": "done",
+   "what": "Chimney stacks with pots on the walls shared with neighbours"
+  },
+  {
+   "id": "capped_chimneys",
+   "name": "Capped chimneys",
+   "order": 13,
+   "status": "done",
+   "what": "Small stacks with a tile cap"
+  },
+  {
+   "id": "plain_chimneys",
+   "name": "Plain chimneys",
+   "order": 14,
+   "status": "done",
+   "what": "A plain stack on the ridge"
+  },
+  {
+   "id": "towers",
+   "name": "Towers",
+   "order": 15,
+   "status": "done",
+   "what": "Towers at a tower’s usual height where none is mapped"
+  },
+  {
+   "id": "church_windows",
+   "name": "Church windows",
+   "order": 16,
+   "status": "done",
+   "what": "Tall lancet windows on churches and cathedrals"
+  },
+  {
+   "id": "curtain_walls",
+   "name": "Curtain walls and decks",
+   "order": 17,
+   "status": "done",
+   "what": "Glass curtain walls, metal ribs, open parking decks"
+  },
+  {
+   "id": "iron_balconies",
+   "name": "Iron balconies",
+   "order": 18,
+   "status": "done",
+   "what": "Continuous iron balconies on tall stone fronts"
+  },
+  {
+   "id": "stone_quays",
+   "name": "Stone quays",
+   "order": 19,
+   "status": "done",
+   "what": "Quay walls in cut stone, lit or shaded piece by piece"
+  },
+  {
+   "id": "terrain_towns",
+   "name": "Towns on terrain",
+   "order": 20,
+   "status": "done",
+   "what": "Every wall down to the slope, trees and lamps on the ground, shadows on the hill"
+  },
+  {
+   "id": "contact_shadows",
+   "name": "Cast shadows",
+   "order": 21,
+   "status": "done",
+   "what": "Cast shadows, on terrain too. The soft dark seam where walls meet the ground came out on 6 October: the map reads better without it (ATLAS_AO=1 brings it back)."
+  },
+  {
+   "id": "masts",
+   "name": "Masts, gantries, conveyors",
+   "order": 22,
+   "status": "done",
+   "what": "Lighting masts that glow at night, sign gantries, conveyor galleries"
+  },
+  {
+   "id": "domes",
+   "name": "Domes",
+   "order": 23,
+   "status": "next",
+   "what": "Domes on chapels and mosques, the Cycladic blue domes first"
+  },
+  {
+   "id": "flat_parapet",
+   "name": "Flat roofs and terraces",
+   "order": 24,
+   "status": "next",
+   "what": "Flat roofs with a low parapet, roof terraces"
+  },
+  {
+   "id": "wood_balconies",
+   "name": "Wooden balconies",
+   "order": 25,
+   "status": "next",
+   "what": "Timber balconies along the upper floors"
+  },
+  {
+   "id": "rounded_edges",
+   "name": "Whitewashed edges",
+   "order": 26,
+   "status": "next",
+   "what": "Softened corners and steps, as lime-wash leaves them"
+  },
+  {
+   "id": "half_timber",
+   "name": "Half-timbering",
+   "order": 27,
+   "status": "planned",
+   "what": "Exposed timber frames over plaster infill"
+  },
+  {
+   "id": "jetty",
+   "name": "Jettied floors",
+   "order": 28,
+   "status": "planned",
+   "what": "Upper floors jutting over the street"
+  },
+  {
+   "id": "stepped_gables",
+   "name": "Stepped gables",
+   "order": 29,
+   "status": "planned",
+   "what": "Stepped and bell gables to the street"
+  },
+  {
+   "id": "baroque_gables",
+   "name": "Baroque gables",
+   "order": 30,
+   "status": "planned",
+   "what": "Curved baroque and Cape Dutch gables"
+  },
+  {
+   "id": "funnel_chimneys",
+   "name": "Funnel chimneys",
+   "order": 31,
+   "status": "planned",
+   "what": "The Venetian funnel chimney"
+  },
+  {
+   "id": "onion_domes",
+   "name": "Onion domes",
+   "order": 32,
+   "status": "planned",
+   "what": "Onion domes on churches"
+  },
+  {
+   "id": "carved_frames",
+   "name": "Carved frames",
+   "order": 33,
+   "status": "planned",
+   "what": "Carved, painted window frames"
+  },
+  {
+   "id": "minarets",
+   "name": "Minarets",
+   "order": 34,
+   "status": "planned",
+   "what": "Minarets beside mosques"
+  },
+  {
+   "id": "thatch",
+   "name": "Thatch",
+   "order": 35,
+   "status": "planned",
+   "what": "Thatched roofs"
+  },
+  {
+   "id": "mashrabiya",
+   "name": "Window screens",
+   "order": 36,
+   "status": "planned",
+   "what": "Carved wooden window screens"
+  },
+  {
+   "id": "wind_towers",
+   "name": "Wind towers",
+   "order": 37,
+   "status": "planned",
+   "what": "Badgir and barjeel wind towers"
+  },
+  {
+   "id": "vaults",
+   "name": "Vaults",
+   "order": 38,
+   "status": "planned",
+   "what": "Vaulted and domed earthen roofs"
+  },
+  {
+   "id": "arched_windows",
+   "name": "Arched openings",
+   "order": 39,
+   "status": "planned",
+   "what": "Arched windows and doors"
+  },
+  {
+   "id": "toron_beams",
+   "name": "Toron beams",
+   "order": 40,
+   "status": "planned",
+   "what": "Wooden beams jutting from mud walls"
+  },
+  {
+   "id": "buttresses",
+   "name": "Buttresses",
+   "order": 41,
+   "status": "planned",
+   "what": "Buttressed earthen walls and towers"
+  },
+  {
+   "id": "corrugated_iron",
+   "name": "Corrugated iron",
+   "order": 42,
+   "status": "planned",
+   "what": "Corrugated metal roofs"
+  },
+  {
+   "id": "lattice_fronts",
+   "name": "Lattice fronts",
+   "order": 43,
+   "status": "planned",
+   "what": "Timber lattice fronts of the machiya"
+  },
+  {
+   "id": "curved_eaves",
+   "name": "Curved eaves",
+   "order": 44,
+   "status": "planned",
+   "what": "Upturned eaves of East Asian roofs"
+  },
+  {
+   "id": "courtyards",
+   "name": "Courtyards",
+   "order": 45,
+   "status": "planned",
+   "what": "Inner courtyards seen from above"
+  },
+  {
+   "id": "gates",
+   "name": "Gates",
+   "order": 46,
+   "status": "planned",
+   "what": "Gates in courtyard walls"
+  },
+  {
+   "id": "arcades",
+   "name": "Arcades",
+   "order": 47,
+   "status": "planned",
+   "what": "Porticoes and covered five-foot ways"
+  },
+  {
+   "id": "stilts",
+   "name": "Stilts",
+   "order": 48,
+   "status": "planned",
+   "what": "Houses raised on posts"
+  },
+  {
+   "id": "verandas",
+   "name": "Verandas and porches",
+   "order": 49,
+   "status": "planned",
+   "what": "Verandas and front porches"
+  },
+  {
+   "id": "jharokhas",
+   "name": "Jharokhas",
+   "order": 50,
+   "status": "planned",
+   "what": "Carved overhanging balconies"
+  },
+  {
+   "id": "battered_walls",
+   "name": "Battered walls",
+   "order": 51,
+   "status": "planned",
+   "what": "Walls leaning inward as they rise"
+  },
+  {
+   "id": "clapboard",
+   "name": "Clapboard",
+   "order": 52,
+   "status": "planned",
+   "what": "Horizontal clapboard siding"
+  },
+  {
+   "id": "fire_escapes",
+   "name": "Fire escapes",
+   "order": 53,
+   "status": "planned",
+   "what": "Fire escapes on street fronts"
+  },
+  {
+   "id": "water_towers",
+   "name": "Water towers",
+   "order": 54,
+   "status": "planned",
+   "what": "Rooftop water tanks and towers"
+  },
+  {
+   "id": "stoops",
+   "name": "Stoops",
+   "order": 55,
+   "status": "planned",
+   "what": "Steps up to raised front doors"
+  },
+  {
+   "id": "stone_bases",
+   "name": "Stone bases",
+   "order": 56,
+   "status": "planned",
+   "what": "Stone bases under adobe and timber walls"
+  },
+  {
+   "id": "iron_lace",
+   "name": "Iron lace",
+   "order": 57,
+   "status": "planned",
+   "what": "Cast-iron lace on verandas and balconies"
+  },
+  {
+   "id": "tile_facades",
+   "name": "Tiled fronts",
+   "order": 58,
+   "status": "planned",
+   "what": "Fronts covered in patterned tiles"
+  },
+  {
+   "id": "window_grilles",
+   "name": "Window grilles",
+   "order": 59,
+   "status": "planned",
+   "what": "Wrought-iron grilles over windows"
+  },
+  {
+   "id": "water_doors",
+   "name": "Water doors",
+   "order": 60,
+   "status": "planned",
+   "what": "Doors onto canals at water level"
+  },
+  {
+   "id": "shingle_courses",
+   "name": "Shingles",
+   "order": 61,
+   "status": "planned",
+   "what": "Rows of wood or asphalt shingles"
+  }
+ ],
+ "foundations": [
+  {
+   "id": "profiles",
+   "name": "Traditions as data",
+   "order": 0,
+   "status": "done",
+   "what": "Each tradition a short file: walls, roofs, windows and details by kind and age, with rules such as a Paris mansard or a canal gable"
+  },
+  {
+   "id": "mapped_first",
+   "name": "Mapped values first",
+   "order": 1,
+   "status": "done",
+   "what": "What OpenStreetMap maps always wins; every guess is a real tag value, marked, with its reason in the tap panel"
+  },
+  {
+   "id": "sun_clock",
+   "name": "Each place’s own sun",
+   "order": 2,
+   "status": "done",
+   "what": "The sun from each place’s latitude and clock"
+  },
+  {
+   "id": "weather",
+   "name": "Real weather",
+   "order": 3,
+   "status": "done",
+   "what": "The real hourly weather of each place at the same three moments"
+  },
+  {
+   "id": "open_terrain",
+   "name": "Terrain anywhere",
+   "order": 4,
+   "status": "done",
+   "what": "Ground shape from open elevation tiles, about 30 m in Europe"
+  },
+  {
+   "id": "coast",
+   "name": "Coasts and harbours",
+   "order": 5,
+   "status": "done",
+   "what": "Mapped bays as sea; a coastline closed round the wrong side is dropped"
+  },
+  {
+   "id": "heights",
+   "name": "Heights from neighbours",
+   "order": 6,
+   "status": "done",
+   "what": "Where no height is mapped, the floors of mapped neighbours, never of towers or churches"
+  },
+  {
+   "id": "party_walls",
+   "name": "Party walls",
+   "order": 7,
+   "status": "done",
+   "what": "Walls shared with neighbours found from the footprints"
+  },
+  {
+   "id": "two_layers",
+   "name": "Two image layers",
+   "order": 8,
+   "status": "done",
+   "what": "Ground and buildings as separate images, each under the upload limit"
+  },
+  {
+   "id": "tradition_map",
+   "name": "Tradition by location",
+   "order": 9,
+   "status": "next",
+   "what": "Choose a place’s tradition from where it is: a world map of tradition regions that blend at their edges"
+  },
+  {
+   "id": "local_calibration",
+   "name": "Local calibration",
+   "order": 10,
+   "status": "next",
+   "what": "Shift a profile toward what neighbours have mapped: their colours, materials and roof shapes"
+  },
+  {
+   "id": "old_new",
+   "name": "Old town and new districts",
+   "order": 11,
+   "status": "next",
+   "what": "More than one tradition per city, chosen by age and land use"
+  },
+  {
+   "id": "national_terrain",
+   "name": "Finer national terrain",
+   "order": 12,
+   "status": "planned",
+   "what": "Open national surveys where they exist: Norway, Italy, the United Kingdom"
+  },
+  {
+   "id": "season",
+   "name": "Seasons from the weather",
+   "order": 13,
+   "status": "planned",
+   "what": "Snow on Alpine roofs and wet streets when the real weather says so"
+  },
+  {
+   "id": "living_scale",
+   "name": "Every tradition up close",
+   "order": 14,
+   "status": "planned",
+   "what": "The living map’s detail in every tradition"
+  }
+ ]
+}

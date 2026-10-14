@@ -1,0 +1,24 @@
+{
+  "meta": {"decimal": ",", "sentence": ". ", "list": ", "},
+  "phrases": {
+    "unit.m.other": "{n} metre",
+    "unit.km.other": "{n} kilometre",
+    "unit.ft.other": "{n} fit",
+    "unit.inch.other": "{n} inç",
+    "unit.mi.other": "{n} mil",
+    "unit.mi.quarter": "çeyrek mil",
+    "unit.mi.half": "yarım mil",
+    "unit.mi.three_quarters": "dörtte üç mil",
+    "unit.nmi.other": "{n} deniz mili",
+    "unit.cable.other": "{n} gomina",
+    "unit.t.other": "{n} ton",
+    "unit.min.other": "{n} dakika",
+    "unit.h.other": "{n} saat",
+    "unit.kmh.other": "saatte {n} kilometre",
+    "unit.mph.other": "saatte {n} mil",
+    "unit.kn.other": "{n} knot",
+    "unit.yd.other": "{n} yarda",
+    "unit.nmi.half": "yarım deniz mili",
+    "unit.percent.other": "yüzde {n}"
+  }
+}

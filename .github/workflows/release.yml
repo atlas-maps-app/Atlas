@@ -1,0 +1,65 @@
+# A tag v* builds the APK and publishes it as a GitHub release. A tag with "alpha" in it (v0.1.0-alpha.1) is a debug
+# build published as a pre-release, for testing on real phones; any other tag is the release build. The APK is signed
+# with the release key when the repository has it as secrets (ATLAS_KEYSTORE_BASE64, ATLAS_KEYSTORE_PASSWORD,
+# ATLAS_KEY_ALIAS, ATLAS_KEY_PASSWORD), otherwise with the debug key, and the notes say which.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to release (must exist)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: app/android
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Android SDK 37
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" > /dev/null
+      - name: Release key
+        env:
+          KEYSTORE: ${{ secrets.ATLAS_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE" ]; then echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.keystore"; echo "ATLAS_KEYSTORE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"; fi
+      - name: Build
+        env:
+          ATLAS_KEYSTORE_PASSWORD: ${{ secrets.ATLAS_KEYSTORE_PASSWORD }}
+          ATLAS_KEY_ALIAS: ${{ secrets.ATLAS_KEY_ALIAS }}
+          ATLAS_KEY_PASSWORD: ${{ secrets.ATLAS_KEY_PASSWORD }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          ATLAS_VERSION_CODE: ${{ github.run_number }}
+        run: |
+          export ATLAS_VERSION="${TAG#v}"
+          case "$TAG" in *alpha*) TASK=assembleDebug ;; *) TASK=assembleRelease ;; esac
+          ./gradlew test "$TASK" --stacktrace
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          case "$TAG" in *alpha*) KIND=debug; PRE=--prerelease ;; *) KIND=release; PRE= ;; esac
+          APK="app/build/outputs/apk/$KIND/atlas-${TAG}.apk"
+          cp app/build/outputs/apk/$KIND/*.apk "$APK"
+          SIGNED="signed with the Atlas release key"
+          [ -n "$ATLAS_KEYSTORE" ] || SIGNED="signed with a debug key: install it fresh, later releases may need an uninstall first"
+          printf '%s\n\nThe APK (%s build) is %s. Map data © OpenStreetMap contributors (ODbL); map tiles by OpenFreeMap (OpenMapTiles); routing by BRouter.\n' \
+            "$(git tag -l --format='%(contents)' "$TAG")" "$KIND" "$SIGNED" > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" "$APK" --title "Atlas $TAG" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag $PRE

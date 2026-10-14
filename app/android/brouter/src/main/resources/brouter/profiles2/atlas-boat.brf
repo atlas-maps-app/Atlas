@@ -1,0 +1,120 @@
+# Atlas boat profile, derived from BRouter's river.brf (MIT, BRouter contributors).
+#
+# Routes on rivers, canals, fairways, docks and locks; respects boat=* and, for motorboats, motorboat=*;
+# respects oneway canals; forbids dams, waterfalls and culverts; locks and weirs cost extra.
+# Speeds are per waterway class (km/h) unless the waterway carries a maxspeed.
+# Start and end points away from the network join it with a straight "beeline" leg, which Atlas reports as open water.
+# BRouter's data carries no bridge clearance or depth; Atlas checks those after routing.
+
+---context:global
+
+assign is_motorboat          = true   # %is_motorboat% | Motorboat (false: sailing or rowing boat) | boolean
+assign avoid_locks           = false  # %avoid_locks% | Avoid locks | boolean
+assign avoid_ferry_lines     = false  # %avoid_ferry_lines% | Do not follow ferry lines across open water | boolean
+
+# cruising speed in km/h; the waterway's own limit applies when lower
+assign maxSpeed              = 12
+
+assign add_beeline           = true
+
+assign downhillcost 0
+assign downhillcutoff 1.5
+assign uphillcost 0
+assign uphillcutoff 1.5
+
+assign turnInstructionMode           = 1
+assign turnInstructionCatchingRange  = 60
+assign turnInstructionRoundabouts    = false
+assign considerTurnRestrictions      = false
+assign pass1coefficient              = 1.5
+assign pass2coefficient              = 1.0
+
+---context:way   # following code refers to way-tags
+
+assign turncost 0
+
+assign isfairway = or waterway=fairway seamark:type=recommended_track|fairway
+
+assign navigable =
+       or waterway=river|canal|fairway|lock_gate|dock|lock
+       or seamark:type=recommended_track|fairway
+          and route=ferry not avoid_ferry_lines
+
+assign boataccess =
+       if is_motorboat then
+          ( switch motorboat=
+                   ( switch boat= true not boat=no|private )
+                   not motorboat=no|private )
+       else
+          ( switch boat= true not boat=no|private )
+
+assign isbadoneway = if reversedirection=yes then oneway=yes|true|1 else oneway=-1
+assign isgoodoneway = if reversedirection=yes then oneway=-1 else oneway=yes|true|1
+
+assign initialclassifier =
+       switch waterway=lock 2
+       switch route=ferry 3
+       1
+
+assign initialcost =
+       switch waterway=lock ( switch avoid_locks 5000 900 )
+       0
+
+assign classfactor =
+       switch waterway=river|canal                1.0
+       switch isfairway                           0.9
+       switch waterway=lock|lock_gate             1.0
+       switch waterway=dock                       1.5
+       switch route=ferry                         3.0
+       1.0
+
+assign costfactor =
+       if not navigable then 100000
+       else if not boataccess then 100000
+       else if isbadoneway then 100000
+       else if tunnel=culvert then 100000
+       else if waterway=dam|weir|fish_pass then 100000
+       else classfactor
+
+assign maxspeed_explicit =
+       switch maxspeed=10 10
+       switch maxspeed=20 20
+       switch maxspeed=30 30
+       switch maxspeed=40 40
+       switch maxspeed=50 50
+       999
+
+assign maxspeed =
+       min maxspeed_explicit
+       switch waterway=lock|lock_gate             3
+       switch waterway=dock                       5
+       switch waterway=canal                      7.5
+       switch waterway=river                      12
+       switch isfairway                           20
+       switch route=ferry                         15
+       10
+
+assign priorityclassifier =
+       switch isfairway                           26
+       switch waterway=river                      24
+       switch route=ferry                         22
+       switch waterway=canal                      20
+       switch waterway=lock|lock_gate             10
+       switch waterway=dock                       6
+       0
+
+assign classifiermask add isbadoneway multiply isgoodoneway 2
+
+# keep the tags Atlas reports along the route in the way descriptions
+assign atlasspantags = or waterway= or boat= or motorboat= or route= or bridge= or tunnel= or maxspeed= seamark:type=
+
+---context:node  # following code refers to node tags
+
+assign initialcost =
+       switch waterway=waterfall                  1000000
+       switch waterway=weir                       50000
+       switch waterway=lock_gate|lock             ( switch avoid_locks 3000 300 )
+       0
+
+# keep the node tags Atlas reports along the route
+assign atlasnodetags = or waterway= barrier=

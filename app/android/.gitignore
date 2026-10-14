@@ -6,3 +6,6 @@ local.properties
 *.iml
 .DS_Store
 captures/
+build-builders/
+.gradle-builders/
+.kotlin-builders/

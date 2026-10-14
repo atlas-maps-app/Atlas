@@ -1,0 +1,47 @@
+{
+  "id": "fr_paris",
+  "name": "Paris stone and zinc",
+  "says": "a Paris stone front",
+  "says_by": {"concrete": "a Paris postwar block", "glass": "a Paris modern front", "plaster": "an old Paris house"},
+  "summary": "Limestone fronts in several tones, tall French windows with iron balconies, zinc mansards with dormers, chimney stacks with pots along the party walls",
+  "floor_h": 3.0,
+  "levels": {"default": 6, "house": 3, "shed": 1, "kiosk": 1},
+  "walls": {
+    "home": {"after:1950": [["concrete", "#BEBAB1", 1]], "before:1830": [["plaster", "#E6DFD1", 2], ["plaster", "#E9E1CF", 1]],
+             "default": [["limestone", "#DCD0B6", 1], ["limestone", "#D3C4A6", 1], ["limestone", "#E2D8C3", 1], ["limestone", "#CDC1A8", 1], ["limestone", "#D8C8AA", 1], ["limestone", "#C8BCA3", 1], ["limestone", "#E0D2B5", 1], ["limestone", "#D6CCB9", 1]]},
+    "office": {"after:1965": [["glass", "#93ABBC", 1]], "default": [["limestone", "#DCD0B6", 1], ["limestone", "#D3C4A6", 1], ["limestone", "#E2D8C3", 1], ["limestone", "#D6CCB9", 1]]},
+    "hotel": {"after:1965": [["glass", "#93ABBC", 1]], "default": [["limestone", "#DCD0B6", 1], ["limestone", "#E2D8C3", 1], ["limestone", "#D8C8AA", 1]]},
+    "hospital": {"after:1965": [["glass", "#93ABBC", 1]], "default": [["limestone", "#D8CCB2", 1]]},
+    "retail": {"after:1960": [["glass", "#93ABBC", 1]], "default": [["limestone", "#DCD0B6", 1], ["limestone", "#D3C4A6", 1], ["limestone", "#E2D8C3", 1]]},
+    "school": [["brick", "#A27A62", 1]],
+    "worship": [["limestone", "#D8CCB2", 1]],
+    "monument": [["limestone", "#D8CCB2", 1], ["limestone", "#D3C4A6", 1]],
+    "kiosk": [["metal", "#4C5E52", 1]],
+    "canopy": [["metal", "#9AA1A7", 1]],
+    "industrial": [["plaster", "#E6DFD1", 1]],
+    "utility": [["plaster", "#E6DFD1", 1]],
+    "shed": [["plaster", "#E6DFD1", 1]],
+    "default": [["limestone", "#DCD0B6", 1], ["limestone", "#D3C4A6", 1], ["limestone", "#E2D8C3", 1]]
+  },
+  "roof": {
+    "home": {"after:1950": {"shapes": [["flat", 1]], "material": "gravel", "colours": ["#9C988F"]}, "default": {"shapes": [["flat", 1]], "material": "metal", "colours": ["#737E88"]}},
+    "office": {"after:1965": {"shapes": [["flat", 1]], "material": "gravel", "colours": ["#9C988F"]}, "default": {"shapes": [["flat", 1]], "material": "metal", "colours": ["#737E88"]}},
+    "hotel": {"shapes": [["flat", 1]], "material": "metal", "colours": ["#737E88"]},
+    "retail": {"shapes": [["flat", 1]], "material": "metal", "colours": ["#737E88"]},
+    "school": {"shapes": [["flat", 1]], "material": "slate", "colours": ["#535C66"]},
+    "worship": {"shapes": [["gabled", 1]], "material": "metal", "colours": ["#7A8187"], "pitch": 0.9},
+    "monument": {"shapes": [["flat", 1]], "material": "slate", "colours": ["#535C66"]},
+    "kiosk": {"shapes": [["flat", 1]], "material": "metal", "colours": ["#737E88"]},
+    "canopy": {"shapes": [["flat", 1]], "material": "glass", "colours": ["#C3D3DA"]},
+    "default": {"shapes": [["flat", 1]], "material": "metal", "colours": ["#737E88"]}
+  },
+  "rules": [
+    {"when": {"kind": ["home", "office", "hotel", "retail", "hospital", "school", "monument"], "material": ["limestone", "plaster"], "year": {"from": 1760, "to": 1940, "unknown": true}, "levels": [4, 9], "area": [80, 1000000]},
+     "roof": {"shape": "mansard", "roof_h": 3.4, "material": "metal", "colours": ["#737E88"]}}
+  ],
+  "windows": {"bay": 2.9, "w": 0.38, "h": 0.73, "top": 0.13, "frame": "#F2EEE6", "glass": "dark", "materials": ["limestone", "plaster", "stone", "sandstone"], "kinds": ["home", "office", "hotel", "retail", "monument", "default"]},
+  "shutters": null,
+  "eaves": 0,
+  "chimneys": {"share": 0.85, "kind": "party", "colour": "#CDBFA5", "pots": "#B26A45"},
+  "cornice": false
+}

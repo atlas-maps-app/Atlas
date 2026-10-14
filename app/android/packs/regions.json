@@ -1,0 +1,62 @@
+{
+  "about": "The offline packs .github/workflows/packs.yml builds: per region a Geofabrik extract (url), the box the app shows it for (bbox: west, south, east, north), and clip when the extract is bigger than the region (tiles and places are then cut to the box). Ids are lower-case letters, digits and dashes, and name the release files.",
+  "regions": [
+    {
+      "id": "netherlands",
+      "name": "Netherlands",
+      "country": "NL",
+      "url": "https://download.geofabrik.de/europe/netherlands-latest.osm.pbf",
+      "bbox": [2.9361, 50.7475, 7.2305, 54.0179]
+    },
+    {
+      "id": "belgium",
+      "name": "Belgium",
+      "country": "BE",
+      "url": "https://download.geofabrik.de/europe/belgium-latest.osm.pbf",
+      "bbox": [2.3407, 49.4949, 6.4103, 51.5984]
+    },
+    {
+      "id": "luxembourg",
+      "name": "Luxembourg",
+      "country": "LU",
+      "url": "https://download.geofabrik.de/europe/luxembourg-latest.osm.pbf",
+      "bbox": [5.733, 49.4455, 6.5322, 50.185]
+    },
+    {
+      "id": "new-york",
+      "name": "New York",
+      "country": "US",
+      "url": "https://download.geofabrik.de/north-america/us/new-york-latest.osm.pbf",
+      "bbox": [-79.7648, 40.4392, -71.6608, 45.0177]
+    },
+    {
+      "id": "paris",
+      "name": "Paris and Île-de-France",
+      "country": "FR",
+      "url": "https://download.geofabrik.de/europe/france/ile-de-france-latest.osm.pbf",
+      "bbox": [1.4451, 48.1192, 3.5604, 49.2427]
+    },
+    {
+      "id": "tuscany",
+      "name": "Tuscany",
+      "country": "IT",
+      "url": "https://download.geofabrik.de/europe/italy/centro-latest.osm.pbf",
+      "bbox": [9.68, 42.23, 12.38, 44.48],
+      "clip": true
+    },
+    {
+      "id": "norway",
+      "name": "Norway",
+      "country": "NO",
+      "url": "https://download.geofabrik.de/europe/norway-latest.osm.pbf",
+      "bbox": [-11.368, 57.5532, 35.5271, 81.052]
+    },
+    {
+      "id": "greater-london",
+      "name": "Greater London",
+      "country": "GB",
+      "url": "https://download.geofabrik.de/europe/united-kingdom/england/greater-london-latest.osm.pbf",
+      "bbox": [-0.5115, 51.2855, 0.3354, 51.6934]
+    }
+  ]
+}
