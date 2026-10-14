@@ -125,7 +125,8 @@ class HomeViewModelTest {
     fun aCategoryShowsItsPlacesAndTappingItAgainClears() {
         val vm = HomeViewModel(testServices(places = true), null, null)
         vm.selectCategory("groceries")
-        assertTrue(vm.results.value!!.loading)
+        // The sheet appears at once, loading; the store may answer before the next line runs, so do not insist on loading.
+        assertNotNull(vm.results.value)
         until { vm.results.value?.loading == false }
         val r = vm.results.value!!
         assertEquals("groceries", r.categoryId)
