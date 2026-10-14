@@ -41,7 +41,7 @@ The rest of the screens are arriving alpha by alpha.
 - **Search** runs on the phone over names, tags and brands, typo-tolerant, in many languages. It has a query language for any tags and "A within 200 m of B".
 - **Symbols** are Atlas's own, drawn for its screens. They are backed by the OpenStreetMap presets of the iD editor, the name-suggestion-index's brands, and Maki and Temaki.
 
-The screens were designed first as boards, each a phone screen, fed by real open data and drawn on the engine. The boards are the app's specification. The app takes their elements (icons, symbols, colours, shapes) directly from them.
+The screens were designed first as boards, each a phone screen, fed by real open data and drawn on the engine. The boards are the app's specification, and the app takes their elements (icons, symbols, colours, shapes) directly from them. The boards themselves are the designer's working space and are not part of this repository.
 
 ## What is where
 
@@ -49,8 +49,6 @@ The screens were designed first as boards, each a phone screen, fed by real open
 |---|---|
 | `app/` | The Android app. `app/README.md` holds the decisions and the order of work, `app/ideas.md` the ideas, and `app/android/` the Kotlin and Compose project (its README has the modules and how to build) |
 | `render/`, `fetch/`, `data/` | The Python map engine the app's engine is ported from, the data fetchers, and what they fetched. `render/README.md` covers the engine, the pipelines and the data |
-| `canvas/`, `engine/` | The screens and the engine's looks as boards (HTML and SVG) |
-| `studio/`, `qa/` | Tools for working on the boards and their tests |
 | `reviews/` | Mangrove reviews, a small Python package |
 | `.github/workflows/` | Build and test on every push, an emulator run of every screen, releases, and the offline packs |
 
@@ -66,7 +64,7 @@ It needs JDK 17 and the Android SDK (platform 37); the Gradle wrapper fetches th
 
 ## Licence
 
-The code, the boards and the notes are under the MIT licence (`LICENSE`): use them, change them, fork them.
+The code and the notes are under the MIT licence (`LICENSE`): use them, change them, fork them.
 
 Data keeps the terms of its sources:
 - Map data © OpenStreetMap contributors, under the ODbL.

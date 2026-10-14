@@ -1,6 +1,6 @@
 # Atlas, the app
 
-Start here. The brief is in the [README](../README.md). The boards are the spec: `canvas/project/` (each board's HTML, CSS and SVG are the material the screens are built from), every screen as a picture in `cache/pictures/img/`, and their stars and your requests in the Studio ([WORKING.md](../WORKING.md)). Atlas's own map engine, in Python, is `render/` (its README says how it draws from real data), and the data it draws from is `data/`.
+Start here. The brief is in the [README](../README.md). The boards are the spec. They stay on the owner's Mac, out of the public repo: `canvas/project/` holds each board's HTML, CSS and SVG, which are the material the screens are built from; `cache/pictures/img/` has every screen as a picture; and the Studio has their stars and the owner's requests (see `WORKING.md`, also local). Atlas's own map engine, in Python, is `render/` (its README says how it draws from real data), and the data it draws from is `data/`.
 
 Everything about the app is decided here, in its code and in this file. Nothing sits in between: no plan page, no procedure. A decision is written down the day it is made, under Decisions.
 
