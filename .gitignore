@@ -32,14 +32,14 @@ Instructions.rtf
 
 # The owner's working space stays on this Mac, out of the public repo (14 Oct 2026): the design canvases' boards
 # (canvas/, engine/), the Studio, the page tests, the session tools and notes, Claude's own settings.
-canvas/
-engine/
-studio/
-qa/
-.claude/
-inbox.py
-after_canvas.py
-rename.py
-dbplan.py
-github.sh
-WORKING.md
+/canvas/
+/engine/
+/studio/
+/qa/
+/.claude/
+/inbox.py
+/after_canvas.py
+/rename.py
+/dbplan.py
+/github.sh
+/WORKING.md
