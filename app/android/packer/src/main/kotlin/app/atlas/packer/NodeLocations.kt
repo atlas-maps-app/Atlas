@@ -160,6 +160,15 @@ class LongLongMap(expected: Int = 64) {
 
     val bytes: Long get() = keys.size * 17L
 
+    /** Calls [action] with every key, in no particular order. */
+    inline fun forEachKey(action: (Long) -> Unit) {
+        for (i in 0 until capacity) if (isUsed(i)) action(keyAt(i))
+    }
+
+    val capacity: Int get() = keys.size
+    fun isUsed(slot: Int): Boolean = used[slot]
+    fun keyAt(slot: Int): Long = keys[slot]
+
     fun get(key: Long): Long {
         var i = slot(key)
         while (used[i]) {

@@ -19,4 +19,6 @@ tasks.test {
     // The Python oracle runs in the tests (python3, PYTHONHASHSEED=0); its outputs go to the repo's cache/oracle.
     environment("PYTHONHASHSEED", "0")
     System.getProperty("atlas.online")?.let { systemProperty("atlas.online", it) }
+    // -Datlas.regions=efteling,grachten_home limits RegionsTest to those views (the region extracts are local only)
+    System.getProperty("atlas.regions")?.let { systemProperty("atlas.regions", it) }
 }

@@ -27,6 +27,10 @@ android {
                 // Screenshot tests always record, so a plain test run leaves the PNGs to look at (CI keeps them).
                 it.systemProperty("roborazzi.test.record", "true")
                 it.systemProperty("atlas.shots", layout.buildDirectory.dir("outputs/roborazzi").get().asFile.absolutePath)
+                // -Datlas.svg.only=<prefix> limits the SVG reference comparison to some files while working on them.
+                providers.systemProperty("atlas.svg.only").orNull?.let { only -> it.systemProperty("atlas.svg.only", only) }
+                providers.systemProperty("atlas.svg.file").orNull?.let { file -> it.systemProperty("atlas.svg.file", file) }
+                providers.systemProperty("atlas.svg.mode").orNull?.let { mode -> it.systemProperty("atlas.svg.mode", mode) }
             }
         }
     }

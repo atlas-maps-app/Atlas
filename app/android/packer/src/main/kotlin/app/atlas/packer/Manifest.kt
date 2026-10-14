@@ -1,6 +1,8 @@
 package app.atlas.packer
 
 import app.atlas.geo.BBox
+import app.atlas.render.data.PackManifest
+import app.atlas.render.data.PackReader
 import app.atlas.tiles.FileRangeSource
 import app.atlas.tiles.PmHeader
 import app.atlas.tiles.PmTiles
@@ -66,7 +68,7 @@ object Manifest {
     }
 
     /**
-     * Writes `<id>.pack.json` for every region with files in [dir] (tiles `<id>.pmtiles`, places `<id>.places.db.gz`
+     * Writes `<id>.pack.json` for every region with files in [dir] (region pack `<id>.atlas`, tiles `<id>.pmtiles`, places `<id>.places.db.gz`
      * with its `<id>.places.json` sidecar), their URLs under [urlBase], and returns the merged list: the [previous]
      * list, then any `<id>.pack.json` already in [dir], then the fresh entries, each replacing the one before. With
      * [regions], only listed regions stay, in their order.
@@ -92,6 +94,7 @@ object Manifest {
         val fresh = names.mapNotNull { n ->
             when {
                 n.endsWith(TILES_SUFFIX) -> n.removeSuffix(TILES_SUFFIX)
+                n.endsWith(ATLAS_SUFFIX) -> n.removeSuffix(ATLAS_SUFFIX)
                 n.endsWith(PLACES_GZ_SUFFIX) -> n.removeSuffix(PLACES_GZ_SUFFIX)
                 n.endsWith(PLACES_SUFFIX) -> n.removeSuffix(PLACES_SUFFIX)
                 else -> null
@@ -118,15 +121,18 @@ object Manifest {
     fun entry(dir: File, id: String, base: String, region: Region?, before: JsonObject? = null, splitBytes: Long = SPLIT_BYTES): JsonObject {
         val tiles = File(dir, id + TILES_SUFFIX).takeIf { it.isFile }
         val places = File(dir, id + PLACES_GZ_SUFFIX).takeIf { it.isFile } ?: File(dir, id + PLACES_SUFFIX).takeIf { it.isFile }
+        val atlas = File(dir, id + ATLAS_SUFFIX).takeIf { it.isFile }
+        val atlasHead = atlas?.let { runCatching { PackReader.open(it).use { r -> r.manifest } }.getOrNull() }
         val earlier = before?.get("files")?.let { it as? JsonArray }?.mapNotNull { it as? JsonObject }.orEmpty()
         fun earlier(kind: String) = earlier.firstOrNull { it.str("kind") == kind }
-        require(tiles != null || places != null || earlier.isNotEmpty()) { "no files for region $id in $dir" }
+        require(tiles != null || places != null || atlas != null || earlier.isNotEmpty()) { "no files for region $id in $dir" }
         val sidecar = File(dir, "$id.places.json").takeIf { it.isFile }?.let { Json.parseToJsonElement(it.readText()).jsonObject }
         val header = tiles?.let { readHeader(it) }
         val metadata = tiles?.let { runCatching { readMetadata(it) }.getOrDefault(emptyMap()) }.orEmpty()
-        val bbox = region?.bbox ?: sidecar?.box("bbox") ?: header?.bounds ?: before?.box("bbox")
+        val bbox = region?.bbox ?: sidecar?.box("bbox") ?: header?.bounds ?: atlasHead?.bbox ?: before?.box("bbox")
         val osmTime = sidecar?.str("osm_timestamp")
             ?: metadata.entries.firstOrNull { it.key.endsWith("osmosisreplicationtime") }?.value?.toString()
+            ?: atlasHead?.dataTime
             ?: before?.str("osm_timestamp")
         val tilesEntry = if (tiles != null) buildJsonObject {
             put("kind", "tiles")
@@ -134,6 +140,12 @@ object Manifest {
             put("format", "pmtiles")
             metadata["version"]?.let { put("schema", "openmaptiles $it") }
         } else earlier("tiles")
+        val atlasEntry = if (atlas != null) buildJsonObject {
+            put("kind", "atlas")
+            file(atlas, base, splitBytes)
+            put("format", PackManifest.FORMAT)
+            atlasHead?.let { put("version", it.version); put("elements", it.elementCount) }
+        } else earlier("atlas")
         val placesEntry = if (places != null) buildJsonObject {
             put("kind", "places")
             val gz = places.name.endsWith(".gz")
@@ -159,7 +171,7 @@ object Manifest {
                 put("maxzoom", maxZoom)
             }
             (releaseOf(base) ?: before?.str("release"))?.let { put("release", it) }
-            put("files", JsonArray(listOfNotNull(tilesEntry, placesEntry)))
+            put("files", JsonArray(listOfNotNull(tilesEntry, placesEntry, atlasEntry)))
         }
     }
 
@@ -219,6 +231,7 @@ object Manifest {
     const val SPLIT_BYTES = 2_000_000_000L
 
     const val TILES_SUFFIX = ".pmtiles"
+    const val ATLAS_SUFFIX = ".atlas"
     const val PLACES_GZ_SUFFIX = ".places.db.gz"
     const val PLACES_SUFFIX = ".places.db"
     const val PACK_SUFFIX = ".pack.json"

@@ -2,6 +2,11 @@ package app.atlas.packer
 
 import app.atlas.geo.BBox
 import app.atlas.packer.pbf.PbfReader
+import app.atlas.render.data.OverpassClient
+import app.atlas.render.data.PackReader
+import app.atlas.render.data.PackWriter
+import app.atlas.render.data.RegionBuilder
+import app.atlas.render.data.RegionConfig
 import app.atlas.search.PlaceStore
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.add
@@ -26,9 +31,22 @@ private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap ex
       limit for release assets) are cut into parts <name>.000, .001…
 
   packer info <in.osm.pbf> [--count]
-      Prints the file's header and, with --count, what it holds."""
+      Prints the file's header and, with --count, what it holds.
 
-/** The command line: `places`, `manifest` and `info`. */
+  packer renders <out-dir> [--only a,b] [--repo DIR]
+      The renders' own data as .atlas packs: every data/regions/<name>/raw.json with its places.py entry, dem*.json and
+      weather, and Amsterdam's data/ams/raw.json. --repo is the repo root (default: the current directory).
+
+  packer region <W,S,E,N> <name> [--out FILE] [--id ID] [--country XX]
+      Builds a .atlas pack from Overpass with fetch/regions.py's query (a big box is split, the parts merged by id).
+
+  packer pbf <in.osm.pbf> <W,S,E,N> [--name NAME] [--out FILE] [--id ID] [--country XX]
+      Builds the same pack from a Geofabrik extract: the elements Overpass would give for the box.
+
+  packer packinfo <file.atlas>
+      Prints a pack's manifest, sections and sizes."""
+
+/** The command line: `places`, `manifest`, `info`, and the region packs: `renders`, `region`, `pbf`, `packinfo`. */
 fun main(args: Array<String>) {
     val code = try {
         run(args.toList(), ::println)
@@ -119,6 +137,48 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
             }
             out(Manifest.pretty(info))
         }
+        "renders" -> {
+            val (dir) = a.files(1)
+            val only = a.value("--only")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()
+            val repo = File(a.value("--repo") ?: ".").absoluteFile
+            a.done()
+            if (!File(repo, "data/regions/places.py").isFile) throw UsageException("$repo is not the repo root (no data/regions/places.py)")
+            val results = Renders.build(repo, File(dir), only) { out(it) }
+            out("${results.size} packs, ${results.sumOf { it.stats.bytes } shr 10} KiB in all")
+        }
+        "region" -> {
+            val (box, name) = a.files(2)
+            val bbox = parseBox(box)
+            val id = a.value("--id") ?: RegionBuilder.slug(name)
+            val file = File(a.value("--out") ?: "$id.atlas")
+            val country = a.value("--country")
+            a.done()
+            val stats = RegionBuilder.buildFromOverpass(OverpassClient(log = { out("  $it") }), id, name, bbox, file, country)
+            out("${file.path}: ${stats.elements} elements (${stats.nodes} nodes, ${stats.ways} ways, ${stats.relations} relations), ${file.length() shr 10} KiB in ${stats.millis} ms")
+        }
+        "pbf" -> {
+            val (pbf, box) = a.files(2)
+            val bbox = parseBox(box)
+            val name = a.value("--name") ?: File(pbf).name.removeSuffix(".osm.pbf").removeSuffix(".pbf")
+            val id = a.value("--id") ?: RegionBuilder.slug(name)
+            val file = File(a.value("--out") ?: "$id.atlas")
+            val country = a.value("--country")
+            a.done()
+            val extract = PbfRegion.extract(File(pbf), bbox) { out("  $it") }
+            val spec = RegionBuilder.spec(id, RegionConfig.forBox(name, bbox, country), extract.source(), listOf(File(pbf).name + " (Geofabrik, OpenStreetMap contributors, ODbL 1.0)"))
+            val stats = PackWriter.write(spec, file)
+            out("${file.path}: ${stats.elements} elements (${stats.nodes} nodes, ${stats.ways} ways, ${stats.relations} relations), ${file.length() shr 10} KiB in ${stats.millis} ms")
+        }
+        "packinfo" -> {
+            val (path) = a.files(1)
+            a.done()
+            PackReader.open(File(path)).use { r ->
+                out(r.manifest.pretty())
+                out("size: ${r.size} bytes, ${r.chunkCount} chunks, sections: ${r.sectionNames.joinToString()}")
+                val bad = r.verify()
+                out(if (bad.isEmpty()) "checksums: all sections intact" else "checksums: damaged sections ${bad.joinToString()}")
+            }
+        }
         null, "help", "--help", "-h" -> {
             out(USAGE)
             return if (a.command == null) 2 else 0
@@ -179,6 +239,6 @@ private class Args(args: List<String>) {
     }
 
     companion object {
-        val VALUED = setOf("--name", "--langs", "--bbox", "--threads", "--regions", "--previous", "--out", "--split-bytes")
+        val VALUED = setOf("--name", "--langs", "--bbox", "--threads", "--regions", "--previous", "--out", "--split-bytes", "--only", "--repo", "--country", "--id")
     }
 }

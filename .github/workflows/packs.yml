@@ -1,6 +1,12 @@
 # Builds Atlas's offline packs and publishes them as GitHub release assets (free hosting that serves HTTP ranges).
-# For each region of app/android/packs/regions.json, from Geofabrik's extract: the map tiles (Planetiler, OpenMapTiles
-# schema, PMTiles, the schema OpenFreeMap serves) and the place store `:search` reads (`packer places`, gzipped SQLite).
+# For each region of app/android/packs/regions.json, from Geofabrik's extract: the place store `:search` reads
+# (`packer places`, gzipped SQLite), the region pack the engine draws from (`packer pbf`, an `.atlas` file with the
+# elements Overpass would give for the region: full tags, way geometry, multipolygons) and, until the engine replaces
+# them, the map tiles (Planetiler, OpenMapTiles schema, PMTiles).
+# The region pack covers the region's `atlas` box when regions.json gives one (a city, a district: "atlas": [w, s, e, n]),
+# else its whole bbox when that is under 0.6 square degrees; a country-sized region without an `atlas` box gets none.
+# The renders' own packs (the Python engine's extracts) are made by `packer renders` on the owner's Mac and published
+# as the release packs-renders.
 # A run uploads to a dated release packs-YYYYMMDD, then writes packs.json there and to the fixed release packs-latest,
 # which the app reads (PackCatalog in :tiles). A region whose build fails keeps its previous entry in packs.json.
 name: Packs
@@ -36,7 +42,8 @@ env:
 
     Map data © OpenStreetMap contributors, under the Open Database Licence (ODbL 1.0):
     https://www.openstreetmap.org/copyright. The place stores (*.places.db.gz) are derived databases and are
-    themselves available under the ODbL; the map tiles (*.pmtiles) are produced works. Extracts by Geofabrik
+    themselves available under the ODbL; the region packs (*.atlas) hold OpenStreetMap elements with their tags and
+    geometry and are available under the ODbL as well; the map tiles (*.pmtiles) are produced works. Extracts by Geofabrik
     (https://download.geofabrik.de). Tiles in the OpenMapTiles schema (© OpenMapTiles, CC-BY 4.0,
     https://openmaptiles.org), built with Planetiler (Apache-2.0) from OpenStreetMap, OSM water polygons
     (osmdata.openstreetmap.de, ODbL) and Natural Earth (public domain).
@@ -63,7 +70,8 @@ jobs:
           if [ -n "$UNKNOWN" ]; then echo "::error::Unknown regions: $UNKNOWN"; exit 1; fi
           MATRIX=$(jq -c --arg ids "${REGIONS:-}" "$WANT as \$want
             | [.regions[] | select((\$want | length) == 0 or (.id as \$i | \$want | index(\$i) != null))
-               | {id, name, url, bbox: (.bbox | map(tostring) | join(\",\")), clip: (.clip // false)}]" "$FILE")
+               | {id, name, url, country: (.country // \"\"), bbox: (.bbox | map(tostring) | join(\",\")), clip: (.clip // false),
+                  atlas: ((.atlas // (if ((.bbox[2] - .bbox[0]) * (.bbox[3] - .bbox[1])) <= 0.6 then .bbox else null end)) // [] | map(tostring) | join(\",\"))}]" "$FILE")
           if [ "$(jq length <<< "$MATRIX")" -eq 0 ]; then echo "::error::No regions to build"; exit 1; fi
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
           echo "tag=packs-$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
@@ -129,6 +137,8 @@ jobs:
       PBF_URL: ${{ matrix.region.url }}
       BBOX: ${{ matrix.region.bbox }}
       CLIP: ${{ matrix.region.clip }}
+      COUNTRY: ${{ matrix.region.country }}
+      ATLAS_BOX: ${{ matrix.region.atlas }}
       TAG: ${{ needs.plan.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -189,6 +199,20 @@ jobs:
           ARGS=(--name "$NAME")
           if [ "$CLIP" = "true" ]; then ARGS+=(--bbox "$BBOX"); fi
           app/android/packer/build/install/packer/bin/packer places "$WORK/$ID.osm.pbf" "$WORK/out/$ID.places.db" "${ARGS[@]}"
+          df -h "$WORK"
+      - name: Region pack
+        env:
+          JAVA_OPTS: -Xmx10g
+        run: |
+          set -euo pipefail
+          if [ -z "$ATLAS_BOX" ]; then
+            echo "- $ID: no region pack (the region is too big for one; give it an \"atlas\" box in regions.json)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          ARGS=(--name "$NAME" --id "$ID" --out "$WORK/out/$ID.atlas")
+          if [ -n "$COUNTRY" ]; then ARGS+=(--country "$COUNTRY"); fi
+          app/android/packer/build/install/packer/bin/packer pbf "$WORK/$ID.osm.pbf" "$ATLAS_BOX" "${ARGS[@]}"
+          app/android/packer/build/install/packer/bin/packer packinfo "$WORK/out/$ID.atlas" | tail -2
           df -h "$WORK"
       - name: Tiles
         working-directory: ${{ env.WORK }}/planetiler

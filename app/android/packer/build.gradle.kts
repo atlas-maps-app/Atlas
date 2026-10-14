@@ -19,6 +19,8 @@ dependencies {
     implementation(project(":places"))
     implementation(project(":search"))
     implementation(project(":tiles"))
+    // the region pack format (PackWriter, PackReader, the Overpass client): plain Kotlin, shared with the phone
+    implementation(project(":render"))
     implementation(libs.sqlite.bundled)
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
