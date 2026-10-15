@@ -116,8 +116,9 @@ class GoScreenshotTest {
             store.visited(SavedPlace("Haarlem", GoFixtures.HAARLEM), s.clock.millis() - 2 * 3600_000L)
         }
         open(s, Dest.Go)
-        // Both signs timed by the router: Amsterdam Centraal and Haarlem by bike.
-        compose.waitUntil(60_000) { compose.onAllNodes(hasContentDescription("′ ·", substring = true)).fetchSemanticsNodes().size >= 2 }
+        // Both signs timed by the router: Amsterdam Centraal and Haarlem by bike (where the routing segment is on this
+        // machine; on CI the gantry shows without times).
+        if (GoFixtures.hasSegment) compose.waitUntil(60_000) { compose.onAllNodes(hasContentDescription("′ ·", substring = true)).fetchSemanticsNodes().size >= 2 }
         compose.waitUntil(10_000) { compose.onAllNodes(hasText("°", substring = true)).fetchSemanticsNodes().isNotEmpty() }
         compose.settle()
         for (d in listOf("Where to?", "Search by voice", "Ears only", "Fuel", "Charge", "Park", "Bike fix", "Lockers")) {

@@ -52,9 +52,11 @@ class DrawingTest {
         assertEquals("ui-walk", Icons.resolveId("walk"))
         assertEquals("maki-cafe", Icons.resolveId("maki-cafe"))
         assertNull(Icons.resolveId("no-such-symbol-anywhere"))
+        // The boards' own café cup stands in for Maki's: drawn in strokes.
         val cafe = Icons.shape("cafe")!!
+        assertEquals("place.cafe", cafe.icon.id)
         val bounds = RectF()
-        cafe.fills[0].computeBounds(bounds, true)
+        (cafe.fills + cafe.strokes).first().computeBounds(bounds, true)
         assertTrue(bounds.width() > 5f && bounds.height() > 5f)
         // Drawn white on black, it marks pixels inside its box only.
         val b = bitmap(64, 64)

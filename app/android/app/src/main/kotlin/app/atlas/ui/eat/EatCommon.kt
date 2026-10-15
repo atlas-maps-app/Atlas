@@ -8,11 +8,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.offset
 import app.atlas.R
 import app.atlas.nav.LocalServices
 import app.atlas.services.PlaceOrigin
@@ -23,6 +25,13 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
+
+/** Lets the content run [x] beyond its slot on both sides, as the boards' wider rows do (padding cannot be negative). */
+fun Modifier.bleed(x: Dp): Modifier = layout { measurable, constraints ->
+    val px = x.roundToPx()
+    val placeable = measurable.measure(constraints.offset(horizontal = 2 * px))
+    layout((placeable.width - 2 * px).coerceAtLeast(0), placeable.height) { placeable.place(-px, 0) }
+}
 
 /** What the open line says, before words: open until, closing soon, closed and when it opens, open 24/7, unknown. */
 sealed interface OpenSay {

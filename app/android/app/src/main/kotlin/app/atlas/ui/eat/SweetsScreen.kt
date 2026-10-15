@@ -101,7 +101,7 @@ fun SweetsScreen(nav: Navigator) {
                     )
                 }
             }
-            item { GelatoCase(case?.tubs.orEmpty(), tub, Modifier.padding(top = 18.dp, start = (-2).dp, end = (-2).dp)) { t -> tub = if (tub == t) null else t } }
+            item { GelatoCase(case?.tubs.orEmpty(), tub, Modifier.padding(top = 18.dp).bleed(2.dp)) { t -> tub = if (tub == t) null else t } }
             item {
                 Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     for (s in SweetPill.entries) {

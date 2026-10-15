@@ -105,7 +105,7 @@ fun MarketScreen(nav: Navigator) {
                 }
             }
             item {
-                TagStrings(board?.stalls.orEmpty(), stall, Modifier.padding(top = 10.dp, start = (-6).dp, end = (-6).dp)) { s -> stall = if (stall == s) null else s }
+                TagStrings(board?.stalls.orEmpty(), stall, Modifier.padding(top = 10.dp).bleed(6.dp)) { s -> stall = if (stall == s) null else s }
             }
             item {
                 board?.let { b ->

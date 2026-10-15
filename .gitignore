@@ -26,6 +26,8 @@ qa/pagetest/runner
 *.zip
 *.mp4
 *.mov
+# but the app's test references are kept: Safari's pictures of the probe SVGs, which CI compares the drawing against
+!app/android/*/src/test/resources/**/*.png
 
 # The owner's own instructions file stays on this Mac
 Instructions.rtf
