@@ -93,7 +93,8 @@ class NavigationServiceTest {
     @Test
     fun theNoticeSaysTheNextTurnAndTheArrival() {
         val session = startTrip()
-        val notice0 = NavNotice.of(app, session.view.value, "Amsterdam Centraal", Units.METRIC, ZoneId.of("Europe/Amsterdam"), muted = false)
+        // Before the first fix (startNav's demo feed may already have sent one before the test held it).
+        val notice0 = NavNotice.of(app, session.view.value.copy(state = null), "Amsterdam Centraal", Units.METRIC, ZoneId.of("Europe/Amsterdam"), muted = false)
         assertEquals(app.getString(R.string.go_notify_starting), notice0.title)
         Simulator(session.view.value.route).fixes().take(15).forEach(session::onFix)
         val v = session.view.value

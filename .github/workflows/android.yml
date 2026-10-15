@@ -49,6 +49,7 @@ jobs:
             app/android/**/build/outputs/roborazzi/
             app/android/**/build/preview/
             app/android/**/build/screenshots/
+            cache/svg-android/compare/
           if-no-files-found: ignore
 
   emulator:
