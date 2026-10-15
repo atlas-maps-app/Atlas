@@ -57,6 +57,30 @@ class ProbeStagesTest {
         raster.run(src, out)
         lines += "chain ${hash(out)} source ${sr.left},${sr.top} ${sr.width}x${sr.height} out ${o.left},${o.top} ${o.width}x${o.height}"
 
+        // SvgCanvas's own steps, one by one: the source drawn by Skia on transparent, the chain on it, the result as a
+        // bitmap (read back), and drawn over the probe's background.
+        val plainDoc = SvgParser.parse(text.replace(" filter=\"url(#f)\"", "").replace("<rect width=\"160\" height=\"160\" fill=\"#7f8fa0\"/>", ""))
+        val srcBmp = Bitmap.createBitmap(sr.width, sr.height, Bitmap.Config.ARGB_8888)
+        val sc = android.graphics.Canvas(srcBmp)
+        sc.translate(-sr.left.toFloat(), -sr.top.toFloat())
+        sc.scale(2f, 2f)
+        SvgCanvas(plainDoc, SvgFonts.fromDirectory(SvgCompare.fonts), SvgCanvas.FilterMode.CPU).draw(sc, 160f, 160f)
+        val srcPx = SvgCanvas.premultipliedPixels(srcBmp)
+        lines += "skia source ${hash(srcPx)}"
+        val out2 = IntArray(o.width * o.height)
+        raster.run(srcPx, out2)
+        lines += "chain on skia source ${hash(out2)}"
+        val res = SvgCanvas.bitmapOfPremultiplied(out2, o.width, o.height)
+        lines += "result read back ${hash(SvgCanvas.premultipliedPixels(res))} same ${SvgCanvas.premultipliedPixels(res).contentEquals(out2)}"
+        val bg = Bitmap.createBitmap(320, 320, Bitmap.Config.ARGB_8888)
+        val bc = android.graphics.Canvas(bg)
+        bc.drawColor(0xff7f8fa0.toInt())
+        bc.drawBitmap(res, o.left.toFloat(), o.top.toFloat(), android.graphics.Paint())
+        lines += "drawn over bg ${hash(pixels(bg))} at 64,64=%08x 200,100=%08x".format(bg.getPixel(64, 64), bg.getPixel(200, 100))
+        // The same blend in Kotlin: src-over, rounded.
+        val k = out2[(64 - o.top) * o.width + (64 - o.left)]
+        lines += "result px 64,64 premul %08x".format(k)
+
         // Skia: the shapes without the filter, then the whole probe.
         val (plain, _) = SvgCompare.render(File.createTempFile("canopy-plain", ".svg").apply { writeText(text.replace(" filter=\"url(#f)\"", "")) })
         lines += "skia shapes ${hash(pixels(plain))}"
