@@ -627,7 +627,8 @@ class SvgCanvas(
             bytes.rewind()
             val ints = IntArray(b.width * b.height)
             bytes.asIntBuffer().get(ints)
-            for (i in ints.indices) ints[i] = swapRedBlue(ints[i])
+            val rgba = rgbaMemory
+            for (i in ints.indices) ints[i] = swapRedBlue(ints[i], rgba)
             return ints
         }
 
@@ -636,18 +637,34 @@ class SvgCanvas(
             val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
             val bytes = ByteBuffer.allocate(w * h * 4).order(ByteOrder.nativeOrder())
             val ints = bytes.asIntBuffer()
-            for (p in px) ints.put(swapRedBlue(p))
+            val rgba = rgbaMemory
+            for (p in px) ints.put(swapRedBlue(p, rgba))
             bytes.rewind()
             b.copyPixelsFromBuffer(bytes)
             return b
         }
 
-        /** `a r g b` ↔ the int a little-endian R, G, B, A byte quadruple reads as. */
-        private fun swapRedBlue(p: Int): Int {
+        /**
+         * Whether ARGB_8888 memory holds the bytes R, G, B, A, as on Android. Desktop builds of Skia (Robolectric's on
+         * x86 Linux, which CI runs) hold B, G, R, A instead; asked once of a real bitmap.
+         */
+        private val rgbaMemory: Boolean by lazy {
+            val b = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+            b.setPixel(0, 0, 0xFF102030.toInt())
+            val bytes = ByteBuffer.allocate(4)
+            b.copyPixelsToBuffer(bytes)
+            b.recycle()
+            bytes.get(0) == 0x10.toByte()
+        }
+
+        /** `a r g b` ↔ the int that a pixel's four bytes in memory read as in native order. */
+        private fun swapRedBlue(p: Int, rgba: Boolean): Int {
             if (ByteOrder.nativeOrder() != ByteOrder.LITTLE_ENDIAN) {
                 // Big-endian: the bytes R, G, B, A read as r g b a.
                 return (p ushr 8) or (p shl 24)
             }
+            // R, G, B, A reads as a b g r: red and blue swap. B, G, R, A reads as a r g b already.
+            if (!rgba) return p
             return (p and 0xFF00FF00.toInt()) or ((p shr 16) and 0xFF) or ((p and 0xFF) shl 16)
         }
 
