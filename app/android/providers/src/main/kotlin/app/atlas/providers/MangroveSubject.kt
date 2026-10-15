@@ -62,7 +62,8 @@ data class GeoSubject(val at: LatLon, val name: String, val uncertainty: Int = U
 
         private const val HEX = "0123456789ABCDEF"
 
-        // Any run of Unicode white space, as Python's str.split() sees it: a no-break space in a name is a space.
-        private val SPACES = Regex("""(?U)\s+""")
+        // Any run of Unicode white space, as Python's str.split() sees it: a no-break space in a name is a space. Spelt
+        // out: Android's regex (ICU) rejects Java's (?U).
+        private val SPACES = Regex("""[\t\n\x0B\f\r\x1C-\x1F \x{85}\x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}]+""")
     }
 }

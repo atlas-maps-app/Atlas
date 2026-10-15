@@ -1360,8 +1360,11 @@ object PyRe {
     /** Python's `\s` for str patterns (the characters `str.isspace()` accepts). */
     const val WS = "[\\t\\n\\x0B\\f\\r\\x1C-\\x1F \\x{85}\\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}]"
 
+    /** The JVM needs UNICODE_CHARACTER_CLASS for Unicode `\d`, `\w` and `\b`; Android's ICU has them so and rejects the flag. */
+    private val UNICODE = if (System.getProperty("java.vm.name") == "Dalvik") 0 else Pattern.UNICODE_CHARACTER_CLASS
+
     /** A pattern with Python's semantics: Unicode `\d` and `\b`, `.` excluding only newline. Write `\s` as [WS]. */
-    fun compile(p: String): Pattern = Pattern.compile(p, Pattern.UNICODE_CHARACTER_CLASS or Pattern.UNIX_LINES)
+    fun compile(p: String): Pattern = Pattern.compile(p, UNICODE or Pattern.UNIX_LINES)
 
     /** `str.isspace()` for one character. */
     fun isSpace(c: Char): Boolean = when (c) {
