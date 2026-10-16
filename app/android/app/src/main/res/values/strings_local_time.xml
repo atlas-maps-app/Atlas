@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="time_title">Time machine</string>
+    <string name="time_compare">Drag to compare %1$d and today</string>
+    <string name="time_year">Year</string>
+    <string name="time_stood">%1$d of %2$d buildings here stood in %3$d</string>
+    <string name="time_stands">stands today</string>
+    <string name="time_stands_kind">%1$s · stands today</string>
+    <string name="time_later">%1$d years later</string>
+    <string name="time_planned">under construction</string>
+    <string name="time_nothing_yet">No building with a mapped year goes back this far</string>
+    <string name="time_unknown_note">%1$d buildings have no year in the map and show faint.</string>
+    <string name="time_footer">Dates: OpenStreetMap start_date tags. Only buildings that still stand are mapped; lost ones need OpenHistoricalMap.</string>
+    <string name="time_none">No buildings mapped here</string>
+    <string name="time_none_text">Download this region\'s map, or go online, to see its buildings.</string>
+    <string name="time_nodates">None of the %1$d buildings here has a year in the map yet.</string>
+    <string name="time_era_old">before 1700</string>
+    <string name="time_era_brick">1700 to 1849</string>
+    <string name="time_era_ochre">1850 to 1944</string>
+    <string name="time_era_postwar">1945 to 1989</string>
+    <string name="time_era_new">1990 on</string>
+    <string name="time_era_unknown">no year</string>
+</resources>

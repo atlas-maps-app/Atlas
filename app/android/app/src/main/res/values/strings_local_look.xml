@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="look_title">Look around</string>
+    <string name="look_heading_label">Heading %1$s, %2$d degrees</string>
+    <string name="look_tab_view">View</string>
+    <string name="look_tab_3d">3D</string>
+    <string name="look_tab_photo_none">photo · none yet</string>
+    <string name="look_tab_photo">photo · %1$d</string>
+    <string name="look_tab_photo_wait">photo · looking…</string>
+    <string name="look_step_back">Step back</string>
+    <string name="look_step_forward">Step forward</string>
+    <string name="look_street">%1$s, looking %2$s</string>
+    <string name="look_looking">Looking %1$s</string>
+    <string name="look_dir_n">north</string>
+    <string name="look_dir_ne">north-east</string>
+    <string name="look_dir_e">east</string>
+    <string name="look_dir_se">south-east</string>
+    <string name="look_dir_s">south</string>
+    <string name="look_dir_sw">south-west</string>
+    <string name="look_dir_w">west</string>
+    <string name="look_dir_nw">north-west</string>
+    <string name="look_ahead">%1$s %2$d m ahead, %3$s</string>
+    <string name="look_ahead_straight">%1$s %2$d m ahead</string>
+    <string name="look_side_left">left</string>
+    <string name="look_side_right">right</string>
+    <string name="look_nothing">Nothing named within 150 m in view</string>
+    <string name="look_nophoto">No street photo here yet. Walk it once and share it openly.</string>
+    <string name="look_offline_photo">No street photo offline. Go online to look for one.</string>
+    <string name="look_photo_credit">Photo: %1$s · %2$s · %3$s</string>
+    <string name="look_footer">Street photos: Panoramax where they exist · 3D stand-in from the map\'s buildings elsewhere (9 m where no height is mapped)</string>
+    <string name="look_closes">closes %1$s</string>
+    <string name="look_open_until">open until %1$s</string>
+    <string name="look_opens">opens %1$s</string>
+    <string name="look_mark_desc">%1$s, %2$s</string>
+    <string name="look_empty">No buildings mapped here</string>
+    <string name="look_empty_text">Download this region\'s map, or go online, to see the street.</string>
+</resources>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="time_title">Tijdmachine</string>
+    <string name="time_compare">Sleep om %1$d en nu te vergelijken</string>
+    <string name="time_year">Jaar</string>
+    <string name="time_stood">%1$d van %2$d gebouwen hier stonden er in %3$d</string>
+    <string name="time_stands">staat er nog</string>
+    <string name="time_stands_kind">%1$s · staat er nog</string>
+    <string name="time_later">%1$d jaar later</string>
+    <string name="time_planned">in aanbouw</string>
+    <string name="time_nothing_yet">Geen gebouw met een bekend jaar gaat zo ver terug</string>
+    <string name="time_unknown_note">%1$d gebouwen hebben geen jaar op de kaart en staan vaag.</string>
+    <string name="time_footer">Jaartallen: start_date-tags van OpenStreetMap. Alleen gebouwen die er nog staan zijn in kaart; verdwenen gebouwen vragen OpenHistoricalMap.</string>
+    <string name="time_none">Geen gebouwen in kaart hier</string>
+    <string name="time_none_text">Download de kaart van deze regio, of ga online, om de gebouwen te zien.</string>
+    <string name="time_nodates">Geen van de %1$d gebouwen hier heeft al een jaar op de kaart.</string>
+    <string name="time_era_old">voor 1700</string>
+    <string name="time_era_brick">1700-1849</string>
+    <string name="time_era_ochre">1850 tot 1944</string>
+    <string name="time_era_postwar">1945 tot 1989</string>
+    <string name="time_era_new">vanaf 1990</string>
+    <string name="time_era_unknown">geen jaar</string>
+</resources>

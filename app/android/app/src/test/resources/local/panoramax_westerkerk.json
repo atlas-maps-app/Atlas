@@ -1,0 +1,52 @@
+{
+"features": [
+{
+"id": "3824a121-4bad-4436-b2f3-6d45c7ce5419",
+"type": "Feature",
+"geometry": {
+"type": "Point",
+"coordinates": [
+4.884085,
+52.374182
+]
+},
+"assets": {
+"hd": {
+"href": "https://nl.panoramax.xyz/images/38/24/a1/21/4bad-4436-b2f3-6d45c7ce5419.jpg"
+},
+"sd": {
+"href": "https://nl.panoramax.xyz/derivates/38/24/a1/21/4bad-4436-b2f3-6d45c7ce5419/sd.jpg"
+},
+"thumb": {
+"href": "https://nl.panoramax.xyz/derivates/38/24/a1/21/4bad-4436-b2f3-6d45c7ce5419/thumb.jpg"
+}
+},
+"providers": [
+{
+"id": "6fb3e824-690b-4b43-b197-525f82f6687e",
+"name": "Panoramax Test-NL",
+"roles": [
+"producer"
+]
+},
+{
+"name": "City of Amsterdam",
+"roles": [
+"producer"
+]
+}
+],
+"properties": {
+"datetime": "2023-02-06T09:18:13.594940+00:00",
+"datetimetz": "2023-02-06T10:18:13.594940+01:00",
+"license": "CC-BY-SA-4.0",
+"view:azimuth": 360,
+"exif": {
+"Exif.Image.Artist": "City of Amsterdam",
+"Xmp.GPano.PoseHeading": "357.723593797079",
+"Xmp.GPano.ProjectionType": "equirectangular"
+}
+}
+}
+]
+}

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="peaks_title">What\'s that peak?</string>
+    <string name="peaks_heading_label">Heading %1$s, %2$d degrees</string>
+    <string name="peaks_here">%1$s · %2$d m</string>
+    <string name="peaks_here_unnamed">Here · %1$d m</string>
+    <string name="peaks_here_flat">Here</string>
+    <string name="peaks_sunset_behind">sunset behind %1$s %2$s</string>
+    <string name="peaks_label_detail">%1$d m · %2$s · %3$d°</string>
+    <string name="peaks_label_detail_noele">%1$s · %2$d°</string>
+    <string name="peaks_row_detail">%1$d m · %2$s</string>
+    <string name="peaks_row_detail_noele">no height · %1$s</string>
+    <string name="peaks_km">%1$s km</string>
+    <string name="peaks_desc">%1$s, %2$d metres, %3$s kilometres</string>
+    <string name="peaks_hike">Hike %1$s · ~%2$s</string>
+    <string name="peaks_hike_hm">%1$d h %2$02d</string>
+    <string name="peaks_hike_m">%1$d min</string>
+    <string name="peaks_none">No named peaks within 25 km</string>
+    <string name="peaks_none_text">Peaks need this region\'s map downloaded or a connection. OpenStreetMap lists them by name and height.</string>
+    <string name="peaks_no_view">No peak with a mapped height in this direction. Turn round, or drag the picture.</string>
+    <string name="peaks_eye_unknown">Your own height is not known without a connection, so the angles count from sea level.</string>
+    <string name="peaks_footer">Names and heights: OpenStreetMap · the ridge is drawn from them, not from terrain data · compass: the phone\'s sensor, or drag</string>
+    <string name="peaks_listed">Peaks near, nearest in view first</string>
+</resources>

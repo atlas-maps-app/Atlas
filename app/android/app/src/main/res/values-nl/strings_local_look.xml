@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="look_title">Kijk rond</string>
+    <string name="look_heading_label">Richting %1$s, %2$d graden</string>
+    <string name="look_tab_view">Weergave</string>
+    <string name="look_tab_3d">3D</string>
+    <string name="look_tab_photo_none">foto · nog geen</string>
+    <string name="look_tab_photo">foto · %1$d</string>
+    <string name="look_tab_photo_wait">foto · zoeken…</string>
+    <string name="look_step_back">Stap terug</string>
+    <string name="look_step_forward">Stap vooruit</string>
+    <string name="look_street">%1$s, kijkend naar het %2$s</string>
+    <string name="look_looking">Kijkend naar het %1$s</string>
+    <string name="look_dir_n">noorden</string>
+    <string name="look_dir_ne">noordoosten</string>
+    <string name="look_dir_e">oosten</string>
+    <string name="look_dir_se">zuidoosten</string>
+    <string name="look_dir_s">zuiden</string>
+    <string name="look_dir_sw">zuidwesten</string>
+    <string name="look_dir_w">westen</string>
+    <string name="look_dir_nw">noordwesten</string>
+    <string name="look_ahead">%1$s %2$d m verderop, %3$s</string>
+    <string name="look_ahead_straight">%1$s %2$d m rechtdoor</string>
+    <string name="look_side_left">links</string>
+    <string name="look_side_right">rechts</string>
+    <string name="look_nothing">Niets met een naam binnen 150 m in beeld</string>
+    <string name="look_nophoto">Hier is nog geen straatfoto. Loop er één keer en deel hem openlijk.</string>
+    <string name="look_offline_photo">Geen straatfoto offline. Ga online om er een te zoeken.</string>
+    <string name="look_photo_credit">Foto: %1$s · %2$s · %3$s</string>
+    <string name="look_footer">Straatfoto\'s: Panoramax waar ze bestaan · elders een 3D-vervanger van de gebouwen op de kaart (9 m waar geen hoogte staat)</string>
+    <string name="look_closes">sluit %1$s</string>
+    <string name="look_open_until">open tot %1$s</string>
+    <string name="look_opens">opent %1$s</string>
+    <string name="look_mark_desc">%1$s, %2$s</string>
+    <string name="look_empty">Geen gebouwen in kaart hier</string>
+    <string name="look_empty_text">Download de kaart van deze regio, of ga online, om de straat te zien.</string>
+</resources>
