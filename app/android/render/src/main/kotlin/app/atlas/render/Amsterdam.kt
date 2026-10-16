@@ -19,6 +19,8 @@ import app.atlas.render.City.vdot
 import app.atlas.render.City.vnorm
 import app.atlas.render.City.vsub
 import app.atlas.render.data.RawSource
+import app.atlas.render.live.ItemNote
+import app.atlas.render.live.WorldTape
 import app.atlas.render.Real.centroid
 import app.atlas.render.Real.pip
 import app.atlas.render.Real.signedArea
@@ -1209,7 +1211,23 @@ object Amsterdam {
 
     // ------------------------------------------------------------------ render
     /** A thing to draw, sorted by depth: a building ("b"), a tree, a lamp, a bench, … with its dict, or ready SVG ("svg") as a String. */
-    class Item(val d: Double, val k: String, val o: Any?)
+    class Item(val d: Double, val k: String, val o: Any?) {
+        /** What its maker knew of it, kept only while the render is taped (see [noted]). */
+        @JvmField var note: ItemNote? = null
+    }
+
+    /**
+     * [item], with an [ItemNote] for the world tape when [cam] records into one: its [kind], its [owner], the point ([fx],
+     * [fz]) its radius cut tested (and a second, ([fx1], [fz1]), that keeps it too), and its sort point ([sx], [sy], [sz])
+     * whose camera depth plus [off] is the item's depth. Without a tape it is [item] as it was.
+     */
+    internal fun noted(
+        item: Item, cam: Camera, kind: String, owner: Any?, fx: Double, fz: Double, sx: Double, sy: Double, sz: Double,
+        off: Double = 0.0, fx1: Double = fx, fz1: Double = fz,
+    ): Item {
+        if (cam.tape != null) item.note = ItemNote(kind, owner, fx, fz, fx1, fz1, sx, sy, sz, off)
+        return item
+    }
 
     /** `S['under']`, `S['over']`: other regions' land cover below the water, or runways, lanes and rails on the ground. */
     typealias SceneLayer = (Camera, Dict, (Double, Double) -> Boolean, MutableList<String>) -> String
@@ -1292,12 +1310,14 @@ object Amsterdam {
         }
         if (wx) ground.add("<g filter=\"url(#mat)\">") // pavers and setts are never one flat tone either
         for (a in dicts(S["areas"])) {
+            WorldTape.owner(a)
             var c = AREA[a["kind"]] ?: "#DCD3C4"
             val sf = ((a["tags"] as Map<String, Any?>?) ?: emptyMap())["surface"] as? String
             if (a["kind"] in SURFACED_AREAS && sf != null && truthy(SURF[sf]) && TONE) c = SURF.getValue(tagsOf(a)["surface"] as String) // a square in its mapped surface
             if (night) c = tohex(mulc(hx(c), 0.18))
             ground.add(groundPath(cam, polyOf(a), c, 0.02))
         }
+        WorldTape.owner(null)
         // roads in their mapped material; at eye level, pavements where sidewalk=* is mapped, and the joints of each material
         val eye = wx && pitch < 10
         th["_eye"] = eye
@@ -1389,6 +1409,7 @@ object Amsterdam {
         for (hw in ROAD_ORDER) {
             for (r in roads) {
                 if (r["hw"] != hw) continue
+                WorldTape.owner(r)
                 val rt = tagsOf(r); val pts = ptsOf(r); val rw = d(r["w"]); val bridge = truthy(r["bridge"])
                 val surf = rt["surface"] as String?
                 var col = SURF[surf] ?: (th["road"] as String)
@@ -1402,7 +1423,7 @@ object Amsterdam {
                     for (s_ in intArrayOf(-1, 1)) {
                         val off = ribbon(pts, rw / 2 + 0.15); val n = pts.size
                         val line = if (s_ < 0) off.subList(0, n) else off.subList(n, off.size).asReversed()
-                        items.addAll(railing(cam, th, line, y + 0.02))
+                        items.addAll(railing(cam, th, line, y + 0.02, r))
                     }
                 } else if (bridge && !night) {
                     for (s_ in intArrayOf(-1, 1)) {
@@ -1430,6 +1451,7 @@ object Amsterdam {
                 }
             }
         }
+        WorldTape.owner(null)
     }
 
     // render/amsterdam.py:615 render: tram tracks, canal names, and the shadows of buildings and trees on the ground
@@ -1511,16 +1533,19 @@ object Amsterdam {
             if (truthy(b["hidden"])) continue
             val c = centroid(polyOf(b))
             if (far(c.x, c.y)) continue
-            val cc = cam.cam(V3(c.x, (if (truthy(b["h"])) d(b["h"]) else 0.0) / 2, c.y))
+            val sy = (if (truthy(b["h"])) d(b["h"]) else 0.0) / 2
+            val cc = cam.cam(V3(c.x, sy, c.y))
             if (cc[2] < 2) continue
-            items.add(Item(cc[2], "b", b))
+            items.add(noted(Item(cc[2], "b", b), cam, "building", b, c.x, c.y, c.x, sy, c.y))
         }
         for (p in dicts(S["parts"])) {
             val c = centroid(polyOf(p))
             if (far(c.x, c.y)) continue
-            val cc = cam.cam(V3(c.x, (d(p["min"]) + (if (truthy(p["h"])) d(p["h"]) else 0.0)) / 2, c.y))
+            val sy = (d(p["min"]) + (if (truthy(p["h"])) d(p["h"]) else 0.0)) / 2
+            val cc = cam.cam(V3(c.x, sy, c.y))
             if (cc[2] < 2) continue
-            items.add(Item(cc[2] - 0.01 * d(p["min"]), "b", p))
+            val off = -(0.01 * d(p["min"]))
+            items.add(noted(Item(cc[2] + off, "b", p), cam, "part", p, c.x, c.y, c.x, sy, c.y, off))
         }
         val furniturePx = if ("furniture_px" in cfg) d(cfg["furniture_px"]) else 1.6
         for (n in dicts(S["nodes"])) {
@@ -1534,13 +1559,13 @@ object Amsterdam {
             val c = cam.cam(V3(nx, 1.0, nz))
             if (c[2] < (if (pitch < 10) 3.0 else 2.0)) continue // at eye level, nothing right in your face
             if (k != "tree" && cam.focal / c[2] < furniturePx) continue // street furniture only a pixel or two tall is left out
-            items.add(Item(c[2], k, n))
+            items.add(noted(Item(c[2], k, n), cam, k, n, nx, nz, nx, 1.0, nz))
         }
         (S["items"] as SceneItems?)?.let { items.addAll(it(cam, th, far, defs)) } // other regions: cranes, tanks, turbines, masts
         if (wx && !truthy(S["no_facades"])) {
             for (it in facadeDetails(S, cam, th, far)) {
                 val hz = hazeAt(th, it.d)
-                items.add(if (hz > 0.04 && it.k == "svg") Item(it.d, it.k, pf("<g opacity=\"%.2f\">%s</g>", 1 - 0.8 * hz, it.o)) else it)
+                items.add(if (hz > 0.04 && it.k == "svg") Item(it.d, it.k, pf("<g opacity=\"%.2f\">%s</g>", 1 - 0.8 * hz, it.o)).also { h -> h.note = it.note } else it)
             }
         }
     }
@@ -1553,11 +1578,16 @@ object Amsterdam {
     private fun drawObjects(items: MutableList<Item>, split: Dict?, cam: Camera, th: Dict, sh: Shade, lens: String?): Drawn {
         items.pySortBy { -it.d }
         val out = ArrayList<String>(); var cut: Int? = null; var splitD: Double? = null
+        val tape = cam.tape
         for (it in items) {
             val o = it.o
             if (split != null && it.k == "b" && o === split) {
                 cut = out.size; splitD = it.d; continue
             }
+            val from = out.size
+            val note = it.note
+            val owner = if (note != null) note.owner else if (o is String) null else o
+            tape?.setOwner(owner)
             when (it.k) {
                 "b" -> out.addAll(drawBuilding(cam, th, sh, o as Dict, it.d, lens))
                 "tree" -> out.addAll(drawTree3d(lift(cam, o), th, sh, o as Dict, it.d, lens))
@@ -1568,7 +1598,9 @@ object Amsterdam {
                 "bicycle_parking" -> out.add(drawRack(lift(cam, o), th, o as Dict))
                 "svg" -> out.add(o as String)
             }
+            tape?.item(note?.kind ?: it.k, owner, it.d, note, out, from)
         }
+        tape?.setOwner(null)
         return Drawn(out, cut, splitD)
     }
 
@@ -2699,14 +2731,15 @@ object Amsterdam {
 
     // render/amsterdam.py:1686 railing
     /** bridge=yes: a generic iron railing, posts and two rails, in short pieces so it sorts with everything else. */
-    fun railing(cam: Camera, th: Map<String, Any?>, line: List<V2>, y0: Double): List<Item> {
+    fun railing(cam: Camera, th: Map<String, Any?>, line: List<V2>, y0: Double, owner: Any? = null): List<Item> {
         val out = ArrayList<Item>(); val night = th["night"] == true; val col = if (!night) "#26292C" else "#0A0B0E"
         for (i in 0 until line.size - 1) {
             val a = line[i]; val b = line[i + 1]; val Lg = dist(a, b); var k = 0.0
             while (k < Lg) {
                 val k2 = pmin(Lg, k + 2.0)
                 val pa = V2(a[0] + (b[0] - a[0]) * k / Lg, a[1] + (b[1] - a[1]) * k / Lg); val pb = V2(a[0] + (b[0] - a[0]) * k2 / Lg, a[1] + (b[1] - a[1]) * k2 / Lg)
-                val c = cam.cam(V3((pa[0] + pb[0]) / 2, y0 + 0.5, (pa[1] + pb[1]) / 2))
+                val sx = (pa[0] + pb[0]) / 2; val sz = (pa[1] + pb[1]) / 2
+                val c = cam.cam(V3(sx, y0 + 0.5, sz))
                 if (c[2] < 0.8 || c[2] > 220) { k = k2; continue }
                 val s = cam.focal / c[2]; val segs = ArrayList<String>()
                 for (yy in doubleArrayOf(y0 + 1.0, y0 + 0.12)) {
@@ -2719,7 +2752,10 @@ object Amsterdam {
                     val p0 = cam.proj(V3(px, y0 + 0.12, pz)); val p1 = cam.proj(V3(px, y0 + 1.0, pz))
                     if (p0 != null && p1 != null) segs.add(pf("M%.1f %.1fL%.1f %.1f", p0[0], p0[1], p1[0], p1[1]))
                 }
-                if (segs.isNotEmpty()) out.add(Item(c[2], "svg", pf("<path d=\"%s\" stroke=\"%s\" stroke-width=\"%.2f\" stroke-linecap=\"round\" fill=\"none\"/>", segs.joinToString(""), col, pmax(0.4, 0.045 * s))))
+                if (segs.isNotEmpty()) {
+                    val item = Item(c[2], "svg", pf("<path d=\"%s\" stroke=\"%s\" stroke-width=\"%.2f\" stroke-linecap=\"round\" fill=\"none\"/>", segs.joinToString(""), col, pmax(0.4, 0.045 * s)))
+                    out.add(noted(item, cam, "railing", owner, Double.NaN, Double.NaN, sx, y0 + 0.5, sz)) // no radius cut: drawn with its road
+                }
                 k = k2
             }
         }
@@ -2784,7 +2820,10 @@ object Amsterdam {
         return best?.copyOfRange(1, 5)
     }
 
-    private class Door(val nums: MutableSet<Long>, var depth: Double = 0.0, var sv: String = "", var p: V2? = null, var d0: Double = 0.0, var drawn: Boolean = false)
+    private class Door(
+        val nums: MutableSet<Long>, var depth: Double = 0.0, var sv: String = "", var p: V2? = null, var d0: Double = 0.0, var drawn: Boolean = false,
+        var note: ItemNote? = null,
+    )
 
     // render/amsterdam.py:1745 facade_details
     /**
@@ -2801,6 +2840,7 @@ object Amsterdam {
             val biz = st != null && st.cat != "service"
             val nx = d(n["x"]); val nz = d(n["z"])
             if (!(truthy(num) || biz) || far(nx, nz)) continue
+            WorldTape.owner(n) // a shopfront is its shop's, a door its address's
             val d0 = cam.depth(V3(nx, 1.0, nz))
             if (d0 < 2 || d0 > (if (!biz) 75.0 else 230.0)) continue
             var b: Dict? = null
@@ -2813,7 +2853,7 @@ object Amsterdam {
             val qx = best[0]; val qz = best[1]; val ux = best[2]; val uz = best[3]
             val nrm = vnorm(V3(uz, 0.0, -ux))
             if (vdot(nrm, vsub(cam.C, V3(qx, 1.2, qz))) <= 0) continue // that wall faces away
-            val ce = centroid(polyOf(b)); val cb = cam.cam(V3(ce.x, d(b["h"]) / 2, ce.y))
+            val ce = centroid(polyOf(b)); val sy = d(b["h"]) / 2; val cb = cam.cam(V3(ce.x, sy, ce.y))
             val depth = cb[2] - 0.03
             val o = 0.06
             fun quad(w: Double, y0: Double, y1: Double, off: Double = o) = listOf(
@@ -2823,6 +2863,12 @@ object Amsterdam {
             if (biz) {
                 val oh = t["opening_hours"] as String?; val isOpen = !oh.isNullOrEmpty() && openNow(oh, th)
                 val items = shopfront(cam, th, S, t, st!!, qx, qz, ux, uz, nrm, isOpen, depth, d0)
+                if (cam.tape != null) {
+                    for (it in items) { // the board at the building's depth; the blade and the tables at their own points
+                        val sn = it.note ?: ItemNote("shopfront", n, nx, nz, nx, nz, ce.x, sy, ce.y, -0.03)
+                        it.note = ItemNote(sn.kind, n, nx, nz, nx, nz, sn.sx, sn.sy, sn.sz, sn.off)
+                    }
+                }
                 if (items.isNotEmpty()) {
                     out.addAll(items)
                     th["_shops"] = ((th["_shops"] as Int?) ?: 0) + 1; th["_open"] = ((th["_open"] as Int?) ?: 0) + (if (isOpen) 1 else 0)
@@ -2838,6 +2884,7 @@ object Amsterdam {
                 continue
             }
             val door = Door(if (base != null) linkedSetOf(base) else linkedSetOf())
+            if (cam.tape != null) door.note = ItemNote("door", n, nx, nz, nx, nz, ce.x, sy, ce.y, -0.03)
             doors[key] = door
             var sv = face(cam, quad(1.15, 0.0, 2.45), listOf("#1F3A30", "#23262C", "#3B2220", "#1E2C3E", "#2E3B2A")[Math.floorMod((n["id"] as Number).toLong(), 5L).toInt()], " stroke=\"#E8E2D6\" stroke-width=\".5\"")
             sv += face(cam, quad(1.5, 0.0, 0.32, 0.6), if (!night) "#9C9488" else "#22232A") // the stoop
@@ -2854,8 +2901,9 @@ object Amsterdam {
                     p[0] - fs * (0.4 + 0.3 * plen(num)), p[1] - fs * 0.85, fs * (0.8 + 0.6 * plen(num)), fs * 1.15, fs * 0.15, if (!night) "#F2EEE4" else "#3A3A40", p[0], p[1] + fs * 0.08, fs,
                     if (!night) "#1E2A44" else "#B9C0D0", num)
             }
-            if (sv.isNotEmpty()) { out.add(Item(door.depth, "svg", sv)); th["_doors"] = ((th["_doors"] as Int?) ?: 0) + 1 }
+            if (sv.isNotEmpty()) { out.add(Item(door.depth, "svg", sv).also { it.note = door.note }); th["_doors"] = ((th["_doors"] as Int?) ?: 0) + 1 }
         }
+        WorldTape.owner(null)
         return out
     }
 
@@ -2915,7 +2963,8 @@ object Amsterdam {
         // a blade sign out over the pavement: what you read when you look along a street
         val bu = W2 + 0.35
         val blade = listOf(p3(bu, 2.75, 0.18), p3(bu, 2.75, 1.05), p3(bu, 3.55, 1.05), p3(bu, 3.55, 0.18))
-        val cb = cam.cam(p3(bu, 3.15, 0.6))
+        val bp = p3(bu, 3.15, 0.6)
+        val cb = cam.cam(bp)
         if (cb[2] > 1.5) {
             var bsv = ""
             val br0 = cam.proj(p3(bu, 3.62, 0.05)); val br1 = cam.proj(p3(bu, 3.62, 1.1))
@@ -2938,7 +2987,7 @@ object Amsterdam {
                     }
                 }
             }
-            out.add(Item(cb[2], "svg", bsv))
+            out.add(noted(Item(cb[2], "svg", bsv), cam, "blade", null, Double.NaN, Double.NaN, bp.x, bp.y, bp.z))
         }
         // a terrace: outdoor_seating=yes puts tables and chairs on the pavement, and a parasol by day
         if (t["outdoor_seating"] in OUTDOOR_SEATING && st.cat == "food") {
@@ -2978,7 +3027,7 @@ object Amsterdam {
                     }
                     tbl.add(fan.toString())
                 }
-                out.add(Item(cc[2], "svg", tbl.joinToString("")))
+                out.add(noted(Item(cc[2], "svg", tbl.joinToString("")), cam, "terrace", null, Double.NaN, Double.NaN, x, 0.75, z))
             }
         }
         return out

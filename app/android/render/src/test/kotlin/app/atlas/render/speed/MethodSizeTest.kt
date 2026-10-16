@@ -21,9 +21,8 @@ class MethodSizeTest {
 
     /** The methods over 8000 bytes before this test, none on the live path: their sizes then, as ceilings. */
     private val ceilings = mapOf(
-        "app/atlas/render/Living.render" to 10793, // the living map's own renderer (LivingTest), 9834 dex code units: at ART's edge
+        "app/atlas/render/Living.render" to 9997, // the living map's own renderer (LivingTest), 10 793 until its item loop moved out (M1b)
         "app/atlas/render/City.render" to 10282,
-        "app/atlas/render/Regions.drawItems" to 8897, // under ART's limit (8252 code units); HotSpot interprets it
         "app/atlas/render/Real.renderImpl" to 8597, // the Williamsburg renders only
     )
 

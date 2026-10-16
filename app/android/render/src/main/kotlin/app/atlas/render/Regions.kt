@@ -16,6 +16,7 @@ import app.atlas.render.Real.centroid
 import app.atlas.render.Real.pip
 import app.atlas.render.Real.signedArea
 import app.atlas.render.data.RawSource
+import app.atlas.render.live.WorldTape
 import app.atlas.render.py.CrMath
 import app.atlas.render.py.Dict
 import app.atlas.render.py.PyFmt.pf
@@ -848,9 +849,11 @@ object Regions {
         val groups = LinkedHashMap<String, MutableList<String>>()
         val land = dicts(S["land"])
         for (a in land) {
+            WorldTape.owner(a)
             val dd = gpoly(cam, Amsterdam.polyOf(a), 0.01)
             if (dd.isNotEmpty()) groups.getOrPut(a["kind"] as String) { ArrayList() }.add(dd)
         }
+        WorldTape.owner(null)
         for ((kind, ds) in groups) out.add(pf("<path d=\"%s\" fill=\"%s\"/>", ds.joinToString(""), nightC(th, LAND.getValue(kind).first)))
         out.add("</g>")
         // forest and scrub seen from above: a canopy of crowns, generic, inside the mapped outline
@@ -859,7 +862,8 @@ object Regions {
             defs.add("<filter id=\"canopy\" x=\"0\" y=\"0\" width=\"100%\" height=\"100%\"><feTurbulence type=\"fractalNoise\" baseFrequency=\".55\" numOctaves=\"2\" seed=\"17\" result=\"n\"/>" +
                 "<feColorMatrix in=\"n\" type=\"matrix\" values=\"0 0 0 0 .16  0 0 0 0 .24  0 0 0 0 .12  -3.4 0 0 0 2.1\"/>" +
                 "<feComposite in2=\"SourceGraphic\" operator=\"in\"/></filter>")
-            val ds = canopy.map { gpoly(cam, Amsterdam.polyOf(it), 0.02) }
+            val ds = canopy.map { WorldTape.owner(it); gpoly(cam, Amsterdam.polyOf(it), 0.02) }
+            WorldTape.owner(null)
             out.add(pf("<path d=\"%s\" fill=\"#000\" filter=\"url(#canopy)\" opacity=\".55\"/>", ds.joinToString("")))
         }
         if (truthy(S["_relief"])) {
@@ -930,6 +934,7 @@ object Regions {
         for (r in dicts(S["rail"])) {
             val rp = Amsterdam.ptsOf(r); val crane = r["crane"] == true
             if (!near(rp)) continue
+            WorldTape.owner(r)
             val dd = gpoly(cam, ribbon(rp, if (!crane) 1.6 else 0.5), 0.04)
             if (dd.isNotEmpty() && !crane) out.add(pf("<path d=\"%s\" fill=\"%s\"/>", dd, nightC(th, "#A0978B")))
             val rl = lineD(cam, offsetLine(rp, 0.72), 0.08) + lineD(cam, offsetLine(rp, -0.72), 0.08)
@@ -939,6 +944,7 @@ object Regions {
         for (r in dicts(S["big"]).pySortedBy0 { d(it["layer"]) }) {
             val rp = Amsterdam.ptsOf(r)
             if (!near(rp)) continue
+            WorldTape.owner(r)
             val t = tagsOf(r); val hw = r["hw"] as String; val layer = d(r["layer"])
             val lanes = PyMath.int(Real.num(t["lanes"], if (hw.endsWith("link")) 1.0 else 2.0)!!).toInt()
             val motorway = hw == "motorway"
@@ -962,6 +968,7 @@ object Regions {
         for (a in dicts(S["aero"]).pySortedBy0 { ORDER.getValue(it["kind"] as String).toDouble() }) {
             val ap = Amsterdam.ptsOf(a)
             if (!near(ap)) continue
+            WorldTape.owner(a)
             val t = tagsOf(a); val kind = a["kind"] as String
             if (kind == "runway") {
                 val w = Real.num(t["width"], 45.0)!!
@@ -988,12 +995,14 @@ object Regions {
         for (m in dicts(S["marine"])) {
             val mp = Amsterdam.ptsOf(m)
             if (!near(mp)) continue
+            WorldTape.owner(m)
             val kind = m["kind"] as String
             val wdt = mapOf("breakwater" to 9.0, "groyne" to 4.0, "pier" to 5.0, "quay" to 3.0).getValue(kind)
             val col = mapOf("breakwater" to "#9E9A92", "groyne" to "#8E8A84", "pier" to "#A89A86", "quay" to "#B4AEA4").getValue(kind)
             val dd = gpoly(cam, if (m["closed"] == true) mp else ribbon(mp, wdt / 2), 0.3)
             if (dd.isNotEmpty()) out.add(pf("<path d=\"%s\" fill=\"%s\"/>", dd, nightC(th, col)))
         }
+        WorldTape.owner(null)
         if (truthy(S["coasters"]) || truthy(S["woods"])) { // a theme park's tracks, and a park's or a zoo's planted woods
             var its: List<Amsterdam.Item> = emptyList(); var shs: List<Pair<String, Double>> = emptyList()
             if (truthy(S["coasters"])) {
@@ -1009,9 +1018,11 @@ object Regions {
         }
         // a national park's edge: a quiet dashed line on the ground, as on a walking map
         for (p in dicts(S["park"])) {
+            WorldTape.owner(p)
             val dd = lineD(cam, p["ring"] as List<V2>, 0.15)
             if (dd.isNotEmpty()) out.add(pf("<path d=\"%s\" fill=\"none\" stroke=\"%s\" stroke-width=\"2.2\" stroke-dasharray=\"7 5\" opacity=\".85\"/>", dd, if (!night) "#2F6B3E" else "#4C8A5A"))
         }
+        WorldTape.owner(null)
         return out.joinToString("")
     }
 
@@ -1071,64 +1082,8 @@ object Regions {
     /** Towers, wind turbines, cranes, masts, gantries and conveyors, a park's tracks and woods, power lines: items sorted with the rest. */
     fun drawItems(S: Dict, cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, defs: MutableList<String>): List<Amsterdam.Item> {
         val night = th["night"] == true; val L = v3(th["_L"]); val items = ArrayList<Amsterdam.Item>()
-        // towers mapped as points with a height: a round concrete shaft; an airport or observation tower carries a glazed cab
-        val sx_ = cam.r[0]; val sz_ = cam.r[2]
-        for (tw in (S["mtowers"] as List<Dict>?) ?: emptyList()) {
-            val x = d(tw["x"]); val z = d(tw["z"])
-            if (far(x, z)) continue
-            val t = tagsOf(tw); val H = d(tw["h"]); val cab = t["aeroway"] == "tower" || t["tower:type"] in setOf("observation", "control")
-            val c = cam.cam(V3(x, H / 2, z))
-            if (c[2] < 5) continue
-            val rs = if (cab) 3.2 else pmax(1.2, H / 30)
-            fun band(y0: Double, y1: Double, r: Double, col: String): String {
-                val q = listOf(V3(x - sx_ * r, y0, z - sz_ * r), V3(x + sx_ * r, y0, z + sz_ * r), V3(x + sx_ * r, y1, z + sz_ * r), V3(x - sx_ * r, y1, z - sz_ * r))
-                val sp = cam.poly(q, margin = 200.0) ?: return ""
-                val gid = pf("tw%d_%d", PyMath.mod((tw["id"] as Number).toLong(), 100000L), PyMath.int(y0))
-                val sh = if (!night) th["shadow"] as String else "#05060A"
-                defs.add(pf("<linearGradient id=\"%s\" x1=\"0\" x2=\"1\" y1=\"0\" y2=\"0\"><stop offset=\"0\" stop-color=\"%s\"/><stop offset=\"%.2f\" stop-color=\"%s\"/><stop offset=\"1\" stop-color=\"%s\"/></linearGradient>",
-                    gid, tohex(mix(hx(col), hx(sh), 0.35)), 0.35 + 0.3 * (if (L[0] * sx_ + L[2] * sz_ > 0) 1 else 0), col, tohex(mix(hx(col), hx(sh), 0.5))))
-                return pf("<path d=\"%s\" fill=\"url(#%s)\"/>", P(sp), gid)
-            }
-            val shaft = tohex(Amsterdam.light(th, hx("#C9C6BE"), V3(0.0, 0.0, 1.0), !night))
-            val parts = arrayListOf(band(0.0, H - (if (cab) 14 else 0), rs, shaft))
-            if (cab) {
-                parts.add(band(H - 14, H - 11, rs * 2.3, shaft))
-                parts.add(band(H - 11, H - 4.5, rs * 2.6, if (!night) "#7F98AA" else "#1A2230"))
-                parts.add(band(H - 4.5, H - 3.2, rs * 2.7, tohex(Amsterdam.light(th, hx("#E2E0DA"), V3(0.0, 1.0, 0.0), !night))))
-                parts.add(band(H - 3.2, H, 0.5, "#8C9096"))
-            }
-            items.add(Amsterdam.Item(c[2], "svg", parts.joinToString("")))
-        }
-        // wind turbines: tower, nacelle, three blades; the rotor faces the hour's real wind
-        val wd = PyMath.radians(d((th["wx"] as Map<String, Any?>)["wind_dir"]))
-        val fx = PyMath.sin(wd); val fz = -PyMath.cos(wd) // toward where the wind comes from
-        for (tb in dicts(S["turbines"])) {
-            val x = d(tb["x"]); val z = d(tb["z"])
-            if (far(x, z)) continue
-            val H = if (truthy(tb["h"])) d(tb["h"]) else 100.0; val Rr = (if (truthy(tb["rotor"])) d(tb["rotor"]) else 100.0) / 2
-            val c = cam.cam(V3(x, H / 2, z))
-            if (c[2] < 5) continue
-            val s = cam.focal / c[2]
-            val base = cam.proj(V3(x, 0.0, z)); val top = cam.proj(V3(x, H, z))
-            if (base == null || top == null) continue
-            val g = StringBuilder(pf("<path d=\"M%.1f %.1fL%.1f %.1fL%.1f %.1fL%.1f %.1fZ\" fill=\"%s\"/>", base[0] - 2.2 * s, base[1], base[0] + 2.2 * s, base[1], top[0] + 1.2 * s, top[1], top[0] - 1.2 * s, top[1],
-                if (!night) "#E9ECEE" else "#3A3F4C"))
-            val hub = V3(x + fx * 2, H, z + fz * 2)
-            val rx = -fz; val rz = fx // the rotor plane: across the wind, and up
-            val blades = StringBuilder()
-            for (k in 0 until 3) {
-                val a = PyMath.radians((25 + 120 * k).toDouble())
-                val tip = V3(hub[0] + rx * PyMath.cos(a) * Rr, H + PyMath.sin(a) * Rr, hub[2] + rz * PyMath.cos(a) * Rr)
-                val mid = V3(hub[0] + rx * PyMath.cos(a + 0.06) * Rr * 0.3, H + PyMath.sin(a + 0.06) * Rr * 0.3, hub[2] + rz * PyMath.cos(a + 0.06) * Rr * 0.3)
-                val ph = cam.proj(hub); val pt = cam.proj(tip); val pm = cam.proj(mid)
-                if (ph != null && pt != null && pm != null) blades.append(pf("M%.1f %.1fL%.1f %.1fL%.1f %.1fZ", ph[0], ph[1], pm[0], pm[1], pt[0], pt[1]))
-            }
-            if (blades.isNotEmpty()) g.append(pf("<path d=\"%s\" fill=\"%s\" stroke=\"%s\" stroke-width=\".4\"/>", blades.toString(), if (!night) "#F2F4F5" else "#454B58", if (!night) "#C9CDD1" else "#2A2E38"))
-            val ph = cam.proj(hub)
-            if (ph != null) g.append(pf("<circle cx=\"%.1f\" cy=\"%.1f\" r=\"%.1f\" fill=\"%s\"/>", ph[0], ph[1], pmax(0.8, 2.2 * s), if (!night) "#DADDE0" else "#3A3F4C"))
-            if (night && ph != null) g.append(pf("<circle cx=\"%.1f\" cy=\"%.1f\" r=\"%.1f\" fill=\"#FF3B30\" opacity=\".9\"/>", ph[0], ph[1] - pmax(1.0, 3 * s), pmax(0.8, 1.2 * s)))
-            items.add(Amsterdam.Item(c[2], "svg", g.toString()))
-        }
+        drawTowers(S, cam, th, far, defs, items)
+        drawTurbines(S, cam, th, far, items)
         // cranes (man_made=crane): solid painted steel, height and colour generic as neither is mapped here.
         // On the quay edge, the ship-to-shore shape: a portal with a boom out over the water; in the yard, a portal gantry over the stack.
         val steel = if (!night) hx("#7D8993") else hx("#1A1E24")
@@ -1169,6 +1124,7 @@ object Regions {
         for (cr in cranes) {
             val x = d(cr["x"]); val z = d(cr["z"])
             if (far(x, z)) continue
+            WorldTape.owner(cr)
             val c = cam.cam(V3(x, 15.0, z))
             if (c[2] < 5) continue
             if (cam.focal / c[2] < 0.6) continue // too far to show as more than a speck
@@ -1205,7 +1161,8 @@ object Regions {
                 val tail = cam.proj(V3(x - w[0] * back, H + 2.4, z - w[1] * back))
                 val stays = listOf(tip, tail).filter { top != null && it != null }.joinToString("") { e -> pf("M%.1f %.1fL%.1f %.1f", top!![0], top[1], e!![0], e[1]) }
                 val sw_ = pmax(0.5, 0.35 * cam.focal / c[2])
-                items.add(Amsterdam.Item(c[2], "svg", body(parts, H) + (if (stays.isNotEmpty()) pf("<path d=\"%s\" fill=\"none\" stroke=\"%s\" stroke-width=\"%.2f\"/>", stays, tohex(steel), sw_) else "")))
+                items.add(Amsterdam.noted(Amsterdam.Item(c[2], "svg", body(parts, H) + (if (stays.isNotEmpty()) pf("<path d=\"%s\" fill=\"none\" stroke=\"%s\" stroke-width=\"%.2f\"/>", stays, tohex(steel), sw_) else "")),
+                    cam, "crane", cr, x, z, x, 15.0, z))
                 continue
             }
             // a yard gantry over the stack: legs at the corners, girders along the span, end beams, a trolley on top
@@ -1251,13 +1208,14 @@ object Regions {
                 val cc = V2(x + ux * su * (hu - 0.6), z + uz * su * (hu - 0.6)); parts.add(Part(cc.x, cc.y, box(cc, u, v, 0.6, hv, H - 2.0, H)))
             }
             parts.add(Part(x, z, box(V2(x, z), u, v, 2.2, pmin(hv, 3.0), H, H + 2.6, if (!night) hx("#C9CCCF") else hx("#20242A"))))
-            items.add(Amsterdam.Item(c[2], "svg", body(parts, H)))
+            items.add(Amsterdam.noted(Amsterdam.Item(c[2], "svg", body(parts, H)), cam, "crane", cr, x, z, x, 15.0, z))
         }
         // masts: a slim steel shaft; a lighting mast carries a frame of floodlights, lit after dark (height generic where not mapped)
         val masts = (S["masts"] as List<Dict>?) ?: emptyList()
         for (m in masts) {
             val x = d(m["x"]); val z = d(m["z"])
             if (far(x, z)) continue
+            WorldTape.owner(m)
             val lighting = tagsOf(m)["tower:type"] == "lighting"
             val H = if (truthy(m["h"])) d(m["h"]) else (if (lighting) 30.0 else 25.0)
             val c = cam.cam(V3(x, H / 2, z))
@@ -1274,7 +1232,7 @@ object Regions {
                     }
                 }
             }
-            items.add(Amsterdam.Item(c[2], "svg", g))
+            items.add(Amsterdam.noted(Amsterdam.Item(c[2], "svg", g), cam, "mast", m, x, z, x, H / 2, z))
         }
         if (night && masts.any { tagsOf(it)["tower:type"] == "lighting" }) {
             defs.add("<radialGradient id=\"mastglow\"><stop offset=\"0\" stop-color=\"#FFE9C2\" stop-opacity=\".75\"/><stop offset=\".35\" stop-color=\"#FFD9A0\" stop-opacity=\".22\"/><stop offset=\"1\" stop-color=\"#FFD9A0\" stop-opacity=\"0\"/></radialGradient>")
@@ -1285,6 +1243,7 @@ object Regions {
             for (gt in coll) {
                 val pts = Amsterdam.ptsOf(gt)
                 if (pts.all { far(it.x, it.y) }) continue
+                WorldTape.owner(gt)
                 val H = if (truthy(gt["h"])) d(gt["h"]) else (if (kind == "gantry") 7.0 else 6.0)
                 for (i in 0 until pts.size - 1) {
                     val a = pts[i]; val b = pts[i + 1]; val Lg = dist(a, b)
@@ -1306,15 +1265,17 @@ object Regions {
                         }
                         parts.add(Part(mid.x, mid.y, box(mid, u, v, Lg / 2, 1.4, H - 2.2, H, if (!night) hx("#B4B1A9") else hx("#1C1E22"))))
                     }
-                    items.add(Amsterdam.Item(c[2], "svg", body(parts, H)))
+                    items.add(Amsterdam.noted(Amsterdam.Item(c[2], "svg", body(parts, H)), cam, kind, gt, a.x, a.y, mid[0], H, mid[1], fx1 = b.x, fz1 = b.y))
                 }
             }
         }
+        WorldTape.owner(null)
         (S.remove("_coaster_items") as List<Amsterdam.Item>?)?.let { items.addAll(it) } // coaster tracks and their posts, drawn in draw_over's pass
         // power lines: towers with three conductors between them (tower height generic where not mapped)
         for (pl in dicts(S["power"])) {
             val pts = Amsterdam.ptsOf(pl)
             if (pts.size < 2 || !pts.any { !far(it.x, it.y) }) continue
+            WorldTape.owner(pl)
             val H = 38.0
             for (i in 0 until pts.size - 1) {
                 val a = pts[i]; val b = pts[i + 1]
@@ -1332,10 +1293,84 @@ object Regions {
                 val p0 = cam.proj(V3(a[0], 0.0, a[1])); val p1 = cam.proj(V3(a[0], H + 2, a[1]))
                 val tw = if (p0 != null && p1 != null) pf("<path d=\"M%.1f %.1fL%.1f %.1f\" stroke=\"%s\" stroke-width=\"%.2f\"/>", p0[0], p0[1], p1[0], p1[1], if (!night) "#6E747C" else "#1A1E26", pmax(0.5, 1.4 * s)) else ""
                 val body = tw + (if (segs.isNotEmpty()) pf("<path d=\"%s\" fill=\"none\" stroke=\"%s\" stroke-width=\".45\" opacity=\".8\"/>", segs.toString(), if (!night) "#4A4F57" else "#1A1E26") else "")
-                items.add(Amsterdam.Item(c[2], "svg", if (fade >= 1) body else pf("<g opacity=\"%.2f\">%s</g>", fade, body)))
+                items.add(Amsterdam.noted(Amsterdam.Item(c[2], "svg", if (fade >= 1) body else pf("<g opacity=\"%.2f\">%s</g>", fade, body)),
+                    cam, "power", pl, a.x, a.y, (a[0] + b[0]) / 2, H, (a[1] + b[1]) / 2, fx1 = b.x, fz1 = b.y))
             }
         }
+        WorldTape.owner(null)
         return items
+    }
+
+    // render/regions.py:657 draw_items: towers mapped as points with a height (split out of drawItems, so it stays compilable)
+    private fun drawTowers(S: Dict, cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, defs: MutableList<String>, items: MutableList<Amsterdam.Item>) {
+        val night = th["night"] == true; val L = v3(th["_L"])
+        // towers mapped as points with a height: a round concrete shaft; an airport or observation tower carries a glazed cab
+        val sx_ = cam.r[0]; val sz_ = cam.r[2]
+        for (tw in (S["mtowers"] as List<Dict>?) ?: emptyList()) {
+            val x = d(tw["x"]); val z = d(tw["z"])
+            if (far(x, z)) continue
+            WorldTape.owner(tw)
+            val t = tagsOf(tw); val H = d(tw["h"]); val cab = t["aeroway"] == "tower" || t["tower:type"] in setOf("observation", "control")
+            val c = cam.cam(V3(x, H / 2, z))
+            if (c[2] < 5) continue
+            val rs = if (cab) 3.2 else pmax(1.2, H / 30)
+            fun band(y0: Double, y1: Double, r: Double, col: String): String {
+                val q = listOf(V3(x - sx_ * r, y0, z - sz_ * r), V3(x + sx_ * r, y0, z + sz_ * r), V3(x + sx_ * r, y1, z + sz_ * r), V3(x - sx_ * r, y1, z - sz_ * r))
+                val sp = cam.poly(q, margin = 200.0) ?: return ""
+                val gid = pf("tw%d_%d", PyMath.mod((tw["id"] as Number).toLong(), 100000L), PyMath.int(y0))
+                val sh = if (!night) th["shadow"] as String else "#05060A"
+                defs.add(pf("<linearGradient id=\"%s\" x1=\"0\" x2=\"1\" y1=\"0\" y2=\"0\"><stop offset=\"0\" stop-color=\"%s\"/><stop offset=\"%.2f\" stop-color=\"%s\"/><stop offset=\"1\" stop-color=\"%s\"/></linearGradient>",
+                    gid, tohex(mix(hx(col), hx(sh), 0.35)), 0.35 + 0.3 * (if (L[0] * sx_ + L[2] * sz_ > 0) 1 else 0), col, tohex(mix(hx(col), hx(sh), 0.5))))
+                return pf("<path d=\"%s\" fill=\"url(#%s)\"/>", P(sp), gid)
+            }
+            val shaft = tohex(Amsterdam.light(th, hx("#C9C6BE"), V3(0.0, 0.0, 1.0), !night))
+            val parts = arrayListOf(band(0.0, H - (if (cab) 14 else 0), rs, shaft))
+            if (cab) {
+                parts.add(band(H - 14, H - 11, rs * 2.3, shaft))
+                parts.add(band(H - 11, H - 4.5, rs * 2.6, if (!night) "#7F98AA" else "#1A2230"))
+                parts.add(band(H - 4.5, H - 3.2, rs * 2.7, tohex(Amsterdam.light(th, hx("#E2E0DA"), V3(0.0, 1.0, 0.0), !night))))
+                parts.add(band(H - 3.2, H, 0.5, "#8C9096"))
+            }
+            items.add(Amsterdam.noted(Amsterdam.Item(c[2], "svg", parts.joinToString("")), cam, "tower", tw, x, z, x, H / 2, z))
+        }
+        WorldTape.owner(null)
+    }
+
+    // render/regions.py:657 draw_items: wind turbines (split out of drawItems, so it stays compilable)
+    private fun drawTurbines(S: Dict, cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, items: MutableList<Amsterdam.Item>) {
+        val night = th["night"] == true
+        // wind turbines: tower, nacelle, three blades; the rotor faces the hour's real wind
+        val wd = PyMath.radians(d((th["wx"] as Map<String, Any?>)["wind_dir"]))
+        val fx = PyMath.sin(wd); val fz = -PyMath.cos(wd) // toward where the wind comes from
+        for (tb in dicts(S["turbines"])) {
+            val x = d(tb["x"]); val z = d(tb["z"])
+            if (far(x, z)) continue
+            WorldTape.owner(tb)
+            val H = if (truthy(tb["h"])) d(tb["h"]) else 100.0; val Rr = (if (truthy(tb["rotor"])) d(tb["rotor"]) else 100.0) / 2
+            val c = cam.cam(V3(x, H / 2, z))
+            if (c[2] < 5) continue
+            val s = cam.focal / c[2]
+            val base = cam.proj(V3(x, 0.0, z)); val top = cam.proj(V3(x, H, z))
+            if (base == null || top == null) continue
+            val g = StringBuilder(pf("<path d=\"M%.1f %.1fL%.1f %.1fL%.1f %.1fL%.1f %.1fZ\" fill=\"%s\"/>", base[0] - 2.2 * s, base[1], base[0] + 2.2 * s, base[1], top[0] + 1.2 * s, top[1], top[0] - 1.2 * s, top[1],
+                if (!night) "#E9ECEE" else "#3A3F4C"))
+            val hub = V3(x + fx * 2, H, z + fz * 2)
+            val rx = -fz; val rz = fx // the rotor plane: across the wind, and up
+            val blades = StringBuilder()
+            for (k in 0 until 3) {
+                val a = PyMath.radians((25 + 120 * k).toDouble())
+                val tip = V3(hub[0] + rx * PyMath.cos(a) * Rr, H + PyMath.sin(a) * Rr, hub[2] + rz * PyMath.cos(a) * Rr)
+                val mid = V3(hub[0] + rx * PyMath.cos(a + 0.06) * Rr * 0.3, H + PyMath.sin(a + 0.06) * Rr * 0.3, hub[2] + rz * PyMath.cos(a + 0.06) * Rr * 0.3)
+                val ph = cam.proj(hub); val pt = cam.proj(tip); val pm = cam.proj(mid)
+                if (ph != null && pt != null && pm != null) blades.append(pf("M%.1f %.1fL%.1f %.1fL%.1f %.1fZ", ph[0], ph[1], pm[0], pm[1], pt[0], pt[1]))
+            }
+            if (blades.isNotEmpty()) g.append(pf("<path d=\"%s\" fill=\"%s\" stroke=\"%s\" stroke-width=\".4\"/>", blades.toString(), if (!night) "#F2F4F5" else "#454B58", if (!night) "#C9CDD1" else "#2A2E38"))
+            val ph = cam.proj(hub)
+            if (ph != null) g.append(pf("<circle cx=\"%.1f\" cy=\"%.1f\" r=\"%.1f\" fill=\"%s\"/>", ph[0], ph[1], pmax(0.8, 2.2 * s), if (!night) "#DADDE0" else "#3A3F4C"))
+            if (night && ph != null) g.append(pf("<circle cx=\"%.1f\" cy=\"%.1f\" r=\"%.1f\" fill=\"#FF3B30\" opacity=\".9\"/>", ph[0], ph[1] - pmax(1.0, 3 * s), pmax(0.8, 1.2 * s)))
+            items.add(Amsterdam.noted(Amsterdam.Item(c[2], "svg", g.toString()), cam, "turbine", tb, x, z, x, H / 2, z))
+        }
+        WorldTape.owner(null)
     }
 
     // render/regions.py:876 view_moments

@@ -805,26 +805,7 @@ object Living {
             if (c[2] < 2) continue
             items.add(Item(c[2], Feature("person", listOf(x, z), dictOf("_col" to rg.choice(PEOPLE)))))
         }
-        items.pySortBy { -it.d }
-        val out = ArrayList<String>()
-        for (it in items) {
-            val d = it.d; val f = it.f
-            when (f.kind) {
-                "building" -> out.addAll(drawBuilding(scene, f, d, glow, anchors))
-                "tree" -> out.addAll(drawTree(scene, f, d, rg))
-                "lamp" -> out.addAll(drawLamp(scene, f, d, glow))
-                "hydrant" -> out.addAll(drawPost(scene, f, 0.85, 0.28, if (!night) "#C0392B" else "#4A1F1C", "#E8C04A"))
-                "bench" -> out.addAll(drawBench(scene, f))
-                "car" -> out.addAll(drawCar(scene, f))
-                "person" -> out.addAll(drawPerson(scene, f))
-                "subway" -> out.addAll(drawSubway(scene, f, glow, anchors))
-                "bus_stop" -> out.addAll(drawShelter(scene, f, glow))
-                "bike_rack" -> out.addAll(drawRack(scene, f))
-                "fountain" -> out.addAll(drawPost(scene, f, 0.95, 0.35, if (!night) "#5A6B7A" else "#1A2230", if (!night) "#7FC3FF" else "#2A4A6A"))
-                "person_park" -> out.addAll(drawPerson(scene, Feature("person_park", f.geom, dictOf("_col" to rg.choice(PARK_PEOPLE)))))
-                "playground" -> out.addAll(drawPlayground(scene, f))
-            }
-        }
+        val out = drawItems(items, scene, glow, anchors, rg, night)
         // night light pools on the ground
         val pools = ArrayList<String>()
         if (night) {
@@ -929,6 +910,37 @@ object Living {
         if (q != null) anchors["sett_pick"] = listOf(PyMath.round(q[0], 1), PyMath.round(q[1], 1), F.first { f -> f.kind == "road" && f.tags["name"] == "North 7th Street" }.tags)
         anchors["sun"] = dictOf("azimuth" to PyMath.round(az, 1), "elevation" to PyMath.round(el, 1))
         return Rendered(svg.joinToString(""), anchors, cam)
+    }
+
+    // render/living.py:530 render: every object, far to near (split out of render, so it stays compilable)
+    /** The objects drawn far to near, each its feature's on the world tape when one records. */
+    private fun drawItems(items: MutableList<Item>, scene: Scene, glow: MutableList<String>, anchors: MutableMap<String, Any?>, rg: PyRandom, night: Boolean): ArrayList<String> {
+        items.pySortBy { -it.d }
+        val out = ArrayList<String>()
+        val tape = scene.cam.tape
+        for (it in items) {
+            val d = it.d; val f = it.f
+            val from = out.size
+            tape?.setOwner(f) // a building, a POI's symbol, a parked car or a passer-by: its feature
+            when (f.kind) {
+                "building" -> out.addAll(drawBuilding(scene, f, d, glow, anchors))
+                "tree" -> out.addAll(drawTree(scene, f, d, rg))
+                "lamp" -> out.addAll(drawLamp(scene, f, d, glow))
+                "hydrant" -> out.addAll(drawPost(scene, f, 0.85, 0.28, if (!night) "#C0392B" else "#4A1F1C", "#E8C04A"))
+                "bench" -> out.addAll(drawBench(scene, f))
+                "car" -> out.addAll(drawCar(scene, f))
+                "person" -> out.addAll(drawPerson(scene, f))
+                "subway" -> out.addAll(drawSubway(scene, f, glow, anchors))
+                "bus_stop" -> out.addAll(drawShelter(scene, f, glow))
+                "bike_rack" -> out.addAll(drawRack(scene, f))
+                "fountain" -> out.addAll(drawPost(scene, f, 0.95, 0.35, if (!night) "#5A6B7A" else "#1A2230", if (!night) "#7FC3FF" else "#2A4A6A"))
+                "person_park" -> out.addAll(drawPerson(scene, Feature("person_park", f.geom, dictOf("_col" to rg.choice(PARK_PEOPLE)))))
+                "playground" -> out.addAll(drawPlayground(scene, f))
+            }
+            tape?.item(f.kind, f, d, null, out, from) // no radius cut here: no reference point
+        }
+        tape?.setOwner(null)
+        return out
     }
 
     private val DRAWN = setOf("tree", "lamp", "hydrant", "bench", "subway", "bus_stop", "bike_rack", "fountain", "person_park")

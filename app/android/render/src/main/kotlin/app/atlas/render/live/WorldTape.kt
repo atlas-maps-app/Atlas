@@ -22,6 +22,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * among them from the rest of a path. Once sealed, the entries are 0 until [size], in the order of their first call; an
  * entry id (from [find], [findKey], [next] or that range) stays valid until [reset].
  *
+ * The render loops also name the [owner] of what they draw, and log each object they sort and draw in [items], in
+ * painter's order, with the points its radius cut tested and its sort point.
+ *
  * Recording never changes what the render returns. Not thread-safe: one render records on one thread; [recording]
  * closes the tape when the render returns; whoever takes it then calls [seal] before handing it to other threads.
  */
@@ -94,6 +97,7 @@ class WorldTape(frame: City.Camera? = null) {
     private val ownerIds = IdentityHashMap<Any, Int>()
     private val ownerList = ArrayList<Any>()
     private var current = 0
+    private var currentObject: Any? = null
 
     init {
         if (frame != null) adopt(frame)
@@ -105,7 +109,8 @@ class WorldTape(frame: City.Camera? = null) {
         calls = 0; skipped = 0; late = 0; overflow = 0; ambiguous = 0; foreignCameras = 0
         cur = pages[0]; pos = if (cur == null) PAGE * 2 else 0
         recent.fill(0)
-        framed = false; ownerIds.clear(); ownerList.clear(); current = 0
+        framed = false; ownerIds.clear(); ownerList.clear(); current = 0; currentObject = null
+        items.clear()
     }
 
     /** Whether camera [cam] is taped: it projects exactly as the first camera taped (or the frame given at construction). */
@@ -128,7 +133,18 @@ class WorldTape(frame: City.Camera? = null) {
 
     /** The owner of what is drawn from now on: an OSM element's dict, a tree, a POI; null for none (owner 0). */
     fun setOwner(o: Any?) {
-        current = if (o == null) 0 else ownerIds.getOrPut(o) { ownerList.add(o); ownerList.size }
+        current = ownerId(o); currentObject = o
+    }
+
+    /** The id of owner [o] (1-based, registered on first use), 0 for null. */
+    fun ownerId(o: Any?): Int = if (o == null) 0 else ownerIds.getOrPut(o) { ownerList.add(o); ownerList.size }
+
+    /** The objects the render sorted by depth and drew, in painter's order, with their owners and reference points. */
+    val items = TapeItems()
+
+    /** Logs one item drawn (see [TapeItems.add]); ignored once the tape is closed. */
+    fun item(kind: String, owner: Any?, depth: Double, note: ItemNote?, out: List<String>, from: Int) {
+        if (!closed) items.add(kind, if (owner === currentObject) current else ownerId(owner), depth, note, out, from)
     }
 
     /** The object behind owner [id] (1-based), or null for 0. */
