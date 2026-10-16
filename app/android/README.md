@@ -20,6 +20,7 @@ Checked against the official release pages and Maven metadata on 13 October 2026
 | `core` | Geometry and the shared model: LatLon, Mercator and tiles, polylines and snapping, Earcut, packed R-tree, shapes and route corridors, Plus Codes, UTM/MGRS, the coordinate parser, sun and moon, quantities in four unit systems; Place, Route, Step, Fix |
 | `tiles` | Vector tiles: our own MVT decoder, PMTiles, MBTiles, OpenFreeMap online with a cache, overzoom, offline regions, the packs catalog |
 | `render` | Atlas's map engine: `render/*.py` ported 1:1 to Kotlin (byte-identical SVG), the `.atlas` region packs, and the live glue (`render.live`: the map camera in the engine's terms, tolerance bands, the live moment from the forecast, the packs library) |
+| `rendertiles` | Plain Kotlin: render tiles, stage P of the vector engine. The port's own loaded scene written as format-3 render packs (columnar layers in zstd chunks, keep codes, the renders' derived values), the packer's `render-tiles` command, and a reference reader in its test fixtures |
 | `anchor` | Plain Kotlin: the SVG model and parser the engine's renders are read into (`app.atlas.mapview.svg`), and the GPU's anchors, renders lifted into world space; shared by the phone and the packer |
 | `mapview` | The engine on Android's Canvas: its SVG (parsed by `anchor`) drawn exactly (`svg`), exact frames off the main thread warped under gestures, gestures, markers, routes, location puck |
 | `places` | OSM knowledge: id-tagging-schema presets in 19 languages, NSI brands with logos, Maki/Temaki/Lucide symbols, facts, opening hours, categories, tag filters |
@@ -44,7 +45,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk && adb shell am start -
 - **Robolectric runs SDK 34.** SDK 35 and later need JDK 21, which this Mac lacks.
 - **Online tests are opt-in.** Tests that need the internet run only with `-Datlas.online=true`.
 - **Routing data.** Routing tests use BRouter's `E0_N50.rd5` from `../../cache/brouter/segments4/` when it is there.
-- **Bundled anchors.** `:app:generateBundledAnchors` renders the Westerkerk's GPU anchors from the bundled pack into `app/build/generated/anchors` (built, never committed; `packer anchors --bundled` does the same by hand). Each carries `EngineVersion.ID`, which follows the engine's own outputs: when a port change alters them, `EngineVersionTest` fails with the new `OUTPUTS` block to paste into `render/live/EngineVersion.kt`.
+- **Bundled render tiles.** `:app:generateBundledTiles` writes the Westerkerk's living map (from the bundled pack) and the canal ring (from `packs-renders`' `grachten.atlas`, fetched once into `cache/` and checked against its SHA-256) as format-3 render packs into the APK's `tiles/` folder, stored uncompressed (built, never committed; `packer render-tiles --bundled` does the same by hand). Each carries `EngineVersion.ID` and `StyleVersion.ID`. `EngineVersion.ID` follows the engine's own outputs: when a port change alters them, `EngineVersionTest` fails with the new `OUTPUTS` block to paste into `render/live/EngineVersion.kt`.
 
 ## On GitHub
 

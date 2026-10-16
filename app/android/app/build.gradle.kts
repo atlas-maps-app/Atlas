@@ -20,8 +20,9 @@ android {
         versionName = System.getenv("ATLAS_VERSION") ?: "0.1"
     }
 
-    // The bundled anchors are deflated already: stored as they are, the GPU path maps them straight from the APK.
-    androidResources { noCompress += "anchor" }
+    // Packs (.atlas) are compressed inside already, chunk by chunk: stored as they are, the core maps the bundled render
+    // tiles straight from the APK (and the element pack reads in ranges).
+    androidResources { noCompress += "atlas" }
 
     // The release key comes from the environment (CI secrets, see .github/workflows/release.yml); without it the
     // release build is signed with the debug key so it still installs. Alphas are debug builds signed with the release
@@ -196,11 +197,13 @@ tasks.withType<Test>().configureEach {
     }
 }
 
-// The bundled anchors (plan-gpu G4): the GPU's first picture on a first launch. The Westerkerk home at its four moments
-// and its 1.3 km backdrop, on the two common map frames, made at build time by the packer through the same engine port
-// the phone runs, from the bundled pack, into the assets' anchors/ folder with their index bundled.json. They are built,
-// not committed: the task runs again when the pack or the packer's classpath changes (the engine port, the anchor
-// compiler, the packer and their libraries), and is up to date, or taken from the build cache, otherwise.
+// The bundled render tiles (plan-vector K2): the vector engine's first look on a first launch. The Westerkerk's living map
+// (from the app's bundled pack) and the canal ring (from packs-renders' grachten.atlas, fetched once into the repo's
+// cache and checked against its published SHA-256) as format-3 render packs, made at build time by the packer through the
+// same engine port the renders come from, into the assets' tiles/ folder with their index bundled.json. They are built,
+// not committed: the task runs again when the Westerkerk's pack or the packer's classpath (the engine port, the
+// render-tile compiler, the packer and their libraries; the canal ring's published hash is in the packer) changes, and
+// is up to date, or taken from the build cache, otherwise.
 val packerTool: Configuration = configurations.create("packerTool") {
     isCanBeConsumed = false
     isCanBeResolved = true
@@ -214,22 +217,26 @@ val packerTool: Configuration = configurations.create("packerTool") {
 }
 dependencies { packerTool(project(":packer")) }
 
-/** Runs `packer anchors --bundled` into [outputDir]`/anchors`. */
+/** Runs `packer render-tiles --bundled` into [outputDir]`/tiles`. */
 @CacheableTask
-abstract class BundledAnchors @Inject constructor(private val exec: ExecOperations) : DefaultTask() {
-    /** The packer and everything it runs: the engine port, the anchor compiler and their libraries. */
+abstract class BundledTiles @Inject constructor(private val exec: ExecOperations) : DefaultTask() {
+    /** The packer and everything it runs: the engine port, the render-tile compiler and their libraries. */
     @get:Classpath
     abstract val tool: ConfigurableFileCollection
 
-    /** The scene the anchors are rendered from: the bundled region pack. */
+    /** The Westerkerk's element pack, the app's own. */
     @get:InputFile
     @get:PathSensitive(PathSensitivity.NONE)
-    abstract val pack: RegularFileProperty
+    abstract val westerkerk: RegularFileProperty
+
+    /** The repo's root: the packer finds the Westerkerk's pack under it, and keeps the canal ring's in its cache. */
+    @get:Internal
+    abstract val repo: DirectoryProperty
 
     @get:Nested
     abstract val launcher: Property<JavaLauncher>
 
-    /** An asset root: the anchors land in its anchors/ folder. */
+    /** An asset root: the render packs land in its tiles/ folder. */
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
 
@@ -239,13 +246,18 @@ abstract class BundledAnchors @Inject constructor(private val exec: ExecOperatio
         out.deleteRecursively()
         val work = File(temporaryDir, "work")
         work.deleteRecursively()
+        val root = repo.get().asFile
         try {
             exec.javaexec {
                 classpath = tool
-                mainClass.set("app.atlas.packer.Anchors")
+                mainClass.set("app.atlas.packer.RenderTiles")
                 executable = launcher.get().executablePath.asFile.absolutePath
-                maxHeapSize = "1g"
-                args("--bundled", pack.get().asFile.absolutePath, File(out, "anchors").absolutePath, "--work", work.absolutePath, "--quiet")
+                // the canal ring's scene, whole, and one other load at a time for its tolerances
+                maxHeapSize = "2g"
+                args(
+                    "--bundled", File(out, "tiles").absolutePath, "--repo", root.absolutePath, "--packs", File(root, "cache/packs/regions").absolutePath,
+                    "--work", work.absolutePath, "--quiet",
+                )
             }
         } finally {
             work.deleteRecursively()
@@ -253,13 +265,14 @@ abstract class BundledAnchors @Inject constructor(private val exec: ExecOperatio
     }
 }
 
-val generateBundledAnchors = tasks.register<BundledAnchors>("generateBundledAnchors") {
-    description = "Builds the bundled GPU anchors (plan-gpu G4) into the app's assets."
+val generateBundledTiles = tasks.register<BundledTiles>("generateBundledTiles") {
+    description = "Builds the bundled render tiles (plan-vector K2) into the app's assets."
     tool.from(packerTool)
-    pack.set(layout.projectDirectory.file("src/main/assets/packs/amsterdam.atlas"))
+    westerkerk.set(layout.projectDirectory.file("src/main/assets/packs/amsterdam.atlas"))
+    repo.set(rootProject.layout.projectDirectory.dir("../.."))
     launcher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(17)) })
-    outputDir.set(layout.buildDirectory.dir("generated/anchors"))
+    outputDir.set(layout.buildDirectory.dir("generated/tiles"))
 }
 androidComponents {
-    onVariants { variant -> variant.sources.assets?.addGeneratedSourceDirectory(generateBundledAnchors, BundledAnchors::outputDir) }
+    onVariants { variant -> variant.sources.assets?.addGeneratedSourceDirectory(generateBundledTiles, BundledTiles::outputDir) }
 }

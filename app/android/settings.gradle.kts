@@ -27,3 +27,5 @@ include(":mapview")
 include(":brouter")
 // The pack builder: OSM PBF to the place store and the packs manifest, run by .github/workflows/packs.yml.
 include(":packer")
+// Pure Kotlin: render tiles (plan-vector K2), stage P of the vector engine, written by the packer and Gradle.
+include(":rendertiles")

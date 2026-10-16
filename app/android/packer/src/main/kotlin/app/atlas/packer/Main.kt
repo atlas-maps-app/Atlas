@@ -48,7 +48,9 @@ private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap ex
   packer packinfo <file.atlas>
       Prints a pack's manifest, sections and sizes.
 
-  ${Anchors.USAGE}"""
+  ${Anchors.USAGE}
+
+  ${RenderTiles.USAGE}"""
 
 /** The command line: `places`, `manifest`, `info`, and the region packs: `renders`, `region`, `pbf`, `packinfo`. */
 fun main(args: Array<String>) {
@@ -175,6 +177,7 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
             out("${file.path}: ${stats.elements} elements (${stats.nodes} nodes, ${stats.ways} ways, ${stats.relations} relations), ${file.length() shr 10} KiB in ${stats.millis} ms")
         }
         "anchors" -> return Anchors.run(args, out)
+        "render-tiles" -> return RenderTiles.run(args, out)
         "packinfo" -> {
             val (path) = a.files(1)
             a.done()

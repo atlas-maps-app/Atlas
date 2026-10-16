@@ -206,6 +206,89 @@ object LiveEngine {
         return s
     }
 
+    /**
+     * Loads the scene of [region] without rendering it: what [render] draws from, with the port's module state its load
+     * left ([LiveScene.state]), for the vector engine's stage P (the packer's render tiles, plan-vector K2).
+     *
+     * [view] names one of the region's own views: the scene then loads as that view's renders load it (its tolerance, and
+     * the values regions.py measures around its camera). Null loads the region whole, at [tolerance] (0 by default): every
+     * value that depends on a view (water levels from the banks, the relief's extent, a park's woods) measured around the
+     * centre of the region's box with a radius reaching its corners. The living map has one view and always loads at
+     * tolerance 0.
+     *
+     * The scene is not kept: [render]'s scenes are left as they were, and so is what renders draw.
+     */
+    fun loadScene(region: LiveRegion, view: String? = null, opts: RenderOptions = RenderOptions(), tolerance: Double = 0.0): LiveScene = lock.withLock {
+        val rt = Runtime.getRuntime()
+        val before = rt.totalMemory() - rt.freeMemory()
+        val t0 = System.nanoTime()
+        setRoots(region)
+        val loadView: String
+        val loaded: Double
+        val anchor: List<*>
+        val radius: Double
+        val S: Dict
+        if (region.kind == LiveRegion.Kind.LIVING) {
+            require(view == null || view == region.id || view == region.ladder.region) { "the living map ${region.id} has one view, not $view" }
+            require(tolerance == 0.0) { "the living map loads at tolerance 0, not $tolerance" }
+            loadView = region.id
+            loaded = 0.0
+            val cam = region.ladder.knots.first().cam
+            anchor = cam["target"] as List<*>
+            radius = (cam["radius"] as Number?)?.toDouble() ?: 1e9
+            Regions.resetPlace(opts.daylight)
+            S = Amsterdam.load(File(region.dir, "raw.json"), opts)
+        } else {
+            for (k in region.ladder.knots) if (k.name !in Regions.CAMS) Regions.CAMS[k.name] = LinkedHashMap(k.cam)
+            val cam: Dict
+            if (view != null) {
+                val knot = region.ladder.knots.firstOrNull { it.name == view } ?: throw IllegalArgumentException("region ${region.id} has no view $view")
+                require(tolerance == 0.0) { "a view loads at its own tolerance" }
+                loadView = knot.name
+                loaded = Lod.ofView(region.id, knot.name)
+                cam = Regions.cfgFor(knot.name)
+            } else {
+                require(tolerance >= 0.0) { "a tolerance of $tolerance" }
+                loadView = "${region.id}_$WHOLE" + if (tolerance == 0.0) "" else "${Math.round(tolerance * 1000)}"
+                loaded = tolerance
+                cam = wholeCamera(region)
+                @Suppress("UNCHECKED_CAST")
+                (Regions.GENERALISE as MutableMap<String, Double>)[loadView] = tolerance
+                Regions.CAMS[loadView] = LinkedHashMap(cam)
+            }
+            anchor = cam["target"] as List<*>
+            radius = (cam["radius"] as Number?)?.toDouble() ?: 1e9
+            S = Regions.load(loadView, opts)
+        }
+        val millis = (System.nanoTime() - t0) / 1_000_000
+        val bytes = (rt.totalMemory() - rt.freeMemory() - before).coerceAtLeast(0)
+        LiveScene(region, loadView, loaded, S, EngineState.capture(), opts, (anchor[0] as Number).toDouble(), (anchor[2] as Number).toDouble(), radius, millis, bytes)
+    }
+
+    /** The view name a region loads under when it is loaded whole ([loadScene] without a view): `<region>_whole`, and the tolerance in millimetres after it when not 0. */
+    const val WHOLE = "whole"
+
+    /**
+     * The camera a whole region is loaded for: the region's overview, aimed at the centre of the region's box (in its
+     * frame), with a radius and a ground reaching the box's corners.
+     */
+    private fun wholeCamera(region: LiveRegion): Dict {
+        val box = region.bbox ?: throw IllegalStateException("region ${region.id} has no box to load whole")
+        val f = region.frame
+        val x0 = f.x(box.south, box.west)
+        val x1 = f.x(box.north, box.east)
+        val z0 = f.z(box.north, box.west)
+        val z1 = f.z(box.south, box.east)
+        val cx = (x0 + x1) / 2
+        val cz = (z0 + z1) / 2
+        val reach = hypot(x1 - x0, z1 - z0) / 2
+        val c: Dict = LinkedHashMap(region.ladder.knots.last().cam)
+        c["target"] = listOf(cx, 0.0, cz)
+        c["radius"] = reach
+        c["ground_r"] = reach
+        return c
+    }
+
     /** Drops every kept scene (memory pressure, or the region's data changed). */
     fun forget(region: LiveRegion? = null) = lock.withLock {
         if (region == null) scenes.clear() else scenes.removeAll { it.region.id == region.id }
@@ -250,8 +333,10 @@ class LiveScene internal constructor(
     val region: LiveRegion,
     val loadView: String,
     val tolerance: Double,
-    internal val S: Dict,
-    internal val state: EngineState,
+    /** The scene: the dict `render` draws from. */
+    val S: Dict,
+    /** The port's module state the load left (the place, its weather, palette and moments), put back before rendering it. */
+    val state: EngineState,
     val opts: RenderOptions,
     val anchorX: Double,
     val anchorZ: Double,
@@ -289,12 +374,13 @@ data class LiveProgress(val stage: Stage, val region: String, val fraction: Doub
 }
 
 /** The port's module state a scene's load leaves (the place, its weather, palette and moments), to put back before rendering it. */
-internal class EngineState private constructor(
+class EngineState private constructor(
     private val lat0: Double, private val lon0: Double, private val kx: Double, private val kz: Double, private val tzH: Int,
     private val brickOld: List<String>, private val plaster: List<String>, private val brickNew: List<String>,
     private val waterY: Double, private val quayCol: String, private val quayCourse: Double?, private val tone: Boolean, private val winStyle: String?,
     private val wxd: Map<String, Any?>, private val themes: LinkedHashMap<String, Dict>, private val airHaze: Boolean, private val cloudsLit: Boolean,
 ) {
+    /** Puts the state back into the port's modules. */
     fun restore() {
         val a = Amsterdam
         a.LAT0 = lat0; a.LON0 = lon0; a.KX = kx; a.KZ = kz; a.TZ_H = tzH
@@ -308,6 +394,7 @@ internal class EngineState private constructor(
     }
 
     companion object {
+        /** The module state as it is now. */
         fun capture(): EngineState {
             val a = Amsterdam
             return EngineState(
