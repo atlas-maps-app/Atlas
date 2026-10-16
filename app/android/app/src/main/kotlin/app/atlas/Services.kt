@@ -341,6 +341,25 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
     /** The map's region packs and the live moment's forecast, wired to every map (the 1:1 engine draws from them). */
     val mapData: app.atlas.services.MapData by lazy { app.atlas.services.MapData(this) }
 
+    // ---- Features on Atlas's own data ----------------------------------------------------------------------------
+
+    private val localDataLazy = lazy {
+        val shelf = app.atlas.services.PackShelf({ mapData.packs.local().map { it.file } })
+        app.atlas.services.LocalData(
+            stores = { placeStores },
+            packs = shelf,
+            overpass = { if (config.offline) null else overpass },
+            isOnline = { !config.offline && connectivity.online.value },
+            onClose = shelf::close,
+        )
+    }
+
+    /**
+     * The features' data, offline first: the downloaded regions' place stores, the map's own packs (the bundled
+     * Westerkerk, the renders', city, country and Overpass-built ones), then Overpass online where nothing covers.
+     */
+    val localData: app.atlas.services.LocalData by localDataLazy
+
     /** CI's demo (`atlas.ci`): the home opens on the bundled Westerkerk, drawn at once without the network. */
     @Volatile
     var ciDemo: Boolean = false
@@ -355,6 +374,7 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         synchronized(openStores) { openStores.values.forEach { runCatching { it.close() } } }
         if (tileCacheLazy.isInitialized()) runCatching { tileCache.close() }
         if (savedLazy.isInitialized()) runCatching { saved.close() }
+        if (localDataLazy.isInitialized()) runCatching { localData.close() }
     }
 
     companion object {

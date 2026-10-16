@@ -1,0 +1,5706 @@
+{
+    "source": "testdata/omt (OpenFreeMap tiles, OpenMapTiles schema) through TileStack: TileAddress, TileWayNamer, TilePlaces, BrandsAround, TileBridges; the quests through QuestFinder over the place store of data/ams/raw.json",
+    "points": [
+        {
+            "name": "westerkerk",
+            "at": [
+                52.374531,
+                4.883447
+            ],
+            "bearing": 3.0,
+            "street": "Prinsengracht",
+            "way": "Prinsengracht",
+            "nearest": "Prinsengracht",
+            "address": {
+                "street": "Prinsengracht",
+                "housenumber": "279",
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": [
+                    52.374525001820075,
+                    4.883497953414917
+                ]
+            }
+        },
+        {
+            "name": "annefrank",
+            "at": [
+                52.375303,
+                4.884042
+            ],
+            "bearing": 29.0,
+            "street": "Prinsengracht",
+            "way": "Prinsengracht",
+            "nearest": "Prinsengracht",
+            "address": {
+                "street": "Prinsengracht",
+                "housenumber": "261B",
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": [
+                    52.375337185205005,
+                    4.884147047996521
+                ]
+            }
+        },
+        {
+            "name": "raadhuisstraat",
+            "at": [
+                52.373784,
+                4.885977
+            ],
+            "bearing": 312.0,
+            "street": "Raadhuisstraat",
+            "way": "Raadhuisstraat",
+            "nearest": "Raadhuisstraat",
+            "address": {
+                "street": "Raadhuisstraat",
+                "housenumber": "40B-1",
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": [
+                    52.3738274291671,
+                    4.886088967323303
+                ]
+            }
+        },
+        {
+            "name": "westermarkt",
+            "at": [
+                52.374114,
+                4.884501
+            ],
+            "bearing": 273.0,
+            "street": "Westermarkt",
+            "way": "Westermarkt",
+            "nearest": "Westermarkt",
+            "address": {
+                "street": "Westermarkt",
+                "housenumber": null,
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": null
+            }
+        },
+        {
+            "name": "keizersgracht_lelie",
+            "at": [
+                52.375792,
+                4.885933
+            ],
+            "bearing": 209.0,
+            "street": "Keizersgracht",
+            "way": "Keizersgracht",
+            "nearest": "Keizersgracht",
+            "address": {
+                "street": "Keizersgracht",
+                "housenumber": "162D",
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": [
+                    52.375929938650145,
+                    4.886035323143005
+                ]
+            }
+        },
+        {
+            "name": "herengracht_lelie",
+            "at": [
+                52.376171,
+                4.888983
+            ],
+            "bearing": 30.0,
+            "street": "Herengracht",
+            "way": "Herengracht",
+            "nearest": "Herengracht",
+            "address": {
+                "street": "Herengracht",
+                "housenumber": "108P",
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": [
+                    52.37614935365368,
+                    4.888781905174255
+                ]
+            }
+        },
+        {
+            "name": "leliegracht",
+            "at": [
+                52.375145,
+                4.887108
+            ],
+            "bearing": 299.0,
+            "street": "Leliegracht",
+            "way": "Leliegracht",
+            "nearest": "Leliegracht",
+            "address": {
+                "street": "Leliegracht",
+                "housenumber": "20A-1",
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": [
+                    52.37520946380759,
+                    4.887076020240784
+                ]
+            }
+        },
+        {
+            "name": "bloemgracht",
+            "at": [
+                52.375007,
+                4.881493
+            ],
+            "bearing": 250.0,
+            "street": "Bloemgracht",
+            "way": "Bloemgracht",
+            "nearest": "Bloemgracht",
+            "address": {
+                "street": "Bloemgracht",
+                "housenumber": "66C",
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": [
+                    52.37502934326041,
+                    4.881480932235718
+                ]
+            }
+        },
+        {
+            "name": "egelantiersgracht",
+            "at": [
+                52.376363,
+                4.882901
+            ],
+            "bearing": 71.0,
+            "street": "Egelantiersgracht",
+            "way": "Egelantiersgracht",
+            "nearest": "Egelantiersgracht",
+            "address": {
+                "street": "Egelantiersgracht",
+                "housenumber": "44-4",
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": [
+                    52.37650958487745,
+                    4.883106350898743
+                ]
+            }
+        },
+        {
+            "name": "rozengracht",
+            "at": [
+                52.373447,
+                4.881037
+            ],
+            "bearing": 68.0,
+            "street": "Rozengracht",
+            "way": "Rozengracht",
+            "nearest": "Rozengracht",
+            "address": {
+                "street": "Rozengracht",
+                "housenumber": "57-H",
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": [
+                    52.37336564965987,
+                    4.88116979598999
+                ]
+            }
+        },
+        {
+            "name": "egelantiersdwars",
+            "at": [
+                52.376305,
+                4.882424
+            ],
+            "bearing": 340.0,
+            "street": "Tweede Egelantiersdwarsstraat",
+            "way": "Tweede Egelantiersdwarsstraat",
+            "nearest": "Egelantiersgracht",
+            "address": {
+                "street": "Egelantiersgracht",
+                "housenumber": "72-74",
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": [
+                    52.37631637031369,
+                    4.882274866104126
+                ]
+            }
+        },
+        {
+            "name": "tuinstraat",
+            "at": [
+                52.376846,
+                4.881173
+            ],
+            "bearing": 250.0,
+            "street": "Tuinstraat",
+            "way": "Tuinstraat",
+            "nearest": "Tuinstraat",
+            "address": {
+                "street": "Tuinstraat",
+                "housenumber": "172G",
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": [
+                    52.376879637529385,
+                    4.881314635276794
+                ]
+            }
+        },
+        {
+            "name": "prinsengracht_south",
+            "at": [
+                52.372233,
+                4.883104
+            ],
+            "bearing": 183.0,
+            "street": "Prinsengracht",
+            "way": "Prinsengracht",
+            "nearest": "Prinsengracht",
+            "address": {
+                "street": "Prinsengracht",
+                "housenumber": "343C",
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": [
+                    52.37227831997863,
+                    4.883283376693726
+                ]
+            }
+        },
+        {
+            "name": "reestraat",
+            "at": [
+                52.372392,
+                4.884663
+            ],
+            "bearing": 273.0,
+            "street": "Reestraat",
+            "way": "Reestraat",
+            "nearest": "Reestraat",
+            "address": {
+                "street": "Reestraat",
+                "housenumber": null,
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": null
+            }
+        },
+        {
+            "name": "hartenstraat",
+            "at": [
+                52.372246,
+                4.886712
+            ],
+            "bearing": 94.0,
+            "street": "Hartenstraat",
+            "way": "Hartenstraat",
+            "nearest": "Hartenstraat",
+            "address": {
+                "street": "Hartenstraat",
+                "housenumber": "234-3",
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": [
+                    52.372229193005566,
+                    4.886711239814758
+                ]
+            }
+        },
+        {
+            "name": "herengracht_raadhuis",
+            "at": [
+                52.37426,
+                4.887824
+            ],
+            "bearing": 29.0,
+            "street": "Herengracht",
+            "way": "Herengracht",
+            "nearest": "Herengracht",
+            "address": {
+                "street": "Herengracht",
+                "housenumber": "189D",
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": [
+                    52.37423025415597,
+                    4.887950420379639
+                ]
+            }
+        },
+        {
+            "name": "singel_torensteeg",
+            "at": [
+                52.374683,
+                4.889939
+            ],
+            "bearing": 34.0,
+            "street": "Singel",
+            "way": "Singel",
+            "nearest": "Singel",
+            "address": {
+                "street": "Singel",
+                "housenumber": "155S",
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": [
+                    52.3746985745242,
+                    4.890058636665344
+                ]
+            }
+        },
+        {
+            "name": "nieuwe_leliestraat",
+            "at": [
+                52.375465,
+                4.881428
+            ],
+            "bearing": 250.0,
+            "street": "Nieuwe Leliestraat",
+            "way": "Nieuwe Leliestraat",
+            "nearest": "Nieuwe Leliestraat",
+            "address": {
+                "street": "Nieuwe Leliestraat",
+                "housenumber": "62L",
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": [
+                    52.37549765515509,
+                    4.881577491760254
+                ]
+            }
+        },
+        {
+            "name": "keizersgracht_south",
+            "at": [
+                52.371897,
+                4.885068
+            ],
+            "bearing": 184.0,
+            "street": "Keizersgracht",
+            "way": "Keizersgracht",
+            "nearest": "Keizersgracht",
+            "address": {
+                "street": "Keizersgracht",
+                "housenumber": "249-HA",
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": [
+                    52.37187220202682,
+                    4.885230660438538
+                ]
+            }
+        },
+        {
+            "name": "eerste_tuindwars",
+            "at": [
+                52.377421,
+                4.883894
+            ],
+            "bearing": 340.0,
+            "street": "Eerste Tuindwarsstraat",
+            "way": "Eerste Tuindwarsstraat",
+            "nearest": "Eerste Tuindwarsstraat",
+            "address": {
+                "street": "Eerste Tuindwarsstraat",
+                "housenumber": "52D",
+                "quarter": "Jordaan",
+                "town": "Amsterdam",
+                "house_at": [
+                    52.377531315634116,
+                    4.88416850566864
+                ]
+            }
+        }
+    ],
+    "cafes": {
+        "centre": [
+            52.37452,
+            4.88377
+        ],
+        "radius": 300.0,
+        "filter": "amenity=cafe",
+        "places": [
+            {
+                "id": "n12672791013",
+                "name": "Museum Cafe",
+                "at": [
+                    52.375094841726195,
+                    4.883878827095032
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Museum Cafe"
+                }
+            },
+            {
+                "id": "n1147560517",
+                "name": "Café Kalkhoven",
+                "at": [
+                    52.37390930446233,
+                    4.883438944816589
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Café Kalkhoven",
+                    "level": "0"
+                }
+            },
+            {
+                "id": "n6662347488",
+                "name": "Teds",
+                "at": [
+                    52.37422697917087,
+                    4.882720112800598
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Teds"
+                }
+            },
+            {
+                "id": "n9141449091",
+                "name": "Lunchcafé Dialoog",
+                "at": [
+                    52.37535028481462,
+                    4.884093403816223
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Lunchcafé Dialoog"
+                }
+            },
+            {
+                "id": "n7487205751",
+                "name": null,
+                "at": [
+                    52.375432157286696,
+                    4.883347749710083
+                ],
+                "tags": {
+                    "amenity": "cafe"
+                }
+            },
+            {
+                "id": "n2721823575",
+                "name": null,
+                "at": [
+                    52.37370297842765,
+                    4.882564544677734
+                ],
+                "tags": {
+                    "amenity": "cafe"
+                }
+            },
+            {
+                "id": "n10920278785",
+                "name": "Kafenion",
+                "at": [
+                    52.37469202462323,
+                    4.881373643875122
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Kafenion"
+                }
+            },
+            {
+                "id": "n2720971344",
+                "name": "Café Wester",
+                "at": [
+                    52.37602818430889,
+                    4.883878827095032
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Café Wester"
+                }
+            },
+            {
+                "id": "n12620462078",
+                "name": "Sandro",
+                "at": [
+                    52.375681048669776,
+                    4.885600805282593
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Sandro"
+                }
+            },
+            {
+                "id": "n12620469982",
+                "name": "'t Hotel",
+                "at": [
+                    52.375163615010734,
+                    4.887124300003052
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "'t Hotel"
+                }
+            },
+            {
+                "id": "n2721938717",
+                "name": "Pluk",
+                "at": [
+                    52.372337272274166,
+                    4.883744716644287
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Pluk"
+                }
+            },
+            {
+                "id": "n2468154212",
+                "name": "De Hoek",
+                "at": [
+                    52.37233072202299,
+                    4.883304834365845
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "De Hoek"
+                }
+            },
+            {
+                "id": "n2721947639",
+                "name": "Ree7",
+                "at": [
+                    52.37230124588069,
+                    4.884243607521057
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Ree7"
+                }
+            },
+            {
+                "id": "n11536511023",
+                "name": "Cheesy Cakes",
+                "at": [
+                    52.37653578339727,
+                    4.88216757774353
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Cheesy Cakes"
+                }
+            },
+            {
+                "id": "n6700113385",
+                "name": "NU koffie & delicatessen",
+                "at": [
+                    52.376581630769586,
+                    4.882258772850037
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "NU koffie & delicatessen"
+                }
+            },
+            {
+                "id": "n1590664278",
+                "name": "Tom's bread & more",
+                "at": [
+                    52.376951682817804,
+                    4.882097840309143
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Tom's bread & more"
+                }
+            }
+        ]
+    },
+    "pois": {
+        "centre": [
+            52.37452,
+            4.88377
+        ],
+        "radius": 300.0,
+        "filter": "name",
+        "places": [
+            {
+                "id": "w99205257",
+                "name": "Westerkerk",
+                "at": [
+                    52.37454792655594,
+                    4.883986115455627
+                ],
+                "tags": {
+                    "amenity": "christian",
+                    "name": "Westerkerk",
+                    "name:en": "Westerkerk",
+                    "name:nl": "Westerkerk",
+                    "name:de": "Westerkerk",
+                    "name:fr": "Westerkerk"
+                }
+            },
+            {
+                "id": "w99203577",
+                "name": "Westertoren",
+                "at": [
+                    52.374531551745825,
+                    4.8835355043411255
+                ],
+                "tags": {
+                    "tourism": "attraction",
+                    "name": "Westertoren"
+                }
+            },
+            {
+                "id": "n5831919166",
+                "name": "Westerkerk WC",
+                "at": [
+                    52.374672374914475,
+                    4.884039759635925
+                ],
+                "tags": {
+                    "amenity": "toilets",
+                    "name": "Westerkerk WC"
+                }
+            },
+            {
+                "id": "n1843810119",
+                "name": "Anne Frank",
+                "at": [
+                    52.37434160350471,
+                    4.8835355043411255
+                ],
+                "tags": {
+                    "tourism": "artwork",
+                    "name": "Anne Frank",
+                    "name:en": "statue of Anne Frank",
+                    "name:nl": "beeld van Anne Frank"
+                }
+            },
+            {
+                "id": "n7256073282",
+                "name": "Stromma",
+                "at": [
+                    52.37467564986653,
+                    4.883331656455994
+                ],
+                "tags": {
+                    "shop": "ticket",
+                    "name": "Stromma"
+                }
+            },
+            {
+                "id": "n11449955960",
+                "name": "Thejo's Bloemen",
+                "at": [
+                    52.374204054268404,
+                    4.883637428283691
+                ],
+                "tags": {
+                    "shop": "florist",
+                    "name": "Thejo's Bloemen"
+                }
+            },
+            {
+                "id": "n10743234655",
+                "name": "Haringkar de Gigant",
+                "at": [
+                    52.37419750429408,
+                    4.883905649185181
+                ],
+                "tags": {
+                    "amenity": "fast_food",
+                    "name": "Haringkar de Gigant"
+                }
+            },
+            {
+                "id": "n440431999",
+                "name": "Pancakes Amsterdam",
+                "at": [
+                    52.37486232173294,
+                    4.883857369422913
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Pancakes Amsterdam",
+                    "level": "0"
+                }
+            },
+            {
+                "id": "n5658543886",
+                "name": "Tours & Tickets",
+                "at": [
+                    52.37490489590777,
+                    4.883712530136108
+                ],
+                "tags": {
+                    "shop": "ticket",
+                    "name": "Tours & Tickets",
+                    "level": "0"
+                }
+            },
+            {
+                "id": "n11449955959",
+                "name": "Wil Graanstra's Frites",
+                "at": [
+                    52.374190954318784,
+                    4.8841845989227295
+                ],
+                "tags": {
+                    "amenity": "fast_food",
+                    "name": "Wil Graanstra's Frites"
+                }
+            },
+            {
+                "id": "n6841972901",
+                "name": "Westermarkt",
+                "at": [
+                    52.37408287958624,
+                    4.883776903152466
+                ],
+                "tags": {
+                    "highway": "bus_stop",
+                    "name": "Westermarkt",
+                    "name:en": "Westermarkt tram stop",
+                    "name:nl": "Westermarkt",
+                    "name:de": "Straßenbahnhaltestelle Westermarkt",
+                    "name:fr": "Westermarkt"
+                }
+            },
+            {
+                "id": "n724232573",
+                "name": "Westermarkt",
+                "at": [
+                    52.37405667961126,
+                    4.883771538734436
+                ],
+                "tags": {
+                    "railway": "tram_stop",
+                    "name": "Westermarkt",
+                    "name:en": "Westermarkt tram stop",
+                    "name:nl": "Westermarkt",
+                    "name:de": "Straßenbahnhaltestelle Westermarkt",
+                    "name:fr": "Westermarkt"
+                }
+            },
+            {
+                "id": "n10743235032",
+                "name": "Pink Point",
+                "at": [
+                    52.374181129354035,
+                    4.884452819824219
+                ],
+                "tags": {
+                    "building": "office",
+                    "name": "Pink Point"
+                }
+            },
+            {
+                "id": "n1301324761",
+                "name": "Anne Frank Huis Museumshop",
+                "at": [
+                    52.375026068334556,
+                    4.884104132652283
+                ],
+                "tags": {
+                    "shop": "gift",
+                    "name": "Anne Frank Huis Museumshop"
+                }
+            },
+            {
+                "id": "n12672791013",
+                "name": "Museum Cafe",
+                "at": [
+                    52.375094841726195,
+                    4.883878827095032
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Museum Cafe"
+                }
+            },
+            {
+                "id": "n5773624062",
+                "name": "Homomonument",
+                "at": [
+                    52.37419422930656,
+                    4.884586930274963
+                ],
+                "tags": {
+                    "amenity": "board",
+                    "name": "Homomonument"
+                }
+            },
+            {
+                "id": "n724232677",
+                "name": "Westermarkt",
+                "at": [
+                    52.374014104618745,
+                    4.8843348026275635
+                ],
+                "tags": {
+                    "railway": "tram_stop",
+                    "name": "Westermarkt",
+                    "name:en": "Westermarkt tram stop",
+                    "name:nl": "Westermarkt",
+                    "name:de": "Straßenbahnhaltestelle Westermarkt",
+                    "name:fr": "Westermarkt"
+                }
+            },
+            {
+                "id": "n2720970713",
+                "name": "Banh Mi Deli",
+                "at": [
+                    52.37454137663262,
+                    4.882746934890747
+                ],
+                "tags": {
+                    "shop": "bakery",
+                    "name": "Banh Mi Deli"
+                }
+            },
+            {
+                "id": "n13075450589",
+                "name": "Geldmaat",
+                "at": [
+                    52.37389947943492,
+                    4.883948564529419
+                ],
+                "tags": {
+                    "amenity": "atm",
+                    "name": "Geldmaat"
+                }
+            },
+            {
+                "id": "n6841972900",
+                "name": "Westermarkt",
+                "at": [
+                    52.373991179605774,
+                    4.8843348026275635
+                ],
+                "tags": {
+                    "highway": "bus_stop",
+                    "name": "Westermarkt",
+                    "name:en": "Westermarkt tram stop",
+                    "name:nl": "Westermarkt",
+                    "name:de": "Straßenbahnhaltestelle Westermarkt",
+                    "name:fr": "Westermarkt"
+                }
+            },
+            {
+                "id": "n4862660321",
+                "name": "Koh-I-Noor",
+                "at": [
+                    52.373889654405325,
+                    4.88366425037384
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Koh-I-Noor"
+                }
+            },
+            {
+                "id": "n10946308060",
+                "name": "Vesper Advocaten",
+                "at": [
+                    52.374796822922306,
+                    4.884715676307678
+                ],
+                "tags": {
+                    "office": "lawyer",
+                    "name": "Vesper Advocaten"
+                }
+            },
+            {
+                "id": "n2721940166",
+                "name": "Sefa",
+                "at": [
+                    52.37387982937353,
+                    4.883814454078674
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Sefa"
+                }
+            },
+            {
+                "id": "n1147560517",
+                "name": "Café Kalkhoven",
+                "at": [
+                    52.37390930446233,
+                    4.883438944816589
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Café Kalkhoven",
+                    "level": "0"
+                }
+            },
+            {
+                "id": "n34044750",
+                "name": "Albert Heijn",
+                "at": [
+                    52.37387982937353,
+                    4.8839271068573
+                ],
+                "tags": {
+                    "shop": "supermarket",
+                    "name": "Albert Heijn",
+                    "level": "0"
+                }
+            },
+            {
+                "id": "n2721939469",
+                "name": "Steakhouse",
+                "at": [
+                    52.37387000433956,
+                    4.883857369422913
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Steakhouse"
+                }
+            },
+            {
+                "id": "n6491481205",
+                "name": "Cup a la Cake",
+                "at": [
+                    52.37387982937353,
+                    4.884029030799866
+                ],
+                "tags": {
+                    "shop": "confectionery",
+                    "name": "Cup a la Cake"
+                }
+            },
+            {
+                "id": "w601081859",
+                "name": "Anne Frank Huis",
+                "at": [
+                    52.37515706517872,
+                    4.884082674980164
+                ],
+                "tags": {
+                    "tourism": "museum",
+                    "name": "Anne Frank Huis",
+                    "name:en": "Anne Frank House",
+                    "name:nl": "Anne Frank Huis",
+                    "name:de": "Anne-Frank-Haus",
+                    "name:fr": "Maison Anne Frank"
+                }
+            },
+            {
+                "id": "n11210972254",
+                "name": "Madame Blue",
+                "at": [
+                    52.37426955395817,
+                    4.882741570472717
+                ],
+                "tags": {
+                    "shop": "jewelry",
+                    "name": "Madame Blue"
+                }
+            },
+            {
+                "id": "n5773624061",
+                "name": "CitySightseeing",
+                "at": [
+                    52.37387982937353,
+                    4.884216785430908
+                ],
+                "tags": {
+                    "shop": "ticket",
+                    "name": "CitySightseeing"
+                }
+            },
+            {
+                "id": "n6662347488",
+                "name": "Teds",
+                "at": [
+                    52.37422697917087,
+                    4.882720112800598
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Teds"
+                }
+            },
+            {
+                "id": "n13825160491",
+                "name": "Zivatu",
+                "at": [
+                    52.375065367428626,
+                    4.8830366134643555
+                ],
+                "tags": {
+                    "shop": "jewelry",
+                    "name": "Zivatu"
+                }
+            },
+            {
+                "id": "n2721937969",
+                "name": "Souvenir Shop Giftshop",
+                "at": [
+                    52.3738634543157,
+                    4.884297251701355
+                ],
+                "tags": {
+                    "shop": "gift",
+                    "name": "Souvenir Shop Giftshop"
+                }
+            },
+            {
+                "id": "n2721941495",
+                "name": "Bistro Amsterdam",
+                "at": [
+                    52.37379795402365,
+                    4.883396029472351
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Bistro Amsterdam"
+                }
+            },
+            {
+                "id": "n11210985798",
+                "name": "Hope",
+                "at": [
+                    52.37412872950507,
+                    4.882704019546509
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Hope"
+                }
+            },
+            {
+                "id": "n11211110962",
+                "name": "Huisartsenpraktijk Westertoren",
+                "at": [
+                    52.37477389831563,
+                    4.884967803955078
+                ],
+                "tags": {
+                    "amenity": "doctors",
+                    "name": "Huisartsenpraktijk Westertoren"
+                }
+            },
+            {
+                "id": "n2721947477",
+                "name": "Rent a Bike Amstel",
+                "at": [
+                    52.37387327935113,
+                    4.884490370750427
+                ],
+                "tags": {
+                    "shop": "bicycle",
+                    "name": "Rent a Bike Amstel"
+                }
+            },
+            {
+                "id": "n2721947822",
+                "name": "Kim Ngân Nails",
+                "at": [
+                    52.37381105408984,
+                    4.884340167045593
+                ],
+                "tags": {
+                    "shop": "beauty",
+                    "name": "Kim Ngân Nails"
+                }
+            },
+            {
+                "id": "n5551560327",
+                "name": "Oude Wester",
+                "at": [
+                    52.374066504603704,
+                    4.882687926292419
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Oude Wester"
+                }
+            },
+            {
+                "id": "n2721937900",
+                "name": "Wine & Liquor",
+                "at": [
+                    52.37385690429087,
+                    4.8846083879470825
+                ],
+                "tags": {
+                    "shop": "alcohol",
+                    "name": "Wine & Liquor"
+                }
+            },
+            {
+                "id": "n11112639605",
+                "name": "Flagship Amsterdam",
+                "at": [
+                    52.375360109519285,
+                    4.88392174243927
+                ],
+                "tags": {
+                    "tourism": "attraction",
+                    "name": "Flagship Amsterdam"
+                }
+            },
+            {
+                "id": "n2721945852",
+                "name": "Alex Souvenirs",
+                "at": [
+                    52.37381105408984,
+                    4.8845332860946655
+                ],
+                "tags": {
+                    "shop": "gift",
+                    "name": "Alex Souvenirs"
+                }
+            },
+            {
+                "id": "n9141449091",
+                "name": "Lunchcafé Dialoog",
+                "at": [
+                    52.37535028481462,
+                    4.884093403816223
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Lunchcafé Dialoog"
+                }
+            },
+            {
+                "id": "n2721941823",
+                "name": "Nieuws",
+                "at": [
+                    52.37354250195651,
+                    4.883374571800232
+                ],
+                "tags": {
+                    "shop": "newsagent",
+                    "name": "Nieuws"
+                }
+            },
+            {
+                "id": "n5870490900",
+                "name": "Pizza Pasta Steaks",
+                "at": [
+                    52.37373900367777,
+                    4.88268256187439
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Pizza Pasta Steaks"
+                }
+            },
+            {
+                "id": "n12146375689",
+                "name": "Equans AMS-4376",
+                "at": [
+                    52.37369642837901,
+                    4.884774684906006
+                ],
+                "tags": {
+                    "amenity": "charging_station",
+                    "name": "Equans AMS-4376"
+                }
+            },
+            {
+                "id": "n1581150246",
+                "name": "Euronet",
+                "at": [
+                    52.37395187955586,
+                    4.882339239120483
+                ],
+                "tags": {
+                    "amenity": "atm",
+                    "name": "Euronet"
+                }
+            },
+            {
+                "id": "n2721823451",
+                "name": "Amigo",
+                "at": [
+                    52.373666953148145,
+                    4.88267183303833
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Amigo"
+                }
+            },
+            {
+                "id": "n1757260899",
+                "name": "Mister B",
+                "at": [
+                    52.37362437777994,
+                    4.882687926292419
+                ],
+                "tags": {
+                    "shop": "erotic",
+                    "name": "Mister B"
+                }
+            },
+            {
+                "id": "n11251745049",
+                "name": "Café Brakke",
+                "at": [
+                    52.37391585447939,
+                    4.882151484489441
+                ],
+                "tags": {
+                    "amenity": "bar",
+                    "name": "Café Brakke"
+                }
+            },
+            {
+                "id": "n2721826417",
+                "name": "Amigo",
+                "at": [
+                    52.37368660330425,
+                    4.882451891899109
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Amigo"
+                }
+            },
+            {
+                "id": "n11747878164",
+                "name": "atelier paradis",
+                "at": [
+                    52.37555987804007,
+                    4.882891774177551
+                ],
+                "tags": {
+                    "tourism": "gallery",
+                    "name": "atelier paradis"
+                }
+            },
+            {
+                "id": "n2721830971",
+                "name": "Tara massage",
+                "at": [
+                    52.373676778227285,
+                    4.882392883300781
+                ],
+                "tags": {
+                    "shop": "massage",
+                    "name": "Tara massage"
+                }
+            },
+            {
+                "id": "n34050787",
+                "name": "Theo Thijssen Museum",
+                "at": [
+                    52.37552057938607,
+                    4.882687926292419
+                ],
+                "tags": {
+                    "tourism": "museum",
+                    "name": "Theo Thijssen Museum",
+                    "name:en": "Theo Thijssen Museum",
+                    "name:nl": "Theo Thijssen Museum"
+                }
+            },
+            {
+                "id": "n2721832932",
+                "name": "Maijard Smashburgers",
+                "at": [
+                    52.37366367812128,
+                    4.882349967956543
+                ],
+                "tags": {
+                    "amenity": "fast_food",
+                    "name": "Maijard Smashburgers",
+                    "name:nl": "Maijard Smashburgers"
+                }
+            },
+            {
+                "id": "n11747861492",
+                "name": "Frame",
+                "at": [
+                    52.37557625246892,
+                    4.882725477218628
+                ],
+                "tags": {
+                    "shop": "hairdresser",
+                    "name": "Frame"
+                }
+            },
+            {
+                "id": "n2721817199",
+                "name": "Theatre de Coiffure",
+                "at": [
+                    52.37365057801139,
+                    4.882301688194275
+                ],
+                "tags": {
+                    "shop": "hairdresser",
+                    "name": "Theatre de Coiffure"
+                }
+            },
+            {
+                "id": "n2721823548",
+                "name": "'t Klaproosje",
+                "at": [
+                    52.37346062598129,
+                    4.882655739784241
+                ],
+                "tags": {
+                    "amenity": "kindergarten",
+                    "name": "'t Klaproosje"
+                }
+            },
+            {
+                "id": "n5771329666",
+                "name": "Bolia",
+                "at": [
+                    52.373788128971476,
+                    4.885455965995789
+                ],
+                "tags": {
+                    "shop": "furniture",
+                    "name": "Bolia",
+                    "level": "0"
+                }
+            },
+            {
+                "id": "n2720971582",
+                "name": "Thaise Afhaal Dong Son",
+                "at": [
+                    52.37387327935113,
+                    4.881990551948547
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Thaise Afhaal Dong Son",
+                    "name:en": "Dong Son Takeaway Restaurant"
+                }
+            },
+            {
+                "id": "n11211150638",
+                "name": "Design Thinkers Academy",
+                "at": [
+                    52.375736721550325,
+                    4.883143901824951
+                ],
+                "tags": {
+                    "office": "company",
+                    "name": "Design Thinkers Academy"
+                }
+            },
+            {
+                "id": "n11012803505",
+                "name": "In2Retail",
+                "at": [
+                    52.375723622055325,
+                    4.884463548660278
+                ],
+                "tags": {
+                    "amenity": "atm",
+                    "name": "In2Retail"
+                }
+            },
+            {
+                "id": "n11747871780",
+                "name": "Dr. Spectacles",
+                "at": [
+                    52.375664674279776,
+                    4.882827401161194
+                ],
+                "tags": {
+                    "shop": "optician",
+                    "name": "Dr. Spectacles"
+                }
+            },
+            {
+                "id": "n10692454659",
+                "name": "Toni & Guy",
+                "at": [
+                    52.37364075292642,
+                    4.882242679595947
+                ],
+                "tags": {
+                    "shop": "hairdresser",
+                    "name": "Toni & Guy"
+                }
+            },
+            {
+                "id": "n10012697481",
+                "name": "We Are Labels",
+                "at": [
+                    52.37401737961962,
+                    4.885713458061218
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "We Are Labels"
+                }
+            },
+            {
+                "id": "n853780887",
+                "name": "Kennisland",
+                "at": [
+                    52.37535028481462,
+                    4.885386228561401
+                ],
+                "tags": {
+                    "office": "company",
+                    "name": "Kennisland"
+                }
+            },
+            {
+                "id": "n11377603685",
+                "name": "27 Huis",
+                "at": [
+                    52.375638475243164,
+                    4.88268256187439
+                ],
+                "tags": {
+                    "office": "estate_agent",
+                    "name": "27 Huis"
+                }
+            },
+            {
+                "id": "n9896139617",
+                "name": "Tickets & Gifts",
+                "at": [
+                    52.37583824250477,
+                    4.883744716644287
+                ],
+                "tags": {
+                    "shop": "gift",
+                    "name": "Tickets & Gifts"
+                }
+            },
+            {
+                "id": "n5771329669",
+                "name": "Nadia Hotel",
+                "at": [
+                    52.373732453634474,
+                    4.885547161102295
+                ],
+                "tags": {
+                    "tourism": "hotel",
+                    "name": "Nadia Hotel"
+                }
+            },
+            {
+                "id": "n2721947389",
+                "name": "Balmain",
+                "at": [
+                    52.37374227869905,
+                    4.885563254356384
+                ],
+                "tags": {
+                    "shop": "hairdresser",
+                    "name": "Balmain"
+                }
+            },
+            {
+                "id": "n12085380769",
+                "name": "Broodje Mokum",
+                "at": [
+                    52.37386672932775,
+                    4.881834983825684
+                ],
+                "tags": {
+                    "amenity": "fast_food",
+                    "name": "Broodje Mokum"
+                }
+            },
+            {
+                "id": "n11941568336",
+                "name": "Antiek 58",
+                "at": [
+                    52.37507191727422,
+                    4.881743788719177
+                ],
+                "tags": {
+                    "shop": "antiques",
+                    "name": "Antiek 58"
+                }
+            },
+            {
+                "id": "n10991974154",
+                "name": "Subculture",
+                "at": [
+                    52.37416147941796,
+                    4.881620407104492
+                ],
+                "tags": {
+                    "shop": "tattoo",
+                    "name": "Subculture"
+                }
+            },
+            {
+                "id": "n5696710525",
+                "name": "Chris",
+                "at": [
+                    52.374256454027986,
+                    4.881566762924194
+                ],
+                "tags": {
+                    "amenity": "pub",
+                    "name": "Chris"
+                }
+            },
+            {
+                "id": "n12105994701",
+                "name": "Equans",
+                "at": [
+                    52.37480337280774,
+                    4.881550669670105
+                ],
+                "tags": {
+                    "amenity": "charging_station",
+                    "name": "Equans"
+                }
+            },
+            {
+                "id": "n11211150639",
+                "name": "Design Studio Lumineus",
+                "at": [
+                    52.375792394360694,
+                    4.882864952087402
+                ],
+                "tags": {
+                    "shop": "interior_decoration",
+                    "name": "Design Studio Lumineus"
+                }
+            },
+            {
+                "id": "n12085564668",
+                "name": "A Space Oddity",
+                "at": [
+                    52.37330342368337,
+                    4.8826611042022705
+                ],
+                "tags": {
+                    "shop": "toys",
+                    "name": "A Space Oddity"
+                }
+            },
+            {
+                "id": "n2721947207",
+                "name": "Bey",
+                "at": [
+                    52.37370952847531,
+                    4.885638356208801
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Bey"
+                }
+            },
+            {
+                "id": "n2720972091",
+                "name": "Moo!zo",
+                "at": [
+                    52.3757825697522,
+                    4.882763028144836
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Moo!zo"
+                }
+            },
+            {
+                "id": "n1578160237",
+                "name": "De Reiger",
+                "at": [
+                    52.375736721550325,
+                    4.882596731185913
+                ],
+                "tags": {
+                    "amenity": "pub",
+                    "name": "De Reiger"
+                }
+            },
+            {
+                "id": "n2720972543",
+                "name": "Box Sociaal",
+                "at": [
+                    52.37469529957383,
+                    4.881470203399658
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Box Sociaal"
+                }
+            },
+            {
+                "id": "n1578160226",
+                "name": "De Reiger",
+                "at": [
+                    52.37573017180331,
+                    4.882526993751526
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "De Reiger"
+                }
+            },
+            {
+                "id": "n2720970244",
+                "name": "Universe on a T-Shirt",
+                "at": [
+                    52.37408615458203,
+                    4.881518483161926
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Universe on a T-Shirt"
+                }
+            },
+            {
+                "id": "n2721824226",
+                "name": "Sneaker District",
+                "at": [
+                    52.37355887713334,
+                    4.881995916366577
+                ],
+                "tags": {
+                    "shop": "shoes",
+                    "name": "Sneaker District"
+                }
+            },
+            {
+                "id": "n10920278785",
+                "name": "Kafenion",
+                "at": [
+                    52.37469202462323,
+                    4.881373643875122
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Kafenion"
+                }
+            },
+            {
+                "id": "n1456331226",
+                "name": "Moeder Godskerk",
+                "at": [
+                    52.373120020295296,
+                    4.884544014930725
+                ],
+                "tags": {
+                    "amenity": "christian",
+                    "name": "Moeder Godskerk"
+                }
+            },
+            {
+                "id": "n2720972352",
+                "name": "Quinta Absinthe",
+                "at": [
+                    52.37600198548793,
+                    4.883830547332764
+                ],
+                "tags": {
+                    "shop": "alcohol",
+                    "name": "Quinta Absinthe"
+                }
+            },
+            {
+                "id": "n5761681652",
+                "name": "Hotel Galerij",
+                "at": [
+                    52.373630927839265,
+                    4.885740280151367
+                ],
+                "tags": {
+                    "tourism": "hotel",
+                    "name": "Hotel Galerij"
+                }
+            },
+            {
+                "id": "n2721472913",
+                "name": "Pizza Beppe",
+                "at": [
+                    52.37389292941542,
+                    4.885997772216797
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Pizza Beppe"
+                }
+            },
+            {
+                "id": "n6893999585",
+                "name": "Almost Summer store",
+                "at": [
+                    52.376021634605095,
+                    4.883739352226257
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Almost Summer store"
+                }
+            },
+            {
+                "id": "n2720971344",
+                "name": "Café Wester",
+                "at": [
+                    52.37602818430889,
+                    4.883878827095032
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Café Wester"
+                }
+            },
+            {
+                "id": "n11377634987",
+                "name": "MenM",
+                "at": [
+                    52.376054383114315,
+                    4.8839271068573
+                ],
+                "tags": {
+                    "tourism": "gallery",
+                    "name": "MenM"
+                }
+            },
+            {
+                "id": "n6488693366",
+                "name": "Birkenstock",
+                "at": [
+                    52.37361127765839,
+                    4.885836839675903
+                ],
+                "tags": {
+                    "shop": "shoes",
+                    "name": "Birkenstock"
+                }
+            },
+            {
+                "id": "n12620404230",
+                "name": "Marit Törnqvist",
+                "at": [
+                    52.375877540876104,
+                    4.885042905807495
+                ],
+                "tags": {
+                    "amenity": "arts_centre",
+                    "name": "Marit Törnqvist"
+                }
+            },
+            {
+                "id": "n11747823968",
+                "name": "patina",
+                "at": [
+                    52.37589064032544,
+                    4.882526993751526
+                ],
+                "tags": {
+                    "shop": "jewelry",
+                    "name": "patina"
+                }
+            },
+            {
+                "id": "n154980550",
+                "name": "Bike City",
+                "at": [
+                    52.37503589311135,
+                    4.881341457366943
+                ],
+                "tags": {
+                    "amenity": "bicycle_rental",
+                    "name": "Bike City"
+                }
+            },
+            {
+                "id": "n12620474612",
+                "name": "Flagship",
+                "at": [
+                    52.375805493835294,
+                    4.885246753692627
+                ],
+                "tags": {
+                    "shop": "ticket",
+                    "name": "Flagship"
+                }
+            },
+            {
+                "id": "n4862660322",
+                "name": "Spanjer en van Twist",
+                "at": [
+                    52.375936488367515,
+                    4.88491415977478
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Spanjer en van Twist"
+                }
+            },
+            {
+                "id": "n12620463154",
+                "name": "Flagship",
+                "at": [
+                    52.37569742305369,
+                    4.885536432266235
+                ],
+                "tags": {
+                    "office": "company",
+                    "name": "Flagship"
+                }
+            },
+            {
+                "id": "n2720970002",
+                "name": "Kesar Indian restaurant",
+                "at": [
+                    52.37611333036969,
+                    4.883975386619568
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Kesar Indian restaurant"
+                }
+            },
+            {
+                "id": "n11747871779",
+                "name": "Galilea",
+                "at": [
+                    52.37593321350895,
+                    4.882516264915466
+                ],
+                "tags": {
+                    "tourism": "gallery",
+                    "name": "Galilea"
+                }
+            },
+            {
+                "id": "n12620462078",
+                "name": "Sandro",
+                "at": [
+                    52.375681048669776,
+                    4.885600805282593
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Sandro"
+                }
+            },
+            {
+                "id": "n2721946082",
+                "name": "Tiftix",
+                "at": [
+                    52.37357197727043,
+                    4.8859065771102905
+                ],
+                "tags": {
+                    "shop": "interior_decoration",
+                    "name": "Tiftix"
+                }
+            },
+            {
+                "id": "n4728626591",
+                "name": "Black and Blue",
+                "at": [
+                    52.375789119491444,
+                    4.88542377948761
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Black and Blue",
+                    "name:en": "Black and Blue",
+                    "name:nl": "Black and Blue"
+                }
+            },
+            {
+                "id": "n11377527320",
+                "name": "cabana interior",
+                "at": [
+                    52.37538958362016,
+                    4.881523847579956
+                ],
+                "tags": {
+                    "office": "consulting",
+                    "name": "cabana interior"
+                }
+            },
+            {
+                "id": "n2610881750",
+                "name": "Cafe de Prins",
+                "at": [
+                    52.376152628496214,
+                    4.884023666381836
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Cafe de Prins"
+                }
+            },
+            {
+                "id": "n6488693367",
+                "name": "Hotel Clemens",
+                "at": [
+                    52.3735228517363,
+                    4.88591730594635
+                ],
+                "tags": {
+                    "tourism": "hotel",
+                    "name": "Hotel Clemens"
+                }
+            },
+            {
+                "id": "n2721945650",
+                "name": "Shans",
+                "at": [
+                    52.373539226920414,
+                    4.885976314544678
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Shans"
+                }
+            },
+            {
+                "id": "n13049541384",
+                "name": "Bonboon",
+                "at": [
+                    52.37317242134103,
+                    4.882156848907471
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Bonboon"
+                }
+            },
+            {
+                "id": "n11497504242",
+                "name": "pizza'dam",
+                "at": [
+                    52.37348355126966,
+                    4.881625771522522
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "pizza'dam"
+                }
+            },
+            {
+                "id": "n12620444865",
+                "name": "Duijn Horecamakelaars",
+                "at": [
+                    52.37620502594386,
+                    4.884055852890015
+                ],
+                "tags": {
+                    "office": "estate_agent",
+                    "name": "Duijn Horecamakelaars"
+                }
+            },
+            {
+                "id": "n1588328793",
+                "name": "Velvet Music",
+                "at": [
+                    52.37371280349878,
+                    4.8812878131866455
+                ],
+                "tags": {
+                    "shop": "music",
+                    "name": "Velvet Music"
+                }
+            },
+            {
+                "id": "n5771329668",
+                "name": "La Belle Vue",
+                "at": [
+                    52.37346717606489,
+                    4.885992407798767
+                ],
+                "tags": {
+                    "tourism": "hotel",
+                    "name": "La Belle Vue"
+                }
+            },
+            {
+                "id": "n331630133",
+                "name": "Pulitzer",
+                "at": [
+                    52.372808887805775,
+                    4.88342821598053
+                ],
+                "tags": {
+                    "tourism": "hotel",
+                    "name": "Pulitzer",
+                    "name:en": "Hotel Pulitzer",
+                    "name:nl": "Hotel Pulitzer",
+                    "name:fr": "Hotel Pulitzer"
+                }
+            },
+            {
+                "id": "n11782470783",
+                "name": "van Ilse",
+                "at": [
+                    52.37505881758204,
+                    4.881078600883484
+                ],
+                "tags": {
+                    "shop": "beauty",
+                    "name": "van Ilse"
+                }
+            },
+            {
+                "id": "n11377620192",
+                "name": "Tropics",
+                "at": [
+                    52.375314260878824,
+                    4.88117516040802
+                ],
+                "tags": {
+                    "shop": "beauty",
+                    "name": "Tropics"
+                }
+            },
+            {
+                "id": "n12160416137",
+                "name": "Equans AMS-0454",
+                "at": [
+                    52.37295299154709,
+                    4.885144829750061
+                ],
+                "tags": {
+                    "amenity": "charging_station",
+                    "name": "Equans AMS-0454"
+                }
+            },
+            {
+                "id": "n2721944426",
+                "name": "The Pelican Studio",
+                "at": [
+                    52.37345735093913,
+                    4.886137247085571
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "The Pelican Studio"
+                }
+            },
+            {
+                "id": "n2721944405",
+                "name": "Hotel de Westertoren",
+                "at": [
+                    52.373408225277494,
+                    4.886094331741333
+                ],
+                "tags": {
+                    "tourism": "hotel",
+                    "name": "Hotel de Westertoren"
+                }
+            },
+            {
+                "id": "n2720969403",
+                "name": "Amsterdam Tulip Museum",
+                "at": [
+                    52.37631637031369,
+                    4.88417387008667
+                ],
+                "tags": {
+                    "tourism": "museum",
+                    "name": "Amsterdam Tulip Museum",
+                    "name:en": "Amsterdam Tulip Museum",
+                    "name:nl": "Amsterdam Tulip Museum",
+                    "name:de": "Amsterdam Tulip Museum",
+                    "name:fr": "Amsterdam Tulip Museum"
+                }
+            },
+            {
+                "id": "n1588328789",
+                "name": "Long Pura",
+                "at": [
+                    52.37365385303924,
+                    4.881116151809692
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Long Pura"
+                }
+            },
+            {
+                "id": "n538534998",
+                "name": "Brandon",
+                "at": [
+                    52.37539940831608,
+                    4.88641619682312
+                ],
+                "tags": {
+                    "amenity": "pub",
+                    "name": "Brandon",
+                    "name:nl": "Café Brandon"
+                }
+            },
+            {
+                "id": "n2720969381",
+                "name": "Twee Zwaantjes",
+                "at": [
+                    52.37634911860433,
+                    4.884200692176819
+                ],
+                "tags": {
+                    "amenity": "bar",
+                    "name": "Twee Zwaantjes",
+                    "level": "0"
+                }
+            },
+            {
+                "id": "n2721943212",
+                "name": "Sharm Hotel",
+                "at": [
+                    52.37338529995003,
+                    4.88616943359375
+                ],
+                "tags": {
+                    "tourism": "hotel",
+                    "name": "Sharm Hotel"
+                }
+            },
+            {
+                "id": "w174193863",
+                "name": "Huis Bartolotti",
+                "at": [
+                    52.3740697796007,
+                    4.886732697486877
+                ],
+                "tags": {
+                    "tourism": "museum",
+                    "name": "Huis Bartolotti",
+                    "name:en": "Huis Bartolotti",
+                    "name:nl": "Huis Bartolotti",
+                    "name:de": "Bartolottihaus",
+                    "name:fr": "Huis Bartolotti"
+                }
+            },
+            {
+                "id": "n2720969322",
+                "name": "Amsterdam Cheese Museum",
+                "at": [
+                    52.37638514169599,
+                    4.884232878684998
+                ],
+                "tags": {
+                    "tourism": "museum",
+                    "name": "Amsterdam Cheese Museum",
+                    "level": "-1"
+                }
+            },
+            {
+                "id": "n2429444887",
+                "name": "De Pizzabakkers To Go",
+                "at": [
+                    52.37535355971641,
+                    4.886544942855835
+                ],
+                "tags": {
+                    "amenity": "fast_food",
+                    "name": "De Pizzabakkers To Go"
+                }
+            },
+            {
+                "id": "n2721355260",
+                "name": "The Toren",
+                "at": [
+                    52.375874266013156,
+                    4.885965585708618
+                ],
+                "tags": {
+                    "tourism": "hotel",
+                    "name": "The Toren"
+                }
+            },
+            {
+                "id": "n6488693364",
+                "name": "La Belle Vue",
+                "at": [
+                    52.373349274411396,
+                    4.886255264282227
+                ],
+                "tags": {
+                    "tourism": "hotel",
+                    "name": "La Belle Vue"
+                }
+            },
+            {
+                "id": "n11285952687",
+                "name": "L'Artisan d'Amsterdam",
+                "at": [
+                    52.376427714402794,
+                    4.884270429611206
+                ],
+                "tags": {
+                    "shop": "bakery",
+                    "name": "L'Artisan d'Amsterdam"
+                }
+            },
+            {
+                "id": "n1556508595",
+                "name": "De Nieuwe Lelie",
+                "at": [
+                    52.37520946380759,
+                    4.880799651145935
+                ],
+                "tags": {
+                    "amenity": "pub",
+                    "name": "De Nieuwe Lelie"
+                }
+            },
+            {
+                "id": "n6491481207",
+                "name": "Pulitzer's Bar",
+                "at": [
+                    52.37262548236409,
+                    4.884511828422546
+                ],
+                "tags": {
+                    "amenity": "bar",
+                    "name": "Pulitzer's Bar"
+                }
+            },
+            {
+                "id": "n3141828790",
+                "name": "Bakkerij Andere Koek",
+                "at": [
+                    52.37337219975756,
+                    4.886367917060852
+                ],
+                "tags": {
+                    "shop": "confectionery",
+                    "name": "Bakkerij Andere Koek"
+                }
+            },
+            {
+                "id": "n2721828852",
+                "name": "BENU",
+                "at": [
+                    52.37336564965987,
+                    4.88116979598999
+                ],
+                "tags": {
+                    "amenity": "pharmacy",
+                    "name": "BENU"
+                }
+            },
+            {
+                "id": "n1588328785",
+                "name": "Coppenhagen",
+                "at": [
+                    52.37358507740363,
+                    4.880901575088501
+                ],
+                "tags": {
+                    "shop": "jewelry",
+                    "name": "Coppenhagen"
+                }
+            },
+            {
+                "id": "n3471041353",
+                "name": "Sonneveld Eetcafe",
+                "at": [
+                    52.37631637031369,
+                    4.882274866104126
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Sonneveld Eetcafe"
+                }
+            },
+            {
+                "id": "n2721941019",
+                "name": "Di-Ann",
+                "at": [
+                    52.373342724310305,
+                    4.886464476585388
+                ],
+                "tags": {
+                    "shop": "gift",
+                    "name": "Di-Ann"
+                }
+            },
+            {
+                "id": "n11025463149",
+                "name": "Di-Ann City Centre Hotel",
+                "at": [
+                    52.373342724310305,
+                    4.8864805698394775
+                ],
+                "tags": {
+                    "tourism": "hotel",
+                    "name": "Di-Ann City Centre Hotel"
+                }
+            },
+            {
+                "id": "n11377616764",
+                "name": "Davie's",
+                "at": [
+                    52.37547145601939,
+                    4.880826473236084
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Davie's"
+                }
+            },
+            {
+                "id": "n11782484792",
+                "name": "Equans",
+                "at": [
+                    52.37455120151724,
+                    4.88042950630188
+                ],
+                "tags": {
+                    "amenity": "charging_station",
+                    "name": "Equans"
+                }
+            },
+            {
+                "id": "n2061794034",
+                "name": "De Luwte",
+                "at": [
+                    52.37528806163432,
+                    4.886877536773682
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "De Luwte"
+                }
+            },
+            {
+                "id": "n11377613936",
+                "name": "The Boardroom",
+                "at": [
+                    52.37575964565721,
+                    4.881100058555603
+                ],
+                "tags": {
+                    "shop": "tailor",
+                    "name": "The Boardroom"
+                }
+            },
+            {
+                "id": "n12117256773",
+                "name": "Eat Dust",
+                "at": [
+                    52.37524221291907,
+                    4.88691508769989
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Eat Dust"
+                }
+            },
+            {
+                "id": "n1588328794",
+                "name": "Perzische Supermarkt",
+                "at": [
+                    52.37356542720238,
+                    4.880794286727905
+                ],
+                "tags": {
+                    "shop": "convenience",
+                    "name": "Perzische Supermarkt"
+                }
+            },
+            {
+                "id": "n11941606079",
+                "name": "TotalEnergies TNLP011129",
+                "at": [
+                    52.37469529957383,
+                    4.88041877746582
+                ],
+                "tags": {
+                    "amenity": "charging_station",
+                    "name": "TotalEnergies TNLP011129"
+                }
+            },
+            {
+                "id": "n2721940119",
+                "name": "Bas Optiek",
+                "at": [
+                    52.373332899156864,
+                    4.886534214019775
+                ],
+                "tags": {
+                    "shop": "optician",
+                    "name": "Bas Optiek"
+                }
+            },
+            {
+                "id": "n6491481213",
+                "name": "Bussia",
+                "at": [
+                    52.37246172686189,
+                    4.883497953414917
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Bussia"
+                }
+            },
+            {
+                "id": "n2721940763",
+                "name": "Regalo Gallery",
+                "at": [
+                    52.372455176629174,
+                    4.883594512939453
+                ],
+                "tags": {
+                    "shop": "interior_decoration",
+                    "name": "Regalo Gallery"
+                }
+            },
+            {
+                "id": "n6491481212",
+                "name": "L'Étoile de Saint Honoré",
+                "at": [
+                    52.372451901512456,
+                    4.8836749792099
+                ],
+                "tags": {
+                    "shop": "bag",
+                    "name": "L'Étoile de Saint Honoré"
+                }
+            },
+            {
+                "id": "n2721938620",
+                "name": "Who's That Girl",
+                "at": [
+                    52.372448626395496,
+                    4.883878827095032
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Who's That Girl"
+                }
+            },
+            {
+                "id": "n6491481210",
+                "name": "Ou",
+                "at": [
+                    52.37244535127827,
+                    4.883948564529419
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Ou"
+                }
+            },
+            {
+                "id": "n11377622283",
+                "name": "Antiek d'Eglantier",
+                "at": [
+                    52.375736721550325,
+                    4.881008863449097
+                ],
+                "tags": {
+                    "shop": "antiques",
+                    "name": "Antiek d'Eglantier"
+                }
+            },
+            {
+                "id": "n2721938089",
+                "name": "Galerie Geluk",
+                "at": [
+                    52.37244535127827,
+                    4.8841094970703125
+                ],
+                "tags": {
+                    "shop": "jewelry",
+                    "name": "Galerie Geluk"
+                }
+            },
+            {
+                "id": "n2061794303",
+                "name": "Architectura & Natura",
+                "at": [
+                    52.37521601363183,
+                    4.886995553970337
+                ],
+                "tags": {
+                    "shop": "books",
+                    "name": "Architectura & Natura"
+                }
+            },
+            {
+                "id": "n11211150786",
+                "name": "Huisartsenpraktijk Herengracht",
+                "at": [
+                    52.374459502509154,
+                    4.887236952781677
+                ],
+                "tags": {
+                    "amenity": "doctors",
+                    "name": "Huisartsenpraktijk Herengracht"
+                }
+            },
+            {
+                "id": "n2631625098",
+                "name": "Electric Ladyland",
+                "at": [
+                    52.375618825955506,
+                    4.880794286727905
+                ],
+                "tags": {
+                    "tourism": "museum",
+                    "name": "Electric Ladyland",
+                    "name:en": "Electric Ladyland",
+                    "name:nl": "Electric Ladyland"
+                }
+            },
+            {
+                "id": "n2721939457",
+                "name": "Dam",
+                "at": [
+                    52.37331652389624,
+                    4.886641502380371
+                ],
+                "tags": {
+                    "shop": "gift",
+                    "name": "Dam"
+                }
+            },
+            {
+                "id": "n6491481209",
+                "name": "Jansz",
+                "at": [
+                    52.37242570056993,
+                    4.8844581842422485
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Jansz"
+                }
+            },
+            {
+                "id": "n12620469982",
+                "name": "'t Hotel",
+                "at": [
+                    52.375163615010734,
+                    4.887124300003052
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "'t Hotel"
+                }
+            },
+            {
+                "id": "n2721355412",
+                "name": "´t Hotel",
+                "at": [
+                    52.37516034009485,
+                    4.887145757675171
+                ],
+                "tags": {
+                    "tourism": "hotel",
+                    "name": "´t Hotel"
+                }
+            },
+            {
+                "id": "n2720880868",
+                "name": "OSAKAsan",
+                "at": [
+                    52.37644408850987,
+                    4.88216757774353
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "OSAKAsan"
+                }
+            },
+            {
+                "id": "n2721824634",
+                "name": "Juffrouw Splinter",
+                "at": [
+                    52.372481377554216,
+                    4.882553815841675
+                ],
+                "tags": {
+                    "shop": "toys",
+                    "name": "Juffrouw Splinter"
+                }
+            },
+            {
+                "id": "n1588328791",
+                "name": "Gebr. Winter",
+                "at": [
+                    52.373516301660956,
+                    4.880611896514893
+                ],
+                "tags": {
+                    "shop": "stationery",
+                    "name": "Gebr. Winter"
+                }
+            },
+            {
+                "id": "n2721940163",
+                "name": "Koko von Knebel",
+                "at": [
+                    52.372347097649104,
+                    4.883508682250977
+                ],
+                "tags": {
+                    "shop": "pet",
+                    "name": "Koko von Knebel"
+                }
+            },
+            {
+                "id": "n2721938717",
+                "name": "Pluk",
+                "at": [
+                    52.372337272274166,
+                    4.883744716644287
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Pluk"
+                }
+            },
+            {
+                "id": "n11782483595",
+                "name": "de cirkel",
+                "at": [
+                    52.3764768367058,
+                    4.88218367099762
+                ],
+                "tags": {
+                    "shop": "hairdresser",
+                    "name": "de cirkel"
+                }
+            },
+            {
+                "id": "n2721938942",
+                "name": "Terra",
+                "at": [
+                    52.372337272274166,
+                    4.88366425037384
+                ],
+                "tags": {
+                    "shop": "shoes",
+                    "name": "Terra"
+                }
+            },
+            {
+                "id": "n6491481206",
+                "name": "Muze the Store",
+                "at": [
+                    52.37233072202299,
+                    4.883846640586853
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Muze the Store"
+                }
+            },
+            {
+                "id": "n4320585689",
+                "name": "Red Wing",
+                "at": [
+                    52.37232744689703,
+                    4.88391637802124
+                ],
+                "tags": {
+                    "shop": "shoes",
+                    "name": "Red Wing"
+                }
+            },
+            {
+                "id": "n2721938143",
+                "name": "Bij Ons Vintage",
+                "at": [
+                    52.37232744689703,
+                    4.884007573127747
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Bij Ons Vintage"
+                }
+            },
+            {
+                "id": "n2721941024",
+                "name": "Arman Tabak-Shop",
+                "at": [
+                    52.37233072202299,
+                    4.88342821598053
+                ],
+                "tags": {
+                    "shop": "newsagent",
+                    "name": "Arman Tabak-Shop"
+                }
+            },
+            {
+                "id": "n2721938011",
+                "name": "Senayan",
+                "at": [
+                    52.37232744689703,
+                    4.884088039398193
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Senayan"
+                }
+            },
+            {
+                "id": "n2468154212",
+                "name": "De Hoek",
+                "at": [
+                    52.37233072202299,
+                    4.883304834365845
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "De Hoek"
+                }
+            },
+            {
+                "id": "n1447362298",
+                "name": "'t Smalle",
+                "at": [
+                    52.37671917260092,
+                    4.884136319160461
+                ],
+                "tags": {
+                    "amenity": "bar",
+                    "name": "'t Smalle",
+                    "name:en": "Café ‘t Smalle"
+                }
+            },
+            {
+                "id": "n6491481208",
+                "name": "Champion",
+                "at": [
+                    52.372320896644396,
+                    4.88416850566864
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Champion"
+                }
+            },
+            {
+                "id": "n2721824642",
+                "name": "Polaberry",
+                "at": [
+                    52.372428975688585,
+                    4.882564544677734
+                ],
+                "tags": {
+                    "shop": "confectionery",
+                    "name": "Polaberry"
+                }
+            },
+            {
+                "id": "n2721938720",
+                "name": "Il Panorama",
+                "at": [
+                    52.37329032346663,
+                    4.886813163757324
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Il Panorama"
+                }
+            },
+            {
+                "id": "n12117241457",
+                "name": "Casa Luna",
+                "at": [
+                    52.375121041085315,
+                    4.887285232543945
+                ],
+                "tags": {
+                    "tourism": "gallery",
+                    "name": "Casa Luna"
+                }
+            },
+            {
+                "id": "n2721947639",
+                "name": "Ree7",
+                "at": [
+                    52.37230124588069,
+                    4.884243607521057
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Ree7"
+                }
+            },
+            {
+                "id": "n11536511023",
+                "name": "Cheesy Cakes",
+                "at": [
+                    52.37653578339727,
+                    4.88216757774353
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Cheesy Cakes"
+                }
+            },
+            {
+                "id": "n2721947331",
+                "name": "Cinq Amsterdam",
+                "at": [
+                    52.37229797075255,
+                    4.884324073791504
+                ],
+                "tags": {
+                    "shop": "jewelry",
+                    "name": "Cinq Amsterdam"
+                }
+            },
+            {
+                "id": "n4851205229",
+                "name": "Mr Jordaan",
+                "at": [
+                    52.37475097369706,
+                    4.880107641220093
+                ],
+                "tags": {
+                    "tourism": "hotel",
+                    "name": "Mr Jordaan"
+                }
+            },
+            {
+                "id": "n2721941935",
+                "name": "Amsterdam Watch Company",
+                "at": [
+                    52.37229469562417,
+                    4.884393811225891
+                ],
+                "tags": {
+                    "shop": "watches",
+                    "name": "Amsterdam Watch Company"
+                }
+            },
+            {
+                "id": "n6700113385",
+                "name": "NU koffie & delicatessen",
+                "at": [
+                    52.376581630769586,
+                    4.882258772850037
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "NU koffie & delicatessen"
+                }
+            },
+            {
+                "id": "n2721937894",
+                "name": "Sessùn",
+                "at": [
+                    52.37230124588069,
+                    4.884479641914368
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Sessùn"
+                }
+            },
+            {
+                "id": "n12117274803",
+                "name": "Big Shoe",
+                "at": [
+                    52.37509811664694,
+                    4.887360334396362
+                ],
+                "tags": {
+                    "shop": "shoes",
+                    "name": "Big Shoe"
+                }
+            },
+            {
+                "id": "n12117277873",
+                "name": "Animal Presents",
+                "at": [
+                    52.375091566805224,
+                    4.887376427650452
+                ],
+                "tags": {
+                    "shop": "gift",
+                    "name": "Animal Presents"
+                }
+            },
+            {
+                "id": "n12145672414",
+                "name": "Equans AMS-3718",
+                "at": [
+                    52.37613625428108,
+                    4.8864054679870605
+                ],
+                "tags": {
+                    "amenity": "charging_station",
+                    "name": "Equans AMS-3718"
+                }
+            },
+            {
+                "id": "n12620458089",
+                "name": "Lola Leads",
+                "at": [
+                    52.37506209250544,
+                    4.887435436248779
+                ],
+                "tags": {
+                    "office": "company",
+                    "name": "Lola Leads"
+                }
+            },
+            {
+                "id": "n1348470849",
+                "name": "Essentiel Antwerp",
+                "at": [
+                    52.372399499611866,
+                    4.885273575782776
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Essentiel Antwerp"
+                }
+            },
+            {
+                "id": "n13074712907",
+                "name": "Best Bench in Town",
+                "at": [
+                    52.37465600015048,
+                    4.879984259605408
+                ],
+                "tags": {
+                    "tourism": "attraction",
+                    "name": "Best Bench in Town",
+                    "level": "0"
+                }
+            },
+            {
+                "id": "n12077123316",
+                "name": "The Urbanista",
+                "at": [
+                    52.37239622449101,
+                    4.885386228561401
+                ],
+                "tags": {
+                    "shop": "jewelry",
+                    "name": "The Urbanista"
+                }
+            },
+            {
+                "id": "n6366091331",
+                "name": "Gunters en Meuser",
+                "at": [
+                    52.37682069129687,
+                    4.8845332860946655
+                ],
+                "tags": {
+                    "shop": "doityourself",
+                    "name": "Gunters en Meuser"
+                }
+            },
+            {
+                "id": "n11747910235",
+                "name": "Canal House",
+                "at": [
+                    52.37628689683135,
+                    4.886319637298584
+                ],
+                "tags": {
+                    "tourism": "hotel",
+                    "name": "Canal House"
+                }
+            },
+            {
+                "id": "n5427284621",
+                "name": "the Otherist",
+                "at": [
+                    52.37501951848215,
+                    4.887548089027405
+                ],
+                "tags": {
+                    "shop": "gift",
+                    "name": "the Otherist",
+                    "name:en": "the Otherist"
+                }
+            },
+            {
+                "id": "n1348470831",
+                "name": "Eddy Varekamp",
+                "at": [
+                    52.37239294936991,
+                    4.885450601577759
+                ],
+                "tags": {
+                    "shop": "art",
+                    "name": "Eddy Varekamp",
+                    "level": "0"
+                }
+            },
+            {
+                "id": "n2721824224",
+                "name": "Sneaker Addict",
+                "at": [
+                    52.37240604985284,
+                    4.882038831710815
+                ],
+                "tags": {
+                    "shop": "shoes",
+                    "name": "Sneaker Addict"
+                }
+            },
+            {
+                "id": "n566346908",
+                "name": "La Oliva Pintxos y Vinos",
+                "at": [
+                    52.37669624899211,
+                    4.8822373151779175
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "La Oliva Pintxos y Vinos"
+                }
+            },
+            {
+                "id": "n11747853346",
+                "name": "FABI.ART",
+                "at": [
+                    52.37666022615423,
+                    4.882065653800964
+                ],
+                "tags": {
+                    "shop": "hairdresser",
+                    "name": "FABI.ART"
+                }
+            },
+            {
+                "id": "n1348470834",
+                "name": "BLGK",
+                "at": [
+                    52.37238967424857,
+                    4.885509610176086
+                ],
+                "tags": {
+                    "shop": "jewelry",
+                    "name": "BLGK"
+                }
+            },
+            {
+                "id": "n12117262246",
+                "name": "Cow Museum",
+                "at": [
+                    52.37500969370172,
+                    4.887607097625732
+                ],
+                "tags": {
+                    "shop": "gift",
+                    "name": "Cow Museum"
+                }
+            },
+            {
+                "id": "n1348470870",
+                "name": "Ba&sh",
+                "at": [
+                    52.37239622449101,
+                    4.885590076446533
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Ba&sh"
+                }
+            },
+            {
+                "id": "n12181704717",
+                "name": "The Toren dependance",
+                "at": [
+                    52.37633274446206,
+                    4.886373281478882
+                ],
+                "tags": {
+                    "tourism": "hotel",
+                    "name": "The Toren dependance"
+                }
+            },
+            {
+                "id": "n2721832417",
+                "name": "Eethuis De Jordaan",
+                "at": [
+                    52.37319207171715,
+                    4.880456328392029
+                ],
+                "tags": {
+                    "amenity": "fast_food",
+                    "name": "Eethuis De Jordaan"
+                }
+            },
+            {
+                "id": "n2626414942",
+                "name": "Expat Medical Centre",
+                "at": [
+                    52.374672374914475,
+                    4.879807233810425
+                ],
+                "tags": {
+                    "amenity": "doctors",
+                    "name": "Expat Medical Centre"
+                }
+            },
+            {
+                "id": "n3642237752",
+                "name": "Sebastian",
+                "at": [
+                    52.37239294936991,
+                    4.8856812715530396
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Sebastian"
+                }
+            },
+            {
+                "id": "n12620471110",
+                "name": "Headline",
+                "at": [
+                    52.374976944417824,
+                    4.887682199478149
+                ],
+                "tags": {
+                    "shop": "hairdresser",
+                    "name": "Headline"
+                }
+            },
+            {
+                "id": "n11747868629",
+                "name": "Yan Yan",
+                "at": [
+                    52.37671589780039,
+                    4.882038831710815
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Yan Yan"
+                }
+            },
+            {
+                "id": "n1588328787",
+                "name": "Wulf",
+                "at": [
+                    52.37341477536886,
+                    4.880204200744629
+                ],
+                "tags": {
+                    "shop": "furniture",
+                    "name": "Wulf"
+                }
+            },
+            {
+                "id": "n1348470813",
+                "name": "Pure Silk",
+                "at": [
+                    52.37238967424857,
+                    4.885751008987427
+                ],
+                "tags": {
+                    "shop": "fabric",
+                    "name": "Pure Silk"
+                }
+            },
+            {
+                "id": "n10804571526",
+                "name": "Tandartspraktijk Buisman",
+                "at": [
+                    52.376372042393335,
+                    4.88641619682312
+                ],
+                "tags": {
+                    "amenity": "dentist",
+                    "name": "Tandartspraktijk Buisman"
+                }
+            },
+            {
+                "id": "n1348523695",
+                "name": "Pina Apartments",
+                "at": [
+                    52.37224229353706,
+                    4.885295033454895
+                ],
+                "tags": {
+                    "tourism": "hotel",
+                    "name": "Pina Apartments"
+                }
+            },
+            {
+                "id": "n5768607654",
+                "name": "Guy Olivier",
+                "at": [
+                    52.376977881075355,
+                    4.884018301963806
+                ],
+                "tags": {
+                    "tourism": "gallery",
+                    "name": "Guy Olivier"
+                }
+            },
+            {
+                "id": "n1348523710",
+                "name": "Hester van Eeghen",
+                "at": [
+                    52.37226849458838,
+                    4.8854076862335205
+                ],
+                "tags": {
+                    "shop": "bag",
+                    "name": "Hester van Eeghen"
+                }
+            },
+            {
+                "id": "n1348470879",
+                "name": "American Vintage",
+                "at": [
+                    52.372386399127,
+                    4.885826110839844
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "American Vintage"
+                }
+            },
+            {
+                "id": "n1348523717",
+                "name": "Juju",
+                "at": [
+                    52.37226521945783,
+                    4.885466694831848
+                ],
+                "tags": {
+                    "shop": "jewelry",
+                    "name": "Juju"
+                }
+            },
+            {
+                "id": "n11747851605",
+                "name": "Rosario",
+                "at": [
+                    52.37680431732944,
+                    4.882156848907471
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Rosario"
+                }
+            },
+            {
+                "id": "n1348523641",
+                "name": "American Vintage",
+                "at": [
+                    52.37226521945783,
+                    4.885525703430176
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "American Vintage"
+                }
+            },
+            {
+                "id": "n1348470846",
+                "name": "Carhartt",
+                "at": [
+                    52.372386399127,
+                    4.88591194152832
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Carhartt"
+                }
+            },
+            {
+                "id": "n11747844740",
+                "name": "piselli boutique",
+                "at": [
+                    52.37679121815113,
+                    4.882001280784607
+                ],
+                "tags": {
+                    "shop": "interior_decoration",
+                    "name": "piselli boutique"
+                }
+            },
+            {
+                "id": "n12077123317",
+                "name": "Via Vai",
+                "at": [
+                    52.372261944327015,
+                    4.885590076446533
+                ],
+                "tags": {
+                    "shop": "shoes",
+                    "name": "Via Vai"
+                }
+            },
+            {
+                "id": "n3555881382",
+                "name": "Vindit Vintage",
+                "at": [
+                    52.376846889632155,
+                    4.882135391235352
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Vindit Vintage"
+                }
+            },
+            {
+                "id": "n3642241310",
+                "name": "Dr. Martens",
+                "at": [
+                    52.372383124005175,
+                    4.885997772216797
+                ],
+                "tags": {
+                    "shop": "shoes",
+                    "name": "Dr. Martens"
+                }
+            },
+            {
+                "id": "n1348523661",
+                "name": "Madame Croissant",
+                "at": [
+                    52.372255394064666,
+                    4.88565981388092
+                ],
+                "tags": {
+                    "shop": "bakery",
+                    "name": "Madame Croissant"
+                }
+            },
+            {
+                "id": "n2720887312",
+                "name": "Assaggi",
+                "at": [
+                    52.376823966089646,
+                    4.881979823112488
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Assaggi"
+                }
+            },
+            {
+                "id": "n2721938467",
+                "name": "Birkenstock",
+                "at": [
+                    52.372366748392416,
+                    4.8860085010528564
+                ],
+                "tags": {
+                    "shop": "shoes",
+                    "name": "Birkenstock"
+                }
+            },
+            {
+                "id": "n10994536129",
+                "name": "Purcy Bikes",
+                "at": [
+                    52.37199665792501,
+                    4.884463548660278
+                ],
+                "tags": {
+                    "shop": "bicycle",
+                    "name": "Purcy Bikes"
+                }
+            },
+            {
+                "id": "n1348523658",
+                "name": "Dr Wonen",
+                "at": [
+                    52.372255394064666,
+                    4.885745644569397
+                ],
+                "tags": {
+                    "shop": "furniture",
+                    "name": "Dr Wonen"
+                }
+            },
+            {
+                "id": "n11747855884",
+                "name": "Serekunda",
+                "at": [
+                    52.37688618710592,
+                    4.882103204727173
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Serekunda"
+                }
+            },
+            {
+                "id": "n1348523692",
+                "name": "Fred Perry",
+                "at": [
+                    52.37225211893313,
+                    4.885826110839844
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Fred Perry"
+                }
+            },
+            {
+                "id": "n2721938084",
+                "name": "My Jewellery",
+                "at": [
+                    52.3723765737608,
+                    4.88616406917572
+                ],
+                "tags": {
+                    "shop": "jewelry",
+                    "name": "My Jewellery"
+                }
+            },
+            {
+                "id": "n11134000559",
+                "name": "Grimm",
+                "at": [
+                    52.372068711179466,
+                    4.885219931602478
+                ],
+                "tags": {
+                    "tourism": "gallery",
+                    "name": "Grimm"
+                }
+            },
+            {
+                "id": "n1823913265",
+                "name": "Euronet",
+                "at": [
+                    52.37345407589672,
+                    4.88767147064209
+                ],
+                "tags": {
+                    "amenity": "atm",
+                    "name": "Euronet"
+                }
+            },
+            {
+                "id": "n11210948232",
+                "name": "Drukkerij De Haan",
+                "at": [
+                    52.374561026399675,
+                    4.879485368728638
+                ],
+                "tags": {
+                    "shop": "copyshop",
+                    "name": "Drukkerij De Haan"
+                }
+            },
+            {
+                "id": "w266556487",
+                "name": "Mr Haz",
+                "at": [
+                    52.37712197121411,
+                    4.884232878684998
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Mr Haz"
+                }
+            },
+            {
+                "id": "n2721940670",
+                "name": "COS",
+                "at": [
+                    52.37224884380135,
+                    4.885901212692261
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "COS"
+                }
+            },
+            {
+                "id": "n2721824802",
+                "name": "Raïnaraï",
+                "at": [
+                    52.37201303367498,
+                    4.8825109004974365
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Raïnaraï"
+                }
+            },
+            {
+                "id": "n1348523691",
+                "name": "King Louie",
+                "at": [
+                    52.37237329863826,
+                    4.886244535446167
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "King Louie"
+                }
+            },
+            {
+                "id": "n1590664278",
+                "name": "Tom's bread & more",
+                "at": [
+                    52.376951682817804,
+                    4.882097840309143
+                ],
+                "tags": {
+                    "amenity": "cafe",
+                    "name": "Tom's bread & more"
+                }
+            },
+            {
+                "id": "n2720879024",
+                "name": "Het Oud-Hollandsch Snoepwinkeltje",
+                "at": [
+                    52.376899286256055,
+                    4.881899356842041
+                ],
+                "tags": {
+                    "shop": "confectionery",
+                    "name": "Het Oud-Hollandsch Snoepwinkeltje"
+                }
+            },
+            {
+                "id": "n1348470819",
+                "name": "Hotel IX",
+                "at": [
+                    52.37239622449101,
+                    4.886341094970703
+                ],
+                "tags": {
+                    "tourism": "hotel",
+                    "name": "Hotel IX"
+                }
+            },
+            {
+                "id": "n2720891656",
+                "name": "Café P96",
+                "at": [
+                    52.37707284962871,
+                    4.884887337684631
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Café P96"
+                }
+            },
+            {
+                "id": "n1348523714",
+                "name": "Kleicollectief",
+                "at": [
+                    52.37224556866932,
+                    4.885976314544678
+                ],
+                "tags": {
+                    "shop": "furniture",
+                    "name": "Kleicollectief"
+                }
+            },
+            {
+                "id": "n2720969997",
+                "name": "Playback Images",
+                "at": [
+                    52.374544651594405,
+                    4.87943172454834
+                ],
+                "tags": {
+                    "office": "company",
+                    "name": "Playback Images"
+                }
+            },
+            {
+                "id": "n1348523677",
+                "name": "Kagetsu",
+                "at": [
+                    52.37224556866932,
+                    4.886019229888916
+                ],
+                "tags": {
+                    "amenity": "restaurant",
+                    "name": "Kagetsu"
+                }
+            },
+            {
+                "id": "n6488479764",
+                "name": "De Hypotheker",
+                "at": [
+                    52.37321172208454,
+                    4.887558817863464
+                ],
+                "tags": {
+                    "office": "financial_advisor",
+                    "name": "De Hypotheker"
+                }
+            },
+            {
+                "id": "n4382404491",
+                "name": "SCIP",
+                "at": [
+                    52.37189185298142,
+                    4.88441526889801
+                ],
+                "tags": {
+                    "amenity": "community_centre",
+                    "name": "SCIP"
+                }
+            },
+            {
+                "id": "n6488693365",
+                "name": "Guts & Gusto",
+                "at": [
+                    52.37237002351546,
+                    4.886341094970703
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Guts & Gusto"
+                }
+            },
+            {
+                "id": "n11210963862",
+                "name": "Better Call Sol",
+                "at": [
+                    52.3745381016706,
+                    4.879404902458191
+                ],
+                "tags": {
+                    "office": "company",
+                    "name": "Better Call Sol"
+                }
+            },
+            {
+                "id": "n11377576125",
+                "name": "Wilde Haren",
+                "at": [
+                    52.376208300782274,
+                    4.880391955375671
+                ],
+                "tags": {
+                    "shop": "hairdresser",
+                    "name": "Wilde Haren"
+                }
+            },
+            {
+                "id": "n12803676301",
+                "name": "Kings Of Indigo",
+                "at": [
+                    52.37224229353706,
+                    4.886078238487244
+                ],
+                "tags": {
+                    "shop": "clothes",
+                    "name": "Kings Of Indigo"
+                }
+            },
+            {
+                "id": "n6231096262",
+                "name": "WOW media",
+                "at": [
+                    52.373113470160206,
+                    4.887521266937256
+                ],
+                "tags": {
+                    "office": "company",
+                    "name": "WOW media"
+                }
+            },
+            {
+                "id": "n12271174398",
+                "name": "Massage marin",
+                "at": [
+                    52.37714161983296,
+                    4.884769320487976
+                ],
+                "tags": {
+                    "shop": "massage",
+                    "name": "Massage marin"
+                }
+            }
+        ]
+    },
+    "brand": {
+        "id": "albertheijn-1cf55d",
+        "centre": [
+            52.37452,
+            4.88377
+        ],
+        "radius": 500.0,
+        "branches": [
+            {
+                "id": "n34044750",
+                "name": "Albert Heijn",
+                "at": [
+                    52.37387982937353,
+                    4.8839271068573
+                ],
+                "tags": {
+                    "shop": "supermarket",
+                    "name": "Albert Heijn",
+                    "level": "0"
+                }
+            },
+            {
+                "id": "n34044751",
+                "name": "Albert Heijn",
+                "at": [
+                    52.37844495869335,
+                    4.884452819824219
+                ],
+                "tags": {
+                    "shop": "supermarket",
+                    "name": "Albert Heijn"
+                }
+            },
+            {
+                "id": "n4453950325",
+                "name": "Albert Heijn",
+                "at": [
+                    52.37284163869736,
+                    4.890246391296387
+                ],
+                "tags": {
+                    "shop": "supermarket",
+                    "name": "Albert Heijn"
+                }
+            }
+        ]
+    },
+    "chains": {
+        "centre": [
+            52.37452,
+            4.88377
+        ],
+        "radius": 300.0,
+        "chains": {
+            "birkenstock-9b62dc": [
+                {
+                    "id": "n6488693366",
+                    "name": "Birkenstock",
+                    "at": [
+                        52.37361127765839,
+                        4.885836839675903
+                    ],
+                    "tags": {
+                        "shop": "shoes",
+                        "name": "Birkenstock"
+                    }
+                },
+                {
+                    "id": "n2721938467",
+                    "name": "Birkenstock",
+                    "at": [
+                        52.372366748392416,
+                        4.8860085010528564
+                    ],
+                    "tags": {
+                        "shop": "shoes",
+                        "name": "Birkenstock"
+                    }
+                }
+            ],
+            "americanvintage-3937bd": [
+                {
+                    "id": "n1348470879",
+                    "name": "American Vintage",
+                    "at": [
+                        52.372386399127,
+                        4.885826110839844
+                    ],
+                    "tags": {
+                        "shop": "clothes",
+                        "name": "American Vintage"
+                    }
+                },
+                {
+                    "id": "n1348523641",
+                    "name": "American Vintage",
+                    "at": [
+                        52.37226521945783,
+                        4.885525703430176
+                    ],
+                    "tags": {
+                        "shop": "clothes",
+                        "name": "American Vintage"
+                    }
+                }
+            ],
+            "albertheijn-1cf55d": [
+                {
+                    "id": "n34044750",
+                    "name": "Albert Heijn",
+                    "at": [
+                        52.37387982937353,
+                        4.8839271068573
+                    ],
+                    "tags": {
+                        "shop": "supermarket",
+                        "name": "Albert Heijn",
+                        "level": "0"
+                    }
+                }
+            ],
+            "hope-0b7e74": [
+                {
+                    "id": "n11210985798",
+                    "name": "Hope",
+                    "at": [
+                        52.37412872950507,
+                        4.882704019546509
+                    ],
+                    "tags": {
+                        "shop": "clothes",
+                        "name": "Hope"
+                    }
+                }
+            ],
+            "bolia-a18722": [
+                {
+                    "id": "n5771329666",
+                    "name": "Bolia",
+                    "at": [
+                        52.373788128971476,
+                        4.885455965995789
+                    ],
+                    "tags": {
+                        "shop": "furniture",
+                        "name": "Bolia",
+                        "level": "0"
+                    }
+                }
+            ],
+            "toniandguy-ece769": [
+                {
+                    "id": "n10692454659",
+                    "name": "Toni & Guy",
+                    "at": [
+                        52.37364075292642,
+                        4.882242679595947
+                    ],
+                    "tags": {
+                        "shop": "hairdresser",
+                        "name": "Toni & Guy"
+                    }
+                }
+            ],
+            "osm-q138975625": [
+                {
+                    "id": "n2721472913",
+                    "name": "Pizza Beppe",
+                    "at": [
+                        52.37389292941542,
+                        4.885997772216797
+                    ],
+                    "tags": {
+                        "amenity": "restaurant",
+                        "name": "Pizza Beppe"
+                    }
+                }
+            ],
+            "osm-q140668249": [
+                {
+                    "id": "n1588328793",
+                    "name": "Velvet Music",
+                    "at": [
+                        52.37371280349878,
+                        4.8812878131866455
+                    ],
+                    "tags": {
+                        "shop": "music",
+                        "name": "Velvet Music"
+                    }
+                }
+            ],
+            "benu-c1f9dd": [
+                {
+                    "id": "n2721828852",
+                    "name": "BENU",
+                    "at": [
+                        52.37336564965987,
+                        4.88116979598999
+                    ],
+                    "tags": {
+                        "amenity": "pharmacy",
+                        "name": "BENU"
+                    }
+                }
+            ],
+            "redwing-1e24e3": [
+                {
+                    "id": "n4320585689",
+                    "name": "Red Wing",
+                    "at": [
+                        52.37232744689703,
+                        4.88391637802124
+                    ],
+                    "tags": {
+                        "shop": "shoes",
+                        "name": "Red Wing"
+                    }
+                }
+            ],
+            "champion-3937bd": [
+                {
+                    "id": "n6491481208",
+                    "name": "Champion",
+                    "at": [
+                        52.372320896644396,
+                        4.88416850566864
+                    ],
+                    "tags": {
+                        "shop": "clothes",
+                        "name": "Champion"
+                    }
+                }
+            ],
+            "essentielantwerp-fbdad9": [
+                {
+                    "id": "n1348470849",
+                    "name": "Essentiel Antwerp",
+                    "at": [
+                        52.372399499611866,
+                        4.885273575782776
+                    ],
+                    "tags": {
+                        "shop": "clothes",
+                        "name": "Essentiel Antwerp"
+                    }
+                }
+            ],
+            "baandsh-3937bd": [
+                {
+                    "id": "n1348470870",
+                    "name": "Ba&sh",
+                    "at": [
+                        52.37239622449101,
+                        4.885590076446533
+                    ],
+                    "tags": {
+                        "shop": "clothes",
+                        "name": "Ba&sh"
+                    }
+                }
+            ],
+            "carhartt-65f908": [
+                {
+                    "id": "n1348470846",
+                    "name": "Carhartt",
+                    "at": [
+                        52.372386399127,
+                        4.88591194152832
+                    ],
+                    "tags": {
+                        "shop": "clothes",
+                        "name": "Carhartt"
+                    }
+                }
+            ],
+            "drmartens-9b62dc": [
+                {
+                    "id": "n3642241310",
+                    "name": "Dr. Martens",
+                    "at": [
+                        52.372383124005175,
+                        4.885997772216797
+                    ],
+                    "tags": {
+                        "shop": "shoes",
+                        "name": "Dr. Martens"
+                    }
+                }
+            ],
+            "myjewellery-ffe265": [
+                {
+                    "id": "n2721938084",
+                    "name": "My Jewellery",
+                    "at": [
+                        52.3723765737608,
+                        4.88616406917572
+                    ],
+                    "tags": {
+                        "shop": "jewelry",
+                        "name": "My Jewellery"
+                    }
+                }
+            ],
+            "cos-3937bd": [
+                {
+                    "id": "n2721940670",
+                    "name": "COS",
+                    "at": [
+                        52.37224884380135,
+                        4.885901212692261
+                    ],
+                    "tags": {
+                        "shop": "clothes",
+                        "name": "COS"
+                    }
+                }
+            ]
+        }
+    },
+    "quests": {
+        "centre": [
+            52.37452,
+            4.88377
+        ],
+        "radius": 400.0,
+        "now": "2026-10-13T19:30",
+        "quests": [
+            {
+                "place": "n2721472964",
+                "name": "Cheese Store",
+                "key": "wheelchair",
+                "distance": 29.03270307478919
+            },
+            {
+                "place": "n7256073282",
+                "name": "Stromma",
+                "key": "wheelchair",
+                "distance": 34.485361885355616
+            },
+            {
+                "place": "n10743234655",
+                "name": "Haringkar de Gigant",
+                "key": "wheelchair",
+                "distance": 37.13008227605702
+            },
+            {
+                "place": "n440431999",
+                "name": "Pancakes Amsterdam",
+                "key": "wheelchair",
+                "distance": 38.62502924087858
+            },
+            {
+                "place": "n5658543886",
+                "name": "Tours & Tickets",
+                "key": "wheelchair",
+                "distance": 42.976612566891454
+            },
+            {
+                "place": "n11449955959",
+                "name": "Wil Graanstra's Frites",
+                "key": "wheelchair",
+                "distance": 46.34864403239381
+            },
+            {
+                "place": "n6841972901",
+                "name": "Westermarkt",
+                "key": "wheelchair",
+                "distance": 48.682967305832456
+            },
+            {
+                "place": "n10743234655",
+                "name": "Haringkar de Gigant",
+                "key": "diet:vegetarian",
+                "distance": 37.13008227605702
+            },
+            {
+                "place": "n11449955959",
+                "name": "Wil Graanstra's Frites",
+                "key": "diet:vegetarian",
+                "distance": 46.34864403239381
+            },
+            {
+                "place": "n5831919166",
+                "name": "Westerkerk WC",
+                "key": "changing_table",
+                "distance": 24.89867957855815
+            },
+            {
+                "place": "n4862660321",
+                "name": "Koh-I-Noor",
+                "key": "outdoor_seating",
+                "distance": 70.3041117152178
+            },
+            {
+                "place": "n1147560517",
+                "name": "Café Kalkhoven",
+                "key": "outdoor_seating",
+                "distance": 71.562209431516
+            },
+            {
+                "place": "n2721939469",
+                "name": "Steakhouse",
+                "key": "outdoor_seating",
+                "distance": 72.38748659165526
+            },
+            {
+                "place": "n10743235032",
+                "name": "Pink Point",
+                "key": "wheelchair",
+                "distance": 59.75733117995665
+            },
+            {
+                "place": "n1301324761",
+                "name": "Anne Frank Huis Museumshop",
+                "key": "wheelchair",
+                "distance": 60.73023519532322
+            },
+            {
+                "place": "n12672791013",
+                "name": "Museum Cafe",
+                "key": "wheelchair",
+                "distance": 64.33947345883227
+            },
+            {
+                "place": "n2720970713",
+                "name": "Banh Mi Deli",
+                "key": "wheelchair",
+                "distance": 69.41518877746508
+            },
+            {
+                "place": "n13075450589",
+                "name": "Geldmaat",
+                "key": "wheelchair",
+                "distance": 69.87066587283654
+            },
+            {
+                "place": "n6841972900",
+                "name": "Westermarkt",
+                "key": "wheelchair",
+                "distance": 70.1818486747199
+            },
+            {
+                "place": "n10946308060",
+                "name": "Vesper Advocaten",
+                "key": "wheelchair",
+                "distance": 71.07568366374882
+            },
+            {
+                "place": "n2721940166",
+                "name": "Sefa",
+                "key": "wheelchair",
+                "distance": 71.29191130296832
+            },
+            {
+                "place": "n6491481205",
+                "name": "Cup a la Cake",
+                "key": "wheelchair",
+                "distance": 73.36084610259174
+            },
+            {
+                "place": "n11210972254",
+                "name": "Madame Blue",
+                "key": "wheelchair",
+                "distance": 75.03823700252234
+            },
+            {
+                "place": "n5773624061",
+                "name": "CitySightseeing",
+                "key": "wheelchair",
+                "distance": 77.3322134730924
+            },
+            {
+                "place": "n6662347488",
+                "name": "Teds",
+                "key": "wheelchair",
+                "distance": 78.36093931789439
+            },
+            {
+                "place": "n2721937969",
+                "name": "Souvenir Shop Giftshop",
+                "key": "wheelchair",
+                "distance": 81.27058690897192
+            },
+            {
+                "place": "n11210985155",
+                "name": "Simon Lévelt",
+                "key": "wheelchair",
+                "distance": 81.74966218022458
+            },
+            {
+                "place": "n13051368641",
+                "name": "Rembrandt workshop apartment",
+                "key": "wheelchair",
+                "distance": 82.4636628599524
+            },
+            {
+                "place": "n11210985798",
+                "name": "Hope",
+                "key": "wheelchair",
+                "distance": 84.55513323499648
+            },
+            {
+                "place": "n11211110962",
+                "name": "Huisartsenpraktijk Westertoren",
+                "key": "wheelchair",
+                "distance": 86.04410371682442
+            },
+            {
+                "place": "n2721947477",
+                "name": "Rent a Bike Amstel",
+                "key": "wheelchair",
+                "distance": 86.85489484622914
+            },
+            {
+                "place": "n2721947822",
+                "name": "Kim Ngân Nails",
+                "key": "wheelchair",
+                "distance": 87.96502685904558
+            },
+            {
+                "place": "n2721945852",
+                "name": "Alex Souvenirs",
+                "key": "wheelchair",
+                "distance": 94.3375923500738
+            },
+            {
+                "place": "n9141449091",
+                "name": "Lunchcafé Dialoog",
+                "key": "wheelchair",
+                "distance": 95.03530649967585
+            },
+            {
+                "place": "n13075450589",
+                "name": "Geldmaat",
+                "key": "drive_through",
+                "distance": 69.87066587283654
+            },
+            {
+                "place": "n2721937900",
+                "name": "Wine & Liquor",
+                "key": "drive_through",
+                "distance": 93.14398684406206
+            },
+            {
+                "place": "n10743235032",
+                "name": "Pink Point",
+                "key": "internet_access",
+                "distance": 59.75733117995665
+            },
+            {
+                "place": "n12672791013",
+                "name": "Museum Cafe",
+                "key": "internet_access",
+                "distance": 64.33947345883227
+            },
+            {
+                "place": "n1147560517",
+                "name": "Café Kalkhoven",
+                "key": "internet_access",
+                "distance": 71.562209431516
+            },
+            {
+                "place": "n6662347488",
+                "name": "Teds",
+                "key": "internet_access",
+                "distance": 78.36093931789439
+            }
+        ]
+    },
+    "routes": [
+        {
+            "name": "bike to Centraal",
+            "mode": "BIKE",
+            "points": [
+                [
+                    52.37456599999999,
+                    4.883390999999989
+                ],
+                [
+                    52.37465499999999,
+                    4.88340500000001
+                ],
+                [
+                    52.374717000000004,
+                    4.883440000000007
+                ],
+                [
+                    52.37500700000001,
+                    4.883711000000005
+                ],
+                [
+                    52.37575899999999,
+                    4.884381999999988
+                ],
+                [
+                    52.37580299999999,
+                    4.884447999999992
+                ],
+                [
+                    52.375844,
+                    4.884483999999986
+                ],
+                [
+                    52.375923,
+                    4.884555000000006
+                ],
+                [
+                    52.375969,
+                    4.884581999999995
+                ],
+                [
+                    52.375556999999986,
+                    4.8857849999999985
+                ],
+                [
+                    52.37553,
+                    4.885862000000003
+                ],
+                [
+                    52.375405,
+                    4.886223999999999
+                ],
+                [
+                    52.375384999999994,
+                    4.88629499999999
+                ],
+                [
+                    52.37490399999999,
+                    4.887682000000012
+                ],
+                [
+                    52.374898,
+                    4.8877549999999985
+                ],
+                [
+                    52.374888999999996,
+                    4.887853000000007
+                ],
+                [
+                    52.37480600000001,
+                    4.888148000000001
+                ],
+                [
+                    52.374787,
+                    4.888226000000003
+                ],
+                [
+                    52.374596,
+                    4.888932000000011
+                ],
+                [
+                    52.37457499999999,
+                    4.889049
+                ],
+                [
+                    52.37456499999999,
+                    4.889138000000003
+                ],
+                [
+                    52.37452999999999,
+                    4.8896640000000104
+                ],
+                [
+                    52.374536000000006,
+                    4.88970599999999
+                ],
+                [
+                    52.375147999999996,
+                    4.890385000000009
+                ],
+                [
+                    52.37621200000001,
+                    4.8915250000000015
+                ],
+                [
+                    52.376239999999996,
+                    4.891555000000011
+                ],
+                [
+                    52.37697600000001,
+                    4.892357000000004
+                ],
+                [
+                    52.377194,
+                    4.892617000000001
+                ],
+                [
+                    52.37741500000001,
+                    4.892854999999997
+                ],
+                [
+                    52.378086999999994,
+                    4.893585000000002
+                ],
+                [
+                    52.37858299999999,
+                    4.8941269999999975
+                ],
+                [
+                    52.37866299999999,
+                    4.894233000000014
+                ],
+                [
+                    52.378749,
+                    4.894338000000005
+                ],
+                [
+                    52.378805,
+                    4.894406000000004
+                ],
+                [
+                    52.378873999999996,
+                    4.894509999999997
+                ],
+                [
+                    52.378929,
+                    4.894609000000003
+                ],
+                [
+                    52.37895800000001,
+                    4.8946750000000065
+                ],
+                [
+                    52.379177999999996,
+                    4.8951800000000105
+                ],
+                [
+                    52.379223999999994,
+                    4.89531199999999
+                ],
+                [
+                    52.37915000000001,
+                    4.895438000000013
+                ],
+                [
+                    52.378724000000005,
+                    4.896222999999992
+                ],
+                [
+                    52.37853100000001,
+                    4.896568000000002
+                ],
+                [
+                    52.37847400000001,
+                    4.896656000000007
+                ],
+                [
+                    52.378356999999994,
+                    4.896791000000007
+                ],
+                [
+                    52.37827100000001,
+                    4.896868000000012
+                ],
+                [
+                    52.37821600000001,
+                    4.896911999999986
+                ],
+                [
+                    52.378240000000005,
+                    4.896961000000005
+                ],
+                [
+                    52.37827200000001,
+                    4.8970410000000015
+                ],
+                [
+                    52.37829099999999,
+                    4.897102999999987
+                ],
+                [
+                    52.37832800000001,
+                    4.897179999999992
+                ],
+                [
+                    52.37837300000001,
+                    4.897234999999995
+                ],
+                [
+                    52.378399,
+                    4.897264000000007
+                ],
+                [
+                    52.37841700000001,
+                    4.897314999999992
+                ],
+                [
+                    52.378445,
+                    4.897347999999994
+                ],
+                [
+                    52.37846999999999,
+                    4.897378000000003
+                ],
+                [
+                    52.37851599999999,
+                    4.897408000000013
+                ],
+                [
+                    52.37862799999999,
+                    4.897547000000003
+                ],
+                [
+                    52.378787999999986,
+                    4.897730999999993
+                ],
+                [
+                    52.37892500000001,
+                    4.89790099999999
+                ],
+                [
+                    52.378962,
+                    4.897946999999988
+                ],
+                [
+                    52.379031,
+                    4.898008000000004
+                ],
+                [
+                    52.379099999999994,
+                    4.898046999999991
+                ],
+                [
+                    52.379087,
+                    4.898092999999989
+                ],
+                [
+                    52.37908300000001,
+                    4.898111
+                ],
+                [
+                    52.379012999999986,
+                    4.898432000000014
+                ],
+                [
+                    52.37876499999999,
+                    4.898914999999988
+                ],
+                [
+                    52.378708999999986,
+                    4.898999000000003
+                ],
+                [
+                    52.378659999999996,
+                    4.89907199999999
+                ],
+                [
+                    52.37868599999999,
+                    4.899237999999997
+                ],
+                [
+                    52.378708999999986,
+                    4.899259999999998
+                ],
+                [
+                    52.37877499999999,
+                    4.89932300000001
+                ],
+                [
+                    52.37870699999999,
+                    4.899513000000013
+                ],
+                [
+                    52.37868399999999,
+                    4.899576999999994
+                ],
+                [
+                    52.378713000000005,
+                    4.899607000000003
+                ],
+                [
+                    52.378748,
+                    4.8996429999999975
+                ],
+                [
+                    52.378814000000006,
+                    4.899708000000004
+                ],
+                [
+                    52.378919999999994,
+                    4.899811999999997
+                ],
+                [
+                    52.37907799999999,
+                    4.899966000000006
+                ]
+            ],
+            "steps": [
+                {
+                    "at": [
+                        52.37469800625518,
+                        4.883429277724706
+                    ],
+                    "bearing": 27.9553428314386,
+                    "street": "Prinsengracht"
+                },
+                {
+                    "at": [
+                        52.375902999147755,
+                        4.884774716080685
+                    ],
+                    "bearing": 119.29178555758563,
+                    "street": "Leliegracht"
+                },
+                {
+                    "at": [
+                        52.37464768935782,
+                        4.889829916787504
+                    ],
+                    "bearing": 34.110616426590695,
+                    "street": "Singel"
+                },
+                {
+                    "at": [
+                        52.379131286637374,
+                        4.895472483543838
+                    ],
+                    "bearing": 131.63663851633692,
+                    "street": "Prins Hendrikkade"
+                },
+                {
+                    "at": [
+                        52.378245490637326,
+                        4.896974726593313
+                    ],
+                    "bearing": 59.52957068120463,
+                    "street": "Stationsplein"
+                },
+                {
+                    "at": [
+                        52.37835423245023,
+                        4.8972120618835895
+                    ],
+                    "bearing": 35.837378051206656,
+                    "street": "Stationsplein"
+                },
+                {
+                    "at": [
+                        52.3786235248521,
+                        4.897541446021821
+                    ],
+                    "bearing": 37.147565693954505,
+                    "street": "Stationsplein"
+                },
+                {
+                    "at": [
+                        52.379008179229125,
+                        4.897987825115606
+                    ],
+                    "bearing": 28.353956272157916,
+                    "street": "Stationsplein"
+                },
+                {
+                    "at": [
+                        52.379051962002954,
+                        4.898253331386449
+                    ],
+                    "bearing": 109.65836588305018,
+                    "street": "Stationsplein"
+                },
+                {
+                    "at": [
+                        52.37867299999999,
+                        4.899154999999993
+                    ],
+                    "bearing": 75.60943183173424,
+                    "street": "Westtunnel"
+                },
+                {
+                    "at": [
+                        52.37873049395739,
+                        4.899280516959345
+                    ],
+                    "bearing": 30.228981589669047,
+                    "street": "Westtunnel"
+                },
+                {
+                    "at": [
+                        52.37872953522386,
+                        4.899450033933324
+                    ],
+                    "bearing": 120.3826223766331,
+                    "street": "IJ-passage"
+                },
+                {
+                    "at": [
+                        52.37879879913625,
+                        4.899693029452365
+                    ],
+                    "bearing": 31.013816014594,
+                    "street": "IJ-passage"
+                },
+                {
+                    "at": [
+                        52.37903935666248,
+                        4.899928334974837
+                    ],
+                    "bearing": 30.751800124581962,
+                    "street": "IJ-passage"
+                }
+            ],
+            "bridges": [
+                {
+                    "along": 164.74573301666462,
+                    "at": [
+                        52.37587049246703,
+                        4.884507809685553
+                    ]
+                },
+                {
+                    "along": 434.70089243342113,
+                    "at": [
+                        52.37487151084162,
+                        4.887915160261704
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "walk in the Westerkerk pack",
+            "mode": "WALK",
+            "points": [
+                [
+                    52.37456599999999,
+                    4.883390999999989
+                ],
+                [
+                    52.37465499999999,
+                    4.88340500000001
+                ],
+                [
+                    52.374717000000004,
+                    4.883440000000007
+                ],
+                [
+                    52.37500700000001,
+                    4.883711000000005
+                ],
+                [
+                    52.37575899999999,
+                    4.884381999999988
+                ],
+                [
+                    52.37580299999999,
+                    4.884447999999992
+                ],
+                [
+                    52.375844,
+                    4.884483999999986
+                ],
+                [
+                    52.375923,
+                    4.884555000000006
+                ],
+                [
+                    52.375969,
+                    4.884581999999995
+                ],
+                [
+                    52.376014,
+                    4.884477000000004
+                ],
+                [
+                    52.37609900000001,
+                    4.884217000000007
+                ],
+                [
+                    52.37613400000001,
+                    4.884114000000011
+                ],
+                [
+                    52.37594100000001,
+                    4.883915000000002
+                ],
+                [
+                    52.37594200000001,
+                    4.883803
+                ],
+                [
+                    52.375710999999995,
+                    4.882720000000006
+                ],
+                [
+                    52.376109000000014,
+                    4.882483000000008
+                ],
+                [
+                    52.37615099999999,
+                    4.882455999999991
+                ],
+                [
+                    52.37624500000001,
+                    4.882402000000013
+                ],
+                [
+                    52.376289000000014,
+                    4.882371000000006
+                ],
+                [
+                    52.376632,
+                    4.882164999999986
+                ],
+                [
+                    52.37654699999999,
+                    4.881770999999986
+                ],
+                [
+                    52.376632,
+                    4.882164999999986
+                ],
+                [
+                    52.376289000000014,
+                    4.882371000000006
+                ],
+                [
+                    52.37624500000001,
+                    4.882402000000013
+                ],
+                [
+                    52.37615099999999,
+                    4.882455999999991
+                ],
+                [
+                    52.376109000000014,
+                    4.882483000000008
+                ],
+                [
+                    52.375710999999995,
+                    4.882720000000006
+                ],
+                [
+                    52.37594200000001,
+                    4.883803
+                ],
+                [
+                    52.37594100000001,
+                    4.883915000000002
+                ],
+                [
+                    52.37613400000001,
+                    4.884114000000011
+                ],
+                [
+                    52.37609900000001,
+                    4.884217000000007
+                ],
+                [
+                    52.376014,
+                    4.884477000000004
+                ],
+                [
+                    52.375969,
+                    4.884581999999995
+                ],
+                [
+                    52.375556999999986,
+                    4.8857849999999985
+                ],
+                [
+                    52.37553,
+                    4.885862000000003
+                ],
+                [
+                    52.375405,
+                    4.886223999999999
+                ],
+                [
+                    52.375384999999994,
+                    4.88629499999999
+                ],
+                [
+                    52.37490399999999,
+                    4.887682000000012
+                ],
+                [
+                    52.374898,
+                    4.8877549999999985
+                ],
+                [
+                    52.37497400000001,
+                    4.887808000000007
+                ],
+                [
+                    52.375113999999996,
+                    4.887936999999994
+                ],
+                [
+                    52.37578500000001,
+                    4.888557999999989
+                ],
+                [
+                    52.37618800000001,
+                    4.888929999999988
+                ],
+                [
+                    52.37578500000001,
+                    4.888557999999989
+                ],
+                [
+                    52.375113999999996,
+                    4.887936999999994
+                ],
+                [
+                    52.37497400000001,
+                    4.887808000000007
+                ],
+                [
+                    52.374898,
+                    4.8877549999999985
+                ],
+                [
+                    52.37485699999999,
+                    4.887721999999997
+                ],
+                [
+                    52.374753,
+                    4.887629000000004
+                ],
+                [
+                    52.37470999999999,
+                    4.887588999999991
+                ],
+                [
+                    52.37408400000001,
+                    4.8870290000000125
+                ],
+                [
+                    52.374049000000014,
+                    4.887009000000006
+                ],
+                [
+                    52.374008,
+                    4.886999000000003
+                ],
+                [
+                    52.37366499999999,
+                    4.886959999999988
+                ],
+                [
+                    52.373580000000004,
+                    4.886950000000013
+                ],
+                [
+                    52.373537,
+                    4.886942000000005
+                ],
+                [
+                    52.373468,
+                    4.8869379999999865
+                ],
+                [
+                    52.37344300000001,
+                    4.886932999999999
+                ],
+                [
+                    52.37343200000001,
+                    4.886931000000004
+                ],
+                [
+                    52.37341799999999,
+                    4.886930000000007
+                ],
+                [
+                    52.37329299999999,
+                    4.886917000000011
+                ],
+                [
+                    52.373209,
+                    4.88690600000001
+                ],
+                [
+                    52.372681,
+                    4.886837000000014
+                ],
+                [
+                    52.37248299999999,
+                    4.8868109999999945
+                ]
+            ],
+            "steps": [
+                {
+                    "at": [
+                        52.37469800625518,
+                        4.883429277724706
+                    ],
+                    "bearing": 27.9553428314386,
+                    "street": "Prinsengracht"
+                },
+                {
+                    "at": [
+                        52.376040710496966,
+                        4.884395297303403
+                    ],
+                    "bearing": 298.1701057134186,
+                    "street": "Leliesluis"
+                },
+                {
+                    "at": [
+                        52.37603750000001,
+                        4.884014500000006
+                    ],
+                    "bearing": 212.18864745865594,
+                    "street": "Prinsengracht"
+                },
+                {
+                    "at": [
+                        52.375920060040464,
+                        4.88370013863122
+                    ],
+                    "bearing": 250.7414405500928,
+                    "street": "Nieuwe Leliestraat"
+                },
+                {
+                    "at": [
+                        52.375837780798506,
+                        4.882644504901402
+                    ],
+                    "bearing": 340.0225734204702,
+                    "street": "Eerste Leliedwarsstraat"
+                },
+                {
+                    "at": [
+                        52.376589499999994,
+                        4.881967999999986
+                    ],
+                    "bearing": 250.53705206288583,
+                    "street": "Egelantiersstraat"
+                },
+                {
+                    "at": [
+                        52.376589499999994,
+                        4.881967999999986
+                    ],
+                    "bearing": 70.53673999945022,
+                    "street": "Egelantiersstraat"
+                },
+                {
+                    "at": [
+                        52.376505346251584,
+                        4.88224106609963
+                    ],
+                    "bearing": 159.86504614244916,
+                    "street": "Tweede Egelantiersdwarsstraat"
+                },
+                {
+                    "at": [
+                        52.37575549460517,
+                        4.882928604577509
+                    ],
+                    "bearing": 70.74058277912684,
+                    "street": "Nieuwe Leliestraat"
+                },
+                {
+                    "at": [
+                        52.37603750000001,
+                        4.884014500000006
+                    ],
+                    "bearing": 32.18848984364183,
+                    "street": "Prinsengracht"
+                },
+                {
+                    "at": [
+                        52.37606928933202,
+                        4.884307879690303
+                    ],
+                    "bearing": 118.16989978398408,
+                    "street": "Leliesluis"
+                },
+                {
+                    "at": [
+                        52.375902999147755,
+                        4.884774716080685
+                    ],
+                    "bearing": 119.29178555758563,
+                    "street": "Leliegracht"
+                },
+                {
+                    "at": [
+                        52.37501958043921,
+                        4.887849999118983
+                    ],
+                    "bearing": 29.358708385994532,
+                    "street": "Herengracht"
+                },
+                {
+                    "at": [
+                        52.376070477281345,
+                        4.8888215174904515
+                    ],
+                    "bearing": 209.4021628089876,
+                    "street": "Herengracht"
+                },
+                {
+                    "at": [
+                        52.37477869326958,
+                        4.88765197571223
+                    ],
+                    "bearing": 208.6311375466408,
+                    "street": "Herengracht"
+                },
+                {
+                    "at": [
+                        52.373297358184644,
+                        4.886917453251215
+                    ],
+                    "bearing": 183.63303261931523,
+                    "street": "Herengracht"
+                },
+                {
+                    "at": [
+                        52.37252782220813,
+                        4.886816885744501
+                    ],
+                    "bearing": 184.58360115142986,
+                    "street": "Herengracht"
+                }
+            ],
+            "bridges": [
+                {
+                    "along": 164.74573301666462,
+                    "at": [
+                        52.37587049246703,
+                        4.884507809685553
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "boat to the IJ",
+            "mode": "BOAT",
+            "points": [
+                [
+                    52.374548000000004,
+                    4.883124000000009
+                ],
+                [
+                    52.374149999999986,
+                    4.883074999999991
+                ],
+                [
+                    52.37385800000001,
+                    4.883051999999992
+                ],
+                [
+                    52.372456,
+                    4.882923000000005
+                ],
+                [
+                    52.37237999999999,
+                    4.8829159999999945
+                ],
+                [
+                    52.371849,
+                    4.882824999999997
+                ],
+                [
+                    52.37047799999999,
+                    4.8827560000000005
+                ],
+                [
+                    52.370374999999996,
+                    4.88274899999999
+                ],
+                [
+                    52.368976,
+                    4.882608000000005
+                ],
+                [
+                    52.36888300000001,
+                    4.882598999999999
+                ],
+                [
+                    52.368758000000014,
+                    4.882588999999996
+                ],
+                [
+                    52.367436,
+                    4.8824710000000096
+                ],
+                [
+                    52.366727,
+                    4.882414000000011
+                ],
+                [
+                    52.366411,
+                    4.882644999999997
+                ],
+                [
+                    52.366341000000006,
+                    4.8826310000000035
+                ],
+                [
+                    52.366218,
+                    4.882695000000012
+                ],
+                [
+                    52.366175,
+                    4.8827890000000025
+                ],
+                [
+                    52.366232999999994,
+                    4.882948999999996
+                ],
+                [
+                    52.366277,
+                    4.883074999999991
+                ],
+                [
+                    52.366749999999996,
+                    4.884442000000007
+                ],
+                [
+                    52.366816,
+                    4.884637999999995
+                ],
+                [
+                    52.36689899999999,
+                    4.884851999999995
+                ],
+                [
+                    52.36697100000001,
+                    4.885056999999989
+                ],
+                [
+                    52.36701099999999,
+                    4.8851689999999905
+                ],
+                [
+                    52.36748,
+                    4.886505
+                ],
+                [
+                    52.367534000000006,
+                    4.8866219999999885
+                ],
+                [
+                    52.367616,
+                    4.886783000000008
+                ],
+                [
+                    52.36776499999999,
+                    4.886705000000006
+                ],
+                [
+                    52.36808500000001,
+                    4.886718999999999
+                ],
+                [
+                    52.36874,
+                    4.8867600000000095
+                ],
+                [
+                    52.36882600000001,
+                    4.886764999999997
+                ],
+                [
+                    52.370227,
+                    4.886899
+                ],
+                [
+                    52.37031200000001,
+                    4.886909000000003
+                ],
+                [
+                    52.37222600000001,
+                    4.887086000000011
+                ],
+                [
+                    52.37230600000001,
+                    4.887092999999993
+                ],
+                [
+                    52.373277,
+                    4.887180000000001
+                ],
+                [
+                    52.373523000000006,
+                    4.887206999999989
+                ],
+                [
+                    52.374007000000006,
+                    4.887247000000002
+                ],
+                [
+                    52.37472600000001,
+                    4.887901999999997
+                ],
+                [
+                    52.37480199999999,
+                    4.887971999999991
+                ],
+                [
+                    52.37488099999999,
+                    4.888044000000008
+                ],
+                [
+                    52.376778,
+                    4.889772999999991
+                ],
+                [
+                    52.37687399999999,
+                    4.889859999999999
+                ],
+                [
+                    52.376901000000004,
+                    4.889888000000013
+                ],
+                [
+                    52.37684100000001,
+                    4.890043999999989
+                ],
+                [
+                    52.37679,
+                    4.890173000000004
+                ],
+                [
+                    52.37645499999999,
+                    4.890993000000009
+                ],
+                [
+                    52.37640400000001,
+                    4.8911270000000115
+                ],
+                [
+                    52.376344999999986,
+                    4.891311999999999
+                ],
+                [
+                    52.376990000000006,
+                    4.89201700000001
+                ],
+                [
+                    52.377084999999994,
+                    4.892121000000003
+                ],
+                [
+                    52.378777000000014,
+                    4.893971999999991
+                ],
+                [
+                    52.37884700000001,
+                    4.894059999999996
+                ],
+                [
+                    52.379153,
+                    4.894531999999998
+                ],
+                [
+                    52.379402,
+                    4.894869
+                ],
+                [
+                    52.379648,
+                    4.895217000000002
+                ],
+                [
+                    52.37983299999999,
+                    4.895431000000002
+                ],
+                [
+                    52.38007200000001,
+                    4.895879000000008
+                ],
+                [
+                    52.380966,
+                    4.896715999999998
+                ],
+                [
+                    52.38140799999999,
+                    4.8971540000000005
+                ],
+                [
+                    52.38158100000001,
+                    4.8972630000000095
+                ],
+                [
+                    52.382833000000005,
+                    4.899007000000012
+                ],
+                [
+                    52.38225600000001,
+                    4.900133000000011
+                ],
+                [
+                    52.38178400000001,
+                    4.901060999999999
+                ]
+            ],
+            "steps": [
+                {
+                    "at": [
+                        52.374413481380465,
+                        4.883107438662423
+                    ],
+                    "bearing": 184.29840469803364,
+                    "street": "Prinsengracht"
+                },
+                {
+                    "at": [
+                        52.366243564708185,
+                        4.882979253482535
+                    ],
+                    "bearing": 60.234885841517325,
+                    "street": "Leidsegracht"
+                },
+                {
+                    "at": [
+                        52.36774449363425,
+                        4.886715734876032
+                    ],
+                    "bearing": 342.2741401597796,
+                    "street": "Herengracht"
+                },
+                {
+                    "at": [
+                        52.37682885617632,
+                        4.890074716730504
+                    ],
+                    "bearing": 122.92778611519748,
+                    "street": "Blauwburgwal"
+                },
+                {
+                    "at": [
+                        52.37645721146338,
+                        4.89143464973906
+                    ],
+                    "bearing": 33.71313704001034,
+                    "street": "Singel"
+                },
+                {
+                    "at": [
+                        52.378945212647075,
+                        4.894211491403317
+                    ],
+                    "bearing": 43.27657287469066,
+                    "street": "Singel"
+                },
+                {
+                    "at": [
+                        52.38274626354858,
+                        4.899176263854957
+                    ],
+                    "bearing": 130.0137790622441,
+                    "street": "IJ"
+                },
+                {
+                    "at": [
+                        52.381812785181324,
+                        4.901004405406232
+                    ],
+                    "bearing": 129.80294445368168,
+                    "street": "IJ"
+                }
+            ],
+            "bridges": [
+                {
+                    "along": 34.7292362101069,
+                    "at": [
+                        52.37423655140583,
+                        4.883085655826342
+                    ]
+                },
+                {
+                    "along": 50.26597769362125,
+                    "at": [
+                        52.37409713155218,
+                        4.883070835704444
+                    ]
+                },
+                {
+                    "along": 68.37942728709552,
+                    "at": [
+                        52.373934421630096,
+                        4.883058019511951
+                    ]
+                },
+                {
+                    "along": 237.48942523288144,
+                    "at": [
+                        52.372415942885425,
+                        4.882919310528921
+                    ]
+                },
+                {
+                    "along": 458.81121152318144,
+                    "at": [
+                        52.37042919546565,
+                        4.882752683186982
+                    ]
+                },
+                {
+                    "along": 626.7390792573907,
+                    "at": [
+                        52.36892177349373,
+                        4.882602752273588
+                    ]
+                },
+                {
+                    "along": 925.3896086095014,
+                    "at": [
+                        52.36627290587676,
+                        4.882666431088526
+                    ]
+                },
+                {
+                    "along": 957.520859833048,
+                    "at": [
+                        52.36625584491139,
+                        4.88301441951899
+                    ]
+                },
+                {
+                    "along": 1079.70316892416,
+                    "at": [
+                        52.366796742789866,
+                        4.884580811921415
+                    ]
+                },
+                {
+                    "along": 1121.3547214855325,
+                    "at": [
+                        52.36698892270072,
+                        4.8851071835620115
+                    ]
+                },
+                {
+                    "along": 1235.3915590102392,
+                    "at": [
+                        52.36750463817118,
+                        4.886558382704196
+                    ]
+                },
+                {
+                    "along": 1385.1971858860195,
+                    "at": [
+                        52.36877848091492,
+                        4.886762237262499
+                    ]
+                },
+                {
+                    "along": 1551.3269408765007,
+                    "at": [
+                        52.37026999201472,
+                        4.8869040578840846
+                    ]
+                },
+                {
+                    "along": 1773.725121758638,
+                    "at": [
+                        52.37226684934494,
+                        4.887089574317683
+                    ]
+                },
+                {
+                    "along": 1893.1936493891965,
+                    "at": [
+                        52.37333960625829,
+                        4.88718687141859
+                    ]
+                },
+                {
+                    "along": 1911.2446414177025,
+                    "at": [
+                        52.37350157928269,
+                        4.8872046489456515
+                    ]
+                },
+                {
+                    "along": 1927.7245570729144,
+                    "at": [
+                        52.37364957747095,
+                        4.887217460948005
+                    ]
+                },
+                {
+                    "along": 2074.1537346937394,
+                    "at": [
+                        52.37484489060293,
+                        4.888011090169771
+                    ]
+                },
+                {
+                    "along": 2327.1348376005258,
+                    "at": [
+                        52.37683304394312,
+                        4.8898228835734585
+                    ]
+                },
+                {
+                    "along": 2353.414888678272,
+                    "at": [
+                        52.37681652660046,
+                        4.890105903304748
+                    ]
+                },
+                {
+                    "along": 2431.5905912675316,
+                    "at": [
+                        52.37642753492874,
+                        4.891065163128425
+                    ]
+                },
+                {
+                    "along": 2543.2840449898977,
+                    "at": [
+                        52.37703753478872,
+                        4.892069038084496
+                    ]
+                },
+                {
+                    "along": 2823.255364275543,
+                    "at": [
+                        52.379093011258114,
+                        4.894439468345841
+                    ]
+                },
+                {
+                    "along": 2871.793817653066,
+                    "at": [
+                        52.37942556412895,
+                        4.8949023346214435
+                    ]
+                },
+                {
+                    "along": 2892.086795260679,
+                    "at": [
+                        52.37956369056633,
+                        4.895097732996267
+                    ]
+                },
+                {
+                    "along": 2978.001539038657,
+                    "at": [
+                        52.380134159533426,
+                        4.895937196341692
+                    ]
+                },
+                {
+                    "along": 2995.585844648956,
+                    "at": [
+                        52.38027145888841,
+                        4.896065741710955
+                    ]
+                },
+                {
+                    "along": 3018.1497473685727,
+                    "at": [
+                        52.38044763924821,
+                        4.896230689094798
+                    ]
+                },
+                {
+                    "along": 3047.971885519271,
+                    "at": [
+                        52.38068049236298,
+                        4.89644869587003
+                    ]
+                },
+                {
+                    "along": 3089.937152410235,
+                    "at": [
+                        52.381007549236784,
+                        4.896757173225586
+                    ]
+                },
+                {
+                    "along": 3116.316902541347,
+                    "at": [
+                        52.38121054109606,
+                        4.8969583280544695
+                    ]
+                },
+                {
+                    "along": 3131.688646185365,
+                    "at": [
+                        52.38132882647811,
+                        4.897075542980577
+                    ]
+                }
+            ]
+        }
+    ]
+}
