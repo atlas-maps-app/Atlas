@@ -21,7 +21,10 @@ object Fixtures {
     /** A Saturday afternoon in Amsterdam, for open-now tests. */
     val saturday: ZonedDateTime = ZonedDateTime.of(2026, 10, 10, 14, 30, 0, 0, amsterdam)
 
-    val dir: File by lazy { Files.createTempDirectory("atlas-search").toFile().also { it.deleteOnExit() } }
+    /** The run's stores, gone at exit with what they hold (deleteOnExit leaves a folder that is not empty). */
+    val dir: File by lazy {
+        Files.createTempDirectory("atlas-search").toFile().also { d -> Runtime.getRuntime().addShutdownHook(Thread { d.deleteRecursively() }) }
+    }
 
     /** Import timings, by file, filled when [store] is built. */
     val importStats = LinkedHashMap<String, ImportStats>()

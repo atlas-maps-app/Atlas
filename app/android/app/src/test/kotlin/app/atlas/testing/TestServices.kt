@@ -18,7 +18,7 @@ import java.time.ZoneId
  */
 fun testServices(
     context: Context = RuntimeEnvironment.getApplication(),
-    root: File = Files.createTempDirectory("atlas-test").toFile(),
+    root: File = TempFiles.dir("atlas-test"),
     demo: Boolean = true,
     /** Attach the place store of `data/ams/raw.json` (the canal ring around the Westerkerk, every tag). */
     places: Boolean = false,
@@ -35,6 +35,28 @@ fun testServices(
         clock = clock,
     ),
 )
+
+/**
+ * The test run's temporary folders and files, deleted when the test JVM exits: folders with what they hold (deleteOnExit
+ * leaves a folder that is not empty), and a database with SQLite's -wal, -shm and -journal files beside it (each run
+ * left 6 MB of them in the temporary folder, every builder's run another few hundred MB).
+ */
+object TempFiles {
+    private val paths = java.util.Collections.synchronizedList(ArrayList<File>())
+
+    init {
+        Runtime.getRuntime().addShutdownHook(Thread { synchronized(paths) { paths.asReversed().forEach { it.deleteRecursively() } } })
+    }
+
+    /** A new empty folder named [prefix]…, gone at exit. */
+    fun dir(prefix: String): File = Files.createTempDirectory(prefix).toFile().also { paths += it }
+
+    /** A path for a new file named [prefix]…[suffix] (not created), gone at exit with SQLite's files beside it. */
+    fun file(prefix: String, suffix: String): File = File.createTempFile(prefix, suffix).apply { delete() }.also { f ->
+        paths += f
+        for (side in listOf("-wal", "-shm", "-journal")) paths += File(f.path + side)
+    }
+}
 
 /** Test data shared by every test in the run. */
 object Fixtures {
@@ -55,7 +77,7 @@ object Fixtures {
      * into a temporary place store, through the store's own import.
      */
     val amsStore: PlaceStore by lazy {
-        val file = File.createTempFile("ams", ".db").apply { delete(); deleteOnExit() }
+        val file = TempFiles.file("ams", ".db")
         PlaceStore.open(file).also { it.importOverpass(File(repo, "data/ams/raw.json"), regionName = "Amsterdam") }
     }
 }
