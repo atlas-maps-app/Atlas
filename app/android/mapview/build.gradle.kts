@@ -39,6 +39,7 @@ android {
 dependencies {
     // The engine: the 1:1 port of render/ (and its region packs); the screens still hand the map a tile source.
     api(project(":render"))
+    api(project(":anchor"))
     api(project(":tiles"))
     api(project(":places"))
     implementation(libs.androidx.core)
@@ -48,6 +49,7 @@ dependencies {
     implementation(libs.androidx.compose.foundation)
     implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
+    testImplementation(testFixtures(project(":anchor")))
     testImplementation(libs.robolectric)
     testImplementation(libs.roborazzi)
     testImplementation(libs.roborazzi.compose)

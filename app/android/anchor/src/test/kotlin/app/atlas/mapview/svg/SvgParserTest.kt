@@ -192,7 +192,8 @@ class SvgParserTest {
     /** Every render in the cache parses; a 4 MB one in well under the brief's 300 ms on the JVM. */
     @Test
     fun everyRenderInTheCacheParses() {
-        val dirs = listOf(File(SvgCompare.cache, "render"), File(SvgCompare.cache, "blob"))
+        val cache = File(System.getProperty("atlas.repo") ?: "../../..", "cache")
+        val dirs = listOf(File(cache, "render"), File(cache, "blob"))
         val files = dirs.flatMap { d -> d.listFiles { f -> f.name.endsWith(".svg") }?.toList().orEmpty() }
         assumeTrue("no renders in the cache", files.isNotEmpty())
         // Warm the JIT on one file, as a running app would be.

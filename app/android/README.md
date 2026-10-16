@@ -20,7 +20,8 @@ Checked against the official release pages and Maven metadata on 13 October 2026
 | `core` | Geometry and the shared model: LatLon, Mercator and tiles, polylines and snapping, Earcut, packed R-tree, shapes and route corridors, Plus Codes, UTM/MGRS, the coordinate parser, sun and moon, quantities in four unit systems; Place, Route, Step, Fix |
 | `tiles` | Vector tiles: our own MVT decoder, PMTiles, MBTiles, OpenFreeMap online with a cache, overzoom, offline regions, the packs catalog |
 | `render` | Atlas's map engine: `render/*.py` ported 1:1 to Kotlin (byte-identical SVG), the `.atlas` region packs, and the live glue (`render.live`: the map camera in the engine's terms, tolerance bands, the live moment from the forecast, the packs library) |
-| `mapview` | The engine on Android's Canvas: its SVG parsed and drawn exactly (`svg`), exact frames off the main thread warped under gestures, gestures, markers, routes, location puck |
+| `anchor` | Plain Kotlin: the SVG model and parser the engine's renders are read into (`app.atlas.mapview.svg`), and the GPU's anchors, renders lifted into world space; shared by the phone and the packer |
+| `mapview` | The engine on Android's Canvas: its SVG (parsed by `anchor`) drawn exactly (`svg`), exact frames off the main thread warped under gestures, gestures, markers, routes, location puck |
 | `places` | OSM knowledge: id-tagging-schema presets in 19 languages, NSI brands with logos, Maki/Temaki/Lucide symbols, facts, opening hours, categories, tag filters |
 | `providers` | Online sources: Overpass, Mangrove, ratings and trends, chargers, EV models, Open-Meteo, Wikidata, Photon, Nominatim, OSM notes |
 | `search` | The offline place store (FTS5 + R*Tree), the query language with natural language, A near B, the Overpass compiler, region import |

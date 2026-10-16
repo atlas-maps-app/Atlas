@@ -19,6 +19,8 @@ include(":app")
 include(":core", ":tiles", ":places", ":search", ":route", ":guide", ":providers")
 // The map engine, ported 1:1 from the Python renderer (render/ in the repo), with its region packs.
 include(":render")
+// Pure Kotlin: the GPU's anchors (engine renders lifted into world space) and the SVG model they are read into.
+include(":anchor")
 // Android library: the map view that draws the engine's frames on a Canvas.
 include(":mapview")
 // BRouter, the offline router, vendored as Java source (MIT).
