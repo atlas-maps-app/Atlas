@@ -132,6 +132,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     private val statusPanel = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xD0141619.toInt() }
 
     private val published = Runnable {
+        // posted before the close: a closed map takes nothing more from its frames (the state may have a new map)
+        if (closed) return@Runnable
         frameTick.intValue++
         val f = frames.latest
         if (frame != frames.frame) frame = frames.frame
@@ -189,12 +191,13 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
 
     private var closed = false
 
-    /** Stops the frame thread; idempotent. */
+    /** Stops the frame thread without waiting for it (a frame being made stops at its next check); idempotent. */
     private fun close() {
         if (closed) return
         closed = true
         MapEngine.unregister(engineChanged)
         frames.close()
+        main.removeCallbacks(published)
     }
 
     override fun onRemembered() {}

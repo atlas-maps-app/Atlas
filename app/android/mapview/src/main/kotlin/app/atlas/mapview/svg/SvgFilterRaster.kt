@@ -155,19 +155,22 @@ class SvgFilterRaster(private val filter: SvgFilter, private val noise: Turbulen
      * Runs the filter. [pixels] are the element drawn in sRGB over [sourceRect] (premultiplied ARGB, row-major); the
      * result over [outputRect], premultiplied sRGB ARGB, goes into [out]. With [bands] above 1 a large output is made in
      * up to that many horizontal bands at once, on the filter workers; the pixels are the same.
+     *
+     * [cancelled] is asked before each band, primitive and noise tile: once it says so, the run throws
+     * [java.util.concurrent.CancellationException] when the bands under way have stopped, and [out] is incomplete.
      */
-    fun run(pixels: IntArray, out: IntArray, bands: Int = 1) {
+    fun run(pixels: IntArray, out: IntArray, bands: Int = 1, cancelled: () -> Boolean = { false }) {
         val whole = main ?: throw IllegalStateException("run before a successful prepare")
         val o = outRect
         val tops = bandTops(o, bands)
         if (tops.size <= 2) {
-            whole.run(pixels, sourceRect, out, 0)
+            whole.run(pixels, sourceRect, out, 0, cancelled)
             return
         }
         val n = tops.size - 1
         val chains = Array(n) { k -> Chain(Rect(o.left, tops[k], o.right, tops[k + 1])) }
         val area = sourceRect
-        parallel(n) { k -> chains[k].run(pixels, area, out, (tops[k] - o.top) * o.width) }
+        parallel(n, cancelled) { k -> chains[k].run(pixels, area, out, (tops[k] - o.top) * o.width, cancelled) }
     }
 
     /**
@@ -186,6 +189,7 @@ class SvgFilterRaster(private val filter: SvgFilter, private val noise: Turbulen
 
         private var source = IntArray(0)
         private var sourceArea = Rect.EMPTY
+        private var cancelled: () -> Boolean = { false }
 
         init {
             val named = HashMap<String, Node>()
@@ -225,11 +229,12 @@ class SvgFilterRaster(private val filter: SvgFilter, private val noise: Turbulen
 
         /**
          * Runs the chain on [pixels], the element drawn over [area] (which holds this chain's [sourceRect]), writing the
-         * rows of [outRect] into [out] from [offset], [outRect]'s width apart.
+         * rows of [outRect] into [out] from [offset], [outRect]'s width apart; [cancelled] is asked before each primitive.
          */
-        fun run(pixels: IntArray, area: Rect, out: IntArray, offset: Int) {
+        fun run(pixels: IntArray, area: Rect, out: IntArray, offset: Int, cancelled: () -> Boolean) {
             source = pixels
             sourceArea = area
+            this.cancelled = cancelled
             for (n in nodes) n.reset()
             src.reset()
             srcAlpha.reset()
@@ -245,12 +250,14 @@ class SvgFilterRaster(private val filter: SvgFilter, private val noise: Turbulen
                 src.reset()
                 srcAlpha.reset()
                 source = IntArray(0)
+                this.cancelled = { false }
             }
         }
 
         /** [n]'s result, computing it (over its needed rectangle) on first use; inputs no one else reads are let go. */
         private fun result(n: Node, fallback: Rect = n.needRect): Buf {
             n.result?.let { return it }
+            stopIf(cancelled)
             val rect = (if (n.needRect.isEmpty) fallback else n.needRect).intersect(regionRect)
             val b = if (rect.isEmpty) Buf(Rect.EMPTY, IntArray(0), true, n.linear) else n.compute(rect)
             n.result = b
@@ -370,12 +377,12 @@ class SvgFilterRaster(private val filter: SvgFilter, private val noise: Turbulen
                 val cache = noise
                 val n = if (cache != null) noise() else null
                 if (cache != null && n != null) {
-                    cache.fill(n.field, rect.left, rect.top, w, rect.height, px)
+                    cache.fill(n.field, rect.left, rect.top, w, rect.height, px, cancelled = cancelled)
                 } else {
                     val t = Turbulence.of(fe.seed)
                     val need = need
                     // WebKit splits turbulence over threads too; rows are independent.
-                    rows(rect.height, w) { y0, y1 ->
+                    rows(rect.height, w, cancelled) { y0, y1 ->
                         t.fillWebKit(rect.left, rect.top + y0, w, y1 - y0, 1f / fx, 1f / fy, fe.baseX, fe.baseY, fe.octaves, fe.fractal, need, px, y0 * w, w)
                     }
                 }
@@ -437,7 +444,7 @@ class SvgFilterRaster(private val filter: SvgFilter, private val noise: Turbulen
                 val cache = noise
                 val n = if (cache != null) noise() else null
                 if (cache != null && n != null) {
-                    cache.fill(n.field, rect.left, rect.top, rect.width, rect.height, px, map = n.map)
+                    cache.fill(n.field, rect.left, rect.top, rect.width, rect.height, px, map = n.map, cancelled = cancelled)
                     return Buf(rect, px, true, linear)
                 }
                 // WebKit draws the input into a premultiplied buffer, then reads that back unpremultiplied.
@@ -811,15 +818,25 @@ class SvgFilterRaster(private val filter: SvgFilter, private val noise: Turbulen
 
         /**
          * Runs [body] for 0 until [count], on the filter workers when there is more than one and this is not a worker,
-         * and returns when all are done. An exception in any is thrown here.
+         * and returns when all are done. An exception in any is thrown here. [cancelled] is asked before each: once it
+         * says so, no more start, and [java.util.concurrent.CancellationException] is thrown here when those under way
+         * have finished.
          */
-        internal fun parallel(count: Int, body: (Int) -> Unit) {
+        internal fun parallel(count: Int, cancelled: () -> Boolean = { false }, body: (Int) -> Unit) {
             if (count <= 0) return
             if (count == 1 || WORKERS == 1 || onWorker()) {
-                for (i in 0 until count) body(i)
+                for (i in 0 until count) {
+                    stopIf(cancelled)
+                    body(i)
+                }
                 return
             }
-            val tasks = (0 until count).map { i -> java.util.concurrent.Callable { body(i) } }
+            val tasks = (0 until count).map { i ->
+                java.util.concurrent.Callable {
+                    stopIf(cancelled)
+                    body(i)
+                }
+            }
             for (f in pool.invokeAll(tasks)) {
                 try {
                     f.get()
@@ -829,8 +846,8 @@ class SvgFilterRaster(private val filter: SvgFilter, private val noise: Turbulen
             }
         }
 
-        /** Runs [body] over row ranges of a [height] × [width] image, in parallel when the image is large. */
-        internal fun rows(height: Int, width: Int, body: (Int, Int) -> Unit) {
+        /** Runs [body] over row ranges of a [height] × [width] image, in parallel when the image is large ([cancelled] as in [parallel]). */
+        internal fun rows(height: Int, width: Int, cancelled: () -> Boolean = { false }, body: (Int, Int) -> Unit) {
             val threads = WORKERS
             // small work, one core, or already on a worker: inline
             if (threads == 1 || height.toLong() * width < 32_768 || height < 2 * threads || onWorker()) {
@@ -839,7 +856,7 @@ class SvgFilterRaster(private val filter: SvgFilter, private val noise: Turbulen
             }
             val chunk = (height + threads * 4 - 1) / (threads * 4)
             val n = (height + chunk - 1) / chunk
-            parallel(n) { k -> body(k * chunk, min(height, (k + 1) * chunk)) }
+            parallel(n, cancelled) { k -> body(k * chunk, min(height, (k + 1) * chunk)) }
         }
 
         private const val WORKER_NAME = "atlas-filter"

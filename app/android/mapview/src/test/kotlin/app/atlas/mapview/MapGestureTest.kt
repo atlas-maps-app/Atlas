@@ -26,6 +26,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.RuleChain
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -39,8 +40,12 @@ import kotlin.math.sin
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [34], qualifiers = "w412dp-h915dp-xhdpi")
 class MapGestureTest {
-    @get:Rule
     val compose = createComposeRule()
+    private val threads = MapFrameThreads()
+
+    /** The compose rule's teardown closes the maps; their frame threads are waited for after it. */
+    @get:Rule
+    val rules: RuleChain = RuleChain.outerRule(threads).around(compose)
 
     private val hits = ArrayList<MapHit>()
     private val longPresses = ArrayList<LatLon>()
@@ -57,7 +62,9 @@ class MapGestureTest {
                 onTap = { hits += it }, onLongPress = { longPresses += it }, onCameraMove = { c, u -> moves += c to u },
             )
         }
-        if (settle) compose.settleMap(state) else compose.waitForIdle()
+        compose.waitForIdle()
+        threads.track(state)
+        if (settle) compose.settleMap(state)
     }
 
     private fun stateAt(c: CameraPosition) = MapState(c).apply { time = Fixtures.afternoon }
@@ -328,6 +335,8 @@ class MapGestureTest {
                 MapCompass(state, Modifier.align(androidx.compose.ui.Alignment.TopEnd))
             }
         }
+        compose.waitForIdle()
+        threads.track(state)
         compose.settleMap(state)
         compose.onNode(androidx.compose.ui.test.hasContentDescription("Compass", substring = true)).performClick()
         pass(1000)

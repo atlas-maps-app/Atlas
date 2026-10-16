@@ -8,13 +8,15 @@ import org.junit.Test
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.file.Files
+import java.util.concurrent.CancellationException
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.random.Random
 
 /**
  * [TurbulenceCache] against [Turbulence.colorWebKit] computed afresh: bit-identical on random rectangles (negative
  * offsets included), filter scales, channel masks and noise types, in memory and in mapped files, read back by a new
- * cache from disk, after damage to a file, under eviction and from many threads at once.
+ * cache from disk, after damage to a file, under eviction, from many threads at once and after a cancelled fill.
  */
 class TurbulenceCacheTest {
     private val dirs = ArrayList<File>()
@@ -246,6 +248,29 @@ class TurbulenceCacheTest {
         } finally {
             d.setWritable(true)
         }
+    }
+
+    /**
+     * A fill cancelled part-way stops between tiles: those it made are whole (the noise exactly, from memory and read
+     * back from disk), and the next fill makes only the rest.
+     */
+    @Test
+    fun aCancelledFillStopsBetweenTilesAndKeepsOnlyWholeOnes() {
+        val d = dir()
+        val f = NoiseField(13f, 0.16f, 0.75f, 2, true, 2f, 2f, 15)
+        val c = TurbulenceCache(d)
+        // 10 × 10 tiles to make; the 31st it asks about is cancelled
+        val asked = AtomicInteger()
+        val e = runCatching { c.fill(f, 0, 0, 640, 640, IntArray(640 * 640), cancelled = { asked.incrementAndGet() > 30 }) }.exceptionOrNull()
+        assertTrue("thrown: $e", e is CancellationException)
+        assertEquals("tiles made before the cancel", 30L, c.stats().tilesMade)
+        assertArrayEquals(direct(f, 0, 0, 640, 640), cached(c, f, 0, 0, 640, 640))
+        assertEquals("tiles made in all", 100L, c.stats().tilesMade)
+        c.close()
+        val back = TurbulenceCache(d)
+        assertArrayEquals(direct(f, 0, 0, 640, 640), cached(back, f, 0, 0, 640, 640))
+        assertEquals(0L, back.stats().tilesMade)
+        back.clear()
     }
 
     @Test

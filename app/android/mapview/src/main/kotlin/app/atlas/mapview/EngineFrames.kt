@@ -4,6 +4,7 @@ import android.graphics.Color
 import android.util.Log
 import app.atlas.mapview.svg.SvgCamera
 import app.atlas.mapview.svg.SvgCanvas
+import app.atlas.mapview.svg.SvgDocument
 import app.atlas.mapview.svg.SvgFonts
 import app.atlas.mapview.svg.SvgParser
 import app.atlas.render.RenderOptions
@@ -38,6 +39,9 @@ sealed interface MapStatus {
  * after the first change, so a long gesture still gets frames); requests in between are dropped. One frame is made at
  * a time per process (the engine's state is shared). [onChange] is called on this thread when [latest] or [status]
  * changed. Every frame's timings go to logcat under the tag `AtlasMap`.
+ *
+ * [close] stops it without waiting: a frame being made stops at its next check (between the stages, and in the raster
+ * between elements, filter bands and noise tiles) and is never shown.
  */
 internal class EngineFrames(
     private val fonts: () -> SvgFonts,
@@ -95,7 +99,11 @@ internal class EngineFrames(
     private var last: Request? = null
     private var wantAt = 0L
     private var firstAt = 0L
+
+    /** Set once, by [close] under the lock; the frame being made reads it without the lock at each of its checks. */
+    @Volatile
     private var closed = false
+    private val cancelled: () -> Boolean = { closed }
 
     @Volatile
     private var working = false
@@ -108,13 +116,13 @@ internal class EngineFrames(
 
     // While a frame is being made, a tick a second, so the stage and its seconds on screen keep counting.
     private val ticker = Thread({
-        while (synchronized(lock) { !closed }) {
+        while (!closed) {
             try {
                 Thread.sleep(1000)
             } catch (_: InterruptedException) {
                 return@Thread
             }
-            if (working) onChange()
+            if (working) changed()
         }
     }, "atlas-engine-tick").apply {
         isDaemon = true
@@ -124,19 +132,23 @@ internal class EngineFrames(
     /** True while a request waits or a frame is being made. */
     val busy: Boolean get() = synchronized(lock) { want != null } || working
 
-    /** Asks for a frame of [r]. */
-    fun submit(r: Request) = synchronized(lock) {
-        val now = clock()
-        if (want == null) firstAt = now
-        want = r
-        wantAt = now
-        lock.notifyAll()
+    /** Asks for a frame of [r]; nothing once closed. */
+    fun submit(r: Request) {
+        synchronized(lock) {
+            if (closed) return
+            val now = clock()
+            if (want == null) firstAt = now
+            want = r
+            wantAt = now
+            lock.notifyAll()
+        }
     }
 
-    /** Asks again for the last request (the region data or the forecast changed). */
+    /** Asks again for the last request (the region data or the forecast changed); nothing once closed. */
     fun invalidate() {
-        val r = synchronized(lock) { want ?: last } ?: return
         synchronized(lock) {
+            if (closed) return
+            val r = want ?: last ?: return
             if (want == null) {
                 firstAt = 0
                 wantAt = 0
@@ -146,59 +158,116 @@ internal class EngineFrames(
         }
     }
 
-    fun close() = synchronized(lock) {
-        closed = true
-        lock.notifyAll()
+    /**
+     * Stops making frames, without waiting: the request waiting is dropped, and the frame being made stops at its next
+     * check and is never shown. Once this returns nothing here changes and [onChange] is not called again (a call under
+     * way, a post to the main thread, is waited for). The thread lets go of what it made as it leaves; [awaitStopped]
+     * waits for that. Idempotent.
+     */
+    fun close() {
+        synchronized(lock) {
+            if (closed) return
+            closed = true
+            want = null
+            lock.notifyAll()
+        }
+        ticker.interrupt()
+    }
+
+    /** Waits up to [timeoutMs] for the threads to end after [close]; true when they have. For tests: no frame outlives its test. */
+    fun awaitStopped(timeoutMs: Long): Boolean {
+        val end = System.nanoTime() + timeoutMs * 1_000_000
+        for (t in arrayOf(thread, ticker)) {
+            while (t.isAlive) {
+                val left = (end - System.nanoTime()) / 1_000_000
+                if (left <= 0) return false
+                t.join(left)
+            }
+        }
+        return true
     }
 
     private fun loop() {
         // the engine works behind the screen: background priority, so a frame being made never starves the UI thread
         runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND) }
         while (true) {
-            val r: Request
-            synchronized(lock) {
-                while (!closed && want == null) lock.wait()
-                while (!closed) {
-                    val now = clock()
-                    val until = min(wantAt + QUIET_MS, firstAt + MAX_WAIT_MS)
-                    if (now >= until) break
-                    lock.wait((until - now).coerceAtLeast(1))
-                }
-                if (closed) return
-                r = want!!
-                want = null
-                last = r
-                working = true
-                workSince = clock()
-            }
+            val r = next() ?: return
             try {
                 make(r)
-            } catch (e: OutOfMemoryError) {
-                // two big scenes and two frames did not fit: keep one scene and try again with the next request
-                failures++
-                lastError = e
-                LiveEngine.forget()
-                status = MapStatus.NoData("not enough memory for this region")
-                Log.w(TAG, "out of memory making a frame; scenes dropped", e)
-            } catch (e: Exception) {
-                failures++
-                lastError = e
-                // an engine fault (a place it has nothing to stand on, a broken pack) is no picture: say so
-                if (latest == null || frame == null) status = MapStatus.NoData("the engine could not draw this place: ${e.message ?: e}")
-                Log.w(TAG, "a frame failed: $e", e)
+            } catch (e: java.util.concurrent.CancellationException) {
+                // closed while it was made: the frame is dropped without a word
             } catch (e: Throwable) {
-                // an error that is not memory (a stack overflow, a class that would not load): never a silent stall
-                failures++
-                lastError = e
-                if (latest == null || frame == null) status = MapStatus.NoData("the engine stopped: $e")
-                Log.e(TAG, "a frame failed: $e", e)
+                // a real failure is logged, and out of memory still frees the scenes, even as the map closes; what it
+                // would publish is dropped once closed
+                failed(e)
             } finally {
                 working = false
                 workSince = 0
                 setStage("", null)
-                onChange()
+                changed()
             }
         }
+    }
+
+    /** The newest request once the camera has been still long enough, or null once closed. */
+    private fun next(): Request? {
+        synchronized(lock) {
+            while (!closed && want == null) lock.wait()
+            while (!closed) {
+                val now = clock()
+                val until = min(wantAt + QUIET_MS, firstAt + MAX_WAIT_MS)
+                if (now >= until) break
+                lock.wait((until - now).coerceAtLeast(1))
+            }
+            if (closed) return null
+            val r = want!!
+            want = null
+            last = r
+            working = true
+            workSince = clock()
+            return r
+        }
+    }
+
+    /** A frame that failed: counted, logged, and said on the map when there is no picture. */
+    private fun failed(e: Throwable) {
+        failures++
+        lastError = e
+        when (e) {
+            is OutOfMemoryError -> {
+                // two big scenes and two frames did not fit: keep one scene and try again with the next request
+                LiveEngine.forget()
+                publish { status = MapStatus.NoData("not enough memory for this region") }
+                Log.w(TAG, "out of memory making a frame; scenes dropped", e)
+            }
+            is Exception -> {
+                // an engine fault (a place it has nothing to stand on, a broken pack) is no picture: say so
+                if (latest == null || frame == null) publish { status = MapStatus.NoData("the engine could not draw this place: ${e.message ?: e}") }
+                Log.w(TAG, "a frame failed: $e", e)
+            }
+            else -> {
+                // an error that is not memory (a stack overflow, a class that would not load): never a silent stall
+                if (latest == null || frame == null) publish { status = MapStatus.NoData("the engine stopped: $e") }
+                Log.e(TAG, "a frame failed: $e", e)
+            }
+        }
+    }
+
+    /**
+     * Runs [change] to what this publishes, under the lock and unless closed: [close] waits for a change under way, and
+     * none runs after it. False when closed.
+     */
+    private inline fun publish(change: () -> Unit): Boolean {
+        synchronized(lock) {
+            if (closed) return false
+            change()
+            return true
+        }
+    }
+
+    /** Tells the view, unless closed. */
+    private fun changed() {
+        publish { onChange() }
     }
 
     private fun make(r: Request) {
@@ -222,31 +291,49 @@ internal class EngineFrames(
         }
         val region = (st as LiveRegions.State.Ready).region
         if (frame != region.frame) {
-            frame = region.frame
-            onChange()
+            publish {
+                frame = region.frame
+                onChange()
+            }
         }
+        // closed meanwhile: not even the engine's lock is waited for
+        if (closed) return
         val res = LiveEngine.render(
             region, r.view, r.moment, r.opts,
             progress = { p ->
                 if (p.stage == LiveProgress.Stage.LOADING) setStatus(MapStatus.Loading(p.region))
                 setStage(p.stage.name.lowercase(), p.region)
             },
-            cancelled = { synchronized(lock) { closed } },
+            cancelled = cancelled,
         ) ?: return
         setStage("parsing", region.id)
         val t0 = System.nanoTime()
-        val docs = res.layers.map { SvgParser.parse(it) }
+        val layers = res.layers
+        val docs = ArrayList<SvgDocument>(layers.size)
+        for (svg in layers) {
+            if (closed) return
+            docs += SvgParser.parse(svg)
+        }
         val t1 = System.nanoTime()
         val scale = min(r.density, MapEngine.maxRasterScale)
         setStage("rasterising", region.id)
         // the CPU filters: exact on every Android version (the AGSL ones need a hardware canvas, see the filters screen)
-        val image = EngineFrame.rasterise(docs, res.raster, fonts(), scale, SvgCanvas.FilterMode.CPU, background = if (r.night) NIGHT else Color.TRANSPARENT)
+        val image = EngineFrame.rasterise(
+            docs, res.raster, fonts(), scale, SvgCanvas.FilterMode.CPU, background = if (r.night) NIGHT else Color.TRANSPARENT, cancelled = cancelled,
+        )
         val t2 = System.nanoTime()
-        val timings = EngineFrame.Timings(res.loadMillis, res.renderMillis, (t1 - t0) / 1_000_000, (t2 - t1) / 1_000_000, res.layers.sumOf { it.length })
+        val timings = EngineFrame.Timings(res.loadMillis, res.renderMillis, (t1 - t0) / 1_000_000, (t2 - t1) / 1_000_000, layers.sumOf { it.length })
         val n = ++number
         val f = EngineFrame(n, image, scale, cameraOf(res.cfg), res.frame, region.id, res.view, res.moment, res.tolerance, timings)
-        latest = f
-        status = pending?.let { statusOf(it) } ?: MapStatus.Ready
+        val shown = publish {
+            latest = f
+            status = pending?.let { statusOf(it) } ?: MapStatus.Ready
+        }
+        if (!shown) {
+            // closed as it was finished: never shown, so its pixels can go at once
+            image.recycle()
+            return
+        }
         Log.i(
             TAG,
             "frame $n ${region.id} view=${res.view ?: "-"} moment=${res.moment} band=${res.tolerance} ${r.view.widthDp}x${r.view.heightDp}dp@${scale}: " +
@@ -257,17 +344,21 @@ internal class EngineFrames(
 
     private fun setStage(name: String, region: String?) {
         if (stage == name && stageRegion == region) return
-        stage = name
-        stageRegion = region
-        stageSince = clock()
-        if (name.isNotEmpty()) Log.i(TAG, "stage: $name${region?.let { " $it" } ?: ""}")
-        onChange()
+        val set = publish {
+            stage = name
+            stageRegion = region
+            stageSince = clock()
+            onChange()
+        }
+        if (set && name.isNotEmpty()) Log.i(TAG, "stage: $name${region?.let { " $it" } ?: ""}")
     }
 
     private fun setStatus(s: MapStatus) {
         if (status != s) {
-            status = s
-            onChange()
+            publish {
+                status = s
+                onChange()
+            }
         }
     }
 

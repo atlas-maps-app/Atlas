@@ -2,9 +2,15 @@ package app.atlas.mapview.svg
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
+import java.util.concurrent.CancellationException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
-/** [SvgFilterRaster] on the engine's own filters, on plain pixel arrays (no Android). */
+/** [SvgFilterRaster] on the engine's own filters, on plain pixel arrays (no Android), and its bands when cancelled. */
 class SvgFilterRasterTest {
     private fun filter(xml: String): SvgFilter {
         val doc = SvgParser.parse("""<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><defs>$xml</defs></svg>""")
@@ -62,5 +68,53 @@ class SvgFilterRasterTest {
             assertEquals(a, p ushr 24)
             assertEquals((red * a + 127) / 255, (p shr 16) and 0xFF)
         }
+    }
+
+    /**
+     * Cancelled with every filter worker on a band and more bands waiting: no other band starts, and the run ends, with
+     * the [CancellationException], only once the bands under way have finished (nothing outlives it).
+     */
+    @Test
+    fun onceCancelledNoBandStartsAndTheRunEndsAfterThoseUnderWay() {
+        val workers = SvgFilterRaster.WORKERS
+        assumeTrue("more than one filter worker", workers > 1)
+        val stop = AtomicBoolean()
+        val started = AtomicInteger()
+        val running = AtomicInteger()
+        val release = CountDownLatch(1)
+        var thrown: Throwable? = null
+        var runningAtTheEnd = -1
+        // the caller is not a filter worker, as the frame thread is not
+        val caller = Thread {
+            try {
+                SvgFilterRaster.parallel(4 * workers, { stop.get() }) {
+                    started.incrementAndGet()
+                    running.incrementAndGet()
+                    release.await(10, TimeUnit.SECONDS)
+                    Thread.sleep(30)
+                    running.decrementAndGet()
+                }
+            } catch (e: Throwable) {
+                thrown = e
+            }
+            runningAtTheEnd = running.get()
+        }
+        caller.start()
+        val end = System.currentTimeMillis() + 10_000
+        while (started.get() < workers && System.currentTimeMillis() < end) Thread.sleep(1)
+        stop.set(true)
+        release.countDown()
+        caller.join(10_000)
+        assertTrue("thrown: $thrown", thrown is CancellationException)
+        assertEquals("bands started", workers, started.get())
+        assertEquals("bands still running when the run ended", 0, runningAtTheEnd)
+    }
+
+    @Test
+    fun aCancelledRunStartsNoBandOnTheCallingThreadEither() {
+        var ran = 0
+        val e = runCatching { SvgFilterRaster.parallel(1, { true }) { ran++ } }.exceptionOrNull()
+        assertTrue("thrown: $e", e is CancellationException)
+        assertEquals(0, ran)
     }
 }

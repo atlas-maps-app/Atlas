@@ -100,6 +100,8 @@ class TurbulenceCache(
      * Copies [field] over the filter pixels [width] × [height] from ([left], [top]) into [out], row r from [offset] +
      * r · [stride]: exactly what [Turbulence.fillWebKit] computes there, mapped by [map] when the field has steps (the map
      * they name). Missing tiles are made, on the filter workers when several are missing and this is not one of them.
+     * [cancelled] is asked before each missing tile: once it says so, the fill throws
+     * [java.util.concurrent.CancellationException] when the tiles under way are made, and every tile kept is whole.
      */
     fun fill(
         field: NoiseField,
@@ -111,7 +113,8 @@ class TurbulenceCache(
         offset: Int = 0,
         stride: Int = width,
         map: NoiseMap? = null,
-    ) = fill(field, left, top, width, height, out, offset, stride, map, direct = true)
+        cancelled: () -> Boolean = { false },
+    ) = fill(field, left, top, width, height, out, offset, stride, map, direct = true, cancelled = cancelled)
 
     /**
      * [fill], [direct] when a filter asks (not when a field with steps makes a tile from its noise): only direct fills
@@ -128,13 +131,14 @@ class TurbulenceCache(
         stride: Int,
         map: NoiseMap?,
         direct: Boolean,
+        cancelled: () -> Boolean,
     ) {
         if (width <= 0 || height <= 0) return
         require(stride >= width && offset >= 0 && offset + (height - 1).toLong() * stride + width <= out.size) { "out is too small" }
         require(field.steps.isEmpty() == (map == null)) { "a field has a map exactly when it has steps" }
         val f = acquire(field, direct)
         try {
-            val tiles = f.ready(left, top, width, height, map)
+            val tiles = f.ready(left, top, width, height, map, cancelled = cancelled)
             val tx0 = Math.floorDiv(left, T)
             val ty0 = Math.floorDiv(top, T)
             val nx = Math.floorDiv(left + width - 1, T) - tx0 + 1
@@ -382,9 +386,9 @@ class TurbulenceCache(
 
         /**
          * Every tile over the filter pixels given, row by row: checked, or made with [map] when [make] (null where a tile
-         * is missing and is not made).
+         * is missing and is not made). [cancelled] is asked before each tile is made.
          */
-        fun ready(left: Int, top: Int, width: Int, height: Int, map: NoiseMap?, make: Boolean = true): Array<Tile?> {
+        fun ready(left: Int, top: Int, width: Int, height: Int, map: NoiseMap?, make: Boolean = true, cancelled: () -> Boolean = { false }): Array<Tile?> {
             val tx0 = Math.floorDiv(left, T)
             val ty0 = Math.floorDiv(top, T)
             val nx = Math.floorDiv(left + width - 1, T) - tx0 + 1
@@ -399,7 +403,7 @@ class TurbulenceCache(
                 val todo = IntArray(missing)
                 var m = 0
                 for (k in out.indices) if (out[k] == null) todo[m++] = k
-                SvgFilterRaster.parallel(missing) { i ->
+                SvgFilterRaster.parallel(missing, cancelled) { i ->
                     val k = todo[i]
                     out[k] = make(tx0 + k % nx, ty0 + k / nx, map)
                 }
@@ -452,8 +456,9 @@ class TurbulenceCache(
                 noise.fillWebKit(tx * T, ty * T, T, T, invX, invY, key.baseX, key.baseY, key.octaves, key.fractal, key.channels, px)
             } else {
                 requireNotNull(map) { "a field with steps is made with its map" }
-                // the noise itself, kept as well (another moment's colours start from it), then the steps
-                fill(key.noise, tx * T, ty * T, T, T, px, 0, T, null, direct = false)
+                // the noise itself, kept as well (another moment's colours start from it), then the steps; never
+                // cancelled: a tile begun is made whole, as other threads may be waiting for it
+                fill(key.noise, tx * T, ty * T, T, T, px, 0, T, null, direct = false, cancelled = { false })
                 for (i in 0 until TILE_PIXELS) px[i] = map.map(px[i])
             }
             val t = store(tx, ty, px)

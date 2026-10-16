@@ -50,6 +50,11 @@ class SvgCanvas(
     var bands: Int = DEFAULT_BANDS,
     /** Where the CPU filters' turbulence is kept; null computes it every time. */
     private val noise: TurbulenceCache? = TurbulenceCache.shared,
+    /**
+     * Asked before each element, and by the CPU filters before each band, primitive and noise tile: once it says so,
+     * [draw] throws [java.util.concurrent.CancellationException], the canvas half drawn and this instance spent.
+     */
+    private val cancelled: () -> Boolean = { false },
 ) {
     /** How filters are drawn. */
     enum class FilterMode {
@@ -129,6 +134,7 @@ class SvgCanvas(
 
     /** Draws [n] with its transform, clip, filter, opacity and blending. */
     private fun node(c: Canvas, n: SvgNode) {
+        stopIf(cancelled)
         val t = n.transform
         if (n.filter == null && n.clip == null && (n is SvgShape || n is SvgText) && foldable(n)) {
             if (t != null) {
@@ -500,19 +506,22 @@ class SvgCanvas(
             pixels = IntArray(0)
         } else {
             val src = Bitmap.createBitmap(sr.width, sr.height, Bitmap.Config.ARGB_8888)
-            val sc = Canvas(src)
-            sc.translate(-sr.left.toFloat(), -sr.top.toFloat())
-            sc.scale(sx.toFloat(), sy.toFloat())
-            val saved = SavedPaints(this)
-            content(sc, n)
-            saved.restore(this)
-            pixels = premultipliedPixels(src)
-            src.recycle()
+            try {
+                val sc = Canvas(src)
+                sc.translate(-sr.left.toFloat(), -sr.top.toFloat())
+                sc.scale(sx.toFloat(), sy.toFloat())
+                val saved = SavedPaints(this)
+                content(sc, n)
+                saved.restore(this)
+                pixels = premultipliedPixels(src)
+            } finally {
+                src.recycle()
+            }
         }
         val t1 = System.nanoTime()
         val o = raster.outputRect
         val out = IntArray(o.width * o.height)
-        raster.run(pixels, out, bands)
+        raster.run(pixels, out, bands, cancelled)
         if (opacity < 1f) for (i in out.indices) out[i] = fade(out[i], opacity)
         stats.sourceNanos += t1 - t0
         stats.filterNanos += System.nanoTime() - t1

@@ -115,6 +115,10 @@ class EngineFrame(
          * filter workers, and its noise comes from [noise] when it was made before. Neither changes a pixel: the result
          * is byte for byte the one-band raster without a cache ([SvgCanvas]). [stats], when given, adds up the time the
          * filters took.
+         *
+         * [cancelled] is asked before each element, filter band, primitive and noise tile: once it says so, the raster
+         * throws [java.util.concurrent.CancellationException] when the bands under way have stopped, and its bitmap is
+         * let go at once.
          */
         fun rasterise(
             layers: List<SvgDocument>, raster: Raster?, fonts: SvgFonts, scale: Float, filters: SvgCanvas.FilterMode = SvgCanvas.FilterMode.CPU,
@@ -122,18 +126,28 @@ class EngineFrame(
             bands: Int = SvgCanvas.DEFAULT_BANDS,
             noise: TurbulenceCache? = TurbulenceCache.shared,
             stats: RasterStats? = null,
+            cancelled: () -> Boolean = { false },
         ): Bitmap {
             val first = layers.first()
             val w = pixels(first.width, scale)
             val h = pixels(first.height, scale)
             val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
             val c = Canvas(bmp)
-            if (background != Color.TRANSPARENT) c.drawColor(background)
-            for ((i, doc) in layers.withIndex()) {
-                val sc = SvgCanvas(doc, fonts, filters, bands, noise)
-                sc.draw(c, w.toFloat(), h.toFloat())
-                stats?.add(sc.stats)
-                if (i == 0 && raster != null) drawRaster(c, raster, first.width, first.height, scale)
+            var done = false
+            try {
+                if (background != Color.TRANSPARENT) c.drawColor(background)
+                for ((i, doc) in layers.withIndex()) {
+                    val sc = SvgCanvas(doc, fonts, filters, bands, noise, cancelled)
+                    sc.draw(c, w.toFloat(), h.toFloat())
+                    stats?.add(sc.stats)
+                    if (i == 0 && raster != null) drawRaster(c, raster, first.width, first.height, scale)
+                }
+                done = true
+            } finally {
+                // the canvas lets go of the pixels (closing any layer a cancel left open), so a recycle frees them at once
+                c.setBitmap(null)
+                // no frame: its pixels go now, not at some later collection
+                if (!done) bmp.recycle()
             }
             return bmp
         }
