@@ -20,6 +20,7 @@ import app.atlas.render.City.vnorm
 import app.atlas.render.City.vsub
 import app.atlas.render.data.RawSource
 import app.atlas.render.live.ItemNote
+import app.atlas.render.live.ScreenLayers
 import app.atlas.render.live.WorldTape
 import app.atlas.render.Real.centroid
 import app.atlas.render.Real.pip
@@ -653,55 +654,7 @@ object Amsterdam {
     /** Relief-lit clouds at height: switched off, the soft flat clouds read better. */
     var CLOUDS_LIT = false
 
-    // render/amsterdam.py:284 sky_layer
-    /** The sky above the horizon from the real cloud cover: overcast as a heavy grey deck, broken cloud as white heaps, night as low cloud lit from below. */
-    @Suppress("UNCHECKED_CAST")
-    fun skyLayer(cam: Camera, th: Dict, W: Double, H: Double, hy: Double, defs: MutableList<String>, layer: String? = null): String {
-        val w = th["wx"] as Map<String, Any?>; val night = th["night"] == true; val L = v3(th["_L"]); val over = th["sky_k"]; val out = ArrayList<String>()
-        val hb = pmin(H, hy + 2)
-        val k: Double; val t: Double; val rgb: DoubleArray
-        if (night) {
-            k = 1.5; t = -0.1; rgb = doubleArrayOf(0.17, 0.15, 0.19)
-        } else if (truthy(over)) {
-            k = 2.2; t = 0.18; rgb = doubleArrayOf(0.66, 0.68, 0.72)
-        } else {
-            k = 9.0; t = 0.62 - d(w["cloud"]) * 0.25; rgb = doubleArrayOf(0.98, 0.98, 0.99)
-        }
-        defs.add(pf("<filter id=\"cloudf\" filterUnits=\"userSpaceOnUse\" x=\"0\" y=\"0\" width=\"%d\" height=\"%d\"><feTurbulence type=\"fractalNoise\" baseFrequency=\"0.0055 0.017\" numOctaves=\"4\" seed=\"31\"/><feColorMatrix type=\"matrix\" values=\"0 0 0 0 %.2f  0 0 0 0 %.2f  0 0 0 0 %.2f  %.1f 0 0 0 %.2f\"/></filter>",
-            W, hb, rgb[0], rgb[1], rgb[2], k, -k * t))
-        defs.add(pf("<filter id=\"cloudsh2\" filterUnits=\"userSpaceOnUse\" x=\"0\" y=\"0\" width=\"%d\" height=\"%d\"><feTurbulence type=\"fractalNoise\" baseFrequency=\"0.0055 0.017\" numOctaves=\"4\" seed=\"31\"/><feOffset dy=\"%d\"/><feColorMatrix type=\"matrix\" values=\"0 0 0 0 %.2f  0 0 0 0 %.2f  0 0 0 0 %.2f  %.1f 0 0 0 %.2f\"/></filter>",
-            W, hb, 5, rgb[0] * 0.62, rgb[1] * 0.64, rgb[2] * 0.7, k, -k * (t + 0.04)))
-        if (!night && L[1] > 0) {
-            val sp = cam.proj(V3(cam.C[0] + L[0] * 4000, cam.C[1] + L[1] * 4000, cam.C[2] + L[2] * 4000))
-            if (sp != null && -260 < sp[0] && sp[0] < W + 260 && -260 < sp[1] && sp[1] < hy + 60) {
-                val (a, b) = if (truthy(over)) ".75" to ".25" else "1" to ".45"
-                defs.add(pf("<radialGradient id=\"sunglow\"><stop offset=\"0\" stop-color=\"#FFF8E6\" stop-opacity=\"%s\"/><stop offset=\".25\" stop-color=\"#FFE9C2\" stop-opacity=\"%s\"/><stop offset=\"1\" stop-color=\"#FFE0B0\" stop-opacity=\"0\"/></radialGradient>", a, b))
-                th["_sunxy"] = sp
-            }
-        }
-        if (truthy(th["_eye"]) && CLOUDS_LIT) {
-            // the sun first, so the clouds can pass in front of it; then a little of its glare back over them
-            val sxy = th["_sunxy"] as V2?
-            if (sxy != null) {
-                out.add(pf("<circle cx=\"%.1f\" cy=\"%.1f\" r=\"%d\" fill=\"url(#sunglow)\"/>", sxy.x, sxy.y, if (truthy(over)) 230 else 170))
-                if (!truthy(over)) out.add(pf("<circle cx=\"%.1f\" cy=\"%.1f\" r=\"9\" fill=\"#FFFDF4\"/>", sxy.x, sxy.y))
-            }
-            if (layer != "front") out.add(Closeup.skyClouds(cam, th, W, hy, defs, cam.C[1]))
-            if (sxy != null) out.add(pf("<circle cx=\"%.1f\" cy=\"%.1f\" r=\"%d\" fill=\"url(#sunglow)\" opacity=\".55\" style=\"mix-blend-mode:screen\"/>", sxy.x, sxy.y, if (truthy(over)) 150 else 120))
-        } else {
-            out.add(pf("<rect width=\"%d\" height=\"%.1f\" filter=\"url(#cloudsh2)\"/><rect width=\"%d\" height=\"%.1f\" filter=\"url(#cloudf)\"/>", W, hb, W, hb))
-            val sxy = th["_sunxy"] as V2?
-            if (sxy != null) {
-                out.add(pf("<circle cx=\"%.1f\" cy=\"%.1f\" r=\"%d\" fill=\"url(#sunglow)\"/>", sxy.x, sxy.y, if (truthy(over)) 230 else 170))
-                if (!truthy(over)) out.add(pf("<circle cx=\"%.1f\" cy=\"%.1f\" r=\"9\" fill=\"#FFFDF4\"/>", sxy.x, sxy.y))
-            }
-        }
-        if (night && layer != "front") { // the city lights the underside of the low cloud
-            defs.add(pf("<linearGradient id=\"cityglow\" gradientUnits=\"userSpaceOnUse\" x1=\"0\" y1=\"%.0f\" x2=\"0\" y2=\"%.0f\"><stop offset=\"0\" stop-color=\"#FF9E5A\" stop-opacity=\"0\"/><stop offset=\"1\" stop-color=\"#FF9E5A\" stop-opacity=\".28\"/></linearGradient>", hy - 220, hy))
-            out.add(pf("<rect width=\"%d\" height=\"%.1f\" fill=\"url(#cityglow)\"/>", W, hb))
-        }
-        return out.joinToString("")
-    }
+    // render/amsterdam.py:284 sky_layer: ScreenLayers.Frame.skyLayer, from the render's ScreenLayers.of
 
     /** `Camera(cfg['target'], …, cx=cfg.get('cx'), cy=cfg.get('cy'))`. */
     fun cameraOf(cfg: Map<String, Any?>): Camera = Camera(
@@ -709,8 +662,8 @@ object Amsterdam {
         cx = (cfg["cx"] as Number?)?.toDouble(), cy = (cfg["cy"] as Number?)?.toDouble(),
     )
 
-    /** `(az, el)` of a theme's moment, and the sun vector render() uses. */
-    private fun sunOf(th: Map<String, Any?>): Triple<Double, Double, V3> {
+    /** `(az, el)` of a theme's moment, and the sun vector render() uses (`_L`): toward the sun, or straight down at night. */
+    fun sunOf(th: Map<String, Any?>): Triple<Double, Double, V3> {
         val hm = ints(th["hhmm"]); val dt = ints(th["date"])
         val (az, el) = sunPosition(LocalDateTime.of(dt[0], dt[1], dt[2], hm[0], hm[1]).minusHours(TZ_H.toLong()))
         return Triple(az, el, if (el > 0) Living.sunVector(az, el) else V3(0.0, -1.0, 0.0))
@@ -724,10 +677,10 @@ object Amsterdam {
         val cam = cameraOf(cfg)
         th["_L"] = sunOf(th).third
         val hy = cam.horizonY(); val defs = ArrayList<String>()
-        defs.add(pf("<linearGradient id=\"sky\" gradientUnits=\"userSpaceOnUse\" x1=\"0\" y1=\"%.0f\" x2=\"0\" y2=\"%.0f\"><stop offset=\"0\" stop-color=\"%s\"/><stop offset=\"1\" stop-color=\"%s\"/></linearGradient>", hy - 300, hy, th["sky_top"], th["sky_hor"]))
-        val body = arrayListOf(pf("<rect width=\"%d\" height=\"%d\" fill=\"url(#sky)\"/>", 2 * W, H), Closeup.skyClouds(cam, th, W, hy, defs, cam.C[1], tile = true))
+        defs.add(ScreenLayers.skyDef(hy, th["sky_top"], th["sky_hor"]))
+        val body = arrayListOf(ScreenLayers.skyRect(2 * W, H), Closeup.skyClouds(cam, th, W, hy, defs, cam.C[1], tile = true))
         if (th["night"] == true) {
-            defs.add(pf("<linearGradient id=\"cityglow\" gradientUnits=\"userSpaceOnUse\" x1=\"0\" y1=\"%.0f\" x2=\"0\" y2=\"%.0f\"><stop offset=\"0\" stop-color=\"#FF9E5A\" stop-opacity=\"0\"/><stop offset=\"1\" stop-color=\"#FF9E5A\" stop-opacity=\".28\"/></linearGradient>", hy - 220, hy))
+            defs.add(ScreenLayers.cityGlowDef(hy))
             body.add(pf("<rect width=\"%d\" height=\"%.1f\" fill=\"url(#cityglow)\"/>", 2 * W, pmin(H, hy + 2)))
         }
         return pf("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 %d %d\" width=\"%d\" height=\"%d\"><defs>%s</defs>%s</svg>", 2 * W, H, 2 * W, H, defs.joinToString(""), body.joinToString(""))
@@ -1278,6 +1231,8 @@ object Amsterdam {
         val defs = ArrayList<String>(); val ground = ArrayList<String>(); val marks = ArrayList<String>(); val shadows = ArrayList<String>()
         val items = ArrayList<Item>(); val glow = ArrayList<String>()
         val hy = cam.horizonY()
+        // the sky, the haze, wfx and fin: fixed to the screen, from the camera, the theme and cfg alone
+        val screen = ScreenLayers.of(cam, th, cfg, thn, layer)
         if (wx) {
             defs.add("<filter id=\"foliage\" x=\"-25%\" y=\"-25%\" width=\"150%\" height=\"150%\"><feTurbulence type=\"fractalNoise\" baseFrequency=\".55\" numOctaves=\"2\" seed=\"4\" result=\"n\"/><feDisplacementMap in=\"SourceGraphic\" in2=\"n\" scale=\"7\" xChannelSelector=\"R\" yChannelSelector=\"G\" result=\"d\"/><feTurbulence type=\"fractalNoise\" baseFrequency=\"1.4\" numOctaves=\"2\" seed=\"9\" result=\"m\"/><feColorMatrix in=\"m\" type=\"matrix\" values=\"0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  -3.2 0 0 0 2.35\" result=\"mask\"/><feComposite in=\"d\" in2=\"mask\" operator=\"in\" result=\"leaves\"/><feColorMatrix in=\"m\" type=\"matrix\" values=\".6 .6 .6 0 0  .6 .6 .6 0 0  .6 .6 .6 0 0  0 0 0 0 1\" result=\"tone\"/><feComposite in=\"leaves\" in2=\"tone\" operator=\"arithmetic\" k1=\".9\" k2=\".55\" k3=\"0\" k4=\"0\" result=\"t\"/><feComposite in=\"t\" in2=\"leaves\" operator=\"in\"/></filter>")
             defs.add("<filter id=\"leaf\" x=\"-15%\" y=\"-15%\" width=\"130%\" height=\"130%\"><feTurbulence type=\"fractalNoise\" baseFrequency=\".55\" numOctaves=\"2\" seed=\"3\" result=\"n\"/><feDisplacementMap in=\"SourceGraphic\" in2=\"n\" scale=\"2.6\" xChannelSelector=\"R\" yChannelSelector=\"G\"/></filter>")
@@ -1285,17 +1240,16 @@ object Amsterdam {
             defs.add(pf("<filter id=\"mat\" filterUnits=\"userSpaceOnUse\" x=\"0\" y=\"0\" width=\"%d\" height=\"%d\"><feTurbulence type=\"fractalNoise\" baseFrequency=\".16 .75\" numOctaves=\"2\" seed=\"13\"/><feColorMatrix type=\"matrix\" values=\".33 .33 .33 0 0  .33 .33 .33 0 0  .33 .33 .33 0 0  0 0 0 0 1\" result=\"g\"/><feComposite in=\"SourceGraphic\" in2=\"g\" operator=\"arithmetic\" k1=\".2\" k2=\".9\" k3=\"0\" k4=\"0\" result=\"t\"/><feComposite in=\"t\" in2=\"SourceAlpha\" operator=\"in\"/></filter>", W, H))
             defs.add(Closeup.crownFilter())
             defs.add("<pattern id=\"scaf\" width=\"9\" height=\"9\" patternUnits=\"userSpaceOnUse\"><path d=\"M0 0h9M0 0v9\" stroke=\"#8A8F96\" stroke-width=\".7\"/><path d=\"M0 9L9 0\" stroke=\"#8A8F96\" stroke-width=\".4\"/></pattern>")
-            defs.add(pf("<filter id=\"grain\" filterUnits=\"userSpaceOnUse\" x=\"0\" y=\"0\" width=\"%d\" height=\"%d\"><feTurbulence type=\"fractalNoise\" baseFrequency=\".9\" numOctaves=\"1\" seed=\"8\"/><feColorMatrix type=\"saturate\" values=\"0\"/></filter>", W, H))
-            defs.add(pf("<radialGradient id=\"vig\" cx=\".5\" cy=\".46\" r=\".75\"><stop offset=\".55\" stop-color=\"#000\" stop-opacity=\"0\"/><stop offset=\"1\" stop-color=\"#000\" stop-opacity=\"%s\"/></radialGradient>", if (night) ".38" else ".2"))
+            defs.addAll(screen.finDefs())
         }
         if (wx && !night) {
             val (s0, s1) = if (truthy(th["sky_k"])) "#C7CDD5" to "#59626E" else "#B7CBE0" to "#3E4C5E"
             defs.add(pf("<linearGradient id=\"glass\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\"><stop offset=\"0\" stop-color=\"%s\"/><stop offset=\"1\" stop-color=\"%s\"/></linearGradient>", s0, s1))
             defs.add("<linearGradient id=\"glassLit\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\"><stop offset=\"0\" stop-color=\"#E8EEF4\"/><stop offset=\"1\" stop-color=\"#8496AA\"/></linearGradient>")
         }
-        defs.add(pf("<linearGradient id=\"sky\" gradientUnits=\"userSpaceOnUse\" x1=\"0\" y1=\"%.0f\" x2=\"0\" y2=\"%.0f\"><stop offset=\"0\" stop-color=\"%s\"/><stop offset=\"1\" stop-color=\"%s\"/></linearGradient>", hy - 300, hy, th["sky_top"], th["sky_hor"]))
-        if (layer != "front") ground.add(pf("<rect width=\"%d\" height=\"%d\" fill=\"url(#sky)\"/>", W, H))
-        if (wx && hy > 4) ground.add(skyLayer(cam, th, W, H, hy, defs, layer))
+        defs.add(screen.skyDef())
+        if (layer != "front") ground.add(screen.skyRect())
+        if (wx && hy > 4) ground.add(screen.skyLayer(cam, th, defs))
         val GR = if ("ground_r" in cfg) d(cfg["ground_r"]) else 1500.0
         ground.add(groundPath(cam, rect(-GR, GR, -GR, GR), th["ground"] as String))
         (S["under"] as SceneLayer?)?.let { ground.add(it(cam, th, far, defs)) } // other regions: land cover below the water
@@ -1346,8 +1300,9 @@ object Amsterdam {
         val pools = ArrayList<String>()
         if (night) nightLight(S, cam, th, roads, wx, eye, far, opts, defs, pools, glow)
         val counts = lensCounts(S, cam, lens, roads, far, W, H, pools, glow)
-        val haze = hazeLayer(cam, th, thn, cfg, target, hy, W, H, eye, defs)
-        val (shadowG, aoG, wfx) = overlays(cam, th, cfg, solids, shadows, far, wx, night, eye, hy, W, H, layer, opts, defs)
+        val haze = screen.hazeAndWash(defs)
+        val (shadowG, aoG) = overlays(cam, th, cfg, solids, shadows, far, wx, night, opts, defs)
+        val wfx = screen.wfx(defs)
         val head = listOf(
             pf("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 %d %d\" width=\"%d\" height=\"%d\">", W, H, W, H),
             pf("<defs><clipPath id=\"vb\"><rect width=\"%d\" height=\"%d\"/></clipPath>%s</defs><g clip-path=\"url(#vb)\">", W, H, defs.joinToString("")),
@@ -1366,9 +1321,8 @@ object Amsterdam {
             }
             return Quest(base, front, variant, cam, splitD, az, el)
         }
-        var fin = if (wx && layer != "front" && !truthy(th["_eye"])) pf("<rect width=\"%d\" height=\"%d\" filter=\"url(#grain)\" opacity=\"%s\" style=\"mix-blend-mode:overlay\"/><rect width=\"%d\" height=\"%d\" fill=\"url(#vig)\"/>", W, H, if (!night) ".09" else ".12", W, H) else ""
+        val fin = screen.fin()
         val mat = if (wx) " filter=\"url(#mat)\"" else ""
-        if (truthy(cfg["no_fin"])) fin = ""
         val above = (th["_above"] as String?) ?: ""
         fun info(raster: Boolean): Dict {
             val i = dictOf("az" to az, "el" to el, "counts" to counts, "doors" to (th["_doors"] ?: 0), "shops" to (th["_shops"] ?: 0), "open" to (th["_open"] ?: 0), "brands" to (th["_brands"] ?: 0))
@@ -1727,89 +1681,33 @@ object Amsterdam {
         return counts
     }
 
-    // render/amsterdam.py:615 render: the haze by ground depth (a soft band on the horizon at eye level), and the golden wash
-    private fun hazeLayer(cam: Camera, th: Dict, thn: String, cfg: Map<String, Any?>, target: V3, hy: Double, W: Double, H: Double, eye: Boolean,
-                          defs: MutableList<String>): String {
-        var stops = ArrayList<String>(); var top = pmax(0.0, hy)
-        val haze0 = if ("haze0" in cfg) d(cfg["haze0"]) else 380.0; val haze1 = if ("haze1" in cfg) d(cfg["haze1"]) else 800.0
-        val hazeMax = d(th["haze_max"])
-        for (k in 0 until 17) {
-            val sy = top + (H - top) * k / 16
-            val gd = cam.groundDepth(sy + 0.01, target[1])
-            val a = if (gd == null) hazeMax else hazeMax * PyMath.pow(clamp((gd - haze0) / haze1), 1.3)
-            stops.add(pf("<stop offset=\"%.3f\" stop-color=\"%s\" stop-opacity=\"%.3f\"/>", k / 16.0, th["haze"], a))
-        }
-        var haze: String
-        if (eye && hy > 0) {
-            // at eye level, far things sit on the horizon line from both sides: a soft band, never an edge
-            val band = ArrayList<Pair<Double, Double>>()
-            for (k in -12..12) {
-                val dy = (H - hy) * PyMath.pow(Math.abs(k) / 12.0, 2.0) * 0.5
-                val gd = cam.groundDepth(hy + pmax(dy, 0.01), target[1])
-                val a = if (gd == null) hazeMax else hazeMax * PyMath.pow(clamp((gd - haze0) / haze1), 1.3)
-                band.add((hy + (if (k > 0) dy else -dy)) to pmin(a, hazeMax * 0.18))
-            }
-            val y0 = band[0].first; val y1 = band[band.size - 1].first
-            stops = band.mapTo(ArrayList()) { (y, a) -> pf("<stop offset=\"%.3f\" stop-color=\"%s\" stop-opacity=\"%.3f\"/>", (y - y0) / (y1 - y0), th["haze"], a * 0.8) }
-            top = y0
-            defs.add(pf("<linearGradient id=\"haze\" gradientUnits=\"userSpaceOnUse\" x1=\"0\" y1=\"%.1f\" x2=\"0\" y2=\"%.1f\">%s</linearGradient>", y0, y1, stops.joinToString("")))
-            haze = pf("<rect y=\"%.1f\" width=\"%d\" height=\"%.1f\" fill=\"url(#haze)\"/>", y0, W, y1 - y0)
-        } else {
-            defs.add(pf("<linearGradient id=\"haze\" gradientUnits=\"userSpaceOnUse\" x1=\"0\" y1=\"%.1f\" x2=\"0\" y2=\"%d\">%s</linearGradient>", top, H, stops.joinToString("")))
-            haze = pf("<rect y=\"%.1f\" width=\"%d\" height=\"%.1f\" fill=\"url(#haze)\"/>", top, W, H - top)
-        }
-        if (thn == "golden") {
-            defs.add("<linearGradient id=\"wash\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\".35\"><stop offset=\"0\" stop-color=\"#FFB25E\" stop-opacity=\".14\"/><stop offset=\".45\" stop-color=\"#FFC98A\" stop-opacity=\".05\"/><stop offset=\"1\" stop-color=\"#FFC98A\" stop-opacity=\"0\"/></linearGradient>")
-            haze += pf("<rect width=\"%d\" height=\"%d\" fill=\"url(#wash)\"/>", W, H)
-        }
-        return haze
-    }
-
-    // render/amsterdam.py:615 render: the shadow group, the footprints' seams (ATLAS_AO), cloud shadows and drizzle
-    @Suppress("UNCHECKED_CAST")
+    // render/amsterdam.py:615 render: the shadow group and the footprints' seams (ATLAS_AO); the haze, the wash, the cloud
+    // shadows and the drizzle are ScreenLayers'
     private fun overlays(cam: Camera, th: Dict, cfg: Map<String, Any?>, solids: List<Dict>, shadows: List<String>, far: (Double, Double) -> Boolean,
-                         wx: Boolean, night: Boolean, eye: Boolean, hy: Double, W: Double, H: Double, layer: String?, opts: RenderOptions,
-                         defs: MutableList<String>): Triple<String, String, String> {
+                         wx: Boolean, night: Boolean, opts: RenderOptions, defs: MutableList<String>): Pair<String, String> {
         var sfx = ""
         if (shadows.isNotEmpty() && truthy(th["shadow_blur"])) {
             defs.add(pf("<filter id=\"sblur\" x=\"-10%%\" y=\"-10%%\" width=\"120%%\" height=\"120%%\"><feGaussianBlur stdDeviation=\"%.1f\"/></filter>", th["shadow_blur"]))
             sfx = " filter=\"url(#sblur)\""
         }
         val shadowG = if (shadows.isNotEmpty()) pf("<g opacity=\"%.2f\" fill=\"%s\"%s>%s</g>", th["shadow_op"], th["shadow"], sfx, shadows.joinToString("") { "<path d=\"$it\"/>" }) else ""
-        var aoG = ""; var wfx = ""
-        if (wx) {
-            // where walls meet the ground the sky is half hidden: a soft dark seam at every footprint (ATLAS_AO=1)
-            if (opts.ao) {
-                val foot = ArrayList<String>()
-                for (b in (if (!truthy(cfg["no_ao"])) solids else emptyList())) {
-                    if ((d(b["min"]) > 0.5 && b["_gy"] == null) || tagsOf(b)["building"] == "houseboat") continue
-                    val poly = polyOf(b); val c = centroid(poly)
-                    if (far(c.x, c.y)) continue
-                    val gy = if ("_gy" in b) d(b["_gy"]) else 0.0
-                    val sp = cam.poly(poly.map { V3(it.x, gy + 0.05, it.y) }, margin = 200.0)
-                    if (sp != null && area(sp) > 1) foot.add(P(sp))
-                }
-                defs.add("<filter id=\"aob\" x=\"-5%\" y=\"-5%\" width=\"110%\" height=\"110%\"><feGaussianBlur stdDeviation=\"2.4\"/></filter>")
-                aoG = if (foot.isNotEmpty()) pf("<path d=\"%s\" fill=\"none\" stroke=\"%s\" stroke-width=\"5.5\" opacity=\"%.2f\" filter=\"url(#aob)\"/><path d=\"%s\" fill=\"none\" stroke=\"#14161E\" stroke-width=\"1.6\" opacity=\"%.2f\"/>",
-                    foot.joinToString(""), "#1A1E2C", if (truthy(th["sky_k"])) 0.62 else (if (night) 0.3 else 0.48), foot.joinToString(""), if (!night) 0.55 else 0.3) else ""
+        var aoG = ""
+        // where walls meet the ground the sky is half hidden: a soft dark seam at every footprint (ATLAS_AO=1)
+        if (wx && opts.ao) {
+            val foot = ArrayList<String>()
+            for (b in (if (!truthy(cfg["no_ao"])) solids else emptyList())) {
+                if ((d(b["min"]) > 0.5 && b["_gy"] == null) || tagsOf(b)["building"] == "houseboat") continue
+                val poly = polyOf(b); val c = centroid(poly)
+                if (far(c.x, c.y)) continue
+                val gy = if ("_gy" in b) d(b["_gy"]) else 0.0
+                val sp = cam.poly(poly.map { V3(it.x, gy + 0.05, it.y) }, margin = 200.0)
+                if (sp != null && area(sp) > 1) foot.add(P(sp))
             }
-            if (truthy(th["cloud_shadows"]) && !eye) { // at eye level the ground is too foreshortened for cloud shadows to read
-                val cov = d(th["cloud_shadows"]); val t0 = 0.62 - cov * 0.3
-                defs.add(pf("<filter id=\"cloudsh\" x=\"0\" y=\"0\" width=\"100%%\" height=\"100%%\"><feTurbulence type=\"fractalNoise\" baseFrequency=\"0.0026 0.0058\" numOctaves=\"3\" seed=\"23\"/><feColorMatrix type=\"matrix\" values=\"0 0 0 0 0.16  0 0 0 0 0.19  0 0 0 0 0.32  7 0 0 0 %.2f\"/></filter>", -7 * t0))
-                wfx += pf("<rect y=\"%.1f\" width=\"%d\" height=\"%.1f\" filter=\"url(#cloudsh)\" opacity=\".42\" style=\"mix-blend-mode:multiply\"/>", pmax(0.0, hy), W, H - pmax(0.0, hy))
-            }
-            if (truthy(th["wet"])) {
-                val rnd = PyRandom(4) // drizzle: short faint streaks scattered at random, leaning with the wind
-                val st = StringBuilder()
-                repeat(26) {
-                    val x = rnd.uniform(0.0, 127.0); val y = rnd.uniform(0.0, 211.0); val l = rnd.uniform(3.0, 8.0); val sw = rnd.uniform(0.3, 0.55); val op = rnd.uniform(0.35, 0.9)
-                    st.append(pf("<path d=\"M%.1f %.1fv%.1f\" stroke=\"#C3CEE8\" stroke-width=\"%.2f\" opacity=\"%.2f\" stroke-linecap=\"round\"/>", x, y, l, sw, op))
-                }
-                defs.add(pf("<pattern id=\"rain\" width=\"127\" height=\"211\" patternUnits=\"userSpaceOnUse\" patternTransform=\"rotate(%d)\">%s</pattern>", PyMath.int(d((th["wx"] as Map<String, Any?>)["wind"]) * 0.8), st.toString()))
-                if (layer != "front") wfx += pf("<rect width=\"%d\" height=\"%d\" fill=\"url(#rain)\" opacity=\".45\"/>", W, H)
-            }
+            defs.add("<filter id=\"aob\" x=\"-5%\" y=\"-5%\" width=\"110%\" height=\"110%\"><feGaussianBlur stdDeviation=\"2.4\"/></filter>")
+            aoG = if (foot.isNotEmpty()) pf("<path d=\"%s\" fill=\"none\" stroke=\"%s\" stroke-width=\"5.5\" opacity=\"%.2f\" filter=\"url(#aob)\"/><path d=\"%s\" fill=\"none\" stroke=\"#14161E\" stroke-width=\"1.6\" opacity=\"%.2f\"/>",
+                foot.joinToString(""), "#1A1E2C", if (truthy(th["sky_k"])) 0.62 else (if (night) 0.3 else 0.48), foot.joinToString(""), if (!night) 0.55 else 0.3) else ""
         }
-        return Triple(shadowG, aoG, wfx)
+        return shadowG to aoG
     }
 
     // ------------------------------------------------------------------ the lenses
