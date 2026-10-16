@@ -380,7 +380,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         var w = 0f
         for (l in lines) w = max(w, debugText.measureText(l))
         val left = insets.left + pad
-        val top = insets.top + pad + 40f * density
+        // Below the boards' top-left pills (the home's weather and needs reach about 140 dp down).
+        val top = insets.top + 150f * density
         debugRect.set(left, top, left + w + 2 * pad, top + lines.size * lh + 2 * pad - 3f * density)
         canvas.drawRoundRect(debugRect, 8f * density, 8f * density, debugPanel)
         for ((i, l) in lines.withIndex()) canvas.drawText(l, left + pad, top + pad + (i + 1) * lh - 4f * density, debugText)

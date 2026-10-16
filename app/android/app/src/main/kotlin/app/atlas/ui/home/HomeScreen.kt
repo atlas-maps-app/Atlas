@@ -9,11 +9,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
@@ -30,27 +30,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.atlas.R
-import app.atlas.mapview.AtlasMap
-import app.atlas.mapview.HomeView
-import app.atlas.mapview.MapStyle
-import app.atlas.mapview.Theme
 import app.atlas.geo.LatLon
 import app.atlas.geo.Sun
-import java.time.Instant
+import app.atlas.mapview.AtlasMap
+import app.atlas.mapview.HomeView
 import app.atlas.mapview.MapHit
 import app.atlas.mapview.MapLayer
 import app.atlas.mapview.MapOverlays
+import app.atlas.mapview.MapStyle
 import app.atlas.mapview.Marker
 import app.atlas.mapview.MarkerStyle
+import app.atlas.mapview.Theme
 import app.atlas.mapview.UserLocation
 import app.atlas.model.Place
 import app.atlas.nav.Dest
@@ -63,8 +63,9 @@ import app.atlas.places.Symbols
 import app.atlas.ui.kit.SheetStop
 import app.atlas.ui.kit.rememberSheetState
 import app.atlas.ui.kit.rememberSpeechInput
-import kotlinx.coroutines.launch
+import java.time.Instant
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
 /**
  * The Map home, as on the Main board: the map full screen with the location puck; the weather and offline chip, the
@@ -148,6 +149,8 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
     // The board's overlays start 48 dp down; a taller status bar pushes them below it.
     val top = maxOf(48.dp, statusTop + 8.dp)
 
+    val context = LocalContext.current
+    val debuggable = remember(context) { context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0 }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         AtlasMap(
             state = vm.map,
@@ -166,6 +169,8 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
             },
             onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
             onCameraMove = vm::onCameraMove,
+            // Debug builds (the alphas) show each exact frame's timings, so a phone can be read without logcat.
+            debug = debuggable,
         )
 
         // The board's wash over the top 170 dp, so the pills read over the far, busy part of the view.
