@@ -3,21 +3,17 @@ package app.atlas.ui.search
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
@@ -31,11 +27,10 @@ import app.atlas.places.Brands
 import app.atlas.places.OpeningHours
 import app.atlas.places.Symbols
 import app.atlas.services.PlaceOrigin
-import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.AtlasScreen
-import app.atlas.ui.kit.Hairline
 import app.atlas.ui.kit.StateMessage
-import app.atlas.ui.kit.SymbolButton
+import app.atlas.ui.kit.TxLine
+import app.atlas.ui.kit.txStyle
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.rememberNow
 import kotlinx.coroutines.Dispatchers
@@ -84,38 +79,30 @@ fun BrandScreen(args: Dest.Brand, nav: Navigator) {
         onPlace = openPlace,
         onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
         title = {
-            BrandLogo(brand, 36.dp)
-            Text(brandName(brand), style = Atlas.type.name, color = Atlas.colors.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BrandLogo(brand, 36.dp, corner = 10.dp)
+            TxLine(brandName(brand), txStyle(16f, 700, 20.5f), 0xFF14161B)
         },
     ) {
-        val c = Atlas.colors
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                BrandLogo(brand, 52.dp)
-                Column(Modifier.weight(1f)) {
-                    Text(brandName(brand), style = Atlas.type.headline, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        if (found == null) stringResource(R.string.kit_loading)
-                        else pluralStringResource(R.plurals.brand_branches_open, branches.size, branches.size, open),
-                        style = Atlas.type.caption, color = c.inkSoft,
-                    )
-                }
-                SymbolButton("ui-bell", stringResource(if (bell) R.string.brands_bell_on else R.string.brands_bell), {
+        // The Brands board's sheet head and rows, 18 px in.
+        Column(Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            BrandHead(
+                brand,
+                if (found == null) stringResource(R.string.kit_loading)
+                else pluralStringResource(R.plurals.brand_branches_open, branches.size, branches.size, open),
+                bell, isHidden,
+                onBell = {
                     services.scope.launch { services.settings.edit { p -> val s = p[BRAND_ALERTS].orEmpty(); p[BRAND_ALERTS] = if (bell) s - brand.id else s + brand.id } }
-                }, size = 44.dp, elevation = 0.dp, background = c.cardMuted, selected = bell)
-                SymbolButton(if (isHidden) "ui-eye" else "ui-eye-off", stringResource(if (isHidden) R.string.brands_show else R.string.brands_hide, brandName(brand)), {
-                    services.scope.launch(Dispatchers.IO) { runCatching { services.saved.hideBrand(brand.id, !isHidden) } }
-                }, size = 44.dp, elevation = 0.dp, background = c.cardMuted, selected = isHidden)
-            }
+                },
+                onHide = { services.scope.launch(Dispatchers.IO) { runCatching { services.saved.hideBrand(brand.id, !isHidden) } } },
+            )
             found?.second?.let { OriginLine(it, null) }
         }
         when {
             found == null -> Unit
             branches.isEmpty() -> StateMessage("ui-store", stringResource(R.string.brands_none))
-            else -> LazyColumn(Modifier.fillMaxWidth(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp)) {
+            else -> LazyColumn(Modifier.fillMaxWidth(), contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 24.dp)) {
                 itemsIndexed(branches, key = { _, p -> p.key }) { i, p ->
-                    BranchRow(p, here, now) { openPlace(p) }
-                    if (i < branches.lastIndex) Hairline()
+                    BranchRow(p, here, now, last = i == branches.lastIndex) { openPlace(p) }
                 }
             }
         }

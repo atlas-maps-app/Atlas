@@ -3,7 +3,10 @@ package app.atlas.ui.kit
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -78,11 +81,12 @@ fun NearbyList(
                     symbol = sum.symbol,
                     colour = Color(sum.colour),
                     meta = listOfNotNull(open?.first, sum.kind, sum.distanceM?.let { shortDistance(it) }).joinToString(" · ").ifEmpty { null },
-                    metaColour = open?.second ?: c.inkSoft,
+                    metaColour = open?.second ?: Color(0xFF5A5F6C),
                     trailing = sum.walk,
                     onClick = { services.remember(p); onPlace(p) },
                 )
-                Hairline()
+                // The Design board's place rows are cards, 8 apart.
+                Spacer(Modifier.height(8.dp))
             }
         }
     }

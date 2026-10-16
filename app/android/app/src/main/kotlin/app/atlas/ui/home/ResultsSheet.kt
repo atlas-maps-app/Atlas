@@ -1,14 +1,12 @@
 package app.atlas.ui.home
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -21,9 +19,7 @@ import app.atlas.geo.LatLon
 import app.atlas.model.Place
 import app.atlas.places.Categories
 import app.atlas.services.PlaceOrigin
-import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.Chip
-import app.atlas.ui.kit.Hairline
 import app.atlas.ui.kit.PlaceRow
 import app.atlas.ui.kit.PlaceSummary
 import app.atlas.ui.kit.Sheet
@@ -34,7 +30,11 @@ import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.SymbolTile
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import app.atlas.ui.kit.OpenWords
 import app.atlas.ui.kit.openLine
+import app.atlas.ui.kit.TxLine
+import app.atlas.ui.kit.txStyle
+import androidx.compose.foundation.layout.PaddingValues
 import app.atlas.ui.kit.rememberNow
 import app.atlas.ui.kit.shortDistance
 
@@ -49,20 +49,20 @@ fun ResultsSheet(
     onAll: () -> Unit,
     onClose: () -> Unit,
 ) {
-    val c = Atlas.colors
     val category = Categories.byId(results.categoryId)
     val colour = categoryColour(results.categoryId)
     val now = rememberNow(results)
     val summaries = remember(results, from) { results.places.map { PlaceSummary.of(it, from ?: results.centre, lang, now) } }
     Sheet(state, peekHeight = 168.dp) {
+        // The Design board's sheet: its content 16 px in, the heading row in its place-row type.
         Row(
-            Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, bottom = 8.dp),
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             SymbolTile(category?.symbol ?: "maki-marker", colour)
-            Column(Modifier.weight(1f)) {
-                Text(category?.name(lang) ?: results.categoryId, style = Atlas.type.headline)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                TxLine(category?.name(lang) ?: results.categoryId, txStyle(20f, 800, 26f), INK)
                 val offlineSource = results.source != PlaceOrigin.ONLINE
                 val sourceNote = stringResource(if (offlineSource) R.string.home_results_offline else R.string.home_results_online)
                 Row(
@@ -75,32 +75,37 @@ fun ResultsSheet(
                         results.error != null && results.places.isEmpty() -> stringResource(R.string.home_results_error, results.error)
                         else -> stringResource(R.string.home_results_count, results.places.size)
                     }
-                    Text(line, style = Atlas.type.caption, color = c.inkSoft, maxLines = 2)
+                    TxLine(line, txStyle(13f, 400, 17f, tnum = true), SUB, lines = 2)
                     if (!results.loading && results.places.isNotEmpty()) {
-                        Symbol(if (offlineSource) "ui-smartphone" else "ui-cloud", tint = if (offlineSource) c.open else c.go, size = 14.dp)
+                        Symbol(if (offlineSource) "ui.smartphone" else "weather.cloud", tint = Color(if (offlineSource) OFFLINE else ONLINE), size = 14.dp)
                     }
                 }
             }
-            if (results.places.isNotEmpty()) Chip(stringResource(R.string.home_results_all), onClick = onAll)
-            SymbolButton("ui-x", stringResource(R.string.home_close_results), onClose, size = 40.dp, elevation = 0.dp, background = c.cardMuted)
+            if (results.places.isNotEmpty()) Chip(stringResource(R.string.home_results_all), onClick = onAll, outlined = true)
+            SymbolButton("ui.close", stringResource(R.string.home_close_results), onClose, size = 40.dp, elevation = 0.dp, background = Color(0xFFF1EEE8), symbolSize = 18.dp)
         }
         if (!results.loading && results.places.isEmpty()) {
             StateMessage(
                 symbol = if (results.error != null) "ui-cloud-off" else (category?.symbol ?: "maki-marker"),
                 title = stringResource(R.string.home_results_none),
-                tint = if (results.error != null) c.alert else colour,
+                tint = if (results.error != null) Color(0xFFB03A3A) else colour,
             )
         }
-        LazyColumn(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-            items(summaries, key = { it.place.key }) { s ->
-                Box {
-                    PlaceRowFor(s, colour, now, onPlace)
-                }
-                Hairline()
-            }
+        LazyColumn(
+            Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(summaries, key = { it.place.key }) { s -> PlaceRowFor(s, colour, now, onPlace) }
         }
     }
 }
+
+/** The Design board's ink and grey, and the Main board's offline green and route blue. */
+private val INK = 0xFF14161BL
+private val SUB = 0xFF464C5AL
+private const val OFFLINE = 0xFF178A4E
+private const val ONLINE = 0xFF2E5BFF
 
 @Composable
 private fun PlaceRowFor(s: PlaceSummary, colour: Color, now: java.time.LocalDateTime, onPlace: (Place) -> Unit) {
@@ -111,7 +116,13 @@ private fun PlaceRowFor(s: PlaceSummary, colour: Color, now: java.time.LocalDate
         symbol = s.symbol,
         colour = Color(s.colour).takeIf { s.colour != 0 } ?: colour,
         meta = meta.ifEmpty { null },
-        metaColour = open?.second ?: Atlas.colors.inkSoft,
+        metaColour = Color(
+            when (OpenWords.of(s, now)) {
+                OpenWords.Always, OpenWords.Open, is OpenWords.OpenUntil -> 0xFF12663A
+                is OpenWords.ClosesIn -> 0xFF8A5A00
+                else -> 0xFF5A5F6C
+            },
+        ),
         trailing = s.walk,
         onClick = { onPlace(s.place) },
     )

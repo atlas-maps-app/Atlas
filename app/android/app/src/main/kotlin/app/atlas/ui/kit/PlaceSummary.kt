@@ -117,16 +117,20 @@ sealed interface OpenWords {
  */
 @Composable
 fun openLine(s: PlaceSummary, now: LocalDateTime = LocalDateTime.now()): Pair<String, Color>? {
-    val c = Atlas.colors
     return when (val w = OpenWords.of(s, now) ?: return null) {
-        OpenWords.Always -> stringResource(R.string.kit_open_24_7) to c.open
-        is OpenWords.ClosesIn -> stringResource(R.string.kit_closes_in, w.minutes) to c.caution
-        is OpenWords.OpenUntil -> stringResource(R.string.kit_open_until, w.at.format(HH_MM)) to c.open
-        OpenWords.Open -> stringResource(R.string.kit_open) to c.open
+        OpenWords.Always -> stringResource(R.string.kit_open_24_7) to OPEN_GREEN
+        is OpenWords.ClosesIn -> stringResource(R.string.kit_closes_in, w.minutes) to CLOSING_AMBER
+        is OpenWords.OpenUntil -> stringResource(R.string.kit_open_until, w.at.format(HH_MM)) to OPEN_GREEN
+        OpenWords.Open -> stringResource(R.string.kit_open) to OPEN_GREEN
         is OpenWords.Opens -> {
             val time = if (w.sameDay) w.at.format(HH_MM) else w.at.format(DateTimeFormatter.ofPattern("EEE H:mm", Locale.getDefault()))
-            stringResource(R.string.kit_closed_opens, time) to c.inkSoft
+            stringResource(R.string.kit_closed_opens, time) to CLOSED_GREY
         }
-        OpenWords.Closed -> stringResource(R.string.kit_closed) to c.inkSoft
+        OpenWords.Closed -> stringResource(R.string.kit_closed) to CLOSED_GREY
     }
 }
+
+/** The boards' colours for open (#12663A), closing soon (#8A5A00) and closed (#5A5F6C). */
+private val OPEN_GREEN = Color(0xFF12663A)
+private val CLOSING_AMBER = Color(0xFF8A5A00)
+private val CLOSED_GREY = Color(0xFF5A5F6C)

@@ -29,48 +29,53 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
-/** A rounded square of [colour] with a white symbol: a place's category, a setting's kind. */
+/**
+ * A rounded square of [colour] with a white symbol: a place's category, a setting's kind. The Design board's tile: 42 px,
+ * 12 round, its symbol 22 px.
+ */
 @Composable
-fun SymbolTile(symbol: String, colour: Color, modifier: Modifier = Modifier, size: Dp = 44.dp, contentDescription: String? = null) {
+fun SymbolTile(symbol: String, colour: Color, modifier: Modifier = Modifier, size: Dp = 42.dp, contentDescription: String? = null) {
     Box(
-        modifier.size(size).clip(RoundedCornerShape(size * 0.3f)).background(colour),
+        modifier.size(size).clip(RoundedCornerShape(size * (12f / 42f))).background(colour),
         contentAlignment = Alignment.Center,
     ) {
-        Symbol(symbol, tint = contentColourFor(colour), size = size * 0.52f, contentDescription = contentDescription)
+        Symbol(symbol, tint = contentColourFor(colour), size = size * (22f / 42f), contentDescription = contentDescription)
     }
 }
 
 /**
- * The row of every list on the boards: a coloured symbol tile, a bold name over a grey "·"-separated line, and a big
- * value on the right (walk minutes "5′", a distance). [metaColour] tints the line (green while open, red when closing).
+ * The place row of the Design board's components: 64 px, 18 round, white in a 1 px #E6E1D6 ring, 12 px in; the 42 px
+ * symbol tile, the name in Geist 800 at 15 over a "·"-separated line in 12 (#5A5F6C) 2 px under it, 12 px apart, and
+ * a value at the right in 900 at 15 (walk minutes "4′", a distance). [metaColour] tints the line (green while open).
  */
 @Composable
 fun PlaceRow(
     name: String,
     modifier: Modifier = Modifier,
     symbol: String? = null,
-    colour: Color = Atlas.colors.inkSoft,
+    colour: Color = argb(0xFF5A5F6C),
     meta: String? = null,
-    metaColour: Color = Atlas.colors.inkSoft,
+    metaColour: Color = argb(0xFF5A5F6C),
     trailing: String? = null,
-    trailingColour: Color = Atlas.colors.ink,
+    trailingColour: Color = argb(BOARD_INK),
     onClick: (() -> Unit)? = null,
 ) {
     Row(
         modifier
             .fillMaxWidth()
             .heightIn(min = 64.dp)
+            .cssEl(0xFFFFFFFF, r = CssCorners(18f, 18f, 18f, 18f), shadows = listOf(CssShadow(0f, 0f, 0f, 1f, BOARD_RING)), clip = true)
             .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
-            .padding(vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (symbol != null) SymbolTile(symbol, colour)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(name, style = Atlas.type.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (meta != null) Text(meta, style = Atlas.type.caption, color = metaColour, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            TxLine(name, txStyle(15f, 800, 19.5f), BOARD_INK)
+            if (meta != null) Text(meta, style = txStyle(12f, 400, 15.5f), color = metaColour, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        if (trailing != null) Text(trailing, style = Atlas.type.numeralSmall, color = trailingColour, textAlign = TextAlign.End)
+        if (trailing != null) Text(trailing, style = txStyle(15f, 900, 19.5f, tnum = true), color = trailingColour, textAlign = TextAlign.End, maxLines = 1)
     }
 }
 
@@ -97,10 +102,13 @@ fun shortDistance(metres: Double): String {
     return "${(metres / 1000).roundToInt()} km"
 }
 
-/** A small letter-spaced caps heading over a section: "KEPT HERE", "RECENT". */
+/**
+ * A small letter-spaced caps heading over a section ("KEPT HERE", "RECENT"), the Design board's sheet heading: Geist 800
+ * at 11, 0.12 em apart, #676D7C.
+ */
 @Composable
-fun Kicker(text: String, modifier: Modifier = Modifier, colour: Color = Atlas.colors.inkSoft) {
-    Text(text.uppercase(), modifier.semantics { heading() }, style = Atlas.type.kicker, color = colour)
+fun Kicker(text: String, modifier: Modifier = Modifier, colour: Color = argb(0xFF676D7C)) {
+    Text(text.uppercase(), modifier.semantics { heading() }, style = txStyle(11f, 800, 14f, spacing = 1.32f), color = colour)
 }
 
 /** The quiet grey line at the end of a screen that names its sources and what is guessed. */

@@ -156,11 +156,22 @@ fun rememberSheetState(
 ): SheetState = rememberSaveable(saver = SheetState.saver(stops)) { SheetState(initial, stops) }
 
 /** A board's own sheet: its [surface] (shadow, corners, colour, clipped) and the colour of its [grabber]. */
-class SheetLook(val surface: Modifier, val grabber: Color)
+class SheetLook(val surface: Modifier, val grabber: Color) {
+    companion object {
+        /**
+         * The Design board's bottom sheet over the 3D map: white, 30 round at the top, its shadow 8 px up and 24 soft (ink at
+         * 14 %), the 40 × 5 grabber in #D5D8DE.
+         */
+        val Default = SheetLook(
+            Modifier.cssEl(0xFFFFFFFF, r = CssCorners(30f, 30f, 0f, 0f), shadows = listOf(CssShadow(0f, -8f, 24f, 0f, 0x2414161B)), clip = true),
+            Color(0xFFD5D8DE),
+        )
+    }
+}
 
 /**
- * A bottom sheet over the map, as on the Place, Route and Charge boards: a white surface with 32 dp top corners (or a
- * board's own [look]), a grabber, and rests at [peekHeight], half the screen ([halfFraction]) and nearly full (leaving
+ * A bottom sheet over the map, as on the Design board: a white surface with 30 px top corners (or a board's own
+ * [look]), a grabber, and rests at [peekHeight], half the screen ([halfFraction]) and nearly full (leaving
  * [fullTopGap]). Drag the grabber or the content; scrollable content inside hands the drag over at its top.
  */
 @Composable
@@ -175,7 +186,6 @@ fun Sheet(
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
-    val c = Atlas.colors
     BoxWithConstraints(modifier.fillMaxSize()) {
         val h = constraints.maxHeight.toFloat()
         val peek = with(density) { peekHeight.toPx() }
@@ -199,7 +209,7 @@ fun Sheet(
                 .offset { IntOffset(0, y.roundToInt()) }
                 .fillMaxWidth()
                 .height(with(density) { (h - fullTop).toDp() })
-                .then(look?.surface ?: Modifier.softShadow(Radii.sheet, c.shadow, 16.dp).clip(Radii.sheet).background(c.card))
+                .then(look?.surface ?: SheetLook.Default.surface)
                 .nestedScroll(connection)
                 .draggable(dragState, Orientation.Vertical, onDragStopped = { v -> state.settle(v) })
                 .semantics {
@@ -211,11 +221,11 @@ fun Sheet(
         ) {
             Box(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp), contentAlignment = Alignment.Center) {
                 Box(
-                    Modifier.size(width = 40.dp, height = 5.dp).clip(CircleShape).background(look?.grabber ?: c.line)
+                    Modifier.size(width = 40.dp, height = 5.dp).clip(CircleShape).background((look ?: SheetLook.Default).grabber)
                         .semantics { contentDescription = expand },
                 )
             }
-            CompositionLocalProvider(LocalContentColor provides c.ink) { content() }
+            CompositionLocalProvider(LocalContentColor provides argb(BOARD_INK)) { content() }
         }
     }
 }

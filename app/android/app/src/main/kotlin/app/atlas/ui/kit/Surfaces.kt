@@ -108,24 +108,23 @@ internal fun cssSpreadRadius(r: Float, s: Float): Float = when {
 }
 
 /**
- * A white card with large radii and a soft shadow, the board's basic surface. [onClick] makes the whole card a button;
- * [onClickLabel] says what it does for accessibility.
+ * A white card, the Design board's: 22 round in a 1 px #E6E1D6 ring (`box-shadow: 0 0 0 1px`); [elevation] 0 leaves the
+ * ring off. [onClick] makes the whole card a button; [onClickLabel] says what it does for accessibility.
  */
 @Composable
 fun Card(
     modifier: Modifier = Modifier,
-    shape: Shape = Radii.card,
-    colour: Color = Atlas.colors.card,
+    shape: Shape = CssCorners(22f, 22f, 22f, 22f),
+    colour: Color = Color.White,
     padding: PaddingValues = PaddingValues(16.dp),
     elevation: Dp = 10.dp,
     onClick: (() -> Unit)? = null,
     onClickLabel: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val shadow = Atlas.colors.shadow
     Column(
         modifier
-            .then(if (elevation > 0.dp) Modifier.softShadow(shape, shadow, elevation) else Modifier)
+            .then(if (elevation > 0.dp) Modifier.cssShadow(shape, y = 0.dp, blur = 0.dp, colour = Color(0xFFE6E1D6), spread = 1.dp) else Modifier)
             .clip(shape)
             .background(colour)
             .then(if (onClick != null) Modifier.clickable(onClickLabel = onClickLabel, role = Role.Button, onClick = onClick) else Modifier)

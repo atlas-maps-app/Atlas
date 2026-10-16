@@ -473,7 +473,8 @@ fun SearchBar(onSearch: () -> Unit, onNear: () -> Unit, onMic: () -> Unit, modif
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Symbol("main.search", tint = look.ink, size = 21.dp, weight = MainSymbols.Width.PILL)
-            Text(hint, style = boardText(16f, FontWeight.Medium), color = look.hint, maxLines = 1)
+            // The board's input box starts 10 after the lens and draws its text 2 in.
+            Text(hint, Modifier.padding(start = 2.dp), style = boardText(16f, FontWeight.Medium), color = look.hint, maxLines = 1)
         }
         val near = stringResource(R.string.home_near)
         Box(

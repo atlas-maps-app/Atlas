@@ -174,7 +174,6 @@ fun El(
     matrix: FloatArray? = null, origin: Pair<Float, Float>? = null,
     modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit = {},
 ) {
-    val shape: Shape = r ?: RectangleShapeCss
     var m = modifier.offset(x.dp, y.dp).requiredSize(w.dp, h.dp)
     if (matrix != null) m = m.graphicsLayer {
         // CSS transform about its origin, given as a 2D matrix (a b c d e f), e and f in board px
@@ -193,6 +192,20 @@ fun El(
         transformOrigin = androidx.compose.ui.graphics.TransformOrigin(ox / size.width.coerceAtLeast(1f), oy / size.height.coerceAtLeast(1f))
     }
     if (alpha < 1f) m = m.graphicsLayer { this.alpha = alpha }
+    Box(m.cssEl(bg, grad, r, shadows, blur, saturate, border, clip), content = content)
+}
+
+/**
+ * El's look on a box of any size, for layouts whose size comes from live content: [shadows] (outer ones under the box,
+ * the first on top; inset ones inside its padding box), the frosted glass ([blur] px over the backdrop, [saturate]), the
+ * background colour and gradients, the [border], and, when [clip] is set, its content clipped to the corners [r].
+ */
+fun Modifier.cssEl(
+    bg: Argb = 0, grad: List<CssGradient> = emptyList(), r: CssCorners? = null, shadows: List<CssShadow> = emptyList(),
+    blur: Float = 0f, saturate: Float = 1f, border: CssBorder? = null, clip: Boolean = false,
+): Modifier {
+    val shape: Shape = r ?: RectangleShapeCss
+    var m = this
     // CSS paints a list's first shadow on top: the last is drawn first
     for (s in shadows.asReversed()) if (!s.inset) m = m.cssShadow(shape, y = s.y.dp, blur = s.blur.dp, colour = argb(s.colour), x = s.x.dp, spread = s.spread.dp)
     if (blur > 0f) m = m.frosted(shape, argb(bg), blur.dp, saturate)
@@ -238,7 +251,7 @@ fun El(
         }
     }
     if (clip) m = m.clip(shape)
-    Box(m, content = content)
+    return m
 }
 
 /** CSS's padding box in px: the box inside its border, with its radii shrunk by the border widths (never below 0). */
