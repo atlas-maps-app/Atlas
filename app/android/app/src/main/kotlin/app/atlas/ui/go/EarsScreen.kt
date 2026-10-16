@@ -2,39 +2,35 @@ package app.atlas.ui.go
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
+import app.atlas.ui.kit.cssRadial
+import app.atlas.ui.kit.Symbol
+import app.atlas.ui.kit.CssCorners
+import app.atlas.ui.kit.CssBorder
+import app.atlas.ui.kit.Argb
+import androidx.compose.ui.semantics.selected
+import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -46,7 +42,6 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
@@ -60,7 +55,6 @@ import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.services.Units
-import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.AtlasTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -71,25 +65,24 @@ import kotlin.math.sin
 
 /** The Ears board's colours (canvas/project/Ears.dc.html). */
 private object EarsColours {
-    val glow = Color(0xFF145048)
-    val deep = Color(0xFF0A2A28)
     val disc = Color(0xFF0E3A36)
     val ring = Color(0xFF2A6A62)
     val mint = Color(0xFF7CFFB2)
     val text = Color(0xFFE6FBF6)
-    val glass = Color(0x1FE6FBF6)
-    val card = Color(0x0FE6FBF6)
-    val rule = Color(0x1FE6FBF6)
-    val note = Color(0xB3E6FBF6)
     val cafe = Color(0xFFFFB547)
     val transit = Color(0xFF7CC4FF)
+    const val TEXT: Argb = 0xFFE6FBF6
+    const val MINT: Argb = 0xFF7CFFB2
+    const val GLASS: Argb = 0x1FE6FBF6
 }
 
+private const val GEIST = "Geist, system-ui, sans-serif"
+
 /**
- * Ears only, as on the Ears board: the world around you by sound, the phone in your pocket. A radar of the places
- * nearby by their direction and distance (ahead is up when the phone knows which way you face), the lines the voice
- * said (beacon and callouts), and Where am I? / Around me / Beacon. It runs in the navigation service, so it goes on
- * with the screen off; leaving the screen ends it.
+ * Ears only, as on the Ears board, each element where the board has it: the world around you by sound, the phone in
+ * your pocket. A radar of the places nearby by their direction and distance (ahead is up when the phone knows which way
+ * you face), the lines the voice said (beacon and callouts), and Where am I? / Around me / Beacon. It runs in the
+ * navigation service, so it goes on with the screen off; leaving the screen ends it.
  */
 @Composable
 fun EarsScreen(args: Dest.Ears, nav: Navigator) {
@@ -110,83 +103,78 @@ fun EarsScreen(args: Dest.Ears, nav: Navigator) {
     val view by (running?.view ?: empty).collectAsStateWithLifecycle()
 
     AtlasTheme(dark = true) {
-        Column(
+        BoxWithConstraints(
             Modifier
                 .fillMaxSize()
-                .drawBehind {
-                    drawRect(Brush.radialGradient(listOf(EarsColours.glow, EarsColours.deep), center = Offset(size.width / 2f, size.height * 0.3f), radius = size.maxDimension * 0.7f))
-                }
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
+                // The board's ground: an ellipse of deep green lit at half the width, 30 % down.
+                .drawWithCache {
+                    val ground = cssRadial(false, size.width / 2f / density, size.height * 0.3f / density, 0f to 0xFF145048, 0.7f to 0xFF0A2A28).brush(size, density)
+                    onDrawBehind { drawRect(ground) }
+                },
         ) {
-            Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            val fit = boardFit(maxHeight, firstY = 42f, lastY = 887f)
+            BoardPlane(dy = fit.top, scale = fit.scale) {
+                Row(Modifier.offset(16.dp, 42.dp).requiredWidth(380.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(
+                        Modifier.size(44.dp).cssBox(bg = EarsColours.GLASS, r = CssCorners(22f, 22f, 22f, 22f)).button(stringResource(R.string.kit_back), leave),
+                        contentAlignment = Alignment.Center,
+                    ) { Symbol("ui.back", Modifier.size(20.dp), tint = EarsColours.text, size = 20.dp) }
+                    BoardText(stringResource(R.string.go_ears_title), boardType("Instrument Serif, serif", 32f, italic = true, lineHeight = 32f), EarsColours.TEXT, Modifier.weight(1f).semantics { heading() })
+                    SymbolFit("ears.headphones", Modifier.size(52.dp, 44.dp), EarsColours.text, contentDescription = stringResource(R.string.go_ears_headphones))
+                }
+                Radar(view, units, Modifier.offset(16.dp, 100.dp).requiredSize(380.dp))
+                Column(Modifier.offset(16.dp, 494.dp).requiredWidth(380.dp)) {
+                    Transcript(view)
+                    Spacer(Modifier.height(41.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val s = running
+                        EarsTile("ui.pin.2", stringResource(R.string.go_where_am_i), Modifier.weight(1f)) { s?.whereAmI() }
+                        EarsTile("ears.around", stringResource(R.string.go_around_me), Modifier.weight(1f)) { s?.aroundMe() }
+                        EarsTile("ears.beacon", stringResource(R.string.go_beacon), Modifier.weight(1f), on = view.beacon != null) { s?.toggleBeacon() }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    BoardText(stringResource(R.string.go_ears_footer), boardType(GEIST, 12f, lineHeight = 18f, align = TextAlign.Center), 0xB3E6FBF6, Modifier.fillMaxWidth(), lines = 3)
+                }
+            }
+            BoardPlane(bottom = true, dy = -fit.bottom, scale = fit.scale) {
                 Box(
-                    Modifier.size(44.dp).clip(CircleShape).background(EarsColours.glass).button(stringResource(R.string.kit_back), leave),
+                    Modifier
+                        .offset(16.dp, 831.dp)
+                        .requiredSize(380.dp, 56.dp)
+                        .cssBox(bg = EarsColours.TEXT, r = CssCorners(28f, 28f, 28f, 28f))
+                        .button(stringResource(R.string.go_step_free_too)) {
+                            services.scope.launch {
+                                hub.store.setPrefs(hub.store.prefs.first().copy(avoidSteps = true))
+                            }
+                            hub.stopEars()
+                            nav.replace(Dest.Route(mode = app.atlas.model.Mode.WALK.name))
+                        },
                     contentAlignment = Alignment.Center,
-                ) { ArtIcon(BoardArt.back, size = 20.dp, tint = EarsColours.text) }
-                Text(
-                    stringResource(R.string.go_ears_title), Modifier.weight(1f).semantics { heading() },
-                    style = Atlas.type.displayItalic.copy(fontSize = 32.sp, lineHeight = 32.sp), color = EarsColours.text,
-                )
-                ArtIcon(BoardArt.headphones, size = 52.dp)
+                ) {
+                    BoardText(stringResource(R.string.go_step_free_too), boardType(GEIST, 15f, 800, lineHeight = 19.5f), 0xFF0E3A36)
+                }
             }
-            Spacer(Modifier.height(14.dp))
-            Radar(view, units, Modifier.fillMaxWidth().aspectRatio(1f))
-            Spacer(Modifier.height(14.dp))
-            Transcript(view)
-            Spacer(Modifier.height(14.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val s = running
-                EarsTile(BoardArt.whereAmI, stringResource(R.string.go_where_am_i), Modifier.weight(1f)) { s?.whereAmI() }
-                EarsTile(BoardArt.aroundMe, stringResource(R.string.go_around_me), Modifier.weight(1f)) { s?.aroundMe() }
-                EarsTile(BoardArt.beacon, stringResource(R.string.go_beacon), Modifier.weight(1f), on = view.beacon != null) { s?.toggleBeacon() }
-            }
-            Spacer(Modifier.height(16.dp))
-            Text(
-                stringResource(R.string.go_ears_footer), style = Atlas.type.caption.copy(fontSize = 12.sp, lineHeight = 18.sp), color = EarsColours.note,
-                textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(18.dp))
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 56.dp)
-                    .clip(CircleShape)
-                    .background(EarsColours.text)
-                    .button(stringResource(R.string.go_step_free_too)) {
-                        services.scope.launch {
-                            hub.store.setPrefs(hub.store.prefs.first().copy(avoidSteps = true))
-                        }
-                        hub.stopEars()
-                        nav.replace(Dest.Route(mode = app.atlas.model.Mode.WALK.name))
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(stringResource(R.string.go_step_free_too), style = Atlas.type.name.copy(fontSize = 15.sp, fontWeight = FontWeight.ExtraBold), color = EarsColours.disc)
-            }
-            Spacer(Modifier.height(16.dp))
         }
     }
 }
 
 /**
- * The radar of the Ears board: the disc and its three rings, the cone you face, you in the middle, and each place as a
- * ringed ping at its direction and distance with its name; the beacon's target in amber.
+ * The radar of the Ears board, drawn from its SVG on the 380 grid: the disc and its three rings, the cone you face, you
+ * in the middle, and each place as a ringed ping at its direction and distance with its name 18 out (11 px, 800); the
+ * beacon's target in amber.
  */
 @Composable
 private fun Radar(view: EarsView, units: Units, modifier: Modifier) {
     val measurer = rememberTextMeasurer(cacheSize = 32)
-    val label = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+    val label = boardType("Geist, sans-serif", 11f, 800)
     val described = view.around.take(6).joinToString("; ") { "${it.label} ${GoFormat.distance(it.distance, units)}" }
     val loading = stringResource(R.string.go_looking)
     Box(modifier.semantics { contentDescription = if (view.loading) loading else described }, contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
-            // The board's radar on its 380 grid: the disc, three rings, the cone you face, the pings, you.
             val k = size.minDimension / 380f
             val c = center
             drawCircle(EarsColours.disc, 186f * k, c)
-            for (r in floatArrayOf(75f, 120f, 165f)) drawCircle(EarsColours.ring, r * k, c, style = Stroke(1.dp.toPx()))
+            for (r in floatArrayOf(75f, 120f, 165f)) drawCircle(EarsColours.ring, r * k, c, style = Stroke(1f * k))
             val cone = Path().apply {
                 moveTo(c.x, c.y)
                 lineTo(c.x - 93f * k, c.y - 161.1f * k)
@@ -240,9 +228,11 @@ private fun DrawScope.drawPing(
     drawCircle(colour, 7f * k, p)
     val text = "${n.label} · ${GoFormat.distance(n.distance, units)}"
     val layout = measurer.measure(text, style.copy(color = colour))
-    // The label on the side with room: right of the ping in the left half, left of it in the right half, 18 out.
+    // The label on the side with room: right of the ping in the left half, left of it in the right half, 18 out, on
+    // a baseline 4 below the ping's centre, as the board sets its text.
     val x = (if (p.x < c.x) p.x + 18f * k else p.x - 18f * k - layout.size.width).coerceIn(0f, size.width - layout.size.width)
-    val box = androidx.compose.ui.geometry.Rect(x, p.y - layout.size.height / 2f, x + layout.size.width, p.y + layout.size.height / 2f)
+    val top = p.y + 4f * k - layout.firstBaseline
+    val box = androidx.compose.ui.geometry.Rect(x, top, x + layout.size.width, top + layout.size.height)
     if (taken.any { it.overlaps(box) }) return
     taken += box
     drawText(layout, topLeft = box.topLeft)
@@ -262,27 +252,25 @@ private fun DrawScope.drawNorth(c: Offset, r: Float, measurer: androidx.compose.
     drawText(layout, topLeft = Offset(c.x - layout.size.width / 2f, c.y - r - layout.size.height * 0.2f))
 }
 
-/** The last lines the voice said, each with its kind in mint capitals, as on the board. */
+/**
+ * The last lines the voice said, as the board's card (6 × 14 px padding, a hairline over each row): each with its kind
+ * in mint capitals, 58 px wide, and the line in quotes on its baseline.
+ */
 @Composable
 private fun Transcript(view: EarsView) {
     val lines = view.lines.take(3)
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(EarsColours.card).padding(horizontal = 14.dp, vertical = 6.dp)) {
+    Column(Modifier.fillMaxWidth().cssBox(bg = 0x0FE6FBF6, r = CssCorners(22f, 22f, 22f, 22f)).padding(horizontal = 14.dp, vertical = 6.dp)) {
+        // A CSS border takes its width in the row: 1 px of rule over 8 px of padding.
+        val rule = Modifier.cssBox(border = CssBorder(1f, 0f, 0f, 0f, longArrayOf(0x1FE6FBF6, 0, 0, 0))).padding(top = 9.dp, bottom = 8.dp)
         if (lines.isEmpty()) {
-            Text(
-                stringResource(if (view.loading) R.string.go_looking else R.string.go_ears_listening),
-                style = Atlas.type.body.copy(fontSize = 14.sp), color = EarsColours.note, modifier = Modifier.padding(vertical = 8.dp),
-            )
+            Row(Modifier.fillMaxWidth().then(rule)) {
+                BoardText(stringResource(if (view.loading) R.string.go_looking else R.string.go_ears_listening), boardType(GEIST, 14f, 600, lineHeight = 18f), 0xB3E6FBF6)
+            }
         }
         lines.forEach { l ->
-            Row(
-                Modifier.fillMaxWidth().drawBehind { drawLine(EarsColours.rule, Offset(0f, 0f), Offset(size.width, 0f), 1.dp.toPx()) }.padding(vertical = 8.dp),
-                verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(
-                    stringResource(lineKind(l.kind)), Modifier.width(58.dp).padding(top = 3.dp),
-                    style = Atlas.type.kicker.copy(fontSize = 10.sp, letterSpacing = 1.sp, fontWeight = FontWeight.ExtraBold), color = EarsColours.mint, maxLines = 1,
-                )
-                Text("“${l.text}”", style = Atlas.type.bodyStrong.copy(fontSize = 14.sp, fontStyle = FontStyle.Normal), color = EarsColours.text, maxLines = 2)
+            Row(Modifier.fillMaxWidth().then(rule), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                BoardText(stringResource(lineKind(l.kind)).uppercase(), boardType(GEIST, 10f, 800, lineHeight = 13f, spacing = 1f), EarsColours.MINT, Modifier.width(58.dp).alignByBaseline())
+                BoardText("“${l.text}”", boardType(GEIST, 14f, 600, lineHeight = 18f), EarsColours.TEXT, Modifier.weight(1f).alignByBaseline())
             }
         }
     }
@@ -295,19 +283,19 @@ private fun lineKind(k: EarsLine.Kind): Int = when (k) {
     EarsLine.Kind.AROUND -> R.string.go_line_around
 }
 
-/** One of the board's three glass buttons: its symbol over its name. */
+/** One of the board's three glass buttons (80 px, 22 px corners): its symbol (26 px) over its name, 6 px apart. */
 @Composable
-private fun EarsTile(art: Art, label: String, modifier: Modifier, on: Boolean = false, onClick: () -> Unit) {
+private fun EarsTile(symbol: String, label: String, modifier: Modifier, on: Boolean = false, onClick: () -> Unit) {
     Column(
         modifier
             .height(80.dp)
-            .clip(RoundedCornerShape(22.dp))
-            .background(if (on) EarsColours.mint.copy(alpha = 0.28f) else EarsColours.glass)
+            .cssBox(bg = if (on) 0x477CFFB2 else EarsColours.GLASS, r = CssCorners(22f, 22f, 22f, 22f))
+            .semantics { selected = on }
             .button(label, onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically),
     ) {
-        ArtIcon(art, size = 26.dp, tint = EarsColours.text)
-        Text(label, style = Atlas.type.label.copy(fontSize = 13.sp, fontWeight = FontWeight.ExtraBold), color = EarsColours.text, maxLines = 1)
+        Symbol(symbol, Modifier.size(26.dp), tint = EarsColours.text, size = 26.dp)
+        BoardText(label, boardType("Geist, sans-serif", 13f, 800, lineHeight = 17f), EarsColours.TEXT)
     }
 }

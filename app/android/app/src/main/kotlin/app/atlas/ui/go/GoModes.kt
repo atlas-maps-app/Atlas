@@ -17,16 +17,22 @@ fun familyOf(mode: Mode): Family = when {
 }
 
 /** The vehicles the Go tab and the planner offer, in the boards' order, each with its glyph and name. */
-enum class GoMode(val mode: Mode, val symbol: String, @StringRes val label: Int) {
-    WALK(Mode.WALK, "go-walk", R.string.go_mode_walk),
-    BIKE(Mode.BIKE, "go-bike", R.string.go_mode_bike),
-    EBIKE(Mode.EBIKE, "go-ebike", R.string.go_mode_ebike),
-    CARGO(Mode.CARGO_BIKE, "go-cargo", R.string.go_mode_cargo),
-    MOTO(Mode.MOTORCYCLE, "go-moto", R.string.go_mode_moto),
-    CAR(Mode.CAR, "go-car", R.string.go_mode_car),
-    CAMPER(Mode.CAMPER, "go-camper", R.string.go_mode_camper),
-    TRUCK(Mode.TRUCK, "go-truck", R.string.go_mode_truck),
-    BOAT(Mode.BOAT, "go-boat", R.string.go_mode_boat);
+enum class GoMode(
+    val mode: Mode,
+    @StringRes val label: Int,
+    /** The Go board's symbol for the mode, and the stroke width that symbol is drawn with (the boards set 1.8 or 2.2). */
+    val board: String,
+    val stroke: Float,
+) {
+    WALK(Mode.WALK, R.string.go_mode_walk, "mode.walk.2", 2.2f),
+    BIKE(Mode.BIKE, R.string.go_mode_bike, "park.bike", 2f),
+    EBIKE(Mode.EBIKE, R.string.go_mode_ebike, "mode.ebike", 2f),
+    CARGO(Mode.CARGO_BIKE, R.string.go_mode_cargo, "mode.cargo-bike", 1.9f),
+    MOTO(Mode.MOTORCYCLE, R.string.go_mode_moto, "mode.moto", 1.9f),
+    CAR(Mode.CAR, R.string.go_mode_car, "mode.car", 1.9f),
+    CAMPER(Mode.CAMPER, R.string.go_mode_camper, "mode.camper", 1.9f),
+    TRUCK(Mode.TRUCK, R.string.go_mode_truck, "mode.truck", 1.9f),
+    BOAT(Mode.BOAT, R.string.go_mode_boat, "mode.boat", 1.9f);
 
     companion object {
         /** The entry for [mode], or the nearest one offered (a hike walks, a road bike bikes, a sailing boat is a boat). */
@@ -46,5 +52,5 @@ enum class GoMode(val mode: Mode, val symbol: String, @StringRes val label: Int)
     }
 }
 
-/** The glyph for any [Mode], for the notification and rows. */
-fun modeSymbol(mode: Mode): String = GoMode.of(mode).symbol
+/** The board symbol for any [Mode], for the notification and rows. */
+fun modeSymbol(mode: Mode): String = GoMode.of(mode).board

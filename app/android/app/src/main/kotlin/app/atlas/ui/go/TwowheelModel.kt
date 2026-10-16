@@ -7,15 +7,15 @@ import app.atlas.model.Place
 
 /** The kinds of two-wheeler parking the Twowheel board counts, each with its board icon and colour. */
 enum class ParkKind(val symbol: String, val colour: Long) {
-    STANDS("go-stand", 0xFF15251C),
-    COVERED("go-covered", 0xFF15251C),
-    LOCKERS("go-locker", 0xFF15251C),
-    GARAGE("go-garage", 0xFF2E6BFF),
-    CARGO("go-cargo", 0xFFE8922A),
-    MOTORBIKE("go-moto", 0xFFC8322A),
-    SCOOTER("go-scooter", 0xFF8E3CF7),
-    CHARGE("ui-bolt", 0xFF1E9E5A),
-    REPAIR("ui-wrench", 0xFF7A4BD6),
+    STANDS("park.bike-stands", 0xFF15251C),
+    COVERED("park.bike-covered", 0xFF15251C),
+    LOCKERS("park.bike-lockers", 0xFF15251C),
+    GARAGE("park.bike-garage", 0xFF2E6BFF),
+    CARGO("mode.cargo-bike", 0xFFE8922A),
+    MOTORBIKE("mode.moto", 0xFFC8322A),
+    SCOOTER("mode.scooter", 0xFF8E3CF7),
+    CHARGE("ui.charge", 0xFF1E9E5A),
+    REPAIR("ui.wrench", 0xFF7A4BD6),
 }
 
 /** One place to leave a two-wheeler: the place, how far, and what it offers by its tags. */

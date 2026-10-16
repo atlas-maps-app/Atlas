@@ -14,6 +14,7 @@ import app.atlas.geo.Geo
 import app.atlas.guide.Simulator
 import app.atlas.model.Mode
 import app.atlas.model.Turn
+import app.atlas.services.Units
 import app.atlas.nav.AtlasRoot
 import app.atlas.nav.BackStackNavigator
 import app.atlas.nav.Dest
@@ -52,7 +53,7 @@ import java.time.ZoneId
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(sdk = [34], qualifiers = "w412dp-h915dp-xhdpi")
+@Config(sdk = [34], qualifiers = "en-rGB-w412dp-h915dp-xhdpi")
 class GoScreenshotTest {
     @get:Rule
     val compose = createComposeRule()
@@ -118,7 +119,7 @@ class GoScreenshotTest {
         open(s, Dest.Go)
         // Both signs timed by the router: Amsterdam Centraal and Haarlem by bike (where the routing segment is on this
         // machine; on CI the gantry shows without times).
-        if (GoFixtures.hasSegment) compose.waitUntil(60_000) { compose.onAllNodes(hasContentDescription("′ ·", substring = true)).fetchSemanticsNodes().size >= 2 }
+        if (GoFixtures.hasSegment) compose.waitUntil(60_000) { compose.onAllNodes(hasContentDescription(" min · ", substring = true)).fetchSemanticsNodes().size >= 2 }
         compose.waitUntil(10_000) { compose.onAllNodes(hasText("°", substring = true)).fetchSemanticsNodes().isNotEmpty() }
         compose.settle()
         for (d in listOf("Where to?", "Search by voice", "Ears only", "Fuel", "Charge", "Park", "Bike fix", "Lockers")) {
@@ -162,12 +163,16 @@ class GoScreenshotTest {
         capture("route_nodata")
     }
 
-    /** Opens guidance for [mode] to [to] in demo mode, then drives it by hand to where [stop] says, and takes the picture. */
+    /**
+     * Opens guidance for [mode] to [to] in demo mode, then drives it by hand to where [stop] says, and takes the picture;
+     * in [units] (the Drive and Sail boards are in feet and miles).
+     */
     private fun guide(
         name: String, mode: Mode, to: app.atlas.geo.LatLon, toName: String, clock: Clock = app.atlas.testing.Fixtures.evening,
-        given: Services? = null, stop: (NavView) -> Boolean,
+        given: Services? = null, units: Units = Units.METRIC, stop: (NavView) -> Boolean,
     ) {
         val s = given ?: servicesFor(clock)
+        if (units != Units.METRIC) runBlocking { s.settings.set(app.atlas.services.SettingsKeys.UNITS, units.name) }
         open(s, Dest.Navigate(to.lat, to.lon, toName, mode.name, demo = true))
         compose.waitUntil(60_000) { s.go.nav.value != null }
         val session = s.go.nav.value!!
@@ -196,14 +201,14 @@ class GoScreenshotTest {
     fun ride() = guide("ride", Mode.BIKE, GoFixtures.CENTRAAL, "Amsterdam Centraal") { v -> beforeATurn(v) }
 
     @Test
-    fun drive() = guide("drive", Mode.CAR, GoFixtures.CENTRAAL, "Amsterdam Centraal") { v ->
+    fun drive() = guide("drive", Mode.CAR, GoFixtures.CENTRAAL, "Amsterdam Centraal", units = Units.IMPERIAL) { v ->
         val st = v.state
         st != null && v.fixes > 8 && st.distanceToManeuver in 60.0..400.0
     }
 
     @Test
     fun truck() {
-        guide("truck", Mode.TRUCK, GoFixtures.HAARLEM, "Haarlem") { v -> v.fixes > 40 && (v.state?.distanceToManeuver ?: 0.0) in 100.0..600.0 }
+        guide("truck", Mode.TRUCK, GoFixtures.HAARLEM, "Haarlem", units = Units.IMPERIAL) { v -> v.fixes > 40 && (v.state?.distanceToManeuver ?: 0.0) in 100.0..600.0 }
         val tacho = services!!.go.nav.value!!.view.value.tacho
         assertNotNull(tacho)
     }
@@ -231,12 +236,12 @@ class GoScreenshotTest {
         val crossings = runBlocking { TileBridges.crossings(route, s.tiles.value!!) }
         val bridges = RouteBridges.find(route, s.placeStores, crossings)
         assertTrue("the tiles draw bridges over the canals: ${crossings.size}", crossings.size > 5)
-        guide("sail", Mode.BOAT, GoFixtures.IJ, "Het IJ", noon, s) { v ->
+        guide("sail", Mode.BOAT, GoFixtures.IJ, "Het IJ", noon, s, units = Units.IMPERIAL) { v ->
             // Shortly before a bridge whose clearance is known, with no other bridge before it.
             val next = RouteBridges.next(bridges, v.travelled)
             next != null && next.first.clearance != null && next.second in 40.0..250.0
         }
-        compose.onNodeWithContentDescription("clearance 2", substring = true).assertExists()
+        assertTrue(compose.onAllNodes(hasContentDescription("clearance ", substring = true)).fetchSemanticsNodes().isNotEmpty())
     }
 
     @Test

@@ -167,7 +167,7 @@ fun NavigateScreen(args: Dest.Navigate, nav: Navigator) {
             Box(Modifier.fillMaxSize().background(NavColours.black), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
                     ProgressRing(0.25f, size = 120.dp, stroke = 8.dp, colour = NavColours.lime, track = NavColours.panel) {
-                        GoSymbol(modeSymbol(mode), tint = NavColours.text, size = 44.dp)
+                        app.atlas.ui.kit.Symbol(modeSymbol(mode), tint = NavColours.text, size = 44.dp)
                     }
                     Text(stringResource(R.string.go_finding_route), color = NavColours.textSoft, textAlign = TextAlign.Center)
                 }

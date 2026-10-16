@@ -1,24 +1,28 @@
 package app.atlas.ui.go
 
 import androidx.compose.foundation.background
+import app.atlas.ui.kit.cssLinear
+import app.atlas.ui.kit.argb
+import app.atlas.ui.kit.Symbol
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.kit.CssCorners
+import app.atlas.ui.kit.Argb
+import androidx.compose.ui.semantics.heading
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -28,43 +32,37 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import app.atlas.R
 import app.atlas.model.Mode
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.rememberHere
-import app.atlas.ui.kit.softShadow
 import app.atlas.ui.kit.walkMinutes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** The Twowheel board's colours (canvas/project/Twowheel.dc.html). */
 private object TwoColours {
-    val bg = Color(0xFFEAF1EC)
-    val ink = Color(0xFF15251C)
-    val count = Color(0xFF6A7E70)
-    val sub = Color(0xFF5A6E60)
-    val free = Color(0xFF12663A)
-    val tipBg = Color(0xFFFFF1D6)
-    val tipText = Color(0xFF6A4A00)
-    val note = Color(0xFF7A8E80)
+    const val BG: Argb = 0xFFEAF1EC
+    const val INK: Argb = 0xFF15251C
+    const val COUNT: Argb = 0xFF6A7E70
+    const val SUB: Argb = 0xFF5A6E60
+    const val FREE: Argb = 0xFF12663A
+    const val TIP_BG: Argb = 0xFFFFF1D6
+    const val TIP_TEXT: Argb = 0xFF6A4A00
+    const val NOTE: Argb = 0xFF7A8E80
 }
 
-private val TwoType = androidx.compose.ui.text.TextStyle(fontFamily = SansFamily)
+private const val GEIST = "Geist, system-ui, sans-serif"
 
 /** The kinds in the board's grid, two rows of four. */
 private val GRID_KINDS = listOf(ParkKind.STANDS, ParkKind.COVERED, ParkKind.LOCKERS, ParkKind.GARAGE, ParkKind.CARGO, ParkKind.MOTORBIKE, ParkKind.SCOOTER, ParkKind.CHARGE)
@@ -73,11 +71,11 @@ private val TWO_WHEELS = listOf(Mode.BIKE, Mode.EBIKE, Mode.CARGO_BIKE, Mode.MOT
 private const val RADIUS_M = 600.0
 
 /**
- * Two wheels, as on the Twowheel board: where to park, lock or charge a bike, an e-bike, a cargo bike or a motorbike
- * around you. The vehicle row; the nearest suitable spot as the board's drawn rack of Sheffield stands with its capacity
- * and whether it is covered; the counts by kind (stands, covered, lockers, guarded garages, cargo, motorbike bays,
- * scooters, chargers); the nearest spots with what they offer, and the nearest repair stand; a tip for locking up. From
- * the offline place store, else the map. Capacities are as mapped: there are no live counts.
+ * Two wheels, as on the Twowheel board, each element where the board has it: where to park, lock or charge a bike, an
+ * e-bike, a cargo bike or a motorbike around you. The vehicle row; the nearest suitable spot as the board's drawn rack
+ * of Sheffield stands with its capacity and whether it is covered; the counts by kind (stands, covered, lockers, guarded
+ * garages, cargo, motorbike bays, scooters, chargers); the nearest spots with what they offer, and the nearest repair
+ * stand; a tip for locking up. From the offline place store, else the map. Capacities are as mapped: no live counts.
  */
 @Composable
 fun TwowheelScreen(args: Dest.Twowheel, nav: Navigator) {
@@ -96,33 +94,47 @@ fun TwowheelScreen(args: Dest.Twowheel, nav: Navigator) {
         }
     }
 
-    Column(
-        Modifier.fillMaxSize().background(TwoColours.bg).windowInsetsPadding(WindowInsets.safeDrawing).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
+    BoardPage(TwoColours.BG, stringResource(R.string.go_twowheel_source), TwoColours.NOTE) {
         BoardHeader(stringResource(R.string.go_twowheel_title), dark = false, onBack = { nav.back() })
-        Spacer(Modifier.height(2.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            for (m in TWO_WHEELS) {
-                val gm = GoMode.of(m)
-                VehicleDisc(gm.symbol, stringResource(gm.label), m == mode) { mode = m }
-            }
-        }
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(12.dp))
+        VehicleRow(TWO_WHEELS, mode, dark = false) { mode = it }
+        Spacer(Modifier.height(16.dp))
         when {
             ui == null -> StateLine(stringResource(R.string.go_looking))
             ui.counts.isEmpty() -> StateLine(stringResource(R.string.go_twowheel_none), stringResource(R.string.go_twowheel_none_text))
             else -> {
-                ui.spots.firstOrNull()?.let { RackCard(it, mode, units) { openSpot(nav, it) } }
+                ui.spots.firstOrNull()?.let {
+                    RackCard(it, mode, units) { openSpot(nav, it) }
+                    Spacer(Modifier.height(10.dp))
+                }
                 KindGrid(ui.counts)
-                for (s in ui.spots.take(4)) SpotRow(s, streets[s.place.key]) { openSpot(nav, s) }
-                ui.repair?.let { r -> SpotRow(r, streets[r.place.key]) { openSpot(nav, r) } }
-                if (ui.spots.isEmpty()) StateLine(stringResource(R.string.go_twowheel_none_for))
+                Spacer(Modifier.height(16.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (s in ui.spots.take(4)) SpotRow(s, streets[s.place.key]) { openSpot(nav, s) }
+                    ui.repair?.let { r -> SpotRow(r, streets[r.place.key]) { openSpot(nav, r) } }
+                    if (ui.spots.isEmpty()) StateLine(stringResource(R.string.go_twowheel_none_for))
+                }
             }
         }
+        Spacer(Modifier.height(16.dp))
         TipCard(stringResource(if (mode == Mode.MOTORCYCLE) R.string.go_tip_moto else R.string.go_tip_bike))
-        Text(stringResource(R.string.go_twowheel_source), style = TwoType.copy(fontSize = 10.sp), color = TwoColours.note, textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
+    }
+}
+
+/**
+ * A page of the parking boards (Twowheel, Truck): [content] in a column 16 px in from the sides, from the board's
+ * 42 px down (below a taller status bar), scrolling when it is long; the [note] centred 14 px above the bottom.
+ */
+@Composable
+internal fun BoardPage(bg: Argb, note: String, noteColour: Argb, content: @Composable ColumnScope.() -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(argb(bg))) {
+        val top = 42.dp + statusShift(42f)
+        val bottom = 14.dp + navShift(901f)
+        Box(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight)) {
+            Column(Modifier.padding(start = 16.dp, end = 16.dp, top = top, bottom = bottom + 26.dp + 24.dp).fillMaxWidth(), content = content)
+            BoardText(note, boardType(GEIST, 10f, lineHeight = 13f, align = TextAlign.Center), noteColour,
+                Modifier.align(Alignment.BottomCenter).padding(start = 16.dp, end = 16.dp, bottom = bottom).fillMaxWidth(), lines = 2)
+        }
     }
 }
 
@@ -132,13 +144,16 @@ private fun openSpot(nav: Navigator, s: ParkSpot) {
 
 @Composable
 private fun StateLine(title: String, text: String? = null) {
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Color.White).padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(title, style = TwoType.copy(fontSize = 15.sp, fontWeight = FontWeight.ExtraBold), color = TwoColours.ink)
-        text?.let { Text(it, style = TwoType.copy(fontSize = 12.sp), color = TwoColours.sub) }
+    Column(Modifier.fillMaxWidth().cssBox(bg = 0xFFFFFFFF, r = CssCorners(20f, 20f, 20f, 20f)).padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        BoardText(title, boardType(GEIST, 15f, 800, lineHeight = 19.5f), TwoColours.INK)
+        text?.let { BoardText(it, boardType(GEIST, 12f, lineHeight = 15.5f), TwoColours.SUB, lines = 3) }
     }
 }
 
-/** The nearest spot as the board's rack card: where and whether covered, its capacity, and the rack of Sheffield stands. */
+/**
+ * The nearest spot as the board's rack card (170 px, pale green): where and whether covered, its capacity, and the
+ * rack of Sheffield stands.
+ */
 @Composable
 private fun RackCard(s: ParkSpot, mode: Mode, units: app.atlas.services.Units, onClick: () -> Unit) {
     val where = if (s.metres < 60) stringResource(R.string.go_right_here) else GoFormat.distance(s.metres, units).toString()
@@ -148,18 +163,18 @@ private fun RackCard(s: ParkSpot, mode: Mode, units: app.atlas.services.Units, o
         Modifier
             .fillMaxWidth()
             .height(170.dp)
-            .clip(RoundedCornerShape(26.dp))
-            .background(Brush.verticalGradient(listOf(Color(0xFFF7FAF8), Color(0xFFDDE8E1))))
+            .cssBox(grad = listOf(cssLinear(180f, 0f to 0xFFF7FAF8, 1f to 0xFFDDE8E1)), r = CssCorners(26f, 26f, 26f, 26f))
             .button(listOfNotNull(title, cap).joinToString(", "), onClick)
             .padding(start = 16.dp, end = 16.dp, top = 12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(title, style = TwoType.copy(fontSize = 15.sp, fontWeight = FontWeight.ExtraBold), color = TwoColours.ink, modifier = Modifier.weight(1f))
-            cap?.let { Text(it, style = TwoType.copy(fontSize = 13.sp, fontWeight = FontWeight.Black), color = TwoColours.free) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BoardText(title, boardType(GEIST, 15f, 800, lineHeight = 19.5f), TwoColours.INK, Modifier.weight(1f).alignByBaseline())
+            cap?.let { BoardText(it, boardType(GEIST, 13f, 900, lineHeight = 17f, tnum = true), TwoColours.FREE, Modifier.alignByBaseline()) }
         }
         // The board's rack, without its "free" highlights: the capacity is as mapped, not live.
-        ArtBox(if (mode == Mode.MOTORCYCLE) MOTO_RACK else FREE_RACK, Modifier.fillMaxWidth().height(130.dp))
+        // An SVG clips its drawing to its box: the last bike is cut at the rack's end, as on the board.
+        ArtBox(if (mode == Mode.MOTORCYCLE) MOTO_RACK else FREE_RACK, Modifier.fillMaxWidth().height(130.dp).clipToBounds())
     }
 }
 
@@ -174,7 +189,7 @@ private val MOTO_RACK: Art by lazy {
     } + r.parts.last())
 }
 
-/** The counts by kind, the board's grid of eight white tiles. */
+/** The counts by kind: the board's grid of eight white tiles (76 px, 8 apart), the symbol over the name and count. */
 @Composable
 private fun KindGrid(counts: Map<ParkKind, Int>) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -187,16 +202,16 @@ private fun KindGrid(counts: Map<ParkKind, Int>) {
                         Modifier
                             .weight(1f)
                             .height(76.dp)
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(Color.White)
+                            .cssBox(bg = 0xFFFFFFFF, r = CssCorners(18f, 18f, 18f, 18f))
                             .semantics(mergeDescendants = true) { contentDescription = "$label $n" },
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
                     ) {
-                        GoSymbol(k.symbol, tint = Color(k.colour).copy(alpha = if (n == 0) 0.35f else 1f), size = 24.dp, weight = 2f / 1.8f)
+                        Symbol(k.symbol, Modifier.size(24.dp), tint = Color(k.colour).copy(alpha = if (n == 0) 0.35f else 1f), size = 24.dp, weight = strokeTo(k.symbol, 2f))
                         Row {
-                            Text(label, style = TwoType.copy(fontSize = 12.sp, fontWeight = FontWeight.ExtraBold), color = TwoColours.ink.copy(alpha = if (n == 0) 0.45f else 1f), maxLines = 1)
-                            Text(" $n", style = TwoType.copy(fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, fontFeatureSettings = "tnum"), color = TwoColours.count)
+                            val type = boardType("Geist, sans-serif", 12f, 800, lineHeight = 15.5f, tnum = true)
+                            BoardText(label, type, if (n == 0) 0x7315251C else TwoColours.INK)
+                            BoardText(" $n", type, TwoColours.COUNT)
                         }
                     }
                 }
@@ -232,7 +247,10 @@ internal fun kindTitle(k: ParkKind): Int = when (k) {
     ParkKind.REPAIR -> R.string.go_title_repair
 }
 
-/** One spot as the board's white row: its kind's coloured tile, its name (or kind), what it offers, and the walk. */
+/**
+ * One spot as the board's white row (72 px, 20 px corners): its kind's coloured 46 px tile, its name (or kind), what it
+ * offers, and the walk.
+ */
 @Composable
 private fun SpotRow(s: ParkSpot, street: String?, onClick: () -> Unit) {
     val main = PRIORITY.firstOrNull { it in s.kinds } ?: s.kinds.first()
@@ -254,65 +272,96 @@ private fun SpotRow(s: ParkSpot, street: String?, onClick: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .height(72.dp)
-            .clip(RoundedCornerShape(20.dp))
-            .background(Color.White)
+            .cssBox(bg = 0xFFFFFFFF, r = CssCorners(20f, 20f, 20f, 20f))
             .button("$name, $facts, $walk", onClick)
             .padding(horizontal = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(46.dp).clip(RoundedCornerShape(14.dp)).background(Color(main.colour)), contentAlignment = Alignment.Center) {
-            GoSymbol(main.symbol, tint = Color.White, size = 24.dp, weight = 2f / 1.8f)
+        Box(Modifier.size(46.dp).cssBox(bg = main.colour, r = CssCorners(14f, 14f, 14f, 14f)), contentAlignment = Alignment.Center) {
+            Symbol(main.symbol, Modifier.size(24.dp), tint = Color.White, size = 24.dp, weight = strokeTo(main.symbol, 2f))
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(name, style = TwoType.copy(fontSize = 15.sp, fontWeight = FontWeight.ExtraBold), color = TwoColours.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (facts.isNotEmpty()) Text(facts, style = TwoType.copy(fontSize = 12.sp, fontFeatureSettings = "tnum"), color = TwoColours.sub, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BoardText(name, boardType(GEIST, 15f, 800, lineHeight = 19.5f), TwoColours.INK)
+            if (facts.isNotEmpty()) BoardText(facts, boardType(GEIST, 12f, lineHeight = 15.5f, tnum = true), TwoColours.SUB)
         }
-        Text(walk, style = TwoType.copy(fontSize = 16.sp, fontWeight = FontWeight.Black, fontFeatureSettings = "tnum"), color = TwoColours.ink)
+        BoardText(walk, boardType(GEIST, 16f, 900, lineHeight = 20.5f, tnum = true), TwoColours.INK)
     }
 }
 
-/** The board's amber tip: a padlock and the sentence. */
+/** The board's amber tip (56 px): the padlock and the sentence. */
 @Composable
 internal fun TipCard(text: String) {
     Row(
-        Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(18.dp)).background(TwoColours.tipBg).padding(horizontal = 14.dp),
+        Modifier.fillMaxWidth().height(56.dp).cssBox(bg = TwoColours.TIP_BG, r = CssCorners(18f, 18f, 18f, 18f)).padding(horizontal = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ArtIcon(BoardArt.lock, size = 26.dp)
-        Text(text, style = TwoType.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold), color = TwoColours.tipText, maxLines = 2)
+        Symbol("fact.lock", Modifier.size(26.dp), tint = Color(0xFF8A5A00), size = 26.dp, weight = strokeTo("fact.lock", 2.2f))
+        BoardText(text, boardType(GEIST, 13f, 700, lineHeight = 17f), TwoColours.TIP_TEXT, lines = 2)
+    }
+}
+
+/** The boards' header (Truck, Twowheel): the 44 px round back button and the title in italic Instrument Serif, 32 px. */
+@Composable
+internal fun BoardHeader(title: String, dark: Boolean, onBack: () -> Unit) {
+    val ink: Argb = if (dark) 0xFFEDEFF3 else 0xFF15251C
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Box(
+            Modifier.size(44.dp).cssBox(bg = if (dark) 0x1AFFFFFF else 0xFFFFFFFF, r = CssCorners(22f, 22f, 22f, 22f)).button(stringResource(R.string.kit_back), onBack),
+            contentAlignment = Alignment.Center,
+        ) { Symbol("ui.back", Modifier.size(20.dp), tint = argb(ink), size = 20.dp) }
+        BoardText(title, boardType("Instrument Serif, serif", 32f, italic = true, lineHeight = 32f), ink, Modifier.weight(1f).semantics { heading() })
+    }
+}
+
+/** The board symbol of a vehicle in the parking boards' row. */
+internal fun vehicleSymbol(m: Mode): String = when (m) {
+    Mode.CAR -> "mode.car"
+    Mode.MOTORCYCLE, Mode.MOPED -> "mode.moto"
+    Mode.BIKE -> "park.bike"
+    Mode.EBIKE -> "mode.ebike"
+    Mode.CARGO_BIKE -> "mode.cargo-bike"
+    Mode.CAMPER -> "mode.camper"
+    Mode.TRUCK -> "mode.truck"
+    Mode.BOAT, Mode.SAIL -> "mode.boat"
+    else -> GoMode.of(m).board
+}
+
+/** The parking boards' row of vehicle discs (38 px, 4.75 px apart as the board's nine), [selected] lit. */
+@Composable
+internal fun VehicleRow(modes: List<Mode>, selected: Mode, dark: Boolean, label: @Composable (Mode) -> String = { stringResource(GoMode.of(it).label) }, onPick: (Mode) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.75.dp)) {
+        for (m in modes) VehicleDisc(vehicleSymbol(m), label(m), m == selected, dark) { onPick(m) }
     }
 }
 
 /**
- * A round vehicle button of the Truck and Twowheel boards' top row: 38 dp, white glass with the chosen one ink on the
- * light board, or smoke with the chosen one white on the dark one.
+ * A round vehicle button of the Truck and Twowheel boards' top row: 38 px with a soft shadow; on the light board white
+ * at 94 % with the chosen one ink, on the dark one smoke with the chosen one white.
  */
 @Composable
 internal fun VehicleDisc(symbol: String, label: String, selected: Boolean, dark: Boolean = false, onClick: () -> Unit) {
-    val bg = when {
-        dark && selected -> Color.White
-        dark -> Color.White.copy(alpha = 0.12f)
-        selected -> Color(0xFF14161B)
-        else -> Color.White.copy(alpha = 0.94f)
+    val bg: Argb = when {
+        dark && selected -> 0xFFFFFFFF
+        dark -> 0x1FFFFFFF
+        selected -> 0xFF14161B
+        else -> 0xF0FFFFFF
     }
-    val fg = when {
-        dark && selected -> Color(0xFF14161B)
-        dark -> Color(0xFFF2F2F2)
-        selected -> Color.White
-        else -> Color(0xFF14161B)
+    val fg: Argb = when {
+        dark && selected -> 0xFF14161B
+        dark -> 0xFFF2F2F2
+        selected -> 0xFFFFFFFF
+        else -> 0xFF14161B
     }
     Box(
         Modifier
             .size(38.dp)
-            .softShadow(CircleShape, Color(0x2414161B), 6.dp)
-            .clip(CircleShape)
-            .background(bg)
+            .cssBox(bg = bg, r = CssCorners(19f, 19f, 19f, 19f), shadows = listOf(CssShadow(0f, 3f, 10f, 0f, 0x2414161B)))
             .button(label, onClick)
             .semantics { this.selected = selected },
         contentAlignment = Alignment.Center,
     ) {
-        GoSymbol(symbol, tint = fg, size = 21.dp, weight = 1.9f / 1.8f)
+        Symbol(symbol, Modifier.size(21.dp), tint = argb(fg), size = 21.dp, weight = strokeTo(symbol, 1.9f))
     }
 }

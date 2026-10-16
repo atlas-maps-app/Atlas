@@ -81,6 +81,11 @@
     <string name="go_twowheel_title">Twee wielen</string>
     <string name="go_shady_way">Schaduwrijk</string>
     <string name="go_step_free">Zonder trappen</string>
+    <string name="go_step_free_on">Zonder trappen aan</string>
+    <string name="go_sign_home">Thuis</string>
+    <string name="go_sign_work">Werk</string>
+    <string name="go_sign_min">%1$d min</string>
+    <string name="go_ears_headphones">Koptelefoon</string>
     <string name="go_ears_short">Oren</string>
     <string name="go_keep_moving">Blijf rijden</string>
     <string name="go_recent">Waar je was</string>

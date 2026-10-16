@@ -1,197 +1,236 @@
 package app.atlas.ui.go
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import app.atlas.ui.kit.SansFamily
-import app.atlas.ui.kit.softShadow
-import kotlin.math.cos
-import kotlin.math.sin
+import app.atlas.ui.kit.Argb
+import app.atlas.ui.kit.CssCorners
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.kit.Symbol
+import app.atlas.ui.kit.Sy
+import app.atlas.ui.kit.Tx
+import app.atlas.ui.kit.argb
+import app.atlas.ui.kit.cssLinear
 
 /** The Go board's colours (canvas/project/Go.dc.html): its night sky, the sign green, the service blue. */
-object SignColours {
-    val green = Color(0xFF0E6B3F)
-    val rule = Color(0xFFF4F7F2)
-    val blueTop = Color(0xFF2461B0)
-    val blueBottom = Color(0xFF1A4C8F)
-    val blueEdge = Color(0xFF1D4F91)
-    val skyTop = Color(0xFF16202D)
-    val skyMid = Color(0xFF22303F)
-    val skyLow = Color(0xFF2B3949)
-    val sub = Color(0xFFB9C3D0)
-    val paper = Color(0xFFF3F1EC)
-    val ink = Color(0xFF14161B)
-    val soft = Color(0xFF4A505E)
-    val blue = Color(0xFF2E5BFF)
+internal object GoBoardColours {
+    const val PAPER: Argb = 0xFFF3F1EC
+    const val INK: Argb = 0xFF14161B
+    const val SOFT: Argb = 0xFF4A505E
+    const val SUB: Argb = 0xFFB9C3D0
+    const val GREEN: Argb = 0xFF0E6B3F
+    const val RULE: Argb = 0xFFF4F7F2
+    const val BLUE: Argb = 0xFF2E5BFF
+    const val READY: Argb = 0xFF7FE0A8
+    const val AMBER: Argb = 0xFFFFB547
+    const val FOOT: Argb = 0xFF5A5F6C
 }
 
-/** The Go board's type: Overpass in the boards, the app's sans here, with tabular figures. */
-internal val SignType = TextStyle(fontFamily = SansFamily)
+private const val OVERPASS = "Overpass, sans-serif"
+private const val GEIST = "Geist, system-ui, sans-serif"
 
-/** The motorway gantry's truss across the width, as the Go board draws it: chords, the zigzag, hangers and bolts. */
-@Composable
-fun GantryTruss(modifier: Modifier = Modifier) {
-    ArtBox(BoardArt.gantry, modifier.fillMaxWidth().height(44.dp), fill = true)
-}
+/** The night sky's gradient, as the board's top 420 px. */
+internal val GoSky = cssLinear(180f, 0f to 0xFF16202D, 0.55f to 0xFF22303F, 1f to 0xFF2B3949)
+
+/** The board's grid of five: a cell's left edge (cells of 77.6 px from 12 px in). */
+internal fun gridX(i: Int): Float = 12f + i * 77.595f
 
 /**
- * A green guide sign of the Go board with its tab plate: [plate] on the tab ("HOME", "LEAVE 7:30"), [name] in large
- * letters on two lines, the sign's arrow turned to [arrowDeg] (0 up), and [footer] below (the mode, time, distance).
+ * A green guide sign of the gantry at [x0] (its tab plate at 184 px, the sign at 204 px): [plate] on the tab, [name]
+ * in large letters on up to two lines, the arrow turned to [arrowDeg] (0 up; none when null), and the [footer] row.
  */
 @Composable
-fun GuideSignBoard(
-    plate: String,
-    name: String,
-    arrowDeg: Float?,
-    modifier: Modifier = Modifier,
-    description: String = "$plate, $name",
-    footer: @Composable () -> Unit,
+internal fun GuideSignAt(
+    x0: Float, plate: String, name: String, arrowDeg: Float?, description: String, onClick: () -> Unit,
+    kind: String? = null, footer: @Composable () -> Unit,
 ) {
-    Box(modifier.height(136.dp).semantics(mergeDescendants = true) { contentDescription = description }) {
-        // The body: green, a white rule 4 dp in from the edge, the sheen across its left third, a deep shadow.
-        Box(
-            Modifier
-                .padding(top = 20.dp)
-                .fillMaxSize()
-                .softShadow(RoundedCornerShape(10.dp), Color(0x66000000), 14.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(SignColours.green)
-                .drawBehind {
-                    // The CSS sheen: a 118° gradient, white at 13 % for its first 34 %, then nothing, with a hard edge.
-                    val end = cssGradientEnd(118f, size.width, size.height)
-                    val start = Offset(size.width - end.x, size.height - end.y)
-                    val sheen = Color.White.copy(alpha = 0.13f)
-                    drawRect(Brush.linearGradient(0f to sheen, 0.34f to sheen, 0.34f to Color.Transparent, 1f to Color.Transparent, start = start, end = end))
-                    val i = 4.dp.toPx() + 1.dp.toPx()
-                    drawRoundRect(SignColours.rule, Offset(i, i), Size(size.width - 2 * i, size.height - 2 * i), CornerRadius(6.dp.toPx()), style = Stroke(2.dp.toPx()))
-                }
-                .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 12.dp),
-        ) {
-            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
-                Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FitText(name, SignType.copy(fontSize = 21.sp, fontWeight = FontWeight.ExtraBold), Modifier.weight(1f), color = Color.White, minSize = 13.sp)
-                    if (arrowDeg != null) ArtIcon(BoardArt.signArrow, Modifier.rotate(arrowDeg), size = 34.dp)
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) { footer() }
-            }
-        }
-        // The tab plate, sitting on the sign's top edge with its own white rule on three sides.
-        Box(
-            Modifier
-                .offset(x = 14.dp)
-                .height(22.dp)
-                .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
-                .background(SignColours.green)
-                .drawBehind {
-                    val w = 2.dp.toPx()
-                    drawRect(SignColours.rule, Offset(w, w), Size(size.width - 2 * w, w))
-                    drawRect(SignColours.rule, Offset(w, w), Size(w, size.height - w))
-                    drawRect(SignColours.rule, Offset(size.width - 2 * w, w), Size(w, size.height - w))
-                }
-                .padding(horizontal = 10.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(plate, style = SignType.copy(fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.9.sp), color = Color.White, maxLines = 1)
-        }
+    Box(Modifier.offset(x0.dp, 184.dp).requiredSize(184.dp, 136.dp).semantics(mergeDescendants = true) { contentDescription = description }.button(null, onClick))
+    // The tab plate: green with a white rule on three sides, its foot under the sign's edge.
+    Row(
+        Modifier
+            .offset((x0 + 14f).dp, 184.dp)
+            .height(22.dp)
+            .cssBox(
+                bg = GoBoardColours.GREEN, r = CssCorners(6f, 6f, 0f, 0f),
+                shadows = listOf(
+                    CssShadow(0f, 0f, 0f, 2f, GoBoardColours.GREEN, inset = true), CssShadow(0f, 2f, 0f, 2f, GoBoardColours.RULE, inset = true),
+                    CssShadow(2f, 0f, 0f, 2f, GoBoardColours.RULE, inset = true), CssShadow(-2f, 0f, 0f, 2f, GoBoardColours.RULE, inset = true),
+                ),
+            )
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BoardText(plate, boardType(OVERPASS, 11f, 800, lineHeight = 13.5f, spacing = 0.88f), 0xFFFFFFFF)
+    }
+    Bx(
+        x0, 204f, 184f, 116f, bg = GoBoardColours.GREEN,
+        grad = listOf(cssLinear(118f, 0f to 0x21FFFFFF, 0.34f to 0x21FFFFFF, 0.34f to 0x00FFFFFF, 1f to 0x00FFFFFF)),
+        r = CssCorners(10f, 10f, 10f, 10f),
+        shadows = listOf(CssShadow(0f, 0f, 0f, 4f, GoBoardColours.GREEN, inset = true), CssShadow(0f, 0f, 0f, 6f, GoBoardColours.RULE, inset = true), CssShadow(0f, 12f, 26f, 0f, 0x66000000)),
+    )
+    SignName(name, kind, x0 + 16f, if (arrowDeg != null) 112f else 152f)
+    if (arrowDeg != null) Sy("nav.straight.2", x0 + 134f, 218f, 34f, 34f, tint = 0xFFFFFFFF, rotate = arrowDeg)
+    Row(
+        Modifier.offset((x0 + 16f).dp, 289.5.dp).height(18.5.dp).widthIn(max = 152.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) { footer() }
+}
+
+/** The sign's footer: the mode's symbol (stroked 2.2), the time in bold and what follows it at 80 %. */
+@Composable
+internal fun SignFooter(mode: GoMode, time: String?, extra: String?) {
+    Symbol(mode.board, Modifier.size(18.dp), tint = argb(0xFFFFFFFF), size = 18.dp, weight = 2.2f / mode.stroke)
+    if (time != null) BoardText(time, boardType(OVERPASS, 15f, 700, lineHeight = 18.5f, tnum = true), 0xFFFFFFFF)
+    if (extra != null) BoardText(extra, boardType(OVERPASS, 15f, if (time != null) 600 else 700, lineHeight = 18.5f, tnum = true), 0xFFFFFFFF, Modifier.alpha(if (time != null) 0.8f else 1f))
+}
+
+/** A glass chip of the night sky's row: 34 px, white at 13 % with a hairline ring; [on] lights it. */
+@Composable
+internal fun NightChip(text: String, on: Boolean = false, onClick: () -> Unit, lead: @Composable () -> Unit) {
+    Row(
+        Modifier
+            .height(34.dp)
+            .cssBox(bg = if (on) 0x47FFFFFF else 0x21FFFFFF, r = CssCorners(17f, 17f, 17f, 17f), shadows = listOf(CssShadow(0f, 0f, 0f, 1f, 0x24FFFFFF, inset = true)))
+            .semantics { selected = on }
+            .button(text, onClick)
+            .padding(start = 10.dp, end = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        lead()
+        BoardText(text, boardType(GEIST, 13f, 600, lineHeight = 17f, tnum = true), 0xFFFFFFFF)
+    }
+}
+
+/** The step-free chip of the sheet: white, or blue with "Step-free on" when on. */
+@Composable
+internal fun StepFreeChip(label: String, on: Boolean, onClick: () -> Unit) {
+    val fg = if (on) 0xFFFFFFFF else GoBoardColours.INK
+    Row(
+        Modifier
+            .height(30.dp)
+            .cssBox(bg = if (on) GoBoardColours.BLUE else 0xFFFFFFFF, r = CssCorners(15f, 15f, 15f, 15f), shadows = listOf(CssShadow(0f, 0f, 0f, 1f, 0x1A14161B)))
+            .semantics { selected = on }
+            .button(label, onClick)
+            .padding(start = 8.dp, end = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Symbol("fact.step-free", Modifier.size(16.dp), tint = argb(fg), size = 16.dp)
+        BoardText(label, boardType("Geist, sans-serif", 12f, 700, lineHeight = 15.5f), fg)
     }
 }
 
 /**
- * A blue road-service sign of "Keep it moving": the board's blue square with its white rule 3 dp in, the service's
- * [art] in white (or the "P" of parking when [art] is null), and its [label] and [value] under it.
+ * A mode's round button of "How are you going?" in the board's grid of five ([col], [row]): the 48 px disc, blue with
+ * the symbol white when chosen, white otherwise; the symbol stroked 1.8 as the board draws it; the label under it.
  */
 @Composable
-internal fun ServiceSign(art: Art?, label: String, value: String?, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
-    Column(
-        modifier.then(if (onClick != null) Modifier.button("$label${value?.let { ", $it" } ?: ""}", onClick) else Modifier),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        Box(
-            Modifier
-                .size(56.dp)
-                .softShadow(RoundedCornerShape(8.dp), Color(0x4D1D4F91), 8.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .drawBehind {
-                    drawRect(Brush.linearGradient(listOf(SignColours.blueTop, SignColours.blueBottom), start = Offset.Zero, end = cssGradientEnd(160f, size.width, size.height)))
-                }
-                .border(3.dp, SignColours.blueEdge, RoundedCornerShape(8.dp))
-                .padding(3.dp)
-                .border(2.dp, SignColours.rule, RoundedCornerShape(5.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (art != null) ArtIcon(art, size = 30.dp, tint = Color.White)
-            else Text("P", style = SignType.copy(fontSize = 34.sp, lineHeight = 34.sp, fontWeight = FontWeight.Black), color = Color.White, modifier = Modifier.padding(top = 3.dp))
-        }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(label, style = SignType.copy(fontSize = 12.sp, lineHeight = 14.sp, fontWeight = FontWeight.Bold), color = SignColours.ink, maxLines = 1)
-            Text(value ?: "–", style = SignType.copy(fontSize = 11.sp, lineHeight = 13.sp), color = SignColours.soft, maxLines = 1)
-        }
-    }
+internal fun ModeCell(col: Int, row: Int, symbol: String, stroke: Float, label: String, selected: Boolean, onClick: () -> Unit) {
+    val x = gridX(col) + 14.8f
+    val y = if (row == 0) 442f else 521.5f
+    Box(Modifier.offset(gridX(col).dp, y.dp).requiredSize(77.6.dp, 67.5.dp).semantics { this.selected = selected }.button(label, onClick))
+    Bx(
+        x, y, 48f, 48f, bg = if (selected) GoBoardColours.BLUE else 0xFFFFFFFF, r = CssCorners(24f, 24f, 24f, 24f),
+        shadows = if (selected) listOf(CssShadow(0f, 6f, 14f, 0f, 0x662E5BFF)) else listOf(CssShadow(0f, 2f, 6f, 0f, 0x1A181C30), CssShadow(0f, 0f, 0f, 1f, 0x0F14161B)),
+    )
+    Sw(symbol, x + 12.5f, y + 12.5f, 23f, 23f, tint = if (selected) 0xFFFFFFFF else GoBoardColours.INK, weight = 1.8f / stroke)
+    Tl(label, gridX(col), y + 52f, 77.6f, 15.5f, GEIST, 12f, weight = if (selected) 800 else 600, lineHeight = 15.5f, align = TextAlign.Center)
 }
 
-/** A mode's round button of "How are you going?": the board's 48 dp disc, blue with white when chosen. */
+/**
+ * A blue road-service sign of "Keep it moving" in grid column [col]: the 56 px blue square with its white rule, the
+ * service's [symbol] in white (or the "P" of parking when null), and its [label] and [value] under it.
+ */
 @Composable
-fun ModeButton(symbol: String, label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Column(
-        modifier.button(label, onClick).semantics { this.selected = selected },
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Box(
-            Modifier
-                .size(48.dp)
-                .softShadow(CircleShape, if (selected) Color(0x662E5BFF) else Color(0x1A14161B), if (selected) 10.dp else 6.dp)
-                .clip(CircleShape)
-                .background(if (selected) SignColours.blue else Color.White),
-            contentAlignment = Alignment.Center,
-        ) {
-            GoSymbol(symbol, tint = if (selected) Color.White else SignColours.ink, size = 23.dp)
-        }
-        Text(label, style = SignType.copy(fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal), color = SignColours.ink, maxLines = 1)
+internal fun ServiceSignAt(col: Int, symbol: String?, label: String, value: String, onClick: () -> Unit) {
+    val x = gridX(col) + 10.8f
+    Box(Modifier.offset(gridX(col).dp, 624.dp).requiredSize(77.6.dp, 90.dp).button("$label, $value", onClick))
+    Bx(
+        x, 624f, 56f, 56f, grad = listOf(cssLinear(160f, 0f to 0xFF2461B0, 1f to 0xFF1A4C8F)), r = CssCorners(8f, 8f, 8f, 8f),
+        shadows = listOf(CssShadow(0f, 0f, 0f, 3f, 0xFF1D4F91, inset = true), CssShadow(0f, 0f, 0f, 5f, GoBoardColours.RULE, inset = true), CssShadow(0f, 4f, 10f, 0f, 0x4C1D4F91)),
+    )
+    if (symbol != null) Sy(symbol, x + 13f, 637f, 30f, 30f, tint = 0xFFFFFFFF)
+    else Tx("P", x + 17.05f, 632f, 21.9f, 43f, OVERPASS, 34f, weight = 900, colour = 0xFFFFFFFF, lineHeight = 34f)
+    Tl(label, gridX(col), 684f, 77.6f, 15.5f, GEIST, 12f, weight = 700, lineHeight = 14.4f, align = TextAlign.Center)
+    Tl(value, gridX(col), 698.9f, 77.6f, 14f, GEIST, 11f, colour = GoBoardColours.SOFT, lineHeight = 13.2f, align = TextAlign.Center, tnum = true)
+}
+
+/** A white card of the board's bottom row at [x]: a 28 px [badge], the [title] and the [sub] line under it. */
+@Composable
+internal fun GoCardAt(x: Float, title: String, sub: String, description: String, onClick: () -> Unit, badge: @Composable () -> Unit) {
+    Bx(x, 724f, 186f, 52f, bg = 0xFFFFFFFF, r = CssCorners(16f, 16f, 16f, 16f), shadows = listOf(CssShadow(0f, 2f, 8f, 0f, 0x14181C30)), modifier = Modifier.button(description, onClick))
+    Box(Modifier.offset((x + 12f).dp, 736.dp).requiredSize(28.dp), contentAlignment = Alignment.Center) { badge() }
+    Tl(title, x + 50f, 733.88f, 124f, 17f, GEIST, 13f, weight = 700, lineHeight = 16.25f)
+    Tl(sub, x + 50f, 750.13f, 124f, 15.5f, GEIST, 12f, colour = GoBoardColours.SOFT, lineHeight = 15f, tnum = true)
+}
+
+/** A round badge of a card: [colour] with [letter] in white, as the board's line badge. */
+@Composable
+internal fun LetterBadge(letter: String, colour: Argb) {
+    Box(Modifier.requiredSize(28.dp).cssBox(bg = colour, r = CssCorners(14f, 14f, 14f, 14f)), contentAlignment = Alignment.Center) {
+        BoardText(letter, boardType(GEIST, 15f, 800, lineHeight = 19.5f), 0xFFFFFFFF)
     }
 }
 
-/** The Go tab's dark top, as on the board: night navy into slate. */
-internal val GoHeaderColours = Brush.verticalGradient(0f to SignColours.skyTop, 0.55f to SignColours.skyMid, 1f to SignColours.skyLow)
+/** A label above content, for the sheet's two headings ("How are you going?", "Keep it moving"). */
+@Composable
+internal fun SheetHeading(text: String, y: Float) {
+    Tl(text, 16f, y, 270f, 21.5f, OVERPASS, 17f, weight = 800, lineHeight = 21.5f, modifier = Modifier.semantics { heading() })
+}
 
-/** Where a CSS `linear-gradient([deg]deg, …)` ends in a box of [w] × [h] (it starts opposite), as CSS lays it out. */
-internal fun cssGradientEnd(deg: Float, w: Float, h: Float): Offset {
-    val a = Math.toRadians(deg.toDouble())
-    val sx = sin(a)
-    val cy = cos(a)
-    // CSS: the gradient line's half length makes the corners reach 0 and 1.
-    val half = (kotlin.math.abs(w * sx) + kotlin.math.abs(h * cy)) / 2
-    return Offset((w / 2 + sx * half).toFloat(), (h / 2 - cy * half).toFloat())
+
+/**
+ * The sign's name beside the arrow: two lines of 21 px Overpass at a line height of 1.05, as the board letters it, the
+ * [kind] ("Home") over the name when the name fits one line; a name whose longest word or whole will not fit is
+ * lettered smaller (down to 15 px), as a sign maker would.
+ */
+@Composable
+private fun SignName(name: String, kind: String?, x: Float, w: Float) {
+    val measurer = rememberTextMeasurer(cacheSize = 16)
+    val density = LocalDensity.current
+    val (lines, size) = remember(name, kind, w, density) {
+        val max = with(density) { w.dp.roundToPx() }
+        fun style(s: Float) = boardType(OVERPASS, s, 800, lineHeight = s * 1.05f)
+        fun width(t: String, s: Float) = measurer.measure(dotted(t, OVERPASS), style(s), maxLines = 1, softWrap = false).size.width
+        if (kind != null && width(name, 21f) <= max) return@remember listOf(kind, name) to 21f
+        val words = name.split(' ').filter { it.isNotEmpty() }
+        fun measure(s: Float) = measurer.measure(dotted(name, OVERPASS), style(s), constraints = Constraints(maxWidth = max))
+        var s = 21f
+        var whole = measure(s)
+        while (s > 15f && !(words.all { width(it, s) <= max } && whole.lineCount <= 2)) {
+            s -= 1f
+            whole = measure(s)
+        }
+        // A third line's words join the second, which then ends in an ellipsis.
+        val first = name.substring(whole.getLineStart(0), whole.getLineEnd(0, visibleEnd = true)).trim()
+        val second = if (whole.lineCount > 1) name.substring(whole.getLineStart(1)).trim() else null
+        listOfNotNull(first, second) to s
+    }
+    // Each line in its own line box, 1.05 of the size apart, as the board's two spans.
+    val box = size * 26.5f / 21f
+    for ((i, line) in lines.withIndex()) {
+        Tl(line, x, 215.5f + i * size * 1.05f, w, box, OVERPASS, size, weight = 800, colour = 0xFFFFFFFF, lineHeight = size * 1.05f)
+    }
 }

@@ -83,6 +83,11 @@
     <string name="go_twowheel_title">Two wheels</string>
     <string name="go_shady_way">Shady way</string>
     <string name="go_step_free">Step-free</string>
+    <string name="go_step_free_on">Step-free on</string>
+    <string name="go_sign_home">Home</string>
+    <string name="go_sign_work">Work</string>
+    <string name="go_sign_min">%1$d min</string>
+    <string name="go_ears_headphones">Headphones</string>
     <string name="go_ears_short">Ears</string>
     <string name="go_keep_moving">Keep it moving</string>
     <string name="go_recent">Where you went</string>
