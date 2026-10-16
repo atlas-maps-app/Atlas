@@ -36,7 +36,8 @@ import javax.imageio.ImageIO
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class BoardSymbolSheetTest {
-    private val all = BoardSymbols.all()
+    // the catalogue only: a local board_art.json adds the boards' drawings (art.*), which are not icons
+    private val all = BoardSymbols.all().filterNot { it.id.startsWith("art.") }
     private val byN = all.associateBy { it.n }
 
     /** The colour a symbol is drawn in on the sheets: its board hue, else the catalogue's ink for currentColor. */
