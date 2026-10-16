@@ -28,15 +28,24 @@ import app.atlas.ui.search.BrandsAround
 import app.atlas.ui.search.QuestFinder
 import app.atlas.ui.search.TileAddress
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.doubleOrNull
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.nio.file.Files
 import java.time.LocalDateTime
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.max
 
 /**
  * Records today's tile-stack answers as the goldens ([Goldens.file]) when the file is missing (delete it to record
@@ -56,7 +65,32 @@ class GoldenRecorderTest {
         }
         val recorded = Goldens.read(file)
         val again = TodaysAnswers.record(recorded.routes.map { r -> RecordedRoute(r.name, r.mode, r.points, r.steps.map { it.at to it.bearing }) })
-        assertEquals(recorded.toJson(), again.toJson())
+        assertJsonClose(Json.parseToJsonElement(recorded.toJson()), Json.parseToJsonElement(again.toJson()), "goldens")
+    }
+
+    /**
+     * [a] and [b] are the same JSON, numbers equal to one part in 10^9: the JVM's sin, cos and atan2 differ in the last
+     * bits between Linux (CI) and macOS, which moved a bridge's distance along a route by 8e-11 m.
+     */
+    private fun assertJsonClose(a: JsonElement, b: JsonElement, at: String) {
+        when (a) {
+            is JsonObject -> {
+                assertTrue("$at: an object, not $b", b is JsonObject)
+                assertEquals("$at: keys", a.keys.toList(), (b as JsonObject).keys.toList())
+                for ((k, v) in a) assertJsonClose(v, b.getValue(k), "$at.$k")
+            }
+            is JsonArray -> {
+                assertTrue("$at: an array, not $b", b is JsonArray)
+                assertEquals("$at: length", a.size, (b as JsonArray).size)
+                a.forEachIndexed { i, v -> assertJsonClose(v, b[i], "$at[$i]") }
+            }
+            is JsonPrimitive -> {
+                val x = a.takeUnless { it.isString }?.doubleOrNull
+                val y = (b as? JsonPrimitive)?.takeUnless { it.isString }?.doubleOrNull
+                if (x != null && y != null) assertTrue("$at: $y, recorded $x", abs(x - y) <= 1e-9 * max(1.0, abs(x)))
+                else assertEquals(at, a, b)
+            }
+        }
     }
 }
 
