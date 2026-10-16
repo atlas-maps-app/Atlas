@@ -297,7 +297,11 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     // -------------------------------------------------------------------------------------------------------------
     // Drawing.
 
-    private fun painter(): OverlayPainter = painter ?: OverlayPainter(density).also { painter = it }
+    private fun painter(): OverlayPainter = painter ?: OverlayPainter(density).also { p ->
+        // the markers' text in the boards' Geist, from the fonts the engine's frames use
+        p.markers.sans = { w -> (fonts ?: SvgFonts.system()).typeface("Geist", w, false) }
+        painter = p
+    }
 
     /** The engine camera of the current view, in the frame of [f] and at its ground level, in CSS pixels. */
     private fun cameraFor(f: EngineFrame, v: Viewport): SvgCamera {

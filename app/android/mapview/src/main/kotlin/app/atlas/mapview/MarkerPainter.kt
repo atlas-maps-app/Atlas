@@ -9,9 +9,16 @@ import android.graphics.Typeface
 import kotlin.math.min
 
 /**
- * Draws the markers as the boards do: pins (a coloured disc with a white symbol on a short stem, larger when
- * selected, with an optional progress ring and corner badge, a value chip under it and its name beside it), dots,
- * brand logos in a rounded square, cluster bubbles with a count, and chips with a symbol and a value.
+ * Draws the markers as the Main board does (`canvas/project/Main.dc.html`), in Geist:
+ * - a pin is a 30 px disc of its colour in a 2 px white ring with a 14 px white symbol, centred on its place
+ *   (`box-shadow: 0 4px 10px rgba(20,22,27,0.25)`);
+ * - the chosen pin is the board's reservation pin: a 44 px disc of its colour round a 36 px #14161B one with an 18 px
+ *   symbol, on a 2 × 10 px stem over a 10 × 4 px shadow (`0 6px 16px rgba(20,22,27,0.3)`);
+ * - a brand is a 34 px tile of its sign's colour, radius 10, in a 2 px white ring, its logo 20 px
+ *   (`0 4px 12px rgba(20,22,27,0.25)`);
+ * - a chip is the charging point's white 32 px pill: a 24 px disc of its colour with a 13 px symbol, its value 13 px
+ *   bold (`0 4px 12px rgba(20,22,27,0.2)`);
+ * - a value under a pin is the board's "4′" chip: white at 92 %, radius 10, 12 px semibold.
  */
 class MarkerPainter(private val density: Float) {
     val metrics = MarkerMetrics(density)
@@ -20,16 +27,14 @@ class MarkerPainter(private val density: Float) {
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
     private val icon = Paint(Paint.ANTI_ALIAS_FLAG)
     val text = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         textSize = 13f * density
+        fontFeatureSettings = "tnum"
     }
     private val labelText = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         textSize = 13f * density
         color = INK
     }
     private val labelHalo = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         textSize = 13f * density
         color = Color.WHITE
         style = Paint.Style.STROKE
@@ -39,7 +44,22 @@ class MarkerPainter(private val density: Float) {
     private val rect = RectF()
     private val path = Path()
     private val metricsBuf = Paint.FontMetrics()
-    private val shadowColour = 0x38000000
+
+    /** The boards' sans, Geist, at a weight; the system's sans until the map's fonts are known. */
+    var sans: (Int) -> Typeface = { w -> Typeface.create(Typeface.SANS_SERIF, w, false) }
+        set(value) {
+            field = value
+            text.typeface = value(700)
+            labelText.typeface = value(600)
+            labelHalo.typeface = value(600)
+        }
+
+    init {
+        sans = sans
+    }
+
+    /** A CSS `box-shadow` blur of [blur] px as Android's shadow radius (σ = blur / 2; σ = 0.57735 r + 0.5). */
+    private fun shadow(blur: Float): Float = ((blur / 2f * density - 0.5f) / 0.57735f).coerceAtLeast(0.1f)
 
     /** The text a chip or a pin's value chip shows. */
     fun chipText(m: Marker): String = m.value ?: if (m.style == MarkerStyle.CHIP) (m.label ?: m.count?.toString() ?: "") else ""
@@ -56,6 +76,12 @@ class MarkerPainter(private val density: Float) {
     /** The view's width in pixels: a pin's name goes to the left of the pin where the right would run off it. */
     var viewWidth = Float.MAX_VALUE
 
+    /** The centre of pin [m]'s disc when its place is at [y]. */
+    private fun pinCentre(m: Marker, y: Float): Float {
+        val r = metrics.pinDiameter(m.selected) / 2
+        return if (m.selected) y - metrics.pinFoot(true) - metrics.pinStem(true) - r else y
+    }
+
     /** Where the name [w] pixels wide of pin [m] at [x] starts: right of the disc, or left of it near the right edge. */
     private fun labelLeft(m: Marker, x: Float, w: Float): Float {
         val gap = metrics.pinDiameter(m.selected) / 2 + 6f * density
@@ -66,8 +92,7 @@ class MarkerPainter(private val density: Float) {
 
     /** The box of a pin's name beside it, into [out] at [o] (left, top, right, bottom). */
     fun labelBox(m: Marker, x: Float, y: Float, out: FloatArray, o: Int) {
-        val r = metrics.pinDiameter(m.selected) / 2
-        val cy = y - metrics.stem - r
+        val cy = pinCentre(m, y)
         val w = labelText.measureText(m.label ?: "")
         val left = labelLeft(m, x, w)
         out[o] = left - 2f * density
@@ -92,34 +117,39 @@ class MarkerPainter(private val density: Float) {
         }
     }
 
-    private fun groundShadow(canvas: Canvas, x: Float, y: Float, rx: Float) {
-        fill.color = shadowColour
-        rect.set(x - rx, y - rx * 0.38f, x + rx, y + rx * 0.38f)
-        canvas.drawOval(rect, fill)
-    }
-
     private fun pin(canvas: Canvas, m: Marker, x: Float, y: Float, colour: Int) {
         val mm = metrics
         val d = mm.pinDiameter(m.selected)
         val r = d / 2
-        val cy = y - mm.stem - r
-        groundShadow(canvas, x, y, 5f * density)
-        // The stem down to the place, then a small foot.
-        stroke.color = Colours.mix(colour, Color.BLACK, 0.25f)
-        stroke.strokeWidth = 2.5f * density
-        canvas.drawLine(x, cy + r - mm.border, x, y - 1f * density, stroke)
-        fill.color = stroke.color
-        canvas.drawCircle(x, y - 1f * density, 2f * density, fill)
-        m.ring?.let { ring(canvas, x, cy, r + mm.ring * 0.5f + 0.5f * density, it) }
-        border.setShadowLayer(3f * density, 0f, 1f * density, shadowColour)
-        canvas.drawCircle(x, cy, r, border)
-        border.clearShadowLayer()
-        fill.color = colour
-        canvas.drawCircle(x, cy, r - mm.border, fill)
-        symbol(canvas, m.symbol, x, cy, d * 0.52f, onColour(colour))
-        m.badge?.let { badge(canvas, it, x + r * 0.72f, cy - r * 0.72f) }
-        m.value?.let { valueChip(canvas, it, x, y + mm.valueChipGap) }
-        if (m.label != null && m.style == MarkerStyle.PIN) {
+        val cy = pinCentre(m, y)
+        if (m.selected) {
+            // the shadow under the point, the stem, then the 44 px disc of the place's colour round the dark one
+            fill.color = Colours.withAlpha(INK, 0.35f)
+            rect.set(x - 5f * density, y - 2f * density, x + 5f * density, y + 2f * density)
+            canvas.drawOval(rect, fill)
+            fill.color = INK
+            canvas.drawRect(x - 1f * density, cy + r, x + 1f * density, cy + r + mm.pinStem(true), fill)
+            fill.color = colour
+            fill.setShadowLayer(shadow(16f), 0f, 6f * density, Colours.withAlpha(INK, 0.3f))
+            canvas.drawCircle(x, cy, r, fill)
+            fill.clearShadowLayer()
+            m.ring?.let { ring(canvas, x, cy, r - 1.5f * density, it) }
+            fill.color = INK
+            canvas.drawCircle(x, cy, 18f * density, fill)
+            symbol(canvas, m.symbol, x, cy, 18f * density, Color.WHITE)
+        } else {
+            border.setShadowLayer(shadow(10f), 0f, 4f * density, Colours.withAlpha(INK, 0.25f))
+            canvas.drawCircle(x, cy, r, border)
+            border.clearShadowLayer()
+            fill.color = colour
+            canvas.drawCircle(x, cy, r - mm.border, fill)
+            m.ring?.let { ring(canvas, x, cy, r + mm.ring * 0.5f, it) }
+            symbol(canvas, m.symbol, x, cy, 14f * density, onColour(colour))
+        }
+        // the board's check badge on the chosen pin: 20 px, 2 px white ring, at its top right
+        m.badge?.let { badge(canvas, it, x + r * 0.8f, cy - r * 0.6f) }
+        m.value?.let { valueChip(canvas, it, x, (if (m.selected) y + mm.pinFoot(true) else cy + r) + mm.valueChipGap) }
+        if (m.label != null) {
             labelText.getFontMetrics(metricsBuf)
             val base = cy - (metricsBuf.ascent + metricsBuf.descent) / 2
             val lx = labelLeft(m, x, labelText.measureText(m.label))
@@ -131,13 +161,13 @@ class MarkerPainter(private val density: Float) {
     private fun dot(canvas: Canvas, m: Marker, x: Float, y: Float, colour: Int) {
         val d = metrics.dotDiameter(m.selected)
         val r = d / 2
-        border.setShadowLayer(2f * density, 0f, 0.5f * density, shadowColour)
+        border.setShadowLayer(shadow(8f), 0f, 3f * density, Colours.withAlpha(INK, 0.25f))
         canvas.drawCircle(x, y, r, border)
         border.clearShadowLayer()
         fill.color = colour
-        canvas.drawCircle(x, y, r - 1.5f * density, fill)
+        canvas.drawCircle(x, y, r - metrics.border, fill)
         m.ring?.let { ring(canvas, x, y, r + metrics.ring * 0.5f, it) }
-        symbol(canvas, m.symbol, x, y, d * 0.58f, onColour(colour))
+        symbol(canvas, m.symbol, x, y, d * 0.5f, onColour(colour))
         m.badge?.let { badge(canvas, it, x + r * 0.75f, y - r * 0.75f) }
     }
 
@@ -150,55 +180,39 @@ class MarkerPainter(private val density: Float) {
             signColour != null -> mark.textColour?.let { it or (0xFF shl 24) } ?: onColour(signColour)
             else -> colour
         }
-        val top = y - metrics.brandPointer - s
-        groundShadow(canvas, x, y, 4f * density)
-        // The pointer under the square.
-        path.rewind()
-        path.moveTo(x - 5f * density, top + s - 1f)
-        path.lineTo(x + 5f * density, top + s - 1f)
-        path.lineTo(x, y)
-        path.close()
-        fill.color = if (signColour != null) signColour else Color.WHITE
-        canvas.drawPath(path, fill)
-        val corner = s * 0.26f
-        rect.set(x - s / 2, top, x + s / 2, top + s)
-        border.setShadowLayer(3f * density, 0f, 1f * density, shadowColour)
+        // the 34 px tile, radius 10, its 2 px white ring inside it (border-box), centred on the shop
+        rect.set(x - s / 2, y - s / 2, x + s / 2, y + s / 2)
+        val corner = 10f * density
+        border.setShadowLayer(shadow(12f), 0f, 4f * density, Colours.withAlpha(INK, 0.25f))
         canvas.drawRoundRect(rect, corner, corner, border)
         border.clearShadowLayer()
-        if (signColour != null) {
-            val inset = 1.5f * density
-            rect.inset(inset, inset)
-            fill.color = square
-            canvas.drawRoundRect(rect, corner - inset, corner - inset, fill)
-        } else {
-            stroke.color = 0xFFE3E0DA.toInt()
-            stroke.strokeWidth = 1f * density
-            canvas.drawRoundRect(rect, corner, corner, stroke)
-        }
+        rect.inset(metrics.border, metrics.border)
+        fill.color = square
+        canvas.drawRoundRect(rect, corner - metrics.border, corner - metrics.border, fill)
         val shape = mark?.shape
         if (shape != null) {
             icon.color = glyphColour
-            shape.draw(canvas, x, top + s / 2, s * 0.6f, icon)
+            shape.draw(canvas, x, y, 20f * density, icon)
         } else {
             // No glyph: the brand's initial, as a shop sign would.
             val name = mark?.name ?: m.label ?: m.logo ?: "?"
             val initial = name.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "?"
             text.color = glyphColour
             val old = text.textSize
-            text.textSize = s * 0.55f
+            text.textSize = 16f * density
             text.textAlign = Paint.Align.CENTER
             text.getFontMetrics(metricsBuf)
-            canvas.drawText(initial, x, top + s / 2 - (metricsBuf.ascent + metricsBuf.descent) / 2, text)
+            canvas.drawText(initial, x, y - (metricsBuf.ascent + metricsBuf.descent) / 2, text)
             text.textAlign = Paint.Align.LEFT
             text.textSize = old
         }
-        m.badge?.let { badge(canvas, it, x + s / 2 - 2f * density, top + 2f * density) }
+        m.badge?.let { badge(canvas, it, x + s / 2 - 2f * density, y - s / 2 + 2f * density) }
     }
 
     private fun cluster(canvas: Canvas, x: Float, y: Float, count: Int, colour: Int) {
         val d = metrics.clusterDiameter(count)
         val r = d / 2
-        border.setShadowLayer(3f * density, 0f, 1f * density, shadowColour)
+        border.setShadowLayer(shadow(10f), 0f, 4f * density, Colours.withAlpha(INK, 0.25f))
         canvas.drawCircle(x, y, r, border)
         border.clearShadowLayer()
         fill.color = colour
@@ -220,72 +234,50 @@ class MarkerPainter(private val density: Float) {
         val tw = if (label.isEmpty()) 0f else text.measureText(label)
         val w = mm.chipWidth(m.selected, tw)
         val h = mm.chipHeight(m.selected)
-        val stem = mm.chipStem(m.selected)
-        val bottom = y - stem
-        val top = bottom - h
+        val top = y - h / 2
         val left = x - w / 2
         val pill = if (m.selected) colour else Color.WHITE
         val ink = if (m.selected) onColour(colour) else INK
-        if (m.selected) {
-            groundShadow(canvas, x, y, 4f * density)
-            stroke.color = colour
-            stroke.strokeWidth = 2f * density
-            canvas.drawLine(x, bottom, x, y - 1f * density, stroke)
-            fill.color = colour
-            canvas.drawCircle(x, y - 1f * density, 2f * density, fill)
-        } else {
-            path.rewind()
-            path.moveTo(x - 4f * density, bottom - 1f)
-            path.lineTo(x + 4f * density, bottom - 1f)
-            path.lineTo(x, y)
-            path.close()
-            fill.color = Color.WHITE
-            canvas.drawPath(path, fill)
-        }
-        rect.set(left, top, left + w, bottom)
+        rect.set(left, top, left + w, top + h)
         fill.color = pill
-        fill.setShadowLayer(3f * density, 0f, 1f * density, shadowColour)
+        fill.setShadowLayer(shadow(12f), 0f, 4f * density, Colours.withAlpha(INK, 0.2f))
         canvas.drawRoundRect(rect, h / 2, h / 2, fill)
         fill.clearShadowLayer()
-        // The symbol in its disc at the left end, ringed when the marker has a ring.
-        val sd = h - 2 * mm.chipPad
+        // the 24 px disc of its colour, 5 px in, with the white symbol
+        val sd = mm.chipDisc
         val scx = left + mm.chipPad + sd / 2
         val scy = top + h / 2
-        if (m.selected) {
-            fill.color = Colours.mix(colour, Color.WHITE, 0.16f)
-            canvas.drawCircle(scx, scy, sd / 2, fill)
-        } else {
-            fill.color = Colours.withAlpha(colour, 0.13f)
-            canvas.drawCircle(scx, scy, sd / 2, fill)
-        }
+        fill.color = if (m.selected) Colours.mix(colour, Color.WHITE, 0.16f) else colour
+        canvas.drawCircle(scx, scy, sd / 2, fill)
         m.ring?.let { ring(canvas, scx, scy, sd / 2 - 1f * density, it, if (m.selected) Colours.withAlpha(Color.WHITE, 0.25f) else 0x22000000) }
-        symbol(canvas, m.symbol, scx, scy, sd * 0.62f, if (m.selected) ink else colour)
+        symbol(canvas, m.symbol, scx, scy, 13f * density, Color.WHITE)
         if (tw > 0f) {
             text.color = ink
             text.getFontMetrics(metricsBuf)
-            canvas.drawText(label, scx + sd / 2 + mm.chipPad, scy - (metricsBuf.ascent + metricsBuf.descent) / 2, text)
+            canvas.drawText(label, scx + sd / 2 + mm.chipGap, scy - (metricsBuf.ascent + metricsBuf.descent) / 2, text)
         }
         m.badge?.let { badge(canvas, it, left + w - 3f * density, top + 3f * density) }
     }
 
-    /** The small white chip under a pin with its value ("4′"), top centre at ([x], [top]). */
+    /** The board's chip under a pin ("4′"): white at 92 %, radius 10, 2 × 7 px padding, 12 px semibold; top centre at ([x], [top]). */
     private fun valueChip(canvas: Canvas, value: String, x: Float, top: Float) {
+        val old = text.textSize
+        val oldFace = text.typeface
+        text.textSize = 12f * density
+        text.typeface = sans(600)
         val tw = text.measureText(value)
         val h = metrics.valueChipHeight
-        val w = tw + 2 * metrics.chipTextPad * 0.7f
+        val w = tw + 2 * metrics.valueChipPad
         rect.set(x - w / 2, top, x + w / 2, top + h)
-        fill.color = Color.WHITE
-        fill.setShadowLayer(2f * density, 0f, 0.5f * density, shadowColour)
-        canvas.drawRoundRect(rect, h / 2, h / 2, fill)
-        fill.clearShadowLayer()
+        fill.color = Colours.withAlpha(Color.WHITE, 0.92f)
+        canvas.drawRoundRect(rect, 10f * density, 10f * density, fill)
         text.color = INK
-        val old = text.textSize
-        text.textSize = 12f * density
         text.textAlign = Paint.Align.CENTER
         text.getFontMetrics(metricsBuf)
         canvas.drawText(value, x, top + h / 2 - (metricsBuf.ascent + metricsBuf.descent) / 2, text)
         text.textAlign = Paint.Align.LEFT
         text.textSize = old
+        text.typeface = oldFace
     }
 
     /** A progress ring of radius [r] around ([x], [y]): [value] 0..1 of a full turn from the top, on a light track. */
@@ -300,12 +292,13 @@ class MarkerPainter(private val density: Float) {
         canvas.drawArc(rect, -90f, 360f * v, false, stroke)
     }
 
+    /** The board's badge (the reservation's check): 20 px, a 2 px white ring, #E8622C, its 11 px symbol white. */
     private fun badge(canvas: Canvas, symbolId: String, x: Float, y: Float) {
         val r = metrics.badge / 2
         canvas.drawCircle(x, y, r, border)
         fill.color = BADGE
-        canvas.drawCircle(x, y, r - 1.5f * density, fill)
-        symbol(canvas, symbolId, x, y, r * 1.25f, Color.WHITE)
+        canvas.drawCircle(x, y, r - metrics.border, fill)
+        symbol(canvas, symbolId, x, y, 11f * density, Color.WHITE)
     }
 
     private fun symbol(canvas: Canvas, id: String, x: Float, y: Float, size: Float, colour: Int) {
@@ -326,7 +319,7 @@ class MarkerPainter(private val density: Float) {
 
         /** The dark ink of the boards. */
         const val INK = 0xFF14161B.toInt()
-        const val BADGE = 0xFFF07A22.toInt()
+        const val BADGE = 0xFFE8622C.toInt()
 
         /** White on dark colours, ink on light ones. */
         fun onColour(c: Int): Int = if (Colours.luma(c) > 186f) INK else Color.WHITE

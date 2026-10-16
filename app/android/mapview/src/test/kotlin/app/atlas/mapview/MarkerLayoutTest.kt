@@ -72,13 +72,17 @@ class MarkerLayoutTest {
     fun boxesFollowTheStyles() {
         val out = FloatArray(4)
         MarkerLayout.boxOf(Marker("p", at, "cafe"), 100f, 200f, metrics, { 0f }, out)
-        // A pin stands on its anchor: 32 dp disc plus a 7 dp stem above it.
-        assertArrayEquals(floatArrayOf(68f, 122f, 132f, 200f), out, 0.01f)
+        // A pin sits on its place, as the Main board's: a 30 px disc centred on the anchor.
+        assertArrayEquals(floatArrayOf(70f, 170f, 130f, 230f), out, 0.01f)
+        // The chosen pin is the board's reservation pin: a 44 px disc on a 10 px stem over a 4 px shadow.
+        MarkerLayout.boxOf(Marker("s", at, "cafe", selected = true), 100f, 200f, metrics, { 0f }, out)
+        assertArrayEquals(floatArrayOf(56f, 200f - 4f - 20f - 88f, 144f, 204f), out, 0.01f)
         MarkerLayout.boxOf(Marker("d", at, "cafe", style = MarkerStyle.DOT), 100f, 200f, metrics, { 0f }, out)
         assertArrayEquals(floatArrayOf(80f, 180f, 120f, 220f), out, 0.01f)
         MarkerLayout.boxOf(Marker("c", at, "zap", style = MarkerStyle.CHIP, value = "150"), 100f, 200f, metrics, { 30f }, out)
         assertEquals(metrics.chipWidth(false, 30f), out[2] - out[0], 0.01f)
-        assertEquals(200f, out[3], 0f)
+        // the charging point's 32 px pill, centred on its place
+        assertEquals(232f, out[3], 0f)
         MarkerLayout.boxOf(Marker("v", at, "cafe", value = "4′"), 100f, 200f, metrics, { 30f }, out)
         assertTrue("the value chip hangs below the anchor", out[3] > 200f)
     }

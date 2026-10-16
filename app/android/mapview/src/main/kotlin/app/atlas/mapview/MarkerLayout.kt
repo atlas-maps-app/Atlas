@@ -4,32 +4,40 @@ import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.min
 
-/** Sizes of the marker styles in dp, scaled to pixels by [density]. */
+/**
+ * Sizes of the marker styles in board px (dp), scaled to pixels by [density], as the Main board draws its places: pins
+ * are 30 px discs centred on the place (the Anne Frank Huis), the chosen one the 44 px reservation pin on a 10 px stem
+ * over a 4 px shadow (De Belhamel); brands 34 px tiles (Bagels & Beans); chips 32 px pills (the charging point).
+ */
 class MarkerMetrics(val density: Float) {
-    fun pinDiameter(selected: Boolean) = (if (selected) 42f else 32f) * density
-    val stem = 7f * density
+    fun pinDiameter(selected: Boolean) = (if (selected) 44f else 30f) * density
+
+    /** The chosen pin's stem and the shadow under it; a pin that is not chosen sits on its place. */
+    fun pinStem(selected: Boolean) = (if (selected) 10f else 0f) * density
+    fun pinFoot(selected: Boolean) = (if (selected) 2f else 0f) * density
     fun dotDiameter(selected: Boolean) = (if (selected) 26f else 20f) * density
-    fun brandSide(selected: Boolean) = (if (selected) 38f else 30f) * density
-    val brandPointer = 5f * density
+    fun brandSide(selected: Boolean) = (if (selected) 40f else 34f) * density
     fun clusterDiameter(count: Int) = min(46f, 28f + 6f * log10(max(1, count).toFloat())) * density
-    fun chipHeight(selected: Boolean) = (if (selected) 32f else 28f) * density
-    fun chipStem(selected: Boolean) = (if (selected) 7f else 3f) * density
+    fun chipHeight(selected: Boolean) = (if (selected) 36f else 32f) * density
+
+    /** The chip's padding: 5 px before its symbol disc, 4 px after it, 9 px after the value. */
     val chipPad = 5f * density
-    val chipTextPad = 10f * density
+    val chipGap = 4f * density
+    val chipEnd = 9f * density
+    val chipDisc = 24f * density
     val valueChipHeight = 18f * density
+    val valueChipPad = 7f * density
     val valueChipGap = 3f * density
     val ring = 3f * density
     val border = 2f * density
-    val badge = 16f * density
+    val badge = 20f * density
 
     /** The smallest a marker's touch target is, either way. */
     val touch = 44f * density
 
-    /** The chip's width for a value [textWidth] pixels wide: symbol disc, gap, text, padding. */
-    fun chipWidth(selected: Boolean, textWidth: Float): Float {
-        val h = chipHeight(selected)
-        return chipPad + (h - 2 * chipPad) + (if (textWidth > 0f) chipPad + textWidth + chipTextPad else chipPad)
-    }
+    /** The chip's width for a value [textWidth] pixels wide: padding, symbol disc, gap, value, end padding. */
+    fun chipWidth(selected: Boolean, textWidth: Float): Float =
+        chipPad + chipDisc + (if (textWidth > 0f) chipGap + textWidth + chipEnd else chipPad)
 }
 
 /**
@@ -142,11 +150,14 @@ class MarkerLayout {
             when (m.style) {
                 MarkerStyle.PIN -> {
                     val d = mm.pinDiameter(m.selected)
-                    out[0] = x - d / 2; out[1] = y - d - mm.stem; out[2] = x + d / 2; out[3] = y
+                    // centred on the place, or the chosen pin standing on its stem
+                    val bottom = y + if (m.selected) mm.pinFoot(true) else d / 2
+                    val top = if (m.selected) y - mm.pinFoot(true) - mm.pinStem(true) - d else y - d / 2
+                    out[0] = x - d / 2; out[1] = top; out[2] = x + d / 2; out[3] = bottom
                     if (m.value != null) {
-                        val w = chipText(m) / 2 + mm.chipTextPad
+                        val w = chipText(m) / 2 + mm.valueChipPad
                         out[0] = min(out[0], x - w); out[2] = max(out[2], x + w)
-                        out[3] = y + mm.valueChipGap + mm.valueChipHeight
+                        out[3] = bottom + mm.valueChipGap + mm.valueChipHeight
                     }
                 }
                 MarkerStyle.DOT -> {
@@ -155,7 +166,7 @@ class MarkerLayout {
                 }
                 MarkerStyle.BRAND -> {
                     val s = mm.brandSide(m.selected)
-                    out[0] = x - s / 2; out[1] = y - s - mm.brandPointer; out[2] = x + s / 2; out[3] = y
+                    out[0] = x - s / 2; out[1] = y - s / 2; out[2] = x + s / 2; out[3] = y + s / 2
                 }
                 MarkerStyle.CLUSTER -> {
                     val d = mm.clusterDiameter(m.count ?: 1) / 2
@@ -164,8 +175,7 @@ class MarkerLayout {
                 MarkerStyle.CHIP -> {
                     val w = mm.chipWidth(m.selected, chipText(m))
                     val h = mm.chipHeight(m.selected)
-                    val stem = mm.chipStem(m.selected)
-                    out[0] = x - w / 2; out[1] = y - h - stem; out[2] = x + w / 2; out[3] = y
+                    out[0] = x - w / 2; out[1] = y - h / 2; out[2] = x + w / 2; out[3] = y + h / 2
                 }
             }
         }

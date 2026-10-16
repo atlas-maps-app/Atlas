@@ -1,12 +1,15 @@
 package app.atlas.mapview
 
+import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Matrix
 import android.graphics.Path
 import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
+import android.graphics.SweepGradient
 import android.graphics.Typeface
 import app.atlas.geo.Geo
 import app.atlas.geo.Quantity
@@ -51,8 +54,11 @@ class OverlayPainter(private val density: Float) {
     private var chipX = FloatArray(4)
     private var chipY = FloatArray(4)
     private var chipCount = 0
-    private var coneShader: RadialGradient? = null
-    private var coneRadius = 0f
+    private var coneShader: SweepGradient? = null
+    private var coneDensity = 0f
+
+    /** The dot's blue glow: CSS blur 8 px is a Gaussian of σ 4, Android's blur radius r gives σ = 0.57735 r + 0.5. */
+    private val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply { maskFilter = BlurMaskFilter((4f * density - 0.5f) / 0.57735f, BlurMaskFilter.Blur.NORMAL) }
 
     private var blocked = FloatArray(64)
     private var blockedN = 0
@@ -187,51 +193,66 @@ class OverlayPainter(private val density: Float) {
         text.textAlign = Paint.Align.LEFT
     }
 
-    /** The blue dot: accuracy on the ground, the heading cone, the dot. */
+    /**
+     * You, as the Main board draws you (`aria-label="You, …"`, a 64 px box on the point): the heading cone, a 36 × 40 dome
+     * shaded by a conic gradient of #2E5BFF from 40 % to nothing; a 40 px halo of #2E5BFF at 16 %; a 20 px dot, #2E5BFF in
+     * a 3 px white ring, with a blue glow (`box-shadow: 0 2px 8px rgba(46,91,255,0.55)`). The accuracy shows on the ground
+     * only where it reaches past the halo.
+     */
     fun drawLocation(canvas: Canvas, g: GroundView, loc: UserLocation) {
         if (!g.project(loc.at, pt)) return
         val x = pt[0]
         val y = pt[1]
-        val dot = 9f * density
-        val halo = areas.circle(g, loc.at, loc.accuracyM, path)
-        if (halo > dot * 1.6f) {
+        val d = density
+        val accuracy = areas.circle(g, loc.at, loc.accuracyM, path)
+        if (accuracy > 20f * d) {
             fill.color = Colours.withAlpha(PUCK, 0.13f)
             canvas.drawPath(path, fill)
             stroke.color = Colours.withAlpha(PUCK, 0.35f)
-            stroke.strokeWidth = 1f * density
+            stroke.strokeWidth = 1f * d
             canvas.drawPath(path, stroke)
         }
-        if (!g.onScreen(x - 60 * density, y - 60 * density, x + 60 * density, y + 60 * density)) return
+        if (!g.onScreen(x - 40 * d, y - 40 * d, x + 40 * d, y + 40 * d)) return
         loc.heading?.let { h ->
             // The heading's direction on screen: project a point a few metres ahead.
             val ahead = Geo.destination(loc.at, h, 15.0)
             if (g.project(ahead, pt)) {
                 val a = Math.toDegrees(atan2((pt[1] - y).toDouble(), (pt[0] - x).toDouble())).toFloat()
-                cone(canvas, x, y, a)
+                cone(canvas, x, y, a + 90f)
             }
         }
-        fill.color = 0x30000000
-        canvas.drawCircle(x, y + 0.8f * density, dot + 3.2f * density, fill)
+        fill.color = Colours.withAlpha(PUCK, 0.16f)
+        canvas.drawCircle(x, y, 20f * d, fill)
+        glow.color = Colours.withAlpha(PUCK, 0.55f)
+        canvas.drawCircle(x, y + 2f * d, 10f * d, glow)
         fill.color = Color.WHITE
-        canvas.drawCircle(x, y, dot + 2.5f * density, fill)
+        canvas.drawCircle(x, y, 10f * d, fill)
         fill.color = PUCK
-        canvas.drawCircle(x, y, dot, fill)
+        canvas.drawCircle(x, y, 7f * d, fill)
     }
 
-    private fun cone(canvas: Canvas, x: Float, y: Float, angle: Float) {
-        val r = 54f * density
-        if (coneShader == null || coneRadius != r) {
-            coneShader = RadialGradient(0f, 0f, r, intArrayOf(Colours.withAlpha(PUCK, 0.55f), Colours.withAlpha(PUCK, 0f)), null, Shader.TileMode.CLAMP)
-            coneRadius = r
-        }
+    /**
+     * The board's heading cone, turned [up] degrees clockwise from straight up: a 36 × 40 box whose top corners are round
+     * (`border-radius: 40px 40px 0 0`, which CSS scales to 18), its bottom 2 px under the dot's centre and the turn about
+     * that bottom middle; filled with `conic-gradient(from -25deg at 50% 100%, 40 % at 0°, 0 at 50°, 0 at 310°, 40 % at 360°)`.
+     */
+    private fun cone(canvas: Canvas, x: Float, y: Float, up: Float) {
+        val d = density
         canvas.save()
-        canvas.translate(x, y)
-        canvas.rotate(angle)
+        canvas.translate(x, y + 2f * d)
+        canvas.rotate(up)
+        if (coneShader == null || coneDensity != d) {
+            // CSS measures from straight up, clockwise; Android's sweep from 3 o'clock: from -25deg is -115°.
+            coneShader = SweepGradient(
+                0f, 0f,
+                intArrayOf(Colours.withAlpha(PUCK, 0.4f), Colours.withAlpha(PUCK, 0f), Colours.withAlpha(PUCK, 0f), Colours.withAlpha(PUCK, 0.4f)),
+                floatArrayOf(0f, 50f / 360f, 310f / 360f, 1f),
+            ).apply { setLocalMatrix(Matrix().apply { setRotate(-115f) }) }
+            coneDensity = d
+        }
         path.rewind()
-        path.moveTo(0f, 0f)
-        rect.set(-r, -r, r, r)
-        path.arcTo(rect, -CONE_HALF, 2 * CONE_HALF)
-        path.close()
+        rect.set(-18f * d, -40f * d, 18f * d, 0f)
+        path.addRoundRect(rect, floatArrayOf(18f * d, 18f * d, 18f * d, 18f * d, 0f, 0f, 0f, 0f), Path.Direction.CW)
         // The shader carries the colour; the paint's own alpha would dim it.
         fill.color = Color.WHITE
         fill.shader = coneShader
@@ -331,7 +352,6 @@ class OverlayPainter(private val density: Float) {
 
         /** The walking symbol of the tape's chip. */
         const val WALK = "ui-walk"
-        const val CONE_HALF = 32f
         val PUCK = 0xFF2E5BFF.toInt()
         val QUIET = 0xFFA9B1C2.toInt()
         val TRAVELLED = 0xFFC3C8D1.toInt()
