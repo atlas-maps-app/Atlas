@@ -18,9 +18,14 @@ import app.atlas.rendertiles.model.Geom
 import app.atlas.rendertiles.model.Grid
 import app.atlas.rendertiles.model.GridPoint
 import app.atlas.rendertiles.model.Keep
+import app.atlas.rendertiles.model.Format
 import app.atlas.rendertiles.model.Layer
+import app.atlas.rendertiles.model.Profile
+import app.atlas.rendertiles.model.Reach
+import app.atlas.rendertiles.model.RenderHead
 import app.atlas.rendertiles.model.RenderTile
 import app.atlas.rendertiles.model.Schema
+import app.atlas.rendertiles.model.StyleTables
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -29,7 +34,10 @@ import org.junit.Assert.fail
 import org.junit.Test
 import kotlin.random.Random
 
-/** The payload's codecs, the clipper, the grid and the keep codes on cases chosen to break them. */
+/**
+ * The payload's codecs, the clipper, the grid and the keep codes on cases chosen to break them; the one rule for what a
+ * reader does not know, the bounds it checks, the `reach` and `rhead` sections.
+ */
 class CodecTest {
     private fun roundTrip(codec: Codec, values: List<Any?>): List<Any?> {
         val strings = StringTable()
@@ -294,5 +302,144 @@ class CodecTest {
         assertArrayEquals(bytes, Format3Writer.encodeTile(t))
         assertTrue(Format3Reader.decodeTile(bytes).layers.getValue(Layer.ROAD).all { it["line"] is Geom && it["index"] is Long })
         assertEquals(GridPoint(1, 2), GridPoint(1, 2))
+    }
+
+    /** A one-layer tile of roads, whose strings hold "bridge" (a column the roads leave out) as a tag's value. */
+    private fun roadTile(): RenderTile {
+        val box = Grid.tileBox(14, 8414, 5384)
+        val fs = (1..3).map { i ->
+            Feature(
+                Layer.ROAD,
+                Schema.canonical(Layer.ROAD, mapOf("index" to i, "id" to 100L + i, "line" to Geom(intArrayOf(box[0] + i, box[0] + 2 * i), intArrayOf(box[1] + 3, box[1] + i), null), "w" to 5.5, "hw" to "residential", "tag:surface" to "bridge")),
+                0, intArrayOf(box[0] + i, box[1] + 3, box[0] + 2 * i, box[1] + i + 3), 0, i.toLong(),
+            )
+        }
+        return RenderTile.of(14, 8414, 5384, fs)
+    }
+
+    /** [tile]'s bytes with one more column appended to its only layer: [name] (a string of its table), [codec] and [bytes]. */
+    private fun withColumn(tile: ByteArray, name: String, codec: Int, bytes: ByteArray): ByteArray {
+        val h = LeSource(tile, 0, tile.size)
+        h.pos = 32
+        val sAt = h.u32().toInt(); val sLen = h.u32().toInt()
+        val strings = StringTable.read(LeSource(tile, sAt, sAt + sLen))
+        val ix = strings.indexOf(name).also { require(it >= 0) { "no string $name" } }
+        val col = LeSink()
+        col.varU(ix.toLong()); col.u8(codec); col.varU(bytes.size.toLong()); col.bytes(bytes)
+        val e = Format.HEADER_BYTES
+        h.pos = e + 4
+        val count = h.u32()
+        h.pos = e + 8
+        val at = h.u32().toInt(); val len = h.u32().toInt()
+        require(at + len == tile.size) { "the layer is not the tile's last block" }
+        val out = LeSink(tile.size + col.size)
+        out.bytes(tile)
+        out.bytes(col.toByteArray())
+        val cols = (tile[e + 2].toInt() and 0xFF) or ((tile[e + 3].toInt() and 0xFF) shl 8)
+        out.putU16(e + 2, cols + 1)
+        out.putU32(e + 12, (len + col.size).toLong())
+        require(count == 3L)
+        return out.toByteArray()
+    }
+
+    @Test
+    fun `a reader skips columns it does not know and refuses known ones in another codec`() {
+        val t = roadTile()
+        val bytes = Format3Writer.encodeTile(t)
+        val want = Format3Reader.decodeTile(bytes).layers
+        // an unknown name ("residential" is a value, not a column), with a known codec and with a codec no reader knows
+        assertEquals(want, Format3Reader.decodeTile(withColumn(bytes, "residential", Codec.U8.id, byteArrayOf(1, 2, 3))).layers)
+        assertEquals(want, Format3Reader.decodeTile(withColumn(bytes, "residential", 200, byteArrayOf(9, 9, 9, 9, 9))).layers)
+        // a known name in its own codec reads; in another codec, or one no reader knows, it is an error
+        val bridged = Format3Reader.decodeTile(withColumn(bytes, "bridge", Codec.BOOL.id, byteArrayOf(2, 0, 1))).layers.getValue(Layer.ROAD)
+        assertEquals(listOf(true, null, false), bridged.map { it["bridge"] })
+        for (codec in listOf(Codec.U8.id, 200)) try {
+            Format3Reader.decodeTile(withColumn(bytes, "bridge", codec, byteArrayOf(2, 0, 1)))
+            fail("bridge read in codec $codec")
+        } catch (e: TileFormatException) {
+        }
+        // a known column twice
+        try {
+            Format3Reader.decodeTile(withColumn(bytes, "hw", Codec.STR.id, byteArrayOf(1, 1, 1)))
+            fail("a column twice")
+        } catch (e: TileFormatException) {
+        }
+    }
+
+    @Test
+    fun `a reader checks the tile's bounds before it reads`() {
+        val good = Format3Writer.encodeTile(roadTile())
+        Format3Reader.decodeTile(good)
+        fun bad(what: String, edit: (LeSink) -> Unit) {
+            val b = LeSink(good.size).also { it.bytes(good) }
+            edit(b)
+            try {
+                Format3Reader.decodeTile(b.toByteArray())
+                fail(what)
+            } catch (e: TileFormatException) {
+            }
+        }
+        bad("level 25") { it.unsafeArray()[6] = 25 }
+        bad("4 cells a side at L14") { it.unsafeArray()[7] = 4 }
+        bad("a column past its level") { it.putU32(8, 1L shl 14) }
+        bad("a row past its level") { it.putU32(12, 0xFFFFFFFFL) }
+        bad("another payload") { it.putU16(4, Format.PAYLOAD + 1) }
+        // the chunk table's bounds
+        Format3Reader.checkTile(24, (1L shl 24) - 1, 0)
+        for ((z, x, y) in listOf(Triple(25, 0L, 0L), Triple(14, 1L shl 14, 0L), Triple(3, 0L, -1L), Triple(-1, 0L, 0L))) try {
+            Format3Reader.checkTile(z, x, y)
+            fail("tile $z/$x/$y")
+        } catch (e: TileFormatException) {
+        }
+    }
+
+    @Test
+    fun `the reach section reads back, newer entries skipped, damage refused`() {
+        val rs = listOf(Reach(-5, -6, 7, 8, 120), Reach(523_700_000, 48_800_000, 523_800_000, 48_900_000, 0))
+        val b = Format3Writer.reachBytes(rs)
+        assertEquals(Reach.HEADER_BYTES + 2 * Reach.ENTRY_BYTES, b.size)
+        assertEquals(rs, Format3Reader.readReach(b, 2))
+        // a newer payload's longer entries: the known fields read, the rest skipped
+        val wide = LeSink()
+        wide.u32(Format.REACH_MAGIC.toLong()); wide.u16(Format.PAYLOAD); wide.u16(Reach.ENTRY_BYTES + 4); wide.u32(2)
+        for (r in rs) { wide.i32(r.south); wide.i32(r.west); wide.i32(r.north); wide.i32(r.east); wide.i32(r.topCm); wide.i32(-1) }
+        assertEquals(rs, Format3Reader.readReach(wide.toByteArray(), 2))
+        val cases = listOf(
+            "another count" to { Format3Reader.readReach(b, 3) },
+            "short entries" to { Format3Reader.readReach(b.copyOf().also { it[6] = 16 }, 2) },
+            "not a reach" to { Format3Reader.readReach(b.copyOf().also { it[0] = 0 }, 2) },
+            "cut short" to { Format3Reader.readReach(b.copyOf(b.size - 1), 2) },
+            "an empty box" to { Format3Reader.readReach(Format3Writer.reachBytes(listOf(Reach(10, 0, 5, 0, 0))), 1) },
+        )
+        for ((what, f) in cases) try {
+            f()
+            fail(what)
+        } catch (e: TileFormatException) {
+        }
+        // a tile's reach is the union of its cells' boxes and their highest top
+        val t = roadTile()
+        val cells = t.cells.mapNotNull { it.box }
+        assertEquals(Reach(cells.minOf { it[0] }, cells.minOf { it[1] }, cells.maxOf { it[2] }, cells.maxOf { it[3] }, t.cells.maxOf { it.maxHeightCm }), Reach.of(t))
+    }
+
+    @Test
+    fun `the head carries each view's tolerance and the bands`() {
+        val views = listOf(RenderHead.View("a", linkedMapOf("dist" to 470, "pitch" to 52.5), 7), RenderHead.View("b", linkedMapOf("dist" to 900), 8))
+        val bands = listOf(RenderHead.Band(0, 250.0), RenderHead.Band(1, 400.0), RenderHead.Band(3, 700.0), RenderHead.Band(6, 2000.0), RenderHead.Band(8, null))
+        val h = RenderHead(Profile.REGION, "grachten", intArrayOf(14, 12), 52.37, 4.89, 67964.45305223769, 110540.0, "e", "s", "src", views, bands)
+        val back = RenderHead.fromBytes(h.toBytes())
+        assertEquals(h, back)
+        assertEquals(7, back.toleranceOf("a", 1e9))
+        assertEquals(0, back.toleranceOf(null, 0.0)); assertEquals(1, back.toleranceOf(null, 250.0)); assertEquals(3, back.toleranceOf(null, 699.999))
+        assertEquals(6, back.toleranceOf(null, 700.0)); assertEquals(8, back.toleranceOf(null, 2000.0)); assertEquals(8, back.toleranceOf(null, 1e12))
+        // damage: no bands, a ladder index off the ladder
+        val bytes = h.toBytes()
+        val noBands = bytes.copyOf(bytes.size - 5 - 4 * 8).also { it[it.size - 1] = 0 }
+        for ((what, b) in listOf("no bands" to noBands, "an index off the ladder" to bytes.copyOf().also { it[it.size - 4 * 8 - 1] = 14 })) try {
+            RenderHead.fromBytes(b)
+            fail(what)
+        } catch (e: TileFormatException) {
+        }
+        assertTrue(StyleTables(linkedMapOf("keep" to Keep.TOLERANCES.toList())).toBytes().isNotEmpty())
     }
 }

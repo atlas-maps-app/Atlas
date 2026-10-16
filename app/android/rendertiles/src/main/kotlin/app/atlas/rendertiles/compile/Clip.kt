@@ -3,14 +3,17 @@ package app.atlas.rendertiles.compile
 import java.math.BigInteger
 
 /**
- * Rings clipped exactly at a tile's edges on the grid (Sutherland–Hodgman against the four edges of the tile's grid
- * box). Land cover and water are fills the renders never simplify, so a ring cut into pieces fills exactly what the
- * ring fills: the pieces of neighbouring tiles share their cut, because both compute the same crossing on the shared
- * edge. A ring that leaves the tile and comes back is joined along the edge by a zero-width bridge, which fills
- * nothing (the vector-tile convention earcut takes).
+ * Rings clipped at a tile's edges on the grid (Sutherland–Hodgman against the four edges of the tile's grid box), for
+ * the water, which the renders only fill and clip by. A crossing lies on the edge's line exactly; its other coordinate
+ * is the exact rational crossing rounded to the nearest grid integer (ties upward), computed in integers, so every
+ * platform cuts alike, and the pieces of neighbouring tiles share their cut, because both compute the same crossing on
+ * the shared edge. The pieces of a ring therefore fill what the ring fills up to that rounding: each cut moves by at
+ * most half a grid unit along the edge (about 0.56 cm north–south at the canal ring). A ring that leaves the tile and
+ * comes back is joined along the edge by a zero-width bridge, which fills nothing (the vector-tile convention earcut
+ * takes).
  *
- * A crossing lies on the edge's line exactly; its other coordinate is the exact rational crossing rounded to the nearest
- * grid integer (ties upward), computed in integers, so every platform cuts alike.
+ * The renders' tests on a ring (`area(sp) > 0.2`, its winding) apply to the whole ring, not to a piece: a reader adds
+ * the signed areas of the pieces that share the ring's `index`.
  */
 object Clip {
     /** A clipped ring: grid latitudes and longitudes, and which vertices are crossings made by the cut. */
@@ -97,6 +100,9 @@ object Clip {
         }
         return a + q.longValueExact()
     }
+
+    /** Twice the signed area of the ring [lat], [lon] on the grid (longitude as x, latitude as y), exactly. */
+    fun area2(lat: IntArray, lon: IntArray): BigInteger = area2(List(lat.size) { P(lat[it].toLong(), lon[it].toLong(), false) })
 
     /** Twice the ring's signed area, exactly. */
     private fun area2(p: List<P>): BigInteger {

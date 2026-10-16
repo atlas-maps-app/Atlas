@@ -6,7 +6,9 @@ import app.atlas.render.V2
 import app.atlas.render.live.LiveScene
 import app.atlas.render.py.Dict
 import app.atlas.render.py.PyMath
+import app.atlas.render.py.pyNum
 import app.atlas.render.py.truthy
+import app.atlas.rendertiles.compile.Clip
 import app.atlas.rendertiles.compile.GroundKeys
 import app.atlas.rendertiles.model.Feature
 import app.atlas.rendertiles.model.Geom
@@ -26,9 +28,10 @@ import java.util.IdentityHashMap
 
 /**
  * The layers besides buildings, decoded from the bundled packs, against the scene they were derived from: roads, lines,
- * trees, things, items, labels, the water and the land (whose clipped pieces fill exactly their ring), the quay edges
- * (`water_edges` rebuilt from the tiles, bit for bit) and the ground keys; and every tile decoded equal to what the
- * packer wrote.
+ * trees, things, items, labels, land cover and areas (whole), the water (whose clipped pieces fill their ring to the
+ * rounding of the crossings and turn as it turns), the quay edges (`water_edges` rebuilt from the tiles, bit for bit)
+ * and the ground keys; and every tile decoded equal to what the packer wrote. The land's per-frame order is
+ * [GroundOrderTest]'s.
  */
 class LayersTest {
     private class Pack(val name: String, val built: Packs.Built, val scene: LiveScene, val tiles: List<RenderTile>) {
@@ -79,7 +82,13 @@ class LayersTest {
                 assertEquals(CanonicalDump.of(w), CanonicalDump.of(t))
                 println("LAYERS $name ${t.level}/${t.x}/${t.y}: canonical ${CanonicalDump.hash(t)}")
             }
-            println("LAYERS $name: ${decoded.size} tiles, $features features decoded equal to the packer's")
+            // the reach section: the union of each tile's cell boxes and its highest top, in the chunk table's order
+            assertEquals("$name reach", b.written.reach, b.reader.reach)
+            for ((c, r) in b.reader.chunks.zip(b.reader.reach)) {
+                val t = Grid.tileBox(c.z, c.x, c.y)
+                assertTrue("$name ${c.z}/${c.x}/${c.y} reaches its own tile", r.south <= t[2] && r.north >= t[0] && r.west <= t[3] && r.east >= t[1])
+            }
+            println("LAYERS $name: ${decoded.size} tiles, $features features decoded equal to the packer's; reach ${b.reader.reach.joinToString { "${it.topCm / 100} m" }}")
         }
     }
 
@@ -88,28 +97,44 @@ class LayersTest {
         for (p in packs()) {
             val S = p.scene.S
             val roads = byIndex(p.l14(Layer.ROAD))
+            val roadOrder = listOf("path", "footway", "steps", "cycleway", "service", "pedestrian", "living_street", "unclassified", "residential", "busway", "tertiary", "secondary")
+            val roadRank = dicts(S, "roads").withIndex().sortedWith(compareBy({ roadOrder.indexOf(it.value["hw"]) }, { it.index })).withIndex().associate { (rank, r) -> r.index to rank }
+            var marked = 0
             for ((i, r) in dicts(S, "roads").withIndex()) {
                 val f = roads[i.toLong()] ?: error("${p.name} road $i missing")
                 @Suppress("UNCHECKED_CAST")
                 assertEquals("${p.name} road $i line", r["pts"] as List<V2>, p.metres(f["line"] as Geom))
                 assertEquals(int(r["id"]), f["id"])
-                assertEquals(r["w"], f["w"]); assertEquals(r["hw"], f["hw"]); assertEquals(r["layer"], f["layer"])
+                assertEquals(r["w"], f["w"]); assertEquals(r["hw"], f["hw"]); assertEquals((r["layer"] as Number?)?.toDouble(), f["layer"])
                 assertEquals(r["bridge"], f["bridge"]); assertEquals(r["wguess"], f["wguess"])
                 for (k in Schema.RENDER_TAGS.getValue(Layer.ROAD)) assertEquals("${p.name} road $i $k", tags(r)[k], f[Schema.tag(k)])
                 assertEquals("${p.name} road $i ground key", GroundKeys.road(r["hw"] as String, i), f["ground_key"])
                 assertEquals(GroundKey.ROAD, GroundKey.stage(f["ground_key"] as Long))
+                // the road loop's marks: bridges and setts, in the roads' drawing order
+                val marks = r["bridge"] == true || tags(r)["surface"] == "sett"
+                val want = if (marks) GroundKey.of(GroundKey.MARKS, GroundKey.MARKS_ROAD, roadRank.getValue(i)) else 0L
+                assertEquals("${p.name} road $i marks key", want, (f["marks_key"] as Long?) ?: 0L)
+                if (marks) marked++
             }
             val lines = p.l14(Layer.LINE)
             fun line(source: Int) = lines.filter { ((it["source"] as Int?) ?: 0) == source }.associateBy { (it["index"] as Long?) ?: 0L }
             @Suppress("UNCHECKED_CAST")
-            for ((i, rl) in ((S["rails"] as List<List<V2>>?) ?: emptyList()).withIndex()) assertEquals("${p.name} tram $i", rl, p.metres(line(0).getValue(i.toLong())["line"] as Geom))
+            for ((i, rl) in ((S["rails"] as List<List<V2>>?) ?: emptyList()).withIndex()) {
+                val f = line(0).getValue(i.toLong())
+                assertEquals("${p.name} tram $i", rl, p.metres(f["line"] as Geom))
+                assertEquals(GroundKey.of(GroundKey.MARKS, GroundKey.MARKS_TRAM, i), f["ground_key"])
+            }
             for ((source, key) in listOf(1 to "rail", 2 to "big", 3 to "aero", 4 to "power", 5 to "marine")) {
                 val got = line(source)
                 val list = dicts(S, key)
                 assertEquals("${p.name} $key", list.size, got.size)
                 for ((i, d) in list.withIndex()) {
                     @Suppress("UNCHECKED_CAST")
-                    assertEquals("${p.name} $key $i", d["pts"] as List<V2>, p.metres(got.getValue(i.toLong())["line"] as Geom))
+                    val f = got.getValue(i.toLong())
+                    assertEquals("${p.name} $key $i", d["pts"] as List<V2>, p.metres(f["line"] as Geom))
+                    // a big road's layer raises it 0.5 m a layer: a typed column, numerically the scene's
+                    if (key == "big") assertEquals("${p.name} big $i layer", pyNum(d["layer"]), f["layer"])
+                    for (k in d.keys) assertTrue("${p.name} $key $i carries $k", k in setOf("pts", "id", "kind", "hw", "crane", "closed", "h", "layer", "tags"))
                 }
             }
             val trees = byIndex(p.l14(Layer.TREE))
@@ -128,12 +153,14 @@ class LayersTest {
                 val got = items.filter { ((it["source"] as Int?) ?: 0) == source }.associateBy { (it["index"] as Long?) ?: 0L }
                 for ((i, d) in dicts(S, key).withIndex()) {
                     val f = got.getValue(i.toLong())
-                    assertEquals(V2(d["x"] as Double, d["z"] as Double), p.at(f["pos"] as GridPoint))
+                    // a mapped node on the grid itself; a way's centre off it, kept exactly in x and z
+                    val exact = V2(d["x"] as Double, d["z"] as Double) == p.at(f["pos"] as GridPoint)
+                    if (exact) assertTrue(f["x"] == null && f["z"] == null) else { assertEquals(d["x"], f["x"]); assertEquals(d["z"], f["z"]) }
                     assertEquals(int(d["id"]), f["id"]); assertEquals(d["h"], f["h"])
                     assertEquals(tags(d), f["tags"] ?: emptyMap<String, String>())
                 }
             }
-            println("LAYERS ${p.name}: ${roads.size} roads, ${lines.size} lines, ${trees.size} trees, ${items.size} items equal the scene")
+            println("LAYERS ${p.name}: ${roads.size} roads ($marked with marks), ${lines.size} lines, ${trees.size} trees, ${items.size} items equal the scene")
         }
     }
 
@@ -147,15 +174,20 @@ class LayersTest {
             val things = byIndex(p.l14(Layer.THING))
             // the buildings facades go on, as facade_details picks them
             val blds = dicts(S, "buildings").filter { !truthy(it["hidden"]) && truthy(it["h"]) && tags(it)["building"] != "houseboat" }
+            val bIndex = IdentityHashMap<Any, Int>().also { m -> dicts(S, "buildings").forEachIndexed { i, b -> m[b] = i } }
+            // facade_details' rule: the first of its buildings whose box and ring hold the node
             @Suppress("UNCHECKED_CAST")
-            fun inFacade(x: Double, z: Double) = blds.any { b -> val poly = b["poly"] as List<V2>; poly.minOf { it.x } <= x && x <= poly.maxOf { it.x } && poly.minOf { it.y } <= z && z <= poly.maxOf { it.y } && app.atlas.render.Real.pip(x, z, poly) }
+            fun facadeOf(x: Double, z: Double): Int? = blds.firstOrNull { b -> val poly = b["poly"] as List<V2>; poly.minOf { it.x } <= x && x <= poly.maxOf { it.x } && poly.minOf { it.y } <= z && z <= poly.maxOf { it.y } && app.atlas.render.Real.pip(x, z, poly) }?.let { bIndex[it] }
             var drawn = 0
+            var doors = 0
             for ((i, n) in dicts(S, "nodes").withIndex()) {
                 if (n in trees) continue
                 val t = tags(n)
                 val st = n["style"] as PoiStyle.Style?
                 val always = t["highway"] == "street_lamp" || t["amenity"] in setOf("bench", "bicycle_parking", "waste_basket") || t["barrier"] in setOf("bollard", "block") || n in pois
-                val facade = facades && (truthy(t["addr:housenumber"]) || (st != null && st.cat != "service")) && inFacade(n["x"] as Double, n["z"] as Double)
+                val door = facades && (truthy(t["addr:housenumber"]) || (st != null && st.cat != "service"))
+                val building = if (door) facadeOf(n["x"] as Double, n["z"] as Double) else null
+                val facade = building != null
                 val f = things[i.toLong()]
                 assertEquals("${p.name} node $i (${n["id"]}) is a thing", always || facade, f != null)
                 if (f == null) continue
@@ -170,9 +202,11 @@ class LayersTest {
                 assertEquals(truthy(num), f["door"] == true)
                 val lead = num?.let { s -> s.takeWhile { Character.isDigit(it) }.takeIf { it.isNotEmpty() }?.let { java.math.BigInteger(app.atlas.render.PyRe.asciiDigits(it)).toLong() } }
                 assertEquals("${p.name} node $i door number of $num", lead, f["door_number"])
+                assertEquals("${p.name} node $i's facade", building?.toLong(), f["building"])
+                if (building != null) doors++
             }
             assertEquals(drawn, things.size)
-            println("LAYERS ${p.name}: $drawn things are exactly the nodes the renders draw (facades ${if (facades) "on" else "off"})")
+            println("LAYERS ${p.name}: $drawn things are exactly the nodes the renders draw (facades ${if (facades) "on" else "off"}), $doors on the facade of their building")
         }
     }
 
@@ -192,6 +226,7 @@ class LayersTest {
                 assertEquals(pts[pts.size / 2], p.at(f["pos"] as GridPoint))
                 assertEquals(pts[pts.size / 2 - 1], p.at(f["prev"] as GridPoint))
                 assertEquals(pts.size.toLong(), f["count"])
+                assertEquals(GroundKey.of(GroundKey.MARKS, GroundKey.MARKS_CANAL, i), f["ground_key"])
                 n++
             }
             val places = labels.count { it["source"] == 1 }
@@ -211,39 +246,72 @@ class LayersTest {
     }
 
     @Test
-    fun `clipped land and water fill exactly their rings, and the quays are water_edges`() {
+    fun `land cover and areas are the scene's, whole`() {
+        for (p in packs()) {
+            val S = p.scene.S
+            val ground = p.l14(Layer.GROUND)
+            for ((source, key) in listOf(0 to "areas", 1 to "land")) {
+                val got = ground.filter { ((it["source"] as Int?) ?: 0) == source }
+                val list = dicts(S, key)
+                assertEquals("${p.name} $key", list.size, got.size)
+                val by = got.associateBy { (it["index"] as Long?) ?: 0L }
+                for ((i, a) in list.withIndex()) {
+                    val f = by.getValue(i.toLong())
+                    @Suppress("UNCHECKED_CAST")
+                    assertEquals("${p.name} $key $i ring", a["poly"] as List<V2>, p.metres(f["ring"] as Geom))
+                    assertEquals(a["kind"], f["kind"]); assertEquals(int(a["id"]), f["id"])
+                    for (k in Schema.RENDER_TAGS.getValue(Layer.GROUND)) assertEquals(tags(a)[k], f[Schema.tag(k)])
+                    val want = if (source == 0) GroundKeys.area(i) else GroundKey.of(GroundKey.LAND, 0, i)
+                    assertEquals("${p.name} $key $i ground key", want, f["ground_key"])
+                }
+            }
+            assertTrue("${p.name}: areas and land cover are their own lists", dicts(S, "land").isEmpty() || dicts(S, "areas") !== dicts(S, "land"))
+            fun kinds(key: String) = dicts(S, key).groupingBy { it["kind"] as String }.eachCount().entries.sortedByDescending { it.value }.take(4).joinToString { "${it.key} ${it.value}" }
+            println("LAYERS ${p.name}: ${dicts(S, "areas").size} areas (${kinds("areas")}) and ${dicts(S, "land").size} land cover rings (${kinds("land")}) equal the scene, whole")
+        }
+    }
+
+    @Test
+    fun `clipped water fills its rings to the crossings' rounding, each piece turning as its ring, and the quays are water_edges`() {
         for (p in packs()) {
             val S = p.scene.S
             for (level in listOf(14)) {
                 val tiles = p.tiles.filter { it.level == level }
-                // pieces by ring: their areas add up to the ring's, to the rounding of the crossings
-                fun check(layer: Layer, rings: List<List<V2>>, select: (Feature) -> Boolean, what: String) {
-                    val pieces = tiles.flatMap { t -> t.layers[layer].orEmpty().filter(select) }.groupBy { (it["index"] as Long?) ?: 0L }
+                // pieces by ring: their areas add up to the ring's, to the rounding of the crossings (half a grid unit along
+                // an edge); each piece turns the way its ring turns
+                fun check(rings: List<List<V2>>, hole: Boolean, what: String) {
+                    val pieces = tiles.flatMap { t -> t.layers[Layer.WATER].orEmpty().filter { (it["hole"] == true) == hole } }.groupBy { (it["index"] as Long?) ?: 0L }
                     var worst = 0.0
+                    var n = 0
                     for ((i, r) in rings.withIndex()) {
                         val ps = pieces[i.toLong()] ?: error("${p.name} $what $i has no piece")
-                        val whole = Geom(IntArray(r.size) { Grid.latOf(r[it].y, p.head.lat0, p.head.kz)!! }, IntArray(r.size) { Grid.lonOf(r[it].x, p.head.lon0, p.head.kx)!! }, null)
-                        val want = area2(whole.lat, whole.lon).abs().toDouble()
-                        val got = ps.sumOf { area2((it["ring"] as Geom).lat, (it["ring"] as Geom).lon).abs().toDouble() }
-                        val perimeter = r.size.toDouble() * 4e5 // a crossing moves by at most half a unit along an edge
-                        val err = Math.abs(got - want)
-                        assertTrue("${p.name} $what $i: pieces fill $got of $want", err <= perimeter + want * 1e-9)
-                        worst = maxOf(worst, err / maxOf(want, 1.0))
+                        val lat = IntArray(r.size) { Grid.latOf(r[it].y, p.head.lat0, p.head.kz)!! }
+                        val lon = IntArray(r.size) { Grid.lonOf(r[it].x, p.head.lon0, p.head.kx)!! }
+                        val whole = Clip.area2(lat, lon)
+                        var sum = BigInteger.ZERO
+                        for (f in ps) {
+                            val g = f["ring"] as Geom
+                            val a2 = Clip.area2(g.lat, g.lon)
+                            assertEquals("${p.name} $what $i: a piece turns as its ring", whole.signum(), a2.signum())
+                            sum = sum.add(a2)
+                            n++
+                        }
+                        val err = sum.subtract(whole).abs().toDouble()
+                        val bound = r.size.toDouble() * 4e5 // a crossing moves by at most half a unit along an edge
+                        assertTrue("${p.name} $what $i: pieces fill $sum of $whole", err <= bound + whole.abs().toDouble() * 1e-9)
+                        worst = maxOf(worst, err / maxOf(whole.abs().toDouble(), 1.0))
                     }
-                    println("LAYERS ${p.name} L$level: ${rings.size} $what rings filled by their pieces (worst relative difference %.2e)".format(worst))
+                    println("LAYERS ${p.name} L$level: ${rings.size} $what rings filled by their $n pieces, each turning as its ring (worst relative difference %.2e)".format(worst))
                 }
                 @Suppress("UNCHECKED_CAST")
-                val water = (S["water"] as List<List<V2>>?) ?: emptyList()
-                check(Layer.WATER, water, { it["hole"] != true }, "water")
+                check((S["water"] as List<List<V2>>?) ?: emptyList(), false, "water")
                 @Suppress("UNCHECKED_CAST")
-                check(Layer.WATER, (S["water_holes"] as List<List<V2>>?) ?: emptyList(), { it["hole"] == true }, "island")
-                check(Layer.GROUND, dicts(S, "land").map { @Suppress("UNCHECKED_CAST") (it["poly"] as List<V2>) }, { it["source"] == 1 }, "land")
+                check((S["water_holes"] as List<List<V2>>?) ?: emptyList(), true, "island")
                 // every piece inside its tile
-                for (t in tiles) for (layer in listOf(Layer.WATER, Layer.GROUND)) for (f in t.layers[layer].orEmpty()) {
-                    if (layer == Layer.GROUND && f["source"] != 1) continue
+                for (t in tiles) for (f in t.layers[Layer.WATER].orEmpty()) {
                     val g = f["ring"] as Geom
                     val b = t.box
-                    for (k in 0 until g.size) assertTrue("${p.name} ${t.level}/${t.x}/${t.y} ${layer.label} ${f["index"]} leaves its tile", g.lat[k] in b[0]..b[2] && g.lon[k] in b[1]..b[3])
+                    for (k in 0 until g.size) assertTrue("${p.name} ${t.level}/${t.x}/${t.y} water ${f["index"]} leaves its tile", g.lat[k] in b[0]..b[2] && g.lon[k] in b[1]..b[3])
                 }
             }
             // the quays: water_edges rebuilt from the tiles, every edge's ends, normal and ring
@@ -273,10 +341,6 @@ class LayersTest {
                 assertTrue("${p.name} quay $k counts as its ring", e.r === owner)
             }
             println("LAYERS ${p.name}: ${edges.size} quay edges equal water_edges, bit for bit")
-            // ground keys of land: the kinds' first-seen order over the sorted land list
-            val land = dicts(S, "land")
-            val keys = GroundKeys.land(land)
-            for (f in p.l14(Layer.GROUND)) if (f["source"] == 1) assertEquals(keys[((f["index"] as Long?) ?: 0L).toInt()], f["ground_key"])
         }
     }
 }

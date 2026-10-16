@@ -29,4 +29,6 @@ tasks.test {
     maxHeapSize = "3g"
     systemProperty("atlas.testdata", rootProject.file("testdata").absolutePath)
     systemProperty("atlas.repo", rootProject.file("../..").absolutePath)
+    // where the tests build their packs and unpack the engine's regions, when the machine's temp disk is small
+    providers.gradleProperty("atlas.testTmp").orNull?.let { systemProperty("java.io.tmpdir", it) }
 }

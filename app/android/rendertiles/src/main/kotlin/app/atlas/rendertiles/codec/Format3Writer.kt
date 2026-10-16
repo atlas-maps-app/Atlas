@@ -11,6 +11,7 @@ import app.atlas.rendertiles.model.Feature
 import app.atlas.rendertiles.model.Format
 import app.atlas.rendertiles.model.Geom
 import app.atlas.rendertiles.model.Layer
+import app.atlas.rendertiles.model.Reach
 import app.atlas.rendertiles.model.RenderHead
 import app.atlas.rendertiles.model.RenderTile
 import app.atlas.rendertiles.model.Schema
@@ -28,8 +29,8 @@ import java.util.zip.CRC32
 
 /**
  * Writes a format-3 render pack ([Format]): the tiles, each encoded ([encodeTile]) and compressed with zstd, in D1's
- * container with the `rhead` and `style` sections. Deterministic: the same tiles, head, style and [Info] give the same
- * bytes (no clock, no host in them), and a tile's hash depends on its features alone.
+ * container with the `reach`, `rhead` and `style` sections. Deterministic: the same tiles, head, style and [Info] give
+ * the same bytes (no clock, no host in them), and a tile's hash depends on its features alone.
  */
 object Format3Writer {
     /** zstd's level for the chunks: the strongest of the ordinary levels (the packer writes once, phones read often). */
@@ -54,8 +55,21 @@ object Format3Writer {
         val sha256Hex: String get() = sha256.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
     }
 
-    /** What [write] made. */
-    class Written(val file: File, val bytes: Long, val chunks: List<Chunk>, val sections: Map<String, Pair<Long, Long>>, val contentSha256: String)
+    /** What [write] made: the chunks and their reach in the file's order. */
+    class Written(val file: File, val bytes: Long, val chunks: List<Chunk>, val reach: List<Reach>, val sections: Map<String, Pair<Long, Long>>, val contentSha256: String)
+
+    /** The `reach` section's bytes for [reach] ([Reach]'s layout). */
+    fun reachBytes(reach: List<Reach>): ByteArray {
+        val out = LeSink(Reach.HEADER_BYTES + reach.size * Reach.ENTRY_BYTES)
+        out.u32(Format.REACH_MAGIC.toLong())
+        out.u16(Format.PAYLOAD)
+        out.u16(Reach.ENTRY_BYTES)
+        out.u32(reach.size.toLong())
+        for (r in reach) {
+            out.i32(r.south); out.i32(r.west); out.i32(r.north); out.i32(r.east); out.i32(r.topCm)
+        }
+        return out.toByteArray()
+    }
 
     /** Writes [tiles] with [head] and [style] into [file] (through a temporary file beside it). */
     fun write(tiles: List<RenderTile>, head: RenderHead, style: StyleTables, info: Info, file: File): Written {
@@ -67,14 +81,17 @@ object Format3Writer {
             require(!(a.level == b.level && a.x == b.x && a.y == b.y)) { "tile ${a.level}/${a.x}/${a.y} twice" }
         }
         val chunks = ArrayList<Chunk>()
+        val reach = ArrayList<Reach>()
         val stored = ArrayList<ByteArray>()
         val sha = MessageDigest.getInstance("SHA-256")
         for (t in ordered) {
             val raw = encodeTile(t)
+            require(raw.size <= Format.MAX_TILE_BYTES) { "tile ${t.level}/${t.x}/${t.y} is ${raw.size} bytes, more than ${Format.MAX_TILE_BYTES}" }
             sha.reset()
             val h = sha.digest(raw)
             val z = Zstd.compress(raw, ZSTD_LEVEL)
             chunks += Chunk(t.level, t.x, t.y, z.size, raw.size, t.featureCount, h)
+            reach += Reach.of(t)
             stored += z
         }
         val table = ByteSink(chunks.size * 48 + 16)
@@ -92,7 +109,9 @@ object Format3Writer {
             c0.byte(ch.z); c0.varInt(ch.x); c0.varInt(ch.y); c0.varInt(ch.count); c0.bytes(ch.sha256)
             content.update(c0.toByteArray())
         }
+        content.update(reachBytes(reach))
         val contentHex = content.digest().joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+        val reachBytes = reachBytes(reach)
         val headBytes = head.toBytes()
         val styleRaw = style.toBytes()
         val styleBytes = Zstd.compress(styleRaw, ZSTD_LEVEL)
@@ -104,6 +123,7 @@ object Format3Writer {
         val tableBytes = table.toByteArray()
         val order = listOf(
             Dir(Format.SECTION_TILES, tableBytes.size.toLong(), tableBytes.size.toLong(), crc(tableBytes), Format.METHOD_STORED),
+            Dir(Format.SECTION_REACH, reachBytes.size.toLong(), reachBytes.size.toLong(), crc(reachBytes), Format.METHOD_STORED),
             Dir(Format.SECTION_CHUNKS, chunkBytes, chunkRaw, chunkCrc, Format.METHOD_ZSTD),
             Dir(Format.SECTION_HEAD, headBytes.size.toLong(), headBytes.size.toLong(), crc(headBytes), Format.METHOD_STORED),
             Dir(Format.SECTION_STYLE, styleBytes.size.toLong(), styleRaw.size.toLong(), crc(styleBytes), Format.METHOD_ZSTD),
@@ -159,13 +179,14 @@ object Format3Writer {
             out.write(manifestBytes)
             out.write(directory.toByteArray())
             out.write(tableBytes)
+            out.write(reachBytes)
             for (s in stored) out.write(s)
             out.write(headBytes)
             out.write(styleBytes)
         }
         if (file.exists() && !file.delete()) throw IOException("cannot replace $file")
         if (!tmp.renameTo(file)) throw IOException("cannot move $tmp to $file")
-        return Written(file, file.length(), chunks, order.associate { it.name to (it.stored to it.raw) }, contentHex)
+        return Written(file, file.length(), chunks, reach, order.associate { it.name to (it.stored to it.raw) }, contentHex)
     }
 
     /** The container's fixed header: magic, version, two lengths (D1's). */

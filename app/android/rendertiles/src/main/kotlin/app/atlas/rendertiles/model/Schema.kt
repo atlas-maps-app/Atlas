@@ -12,8 +12,9 @@ package app.atlas.rendertiles.model
  * - `tag:<key>`: the OSM tags the renders read when they draw ([RENDER_TAGS], measured by rendering the boards' views
  *   with every read recorded), one column per key, never the others; items keep all their tags in `tags`.
  * - `ground_key`: the feature's slot in the renders' ground order ([GroundKey]).
- * - `extra`: every other field the loader left on the record, as typed values ([app.atlas.rendertiles.codec.Values]),
- *   so nothing the scene holds is lost.
+ *
+ * Every field the loader leaves on a record has a column, or is one of [DROPPED]'s (with the reason the renders do
+ * not need it); a field that is neither fails the build, so nothing the renders draw from is left out unnoticed.
  */
 object Schema {
     /** One column: its [name], its [codec], and what it holds. */
@@ -42,6 +43,27 @@ object Schema {
         Layer.THING to listOf("natural", "highway", "amenity", "barrier", "opening_hours", "outdoor_seating"),
         Layer.LABEL to listOf("place", "population", "capital", "admin_level"),
     )
+
+    /**
+     * The fields the loader leaves on a layer's records that the tiles do not carry, each with why: the renders never
+     * read it, or read it only through a value the packer derives with the port's own function. A record's `tags` keep
+     * only [RENDER_TAGS] (items all of theirs); its geometry and position are the layer's geometry columns.
+     */
+    val DROPPED: Map<Layer, Map<String, String>> = run {
+        val building = linkedMapOf(
+            "_bb" to "the box of the tolerance-0 ring: the ring's own, derived again by a reader",
+            "src" to "where the height came from (height, levels): the loader's note, never drawn",
+            "look_why" to "why the generic look is what it is: the loader's note, never drawn",
+            "col" to "the wall's colour: drawn only through surface_colour, carried as wall_rgb",
+            "mat" to "the wall's material as mapped: drawn only through surface_colour (wall_rgb); mat_draw is carried",
+            "col_draw" to "the wall colour drawn: through surface_colour (wall_rgb) and the board lines (Flags.WALL_DRAWN)",
+            "rcol" to "the roof's colour: drawn only through surface_colour, carried as roof_rgb",
+            "rmat" to "the roof's material as mapped: drawn only through surface_colour (roof_rgb); rmat_draw is carried",
+            "rcol_draw" to "the roof colour drawn: only through surface_colour, carried as roof_rgb",
+        )
+        val node = linkedMapOf("_b" to "the building whose places name it: that building's places column holds it")
+        linkedMapOf(Layer.BUILDING to building, Layer.PART to building, Layer.VARIANT to building, Layer.TREE to node, Layer.THING to node)
+    }
 
     /** The tag keys whose values are mostly numbers, coded as such ([Codec.STRN]). */
     private val NUMBER_TAGS = setOf("addr:housenumber")
@@ -76,6 +98,12 @@ object Schema {
 
         /** Built in 1960 or later and not a church (`year >= 1960 and btype not in CHURCHES`). */
         const val MODERN = 64
+
+        /**
+         * The loader drew the wall's colour (`col_draw` is set): a tradition's board lines take `wall_rgb` (× 0.62);
+         * without it they take #888888 (`hx(b.get('col_draw') or '#888888')`).
+         */
+        const val WALL_DRAWN = 128
     }
 
     /** What buildings and parts carry besides their ring (also the attributes of a [Layer.VARIANT]). */
@@ -86,20 +114,14 @@ object Schema {
         c("year", Codec.NVARZ, "the year start_date begins with"),
         c("levels", Codec.NVARZ, "storeys (mapped, or from the height)"),
         c("parent_id", Codec.NVARZ, "a part: the id of the outline it stands in"),
-        c("src", Codec.STR, "where the height came from: height, levels, or null"),
         c("roof", Codec.STR, "roof shape after regions.py's CLOSEST"),
         c("orient", Codec.STR, "roof:orientation (along, across)"),
-        c("mat", Codec.STR, "building:material as mapped"),
-        c("rmat", Codec.STR, "roof:material as mapped"),
-        c("col", Codec.STR, "the wall's colour (mapped or the generic look's)"),
-        c("rcol", Codec.STR, "the roof's colour"),
-        c("mat_draw", Codec.STR, "the wall material drawn"),
-        c("rmat_draw", Codec.STR, "the roof material drawn"),
-        c("col_draw", Codec.STR, "the wall colour drawn (jittered)"),
-        c("rcol_draw", Codec.STR, "the roof colour drawn"),
+        c("wall_rgb", Codec.VARU, "the wall's base colour, 0xRRGGBB: surface_colour(b, None) (drawn, mapped, material or clay), before light"),
+        c("roof_rgb", Codec.VARU, "the roof's base colour, 0xRRGGBB: surface_colour(b, None, 'roof'), before light"),
+        c("mat_draw", Codec.STR, "the wall material drawn (brick, plaster, …: its pattern)"),
+        c("rmat_draw", Codec.STR, "the roof material drawn (roof_tiles, metal, …: its pattern)"),
         c("kind", Codec.STR, "the generic look's kind (home, office, …)"),
-        c("look_why", Codec.STR, "why the look is what it is"),
-        c("otype", Codec.STR, "relation for buildings mapped as multipolygons, else null (a way)"),
+        c("otype", Codec.STR, "relation for buildings mapped as multipolygons, else null (a way): the OSM type of the id"),
         c("hidden", Codec.BOOL, "an outline drawn by its parts instead"),
         c("no_win", Codec.BOOL, "no window rows (halls, tanks, glass walls)"),
         c("in_church", Codec.BOOL, "a part standing in a church"),
@@ -107,7 +129,6 @@ object Schema {
         c("places", Codec.IDS, "the ids of the nodes (shops, cafés) inside it, in the scene's order"),
         c("place_hours", Codec.STRS, "opening_hours of each place, \"\" where none (null without places)"),
         c("flags", Codec.VARU, "derived flags (Flags)"),
-        c("extra", Codec.VALUE, "the loader's other fields"),
     ) + tags(Layer.BUILDING)
 
     val BUILDING: List<Column> = listOf(
@@ -118,22 +139,19 @@ object Schema {
     ) + BUILDING_ATTRIBUTES
 
     val GROUND: List<Column> = listOf(
-        c("source", Codec.U8, "0: S['areas'] (whole); 1: S['land'] (clipped at the tile's edges)"),
-        c("index", Codec.DELTA, "source order in its list"),
-        c("piece", Codec.VARU, "a clipped ring's piece number in this tile (0 for whole rings)"),
+        c("source", Codec.U8, "0: S['areas']; 1: S['land']"),
+        c("index", Codec.DELTA, "source order in its list (S['land'] as the loader sorted it: by LAND's draw order, then area, largest first)"),
         c("id", Codec.NVARZ, "the OSM id (land cover has one, areas do not)"),
-        c("ring", Codec.GEOM, "the ring (an area's whole, a land piece clipped)"),
-        c("ring.keep", Codec.KEEP, "keep codes (an area's are simplify's; a piece's are its own, clip points always kept)"),
+        c("ring", Codec.GEOM, "the ring, whole"),
+        c("ring.keep", Codec.KEEP, "keep codes (simplify's; the renders simplify areas, never land cover, which a coarse level takes at its own tolerance)"),
         c("kind", Codec.STR, "the kind (park, square, residential, …)"),
-        c("ground_key", Codec.VARU, "the slot in the renders' ground order"),
-        c("extra", Codec.VALUE, "the loader's other fields"),
+        c("ground_key", Codec.VARU, "the slot in the renders' ground order (land cover: its class is the frame's, GroundKey.LAND)"),
     ) + tags(Layer.GROUND)
 
     val WATER: List<Column> = listOf(
         c("index", Codec.DELTA, "source order in S['water'] (or S['water_holes'] for holes)"),
         c("hole", Codec.BOOL, "an island: a ring of S['water_holes']"),
-        c("piece", Codec.VARU, "the piece number of the ring in this tile"),
-        c("ring", Codec.GEOM, "the ring, clipped at the tile's edges"),
+        c("ring", Codec.GEOM, "the ring clipped at the tile's edges: one piece per ring and tile, a ring that leaves the tile and comes back joined along the edge"),
         c("ring.keep", Codec.KEEP, "the piece's keep codes, clip points always kept"),
         c("shore", Codec.BOOL, "a natural shore (S['natural_shore']): no quay wall"),
         c("level", Codec.CENTI, "the water level below the street, metres (S['water_y']); null: the region's WATER_Y"),
@@ -163,21 +181,21 @@ object Schema {
         c("layer", Codec.CENTI, "layer"),
         c("wguess", Codec.BOOL, "the width is the class's guess"),
         c("ground_key", Codec.VARU, "the slot in the renders' ground order"),
-        c("extra", Codec.VALUE, "the loader's other fields"),
+        c("marks_key", Codec.VARU, "the slot of the marks drawn along it (a bridge's railing lines, a sett road's courses): GroundKey.MARKS class 0; 0 for a road that draws none"),
     ) + tags(Layer.ROAD)
 
     val LINE: List<Column> = listOf(
-        c("source", Codec.U8, "0 S['rails'] (tram), 1 S['rail'], 2 S['big'], 3 S['aero'], 4 S['power'], 5 S['marine'], 6 S['park'], 7 gantries, 8 conveyors"),
+        c("source", Codec.U8, "0 S['rails'] (tram), 1 S['rail'], 2 S['big'], 3 S['aero'], 4 S['power'], 5 S['marine'], 6 S['park']"),
         c("index", Codec.DELTA, "source order in its list"),
         c("id", Codec.NVARZ, "the OSM id where the scene has one"),
         c("line", Codec.GEOM, "the line, whole (a park's edge is its ring)"),
         c("kind", Codec.STR, "aeroway or man_made kind"),
         c("hw", Codec.STR, "a big road's class"),
+        c("layer", Codec.CENTI, "a big road's layer (0 where none is mapped): it is drawn 0.5 m higher per layer"),
         c("crane", Codec.BOOL, "a crane rail"),
         c("closed", Codec.BOOL, "a marine work mapped as a closed way"),
         c("h", Codec.CENTI, "height, metres"),
         c("ground_key", Codec.VARU, "the slot in the renders' ground order"),
-        c("extra", Codec.VALUE, "the loader's other fields"),
     ) + tags(Layer.LINE)
 
     val TREE: List<Column> = listOf(
@@ -189,7 +207,6 @@ object Schema {
         c("crown", Codec.CENTI, "crown diameter, metres"),
         c("gy", Codec.CENTI, "the ground's height under it (terrain towns)"),
         c("guessed", Codec.STRS, "the tags the loader guessed"),
-        c("extra", Codec.VALUE, "the loader's other fields"),
     ) + tags(Layer.TREE)
 
     val THING: List<Column> = listOf(
@@ -206,19 +223,23 @@ object Schema {
         c("gy", Codec.CENTI, "the ground's height under it (terrain towns)"),
         c("door", Codec.BOOL, "it has a house number (addr:housenumber, truthy): a door where facades are drawn"),
         c("door_number", Codec.NDELTA, "the number on its door: the house number's leading digits (`re.match(r'\\d+')`)"),
-        c("extra", Codec.VALUE, "the loader's other fields"),
+        c(
+            "building", Codec.NVARZ,
+            "where facades are drawn: the building whose facade carries its door or shopfront (facade_details: the first shown building with a height, not a houseboat, whose box and ring hold it), as its index in S['buildings'] (that building's `index`, maybe in another tile); null for none",
+        ),
     ) + tags(Layer.THING)
 
     val ITEM: List<Column> = listOf(
         c("source", Codec.U8, "0 S['cranes'], 1 S['masts'], 2 S['mtowers'], 3 S['towers'] (pylons), 4 S['turbines']"),
         c("index", Codec.DELTA, "source order in its list"),
         c("id", Codec.NVARZ, "the OSM id"),
-        c("pos", Codec.POINT, "where it stands (on the grid: a mapped node)"),
+        c("pos", Codec.POINT, "where it stands: the grid point itself for a mapped node, the nearest grid point otherwise"),
+        c("x", Codec.CENTI, "its x in the frame, metres, where the scene has it off the grid (a crane mapped as a way: its outline's centre); null where pos is exact"),
+        c("z", Codec.CENTI, "its z likewise"),
         c("poly", Codec.GEOM, "a crane's mapped outline (empty for nodes)"),
         c("h", Codec.CENTI, "height, metres"),
         c("rotor", Codec.CENTI, "a turbine's rotor diameter, metres"),
         c("tags", Codec.TAGS, "every tag (items are few)"),
-        c("extra", Codec.VALUE, "the loader's other fields (a crane's position off the grid: x and z)"),
     )
 
     val LABEL: List<Column> = listOf(
@@ -230,6 +251,7 @@ object Schema {
         c("prev", Codec.POINT, "a canal: the vertex before it (pts[n / 2 − 1]), the baseline's direction"),
         c("count", Codec.VARU, "a canal: the way's vertex count"),
         c("kind", Codec.STR, "a place: its place=* value"),
+        c("ground_key", Codec.VARU, "a canal name: its slot among the marks (GroundKey.MARKS class 2); 0 for a place"),
     ) + tags(Layer.LABEL)
 
     val VARIANT: List<Column> = listOf(
@@ -281,5 +303,4 @@ object Schema {
         Layer.VARIANT -> VARIANT
         Layer.MARKING, Layer.BUILT, Layer.DEM -> throw UnsupportedOperationException("the ${layer.label} layer comes with K30, K20b and K28")
     }
-
 }

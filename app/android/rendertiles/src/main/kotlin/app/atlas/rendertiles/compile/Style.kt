@@ -17,7 +17,8 @@ import app.atlas.rendertiles.model.StyleTables
  * - `keep`: the ladder of tolerances ([Keep.TOLERANCES]); `render_tags`: the tag keys each layer carries;
  * - `land` (`regions.py`'s `LAND`: kind → [colour, draw order]), `area` (`amsterdam.py`'s `AREA`: kind → colour),
  *   `surf` (`SURF`: surface → colour), `surf_colour` (`surface:colour` → colour), `material` (`MATERIAL`), `clay`;
- * - `road_order` and `aero_order`: the classes' drawing order ([GroundKeys]); `ground_stages`: [GroundKey]'s stages;
+ * - `road_order` and `aero_order`: the classes' drawing order ([GroundKeys]); `ground_stages`: [GroundKey]'s stages,
+ *   `marks_classes` the classes of its marks stage;
  *   `building_flags`: the bits of a building's `flags`;
  * - `palette`: the region's generic looks (`BRICK_OLD`, `PLASTER`, `BRICK_NEW` after its load);
  * - `state`: the port's module values the region's load set (`WATER_Y`, `QUAY_COL`, `QUAY_COURSE`, `TONE`, `WIN_STYLE`,
@@ -55,9 +56,10 @@ object Style {
         t["road_order"] = GroundKeys.ROAD_ORDER
         t["aero_order"] = GroundKeys.AERO_ORDER
         t["ground_stages"] = linkedMapOf("land" to GroundKey.LAND, "water" to GroundKey.WATER, "area" to GroundKey.AREA, "road" to GroundKey.ROAD, "over" to GroundKey.OVER, "marks" to GroundKey.MARKS)
+        t["marks_classes"] = linkedMapOf("road" to GroundKey.MARKS_ROAD, "tram" to GroundKey.MARKS_TRAM, "canal" to GroundKey.MARKS_CANAL)
         t["building_flags"] = linkedMapOf(
             "church" to Schema.Flags.CHURCH, "warehouse" to Schema.Flags.WAREHOUSE, "shop_floor" to Schema.Flags.SHOP_FLOOR, "construction" to Schema.Flags.CONSTRUCTION,
-            "near_water" to Schema.Flags.NEAR_WATER, "houseboat" to Schema.Flags.HOUSEBOAT, "modern" to Schema.Flags.MODERN,
+            "near_water" to Schema.Flags.NEAR_WATER, "houseboat" to Schema.Flags.HOUSEBOAT, "modern" to Schema.Flags.MODERN, "wall_drawn" to Schema.Flags.WALL_DRAWN,
         )
         t["palette"] = linkedMapOf("brick_old" to Amsterdam.BRICK_OLD.toList(), "plaster" to Amsterdam.PLASTER.toList(), "brick_new" to Amsterdam.BRICK_NEW.toList())
         t["state"] = linkedMapOf(

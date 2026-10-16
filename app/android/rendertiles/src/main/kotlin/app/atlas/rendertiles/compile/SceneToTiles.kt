@@ -5,6 +5,7 @@ import app.atlas.render.PoiStyle
 import app.atlas.render.PyRe
 import app.atlas.render.Real
 import app.atlas.render.V2
+import app.atlas.render.V3
 import app.atlas.render.data.PackReader
 import app.atlas.render.live.LiveEngine
 import app.atlas.render.live.LiveRegion
@@ -34,11 +35,13 @@ import java.util.IdentityHashMap
 /**
  * Stage P (plan-vector D2): a scene the port loaded ([LiveScene], its `S`), written as render tiles at [levels].
  *
- * Every record of the scene becomes a feature with the values the loader derived, field by field ([Schema]); geometry
- * goes onto OSM's grid exactly ([Grid]: a vertex that is not a grid point of the scene's frame fails the build, so a
- * tile never holds a vertex the oracle does not); buildings, parts and areas get keep codes ([KeepCodes]); land cover
- * and water are clipped at the tiles' edges ([Clip]); the ground gets its slots in the renders' order ([GroundKeys]);
- * quay edges are `water_edges`' own ([Amsterdam.waterEdges]).
+ * Every record of the scene becomes a feature with the values the loader derived, field by field ([Schema]): a field
+ * that has no column and is not one of [Schema.DROPPED]'s fails the build. Geometry goes onto OSM's grid exactly ([Grid]:
+ * a vertex that is not a grid point of the scene's frame fails the build, so a tile never holds a vertex the oracle does
+ * not); rings get keep codes ([KeepCodes]) where the pack's views and bands simplify; the water is clipped at the tiles'
+ * edges ([Clip]), everything else is stored whole; the ground gets its slots in the renders' order ([GroundKeys]); quay
+ * edges are `water_edges`' own ([Amsterdam.waterEdges]); each feature's box and top bound what the renders draw from it
+ * ([Drawn]).
  *
  * [variants] are the same region loaded whole at other tolerances of the ladder: where a building's or part's derived
  * values differ there (the loader reads some looks off the simplified footprint), a [Layer.VARIANT] feature carries
@@ -65,6 +68,13 @@ class SceneToTiles(
     private val S: Dict = scene.S
     private val region: LiveRegion = scene.region
 
+    /**
+     * Whether rings carry keep codes: a region's views and bands load it simplified; the living map is always loaded
+     * whole ([Head.bands]), so its pack carries none.
+     */
+    private val keep: Boolean = Head.bands(region).any { it.tolerance > 0 }
+
+
     // the frame the scene was loaded in: the port's module state after its load
     val lat0: Double
     val lon0: Double
@@ -80,6 +90,7 @@ class SceneToTiles(
         val f = region.frame
         require(f.lat0 == lat0 && f.lon0 == lon0 && f.kx.toRawBits() == kx.toRawBits() && f.kz == kz) { "the scene's frame ($lat0, $lon0, $kx, $kz) is not its region's ${region.frame}" }
         require(scene.tolerance == 0.0) { "render tiles are written from a scene loaded at tolerance 0, not ${scene.tolerance}" }
+        require(keep || variants.isEmpty()) { "variants for a pack that is never simplified" }
         for (v in variants) require(Keep.indexOf(v.tolerance) > 0) { "a variant at ${v.tolerance}, which is not on the keep ladder" }
         unsupported()
     }
@@ -90,10 +101,13 @@ class SceneToTiles(
             "coasters" to "a theme park's coaster tracks (K15)", "woods" to "a park's planted woods (K15)", "dem" to "a survey's heights (K28)",
             "_terrain" to "a region drawn on its terrain (K28)", "_flat" to "the relief (K28)", "_lines" to "lines draped on terrain (K28)",
             "_grid" to "a terrain grid (K28)", "gantries" to "gantries (K15)", "conveyors" to "conveyors (K15)",
+            "_coaster_items" to "a theme park's coaster tracks (K15)",
         )
         val found = later.filterKeys { k -> truthy(S[k]) }
         if (found.isNotEmpty()) throw UnsupportedOperationException("${region.id}: render tiles cannot carry ${found.values.joinToString()} yet")
     }
+
+    private fun codes(pts: List<V2>): ByteArray? = if (keep) KeepCodes.of(pts) else null
 
     // ------------------------------------------------------------------ the grid
 
@@ -111,6 +125,17 @@ class SceneToTiles(
     }
 
     private fun point(x: Double, z: Double, what: () -> String) = GridPoint(lat(z, what), lon(x, what))
+
+    /** [box] widened by [metres] on every side, outward on the grid (a box of what is drawn, [Drawn]). */
+    private fun widen(box: IntArray, metres: Double): IntArray {
+        if (!(metres > 0)) return box
+        val dLat = Math.ceil(metres / kz * Grid.SCALE).toLong() + 1
+        val dLon = Math.ceil(metres / kx * Grid.SCALE).toLong() + 1
+        fun c(v: Long): Int = v.coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt()
+        return intArrayOf(c(box[0] - dLat), c(box[1] - dLon), c(box[2] + dLat), c(box[3] + dLon))
+    }
+
+    private fun pointBox(p: GridPoint) = intArrayOf(p.lat, p.lon, p.lat, p.lon)
 
     /** A record's ring or line ([key], `poly` by default) as the scene holds it: a list of points. */
     internal fun points(d: Map<String, Any?>, key: String = "poly"): List<V2> {
@@ -183,7 +208,8 @@ class SceneToTiles(
             val coarse = if (full) 0 else Keep.indexOf(COARSE)
             for (p in areaFeatures(coarse)) put(p, z)
             for (p in Labels.features(this)) put(p.toPending(), z)
-            // clipped fills: one piece per ring and tile it crosses
+            for (p in landFeatures(coarse)) put(p, z)
+            // the water: one piece per ring and tile it crosses
             for ((key, fs) in clipped(z, coarse)) byTile.getOrPut(key) { ArrayList() }.addAll(fs)
             for ((key, fs) in byTile) out += RenderTile.of(key.z, key.x, key.y, fs)
         }
@@ -195,7 +221,7 @@ class SceneToTiles(
     private fun building(layer: Layer, i: Int, b: Dict): Pending {
         val poly = points(b)
         val what = { "${layer.label} $i (${b["id"]})" }
-        val ring = geom(poly, what).withKeep(KeepCodes.of(poly))
+        val ring = geom(poly, what).withKeep(codes(poly))
         val fields = LinkedHashMap<String, Any?>()
         fields["index"] = i
         fields["id"] = (b["id"] as Number).toLong()
@@ -203,26 +229,31 @@ class SceneToTiles(
         fields.putAll(attributes(layer, b, Amsterdam.nearWater(edges, poly, 16.0)))
         val c = Real.centroid(poly)
         val h = (b["h"] as? Double) ?: 0.0
-        return Pending(layer, fields, nearest(c.x, c.y), ring.box(), cm(h), i.toLong())
+        return Pending(layer, fields, nearest(c.x, c.y), ring.box(), cmUp(h + Drawn.CHIMNEY), i.toLong())
     }
 
-    /** A building's or part's attributes ([Schema.BUILDING_ATTRIBUTES]): every field the loader left, typed as the schema codes it. */
+    /**
+     * A building's or part's attributes ([Schema.BUILDING_ATTRIBUTES]): every field the loader left, typed as the schema
+     * codes it, the base colours `surface_colour` resolves (no lens) and the derived flags; a field the schema neither
+     * codes nor drops fails.
+     */
     fun attributes(layer: Layer, b: Dict, nearWater: Boolean): Map<String, Any?> {
         val out = LinkedHashMap<String, Any?>()
-        val extra = LinkedHashMap<String, Any?>()
         val cols = Schema.BUILDING_ATTRIBUTES.associateBy { it.name }
         @Suppress("UNCHECKED_CAST")
         val tags = (b["tags"] as Map<String, Any?>?) ?: emptyMap()
+        val what = { "${layer.label} ${b["id"]}" }
         for ((k, v) in b) {
             when (k) {
                 "poly", "id" -> {}
-                "_bb" -> {} // the box of the tolerance-0 ring: the ring's own, derived again by a reader
                 "tags" -> out.putAll(tagFields(layer, tags))
                 "guessed" -> {
                     @Suppress("UNCHECKED_CAST")
                     val g = v as Map<String, Any?>
-                    if (g.values.all { it == true }) out["guessed"] = g.keys.toList() else extra[k] = v
+                    if (g.values.all { it == true }) out["guessed"] = g.keys.toList() else noColumn(layer, k, v, what)
                 }
+                // what the packer derives: a loader field of the same name would be lost
+                in DERIVED -> noColumn(layer, k, v, what)
                 "places" -> {
                     @Suppress("UNCHECKED_CAST")
                     val ps = v as List<Dict>
@@ -232,13 +263,25 @@ class SceneToTiles(
                 }
                 else -> {
                     val col = cols[k]
-                    if (col != null && fits(col, v)) out[k] = v else extra[k] = v
+                    if (col != null && fits(col, v)) out[k] = v else drop(layer, k, v, what)
                 }
             }
         }
+        out["wall_rgb"] = rgb(Amsterdam.surfaceColour(b, null, "wall"), what)
+        out["roof_rgb"] = rgb(Amsterdam.surfaceColour(b, null, "roof"), what)
         out["flags"] = flags(b, tags, nearWater)
-        if (extra.isNotEmpty()) out["extra"] = checkValue(extra) { "${layer.label} ${b["id"]}" }
         return out
+    }
+
+    /** A colour `hx` read (whole channels 0 to 255) as 0xRRGGBB. */
+    private fun rgb(c: V3, what: () -> String): Long {
+        var v = 0L
+        for (i in 0 until 3) {
+            val ch = c[i]
+            check(ch >= 0 && ch <= 255 && ch == Math.floor(ch)) { "${what()}: a base colour channel of $ch" }
+            v = (v shl 8) or ch.toLong()
+        }
+        return v
     }
 
     /** The derived flags ([Schema.Flags]) with the renders' own tests (amsterdam.py's `_draw_building`). */
@@ -255,6 +298,7 @@ class SceneToTiles(
         if (btype == "houseboat") f = f or Schema.Flags.HOUSEBOAT.toLong()
         val yr = (b["year"] as Number?)?.toInt() ?: 0
         if (yr >= 1960 && btype !in CHURCHES) f = f or Schema.Flags.MODERN.toLong()
+        if (truthy(b["col_draw"])) f = f or Schema.Flags.WALL_DRAWN.toLong()
         return f
     }
 
@@ -273,75 +317,69 @@ class SceneToTiles(
     // ------------------------------------------------------------------ the ground
 
     /** `S['areas']`, whole, each simplified at ladder index [coarse] (0: as the scene holds it) with fresh keep codes. */
-    private fun areaFeatures(coarse: Int = 0): List<Pending> {
-        val out = ArrayList<Pending>()
-        for ((i, a) in dicts("areas").withIndex()) {
-            val poly = generalised(points(a), coarse)
-            val ring = geom(poly) { "area $i" }.withKeep(KeepCodes.of(poly))
-            val fields = LinkedHashMap<String, Any?>()
-            fields["source"] = 0
-            fields["index"] = i
-            fields["ring"] = ring
-            val extra = LinkedHashMap<String, Any?>()
-            for ((k, v) in a) when (k) {
-                "poly" -> {}
-                "kind" -> if (v is String) fields["kind"] = v else extra[k] = v
-                "tags" -> fields.putAll(tagFields(Layer.GROUND, tagMap(v)))
-                "id" -> fields["id"] = (v as Number).toLong()
-                else -> extra[k] = v
-            }
-            fields["ground_key"] = GroundKeys.area(i)
-            if (extra.isNotEmpty()) fields["extra"] = checkValue(extra) { "area $i" }
-            val box = ring.box()
-            val c = Cells.centre(box)
-            out += Pending(Layer.GROUND, fields, GridPoint(c[0], c[1]), box, 0, i.toLong())
+    private fun areaFeatures(coarse: Int = 0): List<Pending> = dicts("areas").mapIndexed { i, a -> ground(0, i, a, coarse, GroundKeys.area(i), Drawn.AREA_TOP) { "area $i" } }
+
+    /**
+     * `S['land']`, whole, in the loader's sorted order, at ladder index [coarse] (0: as the scene holds it): the renders
+     * test and group each polygon whole ([app.atlas.rendertiles.model.GroundKey.LAND]). Their keep codes serve levels
+     * beyond the port's: the renders never simplify land cover, at any view or band.
+     */
+    private fun landFeatures(coarse: Int = 0): List<Pending> {
+        val land = dicts("land")
+        val keys = GroundKeys.land(land)
+        return land.mapIndexed { i, a -> ground(1, i, a, coarse, keys[i], Drawn.LAND_TOP) { "land $i" } }
+    }
+
+    /** One ground ring ([source] 0 an area, 1 land cover) as a feature, its fields field by field. */
+    private fun ground(source: Int, i: Int, a: Dict, coarse: Int, key: Long, top: Double, what: () -> String): Pending {
+        val poly = generalised(points(a), coarse)
+        val ring = geom(poly, what).withKeep(codes(poly))
+        val fields = LinkedHashMap<String, Any?>()
+        fields["source"] = source
+        fields["index"] = i
+        fields["ring"] = ring
+        for ((k, v) in a) when (k) {
+            "poly" -> {}
+            "kind" -> if (v is String) fields["kind"] = v else noColumn(Layer.GROUND, k, v, what)
+            "tags" -> fields.putAll(tagFields(Layer.GROUND, tagMap(v)))
+            "id" -> fields["id"] = (v as Number).toLong()
+            else -> drop(Layer.GROUND, k, v, what)
         }
-        return out
+        fields["ground_key"] = key
+        val box = ring.box()
+        val c = Cells.centre(box)
+        return Pending(Layer.GROUND, fields, GridPoint(c[0], c[1]), box, cmUp(top), (source.toLong() shl 40) or i.toLong())
     }
 
     /** [pts] as `simplify` leaves it at ladder index [level] (0: unchanged). */
     private fun generalised(pts: List<V2>, level: Int): List<V2> = if (level == 0) pts else KeepCodes.simplify(pts, KeepCodes.of(pts), level)
 
-    /** Land cover and water, simplified at ladder index [coarse] (0: as they are), clipped at the edges of every tile at zoom [z] they reach. */
+    /** The water, simplified at ladder index [coarse] (0: as it is), clipped at the edges of every tile at zoom [z] it reaches. */
     private fun clipped(z: Int, coarse: Int = 0): Map<Cells.TileKey, List<Feature>> {
         val out = LinkedHashMap<Cells.TileKey, MutableList<Feature>>()
-        fun cut(layer: Layer, ring: Geom, base: Map<String, Any?>, order: Long) {
+        fun cut(layer: Layer, ring: Geom, base: Map<String, Any?>, order: Long, what: () -> String) {
             val box = ring.box()
+            // every piece turns as its ring turns, so a piece's winding is its ring's (Layer.WATER)
+            val turn = Clip.area2(ring.lat, ring.lon).signum()
             val t0 = Cells.tileOf(z, box[2], box[1])
             val t1 = Cells.tileOf(z, box[0], box[3])
             for (x in t0.x..t1.x) for (y in t0.y..t1.y) {
                 val key = Cells.TileKey(z, x, y)
                 val tb = Grid.tileBox(z, x, y)
-                val piece = if (Clip.inside(ring.lat, ring.lon, tb)) Clip.Piece(ring.lat, ring.lon, BooleanArray(ring.size)) else Clip.ring(ring.lat, ring.lon, tb) ?: continue
-                val pts = (0 until piece.size).map { V2(Grid.x(piece.lon[it], lon0, kx), Grid.z(piece.lat[it], lat0, kz)) }
-                val codes = KeepCodes.of(pts)
-                for (k in 0 until piece.size) if (piece.cut[k]) codes[k] = Keep.ALL.toByte()
-                val g = Geom(piece.lat, piece.lon, codes)
+                val cutPiece = if (Clip.inside(ring.lat, ring.lon, tb)) Clip.Piece(ring.lat, ring.lon, BooleanArray(ring.size)) else Clip.ring(ring.lat, ring.lon, tb) ?: continue
+                check(Clip.area2(cutPiece.lat, cutPiece.lon).signum() == turn) { "${what()}: its piece in tile $z/$x/$y turns the other way (a ring that crosses itself)" }
+                val g = if (keep) {
+                    val pts = (0 until cutPiece.size).map { V2(Grid.x(cutPiece.lon[it], lon0, kx), Grid.z(cutPiece.lat[it], lat0, kz)) }
+                    val codes = KeepCodes.of(pts)
+                    for (k in 0 until cutPiece.size) if (cutPiece.cut[k]) codes[k] = Keep.ALL.toByte()
+                    Geom(cutPiece.lat, cutPiece.lon, codes)
+                } else Geom(cutPiece.lat, cutPiece.lon, null)
                 val fields = LinkedHashMap(base)
                 fields["ring"] = g
                 val pb = g.box()
                 val c = Cells.centre(pb)
                 out.getOrPut(key) { ArrayList() }.add(Feature(layer, Schema.canonical(layer, fields), Cells.cellOf(key, c[0], c[1]), pb, 0, order))
             }
-        }
-        val land = dicts("land")
-        val landKeys = GroundKeys.land(land)
-        for ((i, a) in land.withIndex()) {
-            val ring = geom(generalised(points(a), coarse)) { "land $i" }
-            val base = LinkedHashMap<String, Any?>()
-            base["source"] = 1
-            base["index"] = i
-            val extra = LinkedHashMap<String, Any?>()
-            for ((k, v) in a) when (k) {
-                "poly" -> {}
-                "kind" -> if (v is String) base["kind"] = v else extra[k] = v
-                "tags" -> base.putAll(tagFields(Layer.GROUND, tagMap(v)))
-                "id" -> base["id"] = (v as Number).toLong()
-                else -> extra[k] = v
-            }
-            base["ground_key"] = landKeys[i]
-            if (extra.isNotEmpty()) base["extra"] = checkValue(extra) { "land $i" }
-            cut(Layer.GROUND, ring, base, (1L shl 40) or i.toLong())
         }
         @Suppress("UNCHECKED_CAST")
         val shore = (S["natural_shore"] as Collection<Any?>?) ?: emptyList()
@@ -352,7 +390,8 @@ class SceneToTiles(
         val holeOf = (S["_hole_of"] as Map<Any?, Any?>?) ?: emptyMap()
         for ((hole, list) in listOf(false to water, true to holes)) {
             for ((i, r) in list.withIndex()) {
-                val ring = geom(generalised(r, coarse)) { "${if (hole) "island" else "water"} $i" }
+                val what = { "${if (hole) "island" else "water"} $i" }
+                val ring = geom(generalised(r, coarse), what)
                 val base = LinkedHashMap<String, Any?>()
                 base["index"] = i
                 if (hole) base["hole"] = true
@@ -361,7 +400,7 @@ class SceneToTiles(
                 if (r in tidal) base["tidal"] = true
                 if (hole) holeOf.entries.firstOrNull { it.key === r }?.value?.let { o -> base["hole_of"] = (waterIndex[o] ?: throw IllegalStateException("island $i belongs to a ring outside S['water']")).toLong() }
                 base["ground_key"] = GroundKeys.water(i, hole)
-                cut(Layer.WATER, ring, base, (if (hole) 1L shl 40 else 0L) or i.toLong())
+                cut(Layer.WATER, ring, base, (if (hole) 1L shl 40 else 0L) or i.toLong(), what)
             }
         }
         return out
@@ -411,7 +450,8 @@ class SceneToTiles(
             if (e.r in tidal) fields["tidal"] = true
             val box = intArrayOf(minOf(a.lat, b.lat), minOf(a.lon, b.lon), maxOf(a.lat, b.lat), maxOf(a.lon, b.lon))
             val c = Cells.centre(box)
-            out += Pending(Layer.QUAY, fields, GridPoint(c[0], c[1]), box, 0, k.toLong())
+            // the wall and its coping along the edge (the water's level is below the street: Format's reflections)
+            out += Pending(Layer.QUAY, fields, GridPoint(c[0], c[1]), widen(box, 1.0), 0, k.toLong())
         }
         return out
     }
@@ -420,38 +460,43 @@ class SceneToTiles(
 
     private fun roadFeatures(): List<Pending> {
         val out = ArrayList<Pending>()
-        for ((i, r) in dicts("roads").withIndex()) {
-            val line = geom(points(r, "pts")) { "road $i (${r["id"]})" }
+        val roads = dicts("roads")
+        // the road loop's marks: a bridge's railing lines (no weather), a sett road's courses (amsterdam.py:691-713)
+        val marks = GroundKeys.roadMarks(roads) { r -> r["bridge"] == true || tagMap(r["tags"])["surface"] == "sett" }
+        for ((i, r) in roads.withIndex()) {
+            val what = { "road $i (${r["id"]})" }
+            val line = geom(points(r, "pts"), what)
             val fields = LinkedHashMap<String, Any?>()
             fields["index"] = i
-            val extra = LinkedHashMap<String, Any?>()
             for ((k, v) in r) when (k) {
                 "pts" -> fields["line"] = line
                 "id" -> fields["id"] = (v as Number).toLong()
-                "w", "layer" -> if (v is Double) fields[k] = v else extra[k] = v
-                "hw" -> if (v is String) fields[k] = v else extra[k] = v
-                "bridge", "wguess" -> if (v is Boolean) fields[k] = v else extra[k] = v
+                "w" -> fields[k] = v as? Double ?: noColumn(Layer.ROAD, k, v, what)
+                "layer" -> fields[k] = number(Layer.ROAD, k, v, what)
+                "hw" -> fields[k] = v as? String ?: noColumn(Layer.ROAD, k, v, what)
+                "bridge", "wguess" -> fields[k] = v as? Boolean ?: noColumn(Layer.ROAD, k, v, what)
                 "tags" -> fields.putAll(tagFields(Layer.ROAD, tagMap(v)))
-                else -> extra[k] = v
+                else -> drop(Layer.ROAD, k, v, what)
             }
             fields["ground_key"] = GroundKeys.road(r["hw"] as String, i)
-            if (extra.isNotEmpty()) fields["extra"] = checkValue(extra) { "road $i" }
-            out += linePending(Layer.ROAD, fields, line, i.toLong())
+            fields["marks_key"] = marks[i]
+            val pad = ((r["w"] as? Double) ?: 0.0) / 2 + Drawn.ROAD_SIDE
+            out += linePending(Layer.ROAD, fields, line, i.toLong(), pad, if (r["bridge"] == true) Drawn.BRIDGE_TOP else Drawn.ROAD_TOP)
         }
         return out
     }
 
-    private fun linePending(layer: Layer, fields: Map<String, Any?>, line: Geom, order: Long): Pending {
-        val box = line.box()
+    /** A line's feature: in the tile of its middle vertex, its box widened by [pad] metres, its top [top] metres up. */
+    private fun linePending(layer: Layer, fields: Map<String, Any?>, line: Geom, order: Long, pad: Double, top: Double): Pending {
         val m = line.size / 2
-        return Pending(layer, fields, GridPoint(line.lat[m], line.lon[m]), box, 0, order)
+        return Pending(layer, fields, GridPoint(line.lat[m], line.lon[m]), widen(line.box(), pad), cmUp(top), order)
     }
 
     private fun lineFeatures(): List<Pending> {
         val out = ArrayList<Pending>()
         for ((i, rl) in rings("rails").withIndex()) {
             val line = geom(rl) { "tram track $i" }
-            out += linePending(Layer.LINE, mapOf("source" to 0, "index" to i, "line" to line, "ground_key" to GroundKeys.tram(i)), line, i.toLong())
+            out += linePending(Layer.LINE, mapOf("source" to 0, "index" to i, "line" to line, "ground_key" to GroundKeys.tram(i)), line, i.toLong(), Drawn.TRAM, Drawn.ROAD_TOP)
         }
         val big = dicts("big")
         val bigKeys = GroundKeys.big(big)
@@ -471,25 +516,24 @@ class SceneToTiles(
                 val fields = LinkedHashMap<String, Any?>()
                 fields["source"] = source
                 fields["index"] = i
-                val extra = LinkedHashMap<String, Any?>()
                 var line: Geom? = null
                 for ((k, v) in d) when (k) {
                     "pts", "ring" -> {
-                        @Suppress("UNCHECKED_CAST")
-                        line = geom(v as List<V2>, what)
+                        line = geom(pointList(v), what)
                         fields["line"] = line
                     }
                     "id" -> fields["id"] = (v as Number).toLong()
-                    "kind", "hw" -> if (v is String) fields[k] = v else extra[k] = v
-                    "crane", "closed" -> if (v is Boolean) fields[k] = v else extra[k] = v
-                    "h" -> if (v == null || v is Double) fields[k] = v else extra[k] = v
+                    "kind", "hw" -> fields[k] = v as? String ?: noColumn(Layer.LINE, k, v, what)
+                    "crane", "closed" -> fields[k] = v as? Boolean ?: noColumn(Layer.LINE, k, v, what)
+                    "h" -> fields[k] = if (v == null) null else v as? Double ?: noColumn(Layer.LINE, k, v, what)
+                    "layer" -> fields[k] = number(Layer.LINE, k, v, what)
                     "tags" -> fields.putAll(tagFields(Layer.LINE, tagMap(v)))
-                    else -> extra[k] = v
+                    else -> drop(Layer.LINE, k, v, what)
                 }
                 groundKey(i)?.let { fields["ground_key"] = it }
-                if (extra.isNotEmpty()) fields["extra"] = checkValue(extra, what)
                 val g = line ?: throw IllegalStateException("${what()} has no line")
-                out += linePending(Layer.LINE, fields, g, (source.toLong() shl 40) or i.toLong())
+                val (pad, top) = Drawn.line(source, d)
+                out += linePending(Layer.LINE, fields, g, (source.toLong() shl 40) or i.toLong(), pad, top)
             }
         }
         return out
@@ -507,18 +551,16 @@ class SceneToTiles(
             fields["node"] = (nodeIndex[n] ?: throw IllegalStateException("${what()} is not in S['nodes']")).toLong()
             fields["id"] = (n["id"] as Number).toLong()
             fields["pos"] = p
-            val extra = LinkedHashMap<String, Any?>()
             for ((k, v) in n) when (k) {
                 "x", "z", "id" -> {}
-                "h", "crown", "gy" -> if (v == null || v is Double) fields[k] = v else extra[k] = v
-                "guessed" -> tagMap(v).let { g -> if (g.values.all { it == true }) fields["guessed"] = g.keys.toList() else extra[k] = v }
+                "h", "crown", "gy" -> fields[k] = if (v == null) null else v as? Double ?: noColumn(Layer.TREE, k, v, what)
+                "guessed" -> tagMap(v).let { g -> if (g.values.all { it == true }) fields["guessed"] = g.keys.toList() else noColumn(Layer.TREE, k, v, what) }
                 "tags" -> fields.putAll(tagFields(Layer.TREE, tagMap(v)))
-                "style" -> extra[k] = styleValue(v)
-                "_b" -> {} // its building: the building's places hold it
-                else -> extra[k] = v
+                else -> drop(Layer.TREE, k, v, what)
             }
-            if (extra.isNotEmpty()) fields["extra"] = checkValue(extra, what)
-            out += Pending(Layer.TREE, fields, p, intArrayOf(p.lat, p.lon, p.lat, p.lon), cm((n["h"] as? Double) ?: 0.0), i.toLong())
+            val h = (n["h"] as? Double) ?: Drawn.TREE_H
+            val crown = (n["crown"] as? Double) ?: Drawn.TREE_CROWN
+            out += Pending(Layer.TREE, fields, p, widen(pointBox(p), maxOf(Drawn.TREE_SYMBOL, Drawn.CROWN_REACH * crown)), cmUp(h + crown / 2), i.toLong())
         }
         return out
     }
@@ -583,17 +625,15 @@ class SceneToTiles(
             fields["id"] = (n["id"] as Number).toLong()
             fields["pos"] = p
             if (n in pois) fields["poi"] = true
-            val extra = LinkedHashMap<String, Any?>()
             for ((k, v) in n) when (k) {
                 "x", "z", "id" -> {}
-                "gy" -> if (v == null || v is Double) fields[k] = v else extra[k] = v
+                "gy" -> fields[k] = if (v == null) null else v as? Double ?: noColumn(Layer.THING, k, v, what)
                 "style" -> {
                     val st = v as PoiStyle.Style
                     // the glyph is the app's icon: the renders never read it
                     fields["style.cat"] = st.cat; fields["style.col"] = st.col; fields["style.kind"] = st.kind
                     fields["style.brand"] = st.brand; fields["style.bg"] = st.bg; fields["style.fg"] = st.fg
                 }
-                "_b" -> {} // the building it stands in: that building's places name it
                 "tags" -> {
                     fields.putAll(tagFields(Layer.THING, tagMap(v)))
                     val num = tagMap(v)["addr:housenumber"]
@@ -602,10 +642,10 @@ class SceneToTiles(
                         leadingNumber(num as String)?.let { fields["door_number"] = it }
                     }
                 }
-                else -> extra[k] = v
+                else -> drop(Layer.THING, k, v, what)
             }
-            if (extra.isNotEmpty()) fields["extra"] = checkValue(extra, what)
-            out += Pending(Layer.THING, fields, p, intArrayOf(p.lat, p.lon, p.lat, p.lon), 0, i.toLong())
+            if (facades) doorBuilding(n)?.let { fields["building"] = it.toLong() }
+            out += Pending(Layer.THING, fields, p, widen(pointBox(p), Drawn.THING), cmUp(Drawn.THING), i.toLong())
         }
         return out
     }
@@ -616,23 +656,25 @@ class SceneToTiles(
             val fields = LinkedHashMap<String, Any?>()
             fields["source"] = source
             fields["index"] = i
-            val extra = LinkedHashMap<String, Any?>()
             val x = d["x"] as Double
             val z = d["z"] as Double
             val exact = Grid.latOf(z, lat0, kz) != null && Grid.lonOf(x, lon0, kx) != null
             val p = if (exact) point(x, z, what) else nearest(x, z)
             fields["pos"] = p
-            if (!exact) { extra["x"] = x; extra["z"] = z }
+            if (!exact) { fields["x"] = x; fields["z"] = z }
+            var poly: Geom? = null
             for ((k, v) in d) when (k) {
                 "x", "z" -> {}
                 "id" -> fields["id"] = (v as Number).toLong()
-                "poly" -> if (v != null) fields["poly"] = geom(pointList(v), what)
-                "h", "rotor" -> if (v == null || v is Double) fields[k] = v else extra[k] = v
+                "poly" -> if (v != null) { poly = geom(pointList(v), what); fields["poly"] = poly }
+                "h", "rotor" -> fields[k] = if (v == null) null else v as? Double ?: noColumn(Layer.ITEM, k, v, what)
                 "tags" -> fields["tags"] = allTags(tagMap(v))
-                else -> extra[k] = v
+                else -> drop(Layer.ITEM, k, v, what)
             }
-            if (extra.isNotEmpty()) fields["extra"] = checkValue(extra, what)
-            out += Pending(Layer.ITEM, fields, p, intArrayOf(p.lat, p.lon, p.lat, p.lon), cm((d["h"] as? Double) ?: 0.0), (source.toLong() shl 40) or i.toLong())
+            val (reach, top) = Drawn.item(source, d)
+            var box = pointBox(p)
+            poly?.box()?.let { b -> box = intArrayOf(minOf(box[0], b[0]), minOf(box[1], b[1]), maxOf(box[2], b[2]), maxOf(box[3], b[3])) }
+            out += Pending(Layer.ITEM, fields, p, widen(box, reach), cmUp(top), (source.toLong() shl 40) or i.toLong())
         }
         for ((source, key) in listOf(0 to "cranes", 1 to "masts", 2 to "mtowers", 4 to "turbines")) {
             for ((i, d) in dicts(key).withIndex()) item(source, i, d) { "$key $i" }
@@ -671,17 +713,24 @@ class SceneToTiles(
         return out
     }
 
-    private fun styleValue(v: Any?): Any? = (v as PoiStyle.Style?)?.let { linkedMapOf("cat" to it.cat, "col" to it.col, "glyph" to it.glyph, "kind" to it.kind, "brand" to it.brand, "bg" to it.bg, "fg" to it.fg) }
+    /** Fails the build: [layer] has no column for the field [k] of [what] (holding [v]). */
+    private fun noColumn(layer: Layer, k: String, v: Any?, what: () -> String): Nothing =
+        throw IllegalStateException(
+            "${what()}: the field $k (${v?.let { it::class.simpleName } ?: "null"}) has no column in the ${layer.label} layer: " +
+                "give it one, or add it to Schema.DROPPED with why the renders never read it",
+        )
 
-    /** Fails the build on a value [app.atlas.rendertiles.codec.Values] cannot carry, naming where it is. */
-    private fun checkValue(v: Any?, what: () -> String): Any? {
-        when (v) {
-            null, is Boolean, is Int, is Long, is Double, is String -> {}
-            is List<*> -> v.forEach { checkValue(it, what) }
-            is Map<*, *> -> v.forEach { (k, e) -> if (k !is String) throw IllegalStateException("${what()}: a map with a ${k?.let { it::class.simpleName }} key"); checkValue(e, what) }
-            else -> throw IllegalStateException("${what()}: a field holds a ${v::class.qualifiedName}, which render tiles cannot carry")
-        }
-        return v
+    /** A field [k] that has no column: left out when [Schema.DROPPED] lists it for [layer], else the build fails. */
+    private fun drop(layer: Layer, k: String, v: Any?, what: () -> String) {
+        if (Schema.DROPPED[layer]?.containsKey(k) != true) noColumn(layer, k, v, what)
+    }
+
+    /** A number the renders only compute with (a layer): Python's int and float alike, as a double; null stays null. */
+    private fun number(layer: Layer, k: String, v: Any?, what: () -> String): Double? = when (v) {
+        null -> null
+        is Double -> v
+        is Int, is Long -> (v as Number).toDouble()
+        else -> noColumn(layer, k, v, what)
     }
 
     private fun fits(col: Schema.Column, v: Any?): Boolean = when (col.codec) {
@@ -698,7 +747,7 @@ class SceneToTiles(
     internal fun gridPoint(p: V2, what: () -> String): GridPoint = point(p.x, p.y, what)
     internal fun tagsFor(layer: Layer, d: Dict): Map<String, String> = tagFields(layer, tagMap(d["tags"]))
 
-    private fun Labels.Item.toPending(): Pending = Pending(Layer.LABEL, fields, ref, intArrayOf(ref.lat, ref.lon, ref.lat, ref.lon), 0, order)
+    private fun Labels.Item.toPending(): Pending = Pending(Layer.LABEL, fields, ref, widen(pointBox(ref), reach), 0, order)
 
     companion object {
         /** What [pack] made: the file written, and the tiles, head, style and variants written into it. */
@@ -827,7 +876,10 @@ class SceneToTiles(
         val FURNITURE = setOf("bench", "bicycle_parking", "waste_basket")
         val BOLLARDS = setOf("bollard", "block")
 
-        /** [m] metres in whole centimetres, within an Int. */
-        fun cm(m: Double): Int = Math.round(m * 100).coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt()
+        /** [m] metres in whole centimetres, rounded up, within an Int. */
+        fun cmUp(m: Double): Int = Math.ceil(m * 100).coerceIn(Int.MIN_VALUE.toDouble(), Int.MAX_VALUE.toDouble()).toInt()
+
+        /** The attributes the packer derives for buildings and parts, which no loader field may share a name with. */
+        val DERIVED = setOf("wall_rgb", "roof_rgb", "flags")
     }
 }

@@ -62,12 +62,13 @@ class L0aTest {
 
     /**
      * The scene's record [b] against the decoded attributes [f] (a record, or a variant), every field: the schema's
-     * columns, the tags the renders read, guessed, places, and every other field in `extra`. Returns the differences.
+     * columns, the tags the renders read, guessed, places, the base colours `surface_colour` resolves and the derived
+     * flags; a field the tiles neither carry nor list in [Schema.DROPPED] is a difference. Returns the differences.
      */
     private fun differences(layer: Layer, b: Dict, f: Feature, edges: List<Amsterdam.Edge>): List<String> {
         val out = ArrayList<String>()
         val cols = Schema.BUILDING_ATTRIBUTES.associateBy { it.name }
-        val extra = LinkedHashMap<String, Any?>()
+        val dropped = Schema.DROPPED[layer].orEmpty()
         @Suppress("UNCHECKED_CAST")
         val tags = (b["tags"] as Map<String, Any?>?) ?: emptyMap()
         val handled = HashSet<String>()
@@ -80,7 +81,7 @@ class L0aTest {
                     if (g.values.all { it == true }) {
                         handled += k
                         if (f["guessed"] != g.keys.toList()) out += "guessed ${g.keys} != ${f["guessed"]}"
-                    } else extra[k] = v
+                    } else out += "guessed holds other values than true: $g"
                 }
                 "places" -> {
                     handled += k; handled += "place_hours"
@@ -100,7 +101,10 @@ class L0aTest {
                         Codec.BOOL -> v is Boolean
                         else -> false
                     }
-                    if (!fits) { extra[k] = v; continue }
+                    if (!fits) {
+                        if (k !in dropped) out += "the scene's $k=$v is neither carried nor dropped"
+                        continue
+                    }
                     handled += k
                     val got = f[k]
                     val same = when (col!!.codec) {
@@ -113,10 +117,15 @@ class L0aTest {
             }
         }
         for (key in Schema.RENDER_TAGS.getValue(layer)) if (tags[key] != f[Schema.tag(key)]) out += "tag $key: ${tags[key]} != ${f[Schema.tag(key)]}"
-        if ((f["extra"] ?: emptyMap<String, Any?>()) != extra) out += "extra: $extra != ${f["extra"]}"
+        // the base colours, as surface_colour resolves them with no lens (0xRRGGBB)
+        for (which in listOf("wall", "roof")) {
+            val c = Amsterdam.surfaceColour(b, null, which)
+            val want = (c[0].toLong() shl 16) or (c[1].toLong() shl 8) or c[2].toLong()
+            if (want != ((f["${which}_rgb"] as Long?) ?: 0L)) out += "${which}_rgb ${f["${which}_rgb"]} != $want"
+        }
         // nothing decoded that the scene does not hold
         for (k in f.fields.keys) {
-            if (k in setOf("index", "id", "ring", "flags", "extra", "layer", "tolerance") || k.startsWith("tag:")) continue
+            if (k in setOf("index", "id", "ring", "flags", "layer", "tolerance", "wall_rgb", "roof_rgb") || k.startsWith("tag:")) continue
             if (k !in handled) out += "decoded $k=${f[k]}, which the scene does not have"
         }
         // the derived flags, by the renders' own tests
@@ -131,6 +140,7 @@ class L0aTest {
         if (Amsterdam.nearWater(edges, pointsOf(b), 16.0)) flags = flags or 16
         if (btype == "houseboat") flags = flags or 32
         if (((b["year"] as Number?)?.toInt() ?: 0) >= 1960 && btype !in setOf("church", "cathedral", "chapel")) flags = flags or 64
+        if (truthy(b["col_draw"])) flags = flags or 128
         if (flags != ((f["flags"] as Long?) ?: 0L)) out += "flags ${f["flags"]} != $flags"
         return out
     }
@@ -199,6 +209,8 @@ class L0aTest {
             val scene = Packs.scene(region, view)
             val level = Keep.indexOf(scene.tolerance)
             assertTrue("$view loads at ${scene.tolerance}, which is on the ladder", level > 0)
+            // the head says so: the core loads the view as its renders load it
+            assertEquals("$view's tolerance in rhead", level, head.toleranceOf(view, 0.0))
             scene.state.restore()
             val edges = Amsterdam.waterEdges(scene.S)
             val failures = ArrayList<String>()
@@ -224,21 +236,31 @@ class L0aTest {
         }
     }
 
-    /** Every ring with keep codes (buildings, parts, areas) rebuilt at every positive ladder tolerance equals `simplify`. */
+    /**
+     * Every ring with keep codes (buildings, parts, areas, land cover) rebuilt at every positive ladder tolerance equals
+     * `simplify`; the living map, which every view and band loads whole, carries none.
+     */
     @Test
     fun `every ring rebuilt at every ladder tolerance equals simplify`() {
         for ((name, file) in listOf("westerkerk" to Packs.westerkerkPack, "grachten" to Packs.grachtenPack)) {
             if (!file.isFile) continue
             val b = Packs.build(file, name)
             val head = b.reader.head
+            val simplifies = head.bands.any { it.tolerance > 0 } || head.views.any { it.tolerance > 0 }
             var rings = 0
             var checks = 0
             var simplified = 0
+            var none = 0
             for (t in b.reader.tiles()) {
                 if (t.level != 14) continue
-                for (layer in listOf(Layer.BUILDING, Layer.PART, Layer.GROUND)) for (f in t.layers[layer].orEmpty()) {
-                    if (layer == Layer.GROUND && ((f["source"] as Int?) ?: 0) != 0) continue // land cover is clipped, never simplified by the renders
+                for (layer in listOf(Layer.BUILDING, Layer.PART, Layer.GROUND, Layer.WATER)) for (f in t.layers[layer].orEmpty()) {
                     val g = f["ring"] as Geom
+                    if (!simplifies) {
+                        assertTrue("$name ${layer.label} ${f["index"]}: keep codes in a pack never simplified", g.keep == null)
+                        none++
+                        continue
+                    }
+                    if (layer == Layer.WATER) continue // clipped pieces: their codes are their own, clip points kept
                     val pts = metres(g, head)
                     for (i in 1 until Keep.TOLERANCES.size) {
                         val want = Regions.simplify(pts, Keep.TOLERANCES[i])
@@ -250,7 +272,8 @@ class L0aTest {
                     rings++
                 }
             }
-            println("L0A $name: $rings rings at ${Keep.TOLERANCES.size - 1} tolerances, $checks rebuilt equal to simplify ($simplified simplified)")
+            if (!simplifies) println("L0A $name: its views and bands all load at 0 m, and none of its $none rings carries keep codes")
+            else println("L0A $name: $rings rings at ${Keep.TOLERANCES.size - 1} tolerances, $checks rebuilt equal to simplify ($simplified simplified)")
         }
     }
 }

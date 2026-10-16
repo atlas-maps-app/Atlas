@@ -8,16 +8,16 @@ import org.junit.Test
  * within ±10 % of what they measured when the format was settled, so a change that makes tiles fatter, or drops what
  * they hold, shows.
  *
- * The plan's gates are 2 MB for the canal ring (L14 and L12) and 150 KB for the Westerkerk. The Westerkerk measures
- * 159,423 bytes: the gate's estimate left out the 8,039 address points the living map's doors and numbers are drawn from
- * (about 44 KB of it). Its ceiling holds it where it is until the gate is decided.
+ * The gates are 2 MB for the canal ring (L14 and L12) and 160 KB for the Westerkerk (the plan's 150 KB left out the
+ * 8,039 address points the living map's doors and numbers are drawn from: about 44 KB of the pack, 7 KB more with the
+ * building each door is on).
  */
 class RenderTilesSizeTest {
     private class Pin(val name: String, val ceiling: Long, val bytesPerFeature: Double)
 
     private val pins = listOf(
-        Pin("westerkerk", WESTERKERK_CEILING, 13.20),
-        Pin("grachten", 2_000_000L, 28.71),
+        Pin("westerkerk", WESTERKERK_CEILING, 13.21),
+        Pin("grachten", 2_000_000L, 28.33),
     )
 
     @Test
@@ -37,7 +37,7 @@ class RenderTilesSizeTest {
     }
 
     companion object {
-        /** The Westerkerk's ceiling while its gate (150 KB in the plan) is decided: what it measures, with no room to grow. */
+        /** The Westerkerk's gate. */
         const val WESTERKERK_CEILING = 160_000L
     }
 }

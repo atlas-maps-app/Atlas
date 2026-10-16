@@ -103,11 +103,22 @@ class RenderTile(
 
 /**
  * A ground feature's slot in the renders' ground order (plan-vector D6): [stage] (the fixed order of `render`'s ground
- * layers), then [klass] (the class order within a stage: a land cover kind's group, a road's class), then [order] (data
- * order within it). Packed as `stage << 28 | klass << 22 | order`.
+ * layers), then [klass] (the class order within a stage: a road's class, a kind of mark), then [order] (data order
+ * within it). Packed as `stage << 28 | klass << 22 | order`. Every key is static except land cover's class, which the
+ * renders choose per frame ([LAND]).
  */
 object GroundKey {
-    /** `regions.py`'s `draw_under`: land cover, grouped by kind in the order the sorted land first shows each kind. */
+    /**
+     * `regions.py`'s `draw_under` (regions.py:487–495): land cover, one path per kind, the kinds in the order their
+     * first *drawn* polygon comes in `S['land']` (sorted by `LAND`'s draw order, then by area, largest first). A polygon
+     * is drawn when `gpoly(cam, ring, 0.01)` keeps it: its ring, whole, projected and clipped at the near plane
+     * (`Camera.poly`, margin 600), not culled, with an area over 0.3 px². Kinds of one draw order interleave by area, and
+     * which comes first depends on what the camera sees, so the class cannot be static.
+     *
+     * A land feature's key is (LAND, 0, its `index`). Per frame the core ranks the kinds: each kind by the smallest
+     * `index` among its rings that pass `gpoly` at that camera; a land feature drawn in that frame takes its kind's rank
+     * as its class. Within a kind the order does not show (one colour, one path).
+     */
     const val LAND = 1
 
     /** The water (its fill, clipped twice). */
@@ -122,8 +133,18 @@ object GroundKey {
     /** `regions.py`'s `draw_over`: rail, big roads by layer, runways by kind, marine works, a park's edge (class by source). */
     const val OVER = 5
 
-    /** The marks over the ground: tram tracks. */
+    /**
+     * The marks over the ground (`amsterdam.py`'s `marks`, drawn after the whole ground), in the order `render` appends
+     * them: class [MARKS_ROAD] the marks the road loop makes (a bridge's railing lines without weather, a sett road's
+     * courses), road by road in the roads' drawing order; class [MARKS_TRAM] tram tracks in data order; class
+     * [MARKS_CANAL] canal names in source order.
+     */
     const val MARKS = 6
+
+    /** [MARKS]' classes. */
+    const val MARKS_ROAD = 0
+    const val MARKS_TRAM = 1
+    const val MARKS_CANAL = 2
 
     const val MAX_CLASS = 63
     const val MAX_ORDER = (1 shl 22) - 1
