@@ -54,9 +54,39 @@ class PackManifest(val json: JsonObject) {
     /** Pretty JSON for people (`packer info`). */
     fun pretty(): String = Json { prettyPrint = true }.encodeToString(JsonElement.serializer(), json)
 
+    /** True for format 2, the tile pyramid ([PackTiles]). */
+    val isTiled: Boolean get() = version >= TILED
+
+    /** `tiles` for format 2; format 1 has no layout field (its chunks are runs along a Hilbert curve). */
+    val layout: String get() = str("layout") ?: LAYOUT_RUNS
+
+    /** The zoom levels of a tiled pack, finest first, ending at 0; empty for format 1. */
+    val levels: IntArray
+        get() = (json["levels"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content?.toIntOrNull() }?.toIntArray() ?: IntArray(0)
+
+    /**
+     * A tiled pack's content hash: SHA-256 over its grid, levels and every chunk's tile, count and SHA-256 (not over
+     * the compressed bytes). Two builds from the same data have the same one; null for format 1.
+     */
+    val contentSha256: String? get() = str("content_sha256")
+
+    /** Chunks in a tiled pack, as the manifest records them (0 for format 1, whose chunk count is in its table). */
+    val tileChunkCount: Int get() = (json["chunks"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0
+
     companion object {
         const val FORMAT = "atlas-pack"
+
+        /** Format 1: the renders' packs, elements in the extract's order, a per-element index. */
         const val VERSION = 1
+
+        /** Format 2: a tile pyramid of self-contained chunks, elements in canonical order, a per-tile table. */
+        const val TILED = 2
+
+        /** The newest format this code reads. */
+        const val NEWEST = TILED
+
+        const val LAYOUT_RUNS = "runs"
+        const val LAYOUT_TILES = "tiles"
         const val LICENCE = "ODbL-1.0"
         const val ATTRIBUTION = "Map data © OpenStreetMap contributors, under the Open Database Licence (ODbL 1.0): https://www.openstreetmap.org/copyright"
 
@@ -79,9 +109,10 @@ class PackManifest(val json: JsonObject) {
             header: JsonObject,
             sources: List<String>,
             extra: JsonObject = JsonObject(emptyMap()),
+            version: Int = VERSION,
         ): PackManifest = PackManifest(buildJsonObject {
             put("format", FORMAT)
-            put("version", VERSION)
+            put("version", version)
             put("id", id)
             put("name", name)
             put("bbox", buildJsonObject {

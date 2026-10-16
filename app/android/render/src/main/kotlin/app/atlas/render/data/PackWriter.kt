@@ -81,12 +81,13 @@ class PackStats(
     val ways: Int,
     val relations: Int,
     val digits: Int,
-    val sections: Map<String, Pair<Int, Int>>,
+    /** Stored and raw bytes of each section, by name. */
+    val sections: Map<String, Pair<Long, Long>>,
     val millis: Long,
 )
 
 /**
- * Writes a `.atlas` region pack.
+ * Writes a `.atlas` region pack in format 1, the renders' layout; [writeTiled] writes format 2 (tiles) for countries.
  *
  * Layout: magic, version, manifest (JSON, readable), a directory of sections (name, offset, stored and raw lengths,
  * CRC-32, method), then the sections: `strings` and `pairs` (the shared tag tables), `index` (every element's box and
@@ -348,8 +349,60 @@ object PackWriter {
         out.flush()
         return PackStats(
             total, n, chunks, nodes, ways, relations, digits,
-            sections.associate { it.name to (it.stored.size to it.raw) }, (System.nanoTime() - started) / 1_000_000,
+            sections.associate { it.name to (it.stored.size.toLong() to it.raw.toLong()) }, (System.nanoTime() - started) / 1_000_000,
         )
+    }
+
+    /**
+     * Writes [spec] as a tiled (format 2) pack: see [TiledPackWriter]. Two passes over the elements, one for the
+     * coordinate grid and one for the tiles; work files go to [work] and are removed afterwards.
+     */
+    fun writeTiled(
+        spec: PackSpec,
+        file: File,
+        levels: IntArray = PackTiles.LEVELS,
+        work: File = File(file.absolutePath + ".work"),
+        memory: Long = 32L shl 20,
+        log: (String) -> Unit = {},
+    ): PackStats {
+        val digits = coordinateDigits(spec.elements)
+        TiledPackWriter(work, digits, levels, memory).use { w ->
+            for (e in spec.elements.elements()) w.add(e)
+            return w.finish(spec, file, log)
+        }
+    }
+
+    /** A tiled pack of [spec] in memory (built through a temporary folder), for tests and small areas. */
+    fun tiledBytes(spec: PackSpec, levels: IntArray = PackTiles.LEVELS): ByteArray {
+        val dir = java.nio.file.Files.createTempDirectory("atlas-tiled").toFile()
+        try {
+            val f = File(dir, "pack.atlas")
+            writeTiled(spec, f, levels, File(dir, "work"))
+            return f.readBytes()
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    /** The fewest decimal places (7 to 9) at which every coordinate of [source] is exact, as format 1 chooses them. */
+    fun coordinateDigits(source: ElementSource): Int {
+        val scales = Array(Scale.MAX_DIGITS + 1) { Scale(it) }
+        var digits = Scale.MIN_DIGITS
+        fun check(v: Double) {
+            if (v.isNaN()) return
+            while (digits <= Scale.MAX_DIGITS && !scales[digits].exact(v)) digits++
+            if (digits > Scale.MAX_DIGITS) throw PackFormatException("a coordinate ($v) does not fit a 1e-9 degree grid")
+        }
+        for (e in source.elements()) {
+            if (!e.lat.isNaN()) { check(e.lat); check(e.lon) }
+            e.geometry?.let { g -> for (i in 0 until g.size) if (!g.isNull(i)) { check(g.lat[i]); check(g.lon[i]) } }
+            e.members?.forEach { m ->
+                if (m.hasPosition) { check(m.lat); check(m.lon) }
+                m.geometry?.let { g -> for (i in 0 until g.size) if (!g.isNull(i)) { check(g.lat[i]); check(g.lon[i]) } }
+            }
+            e.bounds?.let { bo -> check(bo.minLat); check(bo.minLon); check(bo.maxLat); check(bo.maxLon) }
+        }
+        return digits
     }
 
     /** The bytes before the manifest: magic (8), version (2), flags (2), manifest length (4), directory length (4). */

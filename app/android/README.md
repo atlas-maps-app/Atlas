@@ -28,7 +28,7 @@ Checked against the official release pages and Maven metadata on 13 October 2026
 | `route` | Routing: BRouter in process with a profile per mode, truck and boat limit checks, steps and hazards, segment downloads, the EV planner, the water router |
 | `brouter` | BRouter's routing core, vendored as Java source (MIT, commit 2989810) |
 | `guide` | Turn by turn and eyes free: the navigator, announcement timing per mode, phrasing (osrm-text-instructions), landmarks, callouts, earcons and haptics, Ears only, a simulator |
-| `packer` | A command-line tool: our own OSM PBF reader and the place-store builder for the offline packs |
+| `packer` | A command-line tool: our own OSM PBF reader, the place-store builder for the offline packs, and the `.atlas` region packs (format 1 for a box; format 2, a tile pyramid, for a whole Geofabrik extract) |
 | `app` | The app: services, design kit, navigation, the screens in `ui/<package>`, the navigation service and the voice |
 
 ## Build and test

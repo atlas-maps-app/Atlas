@@ -1,11 +1,14 @@
 package app.atlas.render.data
 
-/** Counts the strings and tag pairs of a pack, so the frequent ones go into shared tables. */
-internal class DictionaryBuilder {
-    private val ids = HashMap<String, Int>(1 shl 16)
+/**
+ * Counts the strings and tag pairs of a pack (or of one chunk of a tiled pack), so the frequent ones go into shared
+ * tables. [expected] sizes the tables: the default suits a whole region, a small number one chunk.
+ */
+internal class DictionaryBuilder(expected: Int = 1 shl 16) {
+    private val ids = HashMap<String, Int>(expected)
     private val names = ArrayList<String>()
-    private var counts = IntArray(1 shl 12)
-    private val pairCounts = HashMap<Long, IntArray>(1 shl 14)
+    private var counts = IntArray((expected shr 4).coerceAtLeast(16))
+    private val pairCounts = HashMap<Long, IntArray>((expected shr 2).coerceAtLeast(16))
 
     private fun intern(s: String): Int {
         val existing = ids[s]
@@ -18,7 +21,9 @@ internal class DictionaryBuilder {
     }
 
     fun string(s: String) {
-        counts[intern(s)]++
+        // intern first: it may grow the counts
+        val i = intern(s)
+        counts[i]++
     }
 
     fun tag(k: String, v: String) {
@@ -73,6 +78,9 @@ internal class Dictionary(val strings: Array<String>, val pairKey: IntArray, val
     }
 
     companion object {
+        /** No shared strings: every string is written where it is used. */
+        val EMPTY = Dictionary(emptyArray(), IntArray(0), IntArray(0))
+
         fun read(strings: ByteSource, pairs: ByteSource): Dictionary {
             val n = strings.varInt()
             val s = Array(n) { strings.string() }
@@ -148,6 +156,12 @@ internal class ElementEncoder(private val dict: Dictionary, private val scale: S
 
     fun reset() {
         lastId = 0; lastLat = 0; lastLon = 0; lastNode = 0; lastRef = 0
+    }
+
+    /** Writes [e] on its own, deltas from zero, so it can be read back without the elements before it. */
+    fun encodeOne(e: OsmElement, sink: ByteSink) {
+        reset()
+        encode(e, sink)
     }
 
     /** The corners of what [e] covers, derived from its positions (no corners for an element without any). */
@@ -319,11 +333,19 @@ internal class ElementDecoder(private val dict: Dictionary, private val scale: S
     private var lastRef = 0L
 
     /** All the elements of one inflated chunk, in the order they were written. */
-    fun decodeChunk(raw: ByteArray, length: Int = raw.size): Array<OsmElement> {
-        val src = ByteSource(raw, 0, length)
+    fun decodeChunk(raw: ByteArray, length: Int = raw.size): Array<OsmElement> = decodeChunk(ByteSource(raw, 0, length))
+
+    /** The count and the elements that follow it at [src]'s position. */
+    fun decodeChunk(src: ByteSource): Array<OsmElement> {
         lastId = 0; lastLat = 0; lastLon = 0; lastNode = 0; lastRef = 0
         val n = src.varInt()
         return Array(n) { element(src) }
+    }
+
+    /** One element written by [ElementEncoder.encodeOne]. */
+    fun decodeOne(src: ByteSource): OsmElement {
+        lastId = 0; lastLat = 0; lastLon = 0; lastNode = 0; lastRef = 0
+        return element(src)
     }
 
     private fun element(src: ByteSource): OsmElement {

@@ -42,6 +42,8 @@ private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap ex
 
   packer pbf <in.osm.pbf> <W,S,E,N> [--name NAME] [--out FILE] [--id ID] [--country XX]
       Builds the same pack from a Geofabrik extract: the elements Overpass would give for the box.
+  packer pbf <in.osm.pbf> [W,S,E,N] --tiled [--name NAME] [--id ID] [--out FILE] [--country XX] [--work DIR] [--threads N] [--memory MiB]
+      The same as a tiled pack (format 2); without a box, the whole extract.
 
   packer packinfo <file.atlas>
       Prints a pack's manifest, sections and sizes."""
@@ -157,6 +159,7 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
             out("${file.path}: ${stats.elements} elements (${stats.nodes} nodes, ${stats.ways} ways, ${stats.relations} relations), ${file.length() shr 10} KiB in ${stats.millis} ms")
         }
         "pbf" -> {
+            if ("--tiled" in args) return TiledPack.run(args, out)
             val (pbf, box) = a.files(2)
             val bbox = parseBox(box)
             val name = a.value("--name") ?: File(pbf).name.removeSuffix(".osm.pbf").removeSuffix(".pbf")
