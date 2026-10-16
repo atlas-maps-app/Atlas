@@ -58,6 +58,24 @@ data class Marker(
     val place: Place? = null,
 )
 
+/** What a [MapLabel] names, which sets its look: the Main board's two map labels. */
+enum class LabelKind {
+    /** A water ("IJ"): italic serif 21 board px in #2F5A84 on a 10 px white glow at 85 %. */
+    WATER,
+
+    /** A quarter ("Jordaan"): italic serif 17 board px in #3A3F4B on white halos of 6 and 2 px. */
+    AREA,
+}
+
+/**
+ * A place's name over the map, centred on the first of its [points] that stands on screen clear of the map's chrome,
+ * the markers and the other labels (centred on it, else above it or beside it): a quarter's one point, a large water's
+ * points along it, the likeliest first. The board sets these over the engine's own small-capital canal names, which
+ * they never repeat: only quarters and large waters are named here. Higher [priority] goes first.
+ */
+@Immutable
+data class MapLabel(val id: String, val text: String, val kind: LabelKind, val points: List<LatLon>, val priority: Int = 0)
+
 /** A route drawn on the map, with a white casing as on the boards. */
 @Immutable
 data class RouteLine(
@@ -86,6 +104,10 @@ data class AreaOverlay(val id: String, val centre: LatLon, val radiusM: Double, 
 @Immutable
 data class MapOverlays(
     val markers: List<Marker> = emptyList(),
+    /** Names over the map, as the Main board sets "IJ" and "Jordaan" over the engine's frame. */
+    val labels: List<MapLabel> = emptyList(),
+    /** Where the screen's own chrome stands (boxes in dp from the map's top left): no label goes under it. */
+    val labelKeepOut: List<androidx.compose.ui.geometry.Rect> = emptyList(),
     val routes: List<RouteLine> = emptyList(),
     val location: UserLocation? = null,
     val areas: List<AreaOverlay> = emptyList(),

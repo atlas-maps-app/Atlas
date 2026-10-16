@@ -58,6 +58,8 @@ fun AtlasMap(
     onCameraMove: (camera: CameraPosition, byUser: Boolean) -> Unit = { _, _ -> },
     debug: Boolean = false,
     units: UnitSystem = UnitSystem.forLocale(Locale.getDefault()),
+    /** The face of [MapOverlays.labels]: the boards' Instrument Serif italic. */
+    labelTypeface: android.graphics.Typeface? = null,
 ) {
     val density = LocalDensity.current
     val assets = LocalContext.current.assets
@@ -77,6 +79,7 @@ fun AtlasMap(
     SideEffect {
         controller.density = density.density
         controller.style = style
+        controller.labelTypeface = labelTypeface
         controller.overlays = overlays
         if (controller.gestures.config.measureEnabled != overlays.measure || controller.gestures.config.touchSlop != 8f * density.density) {
             controller.gestures.config = GestureConfig.forDensity(density.density, overlays.measure)

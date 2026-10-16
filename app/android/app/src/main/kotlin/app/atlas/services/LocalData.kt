@@ -93,6 +93,12 @@ data class LocalBrand(val brand: Brand, val branches: List<Place>)
 data class LocalHere(val address: LocalAddress?, val spot: Place?, val nearby: List<Place>, val origin: LocalOrigin?)
 
 /**
+ * A name to set over the map: a quarter ([water] false) or a large water, with where it may stand, likeliest first.
+ * [rank] orders them: a water, then a quarter, a neighbourhood, a suburb.
+ */
+data class MapName(val name: String, val water: Boolean, val rank: Int, val points: List<LatLon>)
+
+/**
  * The features' data on Atlas's own sources, offline first, in layers: the downloaded regions' place stores (FTS5 and
  * R*Tree, every tag), the map's packs ([PackFeatures]: the bundled Westerkerk, the renders' packs, city and country
  * packs, packs built from Overpass; full geometry, so outlines, streets and bridges), and Overpass online where nothing
@@ -439,8 +445,89 @@ class LocalData(
         LocalAnswer(emptyList(), LocalOrigin.ONLINE, e.message ?: e.toString())
     }
 
+    // ---- Names for the map ----------------------------------------------------------------------------------------
+
+    /**
+     * The quarters and large waters around [at] (within [radiusM]) to name over the map, from the packs, which hold the
+     * outlines and lines: a quarter at its place node, else well inside its outline; a water of at least
+     * [WATER_MIN_M2] at points along its named waterway lines and rivers every [WATER_STEP_M], nearest [at] first, then
+     * well inside its largest outline. The canals' names are the engine's own; a canal's water polygons are too small.
+     */
+    fun mapNames(at: LatLon, radiusM: Double): List<MapName> {
+        val box = BBox.around(at, radiusM)
+        val f = packsMeeting(box) ?: return emptyList()
+        val out = ArrayList<MapName>()
+        val quarters = f.elements(box) { e -> e.tag("name") != null && e.tag("place") in AREA_RANK }
+        val named = HashSet<String>()
+        // a place node first: it is where the map's makers set the name
+        for (e in quarters.sortedBy { if (it.type == ElementType.NODE) 0 else 1 }) {
+            val name = e.tag("name") ?: continue
+            if (name in named) continue
+            val p = PackFeatures.pointOf(e) ?: continue
+            named += name
+            out += MapName(name, water = false, rank = AREA_RANK.getValue(e.tag("place")!!), points = listOf(p))
+        }
+        val waters = HashMap<String, Largest>()
+        for (e in f.elements(box) { e -> e.type != ElementType.NODE && e.tag("natural") == "water" && e.tag("name") != null }) {
+            val o = PackFeatures.outlineOf(e) ?: continue
+            if (o.areaM2 < WATER_MIN_M2) continue
+            val name = e.tag("name")!!
+            val had = waters[name]
+            if (had == null || had.areaM2 < o.areaM2) waters[name] = Largest(o.areaM2, o.label())
+        }
+        val lines = f.elements(box) { e -> e.type != ElementType.NODE && e.tag("name") != null && (e.tag("waterway") == "river" || (e.tag("waterway") in WATER_LINES && e.tag("name") in waters)) }
+        val along = HashMap<String, MutableList<LatLon>>()
+        for (e in lines) {
+            val list = along.getOrPut(e.tag("name")!!) { ArrayList() }
+            for (part in PackFeatures.linesOf(e)) sample(part, WATER_STEP_M, list)
+        }
+        for (name in waters.keys + along.keys) {
+            if (name in named) continue
+            named += name
+            val points = along[name].orEmpty().filter { Geo.distance(it, at) <= radiusM }.sortedBy { Geo.distance(it, at) } + listOfNotNull(waters[name]?.label)
+            if (points.isNotEmpty()) out += MapName(name, water = true, rank = WATER_RANK, points = points)
+        }
+        return out.sortedByDescending { it.rank }
+    }
+
+    /** A water's largest outline: its area and a point well inside it. */
+    private class Largest(val areaM2: Double, val label: LatLon)
+
+    /** Points every [step] metres along [part] (its nulls skipped) into [into]. */
+    private fun sample(part: app.atlas.render.data.Points, step: Double, into: MutableList<LatLon>) {
+        var carried = 0.0
+        var prev: LatLon? = null
+        for (i in 0 until part.size) {
+            if (part.isNull(i)) { prev = null; continue }
+            val p = LatLon(part.lat[i], part.lon[i])
+            val q = prev
+            if (q == null) {
+                into += p
+            } else {
+                val d = Geo.distance(q, p)
+                var at = step - carried
+                while (at <= d) {
+                    val t = at / d
+                    into += LatLon(q.lat + (p.lat - q.lat) * t, q.lon + (p.lon - q.lon) * t)
+                    at += step
+                }
+                carried = (carried + d) % step
+            }
+            prev = p
+        }
+    }
+
     companion object {
         const val DEFAULT_LIMIT = 200
+
+        /** A water this large is named over the map (m²): the IJ, a lake, a harbour; not a canal's pieces. */
+        const val WATER_MIN_M2 = 200_000.0
+
+        /** Spacing of a water's label points along its lines (metres). */
+        const val WATER_STEP_M = 100.0
+        private const val WATER_RANK = 10
+        private val AREA_RANK = mapOf("quarter" to 3, "neighbourhood" to 2, "suburb" to 1)
+        private val WATER_LINES = setOf("river", "canal", "fairway")
 
         /** How far a house number may be from the point asked about (metres). */
         const val HOUSE_M = 25.0

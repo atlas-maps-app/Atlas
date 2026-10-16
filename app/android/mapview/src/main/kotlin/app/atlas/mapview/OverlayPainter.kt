@@ -33,6 +33,10 @@ class Tape(val x0: Float, val y0: Float, val x1: Float, val y1: Float, val alpha
 class OverlayPainter(private val density: Float) {
     val markers = MarkerPainter(density)
     val layout = MarkerLayout()
+
+    /** The map's labels, drawn under the markers and clear of them. */
+    internal val labels = LabelPainter(density)
+    private var keepOut = FloatArray(16)
     private val ribbons = RouteRibbons()
     private val triangles = TriangleBuffer()
     private val areas = AreaPaths()
@@ -154,6 +158,21 @@ class OverlayPainter(private val density: Float) {
     }
 
     /** The markers placed by [layoutMarkers]. */
+    /**
+     * Draws [overlays]' labels, clear of the chrome ([MapOverlays.labelKeepOut], dp) and of the markers this frame laid
+     * out.
+     */
+    fun drawLabels(canvas: Canvas, g: GroundView, overlays: MapOverlays) {
+        val k = overlays.labelKeepOut
+        if (keepOut.size < 4 * k.size) keepOut = FloatArray(4 * k.size)
+        for (i in k.indices) {
+            val r = k[i]
+            keepOut[4 * i] = r.left * density; keepOut[4 * i + 1] = r.top * density
+            keepOut[4 * i + 2] = r.right * density; keepOut[4 * i + 3] = r.bottom * density
+        }
+        labels.draw(canvas, g, overlays.labels, keepOut, k.size, blocked, blockedN)
+    }
+
     fun drawMarkers(canvas: Canvas) {
         val list = lastMarkers
         for (j in 0 until layout.placedCount) {

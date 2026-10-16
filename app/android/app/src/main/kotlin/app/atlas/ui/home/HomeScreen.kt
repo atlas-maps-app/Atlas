@@ -36,6 +36,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.atlas.BuildConfig
@@ -87,6 +89,18 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
     val moments by vm.moments.collectAsStateWithLifecycle()
     val results by vm.results.collectAsStateWithLifecycle()
     val highlights by vm.highlights.collectAsStateWithLifecycle()
+    val labels by vm.labels.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // The Main board's map labels in its Instrument Serif italic.
+    val labelFace = remember { runCatching { androidx.core.content.res.ResourcesCompat.getFont(context, R.font.instrument_serif_italic) }.getOrNull() }
+    // Where the chrome stands as laid out (dp): no map label goes under it.
+    val chromeBoxes = remember { androidx.compose.runtime.mutableStateMapOf<String, androidx.compose.ui.geometry.Rect>() }
+    val dpPerPx = 1f / LocalDensity.current.density
+    fun Modifier.keepsLabelsOff(key: String): Modifier = onGloballyPositioned { c ->
+        val b = c.boundsInRoot()
+        val r = androidx.compose.ui.geometry.Rect(b.left * dpPerPx, b.top * dpPerPx, b.right * dpPerPx, b.bottom * dpPerPx)
+        if (chromeBoxes[key] != r) chromeBoxes[key] = r
+    }
     val online by services.connectivity.online.collectAsStateWithLifecycle()
     val regions by services.regions.regions.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
@@ -131,6 +145,9 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
     }
     val overlays = MapOverlays(
         markers = markers,
+        labels = labels,
+        // the chrome as laid out, and the status bar's band (the board's top 40 px)
+        labelKeepOut = chromeBoxes.values.toList() + androidx.compose.ui.geometry.Rect(0f, 0f, Float.MAX_VALUE, WindowInsets.statusBars.asPaddingValues().calculateTopPadding().value.coerceAtLeast(40f)),
         location = fix?.let { UserLocation(it.location, it.accuracy, it.bearing, it.speed) },
     )
     // Read the camera through derived states, so panning (a new camera every frame) does not recompose the screen.
@@ -174,6 +191,7 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
             onCameraMove = vm::onCameraMove,
             // Debug and bench builds show each exact frame's timings, so a phone can be read without logcat.
             debug = BuildConfig.TIMINGS,
+            labelTypeface = labelFace,
         )
 
         // The board's wash over the top 170 dp, so the pills read over the far, busy part of the view.
@@ -186,7 +204,7 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
       }
 
         // Top left: the weather and offline state, what is coming up, the quick needs.
-        Column(Modifier.padding(start = 16.dp, top = top)) {
+        Column(Modifier.padding(start = 16.dp, top = top).keepsLabelsOff("top")) {
             WeatherChip(weather, offline, onClick = { nav.go(Dest.Weather()) })
             if (moments.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))
@@ -217,7 +235,8 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
             onGlobe = { nav.go(Dest.Globe) },
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(end = 16.dp, top = top),
+                .padding(end = 16.dp, top = top)
+                .keepsLabelsOff("controls"),
         )
 
         // Bottom: attribution, the category row and the search bar, 90 dp up on the board (which steps aside for
@@ -229,7 +248,8 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
                 .fillMaxWidth()
                 // Read in the layout phase only: dragging the sheet moves the row without recomposing the screen.
                 .offset { IntOffset(0, if (showingResults) -sheet.visibleHeightPx.roundToInt() else 0) }
-                .padding(start = 12.dp, end = 12.dp, bottom = if (showingResults) 8.dp else barInset + 12.dp),
+                .padding(start = 12.dp, end = 12.dp, bottom = if (showingResults) 8.dp else barInset + 12.dp)
+                .keepsLabelsOff("bottom"),
         ) {
             Text(
                 stringResource(R.string.home_attribution),

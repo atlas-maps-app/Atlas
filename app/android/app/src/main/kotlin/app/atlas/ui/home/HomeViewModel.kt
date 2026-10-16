@@ -8,6 +8,8 @@ import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.HomeView
+import app.atlas.mapview.LabelKind
+import app.atlas.mapview.MapLabel
 import app.atlas.model.Place
 import app.atlas.mapview.Follow
 import app.atlas.mapview.MapLayer
@@ -48,6 +50,8 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.time.Instant
 import java.time.ZoneId
+import kotlin.math.abs
+import kotlin.math.pow
 
 /** The category row's answer: which category, whether it is still looking, the places and where they came from. */
 data class CategoryResults(
@@ -158,6 +162,22 @@ class HomeViewModel(
             runCatching { HomeHighlights.pick(services.placeStores, anchor, now.atZone(zone).toLocalDateTime(), saved) }.getOrDefault(emptyList())
         }
     }.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * The Main board's names over the map ("IJ", "Jordaan") for where the map looks, from the packs, again when it
+     * moves on; the map sets each where it fits.
+     */
+    val labels: StateFlow<List<MapLabel>> = cameraMoves.debounce(800)
+        .distinctUntilChanged { a, b -> Geo.distance(a.target, b.target) < LABEL_MOVE_M && abs(a.zoom - b.zoom) < 0.5 }
+        .map { c ->
+            withContext(Dispatchers.IO) {
+                val radius = (LABEL_RADIUS_M * 2.0.pow(16.0 - c.zoom)).coerceIn(600.0, 6_000.0)
+                runCatching { services.localData.mapNames(c.target, radius) }.getOrDefault(emptyList()).map { n ->
+                    MapLabel(if (n.water) "water:${n.name}" else "area:${n.name}", n.name, if (n.water) LabelKind.WATER else LabelKind.AREA, n.points, n.rank)
+                }
+            }
+        }
+        .distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val resultsState = MutableStateFlow<CategoryResults?>(null)
     val results: StateFlow<CategoryResults?> = resultsState.asStateFlow()
@@ -288,6 +308,10 @@ class HomeViewModel(
     companion object {
         const val DEFAULT_PITCH = 50.0
         private const val HIGHLIGHT_MOVE_M = 150.0
+        private const val LABEL_MOVE_M = 200.0
+
+        /** How far around the target names are looked for at zoom 16 (twice at 15, half at 17). */
+        private const val LABEL_RADIUS_M = 1_500.0
         const val MAX_RESULTS = 60
         private const val WEATHER_MOVE_M = 5_000.0
         private const val WEATHER_MAX_AGE_MS = 30 * 60_000L

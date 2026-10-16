@@ -56,6 +56,9 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
 
     /** The engine's typefaces, set by the view from its assets. */
     var fonts: SvgFonts? = null
+
+    /** The labels' face (the boards' Instrument Serif italic), given by the app. */
+    var labelTypeface: android.graphics.Typeface? = null
     val frames: EngineFrames = EngineFrames(fonts = { fonts ?: SvgFonts.system() }, onChange = { main.post(published) })
     private val engineChanged: () -> Unit = { frames.invalidate() }
 
@@ -334,6 +337,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             val ov = overlays
             pt.layoutMarkers(g, ov.markers)
             pt.drawGround(canvas, g, ov)
+            labelTypeface?.let { pt.labels.typeface = it }
+            pt.drawLabels(canvas, g, ov)
             pt.drawMarkers(canvas)
             ov.location?.let { pt.drawLocation(canvas, g, it) }
             tape?.let { pt.drawTape(canvas, g, it, units, Locale.getDefault()) }

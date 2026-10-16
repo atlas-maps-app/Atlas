@@ -261,6 +261,36 @@ class LocalDataTest {
         assertTrue(!LocalData.isTrade(mapOf("amenity" to "bench")))
     }
 
+    /** The Main board's names over the map: the quarter at its place node; canals left to the engine, which names them. */
+    @Test
+    fun theMapIsNamedFromThePacks() {
+        val names = LocalData(stores = { null }, packs = { pack }).mapNames(here, 1_500.0)
+        val jordaan = names.single { it.name == "Jordaan" }
+        assertTrue(!jordaan.water)
+        // node 6693415585, place=quarter: where the map's makers set the name, not the middle of its outline
+        assertEquals(LatLon(52.3754157, 4.8810958), jordaan.points.single().let { LatLon(Math.round(it.lat * 1e7) / 1e7, Math.round(it.lon * 1e7) / 1e7) })
+        assertTrue("the canals are the engine's to name", names.none { it.name.endsWith("gracht") })
+        assertTrue("no water here is large enough", names.none { it.water })
+        // quarters before neighbourhoods and suburbs
+        assertEquals(names.sortedByDescending { it.rank }, names)
+    }
+
+    /** With the canal ring's pack (this machine's renders), the IJ is named along its waterway, nearest first. */
+    @Test
+    fun theIjIsNamedAlongItsWaterway() {
+        val file = File(repo, "cache/packs/regions/grachten.atlas")
+        org.junit.Assume.assumeTrue("the canal ring's pack is on this machine", file.isFile)
+        val grachten = PackFeatures(listOf(PackBoxes(PackReader.open(file))))
+        val names = LocalData(stores = { null }, packs = { grachten }).mapNames(here, 1_700.0)
+        val ij = names.single { it.name == "IJ" }
+        assertTrue(ij.water)
+        assertTrue("points along the line, a hundred metres apart", ij.points.size > 5)
+        val d = ij.points.map { Geo.distance(it, here) }
+        assertEquals("nearest first, the outline's inner point last", d.dropLast(1), d.dropLast(1).sorted())
+        assertTrue(names.first().water)
+        assertTrue(names.any { it.name == "Jordaan" && !it.water })
+    }
+
     private companion object {
         val OVERPASS_CAFES = """
             {"version":0.6,"generator":"Overpass API","osm3s":{"timestamp_osm_base":"2026-10-16T00:00:00Z"},"elements":[
