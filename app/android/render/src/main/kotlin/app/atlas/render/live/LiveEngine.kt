@@ -118,14 +118,29 @@ object LiveEngine {
             scene.S["view"] = scene.loadView
         }
         progress(LiveProgress(LiveProgress.Stage.RENDERING, region.id, -1.0))
+        fun live(at: java.time.Instant, hours: List<WxHour>?): String {
+            val name = LiveMoment.install(at, region.zone, hours, opts.daylight)
+            @Suppress("UNCHECKED_CAST")
+            (scene.S["_tide"] as? MutableMap<String, Double>)?.let { t -> if (t.isNotEmpty() && LiveMoment.KEY !in t) t[LiveMoment.KEY] = t[name] ?: t.values.first() }
+            return LiveMoment.KEY
+        }
         val thn = when (moment) {
-            is Moment.Named -> moment.name.also { require(it in Amsterdam.THEMES) { "the engine has no moment '$it'" } }
-            is Moment.Live -> {
-                val name = LiveMoment.install(moment.at, region.zone, moment.hours, opts.daylight)
-                @Suppress("UNCHECKED_CAST")
-                (scene.S["_tide"] as? MutableMap<String, Double>)?.let { t -> if (t.isNotEmpty() && LiveMoment.KEY !in t) t[LiveMoment.KEY] = t[name] ?: t.values.first() }
-                LiveMoment.KEY
+            is Moment.Named -> {
+                val th = Amsterdam.THEMES[moment.name] ?: throw IllegalArgumentException("the engine has no moment '${moment.name}'")
+                if (region.kind == LiveRegion.Kind.REGION && th["wx"] == null) {
+                    // regions.py reads every moment's weather (its turbines turn in the wind); amsterdam.py's own fixed
+                    // moments (night, golden, noon) carry none, and regions.py never draws them. Such a moment is drawn
+                    // as the live moment at its own date and hour, with an overcast record: the same light, and a wind.
+                    @Suppress("UNCHECKED_CAST")
+                    val d = (th["date"] as List<Number>).map { it.toInt() }
+                    @Suppress("UNCHECKED_CAST")
+                    val hm = (th["hhmm"] as List<Number>).map { it.toInt() }
+                    live(java.time.LocalDateTime.of(d[0], d[1], d[2], hm[0], hm[1]).atZone(region.zone).toInstant(), null)
+                } else {
+                    moment.name
+                }
             }
+            is Moment.Live -> live(moment.at, moment.hours)
         }
         val t1 = System.nanoTime()
         val out = if (region.kind == LiveRegion.Kind.REGION) {

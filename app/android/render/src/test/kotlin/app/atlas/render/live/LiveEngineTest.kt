@@ -163,4 +163,18 @@ class LiveEngineTest {
         assertTrue(LiveEngine.sceneCount <= LiveEngine.MAX_SCENES)
         println("LIVE band 0.6: load ${a.loadMillis} ms, render ${a.renderMillis} ms; again ${b.loadMillis} ms load, ${b.renderMillis} ms render; scenes ${LiveEngine.sceneCount}, ${LiveEngine.sceneBytes / 1_000_000} MB")
     }
+
+    /**
+     * The map's Night look on a region: amsterdam.py's fixed night carries no weather, which regions.py reads for every
+     * moment (the canal ring's turbines turn in the wind), so it is drawn as the live moment at the night's own hour.
+     */
+    @Test
+    fun `a region draws the fixed night as the live moment at its hour`() {
+        assumeTrue("the grachten pack is local only", grachtenPack.isFile)
+        val region = PackReader.open(grachtenPack).use { LiveEngine.open(it, "${grachtenPack.length()}") }
+        val night = LiveEngine.render(region, boardView(region.frame), Moment.Named("night"))!!
+        assertEquals(LiveMoment.KEY, night.themeKey)
+        assertEquals("night", night.moment)
+        assertTrue(night.o.isNotEmpty())
+    }
 }
