@@ -45,8 +45,15 @@ import app.atlas.R
 import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
 import app.atlas.services.RegionLayer
-import app.atlas.ui.mine.MineTone
-import app.atlas.ui.mine.mt
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
+import app.atlas.ui.mine.BText
+import app.atlas.ui.mine.INK
+import app.atlas.ui.mine.SOFT
+import app.atlas.ui.mine.WHITE
+import app.atlas.ui.mine.bbox
+import app.atlas.ui.mine.bt
+import app.atlas.ui.mine.cr
 import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -75,11 +82,15 @@ internal fun PreviewMap(
     var loop by remember { mutableStateOf(emptyList<Offset>()) }
     var drawing by remember { mutableStateOf(false) }
     var box by remember { mutableStateOf(IntSize.Zero) }
-    val sheet = MineTone.of(0xFFE4ECF6, 0xFF1E2733)
-    val grid = MineTone.of(0xFFC9D6E6, 0xFF2D3A4A)
-    val ink = MineTone.of(0xFF14161B, 0xFFEDEEF1)
+    // the Welcome board's map: its sheet, its grid lines, the chosen regions' blue at 28 %, the red pin ringed in white
+    val sheet = Color(0xFFE4ECF6)
+    val grid = Color(0xFFC9D6E6)
+    val ink = Color(0xFF14161B)
     val dot = Color(0xFFB8905C)
-    val blue = MineTone.blue
+    val blue = Color(0xFF2E7BFF)
+    val measurer = rememberTextMeasurer()
+    val pinStyle = bt(11f, 800)
+    val scaleStyle = bt(10f, 800)
     val (spanWkm, _) = PickerModel.sides(view)
     val step = PickerModel.gridStepKm(spanWkm)
     val scale = if (step >= 1) "${step.roundToInt()} km" else String.format(Locale.ROOT, "%d m", (step * 1000).roundToInt())
@@ -122,13 +133,12 @@ internal fun PreviewMap(
             val tl = Offset(x(f.west), y(f.north))
             val sz = Size(x(f.east) - tl.x, y(f.south) - tl.y)
             drawRoundRect(blue.copy(alpha = 0.28f), tl, sz, CornerRadius(6f * density))
-            drawRoundRect(blue, tl, sz, CornerRadius(6f * density), style = Stroke(2f * density))
         }
         for ((dx, dy) in dots) drawCircle(dot.copy(alpha = 0.9f), 2.6f * density, Offset(dx * w, dy * h))
         if (route.size > 1) {
             val p = Path().apply { route.forEachIndexed { i, q -> if (i == 0) moveTo(x(q.lon), y(q.lat)) else lineTo(x(q.lon), y(q.lat)) } }
             drawPath(p, Color.White, style = Stroke(6f * density, cap = StrokeCap.Round))
-            drawPath(p, MineTone.greenDeep, style = Stroke(3.5f * density, cap = StrokeCap.Round))
+            drawPath(p, Color(0xFF178A4E), style = Stroke(3.5f * density, cap = StrokeCap.Round))
         }
         if (loop.size > 1) {
             val p = Path().apply { loop.forEachIndexed { i, q -> if (i == 0) moveTo(q.x, q.y) else lineTo(q.x, q.y) }; if (!drawing) close() }
@@ -136,11 +146,12 @@ internal fun PreviewMap(
         }
         pin?.let {
             val c = Offset(x(it.lon), y(it.lat))
-            drawCircle(Color.White, 10f * density, c)
-            drawCircle(MineTone.red, 7f * density, c)
+            drawCircle(Color(0xFFC8322A), 7f * density, c)
+            drawCircle(Color.White, 7f * density, c, style = Stroke(3f * density))
             if (pinLabel != null) {
-                val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { textSize = 11f * density; color = ink.toArgb(); typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD) }
-                drawContext.canvas.nativeCanvas.drawText(pinLabel, c.x + 14f * density, c.y - 6f * density, paint)
+                // the board's label: Geist 11, 800, its baseline 4 px over the pin and 12 px to its right
+                val t = measurer.measure(pinLabel, pinStyle)
+                drawText(t, ink, Offset(c.x + 12f * density, c.y - 4f * density - t.firstBaseline))
             }
         }
         // The scale bar: one grid step wide, bottom left.
@@ -149,8 +160,8 @@ internal fun PreviewMap(
         drawLine(ink, Offset(12f * density, by), Offset(12f * density + barPx, by), 2f * density)
         drawLine(ink, Offset(12f * density, by - 4f * density), Offset(12f * density, by + 4f * density), 2f * density)
         drawLine(ink, Offset(12f * density + barPx, by - 4f * density), Offset(12f * density + barPx, by + 4f * density), 2f * density)
-        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { textSize = 10f * density; color = ink.toArgb(); typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD) }
-        drawContext.canvas.nativeCanvas.drawText(scale, 12f * density + barPx + 6f * density, by + 3.5f * density, paint)
+        val t = measurer.measure(scale, scaleStyle)
+        drawText(t, ink, Offset(12f * density + barPx + 6f * density, by + 3.5f * density - t.firstBaseline))
     }
 }
 
@@ -172,15 +183,17 @@ internal fun EstimateCard(bytes: Map<RegionLayer, Long?>?, caption: String, modi
     val none = stringResource(R.string.mine_est_unknown)
     val working = stringResource(R.string.mine_est_working)
     val onPhone = stringResource(R.string.mine_est_on_phone)
-    Column(modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(MineTone.of(0xFFFFFFFF, 0xFF1B1D22)).padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    // the board's card: white, radius 20, 12 px above and below, 14 at the sides, 6 px between its lines
+    Column(modifier.fillMaxWidth().bbox(WHITE, cr(20f)).padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(if (bytes == null) "…" else if (unknown && total == 0L) "?" else "${if (unknown) "≥ " else ""}$number $unit", style = mt(20f, 900, tabular = true), maxLines = 1, softWrap = false)
-            Text(caption, Modifier.weight(1f), style = mt(12f, 700, line = 15f), color = MineTone.of(0xFF5A5F6C, 0xFFA0A5B1), maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.End)
+            BText(if (bytes == null) "…" else if (unknown && total == 0L) "?" else "${if (unknown) "≥ " else ""}$number $unit", bt(20f, 900, 26f, tnum = true), INK, Modifier.alignByBaseline())
+            BText(caption, bt(12f, 700, 15.5f, align = androidx.compose.ui.text.style.TextAlign.End), SOFT, Modifier.weight(1f).alignByBaseline(), lines = 2)
         }
-        Row(Modifier.fillMaxWidth().height(12.dp).clip(RoundedCornerShape(6.dp)), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        // the five-colour bar: 12 px, radius 6, 2 px between the layers
+        Row(Modifier.fillMaxWidth().height(12.dp).bbox(r = cr(6f)), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             val have = rows.filter { (bytes?.get(it.first) ?: 0L) > 0L }
-            if (have.isEmpty()) Box(Modifier.weight(1f).fillMaxHeight().background(MineTone.of(0xFFD5D8DE, 0xFF2C2F36)))
-            for (r in have) Box(Modifier.weight(bytes!![r.first]!!.toFloat().coerceAtLeast(1f)).fillMaxHeight().background(Color(r.second)))
+            if (have.isEmpty()) Box(Modifier.weight(1f).fillMaxHeight().bbox(0xFFD5D8DE))
+            for (r in have) Box(Modifier.weight(bytes!![r.first]!!.toFloat().coerceAtLeast(1f)).fillMaxHeight().bbox(r.second))
         }
         for ((layer, colour, label) in rows) {
             val size = bytes?.get(layer)
@@ -192,10 +205,11 @@ internal fun EstimateCard(bytes: Map<RegionLayer, Long?>?, caption: String, modi
                 size == 0L -> "0"
                 else -> RegionEngine.size(size)
             }
+            // a layer: 26 px, its 10 px dot, the name and the size (12, 700 on 15.5), 8 px apart
             Row(Modifier.height(26.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(10.dp).clip(CircleShape).background(Color(colour)))
-                Text(name, style = mt(12f, 700), modifier = Modifier.weight(1f), maxLines = 1)
-                Text(text, style = mt(12f, 400, tabular = true), color = MineTone.of(0xFF5A5F6C, 0xFFA0A5B1))
+                Box(Modifier.size(10.dp).bbox(colour, cr(5f)))
+                BText(name, bt(12f, 700, 15.5f), INK, Modifier.weight(1f))
+                BText(text, bt(12f, 700, 15.5f, tnum = true), SOFT)
             }
         }
     }

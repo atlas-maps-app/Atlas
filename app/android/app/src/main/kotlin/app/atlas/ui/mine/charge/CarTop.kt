@@ -38,13 +38,20 @@ import app.atlas.services.Units
 import app.atlas.ui.go.GoFormat
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssShadow
-import app.atlas.ui.mine.art.MineArtImage
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.mine.BText
+import app.atlas.ui.mine.INK
+import app.atlas.ui.mine.MSy
+import app.atlas.ui.mine.TextPill
+import app.atlas.ui.mine.WHITE
+import app.atlas.ui.mine.bbox
+import app.atlas.ui.mine.bt
+import app.atlas.ui.mine.cr
 import app.atlas.ui.mine.mt
 import kotlin.math.roundToInt
 
-private val Ink = Color(0xFF14161B)
-private val Soft = Color(0xFF464C5A)
-private val Bolt = Color(0xFF7EE0A4)
+/* The Charge board's green bolt. */
+private const val BOLT = 0xFF7EE0A4
 
 /**
  * The top of the Charge board: the back button, and a white pill with the car's battery as the board draws it (a pale case
@@ -58,64 +65,62 @@ internal fun CarTop(
     onBack: () -> Unit, onCar: () -> Unit, onMinKw: () -> Unit, onAvailable: () -> Unit, onTrip: () -> Unit,
 ) {
     val units by LocalServices.current.settings.units.collectAsStateWithLifecycle(Units.METRIC)
-    val shape = RoundedCornerShape(26.dp)
+    // the board's frosted glass: 90–92 % white over the map, blurred 20 px, its shadow 6 px down
+    val glass = listOf(CssShadow(0f, 6f, 20f, 0f, 0x1F181C30))
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val back = stringResource(R.string.kit_back)
             Box(
-                Modifier.size(52.dp, 64.dp).cssShadow(shape, 6.dp, 20.dp, Color(0x1F181C30)).clip(shape).background(Color(0xE6FFFFFF)).clickable(role = Role.Button, onClick = onBack).semantics { contentDescription = back },
+                Modifier.size(52.dp, 64.dp).bbox(0xE6FFFFFF, cr(26f), glass, blur = 20f).clickable(role = Role.Button, onClick = onBack).semantics { contentDescription = back },
                 contentAlignment = Alignment.Center,
-            ) { Symbol("ui.back", tint = Ink, size = 22.dp) }
+            ) { MSy("ui.back", 22f, INK) }
             val range = car.rangeKm?.let { GoFormat.distance(it * 1000.0, units).toString() }
             val description = if (car.model == null) stringResource(R.string.mine_car_pick)
             else stringResource(R.string.mine_car_gauge_cd, (car.soc * 100).roundToInt(), range ?: "")
+            // the pill: 64 high, 14 px in on the left, 10 on the right; the battery (92 × 40), 12 px on the charge (20, 700)
+            // over the range (12, grey), and at the right the car's plugs on pale chips (34 × 40, radius 10), 4 px apart
             Row(
-                Modifier.weight(1f).height(64.dp).cssShadow(shape, 6.dp, 20.dp, Color(0x1F181C30)).clip(shape).background(Color(0xEBFFFFFF)).clickable(role = Role.Button, onClick = onCar)
+                Modifier.weight(1f).height(64.dp).bbox(0xEBFFFFFF, cr(26f), glass, blur = 20f).clickable(role = Role.Button, onClick = onCar)
                     .padding(start = 14.dp, end = 10.dp).semantics { contentDescription = description },
                 horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
             ) {
                 CarBattery(if (car.model != null) car.soc.toFloat() else Float.NaN, Modifier.size(92.dp, 40.dp))
-                if (car.model != null) Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                    Text("${(car.soc * 100).roundToInt()}%", style = mt(20f, 700, tabular = true, line = 22f), color = Ink)
-                    if (range != null) Text(range, style = mt(12f, 400, tabular = true), color = Soft)
-                } else Text(stringResource(R.string.mine_car_pick), style = mt(14f, 700), color = Ink, maxLines = 1)
+                if (car.model != null) Column {
+                    BText("${(car.soc * 100).roundToInt()}%", bt(20f, 700, 22f, tnum = true), INK)
+                    if (range != null) BText(range, bt(12f, 400, 15.5f, tnum = true), 0xFF464C5A)
+                } else BText(stringResource(R.string.mine_car_pick), bt(14f, 700, 18f), INK)
                 Spacer(Modifier.weight(1f))
                 if (car.model != null) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     for (p in ChargeModel.PLUGS.filter { it.id in ChargeModel.plugIdsOf(car.ports) }.take(3)) {
-                        Box(Modifier.size(34.dp, 40.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFF1EEE8)), contentAlignment = Alignment.Center) {
-                            MineArtImage(p.art, 24.dp, tint = Color(0xFF2B2F38))
+                        Box(Modifier.size(34.dp, 40.dp).bbox(0xFFF1EEE8, cr(10f)), contentAlignment = Alignment.Center) {
+                            MSy(p.face, 22f, INK, h = 27f)
                         }
                     }
                 }
             }
         }
+        // the chips, 8 px apart, 38 high: the least power (dark, the green bolt 15 px, 14, 600), free now only (a 10 px dot
+        // ringed by 4 px of its green at 25 %), and the trip with stops (frosted, its route and bolt)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             val power = if (minKw == 0) stringResource(R.string.mine_charge_any_power) else stringResource(R.string.mine_charge_min_power, minKw)
-            Row(
-                Modifier.height(38.dp).clip(CircleShape).background(if (minKw > 0) Ink else Color(0xE6FFFFFF)).clickable(role = Role.Button, onClick = onMinKw).padding(start = 9.dp, end = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Symbol("ui.charge", tint = if (minKw > 0) Bolt else Ink, size = 15.dp)
-                Text(power, style = mt(14f, 600, tabular = true), color = if (minKw > 0) Color.White else Ink, maxLines = 1)
-            }
+            TextPill(
+                power, bt(14f, 600, 18f, tnum = true), if (minKw > 0) INK else 0xE6FFFFFF, if (minKw > 0) WHITE else INK, h = 38f, padStart = 9f, padEnd = 12f,
+                symbol = "cat.charge", symbolSize = 15f, gap = 5f, tint = if (minKw > 0) BOLT else INK, onClick = onMinKw,
+            )
             val free = stringResource(R.string.mine_charge_available_only)
             Box(
-                Modifier.size(38.dp).clip(CircleShape).background(if (availableOnly) Ink else Color(0xE6FFFFFF)).clickable(role = Role.Switch, onClick = onAvailable).semantics { contentDescription = free },
+                Modifier.size(38.dp).bbox(if (availableOnly) INK else 0xE6FFFFFF, cr(19f)).clickable(role = Role.Switch, onClick = onAvailable).semantics { contentDescription = free },
                 contentAlignment = Alignment.Center,
             ) {
-                val dot = if (availableOnly) Bolt else Color(0xFF8A8F98)
-                Canvas(Modifier.size(18.dp)) {
-                    if (availableOnly) drawCircle(dot.copy(alpha = 0.25f), 9.dp.toPx())
-                    drawCircle(dot, 5.dp.toPx())
-                }
+                Box(Modifier.size(10.dp).bbox(if (availableOnly) BOLT else 0xFF8A8F98, cr(5f), if (availableOnly) listOf(CssShadow(0f, 0f, 0f, 4f, 0x407EE0A4)) else emptyList(), clip = false))
             }
             val trip = stringResource(R.string.mine_charge_trip)
             Row(
-                Modifier.height(38.dp).cssShadow(CircleShape, 4.dp, 14.dp, Color(0x1A181C30)).clip(CircleShape).background(Color(0xE6FFFFFF)).clickable(role = Role.Button, onClick = onTrip).padding(start = 10.dp, end = 12.dp).semantics { contentDescription = trip },
+                Modifier.height(38.dp).bbox(0xE6FFFFFF, cr(19f), listOf(CssShadow(0f, 4f, 14f, 0f, 0x1A181C30)), blur = 20f).clickable(role = Role.Button, onClick = onTrip).padding(start = 10.dp, end = 12.dp).semantics { contentDescription = trip },
                 horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
             ) {
-                Symbol("ui.along-route", tint = Ink, size = 16.dp)
-                Symbol("ui.charge", tint = Ink, size = 14.dp)
+                MSy("ui.route", 16f, INK)
+                MSy("cat.charge", 14f, INK)
             }
         }
     }

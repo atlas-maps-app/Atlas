@@ -102,7 +102,7 @@
     <string name="mine_voice_sample">Beispiel</string>
     <string name="mine_voice_sample_text">In zweihundert Metern rechts abbiegen.</string>
     <string name="mine_voice_haptics">Vibration</string>
-    <string name="mine_voice_engine">Spracheinstellungen</string>
+    <string name="mine_voice_engine">Stimmen</string>
     <string name="mine_settings_units">Einheiten</string>
     <string name="mine_settings_km">km</string>
     <string name="mine_settings_mi">mi</string>

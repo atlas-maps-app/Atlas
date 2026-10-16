@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -119,16 +121,16 @@ fun SettingsScreen(args: Dest.Settings, nav: Navigator) {
         else -> stringResource(R.string.mine_settings_look_auto)
     }
     BoardPage(stringResource(R.string.mine_settings_title), onBack = { nav.back() }, scrollState = scroll) {
-        // The voice.
-        BoardCard(Modifier.onGloballyPositioned { marks["voice"] = it.positionInParent().y }, padding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 4.dp)) {
-            Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+        // The voice: the steel knob, what it says and its buttons (the board's card: 4 px in, a 96 px row, 14 px gaps).
+        BoardCard(Modifier.onGloballyPositioned { marks["voice"] = it.positionInParent().y }, padding = PaddingValues(horizontal = 14.dp, vertical = 4.dp)) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 96.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
                 val toggle = stringResource(if (muted) R.string.mine_voice_off else R.string.mine_voice_on)
                 Box(Modifier.clickable(role = Role.Switch) { scope.launch { settings.set(MineKeys.VOICE_MUTED, !muted); services.go.setMuted(!muted) } }.semantics { contentDescription = toggle }) {
                     VoiceKnob(on = !muted, Modifier.size(76.dp))
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(toggle.substringBefore(',').substringBefore(" (") , style = mt(16f, 800), color = Atlas.colors.ink)
-                    Text(stringResource(if (ready) R.string.mine_voice_sub_ready else R.string.mine_voice_sub_none), style = mt(12f, 400, line = 16f), color = Atlas.colors.inkSoft)
+                    BText(toggle.substringBefore(',').substringBefore(" ("), bt(16f, 800, 20.5f), INK)
+                    BText(stringResource(if (ready) R.string.mine_voice_sub_ready else R.string.mine_voice_sub_none), bt(12f, 400, 15.5f), SOFT, lines = 2)
                     Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         MiniButton(stringResource(R.string.mine_voice_sample), { services.voice.say(sample) })
                         MiniButton(stringResource(R.string.mine_voice_haptics), { scope.launch { settings.set(MineKeys.HAPTICS, !haptics); (services.voice as? app.atlas.ui.go.TtsVoice)?.setHaptics(!haptics) } }, primary = haptics, symbol = "ui.vibrate")
@@ -141,7 +143,7 @@ fun SettingsScreen(args: Dest.Settings, nav: Navigator) {
         BoardCard {
             Row(Modifier.onGloballyPositioned { marks["units"] = it.positionInParent().y }) {
                 SettingRow(
-                    stringResource(R.string.mine_settings_units), symbol = "ui.units", tile = MineTone.steel, first = true,
+                    stringResource(R.string.mine_settings_units), symbol = "ui.units", tile = MineTone.steel,
                     trailing = {
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             for (u in Units.entries) UnitPill(unitName(u), units == u) { scope.launch { settings.set(SettingsKeys.UNITS, u.name) } }
@@ -151,7 +153,7 @@ fun SettingsScreen(args: Dest.Settings, nav: Navigator) {
                     },
                 )
             }
-            SettingRow(stringResource(R.string.mine_settings_look), symbol = "ui.layers", tile = Color(0xFF14161B), value = look, onClick = { nav.go(Dest.Layers) })
+            SettingRow(stringResource(R.string.mine_settings_look), symbol = "ui.layers.2", tile = Color(INK), value = look, onClick = { nav.go(Dest.Layers) })
             SettingRow(stringResource(R.string.mine_settings_names), symbol = "ui.globe", tile = Color(0xFF2E7BC4), value = names?.let(SettingsModel::languageName) ?: local, onClick = { namesOpen = true })
             val scale = LocalContext.current.resources.configuration.fontScale
             SettingRow(
@@ -162,11 +164,11 @@ fun SettingsScreen(args: Dest.Settings, nav: Navigator) {
         }
         // Your places.
         BoardCard {
-            SettingRow(stringResource(R.string.mine_settings_home), symbol = "place.home", tile = MineTone.amber, value = home?.name?.ifBlank { null } ?: home?.let { coords(it.at) } ?: notSet, first = true, onClick = { picking = true })
+            SettingRow(stringResource(R.string.mine_settings_home), symbol = "place.home", tile = MineTone.amber, value = home?.name?.ifBlank { null } ?: home?.let { coords(it.at) } ?: notSet, onClick = { picking = true })
             SettingRow(stringResource(R.string.mine_settings_work), symbol = "place.tools", tile = MineTone.purple, value = work?.name?.ifBlank { null } ?: work?.let { coords(it.at) } ?: notSet, onClick = { picking = false })
             SettingRow(stringResource(R.string.mine_settings_saved), symbol = "ui.bookmark", tile = Color(0xFFC4452F), value = pluralStringResource(R.plurals.mine_n_lists, lists.size, lists.size), onClick = { nav.go(Dest.Lists()) })
             SettingRow(
-                stringResource(R.string.mine_settings_offline), symbol = "ui.no-signal", tile = MineTone.green,
+                stringResource(R.string.mine_settings_offline), symbol = "ui.no-signal.2", tile = MineTone.green,
                 value = if (details.isEmpty()) noneYet else offlineValue,
                 onClick = { nav.go(Dest.Offline) },
             )
@@ -174,13 +176,17 @@ fun SettingsScreen(args: Dest.Settings, nav: Navigator) {
         }
         // What is kept and where it comes from.
         BoardCard {
-            SettingRow(stringResource(R.string.mine_settings_privacy), symbol = "ui.shield-check", tile = Color(0xFF0F3D2A), value = stringResource(R.string.mine_settings_privacy_value), first = true, onClick = { nav.go(Dest.Privacy) })
+            SettingRow(stringResource(R.string.mine_settings_privacy), symbol = "ui.privacy.2", tile = Color(0xFF0F3D2A), value = stringResource(R.string.mine_settings_privacy_value), onClick = { nav.go(Dest.Privacy) })
             SettingRow(stringResource(R.string.mine_settings_data), symbol = "ui.key", tile = MineTone.purple, value = stringResource(R.string.mine_settings_data_value, sourcesOn), onClick = { nav.go(Dest.DataSources()) })
             SettingRow(stringResource(R.string.mine_settings_new_phone), symbol = "ui.smartphone", tile = MineTone.blue, value = stringResource(R.string.mine_settings_new_phone_value), onClick = { nav.go(Dest.NewPhone) })
             SettingRow(stringResource(R.string.mine_settings_about), symbol = "ui.info", tile = MineTone.steel, onClick = { nav.go(Dest.About) })
         }
         val version = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "" }
-        Text(stringResource(R.string.mine_settings_footer, version), style = mt(11f, 400, line = 15f), color = Atlas.colors.inkFaint, modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        // The board's footer: 11 on 14, grey, centred.
+        BText(
+            stringResource(R.string.mine_settings_footer, version), bt(11f, 400, 14f, align = androidx.compose.ui.text.style.TextAlign.Center), 0xFF7A7F8C,
+            Modifier.fillMaxWidth().padding(top = 12.dp), lines = 2,
+        )
     }
     picking?.let { isHome ->
         PlacePicker(
@@ -200,14 +206,10 @@ private fun unitName(u: Units): String = stringResource(
     when (u) { Units.METRIC -> R.string.mine_settings_km; Units.IMPERIAL -> R.string.mine_settings_mi; Units.NAUTICAL -> R.string.mine_settings_nm },
 )
 
-/** A pill of the units row: dark when it is what is set, light when it is another choice (28 dp, 12 sp, 800). */
+/** A pill of the units row (28 high, 9 px at the sides, 12 px 800 on 15.5): dark when it is what is set, light otherwise. */
 @Composable
 private fun UnitPill(text: String, selected: Boolean, onClick: () -> Unit) {
-    val c = Atlas.colors
-    Box(
-        Modifier.height(28.dp).clip(CircleShape).background(if (selected) c.pill else MineTone.of(0xFFEEF0F4, 0xFF2A2D34)).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 9.dp),
-        contentAlignment = Alignment.Center,
-    ) { Text(text, style = mt(12f, 800, tabular = true), color = if (selected) c.onPill else c.ink, maxLines = 1) }
+    TextPill(text, bt(12f, 800, 15.5f, tnum = true), if (selected) INK else HAIR, if (selected) WHITE else INK, padH = 9f, onClick = onClick)
 }
 
 /**
@@ -256,21 +258,21 @@ internal fun PlacePicker(title: String, current: SavedPlace?, onPick: (SavedPlac
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 here?.let { fix ->
-                    Row(Modifier.fillMaxWidth().clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).background(Atlas.colors.cardMuted).clickable { onPick(SavedPlace("", fix.location)) }.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).background(Color(PAGE)).clickable { onPick(SavedPlace("", fix.location)) }.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                         Symbol("ui.locate", size = 20.dp)
                         Text(stringResource(R.string.mine_pick_here), style = mt(14f, 700))
                     }
                 }
-                Box(Modifier.fillMaxWidth().clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).background(Atlas.colors.cardMuted).padding(12.dp)) {
+                Box(Modifier.fillMaxWidth().clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).background(Color(PAGE)).padding(12.dp)) {
                     val hint = stringResource(R.string.mine_pick_search)
-                    if (query.isEmpty()) Text(hint, style = mt(14f, 400), color = Atlas.colors.inkFaint)
-                    BasicTextField(query, { query = it }, singleLine = true, textStyle = mt(14f, 500).copy(color = Atlas.colors.ink), cursorBrush = SolidColor(Atlas.colors.ink), modifier = Modifier.fillMaxWidth().semantics { contentDescription = hint }, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Search))
+                    if (query.isEmpty()) Text(hint, style = mt(14f, 400), color = Color(FAINT))
+                    BasicTextField(query, { query = it }, singleLine = true, textStyle = mt(14f, 500).copy(color = Color(INK)), cursorBrush = SolidColor(Color(INK)), modifier = Modifier.fillMaxWidth().semantics { contentDescription = hint }, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Search))
                 }
                 for (r in results) Row(Modifier.fillMaxWidth().clickable { onPick(r) }.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Symbol("ui.pin", size = 18.dp, tint = Atlas.colors.inkSoft)
+                    Symbol("ui.pin", size = 18.dp, tint = Color(SOFT))
                     Text(r.name, style = mt(14f, 600), maxLines = 1)
                 }
-                if (searched && results.isEmpty()) Text(stringResource(R.string.mine_pick_none), style = mt(13f, 400), color = Atlas.colors.inkSoft)
+                if (searched && results.isEmpty()) Text(stringResource(R.string.mine_pick_none), style = mt(13f, 400), color = Color(SOFT))
             }
         },
         confirmButton = { TextButton(onClose) { Text(stringResource(R.string.mine_pick_close)) } },

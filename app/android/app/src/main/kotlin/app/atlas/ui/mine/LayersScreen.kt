@@ -50,6 +50,7 @@ import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.unit.dp
+import app.atlas.ui.kit.cssLinear
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.geo.Sun
@@ -112,7 +113,7 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
         coverage = withContext(Dispatchers.IO) { runCatching { streetsAround(services, here) }.getOrNull() }
         coverageDone = true
     }
-    Box(Modifier.fillMaxSize().background(Atlas.colors.paper)) {
+    Box(Modifier.fillMaxSize().background(Color(0xFFF4F1EA))) {
         AtlasMap(
             state = map,
             tiles = tiles,
@@ -121,31 +122,30 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
             overlays = MapOverlays(location = fix?.let { UserLocation(it.location, it.accuracy, it.bearing, it.speed) }),
             contentPadding = PaddingValues(top = 150.dp, bottom = 440.dp),
         )
-        Box(Modifier.fillMaxWidth().height(170.dp).background(Brush.verticalGradient(listOf(Color(0xF2F4F1EA), Color(0x00F4F1EA)))))
-        Column(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                val back = stringResource(R.string.kit_back)
-                Box(Modifier.size(44.dp).clip(CircleShape).background(Color.White).clickable { nav.back() }.semantics { contentDescription = back }, contentAlignment = Alignment.Center) { Symbol("ui.back", tint = Color(0xFF14161B), size = 20.dp) }
-                Text(stringResource(R.string.mine_layers), Modifier.weight(1f), style = serifTitle(32f), color = Color(0xFF14161B))
-                Box(Modifier.height(34.dp).clip(CircleShape).background(Color.White).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Symbol(if (Sun.position(map.time!!, here).altitudeDeg > -2) "weather.sun" else "ui.moon", tint = Color(0xFF14161B), size = 15.dp)
-                        Text(LayersModel.clock(minutes, twelve), style = mt(12f, 800, tabular = true), color = Color(0xFF14161B))
-                    }
-                }
+        // the Overlay board's wash over the map's top: the paper at 95 % fading out over 170 px
+        Box(Modifier.fillMaxWidth().height(170.dp + shift()).bbox(grad = listOf(cssLinear(180f, 0f to 0xF2F4F1EA, 1f to 0x00F4F1EA))))
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // the title row at y 42 with the time of light in the board's white pill (34 high, 12 px in, 12, 800)
+            TitleRow(stringResource(R.string.mine_layers), onBack = { nav.back() }) {
+                TextPill(
+                    LayersModel.clock(minutes, twelve), bt(12f, 800, 15.5f, tnum = true), WHITE, INK, h = 34f, padH = 12f,
+                    symbol = if (Sun.position(map.time!!, here).altitudeDeg > -2) "weather.sun" else "ui.moon", symbolSize = 15f, gap = 5f,
+                )
             }
-            Row(Modifier.fillMaxWidth().padding(end = 0.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            // the theme chips from x 16, 6 px apart, running off the right edge as the board's do
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (t in LayersModel.THEMES) ThemeChip(t, selected = t == theme) { scope.launch { settings.set(SettingsKeys.MAP_THEME, t.name) } }
             }
         }
         // The sheet.
-        val sheet = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)
+        // the board's sheet: white, radius 30 on top, its shadow 10 px up, 16 px in, the grabber (40 × 5) 10 px down
         Column(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(430.dp).softShadow(sheet, Color(0x29141E3A), 18.dp).clip(sheet).background(MineTone.of(0xFFFFFFFF, 0xFF1B1D22))
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(430.dp)
+                .bbox(WHITE, app.atlas.ui.kit.CssCorners(30f, 30f, 0f, 0f), listOf(app.atlas.ui.kit.CssShadow(0f, -10f, 30f, 0f, 0x2914161B)))
                 .windowInsetsPadding(WindowInsets.navigationBars).padding(start = 16.dp, end = 16.dp, top = 10.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Box(Modifier.align(Alignment.CenterHorizontally).size(40.dp, 5.dp).clip(CircleShape).background(MineTone.of(0xFFD5D8DE, 0xFF3A3E46)))
+            Box(Modifier.align(Alignment.CenterHorizontally).size(40.dp, 5.dp).bbox(0xFFD5D8DE, cr(3f)))
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 LayerChips(layers) { layer, on ->
                     scope.launch {
@@ -171,35 +171,32 @@ private suspend fun streetsAround(services: app.atlas.Services, at: app.atlas.ge
     return StreetCoverage.of(tags)
 }
 
-/** A theme chip over the map: dark when chosen, frosted white otherwise (34 dp, 12 sp, 800), as the overlay board's chips. */
+/** A theme chip over the map, as the board's: 34 high, 12 px in, 12, 800; dark when chosen, 95 % white otherwise, a soft shadow. */
 @Composable
 private fun ThemeChip(theme: Theme, selected: Boolean, onClick: () -> Unit) {
     val label = stringResource(
         when (theme) { Theme.AUTO -> R.string.mine_theme_auto; Theme.DAY -> R.string.mine_theme_day; Theme.NIGHT -> R.string.mine_theme_night; Theme.CHART -> R.string.mine_theme_chart; Theme.GRAY -> R.string.mine_theme_calm },
     )
-    Box(
-        Modifier.height(34.dp).softShadow(CircleShape, Color(0x24141E3A), 6.dp).clip(CircleShape).background(if (selected) Color(0xFF14161B) else Color(0xF2FFFFFF)).clickable(onClick = onClick).padding(horizontal = 12.dp),
-        contentAlignment = Alignment.Center,
-    ) { Text(label, style = mt(12f, 800), color = if (selected) Color.White else Color(0xFF14161B), maxLines = 1) }
+    TextPill(
+        label, bt(12f, 800, 15.5f), if (selected) INK else 0xF2FFFFFF, if (selected) WHITE else INK, h = 34f, padH = 12f,
+        shadows = listOf(app.atlas.ui.kit.CssShadow(0f, 3f, 10f, 0f, 0x2414161B)), onClick = onClick,
+    )
 }
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun LayerChips(layers: Set<MapLayer>, onToggle: (MapLayer, Boolean) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SectionLabel(stringResource(R.string.mine_layers_layers), colour = MineTone.steel)
+        CardLabel(stringResource(R.string.mine_layers_layers))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             for (info in LayersModel.LAYERS) {
                 val on = info.layer in layers
                 val name = stringResource(layerName(info.key))
-                val c = Atlas.colors
-                Row(
-                    Modifier.height(36.dp).clip(CircleShape).background(if (on) c.pill else MineTone.of(0xFFF1F3F6, 0xFF2A2D34)).clickable { onToggle(info.layer, !on) }.padding(horizontal = 12.dp).semantics { contentDescription = name },
-                    horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Symbol(info.symbol, tint = if (on) c.onPill else c.ink, size = 17.dp)
-                    Text(name, style = mt(12f, 700), color = if (on) c.onPill else c.ink, maxLines = 1)
-                }
+                // a layer: 36 high, 12 px in, its 17 px symbol and name (12, 700); dark when on, the board's pale tiles' grey when off
+                TextPill(
+                    name, bt(12f, 700, 15.5f), if (on) INK else 0xFFF4F5F7, if (on) WHITE else INK, Modifier.semantics { contentDescription = name },
+                    h = 36f, padH = 12f, symbol = info.symbol, symbolSize = 17f, gap = 6f, onClick = { onToggle(info.layer, !on) },
+                )
             }
         }
     }
@@ -225,11 +222,10 @@ private fun layerName(key: String): Int = when (key) {
  */
 @Composable
 private fun LightScrubber(minutes: Int, sun: Triple<Int?, Int, Int?>, twelve: Boolean, onChange: (Int) -> Unit, onNow: () -> Unit) {
-    val c = Atlas.colors
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            SectionLabel(stringResource(R.string.mine_layers_light), Modifier.weight(1f), MineTone.steel)
-            Text(LayersModel.clock(minutes, twelve), style = mt(14f, 800, tabular = true), color = c.ink)
+            CardLabel(stringResource(R.string.mine_layers_light), Modifier.weight(1f))
+            BText(LayersModel.clock(minutes, twelve), bt(14f, 800, 18f, tnum = true), INK)
         }
         val description = stringResource(R.string.mine_layers_light_cd, LayersModel.clock(minutes, twelve))
         Canvas(
@@ -256,12 +252,12 @@ private fun LightScrubber(minutes: Int, sun: Triple<Int?, Int, Int?>, twelve: Bo
             drawRoundRect(Brush.horizontalGradient(*stops, startX = 0f, endX = size.width), Offset(0f, top), track, CornerRadius(7.dp.toPx()))
             val x = frac(minutes) * size.width
             drawCircle(Color.White, 12.dp.toPx(), Offset(x.coerceIn(12.dp.toPx(), size.width - 12.dp.toPx()), size.height / 2))
-            drawCircle(Color(0xFF14161B), 12.dp.toPx(), Offset(x.coerceIn(12.dp.toPx(), size.width - 12.dp.toPx()), size.height / 2), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+            drawCircle(Color(INK), 12.dp.toPx(), Offset(x.coerceIn(12.dp.toPx(), size.width - 12.dp.toPx()), size.height / 2), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            sun.first?.let { MiniButton(stringResource(R.string.mine_layers_sunrise), { onChange(it) }, primary = false, symbol = "weather.sunrise") }
+            sun.first?.let { MiniButton(stringResource(R.string.mine_layers_sunrise), { onChange(it) }, primary = false, symbol = "weather.sunrise.2") }
             MiniButton(stringResource(R.string.mine_layers_noon), { onChange(sun.second) }, primary = false, symbol = "weather.sun")
-            sun.third?.let { MiniButton(stringResource(R.string.mine_layers_sunset), { onChange(it) }, primary = false, symbol = "weather.sunset") }
+            sun.third?.let { MiniButton(stringResource(R.string.mine_layers_sunset), { onChange(it) }, primary = false, symbol = "weather.sunset.3") }
             MiniButton(stringResource(R.string.mine_layers_now), onNow)
         }
     }
@@ -269,15 +265,12 @@ private fun LightScrubber(minutes: Int, sun: Triple<Int?, Int, Int?>, twelve: Bo
 
 @Composable
 private fun NamesRow(current: String?, onPick: (String?) -> Unit) {
-    val c = Atlas.colors
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SectionLabel(stringResource(R.string.mine_layers_names), colour = MineTone.steel)
+        CardLabel(stringResource(R.string.mine_layers_names))
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             for (code in SettingsModel.NAME_LANGUAGES) {
                 val on = code == current
-                Box(Modifier.height(32.dp).clip(CircleShape).background(if (on) c.pill else MineTone.of(0xFFF1F3F6, 0xFF2A2D34)).clickable { onPick(code) }.padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
-                    Text(code?.uppercase() ?: stringResource(R.string.mine_layers_local), style = mt(12f, 800), color = if (on) c.onPill else c.ink)
-                }
+                TextPill(code?.uppercase() ?: stringResource(R.string.mine_layers_local), bt(12f, 800, 15.5f), if (on) INK else 0xFFF4F5F7, if (on) WHITE else INK, h = 32f, padH = 12f) { onPick(code) }
             }
         }
     }
@@ -286,17 +279,17 @@ private fun NamesRow(current: String?, onPick: (String?) -> Unit) {
 /** What OpenStreetMap knows of the streets here, as four bars; with no connection, a line that says so. */
 @Composable
 private fun CoverageCard(coverage: StreetCoverage?, done: Boolean, onQuests: () -> Unit) {
-    val c = Atlas.colors
+    // the board's pale tile (radius 16, 14 px in): what is known of the streets here, and the way to fill the gaps
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(MineTone.of(0xFFF4F5F7, 0xFF24272D)).clickable(onClick = onQuests).padding(14.dp),
+        Modifier.fillMaxWidth().bbox(0xFFF4F5F7, cr(16f)).clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onQuests).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            SectionLabel(stringResource(R.string.mine_layers_known), Modifier.weight(1f), MineTone.steel)
-            if (coverage != null) Text(stringResource(R.string.mine_layers_known_pct, coverage.known), style = mt(12f, 800, tabular = true), color = c.ink)
+            CardLabel(stringResource(R.string.mine_layers_known), Modifier.weight(1f))
+            if (coverage != null) BText(stringResource(R.string.mine_layers_known_pct, coverage.known), bt(12f, 800, 15.5f, tnum = true), INK)
         }
         if (coverage == null) {
-            Text(stringResource(if (done) R.string.mine_layers_known_none else R.string.kit_loading), style = mt(12f, 400, line = 16f), color = c.inkSoft)
+            BText(stringResource(if (done) R.string.mine_layers_known_none else R.string.kit_loading), bt(12f, 400, 15.5f), SOFT, lines = 3)
         } else {
             for ((label, share, colour) in listOf(
                 Triple(R.string.mine_layers_lighting, coverage.lighting, Color(0xFFF2C230)),
@@ -304,11 +297,11 @@ private fun CoverageCard(coverage: StreetCoverage?, done: Boolean, onQuests: () 
                 Triple(R.string.mine_layers_sidewalks, coverage.sidewalks, Color(0xFF2E6BFF)),
                 Triple(R.string.mine_layers_parking, coverage.parking, Color(0xFF8E3CF7)),
             )) Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(label), style = mt(12f, 700), color = c.ink, modifier = Modifier.width(78.dp))
-                Box(Modifier.weight(1f).height(8.dp).clip(CircleShape).background(MineTone.of(0xFFE3E6EB, 0xFF3A3E46))) { Box(Modifier.fillMaxWidth(share.coerceIn(0.02f, 1f)).height(8.dp).background(colour)) }
-                Text("${Math.round(share * 100)}%", style = mt(12f, 700, tabular = true), color = c.inkSoft, modifier = Modifier.width(36.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                BText(stringResource(label), bt(12f, 700, 15.5f), INK, Modifier.width(78.dp))
+                Box(Modifier.weight(1f).height(8.dp).bbox(0xFFE3E6EB, cr(4f))) { Box(Modifier.fillMaxWidth(share.coerceIn(0.02f, 1f)).height(8.dp).background(colour)) }
+                BText("${Math.round(share * 100)}%", bt(12f, 700, 15.5f, tnum = true, align = androidx.compose.ui.text.style.TextAlign.End), SOFT, Modifier.width(36.dp))
             }
-            Text(stringResource(R.string.mine_layers_known_help), style = mt(11f, 400, line = 15f), color = c.inkFaint)
+            BText(stringResource(R.string.mine_layers_known_help), bt(11f, 400, 14f), FAINT, lines = 3)
         }
     }
 }

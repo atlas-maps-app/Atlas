@@ -5,68 +5,52 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LocalContentColor
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import app.atlas.R
-import app.atlas.ui.kit.Atlas
+import app.atlas.ui.kit.Argb
+import app.atlas.ui.kit.BoardFonts
+import app.atlas.ui.kit.CssShadow
 import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.SerifFamily
-import app.atlas.ui.kit.Symbol
-import app.atlas.ui.kit.cssShadow
 
 /**
- * The look of the mine boards (Settings, Privacy, Mine, Offline, Power, Weather, …): their cool or warm grey pages,
- * white cards of radius 22, a round white back button, an italic serif title and tiles of colour with a white symbol.
- * Surfaces and ink follow the theme, so the same screens read in the dark; the accent colours are the boards' own.
+ * The colours of the mine boards (Settings, Privacy, Mine, Offline, Power, Weather, …): their grey pages, white cards and
+ * the accents the boards give their tiles and switches. The boards are light only, and so are these screens.
  */
 internal object MineTone {
-    /** [light] by day, [dark] in the dark theme. */
-    @Composable
-    fun of(light: Long, dark: Long): Color = if (Atlas.colors.isDark) Color(dark) else Color(light)
+    /** The board's colour ([light]); the boards have no dark designs, so [dark] is not drawn. */
+    @Suppress("UNUSED_PARAMETER")
+    fun of(light: Long, dark: Long): Color = Color(light)
 
     val green = Color(0xFF1E9E5A)
     val greenDeep = Color(0xFF178A4E)
@@ -77,26 +61,22 @@ internal object MineTone {
     val steel = Color(0xFF6B7282)
 }
 
+/** A colour as the boards' ARGB literal. */
+internal fun Color.argbLong(): Argb = toArgb().toLong() and 0xFFFFFFFFL
+
 /** Bricolage Grotesque, the title of the Mine board. */
-internal val BricolageFamily = androidx.compose.ui.text.font.FontFamily(
-    androidx.compose.ui.text.font.Font(R.font.mine_bricolage, FontWeight.ExtraBold, variationSettings = androidx.compose.ui.text.font.FontVariation.Settings(androidx.compose.ui.text.font.FontVariation.weight(800))),
-)
+internal val BricolageFamily: FontFamily get() = BoardFonts.Bricolage
 
 /** VT323, the pump's amber display. */
-internal val Vt323Family = androidx.compose.ui.text.font.FontFamily(androidx.compose.ui.text.font.Font(R.font.mine_vt323))
+internal val Vt323Family: FontFamily get() = BoardFonts.VT323
 
-/** Caveat, the handwriting on the desk's notes (the eat package's copy of the font). */
-internal val CaveatFamily = androidx.compose.ui.text.font.FontFamily(
-    androidx.compose.ui.text.font.Font(R.font.eat_caveat, FontWeight.Bold, variationSettings = androidx.compose.ui.text.font.FontVariation.Settings(androidx.compose.ui.text.font.FontVariation.weight(700))),
-)
+/** Caveat, the handwriting on the desk's notes. */
+internal val CaveatFamily: FontFamily get() = BoardFonts.Caveat
 
 /** Courier Prime, the ticket stubs' typewriter. */
-internal val CourierFamily = androidx.compose.ui.text.font.FontFamily(
-    androidx.compose.ui.text.font.Font(R.font.eat_courier_prime, FontWeight.Normal),
-    androidx.compose.ui.text.font.Font(R.font.eat_courier_prime_bold, FontWeight.Bold),
-)
+internal val CourierFamily: FontFamily get() = BoardFonts.CourierPrime
 
-/** The board's sans (Inter here, for Geist) at [size] and [weight]; [tabular] for figures that change. */
+/** The board's sans (Geist) at [size] and [weight]; [tabular] for figures that change. */
 internal fun mt(size: Float, weight: Int = 600, tabular: Boolean = false, spacing: Float = 0f, line: Float = 0f): TextStyle = TextStyle(
     fontFamily = SansFamily,
     fontWeight = FontWeight(weight),
@@ -106,89 +86,79 @@ internal fun mt(size: Float, weight: Int = 600, tabular: Boolean = false, spacin
     fontFeatureSettings = if (tabular) "tnum" else null,
 )
 
-/** The italic serif title of the boards, at [size]. */
+/** The italic serif title of the boards, at [size] on a line of its size (`line-height: 1`). */
 internal fun serifTitle(size: Float, italic: Boolean = true) = TextStyle(
     fontFamily = SerifFamily,
     fontStyle = if (italic) FontStyle.Italic else FontStyle.Normal,
     fontSize = size.sp,
-    lineHeight = (size * 1.05f).sp,
+    lineHeight = size.sp,
 )
 
 /**
- * A mine board's page: the round back button and the serif title ([titleSize] 32–36 as the boards have it), an optional
- * pill [trailing] on the right, and the content in a column of 16 dp margins and 12 dp gaps that scrolls when it must.
+ * A mine board's page: the title row of the grey boards ([TitleRow]: the round back button at y 42 and the serif title,
+ * [titleSize] as the board has it, an optional [trailing] at the right), then the content [top] px under it (the boards'
+ * first card is at 98) in a column of 16 px margins and [gap] between cards, which scrolls when it must. Without a
+ * [header] the content starts at the top of the screen and draws its own.
  */
 @Composable
 internal fun BoardPage(
     title: String,
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
-    background: Color = MineTone.of(0xFFF1F3F6, 0xFF101114),
+    background: Color = Color(PAGE),
     backgroundBrush: androidx.compose.ui.graphics.Brush? = null,
-    ink: Color = Atlas.colors.ink,
-    backFill: Color = Atlas.colors.card,
+    ink: Color = Color(INK),
+    @Suppress("UNUSED_PARAMETER") backFill: Color = Color.White,
     italic: Boolean = true,
     titleSize: Float = 32f,
     gap: Dp = 12.dp,
+    top: Dp = 12.dp,
     scroll: Boolean = true,
     header: Boolean = true,
     scrollState: androidx.compose.foundation.ScrollState = rememberScrollState(),
     bottomPadding: Dp = 24.dp,
     trailing: (@Composable RowScope.() -> Unit)? = null,
+    bottomBar: (@Composable RowScope.() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     CompositionLocalProvider(LocalContentColor provides ink) {
         Column(
             modifier
                 .fillMaxSize()
-                .then(if (backgroundBrush != null) Modifier.background(backgroundBrush) else Modifier.background(background))
-                .windowInsetsPadding(WindowInsets.statusBars),
+                .then(if (backgroundBrush != null) Modifier.background(backgroundBrush) else Modifier.background(background)),
         ) {
-            if (header) Row(
-                Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (onBack != null) {
-                    val back = stringResource(R.string.kit_back)
-                    Box(
-                        Modifier.size(44.dp).clip(CircleShape).background(backFill).clickable(role = Role.Button, onClick = onBack)
-                            .semantics { contentDescription = back },
-                        contentAlignment = Alignment.Center,
-                    ) { Symbol("ui-chevron-left", tint = ink, size = 20.dp) }
+            if (header) TitleRow(title, onBack, ink = ink.argbLong(), size = titleSize, italic = italic) { trailing?.invoke(this) }
+            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+                val room = maxHeight
+                Column(Modifier.fillMaxWidth().then(if (scroll) Modifier.verticalScroll(scrollState) else Modifier)) {
+                    // the page is at least the screen's height, so a bottom bar sits at the foot when the content is short
+                    Column(
+                        Modifier.fillMaxWidth().heightIn(min = room).padding(start = 16.dp, end = 16.dp, top = if (header) top else 0.dp),
+                        verticalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap), content = content)
+                        if (bottomBar != null) {
+                            // the board's buttons: 54 px, 8 px apart, 30 px from the foot
+                            Row(
+                                Modifier.fillMaxWidth().padding(top = 24.dp, bottom = foot(30f)),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                content = bottomBar,
+                            )
+                        } else Spacer(Modifier.height(foot(bottomPadding.value)))
+                    }
                 }
-                Text(
-                    title,
-                    Modifier.weight(1f).semantics { heading() },
-                    style = serifTitle(titleSize, italic),
-                    color = ink,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                trailing?.invoke(this)
-            }
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .then(if (scroll) Modifier.verticalScroll(scrollState) else Modifier)
-                    .padding(horizontal = 16.dp)
-                    .windowInsetsPadding(WindowInsets.navigationBars),
-                verticalArrangement = Arrangement.spacedBy(gap),
-            ) {
-                content()
-                Spacer(Modifier.height(bottomPadding))
             }
         }
     }
 }
 
-/** A white card of the boards: radius 22, [padding] inside; the theme's card colour by night. */
+/** A white card of the boards: radius 22, [padding] inside (the rows' cards: 2 px above and below, 14 at the sides). */
 @Composable
 internal fun BoardCard(
     modifier: Modifier = Modifier,
-    colour: Color = Atlas.colors.card,
-    shape: Shape = RoundedCornerShape(22.dp),
+    colour: Color = Color.White,
+    radius: Float = 22f,
+    shadows: List<CssShadow> = emptyList(),
     padding: PaddingValues = PaddingValues(horizontal = 14.dp, vertical = 2.dp),
     onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
@@ -196,23 +166,24 @@ internal fun BoardCard(
     Column(
         modifier
             .fillMaxWidth()
-            .clip(shape)
-            .background(colour)
+            .bbox(colour.argbLong(), cr(radius), shadows)
             .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
             .padding(padding),
         content = content,
     )
 }
 
-/** The small caps heading over a card: "KEPT HERE", "ON YOUR TRAIL" (11 sp, 800, spaced 0.12 em). */
+/** The small caps heading of a card: "KEPT HERE", "WHAT GOES ONLINE" (11 px, 800, 1.32 px apart, on a 14 px line). */
 @Composable
-internal fun SectionLabel(text: String, modifier: Modifier = Modifier, colour: Color = Atlas.colors.inkSoft) {
-    Text(text.uppercase(), modifier.semantics { heading() }, style = mt(11f, 800, spacing = 1.3f), color = colour)
+internal fun SectionLabel(text: String, modifier: Modifier = Modifier, colour: Color = Color(LABEL)) {
+    CardLabel(text, modifier, colour.argbLong())
 }
 
 /**
- * One row of a settings card: a tile of colour ([symbol] in white) 34 dp square with radius 10, the [title] (14 sp, 800),
- * what it is set to ([value]) and a chevron when it opens something; a hairline above except on the [first] row.
+ * One row of a settings card, as the Settings board draws it: a 1 px hairline on top, [padV] above and below, a tile of
+ * colour ([symbol] 18 px in [tileSymbol]) 34 px square with radius 10, 12 px on the [title] (14, 800, on 18) and its
+ * [subtitle] (11 on 14, 1 px under), what it is set to ([value]: 13 on 17, grey, right) and a 16 px chevron 12 px after
+ * when it opens something.
  */
 @Composable
 internal fun SettingRow(
@@ -223,58 +194,37 @@ internal fun SettingRow(
     tileSymbol: Color = Color.White,
     value: String? = null,
     subtitle: String? = null,
-    first: Boolean = false,
+    @Suppress("UNUSED_PARAMETER") first: Boolean = false,
     chevron: Boolean = true,
+    padV: Float = 10f,
     onClick: (() -> Unit)? = null,
     trailing: (@Composable RowScope.() -> Unit)? = null,
 ) {
-    val c = Atlas.colors
-    androidx.compose.runtime.key(title, symbol) { SettingRowBody(title, modifier, symbol, tile, tileSymbol, value, subtitle, first, chevron, onClick, trailing) }
-}
-
-@Composable
-private fun SettingRowBody(
-    title: String,
-    modifier: Modifier,
-    symbol: String?,
-    tile: Color,
-    tileSymbol: Color,
-    value: String?,
-    subtitle: String?,
-    first: Boolean,
-    chevron: Boolean,
-    onClick: (() -> Unit)?,
-    trailing: (@Composable RowScope.() -> Unit)?,
-) {
-    val c = Atlas.colors
-    Column(modifier.fillMaxWidth()) {
-        if (!first) Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .heightIn(min = 54.dp)
-                .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
-                .padding(vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (symbol != null) {
-                Box(Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(tile), contentAlignment = Alignment.Center) {
-                    Symbol(symbol, tint = tileSymbol, size = 18.dp)
-                }
+    Row(
+        modifier
+            .fillMaxWidth()
+            .bbox(border = hairTop())
+            .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
+            .padding(top = (padV + 1f).dp, bottom = padV.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (symbol != null) {
+            Box(Modifier.size(34.dp).bbox(tile.argbLong(), cr(10f)), contentAlignment = Alignment.Center) {
+                MSy(symbol, 18f, tileSymbol.argbLong())
             }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                Text(title, style = mt(14f, 800), color = c.ink)
-                if (subtitle != null) Text(subtitle, style = mt(11f, 500, line = 15f), color = c.inkSoft)
-            }
-            if (value != null) Text(value, style = mt(13f, 500, tabular = true), color = c.inkSoft, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 170.dp))
-            trailing?.invoke(this)
-            if (onClick != null && chevron) Symbol("ui-chevron-right", tint = c.inkFaint, size = 16.dp)
         }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            BText(title, bt(14f, 800, 18f), INK)
+            if (subtitle != null) BText(subtitle, bt(11f, 400, 14f), SOFT, lines = 2)
+        }
+        if (value != null) BText(value, bt(13f, 400, 17f, tnum = true), SOFT, Modifier.widthIn(max = 180.dp))
+        trailing?.invoke(this)
+        if (onClick != null && chevron) MSy("ui.chevron-right", 16f, FAINT)
     }
 }
 
-/** The board's switch: 44 × 26, a 20 dp knob, green when on ([on] colour), grey when off. */
+/** The board's switch: 44 × 26, a 20 px knob, [onColour] when on, grey when off. */
 @Composable
 internal fun BoardSwitch(
     checked: Boolean,
@@ -284,52 +234,24 @@ internal fun BoardSwitch(
     onColour: Color = MineTone.green,
     enabled: Boolean = true,
 ) {
-    val track = if (checked) onColour else MineTone.of(0xFFD5D8DE, 0xFF3A3E46)
-    Box(
-        modifier
-            .size(44.dp, 26.dp)
-            .clip(CircleShape)
-            .background(track)
-            .toggleable(checked, enabled = enabled, role = Role.Switch, onValueChange = onChange)
-            .semantics {
-                contentDescription = label
-                stateDescription = if (checked) "on" else "off"
-            },
-    ) {
-        Box(
-            Modifier
-                .align(if (checked) Alignment.CenterEnd else Alignment.CenterStart)
-                .padding(3.dp)
-                .size(20.dp)
-                .cssShadow(CircleShape, 1.dp, 3.dp, Color(0x40000000))
-                .clip(CircleShape)
-                .background(Color.White),
-        )
-    }
+    MineSwitch(checked, onChange, label, modifier, onColour = onColour.argbLong(), enabled = enabled)
 }
 
-/** A small pill of text ("ODbL", "open data", "LIVE"): [fg] on [bg], 11 sp 800. */
+/** A small tag of text ("ODbL", "open data"): [fg] on [bg], 10 px 700 on 13, radius 8, 7 px at the sides. */
 @Composable
-internal fun TagPill(text: String, bg: Color, fg: Color, modifier: Modifier = Modifier, height: Dp = 22.dp) {
-    Box(modifier.height(height).clip(CircleShape).background(bg).padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
-        Text(text, style = mt(10.5f, 800), color = fg, maxLines = 1)
+internal fun TagPill(text: String, bg: Color, fg: Color, modifier: Modifier = Modifier, height: Dp = 19.dp) {
+    Box(modifier.height(height).bbox(bg.argbLong(), cr(8f)).padding(horizontal = 7.dp), contentAlignment = Alignment.Center) {
+        BText(text, bt(10f, 700, 13f), fg.argbLong())
     }
 }
 
-/** A text pill button (28 dp high, 11 sp 800): dark by default, light when [primary] is false. */
+/** The boards' text button (28 high, radius 14, 11 px 800 on 14, 10 px at the sides): dark, or light when not [primary]. */
 @Composable
 internal fun MiniButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, primary: Boolean = true, symbol: String? = null) {
-    val c = Atlas.colors
-    val bg = if (primary) c.pill else MineTone.of(0xFFEEF0F4, 0xFF2A2D34)
-    val fg = if (primary) c.onPill else c.ink
-    Row(
-        modifier.height(28.dp).clip(CircleShape).background(bg).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (symbol != null) Symbol(symbol, tint = fg, size = 14.dp)
-        Text(text, style = mt(11f, 800), color = fg, maxLines = 1)
-    }
+    TextPill(
+        text, bt(11f, 800, 14f), if (primary) INK else HAIR, if (primary) WHITE else INK, modifier,
+        symbol = symbol, symbolSize = 14f, onClick = onClick,
+    )
 }
 
 /** A hairline-bordered outline for dashed or empty states. */

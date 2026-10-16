@@ -55,14 +55,17 @@ data class Charger(
 
 /** What a charging screen works out: chargers from places, filters, the sheet's summary, the power mix and the time to charge. */
 object ChargeModel {
-    /** The plug faces of the connector tiles: label, OSM socket names it stands for, the board art id. */
-    class Plug(val id: String, val label: String, val types: Set<String>, val art: String)
+    /**
+     * The plugs of the connector tiles: label, the OSM socket names it stands for, the board symbol of its tile ([art]) and
+     * of its face on the car's chips and the station's sockets ([face]).
+     */
+    class Plug(val id: String, val label: String, val types: Set<String>, val art: String, val face: String)
 
     val PLUGS = listOf(
-        Plug("ccs2", "CCS2", setOf("type2_combo"), "plug.ccs2.line"),
-        Plug("type2", "Type 2", setOf("type2", "type2_cable"), "plug.type2.line"),
-        Plug("chademo", "CHAdeMO", setOf("chademo"), "plug.chademo.line"),
-        Plug("schuko", "Schuko", setOf("schuko"), "plug.schuko.line"),
+        Plug("ccs2", "CCS2", setOf("type2_combo"), "plug.ccs2.2", "plug.ccs2"),
+        Plug("type2", "Type 2", setOf("type2", "type2_cable"), "plug.type2.2", "plug.type2"),
+        Plug("chademo", "CHAdeMO", setOf("chademo"), "plug.chademo", "plug.chademo"),
+        Plug("schuko", "Schuko", setOf("schuko"), "plug.schuko", "plug.schuko"),
     )
 
     /** The minimum power steps of the "≥ kW" tile. */

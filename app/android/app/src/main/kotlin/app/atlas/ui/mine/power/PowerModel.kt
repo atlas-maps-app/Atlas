@@ -47,7 +47,7 @@ data class PhoneBattery(val percent: Int, val charging: Boolean, val saver: Bool
 data class PowerSpot(val place: Place, val kind: Kind, val name: String, val detail: String, val distanceM: Double) {
     enum class Kind(val symbol: String, val colour: Long) {
         LOCKER("power.bank", 0xFF7B4DFF), CAFE("place.cafe.2", 0xFFB8461A), PILLAR("power.pillar", 0xFF2E5BFF), LIBRARY("place.library", 0xFF2F7A3A),
-        SOLAR("weather.sun", 0xFFE8922A), OUTLET("fact.socket", 0xFF1E9E5A),
+        SOLAR("weather.sun.2", 0xFFE8922A), OUTLET("fact.socket", 0xFF1E9E5A),
     }
 }
 

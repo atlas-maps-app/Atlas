@@ -36,6 +36,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
+import app.atlas.ui.kit.CssCorners
 import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
@@ -49,8 +53,9 @@ import java.time.Instant
 import java.time.format.TextStyle
 import java.util.Locale
 
-private val FInk = Color(0xFF14203A)
-private val FSoft = Color(0xFF5A6A88)
+/* The Forecast board's inks (`canvas/project/Forecast.dc.html`). */
+private const val F_INK = 0xFF14203A
+private const val F_SOFT = 0xFF5A6A88
 
 /**
  * The Forecast sources board: the next 48 hours' temperature from several weather models at once, drawn together so you
@@ -74,50 +79,55 @@ fun ForecastScreen(args: Dest.Forecast, nav: Navigator) {
         title = stringResource(R.string.mine_forecast_title),
         onBack = { nav.back() },
         background = Color(0xFFE3EAF3),
-        ink = FInk,
+        ink = Color(F_INK),
         titleSize = 30f,
+        top = 10.dp,
+        gap = 11.dp,
         trailing = {
-            if (m != null) Box(Modifier.height(34.dp).clip(CircleShape).background(Color(0xFFE1F2EA)).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
-                Text(pluralStringResource(R.plurals.mine_n_models, m.count, m.count), style = mt(12f, 800), color = Color(0xFF12663A))
-            }
+            if (m != null) TextPill(pluralStringResource(R.plurals.mine_n_models, m.count, m.count), bt(12f, 800, 15.5f), 0xFFE1F2EA, 0xFF12663A, h = 34f, padH = 12f)
         },
     ) {
         if (m != null) {
             ChartCard(m, zone)
             Sources(m)
         } else if (done) {
-            app.atlas.ui.kit.StateMessage("ui.no-signal", stringResource(R.string.mine_forecast_none), text = stringResource(R.string.mine_forecast_none_text), tint = FSoft)
-        } else Text(stringResource(R.string.kit_loading), style = mt(13f, 500), color = FSoft)
-        Text(stringResource(R.string.mine_forecast_footer), style = mt(10f, 400, line = 15f), color = Color(0xFF6A7A98), modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            MineState("ui.no-signal", stringResource(R.string.mine_forecast_none), text = stringResource(R.string.mine_forecast_none_text), tint = Color(F_SOFT))
+        } else BText(stringResource(R.string.kit_loading), bt(13f, 500, 17f), F_SOFT)
+        // the board's foot: 10 on 15, centred, 36 px under the last card
+        BText(stringResource(R.string.mine_forecast_footer), bt(10f, 400, 15f, align = TextAlign.Center), 0xFF6A7A98, Modifier.fillMaxWidth().padding(start = 1.dp, end = 1.dp, top = 25.dp), lines = 4)
     }
 }
 
+/**
+ * The chart card as the board's (radius 24, 12 px above, 16 at the sides, 10 below, 8 px between): the label and the
+ * frost note, the 162 px chart, the legend, the rain label, the 32 px of rain bars and the times under them.
+ */
 @Composable
 private fun ChartCard(m: ModelsForecast, zone: java.time.ZoneId) {
     val frost = m.frost()
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Color.White).padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(stringResource(R.string.mine_forecast_temp).uppercase(), style = mt(11f, 800, spacing = 1.3f), color = FSoft, modifier = Modifier.weight(1f))
-            if (frost != null) Text(
+    Column(Modifier.fillMaxWidth().bbox(WHITE, cr(24f)).padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BText(stringResource(R.string.mine_forecast_temp).uppercase(), bt(11f, 800, 14f, spacing = 1.32f), F_SOFT, Modifier.weight(1f).alignByBaseline())
+            if (frost != null) BText(
                 stringResource(R.string.mine_forecast_frost, Instant.ofEpochSecond(m.hours[frost.first]).atZone(zone).dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.getDefault()), m.frostModels(), m.count),
-                style = mt(11f, 800), color = Color(0xFFC8322A),
+                bt(11f, 800, 14f), 0xFFC8322A, Modifier.alignByBaseline(),
             )
         }
         TemperatureChart(m, Modifier.fillMaxWidth().height(162.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             for (c in m.curves) Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(12.dp, 3.dp).clip(RoundedCornerShape(2.dp)).background(Color(c.model.colour)))
-                Text(c.model.label, style = mt(11f, 800), color = FInk)
+                Box(Modifier.size(12.dp, 3.dp).bbox(c.model.colour, cr(2f)))
+                BText(c.model.label, bt(11f, 800, 14f), F_INK)
             }
         }
-        Text(stringResource(R.string.mine_forecast_rain).uppercase(), style = mt(11f, 800, spacing = 1.3f), color = FSoft)
+        BText(stringResource(R.string.mine_forecast_rain).uppercase(), bt(11f, 800, 14f, spacing = 1.32f), F_SOFT)
         RainBars(m, Modifier.fillMaxWidth().height(32.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             val first = Instant.ofEpochSecond(m.hours.first())
             for (i in 0..4) {
                 val t = first.plusSeconds(i * 12L * 3600)
                 val z = t.atZone(zone)
-                Text(if (i == 0) stringResource(R.string.mine_weather_now) else "${z.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.getDefault())} ${String.format(Locale.ROOT, "%02d:00", z.hour)}", style = mt(10f, 700, tabular = true), color = Color(0xFF8A96A8))
+                BText(if (i == 0) stringResource(R.string.mine_weather_now) else "${z.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.getDefault())} ${String.format(Locale.ROOT, "%02d:00", z.hour)}", bt(10f, 700, 13f, tnum = true), 0xFF8A96A8)
             }
         }
     }
@@ -128,6 +138,8 @@ private fun ChartCard(m: ModelsForecast, zone: java.time.ZoneId) {
 private fun TemperatureChart(m: ModelsForecast, modifier: Modifier) {
     val cd = stringResource(R.string.mine_forecast_chart_cd, m.count)
     val frost = m.frost()
+    val measurer = rememberTextMeasurer()
+    val zeroStyle = bt(9f, 800)
     Canvas(modifier.semantics { contentDescription = cd }) {
         val n = m.hours.size
         val (lo, hi) = m.range ?: return@Canvas
@@ -141,7 +153,9 @@ private fun TemperatureChart(m: ModelsForecast, modifier: Modifier) {
         if (top < 0 && bottom > 0) {
             val zy = y(0.0)
             drawLine(Color(0xFFC8322A), Offset(0f, zy), Offset(size.width, zy), 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 3.dp.toPx())))
-            text("0°", Offset(size.width, zy - 3.dp.toPx()), 9.dp.toPx(), Color(0xFFC8322A))
+            // the board's "0°": Geist 9, 800, its end at the right, its baseline 3 px over the line
+            val t = measurer.measure("0°", zeroStyle)
+            drawText(t, Color(0xFFC8322A), Offset(size.width - t.size.width, zy - 3.dp.toPx() - t.firstBaseline))
         }
         // The band of all models.
         val band = Path()
@@ -167,54 +181,56 @@ private fun TemperatureChart(m: ModelsForecast, modifier: Modifier) {
             }
             drawPath(p, Color(c.model.colour).copy(alpha = 0.9f), style = Stroke(1.8.dp.toPx(), join = StrokeJoin.Round))
         }
-        if (frost != null) drawLine(Color(0x80141E3A), Offset(x(frost.first), 0f), Offset(x(frost.first), size.height), 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(2.dp.toPx(), 3.dp.toPx())))
+        // the coldest hour: the board's dashed ink at half, over the data's 150 px (from y 6, the viewBox's 0)
+        if (frost != null) drawLine(Color(0x8014203A), Offset(x(frost.first), 6.dp.toPx()), Offset(x(frost.first), 156.dp.toPx()), 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(2.dp.toPx(), 3.dp.toPx())))
     }
 }
 
-private fun DrawScope.text(s: String, at: Offset, size: Float, colour: Color) {
-    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = size; color = colour.toArgb(); textAlign = android.graphics.Paint.Align.RIGHT; typeface = android.graphics.Typeface.DEFAULT_BOLD
-    }
-    drawContext.canvas.nativeCanvas.drawText(s, at.x, at.y, paint)
-}
 
-/** One bar an hour: tall and strong when every model expects rain, low and pale when only some do, a sliver when none. */
+/**
+ * One bar an hour, as the board's (1 px apart, the top corners round by 2): 4 px and pale when no model expects rain, then 5 px
+ * more for each that does, pale grey for one in five, light blue for two or three, the full blue for four and more.
+ */
 @Composable
 private fun RainBars(m: ModelsForecast, modifier: Modifier) {
     val counts = remember(m) { m.rainAgreement() }
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(1.dp), verticalAlignment = Alignment.Bottom) {
         for (n in counts) {
             val share = n.toFloat() / m.count.coerceAtLeast(1)
-            Box(
-                Modifier.weight(1f).height((if (n == 0) 4f else 8f + 21f * share).dp).clip(RoundedCornerShape(topStart = 2.dp, topEnd = 2.dp))
-                    .background(if (n == 0) Color(0xFFEEF2F7) else if (share >= 0.99f) Color(0xFF2E7BFF) else Color(0xFF2E7BFF).copy(alpha = 0.35f + 0.5f * share)),
-            )
+            val colour = when {
+                n == 0 -> 0xFFEEF2F7
+                share >= 0.79f -> 0xFF2E7BFF
+                share >= 0.39f -> 0xFF8FB4FF
+                else -> 0xFFD5DEEC
+            }
+            Box(Modifier.weight(1f).height((4f + 25f * share).dp).bbox(colour, CssCorners(2f, 2f, 0f, 0f)))
         }
     }
 }
 
-/** "Who makes it": each model that answered, Open-Meteo that serves them, and the phone's barometer that needs no one. */
+/** "Who makes it", as the board's card (radius 24, 14 px in): each model that answered, Open-Meteo that serves them, and the phone's barometer. */
 @Composable
 private fun Sources(m: ModelsForecast) {
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Color.White).padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 2.dp)) {
-        SectionLabel(stringResource(R.string.mine_forecast_who), Modifier.padding(top = 4.dp, bottom = 8.dp), FSoft)
-        for ((i, c) in m.curves.withIndex()) SourceRow(c.model.label, c.model.maker, stringResource(R.string.mine_forecast_open), Color(c.model.colour), "weather.cloud", i == 0)
-        SourceRow("Open-Meteo", stringResource(R.string.mine_forecast_openmeteo), stringResource(R.string.mine_forecast_cc), Color(0xFF0A6E7E), "weather.sun", false)
-        SourceRow(stringResource(R.string.mine_forecast_baro), stringResource(R.string.mine_forecast_baro_sub), stringResource(R.string.mine_forecast_offline), Color(0xFF6A5A3A), "ui.gauge", false)
+    Column(Modifier.fillMaxWidth().bbox(WHITE, cr(24f)).padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 2.dp)) {
+        CardLabel(stringResource(R.string.mine_forecast_who), Modifier.padding(bottom = 8.dp), F_SOFT)
+        for (c in m.curves) SourceRow(c.model.label, c.model.maker, stringResource(R.string.mine_forecast_open), c.model.colour, "weather.cloud")
+        SourceRow("Open-Meteo", stringResource(R.string.mine_forecast_openmeteo), stringResource(R.string.mine_forecast_cc), 0xFF0A6E7E, "ui.source")
+        SourceRow(stringResource(R.string.mine_forecast_baro), stringResource(R.string.mine_forecast_baro_sub), stringResource(R.string.mine_forecast_offline), 0xFF6B5A40, "ui.gauge")
     }
 }
 
+/** A row of the board: the hairline, 9 px, the 36 px tile (radius 10), 12 px on the name (14, 800 on 18) and its line (11 on 14), the green tag. */
 @Composable
-private fun SourceRow(name: String, sub: String, tag: String, colour: Color, symbol: String, first: Boolean) {
-    Column {
-        if (!first) Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFEEF2F7)))
-        Row(Modifier.fillMaxWidth().height(54.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(colour), contentAlignment = Alignment.Center) { Symbol(symbol, tint = Color.White, size = 18.dp) }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                Text(name, style = mt(14f, 800), color = FInk)
-                Text(sub, style = mt(11f, 400), color = FSoft, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-            }
-            TagPill(tag, Color(0xFFE1F2EA), Color(0xFF12663A), height = 22.dp)
+private fun SourceRow(name: String, sub: String, tag: String, colour: Long, symbol: String) {
+    Row(
+        Modifier.fillMaxWidth().bbox(border = hairTop(0xFFEEF2F7)).padding(top = 10.dp, bottom = 9.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(36.dp).bbox(colour, cr(10f)), contentAlignment = Alignment.Center) { MSy(symbol, 18f, WHITE) }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            BText(name, bt(14f, 800, 18f), F_INK)
+            BText(sub, bt(11f, 400, 14f), F_SOFT)
         }
+        TextPill(tag, bt(10f, 900, 13f), 0xFFE1F2EA, 0xFF12663A, h = 22f, padH = 8f)
     }
 }

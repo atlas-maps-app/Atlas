@@ -31,7 +31,11 @@ import org.robolectric.annotation.GraphicsMode
 import java.io.File
 import java.time.Duration
 
-/** Every mine screen, through the real navigation, on the test phone at the Westerkerk: one PNG each to look at. */
+/**
+ * Every mine screen, through the real navigation, on the test phone at the Westerkerk: one PNG each to look at beside its
+ * board (`cache/pictures/img/<Board>.jpg`): Mine, Offline, Settings, Privacy, DataSources, Satellites, Watch, Weather,
+ * Forecast, Overlay (the map's look), Plugs and Charge, Pump, Power, Sources (water) and Welcome.
+ */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [34], qualifiers = "w412dp-h915dp-xhdpi")
@@ -86,6 +90,10 @@ class MineScreenshotTest {
         MineFixtures.region(s, "Haarlem", MineFixtures.HAARLEM, mapMb = 120, placesMb = 24, at = at)
         s.mine.useDeps(MineFixtures.offlineDeps(s, s.clock.instant()))
         runBlocking { s.settings.set(MineKeys.EV_MODEL, app.atlas.providers.EvModels.bundled().all.first { it.make == "Tesla" }.id) }
+        // Where you have been, on, as the board's note shows it: 41 places this year, 300 m apart along the canals.
+        runBlocking { s.settings.set(MineKeys.TRAIL, true) }
+        val day = s.clock.instant().minus(Duration.ofDays(2))
+        for (i in 0 until 41) s.mine.trail.record(app.atlas.geo.LatLon(52.36 + (i % 7) * 0.003, 4.87 + (i / 7) * 0.0045), day.plusSeconds(i * 600L))
         show(Dest.Mine, s)
         capture("mine_desk")
     }
@@ -330,34 +338,10 @@ class MineScreenshotTest {
         chargingRoute("mine_charging_route_nocar", app.atlas.ui.mine.charge.Car(null, 0.8, emptySet())) { app.atlas.ui.mine.charge.TripState.NoCar }
     }
 
+    /** The boards are light only, and so are these screens: the dark theme leaves them as their boards. */
     @Test
     fun darkSettings() {
         show(Dest.Settings(), phone(), dark = true)
         capture("mine_settings_dark")
-    }
-
-    @Test
-    fun darkOffline() {
-        val s = phone()
-        val at = s.clock.instant().minus(Duration.ofHours(2))
-        MineFixtures.region(s, "Amsterdam", MineFixtures.AMSTERDAM, mapMb = 410, placesMb = 180, routeMb = 310, at = at, voices = listOf("en"))
-        s.mine.useDeps(MineFixtures.offlineDeps(s, s.clock.instant()))
-        s.mine.engine.refresh()
-        show(Dest.Offline, s, dark = true)
-        capture("mine_offline_dark")
-    }
-
-    @Test
-    fun darkWelcome() {
-        val s = withPacks()
-        show(Dest.Onboarding(1), s, dark = true)
-        estimated()
-        capture("mine_welcome_2_dark")
-    }
-
-    @Test
-    fun darkWeather() {
-        show(Dest.Weather(), phone(), dark = true)
-        capture("mine_weather_dark")
     }
 }

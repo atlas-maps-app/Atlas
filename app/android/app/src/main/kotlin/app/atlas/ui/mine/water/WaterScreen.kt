@@ -50,10 +50,24 @@ import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.services.Units
 import app.atlas.ui.go.GoFormat
-import app.atlas.ui.kit.StateMessage
+import app.atlas.ui.mine.MineState
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.appClock
 import app.atlas.ui.kit.rememberHere
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
+import app.atlas.ui.kit.cssLinear
+import app.atlas.ui.mine.BText
+import app.atlas.ui.mine.MSy
+import app.atlas.ui.mine.TextPill
+import app.atlas.ui.mine.WHITE
+import app.atlas.ui.mine.bbox
+import app.atlas.ui.mine.bt
+import app.atlas.ui.mine.cr
 import app.atlas.ui.mine.BoardPage
 import app.atlas.ui.mine.MineKeys
 import app.atlas.ui.mine.SectionLabel
@@ -65,8 +79,9 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToInt
 
-private val WInk = Color(0xFF16261E)
-private val WSoft = Color(0xFF5A6E60)
+/* The Sources board's inks (`canvas/project/Sources.dc.html`). */
+private const val W_INK = 0xFF16261E
+private const val W_SOFT = 0xFF5A6E60
 
 /**
  * "Water out there": the springs, taps, wells and drinking fountains of OpenStreetMap along your trip (or around you), with
@@ -103,30 +118,36 @@ fun WaterScreen(args: Dest.Water, nav: Navigator) {
     val next = list.firstOrNull { WaterModel.usable(it) }
     val verdict = WaterModel.verdict(supply, next)
     BoardPage(
-        title = stringResource(R.string.mine_water_title), onBack = { nav.back() }, background = Color(0xFFEAF1EC), ink = WInk, titleSize = 32f,
-        bottomPadding = 28.dp,
+        title = stringResource(R.string.mine_water_title), onBack = { nav.back() }, background = Color(0xFFEAF1EC), ink = Color(W_INK), titleSize = 32f,
+        gap = 0.dp, bottomPadding = 22.dp,
     ) {
         Hero(WaterModel.fill(leftMl / 1000.0, bottleMl / 1000.0), leftMl / 1000.0, supply, next, verdict, tempC, units, onClick = { dialog = true })
-        SectionLabel(stringResource(if (route != null) R.string.mine_water_on_trail else R.string.mine_water_around), Modifier.padding(start = 2.dp), Color(0xFF5A6E60))
+        // "ON YOUR TRAIL": 12, 800, 1.44 px apart, 20 px under the bottle, the rows 6.5 px under it
+        BText(stringResource(if (route != null) R.string.mine_water_on_trail else R.string.mine_water_around).uppercase(), bt(12f, 800, 15.5f, spacing = 1.44f), W_SOFT, Modifier.padding(start = 2.dp, top = 20.dp, bottom = 6.5.dp).semantics { heading() })
         when {
-            sources == null -> Text(stringResource(R.string.kit_loading), style = mt(13f, 500), color = WSoft)
-            list.isEmpty() -> StateMessage("water.flowing", stringResource(R.string.mine_water_none), text = stringResource(R.string.mine_water_none_text), tint = WSoft)
+            sources == null -> BText(stringResource(R.string.kit_loading), bt(13f, 500, 17f), W_SOFT)
+            list.isEmpty() -> MineState("water.flowing", stringResource(R.string.mine_water_none), text = stringResource(R.string.mine_water_none_text), tint = Color(W_SOFT))
             else -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (s in list.take(6)) SourceRow(s, units, onClick = { services.remember(s.place); nav.go(Dest.Place.of(s.place)) })
             }
         }
+        // the report card: 64 high, radius 20, amber, 14 px in, the 26 px symbol and 12 px on the line (13, 700)
         Row(
-            Modifier.fillMaxWidth().height(64.dp).clip(RoundedCornerShape(20.dp)).background(Color(0xFFFFF1D6)).clickable { next?.let { n -> services.remember(n.place); nav.go(Dest.Place.of(n.place)) } }.padding(horizontal = 14.dp),
+            Modifier.padding(top = 16.dp).fillMaxWidth().height(64.dp).bbox(0xFFFFF1D6, cr(20f)).clickable(role = Role.Button) { next?.let { n -> services.remember(n.place); nav.go(Dest.Place.of(n.place)) } }.padding(horizontal = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
         ) {
-            Symbol("water.flowing", tint = Color(0xFF8A5A00), size = 26.dp)
-            Text(stringResource(R.string.mine_water_report), Modifier.weight(1f), style = mt(13f, 700, line = 17f), color = Color(0xFF6A4A00))
+            MSy("water.flowing", 26f, 0xFF8A5A00)
+            BText(stringResource(R.string.mine_water_report), bt(13f, 700, 17f), 0xFF6A4A00, Modifier.weight(1f), lines = 2)
         }
-        Row(Modifier.fillMaxWidth().height(56.dp).clip(CircleShape).background(WInk).clickable { nav.go(Dest.Needs("water")) }, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-            Symbol("ui.map", tint = Color.White, size = 20.dp)
-            Text(stringResource(R.string.mine_water_on_map), style = mt(15f, 800), color = Color.White)
+        // the dark button: 56 high, radius 28, the 20 px symbol and the label (15, 800), 8 px apart
+        Row(
+            Modifier.padding(top = 16.dp).fillMaxWidth().height(56.dp).bbox(W_INK, cr(28f)).clickable(role = Role.Button) { nav.go(Dest.Needs("water")) },
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MSy("ui.map", 20f, WHITE)
+            BText(stringResource(R.string.mine_water_on_map), bt(15f, 800, 19.5f), WHITE)
         }
-        Text(stringResource(R.string.mine_water_footer), style = mt(10f, 400, line = 15f), color = Color(0xFF7A8E80), modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        BText(stringResource(R.string.mine_water_footer), bt(10f, 400, 13f, align = TextAlign.Center), 0xFF7A8E80, Modifier.fillMaxWidth().padding(top = 7.dp), lines = 3)
     }
     if (dialog) BottleDialog(bottleMl, leftMl, onClose = { dialog = false }, onSave = { b, l -> scope.launch { services.settings.set(MineKeys.WATER_BOTTLE_ML, b); services.settings.set(MineKeys.WATER_LEFT_ML, l); services.settings.set(MineKeys.WATER_STAMP, clock.millis()) } })
 }
@@ -139,31 +160,32 @@ private fun minutesText(minutes: Double): String =
 /** The green card: the bottle with its level, "enough until km 3.2", how long that is at this heat, and the verdict. */
 @Composable
 private fun Hero(fill: Float, litres: Double, supply: Supply, next: WaterSource?, verdict: WaterModel.Verdict, tempC: Double?, units: Units, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(26.dp)
     val range = GoFormat.distance(supply.rangeKm * 1000.0, units)
     val cd = stringResource(R.string.mine_water_bottle_cd, String.format(Locale.ROOT, "%.1f", litres))
+    // the board's card: 212 high, radius 26, green at 135°, 8 px in; the bottle (120 × 200, squeezed to 119.11 by the row)
+    // and 14 px on the column, 8 px apart: ENOUGH UNTIL, the distance (30, 900), how long (13 on 17) and the verdict
     Row(
-        Modifier.fillMaxWidth().height(212.dp).clip(shape).background(Brush.linearGradient(listOf(Color(0xFF2F6B3A), Color(0xFF1E4A2A)))).clickable(onClick = onClick).padding(start = 8.dp, end = 16.dp),
+        Modifier.fillMaxWidth().height(212.dp).bbox(r = cr(26f), grad = listOf(cssLinear(135f, 0f to 0xFF2F6B3A, 1f to 0xFF1E4A2A))).clickable(role = Role.Button, onClick = onClick).padding(start = 8.dp, end = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Bottle(fill, litres, Modifier.size(120.dp, 200.dp).semantics { contentDescription = cd })
+        Bottle(fill, litres, Modifier.size(119.11.dp, 200.dp).semantics { contentDescription = cd })
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(stringResource(R.string.mine_water_enough).uppercase(), style = mt(12f, 800, spacing = 1.4f), color = Color(0xFFA8C8A8))
-            Text(stringResource(R.string.mine_water_km, range.unit, range.value), style = mt(30f, 900, tabular = true, line = 30f), color = Color(0xFFEEF4EC))
+            BText(stringResource(R.string.mine_water_enough).uppercase(), bt(12f, 800, 15.5f, spacing = 1.44f), 0xFFA8C8A8)
+            BText(stringResource(R.string.mine_water_km, range.unit, range.value), bt(30f, 900, 30f, tnum = true), 0xFFEEF4EC)
             val temp = tempC?.let { "${it.roundToInt()}°" }
-            Text(
+            BText(
                 listOfNotNull(
                     stringResource(R.string.mine_water_lasts, minutesText(supply.minutes), temp ?: stringResource(R.string.mine_water_mild)),
                     next?.let { stringResource(R.string.mine_water_next, next.name.ifBlank { stringResource(R.string.mine_water_source) }, minutesText(WaterModel.walkMinutes((next.alongM ?: next.distanceM)))) },
-                ).joinToString(" · "), style = mt(13f, 400, tabular = true, line = 17f), color = Color(0xFFC8DCC8),
+                ).joinToString(" · "), bt(13f, 400, 17f, tnum = true), 0xFFC8DCC8, lines = 3,
             )
-            val (text, bg, fg) = when (verdict) {
-                WaterModel.Verdict.FINE -> Triple(R.string.mine_water_fine, Color(0xFF7CFF6B), WInk)
-                WaterModel.Verdict.TIGHT -> Triple(R.string.mine_water_tight, Color(0xFFFFD27A), WInk)
-                WaterModel.Verdict.LOW -> Triple(R.string.mine_water_low, Color(0xFFFF8A6B), WInk)
-                WaterModel.Verdict.NO_SOURCE -> Triple(R.string.mine_water_nosource, Color(0xFFC8DCC8), WInk)
+            val (text, bg) = when (verdict) {
+                WaterModel.Verdict.FINE -> R.string.mine_water_fine to 0xFF7CFF6B
+                WaterModel.Verdict.TIGHT -> R.string.mine_water_tight to 0xFFFFD27A
+                WaterModel.Verdict.LOW -> R.string.mine_water_low to 0xFFFF8A6B
+                WaterModel.Verdict.NO_SOURCE -> R.string.mine_water_nosource to 0xFFC8DCC8
             }
-            Box(Modifier.height(26.dp).clip(CircleShape).background(bg).padding(horizontal = 10.dp), contentAlignment = Alignment.Center) { Text(stringResource(text), style = mt(12f, 900), color = fg) }
+            TextPill(stringResource(text), bt(12f, 900, 15.5f), bg, W_INK, h = 26f, padH = 10f)
         }
     }
 }
@@ -171,8 +193,12 @@ private fun Hero(fill: Float, litres: Double, supply: Supply, next: WaterSource?
 /** The bottle of the board (120 × 200): aluminium with a green cap, water to its level and a label with the litres. */
 @Composable
 private fun Bottle(fill: Float, litres: Double, modifier: Modifier) {
+    val measurer = rememberTextMeasurer()
+    val label = bt(15f, 900)
     Canvas(modifier) {
-        val k = size.width / 120f
+        // the SVG's 120 × 200 fitted into its box and centred (`xMidYMid meet`)
+        val k = minOf(size.width / 120f, size.height / 200f)
+        translate((size.width - 120f * k) / 2f, (size.height - 200f * k) / 2f) {
         fun p(x: Float, y: Float) = Offset(x * k, y * k)
         val body = Path().apply {
             moveTo(40f * k, 30f * k); lineTo(80f * k, 30f * k); lineTo(80f * k, 44f * k)
@@ -182,7 +208,7 @@ private fun Bottle(fill: Float, litres: Double, modifier: Modifier) {
             cubicTo(18f * k, 64f * k, 26f * k, 52f * k, 40f * k, 44f * k); close()
         }
         drawRoundRect(Color(0xFF2F6B3A), p(44f, 6f), androidx.compose.ui.geometry.Size(32f * k, 26f * k), androidx.compose.ui.geometry.CornerRadius(5f * k))
-        drawPath(body, Brush.horizontalGradient(0f to Color(0xFF8A929C), 0.35f to Color(0xFFEEF1F4), 1f to Color(0xFF7A828C), startX = 18f * k, endX = 102f * k))
+        drawPath(body, Brush.horizontalGradient(0f to Color(0xFF8A929C), 0.35f to Color(0xFFEEF1F4), 1f to Color(0xFF7A828C), startX = 17f * k, endX = 103f * k))
         drawPath(body, Color(0xFF5A626C), style = Stroke(2f * k))
         clipPath(body) {
             val y = (194f - fill * 150f) * k
@@ -191,8 +217,10 @@ private fun Bottle(fill: Float, litres: Double, modifier: Modifier) {
             drawPath(wave, Color(0xFF9FDCFF), style = Stroke(3f * k))
         }
         drawRect(Color(0xFF6E7F4A).copy(alpha = 0.9f), p(18f, 96f), androidx.compose.ui.geometry.Size(84f * k, 30f * k))
-        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { textSize = 15f * k; color = Color.White.toArgb(); typeface = android.graphics.Typeface.DEFAULT_BOLD; textAlign = android.graphics.Paint.Align.CENTER }
-        drawContext.canvas.nativeCanvas.drawText(String.format(Locale.ROOT, "%.1f L", litres), 60f * k, 117f * k, paint)
+        // the label: Geist 15, 900, white, centred on 60 with its baseline at 117
+        val t = measurer.measure(String.format(Locale.ROOT, "%.1f L", litres), label.copy(fontSize = label.fontSize * (k / density)))
+        drawText(t, Color.White, Offset(60f * k - t.size.width / 2f, 117f * k - t.firstBaseline))
+        }
     }
 }
 
@@ -200,10 +228,10 @@ private fun Bottle(fill: Float, litres: Double, modifier: Modifier) {
 private fun SourceRow(s: WaterSource, units: Units, onClick: () -> Unit) {
     val away = GoFormat.distance(s.alongM ?: s.distanceM, units)
     val (chip, chipColour) = when (s.status) {
-        WaterSource.Status.POTABLE -> stringResource(R.string.mine_water_potable) to Color(0xFF2E7BC4)
-        WaterSource.Status.SEASONAL -> stringResource(R.string.mine_water_seasonal) to Color(0xFF8A929C)
-        WaterSource.Status.NOT_DRINKING -> stringResource(R.string.mine_water_not_drinking) to Color(0xFFC8322A)
-        WaterSource.Status.UNSAID -> stringResource(R.string.mine_water_unsaid) to Color(0xFF1E9E5A)
+        WaterSource.Status.POTABLE -> stringResource(R.string.mine_water_potable) to 0xFF2E7BC4
+        WaterSource.Status.SEASONAL -> stringResource(R.string.mine_water_seasonal) to 0xFF8A929C
+        WaterSource.Status.NOT_DRINKING -> stringResource(R.string.mine_water_not_drinking) to 0xFFC8322A
+        WaterSource.Status.UNSAID -> stringResource(R.string.mine_water_unsaid) to 0xFF1E9E5A
     }
     val sub = when (s.status) {
         WaterSource.Status.POTABLE -> stringResource(R.string.mine_water_sub_potable)
@@ -211,20 +239,22 @@ private fun SourceRow(s: WaterSource, units: Units, onClick: () -> Unit) {
         WaterSource.Status.NOT_DRINKING -> stringResource(R.string.mine_water_sub_not)
         WaterSource.Status.UNSAID -> stringResource(R.string.mine_water_sub_unsaid)
     }
+    // the board's row: 76 high, radius 20, 12 px in; how far (the unit 10, 800 over the figure 18, 900) in 48 px, the 44 px
+    // tile (radius 14, a 24 px symbol), the name (15, 800) over what the tags say (12), 3 px apart, and the chip (11, 900)
     Row(
-        Modifier.fillMaxWidth().height(76.dp).clip(RoundedCornerShape(20.dp)).background(Color.White).clickable(onClick = onClick).padding(horizontal = 12.dp),
+        Modifier.fillMaxWidth().height(76.dp).bbox(WHITE, cr(20f)).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.width(48.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(away.unit, style = mt(10f, 800), color = Color(0xFF8A9A8E))
-            Text(away.value, style = mt(18f, 900, tabular = true), color = WInk)
+            BText(away.unit, bt(10f, 800, 13f), 0xFF8A9A8E)
+            BText(away.value, bt(18f, 900, 23.5f, tnum = true), W_INK)
         }
-        Box(Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(Color(s.kind.colour)), contentAlignment = Alignment.Center) { Symbol(s.kind.symbol, tint = Color.White, size = 24.dp) }
+        Box(Modifier.size(44.dp).bbox(s.kind.colour, cr(14f)), contentAlignment = Alignment.Center) { MSy(s.kind.symbol, 24f, WHITE) }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(s.name.ifBlank { stringResource(kindName(s.kind)) }, style = mt(15f, 800), color = WInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(sub, style = mt(12f, 400, line = 15f), color = if (s.status == WaterSource.Status.SEASONAL) Color(0xFF8A5A00) else WSoft, maxLines = 2)
+            BText(s.name.ifBlank { stringResource(kindName(s.kind)) }, bt(15f, 800, 19.5f), W_INK)
+            BText(sub, bt(12f, 400, 15.5f), if (s.status == WaterSource.Status.SEASONAL) 0xFF8A5A00 else W_SOFT, lines = 2)
         }
-        Box(Modifier.height(24.dp).clip(CircleShape).background(chipColour).padding(horizontal = 8.dp), contentAlignment = Alignment.Center) { Text(chip, style = mt(11f, 900), color = Color.White, maxLines = 1) }
+        TextPill(chip, bt(11f, 900, 14f), chipColour, WHITE, h = 24f, padH = 8f)
     }
 }
 
@@ -243,9 +273,9 @@ private fun BottleDialog(bottleMl: Int, leftMl: Int, onClose: () -> Unit, onSave
         title = { Text(stringResource(R.string.mine_water_bottle_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(stringResource(R.string.mine_water_bottle_size, String.format(Locale.ROOT, "%.1f", size)), style = mt(13f, 700))
+                BText(stringResource(R.string.mine_water_bottle_size, String.format(Locale.ROOT, "%.1f", size)), bt(13f, 700, 17f), W_INK)
                 Slider(size, { size = it; left = left.coerceAtMost(it) }, valueRange = 0.5f..3f)
-                Text(stringResource(R.string.mine_water_bottle_left, String.format(Locale.ROOT, "%.2f", left)), style = mt(13f, 700))
+                BText(stringResource(R.string.mine_water_bottle_left, String.format(Locale.ROOT, "%.2f", left)), bt(13f, 700, 17f), W_INK)
                 Slider(left, { left = it.coerceAtMost(size) }, valueRange = 0f..size.coerceAtLeast(0.5f))
             }
         },

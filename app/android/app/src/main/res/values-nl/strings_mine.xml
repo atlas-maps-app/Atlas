@@ -102,7 +102,7 @@
     <string name="mine_voice_sample">Voorbeeld</string>
     <string name="mine_voice_sample_text">Over tweehonderd meter rechtsaf, de gracht op.</string>
     <string name="mine_voice_haptics">Trillingen</string>
-    <string name="mine_voice_engine">Steminstellingen</string>
+    <string name="mine_voice_engine">Stemmen</string>
     <string name="mine_settings_units">Eenheden</string>
     <string name="mine_settings_km">km</string>
     <string name="mine_settings_mi">mi</string>

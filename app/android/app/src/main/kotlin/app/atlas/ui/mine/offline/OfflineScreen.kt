@@ -60,10 +60,27 @@ import app.atlas.nav.Navigator
 import app.atlas.services.RegionLayer
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.SerifFamily
-import app.atlas.ui.kit.StateMessage
+import app.atlas.ui.mine.MineState
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.appClock
 import app.atlas.ui.kit.cssShadow
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.kit.cssLinear
+import app.atlas.ui.mine.BText
+import app.atlas.ui.mine.FAINT
+import app.atlas.ui.mine.INK
+import app.atlas.ui.mine.MSy
+import app.atlas.ui.mine.SERIF
+import app.atlas.ui.mine.TextPill
+import app.atlas.ui.mine.WHITE
+import app.atlas.ui.mine.bbox
+import app.atlas.ui.mine.bt
+import app.atlas.ui.mine.cr
+import app.atlas.ui.mine.ring
+import app.atlas.ui.mine.shift
 import app.atlas.ui.mine.BoardPage
 import app.atlas.ui.mine.BoardSwitch
 import app.atlas.ui.mine.MineKeys
@@ -76,9 +93,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
-private val Cream = Color(0xFFF4EDDD)
-private val Panel = Color(0xFFF6F2EA)
-private val Dashed = Color(0xFFB5AB98)
+/* The Offline board's paper (`canvas/project/Offline.dc.html`). */
+private const val PAPER = 0xFFE9E3D8
+private const val BODY = 0xFF464C5A
 
 /**
  * The Offline board: the regions on this phone, each a paper card with a map drawn from its own places, the total with
@@ -96,22 +113,20 @@ fun OfflineScreen(args: Dest.Offline, nav: Navigator) {
     LaunchedEffect(Unit) { withContext(Dispatchers.IO) { runCatching { manager.engine.checkUpdates() } } }
     val capacity = remember { runCatching { StatFs(services.dirs.files.also { it.mkdirs() }.path).totalBytes }.getOrDefault(0L) }
     var asking by remember { mutableStateOf<RegionDetail?>(null) }
-    BoardPage(
-        title = stringResource(R.string.mine_offline_title),
-        onBack = { nav.back() },
-        background = Atlas.colors.paperDeep,
-        backFill = MineTone.of(0xFFF6F2EA, 0xFF1B1D22),
-        italic = false,
-        titleSize = 36f,
-        gap = 16.dp,
-        trailing = {
-            val works = stringResource(R.string.mine_offline_works)
+    BoardPage(title = "", onBack = null, header = false, background = Color(PAPER), gap = 16.dp) {
+        // The header at y 48: the 48 px back round, the upright serif title (36 on 36) and the green "works offline" round.
+        Row(Modifier.fillMaxWidth().padding(top = 48.dp + shift()), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            val back = stringResource(R.string.kit_back)
             Box(
-                Modifier.size(48.dp).clip(CircleShape).background(MineTone.greenDeep).semantics { contentDescription = works },
+                Modifier.size(48.dp).bbox(0xFFF6F2EA, cr(24f)).clickable(role = Role.Button) { nav.back() }.semantics { contentDescription = back },
                 contentAlignment = Alignment.Center,
-            ) { Symbol("ui.offline", tint = Color.White, size = 22.dp) }
-        },
-    ) {
+            ) { MSy("ui.back", 22f, INK) }
+            BText(stringResource(R.string.mine_offline_title), bt(36f, 400, 36f, SERIF), INK, Modifier.weight(1f).semantics { heading() })
+            val works = stringResource(R.string.mine_offline_works)
+            Box(Modifier.size(48.dp).bbox(0xFF178A4E, cr(24f)).semantics { contentDescription = works }, contentAlignment = Alignment.Center) {
+                MSy("ui.offline", 22f, WHITE)
+            }
+        }
         val age = OfflineModel.refreshAge(details, clock.instant())?.let { (unit, n) ->
             stringResource(
                 when (unit) {
@@ -126,7 +141,7 @@ fun OfflineScreen(args: Dest.Offline, nav: Navigator) {
         }
         StorageCard(details, capacity, age)
         if (details.isEmpty()) {
-            StateMessage("ui.offline", stringResource(R.string.mine_offline_none_title), text = stringResource(R.string.mine_offline_none_text), tint = MineTone.greenDeep)
+            MineState("ui.offline", stringResource(R.string.mine_offline_none_title), text = stringResource(R.string.mine_offline_none_text), tint = Color(0xFF178A4E))
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 for (d in details) RegionCard(d, manager, onDelete = { asking = d })
@@ -140,7 +155,7 @@ fun OfflineScreen(args: Dest.Offline, nav: Navigator) {
             onAuto = { scope.launch { services.settings.set(MineKeys.AUTO_REGIONS, !auto) } },
         )
         VoicesRow(wifi = wifi, onWifi = { scope.launch { services.settings.set(MineKeys.WIFI_ONLY, it) } })
-        Text(stringResource(R.string.mine_offline_footer), style = mt(10f, 500, line = 15f), color = Atlas.colors.inkFaint, modifier = Modifier.padding(horizontal = 8.dp))
+        BText(stringResource(R.string.mine_offline_footer), bt(10f, 500, 15f), FAINT, Modifier.padding(horizontal = 8.dp), lines = 4)
         Spacer(Modifier.height(LocalBottomBarInset.current))
     }
     asking?.let { d ->
@@ -148,7 +163,7 @@ fun OfflineScreen(args: Dest.Offline, nav: Navigator) {
             onDismissRequest = { asking = null },
             title = { Text(stringResource(R.string.mine_offline_delete_title, d.name)) },
             text = { Text(stringResource(R.string.mine_offline_delete_text, RegionEngine.size(d.bytes))) },
-            confirmButton = { TextButton({ asking = null; scope.launch { manager.delete(d.id) } }) { Text(stringResource(R.string.mine_offline_delete_confirm), color = MineTone.red) } },
+            confirmButton = { TextButton({ asking = null; scope.launch { manager.delete(d.id) } }) { Text(stringResource(R.string.mine_offline_delete_confirm), color = Color(0xFFC8322A)) } },
             dismissButton = { TextButton({ asking = null }) { Text(stringResource(R.string.mine_offline_keep)) } },
         )
     }
@@ -163,23 +178,26 @@ private fun StorageCard(details: List<RegionDetail>, capacity: Long, age: String
     val shares = OfflineModel.shares(slices, capacity)
     val capText = if (capacity > 0) OfflineModel.total(capacity).let { "${it.first} ${it.second}" } else ""
     val description = stringResource(R.string.mine_offline_storage_cd, "$number $unit", capText)
+    // the board's card: 14 px in, the total (24, 700 on 31) and its unit (14 on 18) on a baseline, the age at the right,
+    // the bar 8 px under (12 px, radius 6, 2 px between), then the legend 8 px under it (an 8 px dot and a 15 px symbol)
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(MineTone.of(0xFFF6F2EA, 0xFF1B1D22)).padding(14.dp).semantics { contentDescription = description },
+        Modifier.fillMaxWidth().bbox(0xFFF6F2EA, cr(22f)).padding(14.dp).semantics { contentDescription = description },
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(number, style = mt(24f, 700, tabular = true), color = Atlas.colors.ink)
-            Text(unit, style = mt(14f, 500), color = Atlas.colors.inkSoft, modifier = Modifier.padding(bottom = 2.dp))
-            Spacer(Modifier.weight(1f))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                BText(number, bt(24f, 700, 31f, tnum = true), INK, Modifier.alignByBaseline())
+                BText(unit, bt(14f, 400, 18f, tnum = true), BODY, Modifier.alignByBaseline())
+            }
             if (age != null) Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
-                Symbol("ui.refresh", tint = Atlas.colors.inkSoft, size = 15.dp)
-                Text(age, style = mt(13f, 500, tabular = true), color = Atlas.colors.inkSoft)
+                MSy("ui.refresh", 15f, BODY)
+                BText(age, bt(13f, 400, 17f, tnum = true), BODY)
             }
         }
-        Row(Modifier.fillMaxWidth().height(12.dp).clip(RoundedCornerShape(6.dp)), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            for ((i, s) in slices.withIndex()) Box(Modifier.weight(shares[i]).fillMaxHeight().background(Color(s.colour)))
+        Row(Modifier.fillMaxWidth().height(12.dp).bbox(r = cr(6f)), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            for ((i, s) in slices.withIndex()) Box(Modifier.weight(shares[i]).fillMaxHeight().bbox(s.colour))
             val rest = (1f - shares.sum()).coerceAtLeast(0.02f)
-            Box(Modifier.weight(rest).fillMaxHeight().background(MineTone.of(0xFFDDD6C9, 0xFF2C2F36)))
+            Box(Modifier.weight(rest).fillMaxHeight().bbox(0xFFDDD6C9))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             for (s in slices) {
@@ -188,8 +206,8 @@ private fun StorageCard(details: List<RegionDetail>, capacity: Long, age: String
                     Modifier.semantics { contentDescription = "$name ${RegionEngine.size(details.sumOf { it.sizes[s.layer] ?: 0L })}" },
                     horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(Modifier.size(8.dp).clip(CircleShape).background(Color(s.colour)))
-                    Symbol(s.symbol, tint = Atlas.colors.inkSoft, size = 15.dp)
+                    Box(Modifier.size(8.dp).bbox(s.colour, cr(4f)))
+                    MSy(s.symbol, 15f, BODY)
                 }
             }
         }
@@ -207,34 +225,36 @@ private fun layerName(key: String): String = stringResource(
     },
 )
 
-/** One region: a paper map on the left, folded, and on the right its name in serif, its size, what it holds and its state. */
+/**
+ * One region as the board's paper cards (radius 10, its white top edge and two shadows): the folded map 150 px wide on the
+ * left, then 16 px in its name (serif 24 on 24), its size (13 on 17), what it holds (16 px symbols 7 apart) and its state.
+ */
 @Composable
 private fun RegionCard(d: RegionDetail, manager: AtlasRegionManager, onDelete: () -> Unit) {
-    val shape = RoundedCornerShape(10.dp)
     var open by rememberSaveable(d.id) { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
     Column(
         Modifier
             .fillMaxWidth()
-            .cssShadow(shape, 8.dp, 18.dp, Color(0x2E3C2D14))
-            .cssShadow(shape, 1.dp, 3.dp, Color(0x333C2D14))
-            .clip(shape)
-            .background(MineTone.of(0xFFF4EDDD, 0xFF1B1D22))
+            .bbox(
+                0xFFF4EDDD, cr(10f),
+                listOf(CssShadow(0f, 1f, 0f, 0f, 0xFFFFFFFF, inset = true), CssShadow(0f, 8f, 18f, 0f, 0x2E3C2D14), CssShadow(0f, 1f, 3f, 0f, 0x333C2D14)),
+            )
             .clickable { open = !open },
     ) {
         Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).heightIn(min = 128.dp)) {
             MiniMap(d, Modifier.width(150.dp).fillMaxHeight())
             Column(
-                Modifier.weight(1f).fillMaxHeight().padding(start = 16.dp, top = 12.dp, end = 14.dp, bottom = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(7.dp),
+                Modifier.weight(1f).fillMaxHeight()
+                    .bbox(grad = listOf(cssLinear(90f, 0f to 0x0F000000, 0.06f to 0x00000000)))
+                    .padding(start = 16.dp, top = 13.75.dp, end = 14.dp, bottom = 9.dp),
             ) {
-                Text(d.name, style = serifTitle(24f, italic = false).copy(lineHeight = 24.sp), color = Atlas.colors.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (d.bytes > 0) Text(RegionEngine.size(d.bytes), style = mt(13f, 500, tabular = true, line = 16f), color = Atlas.colors.inkSoft)
+                BText(d.name, bt(24f, 400, 24f, SERIF), INK, lines = 2)
+                if (d.bytes > 0) BText(RegionEngine.size(d.bytes), bt(13f, 400, 17f, tnum = true), BODY, Modifier.padding(top = 8.25.dp))
                 val icons = OfflineModel.icons(d)
-                if (icons.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    for (s in icons) Symbol(s, tint = Atlas.colors.ink, size = 16.dp)
+                if (icons.isNotEmpty()) Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    for (s in icons) MSy(s, 16f, INK)
                 }
-                Spacer(Modifier.weight(1f, fill = true))
+                Spacer(Modifier.weight(1f, fill = true).heightIn(min = 8.dp))
                 StateChip(d)
             }
         }
@@ -252,16 +272,10 @@ private fun RegionCard(d: RegionDetail, manager: AtlasRegionManager, onDelete: (
     }
 }
 
+/** A card's action: a white pill (34 high, 12 px at the sides) with its 15 px symbol and name (12, 700). */
 @Composable
 private fun ActionPill(text: String, symbol: String, danger: Boolean = false, onClick: () -> Unit) {
-    val fg = if (danger) MineTone.red else Atlas.colors.ink
-    Row(
-        Modifier.height(34.dp).clip(CircleShape).background(MineTone.of(0xFFFFFFFF, 0xFF24272D)).clickable(onClick = onClick).padding(horizontal = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Symbol(symbol, tint = fg, size = 15.dp)
-        Text(text, style = mt(12f, 700), color = fg)
-    }
+    TextPill(text, bt(12f, 700, 15.5f), WHITE, if (danger) 0xFFC8322A else INK, h = 34f, padH = 12f, symbol = symbol, symbolSize = 15f, gap = 6f, onClick = onClick)
 }
 
 /** The state at the foot of a card: progress with its percentage, waiting, a failure, an update, or the green check. */
@@ -269,32 +283,27 @@ private fun ActionPill(text: String, symbol: String, danger: Boolean = false, on
 private fun StateChip(d: RegionDetail) {
     val p = d.progress
     when {
-        p != null && p.waiting -> Chip("ui.clock", stringResource(R.string.mine_offline_waiting_wifi), Color(0xFFEFE8FF), Color(0xFF4B34B8))
+        p != null && p.waiting -> Chip("ui.clock", stringResource(R.string.mine_offline_waiting_wifi), 0xFFEFE8FF, 0xFF4B34B8)
+        // the board's progress: an 8 px track (radius 4) and the percentage 6 px under it (12 on 15.5)
         p != null -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Box(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)).background(MineTone.of(0xFFE3DCCD, 0xFF2C2F36))) {
-                Box(Modifier.fillMaxWidth(p.fraction.coerceIn(0f, 1f)).height(8.dp).background(MineTone.blue))
+            Box(Modifier.fillMaxWidth().height(8.dp).bbox(0xFFE3DCCD, cr(4f))) {
+                Box(Modifier.fillMaxWidth(p.fraction.coerceIn(0f, 1f)).height(8.dp).bbox(0xFF2E5BFF))
             }
-            Text("${(p.fraction * 100).roundToInt()}%", style = mt(12f, 500, tabular = true), color = Atlas.colors.inkSoft)
+            BText("${(p.fraction * 100).roundToInt()}%", bt(12f, 400, 15.5f, tnum = true), BODY)
         }
-        d.error != null -> Chip("ui.warning", stringResource(R.string.mine_offline_stopped), Color(0xFFFBE7E5), Color(0xFF9B2A24))
-        !d.complete -> Chip("ui.clock", stringResource(R.string.mine_offline_stopped), Color(0xFFFFF1D6), Color(0xFF8A5A00))
-        d.update != null -> Chip("ui.refresh", d.update.bytes?.let { stringResource(R.string.mine_offline_update_chip, RegionEngine.size(it)) } ?: stringResource(R.string.mine_offline_actions_update), Color(0xFFE4EAFF), Color(0xFF1F3FC7))
-        else -> Row(
-            Modifier.height(24.dp).clip(CircleShape).background(Color(0xFFE7F4EC)).padding(horizontal = 8.dp).semantics { contentDescription = "" },
-            verticalAlignment = Alignment.CenterVertically,
-        ) { Symbol("ui.check", tint = Color(0xFF12663A), size = 12.dp, weight = 1.4f) }
+        d.error != null -> Chip("ui.warning", stringResource(R.string.mine_offline_stopped), 0xFFFBE7E5, 0xFF9B2A24)
+        !d.complete -> Chip("ui.clock", stringResource(R.string.mine_offline_stopped), 0xFFFFF1D6, 0xFF8A5A00)
+        d.update != null -> Chip("ui.refresh", d.update.bytes?.let { stringResource(R.string.mine_offline_update_chip, RegionEngine.size(it)) } ?: stringResource(R.string.mine_offline_actions_update), 0xFFE4EAFF, 0xFF1F3FC7)
+        else -> Box(Modifier.size(28.dp, 24.dp).bbox(0xFFE7F4EC, cr(12f)).semantics { contentDescription = "" }, contentAlignment = Alignment.Center) {
+            MSy("ui.check", 12f, 0xFF12663A)
+        }
     }
 }
 
+/** The board's chip: 24 high, radius 12, 8 px in, a 12 px symbol and 4 px on its words (12, 600 on 15.5). */
 @Composable
-private fun Chip(symbol: String, text: String, bg: Color, fg: Color) {
-    Row(
-        Modifier.height(24.dp).clip(CircleShape).background(bg).padding(horizontal = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Symbol(symbol, tint = fg, size = 12.dp, weight = 1.2f)
-        Text(text, style = mt(12f, 600, tabular = true), color = fg, maxLines = 1)
-    }
+private fun Chip(symbol: String, text: String, bg: Long, fg: Long) {
+    TextPill(text, bt(12f, 600, 15.5f, tnum = true), bg, fg, h = 24f, padH = 8f, symbol = symbol, symbolSize = 12f, gap = 4f)
 }
 
 /**
@@ -309,9 +318,8 @@ private fun MiniMap(d: RegionDetail, modifier: Modifier) {
         dots = withContext(Dispatchers.IO) { runCatching { OfflineModel.dots(services.placeStores, d.meta.bbox) }.getOrDefault(emptyList()) }
     }
     val here by services.location.last.collectAsStateWithLifecycle()
-    val paper = MineTone.of(0xFFEFE6D0, 0xFF2A2822)
-    val water = MineTone.of(0xFFA9CFE6, 0xFF2D4656)
-    val line = MineTone.of(0xFFFFFFFF, 0xFF4A4636)
+    val paper = Color(0xFFEFE6D0)
+    val line = Color(0xFFFFFFFF)
     Canvas(modifier.semantics { contentDescription = "" }) {
         val w = size.width
         val h = size.height
@@ -330,7 +338,7 @@ private fun MiniMap(d: RegionDetail, modifier: Modifier) {
             val x = ((fix.location.lon - b.west) / (b.east - b.west)).toFloat() * w
             val y = ((b.north - fix.location.lat) / (b.north - b.south)).toFloat() * h
             drawCircle(Color.White, 6.5f * density, Offset(x, y))
-            drawCircle(MineTone.blue, 4.5f * density, Offset(x, y))
+            drawCircle(Color(0xFF2E5BFF), 4.5f * density, Offset(x, y))
         }
         // The fold: the board's gradient over the middle of the map.
         drawRect(
@@ -338,16 +346,13 @@ private fun MiniMap(d: RegionDetail, modifier: Modifier) {
                 0f to Color.Transparent, 0.48f to Color.Transparent, 0.50f to Color(0x12000000), 0.52f to Color(0x40FFFFFF), 0.56f to Color.Transparent, 1f to Color.Transparent,
             ),
         )
-        // The page's own shadow on the card's side.
-        drawRect(Brush.horizontalGradient(listOf(Color(0x0F000000), Color.Transparent), startX = w - 6f * density, endX = w), topLeft = Offset(w - 6f * density, 0f), size = Size(6f * density, h))
     }
 }
 
-/** The dashed add buttons: draw an area, along a route, a whole country, and the dark sparkle for automatic downloads. */
+/** The board's add buttons (64 high, radius 18, 8 px apart): three dashed (1.5 px of B5AB98) and the dark sparkle for automatic. */
 @Composable
 private fun AddRow(auto: Boolean, onArea: () -> Unit, onRoute: () -> Unit, onCountry: () -> Unit, onAuto: () -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        val shape = RoundedCornerShape(18.dp)
         for ((symbol, label, click) in listOf(
             Triple("ui.draw-area", R.string.mine_offline_add_area, onArea),
             Triple("ui.along-route", R.string.mine_offline_add_route, onRoute),
@@ -355,25 +360,25 @@ private fun AddRow(auto: Boolean, onArea: () -> Unit, onRoute: () -> Unit, onCou
         )) {
             val cd = stringResource(label)
             Box(
-                Modifier.weight(1f).height(64.dp).clip(shape).clickable(onClick = click).semantics { contentDescription = cd }.dashedBorder(Dashed, 18.dp),
+                Modifier.weight(1f).height(64.dp).bbox(r = cr(18f)).clickable(role = Role.Button, onClick = click).semantics { contentDescription = cd }.dashedBorder(Color(0xFFB5AB98), 18.dp),
                 contentAlignment = Alignment.Center,
-            ) { Symbol(symbol, tint = Atlas.colors.ink, size = 24.dp) }
+            ) { MSy(symbol, 24f, INK) }
         }
         val cd = stringResource(if (auto) R.string.mine_offline_auto_on else R.string.mine_offline_add_auto)
         Box(
-            Modifier.weight(1f).height(64.dp).clip(shape).background(if (auto) MineTone.greenDeep else Color(0xFF14161B)).clickable(onClick = onAuto).semantics { contentDescription = cd },
+            Modifier.weight(1f).height(64.dp).bbox(if (auto) 0xFF178A4E else INK, cr(18f)).clickable(role = Role.Button, onClick = onAuto).semantics { contentDescription = cd },
             contentAlignment = Alignment.Center,
-        ) { Symbol("ui.sparkles", tint = Color(0xFFFFE7A3), size = 24.dp) }
+        ) { MSy("ui.sparkles", 24f, 0xFFFFE7A3) }
     }
 }
 
-/** A dashed rounded outline of [colour], 1.5 dp wide, as the board's add buttons have. */
+/** A dashed rounded outline of [colour], 1.5 px wide, inside the box as CSS draws a border. */
 private fun Modifier.dashedBorder(colour: Color, radius: androidx.compose.ui.unit.Dp): Modifier = this.drawWithContent {
     drawContent()
     val w = 1.5.dp.toPx()
     drawRoundRect(
-        colour, topLeft = Offset(w / 2, w / 2), size = Size(size.width - w, size.height - w), cornerRadius = CornerRadius(radius.toPx()),
-        style = Stroke(w, pathEffect = PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 4.dp.toPx()))),
+        colour, topLeft = Offset(w / 2, w / 2), size = Size(size.width - w, size.height - w), cornerRadius = CornerRadius(radius.toPx() - w / 2),
+        style = Stroke(w, pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.5f * density, 4.5f * density))),
     )
 }
 
@@ -387,32 +392,35 @@ private fun VoicesRow(wifi: Boolean, onWifi: (Boolean) -> Unit) {
     val kept = VoiceLanguages.kept(saved, device)
     val label = stringResource(R.string.mine_offline_voices)
     val context = LocalContext.current
+    // the board's row: 12 px above and below, 14 at the sides, 10 px apart; the 22 px speaker, the language chips (32 high,
+    // 10 px in, 13, 600), and at the right the Wi-Fi symbol and its check box
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(MineTone.of(0xFFF6F2EA, 0xFF1B1D22)).padding(horizontal = 14.dp, vertical = 12.dp),
+        Modifier.fillMaxWidth().bbox(0xFFF6F2EA, cr(20f)).padding(horizontal = 14.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Symbol("ui.volume", tint = Atlas.colors.inkSoft, size = 22.dp, contentDescription = label)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            for (lang in VoiceLanguages.shown(kept).take(3)) {
-                val on = lang in kept
-                Box(
-                    Modifier.height(32.dp).clip(CircleShape).background(if (on) Atlas.colors.pill else MineTone.of(0xFFFFFFFF, 0xFF24272D))
-                        .clickable {
-                            scope.launch {
-                                val next = if (on) kept - lang else kept + lang
-                                services.settings.set(MineKeys.VOICE_LANGS, next.takeIf { it.isNotEmpty() })
-                                if (!on && VoiceLanguages.installed(context, lang) == false) VoiceLanguages.install(context)
-                            }
-                        }
-                        .padding(horizontal = 10.dp),
-                    contentAlignment = Alignment.Center,
-                ) { Text(lang.uppercase(), style = mt(13f, 600), color = if (on) Atlas.colors.onPill else Atlas.colors.ink, maxLines = 1, softWrap = false) }
+        MSy("ui.volume.3", 22f, BODY, description = label)
+        for (lang in VoiceLanguages.shown(kept).take(3)) {
+            val on = lang in kept
+            TextPill(lang.uppercase(), bt(13f, 600, 17f), if (on) INK else WHITE, if (on) WHITE else INK, h = 32f, padH = 10f) {
+                scope.launch {
+                    val next = if (on) kept - lang else kept + lang
+                    services.settings.set(MineKeys.VOICE_LANGS, next.takeIf { it.isNotEmpty() })
+                    if (!on && VoiceLanguages.installed(context, lang) == false) VoiceLanguages.install(context)
+                }
             }
         }
         Spacer(Modifier.weight(1f))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Symbol("fact.wifi", tint = Atlas.colors.inkSoft, size = 18.dp)
-            BoardSwitch(wifi, onWifi, stringResource(R.string.mine_offline_wifi_only), onColour = MineTone.blue)
+        val wifiLabel = stringResource(R.string.mine_offline_wifi_only)
+        Row(
+            Modifier.toggleable(wifi, role = Role.Checkbox, onValueChange = onWifi).semantics { contentDescription = wifiLabel },
+            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MSy("fact.wifi", 18f, BODY)
+            // the board's check box (20 px) as its picture draws it: the check alone when on, an empty square when off
+            Box(
+                Modifier.size(20.dp).then(if (wifi) Modifier else Modifier.padding(2.dp).bbox(WHITE, cr(4f), border = ring(1.5f, FAINT))),
+                contentAlignment = Alignment.Center,
+            ) { if (wifi) MSy("ui.check", 18f, INK) }
         }
     }
 }

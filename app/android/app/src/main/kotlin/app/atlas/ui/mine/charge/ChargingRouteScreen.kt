@@ -45,7 +45,11 @@ import app.atlas.nav.Navigator
 import app.atlas.route.RouteResult
 import app.atlas.ui.go.SavedPlace
 import app.atlas.ui.kit.Atlas
-import app.atlas.ui.kit.StateMessage
+import app.atlas.ui.mine.INK
+import app.atlas.ui.mine.FAINT
+import app.atlas.ui.mine.SOFT
+import app.atlas.ui.mine.WHITE
+import app.atlas.ui.mine.MineState
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.mine.BoardCard
@@ -97,29 +101,29 @@ internal fun ChargingRouteView(target: SavedPlace?, car: Car, state: TripState, 
     val units by LocalServices.current.settings.units.collectAsStateWithLifecycle(Units.METRIC)
     BoardPage(stringResource(R.string.mine_charging_route), onBack = { nav.back() }, background = MineTone.of(0xFFF1F3F6, 0xFF101114)) {
         Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Atlas.colors.card).clickable(onClick = onPickPlace).padding(14.dp),
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Color(WHITE)).clickable(onClick = onPickPlace).padding(14.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
         ) {
             Symbol("ui.pin", tint = MineTone.blue, size = 22.dp)
             Column(Modifier.weight(1f)) {
-                Text(stringResource(R.string.mine_route_to), style = mt(11f, 800, spacing = 1.2f), color = Atlas.colors.inkSoft)
-                Text(target?.name?.ifBlank { null } ?: target?.let { String.format(Locale.ROOT, "%.4f, %.4f", it.at.lat, it.at.lon) } ?: stringResource(R.string.mine_route_choose), style = mt(16f, 800), color = Atlas.colors.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(stringResource(R.string.mine_route_to), style = mt(11f, 800, spacing = 1.2f), color = Color(SOFT))
+                Text(target?.name?.ifBlank { null } ?: target?.let { String.format(Locale.ROOT, "%.4f, %.4f", it.at.lat, it.at.lon) } ?: stringResource(R.string.mine_route_choose), style = mt(16f, 800), color = Color(INK), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Symbol("ui.edit", tint = Atlas.colors.inkFaint, size = 18.dp)
+            Symbol("ui.edit", tint = Color(FAINT), size = 18.dp)
         }
         Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Atlas.colors.card).clickable(onClick = onPickCar).padding(14.dp),
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Color(WHITE)).clickable(onClick = onPickCar).padding(14.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
         ) {
-            Symbol("drop.battery", tint = Atlas.colors.ink, size = 24.dp)
+            Symbol("drop.battery", tint = Color(INK), size = 24.dp)
             Column(Modifier.weight(1f)) {
-                Text(car.name ?: stringResource(R.string.mine_car_pick), style = mt(15f, 800), color = Atlas.colors.ink)
-                if (car.model != null) Text(stringResource(R.string.mine_route_battery, (car.soc * 100).roundToInt(), GoFormat.distance((car.rangeKm ?: 0.0) * 1000.0, units).toString()), style = mt(12f, 400), color = Atlas.colors.inkSoft)
+                Text(car.name ?: stringResource(R.string.mine_car_pick), style = mt(15f, 800), color = Color(INK))
+                if (car.model != null) Text(stringResource(R.string.mine_route_battery, (car.soc * 100).roundToInt(), GoFormat.distance((car.rangeKm ?: 0.0) * 1000.0, units).toString()), style = mt(12f, 400), color = Color(SOFT))
             }
-            Symbol("ui.chevron-right", tint = Atlas.colors.inkFaint, size = 16.dp)
+            Symbol("ui.chevron-right", tint = Color(FAINT), size = 16.dp)
         }
         TripBody(state, car, target, onGo = { t -> nav.go(Dest.Navigate(t.at.lat, t.at.lon, t.name.ifBlank { null }, "CAR")) }, onOffline = { nav.go(Dest.Offline) }, onCar = onPickCar)
-        Text(stringResource(R.string.mine_route_footer), style = mt(10.5f, 400, line = 15f), color = Atlas.colors.inkFaint, modifier = Modifier.padding(horizontal = 6.dp))
+        Text(stringResource(R.string.mine_route_footer), style = mt(10.5f, 400, line = 15f), color = Color(FAINT), modifier = Modifier.padding(horizontal = 6.dp))
     }
 }
 
@@ -136,18 +140,17 @@ internal sealed interface TripState {
 @Composable
 internal fun TripBody(state: TripState, car: Car, target: SavedPlace?, onGo: (SavedPlace) -> Unit, onOffline: () -> Unit, onCar: () -> Unit) {
     when (state) {
-        TripState.Waiting -> StateMessage("ui.along-route", stringResource(R.string.mine_route_waiting), text = stringResource(R.string.mine_charging_route_text), tint = Atlas.colors.inkSoft)
-        TripState.Planning -> StateMessage("ui.refresh", stringResource(R.string.mine_route_planning), tint = Atlas.colors.inkSoft)
-        TripState.NoCar -> StateMessage("drop.battery", stringResource(R.string.mine_route_nocar), text = stringResource(R.string.mine_route_nocar_text), tint = MineTone.amber, action = { MiniButton(stringResource(R.string.mine_car_pick), onCar) })
-        is TripState.NoData -> StateMessage("ui.no-signal", stringResource(R.string.mine_route_nodata), text = stringResource(R.string.mine_route_nodata_text), tint = MineTone.amber, action = { MiniButton(stringResource(R.string.mine_offline_title), onOffline) })
-        is TripState.Failed -> StateMessage("ui.warning", stringResource(R.string.mine_route_failed), text = state.message.ifBlank { null }, tint = MineTone.red)
+        TripState.Waiting -> MineState("ui.along-route", stringResource(R.string.mine_route_waiting), text = stringResource(R.string.mine_charging_route_text), tint = Color(SOFT))
+        TripState.Planning -> MineState("ui.refresh", stringResource(R.string.mine_route_planning), tint = Color(SOFT))
+        TripState.NoCar -> MineState("drop.battery", stringResource(R.string.mine_route_nocar), text = stringResource(R.string.mine_route_nocar_text), tint = MineTone.amber, action = { MiniButton(stringResource(R.string.mine_car_pick), onCar) })
+        is TripState.NoData -> MineState("ui.no-signal", stringResource(R.string.mine_route_nodata), text = stringResource(R.string.mine_route_nodata_text), tint = MineTone.amber, action = { MiniButton(stringResource(R.string.mine_offline_title), onOffline) })
+        is TripState.Failed -> MineState("ui.warning", stringResource(R.string.mine_route_failed), text = state.message.ifBlank { null }, tint = MineTone.red)
         is TripState.Ready -> TripPlan(state.trip, car, target, onGo)
     }
 }
 
 @Composable
 private fun TripPlan(trip: ChargingTrip, car: Car, target: SavedPlace?, onGo: (SavedPlace) -> Unit) {
-    val c = Atlas.colors
     val total = (trip.route.duration / 60).roundToInt()
     val units by LocalServices.current.settings.units.collectAsStateWithLifecycle(Units.METRIC)
     val distance = GoFormat.distance(trip.route.distance, units)
@@ -178,8 +181,8 @@ private fun hm(minutes: Int) = if (minutes < 60) "$minutes′" else "${minutes /
 @Composable
 private fun Big(value: String, label: String) {
     Column {
-        Text(value, style = mt(24f, 900, tabular = true, line = 26f), color = Atlas.colors.ink)
-        Text(label, style = mt(11f, 700), color = Atlas.colors.inkSoft)
+        Text(value, style = mt(24f, 900, tabular = true, line = 26f), color = Color(INK))
+        Text(label, style = mt(11f, 700), color = Color(SOFT))
     }
 }
 
@@ -187,7 +190,7 @@ private fun Big(value: String, label: String) {
 @Composable
 private fun SocChart(trip: ChargingTrip, car: Car, modifier: Modifier) {
     val cd = stringResource(R.string.mine_route_chart_cd, trip.stops.size)
-    val line = Atlas.colors.go
+    val line = Color(0xFF2E5BFF)
     Canvas(modifier.semantics { contentDescription = cd }) {
         val total = trip.route.distance.coerceAtLeast(1.0)
         fun x(d: Double) = (d / total * size.width).toFloat()
@@ -213,9 +216,8 @@ private fun SocChart(trip: ChargingTrip, car: Car, modifier: Modifier) {
 
 @Composable
 private fun StopRow(s: StopView) {
-    val c = Atlas.colors
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.card).padding(horizontal = 12.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Color(WHITE)).padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.size(44.dp).clip(CircleShape).background(Color(PowerBand.of(s.powerKw).colour)), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -223,13 +225,13 @@ private fun StopRow(s: StopView) {
             Text("kW", style = mt(9f, 700, line = 9f), color = Color.White)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(s.name.ifBlank { stringResource(R.string.mine_charge_site) }, style = mt(15f, 800), color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(s.name.ifBlank { stringResource(R.string.mine_charge_site) }, style = mt(15f, 800), color = Color(INK), maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 listOfNotNull(
                     s.arriveSoc?.let { "${(it * 100).roundToInt()}%" }, s.departSoc?.let { "→ ${(it * 100).roundToInt()}%" },
-                ).joinToString(" "), style = mt(12f, 500, tabular = true), color = c.inkSoft,
+                ).joinToString(" "), style = mt(12f, 500, tabular = true), color = Color(SOFT),
             )
         }
-        s.chargeMinutes?.let { Text("${it.roundToInt()}′", style = mt(16f, 900, tabular = true), color = c.ink) }
+        s.chargeMinutes?.let { Text("${it.roundToInt()}′", style = mt(16f, 900, tabular = true), color = Color(INK)) }
     }
 }

@@ -102,7 +102,7 @@
     <string name="mine_voice_sample">Play sample</string>
     <string name="mine_voice_sample_text">In two hundred metres, turn right onto the canal.</string>
     <string name="mine_voice_haptics">Vibrations</string>
-    <string name="mine_voice_engine">Voice settings</string>
+    <string name="mine_voice_engine">Voices</string>
     <string name="mine_settings_units">Units</string>
     <string name="mine_settings_km">km</string>
     <string name="mine_settings_mi">mi</string>
@@ -181,7 +181,7 @@
     <string name="mine_sent_fuel">the area you look at, with your key</string>
     <string name="mine_data_crumb">Settings · Data</string>
     <string name="mine_data_title">Where every number comes from</string>
-    <string name="mine_data_text">Open data, a partner\'s yes, or a link out. Atlas never pretends to be a browser or a person to copy another app, and names the source of every number. %1$d sources are on now.</string>
+    <string name="mine_data_text">Open data, a partner’s yes, or a link out. Atlas never pretends to be a browser or a person to copy another app, and names the source of every number. %1$d sources are on now.</string>
     <string name="mine_data_open">On by default: open data</string>
     <string name="mine_data_keyed">Needs a key or a yes</string>
     <string name="mine_data_outside">Outside Atlas</string>
@@ -496,7 +496,7 @@
     <string name="mine_welcome_later">Later</string>
     <string name="mine_welcome_next">Continue</string>
     <string name="mine_welcome_take_title">Take the map with you</string>
-    <string name="mine_welcome_take_text">Everything works with no signal: maps, routes, places, voice. Here is what the area around you takes.</string>
+    <string name="mine_welcome_take_text">Everything works with no signal: maps, routes, places, voice. Take the area around you.</string>
     <string name="mine_welcome_radius">%1$d km</string>
     <string name="mine_welcome_have">%1$s is already on this phone (%2$s)</string>
     <string name="mine_welcome_wifi">Only on Wi‑Fi</string>

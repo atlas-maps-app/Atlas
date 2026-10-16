@@ -43,9 +43,17 @@ import app.atlas.services.RegionLayer
 import app.atlas.services.RegionRequest
 import app.atlas.tiles.Pack
 import app.atlas.ui.kit.Atlas
-import app.atlas.ui.kit.StateMessage
+import app.atlas.ui.mine.MineState
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.rememberHere
+import app.atlas.ui.mine.BText
+import app.atlas.ui.mine.INK
+import app.atlas.ui.mine.MineSwitch
+import app.atlas.ui.mine.TextPill
+import app.atlas.ui.mine.WHITE
+import app.atlas.ui.mine.bbox
+import app.atlas.ui.mine.bt
+import app.atlas.ui.mine.cr
 import app.atlas.ui.mine.BoardPage
 import app.atlas.ui.mine.BoardSwitch
 import app.atlas.ui.mine.MineKeys
@@ -164,8 +172,8 @@ fun RegionPickerScreen(args: Dest.RegionPicker, nav: Navigator) {
             if (tooBig) Text(stringResource(R.string.mine_picker_too_big), style = mt(12f, 700, line = 16f), color = MineTone.red)
             if (failed) Text(stringResource(R.string.mine_picker_failed), style = mt(12f, 700, line = 16f), color = MineTone.red)
             Row(Modifier.fillMaxWidth().height(44.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.mine_picker_wifi), Modifier.weight(1f), style = mt(14f, 700))
-                BoardSwitch(wifi, { scope.launch { services.settings.set(MineKeys.WIFI_ONLY, it) } }, stringResource(R.string.mine_offline_wifi_only))
+                BText(stringResource(R.string.mine_picker_wifi), bt(14f, 700, 18f), INK, Modifier.weight(1f))
+                MineSwitch(wifi, { scope.launch { services.settings.set(MineKeys.WIFI_ONLY, it) } }, stringResource(R.string.mine_offline_wifi_only))
             }
         }
     }
@@ -173,7 +181,7 @@ fun RegionPickerScreen(args: Dest.RegionPicker, nav: Navigator) {
     Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp, vertical = 28.dp)) {
         val label = if (ready && totalBytes > 0) stringResource(R.string.mine_picker_download_size, RegionEngine.size(totalBytes)) else stringResource(R.string.mine_picker_download)
         Box(
-            Modifier.fillMaxWidth().height(56.dp).clip(CircleShape).background(if (ready) Color14 else MineTone.of(0xFFD5D8DE, 0xFF3A3E46))
+            Modifier.fillMaxWidth().height(56.dp).bbox(if (ready) INK else 0xFFD5D8DE, cr(28f))
                 .clickable(enabled = ready) {
                     val taken = details.map { it.id }.toMutableSet()
                     for ((i, b) in boxes.withIndex()) {
@@ -184,13 +192,14 @@ fun RegionPickerScreen(args: Dest.RegionPicker, nav: Navigator) {
                     nav.back()
                 },
             contentAlignment = Alignment.Center,
-        ) { Text(label, style = mt(15f, 800), color = OnPill) }
+        ) { BText(label, bt(15f, 800, 19.5f), WHITE) }
     }
     }
 }
 
-private val Color14: Color @Composable get() = Atlas.colors.pill
-private val OnPill: Color @Composable get() = Atlas.colors.onPill
+/* The Welcome board's dark pill and its white text. */
+private val Color14 = Color(0xFF14161B)
+private val OnPill = Color.White
 
 @Composable
 private fun AreaBody(
@@ -213,10 +222,7 @@ private fun AreaBody(
         val (w, h) = PickerModel.sides(drawn)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(stringResource(R.string.mine_picker_drawn, String.format(Locale.ROOT, "%.0f", w), String.format(Locale.ROOT, "%.0f", h)), Modifier.weight(1f), style = mt(14f, 800, tabular = true))
-            Row(Modifier.height(34.dp).clip(CircleShape).background(MineTone.of(0xFFFFFFFF, 0xFF24272D)).clickable(onClick = onClear).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Symbol("ui.close", size = 14.dp)
-                Text(stringResource(R.string.mine_picker_clear), style = mt(12f, 700))
-            }
+            TextPill(stringResource(R.string.mine_picker_clear), bt(12f, 700, 15.5f), WHITE, INK, h = 34f, padH = 12f, symbol = "ui.close", symbolSize = 14f, gap = 6f, onClick = onClear)
         }
     }
 }
@@ -224,7 +230,7 @@ private fun AreaBody(
 @Composable
 private fun RouteBody(route: List<LatLon>, corridor: Float, onCorridor: (Float) -> Unit, boxes: List<BBox>) {
     if (route.size < 2) {
-        StateMessage("ui.along-route", stringResource(R.string.mine_picker_route_none), text = stringResource(R.string.mine_picker_route_none_text), tint = MineTone.greenDeep)
+        MineState("ui.along-route", stringResource(R.string.mine_picker_route_none), text = stringResource(R.string.mine_picker_route_none_text), tint = MineTone.greenDeep)
         return
     }
     val services = LocalServices.current
@@ -244,7 +250,7 @@ private fun RouteBody(route: List<LatLon>, corridor: Float, onCorridor: (Float) 
 private fun CountryBody(packs: List<Pack>?, picked: Pack?, have: Set<String>, onPick: (Pack) -> Unit) {
     when {
         packs == null -> Text(stringResource(R.string.mine_picker_country_loading), style = mt(13f, 500), color = MineTone.of(0xFF5A5F6C, 0xFFA0A5B1))
-        packs.isEmpty() -> StateMessage("ui.web", stringResource(R.string.mine_picker_country_none), text = stringResource(R.string.mine_picker_country_none_text), tint = MineTone.greenDeep)
+        packs.isEmpty() -> MineState("ui.web", stringResource(R.string.mine_picker_country_none), text = stringResource(R.string.mine_picker_country_none_text), tint = MineTone.greenDeep)
         else -> {
             if (picked != null) {
                 val services = LocalServices.current
@@ -261,8 +267,8 @@ private fun CountryBody(packs: List<Pack>?, picked: Pack?, have: Set<String>, on
                         Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(18.dp)).background(if (on) Color14 else MineTone.of(0xFFFFFFFF, 0xFF1B1D22)).clickable { onPick(p) }.padding(horizontal = 14.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Symbol("ui.web", tint = if (on) OnPill else Atlas.colors.ink, size = 20.dp)
-                        Text(p.name, Modifier.weight(1f), style = mt(15f, 800), color = if (on) OnPill else Atlas.colors.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Symbol("ui.web", tint = if (on) OnPill else Color(INK), size = 20.dp)
+                        Text(p.name, Modifier.weight(1f), style = mt(15f, 800), color = if (on) OnPill else Color(INK), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         if (RegionEngine.idFor(p.name) in have) Symbol("ui.check", tint = MineTone.green, size = 16.dp, weight = 1.4f)
                         Text(size, style = mt(12f, 500, tabular = true), color = if (on) OnPill.copy(alpha = 0.75f) else MineTone.of(0xFF5A5F6C, 0xFFA0A5B1))
                     }
@@ -281,21 +287,14 @@ private fun LayerChips(routing: Boolean, onRouting: (Boolean) -> Unit, places: B
     }
 }
 
+/** A layer to take: a pill of the boards (36 high, 12 px in), dark when taken, white when not. */
 @Composable
 private fun Chip(text: String, symbol: String, on: Boolean, onClick: (() -> Unit)?) {
-    val c = Atlas.colors
-    Row(
-        Modifier.height(36.dp).clip(CircleShape).background(if (on) c.pill else MineTone.of(0xFFFFFFFF, 0xFF24272D))
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(horizontal = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Symbol(symbol, tint = if (on) c.onPill else c.ink, size = 16.dp)
-        Text(text, style = mt(13f, 700), color = if (on) c.onPill else c.ink, maxLines = 1)
-    }
+    TextPill(text, bt(13f, 700, 17f), if (on) INK else WHITE, if (on) WHITE else INK, h = 36f, padH = 12f, symbol = symbol, symbolSize = 16f, gap = 6f, onClick = onClick)
 }
 
 @Composable
 private fun sliderColors() = androidx.compose.material3.SliderDefaults.colors(
-    thumbColor = Atlas.colors.ink, activeTrackColor = Atlas.colors.ink, inactiveTrackColor = MineTone.of(0xFFD5D8DE, 0xFF3A3E46),
+    thumbColor = Color(INK), activeTrackColor = Color(INK), inactiveTrackColor = Color(0xFFD5D8DE),
     activeTickColor = Color.Transparent, inactiveTickColor = Color.Transparent,
 )

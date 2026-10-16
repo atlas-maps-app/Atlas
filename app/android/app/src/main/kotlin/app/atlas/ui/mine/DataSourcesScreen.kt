@@ -1,18 +1,17 @@
 package app.atlas.ui.mine
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
@@ -25,19 +24,17 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.nav.Dest
@@ -45,10 +42,19 @@ import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.providers.KeyNeed
 import app.atlas.services.SettingsKeys
-import app.atlas.ui.kit.Atlas
-import app.atlas.ui.kit.SerifFamily
-import app.atlas.ui.kit.Symbol
+import app.atlas.ui.kit.Argb
+import app.atlas.ui.kit.CssShadow
 import kotlinx.coroutines.launch
+
+/* The Data sources board's warm paper (`canvas/project/DataSources.dc.html`). */
+private const val PAPER: Argb = 0xFFF1EDE6
+private const val CARD: Argb = 0xFFFBFAF7
+private const val CARD_RING: Argb = 0xFFECE7DD
+private const val RULE: Argb = 0xFFEEE9E0
+private const val BODY: Argb = 0xFF464C5A
+private const val HEAD: Argb = 0xFF3A3F4B
+private const val TAG: Argb = 0xFFF1EEE8
+private const val ON: Argb = 0xFF178A4E
 
 /**
  * Data sources & keys, the board "Where every number comes from": the open sources that are on by default with their
@@ -66,100 +72,97 @@ fun DataSourcesScreen(args: Dest.DataSources, nav: Navigator) {
     var editing by remember { mutableStateOf(args.provider) }
     LaunchedEffect(args.provider) { if (args.provider != null) editing = args.provider }
     fun setOn(id: String, value: Boolean) = scope.launch { services.settings.set(SettingsKeys.PROVIDERS_OFF, (if (value) off - id else off + id).takeIf { it.isNotEmpty() }) }
-    BoardPage(
-        title = "", onBack = null, header = false, background = MineTone.of(0xFFF1EDE6, 0xFF101114), gap = 12.dp, bottomPadding = 28.dp,
-    ) {
-        // The header: the back button and the small label above the serif question.
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            val back = stringResource(R.string.kit_back)
-            Box(Modifier.size(44.dp).clip(CircleShape).background(Atlas.colors.card).clickable { nav.back() }.semantics { contentDescription = back }, contentAlignment = Alignment.Center) {
-                Symbol("ui.back", size = 20.dp)
+    BoardPage(title = "", onBack = null, header = false, background = Color(PAPER), gap = 12.dp, bottomPadding = 28.dp) {
+        // The header: the frosted back button at y 44 and the crumb beside it, then the serif question (its 78 px box
+        // 9 px under the button, 5 px of half-leading at each end) and the lead 1.5 px under it.
+        Column {
+            Row(Modifier.padding(top = 44.dp + shift()), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                BackButton({ nav.back() }, shadows = listOf(CssShadow(0f, 6f, 20f, 0f, 0x24181C30)), blur = 20f)
+                BText(stringResource(R.string.mine_data_crumb), bt(12f, 700, 15.5f), LABEL)
             }
-            Text(stringResource(R.string.mine_data_crumb), style = mt(12f, 700), color = Atlas.colors.inkSoft)
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(2.dp)) {
-            Text(stringResource(R.string.mine_data_title), style = androidx.compose.ui.text.TextStyle(fontFamily = SerifFamily, fontSize = 34.sp, lineHeight = 34.sp), color = Atlas.colors.ink)
-            Text(stringResource(R.string.mine_data_text, on), style = mt(13f, 400, line = 18.2f), color = Atlas.colors.inkSoft)
+            // the board's line is 317 px: its title breaks after "number"
+            BText(stringResource(R.string.mine_data_title), bt(34f, 400, 34f, SERIF), INK, Modifier.padding(start = 2.dp, top = 14.dp, bottom = 6.dp).widthIn(max = 318.dp).semantics { heading() }, lines = 3)
+            BText(stringResource(R.string.mine_data_text, on), bt(13f, 400, 18.2f), BODY, Modifier.padding(start = 2.dp, end = 2.dp), lines = 6)
         }
         val open = rows.filter { !it.needsKey }
         val keyed = rows.filter { it.needsKey }
-        SourceCard(stringResource(R.string.mine_data_open)) {
-            for ((i, r) in open.withIndex()) OpenRow(r, i == 0, editing == r.info.id, onToggle = { setOn(r.info.id, it) }, onKey = { editing = if (editing == r.info.id) null else r.info.id }, onSave = { k -> scope.launch { services.keys.set(r.info.id, k) }; editing = null })
+        SourceCard(stringResource(R.string.mine_data_open), Modifier.padding(top = 2.7.dp)) {
+            for (r in open) OpenRow(r, editing == r.info.id, onToggle = { setOn(r.info.id, it) }, onKey = { editing = if (editing == r.info.id) null else r.info.id }, onSave = { k -> scope.launch { services.keys.set(r.info.id, k) }; editing = null })
         }
         SourceCard(stringResource(R.string.mine_data_keyed)) {
-            for ((i, r) in keyed.withIndex()) KeyedRow(r, i == 0, editing == r.info.id, onToggle = { setOn(r.info.id, it) }, onKey = { editing = if (editing == r.info.id) null else r.info.id }, onSave = { k -> scope.launch { services.keys.set(r.info.id, k) }; editing = null })
+            for (r in keyed) KeyedRow(r, editing == r.info.id, onToggle = { setOn(r.info.id, it) }, onKey = { editing = if (editing == r.info.id) null else r.info.id }, onSave = { k -> scope.launch { services.keys.set(r.info.id, k) }; editing = null })
         }
         SourceCard(stringResource(R.string.mine_data_outside)) {
-            Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(stringResource(R.string.mine_data_google), style = mt(13.5f, 700), color = Atlas.colors.ink)
-                Text(stringResource(R.string.mine_data_google_text), style = mt(11.5f, 400, line = 16f), color = Atlas.colors.inkSoft)
+            Column(Modifier.fillMaxWidth().bbox(border = hairTop(RULE)).padding(top = 11.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                BText(stringResource(R.string.mine_data_google), bt(13.5f, 700, 17.5f), INK)
+                BText(stringResource(R.string.mine_data_google_text), bt(11.5f, 400, 15f), BODY, lines = 6)
             }
         }
+        // The way to what each source is sent: the lock and the blue line (12.5, 600 on 16), 8 px apart.
         Row(
-            Modifier.fillMaxWidth().clickable { nav.go(Dest.Privacy) }.padding(horizontal = 4.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
+            Modifier.fillMaxWidth().padding(top = 2.dp).clickable(role = Role.Button) { nav.go(Dest.Privacy) }.padding(start = 2.dp, top = 0.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(stringResource(R.string.mine_data_sent_link), style = mt(13f, 700), color = MineTone.blue)
-            Symbol("ui.arrow-right", tint = MineTone.blue, size = 14.dp)
+            MSy("ui.lock", 16f, 0xFF2E5BFF)
+            BText(stringResource(R.string.mine_data_sent_link) + " →", bt(12.5f, 600, 16f), 0xFF2E5BFF, lines = 2)
         }
-        Text(stringResource(R.string.mine_data_footer, keysSet), style = mt(11f, 400, line = 15f), color = Atlas.colors.inkFaint, modifier = Modifier.padding(horizontal = 4.dp))
+        BText(stringResource(R.string.mine_data_footer, keysSet), bt(10f, 400, 14.5f), LABEL, Modifier.padding(top = 2.5.dp), lines = 4)
     }
 }
 
-/** One card of sources: a small caps heading in ink, then the rows with hairlines. */
+/** One card of sources: the board's paper card (radius 20, a 1 px inner ring), its small caps heading, then the rows. */
 @Composable
-private fun SourceCard(title: String, content: @Composable () -> Unit) {
+private fun SourceCard(title: String, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(MineTone.of(0xFFFBFAF7, 0xFF1B1D22)).border(1.dp, MineTone.of(0xFFECE7DD, 0xFF2C2F36), RoundedCornerShape(20.dp)).padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 4.dp),
+        modifier.fillMaxWidth().bbox(CARD, cr(20f), listOf(CssShadow(0f, 0f, 0f, 1f, CARD_RING, inset = true))).padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 4.dp),
     ) {
-        Text(title.uppercase(), style = mt(11f, 800, spacing = 1.1f), color = Atlas.colors.ink)
-        Column(Modifier.padding(top = 8.dp)) { content() }
-    }
-}
-
-@Composable
-private fun RowShell(first: Boolean, content: @Composable () -> Unit) {
-    Column {
-        if (!first) Box(Modifier.fillMaxWidth().height(1.dp).background(MineTone.of(0xFFEEE9E0, 0xFF2C2F36)))
+        CardLabel(title, Modifier.padding(bottom = 8.dp), HEAD, spacing = 1.1f)
         content()
     }
 }
 
-/** A licence tag: 10 sp, 700, on a soft pill. */
+/** A row's frame: the hairline on top, 10 px above and below the name (13.5, 700 on 17.5) and what it feeds (11.5 on 15). */
+@Composable
+private fun SourceRow(r: SourcesModel.Row, lines: Int, trailing: @Composable () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().bbox(border = hairTop(RULE)).padding(top = 11.dp, bottom = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            BText(r.info.name, bt(13.5f, 700, 17.5f), INK, lines = 2)
+            BText(feeds(r.info.id), bt(11.5f, 400, 15f), BODY, lines = lines)
+        }
+        trailing()
+    }
+}
+
+/** A licence tag: 10 px 700 on 13, grey, on a pale pill 19 high (radius 8, 7 px at the sides). */
 @Composable
 private fun LicenceTag(text: String) {
-    Box(Modifier.clip(RoundedCornerShape(8.dp)).background(MineTone.of(0xFFF1EEE8, 0xFF2A2D34)).padding(horizontal = 7.dp, vertical = 3.dp)) {
-        Text(text, style = mt(10f, 700), color = Atlas.colors.inkSoft, maxLines = 1)
+    Box(Modifier.height(19.dp).bbox(TAG, cr(8f)).padding(horizontal = 7.dp), contentAlignment = Alignment.Center) {
+        BText(text, bt(10f, 700, 13f), LABEL)
     }
 }
 
 @Composable
-private fun OpenRow(r: SourcesModel.Row, first: Boolean, editing: Boolean, onToggle: (Boolean) -> Unit, onKey: () -> Unit, onSave: (String?) -> Unit) {
-    RowShell(first) {
-        Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(r.info.name, style = mt(13.5f, 700, line = 17f), color = Atlas.colors.ink)
-                Text(feeds(r.info.id), style = mt(11.5f, 400, line = 15f), color = Atlas.colors.inkSoft, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
+private fun OpenRow(r: SourcesModel.Row, editing: Boolean, onToggle: (Boolean) -> Unit, onKey: () -> Unit, onSave: (String?) -> Unit) {
+    Column {
+        SourceRow(r, 2) {
             LicenceTag(SourcesModel.licenceLabel(r.info.licence))
             if (r.canTakeKey) KeyButton(r.keySet, onKey)
-            BoardSwitch(r.on, onToggle, r.info.name, onColour = MineTone.greenDeep)
+            MineSwitch(r.on, onToggle, r.info.name, onColour = ON, knobShadow = 0x40000000)
         }
         if (editing) KeyField(r, onSave)
     }
 }
 
 @Composable
-private fun KeyedRow(r: SourcesModel.Row, first: Boolean, editing: Boolean, onToggle: (Boolean) -> Unit, onKey: () -> Unit, onSave: (String?) -> Unit) {
-    RowShell(first) {
-        Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(r.info.name, style = mt(13.5f, 700, line = 17f), color = Atlas.colors.ink)
-                Text(feeds(r.info.id), style = mt(11.5f, 400, line = 15f), color = Atlas.colors.inkSoft, maxLines = 3, overflow = TextOverflow.Ellipsis)
-            }
+private fun KeyedRow(r: SourcesModel.Row, editing: Boolean, onToggle: (Boolean) -> Unit, onKey: () -> Unit, onSave: (String?) -> Unit) {
+    Column {
+        SourceRow(r, 3) {
             LicenceTag(keyKind(r.info.keyNeed))
             KeyButton(r.keySet, onKey)
-            if (r.keySet) BoardSwitch(r.on, onToggle, r.info.name, onColour = MineTone.greenDeep)
+            if (r.keySet) MineSwitch(r.on, onToggle, r.info.name, onColour = ON, knobShadow = 0x40000000)
         }
         if (editing) KeyField(r, onSave)
     }
@@ -193,18 +196,14 @@ private fun feeds(id: String): String = stringResource(
 @Composable
 private fun keyKind(need: KeyNeed): String = stringResource(if (need == KeyNeed.PARTNER) R.string.mine_data_partner else R.string.mine_data_key)
 
-/** "Add key" in amber, or "key set" in green once there is one. */
+/** "Add key" in amber (30 high, radius 15, the 14 px key 11 px in, 12 px 700 on 15.5), or "key set" in green once there is one. */
 @Composable
 private fun KeyButton(keySet: Boolean, onClick: () -> Unit) {
-    val bg = if (keySet) Color(0xFFE7F4EC) else Color(0xFFFFF1D6)
-    val fg = if (keySet) Color(0xFF12663A) else Color(0xFF8A5A00)
-    Row(
-        Modifier.height(34.dp).clip(CircleShape).background(bg).clickable(onClick = onClick).padding(horizontal = 11.dp),
-        horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Symbol(if (keySet) "ui.check" else "ui.key", tint = fg, size = 14.dp)
-        Text(stringResource(if (keySet) R.string.mine_key_set else R.string.mine_data_add_key), style = mt(12f, 800), color = fg, maxLines = 1)
-    }
+    TextPill(
+        stringResource(if (keySet) R.string.mine_key_set else R.string.mine_data_add_key), bt(12f, 700, 15.5f),
+        if (keySet) 0xFFE7F4EC else 0xFFFFF1D6, if (keySet) 0xFF12663A else 0xFF8A5A00,
+        h = 30f, padH = 11f, symbol = if (keySet) "ui.check" else "ui.key", symbolSize = 14f, gap = 5f, onClick = onClick,
+    )
 }
 
 /** The field a key is pasted into: hidden as it is typed, saved to this phone only, removable. */
@@ -214,27 +213,27 @@ private fun KeyField(r: SourcesModel.Row, onSave: (String?) -> Unit) {
     var show by remember(r.info.id) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Atlas.colors.cardMuted).padding(horizontal = 12.dp, vertical = 10.dp),
+            Modifier.fillMaxWidth().bbox(TAG, cr(12f)).padding(horizontal = 12.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(Modifier.weight(1f)) {
                 val hint = stringResource(if (r.keySet) R.string.mine_data_key_replace else R.string.mine_data_key_hint, r.info.name)
-                if (text.isEmpty()) Text(hint, style = mt(13f, 400), color = Atlas.colors.inkFaint)
+                if (text.isEmpty()) BText(hint, bt(13f, 400, 17f), FAINT)
                 BasicTextField(
-                    text, { text = it.trim() }, singleLine = true, textStyle = mt(13f, 500).copy(color = Atlas.colors.ink), cursorBrush = SolidColor(Atlas.colors.ink),
+                    text, { text = it.trim() }, singleLine = true, textStyle = bt(13f, 500, 17f).copy(color = Color(INK)), cursorBrush = SolidColor(Color(INK)),
                     visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth().semantics { contentDescription = hint },
                 )
             }
             val eye = stringResource(if (show) R.string.mine_data_key_hide else R.string.mine_data_key_show)
-            Box(Modifier.size(36.dp).clip(CircleShape).semantics { contentDescription = eye }.clickable(role = androidx.compose.ui.semantics.Role.Button) { show = !show }, contentAlignment = Alignment.Center) {
-                Symbol(if (show) "ui.eye-off" else "ui.eye", tint = Atlas.colors.inkSoft, size = 18.dp)
+            Box(Modifier.size(36.dp).bbox(r = cr(18f)).semantics { contentDescription = eye }.clickable(role = Role.Button) { show = !show }, contentAlignment = Alignment.Center) {
+                MSy(if (show) "ui.eye-off" else "ui.eye", 18f, SOFT)
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             MiniButton(stringResource(R.string.mine_data_save), { if (text.isNotBlank()) onSave(text) })
             if (r.keySet) MiniButton(stringResource(R.string.mine_data_remove), { onSave(null) }, primary = false)
-            Text(stringResource(R.string.mine_data_key_note), style = mt(10.5f, 400, line = 14f), color = Atlas.colors.inkFaint, modifier = Modifier.weight(1f))
+            BText(stringResource(R.string.mine_data_key_note), bt(10.5f, 400, 14f), FAINT, Modifier.weight(1f), lines = 2)
         }
     }
 }

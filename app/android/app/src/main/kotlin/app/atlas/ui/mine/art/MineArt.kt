@@ -30,8 +30,9 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.floatOrNull
 
 /**
- * The objects of the mine package's boards, taken from the boards' own SVG by `mine_art.py` (`res/raw/mine_art.json`):
- * the car's connector faces, the passport's globe, the privacy shield. Ids are `plug.ccs2.face`, `mine.globe`, ….
+ * The drawings of the mine package's boards that are not in the board symbol set, taken from the boards' own SVG by
+ * `mine_art.py` (`res/raw/mine_art.json`): the paper map of the Mine board (`mine.paper`). The format also serves other
+ * packages' drawings ([parse]).
  */
 object MineArt {
     private var all: Map<String, Icon>? = null

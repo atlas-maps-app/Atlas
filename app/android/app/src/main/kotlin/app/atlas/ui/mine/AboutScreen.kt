@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.atlas.R
@@ -64,60 +66,61 @@ fun AboutScreen(args: Dest.About, nav: Navigator) {
     val version = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "" }
     val items = remember { runCatching { Licences.parse(context.resources.openRawResource(R.raw.mine_licences).bufferedReader().use { it.readText() }) }.getOrDefault(emptyList()) }
     BoardPage(stringResource(R.string.mine_about), onBack = { nav.back() }) {
-        BoardCard(padding = androidx.compose.foundation.layout.PaddingValues(16.dp)) {
+        // Atlas and its licence, in the voice card's type (16, 800 on 20.5 over 12 on 15.5).
+        BoardCard(padding = PaddingValues(16.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(56.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFFE0592A)), contentAlignment = Alignment.Center) {
-                    Text("A", style = TextStyle(fontFamily = SerifFamily, fontSize = 38.sp, lineHeight = 40.sp), color = Color.White)
+                Box(Modifier.size(56.dp).bbox(0xFFE0592A, cr(16f)), contentAlignment = Alignment.Center) {
+                    BText("A", bt(38f, 400, 38f, SERIF), WHITE)
                 }
-                Column {
-                    Text("Atlas $version", style = mt(18f, 800), color = Atlas.colors.ink)
-                    Text(stringResource(R.string.mine_about_tag), style = mt(12f, 400, line = 16f), color = Atlas.colors.inkSoft)
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    BText("Atlas $version", bt(16f, 800, 20.5f), INK)
+                    BText(stringResource(R.string.mine_about_tag), bt(12f, 400, 15.5f), SOFT, lines = 3)
                 }
             }
         }
-        BoardCard(padding = androidx.compose.foundation.layout.PaddingValues(16.dp)) {
-            SectionLabel(stringResource(R.string.mine_about_map_data), colour = MineTone.steel)
-            Text(stringResource(R.string.mine_about_osm), style = mt(14f, 700, line = 19f), color = Atlas.colors.ink, modifier = Modifier.padding(top = 6.dp))
-            Text(stringResource(R.string.mine_about_osm_text), style = mt(12f, 400, line = 16.5f), color = Atlas.colors.inkSoft, modifier = Modifier.padding(top = 4.dp))
+        BoardCard(padding = PaddingValues(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 14.dp)) {
+            CardLabel(stringResource(R.string.mine_about_map_data))
+            BText(stringResource(R.string.mine_about_osm), bt(14f, 800, 18f), INK, Modifier.padding(top = 8.dp), lines = 2)
+            BText(stringResource(R.string.mine_about_osm_text), bt(12f, 400, 15.5f), SOFT, Modifier.padding(top = 3.dp), lines = 12)
         }
         val credits = remember { (Catalogue.ALL + Catalogue.BUNDLED + SourcesModel.TANKERKOENIG).distinctBy { it.id } }
         Section(stringResource(R.string.mine_about_credits)) {
-            for ((i, p) in credits.withIndex()) LicenceRow(p.name, p.attribution, p.licence, i == 0)
+            for (p in credits) LicenceRow(p.name, p.attribution, p.licence)
         }
         val titles = listOf(R.string.mine_about_s_providers, R.string.mine_about_s_places, R.string.mine_about_s_code, R.string.mine_about_s_libs)
         for ((i, t) in titles.withIndex()) {
             val group = items.filter { Licences.section(it) == i }
             if (group.isEmpty()) continue
             Section(stringResource(t)) {
-                for ((j, it) in group.withIndex()) LicenceRow(it.what, it.credit, it.licence, j == 0)
+                for (it in group) LicenceRow(it.what, it.credit, it.licence)
             }
         }
-        Text(stringResource(R.string.mine_about_mit), style = mt(11f, 400, line = 15f), color = Atlas.colors.inkFaint, modifier = Modifier.padding(horizontal = 8.dp))
+        BText(stringResource(R.string.mine_about_mit), bt(11f, 400, 14f, align = TextAlign.Center), 0xFF7A7F8C, Modifier.fillMaxWidth().padding(top = 12.dp), lines = 4)
     }
 }
 
+/** A card of credits: the small caps label 12 px in, then the rows. */
 @Composable
 private fun Section(title: String, content: @Composable () -> Unit) {
-    BoardCard(padding = androidx.compose.foundation.layout.PaddingValues(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 4.dp)) {
-        SectionLabel(title, Modifier.padding(bottom = 4.dp), MineTone.steel)
+    BoardCard(padding = PaddingValues(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 2.dp)) {
+        CardLabel(title, Modifier.padding(bottom = 8.dp))
         content()
     }
 }
 
+/** A credit, as the Data sources board's rows: the hairline, the name (13.5, 700 on 17.5), its credit line and the licence tag. */
 @Composable
-private fun LicenceRow(name: String, credit: String?, licence: String, first: Boolean) {
-    Column {
-        if (!first) Box(Modifier.fillMaxWidth().height(1.dp).background(Atlas.colors.line))
-        Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(name, style = mt(13f, 700, line = 17f), color = Atlas.colors.ink)
-                if (!credit.isNullOrBlank()) Text(credit, style = mt(11.5f, 400, line = 15f), color = Atlas.colors.inkSoft)
-            }
-            Box(Modifier.widthLimit().clip(RoundedCornerShape(8.dp)).background(MineTone.of(0xFFF1EEE8, 0xFF2A2D34)).padding(horizontal = 7.dp, vertical = 3.dp)) {
-                Text(licence.take(60), style = mt(10f, 700, line = 13f), color = Atlas.colors.inkSoft)
-            }
+private fun LicenceRow(name: String, credit: String?, licence: String) {
+    Row(
+        Modifier.fillMaxWidth().bbox(border = hairTop()).padding(top = 11.dp, bottom = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            BText(name, bt(13.5f, 700, 17.5f), INK, lines = 2)
+            if (!credit.isNullOrBlank()) BText(credit, bt(11.5f, 400, 15f), SOFT, lines = 4)
+        }
+        Box(Modifier.widthIn(max = 130.dp).bbox(HAIR, cr(8f)).padding(horizontal = 7.dp, vertical = 3.dp)) {
+            BText(licence.take(60), bt(10f, 700, 13f), LABEL, lines = 3)
         }
     }
 }
-
-private fun Modifier.widthLimit(): Modifier = this.widthIn(max = 130.dp)

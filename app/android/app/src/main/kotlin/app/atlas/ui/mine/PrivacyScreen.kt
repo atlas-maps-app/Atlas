@@ -8,6 +8,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -43,7 +45,6 @@ import app.atlas.nav.Navigator
 import app.atlas.services.SettingsKeys
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.Symbol
-import app.atlas.ui.mine.art.MineArtImage
 import app.atlas.ui.mine.offline.RegionEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -86,26 +87,37 @@ fun PrivacyScreen(args: Dest.Privacy, nav: Navigator) {
     }
     val rows = SourcesModel.rows(off, keys.orEmpty())
     val placesSaved = lists.sumOf { it.places.size }
-    BoardPage(stringResource(R.string.mine_privacy), onBack = { nav.back() }) {
-        // The promise.
+    BoardPage(
+        stringResource(R.string.mine_privacy), onBack = { nav.back() }, gap = 6.dp,
+        bottomBar = {
+            // Export and forget: the board's two 54 px buttons, 8 px apart.
+            Box(
+                Modifier.weight(187.5f).height(54.dp).bbox(WHITE, cr(27f), border = ring(1.5f, 0xFFD5D8DE)).androidClick { export.launch("atlas-backup.json") },
+                contentAlignment = Alignment.Center,
+            ) { BText(stringResource(R.string.mine_privacy_export), bt(14f, 800, 18f), INK) }
+            Box(Modifier.weight(184.5f).height(54.dp).bbox(0xFFC8322A, cr(27f)).androidClick { confirm = true }, contentAlignment = Alignment.Center) {
+                BText(stringResource(R.string.mine_privacy_delete), bt(14f, 800, 18f), WHITE)
+            }
+        },
+    ) {
+        // The promise: the shield and two lines on the deep green (96 px, 16 px in, 14 px between).
         Row(
-            Modifier.fillMaxWidth().height(96.dp).clip(RoundedCornerShape(22.dp)).background(Color(0xFF0F3D2A)).padding(horizontal = 16.dp),
+            Modifier.fillMaxWidth().height(96.dp).bbox(0xFF0F3D2A, cr(22f)).padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically,
         ) {
-            MineArtImage("privacy.shield", 56.dp)
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(stringResource(R.string.mine_privacy_head), style = mt(17f, 800, line = 20.4f), color = Color(0xFFEAF6EE))
-                Text(stringResource(R.string.mine_privacy_text), style = mt(12f, 400, line = 15f), color = Color(0xFFA8D8B8))
+            MSy("ui.privacy", 45.38f, 0xFFEAF6EE, h = 56f)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                BText(stringResource(R.string.mine_privacy_head), bt(17f, 800, 20.4f), 0xFFEAF6EE)
+                BText(stringResource(R.string.mine_privacy_text), bt(12f, 400, 15.5f), 0xFFA8D8B8, lines = 2)
             }
         }
-        // What is kept.
-        BoardCard(padding = androidx.compose.foundation.layout.PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 2.dp)) {
-            SectionLabel(stringResource(R.string.mine_privacy_kept), Modifier.padding(top = 4.dp, bottom = 6.dp), MineTone.steel)
+        // What is kept: the label 12 px in, then the rows (53 px: a hairline, 9 px, the 34 px tile, 9 px).
+        BoardCard(Modifier.padding(top = 6.dp), padding = PaddingValues(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 2.dp)) {
+            CardLabel(stringResource(R.string.mine_privacy_kept), Modifier.padding(bottom = 6.dp))
             KeptRow(
-                "ui.pin", stringResource(R.string.mine_kept_trail),
+                "ui.pin.2", stringResource(R.string.mine_kept_trail),
                 if (!trailOn && trail.first == 0) stringResource(R.string.mine_kept_trail_off) else stringResource(R.string.mine_kept_trail_on, pluralStringResource(R.plurals.mine_n_points, trail.first, trail.first), RegionEngine.size(trail.second)),
-                first = true,
-                toggle = { BoardSwitch(trailOn, { on -> scope.launch { settings.set(MineKeys.TRAIL, on) } }, stringResource(R.string.mine_kept_trail)) },
+                toggle = { MineSwitch(trailOn, { on -> scope.launch { settings.set(MineKeys.TRAIL, on) } }, stringResource(R.string.mine_kept_trail)) },
                 clear = if (trail.first > 0) ({ services.mine.trail.clear(); tick++ }) else null,
             )
             KeptRow(
@@ -115,7 +127,7 @@ fun PrivacyScreen(args: Dest.Privacy, nav: Navigator) {
                     pressureOn -> stringResource(R.string.mine_kept_pressure_on, pluralStringResource(R.plurals.mine_n_readings, pressure, pressure))
                     else -> stringResource(R.string.mine_kept_pressure_off)
                 },
-                toggle = { BoardSwitch(pressureOn, { on -> scope.launch { settings.set(MineKeys.PRESSURE, on) } }, stringResource(R.string.mine_kept_pressure), enabled = barometer) },
+                toggle = { MineSwitch(pressureOn, { on -> scope.launch { settings.set(MineKeys.PRESSURE, on) } }, stringResource(R.string.mine_kept_pressure), enabled = barometer) },
                 clear = if (pressure > 0) ({ services.mine.pressure.clear(); tick++ }) else null,
             )
             KeptRow(
@@ -123,7 +135,7 @@ fun PrivacyScreen(args: Dest.Privacy, nav: Navigator) {
                 onOpen = { nav.go(Dest.Lists()) },
             )
             KeptRow(
-                "ui.search", stringResource(R.string.mine_kept_searches), stringResource(R.string.mine_kept_searches_sub, pluralStringResource(R.plurals.mine_n_kept, recents.size, recents.size)),
+                "ui.search.2", stringResource(R.string.mine_kept_searches), stringResource(R.string.mine_kept_searches_sub, pluralStringResource(R.plurals.mine_n_kept, recents.size, recents.size)),
                 clear = if (recents.isNotEmpty()) ({ scope.launch(Dispatchers.IO) { services.saved.clearRecents() } }) else null,
             )
             KeptRow(
@@ -132,54 +144,44 @@ fun PrivacyScreen(args: Dest.Privacy, nav: Navigator) {
                 clear = if (home != null || work != null) ({ scope.launch { services.go.store.setHome(null); services.go.store.setWork(null) } }) else null,
             )
         }
-        // What goes online.
-        BoardCard(padding = androidx.compose.foundation.layout.PaddingValues(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 8.dp)) {
-            SectionLabel(stringResource(R.string.mine_privacy_online), Modifier.padding(bottom = 4.dp), MineTone.steel)
-            val live = rows.filter { it.on && (it.state == app.atlas.providers.ProviderState.READY) }
-            for (r in live) OnlineRow(r.info.name, r.host, sentLine(r.info.id))
-            if (live.isEmpty()) Text(stringResource(R.string.mine_privacy_online_none), style = mt(12f, 400), color = Atlas.colors.inkSoft, modifier = Modifier.padding(vertical = 6.dp))
+        // What goes online: the label, then one line a host (a blue dot, the name, what it is sent), 10 px apart.
+        BoardCard(padding = PaddingValues(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 14.dp)) {
+            CardLabel(stringResource(R.string.mine_privacy_online), Modifier.padding(bottom = 9.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                val live = rows.filter { it.on && (it.state == app.atlas.providers.ProviderState.READY) }
+                for (r in live) OnlineRow(r.info.name, r.host, sentLine(r.info.id))
+                if (live.isEmpty()) BText(stringResource(R.string.mine_privacy_online_none), bt(12f, 400, 15.5f), SOFT, lines = 3)
+            }
             // What a download you start asks of its server (these hosts see your address and what you asked for).
-            SectionLabel(stringResource(R.string.mine_privacy_downloads), Modifier.padding(top = 10.dp, bottom = 4.dp), MineTone.steel)
-            OnlineRow(stringResource(R.string.mine_offline_title), "github.com", stringResource(R.string.mine_sent_pack))
-            OnlineRow(stringResource(R.string.mine_offline_layer_routes), "brouter.de", stringResource(R.string.mine_sent_routing))
-            OnlineRow(stringResource(R.string.mine_offline_layer_map), "tiles.openfreemap.org", stringResource(R.string.mine_sent_tiles))
-        }
-        // Export and forget.
-        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val c = Atlas.colors
-            Box(
-                Modifier.weight(1f).height(54.dp).clip(CircleShape).border(1.5.dp, MineTone.of(0xFFD5D8DE, 0xFF3A3E46), CircleShape).background(c.card)
-                    .androidClick { export.launch("atlas-backup.json") },
-                contentAlignment = Alignment.Center,
-            ) { Text(stringResource(R.string.mine_privacy_export), style = mt(14f, 800), color = c.ink) }
-            Box(Modifier.weight(1f).height(54.dp).clip(CircleShape).background(MineTone.red).androidClick { confirm = true }, contentAlignment = Alignment.Center) {
-                Text(stringResource(R.string.mine_privacy_delete), style = mt(14f, 800), color = Color.White)
+            CardLabel(stringResource(R.string.mine_privacy_downloads), Modifier.padding(top = 14.dp, bottom = 9.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OnlineRow(stringResource(R.string.mine_offline_title), "github.com", stringResource(R.string.mine_sent_pack))
+                OnlineRow(stringResource(R.string.mine_offline_layer_routes), "brouter.de", stringResource(R.string.mine_sent_routing))
+                OnlineRow(stringResource(R.string.mine_offline_layer_map), "tiles.openfreemap.org", stringResource(R.string.mine_sent_tiles))
             }
         }
-        exported?.let { Text(stringResource(R.string.mine_privacy_exported, it), style = mt(12f, 500), color = MineTone.greenDeep, modifier = Modifier.padding(horizontal = 8.dp)) }
-        if (exportFailed) Text(stringResource(R.string.mine_phone_export_failed), style = mt(12f, 500), color = MineTone.red, modifier = Modifier.padding(horizontal = 8.dp))
+        exported?.let { BText(stringResource(R.string.mine_privacy_exported, it), bt(12f, 500, 15.5f), 0xFF178A4E, Modifier.padding(horizontal = 8.dp), lines = 2) }
+        if (exportFailed) BText(stringResource(R.string.mine_phone_export_failed), bt(12f, 500, 15.5f), 0xFFC8322A, Modifier.padding(horizontal = 8.dp), lines = 2)
     }
     if (confirm) AlertDialog(
         onDismissRequest = { confirm = false },
         title = { Text(stringResource(R.string.mine_privacy_delete_title)) },
         text = { Text(stringResource(R.string.mine_privacy_delete_text)) },
-        confirmButton = { TextButton({ confirm = false; scope.launch(Dispatchers.IO) { Backup.wipe(services); tick++ } }) { Text(stringResource(R.string.mine_privacy_delete), color = MineTone.red) } },
+        confirmButton = { TextButton({ confirm = false; scope.launch(Dispatchers.IO) { Backup.wipe(services); tick++ } }) { Text(stringResource(R.string.mine_privacy_delete), color = Color(0xFFC8322A)) } },
         dismissButton = { TextButton({ confirm = false }) { Text(stringResource(R.string.mine_offline_keep)) } },
     )
 }
 
-/** One host something is sent to: its name, the address, and what it is told. */
+/**
+ * One host something is sent to, as the board's lines: a 6 px blue dot, the name (13, 800 on 17) and 8 px on what it is
+ * told and the host (12 on 15.5, grey, wrapping beside the name).
+ */
 @Composable
 private fun OnlineRow(name: String, host: String?, line: String) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-        Box(Modifier.padding(top = 6.dp).size(6.dp).clip(CircleShape).background(MineTone.blue))
-        Column {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Bottom) {
-                Text(name, style = mt(13f, 800), color = Atlas.colors.ink)
-                host?.let { Text(it, style = mt(11f, 500, tabular = true), color = Atlas.colors.inkFaint) }
-            }
-            Text(line, style = mt(12f, 400, line = 16f), color = Atlas.colors.inkSoft)
-        }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+        Box(Modifier.padding(top = 5.dp).size(6.dp).bbox(0xFF2E7BFF, cr(3f)))
+        BText(name, bt(13f, 800, 17f), INK, Modifier.widthIn(max = 170.dp), lines = 2)
+        BText(if (host != null) "$line · $host" else line, bt(12f, 400, 15.5f), SOFT, Modifier.weight(1f).padding(top = 1.dp), lines = 3)
     }
 }
 
@@ -200,25 +202,24 @@ internal fun sentLine(id: String): String = stringResource(
     },
 )
 
-/** A kept thing: a tile, its name and what is kept, and a switch, a "Clear" button or a way in. */
+/**
+ * A kept thing, as the board's rows: a hairline, 9 px, the pale 34 px tile with the symbol, its name (14, 800 on 18) and
+ * what is kept (11 on 14, grey), then a "Clear" button, a switch or the way in.
+ */
 @Composable
-private fun KeptRow(symbol: String, title: String, sub: String, first: Boolean = false, toggle: (@Composable () -> Unit)? = null, clear: (() -> Unit)? = null, onOpen: (() -> Unit)? = null) {
-    val c = Atlas.colors
-    Column {
-        if (!first) Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
-        Row(
-            Modifier.fillMaxWidth().height(52.dp).then(if (onOpen != null) Modifier.androidClick(onOpen) else Modifier),
-            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(MineTone.of(0xFFF1F3F6, 0xFF2A2D34)), contentAlignment = Alignment.Center) { Symbol(symbol, tint = c.ink, size = 18.dp) }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                Text(title, style = mt(14f, 800), color = c.ink)
-                Text(sub, style = mt(11f, 500, line = 14f), color = c.inkSoft, maxLines = 2)
-            }
-            if (clear != null) MiniButton(stringResource(R.string.mine_privacy_clear), clear, primary = false)
-            toggle?.invoke()
-            if (onOpen != null) Symbol("ui.chevron-right", tint = c.inkFaint, size = 16.dp)
+private fun KeptRow(symbol: String, title: String, sub: String, toggle: (@Composable () -> Unit)? = null, clear: (() -> Unit)? = null, onOpen: (() -> Unit)? = null) {
+    Row(
+        Modifier.fillMaxWidth().bbox(border = hairTop()).then(if (onOpen != null) Modifier.androidClick(onOpen) else Modifier).padding(top = 10.dp, bottom = 9.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(34.dp).bbox(PAGE, cr(10f)), contentAlignment = Alignment.Center) { MSy(symbol, 18f, INK) }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            BText(title, bt(14f, 800, 18f), INK)
+            BText(sub, bt(11f, 400, 14f), SOFT, lines = 2)
         }
+        if (clear != null) MiniButton(stringResource(R.string.mine_privacy_clear), clear, primary = false)
+        toggle?.invoke()
+        if (onOpen != null) MSy("ui.chevron-right", 16f, FAINT)
     }
 }
 

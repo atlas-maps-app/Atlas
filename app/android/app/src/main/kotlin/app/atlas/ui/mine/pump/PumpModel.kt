@@ -44,7 +44,7 @@ data class Station(
     val distanceM: Double?,
     val open24h: Boolean,
 ) {
-    enum class Amenity(val symbol: String) { SHOP("place.shop-front"), CAR_WASH("place.car-wash"), AIR("weather.wind"), TOILETS("need.toilet"), WATER("place.tap"), OPEN_24H("ui.clock.2") }
+    enum class Amenity(val symbol: String) { SHOP("place.shop-front"), CAR_WASH("place.car-wash"), AIR("weather.wind"), TOILETS("need.toilet.4"), WATER("place.tap"), OPEN_24H("ui.clock.2") }
 
     val key: String get() = place.key
     fun sells(f: Fuel) = f in fuels

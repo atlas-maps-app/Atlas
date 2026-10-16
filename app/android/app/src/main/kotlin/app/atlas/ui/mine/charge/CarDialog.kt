@@ -26,6 +26,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.stringResource
@@ -37,6 +38,11 @@ import app.atlas.providers.EvModel
 import app.atlas.providers.EvModels
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.Symbol
+import app.atlas.ui.mine.INK
+import app.atlas.ui.mine.PAGE
+import app.atlas.ui.mine.FAINT
+import app.atlas.ui.mine.SOFT
+import app.atlas.ui.mine.WHITE
 import app.atlas.ui.mine.MineTone
 import app.atlas.ui.mine.mt
 import kotlinx.coroutines.launch
@@ -59,9 +65,9 @@ internal fun CarDialog(store: CarStore, car: Car, onClose: () -> Unit) {
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 car.model?.let { m ->
-                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Atlas.colors.cardMuted).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(PAGE)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(m.title, style = mt(14f, 800))
-                        Text(stringResource(R.string.mine_car_facts, m.batteryKwh.roundToInt(), m.maxDcKw?.roundToInt() ?: 0, m.consumption.roundToInt()), style = mt(12f, 400), color = Atlas.colors.inkSoft)
+                        Text(stringResource(R.string.mine_car_facts, m.batteryKwh.roundToInt(), m.maxDcKw?.roundToInt() ?: 0, m.consumption.roundToInt()), style = mt(12f, 400), color = Color(SOFT))
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("${(soc * 100).roundToInt()}%", style = mt(13f, 800, tabular = true), modifier = Modifier.padding(end = 4.dp))
                             Slider(soc, { soc = it }, valueRange = 0.05f..1f, onValueChangeFinished = { scope.launch { store.setSoc(soc.toDouble()) } }, modifier = Modifier.weight(1f))
@@ -70,24 +76,24 @@ internal fun CarDialog(store: CarStore, car: Car, onClose: () -> Unit) {
                             val on = ChargeModel.plugIdsOf(car.ports)
                             for (p in ChargeModel.PLUGS.filter { p -> p.types.any { it in m.connectors } }) {
                                 val sel = p.id in on
-                                Box(Modifier.clip(RoundedCornerShape(10.dp)).background(if (sel) Atlas.colors.pill else MineTone.of(0xFFF1F3F6, 0xFF2A2D34)).clickable {
+                                Box(Modifier.clip(RoundedCornerShape(10.dp)).background(if (sel) Color(INK) else MineTone.of(0xFFF1F3F6, 0xFF2A2D34)).clickable {
                                     val next = if (sel) on - p.id else on + p.id
                                     scope.launch { store.setPorts(ChargeModel.portsOf(next)) }
-                                }.padding(horizontal = 10.dp, vertical = 6.dp)) { Text(p.label, style = mt(12f, 700), color = if (sel) Atlas.colors.onPill else Atlas.colors.ink) }
+                                }.padding(horizontal = 10.dp, vertical = 6.dp)) { Text(p.label, style = mt(12f, 700), color = if (sel) Color(WHITE) else Color(INK)) }
                             }
                         }
                     }
                 }
-                Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Atlas.colors.cardMuted).padding(12.dp)) {
+                Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(PAGE)).padding(12.dp)) {
                     val hint = stringResource(R.string.mine_car_search)
-                    if (query.isEmpty()) Text(hint, style = mt(14f, 400), color = Atlas.colors.inkFaint)
-                    BasicTextField(query, { query = it }, singleLine = true, textStyle = mt(14f, 500).copy(color = Atlas.colors.ink), cursorBrush = SolidColor(Atlas.colors.ink), modifier = Modifier.fillMaxWidth().semantics { contentDescription = hint })
+                    if (query.isEmpty()) Text(hint, style = mt(14f, 400), color = Color(FAINT))
+                    BasicTextField(query, { query = it }, singleLine = true, textStyle = mt(14f, 500).copy(color = Color(INK)), cursorBrush = SolidColor(Color(INK)), modifier = Modifier.fillMaxWidth().semantics { contentDescription = hint })
                 }
                 for (m in results) Column(Modifier.fillMaxWidth().clickable { scope.launch { store.choose(m, soc.toDouble()); onClose() } }.padding(vertical = 6.dp)) {
                     Text(m.title, style = mt(14f, 700), maxLines = 2)
-                    Text(stringResource(R.string.mine_car_facts, m.batteryKwh.roundToInt(), m.maxDcKw?.roundToInt() ?: 0, m.consumption.roundToInt()), style = mt(12f, 400), color = Atlas.colors.inkSoft)
+                    Text(stringResource(R.string.mine_car_facts, m.batteryKwh.roundToInt(), m.maxDcKw?.roundToInt() ?: 0, m.consumption.roundToInt()), style = mt(12f, 400), color = Color(SOFT))
                 }
-                Text(stringResource(R.string.mine_car_credit), style = mt(10.5f, 400, line = 14f), color = Atlas.colors.inkFaint)
+                Text(stringResource(R.string.mine_car_credit), style = mt(10.5f, 400, line = 14f), color = Color(FAINT))
             }
         },
         confirmButton = { TextButton(onClose) { Text(stringResource(R.string.mine_pick_close)) } },

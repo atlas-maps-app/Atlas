@@ -39,6 +39,12 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.foundation.layout.heightIn
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.geo.LatLon
@@ -66,9 +72,10 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-private val WInk = Color(0xFF14203A)
-private val WSoft = Color(0xFF5A6A88)
-private val Rain = Color(0xFF3E7BC4)
+/* The Weather board's inks (`canvas/project/Weather.dc.html`). */
+private const val W_INK = 0xFF14203A
+private const val W_SOFT = 0xFF5A6A88
+private const val RAIN = 0xFF3E7BC4
 
 /**
  * The Weather board: the brass barometer (the phone's own, else the forecast's pressure), now in words, the next hours
@@ -130,33 +137,36 @@ fun WeatherScreen(args: Dest.Weather, nav: Navigator) {
         onBack = { nav.back() },
         background = Color(0xFFE8EEF6),
         backgroundBrush = Brush.verticalGradient(0f to Color(0xFFC9D8EC), 0.45f to Color(0xFFE8EEF6), 1f to Color(0xFFE8EEF6)),
-        ink = WInk,
+        ink = Color(W_INK),
         titleSize = 34f,
-        gap = 14.dp,
+        gap = 0.dp,
         trailing = {
-            Box(Modifier.height(34.dp).clip(CircleShape).background(Color.White).clickable { nav.go(Dest.Forecast) }.padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
-                Text(stringResource(R.string.mine_weather_models), style = mt(12f, 800), color = WInk)
-            }
+            // the board's pill: 34 high, white, 12 px in, 12, 800 on 15.5
+            TextPill(stringResource(R.string.mine_weather_models), bt(12f, 800, 15.5f), WHITE, W_INK, h = 34f, padH = 12f, onClick = { nav.go(Dest.Forecast) })
         },
     ) {
         when {
             f != null && current != null -> {
                 NowCard(f, current, barometer, live != null || log.isNotEmpty(), ::hm, { ZonedLocal.hm(it, clock.zone, twelve) }, units, fahrenheit, now, onModels = { nav.go(Dest.Forecast) })
-                HoursStrip(f, now, zone, twelve, fahrenheit)
+                HoursStrip(f, now, zone, twelve, fahrenheit, Modifier.padding(top = 14.dp))
                 if (advice.isNotEmpty()) {
-                    SectionLabel(stringResource(R.string.mine_weather_means), Modifier.padding(start = 2.dp), WSoft)
-                    for (a in advice) AdviceRow(a, f, ::hm, units, cafe?.name(), onCafe = cafe?.let { c -> { nav.go(Dest.Place.of(c)) } })
+                    // "WHAT IT MEANS FOR YOU": 12, 800 on 15.5, 1.44 px apart, 18 px under the hours, the rows 6.5 px under it
+                    BText(stringResource(R.string.mine_weather_means).uppercase(), bt(12f, 800, 15.5f, spacing = 1.44f), W_SOFT, Modifier.padding(start = 2.dp, top = 18.dp, bottom = 6.5.dp).semantics { heading() })
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        for (a in advice) AdviceRow(a, f, ::hm, units, cafe?.name(), onCafe = cafe?.let { c -> { nav.go(Dest.Place.of(c)) } })
+                    }
                 }
-                SunStrip(at, zone, now, twelve)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SunStrip(at, zone, now, twelve, Modifier.padding(top = 12.dp))
+                Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutLink("water.flowing", stringResource(R.string.mine_water_title), Modifier.weight(1f)) { nav.go(Dest.Water(at.lat, at.lon)) }
                     OutLink("ui.charge", stringResource(R.string.mine_power_title), Modifier.weight(1f)) { nav.go(Dest.Power) }
                 }
             }
-            done -> app.atlas.ui.kit.StateMessage("ui.no-signal", stringResource(R.string.mine_weather_none), text = stringResource(R.string.mine_weather_none_text), tint = WSoft)
-            else -> Text(stringResource(R.string.kit_loading), style = mt(13f, 500), color = WSoft)
+            done -> MineState("ui.no-signal", stringResource(R.string.mine_weather_none), text = stringResource(R.string.mine_weather_none_text), tint = Color(W_SOFT))
+            else -> BText(stringResource(R.string.kit_loading), bt(13f, 500, 17f), W_SOFT)
         }
-        Text(stringResource(R.string.mine_weather_footer), style = mt(10f, 400, line = 15f), color = Color(0xFF6A7A98), modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        // the board's foot: 10 on 13, centred, 25 px under the sun's strip
+        BText(stringResource(R.string.mine_weather_footer), bt(10f, 400, 13f, align = TextAlign.Center), 0xFF6A7A98, Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 25.dp), lines = 4)
     }
 }
 
@@ -177,39 +187,35 @@ private fun NowCard(f: Forecast, current: CurrentWeather, barometer: Barometer?,
     val wind = nowHour?.takeIf { it.windSpeed.isFinite() }?.let { WeatherAdvice.wind(it.windSpeed, it.windDirection) }
     val uv = nowHour?.uvIndex?.takeIf { it.isFinite() && it >= 1 }?.let { "UV ${it.roundToInt()}" }
     val details = listOfNotNull(wind?.let { stringResource(R.string.mine_weather_wind, it) }, uv).joinToString(" · ")
+    // the board's card: 190 high, radius 26, 12 px in on the left and 14 on the right, the dial (160, squeezed to 153.46 by
+    // the row) and 10 px on the column: the temperature (52, 900 on 52), the sky (14, 700 on 18), the wind (12 on 15.5)
+    // and the pills (28 high), 6 px apart
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(Color.White).padding(start = 12.dp, end = 14.dp, top = 14.dp, bottom = 14.dp),
+        Modifier.fillMaxWidth().heightIn(min = 190.dp).bbox(WHITE, cr(26f)).padding(start = 12.dp, end = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        BarometerDial(barometer, fromPhone, Modifier.size(160.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(SettingsModel.temperature(current.temperature, fahrenheit), style = mt(52f, 900, tabular = true, line = 52f), color = WInk)
-            Text(words, style = mt(14f, 700, line = 18f), color = WInk)
-            if (details.isNotEmpty()) Text(details, style = mt(12f, 400, tabular = true, line = 16f), color = WSoft)
+        BarometerDial(barometer, fromPhone, Modifier.size(153.46.dp, 160.dp))
+        Column(Modifier.weight(1f).padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            BText(SettingsModel.temperature(current.temperature, fahrenheit), bt(52f, 900, 52f, tnum = true), W_INK)
+            BText(words, bt(14f, 700, 18f), W_INK, lines = 2)
+            if (details.isNotEmpty()) BText(details, bt(12f, 400, 15.5f, tnum = true), W_SOFT, lines = 2)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (f.kept) Pill(stringResource(R.string.mine_weather_kept_chip, phoneHm(f.fetchedAt)), Color(0xFFFFF1D6), Color(0xFF8A5A00), {})
-                Pill(stringResource(R.string.mine_weather_sources), Color(0xFFE1F2EA), Color(0xFF12663A), onModels)
+                if (f.kept) TextPill(stringResource(R.string.mine_weather_kept_chip, phoneHm(f.fetchedAt)), bt(12f, 800, 15.5f), 0xFFFFF1D6, 0xFF8A5A00)
+                TextPill(stringResource(R.string.mine_weather_sources), bt(12f, 800, 15.5f), 0xFFE1F2EA, 0xFF12663A, onClick = onModels)
             }
         }
     }
 }
 
-/** A card that leads from the weather to what it asks for outdoors: water to carry, power to find. */
+/** A card that leads from the weather to what it asks for outdoors (water to carry, power to find), in the advice rows' white. */
 @Composable
 private fun OutLink(symbol: String, text: String, modifier: Modifier, onClick: () -> Unit) {
     Row(
-        modifier.height(56.dp).clip(RoundedCornerShape(20.dp)).background(Color.White).clickable(onClick = onClick).padding(horizontal = 14.dp),
+        modifier.height(56.dp).bbox(WHITE, cr(18f)).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Symbol(symbol, tint = WInk, size = 22.dp)
-        Text(text, Modifier.weight(1f), style = mt(14f, 800), color = WInk, maxLines = 1)
-    }
-}
-
-@Composable
-private fun Pill(text: String, bg: Color, fg: Color, onClick: () -> Unit) {
-    Box(Modifier.height(28.dp).clip(CircleShape).background(bg).clickable(onClick = onClick).padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
-        Text(text, style = mt(12f, 800), color = fg, maxLines = 1)
+        MSy(symbol, 22f, W_INK)
+        BText(text, bt(14f, 800, 18f), W_INK, Modifier.weight(1f))
     }
 }
 
@@ -238,9 +244,15 @@ private fun BarometerDial(b: Barometer?, fromPhone: Boolean, modifier: Modifier)
         Triple(stringResource(R.string.mine_baro_stormy), Offset(41.4f, 93.4f), 255f), Triple(stringResource(R.string.mine_baro_rain), Offset(45.4f, 63.0f), 300f),
         Triple(stringResource(R.string.mine_baro_change), Offset(80f, 43f), 360f), Triple(stringResource(R.string.mine_baro_fair), Offset(114.6f, 63f), 420f),
     )
+    val measurer = rememberTextMeasurer()
+    val serif = bt(9f, 400, family = SERIF)
+    val reading = bt(9f, 800)
     Canvas(modifier.semantics { contentDescription = cd }) {
+        // the SVG's 160 square fitted into its box and centred (`xMidYMid meet`)
         val k = size.minDimension / 160f
-        fun p(x: Float, y: Float) = Offset(x * k, y * k)
+        val ox = (size.width - 160f * k) / 2f
+        val oy = (size.height - 160f * k) / 2f
+        fun p(x: Float, y: Float) = Offset(ox + x * k, oy + y * k)
         drawCircle(Color(0x26000000), 78f * k, p(80f, 82f))
         drawCircle(Brush.linearGradient(0f to Color(0xFFF6E2A8), 0.5f to Color(0xFFB98A36), 1f to Color(0xFFE9C977), start = p(2f, 2f), end = p(158f, 158f)), 78f * k, p(80f, 80f))
         drawCircle(Color(0xFFF8F0DC), 68f * k, p(80f, 80f))
@@ -252,7 +264,7 @@ private fun BarometerDial(b: Barometer?, fromPhone: Boolean, modifier: Modifier)
             val inner = if (major) 54f else 57.5f
             drawLine(Color(0xFF3A2A10), p(80f + outer * cos(a).toFloat(), 80f + outer * sin(a).toFloat()), p(80f + inner * cos(a).toFloat(), 80f + inner * sin(a).toFloat()), (if (major) 1.6f else 0.8f) * k)
         }
-        for ((text, at, deg) in words) rotate(deg, p(at.x, at.y - 3f)) { label(text, p(at.x, at.y), 9f * k, Color(0xFF3A2A10), serif = true) }
+        for ((text, at, deg) in words) rotate(deg, p(at.x, at.y - 3f)) { label(measurer, text, p(at.x, at.y), serif, k, Color(0xFF3A2A10)) }
         if (b != null) {
             fun tip(deg: Double, len: Float): Offset { val a = Math.toRadians(deg); return p(80f + len * sin(a).toFloat(), 80f - len * cos(a).toFloat()) }
             b.setHandDeg?.let { drawLine(Color(0xFFC8322A), p(80f, 80f), tip(it, 50f), 2f * k, pathEffect = PathEffect.dashPathEffect(floatArrayOf(3f * k, 2f * k))) }
@@ -260,32 +272,41 @@ private fun BarometerDial(b: Barometer?, fromPhone: Boolean, modifier: Modifier)
         }
         drawCircle(Brush.linearGradient(0f to Color(0xFFF6E2A8), 0.5f to Color(0xFFB98A36), 1f to Color(0xFFE9C977), start = p(74f, 74f), end = p(86f, 86f)), 6f * k, p(80f, 80f))
         drawCircle(Color(0xFF3A2A10), 6f * k, p(80f, 80f), style = Stroke(1f * k))
-        label(label, p(80f, 118f), 9f * k, Color(0xFF6A5A40), bold = true)
+        label(measurer, label, p(80f, 118f), reading, k, Color(0xFF6A5A40))
     }
 }
 
-private fun DrawScope.label(text: String, at: Offset, size: Float, colour: Color, serif: Boolean = false, bold: Boolean = false) {
-    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = size
-        color = colour.toArgb()
-        textAlign = android.graphics.Paint.Align.CENTER
-        typeface = when { serif -> android.graphics.Typeface.SERIF; bold -> android.graphics.Typeface.DEFAULT_BOLD; else -> android.graphics.Typeface.DEFAULT }
-    }
-    drawContext.canvas.nativeCanvas.drawText(text, at.x, at.y, paint)
+/** SVG text with `text-anchor="middle"`: [text] in [style] (its units scaled by [k] px) with its baseline centred at [at]. */
+private fun DrawScope.label(measurer: androidx.compose.ui.text.TextMeasurer, text: String, at: Offset, style: androidx.compose.ui.text.TextStyle, k: Float, colour: Color) {
+    val t = measurer.measure(text, style.copy(fontSize = style.fontSize * (k / density), lineHeight = androidx.compose.ui.unit.TextUnit.Unspecified))
+    drawText(t, colour, Offset(at.x - t.size.width / 2f, at.y - t.firstBaseline))
 }
 
-/** The next eight hours: the hour, the sky, the temperature and a bar for the rain, in a frosted card. */
+/** The sky as the Weather board's symbols draw it: the cloud, the rain, the moon by night, the sun, the snow. */
+internal fun boardSky(sky: app.atlas.providers.Sky, day: Boolean): String = when (sky) {
+    app.atlas.providers.Sky.CLEAR -> if (day) "weather.sun" else "ui.moon"
+    app.atlas.providers.Sky.MAINLY_CLEAR, app.atlas.providers.Sky.PARTLY_CLOUDY -> if (day) "weather.partly-cloudy" else "ui.moon"
+    app.atlas.providers.Sky.DRIZZLE, app.atlas.providers.Sky.FREEZING_DRIZZLE, app.atlas.providers.Sky.RAIN, app.atlas.providers.Sky.FREEZING_RAIN,
+    app.atlas.providers.Sky.SHOWERS, app.atlas.providers.Sky.THUNDERSTORM, app.atlas.providers.Sky.THUNDERSTORM_HAIL -> "weather.rain.2"
+    app.atlas.providers.Sky.SNOW, app.atlas.providers.Sky.SNOW_GRAINS, app.atlas.providers.Sky.SNOW_SHOWERS -> "weather.snow"
+    else -> "weather.cloud"
+}
+
+/**
+ * The next eight hours as the board's frosted card (104 high, radius 22, 70 % white): columns 46 px wide from 6 px in, each
+ * the hour (11, 800 on 14), 4 px, the sky (22 px), 4 px, the temperature (13, 900 on 17), 4 px and a rain bar (10 wide).
+ */
 @Composable
-private fun HoursStrip(f: Forecast, now: Instant, zone: ZoneId, twelve: Boolean, fahrenheit: Boolean) {
+private fun HoursStrip(f: Forecast, now: Instant, zone: ZoneId, twelve: Boolean, fahrenheit: Boolean, modifier: Modifier = Modifier) {
     val hours = f.hours.filter { it.time > now.minus(Duration.ofMinutes(59)) }.take(8)
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Color(0xB3FFFFFF)).padding(start = 6.dp, end = 6.dp, top = 12.dp, bottom = 10.dp)) {
+    Row(modifier.fillMaxWidth().height(104.dp).bbox(0xB2FFFFFF, cr(22f)).padding(start = 6.dp, end = 6.dp, top = 12.dp)) {
         for ((i, h) in hours.withIndex()) Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             val label = if (i == 0) stringResource(R.string.mine_weather_now) else h.time.atZone(zone).hour.let { if (twelve) (if (it % 12 == 0) 12 else it % 12).toString() else it.toString() }
-            Text(label, style = mt(11f, 800), color = WSoft)
-            Symbol(skySymbol(h.sky, h.isDay), tint = WInk, size = 22.dp)
-            Text(if (h.temperature.isFinite()) SettingsModel.temperature(h.temperature, fahrenheit) else "–", style = mt(13f, 900, tabular = true), color = WInk)
+            BText(label, bt(11f, 800, 14f), W_SOFT)
+            MSy(boardSky(h.sky, h.isDay), 22f, W_INK)
+            BText(if (h.temperature.isFinite()) SettingsModel.temperature(h.temperature, fahrenheit) else "–", bt(13f, 900, 17f, tnum = true), W_INK)
             val mm = h.precipitation.takeIf { it.isFinite() } ?: 0.0
-            Box(Modifier.size(10.dp, (2 + (mm * 12).coerceAtMost(24.0)).dp).clip(RoundedCornerShape(3.dp)).background(Rain))
+            Box(Modifier.size(10.dp, (2 + (mm * 12).coerceAtMost(22.0)).dp).bbox(RAIN, cr(3f)))
         }
     }
 }
@@ -294,12 +315,12 @@ private fun HoursStrip(f: Forecast, now: Instant, zone: ZoneId, twelve: Boolean,
 @Composable
 private fun AdviceRow(a: Advice, f: Forecast, hm: (Instant) -> String, units: Units, cafe: String?, onCafe: (() -> Unit)?) {
     val (symbol, colour) = when (a.kind) {
-        Advice.Kind.RAIN_NOW, Advice.Kind.RAIN_SOON -> "weather.rain" to Color(0xFF5A7ACA)
-        Advice.Kind.DRY_DAY -> "weather.sun" to Color(0xFF1E9E5A)
-        Advice.Kind.WINDY -> "weather.wind" to Color(0xFF3FCF8E)
-        Advice.Kind.FROST, Advice.Kind.SNOW -> "weather.snow" to Color(0xFF8A929C)
-        Advice.Kind.HOT, Advice.Kind.UV -> "weather.sun" to Color(0xFFE8922A)
-        Advice.Kind.FOG -> "weather.cloud" to Color(0xFF8A929C)
+        Advice.Kind.RAIN_NOW, Advice.Kind.RAIN_SOON -> "weather.rain.2" to 0xFF5A7ACA
+        Advice.Kind.DRY_DAY -> "park.bike" to 0xFF1E9E5A
+        Advice.Kind.WINDY -> "weather.wind" to 0xFF3FCF8E
+        Advice.Kind.FROST, Advice.Kind.SNOW -> "weather.snow" to 0xFF8A96A8
+        Advice.Kind.HOT, Advice.Kind.UV -> "weather.sun" to 0xFFE8922A
+        Advice.Kind.FOG -> "weather.cloud" to 0xFF8A96A8
     }
     val title = when (a.kind) {
         Advice.Kind.RAIN_NOW -> stringResource(R.string.mine_adv_rain_now, a.until?.let { hm(it) } ?: "")
@@ -322,41 +343,45 @@ private fun AdviceRow(a: Advice, f: Forecast, hm: (Instant) -> String, units: Un
         Advice.Kind.FOG -> stringResource(R.string.mine_adv_fog_sub)
         Advice.Kind.SNOW -> stringResource(R.string.mine_adv_snow_sub)
     }
+    // the board's row: 62 high, radius 18, 12 px in; the 40 px tile (radius 12, a 22 px symbol), 12 px on the title (15, 800
+    // on 19.5) and 2 px under it the why (12 on 15.5), and the chevron 12 px after
+    val open = onCafe != null && (a.kind == Advice.Kind.RAIN_NOW || a.kind == Advice.Kind.RAIN_SOON)
     Row(
-        Modifier.fillMaxWidth().height(62.dp).clip(RoundedCornerShape(18.dp)).background(Color.White).then(if (onCafe != null && (a.kind == Advice.Kind.RAIN_NOW || a.kind == Advice.Kind.RAIN_SOON)) Modifier.clickable(onClick = onCafe) else Modifier).padding(horizontal = 12.dp),
+        Modifier.fillMaxWidth().height(62.dp).bbox(WHITE, cr(18f)).then(if (open) Modifier.clickable(role = Role.Button, onClick = onCafe!!) else Modifier).padding(horizontal = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(colour), contentAlignment = Alignment.Center) { Symbol(symbol, tint = Color.White, size = 22.dp) }
+        Box(Modifier.size(40.dp).bbox(colour, cr(12f)), contentAlignment = Alignment.Center) { MSy(symbol, 22f, WHITE) }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = mt(15f, 800), color = WInk, maxLines = 1)
-            Text(sub, style = mt(12f, 400), color = WSoft, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            BText(title, bt(15f, 800, 19.5f), W_INK)
+            BText(sub, bt(12f, 400, 15.5f), W_SOFT)
         }
-        if (onCafe != null && (a.kind == Advice.Kind.RAIN_NOW || a.kind == Advice.Kind.RAIN_SOON)) Symbol("ui.chevron-right", tint = Color(0xFF9AA6BC), size = 16.dp)
+        if (open) MSy("ui.chevron-right", 16f, 0xFF9AA6BC)
     }
 }
 
 /** Sunrise, golden hour, sunset and the moon's lit share, from the sun and moon's own arithmetic for here. */
 @Composable
-private fun SunStrip(at: LatLon, zone: ZoneId, now: Instant, twelve: Boolean) {
+private fun SunStrip(at: LatLon, zone: ZoneId, now: Instant, twelve: Boolean, modifier: Modifier = Modifier) {
     val date = now.atZone(zone).toLocalDate()
     val sun = remember(at, date) { app.atlas.geo.Sun.times(date, at, zone) }
     val moon = remember(now) { Moon.phase(now) }
+    // the board's strip: 40 high, radius 14, 62 % white, 14 px in, four times spread: a 16 px symbol, 5 px, 12, 700 on 15.5
     Row(
-        Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(14.dp)).background(Color(0x9EFFFFFF)).padding(horizontal = 14.dp),
+        modifier.fillMaxWidth().height(40.dp).bbox(0x9EFFFFFF, cr(14f)).padding(horizontal = 14.dp),
         horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
     ) {
         fun t(z: java.time.ZonedDateTime?) = z?.let { SettingsModel.clock(it.hour, it.minute, twelve) } ?: "–"
-        SunItem("weather.sunrise", t(sun.sunrise), WInk)
-        SunItem("weather.golden-hour", stringResource(R.string.mine_weather_golden, t(sun.goldenHourEveningStart)), Color(0xFFB8741A))
-        SunItem("weather.sunset", t(sun.sunset), WInk)
-        SunItem("ui.moon", "${(moon.illumination * 100).roundToInt()}%", Color(0xFF4B34B8))
+        SunItem("weather.sunrise.2", t(sun.sunrise), W_INK)
+        SunItem("weather.golden-hour", stringResource(R.string.mine_weather_golden, t(sun.goldenHourEveningStart)), 0xFFB8741A)
+        SunItem("weather.sunset.3", t(sun.sunset), W_INK)
+        SunItem("ui.moon", "${(moon.illumination * 100).roundToInt()}%", 0xFF4B34B8)
     }
 }
 
 @Composable
-private fun SunItem(symbol: String, text: String, colour: Color) {
+private fun SunItem(symbol: String, text: String, colour: Long) {
     Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
-        Symbol(symbol, tint = colour, size = 16.dp)
-        Text(text, style = mt(12f, 700, tabular = true), color = colour, maxLines = 1)
+        MSy(symbol, 16f, colour)
+        BText(text, bt(12f, 700, 15.5f, tnum = true), colour)
     }
 }

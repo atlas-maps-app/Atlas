@@ -102,7 +102,7 @@
     <string name="mine_voice_sample">Écouter</string>
     <string name="mine_voice_sample_text">Dans deux cents mètres, tournez à droite.</string>
     <string name="mine_voice_haptics">Vibrations</string>
-    <string name="mine_voice_engine">Réglages de la voix</string>
+    <string name="mine_voice_engine">Voix</string>
     <string name="mine_settings_units">Unités</string>
     <string name="mine_settings_km">km</string>
     <string name="mine_settings_mi">mi</string>

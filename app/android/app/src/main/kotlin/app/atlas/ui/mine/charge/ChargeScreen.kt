@@ -78,8 +78,27 @@ import app.atlas.ui.kit.cssShadow
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.shortDistance
 import app.atlas.ui.kit.softShadow
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.ui.semantics.Role
+import app.atlas.ui.kit.CssCorners
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.kit.cssLinear
+import app.atlas.ui.kit.cssRepeatingLinear
+import app.atlas.ui.mine.BText
+import app.atlas.ui.mine.BackButton
+import app.atlas.ui.mine.INK
+import app.atlas.ui.mine.MSy
+import app.atlas.ui.mine.MineState
+import app.atlas.ui.mine.SERIF
+import app.atlas.ui.mine.TextPill
+import app.atlas.ui.mine.WHITE
+import app.atlas.ui.mine.bbox
+import app.atlas.ui.mine.bt
+import app.atlas.ui.mine.cr
+import app.atlas.ui.mine.foot
+import app.atlas.ui.mine.shift
 import app.atlas.ui.mine.MineTone
-import app.atlas.ui.mine.art.MineArtImage
 import app.atlas.ui.mine.mt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.firstOrNull
@@ -88,9 +107,6 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToInt
 
-private val Ink = Color(0xFF14161B)
-private val Green = Color(0xFF22A85C)
-private val Amber = Color(0xFFF2A71B)
 
 /**
  * Chargers around you for your car, on the map with the Plugs board's chips and its sheet: your plugs and the least power
@@ -139,17 +155,22 @@ fun ChargeScreen(args: Dest.Charge, nav: Navigator) {
             )
         }
     }
-    Box(Modifier.fillMaxSize().background(Atlas.colors.paper)) {
+    Box(Modifier.fillMaxSize().background(Color(0xFFF4F1EA))) {
         AtlasMap(
             state = map, tiles = tiles, modifier = Modifier.fillMaxSize(),
             overlays = MapOverlays(markers = markers, location = fix?.let { UserLocation(it.location, it.accuracy, it.bearing, it.speed) }),
             contentPadding = PaddingValues(top = 200.dp, bottom = 380.dp),
             onTap = { hit -> if (hit is MapHit.OnMarker) selected = hit.marker.id else if (hit is MapHit.Empty) selected = null },
         )
-        Box(Modifier.fillMaxWidth().height(190.dp).background(Brush.verticalGradient(listOf(Color(0xE6F4F1EA), Color(0x00F4F1EA)))))
-        Column(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        // the board's wash over the map's top: the paper at 90 % fading out over 190 px
+        Box(Modifier.fillMaxWidth().height(190.dp + shift()).bbox(grad = listOf(cssLinear(180f, 0f to 0xE6F4F1EA, 1f to 0x00F4F1EA))))
+        Column(
+            Modifier.fillMaxWidth().padding(start = if (pick == null) 16.dp else 12.dp, end = if (pick == null) 16.dp else 12.dp, top = (if (pick == null) 42.dp else 44.dp) + shift()),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             if (pick == null) {
                 TopBar(onBack = { nav.back() }, onFuel = { nav.go(Dest.Pump(centre.lat, centre.lon)) }, onPark = { nav.go(Dest.Category("parking")) }, onBike = { nav.go(Dest.Twowheel()) })
+                // the connector tiles: five of 71.2 × 66, 6 px apart
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (p in ChargeModel.PLUGS) PlugTile(p, p.id in activePlugs, Modifier.weight(1f)) { plugsTouched = true; plugs = if (p.id in activePlugs) activePlugs - p.id else activePlugs + p.id }
                     MinPowerTile(ChargeModel.MIN_KW_STEPS[minStep], Modifier.weight(1f)) { minStep = (minStep + 1) % ChargeModel.MIN_KW_STEPS.size }
@@ -163,14 +184,17 @@ fun ChargeScreen(args: Dest.Charge, nav: Navigator) {
                 )
             }
         }
-        val sheet = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)
+        // The sheet: the Plugs board's white one (radius 30, 16 px in) for the overview, the Charge board's paper one (18 px
+        // in) for a site; a shadow 10 px up, the grabber 10 px down, then 12 (or 14) px between its parts.
+        val card = pick != null
         Column(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().heightIn(max = 400.dp).softShadow(sheet, Color(0x29141E3A), 18.dp).clip(sheet).background(Color(0xFFFBFAF7))
-                .windowInsetsPadding(WindowInsets.navigationBars).padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().heightIn(max = 400.dp)
+                .bbox(if (card) 0xFFFBFAF7 else WHITE, CssCorners(30f, 30f, 0f, 0f), listOf(CssShadow(0f, -10f, 30f, 0f, if (card) 0x24181C30 else 0x2914161B)))
+                .padding(start = if (card) 18.dp else 16.dp, end = if (card) 18.dp else 16.dp, top = 10.dp, bottom = foot(23.5f)),
+            verticalArrangement = Arrangement.spacedBy(if (card) 14.dp else 12.dp),
         ) {
-            Box(Modifier.align(Alignment.CenterHorizontally).size(40.dp, 5.dp).clip(CircleShape).background(Color(0xFFD8D4CC)))
-            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.align(Alignment.CenterHorizontally).size(40.dp, 5.dp).bbox(if (card) 0xFFD8D4CC else 0xFFD5D8DE, cr(3f)))
+            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(if (card) 14.dp else 12.dp)) {
                 if (pick != null) CardSheet(pick, car, centre, onClose = { selected = null }, onGo = { c ->
                     nav.go(Dest.Route(c.place.location.lat, c.place.location.lon, c.name.ifBlank { c.operator ?: "" }, centre.lat, centre.lon, null, "CAR"))
                 }, onCar = { carDialog = true }, onMore = {
@@ -180,35 +204,35 @@ fun ChargeScreen(args: Dest.Charge, nav: Navigator) {
                 else Overview(shown, result, availableOnly, onAvailable = { availableOnly = !availableOnly }, car = car, onCar = { carDialog = true }, onPick = { selected = it.key },
                     onDownload = { nav.go(Dest.RegionPicker(centre.lat, centre.lon)) })
             }
+            // "Plan a long trip with stops": 48 high, radius 24, the 18 px route and the label (14, 800), 8 px apart
             if (pick == null) Row(
-                Modifier.fillMaxWidth().height(48.dp).clip(CircleShape).background(Ink).clickable { nav.go(Dest.ChargingRoute()) },
+                Modifier.fillMaxWidth().height(48.dp).bbox(INK, cr(24f)).clickable(role = Role.Button) { nav.go(Dest.ChargingRoute()) },
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
             ) {
-                Symbol("ui.along-route", tint = Color.White, size = 18.dp)
-                Text(stringResource(R.string.mine_charge_trip), style = mt(14f, 800), color = Color.White)
+                MSy("ui.route.2", 18f, WHITE)
+                BText(stringResource(R.string.mine_charge_trip), bt(14f, 800, 18f), WHITE)
             }
         }
     }
     if (carDialog) CarDialog(store, car, onClose = { carDialog = false })
 }
 
-/** The back button and the four ways to move: fuel, charge (here), park, bike. */
+/** The back round and the four ways to move (fuel, charge here, park, bike) on the board's 94 % white, 4 px in, 76.5 px each. */
 @Composable
 private fun TopBar(onBack: () -> Unit, onFuel: () -> Unit, onPark: () -> Unit, onBike: () -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        val back = stringResource(R.string.kit_back)
-        Box(Modifier.size(44.dp).clip(CircleShape).background(Color(0xF0FFFFFF)).clickable(onClick = onBack).semantics { contentDescription = back }, contentAlignment = Alignment.Center) { Symbol("ui.back", tint = Ink, size = 20.dp) }
-        Row(Modifier.weight(1f).height(44.dp).clip(CircleShape).background(Color(0xF0FFFFFF)).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        BackButton(onBack, bg = 0xF0FFFFFF)
+        Row(Modifier.weight(1f).height(44.dp).bbox(0xF0FFFFFF, cr(22f)).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             for ((symbol, label, on, click) in listOf(
                 Quad("place.fuel", R.string.mine_move_fuel, false, onFuel), Quad("ui.charge", R.string.mine_move_charge, true, {}),
-                Quad("park.parking", R.string.mine_move_park, false, onPark), Quad("mode.bike", R.string.mine_move_bike, false, onBike),
+                Quad("park.parking", R.string.mine_move_park, false, onPark), Quad("ui.wrench", R.string.mine_move_bike, false, onBike),
             )) {
                 Row(
-                    Modifier.weight(1f).height(36.dp).clip(CircleShape).background(if (on) Ink else Color.Transparent).clickable(onClick = click),
+                    Modifier.weight(1f).height(36.dp).bbox(if (on) INK else 0, cr(18f)).clickable(role = Role.Button, onClick = click),
                     horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Symbol(symbol, tint = if (on) Color.White else Ink, size = 16.dp)
-                    Text(stringResource(label), style = mt(12f, 800), color = if (on) Color.White else Ink, maxLines = 1)
+                    MSy(symbol, 16f, if (on) WHITE else INK)
+                    BText(stringResource(label), bt(12f, 800, 15.5f), if (on) WHITE else INK)
                 }
             }
         }
@@ -217,128 +241,121 @@ private fun TopBar(onBack: () -> Unit, onFuel: () -> Unit, onPark: () -> Unit, o
 
 private data class Quad(val symbol: String, val label: Int, val on: Boolean, val click: () -> Unit)
 
-/** A connector tile: the plug's face drawn as the board draws it, over its name; dark when it is one of the plugs wanted. */
+/** A connector tile (66 high, radius 18, a soft shadow): the plug's 30 px symbol over its name (11, 800); dark when wanted. */
 @Composable
 private fun PlugTile(p: ChargeModel.Plug, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(18.dp)
     Column(
-        modifier.height(66.dp).cssShadow(shape, 4.dp, 12.dp, Color(0x24141E3A)).clip(shape).background(if (on) Ink else Color(0xF0FFFFFF)).clickable(onClick = onClick).semantics { contentDescription = p.label },
+        modifier.height(66.dp).bbox(if (on) INK else 0xF0FFFFFF, cr(18f), listOf(CssShadow(0f, 4f, 12f, 0f, 0x2414161B))).clickable(role = Role.Button, onClick = onClick).semantics { contentDescription = p.label },
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
     ) {
-        MineArtImage(p.art, 30.dp, tint = if (on) Color.White else Ink)
-        Text(p.label, style = mt(11f, 800), color = if (on) Color.White else Ink, maxLines = 1)
+        MSy(p.art, 30f, if (on) WHITE else INK)
+        BText(p.label, bt(11f, 800, 14f), if (on) WHITE else INK)
     }
 }
 
-/** The "≥ 50 kW" tile: tap to raise the least power wanted. */
+/** The "≥ 50 kW" tile: the least power (15, 900) over "kW" (11, 800); tap to raise it. */
 @Composable
 private fun MinPowerTile(kw: Int, modifier: Modifier, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(18.dp)
     Column(
-        modifier.height(66.dp).cssShadow(shape, 4.dp, 12.dp, Color(0x24141E3A)).clip(shape).background(if (kw > 0) Ink else Color(0xF0FFFFFF)).clickable(onClick = onClick),
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+        modifier.height(66.dp).bbox(if (kw > 0) INK else 0xF0FFFFFF, cr(18f), listOf(CssShadow(0f, 4f, 12f, 0f, 0x2414161B))).clickable(role = Role.Button, onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
     ) {
-        Text(if (kw == 0) "kW" else "≥ $kw", style = mt(15f, 900, tabular = true), color = if (kw > 0) Color.White else Ink)
-        Text(if (kw == 0) stringResource(R.string.mine_charge_any) else "kW", style = mt(11f, 800), color = if (kw > 0) Color.White else Ink)
+        BText(if (kw == 0) "kW" else "≥ $kw", bt(15f, 900, 19.5f, tnum = true), if (kw > 0) WHITE else INK)
+        BText(if (kw == 0) stringResource(R.string.mine_charge_any) else "kW", bt(11f, 800, 14f), if (kw > 0) WHITE else INK)
     }
 }
 
-/** The Plugs sheet: sites, free now and the cheapest price, the power mix, the nearest sites, and "Plan a long trip with stops". */
+/** The Plugs sheet: sites, free now and the cheapest price, the power mix, the nearest sites. */
 @Composable
 private fun Overview(shown: List<Charger>, result: ChargeResult?, availableOnly: Boolean, onAvailable: () -> Unit, car: Car, onCar: () -> Unit, onPick: (Charger) -> Unit, onDownload: () -> Unit) {
     val sum = ChargeModel.summary(shown)
-    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        Stat("${sum.sites}", stringResource(R.string.mine_charge_sites), Ink)
-        if (sum.free != null) Stat("${sum.free}", stringResource(R.string.mine_charge_free_now), Color(0xFF12663A))
-        if (sum.cheapest != null) Stat(String.format(Locale.ROOT, "%.2f", sum.cheapest), (if (sum.currency == "EUR") "€" else sum.currency ?: "") + "/kWh " + stringResource(R.string.mine_charge_min), Ink)
-        Spacer(Modifier.weight(1f))
-        CarPill(car, onCar)
+    // the figures (26, 900) and what they count (12, 700, grey) on one baseline, 14 px between them
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        Stat("${sum.sites}", stringResource(R.string.mine_charge_sites), INK)
+        if (sum.free != null) Stat("${sum.free}", stringResource(R.string.mine_charge_free_now), 0xFF12663A)
+        if (sum.cheapest != null) Stat(String.format(Locale.ROOT, "%.2f", sum.cheapest), (if (sum.currency == "EUR") "€" else sum.currency ?: "") + "/kWh " + stringResource(R.string.mine_charge_min), INK)
     }
+    // with no car chosen yet, the invitation to pick one (the tiles follow the car's plugs once there is one)
+    if (car.model == null) CarPill(car, onCar)
     if (shown.isEmpty()) {
         val offline = result?.online == false
-        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Symbol(if (result == null) "ui.refresh" else "ui.charge", tint = Color(0xFF8A8F98), size = 36.dp)
-            Text(stringResource(if (result == null) R.string.kit_loading else R.string.mine_charge_none), style = mt(15f, 800), color = Ink)
-            if (result != null) Text(stringResource(if (offline) R.string.mine_charge_none_offline else R.string.mine_charge_none_text), style = mt(12f, 400, line = 16f), color = Color(0xFF676D7C), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-            if (offline) Row(Modifier.height(40.dp).clip(CircleShape).background(Ink).clickable(onClick = onDownload).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Symbol("ui.download", tint = Color.White, size = 16.dp)
-                Text(stringResource(R.string.mine_charge_download), style = mt(13f, 800), color = Color.White)
-            }
-        }
+        MineState(
+            if (result == null) "ui.refresh" else "ui.charge", stringResource(if (result == null) R.string.kit_loading else R.string.mine_charge_none),
+            text = if (result != null) stringResource(if (offline) R.string.mine_charge_none_offline else R.string.mine_charge_none_text) else null, tint = Color(0xFF8A8F98),
+            action = if (offline) ({ TextPill(stringResource(R.string.mine_charge_download), bt(13f, 800, 17f), INK, WHITE, h = 40f, padH = 16f, symbol = "ui.download", symbolSize = 16f, gap = 6f, onClick = onDownload) }) else null,
+        )
     } else {
         PowerMix(shown)
         for ((i, c) in shown.take(2).withIndex()) SiteCard(c, car, highlight = i == 0, onClick = { onPick(c) })
-        if (shown.any { it.live }) Row(Modifier.clickable(onClick = onAvailable), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(10.dp).clip(CircleShape).background(if (availableOnly) Green else Color(0xFFD8D4CC)))
-            Text(stringResource(R.string.mine_charge_available_only), style = mt(12f, 700), color = Color(0xFF464C5A))
+        if (shown.any { it.live }) Row(Modifier.clickable(role = Role.Switch, onClick = onAvailable), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(10.dp).bbox(if (availableOnly) 0xFF22A85C else 0xFFD8D4CC, cr(5f)))
+            BText(stringResource(R.string.mine_charge_available_only), bt(12f, 700, 15.5f), 0xFF464C5A)
         }
     }
 }
 
 @Composable
-private fun Stat(value: String, label: String, colour: Color) {
-    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(value, style = mt(26f, 900, tabular = true, line = 28f), color = colour)
-        Text(label, style = mt(12f, 700, line = 16f), color = Color(0xFF676D7C), modifier = Modifier.padding(bottom = 2.dp))
+private fun RowScope.Stat(value: String, label: String, colour: Long) {
+    Row(Modifier.alignByBaseline(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        BText(value, bt(26f, 900, 33.5f, tnum = true), colour, Modifier.alignByBaseline())
+        BText(label, bt(12f, 700, 15.5f, tnum = true), 0xFF676D7C, Modifier.alignByBaseline())
     }
 }
 
-/** The car as a small pill: its charge and range, or an invitation to pick one. */
+/** The car as a small pill (34 high, pale): its charge and range, or an invitation to pick one. */
 @Composable
 private fun CarPill(car: Car, onClick: () -> Unit) {
     val units by LocalServices.current.settings.units.collectAsStateWithLifecycle(Units.METRIC)
     val text = if (car.model != null) "${(car.soc * 100).roundToInt()}%" + (car.rangeKm?.let { " · ${GoFormat.distance(it * 1000.0, units)}" } ?: "") else stringResource(R.string.mine_car_pick)
-    Row(
-        Modifier.height(34.dp).clip(CircleShape).background(Color(0xFFF1EEE8)).clickable(onClick = onClick).padding(horizontal = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Symbol("drop.battery", tint = Ink, size = 18.dp)
-        Text(text, style = mt(12f, 800, tabular = true), color = Ink, maxLines = 1)
-    }
+    TextPill(text, bt(12f, 800, 15.5f, tnum = true), 0xFFF1EEE8, INK, h = 34f, padH = 10f, symbol = "drop.battery", symbolSize = 18f, gap = 6f, tint = INK, onClick = onClick)
 }
 
-/** The bar of the Plugs sheet: the sites by power band, widths as their numbers, with the count under each. */
+/** The bar of the Plugs sheet: 12 px, radius 6, the bands 3 px apart as wide as their counts, and under it each band and "×n" (11, 800). */
 @Composable
 private fun PowerMix(list: List<Charger>) {
     val mix = ChargeModel.mix(list)
     val description = mix.joinToString(", ") { "${it.second} × ${it.first.label}" }
     Column(Modifier.fillMaxWidth().semantics { contentDescription = description }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-            for ((b, n) in mix) Box(Modifier.weight(n.toFloat()).height(12.dp).background(Color(b.colour)))
+        Row(Modifier.fillMaxWidth().height(12.dp).bbox(r = cr(6f)), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+            for ((b, n) in mix) Box(Modifier.weight(n.toFloat()).height(12.dp).bbox(b.colour))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
             for ((b, n) in mix) Row(Modifier.weight(n.toFloat()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(b.label, style = mt(11f, 800, tabular = true), color = Color(0xFF464C5A), maxLines = 1, softWrap = false)
-                Text("×$n", style = mt(11f, 800, tabular = true), color = Color(0xFF8A8F98), maxLines = 1, softWrap = false)
+                BText(b.label, bt(11f, 800, 14f, tnum = true), 0xFF464C5A)
+                BText("×$n", bt(11f, 800, 14f, tnum = true), 0xFF8A8F98)
             }
         }
     }
 }
 
-/** A site as a card: the power as a disc, its name, what is known of it, how far and how many are free. */
+/**
+ * A site as the board's cards (64 high, radius 18, 12 px in): the nearest on cream ringed in its band's colour, the rest pale;
+ * the power as a 44 px disc ("150" 13, 900 over "kW" 9, 900), its name (15, 800) and what is known (12), how far and how many are free.
+ */
 @Composable
 private fun SiteCard(c: Charger, car: Car, highlight: Boolean, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(18.dp)
-    val colour = Color(if (c.busy) PowerBand.UNKNOWN.colour else c.band.colour)
+    val colour = if (c.busy) PowerBand.UNKNOWN.colour else c.band.colour
     val walkMin = c.distanceM?.let { (it * 1.3 / 1.35 / 60).roundToInt().coerceAtLeast(1) }
     Row(
-        Modifier.fillMaxWidth().height(64.dp).clip(shape).then(if (highlight) Modifier.background(Color(0xFFFFF4E8)).border(2.dp, colour, shape) else Modifier.background(Color(0xFFF4F5F7))).clickable(onClick = onClick).padding(horizontal = 12.dp),
+        Modifier.fillMaxWidth().height(64.dp)
+            .bbox(if (highlight) 0xFFFFF4E8 else 0xFFF4F5F7, cr(18f), if (highlight) listOf(CssShadow(0f, 0f, 0f, 2f, colour)) else emptyList(), clip = false)
+            .clickable(role = Role.Button, onClick = onClick).padding(horizontal = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.size(44.dp).clip(CircleShape).background(colour), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Column(Modifier.size(44.dp).bbox(colour, cr(22f)), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             if (c.kw != null) {
-                Text("${c.kw.roundToInt()}", style = mt(13f, 900, tabular = true, line = 13f), color = Color.White)
-                Text("kW", style = mt(9f, 700, line = 9f), color = Color.White)
-            } else Symbol("ui.charge", tint = Color.White, size = 22.dp)
+                BText("${c.kw.roundToInt()}", bt(13f, 900, 13f, tnum = true), WHITE)
+                BText("kW", bt(9f, 900, 9f), WHITE)
+            } else MSy("ui.charge", 22f, WHITE)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(c.name.ifBlank { stringResource(R.string.mine_charge_site) }, style = mt(15f, 800), color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(detail(c), style = mt(12f, 400, tabular = true), color = Color(0xFF676D7C), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BText(c.name.ifBlank { stringResource(R.string.mine_charge_site) }, bt(15f, 800, 19.5f), INK)
+            BText(detail(c), bt(12f, 400, 15.5f, tnum = true), 0xFF676D7C)
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            if (walkMin != null) Text("$walkMin′", style = mt(15f, 900, tabular = true), color = Ink)
-            if (c.live) Text(stringResource(R.string.mine_charge_free_of, c.free ?: 0, c.points ?: 0), style = mt(12f, 800, tabular = true), color = if (c.busy) Color(0xFFC8322A) else Color(0xFF12663A))
-            else c.points?.let { Text(pluralStringResource(R.plurals.mine_n_points, it, it), style = mt(12f, 700, tabular = true), color = Color(0xFF676D7C)) }
+            if (walkMin != null) BText("$walkMin′", bt(15f, 900, 19.5f, tnum = true), INK)
+            if (c.live) BText(stringResource(R.string.mine_charge_free_of, c.free ?: 0, c.points ?: 0), bt(12f, 800, 15.5f, tnum = true), if (c.busy) 0xFFC8322A else 0xFF12663A)
+            else c.points?.let { BText(pluralStringResource(R.plurals.mine_n_points, it, it), bt(12f, 700, 15.5f, tnum = true), 0xFF676D7C) }
         }
     }
 }
@@ -367,7 +384,7 @@ private fun CardSheet(c: Charger, car: Car, here: LatLon, onClose: () -> Unit, o
     LaunchedEffect(c.key) {
         nearby = withContext(Dispatchers.IO) {
             buildList {
-                for ((id, symbol) in listOf("cafe" to "place.cafe", "toilet" to "need.toilet")) {
+                for ((id, symbol) in listOf("cafe" to "place.cafe", "toilet" to "need.toilet.2")) {
                     val found = runCatching { services.places.nearby(id, c.place.location, 250.0, 1).let { f -> f.firstOrNull { it.places.isNotEmpty() || it.error != null } } }.getOrNull()
                     if (found?.places?.isNotEmpty() == true) add(symbol)
                 }
@@ -375,35 +392,40 @@ private fun CardSheet(c: Charger, car: Car, here: LatLon, onClose: () -> Unit, o
         }
     }
     val driveMin = c.distanceM?.let { (it * 1.4 / 8.3 / 60).roundToInt().coerceAtLeast(1) }
+    // the head: the operator's 48 px tile (radius 14), 12 px on the name (18, 600) over the drive and the price (13, grey),
+    // and the LIVE chip (26 high, a 7 px dot)
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable(onClick = onClose)) {
         // The operator's own logo from the brand index when it knows it; else the board's tile with the operator's initial
         // (or the bolt when nobody is named).
         val brand = remember(c.place) { Brands.forTags(c.place.tags) }
         val initial = (c.operator ?: c.name).firstOrNull()?.uppercase()
         if (brand != null) BrandLogo(brand, 48.dp)
-        else Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF10233F)), contentAlignment = Alignment.Center) {
-            if (initial != null) Text(initial, style = androidx.compose.ui.text.TextStyle(fontFamily = SerifFamily, fontStyle = FontStyle.Italic, fontSize = 30.sp, lineHeight = 30.sp), color = Color(0xFF7EE0A4))
-            else Symbol("ui.charge", tint = Color(0xFF7EE0A4), size = 26.dp)
+        else Box(Modifier.size(48.dp).bbox(0xFF10233F, cr(14f)), contentAlignment = Alignment.Center) {
+            if (initial != null) BText(initial, bt(30f, 400, 30f, SERIF, italic = true), 0xFF7EE0A4)
+            else MSy("ui.charge", 26f, 0xFF7EE0A4)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(c.name.ifBlank { c.operator ?: stringResource(R.string.mine_charge_site) }, style = mt(18f, 600), color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BText(c.name.ifBlank { c.operator ?: stringResource(R.string.mine_charge_site) }, bt(18f, 600, 23.5f), INK)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (driveMin != null) Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Symbol("mode.car", tint = Color(0xFF464C5A), size = 13.dp)
-                    Text("$driveMin′", style = mt(13f, 500, tabular = true), color = Color(0xFF464C5A))
+                    MSy("mode.car.2", 13f, 0xFF464C5A)
+                    BText("$driveMin′", bt(13f, 400, 17f, tnum = true), 0xFF464C5A)
                 }
-                c.pricePerKwh?.let { Text(String.format(Locale.ROOT, "%s%.2f/kWh", if (c.currency == "EUR") "€" else "", it), style = mt(13f, 500, tabular = true), color = Color(0xFF464C5A)) }
-                if (c.plugAndCharge) Symbol("ui.check", tint = Color(0xFF178A4E), size = 13.dp)
+                c.pricePerKwh?.let { BText(String.format(Locale.ROOT, "%s%.2f/kWh", if (c.currency == "EUR") "€" else "", it), bt(13f, 400, 17f, tnum = true), 0xFF464C5A) }
+                if (c.plugAndCharge) Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    MSy("fact.socket", 13f, 0xFF178A4E)
+                    MSy("ui.check", 12f, 0xFF178A4E)
+                }
             }
         }
-        if (c.live) Row(Modifier.height(26.dp).clip(CircleShape).background(Color(0xFFE7F4EC)).padding(horizontal = 9.dp), horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(7.dp).clip(CircleShape).background(Green))
-            Text(stringResource(R.string.mine_charge_live), style = mt(12f, 700), color = Color(0xFF12663A))
+        if (c.live) Row(Modifier.height(26.dp).bbox(0xFFE7F4EC, cr(13f)).padding(horizontal = 9.dp), horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(7.dp).bbox(0xFF22A85C, cr(4f)))
+            BText(stringResource(R.string.mine_charge_live), bt(12f, 700, 15.5f), 0xFF12663A)
         }
     }
-    // The plugs.
+    // The plugs: white cards (radius 18, a 1 px ring) two to a row, 10 px apart.
     val shown = c.sockets.ifEmpty { emptyList() }
-    if (shown.isEmpty()) Text(stringResource(R.string.mine_charge_no_sockets), style = mt(12f, 400, line = 16f), color = Color(0xFF676D7C))
+    if (shown.isEmpty()) BText(stringResource(R.string.mine_charge_no_sockets), bt(12f, 400, 15.5f), 0xFF676D7C, lines = 3)
     else Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         for (row in shown.take(4).chunked(2)) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             for (s in row) SocketCard(s, c, Modifier.weight(1f))
@@ -416,72 +438,66 @@ private fun CardSheet(c: Charger, car: Car, here: LatLon, onClose: () -> Unit, o
     val kw = socket?.kw ?: c.kw
     val minutes = if (model != null && socket != null && kw != null && kw > 0) ChargeModel.chargeMinutes(model, car.soc, 0.8, kw, socket.type in Sockets.DC) else null
     if (model != null && minutes != null && car.soc < 0.8) PlanBar(car.soc, minutes)
-    else Row(Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFFF1EEE8)).clickable(onClick = onCar).padding(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Symbol("drop.battery", tint = Ink, size = 20.dp)
-        Text(stringResource(if (model == null) R.string.mine_charge_pick_car else R.string.mine_charge_no_plan), style = mt(13f, 700), color = Ink)
+    else Row(Modifier.fillMaxWidth().height(44.dp).bbox(0xFFF1EEE8, cr(14f)).clickable(role = Role.Button, onClick = onCar).padding(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        MSy("drop.battery", 20f, INK)
+        BText(stringResource(if (model == null) R.string.mine_charge_pick_car else R.string.mine_charge_no_plan), bt(13f, 700, 17f), INK)
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        for (s in nearby) Box(Modifier.size(40.dp).clip(CircleShape).background(Color(0xFFF1EEE8)), contentAlignment = Alignment.Center) { Symbol(s, tint = Color(0xFF464C5A), size = 18.dp) }
+    // What is near while you wait (40 px rounds), the Chargemap link, and the way there (52 high, the board's blue).
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        for (s in nearby) Box(Modifier.size(40.dp).bbox(0xFFF1EEE8, cr(20f)), contentAlignment = Alignment.Center) { MSy(s, 18f, 0xFF464C5A) }
         Spacer(Modifier.weight(1f))
-        Text(stringResource(R.string.mine_charge_chargemap), style = mt(12f, 700), color = Color(0xFF2E5BFF), modifier = Modifier.clickable(onClick = onMore).padding(8.dp))
+        BText(stringResource(R.string.mine_charge_chargemap), bt(12f, 700, 15.5f), 0xFF2E5BFF, Modifier.clickable(role = Role.Button, onClick = onMore).padding(8.dp))
         Row(
-            Modifier.height(52.dp).clip(CircleShape).background(Color(0xFF2E5BFF)).clickable { onGo(c) }.padding(horizontal = 22.dp),
+            Modifier.height(52.dp).bbox(0xFF2E5BFF, cr(26f)).clickable(role = Role.Button) { onGo(c) }.padding(horizontal = 22.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
         ) {
-            Symbol("tab.go", tint = Color.White, size = 20.dp)
-            if (driveMin != null) Text("$driveMin′", style = mt(16f, 600, tabular = true), color = Color.White)
+            MSy("tab.go", 20f, WHITE)
+            if (driveMin != null) BText("$driveMin′", bt(16f, 600, 20.5f, tnum = true), WHITE)
         }
     }
 }
 
-/** A plug on the card: the face as the board draws it, a dot per point (green free, amber busy, grey unknown) and the kW. */
+/** A plug on the card (56 high, 12 px in): its face (30 × 36), 10 px on a dot per point (10 px, 3 apart: green free, amber busy, grey unknown) over the kW (13, 700). */
 @Composable
 private fun SocketCard(s: app.atlas.providers.Socket, c: Charger, modifier: Modifier) {
-    val art = when (s.type) { "type2_combo" -> "plug.ccs2.face"; "type2", "type2_cable" -> "plug.type2.face"; else -> null }
+    val face = ChargeModel.PLUGS.firstOrNull { s.type in it.types }?.face
     val live = c.place.extra["status:${s.type}"]?.split('/')?.mapNotNull { it.toIntOrNull() }?.takeIf { it.size == 2 }
     val label = "${plugName(s.type)}${s.kw?.let { ", ${it.roundToInt()} kW" } ?: ""}"
     Row(
-        modifier.clip(RoundedCornerShape(18.dp)).background(Color.White).border(1.dp, Color(0xFFECE8E1), RoundedCornerShape(18.dp)).padding(horizontal = 12.dp, vertical = 10.dp).semantics { contentDescription = label },
+        modifier.height(56.dp).bbox(WHITE, cr(18f), listOf(CssShadow(0f, 0f, 0f, 1f, 0xFFECE8E1))).padding(horizontal = 12.dp).semantics { contentDescription = label },
         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (art != null) MineArtImage(art, 36.dp) else Symbol("fact.socket", tint = Ink, size = 30.dp)
+        if (face != null) MSy(face, 30f, INK, h = 36f) else MSy("fact.socket", 30f, INK)
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                 val total = (live?.get(1) ?: s.count).coerceIn(1, 8)
                 val free = live?.get(0)
-                for (i in 0 until total) Box(Modifier.size(10.dp).clip(CircleShape).background(if (free == null) Color(0xFFC9C5BC) else if (i < free) Green else Amber))
+                for (i in 0 until total) Box(Modifier.size(10.dp).bbox(if (free == null) 0xFFC9C5BC else if (i < free) 0xFF22A85C else 0xFFF2A71B, cr(5f)))
             }
-            Text(s.kw?.let { "${it.roundToInt()} kW" } ?: plugName(s.type), style = mt(13f, 700, tabular = true), color = Ink)
+            BText(s.kw?.let { "${it.roundToInt()} kW" } ?: plugName(s.type), bt(13f, 700, 17f, tnum = true), INK)
         }
     }
 }
 
-/** "37% → 80% in 20′": the charge now in amber, what one stop adds in green stripes. */
+/** "37% → 80% in 20′" as the board's bar: the labels (13, 600), 6 px, then 14 px of pale with the charge now in amber and what one stop adds in green stripes (10 px on, 2 off). */
 @Composable
 private fun PlanBar(soc: Double, minutes: Double) {
     val now = (soc * 100).roundToInt()
     val cd = stringResource(R.string.mine_charge_plan_cd, now, 80, ChargeModel.minutes(minutes))
     Column(Modifier.fillMaxWidth().semantics { contentDescription = cd }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("$now%", style = mt(13f, 600, tabular = true), color = Color(0xFF9A5B00))
+            BText("$now%", bt(13f, 600, 17f, tnum = true), 0xFF9A5B00)
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Symbol("ui.clock", tint = Ink, size = 13.dp)
-                Text(ChargeModel.minutes(minutes), style = mt(13f, 600, tabular = true), color = Ink)
+                MSy("ui.clock", 13f, INK)
+                BText(ChargeModel.minutes(minutes), bt(13f, 600, 17f, tnum = true), INK)
             }
-            Text("80%", style = mt(13f, 600, tabular = true), color = Color(0xFF178A4E))
+            BText("80%", bt(13f, 600, 17f, tnum = true), 0xFF178A4E)
         }
-        Canvas(Modifier.fillMaxWidth().height(14.dp).clip(RoundedCornerShape(7.dp))) {
-            drawRect(Color(0xFFECE8E1))
-            drawRect(Amber, Offset.Zero, androidx.compose.ui.geometry.Size(size.width * soc.toFloat(), size.height))
-            val x0 = size.width * soc.toFloat()
-            val x1 = size.width * 0.8f
-            var x = x0
-            var stripe = true
-            while (x < x1) {
-                val w = minOf(if (stripe) 10.dp.toPx() else 2.dp.toPx(), x1 - x)
-                drawRect(if (stripe) Color(0xFF22A85C) else Color(0xFF3FC27A), Offset(x, 0f), androidx.compose.ui.geometry.Size(w, size.height))
-                x += w
-                stripe = !stripe
+        Box(Modifier.fillMaxWidth().height(14.dp).bbox(0xFFECE8E1, cr(7f))) {
+            Row(Modifier.fillMaxSize()) {
+                Box(Modifier.fillMaxHeight().weight(soc.toFloat().coerceIn(0.001f, 1f)).bbox(0xFFF2A71B))
+                Box(Modifier.fillMaxHeight().weight((0.8f - soc.toFloat()).coerceAtLeast(0.001f)).bbox(grad = listOf(cssRepeatingLinear(90f, 12f, 0f to 0xFF22A85C, 10f to 0xFF22A85C, 10f to 0xFF3FC27A, 12f to 0xFF3FC27A))))
+                Spacer(Modifier.fillMaxHeight().weight(0.2f))
             }
         }
     }

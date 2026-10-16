@@ -39,6 +39,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.semantics.heading
+import app.atlas.ui.kit.cssLinear
+import app.atlas.ui.kit.cssRadial
+import app.atlas.ui.kit.cssRepeatingLinear
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.nav.Dest
@@ -48,7 +54,8 @@ import app.atlas.services.Units
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.appClock
 
-private val WatchInk = Color(0xFF1C1F24)
+/* The Watch board's ink (`canvas/project/Watch.dc.html`). */
+private const val WATCH_INK = 0xFF1C1F24
 
 /**
  * The Watch board, "On the wrist": a steel smartwatch showing the next turn of the trip being guided (with no trip, a
@@ -72,58 +79,59 @@ fun WatchScreen(args: Dest.Watch, nav: Navigator) {
     val second = if (state == null) stringResource(R.string.mine_watch_preview) else listOfNotNull(street, eta).joinToString(" · ")
     val progress = state?.progress?.toFloat() ?: 0.65f
     val description = stringResource(R.string.mine_watch_cd, distance, second)
-    BoardPage(
-        title = stringResource(R.string.mine_watch_title),
-        onBack = { nav.back() },
-        background = MineTone.of(0xFFE8E4DB, 0xFF111214),
-        ink = WatchInk.let { Atlas.colors.ink },
-        titleSize = 32f,
-        scroll = true,
-        gap = 0.dp,
-        bottomPadding = 20.dp,
-    ) {
-        Box(Modifier.fillMaxWidth().height(500.dp)) {
-            // The strap, its ribbing and the crown.
-            Canvas(Modifier.fillMaxSize()) {
-                val cx = size.width / 2
-                val strap = Size(140.dp.toPx(), 480.dp.toPx())
-                drawRoundRect(Brush.horizontalGradient(listOf(Color(0xFF262A30), Color(0xFF3A3F46), Color(0xFF262A30)), cx - strap.width / 2, cx + strap.width / 2), Offset(cx - strap.width / 2, 0f), strap, CornerRadius(30.dp.toPx()))
-                var y = 14.dp.toPx()
-                while (y + 20.dp.toPx() <= 450.dp.toPx()) { drawRect(Color(0x40000000), Offset(cx - strap.width / 2 + 0f, y + 18.dp.toPx()), Size(strap.width, 2.dp.toPx())); y += 20.dp.toPx() }
-                drawRoundRect(Brush.horizontalGradient(listOf(Color(0xFF8A929C), Color(0xFFE5E8EC)), cx + 150.dp.toPx(), cx + 164.dp.toPx()), Offset(cx + 146.dp.toPx(), 222.dp.toPx()), Size(14.dp.toPx(), 34.dp.toPx()), CornerRadius(4.dp.toPx()))
+    // the board's page: a radial light at 50 % 35 % from #F6F4EF to #DDD8CE at 75 %
+    Box(Modifier.fillMaxSize().bbox(0xFFDDD8CE, grad = listOf(cssRadial(false, 206f, 320.25f, 0f to 0xFFF6F4EF, 0.75f to 0xFFDDD8CE)))) {
+        BoardPage(
+            title = stringResource(R.string.mine_watch_title),
+            onBack = { nav.back() },
+            background = Color.Transparent,
+            ink = Color(WATCH_INK),
+            titleSize = 32f,
+            top = 10.dp,
+            gap = 0.dp,
+            bottomPadding = 20.dp,
+        ) {
+            Box(Modifier.fillMaxWidth().height(504.dp)) {
+                // The strap (140 × 480, radius 30, its sheen across), its ribbing every 20 px and the crown.
+                Box(Modifier.offset(120.dp, 0.dp).size(140.dp, 480.dp).bbox(r = cr(30f), grad = listOf(cssLinear(90f, 0f to 0xFF262A30, 0.5f to 0xFF3A3F46, 1f to 0xFF262A30))))
+                Box(Modifier.offset(120.dp, 14.dp).size(140.dp, 452.dp).bbox(r = cr(26f), grad = listOf(cssRepeatingLinear(180f, 20f, 0f to 0x00000000, 18f to 0x00000000, 18f to 0x40000000, 20f to 0x40000000))))
+                Box(Modifier.offset(336.dp, 222.dp).size(14.dp, 34.dp).bbox(r = cr(4f), grad = listOf(cssLinear(90f, 0f to 0xFF8A929C, 1f to 0xFFE5E8EC))))
+                WatchFace(glyph, distance, second, progress, Modifier.offset(40.dp, 90.dp).size(300.dp).semantics { contentDescription = description })
             }
-            WatchFace(glyph, distance, second, progress, Modifier.align(Alignment.Center).offset(y = 0.dp).size(300.dp).semantics { contentDescription = description })
+            Legend(onFeel = { g -> services.voice.play(WatchModel.haptic(g)) })
         }
-        Spacer12()
-        Legend(onFeel = { g -> services.voice.play(WatchModel.haptic(g)) })
     }
 }
 
-@Composable
-private fun Spacer12() { Box(Modifier.height(12.dp)) }
-
-/** The watch itself: steel bezel, 60 ticks, a progress ring, the turn arrow, the distance and the street and time. */
+/** The watch itself: steel bezel, 60 ticks, a progress ring, the pulses, the turn arrow, the distance and the street and time. */
 @Composable
 private fun WatchFace(glyph: WatchModel.Glyph, distance: String, second: String, progress: Float, modifier: Modifier) {
+    val measurer = rememberTextMeasurer()
+    val big = bt(30f, 900)
+    val small = bt(13f, 700)
     Canvas(modifier) {
         val k = size.minDimension / 300f
         fun p(x: Float, y: Float) = Offset(x * k, y * k)
-        drawCircle(Brush.linearGradient(0f to Color(0xFFF2F4F6), 0.45f to Color(0xFF8A929C), 1f to Color(0xFFD5D9DF), start = p(0f, 0f), end = p(300f, 300f)), 148f * k, p(150f, 150f))
+        // SVG text, its baseline at y and centred on x, the board's face at its size in the 300-unit square
+        fun text(s: String, x: Float, y: Float, style: androidx.compose.ui.text.TextStyle, colour: Color) {
+            val t = measurer.measure(s, style.copy(fontSize = style.fontSize * (k / density)))
+            drawText(t, colour, Offset(p(x, y).x - t.size.width / 2f, p(x, y).y - t.firstBaseline))
+        }
+        drawCircle(Brush.linearGradient(0f to Color(0xFFF2F4F6), 0.45f to Color(0xFF8A929C), 1f to Color(0xFFD5D9DF), start = p(2f, 2f), end = p(298f, 298f)), 148f * k, p(150f, 150f))
         drawCircle(Color(0xFF050608), 136f * k, p(150f, 150f))
         for ((i, t) in WatchModel.ticks().withIndex()) drawLine(Color(0xFF8A8F98), p(t[0], t[1]), p(t[2], t[3]), (if (i % 5 == 0) 2f else 1f) * k)
         drawCircle(Color(0xFF1E2A22), 112f * k, p(150f, 150f), style = Stroke(8f * k))
-        val (ex, ey, big) = WatchModel.arcEnd(progress)
         val arc = Path().apply {
             moveTo(150f * k, 38f * k)
             arcTo(androidx.compose.ui.geometry.Rect(p(38f, 38f), p(262f, 262f)), -90f, progress.coerceIn(0f, 0.9999f) * 360f, false)
         }
         drawPath(arc, Color(0xFF3FCF8E), style = Stroke(8f * k, cap = StrokeCap.Round))
-        // The dots over the arrow: how many pulses the turn is felt with.
+        // The pulses the turn is felt with, as the board's "● ● ●" (12 px, its baseline at 80) draws them: dots 10.5 apart.
         val n = WatchModel.dots(glyph)
-        for (i in 0 until n) drawCircle(Color(0xFF3FCF8E), 3f * k, p(150f + (i - (n - 1) / 2f) * 14f, 78f))
+        for (i in 0 until n) drawCircle(Color(0xFF3FCF8E), 2.7f * k, p(150f + (i - (n - 1) / 2f) * 10.5f, 75.7f))
         arrow(glyph, k)
-        text(distance, p(150f, 216f), 30f * k, Color.White, bold = true)
-        text(second, p(150f, 236f), 13f * k, Color(0xFF9AA2B2), bold = true)
+        text(distance, 150f, 216f, big, Color.White)
+        text(second, 150f, 236f, small, Color(0xFF9AA2B2))
     }
 }
 
@@ -161,42 +169,34 @@ private fun DrawScope.arrow(g: WatchModel.Glyph, k: Float) {
     }
 }
 
-private fun DrawScope.text(s: String, at: Offset, size: Float, colour: Color, bold: Boolean) {
-    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = size
-        color = colour.toArgb()
-        textAlign = android.graphics.Paint.Align.CENTER
-        typeface = if (bold) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
-    }
-    drawContext.canvas.nativeCanvas.drawText(s, at.x, at.y, paint)
-}
 
-/** "Feel the way": a rhythm of dots and bars beside what it means; tap one to feel it on the phone. */
+/**
+ * "Feel the way", as the board's card (radius 24, 16 px in, 12 below): the label (12, 800, 1.44 px apart), then a row for
+ * each rhythm (33 px: a hairline and 10 px around 12 px dots and 34 px bars, 6 px apart) beside what it means (14, 700),
+ * and the note (12, grey). Tap a row to feel it on the phone.
+ */
 @Composable
 private fun Legend(onFeel: (WatchModel.Glyph) -> Unit) {
-    val c = Atlas.colors
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(c.card).padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 6.dp)) {
-        SectionLabel(stringResource(R.string.mine_watch_feel), colour = MineTone.steel)
-        Column(Modifier.padding(top = 8.dp)) {
-            for ((g, label) in listOf(
-                WatchModel.Glyph.LEFT to R.string.mine_watch_left,
-                WatchModel.Glyph.RIGHT to R.string.mine_watch_right,
-                WatchModel.Glyph.U_TURN to R.string.mine_watch_wrong,
-                WatchModel.Glyph.ARRIVE to R.string.mine_watch_arrived,
-            )) {
-                val name = stringResource(label)
-                Row(
-                    Modifier.fillMaxWidth().height(32.dp).clickable(onClickLabel = stringResource(R.string.mine_watch_feel_it)) { onFeel(g) }.semantics { contentDescription = name },
-                    horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Row(Modifier.width(110.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        for (long in WatchModel.rhythm(g)) Box(Modifier.size(if (long) 34.dp else 12.dp, 12.dp).clip(CircleShape).background(c.ink))
-                    }
-                    Text(name, style = mt(14f, 700), color = c.ink)
+    Column(Modifier.fillMaxWidth().bbox(WHITE, cr(24f)).padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 12.dp)) {
+        BText(stringResource(R.string.mine_watch_feel).uppercase(), bt(12f, 800, 15.5f, spacing = 1.44f), LABEL, Modifier.padding(bottom = 9.dp).semantics { heading() })
+        for ((g, label) in listOf(
+            WatchModel.Glyph.LEFT to R.string.mine_watch_left,
+            WatchModel.Glyph.RIGHT to R.string.mine_watch_right,
+            WatchModel.Glyph.U_TURN to R.string.mine_watch_wrong,
+            WatchModel.Glyph.ARRIVE to R.string.mine_watch_arrived,
+        )) {
+            val name = stringResource(label)
+            Row(
+                Modifier.fillMaxWidth().bbox(border = hairTop(0xFFEEEAE0)).clickable(onClickLabel = stringResource(R.string.mine_watch_feel_it)) { onFeel(g) }
+                    .semantics { contentDescription = name }.padding(top = 8.dp, bottom = 7.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(Modifier.width(110.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    for (long in WatchModel.rhythm(g)) Box(Modifier.size(if (long) 34.dp else 12.dp, 12.dp).bbox(WATCH_INK, cr(6f)))
                 }
-                Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
+                BText(name, bt(14f, 700, 18f), WATCH_INK)
             }
         }
-        Text(stringResource(R.string.mine_watch_speeds), style = mt(12f, 400, line = 16f), color = c.inkSoft, modifier = Modifier.padding(top = 8.dp, bottom = 6.dp))
+        BText(stringResource(R.string.mine_watch_speeds), bt(12f, 400, 15.5f), LABEL, Modifier.padding(top = 8.dp), lines = 3)
     }
 }

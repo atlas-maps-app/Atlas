@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -46,6 +47,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.progressBarRangeInfo
@@ -64,8 +66,7 @@ import app.atlas.services.RegionLayer
 import app.atlas.services.RegionRequest
 import app.atlas.services.SettingsKeys
 import app.atlas.services.Units
-import app.atlas.ui.kit.Atlas
-import app.atlas.ui.kit.Symbol
+import app.atlas.ui.kit.Argb
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.mine.offline.EstimateCard
 import app.atlas.ui.mine.offline.MapKind
@@ -79,16 +80,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 
-private val Soft = Color(0xFF5A5F6C)
-/** The dark pill of the boards: the theme's pill colour, light by night, with the colour of its text. */
-private val Dark: Color @Composable get() = Atlas.colors.pill
-private val OnDark: Color @Composable get() = Atlas.colors.onPill
 private val STEPS = 3
 
 /**
- * Welcome: three steps, each skippable. Where you are (the location permission, said plainly), taking the area around you
- * offline (the board's map, what it costs layer by layer, Wi-Fi only), and how Atlas speaks and measures. Finishing or
- * skipping marks the welcome as seen and goes on to the map.
+ * Welcome, as the Welcome board: three steps, each skippable. Where you are (the location permission, said plainly), taking
+ * the area around you offline (the board's map of it, what it costs layer by layer, Wi-Fi only), and how Atlas speaks and
+ * measures. Finishing or skipping marks the welcome as seen and goes on to the map.
  */
 @Composable
 fun OnboardingScreen(args: Dest.Onboarding, nav: Navigator) {
@@ -100,18 +97,15 @@ fun OnboardingScreen(args: Dest.Onboarding, nav: Navigator) {
         if (!nav.back()) nav.tab(app.atlas.nav.Tab.MAP)
     }
     val progress = stringResource(R.string.mine_welcome_step_cd, step + 1, STEPS)
-    Box(Modifier.fillMaxSize().background(MineTone.of(0xFFF1F3F6, 0xFF101114)).windowInsetsPadding(WindowInsets.statusBars)) {
+    Box(Modifier.fillMaxSize().background(Color(PAGE))) {
+        // The steps: three bars of 6 px at y 48, 6 px apart, green when done, ink for this one, grey to come.
         Row(
-            Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 24.dp).semantics { contentDescription = progress; progressBarRangeInfo = ProgressBarRangeInfo((step + 1).toFloat(), 1f..STEPS.toFloat(), STEPS - 1) },
+            Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 48.dp + shift()).semantics { contentDescription = progress; progressBarRangeInfo = ProgressBarRangeInfo((step + 1).toFloat(), 1f..STEPS.toFloat(), STEPS - 1) },
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            for (i in 0 until STEPS) Box(
-                Modifier.weight(1f).height(6.dp).clip(CircleShape).background(
-                    when { i < step -> MineTone.green; i == step -> MineTone.of(0xFF14161B, 0xFFEDEEF1); else -> MineTone.of(0xFFD5D8DE, 0xFF3A3E46) },
-                ),
-            )
+            for (i in 0 until STEPS) Box(Modifier.weight(1f).height(6.dp).bbox(if (i < step) 0xFF1E9E5A else if (i == step) INK else 0xFFD5D8DE, cr(3f)))
         }
-        Column(Modifier.fillMaxSize().padding(top = 48.dp).windowInsetsPadding(WindowInsets.navigationBars)) {
+        Column(Modifier.fillMaxSize().padding(top = 54.dp + shift())) {
             when (step) {
                 0 -> LocationStep(onNext = { step = 1 }, onSkip = { step = 1 })
                 1 -> RegionStep(args, onNext = { step = 2 })
@@ -121,28 +115,37 @@ fun OnboardingScreen(args: Dest.Onboarding, nav: Navigator) {
     }
 }
 
+/**
+ * A step's head as the board sets it: the serif title's line boxes from y 72 (38 on 39.9, 24 px in), the lead from y 158
+ * (15 on 21, grey) or under a longer title, then [gap] to what follows.
+ */
 @Composable
 private fun StepHead(title: String, text: String) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(title, style = serifTitle(38f, italic = false), color = Atlas.colors.ink, modifier = Modifier.semantics { heading() })
-        Text(text, style = mt(15f, 400, line = 21f), color = MineTone.of(0xFF5A5F6C, 0xFFA0A5B1))
+    Column(Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 18.dp)) {
+        Box(Modifier.heightIn(min = 86.dp)) {
+            BText(title, bt(38f, 400, 39.9f, SERIF), INK, Modifier.semantics { heading() }, lines = 3)
+        }
+        BText(text, bt(15f, 400, 21f), SOFT, lines = 6)
     }
 }
 
-/** The foot of a step: a light "Later" and a dark pill, as the board has them. */
+/** The foot of a step, 32 px from the bottom: "Later" on white (110 × 56) and the dark pill (15, 800 on 19.5), 8 px apart. */
 @Composable
 private fun Foot(later: String?, onLater: () -> Unit, next: String, onNext: () -> Unit, enabled: Boolean = true) {
-    Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 32.dp, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = foot(32f)), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         if (later != null) Box(
-            Modifier.width(110.dp).height(56.dp).clip(CircleShape).background(MineTone.of(0xFFFFFFFF, 0xFF1B1D22)).clickable(onClick = onLater),
+            Modifier.width(110.dp).height(56.dp).bbox(WHITE, cr(28f)).clickable(role = Role.Button, onClick = onLater),
             contentAlignment = Alignment.Center,
-        ) { Text(later, style = mt(15f, 800), color = Atlas.colors.ink) }
+        ) { BText(later, bt(15f, 800, 19.5f), INK) }
         Box(
-            Modifier.weight(1f).height(56.dp).clip(CircleShape).background(if (enabled) Dark else MineTone.of(0xFFD5D8DE, 0xFF3A3E46)).clickable(enabled = enabled, onClick = onNext),
+            Modifier.weight(1f).height(56.dp).bbox(if (enabled) INK else 0xFFD5D8DE, cr(28f)).clickable(enabled = enabled, role = Role.Button, onClick = onNext),
             contentAlignment = Alignment.Center,
-        ) { Text(next, style = mt(15f, 800), color = OnDark, maxLines = 1) }
+        ) { BText(next, bt(15f, 800, 19.5f), WHITE) }
     }
 }
+
+/** A white card of the Welcome board: radius 20, 12 px above and below, 14 at the sides. */
+private fun Modifier.welcomeCard(bg: Argb = WHITE): Modifier = this.fillMaxWidth().bbox(bg, cr(20f)).padding(horizontal = 14.dp, vertical = 12.dp)
 
 // ---- 1: where you are ----
 
@@ -161,28 +164,24 @@ private fun ColumnScope.LocationStep(onNext: () -> Unit, onSkip: () -> Unit) {
     val blocked = asked && !permitted && activity != null && !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.ACCESS_FINE_LOCATION)
     Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
         StepHead(stringResource(R.string.mine_welcome_loc_title), stringResource(R.string.mine_welcome_loc_text))
-        // Pin → phone → lock: where you are stays on this phone.
-        Row(Modifier.fillMaxWidth().padding(vertical = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-            Bubble("ui-map-pin", Atlas.colors.go)
-            Symbol("ui-arrow-right", tint = Atlas.colors.inkFaint, size = 22.dp)
-            Bubble("ui-smartphone", Atlas.colors.ink)
-            Symbol("ui-arrow-right", tint = Atlas.colors.inkFaint, size = 22.dp)
-            Bubble("ui-lock", MineTone.green)
+        // Pin → phone → lock: where you are stays on this phone (the board symbols, 30 px in 64 px rounds).
+        Row(Modifier.fillMaxWidth().padding(top = 22.dp, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+            Bubble("ui.pin.2", 0xFF2E7BFF)
+            MSy("ui.arrow-right", 22f, FAINT)
+            Bubble("ui.smartphone", INK)
+            MSy("ui.arrow-right", 22f, FAINT)
+            Bubble("ui.lock", 0xFF1E9E5A)
         }
         Column(Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            for ((symbol, text) in listOf("ui.search" to R.string.mine_welcome_loc_p1, "ui.route" to R.string.mine_welcome_loc_p2, "ui.offline" to R.string.mine_welcome_loc_p3)) {
-                val line = stringResource(text)
-                Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(MineTone.of(0xFFFFFFFF, 0xFF1B1D22)).padding(horizontal = 14.dp, vertical = 14.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Symbol(symbol, tint = Atlas.colors.ink, size = 22.dp)
-                    Text(line, style = mt(14f, 700, line = 19f), color = Atlas.colors.ink)
+            for ((symbol, text) in listOf("ui.search.2" to R.string.mine_welcome_loc_p1, "ui.route" to R.string.mine_welcome_loc_p2, "ui.no-signal.2" to R.string.mine_welcome_loc_p3)) {
+                Row(Modifier.welcomeCard(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    MSy(symbol, 22f, INK)
+                    BText(stringResource(text), bt(14f, 700, 18f), INK, lines = 2)
                 }
             }
             if (permitted) Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Symbol("ui.check", tint = MineTone.green, size = 18.dp, weight = 1.4f)
-                Text(stringResource(R.string.mine_welcome_loc_on), style = mt(14f, 800), color = MineTone.green)
+                MSy("ui.check", 18f, 0xFF1E9E5A)
+                BText(stringResource(R.string.mine_welcome_loc_on), bt(14f, 800, 18f), 0xFF1E9E5A)
             }
         }
     }
@@ -199,9 +198,10 @@ private fun ColumnScope.LocationStep(onNext: () -> Unit, onSkip: () -> Unit) {
     )
 }
 
+/** A 64 px round of [tint] at 14 % with its 30 px symbol. */
 @Composable
-private fun Bubble(symbol: String, tint: Color) {
-    Box(Modifier.size(64.dp).clip(CircleShape).background(tint.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) { Symbol(symbol, tint = tint, size = 30.dp) }
+private fun Bubble(symbol: String, tint: Argb) {
+    Box(Modifier.size(64.dp).bbox((tint and 0xFFFFFF) or 0x24000000, cr(32f)), contentAlignment = Alignment.Center) { MSy(symbol, 30f, tint) }
 }
 
 // ---- 2: the area around you ----
@@ -249,24 +249,21 @@ private fun ColumnScope.RegionStep(args: Dest.Onboarding, onNext: () -> Unit) {
     val cd = stringResource(R.string.mine_picker_map_cd)
     Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
         StepHead(stringResource(R.string.mine_welcome_take_title), stringResource(R.string.mine_welcome_take_text))
-        Column(Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // The board's map (348 × 270 at x 32, 22 px under the lead) of the area around you, the radius over its corner.
+        Box(Modifier.padding(start = 32.dp, end = 32.dp, top = 22.dp)) {
             PreviewMap(view, Modifier.fillMaxWidth(), dots = dots, frames = listOf(box), pin = centre, pinLabel = town, description = cd)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Row(Modifier.align(Alignment.BottomEnd).padding(10.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 for (r in listOf(5, 12, 25)) {
                     val on = r == radius
-                    Box(
-                        Modifier.height(36.dp).clip(CircleShape).background(if (on) Dark else MineTone.of(0xFFFFFFFF, 0xFF24272D)).clickable { radius = r }.padding(horizontal = 14.dp),
-                        contentAlignment = Alignment.Center,
-                    ) { Text(stringResource(R.string.mine_welcome_radius, r), style = mt(13f, 700), color = if (on) OnDark else Atlas.colors.ink) }
+                    TextPill(stringResource(R.string.mine_welcome_radius, r), bt(12f, 800, 15.5f, tnum = true), if (on) INK else WHITE, if (on) WHITE else INK, padH = 9f) { radius = r }
                 }
             }
+        }
+        Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 14.dp)) {
             if (have != null) {
-                Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(MineTone.of(0xFFE7F4EC, 0xFF1B2B22)).padding(14.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Symbol("ui.check", tint = MineTone.greenDeep, size = 20.dp, weight = 1.4f)
-                    Text(stringResource(R.string.mine_welcome_have, have.name, RegionEngine.size(have.bytes)), style = mt(14f, 700, line = 19f), color = Atlas.colors.ink)
+                Row(Modifier.welcomeCard(0xFFE7F4EC), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    MSy("ui.check", 20f, 0xFF178A4E)
+                    BText(stringResource(R.string.mine_welcome_have, have.name, RegionEngine.size(have.bytes)), bt(14f, 700, 18f), INK, lines = 3)
                 }
             } else {
                 val caption = when {
@@ -277,9 +274,10 @@ private fun ColumnScope.RegionStep(args: Dest.Onboarding, onNext: () -> Unit) {
                     else -> stringResource(R.string.mine_est_unknown)
                 }
                 EstimateCard(bytes, caption)
-                Row(Modifier.fillMaxWidth().height(44.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(stringResource(R.string.mine_welcome_wifi), Modifier.weight(1f), style = mt(14f, 700))
-                    BoardSwitch(wifi, { scope.launch { services.settings.set(MineKeys.WIFI_ONLY, it) } }, stringResource(R.string.mine_offline_wifi_only))
+                // Wi-Fi only: 14, 700 on 18 and the switch, 15 px under the card.
+                Row(Modifier.fillMaxWidth().padding(top = 15.dp), verticalAlignment = Alignment.CenterVertically) {
+                    BText(stringResource(R.string.mine_welcome_wifi), bt(14f, 700, 18f), INK, Modifier.weight(1f))
+                    MineSwitch(wifi, { scope.launch { services.settings.set(MineKeys.WIFI_ONLY, it) } }, stringResource(R.string.mine_offline_wifi_only))
                 }
             }
         }
@@ -310,34 +308,31 @@ private fun ColumnScope.VoiceStep(onDone: () -> Unit) {
     val kept = VoiceLanguages.kept(saved, device)
     Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
         StepHead(stringResource(R.string.mine_welcome_voice_title), stringResource(R.string.mine_welcome_voice_text))
-        Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 8.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 22.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (lang in VoiceLanguages.ALL) {
                     val on = lang in kept
                     val label = remember(lang) { Locale.forLanguageTag(lang).let { it.getDisplayLanguage(it).replaceFirstChar { c -> c.uppercase() } } }
-                    Row(
-                        Modifier.height(40.dp).clip(CircleShape).background(if (on) Dark else MineTone.of(0xFFFFFFFF, 0xFF24272D)).clickable {
-                            scope.launch {
-                                val next = if (on) kept - lang else kept + lang
-                                services.settings.set(MineKeys.VOICE_LANGS, next.takeIf { it.isNotEmpty() })
-                                if (!on && VoiceLanguages.installed(context, lang) == false) VoiceLanguages.install(context)
-                            }
-                        }.padding(horizontal = 14.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
+                    TextPill(
+                        label, bt(14f, 700, 18f), if (on) INK else WHITE, if (on) WHITE else INK, h = 40f, padH = 14f,
+                        symbol = if (on) "ui.check" else null, symbolSize = 14f, gap = 6f,
                     ) {
-                        if (on) Symbol("ui.check", tint = OnDark, size = 14.dp, weight = 1.4f)
-                        Text(label, style = mt(14f, 700), color = if (on) OnDark else Atlas.colors.ink, maxLines = 1)
+                        scope.launch {
+                            val next = if (on) kept - lang else kept + lang
+                            services.settings.set(MineKeys.VOICE_LANGS, next.takeIf { it.isNotEmpty() })
+                            if (!on && VoiceLanguages.installed(context, lang) == false) VoiceLanguages.install(context)
+                        }
                     }
                 }
             }
-            Text(stringResource(R.string.mine_welcome_units_title), style = serifTitle(28f, italic = false), color = Atlas.colors.ink, modifier = Modifier.semantics { heading() })
+            BText(stringResource(R.string.mine_welcome_units_title), bt(28f, 400, 29.4f, SERIF), INK, Modifier.semantics { heading() })
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (u in Units.entries) {
                     val on = u == units
                     val name = stringResource(when (u) { Units.METRIC -> R.string.mine_welcome_u_metric; Units.IMPERIAL -> R.string.mine_welcome_u_imperial; Units.NAUTICAL -> R.string.mine_welcome_u_nautical })
                     val sample = "${SettingsModel.distance(12_400.0, u)} · ${SettingsModel.speed(50.0, u)}"
                     Row(
-                        Modifier.fillMaxWidth().height(60.dp).clip(RoundedCornerShape(20.dp)).background(if (on) Dark else MineTone.of(0xFFFFFFFF, 0xFF1B1D22)).clickable {
+                        Modifier.fillMaxWidth().height(60.dp).bbox(if (on) INK else WHITE, cr(20f)).clickable(role = Role.Button) {
                             scope.launch {
                                 services.settings.set(SettingsKeys.UNITS, u.name)
                                 services.settings.set(MineKeys.TEMP_F, u == Units.IMPERIAL)
@@ -345,9 +340,9 @@ private fun ColumnScope.VoiceStep(onDone: () -> Unit) {
                         }.padding(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(name, Modifier.weight(1f), style = mt(15f, 800), color = if (on) OnDark else Atlas.colors.ink)
-                        Text(sample, style = mt(13f, 500, tabular = true), color = if (on) OnDark.copy(alpha = 0.75f) else Soft)
-                        if (on) Symbol("ui.check", tint = OnDark, size = 18.dp, weight = 1.4f)
+                        BText(name, bt(15f, 800, 19.5f), if (on) WHITE else INK, Modifier.weight(1f))
+                        BText(sample, bt(13f, 500, 17f, tnum = true), if (on) 0xBFFFFFFF else SOFT)
+                        if (on) MSy("ui.check", 18f, WHITE)
                     }
                 }
             }

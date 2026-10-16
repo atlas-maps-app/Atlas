@@ -55,11 +55,31 @@ import app.atlas.providers.Forecast
 import app.atlas.services.Units
 import app.atlas.ui.go.GoFormat
 import app.atlas.ui.kit.Atlas
-import app.atlas.ui.kit.StateMessage
+import app.atlas.ui.mine.MineState
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.appClock
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.walkMinutes
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
+import app.atlas.ui.kit.CssCorners
+import app.atlas.ui.mine.BText
+import app.atlas.ui.mine.CardLabel
+import app.atlas.ui.mine.FAINT
+import app.atlas.ui.mine.INK
+import app.atlas.ui.mine.MSy
+import app.atlas.ui.mine.PAGE
+import app.atlas.ui.mine.SOFT
+import app.atlas.ui.mine.TextPill
+import app.atlas.ui.mine.WHITE
+import app.atlas.ui.mine.bbox
+import app.atlas.ui.mine.bt
+import app.atlas.ui.mine.cr
+import app.atlas.ui.mine.hairTop
+import app.atlas.ui.mine.ring
 import app.atlas.ui.mine.BoardPage
 import app.atlas.ui.mine.MineKeys
 import app.atlas.ui.mine.MineTone
@@ -72,8 +92,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
-private val PInk = Color(0xFF14161B)
-private val PSoft = Color(0xFF5A5F6C)
 
 /**
  * The Power board, for the phone's own battery: how much is left and for how long (when the phone says), the fastest ways
@@ -111,25 +129,27 @@ fun PowerScreen(args: Dest.Power, nav: Navigator) {
     val wh = PowerModel.wattHours(curve)
     val clouds = remember(forecast, today) { PowerModel.cloudsAt(forecast, zone, today) }
     BoardPage(
-        title = stringResource(R.string.mine_power_title), onBack = { nav.back() }, background = MineTone.of(0xFFF1EFEA, 0xFF101114), ink = PInk, titleSize = 34f,
+        title = stringResource(R.string.mine_power_title), onBack = { nav.back() }, background = Color(0xFFF1EFEA), ink = Color(INK), titleSize = 34f,
+        top = 10.dp, gap = 0.dp,
         trailing = {
+            // the board's pill: amber, 34 high, 12 px in, 12, 800 on 15.5
             val saver = battery?.saver == true
-            Box(
-                Modifier.height(34.dp).clip(CircleShape).background(Color(0xFFFFF1D6)).clickable { runCatching { context.startActivity(Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }.padding(horizontal = 12.dp),
-                contentAlignment = Alignment.Center,
-            ) { Text(stringResource(if (saver) R.string.mine_power_saver_on else R.string.mine_power_saver), style = mt(12f, 800), color = Color(0xFF8A5A00)) }
+            TextPill(
+                stringResource(if (saver) R.string.mine_power_saver_on else R.string.mine_power_saver), bt(12f, 800, 15.5f), 0xFFFFF1D6, 0xFF8A5A00, h = 34f, padH = 12f,
+                onClick = { runCatching { context.startActivity(Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } },
+            )
         },
     ) {
         BatteryCard(battery)
-        SectionLabel(stringResource(R.string.mine_power_fastest), Modifier.padding(start = 2.dp), Color(0xFF676D7C))
+        CardLabel(stringResource(R.string.mine_power_fastest), Modifier.padding(start = 2.dp, top = 16.dp, bottom = 6.dp))
         val list = spots
         when {
-            list == null -> Text(stringResource(R.string.kit_loading), style = mt(13f, 500), color = PSoft)
-            list.isEmpty() -> StateMessage("power.bank", stringResource(R.string.mine_power_none), text = stringResource(R.string.mine_power_none_text), tint = PSoft)
+            list == null -> BText(stringResource(R.string.kit_loading), bt(13f, 500, 17f), SOFT)
+            list.isEmpty() -> MineState("power.bank", stringResource(R.string.mine_power_none), text = stringResource(R.string.mine_power_none_text), tint = Color(SOFT))
             else -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) { for (s in list.take(5)) SpotRow(s, units, onClick = { services.remember(s.place); nav.go(Dest.Place.of(s.place)) }) }
         }
-        OffGrid(curve, wh, clouds?.let { ZonedLocal.hm(it, zone, twelve) }, today, zone, bank, battery, hookup, units, onBank = { bankDialog = true })
-        Text(stringResource(R.string.mine_power_footer), style = mt(10f, 400, line = 15f), color = Color(0xFF7A7F8C), modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        OffGrid(curve, wh, clouds?.let { ZonedLocal.hm(it, zone, twelve) }, today, zone, bank, battery, hookup, units, onBank = { bankDialog = true }, Modifier.padding(top = 10.dp))
+        BText(stringResource(R.string.mine_power_footer), bt(10f, 400, 14.5f, align = TextAlign.Center), 0xFF7A7F8C, Modifier.fillMaxWidth().padding(start = 1.dp, end = 1.dp, top = 8.dp), lines = 4)
     }
     if (bankDialog) {
         var text by remember { mutableStateOf(bank?.toString() ?: "") }
@@ -137,10 +157,10 @@ fun PowerScreen(args: Dest.Power, nav: Navigator) {
             onDismissRequest = { bankDialog = false },
             title = { Text(stringResource(R.string.mine_power_bank_title)) },
             text = {
-                Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Atlas.colors.cardMuted).padding(12.dp)) {
+                Box(Modifier.fillMaxWidth().bbox(PAGE, cr(12f)).padding(12.dp)) {
                     val fieldName = stringResource(R.string.mine_power_bank_title)
-                    if (text.isEmpty()) Text("20000", style = mt(15f, 500), color = Atlas.colors.inkFaint)
-                    BasicTextField(text, { text = it.filter(Char::isDigit).take(6) }, singleLine = true, textStyle = mt(15f, 600).copy(color = Atlas.colors.ink), cursorBrush = SolidColor(Atlas.colors.ink), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth().semantics { contentDescription = fieldName })
+                    if (text.isEmpty()) BText("20000", bt(15f, 500, 19.5f), FAINT)
+                    BasicTextField(text, { text = it.filter(Char::isDigit).take(6) }, singleLine = true, textStyle = bt(15f, 600, 19.5f).copy(color = Color(INK)), cursorBrush = SolidColor(Color(INK)), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth().semantics { contentDescription = fieldName })
                 }
             },
             confirmButton = { TextButton({ bankDialog = false; scope.launch { services.settings.set(MineKeys.POWER_BANK_MAH, text.toIntOrNull()?.takeIf { it in 500..100_000 }) } }) { Text(stringResource(R.string.mine_data_save)) } },
@@ -149,32 +169,34 @@ fun PowerScreen(args: Dest.Power, nav: Navigator) {
     }
 }
 
-/** The dark card: a battery glyph with its sliver of charge (red when low) and the percentage, with the hours it lasts. */
+/**
+ * The board's dark card (92 high, radius 22, 16 px in, 14 between): the battery (88 × 44, a 3 px white rim with 4 px inside,
+ * its charge as a share of the cell in red, amber or green, and the terminal), the percentage (28, 900) and how long it lasts.
+ */
 @Composable
 private fun BatteryCard(b: PhoneBattery?) {
     val level = b?.percent ?: 0
-    val colour = when { level <= 15 -> Color(0xFFFF5A3C); level <= 40 -> Color(0xFFF2A71B); else -> Color(0xFF3FCF8E) }
+    val colour = when { level <= 15 -> 0xFFFF5A3C; level <= 40 -> 0xFFF2A71B; else -> 0xFF3FCF8E }
     val cd = if (b == null) stringResource(R.string.mine_power_battery_none) else stringResource(R.string.mine_power_battery_cd, level)
     Row(
-        Modifier.fillMaxWidth().height(92.dp).clip(RoundedCornerShape(22.dp)).background(PInk).padding(horizontal = 16.dp).semantics { contentDescription = cd },
+        Modifier.fillMaxWidth().height(92.dp).bbox(INK, cr(22f)).padding(horizontal = 16.dp).semantics { contentDescription = cd },
         horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Canvas(Modifier.size(100.dp, 44.dp)) {
-            val w = 88.dp.toPx()
-            drawRoundRect(Color.White, Offset.Zero, Size(w, 44.dp.toPx()), CornerRadius(10.dp.toPx()), style = Stroke(3.dp.toPx()))
-            drawRoundRect(Color.White, Offset(w + 1.dp.toPx(), 12.dp.toPx()), Size(6.dp.toPx(), 14.dp.toPx()), CornerRadius(3.dp.toPx()))
-            val inner = w - 14.dp.toPx()
-            drawRoundRect(colour, Offset(7.dp.toPx(), 7.dp.toPx()), Size((inner * level / 100f).coerceAtLeast(4.dp.toPx()), 30.dp.toPx()), CornerRadius(4.dp.toPx()))
+        Box(Modifier.size(88.dp, 44.dp)) {
+            Box(Modifier.fillMaxSize().bbox(r = cr(10f), border = ring(3f, WHITE), clip = false).padding(7.dp)) {
+                Box(Modifier.fillMaxHeight().fillMaxWidth(level / 100f).bbox(colour, cr(4f)))
+            }
+            Box(Modifier.offset(91.dp, 15.dp).size(6.dp, 14.dp).bbox(WHITE, CssCorners(0f, 3f, 3f, 0f)))
         }
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(if (b == null) "–" else "$level%", style = mt(28f, 900, tabular = true, line = 28f), color = Color.White)
+            BText(if (b == null) "–" else "$level%", bt(28f, 900, 28f, tnum = true), WHITE)
             val line = when {
                 b == null -> stringResource(R.string.mine_power_battery_none)
                 b.charging -> stringResource(R.string.mine_power_charging)
                 b.hoursLeft != null -> stringResource(R.string.mine_power_left, durationText(b.hoursLeft))
                 else -> stringResource(R.string.mine_power_left_unknown)
             }
-            Text(line, style = mt(12f, 400, tabular = true), color = Color(0xFFC9CED8))
+            BText(line, bt(12f, 400, 15.5f, tnum = true), 0xFFC9CED8, lines = 2)
         }
     }
 }
@@ -190,18 +212,18 @@ private fun SpotRow(s: PowerSpot, units: Units, onClick: () -> Unit) {
             open24h = stringResource(R.string.mine_power_d_24h),
         ),
     )
+    // the board's row: 62 high, radius 18, 12 px in; the 40 px tile (radius 12, a 21 px symbol), 12 px on the name (15, 800
+    // on 19.5) and 2 px under it how (12 on 15.5), and at the right how far (15, 900)
     Row(
-        Modifier.fillMaxWidth().height(62.dp).clip(RoundedCornerShape(18.dp)).background(Atlas.colors.card).clickable(onClick = onClick).padding(horizontal = 12.dp),
+        Modifier.fillMaxWidth().height(62.dp).bbox(WHITE, cr(18f)).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(Color(s.kind.colour)), contentAlignment = Alignment.Center) { Symbol(s.kind.symbol, tint = Color.White, size = 21.dp) }
+        Box(Modifier.size(40.dp).bbox(s.kind.colour, cr(12f)), contentAlignment = Alignment.Center) { MSy(s.kind.symbol, 21f, WHITE) }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(s.name.ifBlank { stringResource(kindName(s.kind)) }, style = mt(15f, 800), color = PInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(detail.ifBlank { stringResource(kindName(s.kind)) }, style = mt(12f, 400), color = Color(0xFF5A5F6C), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BText(s.name.ifBlank { stringResource(kindName(s.kind)) }, bt(15f, 800, 19.5f), INK)
+            BText(detail.ifBlank { stringResource(kindName(s.kind)) }, bt(12f, 400, 15.5f), SOFT)
         }
-        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(1.dp)) {
-            Text(if (s.distanceM < 150) GoFormat.distance(s.distanceM, units).toString() else walkMinutes(app.atlas.ui.kit.WalkTime.seconds(s.distanceM)), style = mt(15f, 900, tabular = true), color = PInk)
-        }
+        BText(if (s.distanceM < 150) GoFormat.distance(s.distanceM, units).toString() else walkMinutes(app.atlas.ui.kit.WalkTime.seconds(s.distanceM)), bt(15f, 900, 19.5f, tnum = true), INK)
     }
 }
 
@@ -218,35 +240,38 @@ private fun kindName(k: PowerSpot.Kind): Int = when (k) {
     PowerSpot.Kind.LIBRARY -> R.string.mine_power_k_library; PowerSpot.Kind.SOLAR -> R.string.mine_power_k_solar; PowerSpot.Kind.OUTLET -> R.string.mine_power_k_outlet
 }
 
-/** "Off the grid": today's solar curve, the bank and a hook-up. */
+/**
+ * "Off the grid" as the board's card (radius 22, 14 px in, 10 above): the label, the yield curve (230 × 74) beside the day's
+ * watt-hours (18, 900) and when the clouds come (11 on 14.3), then the rows: the bank and a hook-up.
+ */
 @Composable
-private fun OffGrid(curve: DoubleArray, wh: Double, clouds: String?, today: java.time.LocalDate, zone: java.time.ZoneId, bank: Int?, battery: PhoneBattery?, hookup: PowerSpot?, units: Units, onBank: () -> Unit) {
-    val c = Atlas.colors
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(c.card).padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 2.dp)) {
-        SectionLabel(stringResource(R.string.mine_power_off_grid), colour = Color(0xFF676D7C))
-        Row(Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun OffGrid(curve: DoubleArray, wh: Double, clouds: String?, today: java.time.LocalDate, zone: java.time.ZoneId, bank: Int?, battery: PhoneBattery?, hookup: PowerSpot?, units: Units, onBank: () -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxWidth().bbox(WHITE, cr(22f)).padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 2.dp)) {
+        CardLabel(stringResource(R.string.mine_power_off_grid))
+        Row(Modifier.padding(top = 6.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
             SolarChart(curve, java.time.LocalTime.now(java.time.Clock.system(zone)).let { it.hour * 60 + it.minute }, Modifier.size(230.dp, 74.dp))
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("≈ ${wh.roundToInt()} Wh", style = mt(18f, 900, tabular = true), color = PInk)
-                Text(listOfNotNull(stringResource(R.string.mine_power_panel), clouds?.let { stringResource(R.string.mine_power_clouds, it) }).joinToString("\n"), style = mt(11f, 400, line = 14f), color = Color(0xFF5A5F6C))
+                BText("≈ ${wh.roundToInt()} Wh", bt(18f, 900, 23.5f, tnum = true), INK)
+                BText(listOfNotNull(stringResource(R.string.mine_power_panel), clouds?.let { stringResource(R.string.mine_power_clouds, it) }).joinToString("\n"), bt(11f, 400, 14.3f, tnum = true), SOFT, lines = 3)
             }
         }
         val worth = bank?.let { PowerModel.bankWorth(it, battery?.capacityMah?.let { mAh -> mAh * 3.85 / 1000.0 } ?: 17.0) }
-        OffRow("power.bank", Color(0xFF7B4DFF), if (bank != null) stringResource(R.string.mine_power_bank, java.text.NumberFormat.getIntegerInstance().format(bank)) else stringResource(R.string.mine_power_bank_set), worth?.let { stringResource(R.string.mine_power_bank_worth, String.format(java.util.Locale.ROOT, "%.1f", it.first), String.format(java.util.Locale.ROOT, "%.1f", it.second)) } ?: stringResource(R.string.mine_power_bank_help), first = true, onClick = onBank)
-        if (hookup != null) OffRow("power.hookup", Color(0xFF2F6B3A), stringResource(R.string.mine_power_hookup), listOfNotNull(hookup.name.ifBlank { null }, GoFormat.distance(hookup.distanceM, units).toString()).joinToString(" · "))
+        OffRow("power.bank", 0xFF7B4DFF, if (bank != null) stringResource(R.string.mine_power_bank, java.text.NumberFormat.getIntegerInstance().format(bank)) else stringResource(R.string.mine_power_bank_set), worth?.let { stringResource(R.string.mine_power_bank_worth, String.format(java.util.Locale.ROOT, "%.1f", it.first), String.format(java.util.Locale.ROOT, "%.1f", it.second)) } ?: stringResource(R.string.mine_power_bank_help), onClick = onBank)
+        if (hookup != null) OffRow("power.hookup", 0xFF2F6B3A, stringResource(R.string.mine_power_hookup), listOfNotNull(hookup.name.ifBlank { null }, GoFormat.distance(hookup.distanceM, units).toString()).joinToString(" · "))
     }
 }
 
+/** A row of the card: the hairline, 9 px, the 36 px tile (radius 10, a 19 px symbol), 12 px on the name (14, 800) and its line (11). */
 @Composable
-private fun OffRow(symbol: String, colour: Color, title: String, sub: String, first: Boolean = false, onClick: (() -> Unit)? = null) {
-    Column {
-        Box(Modifier.fillMaxWidth().height(1.dp).background(Atlas.colors.line))
-        Row(Modifier.fillMaxWidth().height(54.dp).then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(colour), contentAlignment = Alignment.Center) { Symbol(symbol, tint = Color.White, size = 19.dp) }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                Text(title, style = mt(14f, 800), color = PInk, maxLines = 1)
-                Text(sub, style = mt(11f, 400), color = Color(0xFF5A5F6C), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+private fun OffRow(symbol: String, colour: Long, title: String, sub: String, onClick: (() -> Unit)? = null) {
+    Row(
+        Modifier.fillMaxWidth().bbox(border = hairTop(0xFFEEEAE0)).then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier).padding(top = 10.dp, bottom = 9.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(36.dp).bbox(colour, cr(10f)), contentAlignment = Alignment.Center) { MSy(symbol, 19f, WHITE) }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            BText(title, bt(14f, 800, 18f), INK)
+            BText(sub, bt(11f, 400, 14f), SOFT)
         }
     }
 }
@@ -268,6 +293,7 @@ private fun SolarChart(curve: DoubleArray, nowMinute: Int, modifier: Modifier) {
         drawPath(area, Color(0x8CFFD24A))
         drawPath(line, Color(0xFFE8922A), style = Stroke(2.4f * k, join = StrokeJoin.Round))
         val nx = nowMinute / 1440f * 230f * k
-        drawLine(Color(0xFF14161B), Offset(nx, 0f), Offset(nx, size.height), 1.5f * k, pathEffect = PathEffect.dashPathEffect(floatArrayOf(2f * k, 3f * k)))
+        // the time now: the board's dashed ink over the curve's 70 units (the viewBox starts 4 above)
+        drawLine(Color(0xFF14161B), Offset(nx, 4f * k), Offset(nx, 74f * k), 1.5f * k, pathEffect = PathEffect.dashPathEffect(floatArrayOf(2f * k, 3f * k)))
     }
 }
