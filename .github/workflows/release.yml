@@ -1,5 +1,7 @@
-# A tag v* builds the APK and publishes it as a GitHub release. A tag with "alpha" in it (v0.1.0-alpha.1) is a debug
-# build published as a pre-release, for testing on real phones; any other tag is the release build. The APK is signed
+# A tag v* builds the APK and publishes it as a GitHub release. A tag with "alpha" in it (v0.1.0-alpha.1) is the bench
+# build published as a pre-release, for testing on real phones: not debuggable (a debuggable build ran the map 4 to 7
+# times slower and kept the CPU busy at rest on the emulator, 16 October), with the timings overlay kept; any other tag
+# is the release build. The APK is signed
 # with the release key when the repository has it as secrets (ATLAS_KEYSTORE_BASE64, ATLAS_KEYSTORE_PASSWORD,
 # ATLAS_KEY_ALIAS, ATLAS_KEY_PASSWORD), otherwise with the debug key, and the notes say which.
 name: Release
@@ -48,18 +50,18 @@ jobs:
           ATLAS_VERSION_CODE: ${{ github.run_number }}
         run: |
           export ATLAS_VERSION="${TAG#v}"
-          case "$TAG" in *alpha*) TASK=assembleDebug ;; *) TASK=assembleRelease ;; esac
+          case "$TAG" in *alpha*) TASK=assembleBench ;; *) TASK=assembleRelease ;; esac
           ./gradlew test "$TASK" --stacktrace
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          case "$TAG" in *alpha*) KIND=debug; PRE=--prerelease ;; *) KIND=release; PRE= ;; esac
+          case "$TAG" in *alpha*) KIND=bench; PRE=--prerelease ;; *) KIND=release; PRE= ;; esac
           APK="app/build/outputs/apk/$KIND/atlas-${TAG}.apk"
           cp app/build/outputs/apk/$KIND/*.apk "$APK"
           SIGNED="signed with the Atlas release key"
           [ -n "$ATLAS_KEYSTORE" ] || SIGNED="signed with a debug key: install it fresh, later releases may need an uninstall first"
-          printf '%s\n\nThe APK (%s build) is %s. Map data © OpenStreetMap contributors (ODbL); map tiles by OpenFreeMap (OpenMapTiles); routing by BRouter.\n' \
+          printf '%s\n\nThe APK (%s build) is %s. The map is drawn by Atlas's own engine from OpenStreetMap data (© OpenStreetMap contributors, ODbL); routing by BRouter.\n' \
             "$(git tag -l --format='%(contents)' "$TAG")" "$KIND" "$SIGNED" > "$RUNNER_TEMP/notes.md"
           gh release create "$TAG" "$APK" --title "Atlas $TAG" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag $PRE

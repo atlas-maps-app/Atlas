@@ -46,3 +46,6 @@ Instructions.rtf
 /dbplan.py
 /github.sh
 /WORKING.md
+
+# Boards drawn by boardgen.py (cache/claude-session/boards), for building screens from: the boards stay out of the public repo
+/app/android/app/src/test/kotlin/app/atlas/boards/
