@@ -20,6 +20,9 @@ android {
         versionName = System.getenv("ATLAS_VERSION") ?: "0.1"
     }
 
+    // The bundled anchors are deflated already: stored as they are, the GPU path maps them straight from the APK.
+    androidResources { noCompress += "anchor" }
+
     // The release key comes from the environment (CI secrets, see .github/workflows/release.yml); without it the
     // release build is signed with the debug key so it still installs. Alphas are debug builds signed with the release
     // key, so they update one another and a later release. The bench build (below) is signed the same way.
@@ -191,4 +194,72 @@ tasks.withType<Test>().configureEach {
         val before = test.systemProperties["java.library.path"]?.toString()
         test.systemProperty("java.library.path", listOfNotNull(natives.get(), before).joinToString(File.pathSeparator))
     }
+}
+
+// The bundled anchors (plan-gpu G4): the GPU's first picture on a first launch. The Westerkerk home at its four moments
+// and its 1.3 km backdrop, on the two common map frames, made at build time by the packer through the same engine port
+// the phone runs, from the bundled pack, into the assets' anchors/ folder with their index bundled.json. They are built,
+// not committed: the task runs again when the pack or the packer's classpath changes (the engine port, the anchor
+// compiler, the packer and their libraries), and is up to date, or taken from the build cache, otherwise.
+val packerTool: Configuration = configurations.create("packerTool") {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    attributes {
+        attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage.JAVA_RUNTIME))
+        attribute(Category.CATEGORY_ATTRIBUTE, objects.named(Category.LIBRARY))
+        attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements.JAR))
+        attribute(TargetJvmEnvironment.TARGET_JVM_ENVIRONMENT_ATTRIBUTE, objects.named(TargetJvmEnvironment.STANDARD_JVM))
+        attribute(Attribute.of("org.jetbrains.kotlin.platform.type", String::class.java), "jvm")
+    }
+}
+dependencies { packerTool(project(":packer")) }
+
+/** Runs `packer anchors --bundled` into [outputDir]`/anchors`. */
+@CacheableTask
+abstract class BundledAnchors @Inject constructor(private val exec: ExecOperations) : DefaultTask() {
+    /** The packer and everything it runs: the engine port, the anchor compiler and their libraries. */
+    @get:Classpath
+    abstract val tool: ConfigurableFileCollection
+
+    /** The scene the anchors are rendered from: the bundled region pack. */
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val pack: RegularFileProperty
+
+    @get:Nested
+    abstract val launcher: Property<JavaLauncher>
+
+    /** An asset root: the anchors land in its anchors/ folder. */
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val out = outputDir.get().asFile
+        out.deleteRecursively()
+        val work = File(temporaryDir, "work")
+        work.deleteRecursively()
+        try {
+            exec.javaexec {
+                classpath = tool
+                mainClass.set("app.atlas.packer.Anchors")
+                executable = launcher.get().executablePath.asFile.absolutePath
+                maxHeapSize = "1g"
+                args("--bundled", pack.get().asFile.absolutePath, File(out, "anchors").absolutePath, "--work", work.absolutePath, "--quiet")
+            }
+        } finally {
+            work.deleteRecursively()
+        }
+    }
+}
+
+val generateBundledAnchors = tasks.register<BundledAnchors>("generateBundledAnchors") {
+    description = "Builds the bundled GPU anchors (plan-gpu G4) into the app's assets."
+    tool.from(packerTool)
+    pack.set(layout.projectDirectory.file("src/main/assets/packs/amsterdam.atlas"))
+    launcher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(17)) })
+    outputDir.set(layout.buildDirectory.dir("generated/anchors"))
+}
+androidComponents {
+    onVariants { variant -> variant.sources.assets?.addGeneratedSourceDirectory(generateBundledAnchors, BundledAnchors::outputDir) }
 }

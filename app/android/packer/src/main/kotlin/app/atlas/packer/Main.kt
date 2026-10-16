@@ -46,7 +46,9 @@ private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap ex
       The same as a tiled pack (format 2); without a box, the whole extract.
 
   packer packinfo <file.atlas>
-      Prints a pack's manifest, sections and sizes."""
+      Prints a pack's manifest, sections and sizes.
+
+  ${Anchors.USAGE}"""
 
 /** The command line: `places`, `manifest`, `info`, and the region packs: `renders`, `region`, `pbf`, `packinfo`. */
 fun main(args: Array<String>) {
@@ -172,6 +174,7 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
             val stats = PackWriter.write(spec, file)
             out("${file.path}: ${stats.elements} elements (${stats.nodes} nodes, ${stats.ways} ways, ${stats.relations} relations), ${file.length() shr 10} KiB in ${stats.millis} ms")
         }
+        "anchors" -> return Anchors.run(args, out)
         "packinfo" -> {
             val (path) = a.files(1)
             a.done()

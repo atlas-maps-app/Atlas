@@ -44,6 +44,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk && adb shell am start -
 - **Robolectric runs SDK 34.** SDK 35 and later need JDK 21, which this Mac lacks.
 - **Online tests are opt-in.** Tests that need the internet run only with `-Datlas.online=true`.
 - **Routing data.** Routing tests use BRouter's `E0_N50.rd5` from `../../cache/brouter/segments4/` when it is there.
+- **Bundled anchors.** `:app:generateBundledAnchors` renders the Westerkerk's GPU anchors from the bundled pack into `app/build/generated/anchors` (built, never committed; `packer anchors --bundled` does the same by hand). Each carries `EngineVersion.ID`, which follows the engine's own outputs: when a port change alters them, `EngineVersionTest` fails with the new `OUTPUTS` block to paste into `render/live/EngineVersion.kt`.
 
 ## On GitHub
 
