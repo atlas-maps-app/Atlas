@@ -195,6 +195,8 @@ install_apk "$APK" || exit 1
 adb logcat -c
 CLK_TCK=$(adb shell getconf CLK_TCK 2>/dev/null | tr -d '\r'); [[ $CLK_TCK =~ ^[0-9]+$ ]] || CLK_TCK=100
 SCREENS=$(adb shell am start -W -n $PKG/.MainActivity --es atlas.screen list >/dev/null 2>&1; sleep 6; adb shell run-as $PKG cat files/ci_screens.txt 2>/dev/null | tr -d '\r')
+# The list run leaves its process behind (it finishes during the splash screen); a first launch starts a fresh one.
+adb shell am force-stop $PKG
 [ -n "$SCREENS" ] || SCREENS="home"
 # A run by hand may name its own screens.
 [ -n "${ATLAS_SCREENS:-}" ] && SCREENS="$ATLAS_SCREENS"
