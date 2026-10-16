@@ -335,6 +335,7 @@
     <string name="shop_stroll_back">Terug lopen</string>
     <string name="shop_stroll_on">Verder lopen</string>
     <string name="shop_stroll_count">%1$d / %2$d</string>
+    <string name="shop_stroll_you">Je bent hier</string>
     <string name="shop_stroll_street">%1$s, richting %2$s</string>
     <string name="shop_stroll_none">Geen winkels langs een straat in de buurt</string>
     <string name="shop_stroll_peek">Kijk binnen</string>

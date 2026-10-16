@@ -1,6 +1,13 @@
 package app.atlas.ui.shop
 
 import android.content.Intent
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.Role
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.kit.argb
+import app.atlas.ui.kit.cssLinear
+import app.atlas.ui.kit.cssRadial
+import app.atlas.ui.kit.cssRepeatingLinear
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -82,10 +89,6 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToInt
 
-private val Ink = Color(0xFF14161B)
-private val HandInk = Color(0xFF1F3E86)
-private val HandSoft = Color(0xFF8A9AC4)
-
 /** What the Open Prices lookup for the list said: the prices (maybe none) and whether the phone was offline. */
 internal class ListPrices(val index: PriceIndex, val offline: Boolean)
 
@@ -125,44 +128,49 @@ fun ListScreen(nav: Navigator) {
     val context = LocalContext.current
     val shareTitle = stringResource(R.string.shop_list_share_title)
 
-    Box(
-        Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color(0xFFE4E8EB), 0.45f to Color(0xFFF2F4F5), 1f to Color(0xFFE6EAED))),
-    ) {
-        // The fridge handle.
-        Box(
-            Modifier.align(Alignment.TopEnd).padding(end = 14.dp, top = 180.dp).size(14.dp, 300.dp)
-                .cssShadow(RoundedCornerShape(7.dp), y = 4.dp, x = (-3).dp, blur = 8.dp, colour = Color(0x26000000))
-                .background(Brush.horizontalGradient(0f to Color(0xFFB9C0C7), 0.45f to Color(0xFFF4F6F8), 1f to Color(0xFF9DA5AE)), RoundedCornerShape(7.dp)),
-        )
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).windowInsetsPadding(WindowInsets.statusBars).padding(top = 4.dp, bottom = 100.dp)) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                RoundSymbolButton("ui.back", stringResource(R.string.shop_back_pantry), { nav.back() }, size = 44.dp, fill = Color.White.copy(alpha = 0.8f), iconSize = 20.dp, weight = 1f)
-                Spacer(Modifier.weight(1f))
-                RoundSymbolButton(
-                    "ui.add-person", stringResource(R.string.shop_list_share),
-                    {
+    Box(Modifier.fillMaxSize().boardBox(grad = listOf(cssLinear(90f, 0f to 0xFFE4E8EB, 0.45f to 0xFFF2F4F5, 1f to 0xFFE6EAED)))) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = boardTop(), bottom = 110.dp)) {
+            Box(Modifier.fillMaxWidth()) {
+                // The fridge handle, right 14 px, from y 180.
+                Box(
+                    Modifier.at(384f, 180f, 14f, 300f).boardBox(
+                        r = round(7f), shadows = listOf(CssShadow(-3f, 4f, 8f, 0f, 0x26000000)),
+                        grad = listOf(cssLinear(90f, 0f to 0xFFB9C0C7, 0.45f to 0xFFF4F6F8, 1f to 0xFF9DA5AE)), clip = false,
+                    ),
+                )
+                Column {
+                    Spacer(Modifier.height(84.dp))
+                    Notepad(items, run, repo)
+                    Spacer(Modifier.height(22.dp))
+                    PlanPills(plan, canCheap) { by = it.name }
+                    Spacer(Modifier.height(2.dp))
+                    Receipt(run, toBuy, area, prices, plan)
+                }
+                Box(
+                    Modifier.at(16f, 44f, 44f, 44f).boardBox(0xCCFFFFFF, round(22f), listOf(CssShadow(0f, 2f, 8f, 0f, 0x14000000))).tap(stringResource(R.string.shop_back_pantry)) { nav.back() },
+                    contentAlignment = Alignment.Center,
+                ) { Sym("ui.back", 20f, 20f) }
+                Box(
+                    Modifier.at(352f, 44f, 44f, 44f).boardBox(0xCCFFFFFF, round(22f), listOf(CssShadow(0f, 2f, 8f, 0f, 0x14000000))).tap(stringResource(R.string.shop_list_share)) {
                         val text = items.joinToString("\n") { (if (it.atHome) "✓ " else "• ") + it.text }
                         startSafely(context, Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_SUBJECT, shareTitle).putExtra(Intent.EXTRA_TEXT, text), shareTitle))
                     },
-                    size = 44.dp, fill = Color.White.copy(alpha = 0.8f), iconSize = 19.dp,
-                )
+                    contentAlignment = Alignment.Center,
+                ) { Sym("ui.add-person", 19f, 19f) }
             }
-            Notepad(items, run, repo)
-            Spacer(Modifier.height(14.dp))
-            PlanPills(plan, canCheap) { by = it.name }
-            Spacer(Modifier.height(10.dp))
-            Receipt(run, toBuy, area, prices, plan)
         }
         val r = run
-        Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).padding(start = 16.dp, end = 16.dp, bottom = 26.dp)) {
-            val enabled = r != null && r.stops.isNotEmpty()
-            BigPill(
-                text = if (enabled) stringResource(R.string.shop_go_min, r!!.minutes) else stringResource(R.string.shop_go),
-                onClick = { if (enabled) nav.go(routeOf(r!!)) },
-                modifier = Modifier.fillMaxWidth(),
-                fill = if (enabled) Color(0xFF2E5BFF) else Color(0xFFB9C0C7),
-                icon = { Symbol("mode.walk", tint = Color.White, size = 20.dp) },
-            )
+        val enabled = r != null && r.stops.isNotEmpty()
+        // Go: 56 high, 16 px from the sides, 26 above the bottom; grey while there is no run to walk.
+        Row(
+            Modifier.align(Alignment.BottomCenter).padding(start = 16.dp, end = 16.dp, bottom = 26.dp + boardLift()).fillMaxWidth().height(56.dp)
+                .boardBox(if (enabled) 0xFF2E5BFF else 0xFFB9C0C7, round(28f))
+                .clickable(enabled = enabled, role = Role.Button) { nav.go(routeOf(r!!)) },
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Sym("mode.walk", 20f, 20f, 0xFFFFFFFF)
+            Line(if (enabled) stringResource(R.string.shop_go_min, r!!.minutes) else stringResource(R.string.shop_go), bt(16f, 600, 20.5f, tnum = true), 0xFFFFFFFF)
         }
     }
 }
@@ -178,34 +186,36 @@ internal fun routeOf(run: Run): Dest.Route {
     return Dest.Route(last.location.lat, last.location.lon, last.name, mode = "WALK", via = via)
 }
 
-/** The pad: a magnet, ruled lines every 36 px, the items in blue handwriting with the glyph of the shop and the number of the stop. */
+private const val HAND_INK: Long = 0xFF1F3E86
+private const val HAND_SOFT: Long = 0xFF8A9AC4
+private const val PAPER_INK: Long = 0xFF1D1D1D
+private const val PAPER_SOFT: Long = 0xFF555555
+private const val RED: Long = 0xFFB03A3A
+
+/**
+ * The pad, as the List board's: 300 wide at x 34, at least 334 high, turned 2° to the left, ruled every 36 px (a 1 px
+ * line at 35), the magnet at its top; the items in blue Caveat with the glyph of the shop and the number of the stop.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun Notepad(items: List<ListEntry>, run: Run?, repo: ShopRepository) {
     val stopOf = HashMap<String, Int>()
     run?.stops?.forEachIndexed { i, s -> s.items.forEach { stopOf[it.text] = i + 1 } }
-    val hand = ShopType.hand
-    Box(Modifier.fillMaxWidth().padding(top = 28.dp, start = 34.dp, end = 78.dp)) {
+    Box(Modifier.padding(start = 34.dp).width(300.dp).heightIn(min = 334.dp).graphicsLayer { rotationZ = -2f }) {
         Column(
-            Modifier.fillMaxWidth().heightIn(min = 334.dp - 28.dp).graphicsLayer { rotationZ = -2f }
-                .cssShadow(RoundedCornerShape(0.dp), y = 10.dp, blur = 22.dp, colour = Color(0x24000000))
-                .background(Color(0xFFFFFEF6))
-                .drawBehind {
-                    val top = 30.dp.toPx()
-                    var y = top + 35.dp.toPx()
-                    while (y < size.height) {
-                        drawRect(Color(0xFFC9D8EA), Offset(0f, y), Size(size.width, 1.dp.toPx()))
-                        y += 36.dp.toPx()
-                    }
-                }
-                .padding(start = 22.dp, end = 18.dp, top = 30.dp, bottom = 12.dp),
-        ) {
+            Modifier.matchParentSize().boardBox(
+                0xFFFFFEF6, shadows = listOf(CssShadow(0f, 10f, 22f, 0f, 0x24000000)),
+                grad = listOf(cssRepeatingLinear(180f, 36f, 0f to 0x00000000, 35f to 0x00000000, 35f to 0xFFC9D8EA, 36f to 0xFFC9D8EA)), clip = false,
+            ),
+        ) {}
+        Column(Modifier.fillMaxWidth().padding(start = 22.dp, end = 18.dp, top = 30.dp, bottom = 16.dp)) {
+            val hand = bt(27f, 600, 36f, CAVEAT)
             for (e in items) {
                 val label = e.text
                 val removeLabel = stringResource(R.string.shop_list_remove, label)
                 Row(
                     Modifier.fillMaxWidth().height(36.dp)
-                        .combinedClickable(onClickLabel = stringResource(R.string.shop_list_toggle, label), onLongClickLabel = stringResource(R.string.shop_list_remove, label), onLongClick = { repo.list.remove(e) }) { repo.list.toggleHome(e) }
+                        .combinedClickable(onClickLabel = stringResource(R.string.shop_list_toggle, label), onLongClickLabel = removeLabel, onLongClick = { repo.list.remove(e) }) { repo.list.toggleHome(e) }
                         .semantics {
                             contentDescription = label
                             customActions = listOf(CustomAccessibilityAction(removeLabel) { repo.list.remove(e); true })
@@ -213,20 +223,15 @@ private fun Notepad(items: List<ListEntry>, run: Run?, repo: ShopRepository) {
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        e.text,
-                        Modifier.weight(1f),
-                        style = TextStyle(fontFamily = hand, fontWeight = FontWeight.SemiBold, fontSize = 27.sp, textDecoration = if (e.atHome) TextDecoration.LineThrough else null),
-                        color = if (e.atHome) HandSoft else HandInk,
-                        maxLines = 1,
-                    )
                     if (e.atHome) {
-                        Text(stringResource(R.string.shop_list_at_home), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.sp), color = HandSoft)
+                        Line(e.text, hand.copy(textDecoration = TextDecoration.LineThrough), HAND_SOFT, Modifier.weight(1f))
+                        Line(stringResource(R.string.shop_list_at_home), bt(12f, 600, 17f), HAND_SOFT)
                     } else {
-                        e.kind?.let { k -> Symbol(k.glyph, tint = hueOf(k.glyph) ?: Ink, size = 22.dp) }
+                        Line(e.text, hand, HAND_INK, Modifier.weight(1f))
+                        e.kind?.let { k -> Sym(k.glyph, 22f, 22f, hue(k.glyph) ?: INK) }
                         stopOf[e.text]?.let { n ->
-                            Box(Modifier.size(22.dp).background(Ink, CircleShape), contentAlignment = Alignment.Center) {
-                                Text(n.toString(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp), color = Color.White)
+                            Box(Modifier.size(22.dp).boardBox(INK, round(11f)), contentAlignment = Alignment.Center) {
+                                Line(n.toString(), bt(11f, 700, 14f), 0xFFFFFFFF)
                             }
                         }
                     }
@@ -234,11 +239,12 @@ private fun Notepad(items: List<ListEntry>, run: Run?, repo: ShopRepository) {
             }
             AddRow(items, repo)
         }
-        // The magnet holding the pad to the fridge.
+        // The magnet holding the pad to the fridge: 36 round at x 132, 14 px above the pad.
         Box(
-            Modifier.align(Alignment.TopCenter).offset(x = (-8).dp, y = (-14).dp).size(36.dp)
-                .cssShadow(CircleShape, y = 4.dp, blur = 6.dp, colour = Color(0x4D000000))
-                .background(Brush.radialGradient(0f to Color(0xFFFF9A76), 0.6f to Color(0xFFE8622C), 1f to Color(0xFFB8441B), center = Offset(36f, 32f), radius = 80f), CircleShape),
+            Modifier.at(132f, -14f, 36f, 36f).boardBox(
+                r = round(18f), shadows = listOf(CssShadow(0f, 4f, 6f, 0f, 0x4C000000)),
+                grad = listOf(cssRadial(true, 12.6f, 10.8f, 0f to 0xFFFF9A76, 0.6f to 0xFFE8622C, 1f to 0xFFB8441B)), clip = false,
+            ),
         )
     }
 }
@@ -249,20 +255,20 @@ private fun AddRow(items: List<ListEntry>, repo: ShopRepository) {
     val label = stringResource(R.string.shop_list_add_label)
     val submit = { if (repo.list.add(text)) text = "" }
     Row(Modifier.fillMaxWidth().height(36.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("+", style = TextStyle(fontFamily = ShopType.hand, fontSize = 25.sp), color = HandSoft)
-        Box(Modifier.weight(1f)) {
-            val style = TextStyle(fontFamily = ShopType.hand, fontWeight = FontWeight.SemiBold, fontSize = 25.sp, color = HandInk)
+        Line("+", bt(25f, 400, 32f, CAVEAT), HAND_SOFT)
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+            val style = bt(25f, 600, 40f, CAVEAT)
             BasicTextField(
                 value = text,
                 onValueChange = { text = it.take(80) },
                 singleLine = true,
-                textStyle = style,
-                cursorBrush = SolidColor(HandInk),
+                textStyle = style.copy(color = argb(HAND_INK)),
+                cursorBrush = SolidColor(argb(HAND_INK)),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { submit() }),
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = label },
             )
-            if (text.isEmpty()) Text(stringResource(R.string.shop_list_add), style = style, color = HandSoft)
+            if (text.isEmpty()) Line(stringResource(R.string.shop_list_add), style, 0xFFA9A9A9)
         }
     }
     if (items.isEmpty()) Suggestions(repo)
@@ -273,30 +279,24 @@ private fun AddRow(items: List<ListEntry>, repo: ShopRepository) {
 private fun Suggestions(repo: ShopRepository) {
     val lang = remember { Locale.getDefault().language }
     val names = remember(lang) { listOf("milk", "bread", "eggs", "apples", "cheese", "coffee").mapNotNull { id -> ShopItems.byId(id)?.name(lang) } }
-    Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(stringResource(R.string.shop_list_suggest), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.sp), color = HandSoft)
+    // On the pad's own lines: a 36 px row for the label and for each three things.
+    Column {
+        Box(Modifier.height(36.dp), contentAlignment = Alignment.CenterStart) { Line(stringResource(R.string.shop_list_suggest), bt(12f, 600, 17f), HAND_SOFT) }
         for (row in names.chunked(3)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                for (n in row) {
-                    Text(
-                        "+ $n",
-                        Modifier.tap(n) { repo.list.add(n) }.padding(vertical = 4.dp),
-                        style = TextStyle(fontFamily = ShopType.hand, fontWeight = FontWeight.SemiBold, fontSize = 22.sp),
-                        color = HandSoft,
-                    )
-                }
+            Row(Modifier.height(36.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                for (n in row) Line("+ $n", bt(22f, 600, 32f, CAVEAT), HAND_SOFT, Modifier.tap(n) { repo.list.add(n) })
             }
         }
     }
 }
 
+/** "Plan by": three buttons in a 56 high white pill (4 px padding and gaps), the chosen one ink with white words. */
 @Composable
 private fun PlanPills(selected: PlanBy, canCheap: Boolean, onPick: (PlanBy) -> Unit) {
-    Row(
-        Modifier.padding(horizontal = 16.dp).fillMaxWidth().height(48.dp)
-            .cssShadow(RoundedCornerShape(24.dp), y = 2.dp, blur = 8.dp, colour = Color(0x0F000000))
-            .background(Color.White.copy(alpha = 0.85f), RoundedCornerShape(24.dp)).padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    FlexRow(
+        4f,
+        Modifier.padding(horizontal = 16.dp).fillMaxWidth().height(56.dp)
+            .boardBox(0xD9FFFFFF, round(24f), listOf(CssShadow(0f, 2f, 8f, 0f, 0x0F000000)), clip = false).padding(4.dp),
     ) {
         for (p in PlanBy.entries) {
             val on = p == selected
@@ -308,39 +308,49 @@ private fun PlanPills(selected: PlanBy, canCheap: Boolean, onPick: (PlanBy) -> U
                     PlanBy.CHEAPEST -> R.string.shop_by_cheapest
                 },
             )
-            val fg = if (on) Color.White else Ink.copy(alpha = if (enabled) 1f else 0.35f)
+            val fg = if (on) 0xFFFFFFFF else if (enabled) INK else 0x5914161B
             Row(
-                Modifier.weight(1f).fillMaxSize().clip(RoundedCornerShape(20.dp)).background(if (on) Ink else Color.Transparent)
+                Modifier.boardBox(if (on) INK else 0, round(20f))
                     .then(if (enabled) Modifier.tap(label) { onPick(p) } else Modifier.semantics { contentDescription = label })
                     .semantics { this.selected = on },
                 horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Symbol(
-                    when (p) { PlanBy.FEWEST -> "ui.route"; PlanBy.BEST -> "ui.star"; PlanBy.CHEAPEST -> "ui.tag" },
-                    tint = fg, size = if (p == PlanBy.FEWEST) 16.dp else 15.dp,
-                )
-                Text(label, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp), color = fg, maxLines = 1)
+                val side = if (p == PlanBy.FEWEST) 16f else 15f
+                Sym(when (p) { PlanBy.FEWEST -> "ui.route"; PlanBy.BEST -> "ui.star"; PlanBy.CHEAPEST -> "ui.tag" }, side, side, fg)
+                Line(label, bt(14f, 600, 18f), fg)
             }
         }
     }
 }
 
-/** The till receipt: stops with their walk and items, red closing warnings, the estimated basket, a barcode and a torn edge. */
+/** A receipt's dashed rule: `border-top: 1.5px dashed #999`. */
+@Composable
+private fun Dashes() {
+    Canvas(Modifier.fillMaxWidth().height(1.5.dp)) {
+        val w = 1.5.dp.toPx()
+        drawLine(Color(0xFF999999), Offset(0f, w / 2), Offset(size.width, w / 2), strokeWidth = w, pathEffect = PathEffect.dashPathEffect(floatArrayOf(3 * w, 3 * w)))
+    }
+}
+
+/**
+ * The till receipt, as the List board's: 324 wide at x 44, Courier Prime on white (padding 14 18 12, 6 px between
+ * blocks), the stops with their walk and items, red closing warnings, the estimated basket, the barcode and a torn edge.
+ */
 @Composable
 private fun Receipt(run: Run?, toBuy: List<ListEntry>, area: ShopArea, prices: ListPrices, by: PlanBy) {
-    val mono = ShopType.receipt
-    val base = TextStyle(fontFamily = mono, fontSize = 14.sp, color = Color(0xFF1D1D1D))
-    val dash = Modifier.fillMaxWidth().height(2.dp).drawBehind {
-        drawLine(Color(0xFF999999), Offset(0f, 1.dp.toPx()), Offset(size.width, 1.dp.toPx()), strokeWidth = 1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx())))
-    }
-    Column(Modifier.padding(horizontal = 44.dp).fillMaxWidth()) {
+    val b14 = bt(14f, 700, 16f, COURIER)
+    val r14 = bt(14f, 400, 16f, COURIER, tnum = true)
+    val r13 = bt(13f, 400, 14.5f, COURIER)
+    val r12 = bt(12f, 400, 13.5f, COURIER, tnum = true)
+    Column(Modifier.padding(start = 44.dp).width(324.dp)) {
         Column(
-            Modifier.fillMaxWidth().cssShadow(RoundedCornerShape(0.dp), y = 8.dp, blur = 14.dp, colour = Color(0x29000000)).background(Color.White).padding(start = 18.dp, end = 18.dp, top = 14.dp, bottom = 12.dp),
+            Modifier.fillMaxWidth().boardBox(0xFFFFFFFF, shadows = listOf(CssShadow(0f, 8f, 14f, 0f, 0x29000000)), clip = false)
+                .padding(start = 18.dp, end = 18.dp, top = 14.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(stringResource(R.string.shop_run_title), style = base.copy(fontWeight = FontWeight.Bold, fontSize = 16.sp, letterSpacing = 3.2.sp))
+                Line(stringResource(R.string.shop_run_title), bt(16f, 700, 18f, COURIER, spacing = 3.2f), PAPER_INK)
                 val sub = when {
                     toBuy.isEmpty() -> stringResource(R.string.shop_run_none)
                     run == null -> stringResource(R.string.shop_run_planning)
@@ -350,61 +360,50 @@ private fun Receipt(run: Run?, toBuy: List<ListEntry>, area: ShopArea, prices: L
                         if (run.stops.size == 1) stringResource(R.string.shop_run_summary_one, km, run.minutes) else stringResource(R.string.shop_run_summary, run.stops.size, km, run.minutes)
                     }
                 }
-                Text(sub, style = base.copy(fontSize = 12.sp, color = Color(0xFF555555), fontFeatureSettings = "tnum"), textAlign = TextAlign.Center)
+                Line(sub, r12.copy(textAlign = TextAlign.Center), PAPER_SOFT, lines = 2)
             }
             if (run != null) {
-                Box(dash)
+                Dashes()
                 run.stops.forEachIndexed { i, s ->
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("${i + 1}", style = base.copy(fontWeight = FontWeight.Bold))
-                            Text(s.shop.name.uppercase(), Modifier.weight(1f), style = base.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                            Text("${s.walkMinutes}′", style = base.copy(fontFeatureSettings = "tnum"))
+                            Line("${i + 1}", b14, PAPER_INK)
+                            Line(s.shop.name.uppercase(), b14, PAPER_INK, Modifier.weight(1f))
+                            Line("${s.walkMinutes}′", r14, PAPER_INK)
                         }
                         Row(Modifier.padding(start = 16.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(s.items.joinToString(", ") { it.text }, Modifier.weight(1f), style = base.copy(fontSize = 13.sp))
+                            Line(s.items.joinToString(", ") { it.text }, r13, PAPER_INK, Modifier.weight(1f), lines = 3)
                             if (s.closesAt != null && s.closingSoon) {
-                                Text(stringResource(R.string.shop_run_closes, s.closesAt.hm()), style = base.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFFB03A3A), fontFeatureSettings = "tnum"))
+                                Line(stringResource(R.string.shop_run_closes, s.closesAt.hm()), bt(13f, 700, 14.5f, COURIER, tnum = true), RED)
                             } else if (!s.hoursKnown) {
-                                Text(stringResource(R.string.shop_run_hours_unknown), style = base.copy(fontSize = 13.sp, color = Color(0xFF888888)))
+                                Line(stringResource(R.string.shop_run_hours_unknown), r13, 0xFF888888)
                             }
                         }
                     }
                 }
                 if (run.unmet.isNotEmpty()) {
-                    Column(Modifier.fillMaxWidth()) {
-                        Text(stringResource(R.string.shop_run_unmet), style = base.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFB03A3A)))
-                        Text(run.unmet.joinToString(", ") { it.text }, Modifier.padding(start = 16.dp), style = base.copy(fontSize = 13.sp))
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Line(stringResource(R.string.shop_run_unmet), bt(12f, 700, 13.5f, COURIER), RED)
+                        Line(run.unmet.joinToString(", ") { it.text }, r13, PAPER_INK, Modifier.padding(start = 16.dp), lines = 3)
                     }
                 }
-                if (run.late) Text(stringResource(R.string.shop_run_late), style = base.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFB03A3A)))
+                if (run.late) Line(stringResource(R.string.shop_run_late), bt(12f, 700, 13.5f, COURIER), RED, lines = 2)
                 if (run.stops.isNotEmpty()) {
-                    Box(dash)
+                    Dashes()
                     val b = run.basket
+                    val b15 = bt(15f, 700, 16.5f, COURIER, tnum = true)
                     Row {
-                        Text(stringResource(R.string.shop_run_basket), Modifier.weight(1f), style = base.copy(fontWeight = FontWeight.Bold, fontSize = 15.sp))
-                        Text(if (b != null) money(b.total, prices.index.currency) + if (b.known < b.of) "+" else "" else "?", style = base.copy(fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFeatureSettings = "tnum"))
+                        Line(stringResource(R.string.shop_run_basket), b15, PAPER_INK, Modifier.weight(1f))
+                        Line(if (b != null) money(b.total, prices.index.currency) + if (b.known < b.of) "+" else "" else "?", b15, PAPER_INK)
                     }
                     Row {
-                        Text(
+                        Line(
                             if (prices.offline) stringResource(R.string.shop_run_prices_offline) else stringResource(R.string.shop_run_prices_known, run.basket?.known ?: 0, toBuy.size),
-                            Modifier.weight(1f),
-                            style = base.copy(fontSize = 12.sp, color = Color(0xFF555555)),
+                            r12, PAPER_SOFT, Modifier.weight(1f),
                         )
-                        Text(stringResource(R.string.shop_run_done, run.doneAt.hm()), style = base.copy(fontSize = 12.sp, color = Color(0xFF555555), fontFeatureSettings = "tnum"))
+                        Line(stringResource(R.string.shop_run_done, run.doneAt.hm()), r12, PAPER_SOFT)
                     }
-                    Canvas(Modifier.fillMaxWidth().height(16.dp)) {
-                        // The board's barcode: 288 wide, bars between x 40 and 248.
-                        val k = size.width / 288f
-                        var x = 40f
-                        var h = run.stops.joinToString { it.shop.key }.hashCode().toLong()
-                        while (x < 248f) {
-                            h = h * 6364136223846793005L + 1442695040888963407L
-                            val w = 1f + ((h ushr 40) % 4).toInt()
-                            drawRect(Color(0xFF1D1D1D), Offset(x * k, 0f), Size(w * k, size.height))
-                            x += w + 2f + ((h ushr 20) % 4).toInt()
-                        }
-                    }
+                    BoardArt(ShopBoards.RECEIPT_BARCODE, Modifier.fillMaxWidth(), tint = argb(PAPER_INK), width = 288.dp, height = 16.dp)
                 }
             }
         }
@@ -412,19 +411,24 @@ private fun Receipt(run: Run?, toBuy: List<ListEntry>, area: ShopArea, prices: L
     }
 }
 
-/** The receipt's torn bottom: a row of white triangles, 12 px each, as the board's two gradients. */
+/**
+ * The receipt's torn bottom, as the board's two 12 px gradient tiles (135° and 225°, white to the half): white points
+ * down at every 12 px, notches 6 px deep between them.
+ */
 @Composable
 private fun TornEdge() {
     Canvas(Modifier.fillMaxWidth().height(12.dp)) {
         val tooth = 12.dp.toPx()
         val path = Path()
-        var x = 0f
         path.moveTo(0f, 0f)
+        path.lineTo(0f, size.height)
+        var x = 0f
         while (x < size.width) {
-            path.lineTo(x + tooth / 2f, size.height)
-            path.lineTo(minOf(x + tooth, size.width), 0f)
+            path.lineTo(minOf(x + tooth / 2f, size.width), size.height / 2f)
+            path.lineTo(minOf(x + tooth, size.width), size.height)
             x += tooth
         }
+        path.lineTo(size.width, 0f)
         path.close()
         drawPath(path, Color.White)
     }

@@ -335,6 +335,7 @@
     <string name="shop_stroll_back">Walk back</string>
     <string name="shop_stroll_on">Walk on</string>
     <string name="shop_stroll_count">%1$d / %2$d</string>
+    <string name="shop_stroll_you">You are here</string>
     <string name="shop_stroll_street">%1$s, walking %2$s</string>
     <string name="shop_stroll_none">No shops mapped along a street near you</string>
     <string name="shop_stroll_peek">Peek inside</string>

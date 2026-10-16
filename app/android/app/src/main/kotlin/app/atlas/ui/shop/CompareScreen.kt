@@ -1,5 +1,13 @@
 package app.atlas.ui.shop
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.kit.argb
+import app.atlas.ui.kit.cssLinear
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -73,10 +81,6 @@ import app.atlas.ui.kit.rememberHere
 import java.time.LocalDate
 import java.util.Locale
 
-private val Ink = Color(0xFF14161B)
-private val Soft = Color(0xFF464C5A)
-private val Grey = Color(0xFF676D7C)
-private val Green = Color(0xFF1E7A46)
 
 /**
  * The basket compared, as on the Compare board: a thermal receipt per shop (up to three) with the same product on every
@@ -102,27 +106,15 @@ fun CompareScreen(nav: Navigator) {
     var noting by rememberSaveable { mutableStateOf(false) }
     var snapped by rememberSaveable { mutableStateOf(false) }
 
-    Box(Modifier.fillMaxSize().background(Color(0xFFDCDDD8)).drawBehind {
-        val step = 6.dp.toPx()
-        var y = 0f
-        while (y < size.height) {
-            var x = 0f
-            while (x < size.width) {
-                drawCircle(Color.Black.copy(alpha = 0.05f), 0.6.dp.toPx(), Offset(x + 1f, y + 1f))
-                x += step
-            }
-            y += step
-        }
-    }) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).windowInsetsPadding(WindowInsets.statusBars).padding(top = 4.dp, bottom = 100.dp)) {
-            Header(nav, cmp, toBuy.size, data == null) { noting = true }
-            Spacer(Modifier.height(32.dp))
+    Box(Modifier.fillMaxSize().background(argb(0xFFDCDDD8)).drawDots()) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = boardTop(), bottom = 110.dp)) {
+            Box(Modifier.fillMaxWidth().height(124.dp)) { Header(nav, cmp, toBuy.size, data == null) { noting = true } }
             when {
                 toBuy.isEmpty() -> StateMessage(
                     "cat.groceries", stringResource(R.string.shop_cmp_no_list), text = stringResource(R.string.shop_cmp_no_list_text),
                     action = { PillButton(onClick = { nav.go(Dest.Groceries("list")) }) { Text(stringResource(R.string.shop_cmp_open_list), style = app.atlas.ui.kit.Atlas.type.label) } },
                 )
-                data == null -> Text(stringResource(R.string.shop_loading), Modifier.padding(horizontal = 16.dp), style = TextStyle(fontFamily = SansFamily, fontSize = 14.sp), color = Soft)
+                data == null -> Line(stringResource(R.string.shop_loading), bt(13f, 400, 17f), SOFT, Modifier.padding(horizontal = 22.dp))
                 cmp.empty -> StateMessage(
                     "ui.tag",
                     stringResource(if (data!!.error != null) R.string.shop_cmp_offline_title else R.string.shop_cmp_empty_title),
@@ -138,10 +130,10 @@ fun CompareScreen(nav: Navigator) {
             val goLabel = if (plan == "split" && split != null) {
                 stringResource(R.string.shop_go_split, split.minutes, split.order.joinToString(", ") { it.name })
             } else stringResource(R.string.shop_go_to, one.walkMinutes, one.store.name)
-            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).padding(start = 16.dp, end = 16.dp, bottom = 26.dp)) {
-                BigPill(
-                    goLabel,
-                    onClick = {
+            Row(
+                Modifier.align(Alignment.BottomCenter).padding(start = 16.dp, end = 16.dp, bottom = 26.dp + boardLift()).fillMaxWidth().height(56.dp)
+                    .boardBox(0xFF2E5BFF, round(28f))
+                    .clickable(role = Role.Button) {
                         nav.go(
                             if (plan == "split" && split != null) {
                                 val last = split.order.last()
@@ -152,25 +144,48 @@ fun CompareScreen(nav: Navigator) {
                             } else Dest.Route(one.store.at.lat, one.store.at.lon, one.store.name, mode = "WALK"),
                         )
                     },
-                    modifier = Modifier.fillMaxWidth(),
-                    icon = { Symbol("mode.walk", tint = Color.White, size = 20.dp) },
-                )
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Sym("mode.walk", 20f, 20f, 0xFFFFFFFF)
+                Line(goLabel, bt(16f, 600, 20.5f, tnum = true), 0xFFFFFFFF, Modifier.padding(end = 4.dp))
             }
         }
     }
     if (noting) NotePriceDialog(toBuy, here, onDone = { saved -> noting = false; if (saved) snapped = true })
 }
 
-@Composable
-private fun Header(nav: Navigator, cmp: Comparison, items: Int, loading: Boolean, onNote: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        RoundSymbolButton("ui.back", stringResource(R.string.shop_back_pantry), { nav.back() }, size = 44.dp, fill = Color.White.copy(alpha = 0.8f), iconSize = 20.dp)
-        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(stringResource(R.string.shop_basket), style = TextStyle(fontFamily = SerifFamily, fontSize = 32.sp, lineHeight = 32.sp), color = Ink)
-            val sub = if (cmp.baskets.isEmpty() || loading) stringResource(R.string.shop_basket_sub_none, items) else stringResource(R.string.shop_basket_sub, items, cmp.baskets.size)
-            Text(sub, style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Soft)
+private const val SOFT: Long = 0xFF464C5A
+private const val GREEN: Long = 0xFF1E7A46
+private const val PAPER_INK: Long = 0xFF1D1D1D
+
+/** The board's dotted grey card: a 1 px dot of 5 % black in the middle of every 6 px square. */
+private fun Modifier.drawDots(): Modifier = drawBehind {
+    val step = 6.dp.toPx()
+    val r = 1.15.dp.toPx()
+    val dot = Color(0x0D000000)
+    var y = step / 2
+    while (y < size.height) {
+        var x = step / 2
+        while (x < size.width) {
+            drawCircle(dot, r, Offset(x, y))
+            x += step
         }
-        RoundSymbolButton("ui.camera", stringResource(R.string.shop_note_price), onNote, size = 44.dp, fill = Ink, tint = Color.White, iconSize = 19.dp)
+        y += step
+    }
+}
+
+/** The title row at y 44: back, "Basket" over what is compared, the camera for a price you saw. */
+@Composable
+private fun BoxScope.Header(nav: Navigator, cmp: Comparison, items: Int, loading: Boolean, onNote: () -> Unit) {
+    Box(Modifier.at(16f, 46.5f, 44f, 44f).boardBox(0xCCFFFFFF, round(22f)).tap(stringResource(R.string.shop_back_pantry)) { nav.back() }, contentAlignment = Alignment.Center) {
+        Sym("ui.back", 20f, 20f)
+    }
+    Block(stringResource(R.string.shop_basket), bt(32f, 400, 32f, SERIF, align = TextAlign.Center), INK, Modifier.at(70f, 39f, 272f, 41.5f).semantics { heading() })
+    val sub = if (cmp.baskets.isEmpty() || loading) stringResource(R.string.shop_basket_sub_none, items) else stringResource(R.string.shop_basket_sub, items, cmp.baskets.size)
+    Line(sub, bt(13f, 400, 17f, tnum = true, align = TextAlign.Center), SOFT, Modifier.at(70f, 76f, 272f, 17f))
+    Box(Modifier.at(352f, 46.5f, 44f, 44f).boardBox(INK, round(22f)).tap(stringResource(R.string.shop_note_price), onNote), contentAlignment = Alignment.Center) {
+        Sym("ui.camera", 19f, 19f, 0xFFFFFFFF)
     }
 }
 
@@ -187,17 +202,18 @@ private fun Compared(cmp: Comparison, plan: String, onPlan: (String) -> Unit, sn
         }
         m
     } else mapOf(best.store.key to cmp.entries.map { it.text }.toSet())
-    // Receipts in the order of the board: the middle one is the best, the others lean away from it.
+    // The board's receipts, 14 px from the sides and 8 apart: the best in the middle (128 wide), the others (122) lean
+    // away from it, 16 and 26 px lower; three of them shrink to fit as flex items do.
     val ordered = if (baskets.size == 3) listOf(baskets[1], baskets[0], baskets[2]) else baskets
     Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.Top) {
         ordered.forEach { b ->
             val isBest = b === best
             val tilt = if (baskets.size == 3) (if (isBest) 0f else if (b === baskets[1]) -2f else 1.5f) else 0f
-            val top = if (isBest) 0.dp else if (tilt < 0f) 16.dp else 26.dp
-            Receipt(b, isBest, chosen[b.store.key].orEmpty(), tilt, Modifier.weight(if (isBest) 128f else 122f).padding(top = top))
+            val top = if (isBest) 0f else if (tilt < 0f) 16f else 26f
+            Receipt(b, isBest, isBest || chosen.containsKey(b.store.key) && plan == "split", chosen[b.store.key].orEmpty(), tilt, Modifier.weight(if (isBest) 128f else 122f).padding(top = top.dp))
         }
     }
-    Spacer(Modifier.height(28.dp))
+    Spacer(Modifier.height(64.dp))
     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         PlanCard(
             on = plan != "split", symbol = "ui.pin", title = stringResource(R.string.shop_one_stop),
@@ -215,105 +231,140 @@ private fun Compared(cmp: Comparison, plan: String, onPlan: (String) -> Unit, sn
         }
         cmp.freshness?.let { age ->
             Row(Modifier.padding(horizontal = 6.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Symbol("ui.clock", tint = Soft, size = 16.dp)
-                Text(
+                Sym("ui.clock", 16f, 16f, SOFT)
+                Line(
                     if (age.last == 0) stringResource(R.string.shop_reported_today)
                     else stringResource(R.string.shop_reported_ago, if (age.first == age.last) "${age.first}" else "${age.first}–${age.last}"),
-                    style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Soft,
+                    bt(13f, 400, 17f, tnum = true), SOFT,
                 )
             }
         }
-        cmp.gap?.let { MoneyCard(it, cmp.currency, snapped, onNote) }
+    }
+    cmp.gap?.let {
+        Spacer(Modifier.height(15.dp))
+        MoneyCard(it, cmp.currency, snapped, onNote)
     }
 }
 
-/** A thermal receipt: the shop's mark, its lines with prices, a total and how far it is; torn along the bottom. */
+/** A dashed rule of the receipts: `border-top: 1px dashed #999`. */
 @Composable
-private fun Receipt(b: StoreBasket, best: Boolean, marked: Set<String>, tilt: Float, modifier: Modifier) {
-    val mono = ShopType.receipt
-    val base = TextStyle(fontFamily = mono, fontSize = 12.sp, color = Color(0xFF1D1D1D))
-    val brand = remember(b.store.name) { Brands.search(b.store.name, limit = 1).firstOrNull()?.takeIf { it.brand.equals(b.store.name, true) || it.name.startsWith(b.store.name, true) } }
-    val dash = Modifier.fillMaxWidth().height(1.dp).drawBehind {
-        drawLine(Color(0xFF999999), Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 2.dp.toPx())))
+private fun Dashes() {
+    Canvas(Modifier.fillMaxWidth().height(1.dp)) {
+        val w = 1.dp.toPx()
+        drawLine(Color(0xFF999999), Offset(0f, w / 2), Offset(size.width, w / 2), strokeWidth = w, pathEffect = PathEffect.dashPathEffect(floatArrayOf(3 * w, 3 * w)))
     }
+}
+
+/** The receipts' highlighter: `linear-gradient(100deg, …)` of yellow at 60 %, soft at both ends. */
+private val Marker = cssLinear(100f, 0f to 0x00FFDE3C, 0.05f to 0x99FFDE3C, 0.95f to 0x99FFDE3C, 1f to 0x00FFDE3C)
+
+/**
+ * A thermal receipt, as the board's (padding 12 10, 6 px between lines, Courier Prime 12): the shop's mark, its lines
+ * with prices, a total and how far it is; [ringed] when it is part of the plan (an inset 2 px green ring), torn along
+ * the bottom in 8 px teeth, under a drop shadow.
+ */
+@Composable
+private fun Receipt(b: StoreBasket, best: Boolean, ringed: Boolean, marked: Set<String>, tilt: Float, modifier: Modifier) {
+    val r12 = bt(12f, 400, 13.5f, COURIER, tnum = true)
+    val brand = remember(b.store.name) { Brands.search(b.store.name, limit = 1).firstOrNull()?.takeIf { it.brand.equals(b.store.name, true) || it.name.startsWith(b.store.name, true) } }
+    val shadow = if (best) CssShadow(0f, 14f, 18f, 0f, 0x38000000) else CssShadow(0f, 6f, 10f, 0f, 0x24000000)
     Box(modifier.graphicsLayer { rotationZ = tilt }) {
-        Column(Modifier.cssShadow(RoundedCornerShape(0.dp), y = if (best) 14.dp else 6.dp, blur = if (best) 18.dp else 10.dp, colour = Color(if (best) 0x38000000 else 0x24000000))) {
+        Column {
             Column(
-                Modifier.fillMaxWidth().background(Color.White).then(if (best) Modifier.border(2.dp, Green) else Modifier).padding(horizontal = 10.dp, vertical = 12.dp),
+                Modifier.fillMaxWidth().boardBox(0xFFFFFFFF, shadows = listOf(shadow) + if (ringed) listOf(CssShadow(0f, 0f, 0f, 2f, GREEN, inset = true)) else emptyList(), clip = false)
+                    .padding(horizontal = 10.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                ShopLogo(brand, b.store.name, 34.dp, Modifier.align(Alignment.CenterHorizontally), key = b.store.key, round = true)
-                Text(b.store.name.uppercase(), Modifier.fillMaxWidth(), style = base.copy(fontWeight = FontWeight.Bold), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Box(dash)
+                ReceiptLogo(brand, b.store.name, b.store.key, Modifier.align(Alignment.CenterHorizontally))
+                Line(b.store.name.uppercase(), bt(12f, 700, 13.5f, COURIER, align = TextAlign.Center), PAPER_INK, Modifier.fillMaxWidth())
+                Dashes()
                 for (l in b.lines) {
                     val missing = l.price == null
+                    val ink = if (missing) 0xFF999999 else PAPER_INK
                     Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 0.dp).then(
-                            if (l.entry.text in marked && !missing) Modifier.drawBehind {
-                                drawRect(Brush.horizontalGradient(0f to Color(0x00FFDE3C), 0.05f to Color(0x99FFDE3C), 0.95f to Color(0x99FFDE3C), 1f to Color(0x00FFDE3C)), Offset(-4.dp.toPx(), 0f), androidx.compose.ui.geometry.Size(size.width + 8.dp.toPx(), size.height))
-                            } else Modifier,
-                        ),
+                        Modifier.fillMaxWidth().layout { m, c ->
+                            // margin 0 -4px, padding 0 4px: the marker reaches 4 px past the text on both sides
+                            val p = m.measure(c.copy(maxWidth = c.maxWidth + 8.dp.roundToPx(), minWidth = c.maxWidth + 8.dp.roundToPx()))
+                            layout(c.maxWidth, p.height) { p.place(-4.dp.roundToPx(), 0) }
+                        }.then(if (l.entry.text in marked && !missing) Modifier.boardBox(grad = listOf(Marker), r = round(2f)) else Modifier).padding(horizontal = 4.dp),
                     ) {
-                        Text(l.entry.text, Modifier.weight(1f), style = base.copy(color = if (missing) Color(0xFF999999) else base.color), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(l.price?.let { String.format(Locale.getDefault(), "%.2f", it) } ?: "?", style = base.copy(color = if (missing) Color(0xFF999999) else base.color, fontFeatureSettings = "tnum"))
+                        Line(l.entry.text, r12, ink, Modifier.weight(1f))
+                        Line(l.price?.let { String.format(Locale.getDefault(), "%.2f", it) } ?: "?", r12, ink)
                     }
                 }
-                Box(dash)
+                Dashes()
                 Row {
-                    Text("TOT", Modifier.weight(1f), style = base.copy(fontWeight = FontWeight.Bold, fontSize = if (best) 15.sp else 14.sp, color = if (best) Green else base.color))
-                    Text(String.format(Locale.getDefault(), "%.2f", b.total) + if (b.complete) "" else "+", style = base.copy(fontWeight = FontWeight.Bold, fontSize = if (best) 15.sp else 14.sp, color = if (best) Green else base.color, fontFeatureSettings = "tnum"))
+                    val tot = if (best) bt(15f, 700, 16.5f, COURIER, tnum = true) else bt(14f, 700, 16f, COURIER, tnum = true)
+                    val ink = if (best) GREEN else PAPER_INK
+                    Line("TOT", tot, ink, Modifier.weight(1f))
+                    Line(String.format(Locale.getDefault(), "%.2f", b.total) + if (b.complete) "" else "+", tot, ink)
                 }
-                Text("${b.walkMinutes}′ · ${b.known}/${b.lines.size}", style = base.copy(fontSize = 11.sp, color = Color(0xFF666666), fontFeatureSettings = "tnum"))
+                Line("${b.walkMinutes}′ · ${b.known}/${b.lines.size}", bt(11f, 400, 12.5f, COURIER, tnum = true), 0xFF666666)
             }
-            Canvas(Modifier.fillMaxWidth().height(8.dp)) {
-                val tooth = 8.dp.toPx()
-                val p = Path()
-                var x = 0f
-                p.moveTo(0f, 0f)
-                while (x < size.width) {
-                    p.lineTo(x + tooth / 2f, size.height)
-                    p.lineTo(minOf(x + tooth, size.width), 0f)
-                    x += tooth
-                }
-                p.close()
-                drawPath(p, Color.White)
-            }
+            Teeth(8f)
         }
         if (best) {
-            Text(
-                stringResource(R.string.shop_best),
-                Modifier.align(Alignment.TopStart).offset(x = 38.dp, y = (-14).dp).graphicsLayer { rotationZ = -14f; alpha = 0.82f }
-                    .border(3.dp, Color(0xFFC8322A), RoundedCornerShape(6.dp)).background(Color.White.copy(alpha = 0.7f), RoundedCornerShape(6.dp))
-                    .padding(start = 9.dp, end = 9.dp, top = 3.dp, bottom = 1.dp),
-                style = TextStyle(fontFamily = ShopType.typewriter, fontSize = 20.sp, letterSpacing = 2.sp),
-                color = Color(0xFFC8322A),
-                maxLines = 1,
-            )
+            // The rubber stamp: left 48, top -14, padding 3 9 1, a 3 px red border, 6 px corners, turned 14° back, at 82 %.
+            Box(
+                Modifier.align(Alignment.TopStart).offset(48.dp, (-14).dp).graphicsLayer { rotationZ = -14f; alpha = 0.82f }
+                    .boardBox(0xB3FFFFFF, round(6f), border = ring(3f, 0xFFC8322A)).padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 4.dp),
+            ) { Line(stringResource(R.string.shop_best), bt(20f, 400, 20f, ELITE, spacing = 2f), 0xFFC8322A) }
         }
     }
 }
 
+/** A receipt's shop mark, 34 round: the chain's own logo on its colour, else its first letter in Geist Black 18. */
+@Composable
+private fun ReceiptLogo(brand: app.atlas.places.Brand?, name: String, key: String, modifier: Modifier) {
+    val bg = brandColour(brand, key)
+    val fg = brand?.textColour?.let { Color(it) } ?: app.atlas.ui.kit.contentColourFor(bg)
+    Box(modifier.size(34.dp).clip(CircleShape).background(bg), contentAlignment = Alignment.Center) {
+        val slug = brand?.logoSlug
+        if (slug != null) Symbol("logo-$slug", tint = fg, size = 20.dp)
+        else Text(name.trim().take(1).uppercase(), style = bt(18f, 900, 23.5f), color = fg)
+    }
+}
+
+/** A torn edge of [tooth] px teeth, as the boards' two gradient tiles (135° and 225°, white to the half). */
+@Composable
+internal fun Teeth(tooth: Float) {
+    Canvas(Modifier.fillMaxWidth().height(tooth.dp)) {
+        val t = tooth.dp.toPx()
+        val path = Path()
+        path.moveTo(0f, 0f)
+        path.lineTo(0f, size.height)
+        var x = 0f
+        while (x < size.width) {
+            path.lineTo(minOf(x + t / 2f, size.width), size.height / 2f)
+            path.lineTo(minOf(x + t, size.width), size.height)
+            x += t
+        }
+        path.lineTo(size.width, 0f)
+        path.close()
+        drawPath(path, Color.White)
+    }
+}
+
+/** One of the two plans: 76 high, 22 px corners, white with a 2 px blue ring when chosen, else 70 % white. */
 @Composable
 private fun PlanCard(on: Boolean, symbol: String, title: String, sub: String, price: String, saving: String?, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(22.dp)
     Row(
-        Modifier.fillMaxWidth().height(76.dp).clip(shape)
-            .background(if (on) Color.White else Color.White.copy(alpha = 0.7f))
-            .then(if (on) Modifier.border(2.dp, Color(0xFF2E5BFF), shape) else Modifier)
+        Modifier.fillMaxWidth().height(76.dp)
+            .boardBox(if (on) 0xFFFFFFFF else 0xB3FFFFFF, round(22f), if (on) listOf(CssShadow(0f, 0f, 0f, 2f, 0xFF2E5BFF)) else emptyList())
             .tap(title, onClick).semantics { selected = on }.padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(44.dp).background(if (on) Color(0xFFE4EAFF) else Color(0xFFF1EEE8), RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) {
-            Symbol(symbol, tint = if (on) Color(0xFF2E5BFF) else Ink, size = 22.dp)
+        Box(Modifier.size(44.dp).boardBox(if (on) 0xFFE4EAFF else 0xFFF1EEE8, round(14f)), contentAlignment = Alignment.Center) {
+            Sym(symbol, 22f, 22f, if (on) 0xFF2E5BFF else INK)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp), color = Ink)
-            Text(sub, style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Soft, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Line(title, bt(16f, 700, 20.5f), INK)
+            Line(sub, bt(13f, 400, 17f, tnum = true), SOFT)
         }
         Column(horizontalAlignment = Alignment.End) {
-            Text(price, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, fontFeatureSettings = "tnum"), color = Ink)
-            if (saving != null) Text(saving, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, fontFeatureSettings = "tnum"), color = Green)
+            Line(price, bt(22f, 800, 28.5f, tnum = true), INK)
+            if (saving != null) Line(saving, bt(12f, 700, 15.5f, tnum = true), GREEN)
         }
     }
 }
@@ -325,47 +376,49 @@ private fun MoneyCard(gap: PriceGap, currency: String, snapped: Boolean, onNote:
     val best = gap.best
     val missing = gap.rows.firstOrNull { it.second == null }?.first
     Column(
-        Modifier.fillMaxWidth().cssShadow(RoundedCornerShape(20.dp), y = 2.dp, blur = 10.dp, colour = Color(0x0F000000)).background(Color.White, RoundedCornerShape(20.dp)).padding(horizontal = 14.dp, vertical = 12.dp),
+        Modifier.padding(horizontal = 16.dp).fillMaxWidth().boardBox(0xFFFFFFFF, round(20f), listOf(CssShadow(0f, 2f, 10f, 0f, 0x0F000000)), clip = false)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-            Text(stringResource(R.string.shop_money_where, gap.entry.text.uppercase()), Modifier.weight(1f), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, letterSpacing = 1.4.sp), color = Color(0xFF5A5F6C), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Line(stringResource(R.string.shop_money_where, gap.entry.text.uppercase()), bt(12f, 800, 15.5f, spacing = 1.44f), 0xFF5A5F6C, Modifier.weight(1f, fill = false))
             val what = gap.product?.quantity ?: gap.product?.name
-            if (what != null) Text(what, Modifier.padding(start = 8.dp), style = TextStyle(fontFamily = SansFamily, fontSize = 11.sp), color = Grey, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (what != null) Line(what, bt(11f, 400, 14f), 0xFF676D7C, Modifier.padding(start = 8.dp))
         }
         for ((store, price) in gap.rows) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(store.name, Modifier.width(76.dp), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp), color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Line(store.name, bt(13f, 700, 17f), INK, Modifier.width(76.dp))
                 Box(Modifier.weight(1f).height(10.dp)) {
                     if (price != null) {
-                        Box(Modifier.fillMaxSize().background(Color(0xFFEEF0F3), RoundedCornerShape(5.dp)))
-                        Box(Modifier.fillMaxHeight().fillMaxWidth((price / worst).toFloat().coerceIn(0.05f, 1f)).background(if (price == best) Green else Color(0xFFE8862C), RoundedCornerShape(5.dp)))
+                        Box(Modifier.fillMaxSize().boardBox(0xFFEEF0F3, round(5f)))
+                        Box(Modifier.fillMaxHeight().fillMaxWidth((price / worst).toFloat().coerceIn(0.05f, 1f)).boardBox(if (price == best) GREEN else 0xFFE8862C, round(5f)))
                     } else {
-                        Box(
-                            Modifier.fillMaxSize().drawBehind {
-                                drawRoundRect(Color(0xFFB9BEC8), cornerRadius = androidx.compose.ui.geometry.CornerRadius(5.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx()))))
-                            },
-                        )
+                        Canvas(Modifier.fillMaxSize()) {
+                            val w = 1.5.dp.toPx()
+                            drawRoundRect(
+                                Color(0xFFB9BEC8), topLeft = Offset(w / 2, w / 2), size = androidx.compose.ui.geometry.Size(size.width - w, size.height - w),
+                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(5.dp.toPx() - w / 2),
+                                style = androidx.compose.ui.graphics.drawscope.Stroke(w, pathEffect = PathEffect.dashPathEffect(floatArrayOf(3 * w, 3 * w))),
+                            )
+                        }
                     }
                 }
-                Text(
+                Line(
                     if (price == null) stringResource(R.string.shop_no_price) else String.format(Locale.getDefault(), "%.2f", price) + if (price == best) " " + stringResource(R.string.shop_best_word) else "",
+                    bt(13f, 800, 17f, tnum = true, align = TextAlign.End),
+                    if (price == null) 0xFF8A8F9C else if (price == best) GREEN else INK,
                     Modifier.width(74.dp),
-                    style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, fontFeatureSettings = "tnum"),
-                    color = if (price == null) Color(0xFF8A8F9C) else if (price == best) Green else Ink,
-                    textAlign = TextAlign.End,
-                    maxLines = 1,
                 )
             }
         }
         val label = if (snapped) stringResource(R.string.shop_snap_done) else stringResource(R.string.shop_snap_at, missing?.name ?: gap.rows.last().first.name)
         Row(
-            Modifier.fillMaxWidth().padding(top = 2.dp).height(34.dp).clip(RoundedCornerShape(17.dp)).background(if (snapped) Color(0xFFE3F1E8) else Color(0xFFF1F3F6)).tap(label, onNote),
+            Modifier.fillMaxWidth().padding(top = 2.dp).height(34.dp).boardBox(if (snapped) 0xFFE3F1E8 else 0xFFF1F3F6, round(17f)).tap(label, onNote),
             horizontalArrangement = Arrangement.spacedBy(7.dp, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Symbol(if (snapped) "ui.check" else "ui.camera", tint = if (snapped) Color(0xFF1F6B3E) else Ink, size = 16.dp)
-            Text(label, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp), color = if (snapped) Color(0xFF1F6B3E) else Ink, maxLines = 1)
+            if (!snapped) Sym("ui.camera", 16f, 16f)
+            Line(label, bt(13f, 700, 17f), if (snapped) 0xFF1F6B3E else INK)
         }
     }
 }

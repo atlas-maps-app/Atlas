@@ -46,89 +46,9 @@ internal val HM: DateTimeFormatter = DateTimeFormatter.ofPattern("H:mm")
 
 internal fun LocalDateTime.hm(): String = format(HM)
 
-/**
- * One of the boards' symbols drawn exactly [width] × [height] (the size its board gives it), not squeezed into a
- * square: a shelf object on the pantry, a bin, a trade sign. The symbol's own colours stay; one-colour ones take [tint].
- */
-@Composable
-internal fun BoardSymbol(
-    id: String,
-    width: Dp,
-    height: Dp,
-    modifier: Modifier = Modifier,
-    tint: Color = LocalContentColor.current,
-    contentDescription: String? = null,
-) {
-    val described = if (contentDescription != null) {
-        Modifier.semantics {
-            this.contentDescription = contentDescription
-            role = Role.Image
-        }
-    } else Modifier
-    Canvas(modifier.then(described).size(width, height)) {
-        // drawSymbol centres a symbol's viewBox in a square of its longer side: centre that square on the box.
-        val side = maxOf(size.width, size.height)
-        drawSymbol(id, Offset((size.width - side) / 2f, (size.height - side) / 2f), side, tint)
-    }
-}
-
 /** Makes the thing a button with a spoken [label]. */
 internal fun Modifier.tap(label: String, onClick: () -> Unit): Modifier =
     clickable(onClickLabel = label, role = Role.Button, onClick = onClick).semantics { contentDescription = label }
-
-/** A round button of [size] with a symbol, as the boards' 44–48 px circles: [fill] behind, [tint] on it. */
-@Composable
-internal fun RoundSymbolButton(
-    symbol: String,
-    label: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    size: Dp = 48.dp,
-    fill: Color = Color.White.copy(alpha = 0.72f),
-    tint: Color = Color(0xFF14161B),
-    iconSize: Dp = 21.dp,
-    weight: Float = 1f,
-) {
-    Box(modifier.size(size).clip(CircleShape).background(fill).tap(label, onClick), contentAlignment = Alignment.Center) {
-        CompositionLocalProvider(LocalContentColor provides tint) { Symbol(symbol, tint = tint, size = iconSize, weight = weight) }
-    }
-}
-
-/** The board's tall call to action (56 high, fully round, 16 semibold): [icon] leads [text]. */
-@Composable
-internal fun BigPill(
-    text: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    fill: Color = Color(0xFF2E5BFF),
-    tint: Color = Color.White,
-    icon: @Composable () -> Unit = {},
-) {
-    androidx.compose.foundation.layout.Row(
-        modifier
-            .height(56.dp)
-            .clip(androidx.compose.foundation.shape.RoundedCornerShape(28.dp))
-            .background(fill)
-            .clickable(role = Role.Button, onClick = onClick),
-        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        CompositionLocalProvider(LocalContentColor provides tint) {
-            icon()
-            androidx.compose.material3.Text(
-                text,
-                style = androidx.compose.ui.text.TextStyle(
-                    fontFamily = app.atlas.ui.kit.SansFamily,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-                    fontSize = 16.sp,
-                    fontFeatureSettings = "tnum",
-                ),
-                color = tint,
-                maxLines = 1,
-            )
-        }
-    }
-}
 
 /** "→ 23:00", "closes 19:30" (amber), "opens 9:00" (grey), "24/7"; null when the hours are not mapped. */
 @Composable
@@ -163,10 +83,11 @@ internal fun brandColour(brand: app.atlas.places.Brand?, key: String?): Color =
 internal fun ShopLogo(brand: app.atlas.places.Brand?, name: String, size: Dp, modifier: Modifier = Modifier, key: String? = null, round: Boolean = false) {
     val bg = brandColour(brand, key ?: name)
     val fg = brand?.textColour?.let { Color(it) } ?: app.atlas.ui.kit.contentColourFor(bg)
-    val shape = if (round) CircleShape else androidx.compose.foundation.shape.RoundedCornerShape(size * 0.28f)
+    // The boards' marks: 12 px corners (or round), the logo 24 px, a letter in Overpass Black at half the size.
+    val shape = if (round) CircleShape else androidx.compose.foundation.shape.RoundedCornerShape(minOf(12.dp, size * 0.3f))
     Box(modifier.size(size).clip(shape).background(bg), contentAlignment = Alignment.Center) {
         val slug = brand?.logoSlug
-        if (slug != null) Symbol("logo-$slug", tint = fg, size = size * 0.6f)
+        if (slug != null) Symbol("logo-$slug", tint = fg, size = minOf(24.dp, size * 0.6f))
         else androidx.compose.material3.Text(
             name.trim().take(1).uppercase(),
             style = androidx.compose.ui.text.TextStyle(fontFamily = ShopType.overpass, fontWeight = androidx.compose.ui.text.font.FontWeight.Black, fontSize = (size.value * 0.5f).sp),
@@ -174,9 +95,6 @@ internal fun ShopLogo(brand: app.atlas.places.Brand?, name: String, size: Dp, mo
         )
     }
 }
-
-/** The colour the boards give a one-colour symbol (bread brown, cheese gold), or null when they draw it in the text colour. */
-internal fun hueOf(id: String): Color? = app.atlas.places.BoardSymbols.resolve(id)?.hue?.let { Color(it) }
 
 /** Starts [intent] from [context]; false when no app on the phone takes it (a tablet without a dialler, no browser). */
 internal fun startSafely(context: Context, intent: Intent): Boolean = try {

@@ -1,5 +1,8 @@
 package app.atlas.ui.shop
 
+import app.atlas.ui.kit.CssCorners
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.kit.argb
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -10,6 +13,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -60,8 +64,6 @@ import app.atlas.ui.kit.cssShadow
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.shortDistance
 
-private val Ink = Color(0xFF15181C)
-private val Soft = Color(0xFF464C5A)
 
 /** The materials of the chooser, in the board's order. */
 private val Materials = listOf(Stream.MIXED, Stream.PAPER, Stream.ORGANIC, Stream.BATTERIES, Stream.CLOTHES, Stream.ELECTRONICS, Stream.OIL, Stream.HAZARDOUS)
@@ -104,61 +106,77 @@ fun DropScreen(stream: String?, nav: Navigator) {
             overlays = MapOverlays(markers = markers, location = (fix?.let { UserLocation(it.location, it.accuracy, it.bearing, it.speed) } ?: UserLocation(here, 10.0))),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 120.dp, bottom = 360.dp),
         )
+        // The board's top row at y 42: back (44, 92 % white) and the chooser of materials (52 high, 6 px in, spread out).
         Row(
-            Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(start = 16.dp, end = 16.dp, top = 2.dp),
+            Modifier.fillMaxWidth().padding(top = boardTop()).padding(start = 16.dp, end = 16.dp, top = 42.dp).height(52.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
         ) {
-            RoundSymbolButton("ui.back", stringResource(R.string.shop_bins_back), { nav.back() }, size = 44.dp, fill = Color.White.copy(alpha = 0.92f), tint = Ink, iconSize = 20.dp)
+            Box(Modifier.size(44.dp).boardBox(0xEBFFFFFF, round(22f)).tap(stringResource(R.string.shop_bins_back)) { nav.back() }, contentAlignment = Alignment.Center) {
+                Sym("ui.back", 20f, 20f, INK_D)
+            }
             Row(
-                Modifier.weight(1f).height(52.dp)
-                    .cssShadow(RoundedCornerShape(26.dp), y = 6.dp, blur = 18.dp, colour = Color(0x24181C30))
-                    .background(Color.White.copy(alpha = 0.94f), RoundedCornerShape(26.dp)).padding(horizontal = 6.dp),
+                Modifier.weight(1f).height(52.dp).boardBox(0xF0FFFFFF, round(26f), listOf(CssShadow(0f, 6f, 18f, 0f, 0x24181C30)), clip = false).padding(horizontal = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
             ) {
                 for (m in Materials) {
                     val on = m == sel
                     val label = stringResource(StreamArts.getValue(m).label)
                     Box(
-                        Modifier.size(if (on) 40.dp else 36.dp, 40.dp).then(if (on) Modifier.background(Color(m.colour), CircleShape) else Modifier)
+                        Modifier.size(if (on) 40.dp else 36.dp, 40.dp).then(if (on) Modifier.boardBox(m.colour, round(20f)) else Modifier)
                             .tap(label) { picked = m.name }.semantics { selected = on },
                         contentAlignment = Alignment.Center,
                     ) {
                         when {
-                            m == Stream.BATTERIES -> Symbol("bin.battery", tint = if (on) Color.White else Color(m.colour), size = 18.dp)
-                            on -> Box(Modifier.size(14.dp, 20.dp).background(Color.White, RoundedCornerShape(3.dp, 3.dp, 4.dp, 4.dp)))
-                            m == Stream.HAZARDOUS -> Symbol("sign.warning", size = 22.dp)
-                            else -> Box(Modifier.size(if (m == Stream.OIL) 18.dp else 20.dp, 26.dp).background(Color(m.colour), RoundedCornerShape(3.dp, 3.dp, 5.dp, 5.dp)))
+                            m == Stream.BATTERIES -> if (on) Sym("drop.battery.2", 18f, 20f, 0xFFFFFFFF) else Sym("drop.battery", 12f, 16f, m.colour)
+                            on -> Box(Modifier.size(14.dp, 20.dp).boardBox(0xFFFFFFFF, CssCorners(3f, 3f, 4f, 4f)))
+                            m == Stream.HAZARDOUS -> Sym("bin.hazardous", 22f, 22f, 0xFF000000)
+                            else -> Box(Modifier.size(if (m == Stream.OIL) 18.dp else 20.dp, 26.dp).boardBox(m.colour, Swatch.getValue(m)))
                         }
                     }
                 }
             }
         }
+        // The sheet: the bottom 350 px, 30 px top corners, its grabber, the material's line and the nearest drop-offs.
         Column(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(350.dp)
-                .cssShadow(RoundedCornerShape(30.dp, 30.dp, 0.dp, 0.dp), y = (-10).dp, blur = 30.dp, colour = Color(0x24181C30))
-                .background(Color(0xFFFBFBF9), RoundedCornerShape(30.dp, 30.dp, 0.dp, 0.dp)).padding(start = 16.dp, end = 16.dp, top = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(350.dp + boardLift())
+                .boardBox(0xFFFBFBF9, CssCorners(30f, 30f, 0f, 0f), listOf(CssShadow(0f, -10f, 30f, 0f, 0x24181C30)), clip = false)
+                .padding(start = 16.dp, end = 16.dp, top = 10.dp),
         ) {
-            Box(Modifier.align(Alignment.CenterHorizontally).size(40.dp, 5.dp).background(Color(0xFFD8D4CC), RoundedCornerShape(3.dp)))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(Modifier.size(30.dp).background(colour, CircleShape), contentAlignment = Alignment.Center) {
-                    if (sel == Stream.BATTERIES) Symbol("bin.battery", tint = Color.White, size = 14.dp) else Box(Modifier.size(10.dp, 14.dp).background(Color.White, RoundedCornerShape(2.dp)))
+            Box(Modifier.align(Alignment.CenterHorizontally).size(40.dp, 5.dp).boardBox(0xFFD8D4CC, round(3f)))
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.height(30.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.size(30.dp).boardBox(sel.colour, round(15f)), contentAlignment = Alignment.Center) {
+                    if (sel == Stream.BATTERIES) Sym("drop.battery", 12f, 16f, 0xFFFFFFFF) else Box(Modifier.size(10.dp, 14.dp).boardBox(0xFFFFFFFF, round(2f)))
                 }
-                Text(stringResource(StreamArts.getValue(sel).label), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp), color = Ink)
-                if (!area.waiting) Text(stringResource(R.string.shop_drop_nearby, mine.size), style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Color(0xFF676D7C))
+                Line(stringResource(StreamArts.getValue(sel).label), bt(18f, 800, 23.5f), INK_D)
+                if (!area.waiting) Line(stringResource(R.string.shop_drop_nearby, mine.size), bt(13f, 400, 17f, tnum = true), 0xFF676D7C)
             }
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).windowInsetsPadding(WindowInsets.navigationBars), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Spacer(Modifier.height(10.dp))
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = boardLift()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 when {
-                    area.waiting -> Text(stringResource(R.string.shop_loading), style = TextStyle(fontFamily = SansFamily, fontSize = 14.sp), color = Soft)
+                    area.waiting -> Line(stringResource(R.string.shop_loading), bt(13f, 400, 17f), SOFT)
                     area.places.isEmpty() && area.error != null -> StateMessage("ui-cloud-off", stringResource(R.string.shop_problem), text = area.error, tint = Color(0xFFD23C3C))
-                    streetOnes.isEmpty() && centres.isEmpty() -> StateMessage("bin.recycling", stringResource(R.string.shop_drop_none), text = stringResource(R.string.shop_drop_none_text), tint = Soft)
+                    streetOnes.isEmpty() && centres.isEmpty() -> StateMessage("bin.recycling", stringResource(R.string.shop_drop_none), text = stringResource(R.string.shop_drop_none_text), tint = argb(SOFT))
                     else -> {
                         streetOnes.take(4).forEach { t -> DropRow(t, area, now, false) { open(nav, services, t) } }
                         centres.firstOrNull { it !in streetOnes }?.let { c -> DropRow(c, area, now, true) { open(nav, services, c) } }
                     }
                 }
+                Spacer(Modifier.height(16.dp))
             }
         }
+    }
+}
+
+private const val INK_D: Long = 0xFF15181C
+private const val SOFT: Long = 0xFF464C5A
+
+/** The chooser's little bins: rounded at the foot, square for clothes and electronics, a can for oil. */
+private val Swatch: Map<Stream, CssCorners> = Stream.entries.associateWith {
+    when (it) {
+        Stream.CLOTHES, Stream.ELECTRONICS -> round(3f)
+        Stream.OIL -> CssCorners(9f, 9f, 4f, 4f)
+        else -> CssCorners(3f, 3f, 5f, 5f)
     }
 }
 
@@ -169,31 +187,31 @@ private fun open(nav: Navigator, services: app.atlas.Services, t: BinTarget) {
     nav.go(Dest.Place.of(t.place.place))
 }
 
-/** A drop-off: its name, little bins for what it takes and until when, and how far; amber for a special waste site. */
+/** A drop-off (74 high, 20 px corners): its name, little bins for what it takes and until when, and how far; amber for a special waste site. */
 @Composable
 private fun DropRow(t: BinTarget, area: ShopArea, now: java.time.LocalDateTime, special: Boolean, onClick: () -> Unit) {
-    val bg = if (special) Color(0xFFFFF4D6) else Color.White
     Row(
-        Modifier.fillMaxWidth().height(74.dp).clip(RoundedCornerShape(20.dp)).background(bg)
-            .then(if (special) Modifier.border(1.5.dp, Color(0xFFF2B705), RoundedCornerShape(20.dp)) else Modifier).tap(t.place.name, onClick).padding(horizontal = 14.dp),
+        Modifier.fillMaxWidth().height(74.dp)
+            .boardBox(
+                if (special) 0xFFFFF6DC else 0xFFFFFFFF, round(20f),
+                listOf(if (special) CssShadow(0f, 0f, 0f, 1.5f, 0xFFF2D27A, inset = true) else CssShadow(0f, 2f, 10f, 0f, 0x0F181C30)),
+            )
+            .tap(t.place.name, onClick).padding(horizontal = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (special) Symbol("sign.warning", size = 30.dp)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(
-                if (special) stringResource(R.string.shop_drop_special) else t.place.name,
-                style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp), color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
+        if (special) Sym("sign.warning", 30f, 30f, INK_D)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (special) 3.dp else 6.dp)) {
+            Line(if (special) stringResource(R.string.shop_drop_special) else t.place.name, if (special) bt(15f, 800, 19.5f) else bt(16f, 800, 20.5f), INK_D)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                for (s in t.streams.filter { it != Stream.RUBBISH }.take(6)) {
-                    Box(Modifier.size(12.dp, 16.dp).background(Color(s.colour), RoundedCornerShape(2.dp)))
-                }
-                val st = TextStyle(fontFamily = SansFamily, fontSize = 12.sp, fontFeatureSettings = "tnum")
-                openLine(t.place, area, now)?.let { (text, _) -> Text(text, style = st, color = Soft, maxLines = 1) }
-                val takes = t.streams.filter { it != Stream.RUBBISH }.take(3).map { stringResource(StreamArts.getValue(it).label).lowercase() }.joinToString(" · ")
-                if (special) Text(takes, Modifier.weight(1f, fill = false), style = st, color = Soft, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val st = bt(12f, 400, 15.5f, tnum = true)
+                if (!special) for (s in t.streams.filter { it != Stream.RUBBISH }.take(6)) Box(Modifier.size(12.dp, 16.dp).boardBox(s.colour, round(2f)))
+                val time = openLine(t.place, area, now)?.first
+                if (special) {
+                    val takes = t.streams.filter { it != Stream.RUBBISH }.take(3).map { stringResource(StreamArts.getValue(it).label).lowercase() }
+                    Line(listOfNotNull(time).plus(takes).joinToString(" · "), st, 0xFF5A4A20, Modifier.weight(1f, fill = false))
+                } else if (time != null) Line(time, st, SOFT)
             }
         }
-        Text(shortDistance(t.distanceM), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Black, fontSize = 17.sp, fontFeatureSettings = "tnum"), color = Ink)
+        Line(shortDistance(t.distanceM), bt(17f, 900, 22f, tnum = true), INK_D)
     }
 }

@@ -257,7 +257,24 @@ class ShopLogicTest {
     @Test
     fun everyBoardSymbolTheScreensDrawExists() {
         val ids = ShelfArts.values.map { it.symbol } + FamilyArts.values.map { it.symbol } + StreamArts.values.map { it.symbol } +
-            ShopKind.entries.map { it.glyph } + listOf("ui.back", "ui.list.2", "ui.list", "ui.tag", "ui.route", "ui.star", "ui.add-person", "ui.camera", "ui.clock", "ui.pin", "ui.phone", "ui.grid", "ui.mail", "ui.lock.2", "ui.edit", "ui.heart.3", "ui.volume", "ui.calendar", "ui.brands", "ui.layers", "ui.check", "ui.search", "ui.bookmark", "ui.plus", "ui.arrow-up.2", "mode.walk", "mode.walk.5", "nav.direction", "need.water", "need.water.2", "need.food", "fact.container", "fact.card", "fact.wheelchair", "fact.baby", "fact.person", "fact.second-hand", "fact.independent", "fact.vegan.2", "fact.delivery", "shop.self-checkout", "place.pharmacy", "place.dry-cleaning", "place.laundry", "place.key-cutting", "place.print", "place.shoe-repair", "place.tailor", "place.fridge", "place.food-bank", "place.soup-kitchen", "place.shop", "place.books", "place.drinking-fountain", "sign.warning", "refill.jar", "bin.deposit", "bin.pizza-box", "bin.plastic-bag", "bin.takeout-tub", "tab.map")
+            ShopKind.entries.map { it.glyph } + listOf(
+            "bin.battery", "bin.deposit", "bin.electronics", "bin.hazardous", "bin.organic", "bin.paper", "bin.pizza-box", "bin.plastic-bag",
+            "bin.plastic.2", "bin.recycling", "bin.takeout-tub", "bin.textile", "bin.trash", "brand.greencart", "drop.battery", "drop.battery.2",
+            "fact.baby", "fact.bottle-refill", "fact.card", "fact.container", "fact.delivery", "fact.independent", "fact.new", "fact.open",
+            "fact.person", "fact.second-hand", "fact.vegan.2", "fact.wheelchair", "food.bread", "food.hot", "food.wine", "grocery.cheese",
+            "grocery.produce", "grocery.supermarket", "grocery.world-foods", "mode.walk", "mode.walk.5", "nav.direction", "need.food", "need.toilet",
+            "need.toilet.5", "need.water", "need.water.2", "pantry.bakery", "pantry.bulk", "pantry.butcher", "pantry.cheese", "pantry.community",
+            "pantry.corner-shop", "pantry.eggs", "pantry.late", "pantry.produce", "pantry.supermarket", "pantry.wine", "pantry.world-foods", "place.books",
+            "place.cafe", "place.drinking-fountain", "place.dry-cleaning", "place.food-bank", "place.food-bank.2", "place.fridge", "place.garden", "place.key-cutting",
+            "place.laundry", "place.pharmacy", "place.print", "place.shoe-repair", "place.shop", "place.shop-front", "place.soup-kitchen", "place.tailor",
+            "place.tools", "refill.bulk", "refill.jar", "refill.return", "refill.soap", "refill.vending", "refill.water", "shop.books",
+            "shop.cart", "shop.diy", "shop.errands", "shop.fashion", "shop.florist", "shop.health", "shop.kids", "shop.pets",
+            "shop.self-checkout", "shop.shoes", "shop.sport", "shop.tech", "shop.vintage", "sign.warning", "tab.map", "ui.add-person",
+            "ui.arrow-up.2", "ui.back", "ui.bookmark", "ui.brands", "ui.calendar", "ui.camera", "ui.check", "ui.chevron-right",
+            "ui.clock", "ui.edit", "ui.filter", "ui.grid", "ui.heart.3", "ui.layers", "ui.list", "ui.list.2",
+            "ui.lock.2", "ui.mail", "ui.phone", "ui.pin", "ui.plus", "ui.route", "ui.search", "ui.star",
+            "ui.tag", "ui.volume",
+        )
         val missing = ids.distinct().filterNot { BoardSymbols.has(it) }
         assertTrue("missing symbols: $missing", missing.isEmpty())
     }

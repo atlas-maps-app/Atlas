@@ -50,9 +50,12 @@ class ShopScreenshotTest {
         return f
     }
 
+    /** With the board's list on the fridge, so the badge and "Plan my run" carry its count. */
     @Test
     fun pantry() {
-        show(Dest.Groceries())
+        val services = ShopFixtures.services()
+        boardList(services)
+        show(Dest.Groceries(), services)
         settleWork()
         capture("shop_pantry")
     }
@@ -190,9 +193,10 @@ class ShopScreenshotTest {
         capture("shop_bins")
     }
 
+    /** Batteries, as the Drop board chooses them: two drop-offs around the Westerkerk. */
     @Test
-    fun dropPaper() {
-        show(Dest.Groceries("drop:paper"))
+    fun dropBatteries() {
+        show(Dest.Groceries("drop:batteries"))
         settleWork()
         capture("shop_drop")
     }

@@ -1,5 +1,13 @@
 package app.atlas.ui.shop
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import app.atlas.ui.kit.CssCorners
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.kit.cssLinear
+import app.atlas.ui.kit.cssRepeatingLinear
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -64,8 +72,6 @@ import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private val Ink = Color(0xFF14161B)
-private val Soft = Color(0xFF464C5A)
 
 internal val Errand.label: Int
     get() = when (this) {
@@ -121,63 +127,60 @@ fun ErrandsScreen(nav: Navigator) {
     val plan = planned
     val toggle = { e: Errand -> picked = if (e.name in picked) picked - e.name else picked + e.name }
 
-    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFFE9EAEC), Color(0xFFDCDEE2))))) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).windowInsetsPadding(WindowInsets.statusBars).padding(top = 2.dp, bottom = 100.dp)) {
-            Box(Modifier.fillMaxWidth()) {
-                Box(Modifier.padding(start = 16.dp)) { RoundSymbolButton("ui.back", stringResource(R.string.shop_find_back), { nav.back() }, size = 44.dp, fill = Color.White, tint = Ink, iconSize = 20.dp) }
-                Column(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(stringResource(R.string.shop_errands), style = TextStyle(fontFamily = SerifFamily, fontSize = 36.sp, lineHeight = 36.sp), color = Ink)
+    Box(Modifier.fillMaxSize().boardBox(grad = listOf(cssLinear(180f, 0f to 0xFFE9EAEC, 1f to 0xFFDCDEE2)))) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = boardTop(), bottom = 110.dp)) {
+            Box(Modifier.fillMaxWidth().height(448.dp)) {
+                Box(
+                    Modifier.at(16f, 42f, 44f, 44f).boardBox(0xFFFFFFFF, round(22f)).tap(stringResource(R.string.shop_find_back)) { nav.back() },
+                    contentAlignment = Alignment.Center,
+                ) { Sym("ui.back", 20f, 20f) }
+                Column(Modifier.offset(0.dp, 46.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Block(stringResource(R.string.shop_errands), bt(36f, 400, 36f, SERIF), INK, Modifier.semantics { heading() })
                     val sub = when {
                         picks.isEmpty() -> stringResource(R.string.shop_errands_none)
                         plan?.openTill != null -> stringResource(R.string.shop_errands_picked, picks.size, plan.openTill.hm())
                         else -> stringResource(R.string.shop_errands_picked_open, picks.size)
                     }
-                    Text(sub, style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Soft)
+                    Line(sub, bt(13f, 400, 17f, tnum = true), SOFT)
                 }
+                KeyRing(picks, plan, toggle)
+                MoreErrands(picks, toggle)
             }
-            Spacer(Modifier.height(14.dp))
-            KeyRing(picks, plan, toggle)
-            Spacer(Modifier.height(0.dp))
-            MoreErrands(picks, toggle)
-            Spacer(Modifier.height(24.dp))
             Column(
                 Modifier.padding(horizontal = 16.dp).fillMaxWidth()
-                    .cssShadow(RoundedCornerShape(22.dp), y = 8.dp, blur = 20.dp, colour = Color(0x1A181C30))
-                    .background(Color.White, RoundedCornerShape(22.dp)).padding(horizontal = 16.dp, vertical = 14.dp),
+                    .boardBox(0xFFFFFFFF, round(22f), listOf(CssShadow(0f, 8f, 20f, 0f, 0x1A181C30)), clip = false).padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 when {
-                    picks.isEmpty() -> Text(stringResource(R.string.shop_errands_none), style = TextStyle(fontFamily = SansFamily, fontSize = 14.sp), color = Soft)
-                    plan == null -> Text(stringResource(R.string.shop_errand_loading), style = TextStyle(fontFamily = SansFamily, fontSize = 14.sp), color = Soft)
+                    picks.isEmpty() -> Line(stringResource(R.string.shop_errands_none), bt(13f, 400, 17f), SOFT, lines = 2)
+                    plan == null -> Line(stringResource(R.string.shop_errand_loading), bt(13f, 400, 17f), SOFT, lines = 2)
                     area.places.isEmpty() && area.error != null -> StateMessage("ui-cloud-off", stringResource(R.string.shop_problem), text = area.error, tint = Color(0xFFD23C3C))
                     else -> {
                         plan.stops.forEachIndexed { i, s ->
-                            if (i > 0) Box(Modifier.padding(start = 15.dp).size(2.dp, 10.dp).drawBehind {
-                                var y = 0f
-                                while (y < size.height) { drawRect(Color(0xFFB5B9C2), Offset(0f, y), androidx.compose.ui.geometry.Size(size.width, 3.dp.toPx())); y += 6.dp.toPx() }
-                            })
+                            // The dotted line between stops: 2 × 10, 3 px on and 3 off, under the discs' centres.
+                            if (i > 0) Box(Modifier.padding(start = 15.dp).size(2.dp, 10.dp).boardBox(grad = listOf(cssRepeatingLinear(180f, 6f, 0f to 0xFFB5B9C2, 3f to 0xFFB5B9C2, 3f to 0x00000000, 6f to 0x00000000))))
                             StopRow(i + 1, s, area, now) { nav.go(Dest.Place.of(s.place.place).also { services.remember(s.place.place) }) }
                         }
                         for (m in plan.missing) {
-                            Row(Modifier.fillMaxWidth().height(48.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.size(32.dp).border(2.dp, Color(m.colour), CircleShape), contentAlignment = Alignment.Center) { Text("?", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp), color = Color(m.colour)) }
-                                Column {
-                                    Text(stringResource(m.label), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp), color = Ink)
-                                    Text(stringResource(R.string.shop_errand_nowhere), style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp), color = Color(0xFFB03A3A))
+                            Row(Modifier.fillMaxWidth().height(62.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(32.dp).boardBox(r = round(16f), border = ring(2f, m.colour)), contentAlignment = Alignment.Center) { Line("?", bt(14f, 700, 18f), m.colour) }
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Line(stringResource(m.label), bt(16f, 700, 20.5f), INK)
+                                    Line(stringResource(R.string.shop_errand_nowhere), bt(13f, 400, 17f), RED)
                                 }
                             }
                         }
-                        if (plan.late) Text(stringResource(R.string.shop_errand_late), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.sp), color = Color(0xFFB03A3A))
+                        if (plan.late) Line(stringResource(R.string.shop_errand_late), bt(12f, 600, 15.5f), RED, lines = 2)
                     }
                 }
             }
         }
         val p = plan
         if (p != null && p.stops.isNotEmpty()) {
-            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).padding(start = 16.dp, end = 16.dp, bottom = 26.dp)) {
-                BigPill(
-                    stringResource(R.string.shop_errand_go, p.minutes, p.doneAt.hm()),
-                    onClick = {
+            Row(
+                Modifier.align(Alignment.BottomCenter).padding(start = 16.dp, end = 16.dp, bottom = 26.dp + boardLift()).fillMaxWidth().height(56.dp)
+                    .boardBox(0xFF2E5BFF, round(28f))
+                    .clickable(role = Role.Button) {
                         // Two errands at one place (a parcel and a stamp at the post office) are one call on the route.
                         val calls = p.stops.map { it.place }.fold(emptyList<ShopPlace>()) { acc, s -> if (acc.lastOrNull()?.key == s.key) acc else acc + s }
                         val last = calls.last()
@@ -188,93 +191,99 @@ fun ErrandsScreen(nav: Navigator) {
                             ),
                         )
                     },
-                    modifier = Modifier.fillMaxWidth(),
-                    icon = { Symbol("mode.walk", tint = Color.White, size = 20.dp) },
-                )
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Sym("mode.walk", 20f, 20f, 0xFFFFFFFF)
+                Line(stringResource(R.string.shop_errand_go, p.minutes, p.doneAt.hm()), bt(16f, 600, 20.5f, tnum = true), 0xFFFFFFFF)
             }
         }
     }
 }
 
-/** The key ring: a steel ring and a fob per errand, hanging in a fan; the numbers are the stops, "+" the ones not picked. */
+private const val SOFT: Long = 0xFF464C5A
+private const val RED: Long = 0xFFB03A3A
+
+/** How the board hangs five fobs: turned about the top of the ring, from 14° on the left to -17° on the right. */
+private val FiveAngles = floatArrayOf(14f, 6f, -2f, -9f, -17f)
+
+/**
+ * The key ring (the board's steel ring, 140 × 60 at x 136, y 104) and a fob per errand from y 138, 64 wide and 4
+ * apart, centred, hanging in a fan; the numbers are the stops, "+" the ones not picked.
+ */
 @Composable
 private fun KeyRing(picks: List<Errand>, plan: ErrandPlan?, toggle: (Errand) -> Unit) {
     val shown = (Errand.ring + picks.filterNot { it in Errand.ring }).take(8)
     val n = shown.size
-    Box(Modifier.fillMaxWidth().height(270.dp)) {
-        BoardArt(ShopBoards.KEY_RING, Modifier.align(Alignment.TopCenter).padding(top = 0.dp))
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = 34.dp), horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally)) {
-            shown.forEachIndexed { i, e ->
-                // Fan from +14° on the left to -17° on the right, as the board hangs them.
-                val angle = if (n == 1) 0f else 14f - (31f * i / (n - 1))
-                val on = e in picks
-                val order = plan?.stops?.indexOfFirst { it.errand == e }?.takeIf { it >= 0 }?.plus(1)
-                Fob(e, on, order, plan?.missing?.contains(e) == true, angle, Modifier.width(if (n > 5) 52.dp else 64.dp)) { toggle(e) }
-            }
+    BoardArt(ShopBoards.KEY_RING, Modifier.offset(136.dp, 104.dp))
+    Row(Modifier.offset(0.dp, 138.dp).fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally)) {
+        shown.forEachIndexed { i, e ->
+            val angle = if (n == 5) FiveAngles[i] else if (n == 1) 0f else 14f - (31f * i / (n - 1))
+            val on = e in picks
+            val order = plan?.stops?.indexOfFirst { it.errand == e }?.takeIf { it >= 0 }?.plus(1)
+            // Five fit as the board hangs them (64 wide, the tag 56); more hang narrower, 44 wide with 36 px tags.
+            Fob(e, on, order, plan?.missing?.contains(e) == true, angle, if (n > 5) 44f else 64f) { toggle(e) }
         }
     }
 }
 
+/** A fob: its 14 px ring, then the 56 × 150 tag (10 10 28 28 corners, a 3 px light inset rim, a drop shadow) with the symbol and the stop. */
 @Composable
-private fun Fob(e: Errand, on: Boolean, order: Int?, missing: Boolean, angle: Float, modifier: Modifier, onClick: () -> Unit) {
+private fun Fob(e: Errand, on: Boolean, order: Int?, missing: Boolean, angle: Float, width: Float, onClick: () -> Unit) {
     val name = stringResource(e.label)
     Column(
-        modifier.height(190.dp)
+        Modifier.width(width.dp).height(190.dp)
             .graphicsLayer { rotationZ = angle; transformOrigin = TransformOrigin(0.5f, 0f) }
             .alpha(if (on) 1f else 0.55f)
             .tap(stringResource(if (on) R.string.shop_errand_remove else R.string.shop_errand_add, name), onClick).semantics { selected = on },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(Modifier.size(14.dp).border(3.dp, Color(0xFF9DA3AC), CircleShape))
+        Box(Modifier.size(14.dp).boardBox(r = round(7f), border = ring(3f, 0xFF9DA3AC)))
         Column(
-            Modifier.width(56.dp).height(150.dp)
-                .cssShadow(RoundedCornerShape(10.dp, 10.dp, 28.dp, 28.dp), y = 6.dp, blur = 10.dp, colour = Color(0x33000000))
-                .background(Color(e.colour), RoundedCornerShape(10.dp, 10.dp, 28.dp, 28.dp))
-                .border(3.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(10.dp, 10.dp, 28.dp, 28.dp)),
+            Modifier.width((width - 8f).dp).height(150.dp)
+                .boardBox(e.colour, CssCorners(10f, 10f, 28f, 28f), listOf(CssShadow(0f, 0f, 0f, 3f, 0x40FFFFFF, inset = true), CssShadow(0f, 6f, 10f, 0f, 0x33000000)), clip = false),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
         ) {
             val sym = e.symbol
-            if (sym != null) Symbol(sym, tint = Color.White, size = 28.dp)
-            else Text("$", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Black, fontSize = 26.sp), color = Color.White)
-            Text(
-                if (missing) "?" else order?.toString() ?: "+",
-                style = TextStyle(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 11.sp), color = Color.White,
-            )
+            if (sym != null) Sym(sym, 28f, 28f, 0xFFFFFFFF)
+            else Line("$", bt(26f, 900, 34f), 0xFFFFFFFF)
+            Line(if (missing) "?" else order?.toString() ?: "+", bt(11f, 700, 14f, MONO), 0xFFFFFFFF)
         }
     }
 }
 
+/** More errands: 44 px white circles, 6 apart, centred at y 380; ink when picked. */
 @Composable
 private fun MoreErrands(picks: List<Errand>, toggle: (Errand) -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
+    Row(Modifier.offset(0.dp, 380.dp).fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
         for (e in Errand.more) {
             val on = e in picks
             val name = stringResource(e.label)
             Box(
-                Modifier.size(44.dp).clip(CircleShape).background(if (on) Ink else Color.White)
+                Modifier.size(44.dp).boardBox(if (on) INK else 0xFFFFFFFF, round(22f))
                     .tap(stringResource(if (on) R.string.shop_errand_remove else R.string.shop_errand_add, name)) { toggle(e) }.semantics { selected = on },
                 contentAlignment = Alignment.Center,
-            ) { Symbol(e.symbol ?: "place.shop", tint = if (on) Color.White else Ink, size = 20.dp) }
+            ) { Sym(e.symbol ?: "place.shop", 20f, 20f, if (on) 0xFFFFFFFF else INK) }
         }
     }
 }
 
+/** A stop: 62 high, the numbered 32 px disc in the errand's colour, the place and its hours (red when it closes first), the walk. */
 @Composable
 private fun StopRow(n: Int, s: ErrandStop, area: ShopArea, now: java.time.LocalDateTime, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(62.dp).tap(s.place.name, onClick), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(32.dp).background(Color(s.errand.colour), CircleShape), contentAlignment = Alignment.Center) {
-            Text(n.toString(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp), color = Color.White)
+        Box(Modifier.size(32.dp).boardBox(s.errand.colour, round(16f)), contentAlignment = Alignment.Center) {
+            Line(n.toString(), bt(14f, 700, 18f), 0xFFFFFFFF)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(s.place.name, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp), color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            val st = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum")
+            Line(s.place.name, bt(16f, 700, 20.5f), INK)
             if (s.first && s.closesAt != null) {
-                Text(stringResource(R.string.shop_errand_closes_first, s.closesAt.hm()), style = st.copy(fontWeight = FontWeight.Bold), color = Color(0xFFB03A3A), maxLines = 1)
+                Line(stringResource(R.string.shop_errand_closes_first, s.closesAt.hm()), bt(13f, 700, 17f, tnum = true), RED)
             } else {
                 val line = openLine(s.place, area, now)
-                Text(listOfNotNull(line?.first, stringResource(s.errand.label).takeIf { s.place.name != stringResource(s.errand.label) }).joinToString(" · "), style = st, color = Soft, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Line(listOfNotNull(line?.first, stringResource(s.errand.label).takeIf { s.place.name != stringResource(s.errand.label) }).joinToString(" · "), bt(13f, 400, 17f, tnum = true), SOFT)
             }
         }
-        Text("${s.walkMinutes}′", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, fontFeatureSettings = "tnum"), color = Ink)
+        Line("${s.walkMinutes}′", bt(18f, 800, 23.5f, tnum = true), INK)
     }
 }

@@ -1,5 +1,10 @@
 package app.atlas.ui.shop
 
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.kit.argb
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -111,34 +116,19 @@ fun HighStreetScreen(nav: Navigator) {
     val area by produceState(ShopArea.empty(here), here) { repo.area("street", Family.all, here).collect { value = it } }
     var indie by rememberSaveable { mutableStateOf(false) }
     val counts = remember(area, now, indie) { StreetCounts.of(area, now, indie) }
-    val wall = Color(0xFFA85C44)
 
-    Box(
-        Modifier.fillMaxSize().background(wall).drawBehind {
-            // Brick joints: a line every 22 px across and every 26 px down, in pale mortar.
-            val mortar = Color(0xFFEBDCC8).copy(alpha = 0.55f)
-            val w = 2.dp.toPx()
-            var y = 0f
-            while (y < size.height) { drawRect(mortar, Offset(0f, y), androidx.compose.ui.geometry.Size(size.width, w)); y += 22.dp.toPx() }
-            var x = 0f
-            while (x < size.width) { drawRect(mortar, Offset(x, 0f), androidx.compose.ui.geometry.Size(w, size.height)); x += 26.dp.toPx() }
-            drawRect(Brush.verticalGradient(0f to Color(0x59280F08), 0.3f to Color.Transparent, 0.7f to Color.Transparent, 1f to Color(0x59280F08)))
-        },
-    ) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).windowInsetsPadding(WindowInsets.statusBars).padding(top = 2.dp, bottom = 110.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+    Box(Modifier.fillMaxSize().background(argb(0xFFA85C44)).drawBricks()) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = boardTop(), bottom = 95.dp + boardLift())) {
+            Box(Modifier.fillMaxWidth().height(248.dp)) {
                 Box(
-                    Modifier.size(44.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.85f)).tap(stringResource(R.string.shop_back_map)) { nav.back() },
+                    Modifier.at(16f, 42f, 44f, 44f).boardBox(0xD9FFFFFF, round(22f)).tap(stringResource(R.string.shop_back_map)) { nav.back() },
                     contentAlignment = Alignment.Center,
-                ) { BoardArt(ShopBoards.PANTRY_MAP, tint = Color(0xFF14161B), width = 20.dp, height = 20.dp) }
-                Spacer(Modifier.weight(1f))
-                IndieSwitch(indie) { indie = it }
+                ) { Sym("tab.map", 20f, 20f) }
+                IndieSwitch(indie, Modifier.align(Alignment.TopEnd).padding(end = 16.dp, top = 42.dp)) { indie = it }
+                Plaque(counts, area, Modifier.align(Alignment.TopCenter).padding(top = 100.dp))
+                StreetSearch(nav, Modifier.offset(0.dp, 180.dp))
             }
-            Spacer(Modifier.height(14.dp))
-            Plaque(counts, area)
-            Spacer(Modifier.height(18.dp))
-            StreetSearch(nav)
-            Spacer(Modifier.height(18.dp))
+            // The twelve signs: three columns 6 apart, rows of 140 four apart, 10 px from the sides.
             Column(Modifier.padding(horizontal = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Family.entries.chunked(3).forEach { row ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -151,11 +141,11 @@ fun HighStreetScreen(nav: Navigator) {
                                 Modifier.weight(1f).height(140.dp).tap(desc) { nav.go(if (f == Family.ERRANDS) Dest.Groceries("errands") else Dest.Groceries("street:" + f.name.lowercase() + if (indie) ":indie" else "")) },
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             ) {
-                                BoardSymbol(art.symbol, 120.dp, 112.dp)
-                                Text(
+                                Sym(art.symbol, 120f, 112f, 0xFFFFFFFF)
+                                Line(
                                     stringResource(art.label) + if (c != null && !area.waiting) " ${c.value}" else "",
-                                    Modifier.offset(y = (-4).dp).background(Color(0xFF1A1A1A), RoundedCornerShape(4.dp)).padding(horizontal = 8.dp, vertical = 2.dp),
-                                    style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, fontFeatureSettings = "tnum"), color = Color(0xFFF4EBDD), maxLines = 1,
+                                    bt(12f, 700, 15.5f, tnum = true), 0xFFF4EBDD,
+                                    Modifier.offset(y = (-4).dp).boardBox(0xFF1A1A1A, round(4f)).padding(horizontal = 8.dp, vertical = 2.dp),
                                 )
                             }
                         }
@@ -164,45 +154,73 @@ fun HighStreetScreen(nav: Navigator) {
             }
         }
         Row(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).padding(start = 16.dp, end = 16.dp, bottom = 26.dp),
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 26.dp + boardLift()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            BigPill(
-                stringResource(R.string.shop_stroll), { nav.go(Dest.Groceries("stroll")) }, Modifier.weight(1f), fill = Color(0xFF14161B),
-                icon = { Symbol("mode.walk.5", tint = Color.White, size = 20.dp) },
-            )
-            RoundSymbolButton("ui.brands", stringResource(R.string.shop_brands_branches), { nav.go(Dest.Brands()) }, size = 56.dp, fill = Color.White.copy(alpha = 0.9f), iconSize = 22.dp)
-            RoundSymbolButton("ui.layers", stringResource(R.string.shop_malls), { nav.go(Dest.Search("mall")) }, size = 56.dp, fill = Color.White.copy(alpha = 0.9f), iconSize = 22.dp)
+            Row(
+                Modifier.weight(1f).height(56.dp).boardBox(INK, round(28f)).clickable(role = Role.Button) { nav.go(Dest.Groceries("stroll")) },
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Sym("mode.walk.5", 20f, 20f, 0xFFFFFFFF)
+                Line(stringResource(R.string.shop_stroll), bt(16f, 600, 20.5f), 0xFFFFFFFF)
+            }
+            Box(Modifier.size(56.dp).boardBox(0xE6FFFFFF, round(28f)).tap(stringResource(R.string.shop_brands_branches)) { nav.go(Dest.Brands()) }, contentAlignment = Alignment.Center) {
+                Sym("ui.brands", 22f, 22f)
+            }
+            Box(Modifier.size(56.dp).boardBox(0xE6FFFFFF, round(28f)).tap(stringResource(R.string.shop_malls)) { nav.go(Dest.Search("mall")) }, contentAlignment = Alignment.Center) {
+                Sym("ui.layers", 22f, 22f)
+            }
         }
     }
 }
 
+/**
+ * The brick wall, as the board's background: a 2 px joint of pale mortar at the foot of every 22 px course and every
+ * 26 px across, darkened towards the top and the bottom.
+ */
+private fun Modifier.drawBricks(): Modifier = drawBehind {
+    val mortar = Color(0x8CEBDCC8)
+    val w = 2.dp.toPx()
+    var y = 22.dp.toPx() - w
+    while (y < size.height) { drawRect(mortar, Offset(0f, y), androidx.compose.ui.geometry.Size(size.width, w)); y += 22.dp.toPx() }
+    var x = 0f
+    while (x < size.width) { drawRect(mortar, Offset(x, 0f), androidx.compose.ui.geometry.Size(w, size.height)); x += 26.dp.toPx() }
+    drawRect(Brush.verticalGradient(0f to Color(0x59280F08), 0.3f to Color(0x00280F08), 0.7f to Color(0x00280F08), 1f to Color(0x59280F08)))
+}
+
+/** "indie": 44 high, the shop symbol, the word and a 44 × 28 switch (green when on, its knob 3 px in from the end). */
 @Composable
-private fun IndieSwitch(on: Boolean, onChange: (Boolean) -> Unit) {
+private fun IndieSwitch(on: Boolean, modifier: Modifier, onChange: (Boolean) -> Unit) {
     val d = stringResource(R.string.shop_indie_d)
     Row(
-        Modifier.height(44.dp).clip(RoundedCornerShape(22.dp)).background(Color.White.copy(alpha = 0.85f))
+        modifier.height(44.dp).boardBox(0xD9FFFFFF, round(22f))
             .tap(d) { onChange(!on) }.semantics { selected = on }.padding(start = 12.dp, end = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Symbol("place.shop", tint = Color(0xFF14161B), size = 18.dp)
-        Text(stringResource(R.string.shop_indie), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp), color = Color(0xFF14161B))
-        Box(Modifier.size(44.dp, 28.dp).background(if (on) Color(0xFF1E7A46) else Color(0xFF9AA0A8), RoundedCornerShape(14.dp))) {
-            Box(Modifier.align(if (on) Alignment.CenterEnd else Alignment.CenterStart).padding(horizontal = 3.dp).size(22.dp).cssShadow(CircleShape, y = 1.dp, blur = 3.dp, colour = Color(0x4D000000)).background(Color.White, CircleShape))
+        Sym("place.shop", 18f, 18f)
+        Line(stringResource(R.string.shop_indie), bt(12f, 700, 15.5f), INK)
+        Box(Modifier.size(44.dp, 28.dp).boardBox(if (on) 0xFF1E7A46 else 0xFF9AA0A8, round(14f))) {
+            Box(
+                Modifier.align(if (on) Alignment.CenterEnd else Alignment.CenterStart).padding(horizontal = 3.dp).size(22.dp)
+                    .boardBox(0xFFFFFFFF, round(11f), listOf(CssShadow(0f, 1f, 3f, 0f, 0x4C000000)), clip = false),
+            )
         }
     }
 }
 
-/** The street sign: white enamel with a black double border, the street in Instrument Serif and the count in red capitals. */
+/** The street sign (260 × 62): white enamel, a 2 px black line 3 px in, the street in Instrument Serif and the count in red spaced capitals. */
 @Composable
-private fun Plaque(counts: StreetCounts, area: ShopArea) {
-    val shape = RoundedCornerShape(10.dp)
+private fun Plaque(counts: StreetCounts, area: ShopArea, modifier: Modifier) {
     Column(
-        Modifier.size(260.dp, 62.dp).cssShadow(shape, y = 6.dp, blur = 12.dp, colour = Color(0x59000000))
-            .background(Color(0xFFFBFBF7), shape).padding(3.dp).border(2.dp, Color(0xFF1A1A1A), RoundedCornerShape(7.dp)),
+        modifier.size(260.dp, 62.dp).boardBox(
+            0xFFFBFBF7, round(10f),
+            listOf(CssShadow(0f, 0f, 0f, 3f, 0xFFFBFBF7, inset = true), CssShadow(0f, 0f, 0f, 5f, 0xFF1A1A1A, inset = true), CssShadow(0f, 6f, 12f, 0f, 0x59000000)),
+            clip = false,
+        ),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
     ) {
-        Text(stringResource(R.string.shop_highstreet), style = TextStyle(fontFamily = SerifFamily, fontSize = 30.sp, lineHeight = 30.sp, letterSpacing = 1.2.sp), color = Color(0xFF1A1A1A))
+        Block(stringResource(R.string.shop_highstreet), bt(30f, 400, 30f, SERIF, spacing = 1.2f), 0xFF1A1A1A, Modifier.semantics { heading() })
         val town = counts.town?.uppercase()
         val sub = when {
             area.waiting -> null
@@ -211,30 +229,31 @@ private fun Plaque(counts: StreetCounts, area: ShopArea) {
             counts.total.open -> stringResource(R.string.shop_highstreet_sub_here, counts.total.value)
             else -> stringResource(R.string.shop_highstreet_sub_here_all, counts.total.value)
         }
-        if (sub != null) Text(sub, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 3.sp), color = Color(0xFFC8322A), maxLines = 1)
+        if (sub != null) Line(sub, bt(10f, 700, 13f, spacing = 3f), 0xFFC8322A)
     }
 }
 
+/** The search on the wall (y 180, 50 high, 92 % white): what it finds goes to Find. */
 @Composable
-private fun StreetSearch(nav: Navigator) {
+private fun StreetSearch(nav: Navigator, modifier: Modifier) {
     var text by rememberSaveable { mutableStateOf("") }
     val hint = stringResource(R.string.shop_street_search)
     val label = stringResource(R.string.shop_find_hint)
     Row(
-        Modifier.padding(horizontal = 16.dp).fillMaxWidth().height(50.dp).cssShadow(RoundedCornerShape(25.dp), y = 4.dp, blur = 12.dp, colour = Color(0x40000000))
-            .clip(RoundedCornerShape(25.dp)).background(Color.White.copy(alpha = 0.92f)).padding(horizontal = 16.dp),
+        modifier.padding(horizontal = 16.dp).fillMaxWidth().height(50.dp)
+            .boardBox(0xEBFFFFFF, round(25f), listOf(CssShadow(0f, 4f, 12f, 0f, 0x40000000)), clip = false).padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        BoardArt(ShopBoards.SPARKLE, tint = Color(0xFF7B4DFF))
-        Box(Modifier.weight(1f)) {
-            val style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Medium, fontSize = 16.sp, color = Color(0xFF14161B))
+        Sym("fact.new", 18f, 18f, 0xFF7B4DFF)
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+            val style = bt(16f, 500, 20.5f)
             BasicTextField(
-                text, { text = it }, singleLine = true, textStyle = style,
+                text, { text = it }, singleLine = true, textStyle = style.copy(color = argb(INK)),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { nav.go(Dest.Groceries(if (text.isBlank()) "find" else "find:" + text.trim())) }),
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = label },
             )
-            if (text.isEmpty()) Text(hint, style = style, color = Color(0xFF676D7C), maxLines = 1)
+            if (text.isEmpty()) Line(hint, style, 0xFF676D7C)
         }
     }
 }

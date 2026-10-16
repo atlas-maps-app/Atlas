@@ -1,5 +1,12 @@
 package app.atlas.ui.shop
 
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.Canvas
+import app.atlas.ui.kit.CssCorners
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.kit.argb
+import app.atlas.ui.kit.cssLinear
+import app.atlas.ui.kit.cssRepeatingLinear
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
@@ -72,16 +79,25 @@ import app.atlas.ui.kit.cssShadow
 import app.atlas.ui.kit.rememberHere
 import java.util.Locale
 
-private val Wood = Color(0xFF5A3B22)
-private val Ink = Color(0xFF2A1D14)
-private val Tan = Color(0xFFC9B089)
-private val Rust = Color(0xFFB8461A)
 
-/** The dots of a likelihood: `●●●○○`, the filled ones in rust (tan when it is only a maybe). */
-private fun dots(n: Int, tab: Boolean = false): AnnotatedString = buildAnnotatedString {
-    val on = if (n <= 1 && tab) Tan else Rust
-    withStyle(SpanStyle(color = on, letterSpacing = 1.sp)) { append("●".repeat(n.coerceIn(0, 5))) }
-    withStyle(SpanStyle(color = Tan, letterSpacing = 1.sp)) { append("○".repeat(5 - n.coerceIn(0, 5))) }
+/**
+ * The five dots of a likelihood (`●●●○○` on the board, a monospace cell of 0.6 em and 1 px of spacing each): filled in
+ * rust (tan when it is only a maybe), the rest as tan rings.
+ */
+@Composable
+private fun Dots(n: Int, size: Float, tab: Boolean) {
+    val k = n.coerceIn(0, 5)
+    val cell = size * 0.6f + 1f
+    Canvas(Modifier.size((cell * 5).dp, size.dp)) {
+        val c = cell.dp.toPx()
+        val r = size * 0.28f * density
+        val ring = 1.1f * density
+        for (i in 0 until 5) {
+            val centre = Offset(c * i + (c - 1.dp.toPx()) / 2f, this.size.height / 2f)
+            if (i < k) drawCircle(argb(if (k <= 1 && tab) TAN else RUST), r, centre)
+            else drawCircle(argb(TAN), r - ring / 2f, centre, style = androidx.compose.ui.graphics.drawscope.Stroke(ring))
+        }
+    }
 }
 
 /**
@@ -113,131 +129,142 @@ fun FindScreen(initial: String, nav: Navigator) {
     }
     val shops = remember(area, front, now, openNow) { front?.let { FindModel.shops(it, area.places, area, now, openNow) }.orEmpty() }
 
-    Box(
-        Modifier.fillMaxSize().background(Wood).drawBehind {
-            // Vertical grain: 3 px dark, 4 px light, 8 px mid, repeating every 15 px.
-            var x = 0f
-            val u = 1.dp.toPx()
-            while (x < size.width) {
-                drawRect(Color.Black.copy(alpha = 0.12f), Offset(x, 0f), Size(3 * u, size.height))
-                drawRect(Color.White.copy(alpha = 0.03f), Offset(x + 3 * u, 0f), Size(4 * u, size.height))
-                drawRect(Color.Black.copy(alpha = 0.05f), Offset(x + 7 * u, 0f), Size(8 * u, size.height))
-                x += 15 * u
-            }
-        },
-    ) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).windowInsetsPadding(WindowInsets.statusBars).padding(top = 2.dp, bottom = 24.dp)) {
+    Box(Modifier.fillMaxSize().background(argb(WOOD)).drawGrain()) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = boardTop())) {
+            Spacer(Modifier.height(42.dp))
             TopBar(text, { text = it }, openNow, { openNowChoice = !openNow }, nav) { submitted = text.trim(); picked = 0; openNowChoice = null }
             if (things.size > 1) {
-                Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     things.forEachIndexed { i, t ->
-                        Text(
-                            t,
-                            Modifier.clip(CircleShape).background(if (i == picked) Color(0xFFFBF6EA) else Color.White.copy(alpha = 0.14f)).tap(t) { picked = i }.padding(horizontal = 14.dp, vertical = 7.dp),
-                            style = TextStyle(fontFamily = ShopType.typewriter, fontSize = 14.sp), color = if (i == picked) Ink else Color(0xFFF4EBDD), maxLines = 1,
+                        val on = i == picked
+                        Line(
+                            t, bt(14f, 400, 18f, ELITE), if (on) INK_F else 0xFFF4EBDD,
+                            Modifier.boardBox(if (on) 0xFFFBF6EA else 0x24FFFFFF, round(18f)).tap(t) { picked = i }.padding(horizontal = 14.dp, vertical = 7.dp),
                         )
                     }
                 }
-            } else Spacer(Modifier.height(28.dp))
+            }
+            // The catalogue's first tab stands 10 px under the bar (the cards from y 128, their tabs 24 above).
+            Spacer(Modifier.height(10.dp))
             when {
                 thing.isEmpty() -> EmptyDrawer { q -> text = q; submitted = q; picked = 0 }
-                answer == null -> Column(Modifier.padding(horizontal = 16.dp).background(Color(0xFFFBF6EA), RoundedCornerShape(16.dp))) {
+                answer == null -> Column(Modifier.padding(horizontal = 22.dp).boardBox(0xFFFBF6EA, round(16f))) {
                     StateMessage(
-                        "ui.search", stringResource(R.string.shop_find_unknown, thing), text = stringResource(R.string.shop_find_unknown_text), tint = Ink,
+                        "ui.search", stringResource(R.string.shop_find_unknown, thing), text = stringResource(R.string.shop_find_unknown_text), tint = argb(INK_F),
                         action = { PillButton(onClick = { nav.go(Dest.Search(thing)) }) { Text(stringResource(R.string.shop_find_search_map), style = app.atlas.ui.kit.Atlas.type.label) } },
                     )
                 }
                 else -> Catalogue(answer, front!!, shops, area, now, nav) { frontId = it.id }
             }
-            Spacer(Modifier.height(16.dp))
-            if (answer != null) Drawer(thing, answer.sellers.size)
+            // Room for the drawer front, which overlaps the card's foot by 17 px as the board's does.
+            Spacer(Modifier.height(if (answer != null) 177.dp + boardLift() else 24.dp))
         }
+        if (answer != null) Drawer(thing, answer.sellers.size, Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp + boardLift()))
     }
 }
 
 private const val FIND_RADIUS_M = 1_500.0
 
+private const val WOOD: Long = 0xFF5A3B22
+private const val INK_F: Long = 0xFF2A1D14
+private const val RUST: Long = 0xFFB8461A
+private const val TAN: Long = 0xFFC9B089
+
+/** The cabinet's vertical grain, as the board's repeating gradient: 3 px of 12 % black, 4 of 3 % white, 8 of 5 % black, every 15 px. */
+private fun Modifier.drawGrain(): Modifier = drawBehind {
+    var x = 0f
+    val u = 1.dp.toPx()
+    while (x < size.width) {
+        drawRect(Color(0x1F000000), Offset(x, 0f), Size(3 * u, size.height))
+        drawRect(Color(0x08FFFFFF), Offset(x + 3 * u, 0f), Size(4 * u, size.height))
+        drawRect(Color(0x0D000000), Offset(x + 7 * u, 0f), Size(8 * u, size.height))
+        x += 15 * u
+    }
+}
+
+/** The bar at y 42: back (48 px, 14 % white) and the question on cream (52 high), with the open-now switch at its end. */
 @Composable
 private fun TopBar(text: String, onText: (String) -> Unit, openNow: Boolean, onOpen: () -> Unit, nav: Navigator, onSearch: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        RoundSymbolButton("ui.back", stringResource(R.string.shop_find_back), { nav.back() }, size = 48.dp, fill = Color.White.copy(alpha = 0.14f), tint = Color(0xFFF4EBDD), iconSize = 20.dp)
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(52.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(48.dp).boardBox(0x24FFFFFF, round(24f)).tap(stringResource(R.string.shop_find_back)) { nav.back() }, contentAlignment = Alignment.Center) {
+            Sym("ui.back", 20f, 20f, 0xFFF4EBDD)
+        }
         val label = stringResource(R.string.shop_find_hint)
         Row(
-            Modifier.weight(1f).height(52.dp).clip(RoundedCornerShape(26.dp)).background(Color(0xFFFBF6EA)).padding(horizontal = 16.dp),
+            Modifier.weight(1f).height(52.dp).boardBox(0xFFFBF6EA, round(26f)).padding(start = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
         ) {
-            BoardArt(ShopBoards.SPARKLE, tint = Color(0xFF7B4DFF))
-            val style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = Ink)
-            Box(Modifier.weight(1f)) {
+            Sym("fact.new", 18f, 18f, 0xFF7B4DFF)
+            val style = bt(16f, 600, 20.5f)
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                 BasicTextField(
-                    text, onText, singleLine = true, textStyle = style,
+                    text, onText, singleLine = true, textStyle = style.copy(color = argb(INK_F)),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { onSearch() }),
                     modifier = Modifier.fillMaxWidth().semantics { contentDescription = label },
                 )
-                if (text.isEmpty()) Text(label, style = style, color = Color(0xFF9A8B76), maxLines = 1)
+                if (text.isEmpty()) Line(label, style, 0xFF9A8B76)
             }
+            // The board's open-now mark, 16 px, 16 from the end (its target the bar's last 32 × 52).
             Box(
-                Modifier.size(44.dp).offset(x = 10.dp).tap(stringResource(R.string.shop_find_open_now)) { onOpen() }.semantics { selected = openNow },
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(Modifier.size(16.dp).then(if (openNow) Modifier.background(Color(0xFF1F9D55), CircleShape) else Modifier.background(Color(0xFF9A8B76), CircleShape)))
-            }
+                Modifier.size(32.dp, 52.dp).tap(stringResource(R.string.shop_find_open_now)) { onOpen() }.semantics { selected = openNow },
+                contentAlignment = Alignment.CenterStart,
+            ) { Sym("fact.open", 16f, 16f, if (openNow) 0xFF1F9D55 else 0xFF9A8B76) }
         }
     }
 }
 
 @Composable
 private fun EmptyDrawer(onTry: (String) -> Unit) {
-    Column(Modifier.padding(horizontal = 22.dp).fillMaxWidth().background(Color(0xFFFFFCF4), RoundedCornerShape(8.dp)).padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(stringResource(R.string.shop_find_empty), style = TextStyle(fontFamily = ShopType.receipt, fontSize = 15.sp), color = Ink)
-        for (e in FindModel.examples) {
-            Text("→ $e", Modifier.tap(e) { onTry(e) }.padding(vertical = 4.dp), style = TextStyle(fontFamily = ShopType.typewriter, fontSize = 16.sp), color = Rust)
-        }
+    Column(Modifier.padding(horizontal = 22.dp).fillMaxWidth().boardBox(0xFFFFFCF4, round(8f)).padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Line(stringResource(R.string.shop_find_empty), bt(15f, 400, 17f, COURIER), INK_F, lines = 3)
+        for (e in FindModel.examples) Line("→ $e", bt(16f, 400, 20f, ELITE), RUST, Modifier.tap(e) { onTry(e) }.padding(vertical = 4.dp))
     }
 }
 
-private val BackCards = listOf(Color(0xFFEFE5D0), Color(0xFFF2E9D6), Color(0xFFF6EEDD), Color(0xFFF9F3E6))
-private val BackLeft = listOf(36, 24, 12, 0)
-private val TabLeft = listOf(190, 150, 96, 40)
+/** The cards behind the front one, back to front: their paper, how far in from the left, where the tab sits and its ink. */
+private val BackCards = longArrayOf(0xFFEFE5D0, 0xFFF2E9D6, 0xFFF6EEDD, 0xFFF9F3E6)
+private val BackLeft = floatArrayOf(36f, 24f, 12f, 0f)
+private val TabLeft = floatArrayOf(190f, 150f, 96f, 40f)
+private val TabInk = longArrayOf(0xFF6B5A45, 0xFF5A4A35, 0xFF4A3A28, 0xFF3A2A18)
 
+/**
+ * The card catalogue, as the board's (22 px from the sides): up to four cards of the other kinds behind, 42 px apart,
+ * each 90 high with its tab; the front card at least 440 high, ruled every 32 px, a red margin at 34, with the kind's
+ * tags, its shops (64 px rows) and "ask" and the walk.
+ */
 @Composable
 private fun Catalogue(answer: FindAnswer, front: FindSeller, shops: List<ShopPlace>, area: ShopArea, now: java.time.LocalDateTime, nav: Navigator, onPick: (FindSeller) -> Unit) {
-    // The other drawers' cards behind, the least likely at the back; the picked one in front.
+    // The other kinds' cards behind, the least likely at the back; the picked one in front.
     val backs = answer.sellers.filter { it.id != front.id }.sortedBy { it.likelihood }.takeLast(4)
     val m = backs.size
     val rows = shops.take(3)
-    val frontTop = if (m > 0) 42 * m + 2 else 0
-    val frontHeight = maxOf(440, 44 + 32 + rows.size.coerceAtLeast(1) * 64 + 64 + 16)
-    Box(Modifier.fillMaxWidth().padding(horizontal = 22.dp).height((frontTop + frontHeight + 26).dp)) {
+    val frontTop = 42f * m + if (m > 0) 2f else 0f
+    // padding 44 + tags 32 + rows + the buttons' row 64 + 16
+    val frontHeight = maxOf(440f, 44f + 32f + rows.size.coerceAtLeast(1) * 64f + 64f + 16f)
+    Box(Modifier.fillMaxWidth().padding(horizontal = 22.dp).height((24f + frontTop + frontHeight).dp)) {
         backs.forEachIndexed { k, s ->
             val slot = 4 - m + k
-            val colour = BackCards[slot]
-            val top = 26 + 42 * k
+            val top = 24f + 42f * k
             Box(
                 Modifier.padding(start = BackLeft[slot].dp).fillMaxWidth().offset(y = top.dp).height(90.dp)
-                    .cssShadow(RoundedCornerShape(8.dp, 8.dp, 0.dp, 0.dp), y = (-2).dp, blur = 3.dp, colour = Color(0x1F000000))
-                    .background(colour, RoundedCornerShape(8.dp, 8.dp, 0.dp, 0.dp)),
+                    .boardBox(BackCards[slot], CssCorners(8f, 8f, 0f, 0f), listOf(if (slot == 0) CssShadow(0f, -1f, 0f, 0f, 0x1A000000) else CssShadow(0f, -2f, 3f, 0f, 0x1F000000)), clip = false),
             )
-            Tab(s, colour, Modifier.offset(x = TabLeft[slot].dp, y = (top - 24).dp), small = true) { onPick(s) }
+            Tab(s, BackCards[slot], TabInk[slot], Modifier.offset(x = TabLeft[slot].dp, y = (top - 24f + if (slot == 0) -1f else 0f).dp), small = true) { onPick(s) }
         }
         Column(
-            Modifier.offset(y = (26 + frontTop).dp).fillMaxWidth().height(frontHeight.dp)
-                .cssShadow(RoundedCornerShape(8.dp), y = 10.dp, blur = 20.dp, colour = Color(0x4D000000))
-                .background(Color(0xFFFFFCF4), RoundedCornerShape(8.dp))
-                .drawBehind {
-                    // Ruled lines every 32 px, and the red margin line near the top, as the board's card.
-                    var y = 31.dp.toPx()
-                    while (y < size.height) { drawRect(Color(0xFFE7DCC8), Offset(0f, y), Size(size.width, 1.dp.toPx())); y += 32.dp.toPx() }
-                    drawRect(Color(0xFFD9534F).copy(alpha = 0.6f), Offset(0f, 34.dp.toPx()), Size(size.width, 1.5.dp.toPx()))
-                }
-                .padding(start = 20.dp, end = 20.dp, top = 40.dp, bottom = 16.dp),
-        ) {
-            Text(front.tagLine, Modifier.height(32.dp), style = TextStyle(fontFamily = ShopType.receipt, fontSize = 13.sp), color = Color(0xFF7A6A55), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (rows.isEmpty()) {
-                Text(
-                    stringResource(if (area.waiting) R.string.shop_loading else R.string.shop_find_none_near),
-                    Modifier.height(64.dp), style = TextStyle(fontFamily = ShopType.receipt, fontSize = 14.sp), color = Color(0xFF5A4A35),
+            Modifier.offset(y = (24f + frontTop).dp).fillMaxWidth().height(frontHeight.dp)
+                .boardBox(
+                    0xFFFFFCF4, round(8f), listOf(CssShadow(0f, -3f, 6f, 0f, 0x26000000), CssShadow(0f, 10f, 20f, 0f, 0x4C000000)),
+                    grad = listOf(cssRepeatingLinear(180f, 32f, 0f to 0x00000000, 31f to 0x00000000, 31f to 0xFFE7DCC8, 32f to 0xFFE7DCC8)), clip = false,
                 )
+                .drawBehind { drawRect(Color(0x99D9534F), Offset(0f, 34.dp.toPx()), Size(size.width, 1.5.dp.toPx())) }
+                .padding(start = 20.dp, end = 20.dp, top = 44.dp, bottom = 16.dp),
+        ) {
+            Box(Modifier.height(32.dp), contentAlignment = Alignment.CenterStart) { Line(front.tagLine, bt(13f, 400, 14.5f, COURIER), 0xFF7A6A55) }
+            if (rows.isEmpty()) {
+                Box(Modifier.height(64.dp), contentAlignment = Alignment.CenterStart) {
+                    Line(stringResource(if (area.waiting) R.string.shop_loading else R.string.shop_find_none_near), bt(14f, 400, 16f, COURIER), 0xFF5A4A35, lines = 2)
+                }
             }
             rows.forEach { p -> ShopRow(p, front, area, now) { nav.go(Dest.Place.of(p.place)) } }
             Row(Modifier.fillMaxWidth().height(64.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -247,48 +274,47 @@ private fun Catalogue(answer: FindAnswer, front: FindSeller, shops: List<ShopPla
                 val ask = stringResource(R.string.shop_find_ask_d)
                 if (phone != null) {
                     Row(
-                        Modifier.height(44.dp).border(1.5.dp, Ink, RoundedCornerShape(22.dp)).clip(RoundedCornerShape(22.dp))
-                            .tap(ask) { startSafely(context, phone) }.padding(horizontal = 14.dp),
+                        Modifier.height(44.dp).boardBox(r = round(22f), border = ring(1.5f, INK_F))
+                            .tap(ask) { startSafely(context, phone) }.padding(horizontal = 15.5.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Symbol("ui.phone", tint = Ink, size = 16.dp)
-                        Text(stringResource(R.string.shop_find_ask), style = TextStyle(fontFamily = ShopType.receipt, fontWeight = FontWeight.Bold, fontSize = 13.sp), color = Ink)
+                        Sym("ui.phone", 16f, 16f, INK_F)
+                        Line(stringResource(R.string.shop_find_ask), bt(13f, 700, 14.5f, COURIER), INK_F)
                     }
                 }
                 Spacer(Modifier.weight(1f))
                 if (first != null) {
-                    BigPillSmall("${first.walkMinutes}′") { nav.go(Dest.Route(first.location.lat, first.location.lon, first.name, mode = "WALK")) }
+                    Row(
+                        Modifier.height(48.dp).boardBox(0xFF2E5BFF, round(24f)).tap("${first.walkMinutes}′") { nav.go(Dest.Route(first.location.lat, first.location.lon, first.name, mode = "WALK")) }
+                            .padding(horizontal = 20.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Sym("mode.walk", 18f, 18f, 0xFFFFFFFF)
+                        Line("${first.walkMinutes}′", bt(16f, 600, 20.5f, tnum = true), 0xFFFFFFFF)
+                    }
                 }
             }
         }
-        Tab(front, Color(0xFFFFFCF4), Modifier.offset(x = 0.dp, y = (26 + frontTop - 24).dp), small = false) {}
+        Tab(front, 0xFFFFFCF4, INK_F, Modifier.offset(x = 0.dp, y = frontTop.dp), small = false) {}
     }
 }
 
+/** An index tab (26 high, 6 px top corners, 12 px each side): the kind in Special Elite and its five dots, in the card's own paper. */
 @Composable
-private fun BigPillSmall(text: String, onClick: () -> Unit) {
-    Row(
-        Modifier.height(48.dp).clip(RoundedCornerShape(24.dp)).background(Color(0xFF2E5BFF)).tap(text, onClick).padding(horizontal = 20.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Symbol("mode.walk", tint = Color.White, size = 18.dp)
-        Text(text, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, fontFeatureSettings = "tnum"), color = Color.White)
-    }
-}
-
-/** An index tab: the kind in typewriter lettering and its five dots, in the card's own paper. */
-@Composable
-private fun Tab(s: FindSeller, paper: Color, modifier: Modifier, small: Boolean, onClick: () -> Unit) {
+private fun Tab(s: FindSeller, paper: Long, ink: Long, modifier: Modifier, small: Boolean, onClick: () -> Unit) {
     val desc = stringResource(R.string.shop_find_likely, s.label, s.likelihood)
+    val size = if (small) 13f else 14f
     Row(
-        modifier.height(26.dp).clip(RoundedCornerShape(6.dp, 6.dp, 0.dp, 0.dp)).background(paper).then(if (small) Modifier.tap(desc, onClick) else Modifier.semantics { contentDescription = desc }).padding(horizontal = 12.dp),
+        modifier.height(26.dp).boardBox(paper, CssCorners(6f, 6f, 0f, 0f))
+            .then(if (small) Modifier.tap(desc, onClick) else Modifier.semantics { contentDescription = desc }).padding(horizontal = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(s.label, style = TextStyle(fontFamily = ShopType.typewriter, fontSize = if (small) 13.sp else 14.sp), color = if (small) Color(0xFF5A4A35) else Ink, maxLines = 1)
-        Text(dots(s.likelihood, tab = small), style = TextStyle(fontFamily = SansFamily, fontSize = 11.sp))
+        Line(s.label, bt(size, 400, size, ELITE), ink)
+        Dots(s.likelihood, size, tab = small)
     }
 }
 
+/** A shop on the front card: 64 high, its 44 px mark, the name and hours in Courier Prime (red when it closes soon), the walk. */
 @Composable
 private fun ShopRow(p: ShopPlace, seller: FindSeller, area: ShopArea, now: java.time.LocalDateTime, onClick: () -> Unit) {
     val closed = p.openness(now, area.hours) == Open.CLOSED
@@ -296,52 +322,54 @@ private fun ShopRow(p: ShopPlace, seller: FindSeller, area: ShopArea, now: java.
         if (p.brand != null || p.tags["brand"] != null) {
             ShopLogo(p.brand, p.tags["brand"] ?: p.name, 44.dp, key = p.tags["brand"])
         } else {
-            Box(Modifier.size(44.dp).background(Color(seller.colour), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) { Symbol(seller.symbol, tint = Color(0xFF1A1A1A), size = 22.dp) }
+            Box(Modifier.size(44.dp).boardBox(seller.colour, round(12f)), contentAlignment = Alignment.Center) { Sym(seller.symbol, 22f, 22f, 0xFF1A1A1A) }
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(p.name, style = TextStyle(fontFamily = ShopType.receipt, fontWeight = FontWeight.Bold, fontSize = 17.sp), color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Line(p.name, bt(17f, 700, 19.5f, COURIER), INK_F)
             val soon = p.openness(now, area.hours) == Open.CLOSING_SOON
             val line = openLine(p, area, now)
             val extra = if ((p.footprintM2 ?: 0) >= 2_000) " · " + stringResource(R.string.shop_find_big) else ""
-            if (line != null) {
-                Text(
-                    line.first + extra,
-                    style = TextStyle(fontFamily = ShopType.receipt, fontSize = 13.sp, fontWeight = if (soon) FontWeight.Bold else FontWeight.Normal),
-                    color = if (soon) Color(0xFFB03A3A) else Color(0xFF5A4A35), maxLines = 1,
-                )
-            }
+            if (line != null) Line(line.first + extra, bt(13f, if (soon) 700 else 400, 14.5f, COURIER), if (soon) 0xFFB03A3A else 0xFF5A4A35)
         }
-        Text("${p.walkMinutes}′", style = TextStyle(fontFamily = ShopType.receipt, fontWeight = FontWeight.Bold, fontSize = 22.sp, fontFeatureSettings = "tnum"), color = Ink)
+        Line("${p.walkMinutes}′", bt(22f, 700, 24.5f, COURIER, tnum = true), INK_F)
     }
 }
 
-/** The drawer front under the cards: wood, a brass plate with the paper label ("HOOKS · 5 KINDS") and a brass pull. */
+/**
+ * The drawer front under the cards (12 px from the sides, 170 high, 24 above the bottom): wood with a light top edge and
+ * a dark foot, the brass plate (170 × 46) with the paper label ("HOOKS · 5 KINDS"), and the brass pull, 12 apart.
+ */
 @Composable
-private fun Drawer(thing: String, kinds: Int) {
+private fun Drawer(thing: String, kinds: Int, modifier: Modifier) {
     Column(
-        Modifier.padding(horizontal = 12.dp).fillMaxWidth().height(170.dp)
-            .cssShadow(RoundedCornerShape(8.dp), y = (-6).dp, blur = 14.dp, colour = Color(0x4D000000))
-            .clip(RoundedCornerShape(8.dp)).background(Brush.verticalGradient(listOf(Color(0xFF8C6238), Color(0xFF6E4A28))))
-            .drawBehind {
-                drawRect(Color.White.copy(alpha = 0.18f), Offset(0f, 0f), Size(size.width, 3.dp.toPx()))
-                drawRect(Color.Black.copy(alpha = 0.25f), Offset(0f, size.height - 4.dp.toPx()), Size(size.width, 4.dp.toPx()))
-            },
+        modifier.padding(horizontal = 12.dp).fillMaxWidth().height(170.dp)
+            .boardBox(
+                r = round(8f),
+                shadows = listOf(CssShadow(0f, 3f, 0f, 0f, 0x2EFFFFFF, inset = true), CssShadow(0f, -4f, 0f, 0f, 0x40000000, inset = true), CssShadow(0f, -6f, 14f, 0f, 0x4C000000)),
+                grad = listOf(cssLinear(180f, 0f to 0xFF8C6238, 1f to 0xFF6E4A28)),
+            ),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
     ) {
         Box(
-            Modifier.size(170.dp, 46.dp).cssShadow(RoundedCornerShape(4.dp), y = 2.dp, blur = 3.dp, colour = Color(0x66000000))
-                .background(Brush.verticalGradient(listOf(Color(0xFFE9D08A), Color(0xFFB9933F))), RoundedCornerShape(4.dp))
-                .border(2.dp, Color(0xFF8C6A25), RoundedCornerShape(4.dp)),
+            Modifier.size(170.dp, 46.dp).boardBox(
+                r = round(4f), shadows = listOf(CssShadow(0f, 0f, 0f, 2f, 0xFF8C6A25, inset = true), CssShadow(0f, 2f, 3f, 0f, 0x66000000)),
+                grad = listOf(cssLinear(180f, 0f to 0xFFE9D08A, 1f to 0xFFB9933F)), clip = false,
+            ),
             contentAlignment = Alignment.Center,
         ) {
-            Box(Modifier.size(150.dp, 32.dp).background(Color(0xFFFBF6EA)), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(150.dp, 32.dp).background(argb(0xFFFBF6EA)), contentAlignment = Alignment.Center) {
                 Text(
                     if (kinds == 1) stringResource(R.string.shop_find_kind, thing.uppercase()) else stringResource(R.string.shop_find_kinds, thing.uppercase(), kinds),
                     Modifier.padding(horizontal = 4.dp),
-                    style = TextStyle(fontFamily = ShopType.typewriter, fontSize = 13.sp, letterSpacing = 1.sp), color = Ink, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    style = bt(15f, 400, 15f, ELITE, spacing = 1.2f, align = TextAlign.Center), color = argb(INK_F), maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(minFontSize = 9.sp, maxFontSize = 15.sp),
                 )
             }
         }
-        Box(Modifier.size(90.dp, 20.dp).cssShadow(RoundedCornerShape(10.dp), y = 3.dp, blur = 4.dp, colour = Color(0x66000000)).background(Brush.verticalGradient(listOf(Color(0xFFF1D38A), Color(0xFF9C7A2E))), RoundedCornerShape(10.dp)))
+        Box(
+            Modifier.size(90.dp, 20.dp).boardBox(
+                r = round(10f), shadows = listOf(CssShadow(0f, 3f, 4f, 0f, 0x66000000)), grad = listOf(cssLinear(180f, 0f to 0xFFF1D38A, 1f to 0xFF9C7A2E)), clip = false,
+            ),
+        )
     }
 }
