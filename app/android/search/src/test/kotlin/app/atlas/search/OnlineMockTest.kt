@@ -98,4 +98,34 @@ class OnlineMockTest {
             empty.close()
         }
     }
+
+    /** CI's emulator, with no store for Amsterdam: Photon's exact name "Apotheek", a house in Enkhuizen, came first. */
+    @Test
+    fun onlineAKindsPlacesNearbyComeBeforeAFarNameAndANameKeepsTheGeocodersOrder() = runBlocking {
+        fun feature(id: Long, lon: Double, lat: Double, key: String, value: String, name: String, city: String) =
+            """{"type":"Feature","geometry":{"type":"Point","coordinates":[$lon,$lat]},"properties":{"osm_type":"N","osm_id":$id,""" +
+                """"osm_key":"$key","osm_value":"$value","name":"$name","city":"$city","countrycode":"NL","type":"house"}}"""
+        fun collection(vararg f: String) = """{"type":"FeatureCollection","features":[${f.joinToString(",")}]}"""
+        val apotheek = collection(
+            feature(1, 5.2913, 52.7036, "building", "house", "Apotheek", "Enkhuizen"),
+            feature(2, 4.8745, 52.3505, "amenity", "pharmacy", "Apotheek Oud Zuid", "Amsterdam"),
+            feature(3, 4.8869, 52.3640, "amenity", "pharmacy", "Apotheek Leidsestraat", "Amsterdam"),
+        )
+        val haarlem = collection(
+            feature(4, 4.6368, 52.3874, "place", "city", "Haarlem", "Haarlem"),
+            feature(5, 4.8885, 52.3800, "highway", "residential", "Haarlemmerstraat", "Amsterdam"),
+        )
+        server { r -> MockResponse.Builder().body(if ("haarlem" in r.url.toString()) haarlem else apotheek).build() }.use { s ->
+            val empty = PlaceStore.inMemory()
+            val engine = SearchEngine(empty, geocoder = Photon(Http(policies = emptyMap()), s.url("/").toString().removeSuffix("/")))
+            val ctx = SearchContext(location = Fixtures.westerkerk, online = true, now = Fixtures.saturday)
+            val pharmacies = engine.search("apotheek", ctx).items.filterIsInstance<SearchItem.Online>()
+            assertEquals(listOf("Apotheek Leidsestraat", "Apotheek Oud Zuid", "Apotheek"), pharmacies.map { it.place.name() })
+            assertTrue(pharmacies.last().distance!! > 40_000)
+            // a name is what the geocoder found it to be: the city first, the street near the searcher after it
+            val named = engine.search("haarlem", ctx).items.filterIsInstance<SearchItem.Online>()
+            assertEquals(listOf("Haarlem", "Haarlemmerstraat"), named.map { it.place.name() })
+            empty.close()
+        }
+    }
 }

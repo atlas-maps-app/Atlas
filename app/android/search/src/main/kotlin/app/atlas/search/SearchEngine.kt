@@ -209,7 +209,8 @@ class SearchEngine(
         currentCoroutineContext().ensureActive()
 
         // Kinds of places: "pharm", "apotheek", "Apotheke"; the nearest few, then all of them
-        for (k in kinds(t, ctx.lang)) {
+        val kindsNamed = kinds(t, ctx.lang)
+        for (k in kindsNamed) {
             val count = count(k.query, eval)
             if (count == 0) continue
             items += SearchItem.Kind(k.label, k.symbol, k.query, count, k.score * 0.5)
@@ -275,9 +276,11 @@ class SearchEngine(
             try {
                 val found = geocoder.search(t, ctx.location, ctx.lang, 8, null)
                 val known = items.filterIsInstance<SearchItem.PlaceResult>().mapNotNull { it.hit.place.id }.toSet()
+                val ofKind = kindsNamed.mapNotNull { tagsTest(it.query) }
                 for ((i, p) in found.withIndex()) {
                     if (p.id != null && p.id in known) continue
-                    items += SearchItem.Online(p, ctx.location?.let { Geo.distance(it, p.location) }, Symbols.symbolFor(p.tags), 0.3 - i * 0.01)
+                    val distance = ctx.location?.let { Geo.distance(it, p.location) }
+                    items += SearchItem.Online(p, distance, Symbols.symbolFor(p.tags), onlineScore(p, i, distance, ofKind))
                 }
                 usedOnline = true
             } catch (e: IOException) {
@@ -419,6 +422,29 @@ class SearchEngine(
         return out.sortedByDescending { it.score }.take(MAX_KINDS)
     }
 
+    /** Whether a place's tags are of the kind [q] names ([Query.Tags] or [Query.Category]); null for other queries. */
+    private fun tagsTest(q: Query): ((Map<String, String>) -> Boolean)? = when (q) {
+        is Query.Tags -> q.filter::matches
+        is Query.Category -> Categories.byId(q.id)?.let { c ->
+            val rules = if (c.isGroup) Categories.children(c.id).mapNotNull { it.rule } else listOfNotNull(c.rule)
+            if (rules.isEmpty()) null else { tags: Map<String, String> -> rules.any { it.matches(tags) } }
+        }
+        else -> null
+    }
+
+    /**
+     * An online result's score, below the offline results as before. For a name ("Westerkerk", "Haarlem") the
+     * geocoder's order stands: it already weighs importance and the searcher's position. For a kind ("apotheek",
+     * "cafe") the places of that kind come before those that only bear its word in their name, and the nearer before
+     * the farther, as offline: a building called "Apotheek" 46 km away no longer heads the pharmacies round the corner.
+     */
+    private fun onlineScore(p: Place, index: Int, distance: Double?, ofKind: List<(Map<String, String>) -> Boolean>): Double {
+        val order = 1.0 - ONLINE_ORDER_STEP * index
+        if (ofKind.isEmpty()) return ONLINE_TOP * order
+        val kind = if (ofKind.any { it(p.tags) }) 1.0 else ONLINE_OTHER_KIND
+        return ONLINE_TOP * order * kind * (0.3 + 0.7 * distanceFactor(distance))
+    }
+
     /** Brands whose name the words spell (a typo allowed), widest first. */
     private fun brands(words: List<String>, country: String?): List<Brand> {
         val text = words.joinToString(" ")
@@ -530,6 +556,9 @@ class SearchEngine(
         private const val MIN_KIND_SCORE = 70.0
         private const val NAME_CANDIDATES = 40
         private const val ONLINE_BELOW = 3
+        private const val ONLINE_TOP = 0.3
+        private const val ONLINE_ORDER_STEP = 0.03
+        private const val ONLINE_OTHER_KIND = 0.6
         private const val GROUP_METRES = 600.0
         private const val GOODS_SELLERS = 3
         private const val REFINE_METRES = 3_000.0
