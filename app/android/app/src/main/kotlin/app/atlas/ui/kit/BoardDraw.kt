@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -315,9 +317,23 @@ fun Tx(
     shadow: CssShadow? = null, tnum: Boolean = false, wrap: Boolean = false,
 ) {
     val d = androidx.compose.ui.platform.LocalDensity.current.density
+    // CSS centres the font's content area on the line box, even where the face is taller than the line height
+    // (Instrument Serif at line-height 1): one line is measured at its own height and centred in the box
+    val box = Modifier.offset(x.dp, y.dp).requiredSize(w.dp + if (wrap) 0.dp else 2.dp, h.dp)
+    if (!wrap) Box(box, contentAlignment = androidx.compose.ui.Alignment.CenterStart) { TxText(text, Modifier.requiredWidth(w.dp + 2.dp).wrapContentHeight(unbounded = true), d, family, size, weight, italic, colour, lineHeight, spacing, align, decoration, shadow, tnum, false) }
+    else TxText(text, box, d, family, size, weight, italic, colour, lineHeight, spacing, align, decoration, shadow, tnum, true)
+}
+
+@Composable
+private fun TxText(
+    text: String, modifier: Modifier, d: Float,
+    family: String, size: Float, weight: Int, italic: Boolean, colour: Argb,
+    lineHeight: Float, spacing: Float, align: TextAlign, decoration: TextDecoration?,
+    shadow: CssShadow?, tnum: Boolean, wrap: Boolean,
+) {
     Text(
         text,
-        Modifier.offset(x.dp, y.dp).requiredSize(w.dp + if (wrap) 0.dp else 2.dp, h.dp),
+        modifier,
         style = TextStyle(
             fontFamily = BoardFonts.of(family),
             fontSize = size.sp,
