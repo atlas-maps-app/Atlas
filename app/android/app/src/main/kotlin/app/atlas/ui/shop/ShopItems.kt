@@ -233,6 +233,116 @@ charcoal|supermarket:4,hardware:4,variety:3|en:charcoals|charcoal,barbecue,firel
 bulk_grains|bulk:5,health_food:4,supermarket:2|en:cereal-grains|grains loose,lentils loose,bulk rice,loose oats|los graan,losse linzen,los,granen
 eggs_vending|farm:5|en:farm-eggs|farm eggs,fresh farm milk,raw milk|boereneieren,rauwe melk,boerenmelk
 spring_rolls|world:5,supermarket:3,frozen:3|en:spring-rolls|spring rolls,dumplings,gyoza|loempia,loempia's,dumplings,gyoza
+bread_wholegrain|bakery:5,supermarket:4,health_food:4|en:wholemeal-breads|wholegrain bread,seeded bread,multigrain bread|meergranenbrood,volkoren meergranen,waldkorn
+toast|supermarket:5,bakery:3,convenience:3|en:sliced-breads|toast,toast bread,sliced bread|tosti brood,toastbrood,witbrood gesneden
+brioche|bakery:5,supermarket:4|en:brioches|brioche,brioche buns|brioche,briochebroodjes
+pretzel|bakery:5,supermarket:3|en:pretzels|pretzel,pretzels|pretzel,pretzels
+donuts|bakery:5,supermarket:3,convenience:2|en:doughnuts|donuts,doughnuts|donuts,oliebollen,donut
+waffles|supermarket:5,bakery:3,convenience:3|en:waffles|waffles,waffle|wafels,wafel
+pancake_mix|supermarket:5,convenience:2,world:2|en:pancake-mixes|pancake mix,pancakes|pannenkoekmix,pannenkoeken
+baking_powder|supermarket:5,convenience:2|en:baking-powders|baking powder,yeast,baking soda|bakpoeder,gist,baksoda
+cocoa|supermarket:5,health_food:3,convenience:2|en:cocoas|cocoa,cocoa powder,hot chocolate|cacao,cacaopoeder,chocolademelk
+muesli|supermarket:5,health_food:5,bulk:4|en:mueslis|muesli,granola|muesli,granola
+porridge|supermarket:5,health_food:4,bulk:4|en:porridges|porridge,porridge oats|havermout,pap
+rice_cakes|supermarket:5,health_food:5|en:rice-cakes|rice cakes|rijstwafels
+lentils|supermarket:5,world:5,health_food:4,bulk:5|en:lentils|lentils,red lentils,chickpeas|linzen,rode linzen,kikkererwten
+quinoa|supermarket:4,health_food:5,bulk:5,world:3|en:quinoas|quinoa,bulgur,millet|quinoa,bulgur,gierst
+seeds|health_food:5,supermarket:4,bulk:5|en:seeds|chia seeds,sunflower seeds,pumpkin seeds,flax seeds,sesame|chiazaad,zonnebloempitten,pompoenpitten,lijnzaad,sesamzaad
+almonds|supermarket:5,health_food:5,bulk:5,world:3|en:almonds|almonds,cashews,walnuts,hazelnuts,pistachios|amandelen,cashewnoten,walnoten,hazelnoten,pistachenoten
+raisins|supermarket:5,health_food:4,bulk:4,world:3|en:raisins|raisins,sultanas,prunes|rozijnen,krenten,pruimen
+tahini_paste|world:5,health_food:4,supermarket:3|en:tahini|sesame paste|sesampasta
+harissa|world:5,supermarket:3,deli:3|en:harissa|harissa,za'atar,sumac,ras el hanout|harissa,zaatar,sumak,ras el hanout
+miso|world:5,health_food:4,supermarket:3|en:misos|miso,nori,wasabi,mirin|miso,nori,wasabi,mirin
+rice_paper|world:5,supermarket:2|en:rice-papers|rice paper,spring roll wrappers|rijstpapier,loempiavellen
+coconut_water|supermarket:4,world:4,health_food:4,convenience:2|en:coconut-waters|coconut water|kokoswater
+paneer|world:5,supermarket:3|en:paneers|paneer,halloumi|paneer,halloumi
+plantain|world:5,greengrocer:4,supermarket:2|en:plantains|plantain,cassava,yam|bakbanaan,cassave,yam
+baklava|world:5,bakery:3,sweets:4,deli:3|en:baklavas|baklava,turkish delight|baklava,turks fruit
+tempeh|health_food:5,world:4,supermarket:4|en:tempeh|tempeh,seitan|tempeh,seitan
+vegan_cheese|health_food:5,supermarket:4|en:vegan-cheeses|vegan cheese,plant based cheese|vegan kaas,plantaardige kaas
+sausage_roll|bakery:5,supermarket:3,convenience:3|en:sausage-rolls|sausage roll,saucijzenbroodje|saucijzenbroodje,worstenbroodje
+meatballs|butcher:5,supermarket:5|en:meatballs|meatballs|gehaktballen,balletjes
+schnitzel|butcher:5,supermarket:4|en:schnitzels|schnitzel,cutlet|schnitzel,kotelet,karbonade
+rib_eye|butcher:5,supermarket:3|en:steaks|ribeye,sirloin,fillet steak|ribeye,entrecote,ossenhaas
+duck|butcher:5,supermarket:3,world:3|en:ducks|duck,duck breast|eend,eendenborst
+liver|butcher:5,supermarket:3|en:livers|liver,kidney|lever,nier
+smoked_salmon|supermarket:5,seafood:5,deli:4|en:smoked-salmons|smoked salmon,lox|gerookte zalm
+cod|seafood:5,supermarket:4|en:cods|cod,haddock,plaice,sole|kabeljauw,schelvis,schol,tong
+oysters|seafood:5,deli:3|en:oysters|oysters,crab,lobster,scallops|oesters,krab,kreeft,sint jakobsschelpen
+raw_herring|seafood:5|en:herrings|haring,raw herring|haring,hollandse nieuwe
+smoked_cheese|cheese:5,supermarket:4,deli:4|en:smoked-cheeses|smoked cheese,brie,blue cheese,gorgonzola|rookkaas,blauwe kaas,gorgonzola
+cheese_spread|supermarket:5,cheese:2|en:cheese-spreads|cheese spread,cheese slices|smeerkaas,kaasplakken,plakken kaas
+olives_deli|deli:5,world:4,supermarket:4|en:olives|marinated olives,antipasti,sun dried tomatoes|gemarineerde olijven,antipasti,zongedroogde tomaten
+charcuterie|deli:5,butcher:4,supermarket:4|en:cured-meats|prosciutto,chorizo,pate|prosciutto,chorizo,paté
+fresh_soup|deli:4,supermarket:5,greengrocer:2|en:soups|fresh soup,pea soup|verse soep,erwtensoep
+salad_dressing|supermarket:5,deli:2|en:salad-dressings|salad dressing,vinaigrette|slasaus,dressing,vinaigrette
+stock|supermarket:5,world:3|en:stocks|stock cube,stock,bouillon|bouillonblokjes,bouillon,fond
+tomato_paste|supermarket:5,world:4|en:tomato-pastes|tomato paste,passata|tomatenpuree,passata
+mushrooms_dried|world:5,health_food:3,supermarket:3|en:dried-mushrooms|dried mushrooms,porcini|gedroogde paddenstoelen,eekhoorntjesbrood
+cooking_cream|supermarket:5,convenience:3|en:creams|cooking cream,whipped cream|kookroom,slagroom,room
+mascarpone_tiramisu|supermarket:5,cheese:3,deli:3|en:mascarpones|ladyfingers,tiramisu|lange vingers,tiramisu
+ice_lollies|supermarket:5,convenience:4,frozen:5|en:ice-lollies|ice lollies,popsicles|ijsjes,waterijs
+frozen_fruit|supermarket:5,frozen:5|en:frozen-fruits|frozen fruit,frozen berries|diepvriesfruit,diepvries bessen
+frozen_meals|supermarket:5,frozen:5,convenience:3|en:frozen-ready-meals|frozen meal,ready meal|diepvriesmaaltijd,kant en klaar maaltijd
+sparkling_water|supermarket:5,convenience:4,drinks:3|en:sparkling-waters|sparkling water,soda water,tonic|bruisend water,spa rood,tonic,soda
+lemonade|supermarket:5,convenience:4|en:lemonades|lemonade,iced tea,cola|limonade,ice tea,cola
+cordial|supermarket:5,convenience:3|en:syrups|cordial,squash,syrup|limonadesiroop,siroop
+red_wine|drinks:5,supermarket:4,deli:3|en:red-wines|red wine,white wine,rose wine|rode wijn,witte wijn,rosé
+prosecco|drinks:5,supermarket:4|en:proseccos|prosecco,champagne,cava|prosecco,champagne,cava
+whisky|drinks:5,supermarket:3|en:whiskies|whisky,gin,vodka,rum,liqueur|whisky,gin,wodka,rum,likeur
+craft_beer|drinks:5,supermarket:3,convenience:2|en:beers|craft beer,ipa,stout|speciaalbier,ipa,stout
+alcohol_free|supermarket:5,drinks:3,convenience:3|en:alcohol-free-beers|alcohol free beer,non alcoholic beer|alcoholvrij bier,0.0 bier
+oat_drink_barista|supermarket:5,coffee:3,health_food:4|en:oat-based-drinks|barista oat milk|barista havermelk
+espresso|coffee:5,supermarket:5,deli:3|en:coffees|espresso,coffee pods,coffee capsules|espresso,koffiecups,koffiecapsules
+herbal_tea|supermarket:5,coffee:5,health_food:4|en:herbal-teas|herbal tea,mint tea,green tea,chai|kruidenthee,muntthee,groene thee,chai
+sugar_substitute|supermarket:5,health_food:3|en:sweeteners|sweetener,stevia,maple syrup,agave|zoetstof,stevia,ahornsiroop,agavesiroop
+protein|health_food:5,supermarket:3|en:protein-powders|protein powder,protein bar,protein shake|proteïnepoeder,eiwitreep,proteïneshake
+gluten_free|health_food:5,supermarket:4|en:gluten-free-foods|gluten free bread,gluten free pasta|glutenvrij brood,glutenvrije pasta
+chocolate_bar|supermarket:5,convenience:5,sweets:5,newsagent:3|en:chocolate-bars|chocolate bar,chocolate bars|chocoladereep,chocoladerepen
+chewing_gum|convenience:5,supermarket:5,newsagent:5|en:chewing-gums|chewing gum,mints|kauwgom,pepermunt,mintjes
+liquorice|supermarket:5,sweets:5,convenience:4|en:liquorices|liquorice,licorice,drop|drop,dropjes,zoute drop
+praline|sweets:5,supermarket:3,deli:3|en:pralines|pralines,truffles,box of chocolates|bonbons,truffels,doos bonbons
+birthday_candles|supermarket:5,variety:5,newsagent:2|en:party-candles|birthday candles,party hats,balloons|taartkaarsjes,feesthoedjes,ballonnen
+wrapping|variety:5,newsagent:4,supermarket:3|en:gift-wraps|wrapping paper,ribbon,gift bag|inpakpapier,lint,cadeauzakje
+greeting_card|newsagent:5,variety:4,supermarket:3|en:greeting-cards|greeting card,birthday card|wenskaart,verjaardagskaart
+toilet_cleaner|supermarket:5,chemist:5,variety:4|en:toilet-cleaners|toilet cleaner,bleach,limescale remover|wc reiniger,bleek,kalkverwijderaar
+sponges|supermarket:5,chemist:4,variety:5|en:sponges|sponge,scourer,dish cloth|spons,schuurspons,vaatdoek
+dishwasher_tabs|supermarket:5,chemist:5|en:dishwasher-tablets|dishwasher tablets,dishwasher salt|vaatwastabletten,vaatwaszout
+fabric_softener|supermarket:5,chemist:5|en:fabric-softeners|fabric softener,stain remover|wasverzachter,vlekverwijderaar
+all_purpose_cleaner|supermarket:5,chemist:5,variety:4|en:all-purpose-cleaners|all purpose cleaner,glass cleaner,floor cleaner|allesreiniger,glasreiniger,vloerreiniger
+sandwich_bags|supermarket:5,variety:4|en:food-storage-bags|sandwich bags,freezer bags,cling film,baking paper|boterhamzakjes,diepvrieszakjes,huishoudfolie,bakpapier
+napkins|supermarket:5,variety:5,convenience:2|en:napkins|napkins,paper napkins,tissues|servetten,papieren servetten,zakdoekjes
+face_wash|chemist:5,supermarket:4,pharmacy:3|en:facial-cleansers|face wash,moisturiser,face cream|gezichtsreiniger,dagcrème,gezichtscrème
+makeup_remover|chemist:5,supermarket:4|en:make-up-removers|make-up remover,cotton buds|make-up remover,wattenstaafjes
+conditioner|chemist:5,supermarket:5|en:conditioners|conditioner,hair gel,hair spray|conditioner,haargel,haarspray
+body_lotion|chemist:5,supermarket:5,pharmacy:3|en:body-lotions|body lotion,lip balm|bodylotion,lippenbalsem
+shower_gel|chemist:5,supermarket:5|en:shower-gels|shower gel,soap,hand soap|douchegel,zeep,handzeep
+toothbrush|chemist:5,supermarket:5,pharmacy:4|en:toothbrushes|toothbrush,floss,mouthwash|tandenborstel,floss,mondwater
+sanitary_pads|chemist:5,supermarket:5|en:sanitary-towels|sanitary pads,panty liners|maandverband,inlegkruisjes
+nappy_wipes|chemist:5,supermarket:5|en:baby-wipes|baby wipes,wet wipes|babydoekjes,vochtige doekjes
+baby_formula|chemist:5,supermarket:5,pharmacy:3|en:infant-milks|baby formula,formula milk|flesvoeding,babymelk
+allergy_pills|pharmacy:5,chemist:4|en:antihistamines|allergy tablets,hay fever tablets|hooikoortstabletten,antihistamine
+cough_syrup|pharmacy:5,chemist:4,supermarket:2|en:cough-syrups|cough syrup,throat lozenges|hoestdrank,keelpastilles
+paracetamol|pharmacy:5,chemist:5,supermarket:3,convenience:1|en:paracetamols|paracetamol,ibuprofen,aspirin|paracetamol,ibuprofen,aspirine
+first_aid|pharmacy:5,chemist:5,supermarket:3|en:first-aid-kits|bandage,antiseptic,first aid|verband,ontsmettingsmiddel,eerste hulp
+contact_lenses|pharmacy:3,chemist:3,variety:1|en:contact-lens-solutions|contact lens solution|lenzenvloeistof
+sun_cream|chemist:5,supermarket:5,pharmacy:4|en:sun-creams|sun cream,after sun|zonnebrandcrème,aftersun
+insect_repellent|chemist:5,pharmacy:4,hardware:3,supermarket:3|en:insect-repellents|insect repellent,mosquito spray|insectenspray,muggenspray
+cat_litter|pet:5,supermarket:5|en:cat-litters|cat litter|kattenbakvulling,kattenbak
+bird_seed|pet:5,hardware:2,supermarket:2|en:bird-foods|bird seed,fat balls|vogelzaad,vetbollen
+dog_treats|pet:5,supermarket:4|en:dog-treats|dog treats,chew|hondensnacks,kauwstaaf
+fish_food|pet:5|en:fish-foods|fish food|visvoer
+potting_soil|hardware:5,florist:5,variety:2|en:potting-soils|potting soil,compost,plant food|potgrond,compost,plantenvoeding
+house_plant|florist:5,hardware:3,supermarket:3|en:house-plants|house plant,pot plant,cactus|kamerplant,potplant,cactus
+bouquet|florist:5,supermarket:4,convenience:1|en:bouquets|bouquet,roses,tulips|boeket,rozen,tulpen
+newspapers|newsagent:5,convenience:4,supermarket:3|en:newspapers|newspaper,magazine,magazines|krant,tijdschrift,tijdschriften
+lottery|newsagent:5,convenience:4|en:lottery-tickets|lottery ticket,scratch card|loten,krasloten,lot
+tobacco|newsagent:5,convenience:3,supermarket:2|en:tobaccos|tobacco,rolling paper,lighter|tabak,vloei,aansteker
+phone_credit|newsagent:5,convenience:4,supermarket:4|en:phone-cards|phone credit,sim card|beltegoed,simkaart
+bin_liners|supermarket:5,variety:5,hardware:3|en:waste-bags|bin liners,rubbish bags,compost bags|vuilniszakken,afvalzakken,gft zakken
+matches|supermarket:5,convenience:4,variety:4|en:matches|matches,tea lights|lucifers,theelichtjes
+extension_lead|hardware:5,variety:4|en:extension-leads|extension lead,adapter|verlengsnoer,stekkerdoos
+tape|variety:5,newsagent:3,hardware:4|en:adhesive-tapes|sticky tape,masking tape,glue|plakband,afplaktape,lijm
 """.trimIndent()
 
     /** Every item of the table. */
@@ -264,8 +374,10 @@ spring_rolls|world:5,supermarket:3,frozen:3|en:spring-rolls|spring rolls,dumplin
      * What [text] on a list is, or null when the table does not know it: an exact phrase first, then the phrase with
      * a plural "s"/"en" taken off or put on, then the longest known phrase inside the text ("2 litres oat milk").
      */
+    private val QUANTITY = Regex("^[0-9.,]+\\s*(x|kg|g|gram|l|liter|litre|litres|ml|stuks|pak|pakken|bak|zak)?\\s+")
+
     fun classify(text: String): ShopItem? {
-        val f = Text.fold(text).replace(Regex("^[0-9.,]+\\s*(x|kg|g|gram|l|liter|litre|litres|ml|stuks|pak|pakken|bak|zak)?\\s+"), "").trim()
+        val f = Text.fold(text).replace(QUANTITY, "").trim()
         if (f.isEmpty()) return null
         byPhrase[f]?.let { return it }
         for (v in variants(f)) byPhrase[v]?.let { return it }
