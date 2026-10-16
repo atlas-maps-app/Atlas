@@ -20,6 +20,7 @@ import java.io.IOException
 import java.nio.file.Files
 import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -41,6 +42,13 @@ class PackLibraryTest {
         |"release":"packs-renders","files":[{"kind":"atlas","name":"amsterdam.atlas","bytes":$bytes,"sha256":"$sha",
         |"url":"${server.url("/packs-renders/amsterdam.atlas")}"}]}]}""".trimMargin()
 
+    /** The Westerkerk's pack and grachten's, whose 5.2 MB make a scene of some 300 MB: too big for a small heap. */
+    private fun withGrachten(sha: String, bytes: Int) = manifest(sha, bytes).replace(
+        "]}]}",
+        """]},{"id":"grachten","name":"grachten","bbox":[4.872,52.36,4.922,52.393],"release":"packs-renders","files":[{"kind":"atlas",
+        |"name":"grachten.atlas","bytes":5190931,"sha256":"${"11".repeat(32)}","url":"${server.url("/packs-renders/grachten.atlas")}"}]}]}""".trimMargin(),
+    )
+
     @Before
     fun start() {
         assumeTrue("the bundled pack", pack.isFile)
@@ -56,6 +64,7 @@ class PackLibraryTest {
                 return when {
                     path.endsWith("packs.json") -> MockResponse.Builder().code(200).body(manifest(sha(bytes), bytes.size)).build()
                     path.endsWith("bad.json") -> MockResponse.Builder().code(200).body(manifest("00".repeat(32), bytes.size)).build()
+                    path.endsWith("big.json") -> MockResponse.Builder().code(200).body(withGrachten(sha(bytes), bytes.size)).build()
                     path.endsWith("amsterdam.atlas") -> MockResponse.Builder().code(200).body(Buffer().write(bytes)).build()
                     else -> MockResponse.Builder().code(404).build()
                 }
@@ -151,5 +160,28 @@ class PackLibraryTest {
         // outside every pack with no Overpass: no data here
         val nowhere = regions.stateFor(view.copy(lat = 48.0, lon = 2.0))
         assertTrue(nowhere is LiveRegions.State.Empty)
+    }
+
+    @Test
+    fun `a region whose scene would not fit the heap is neither downloaded nor loaded`() {
+        LiveEngine.workDir = File(dir, "engine")
+        val lib = PackLibrary(File(dir, "packs"), listOf(server.url("/packs-renders/big.json").toString()))
+        lib.install("amsterdam") { pack.inputStream() }
+        // 50 MB for a scene: the Westerkerk's (about 40 MB) fits, grachten's (about 330 MB) does not
+        val regions = LiveRegions(lib, Executor { it.run() }, online = { true }, overpass = null, onChange = {}, heapBudget = { 50_000_000L })
+        val f = RegionFrame.living()
+        val lat = f.lat(-10.0, -30.0)
+        val lon = f.lon(-10.0, -30.0)
+        // the home's distance, where grachten's views fit far better than the living map's
+        val home = LiveView(lat, lon, LiveCamera.zoom(lat, 2300.0, 915.0), 52.0, 46.0, 412, 915, 440.0)
+        var state = regions.stateFor(home)
+        repeat(3) { if (state !is LiveRegions.State.Ready) state = regions.stateFor(home) }
+        val ready = state as LiveRegions.State.Ready
+        assertEquals("amsterdam", ready.region.id)
+        assertEquals(null, ready.pending)
+        assertTrue("grachten was never fetched: $requests", requests.none { it.endsWith("grachten.atlas") })
+        // in the canal ring, away from the Westerkerk's pack: the map says why, and builds nothing
+        val empty = regions.stateFor(home.copy(lat = 52.3655, lon = 4.9010))
+        assertTrue("$empty", empty is LiveRegions.State.Empty && (empty as LiveRegions.State.Empty).reason.contains("grachten"))
     }
 }

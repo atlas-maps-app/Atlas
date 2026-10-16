@@ -24,6 +24,9 @@ import kotlin.math.min
  * living map close up, the canal ring from 2 km); a published pack that fits better than any on the phone is downloaded
  * while the best one on the phone is drawn. Downloads, builds and unpacking run on [worker]; [onChange] is called when
  * one ends, so the map asks again. [stateFor] itself never blocks on the network.
+ *
+ * A region whose scene would not fit the heap ([heapBudget]) is never loaded: a scene near the heap's limit makes the
+ * phone collect garbage for minutes, hot and without a picture, before running out. The map says so instead.
  */
 class LiveRegions(
     val library: PackLibrary,
@@ -33,6 +36,8 @@ class LiveRegions(
     /** Builds packs where none reaches; null to never build. */
     private val overpass: OverpassClient? = null,
     private val onChange: () -> Unit = {},
+    /** The heap one scene may take: a share of what the runtime gives the app, leaving room for its render and frame. */
+    private val heapBudget: () -> Long = { (Runtime.getRuntime().maxMemory() * SCENE_SHARE).toLong() },
 ) {
     /** What the map can draw for a view. */
     sealed interface State {
@@ -59,7 +64,10 @@ class LiveRegions(
     fun stateFor(view: LiveView): State {
         val p = view.target
         maybeRefresh()
-        val (here, remote) = library.at(p)
+        val (allHere, allRemote) = library.at(p)
+        val budget = heapBudget()
+        val here = allHere.filter { sceneBytes(it.file.length()) <= budget }
+        val remote = allRemote.filter { sceneBytes(it.bytes) <= budget }
         val dist = view.distance
         val bestLocal = here.minWithOrNull(compareBy<PackLibrary.Local> { fit(it.id, dist, it.bbox) }.thenBy { area(it.bbox) })
         val bestRemote = if (online()) remote.minWithOrNull(compareBy<PackLibrary.Entry> { fit(it.id, dist, it.bbox) }.thenBy { area(it.bbox) }) else null
@@ -69,6 +77,14 @@ class LiveRegions(
         }
         if (bestLocal == null) {
             if (pending != null) return pending
+            // a region covers this place but its scene is too big for this phone: a build of the same streets would be too
+            val big = allHere.map { it.id to it.file.length() } + allRemote.map { it.id to it.bytes }
+            big.maxByOrNull { it.second }?.let { (id, bytes) ->
+                return State.Empty(
+                    "the region $id needs about ${sceneBytes(bytes) / 1_000_000} MB, more than this phone gives the map " +
+                        "(${budget / 1_000_000} MB); smaller scenes are coming",
+                )
+            }
             if (!online()) return State.Empty("offline, and no region on the phone covers this place")
             val ov = overpass ?: return State.Empty("no region covers this place")
             return build(ov, p, dist)
@@ -185,10 +201,22 @@ class LiveRegions(
 
     private fun area(b: BBox): Double = max(0.0, b.width) * max(0.0, b.height)
 
+    /** The heap a pack's scene takes, estimated from the pack's size. */
+    private fun sceneBytes(packBytes: Long): Long = packBytes * HEAP_PER_PACK_BYTE
+
     companion object {
         const val RETRY_MS = 60_000L
         const val MANIFEST_MS = 6 * 3600_000L
         const val BUILD_MIN_M = 600.0
         const val BUILD_MAX_M = 1500.0
+
+        /**
+         * Heap per byte of pack, measured on the JVM (15 October): grachten's 5.2 MB pack makes a 283 MB scene (54), the
+         * Westerkerk's 0.63 MB one 40 MB (64). The larger is taken.
+         */
+        const val HEAP_PER_PACK_BYTE = 64L
+
+        /** The share of the heap one scene may take; the render, the SVG, the frame and the app need the rest. */
+        const val SCENE_SHARE = 0.4
     }
 }
