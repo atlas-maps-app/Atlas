@@ -88,7 +88,7 @@ fun VehicleScreen(args: Dest.Vehicle, nav: Navigator) {
     val v = vehicles[mode] ?: GoStore.defaultVehicle(mode)
     val scope = rememberCoroutineScope()
     val save: (Vehicle) -> Unit = { nv -> scope.launch { hub.store.setVehicle(mode, nv) } }
-    val units = hub.units
+    val units by hub.unitsFlow.collectAsStateWithLifecycle()
     val here = rememberHere()
 
     AtlasTheme(dark = true) {

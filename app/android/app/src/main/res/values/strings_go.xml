@@ -55,9 +55,9 @@
     <string name="go_surface_steps">Steps ahead</string>
     <string name="go_surface_tram">Tram tracks ahead</string>
     <string name="go_climb_ahead">Climb of %1$d %% ahead</string>
-    <string name="go_profile">Height profile, %1$d m of climbing</string>
-    <string name="go_wind_against">Headwind %1$d km/h</string>
-    <string name="go_wind_behind">Tailwind %1$d km/h</string>
+    <string name="go_profile">Height profile, %1$s of climbing</string>
+    <string name="go_wind_against">Headwind %1$s</string>
+    <string name="go_wind_behind">Tailwind %1$s</string>
     <string name="go_course">Course %1$d°</string>
     <string name="go_speed_knots_said">%1$s knots</string>
     <string name="go_draft_said">Draft %1$s</string>

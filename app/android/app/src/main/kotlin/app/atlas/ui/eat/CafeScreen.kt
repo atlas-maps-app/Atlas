@@ -104,7 +104,7 @@ fun CafeScreen(nav: Navigator) {
         ) {
             LazyColumn(
                 Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 16.dp),
-                contentPadding = PaddingValues(bottom = 150.dp),
+                contentPadding = PaddingValues(bottom = bottomRoom(150.dp)),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item {

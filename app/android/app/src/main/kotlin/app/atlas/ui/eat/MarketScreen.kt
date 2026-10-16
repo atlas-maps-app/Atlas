@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -98,7 +99,7 @@ fun MarketScreen(nav: Navigator) {
     val type = TextStyle(fontFamily = EatType.courier, color = KRAFT_INK)
 
     Box(Modifier.fillMaxSize().background(KRAFT).drawBehind { drawKraft() }) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 40.dp)) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = bottomRoom(40.dp))) {
             item {
                 Box(Modifier.fillMaxWidth().padding(top = boardTop(112.dp)), contentAlignment = Alignment.Center) {
                     RubberStamp(stringResource(R.string.eat_market).uppercase() + " · " + (board?.count?.toString() ?: "…"))
@@ -287,8 +288,9 @@ private fun MarketDays(week: List<MarketDay>, chosen: LocalDate, today: LocalDat
             }
             for (s in sessions) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("${hour(s.from)}–${hour(s.to)}", Modifier.width(64.dp), style = type.copy(fontSize = 15.sp, fontWeight = FontWeight.Bold))
-                    Column {
+                    // The times never break ("10–18:30" stays whole); the name gives way.
+                    Text("${hour(s.from)}–${hour(s.to)}", Modifier.widthIn(min = 64.dp), style = type.copy(fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 1, softWrap = false)
+                    Column(Modifier.weight(1f)) {
                         Text(s.place.name, style = type.copy(fontSize = 15.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         s.what?.let { Text(it, style = type.copy(fontSize = 12.sp, color = KRAFT_INK.copy(alpha = 0.7f)), maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     }

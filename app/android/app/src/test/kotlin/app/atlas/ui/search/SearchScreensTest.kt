@@ -255,7 +255,7 @@ class SearchScreensTest {
     @Test
     fun quests() {
         open(Dest.Quests(Services.WESTERKERK.lat, Services.WESTERKERK.lon))
-        waitFor("Can't tell", 20_000)
+        compose.waitUntil(20_000) { compose.onAllNodes(hasText("skip")).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Yes").assertExists()
         capture("quests")
         // An answer shows the exact note before anything is sent, and offline it cannot go.

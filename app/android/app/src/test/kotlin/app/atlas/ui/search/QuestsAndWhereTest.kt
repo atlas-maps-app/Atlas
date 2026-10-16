@@ -75,8 +75,8 @@ class QuestsAndWhereTest {
     @Test
     fun theChipsAreHonest() {
         val at = LatLon(52.3745, 4.8838)
-        val museum = WherePicker.WEDGES.first { it.id == "museums" }
-        val park = WherePicker.WEDGES.first { it.id == "parks" }
+        val museum = WherePicker.WEDGES.first { it.id == "culture" }
+        val park = WherePicker.WEDGES.first { it.id == "nature" }
         fun place(vararg t: Pair<String, String>) = Place(OsmId.parse("n1"), LatLon(52.3750, 4.8838), mapOf(*t), source = "osm")
         val ctx = OpeningHoursContext.Default
         val open = WhereFilters(openNow = true)

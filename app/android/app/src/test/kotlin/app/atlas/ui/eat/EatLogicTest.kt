@@ -229,4 +229,60 @@ class EatLogicTest {
         assertFalse(CafeKind.COFFEE.has(coffeeshop))
         assertNotNull(CafeKind.entries.firstOrNull { it.has(eat(brunch)) })
     }
+
+    @Test
+    fun theOrderMatchesTheOtherSpellingsOfACuisine() {
+        val doner = place(0.001, 0.0, "amenity" to "restaurant", "name" to "Doner Huis", "cuisine" to "doner", "opening_hours" to "Mo-Su 11:00-23:00")
+        val pizza = place(0.002, 0.0, "amenity" to "restaurant", "name" to "Pizzeria", "cuisine" to "pizza", "opening_hours" to "Mo-Su 11:00-23:00")
+        val a = area(doner, pizza)
+        assertTrue(CuisineTaxonomy.spellings("kebab").containsAll(listOf("kebab", "doner", "kebap")))
+        val kebab = OrderModel.evaluate(OrderPad(cuisines = listOf("kebab")), evening, zone, a, AreaRatings.OFFLINE, "en")
+        assertEquals(listOf("Doner Huis"), kebab.served.map { it.place.name() })
+        val notKebab = OrderModel.evaluate(OrderPad(not = listOf("kebab")), evening, zone, a, AreaRatings.OFFLINE, "en")
+        assertEquals(listOf("Pizzeria"), notKebab.served.map { it.place.name() })
+    }
+
+    @Test
+    fun aKitchenNobodyMappedGetsAnEmptyPlate() {
+        val unknown = eat(place(0.001, 0.0, "amenity" to "restaurant", "name" to "Mystery"))
+        val fastFood = eat(place(0.001, 0.0, "amenity" to "fast_food", "name" to "Snack"))
+        assertEquals(Dish.EMPTY, dishOf(unknown, "NL"))
+        assertEquals(Dish.EMPTY, dishOf(fastFood, "NL"))
+        assertEquals(Dish.PIZZA, dishOf(eat(place(0.001, 0.0, "amenity" to "restaurant", "name" to "P", "cuisine" to "pizza")), "NL"))
+    }
+
+    @Test
+    fun theTicketNumberAlwaysHasFourFigures() {
+        val a = area()
+        for (i in 0 until 400) {
+            val p = eat(place(0.001, 0.001 * i, "amenity" to "restaurant", "name" to "R$i", "cuisine" to "ramen"))
+            val b = MachineButton(p, Openness.OPEN, null, null, null, vegan = false, cashOnly = false)
+            val n = WorldModel.ticket(b, evening.plusDays(i.toLong())).number
+            assertTrue(n, Regex("\\d{4}").matches(n))
+        }
+        assertTrue(a.places.isEmpty())
+    }
+
+    @Test
+    fun aTimeOnAnotherDayNamesTheDay() {
+        val tomorrowNoon = LocalDateTime.of(2026, 10, 14, 12, 0)
+        assertEquals("12:30", dayTime(evening.withHour(12), evening, "en"))
+        assertEquals("Wed 12:00", dayTime(tomorrowNoon, evening, "en"))
+        assertEquals("Wed 09:30", dayTime(tomorrowNoon.withHour(9).withMinute(30), evening, "en", HM_PADDED))
+    }
+
+    @Test
+    fun theWaiterAnswersAnythingYouTypeOrSay() {
+        val pizza = place(0.001, 0.0, "amenity" to "restaurant", "name" to "Pizzeria Roma", "cuisine" to "pizza", "opening_hours" to "Mo-Su 11:00-23:00")
+        val a = area(pizza)
+        val odd = listOf(
+            "", "   ", "((", "[", "\\", "*", "a within", "within 200 m of", "near", "open at 99:99", "open until", "\ud83d\udca5", "vegan\u0000pizza", "pizza ".repeat(2_000),
+            "pizza open now", "pizza near the Westerkerk", "A within 200 m of B", "terras met bier", "cuisine=", "=pizza", "cuisine~[", "dog~(",
+        )
+        for (text in odd) {
+            val answer = Waiter.ask(text, a, evening, zone, "en")
+            assertEquals(text.take(20), text, answer.text)
+        }
+        assertEquals(listOf("Pizzeria Roma"), Waiter.ask("pizza", a, evening, zone, "en").hits.map { it.place.name() })
+    }
 }

@@ -110,6 +110,9 @@ object OrderModel {
     private val VEGETARIAN = TagFilter.parse("diet:vegetarian~^(yes|only|limited)$ or diet:vegan~^(yes|only)$ or cuisine=vegetarian or cuisine=vegan")
     private val CARD = TagFilter.Or(EatPlace.CARD_KEYS.map { TagFilter.Equals("payment:$it", "yes") })
 
+    /** `cuisine=` clauses for a canonical cuisine and the other spellings mappers use ("kebab": "doner", "kebap"). */
+    private fun cuisineClauses(cuisine: String): List<TagFilter> = CuisineTaxonomy.spellings(cuisine).map { TagFilter.Equals("cuisine", it) }
+
     /** The moment the order is for: [OrderPad.time] on the table's day ([at]), or the table's own time. */
     fun momentOf(pad: OrderPad, at: LocalDateTime): LocalDateTime {
         val t = pad.time ?: return at
@@ -127,9 +130,9 @@ object OrderModel {
         } else Query.OpenAt(OpenTime.At(moment))
         return listOf(
             Line.TIME to Query.and(Query.Tags(MEALS), time),
-            Line.CUISINES to pad.cuisines.takeIf { it.isNotEmpty() }?.let { cs -> Query.Tags(TagFilter.Or(cs.map { TagFilter.Equals("cuisine", it) })) },
+            Line.CUISINES to pad.cuisines.takeIf { it.isNotEmpty() }?.let { cs -> Query.Tags(TagFilter.Or(cs.flatMap(::cuisineClauses))) },
             Line.NOT to pad.not.takeIf { it.isNotEmpty() }?.let { ns ->
-                Query.Not(Query.Tags(TagFilter.Or(ns.map { if (it == OrderPad.FAST_FOOD) TagFilter.Equals("amenity", "fast_food") else TagFilter.Equals("cuisine", it) })))
+                Query.Not(Query.Tags(TagFilter.Or(ns.flatMap { if (it == OrderPad.FAST_FOOD) listOf(TagFilter.Equals("amenity", "fast_food")) else cuisineClauses(it) })))
             },
             Line.FEATURES to listOfNotNull(
                 OUTSIDE.takeIf { pad.outside }, VEGAN.takeIf { pad.vegan }, VEGETARIAN.takeIf { pad.vegetarian && !pad.vegan },

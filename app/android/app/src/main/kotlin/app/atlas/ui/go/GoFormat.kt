@@ -2,6 +2,7 @@ package app.atlas.ui.go
 
 import app.atlas.services.Units
 import java.time.Instant
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -61,10 +62,17 @@ object GoFormat {
     fun knots(ms: Double): String = if (!ms.isFinite() || ms < 0) "–" else oneDecimal(ms * 1.943844)
 
     /** A clock time ("18:42", or "6:42 PM" in a 12-hour locale) in [zone]. */
-    fun clock(t: Instant, zone: ZoneId, locale: Locale = Locale.getDefault()): String {
-        val twelve = locale.country in setOf("US", "CA", "AU", "IN", "PH", "EG", "SA", "PK", "BD")
-        return DateTimeFormatter.ofPattern(if (twelve) "h:mm a" else "H:mm", locale).format(t.atZone(zone))
-    }
+    fun clock(t: Instant, zone: ZoneId, locale: Locale = Locale.getDefault()): String =
+        DateTimeFormatter.ofPattern(clockPattern(locale), locale).format(t.atZone(zone))
+
+    /** A time of day as [clock] writes it. */
+    fun time(t: LocalTime, locale: Locale = Locale.getDefault()): String =
+        DateTimeFormatter.ofPattern(clockPattern(locale), locale).format(t)
+
+    private fun clockPattern(locale: Locale) =
+        if (locale.country in TWELVE_HOUR) "h:mm a" else "H:mm"
+
+    private val TWELVE_HOUR = setOf("US", "CA", "AU", "IN", "PH", "EG", "SA", "PK", "BD")
 
     /** A duration as the boards write it: "6′", "1 h 05". */
     fun minutes(seconds: Double): String {

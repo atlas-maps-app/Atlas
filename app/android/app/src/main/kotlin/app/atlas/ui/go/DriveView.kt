@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,7 +71,7 @@ private val Figures = TextStyle(fontFamily = InterFamily, fontFeatureSettings = 
 fun DriveView(show: NavShow, actions: NavActions, truck: Boolean = false) {
     AtlasTheme(dark = true, night = true) {
         val v = show.view
-        var overview by remember { mutableStateOf(false) }
+        var overview by rememberSaveable { mutableStateOf(false) }
         Box(Modifier.fillMaxSize().background(NavColours.night)) {
             GuidanceMap(
                 v, Modifier.fillMaxSize(), theme = if (show.night) Theme.NIGHT else Theme.AUTO, follow = !overview,
@@ -197,12 +198,13 @@ internal fun StreetSign(name: String, modifier: Modifier = Modifier) {
 @Composable
 private fun SpeedLimit(maxspeed: String?, units: Units) {
     val limit = speedNumber(maxspeed) ?: return
-    val said = stringResource(R.string.go_speed_limit, limit)
+    val mph = (limit / 1.609344).roundToInt()
+    // What the sign shows is what is said: km/h on the round sign, mph on the American plate.
+    val said = stringResource(R.string.go_speed_limit, if (units == Units.IMPERIAL) mph else limit)
     if (units != Units.IMPERIAL) {
         RoadSign(SignKind.SPEED, limit.toString(), size = 58.dp, contentDescription = said)
         return
     }
-    val mph = (limit / 1.609344).roundToInt()
     val measurer = rememberTextMeasurer(cacheSize = 4)
     Canvas(Modifier.size(width = 58.dp, height = 72.dp).softShadow(RoundedCornerShape(7.dp), Color(0x80000000), 8.dp).semantics { contentDescription = said }) {
         val r = androidx.compose.ui.geometry.CornerRadius(7.dp.toPx())
@@ -253,9 +255,13 @@ private fun GlassButton(art: Art, description: String, onClick: () -> Unit, on: 
 internal fun speedNumber(maxspeed: String?): Int? {
     val m = maxspeed?.trim() ?: return null
     m.toIntOrNull()?.let { return it }
-    Regex("""^(\d+)\s*mph$""").find(m)?.let { return (it.groupValues[1].toInt() * 1.609344).roundToInt() }
+    MPH.find(m)?.let { return (it.groupValues[1].toInt() * 1.609344).roundToInt() }
+    KMH.find(m)?.let { return it.groupValues[1].toInt() }
     return null
 }
+
+private val MPH = Regex("""^(\d{1,3})\s*mph$""", RegexOption.IGNORE_CASE)
+private val KMH = Regex("""^(\d{1,3})\s*km/?h$""", RegexOption.IGNORE_CASE)
 
 /** The Drive board's footer: the arrival in green, minutes and distance left, the truck's weight, and the end. */
 @Composable

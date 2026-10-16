@@ -15,6 +15,7 @@ import app.atlas.model.Mode
 import app.atlas.model.Turn
 import app.atlas.services
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -88,6 +89,34 @@ class NavigationServiceTest {
         assertNull(hub.nav.value)
         assertTrue(shadow.isStoppedBySelf)
         hub.setMuted(false)
+    }
+
+    @Test
+    fun aNewTripGetsItsOwnHeadsetSessionNotTheOldOnes() {
+        shadowOf(app).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.POST_NOTIFICATIONS)
+        val first = startTrip()
+        val controller = Robolectric.buildService(NavigationService::class.java, Intent(app, NavigationService::class.java).setAction(NavigationService.ACTION_START))
+        val service = controller.create().startCommand(0, 1).get()
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(2))
+        assertEquals(first, service.headsetTrip)
+        // A second trip starts while the first is guided: a headset press must reach the second.
+        val second = startTrip()
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(3))
+        assertTrue(first !== second)
+        assertEquals(second, service.headsetTrip)
+        hub.stopNav()
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(3))
+        assertNull(service.headsetTrip)
+    }
+
+    @Test
+    fun aNewTripStartsWithTheVoiceOnAndASimulatedOneIsNoPlaceYouWent() {
+        hub.setMuted(true)
+        startTrip()
+        assertFalse("a mute left from before must not silence the next trip", hub.muted.value)
+        ShadowLooper.idleMainLooper()
+        Thread.sleep(300)
+        assertTrue(kotlinx.coroutines.runBlocking { hub.store.recent.first() }.isEmpty())
     }
 
     @Test

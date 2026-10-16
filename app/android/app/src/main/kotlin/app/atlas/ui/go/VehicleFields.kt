@@ -39,9 +39,11 @@ enum class VehicleField(
     /** The value one step up or down from [current] (or a sensible start when unset), kept in range. */
     fun stepped(current: Double?, up: Boolean, start: Double): Double {
         val base = current ?: return start.coerceIn(min, max)
-        val next = base + if (up) step else -step
+        // A battery of a bike (under 2 kWh) goes in tenths; a car's in whole kilowatt-hours.
+        val by = if (this == BATTERY && (base < 2.0 - 1e-9 || !up && base <= 2.0 + 1e-9)) 0.1 else step
+        val next = base + if (up) by else -by
         // Round to the step so repeated taps do not drift (3.9999 → 4.0).
-        return ((next / step).roundToInt() * step).coerceIn(min, max)
+        return ((next / by).roundToInt() * by).coerceIn(min, max)
     }
 
     /** "4.0 m", "40 t", "80 %" (feet and inches for heights in imperial units). */

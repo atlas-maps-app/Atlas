@@ -124,7 +124,7 @@ fun EatMapScreen(nav: Navigator) {
     val scope = rememberCoroutineScope()
     val selected by remember(places) { derivedStateOf { places.getOrNull(carousel.firstVisibleItemIndex)?.key } }
     val ask: (String) -> Unit = { text ->
-        if (text.isNotBlank()) scope.launch { answer = withContext(Dispatchers.Default) { Waiter.ask(text, ctx.area, ctx.at, services.clock.zone, ctx.lang, limit = 30) } }
+        if (text.isNotBlank()) scope.launch { answer = Waiter.askSafely { withContext(Dispatchers.Default) { Waiter.ask(text, ctx.area, ctx.at, services.clock.zone, ctx.lang, limit = 30) } } }
     }
     val mic = rememberSpeechInput(onText = { question = it; ask(it) })
 
@@ -245,6 +245,7 @@ fun EatMapScreen(nav: Navigator) {
 @Composable
 private fun SearchPill(text: String, hint: String, onText: (String) -> Unit, onAsk: () -> Unit, onMic: () -> Unit, modifier: Modifier) {
     val micLabel = stringResource(R.string.kit_mic)
+    val askLabel = stringResource(R.string.eat_ask)
     Row(
         modifier.height(52.dp).boxShadow(CircleShape, 1f, 6f, 20f, Color(0x1F181C30)).clip(CircleShape).background(Color.White).padding(start = 16.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -259,7 +260,7 @@ private fun SearchPill(text: String, hint: String, onText: (String) -> Unit, onA
                 textStyle = style,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { onAsk() }),
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "ask" },
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = askLabel },
             )
         }
         Box(Modifier.size(36.dp).clip(CircleShape).clickable(onClick = onMic).semantics { contentDescription = micLabel }, contentAlignment = Alignment.Center) {
@@ -430,7 +431,8 @@ private fun PriceLevel(level: Int?) {
 /** Reviews a month over the last year and more, as the board's orange line ending in a dot. */
 @Composable
 private fun Sparkline(points: FloatArray, modifier: Modifier) {
-    Canvas(modifier.semantics { contentDescription = "trend" }) {
+    val label = stringResource(R.string.eat_trend_desc)
+    Canvas(modifier.semantics { contentDescription = label }) {
         val max = points.maxOrNull()?.takeIf { it > 0f } ?: 1f
         val p = Path()
         val r = 2.5.dp.toPx()

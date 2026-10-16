@@ -38,6 +38,21 @@ class SavedPlacesTest {
     }
 
     @Test
+    fun aDamagedFileIsPutAsideAndTheScreensStillOpen() {
+        val dir = Files.createTempDirectory("saved-broken").toFile()
+        val file = File(dir, "saved.db")
+        file.writeText("this is not a database, it is a lot of text that SQLite will refuse ".repeat(100))
+        SavedPlaces.open(file, clock).use { s ->
+            assertEquals(1, s.lists.value.size)
+            s.toggle(place("n1", "Kept", "amenity" to "cafe"))
+            assertTrue(s.isSaved("n1"))
+        }
+        assertTrue(File(dir, "saved.db.broken").isFile)
+        // And what was kept in the fresh file is there on the next start.
+        SavedPlaces.open(file, clock).use { s -> assertTrue(s.isSaved("n1")) }
+    }
+
+    @Test
     fun saveToggleAndRemove() {
         SavedPlaces.open(null, clock).use { s ->
             val kalkhoven = place("n1147560517", "Café Kalkhoven", "amenity" to "cafe")

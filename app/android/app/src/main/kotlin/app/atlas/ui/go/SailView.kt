@@ -203,7 +203,7 @@ internal fun BridgeCard(bridge: RouteBridge, distance: Double, airDraft: Double?
             if (margin != null) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     val colour = if (fits) SailColours.green else NavColours.end
-                    ArtIcon(if (fits) BoardArt.check.weighted(1.4f) else BoardArt.close.tinted.weighted(1.2f), size = 16.dp, tint = colour)
+                    ArtIcon(if (fits) BoardArt.check.tinted.weighted(1.4f) else BoardArt.close.tinted.weighted(1.2f), size = 16.dp, tint = colour)
                     Text((if (margin >= 0) "+" else "−") + GoFormat.size(abs(margin), units), style = SailFigures.copy(fontSize = 15.sp, fontWeight = FontWeight.Bold), color = colour)
                 }
             }

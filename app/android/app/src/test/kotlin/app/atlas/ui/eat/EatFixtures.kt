@@ -39,4 +39,17 @@ object EatFixtures {
             clock = clock,
         ),
     )
+
+    /** Services offline in a world with no tiles and no places at all: a phone that has downloaded nothing. */
+    fun emptyWorld(clock: Clock = Fixtures.evening, context: Context = RuntimeEnvironment.getApplication()): Services = Services(
+        context,
+        ServicesConfig(
+            root = Files.createTempDirectory("atlas-eat-empty").toFile(),
+            demoLocation = Services.WESTERKERK,
+            offline = true,
+            tiles = TileStack(emptyList()),
+            placeStores = emptyList(),
+            clock = clock,
+        ),
+    )
 }

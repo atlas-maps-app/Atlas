@@ -132,7 +132,7 @@ fun BarScreen(nav: Navigator) {
                     } ?: stringResource(R.string.kit_loading)
                     Text(
                         smallCaps(line.lowercase(), 15.sp),
-                        style = TextStyle(fontFamily = EatType.cormorant, fontWeight = FontWeight.SemiBold, letterSpacing = 0.24.em, color = GOLD_META),
+                        style = TextStyle(fontFamily = EatType.cormorant, fontWeight = FontWeight.SemiBold, letterSpacing = 0.24.em, color = GOLD_META, fontFeatureSettings = "lnum"),
                         textAlign = TextAlign.Center,
                     )
                 }
@@ -295,7 +295,7 @@ private fun VenueEntry(v: Venue, ctx: EatContext, inCrawl: Boolean, onOpen: () -
         )
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val open = when {
-                v.openness == Openness.CLOSED -> v.place.opensAt(ctx.at, ctx.area.hours)?.let { stringResource(R.string.eat_opens_at, it.format(HM)) } ?: stringResource(R.string.kit_closed)
+                v.openness == Openness.CLOSED -> v.place.opensAt(ctx.at, ctx.area.hours)?.let { stringResource(R.string.eat_opens_at, dayTime(it, ctx.at, ctx.lang)) } ?: stringResource(R.string.kit_closed)
                 v.place.alwaysOpen -> "24/7"
                 v.closes != null && v.hooks.none { it is Hook.Until } -> "→ " + v.closes.format(HM)
                 else -> null
@@ -325,6 +325,7 @@ private fun VenueEntry(v: Venue, ctx: EatContext, inCrawl: Boolean, onOpen: () -
 @Composable
 private fun CrawlTray(c: Crawl, modifier: Modifier, onStop: (EatPlace) -> Unit, onWalk: () -> Unit) {
     val shape = RoundedCornerShape(4.dp)
+    val walkLabel = stringResource(R.string.eat_walk_desc, c.minutes)
     Row(
         modifier
             .fillMaxWidth()
@@ -354,7 +355,7 @@ private fun CrawlTray(c: Crawl, modifier: Modifier, onStop: (EatPlace) -> Unit, 
                 .background(GOLD_FILL)
                 .clickable(onClick = onWalk)
                 .padding(horizontal = 16.dp)
-                .semantics(mergeDescendants = true) { contentDescription = "walk ${c.minutes} min" },
+                .semantics(mergeDescendants = true) { contentDescription = walkLabel },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -379,7 +380,7 @@ private fun PokerChip(n: Int, tilt: Float, modifier: Modifier) {
             .innerShadow(CircleShape, BoxShadow(radius = 0.dp, spread = 4.dp, color = Color(0xFFB3A078))),
         contentAlignment = Alignment.Center,
     ) {
-        Text(n.toString(), style = TextStyle(fontFamily = EatType.cormorant, fontWeight = FontWeight.Bold, fontSize = 22.sp, color = Color(0xFF3A2A10)))
+        Text(n.toString(), style = TextStyle(fontFamily = EatType.cormorant, fontWeight = FontWeight.Bold, fontSize = 22.sp, color = Color(0xFF3A2A10), fontFeatureSettings = "lnum"))
     }
 }
 

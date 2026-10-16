@@ -225,6 +225,7 @@ private fun Rivet() {
 @Composable
 private fun PadLine(line: Line, pad: OrderPad, count: Int?, isLast: Boolean, ctx: EatContext, showAdd: Boolean, onAdd: () -> Unit, onTap: () -> Unit) {
     val soft = line == Line.WISHES
+    val addLabel = stringResource(R.string.eat_add_line)
     val hand = TextStyle(fontFamily = EatType.hand, fontWeight = FontWeight.SemiBold, fontSize = 27.sp, lineHeight = 40.sp, color = INK)
     Row(
         Modifier.fillMaxWidth().heightIn(min = ROW).clickable(onClick = onTap).semantics(mergeDescendants = true) {},
@@ -286,7 +287,7 @@ private fun PadLine(line: Line, pad: OrderPad, count: Int?, isLast: Boolean, ctx
                         }
                         .clip(CircleShape)
                         .clickable(onClick = onAdd)
-                        .semantics { contentDescription = "add a line" },
+                        .semantics { contentDescription = addLabel },
                     contentAlignment = Alignment.Center,
                 ) { BoardIcon(EatGlyphs.plus, INK_SOFT, 14.dp) }
             }

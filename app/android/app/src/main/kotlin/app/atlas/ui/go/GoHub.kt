@@ -57,6 +57,9 @@ class GoHub(private val services: Services) {
     private val unitsState: StateFlow<Units> by lazy { services.settings.units.stateIn(services.scope, SharingStarted.Eagerly, Units.METRIC) }
     val units: Units get() = unitsState.value
 
+    /** The same, for screens to observe: a change in Settings reaches an open screen. */
+    val unitsFlow: StateFlow<Units> get() = unitsState
+
     fun setMuted(muted: Boolean) {
         mutedState.value = muted
         (services.voice as? TtsVoice)?.setMuted(muted)
@@ -106,6 +109,8 @@ class GoHub(private val services: Services) {
     fun startNav(context: Context, req: RouteRequest, route: Route, name: String?, settings: GuideSettings, demo: Boolean): NavSession {
         stopNav()
         stopEars()
+        // A trip begins with the voice on: a mute left from an earlier one would make this one silent without warning.
+        if (mutedState.value) setMuted(false)
         // The hours carry on from the last trip; a demo drive shows them but does not add to them.
         val tachoStart = if (req.mode == Mode.TRUCK) tacho.value ?: TachoState() else null
         val session = NavSession(
@@ -116,7 +121,8 @@ class GoHub(private val services: Services) {
         navState.value = session
         val fixes = if (demo) NavSession.demoFixes(route, services.clock.instant()) else services.location.fixes(LocationQuality.NAVIGATION)
         session.start(fixes)
-        services.scope.launch { store.visited(SavedPlace(name ?: "", req.waypoints.last()), services.clock.millis()) }
+        // A simulated drive is not a place you went to.
+        if (!demo) services.scope.launch { store.visited(SavedPlace(name ?: "", req.waypoints.last()), services.clock.millis()) }
         NavigationService.start(context)
         return session
     }

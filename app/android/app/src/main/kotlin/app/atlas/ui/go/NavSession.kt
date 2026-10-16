@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.Instant
 
@@ -135,23 +136,26 @@ class NavSession(
         val words = next?.let { book.instruction(it, StepContext(arrivalSide = s.arrivalSide)).text }
         // The step after the next, when it comes right after it ("then left").
         val then = s.following?.takeIf { next != null && next.distance < THEN_WITHIN_M }
-        viewState.value = viewState.value.copy(
-            route = navigator.route,
-            state = s,
-            instruction = words,
-            street = next?.let { it.street ?: it.ref },
-            then = then,
-            upcoming = navigator.upcoming(),
-            arrived = s.arrived,
-            tacho = tacho,
-            fixes = fixCount,
-        )
+        val upcoming = navigator.upcoming()
+        viewState.update {
+            it.copy(
+                route = navigator.route,
+                state = s,
+                instruction = words,
+                street = next?.let { n -> n.street ?: n.ref },
+                then = then,
+                upcoming = upcoming,
+                arrived = s.arrived,
+                tacho = tacho,
+                fixes = fixCount,
+            )
+        }
     }
 
     /** Finds a new route from [from] through the stops not yet passed, unless one is being found already. */
     private fun reroute(from: Fix) {
         if (rerouteJob?.isActive == true) return
-        viewState.value = viewState.value.copy(rerouting = true)
+        viewState.update { it.copy(rerouting = true) }
         rerouteJob = scope.launch {
             val via = remainingVias()
             val req = request.copy(waypoints = listOf(from.location) + via + destination, startHeading = from.bearing, alternatives = 0)
@@ -165,9 +169,9 @@ class NavSession(
             when (result) {
                 is RouteResult.Found -> {
                     synchronized(this@NavSession) { navigator.replaceRoute(result.best, destination) }
-                    viewState.value = viewState.value.copy(route = result.best, rerouting = false, rerouteFailed = null)
+                    viewState.update { it.copy(route = result.best, rerouting = false, rerouteFailed = null) }
                 }
-                is RouteResult.Failure -> viewState.value = viewState.value.copy(rerouting = false, rerouteFailed = result.message)
+                is RouteResult.Failure -> viewState.update { it.copy(rerouting = false, rerouteFailed = result.message) }
             }
         }
     }

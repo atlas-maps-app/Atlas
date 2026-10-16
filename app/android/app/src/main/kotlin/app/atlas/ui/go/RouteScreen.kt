@@ -98,13 +98,13 @@ fun RouteScreen(args: Dest.Route, nav: Navigator) {
     val vm = viewModel(key = "route:" + args.route) {
         val from = args.from?.let { Endpoint(args.fromName, it) } ?: Endpoint(null, here, here = true)
         val to = args.to?.let { Endpoint(args.toName, it) }
-        RouteViewModel(services, from, to, args.mode?.let { n -> runCatching { Mode.valueOf(n) }.getOrNull() })
+        RouteViewModel(services, from, to, args.mode?.let { n -> runCatching { Mode.valueOf(n) }.getOrNull() }, viaStops(args.via))
     }
     val ui by vm.ui.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var panel by rememberSaveable { mutableStateOf<String?>(null) }
     val sheet = rememberSheetState(SheetStop.HALF)
-    val units = services.go.units
+    val units by services.go.unitsFlow.collectAsStateWithLifecycle()
     // A panel (when, preferences, stops) gets the room: the sheet steps down to its peek while one is open.
     LaunchedEffect(panel) { if (panel != null && sheet.stop != SheetStop.PEEK) sheet.animateTo(SheetStop.PEEK) }
 
@@ -286,8 +286,8 @@ private fun WhenChip(ui: RouteUi, onClick: () -> Unit) {
     val t = ui.timing
     val text = when (t.kind) {
         Timing.Kind.NOW -> stringResource(R.string.go_now)
-        Timing.Kind.DEPART -> stringResource(R.string.go_leave_at, t.at?.toLocalTime()?.toString() ?: "")
-        Timing.Kind.ARRIVE -> stringResource(R.string.go_arrive_by, t.at?.toLocalTime()?.toString() ?: "")
+        Timing.Kind.DEPART -> stringResource(R.string.go_leave_at, t.at?.toLocalTime()?.let { GoFormat.time(it) } ?: "")
+        Timing.Kind.ARRIVE -> stringResource(R.string.go_arrive_by, t.at?.toLocalTime()?.let { GoFormat.time(it) } ?: "")
     }
     Row(
         Modifier.height(38.dp).softShadow(CircleShape, RouteColours.shadow, 8.dp).clip(CircleShape).background(RouteColours.glass)
@@ -325,7 +325,7 @@ private fun TimingPanel(ui: RouteUi, vm: RouteViewModel, clock: java.time.Clock)
     if (t.kind != Timing.Kind.NOW) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             TinyButton("ui-minus", stringResource(R.string.go_earlier), size = 44) { vm.setTiming(t.copy(at = at.minusMinutes(15))) }
-            Text(at.toLocalTime().toString(), style = Atlas.type.numeral.copy(fontSize = 30.sp), modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Text(GoFormat.time(at.toLocalTime()), style = Atlas.type.numeral.copy(fontSize = 30.sp), modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             TinyButton("ui-plus", stringResource(R.string.go_later), size = 44) { vm.setTiming(t.copy(at = at.plusMinutes(15))) }
         }
     }
@@ -404,7 +404,7 @@ private fun ColumnScope.PlannerSheet(ui: RouteUi, vm: RouteViewModel, units: app
             Spacer(Modifier.height(6.dp))
             ElevationProfile(
                 route.elevations, distances = route.line.cumulative, height = 56.dp,
-                contentDescription = stringResource(R.string.go_profile, route.climb.roundToInt()),
+                contentDescription = stringResource(R.string.go_profile, GoFormat.height(route.climb, units).toString()),
             )
         }
         if (found != null) CompareWays(ui, vm)
@@ -522,7 +522,7 @@ private fun FactChips(fact: KeyFact?, route: Route, units: app.atlas.services.Un
         is KeyFact.Ride -> {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                 ArtIcon(BoardArt.trendUp, size = 14.dp, tint = RouteColours.sub)
-                Text("${fact.climbM.roundToInt()} m", style = small, color = RouteColours.sub)
+                Text(GoFormat.height(fact.climbM, units).toString(), style = small, color = RouteColours.sub)
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                 ArtIcon(BoardArt.leaf, size = 14.dp, tint = RouteColours.green)
@@ -533,7 +533,7 @@ private fun FactChips(fact: KeyFact?, route: Route, units: app.atlas.services.Un
             Text(GoFormat.distance(fact.metres, units).toString(), style = small, color = RouteColours.sub)
             if (route.climb >= 10) {
                 ArtIcon(BoardArt.trendUp, size = 14.dp, tint = RouteColours.sub)
-                Text("${route.climb.roundToInt()} m", style = small, color = RouteColours.sub)
+                Text(GoFormat.height(route.climb, units).toString(), style = small, color = RouteColours.sub)
             }
         }
         is KeyFact.Water -> {
@@ -655,4 +655,12 @@ internal fun hilly(route: Route): Boolean {
     var hi = -Double.MAX_VALUE
     for (x in e) if (!x.isNaN()) { if (x < lo) lo = x; if (x > hi) hi = x }
     return hi - lo >= 5.0
+}
+
+/** The stops of a route's `via` argument (`lat,lon,name` joined by `|`), in order; unreadable ones are left out. */
+internal fun viaStops(via: String?): List<Endpoint> = via.orEmpty().split('|').mapNotNull { s ->
+    val p = s.split(',', limit = 3)
+    val lat = p.getOrNull(0)?.toDoubleOrNull() ?: return@mapNotNull null
+    val lon = p.getOrNull(1)?.toDoubleOrNull() ?: return@mapNotNull null
+    Endpoint(p.getOrNull(2)?.takeIf { it.isNotBlank() }, app.atlas.geo.LatLon(lat, lon))
 }

@@ -11,6 +11,12 @@
     <string name="eat_map">Map</string>
     <string name="eat_pad">Order pad</string>
     <string name="eat_ask">Ask the waiter</string>
+    <string name="eat_time_at">Time %1$s</string>
+    <string name="eat_party_of">Party of %1$d</string>
+    <string name="eat_pad_count">Order pad, %1$d jotted</string>
+    <string name="eat_walk_desc">Walk, %1$d minutes</string>
+    <string name="eat_trend_desc">Reviews trend</string>
+    <string name="eat_add_line">Add a line</string>
     <string name="eat_earlier">Earlier</string>
     <string name="eat_later">Later</string>
     <string name="eat_now">Now</string>

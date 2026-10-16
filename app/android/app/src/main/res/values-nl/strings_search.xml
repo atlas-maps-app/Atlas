@@ -290,7 +290,7 @@
     <string name="quests_only_see">Antwoord alleen wat je ziet vanaf waar je staat. Een fout antwoord is erger dan geen.</string>
     <string name="quests_yes">Ja</string>
     <string name="quests_no">Nee</string>
-    <string name="quests_skip">Weet niet · overslaan</string>
+    <string name="quests_skip">overslaan</string>
     <plurals name="quests_month">
         <item quantity="one">antwoord deze maand van deze telefoon</item>
         <item quantity="other">antwoorden deze maand van deze telefoon</item>
@@ -322,4 +322,12 @@
     <string name="where_nothing">Hier past niets</string>
     <string name="where_nothing_text">Probeer een langere wandeling, of minder filters.</string>
     <string name="where_footer">Ideeën uit OpenStreetMap om je heen; grijze vakken hebben niets dat bij de filters past.</string>
+    <string name="where_w_water">Water</string>
+    <string name="where_w_views">Uitzicht</string>
+    <string name="where_w_food">Eten</string>
+    <string name="where_w_quiet">Rust</string>
+    <string name="where_w_night">Nacht</string>
+    <string name="where_w_nature">Natuur</string>
+    <string name="where_w_culture">Cultuur</string>
+    <string name="where_w_odd">Apart</string>
 </resources>

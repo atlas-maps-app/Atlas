@@ -1,7 +1,10 @@
 package app.atlas.ui.eat
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
@@ -32,6 +35,10 @@ fun Modifier.bleed(x: Dp): Modifier = layout { measurable, constraints ->
     val placeable = measurable.measure(constraints.offset(horizontal = 2 * px))
     layout((placeable.width - 2 * px).coerceAtLeast(0), placeable.height) { placeable.place(-px, 0) }
 }
+
+/** [base] plus the navigation bar's height: the room a list needs at its foot so nothing hides under the bar (edge to edge). */
+@Composable
+internal fun bottomRoom(base: Dp): Dp = base + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
 /** What the open line says, before words: open until, closing soon, closed and when it opens, open 24/7, unknown. */
 sealed interface OpenSay {
@@ -69,6 +76,11 @@ internal fun openWords(p: EatPlace, ctx: EatContext): Pair<String, Color>? {
         OpenSay.Closed -> stringResource(R.string.kit_closed) to c.inkSoft
     }
 }
+
+/** [t] as "9:00" on the day of [from], "Wed 9:00" on another day: a place that opens tomorrow must not look as if it opens today. */
+internal fun dayTime(t: LocalDateTime, from: LocalDateTime, lang: String, pattern: DateTimeFormatter = HM): String =
+    if (t.toLocalDate() == from.toLocalDate()) t.format(pattern)
+    else t.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.forLanguageTag(lang)) + " " + t.format(pattern)
 
 /** "9:00" today, "Wed 9:00" another day. */
 internal fun opensText(s: OpenSay.Opens, lang: String): String =

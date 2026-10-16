@@ -45,6 +45,9 @@ object CuisineTaxonomy {
         "gelato" to "ice_cream", "frozen_yoghurt" to "frozen_yogurt", "bubbletea" to "bubble_tea",
     )
 
+    /** Every spelling mappers use for the canonical [value]: itself and its aliases, for matching raw `cuisine` tags. */
+    fun spellings(value: String): List<String> = listOf(value) + ALIASES.filterValues { it == value }.keys
+
     /** The row a cuisine value belongs to, after aliases. */
     fun canonical(value: String): String {
         val v = value.trim().lowercase().replace(' ', '_')

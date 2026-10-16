@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.atlas.R
+import app.atlas.services.Units
 import app.atlas.guide.Haptics
 import app.atlas.model.ManeuverType
 import app.atlas.model.Route
@@ -105,7 +106,7 @@ fun RideView(show: NavShow, actions: NavActions) {
             Spacer(Modifier.weight(1f))
             AheadTiles(show)
             Spacer(Modifier.height(14.dp))
-            Profile(v.route, v.travelled)
+            Profile(v.route, v.travelled, show.units)
             Spacer(Modifier.weight(0.4f))
             RideFooter(show, actions)
             Spacer(Modifier.height(14.dp))
@@ -262,7 +263,7 @@ private fun Tile(modifier: Modifier, description: String, content: @Composable (
  * in orange, and a white dot where you are. Heights spread over at least 12 m, so a flat ride looks flat.
  */
 @Composable
-internal fun Profile(route: Route, travelled: Double) {
+internal fun Profile(route: Route, travelled: Double, units: Units = Units.METRIC) {
     val e = route.elevations
     if (e.size != route.points.size || e.count { !it.isNaN() } < 2) return
     val cum = route.line.cumulative
@@ -271,7 +272,7 @@ internal fun Profile(route: Route, travelled: Double) {
         Modifier.fillMaxWidth().height(64.dp).clip(RoundedCornerShape(20.dp)).background(RideColours.profileBg).padding(horizontal = 12.dp, vertical = 8.dp)
             .semantics { contentDescription = "" },
     ) {
-        val description = stringResource(R.string.go_profile, route.climb.roundToInt())
+        val description = stringResource(R.string.go_profile, GoFormat.height(route.climb, units).toString())
         Canvas(Modifier.fillMaxSize().semantics { contentDescription = description }) {
             var lo = Double.MAX_VALUE
             var hi = -Double.MAX_VALUE
@@ -343,10 +344,13 @@ internal fun Wind(show: NavShow) {
     val speed = show.windKmh ?: return
     val head = show.headwindKmh ?: return
     val against = head > 1
-    val desc = stringResource(if (against) R.string.go_wind_against else R.string.go_wind_behind, abs(head).roundToInt())
+    // In the units of Settings (the nautical ones are for the water: a bike's wind is read in km/h or mph).
+    val units = if (show.units == Units.IMPERIAL) Units.IMPERIAL else Units.METRIC
+    val said = GoFormat.speed(abs(head) / 3.6, units).toString()
+    val desc = stringResource(if (against) R.string.go_wind_against else R.string.go_wind_behind, said)
     Row(Modifier.semantics(mergeDescendants = true) { contentDescription = desc }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         ArtIcon(BoardArt.wind, size = 20.dp, tint = if (against) RideColours.wind else RideColours.soft)
-        Text("${speed.roundToInt()}", style = Figures.copy(fontSize = 14.sp), color = RideColours.wind)
+        Text(GoFormat.speed(speed / 3.6, units).value, style = Figures.copy(fontSize = 14.sp), color = RideColours.wind)
     }
 }
 

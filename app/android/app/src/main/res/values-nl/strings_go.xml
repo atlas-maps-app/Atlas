@@ -54,9 +54,9 @@
     <string name="go_surface_steps">Trappen verderop</string>
     <string name="go_surface_tram">Tramrails verderop</string>
     <string name="go_climb_ahead">Klim van %1$d %% verderop</string>
-    <string name="go_profile">Hoogteprofiel, %1$d m klimmen</string>
-    <string name="go_wind_against">Tegenwind %1$d km/u</string>
-    <string name="go_wind_behind">Rugwind %1$d km/u</string>
+    <string name="go_profile">Hoogteprofiel, %1$s klimmen</string>
+    <string name="go_wind_against">Tegenwind %1$s</string>
+    <string name="go_wind_behind">Rugwind %1$s</string>
     <string name="go_course">Koers %1$d°</string>
     <string name="go_speed_knots_said">%1$s knopen</string>
     <string name="go_draft_said">Diepgang %1$s</string>

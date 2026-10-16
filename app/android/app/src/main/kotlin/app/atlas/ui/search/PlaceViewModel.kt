@@ -71,7 +71,10 @@ data class PlaceState(
     val review: Sending = Sending.Idle,
     /** True when the place came with full tags (a downloaded region or Overpass), not just a map label's. */
     val complete: Boolean = false,
-)
+) {
+    /** The first question still to ask: one whose answer is on its way or sent is done, one that failed to go out is open again. */
+    val openQuest: Quest? get() = quests.firstOrNull { answered[it.key].let { s -> s == null || s is Sending.Failed } }
+}
 
 /**
  * Loads one place for its sheet: from the screens' cache, the downloaded regions (every tag and its outline) or
@@ -143,26 +146,31 @@ class PlaceViewModel(
         }
     }
 
-    private fun show(place: Place?, complete: Boolean) {
+    /** Reads the place's facts and hours on its own clock and holidays (off the main thread: the regions are asked). */
+    private suspend fun show(place: Place?, complete: Boolean) {
         if (place == null) return
-        val now = LocalDateTime.now(services.clock)
-        val zone = ZonedDateTime.now(services.clock).zone
-        val country = place.tags["addr:country"]?.uppercase() ?: HereContext.country(services, place.location)
-        val ctx = OpeningHoursContext.forPlace(country, zone, place.location.lat, place.location.lon)
-        val hours = OpeningHours.parseOrNull(place.tags["opening_hours"])
-        val facts = Facts.of(place, lang, now, ctx, geometry = PlaceRecord.geometryOf(place))
-        mutable.update {
-            it.copy(
+        val next = withContext(Dispatchers.Default) {
+            val local = HereContext.localeOf(services, place, HereContext.phoneAt(services), ZonedDateTime.now(services.clock).zone)
+            val now = local.now(services.clock)
+            val ctx = OpeningHoursContext.forPlace(local.country, local.zone, place.location.lat, place.location.lon)
+            val hours = OpeningHours.parseOrNull(place.tags["opening_hours"])
+            val facts = Facts.of(place, lang, now, ctx, geometry = PlaceRecord.geometryOf(place))
+            PlaceState(
                 place = place,
                 facts = facts,
                 quests = if (place.id != null) Quests.of(facts).filter { q -> !services.saved.answered(place.key, q.key) } else emptyList(),
                 hours = hours,
                 hoursContext = ctx,
-                country = country,
+                country = local.country,
                 status = hours?.status(now, ctx),
                 now = now,
                 brand = Brands.forTags(place.tags),
-                complete = complete || it.complete,
+            )
+        }
+        mutable.update {
+            it.copy(
+                place = next.place, facts = next.facts, quests = next.quests, hours = next.hours, hoursContext = next.hoursContext,
+                country = next.country, status = next.status, now = next.now, brand = next.brand, complete = complete || it.complete,
             )
         }
     }

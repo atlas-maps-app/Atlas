@@ -47,7 +47,8 @@ class EatRepository internal constructor(private val services: Services) {
 
     private class Loaded(val version: Int, val flow: MutableStateFlow<EatArea>)
 
-    private val areas = HashMap<String, Loaded>()
+    /** Most recently asked last: walking about asks for a new area every hundred metres, so the oldest are let go. */
+    private val areas = LinkedHashMap<String, Loaded>()
 
     /**
      * The places to eat and drink around [centre], loading in the background on first ask; then kept until the
@@ -55,9 +56,10 @@ class EatRepository internal constructor(private val services: Services) {
      */
     fun area(centre: LatLon, version: Int = 0): StateFlow<EatArea> = synchronized(areas) {
         val key = keyOf(centre)
-        areas[key]?.takeIf { it.version == version }?.let { return it.flow.asStateFlow() }
+        areas.remove(key)?.takeIf { it.version == version }?.let { areas[key] = it; return it.flow.asStateFlow() }
         val flow = MutableStateFlow(EatArea.empty(centre))
         areas[key] = Loaded(version, flow)
+        while (areas.size > MAX_AREAS) areas.remove(areas.keys.first())
         services.scope.launch(Dispatchers.IO) { load(centre, flow) }
         flow.asStateFlow()
     }
@@ -108,6 +110,7 @@ class EatRepository internal constructor(private val services: Services) {
             .asSequence()
             .map { it.place }
             .filter { EatKind.FILTER.matches(it.tags) && Categories.isPlace(it.tags) && Geo.distance(centre, it.location) <= r }
+            .distinctBy { it.key }
             .mapNotNull { EatPlace.of(it, centre, lang) }
             .sortedBy { it.distanceM }
             .toList()
@@ -150,6 +153,9 @@ class EatRepository internal constructor(private val services: Services) {
 
         /** The eat screens' state for [services], made on first use. */
         fun of(services: Services): EatRepository = synchronized(all) { all.getOrPut(services) { EatRepository(services) } }
+
+        /** How many areas are kept at once. */
+        private const val MAX_AREAS = 6
 
         /** Points within about 100 m share an area. */
         private fun keyOf(p: LatLon): String = "${(p.lat * 1000).roundToLong()}:${(p.lon * 600).roundToLong()}"

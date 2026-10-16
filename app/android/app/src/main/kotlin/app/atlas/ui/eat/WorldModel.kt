@@ -1,7 +1,6 @@
 package app.atlas.ui.eat
 
 import java.time.LocalDateTime
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** The round toggles over a cuisine world's machine. */
@@ -89,7 +88,7 @@ object WorldModel {
 
     /** The ticket the machine prints for [b] at [at]: a number of four figures that stays the same for the day. */
     fun ticket(b: MachineButton, at: LocalDateTime): MealTicket {
-        val n = abs((b.place.key + at.toLocalDate()).hashCode()) % 10_000
+        val n = (b.place.key + at.toLocalDate()).hashCode().and(0x7fffffff) % 10_000
         val pays = when {
             b.cashOnly -> MealTicket.Pays.CASH_ONLY
             b.place.takesCards -> MealTicket.Pays.CARD

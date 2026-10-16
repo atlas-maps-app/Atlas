@@ -103,9 +103,9 @@ data class RouteUi(
  * rows. Planning runs offline through the app's router as soon as anything changes; data missing for the area turns
  * into an offer to download the routing segment.
  */
-class RouteViewModel(private val services: Services, from: Endpoint, to: Endpoint?, mode: Mode?) : ViewModel() {
+class RouteViewModel(private val services: Services, from: Endpoint, to: Endpoint?, mode: Mode?, stops: List<Endpoint> = emptyList()) : ViewModel() {
     private val hub = services.go
-    private val state = MutableStateFlow(RouteUi(from = from, to = to, mode = mode ?: Mode.WALK))
+    private val state = MutableStateFlow(RouteUi(from = from, to = to, stops = stops, mode = mode ?: Mode.WALK))
     val ui: StateFlow<RouteUi> = state.asStateFlow()
     private var planning: Job? = null
     private val gate = Semaphore(2)
@@ -257,10 +257,8 @@ class RouteViewModel(private val services: Services, from: Endpoint, to: Endpoin
     }
 
     private fun request(mode: Mode, points: List<LatLon>, alternatives: Int, s: RouteUi): RouteRequest {
-        val depart = when (s.timing.kind) {
-            Timing.Kind.NOW -> null
-            else -> s.timing.at?.atZone(services.clock.zone)?.toInstant()
-        }
+        // Only a chosen departure is one: for "arrive by" the time is the arrival, and the departure is not known yet.
+        val depart = if (s.timing.kind == Timing.Kind.DEPART) s.timing.at?.atZone(services.clock.zone)?.toInstant() else null
         return RouteRequest(mode, points, s.prefs, s.vehicle(mode), departAt = depart, alternatives = alternatives)
     }
 

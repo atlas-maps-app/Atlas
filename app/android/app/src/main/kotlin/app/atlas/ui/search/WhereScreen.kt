@@ -4,7 +4,8 @@ import android.content.Intent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.annotation.StringRes
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -53,6 +55,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.drawscope.withTransform
 import app.atlas.R
 import app.atlas.Services
 import app.atlas.geo.CoordinateFormat
@@ -80,6 +84,7 @@ import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.rememberNow
 import app.atlas.ui.kit.softShadow
 import app.atlas.ui.kit.walkMinutes
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -90,9 +95,15 @@ import java.time.ZonedDateTime
 import java.util.Locale
 import kotlin.random.Random
 
-/** One wedge of the wheel: a kind of outing, the category it draws from, its colour, and whether it is indoors. */
+/**
+ * One wedge of the wheel, in the board's order and colours: a kind of outing, the categories it draws from, its name and
+ * whether it is indoors.
+ */
 @Immutable
-data class Wedge(val id: String, val category: String, val symbol: String, val colour: Long, val indoors: Boolean)
+data class Wedge(val id: String, val categories: List<String>, @StringRes val label: Int, val indoors: Boolean) {
+    /** The wedge's fill on the board's wheel. */
+    val colour: Long get() = WheelArt.FILLS[WherePicker.WEDGES.indexOfFirst { it.id == id }.coerceAtLeast(0)]
+}
 
 /** The places each wedge can land on, already narrowed by the chips. */
 @Immutable
@@ -116,15 +127,16 @@ data class WhereFilters(val walkMinutes: Int = 15, val free: Boolean = false, va
  * that fits is greyed and never chosen.
  */
 object WherePicker {
+    /** The board's eight wedges, clockwise from the top: water, views, food, quiet, night, nature, culture, odd. */
     val WEDGES = listOf(
-        Wedge("sights", "sights", "maki-attraction", 0xFFE29A12, indoors = false),
-        Wedge("museums", "museums", "maki-museum", 0xFF7B4FD6, indoors = true),
-        Wedge("parks", "parks", "maki-park", 0xFF2F7D3A, indoors = false),
-        Wedge("food", "restaurants", "maki-restaurant", 0xFFE0592A, indoors = true),
-        Wedge("night", "drinks", "maki-bar", 0xFF2B3A8C, indoors = true),
-        Wedge("stage", "stage", "maki-theatre", 0xFFB8326A, indoors = true),
-        Wedge("play", "playground", "maki-playground", 0xFF0E8C8C, indoors = false),
-        Wedge("view", "viewpoint", "maki-viewpoint", 0xFF1E7FB8, indoors = false),
+        Wedge("water", listOf("water"), R.string.where_w_water, indoors = false),
+        Wedge("views", listOf("viewpoint"), R.string.where_w_views, indoors = false),
+        Wedge("food", listOf("restaurants"), R.string.where_w_food, indoors = true),
+        Wedge("quiet", listOf("library", "worship"), R.string.where_w_quiet, indoors = true),
+        Wedge("night", listOf("drinks"), R.string.where_w_night, indoors = true),
+        Wedge("nature", listOf("parks", "nature_spots"), R.string.where_w_nature, indoors = false),
+        Wedge("culture", listOf("museums", "stage"), R.string.where_w_culture, indoors = true),
+        Wedge("odd", listOf("sights"), R.string.where_w_odd, indoors = false),
     )
     private const val LIMIT = 80
 
@@ -132,8 +144,19 @@ object WherePicker {
     suspend fun places(services: Services, at: LatLon, f: WhereFilters, now: LocalDateTime, hours: OpeningHoursContext): WheelPlaces = withContext(Dispatchers.Default) {
         val out = LinkedHashMap<String, List<Place>>()
         for (w in WEDGES) {
-            val found = withTimeoutOrNull(5_000) { runCatching { services.places.nearby(w.category, at, f.radiusM, LIMIT).first() }.getOrNull() }
-            out[w.id] = found?.places.orEmpty().filter { fits(it, w, at, f, now, hours) }
+            val found = w.categories.flatMap { id ->
+                val answer = withTimeoutOrNull(5_000) {
+                    try {
+                        services.places.nearby(id, at, f.radiusM, LIMIT).first().places
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        emptyList()
+                    }
+                }
+                answer.orEmpty()
+            }
+            out[w.id] = found.distinctBy { it.key }.filter { fits(it, w, at, f, now, hours) }
         }
         WheelPlaces(out)
     }
@@ -195,7 +218,7 @@ fun WhereScreen(args: Dest.Where, nav: Navigator) {
         scope.launch {
             // Land the wedge's middle under the pointer at the top, after four full turns.
             val wedge = 360f / WherePicker.WEDGES.size
-            val target = -(pick.first * wedge + wedge / 2)
+            val target = -(pick.first * wedge + wedge / 2 + WheelArt.BASE_TURN)
             val base = angle.value - angle.value % 360f
             angle.animateTo(base - 360f * 4 + target, tween(2_600, easing = CubicBezierEasing(0.1f, 0.6f, 0.2f, 1f)))
             landed = pick
@@ -203,7 +226,23 @@ fun WhereScreen(args: Dest.Where, nav: Navigator) {
     }
     LaunchedEffect(filters) { landed = null }
 
-    AtlasScreen(stringResource(R.string.where_title), onBack = { nav.back() }, italic = true) {
+    // The board's page: a warm radial glow, brightest above the wheel.
+    val glow = if (c.isDark) Modifier else Modifier.drawBehind {
+        val rx = size.width * 0.5f * 1.4142f
+        val ry = size.height * 0.7f * 1.4142f
+        val centre = Offset(size.width * 0.5f, size.height * 0.3f)
+        withTransform({ scale(1f, ry / rx, pivot = centre) }) {
+            drawRect(
+                Brush.radialGradient(0f to Color(0xFFFFF8EC), 0.7f to Color(0xFFF6E6D0), 1f to Color(0xFFF6E6D0), center = centre, radius = rx),
+                Offset(centre.x - 3 * rx, centre.y - 3 * rx), Size(6 * rx, 6 * rx),
+            )
+        }
+    }
+    Box(Modifier.fillMaxSize().then(glow)) {
+    AtlasScreen(stringResource(R.string.where_title), onBack = { nav.back() }, italic = true,
+        // The page's own cream at 1/255: clear enough to show the glow, light enough that the title and chips keep their dark ink.
+        background = if (c.isDark) c.paper else Color(0x01FBF3E6),
+    ) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             ToggleChip("≤ 15′", filters.walkMinutes == 15, { filters = filters.copy(walkMinutes = 15) }, symbol = "ui-walk")
             ToggleChip("≤ 30′", filters.walkMinutes == 30, { filters = filters.copy(walkMinutes = 30) }, symbol = "ui-walk")
@@ -211,7 +250,7 @@ fun WhereScreen(args: Dest.Where, nav: Navigator) {
             ToggleChip(stringResource(R.string.category_open_now), filters.openNow, { filters = filters.copy(openNow = it) }, symbol = "ui-clock")
             ToggleChip(stringResource(R.string.where_indoors), filters.indoors, { filters = filters.copy(indoors = it) }, symbol = "ui-house")
         }
-        Wheel(places, angle.value, onSpin = spin, lang = lang, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).aspectRatio(1f))
+        Wheel(places, angle.value, onSpin = spin, lang = lang, modifier = Modifier.padding(horizontal = 40.dp))
         val l = landed
         when {
             places == null -> Text(stringResource(R.string.kit_loading), style = Atlas.type.caption, color = c.inkSoft)
@@ -221,62 +260,6 @@ fun WhereScreen(args: Dest.Where, nav: Navigator) {
         }
         HonestyFooter(stringResource(R.string.where_footer))
     }
-}
-
-/** The prize wheel: eight wedges in their colours with their symbols, a rim of bulbs, the pointer and the hub. */
-@Composable
-private fun Wheel(places: WheelPlaces?, angle: Float, onSpin: () -> Unit, lang: String, modifier: Modifier) {
-    val c = Atlas.colors
-    val spinLabel = stringResource(R.string.where_spin)
-    val wedges = WherePicker.WEDGES
-    Box(modifier, contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxWidth().aspectRatio(1f).semantics { contentDescription = wedges.joinToString { Categories.byId(it.category)?.name(lang) ?: it.id } }) {
-            val r = size.minDimension / 2f * 0.92f
-            val centre = Offset(size.width / 2, size.height / 2 + r * 0.04f)
-            // The stand's shadow and the rim.
-            drawCircle(Color(0x33000000), r * 1.04f, centre + Offset(0f, r * 0.04f))
-            drawCircle(Brush.radialGradient(listOf(Color(0xFFF6D77B), Color(0xFFB8862B)), centre, r * 1.06f), r * 1.04f, centre)
-            val n = wedges.size
-            val sweep = 360f / n
-            rotate(angle, centre) {
-                for ((i, w) in wedges.withIndex()) {
-                    val empty = places != null && places.of(w).isEmpty()
-                    val base = Color(w.colour)
-                    val fill = if (empty) lerp(base, Color(0xFFBDB7AC), 0.75f) else base
-                    val start = -90f + i * sweep
-                    drawArc(
-                        Brush.radialGradient(listOf(lerp(fill, Color.White, 0.18f), fill), centre, r), start, sweep, true,
-                        Offset(centre.x - r * 0.94f, centre.y - r * 0.94f), Size(r * 1.88f, r * 1.88f),
-                    )
-                    drawArc(Color(0x55FFFFFF), start, sweep, true, Offset(centre.x - r * 0.94f, centre.y - r * 0.94f), Size(r * 1.88f, r * 1.88f), style = Stroke(r * 0.012f))
-                    val mid = Math.toRadians((start + sweep / 2).toDouble())
-                    val at = Offset(centre.x + (r * 0.62f * kotlin.math.cos(mid)).toFloat(), centre.y + (r * 0.62f * kotlin.math.sin(mid)).toFloat())
-                    rotate(start + sweep / 2 + 90f, at) { drawSymbolCentred(w.symbol, at, r * 0.26f, Color.White.copy(alpha = if (empty) 0.6f else 1f)) }
-                }
-            }
-            // Bulbs on the rim.
-            for (k in 0 until 24) {
-                val a = Math.toRadians(k * 15.0)
-                val p = Offset(centre.x + (r * 0.99f * kotlin.math.cos(a)).toFloat(), centre.y + (r * 0.99f * kotlin.math.sin(a)).toFloat())
-                drawCircle(Color(0xFFFFF4C2), r * 0.022f, p)
-            }
-            // The pointer at the top.
-            val tip = Path().apply {
-                moveTo(centre.x, centre.y - r * 0.80f)
-                lineTo(centre.x - r * 0.08f, centre.y - r * 1.10f)
-                lineTo(centre.x + r * 0.08f, centre.y - r * 1.10f)
-                close()
-            }
-            drawPath(tip, Color(0xFFD23C3C))
-            drawPath(tip, Color.White, style = Stroke(r * 0.015f))
-        }
-        Box(
-            Modifier.size(92.dp).softShadow(CircleShape, c.shadow, 10.dp).clip(CircleShape).background(c.pill)
-                .clickable(role = Role.Button, onClickLabel = spinLabel, onClick = onSpin).semantics { contentDescription = spinLabel },
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(stringResource(R.string.where_spin).uppercase(Locale.getDefault()), style = Atlas.type.kicker.copy(fontSize = 15.sp, fontWeight = FontWeight.Black), color = c.onPill)
-        }
     }
 }
 
@@ -294,7 +277,7 @@ private fun Landed(w: Wedge, p: Place, here: LatLon, now: LocalDateTime, hours: 
     val walk = Geo.distance(here, p.location)
     val shareLabel = stringResource(R.string.place_share)
     Card(Modifier.fillMaxWidth(), colour = colour, padding = PaddingValues(18.dp)) {
-        Text((Categories.byId(w.category)?.name(lang) ?: w.id).uppercase(Locale.getDefault()), style = Atlas.type.kicker, color = Color.White.copy(alpha = 0.85f))
+        Text(stringResource(w.label).uppercase(Locale.getDefault()), style = Atlas.type.kicker, color = Color.White.copy(alpha = 0.85f))
         Text(line.summary.name, style = Atlas.type.title, color = Color.White)
         val parts = listOfNotNull(
             stringResource(R.string.ask_walk, walkMinutes(WalkTime.seconds(walk))),

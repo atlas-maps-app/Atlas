@@ -26,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,7 +72,7 @@ fun WalkView(show: NavShow, actions: NavActions) {
     AtlasTheme(dark = false) {
         val v = show.view
         val s = v.state
-        var turns by remember { mutableStateOf(false) }
+        var turns by rememberSaveable { mutableStateOf(false) }
         Box(Modifier.fillMaxSize().background(Color(0xFFEFE5DA))) {
             GuidanceMap(
                 v, Modifier.fillMaxSize(), theme = if (show.night) Theme.NIGHT else Theme.DAY, zoom = 17.8, pitch = 48.0,

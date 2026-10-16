@@ -350,16 +350,37 @@ class SavedPlaces private constructor(private val conn: SQLiteConnection, privat
         private const val MAX_RECENT_TEXT = 200
         private const val MAX_NAME = 60
 
-        /** The notebook covers, in turn: blue, red, purple, orange, green, taupe (as on the Lists board). */
-        val COLOURS = longArrayOf(0xFF3B5B95, 0xFFC8322D, 0xFF7B4FD6, 0xFFE8962C, 0xFF2F7D3A, 0xFF6E6358)
+        /** The notebook covers, in turn, exactly as the Lists board paints them: blue, red, purple, orange, green, taupe. */
+        val COLOURS = longArrayOf(0xFF3E5C8C, 0xFFC8322A, 0xFF7B4DFF, 0xFFE8922A, 0xFF2F7A3A, 0xFF6B6358)
 
         private val driver by lazy { BundledSQLiteDriver() }
 
-        /** Opens (or creates) the store in [file]; null keeps it in memory (tests). */
+        /**
+         * Opens (or creates) the store in [file]; null keeps it in memory (tests). A file that cannot be read (damaged,
+         * or not a database) is put aside as `.broken`, never deleted, and a fresh store takes its place: the search
+         * screens must open whatever happened to the file. If even that fails the store lives in memory this run.
+         */
         fun open(file: File?, clock: Clock = Clock.systemUTC()): SavedPlaces {
+            try {
+                return openAt(file, clock)
+            } catch (e: Exception) {
+                if (file != null) {
+                    for (suffix in listOf("", "-wal", "-shm")) runCatching { File(file.path + suffix).renameTo(File(file.path + suffix + ".broken")) }
+                    runCatching { return openAt(file, clock) }
+                }
+                return openAt(null, clock)
+            }
+        }
+
+        private fun openAt(file: File?, clock: Clock): SavedPlaces {
             file?.absoluteFile?.parentFile?.mkdirs()
             val conn = driver.open(file?.absolutePath ?: ":memory:")
-            return SavedPlaces(conn, clock).also { s -> s.lock.withLock { s.setUp() } }
+            try {
+                return SavedPlaces(conn, clock).also { s -> s.lock.withLock { s.setUp() } }
+            } catch (e: Exception) {
+                runCatching { conn.close() }
+                throw e
+            }
         }
 
         internal fun tagsJson(tags: Map<String, String>): String = JsonObject(tags.mapValues { JsonPrimitive(it.value) }).toString()

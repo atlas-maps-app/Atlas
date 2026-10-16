@@ -33,7 +33,11 @@ import java.time.ZoneId
  */
 class NavigationService : LifecycleService() {
     private var headset: HeadsetControl? = null
+    private var headsetFor: NavSession? = null
     private var watching: Job? = null
+
+    /** The trip the headset's media session is bound to (for tests). */
+    internal val headsetTrip: NavSession? get() = headsetFor
 
     private val hub: GoHub get() = applicationContext.services.go
 
@@ -87,7 +91,11 @@ class NavigationService : LifecycleService() {
                     finish()
                     return@collect
                 }
-                if (nav != null && (headset == null || headset?.isReleased == true)) {
+                // One media session per trip: a new trip (started while this one still ran) gets its own, so a press
+                // repeats the instruction of the trip being guided, not of one that has ended.
+                if (nav != null && (headset == null || headset?.isReleased == true || headsetFor !== nav)) {
+                    headset?.release()
+                    headsetFor = nav
                     headset = HeadsetControl(this, nav.destinationName ?: getString(app.atlas.R.string.go_destination)) { cmd ->
                         when (cmd) {
                             HeadsetCommand.REPEAT -> nav.repeat()
@@ -98,6 +106,7 @@ class NavigationService : LifecycleService() {
                 } else if (nav == null) {
                     headset?.release()
                     headset = null
+                    headsetFor = null
                 }
                 if (canNotify()) runCatching { nm.notify(NavNotification.ID, NavNotification.build(this, notice)) }
                 // At most one update a second: the status bar need not follow every fix.
@@ -120,6 +129,7 @@ class NavigationService : LifecycleService() {
     private fun finish() {
         headset?.release()
         headset = null
+        headsetFor = null
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -127,6 +137,7 @@ class NavigationService : LifecycleService() {
     override fun onDestroy() {
         headset?.release()
         headset = null
+        headsetFor = null
         super.onDestroy()
     }
 

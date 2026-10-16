@@ -13,8 +13,8 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.random.Random
 
-/** What a card's plate holds: one dish per cuisine family, and noodles or sushi for the Japanese planks. */
-enum class Dish { PASTA, PIZZA, SUSHI, RAMEN, DUMPLINGS, CURRY, RICE_BOWL, MEZZE, INJERA, BURGER, FRIES, PANCAKE, STEAK, SALAD }
+/** What a card's plate holds: one dish per cuisine family, noodles or sushi for the Japanese planks, nothing for a kitchen nobody mapped. */
+enum class Dish { PASTA, PIZZA, SUSHI, RAMEN, DUMPLINGS, CURRY, RICE_BOWL, MEZZE, INJERA, BURGER, FRIES, PANCAKE, STEAK, SALAD, EMPTY }
 
 /** The dish a place's plate shows, from its first telling cuisine. */
 fun dishOf(p: EatPlace, country: String?): Dish {
@@ -40,7 +40,7 @@ fun dishOf(p: EatPlace, country: String?): Dish {
             CuisineFamily.AFRICA -> Dish.INJERA
             CuisineFamily.AMERICAS -> Dish.BURGER
             CuisineFamily.EUROPE -> Dish.STEAK
-            CuisineFamily.MORE -> if (p.kind == EatKind.FAST_FOOD) Dish.FRIES else Dish.SALAD
+            CuisineFamily.MORE -> Dish.EMPTY
         }
     }
 }
@@ -267,6 +267,7 @@ private fun DrawScope.drawDish(dish: Dish, c: Offset, r: Float, rnd: Random) {
             }
             leaf(c + Offset(-r * 0.45f, r * 0.45f), r * 0.18f, Color(0xFF4F9A3E), -20f)
         }
+        Dish.EMPTY -> Unit
         Dish.SALAD -> repeat(16) {
             val o = c + Offset((rnd.nextFloat() - 0.5f) * r * 1.3f, (rnd.nextFloat() - 0.5f) * r * 1.3f)
             leaf(o, r * (0.15f + rnd.nextFloat() * 0.12f), listOf(Color(0xFF6FAE45), Color(0xFF4F9A3E), Color(0xFF9CCB5A))[it % 3], rnd.nextFloat() * 360f)

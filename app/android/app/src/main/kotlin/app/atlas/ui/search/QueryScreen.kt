@@ -433,7 +433,7 @@ private fun RankedRow(rank: Int, h: Hit, symbols: List<String>, lang: String, on
                 }
             }
         }
-        h.distance?.let { Text(walkMinutes(WalkTime.seconds(it)), style = Atlas.type.numeralSmall, color = c.ink) }
+        h.distance?.let { Text(walkOrDistance(it), style = Atlas.type.numeralSmall, color = c.ink) }
     }
 }
 
@@ -446,13 +446,15 @@ internal fun shortMetres(m: Double): String = if (m < 1000) "${(Math.round(m / 1
 private fun DistanceDialog(subject: Chip?, metres: Double, onSet: (Double) -> Unit, onDismiss: () -> Unit) {
     val c = Atlas.colors
     var value by remember { mutableFloatStateOf(metres.toFloat()) }
+    // A sentence may ask for more than the dial's usual kilometre ("within 2 km"): the dial stretches to it.
+    val top = maxOf(1000f, metres.toFloat())
     SearchDialog(stringResource(R.string.query_dial_title, subject?.label ?: ""), onDismiss) {
         Box(Modifier.fillMaxWidth().height(170.dp), contentAlignment = Alignment.Center) {
             Canvas(Modifier.size(160.dp)) {
                 val w = 14.dp.toPx()
                 val r = size.minDimension / 2 - w
                 drawCircle(c.goSoft, r, style = Stroke(w))
-                drawArc(c.go, -90f, value / 1000f * 360f, false, Offset(center.x - r, center.y - r), Size(2 * r, 2 * r), style = Stroke(w, cap = StrokeCap.Round))
+                drawArc(c.go, -90f, (value / top * 360f).coerceIn(4f, 360f), false, Offset(center.x - r, center.y - r), Size(2 * r, 2 * r), style = Stroke(w, cap = StrokeCap.Round))
                 for (k in 0 until 10) {
                     val a = Math.toRadians(k * 36.0 - 90.0)
                     val o = Offset(center.x + (r - w) * kotlin.math.cos(a).toFloat(), center.y + (r - w) * kotlin.math.sin(a).toFloat())
@@ -465,7 +467,7 @@ private fun DistanceDialog(subject: Chip?, metres: Double, onSet: (Double) -> Un
             }
         }
         Slider(
-            value = value, onValueChange = { value = (Math.round(it / 25f) * 25f).coerceIn(25f, 1000f) }, valueRange = 25f..1000f,
+            value = value, onValueChange = { value = (Math.round(it / 25f) * 25f).coerceIn(25f, top) }, valueRange = 25f..top,
             colors = SliderDefaults.colors(thumbColor = c.go, activeTrackColor = c.go, inactiveTrackColor = c.goSoft),
         )
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

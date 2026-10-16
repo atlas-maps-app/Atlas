@@ -202,7 +202,7 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
             ) {
                 Header(title, facts, p, here)
                 PrimaryButton(
-                    walkMinutes(WalkTime.seconds(Geo.distance(here, p))),
+                    walkOrDistance(Geo.distance(here, p)),
                     onClick = { nav.go(Dest.Route(p.lat, p.lon, title)) },
                     modifier = Modifier.fillMaxWidth(),
                     symbol = "ui-corner-up-right",

@@ -69,6 +69,12 @@ fun toneColour(t: Tone): Color = when (t) {
     Tone.UNKNOWN -> Atlas.colors.ink
 }
 
+private const val FAR_WALK_S = 30 * 60.0
+
+/** Walking minutes for [metres] that are worth walking, a distance for farther ("2 h 40 on foot" is not the point). */
+fun walkOrDistance(metres: Double): String =
+    if (WalkTime.seconds(metres) <= FAR_WALK_S) walkMinutes(WalkTime.seconds(metres)) else shortDistance(metres)
+
 /**
  * What a row says about a place, worked out once: its name and kind, symbol and colour, its open status (holiday
  * aware when [open] comes from a search that knew the country) and how far it is.
@@ -80,11 +86,9 @@ data class PlaceLine(val summary: PlaceSummary, val words: OpenWords?, val stepF
 
     /** Walking minutes for a near place, a distance for a far one (a walk of over half an hour is not the point). */
     val trailing: String?
-        get() = summary.distanceM?.let { d -> if (WalkTime.seconds(d) <= FAR_WALK_S) walkMinutes(WalkTime.seconds(d)) else shortDistance(d) }
+        get() = summary.distanceM?.let(::walkOrDistance)
 
     companion object {
-        private const val FAR_WALK_S = 30 * 60.0
-
         /** The line for [place] seen from [from] at [now]; [open] overrides the status read without holidays. */
         fun of(place: Place, from: LatLon?, lang: String?, now: LocalDateTime, open: OpenStatus? = null, name: String? = null, distanceM: Double? = null): PlaceLine {
             val base = PlaceSummary.of(place, from, lang, now)

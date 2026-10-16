@@ -72,6 +72,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import app.atlas.R
+import java.time.LocalDateTime
 import app.atlas.nav.Navigator
 import app.atlas.ui.kit.InterFamily
 
@@ -151,7 +152,7 @@ fun WorldScreen(world: CuisineWorld, plank: Int, nav: Navigator) {
         ) {
             val shown = button ?: return@AnimatedVisibility
             PaperTicket(
-                WorldModel.ticket(shown, ctx.at), world,
+                WorldModel.ticket(shown, ctx.at), world, ctx.at, ctx.lang,
                 Modifier.windowInsetsPadding(WindowInsets.navigationBars).padding(start = 50.dp, end = 50.dp, bottom = 24.dp),
                 onPlace = { ctx.open(nav, shown.place.place) },
                 onWalk = { ctx.walkTo(nav, shown.place) },
@@ -319,7 +320,7 @@ private fun TicketMachine(m: Machine, ctx: EatContext, picked: String?, modifier
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             for (row in m.buttons.chunked(2)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for (b in row) MachineKey(b, m.world, on = b.place.key == picked, modifier = Modifier.weight(1f)) { onPick(b.place.key) }
+                    for (b in row) MachineKey(b, m.world, ctx.at, ctx.lang, on = b.place.key == picked, modifier = Modifier.weight(1f)) { onPick(b.place.key) }
                     if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
@@ -345,7 +346,7 @@ private fun TicketMachine(m: Machine, ctx: EatContext, picked: String?, modifier
 
 /** One button (64 px): the shop, walk, rating dots or marks, and its LED; the chosen one pressed in, ringed blue. */
 @Composable
-private fun MachineKey(b: MachineButton, world: CuisineWorld, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun MachineKey(b: MachineButton, world: CuisineWorld, at: LocalDateTime, lang: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val closed = b.openness == Openness.CLOSED
     val shape = RoundedCornerShape(10.dp)
     val ink = if (closed) Color(0xFF5E636B) else SUMI
@@ -379,7 +380,7 @@ private fun MachineKey(b: MachineButton, world: CuisineWorld, on: Boolean, modif
                 val small = TextStyle(fontFamily = InterFamily, fontSize = 12.sp, color = if (closed) ink else META)
                 if (closed) {
                     Text(world.preparing, style = small.copy(fontFamily = SERIF_CJK, fontWeight = FontWeight.ExtraBold))
-                    b.opens?.let { Text(it.format(HM_PADDED), style = small) }
+                    b.opens?.let { Text(dayTime(it, at, lang, HM_PADDED), style = small) }
                 } else {
                     Text("${b.place.walkMinutes}′", style = small)
                     b.dots?.let { Text("●".repeat(it) + "○".repeat(5 - it), style = small.copy(color = SEAL, letterSpacing = 1.sp)) }
@@ -421,8 +422,9 @@ private fun Modifier.dropKey(shape: androidx.compose.ui.graphics.Shape, edge: Fl
 
 /** The printed meal ticket (312 × 112, turned −1.5°): number, shop, closing time, payment and the route stub. */
 @Composable
-private fun PaperTicket(t: MealTicket, world: CuisineWorld, modifier: Modifier, onPlace: () -> Unit, onWalk: () -> Unit) {
+private fun PaperTicket(t: MealTicket, world: CuisineWorld, at: LocalDateTime, lang: String, modifier: Modifier, onPlace: () -> Unit, onWalk: () -> Unit) {
     val shape = RoundedCornerShape(2.dp)
+    val walkLabel = stringResource(R.string.eat_walk_desc, t.walkMinutes)
     Row(
         modifier
             .fillMaxWidth()
@@ -443,7 +445,7 @@ private fun PaperTicket(t: MealTicket, world: CuisineWorld, modifier: Modifier, 
                 val state = when {
                     t.button.place.alwaysOpen -> "24/7"
                     t.button.closes != null -> "→ " + t.button.closes.format(HM_PADDED)
-                    t.button.opens != null -> world.preparing + " " + t.button.opens.format(HM_PADDED)
+                    t.button.opens != null -> world.preparing + " " + dayTime(t.button.opens, at, lang, HM_PADDED)
                     else -> null
                 }
                 state?.let {
@@ -470,7 +472,7 @@ private fun PaperTicket(t: MealTicket, world: CuisineWorld, modifier: Modifier, 
             drawLine(Color(0xFFD4CFC4), Offset(size.width / 2f, 0f), Offset(size.width / 2f, size.height), 2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx())))
         }
         Column(
-            Modifier.width(84.dp).fillMaxHeight().clickable(onClick = onWalk).semantics(mergeDescendants = true) { contentDescription = "walk ${t.walkMinutes} min" },
+            Modifier.width(84.dp).fillMaxHeight().clickable(onClick = onWalk).semantics(mergeDescendants = true) { contentDescription = walkLabel },
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
         ) {

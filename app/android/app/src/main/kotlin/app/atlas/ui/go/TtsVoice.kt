@@ -40,6 +40,10 @@ class TtsVoice(
     private var focusHeld = false
     private var counter = 0
 
+    /** Lines asked for before the engine was ready, said when it is (recent ones only), guarded by [pending]. */
+    private class Early(val text: String, val priority: Priority, val interruptible: Boolean, val pan: Float, val at: Long)
+    private val early = ArrayList<Early>()
+
     override val ready: StateFlow<Boolean> = readyState.asStateFlow()
     override val lastSaid: StateFlow<String?> = said.asStateFlow()
 
@@ -48,7 +52,19 @@ class TtsVoice(
 
     init {
         engine.onFinished(::finished)
-        engine.start(locale) { ok -> readyState.value = ok }
+        engine.start(locale) { ok ->
+            readyState.value = ok
+            if (ok) sayEarly() else synchronized(pending) { early.clear() }
+        }
+    }
+
+    /** Says what was asked while the engine started (the trip's first instruction), unless it has gone stale. */
+    private fun sayEarly() {
+        val lines = synchronized(pending) {
+            val now = System.nanoTime()
+            early.filter { now - it.at < EARLY_NS }.takeLast(EARLY_MAX).also { early.clear() }
+        }
+        for (l in lines) speak(l.text, l.priority, l.interruptible, l.pan)
     }
 
     fun setMuted(muted: Boolean) {
@@ -77,6 +93,7 @@ class TtsVoice(
 
     override fun stop() {
         synchronized(pending) {
+            early.clear()
             pending.clear()
             engine.stop()
             releaseIfIdle()
@@ -92,7 +109,15 @@ class TtsVoice(
     private fun speak(text: String, priority: Priority, interruptible: Boolean, pan: Float) {
         if (text.isBlank()) return
         said.value = text
-        if (mutedState.value || !readyState.value) return
+        if (mutedState.value) return
+        if (!readyState.value) {
+            synchronized(pending) {
+                if (!readyState.value) {
+                    early += Early(text, priority, interruptible, pan, System.nanoTime())
+                    return
+                }
+            }
+        }
         synchronized(pending) {
             if (!hold()) return
             // Cut in only on lines that may be cut, and only for something more urgent than all of them.
@@ -143,6 +168,9 @@ class TtsVoice(
     val holdingFocus: Boolean get() = synchronized(pending) { focusHeld }
 
     companion object {
+        private const val EARLY_NS = 10_000_000_000L
+        private const val EARLY_MAX = 2
+
         /** The voice of the app: the phone's TextToSpeech, AudioTrack earcons and the vibrator. */
         fun forApp(context: Context): TtsVoice {
             val app = context.applicationContext ?: context

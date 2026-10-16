@@ -198,15 +198,29 @@ class VoiceTest {
     }
 
     @Test
-    fun aVoiceNotReadyYetStaysQuietThenSpeaks() {
+    fun aVoiceNotReadyYetKeepsTheFirstLinesAndSaysThemWhenReady() {
         val e = FakeEngine(readyAtStart = false)
         val v = TtsVoice(e, FakeFocus(), FakeEarcons(), FakeHaptics(), { false })
         assertFalse(v.ready.value)
-        v.say("Turn right")
+        v.say("Head north on Prinsengracht")
+        v.say("Turn right in 200 metres")
+        v.say("Then left")
         assertTrue(e.said.isEmpty())
         e.becomeReady()
+        // Only the latest two are still worth saying, in order.
+        assertEquals(listOf("Turn right in 200 metres", "Then left"), e.said.map { it.text })
         v.say("Turn right")
-        assertEquals(1, e.said.size)
+        assertEquals(3, e.said.size)
+    }
+
+    @Test
+    fun linesAskedWhileNoEngineWorksAreDroppedNotSaidLater() {
+        val e = FakeEngine(readyAtStart = false)
+        val v = TtsVoice(e, FakeFocus(), FakeEarcons(), FakeHaptics(), { false })
+        v.say("Turn right")
+        v.stop()
+        e.becomeReady()
+        assertTrue("stop forgets what was waiting", e.said.isEmpty())
     }
 
     @Test

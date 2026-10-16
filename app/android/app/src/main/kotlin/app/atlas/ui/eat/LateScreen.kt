@@ -89,7 +89,7 @@ fun LateScreen(nav: Navigator) {
     val wall = worked.value
 
     Box(Modifier.fillMaxSize().background(NIGHT).drawBehind { drawBrickWall() }) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 110.dp)) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = bottomRoom(110.dp))) {
             item {
                 Column(Modifier.fillMaxWidth().padding(top = boardTop(92.dp)), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     NeonText(
@@ -187,6 +187,11 @@ fun LateScreen(nav: Navigator) {
                 }
             }
         }
+        // The cards slide under the Map pill: the night fades in below them so the pill stays readable on a lit card.
+        Box(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(bottomRoom(128.dp))
+                .background(Brush.verticalGradient(listOf(NIGHT.copy(alpha = 0f), NIGHT.copy(alpha = 0.92f), NIGHT))),
+        )
         Row(
             Modifier
                 .align(Alignment.BottomCenter)
@@ -311,7 +316,8 @@ private fun NeonCard(s: LateSpot, index: Int, ctx: EatContext, modifier: Modifie
     ) {
         Box(Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)).background(CARD_INK), contentAlignment = Alignment.Center) {
             if (bite != null) NeonGlyph(bite, Color(0xFFFFD6F2), Color(0x00000000), scale = 0.88f)
-            else Canvas(Modifier.size(30.dp, 24.dp)) { drawBoardGlyph(EatGlyphs.tacos, Color(0xFFFFD6F2), side = size.width) }
+            // A place that is none of the nine bites is not a taco place: the board's cutlery stands for it.
+            else BoardIcon(EatGlyphs.cutlery, Color(0xFFFFD6F2), 24.dp)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(s.place.name, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 19.sp, letterSpacing = (-0.01).em, color = CARD_INK), maxLines = 1, overflow = TextOverflow.Ellipsis)

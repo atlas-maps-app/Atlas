@@ -20,6 +20,15 @@ object Waiter {
         val onlyName: Boolean get() = parsed.query is Query.Name
     }
 
+    /** Runs [block]; an answer that cannot be worked out (a parser that chokes on odd words) is no answer, not a crash. */
+    suspend fun askSafely(block: suspend () -> Answer): Answer? = try {
+        block()
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
+    }
+
     /** Answers [text] at the table's moment [at] in [zone]. */
     fun ask(text: String, area: EatArea, at: LocalDateTime, zone: ZoneId, lang: String, limit: Int = 8): Answer {
         val zoned = at.atZone(zone)

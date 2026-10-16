@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,6 +59,7 @@ fun CuisinePage(cuisine: String, nav: Navigator) {
     val worked = rememberWorked(ctx.area, cuisine) { CarteModel.placesOf(ctx.area, cuisine) }
     val places = worked.value.orEmpty()
     val pad by ctx.repo.shortlist.items.collectAsStateWithLifecycle()
+    val onPad = remember(pad) { pad.mapTo(HashSet()) { it.key } }
     val title = when (cuisine) {
         CarteModel.UNMAPPED_RESTAURANT -> stringResource(R.string.eat_unmapped_restaurant)
         CarteModel.UNMAPPED_FAST_FOOD -> stringResource(R.string.eat_unmapped_fast_food)
@@ -65,7 +67,7 @@ fun CuisinePage(cuisine: String, nav: Navigator) {
     }
     val family = CarteModel.familyOf(cuisine, ctx.area.country)
     Box(Modifier.fillMaxSize().drawBehind { drawMenuPaper() }) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 28.dp, end = 18.dp, bottom = 32.dp)) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 28.dp, end = 18.dp, bottom = bottomRoom(32.dp))) {
             item {
                 Column(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(top = 76.dp, bottom = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(stringResource(familyName(family)).uppercase(), style = EatType.smallCaps.copy(fontFamily = SerifFamily, fontSize = 12.sp), color = Color(family.colour))
@@ -81,7 +83,7 @@ fun CuisinePage(cuisine: String, nav: Navigator) {
                 }
             }
             items(places, key = { it.key }) { p ->
-                MenuPlaceRow(p, ctx, onPad = p.key in pad.map { it.key }, onToggle = { ctx.repo.shortlist.toggle(p) }) { ctx.open(nav, p.place) }
+                MenuPlaceRow(p, ctx, onPad = p.key in onPad, onToggle = { ctx.repo.shortlist.toggle(p) }) { ctx.open(nav, p.place) }
             }
             if (ctx.area.waiting || !worked.fresh) item { Looking(MENU_SOFT) }
             item { sourceLine(ctx.area)?.let { HonestyFooter(it) } }

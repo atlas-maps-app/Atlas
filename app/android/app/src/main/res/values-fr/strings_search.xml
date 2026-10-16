@@ -44,4 +44,12 @@
     <string name="whatshere_nearby">Au plus près</string>
     <string name="whatshere_at_spot">À cet endroit</string>
     <string name="whatshere_note">Laisser une note aux cartographes</string>
+    <string name="where_w_water">Eau</string>
+    <string name="where_w_views">Vues</string>
+    <string name="where_w_food">Manger</string>
+    <string name="where_w_quiet">Calme</string>
+    <string name="where_w_night">Nuit</string>
+    <string name="where_w_nature">Nature</string>
+    <string name="where_w_culture">Culture</string>
+    <string name="where_w_odd">Insolite</string>
 </resources>

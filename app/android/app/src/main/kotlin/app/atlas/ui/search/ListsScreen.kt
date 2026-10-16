@@ -3,7 +3,6 @@ package app.atlas.ui.search
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,7 +12,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -34,17 +35,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.RoundRect
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -52,7 +45,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -66,6 +60,7 @@ import app.atlas.nav.Navigator
 import app.atlas.places.OpeningHours
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.AtlasScreen
+import app.atlas.ui.eat.EatType
 import app.atlas.ui.kit.Card
 import app.atlas.ui.kit.HonestyFooter
 import app.atlas.ui.kit.PillButton
@@ -74,7 +69,7 @@ import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.SymbolButton
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.rememberNow
-import app.atlas.ui.kit.softShadow
+import app.atlas.ui.kit.cssShadow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -84,7 +79,7 @@ import java.time.ZonedDateTime
 import java.util.Locale
 
 /** The page of the Lists board: warm sand. */
-private val SAND = Color(0xFFEDE5D8)
+private val SAND = Color(0xFFEDE4D6)
 
 /**
  * Saved places, as on the Lists board: each list a notebook with an elastic band and its title by hand, "+" for a
@@ -151,74 +146,47 @@ private fun Notebooks(lists: List<SavedList>, chosen: Int?, onChoose: (Int) -> U
     }
 }
 
-/** One notebook: a cloth cover in the list's colour, its spine, an elastic band, the title by hand and the count. */
+/**
+ * One notebook, as the Lists board writes it: a flat cover in the list's colour (corners 6 and 16), a darker 10 px edge
+ * on its left, an elastic band 18 px from its right, the title in Caveat 28 and the count under it, put down at a tilt.
+ */
 @Composable
 private fun Notebook(list: SavedList, chosen: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val name = listName(list)
     val count = pluralStringResource(R.plurals.lists_places, list.places.size, list.places.size)
-    val cover = Color(list.colour)
     val tilt = TILTS[Math.floorMod(list.id, TILTS.size)]
-    val shape = RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 14.dp, bottomEnd = 14.dp)
+    val shape = RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 16.dp, bottomEnd = 16.dp)
     Box(
         modifier
-            .aspectRatio(0.74f)
+            .height(186.dp)
             .graphicsLayer { rotationZ = tilt; translationY = if (chosen) -6.dp.toPx() else 0f }
-            .softShadow(shape, Color(0x55301E0A), if (chosen) 16.dp else 9.dp)
+            .cssShadow(shape, y = 10.dp, blur = 20.dp, colour = Color(0x40000000))
             .clip(shape)
+            .background(Color(list.colour))
             .clickable(role = Role.Button, onClick = onClick)
             .semantics(mergeDescendants = true) { contentDescription = "$name, $count"; selected = chosen },
     ) {
-        Canvas(Modifier.fillMaxSize()) { drawNotebook(cover) }
-        Column(Modifier.fillMaxSize().padding(start = 18.dp, end = 22.dp, top = 14.dp, bottom = 14.dp)) {
-            // Handwriting shrinks for long words rather than breaking them; a hyphen may end a line.
-            val longest = name.split(' ', '-').maxOf { it.length }
-            val size = when {
-                longest > 9 -> 17.sp
-                longest > 7 -> 20.sp
-                else -> 25.sp
+        Box(Modifier.fillMaxHeight().width(10.dp).background(Color(0x2E000000)))
+        Box(Modifier.align(Alignment.TopEnd).padding(end = 18.dp).fillMaxHeight().width(8.dp).background(Color(0x59000000)))
+        Column(Modifier.fillMaxSize().padding(start = 22.dp, end = 14.dp, top = 16.dp, bottom = 14.dp)) {
+            // The board's 28 px, for names that fit; a long word shrinks rather than breaks, and a hyphen may end a line.
+            val size = when (val longest = name.split(' ', '-').maxOf { it.length }) {
+                in 0..6 -> 28.sp
+                7 -> 24.sp
+                else -> if (longest > 10) 17.sp else 20.sp
             }
             Text(
-                name.replace("-", "-\u200B"), style = Atlas.type.displayItalic.copy(fontSize = size, lineHeight = size), color = Color.White,
-                maxLines = 3, overflow = TextOverflow.Ellipsis,
+                name.replace("-", "-\u200B"), style = TextStyle(fontFamily = EatType.hand, fontWeight = FontWeight.Bold, fontSize = size, lineHeight = size),
+                color = Color.White, maxLines = 3, overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.weight(1f))
-            Text(count, style = Atlas.type.caption.copy(fontSize = 11.sp), color = Color.White.copy(alpha = 0.92f), maxLines = 1)
+            Text(count, style = TextStyle(fontWeight = FontWeight.ExtraBold, fontSize = 11.sp), color = Color.White.copy(alpha = 0.85f), maxLines = 1)
         }
     }
 }
 
-/** The cover: cloth with a soft light from the top, a darker spine, page edges and the elastic band. */
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawNotebook(cover: Color) {
-    val w = size.width
-    val h = size.height
-    val dark = lerp(cover, Color.Black, 0.28f)
-    val light = lerp(cover, Color.White, 0.10f)
-    drawRect(Brush.verticalGradient(listOf(light, cover, lerp(cover, Color.Black, 0.08f))))
-    // The spine: a darker band with a crease.
-    val spine = w * 0.11f
-    drawRect(Brush.horizontalGradient(listOf(dark, lerp(cover, Color.Black, 0.18f)), 0f, spine), size = Size(spine, h))
-    drawLine(lerp(cover, Color.Black, 0.4f), Offset(spine, 0f), Offset(spine, h), strokeWidth = 1.5f)
-    // Page edges at the fore-edge, under the cover's lip.
-    val pages = Color(0xFFF4ECDD)
-    drawRect(pages.copy(alpha = 0.85f), Offset(w - 3.dp.toPx(), 6.dp.toPx()), Size(1.5.dp.toPx(), h - 12.dp.toPx()))
-    // The elastic band, with a highlight on its left edge.
-    val band = w * 0.80f
-    val bw = w * 0.065f
-    drawRect(lerp(cover, Color.Black, 0.5f), Offset(band, 0f), Size(bw, h))
-    drawRect(Color.White.copy(alpha = 0.12f), Offset(band, 0f), Size(bw * 0.25f, h))
-    // Cloth grain: faint diagonal threads, kept on the cover.
-    val step = 6.dp.toPx()
-    clipRect(0f, 0f, w, h) {
-        var x = -h
-        while (x < w) {
-            drawLine(Color.White.copy(alpha = 0.035f), Offset(x, h), Offset(x + h, 0f), strokeWidth = 1f)
-            x += step
-        }
-    }
-}
-
-/** The tilt of each notebook, in turn, as if put down by hand. */
-private val TILTS = floatArrayOf(-2.2f, 1.6f, -1.0f, 2.4f, -1.8f, 0.9f)
+/** The tilt of each notebook, in turn: the board's -3, 2, -1, 3, -2 and 1 degrees. */
+private val TILTS = floatArrayOf(-3f, 2f, -1f, 3f, -2f, 1f)
 
 /** The chosen list open: its title in its colour, what was added lately, its places numbered with their status. */
 @Composable
@@ -232,7 +200,11 @@ private fun ListCard(list: SavedList, nav: Navigator, onDelete: () -> Unit) {
     val zone = remember { ZonedDateTime.now(services.clock).zone }
     Card(padding = PaddingValues(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(listName(list), Modifier.weight(1f), style = Atlas.type.title.copy(fontStyle = FontStyle.Italic), color = colour, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                listName(list), Modifier.weight(1f),
+                style = TextStyle(fontFamily = EatType.hand, fontWeight = FontWeight.Bold, fontSize = 26.sp, lineHeight = 30.sp), color = colour,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
             Text(added(list, now.toLocalDate(), zone), style = Atlas.type.label, color = c.inkSoft)
             SymbolButton("ui-trash", stringResource(if (list.isDefault) R.string.lists_empty else R.string.lists_delete), onDelete, size = 40.dp, elevation = 0.dp, background = Color.Transparent, tint = c.inkFaint)
         }
@@ -268,18 +240,19 @@ private fun SavedRow(n: Int, saved: SavedPlace, colour: Color, here: LatLon, lan
     val ctx = remember(here) { HereContext.hours(services, here, ZonedDateTime.now(services.clock).zone) }
     val line = remember(saved, now) { PlaceLine.of(saved.place, here, lang, now, open = OpeningHours.parseOrNull(saved.place.tags["opening_hours"])?.status(now, ctx)) }
     val status = statusWords(line)
+    // The board's row: 46 px high, corners 14, a 22 px disc, the name in 14 / 800 and the status in 12 / 700.
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 52.dp).clip(RoundedCornerShape(16.dp)).background(c.cardMuted).clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().height(46.dp).clip(RoundedCornerShape(14.dp)).background(c.cardMuted).clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Box(Modifier.size(26.dp).clip(CircleShape).background(colour), contentAlignment = Alignment.Center) {
-            Text(n.toString(), style = Atlas.type.label, color = Color.White)
+        Box(Modifier.size(22.dp).clip(CircleShape).background(colour), contentAlignment = Alignment.Center) {
+            Text(n.toString(), style = TextStyle(fontWeight = FontWeight.Black, fontSize = 11.sp), color = Color.White)
         }
-        Text(line.summary.name, Modifier.weight(1f), style = Atlas.type.bodyStrong, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        status?.let { Text(it, style = Atlas.type.label, color = if (line.tone == Tone.OPEN) c.open else if (line.tone == Tone.SOON) c.caution else c.inkSoft, maxLines = 1) }
-        line.trailing?.let { Text(it, style = Atlas.type.label, color = c.inkSoft) }
+        Text(line.summary.name, Modifier.weight(1f), style = Atlas.type.body.copy(fontWeight = FontWeight.ExtraBold, fontSize = 14.sp), color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        status?.let { Text(it, style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 12.sp), color = if (line.tone == Tone.OPEN) c.open else if (line.tone == Tone.SOON) c.caution else c.inkSoft, maxLines = 1) }
+        line.trailing?.let { Text(it, style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 12.sp), color = c.inkSoft) }
     }
 }
 
@@ -306,12 +279,19 @@ private fun ListActions(list: SavedList) {
     val shareLabel = stringResource(R.string.lists_share)
     val exportLabel = stringResource(R.string.lists_export)
     var exporting by remember { mutableStateOf(false) }
-    var pending by remember { mutableStateOf<String?>(null) }
+    var pending by rememberSaveable { mutableStateOf<String?>(null) }
     val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
-        val text = pending
+        // Only the format is kept across a turn of the phone (a long list's text would not fit a saved state): the file is made then.
+        val ext = pending
         pending = null
-        if (uri != null && text != null) {
-            services.scope.launch(Dispatchers.IO) { runCatching { context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) } } }
+        if (uri != null && ext != null) {
+            val at = services.clock.instant()
+            services.scope.launch(Dispatchers.IO) {
+                runCatching {
+                    val text = if (ext == "gpx") SavedExport.gpx(title, places, at, lang) else SavedExport.geoJson(title, places)
+                    context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
+                }
+            }
         }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -339,13 +319,9 @@ private fun ListActions(list: SavedList) {
     if (exporting) {
         SearchDialog(stringResource(R.string.lists_export), { exporting = false }) {
             Text(stringResource(R.string.lists_export_text), style = Atlas.type.caption, color = c.inkSoft)
-            val now = remember { services.clock.instant() }
-            for ((label, ext, make) in listOf<Triple<String, String, () -> String>>(
-                Triple("GPX", "gpx") { SavedExport.gpx(title, places, now, lang) },
-                Triple("GeoJSON", "geojson") { SavedExport.geoJson(title, places) },
-            )) {
+            for ((label, ext) in listOf("GPX" to "gpx", "GeoJSON" to "geojson")) {
                 PrimaryButton(label, onClick = {
-                    pending = make()
+                    pending = ext
                     exporting = false
                     runCatching { save.launch(SavedExport.fileName(title, ext)) }
                 }, modifier = Modifier.fillMaxWidth(), symbol = "ui-download", colour = c.pill)

@@ -34,6 +34,10 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -87,10 +91,13 @@ data class QuestsState(
     val sending: Map<String, Sending> = emptyMap(),
 ) {
     /** The quest to answer now: the nearest one not skipped and not answered. */
-    val current: PlaceQuest? get() = quests?.firstOrNull { it.id !in skipped && it.id !in sending }
+    val current: PlaceQuest? get() = quests?.firstOrNull { open(it) }
 
     /** The ones after it. */
-    val next: List<PlaceQuest> get() = quests.orEmpty().filter { it.id !in skipped && it.id !in sending && it !== current }
+    val next: List<PlaceQuest> get() = quests.orEmpty().filter { open(it) && it !== current }
+
+    /** A quest is open until it is skipped or its answer is on its way or sent; an answer that failed leaves it open. */
+    private fun open(q: PlaceQuest): Boolean = q.id !in skipped && sending[q.id].let { it == null || it is Sending.Failed }
 }
 
 /** Finds the quests around once; an answer goes out as an OpenStreetMap note only after the user confirmed its text. */
@@ -156,6 +163,7 @@ fun QuestsScreen(args: Dest.Quests, nav: Navigator) {
 
     AtlasScreen(
         stringResource(R.string.quests_title), onBack = { nav.back() }, italic = true,
+        background = if (c.isDark) c.paper else Color(0xFFF1F4EC),
         actions = {
             Row(
                 Modifier.heightIn(min = 40.dp).clip(CircleShape).background(c.pill).padding(horizontal = 14.dp),
@@ -249,15 +257,12 @@ private fun QuestCard(q: PlaceQuest, lang: String, last: Sending?, onYes: () -> 
         QuestArt(q.quest.fact.kind, q.quest.fact.symbol, question, Modifier.fillMaxWidth().height(170.dp).padding(vertical = 8.dp))
         Text(question, Modifier.fillMaxWidth(), style = Atlas.type.headline, color = c.ink, textAlign = TextAlign.Center)
         Text(stringResource(R.string.quests_only_see), Modifier.fillMaxWidth().padding(top = 4.dp), style = Atlas.type.caption, color = c.inkSoft, textAlign = TextAlign.Center)
-        Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            AnswerPill(stringResource(R.string.quests_yes), "ui-check", c.open, Modifier.weight(1f), onYes)
-            AnswerPill(stringResource(R.string.quests_no), "ui-x", c.alert, Modifier.weight(1f), onNo)
+        // The board's three buttons: Yes in green, No in dark, and a small grey skip; 56 high, corners 18, 900 weight.
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AnswerButton(stringResource(R.string.quests_yes), Color(0xFF2F7A3A), Color.White, Modifier.weight(1f), onYes)
+            AnswerButton(stringResource(R.string.quests_no), Color(0xFF1B2A1E), Color.White, Modifier.weight(1f), onNo)
+            AnswerButton(stringResource(R.string.quests_skip), Color(0xFFEEF1EA), Color(0xFF1B2A1E), Modifier.width(76.dp), onSkip, small = true)
         }
-        Text(
-            stringResource(R.string.quests_skip),
-            Modifier.fillMaxWidth().padding(top = 6.dp).clip(CircleShape).clickable(role = Role.Button, onClick = onSkip).padding(10.dp),
-            style = Atlas.type.label, color = c.inkSoft, textAlign = TextAlign.Center,
-        )
         when (last) {
             Sending.Busy -> Text(stringResource(R.string.place_note_sending), style = Atlas.type.caption, color = c.inkSoft)
             is Sending.Done -> Text(stringResource(R.string.place_note_sent), style = Atlas.type.caption, color = c.open)
@@ -268,31 +273,31 @@ private fun QuestCard(q: PlaceQuest, lang: String, last: Sending?, onYes: () -> 
 }
 
 @Composable
-private fun AnswerPill(text: String, symbol: String, colour: Color, modifier: Modifier, onClick: () -> Unit) {
-    val c = Atlas.colors
-    Row(
-        modifier.heightIn(min = 54.dp).clip(CircleShape).background(c.card).border(1.5.dp, colour, CircleShape).clickable(role = Role.Button, onClick = onClick),
-        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically,
+private fun AnswerButton(text: String, background: Color, ink: Color, modifier: Modifier, onClick: () -> Unit, small: Boolean = false) {
+    Box(
+        modifier.height(56.dp).clip(RoundedCornerShape(18.dp)).background(background).clickable(role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
     ) {
-        Symbol(symbol, tint = colour, size = 20.dp, weight = 1.3f)
-        Text(text, style = Atlas.type.name, color = c.ink)
+        Text(
+            text, Modifier.padding(horizontal = 4.dp),
+            style = TextStyle(fontWeight = if (small) FontWeight.ExtraBold else FontWeight.Black, fontSize = if (small) 13.sp else 16.sp), color = ink,
+            textAlign = TextAlign.Center, maxLines = 1,
+        )
     }
 }
 
-/** The dark card of what the answers do: how many this month from this phone, and who reads them. */
+/** The dark card of what the answers do, as the board has it: how many this month from this phone, and who reads them. */
 @Composable
 private fun Impact(thisMonth: Int, all: Int) {
-    val c = Atlas.colors
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(c.pill).padding(18.dp),
+        Modifier.fillMaxWidth().heightIn(min = 90.dp).clip(RoundedCornerShape(22.dp)).background(Color(0xFF1B2A1E)).padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(thisMonth.toString(), style = Atlas.type.numeral, color = c.onPill)
-        Column(Modifier.weight(1f)) {
-            Text(pluralStringResource(R.plurals.quests_month, thisMonth, thisMonth), style = Atlas.type.bodyStrong, color = c.onPill)
-            Text(pluralStringResource(R.plurals.quests_all, all, all), style = Atlas.type.caption, color = c.onPill.copy(alpha = 0.7f))
+        Text(thisMonth.toString(), style = TextStyle(fontWeight = FontWeight.Black, fontSize = 36.sp), color = Color(0xFFF2C230))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(pluralStringResource(R.plurals.quests_month, thisMonth, thisMonth), style = TextStyle(fontWeight = FontWeight.ExtraBold, fontSize = 14.sp), color = Color(0xFFEEF4EC))
+            Text(pluralStringResource(R.plurals.quests_all, all, all), style = TextStyle(fontSize = 12.sp), color = Color(0xFFA8C0A8))
         }
     }
 }

@@ -290,7 +290,7 @@
     <string name="quests_only_see">Answer only what you can see from where you stand. A wrong answer is worse than none.</string>
     <string name="quests_yes">Yes</string>
     <string name="quests_no">No</string>
-    <string name="quests_skip">Can\'t tell · skip</string>
+    <string name="quests_skip">skip</string>
     <plurals name="quests_month">
         <item quantity="one">answer this month from this phone</item>
         <item quantity="other">answers this month from this phone</item>
@@ -322,4 +322,12 @@
     <string name="where_nothing">Nothing fits here</string>
     <string name="where_nothing_text">Try a longer walk, or fewer chips.</string>
     <string name="where_footer">Ideas from OpenStreetMap around you; greyed wedges have nothing that fits the chips.</string>
+    <string name="where_w_water">Water</string>
+    <string name="where_w_views">Views</string>
+    <string name="where_w_food">Food</string>
+    <string name="where_w_quiet">Quiet</string>
+    <string name="where_w_night">Night</string>
+    <string name="where_w_nature">Nature</string>
+    <string name="where_w_culture">Culture</string>
+    <string name="where_w_odd">Odd</string>
 </resources>

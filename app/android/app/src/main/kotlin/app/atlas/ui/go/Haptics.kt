@@ -81,8 +81,8 @@ class AndroidHaptics(context: Context) : HapticSink {
     override fun vibrate(cue: Cue.Haptic) {
         val v = vibrator ?: return
         if (!v.hasVibrator()) return
-        val effect = effectFor(v, cue)
         runCatching {
+            val effect = effectFor(v, cue)
             if (Build.VERSION.SDK_INT >= 33) {
                 v.vibrate(effect, VibrationAttributes.createForUsage(VibrationAttributes.USAGE_COMMUNICATION_REQUEST))
             } else {

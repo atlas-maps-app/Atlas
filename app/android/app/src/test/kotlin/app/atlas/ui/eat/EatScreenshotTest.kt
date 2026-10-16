@@ -18,6 +18,9 @@ import app.atlas.nav.Dest
 import app.atlas.testing.settle
 import app.atlas.testing.shotsDir
 import com.github.takahirom.roborazzi.captureRoboImage
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -70,8 +73,8 @@ class EatScreenshotTest {
     @Test
     fun menusWithTheWaitersAnswer() {
         show(Dest.Eat())
-        compose.onNodeWithContentDescription("ask").performTextInput("pizza open now")
-        compose.onNodeWithContentDescription("ask").performImeAction()
+        compose.onNodeWithContentDescription("Ask the waiter").performTextInput("pizza open now")
+        compose.onNodeWithContentDescription("Ask the waiter").performImeAction()
         compose.waitUntil(10_000) { compose.onAllNodesWithText("Pizza", substring = true).fetchSemanticsNodes().size > 1 }
         compose.settle()
         capture("eat_menus_waiter")
@@ -165,6 +168,18 @@ class EatScreenshotTest {
     @Test
     fun market() {
         show(Dest.Eat("market"))
+        // The market days' times never break across lines, however narrow the room left by the name.
+        val times = compose.onAllNodes(
+            androidx.compose.ui.test.SemanticsMatcher("a market day's times") { n ->
+                n.config.getOrNull(SemanticsProperties.Text)?.firstOrNull()?.text?.matches(Regex("\\d{1,2}–\\d{1,2}(:\\d\\d)?")) == true
+            },
+        ).fetchSemanticsNodes()
+        assertTrue("market days are listed", times.isNotEmpty())
+        for (node in times) {
+            val results = ArrayList<androidx.compose.ui.text.TextLayoutResult>()
+            node.config[androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult].action?.invoke(results)
+            assertEquals("one line: ${node.config}", 1, results.single().lineCount)
+        }
         capture("eat_market")
     }
 
@@ -181,4 +196,35 @@ class EatScreenshotTest {
         show(Dest.Eat(), EatFixtures.services(places = false))
         capture("eat_menus_tiles")
     }
+
+    @Test
+    fun theLateSignSaysItIsLookingWhileHoursMayStillArrive() {
+        val loading = androidx.compose.runtime.mutableStateOf(true)
+        compose.setContent { NeonLate(EatArea.Count(0, open = false), null, "Late", 1f, loading.value) }
+        assertTrue(compose.onAllNodesWithText("…").fetchSemanticsNodes().isNotEmpty())
+        loading.value = false
+        compose.waitForIdle()
+        assertTrue(compose.onAllNodesWithText("?").fetchSemanticsNodes().isNotEmpty())
+        assertTrue(compose.onAllNodesWithText("…").fetchSemanticsNodes().isEmpty())
+    }
+
+    /** A phone that has downloaded nothing and is offline: every screen says so instead of crashing or inventing places. */
+    private fun nothingAtAll(kind: String?, vararg words: String) {
+        show(Dest.Eat(kind), EatFixtures.emptyWorld())
+        settleWork()
+        for (w in words) assertTrue("'$w' on $kind", compose.onAllNodesWithText(w, substring = true).fetchSemanticsNodes().isNotEmpty())
+    }
+
+    @Test fun menusInAnEmptyWorld() = nothingAtAll(null, "Dinner", "Nothing to eat or drink here yet")
+    @Test fun carteInAnEmptyWorld() = nothingAtAll("carte", "La Carte", "Nothing to eat or drink here yet")
+    @Test fun cuisinePageInAnEmptyWorld() = nothingAtAll("carte:italian")
+    @Test fun orderInAnEmptyWorld() = nothingAtAll("order", "GUEST CHECK")
+    @Test fun barInAnEmptyWorld() = nothingAtAll("bar", "Nothing to eat or drink here yet")
+    @Test fun cafeInAnEmptyWorld() = nothingAtAll("cafe", "Nothing to eat or drink here yet")
+    @Test fun lateInAnEmptyWorld() = nothingAtAll("late", "Nothing to eat or drink here yet")
+    @Test fun sweetsInAnEmptyWorld() = nothingAtAll("sweets", "Nothing to eat or drink here yet")
+    @Test fun marketInAnEmptyWorld() = nothingAtAll("market")
+    @Test fun ramenInAnEmptyWorld() = nothingAtAll("ramen")
+    @Test fun eatMapInAnEmptyWorld() = nothingAtAll("map", "Trending")
+    @Test fun anUnknownKindOpensTheTable() = nothingAtAll("bogus", "Dinner")
 }

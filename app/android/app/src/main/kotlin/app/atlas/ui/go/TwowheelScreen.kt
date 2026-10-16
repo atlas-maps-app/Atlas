@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -85,7 +86,7 @@ fun TwowheelScreen(args: Dest.Twowheel, nav: Navigator) {
     var mode by rememberSaveable { mutableStateOf(args.mode?.let { n -> runCatching { Mode.valueOf(n) }.getOrNull() }?.takeIf { it in TWO_WHEELS } ?: Mode.BIKE) }
     val places by produceState<List<app.atlas.model.Place>?>(null, here) { value = services.go.placesAround(here, RADIUS_M) }
     val ui = places?.let { Twowheel.around(it, here, mode) }
-    val units = services.go.units
+    val units by services.go.unitsFlow.collectAsStateWithLifecycle()
     // The street each of the nearest spots is on, from the map (most stands have no name of their own).
     val shown = ui?.spots?.take(4).orEmpty() + listOfNotNull(ui?.repair)
     val streets by produceState(emptyMap<String, String>(), shown) {

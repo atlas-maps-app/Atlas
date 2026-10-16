@@ -106,7 +106,8 @@ class SearchViewModel(
             return
         }
         try {
-            val r = services.search.search(t, context())
+            // The context asks the regions for the country (a query), so it is made off the main thread.
+            val r = withContext(Dispatchers.Default) { services.search.search(t, context()) }
             mutable.value = mutable.value.copy(text = t, searching = false, results = narrow(r), error = null)
         } catch (e: CancellationException) {
             throw e
@@ -124,9 +125,9 @@ class SearchViewModel(
         val chosen = results.refinements.filter { it.chip.value in sel }
         if (chosen.isEmpty()) return
         val q = Query.and(chosen.map { it.query })
-        val ctx = context()
         val r = try {
             withContext(Dispatchers.Default) {
+                val ctx = context()
                 OfflineEvaluator(services.placeStores).run(q, EvalContext(ctx.location, ctx.viewport, ctx.now, ctx.lang, ctx.limit, ctx.hours))
             }
         } catch (e: CancellationException) {

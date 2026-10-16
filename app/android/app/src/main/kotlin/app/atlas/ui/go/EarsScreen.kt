@@ -59,6 +59,7 @@ import app.atlas.guide.Nearby
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
+import app.atlas.services.Units
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.AtlasTheme
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -66,7 +67,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.min
-import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /** The Ears board's colours (canvas/project/Ears.dc.html). */
@@ -97,8 +97,9 @@ fun EarsScreen(args: Dest.Ears, nav: Navigator) {
     val hub = services.go
     val context = LocalContext.current
     val running by hub.ears.collectAsStateWithLifecycle()
+    val units by hub.unitsFlow.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
-        if (hub.ears.value == null) hub.startEars(context, CompassHeadings.flow(context))
+        if (hub.ears.value == null) hub.startEars(context, CompassHeadings.flow(context.applicationContext))
     }
     val leave: () -> Unit = {
         hub.stopEars()
@@ -131,7 +132,7 @@ fun EarsScreen(args: Dest.Ears, nav: Navigator) {
                 ArtIcon(BoardArt.headphones, size = 52.dp)
             }
             Spacer(Modifier.height(14.dp))
-            Radar(view, Modifier.fillMaxWidth().aspectRatio(1f))
+            Radar(view, units, Modifier.fillMaxWidth().aspectRatio(1f))
             Spacer(Modifier.height(14.dp))
             Transcript(view)
             Spacer(Modifier.height(14.dp))
@@ -174,10 +175,10 @@ fun EarsScreen(args: Dest.Ears, nav: Navigator) {
  * ringed ping at its direction and distance with its name; the beacon's target in amber.
  */
 @Composable
-private fun Radar(view: EarsView, modifier: Modifier) {
+private fun Radar(view: EarsView, units: Units, modifier: Modifier) {
     val measurer = rememberTextMeasurer(cacheSize = 32)
     val label = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-    val described = view.around.take(6).joinToString("; ") { "${it.label} ${it.distance.roundToInt()} m" }
+    val described = view.around.take(6).joinToString("; ") { "${it.label} ${GoFormat.distance(it.distance, units)}" }
     val loading = stringResource(R.string.go_looking)
     Box(modifier.semantics { contentDescription = if (view.loading) loading else described }, contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
@@ -197,10 +198,10 @@ private fun Radar(view: EarsView, modifier: Modifier) {
             val range = radarRange(view)
             val taken = ArrayList<androidx.compose.ui.geometry.Rect>()
             val beacon = view.beacon
-            beacon?.let { drawPing(it, view, c, k, range, measurer, label, beacon = true, taken) }
+            beacon?.let { drawPing(it, view, c, k, range, measurer, label, units, beacon = true, taken) }
             for (n in view.around.take(RADAR_PINGS)) {
                 if (beacon != null && Geo.distance(n.place.location, beacon.place.location) < 2.0) continue
-                drawPing(n, view, c, k, range, measurer, label, beacon = false, taken)
+                drawPing(n, view, c, k, range, measurer, label, units, beacon = false, taken)
             }
             drawCircle(EarsColours.text, 16f * k, c)
             drawPath(Path().apply { moveTo(c.x, c.y - 22f * k); lineTo(c.x + 9f * k, c.y - 8f * k); lineTo(c.x - 9f * k, c.y - 8f * k); close() }, EarsColours.text)
@@ -229,7 +230,7 @@ internal fun radarOffset(n: Nearby, heading: Double?, centre: Offset, k: Float, 
 }
 
 private fun DrawScope.drawPing(
-    n: Nearby, view: EarsView, c: Offset, k: Float, range: Double, measurer: androidx.compose.ui.text.TextMeasurer, style: TextStyle, beacon: Boolean,
+    n: Nearby, view: EarsView, c: Offset, k: Float, range: Double, measurer: androidx.compose.ui.text.TextMeasurer, style: TextStyle, units: Units, beacon: Boolean,
     taken: MutableList<androidx.compose.ui.geometry.Rect>,
 ) {
     val p = radarOffset(n, view.heading, c, k, range)
@@ -237,7 +238,7 @@ private fun DrawScope.drawPing(
     drawCircle(colour, 22f * k, p, alpha = 0.35f, style = Stroke(1.5f * k))
     drawCircle(colour, 14f * k, p, alpha = 0.6f, style = Stroke(2f * k))
     drawCircle(colour, 7f * k, p)
-    val text = "${n.label} · ${n.distance.roundToInt()} m"
+    val text = "${n.label} · ${GoFormat.distance(n.distance, units)}"
     val layout = measurer.measure(text, style.copy(color = colour))
     // The label on the side with room: right of the ping in the left half, left of it in the right half, 18 out.
     val x = (if (p.x < c.x) p.x + 18f * k else p.x - 18f * k - layout.size.width).coerceIn(0f, size.width - layout.size.width)

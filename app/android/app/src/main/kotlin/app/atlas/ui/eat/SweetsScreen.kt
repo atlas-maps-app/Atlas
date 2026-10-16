@@ -86,7 +86,7 @@ fun SweetsScreen(nav: Navigator) {
     val case = worked.value
 
     Box(Modifier.fillMaxSize().background(CREAM)) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 40.dp)) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = bottomRoom(40.dp))) {
             item {
                 Row(Modifier.fillMaxWidth().padding(top = boardTop(132.dp)), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.Bottom) {
                     Text(

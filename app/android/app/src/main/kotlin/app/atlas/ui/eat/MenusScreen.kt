@@ -72,6 +72,7 @@ import app.atlas.ui.kit.SymbolButton
 import app.atlas.ui.kit.rememberSpeechInput
 import app.atlas.ui.kit.softShadow
 import app.atlas.ui.kit.walkMinutes
+import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -96,7 +97,7 @@ fun MenusScreen(nav: Navigator) {
 
     val ask: (String) -> Unit = { text ->
         if (text.isNotBlank()) scope.launch {
-            answer = withContext(Dispatchers.Default) { Waiter.ask(text, ctx.area, ctx.at, ctx.services.clock.zone, ctx.lang) }
+            answer = Waiter.askSafely { withContext(Dispatchers.Default) { Waiter.ask(text, ctx.area, ctx.at, ctx.services.clock.zone, ctx.lang) } }
         }
     }
     val mic = rememberSpeechInput(onText = { question = it; ask(it) })
@@ -128,7 +129,7 @@ fun MenusScreen(nav: Navigator) {
                 }
                 if (ctx.area.waiting || !worked.fresh) Looking(MUTED, vertical = 1.dp) else Spacer(Modifier.height(18.dp))
             }
-            TableTop(counts, onOpen = { kind -> nav.go(Dest.Eat(kind)) })
+            TableTop(counts, loading = ctx.area.loading, onOpen = { kind -> nav.go(Dest.Eat(kind)) })
             Column(Modifier.padding(horizontal = 16.dp)) {
                 if (ctx.area.sketchOnly) {
                     sourceLine(ctx.area)?.let { Text(it, Modifier.fillMaxWidth().padding(top = 6.dp), style = Atlas.type.caption, color = MUTED) }
@@ -142,7 +143,7 @@ fun MenusScreen(nav: Navigator) {
                     Text(stringResource(R.string.eat_surprise_none), Modifier.fillMaxWidth().padding(top = 8.dp), style = Atlas.type.caption, color = MUTED)
                 }
             }
-            Spacer(Modifier.height(96.dp))
+            Spacer(Modifier.height(bottomRoom(96.dp)))
         }
         // The board's foot: the dark Map pill and the die, 26 px from the bottom.
         Row(
@@ -190,6 +191,10 @@ internal enum class Picker { TIME, PARTY }
 @Composable
 private fun TableHeader(ctx: EatContext, padCount: Int, onMap: () -> Unit, onPad: () -> Unit, onPick: (Picker) -> Unit) {
     val mapLabel = stringResource(R.string.eat_map)
+    // A table set for tomorrow (earlier than half an hour ago means the next day) says which day.
+    val time = dayTime(ctx.at, LocalDateTime.now(ctx.services.clock), ctx.lang, HM_PADDED)
+    val timeLabel = stringResource(R.string.eat_time_at, time)
+    val partyLabel = stringResource(R.string.eat_party_of, ctx.table.party)
     Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Box(
             Modifier.size(48.dp).paleButton().clickable(onClick = onMap).semantics { contentDescription = mapLabel },
@@ -199,10 +204,9 @@ private fun TableHeader(ctx: EatContext, padCount: Int, onMap: () -> Unit, onPad
             Text(stringResource(mealName(Meal.at(ctx.at.toLocalTime()))), style = TextStyle(fontFamily = SerifFamily, fontSize = 30.sp, lineHeight = 32.sp, color = INK))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 val meta = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, color = MUTED)
-                val time = ctx.at.format(HM_PADDED)
                 Row(
                     Modifier.clip(CircleShape).clickable { onPick(Picker.TIME) }.padding(horizontal = 4.dp, vertical = 2.dp)
-                        .semantics(mergeDescendants = true) { contentDescription = "time $time" },
+                        .semantics(mergeDescendants = true) { contentDescription = timeLabel },
                     horizontalArrangement = Arrangement.spacedBy(3.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -211,7 +215,7 @@ private fun TableHeader(ctx: EatContext, padCount: Int, onMap: () -> Unit, onPad
                 }
                 Row(
                     Modifier.clip(CircleShape).clickable { onPick(Picker.PARTY) }.padding(horizontal = 4.dp, vertical = 2.dp)
-                        .semantics(mergeDescendants = true) { contentDescription = "party ${ctx.table.party}" },
+                        .semantics(mergeDescendants = true) { contentDescription = partyLabel },
                     horizontalArrangement = Arrangement.spacedBy(3.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -227,7 +231,7 @@ private fun TableHeader(ctx: EatContext, padCount: Int, onMap: () -> Unit, onPad
 /** The board's dark order-pad button (48 px) with the orange badge counting the shortlist. */
 @Composable
 internal fun OrderPadButton(count: Int, onClick: () -> Unit, background: Color = INK, edge: Color = Color(0xFFEDE6DA)) {
-    val description = stringResource(R.string.eat_pad)
+    val description = if (count > 0) stringResource(R.string.eat_pad_count, count) else stringResource(R.string.eat_pad)
     Box {
         Box(
             Modifier
@@ -268,7 +272,7 @@ private fun TablePicker(picker: Picker, ctx: EatContext, onDone: () -> Unit) {
         when (picker) {
             Picker.TIME -> {
                 SymbolButton("ui-minus", stringResource(R.string.eat_earlier), { state.shift(-15) }, size = 40.dp, elevation = 0.dp, background = Atlas.colors.cardMuted)
-                Text(ctx.at.format(HM), Modifier.weight(1f), style = Atlas.type.numeralSmall, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Text(dayTime(ctx.at, LocalDateTime.now(ctx.services.clock), ctx.lang), Modifier.weight(1f), style = Atlas.type.numeralSmall, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                 SymbolButton("ui-plus", stringResource(R.string.eat_later), { state.shift(15) }, size = 40.dp, elevation = 0.dp, background = Atlas.colors.cardMuted)
                 PillButton(onClick = { state.setTime(null); onDone() }, background = Color(0xFF16151A)) {
                     Text(stringResource(R.string.eat_now), style = Atlas.type.label)
@@ -292,6 +296,7 @@ private fun TablePicker(picker: Picker, ctx: EatContext, onDone: () -> Unit) {
 @Composable
 private fun AskField(text: String, onText: (String) -> Unit, onAsk: () -> Unit, onMic: () -> Unit) {
     val micLabel = stringResource(R.string.kit_mic)
+    val askLabel = stringResource(R.string.eat_ask)
     Row(
         Modifier
             .fillMaxWidth()
@@ -314,7 +319,7 @@ private fun AskField(text: String, onText: (String) -> Unit, onAsk: () -> Unit, 
                 textStyle = style.copy(color = INK),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { onAsk() }),
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "ask" },
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = askLabel },
             )
         }
         Box(Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onMic).semantics { contentDescription = micLabel }, contentAlignment = Alignment.Center) {
@@ -370,7 +375,7 @@ private fun WaiterCard(a: Waiter.Answer, ctx: EatContext, onPlace: (app.atlas.se
  * frame, and each one's tilt), scaled to the screen's width; later objects lie on top, as on the board.
  */
 @Composable
-private fun TableTop(counts: EatSets.Counts?, onOpen: (String) -> Unit) {
+private fun TableTop(counts: EatSets.Counts?, loading: Boolean, onOpen: (String) -> Unit) {
     val carte = stringResource(R.string.eat_carte)
     val cafe = stringResource(R.string.eat_cafe)
     val late = stringResource(R.string.eat_late)
@@ -392,7 +397,7 @@ private fun TableTop(counts: EatSets.Counts?, onOpen: (String) -> Unit) {
                 TableObject(4f, say(bar, counts?.bar), { onOpen("bar") }) { DecoCard(counts?.bar, bar, u) }
             }
             Placed(u, 26f, 458f, 176f, 170f) {
-                TableObject(-2f, say(late, counts?.late), { onOpen("late") }) { NeonLate(counts?.late, counts?.lateUntil?.format(HM), late, u) }
+                TableObject(-2f, say(late, counts?.late), { onOpen("late") }) { NeonLate(counts?.late, counts?.lateUntil?.format(HM), late, u, loading) }
             }
             Placed(u, 32f, 652f, 160f, 150f) {
                 TableObject(3f, say(sweets, counts?.sweets), { onOpen("sweets") }) { TicketStub(counts?.sweets, sweets, u) }

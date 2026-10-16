@@ -19,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -96,6 +97,10 @@ fun NavigateScreen(args: Dest.Navigate, nav: Navigator) {
     var failure by remember(args) { mutableStateOf<Plan?>(null) }
     var attempt by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
+    // The trip ended from outside (the notification's End button): there is nothing left to show, so leave.
+    var shown by rememberSaveable { mutableStateOf(false) }
+    if (current != null) shown = true
+    LaunchedEffect(current == null, shown) { if (shown && current == null) nav.back() }
 
     LaunchedEffect(args, attempt) {
         if (current != null) return@LaunchedEffect
@@ -118,10 +123,8 @@ fun NavigateScreen(args: Dest.Navigate, nav: Navigator) {
         }
     }
 
-    val end: () -> Unit = {
-        hub.stopNav()
-        nav.back()
-    }
+    // Ending the trip empties the hub, which the effect above answers by leaving.
+    val end: () -> Unit = { hub.stopNav() }
     when {
         current != null -> Guidance(current, args, end)
         failure != null -> AtlasTheme(dark = true, night = true) {
@@ -184,6 +187,7 @@ private fun Guidance(session: NavSession, args: Dest.Navigate, end: () -> Unit) 
     val voice = services.voice as? TtsVoice
     val haptics by (voice?.hapticsOn ?: remember { MutableStateFlow(true) }).collectAsStateWithLifecycle()
     val serviceOn by hub.nav.collectAsStateWithLifecycle()
+    val unitsNow by hub.unitsFlow.collectAsStateWithLifecycle()
     val wind by produceWind(session)
     val bearing = view.state?.routeBearing
     val headwind = wind?.let { (speed, from) -> bearing?.let { speed * cos(Math.toRadians(from - it)) } }
@@ -191,7 +195,7 @@ private fun Guidance(session: NavSession, args: Dest.Navigate, end: () -> Unit) 
         app.atlas.ui.kit.isAfterDark(view.state?.location ?: session.destination, services.clock.instant())
     }
     val show = NavShow(
-        view = view, mode = session.request.mode, destination = session.destinationName ?: args.toName, units = hub.units,
+        view = view, mode = session.request.mode, destination = session.destinationName ?: args.toName, units = unitsNow,
         zone = services.clock.zone, lastSaid = said, muted = muted, haptics = haptics, background = serviceOn != null,
         headwindKmh = headwind, windKmh = wind?.first, vehicle = session.request.vehicle, demo = session.demo, night = night,
     )

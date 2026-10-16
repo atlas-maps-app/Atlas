@@ -94,7 +94,7 @@ class QueryViewModel(
     }
 
     /** The Overpass QL of the query over the area it searched. */
-    fun ql(): String? = query()?.let { OverpassCompiler.compile(it, area(), here()) }
+    fun ql(): String? = runCatching { query()?.let { OverpassCompiler.compile(it, area(), here()) } }.getOrNull()
 
     /** Runs the query on Overpass (the whole planet); the answer replaces the offline one. */
     fun runOnline() {

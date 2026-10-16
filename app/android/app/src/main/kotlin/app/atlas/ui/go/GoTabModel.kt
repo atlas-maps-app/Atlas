@@ -91,6 +91,7 @@ class GoTabViewModel(private val services: Services) : ViewModel() {
     private val state = MutableStateFlow(GoTabUi(here = services.location.last.value?.location ?: Services.WESTERKERK))
     val ui: StateFlow<GoTabUi> = state.asStateFlow()
     private var timing: Job? = null
+    private var lastLook: LatLon? = null
 
     init {
         viewModelScope.launch {
@@ -109,13 +110,13 @@ class GoTabViewModel(private val services: Services) : ViewModel() {
                 timeSigns()
             }
         }
+        // The first look is of where the tab opened; the location flow's first value must not start a second one.
+        lastLook = state.value.here
         viewModelScope.launch { services.location.last.collect { f -> f?.let { moved(it.location) } } }
         viewModelScope.launch(Dispatchers.IO) { surroundings(state.value.here) }
     }
 
     private data class Saved(val home: SavedPlace?, val work: SavedPlace?, val recent: List<SavedPlace>, val mode: Mode, val prefs: RoutePrefs)
-
-    private var lastLook: LatLon? = null
 
     private fun moved(at: LatLon) {
         val before = lastLook

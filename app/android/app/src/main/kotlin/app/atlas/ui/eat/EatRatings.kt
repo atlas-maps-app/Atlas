@@ -39,8 +39,9 @@ data class AreaRatings(val byKey: Map<String, Rating>, val state: State) {
  * app's `RatingsAggregator`. Nothing is ever made up: a place nobody reviewed has no rating.
  */
 class EatRatings internal constructor(private val services: Services) {
-    private val areas = HashMap<String, MutableStateFlow<AreaRatings>>()
+    private val areas = LinkedHashMap<String, MutableStateFlow<AreaRatings>>()
     private val single = MutableStateFlow<Map<String, AggregateRating>>(emptyMap())
+    private val asked = HashSet<String>()
 
     /** Every provider's merged verdict per place key, as far as cards have asked for them. */
     val aggregates: StateFlow<Map<String, AggregateRating>> = single.asStateFlow()
@@ -51,10 +52,21 @@ class EatRatings internal constructor(private val services: Services) {
     fun of(area: EatArea): StateFlow<AreaRatings> = synchronized(areas) {
         if (area.places.isEmpty()) return MutableStateFlow(if (online) AreaRatings(emptyMap(), AreaRatings.State.LOADING) else AreaRatings.OFFLINE)
         val key = "${area.centre}:${area.origin}:${area.places.size}"
-        areas[key]?.let { return it.asStateFlow() }
-        val flow = MutableStateFlow(if (online) AreaRatings(emptyMap(), AreaRatings.State.LOADING) else AreaRatings.OFFLINE)
+        val now = online
+        areas.remove(key)?.let { known ->
+            areas[key] = known
+            // The phone was offline, or the call failed, and the network is back: ask again into the same flow.
+            val state = known.value.state
+            if (now && (state == AreaRatings.State.OFFLINE || state == AreaRatings.State.FAILED)) {
+                known.value = AreaRatings(emptyMap(), AreaRatings.State.LOADING)
+                services.scope.launch(Dispatchers.IO) { known.value = fetch(area) }
+            }
+            return known.asStateFlow()
+        }
+        val flow = MutableStateFlow(if (now) AreaRatings(emptyMap(), AreaRatings.State.LOADING) else AreaRatings.OFFLINE)
         areas[key] = flow
-        if (online) services.scope.launch(Dispatchers.IO) { flow.value = fetch(area) }
+        while (areas.size > MAX_AREAS) areas.remove(areas.keys.first())
+        if (now) services.scope.launch(Dispatchers.IO) { flow.value = fetch(area) }
         flow.asStateFlow()
     }
 
@@ -80,15 +92,24 @@ class EatRatings internal constructor(private val services: Services) {
     /** Asks every enabled provider about [place] (once per place), for a card; the answer lands in [aggregates]. */
     fun ask(place: EatPlace) {
         if (!online || place.key in single.value) return
+        // A card scrolled away and back must not ask the providers twice while the first answer is on its way.
+        if (!synchronized(asked) { asked.add(place.key) }) return
         services.scope.launch(Dispatchers.IO) {
             val agg = try {
                 services.ratings.rate(place.place)
             } catch (e: CancellationException) {
+                synchronized(asked) { asked.remove(place.key) }
                 throw e
             } catch (e: Exception) {
+                synchronized(asked) { asked.remove(place.key) }
                 return@launch
             }
             single.update { it + (place.key to agg) }
         }
+    }
+
+    private companion object {
+        /** How many areas' ratings are kept at once. */
+        const val MAX_AREAS = 6
     }
 }

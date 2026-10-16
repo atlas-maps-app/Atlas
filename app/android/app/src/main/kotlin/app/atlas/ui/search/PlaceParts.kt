@@ -23,6 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -67,6 +68,8 @@ import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.SymbolTile
 import app.atlas.ui.kit.WalkTime
 import app.atlas.ui.kit.walkMinutes
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 /** The sheet of a place, top to bottom. */
@@ -169,24 +172,39 @@ private fun FactRow(facts: List<Fact>) {
     }
 }
 
+/**
+ * A web address from a tag, ready to open: http(s) only (a tag is anyone's text: no `intent:`, `file:` or `javascript:`),
+ * with https added when the tag has no scheme; the first of several given with ";"; null when there is nothing safe.
+ */
+internal fun webUrl(raw: String?): String? {
+    val t = raw?.substringBefore(';')?.trim()?.takeIf { it.isNotEmpty() && !it.any(Char::isWhitespace) } ?: return null
+    return when {
+        t.startsWith("http://", ignoreCase = true) || t.startsWith("https://", ignoreCase = true) -> t
+        "://" in t || UNSAFE_SCHEME.containsMatchIn(t) -> null
+        else -> "https://$t"
+    }
+}
+
+private val UNSAFE_SCHEME = Regex("^(javascript|intent|file|content|data|vbscript|tel|mailto|sms|market):", RegexOption.IGNORE_CASE)
+
 /** The blue route button with the walk minutes, then call, web, menu and mail. */
 @Composable
 private fun Actions(place: Place, summary: PlaceSummary, nav: Navigator) {
     val uri = LocalUriHandler.current
     val t = place.tags
     val phone = (t["phone"] ?: t["contact:phone"])?.substringBefore(';')?.trim()
-    val web = (t["website"] ?: t["contact:website"] ?: t["url"])?.substringBefore(';')?.trim()
-    val menu = t["website:menu"]?.trim()
+    val web = webUrl(t["website"] ?: t["contact:website"] ?: t["url"])
+    val menu = webUrl(t["website:menu"])
     val mail = (t["email"] ?: t["contact:email"])?.substringBefore(';')?.trim()
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         PrimaryButton(
-            summary.distanceM?.let { walkMinutes(WalkTime.seconds(it)) } ?: stringResource(R.string.place_route),
+            summary.distanceM?.let(::walkOrDistance) ?: stringResource(R.string.place_route),
             onClick = { nav.go(Dest.Route(place.location.lat, place.location.lon, summary.name)) },
             modifier = Modifier.weight(1f),
             symbol = "ui-corner-up-right",
         )
         if (phone != null) RoundAction("ui-phone", stringResource(R.string.place_call, phone), { runCatching { uri.openUri("tel:" + phone.filter { it.isDigit() || it == '+' }) } })
-        if (web != null) RoundAction("ui-globe", stringResource(R.string.place_web), { runCatching { uri.openUri(if (web.startsWith("http")) web else "https://$web") } })
+        if (web != null) RoundAction("ui-globe", stringResource(R.string.place_web), { runCatching { uri.openUri(web) } })
         if (menu != null) RoundAction("ui-receipt", stringResource(R.string.place_menu), { runCatching { uri.openUri(menu) } })
         if (mail != null && (phone == null || web == null)) RoundAction("ui-mail", stringResource(R.string.place_mail), { runCatching { uri.openUri("mailto:$mail") } })
     }
@@ -318,10 +336,13 @@ private fun providerName(id: String): String = when (id) {
 private fun QuestStrip(state: PlaceState, onAnswer: (Quest, Boolean) -> Unit, onTags: () -> Unit) {
     val c = Atlas.colors
     val place = state.place ?: return
-    val quest = state.quests.firstOrNull { it.key !in state.answered }
+    // An answer that failed to go out leaves its question open: it can be asked again.
+    val quest = state.openQuest
     val last = state.answered.entries.lastOrNull()
+    val failed = quest?.let { state.answered[it.key] as? Sending.Failed }
     val amber = questPaper()
     val amberInk = questInk()
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(if (quest != null) amber else c.cardMuted).padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -357,6 +378,13 @@ private fun QuestStrip(state: PlaceState, onAnswer: (Quest, Boolean) -> Unit, on
             Symbol("ui-braces", tint = c.onPill, size = 18.dp)
             Text(n.toString(), style = Atlas.type.bodyStrong, color = c.onPill)
         }
+    }
+    if (failed != null) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            Symbol("ui-alert-triangle", tint = c.alert, size = 16.dp)
+            Text(stringResource(R.string.place_note_failed, failed.why), style = Atlas.type.caption, color = c.alert, maxLines = 3)
+        }
+    }
     }
 }
 
@@ -401,8 +429,13 @@ private fun WikiCard(e: WikidataEntity, image: KeptImage?, lang: String) {
     val uri = LocalUriHandler.current
     val langs = listOf(lang, "en")
     Card(Modifier.fillMaxWidth(), padding = PaddingValues(0.dp), elevation = 0.dp, colour = c.cardMuted) {
-        val bitmap = remember(image) { image?.bytes?.let { runCatching { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }.getOrNull() } }
-        if (bitmap != null) {
+        // Decoded off the main thread: a photo is a few hundred kilobytes of JPEG.
+        val bitmap by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, image) {
+            value = image?.bytes?.let { bytes ->
+                withContext(Dispatchers.Default) { runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }.getOrNull() }
+            }
+        }
+        bitmap?.let { bitmap ->
             Image(bitmap, e.label(langs), Modifier.fillMaxWidth().aspectRatio(16f / 10f), contentScale = ContentScale.Crop)
             image?.credit?.let { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = Atlas.type.caption, color = c.inkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }

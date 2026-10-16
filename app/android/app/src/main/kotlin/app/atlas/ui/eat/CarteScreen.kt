@@ -125,7 +125,7 @@ fun CarteScreen(nav: Navigator) {
         LazyColumn(
             Modifier.fillMaxSize(),
             state = list,
-            contentPadding = PaddingValues(start = 30.dp, end = 44.dp, bottom = 120.dp),
+            contentPadding = PaddingValues(start = 30.dp, end = 44.dp, bottom = bottomRoom(120.dp)),
         ) {
             item {
                 CarteTopRow(
@@ -149,7 +149,7 @@ fun CarteScreen(nav: Navigator) {
                     } ?: stringResource(R.string.kit_loading)
                     Text(
                         smallCaps(count.lowercase(), 15.sp),
-                        style = TextStyle(fontFamily = EatType.cormorant, fontWeight = FontWeight.SemiBold, letterSpacing = 0.12.em, color = Color(0xFF6B5A45)),
+                        style = TextStyle(fontFamily = EatType.cormorant, fontWeight = FontWeight.SemiBold, letterSpacing = 0.12.em, color = Color(0xFF6B5A45), fontFeatureSettings = "lnum"),
                     )
                 }
             }

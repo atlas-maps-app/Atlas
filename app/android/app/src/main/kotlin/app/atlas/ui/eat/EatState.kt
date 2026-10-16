@@ -2,6 +2,7 @@ package app.atlas.ui.eat
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
@@ -13,6 +14,7 @@ import app.atlas.model.Place
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
+import app.atlas.services.PlaceOrigin
 import app.atlas.ui.kit.rememberHere
 import java.time.LocalDateTime
 import java.util.Locale
@@ -53,6 +55,13 @@ fun rememberEatContext(centre: LatLon = rememberHere()): EatContext {
     val regions by services.regionsChanged.collectAsStateWithLifecycle()
     val areaFlow = remember(repo, centre, regions) { repo.area(centre, regions) }
     val area by areaFlow.collectAsStateWithLifecycle()
+    // The network came back after the phone was offline: what the tiles or nothing gave is asked for again (once per
+    // return, never in a loop after a failure; the first load decides for itself).
+    val online by services.connectivity.online.collectAsStateWithLifecycle()
+    LaunchedEffect(online) {
+        val a = areaFlow.value
+        if (online && !services.config.offline && !a.loading && a.origin != PlaceOrigin.STORE && a.origin != PlaceOrigin.ONLINE) repo.refresh(centre)
+    }
     val table by repo.table.table.collectAsStateWithLifecycle()
     val ratingsFlow = remember(repo, area) { repo.ratings.of(area) }
     val ratings by ratingsFlow.collectAsStateWithLifecycle()

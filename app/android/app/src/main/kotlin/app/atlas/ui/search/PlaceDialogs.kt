@@ -142,7 +142,7 @@ internal fun RawTagsDialog(place: Place, onDismiss: () -> Unit) {
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Chip(stringResource(R.string.place_copy), symbol = "ui-receipt", onClick = { copy(context, place.name() ?: "tags", text) })
-            place.id?.let { id -> Chip(stringResource(R.string.place_open_osm), symbol = "ui-map", onClick = { uri.openUri(id.url) }) }
+            place.id?.let { id -> Chip(stringResource(R.string.place_open_osm), symbol = "ui-map", onClick = { runCatching { uri.openUri(id.url) } }) }
         }
     }
 }
@@ -194,7 +194,7 @@ internal fun spanWords(spans: List<OpenSpan>): String? {
     if (open.size == 1 && open[0].start <= 0 && open[0].end >= 1440) return "24 h"
     return open.joinToString(", ") { s ->
         val a = "%d:%02d".format(Locale.ROOT, (s.start / 60) % 24, s.start % 60)
-        val b = "%d:%02d".format(Locale.ROOT, (s.end / 60) % 24, s.end % 60)
+        val b = if (s.end == 1440) "24:00" else "%d:%02d".format(Locale.ROOT, (s.end / 60) % 24, s.end % 60)
         if (s.state == OpenState.UNKNOWN) "$a–$b?" else "$a–$b"
     }
 }

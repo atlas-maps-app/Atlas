@@ -68,7 +68,7 @@ fun GoScreen(args: Dest.Go, nav: Navigator) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val speak = rememberSpeechInput(onText = { nav.go(Dest.Search(it)) })
     val zone = services.clock.zone
-    val units = services.go.units
+    val units by services.go.unitsFlow.collectAsStateWithLifecycle()
 
     fun route(p: SavedPlace) = nav.go(Dest.Route(p.at.lat, p.at.lon, p.name.ifBlank { null }, mode = ui.mode.name))
 
@@ -160,7 +160,7 @@ fun GoScreen(args: Dest.Go, nav: Navigator) {
             Spacer(Modifier.height(8.dp))
             KeepMoving(ui, units, onPick = { kind ->
                 when (kind) {
-                    Moving.FUEL -> nav.go(Dest.Category("fuel"))
+                    Moving.FUEL -> nav.go(Dest.Pump(ui.here.lat, ui.here.lon))
                     Moving.CHARGE -> nav.go(Dest.Charge(ui.here.lat, ui.here.lon))
                     Moving.PARK -> nav.go(Dest.Category("parking"))
                     Moving.BIKE_FIX, Moving.LOCKERS -> nav.go(Dest.Twowheel())
@@ -258,7 +258,7 @@ private fun SearchPill(onSearch: () -> Unit, onMic: () -> Unit, modifier: Modifi
 private fun SignFor(sign: GuideSign, mode: Mode, units: Units, zone: ZoneId, modifier: Modifier) {
     val plate = when {
         sign.leaveAt != null -> stringResource(R.string.go_plate_leave, GoFormat.clock(sign.leaveAt, zone))
-        sign.place.arriveBy != null -> stringResource(R.string.go_plate_by, sign.place.arriveBy.toString())
+        sign.place.arriveBy != null -> stringResource(R.string.go_plate_by, GoFormat.time(sign.place.arriveBy))
         sign.kind == GuideSign.Kind.HOME -> stringResource(R.string.go_plate_home)
         sign.kind == GuideSign.Kind.WORK -> stringResource(R.string.go_plate_work)
         else -> stringResource(R.string.go_plate_last)
@@ -329,8 +329,9 @@ private fun StepFreeChip(on: Boolean, onClick: () -> Unit) {
 @Composable
 private fun VehicleRow(mode: Mode, onClick: () -> Unit) {
     val services = LocalServices.current
+    val units by services.go.unitsFlow.collectAsStateWithLifecycle()
     val v by services.go.store.vehicle(mode).collectAsStateWithLifecycle(GoStore.defaultVehicle(mode))
-    val facts = VehicleFacts.short(mode, v, services.go.units)
+    val facts = VehicleFacts.short(mode, v, units)
     val label = stringResource(R.string.go_your_vehicle, stringResource(GoMode.of(mode).label))
     Row(
         Modifier

@@ -160,9 +160,9 @@ internal fun Chalkboard(count: EatArea.Count?, label: String, u: Float) {
     }
 }
 
-/** The neon "Late" sign on folded cardboard (176 × 170, the sign 148 × 112 turned 3°). */
+/** The neon "Late" sign on folded cardboard (176 × 170, the sign 148 × 112 turned 3°); [loading] while hours may still arrive. */
 @Composable
-internal fun NeonLate(count: EatArea.Count?, until: String?, label: String, u: Float) {
+internal fun NeonLate(count: EatArea.Count?, until: String?, label: String, u: Float, loading: Boolean = false) {
     val shape = RoundedCornerShape((3 * u).dp)
     Box(
         Modifier
@@ -190,7 +190,8 @@ internal fun NeonLate(count: EatArea.Count?, until: String?, label: String, u: F
             NeonText(label, (38 * u), Color(0xFFFFD6F2), listOf(4f to Color(0xFFFF4FD8), 12f to Color(0xFFFF4FD8), 24f to Color(0xFFC2189B)), u)
             val line = when {
                 count == null -> "…"
-                !count.open -> "?"
+                // Without mapped hours nobody can say who is open late; while a fuller answer may still come, say so.
+                !count.open -> if (loading) "…" else "?"
                 until != null -> "${count.value} · $until"
                 else -> count.value.toString()
             }

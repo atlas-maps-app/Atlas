@@ -11,6 +11,12 @@
     <string name="eat_map">Kaart</string>
     <string name="eat_pad">Bestelblok</string>
     <string name="eat_ask">Vraag het de ober</string>
+    <string name="eat_time_at">Tijd %1$s</string>
+    <string name="eat_party_of">Gezelschap van %1$d</string>
+    <string name="eat_pad_count">Bestelblok, %1$d genoteerd</string>
+    <string name="eat_walk_desc">Lopen, %1$d minuten</string>
+    <string name="eat_trend_desc">Verloop van de reviews</string>
+    <string name="eat_add_line">Regel toevoegen</string>
     <string name="eat_earlier">Eerder</string>
     <string name="eat_later">Later</string>
     <string name="eat_now">Nu</string>
