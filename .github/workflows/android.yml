@@ -9,6 +9,21 @@ on:
   pull_request:
     paths: ['app/android/**', '.github/workflows/**']
   workflow_dispatch:
+    # A run by hand (gh workflow run android.yml --ref <branch> -f tests=false -f screens="home filters"): the device loop
+    # for the engine's speed and memory, without the half hour of unit tests.
+    inputs:
+      tests:
+        description: Run the unit tests
+        type: boolean
+        default: true
+      screens:
+        description: The screens to open on the emulator, space-separated (empty = every screen)
+        type: string
+        default: ''
+      wait:
+        description: Seconds to wait for the home's map and the filter probes
+        type: number
+        default: 180
 
 concurrency:
   group: android-${{ github.ref }}
@@ -31,7 +46,12 @@ jobs:
       - name: Android SDK 37
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" > /dev/null
       - name: Test and build
-        run: ./gradlew test testDebugUnitTest assembleDebug --continue --stacktrace
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.tests }}" = "false" ]; then
+            ./gradlew assembleDebug --stacktrace
+          else
+            ./gradlew test testDebugUnitTest assembleDebug --continue --stacktrace
+          fi
       - name: Keep the APK
         if: always()
         uses: actions/upload-artifact@v7
@@ -54,9 +74,11 @@ jobs:
 
   emulator:
     # The real thing: the APK on an Android emulator, opened on each screen, with screenshots and frame timings.
+    # It runs whenever the APK was built, even when a unit test failed: the device's word is worth having either way.
     needs: build
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -76,7 +98,7 @@ jobs:
           profile: pixel_7
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash app/android/ci/smoke.sh apk shots
+          script: ATLAS_SCREENS="${{ inputs.screens }}" ATLAS_MAP_WAIT="${{ inputs.wait || 180 }}" bash app/android/ci/smoke.sh apk shots
       - name: Keep the screenshots
         if: always()
         uses: actions/upload-artifact@v7

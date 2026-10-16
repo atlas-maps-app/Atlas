@@ -1,5 +1,6 @@
 package app.atlas.render.py
 
+import app.atlas.num.ExactMath
 import java.math.BigDecimal
 import java.math.RoundingMode
 
@@ -399,7 +400,7 @@ object PyMath {
             var x = vec[i]
             x *= scale
             val prHi = x * x
-            val prLo = Math.fma(x, x, -prHi)
+            val prLo = ExactMath.productError(x, x, prHi)
             val smHi = csum + prHi
             val smLo = (csum - smHi) + prHi
             csum = smHi
@@ -408,7 +409,7 @@ object PyMath {
         }
         var h = Math.sqrt(csum - 1.0 + (frac1 + frac2))
         val prHi = -h * h
-        val prLo = Math.fma(-h, h, -prHi)
+        val prLo = ExactMath.productError(-h, h, prHi)
         val smHi = csum + prHi
         val smLo = (csum - smHi) + prHi
         csum = smHi

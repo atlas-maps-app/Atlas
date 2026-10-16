@@ -1,5 +1,6 @@
 package app.atlas.mapview.svg
 
+import app.atlas.num.ExactMath
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -295,8 +296,8 @@ class SvgFilterRaster(private val filter: SvgFilter) {
                 val mp = m.at(x, y)
                 val cx = channel(mp, fe.xChannel, shiftX)
                 val cy = channel(mp, fe.yChannel, shiftY)
-                val srcX = x + Math.fma(scaleForColorX, cx.toFloat(), offsetX).toInt()
-                val srcY = y + Math.fma(scaleForColorY, cy.toFloat(), offsetY).toInt()
+                val srcX = x + ExactMath.fma(scaleForColorX, cx.toFloat(), offsetX).toInt()
+                val srcY = y + ExactMath.fma(scaleForColorY, cy.toFloat(), offsetY).toInt()
                 px[i++] = if (region.contains(srcX, srcY)) inp.at(srcX, srcY) else 0
             }
             return Buf(rect, px, true, inp.linear)
@@ -350,10 +351,10 @@ class SvgFilterRaster(private val filter: SvgFilter) {
 
         /** One row of the matrix as WebKit's float code computes it, stored like `Uint8ClampedArray`. */
         private fun row(k: Int, r: Float, g: Float, b: Float, a: Float): Int {
-            var t = Math.fma(m[k], r, m[k + 1] * g)
-            t = Math.fma(m[k + 2], b, t)
-            t = Math.fma(m[k + 3], a, t)
-            t = Math.fma(m[k + 4], 255f, t)
+            var t = ExactMath.fma(m[k], r, m[k + 1] * g)
+            t = ExactMath.fma(m[k + 2], b, t)
+            t = ExactMath.fma(m[k + 3], a, t)
+            t = ExactMath.fma(m[k + 4], 255f, t)
             return Bytes.clamped(t.toDouble())
         }
 

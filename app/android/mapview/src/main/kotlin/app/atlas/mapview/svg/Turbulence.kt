@@ -1,5 +1,6 @@
 package app.atlas.mapview.svg
 
+import app.atlas.num.ExactMath
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -221,14 +222,14 @@ class Turbulence(seed: Float) {
         val g = gradientF
         val base = channel * B
         var q = (base + latticeSelector[i + by0]) * 2
-        var u = Math.fma(fx, g[q], fy * g[q + 1])
+        var u = ExactMath.fma(fx, g[q], fy * g[q + 1])
         q = (base + latticeSelector[j + by0]) * 2
-        var v = Math.fma(fx - 1, g[q], fy * g[q + 1])
+        var v = ExactMath.fma(fx - 1, g[q], fy * g[q + 1])
         val a = lerp(u, v, sx)
         q = (base + latticeSelector[i + by1]) * 2
-        u = Math.fma(fx, g[q], (fy - 1) * g[q + 1])
+        u = ExactMath.fma(fx, g[q], (fy - 1) * g[q + 1])
         q = (base + latticeSelector[j + by1]) * 2
-        v = Math.fma(fx - 1, g[q], (fy - 1) * g[q + 1])
+        v = ExactMath.fma(fx - 1, g[q], (fy - 1) * g[q + 1])
         val b = lerp(u, v, sx)
         return lerp(a, b, sy)
     }
@@ -277,14 +278,14 @@ class Turbulence(seed: Float) {
                 if (need and (1 shl c) == 0) continue
                 val base = c * B
                 var q = (base + b00) * 2
-                var u = Math.fma(fx, g[q], fy * g[q + 1])
+                var u = ExactMath.fma(fx, g[q], fy * g[q + 1])
                 q = (base + b10) * 2
-                var v = Math.fma(fx1, g[q], fy * g[q + 1])
+                var v = ExactMath.fma(fx1, g[q], fy * g[q + 1])
                 val a = lerp(u, v, sx)
                 q = (base + b01) * 2
-                u = Math.fma(fx, g[q], fy1 * g[q + 1])
+                u = ExactMath.fma(fx, g[q], fy1 * g[q + 1])
                 q = (base + b11) * 2
-                v = Math.fma(fx1, g[q], fy1 * g[q + 1])
+                v = ExactMath.fma(fx1, g[q], fy1 * g[q + 1])
                 val b = lerp(u, v, sx)
                 val n = lerp(a, b, sy)
                 sums[c] += if (fractal) n / ratio else abs(n) / ratio
@@ -336,13 +337,13 @@ class Turbulence(seed: Float) {
         private const val RAND_Q = 127773L
         private const val RAND_R = 2836L
 
-        private fun smooth(t: Float) = t * t * Math.fma(-2f, t, 3f)
+        private fun smooth(t: Float) = t * t * ExactMath.fma(-2f, t, 3f)
 
         /** libc++'s `std::lerp(a, b, t)` for floats, with its products fused as clang emits them. */
         fun lerp(a: Float, b: Float, t: Float): Float {
-            if ((a <= 0f && b >= 0f) || (a >= 0f && b <= 0f)) return Math.fma(t, b, (1 - t) * a)
+            if ((a <= 0f && b >= 0f) || (a >= 0f && b <= 0f)) return ExactMath.fma(t, b, (1 - t) * a)
             if (t == 1f) return b
-            val x = Math.fma(t, b - a, a)
+            val x = ExactMath.fma(t, b - a, a)
             return if ((t > 1f) == (b > a)) (if (b < x) x else b) else (if (x < b) x else b)
         }
 
