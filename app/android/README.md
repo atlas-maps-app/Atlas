@@ -19,8 +19,8 @@ Checked against the official release pages and Maven metadata on 13 October 2026
 |---|---|
 | `core` | Geometry and the shared model: LatLon, Mercator and tiles, polylines and snapping, Earcut, packed R-tree, shapes and route corridors, Plus Codes, UTM/MGRS, the coordinate parser, sun and moon, quantities in four unit systems; Place, Route, Step, Fix |
 | `tiles` | Vector tiles: our own MVT decoder, PMTiles, MBTiles, OpenFreeMap online with a cache, overzoom, offline regions, the packs catalog |
-| `engine` | Atlas's own map engine, the port of `render/`: camera, tile cover, ground and buildings as triangle meshes, the traditions' roofs, light and shadows, trees, labels; frames of triangle batches |
-| `mapview` | The engine on Android's Canvas (`drawVertices`): tile pipeline, gestures, markers, routes, location puck |
+| `render` | Atlas's map engine: `render/*.py` ported 1:1 to Kotlin (byte-identical SVG), the `.atlas` region packs, and the live glue (`render.live`: the map camera in the engine's terms, tolerance bands, the live moment from the forecast, the packs library) |
+| `mapview` | The engine on Android's Canvas: its SVG parsed and drawn exactly (`svg`), exact frames off the main thread warped under gestures, gestures, markers, routes, location puck |
 | `places` | OSM knowledge: id-tagging-schema presets in 19 languages, NSI brands with logos, Maki/Temaki/Lucide symbols, facts, opening hours, categories, tag filters |
 | `providers` | Online sources: Overpass, Mangrove, ratings and trends, chargers, EV models, Open-Meteo, Wikidata, Photon, Nominatim, OSM notes |
 | `search` | The offline place store (FTS5 + R*Tree), the query language with natural language, A near B, the Overpass compiler, region import |
@@ -38,7 +38,7 @@ Checked against the official release pages and Maven metadata on 13 October 2026
 adb install -r app/build/outputs/apk/debug/app-debug.apk && adb shell am start -n app.atlas/.MainActivity
 ```
 
-- **Tests run on real data.** Most modules test against `testdata/omt` (real OpenFreeMap tiles around the Westerkerk) and the repo's `data/ams/raw.json`.
+- **Tests run on real data.** Most modules test against `testdata/omt` (real OpenFreeMap tiles around the Westerkerk) and the repo's `data/ams/raw.json`; the map against the app's bundled region pack (`app/src/main/assets/packs/amsterdam.atlas`).
 - **Screenshots.** Robolectric's native graphics draws real Canvas and Compose pixels on the JVM. The map and screen tests leave PNGs under each module's `build/outputs/roborazzi`.
 - **Robolectric runs SDK 34.** SDK 35 and later need JDK 21, which this Mac lacks.
 - **Online tests are opt-in.** Tests that need the internet run only with `-Datlas.online=true`.

@@ -6,14 +6,9 @@ import androidx.lifecycle.viewModelScope
 import app.atlas.Services
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
-import app.atlas.engine.Extras
-import app.atlas.geo.TileId
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.HomeView
-import app.atlas.model.OsmId
-import app.atlas.model.OsmType
 import app.atlas.model.Place
-import app.atlas.search.PlaceStore
 import app.atlas.mapview.Follow
 import app.atlas.mapview.MapLayer
 import app.atlas.mapview.MapState
@@ -85,6 +80,8 @@ class HomeViewModel(
         when {
             focus != null -> CameraPosition(focus, focusZoom ?: 17.0, 0.0, DEFAULT_PITCH)
             saved != null -> CameraPosition(saved.target, saved.zoom, saved.bearing, saved.pitch)
+            // CI's demo opens on the bundled Westerkerk, which the engine draws at once without the network
+            services.ciDemo -> HomeView.westerkerk
             else -> FirstLook.around(services.location.last.value?.location)
         },
     ).apply { time = clock() }
@@ -180,7 +177,7 @@ class HomeViewModel(
         // watching updates) so that, indoors with no fix, it does not keep the GPS on after the map has gone.
         viewModelScope.launch {
             val fix = services.location.last.filterNotNull().first()
-            if (cameraUnset) {
+            if (cameraUnset && !services.ciDemo) {
                 cameraUnset = false
                 val look = FirstLook.around(fix.location)
                 if (look != map.camera) map.animateTo(look)
@@ -188,30 +185,6 @@ class HomeViewModel(
         }
         // The light and shadows follow the app's clock (a test's fixed one too), a minute at a time.
         viewModelScope.launch { minutes.collect { map.time = it } }
-    }
-
-    /**
-     * The real trees of [tile] from the downloaded regions' place stores, for the map's crowns; null where no store
-     * covers it or the tile is too coarse for trees to show.
-     */
-    suspend fun treesFor(tile: TileId): Extras? {
-        if (tile.z < TREE_ZOOM) return null
-        val box = tile.bbox
-        val stores = services.placeStores.stores.filterIsInstance<PlaceStore>()
-        if (stores.isEmpty()) return null
-        val trees = ArrayList<Place>()
-        for (store in stores) {
-            if (store.bounds?.intersects(box) == false) continue
-            for (t in store.trees(box)) {
-                val tags = HashMap<String, String>(4)
-                tags["natural"] = "tree"
-                t.leafType?.let { tags["leaf_type"] = it }
-                t.genus?.let { tags["genus"] = it }
-                t.height?.let { tags["height"] = it.toString() }
-                trees += Place(OsmId(OsmType.NODE, t.id), t.location, tags)
-            }
-        }
-        return if (trees.isEmpty()) null else Extras(trees)
     }
 
     fun onCameraMove(camera: CameraPosition, byUser: Boolean) {
@@ -310,7 +283,6 @@ class HomeViewModel(
 
     companion object {
         const val DEFAULT_PITCH = 50.0
-        private const val TREE_ZOOM = 14
         private const val HIGHLIGHT_MOVE_M = 150.0
         const val MAX_RESULTS = 60
         private const val WEATHER_MOVE_M = 5_000.0

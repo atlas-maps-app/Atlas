@@ -41,7 +41,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import app.atlas.R
 import app.atlas.mapview.AtlasMap
 import app.atlas.mapview.HomeView
-import app.atlas.mapview.Looks
 import app.atlas.mapview.MapStyle
 import app.atlas.mapview.Theme
 import app.atlas.geo.LatLon
@@ -167,7 +166,6 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
             },
             onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
             onCameraMove = vm::onCameraMove,
-            extras = vm::treesFor,
         )
 
         // The board's wash over the top 170 dp, so the pills read over the far, busy part of the view.
@@ -274,12 +272,15 @@ private fun scrim(paper: Color) = Brush.verticalGradient(listOf(paper.copy(alpha
 /** The night map's paper, under the wash when the map has turned to night. */
 private val NIGHT_PAPER = Color(0xFF101114)
 
-/** True when the map draws its night look for [style] at [time] over [at], as the map view decides it. */
+/** True when the map draws its night look for [style] at [time] over [at]: the engine's rule, the sun 2° under the horizon. */
 internal fun mapIsNight(style: MapStyle, time: Instant, at: LatLon): Boolean = when (style.theme) {
     Theme.NIGHT -> true
-    Theme.AUTO -> Sun.position(time, at.lat, at.lon).altitudeDeg < Looks.NIGHT_BELOW
+    Theme.AUTO -> Sun.position(time, at.lat, at.lon).altitudeDeg < NIGHT_BELOW
     else -> false
 }
+
+/** amsterdam.py's weather_theme: night once the sun is more than 2° under the horizon. */
+private const val NIGHT_BELOW = -2.0
 
 /** The colour of a category as a Compose colour: the board's own for the home's eight, else the category's. */
 internal fun categoryColour(id: String): Color =

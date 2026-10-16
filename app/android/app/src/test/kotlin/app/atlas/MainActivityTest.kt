@@ -24,9 +24,9 @@ class MainActivityTest {
         val controller = Robolectric.buildActivity(MainActivity::class.java, intent).create()
         val activity = controller.get()
         val file = File(activity.filesDir, MainActivity.CI_SCREENS_FILE)
-        assertEquals(CiScreens.list(), file.readText())
+        assertEquals(MainActivity.screenList(), file.readText())
         assertTrue(activity.isFinishing)
-        for (name in file.readText().split(' ')) assertTrue(name, CiScreens.stackFor(name) != null)
+        for (name in file.readText().split(' ')) if (name != MainActivity.SCREEN_FILTERS) assertTrue(name, CiScreens.stackFor(name) != null)
     }
 
     @Test
@@ -55,7 +55,7 @@ class MainActivityTest {
         val activity = controller.get()
         val file = File(activity.filesDir, MainActivity.CI_SCREENS_FILE).apply { delete() }
         controller.newIntent(Intent(Intent.ACTION_MAIN).putExtra(MainActivity.EXTRA_SCREEN, MainActivity.SCREEN_LIST))
-        assertEquals(CiScreens.list(), file.readText())
+        assertEquals(MainActivity.screenList(), file.readText())
         assertTrue(!activity.isFinishing)
     }
 

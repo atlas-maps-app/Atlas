@@ -3,20 +3,22 @@ package app.atlas.mapview
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.unit.dp
 import app.atlas.geo.LatLon
-import app.atlas.geo.Mercator
-import kotlin.math.PI
-import kotlin.math.ln
-import kotlin.math.tan
+import app.atlas.render.live.LiveCamera
+import app.atlas.render.live.RegionFrame
 
 /**
  * The Main board's view of the canal ring, the map home's first look: the Westermarkt low in the middle, the Jordaan
- * and the three canals ahead, Centraal and the IJ across the top. It is the Python engine's `grachten home` camera
- * (target 177 m west and 521 m north of 52.3720 N 4.8910 E, yaw 52°, 44° below the horizon, 2300 m from the target,
- * a 36° vertical field of view, the principal point 440 dp down a 412 × 915 dp screen) in the map view's terms.
+ * and the three canals ahead, Centraal and the IJ across the top. It is the engine's `grachten home` camera (target
+ * 177 m west and 521 m north of the canal ring's origin, 52.3720 N 4.8910 E; yaw 52°, 44° below the horizon, 2300 m
+ * from the target, a 36° vertical field of view, the principal point 440 dp down a 412 × 915 dp screen) in the map
+ * view's terms: on such a screen with [padding], the map renders the board's SVG byte for byte.
  */
 object HomeView {
-    /** The board's target: the Prinsengracht by the Westermarkt. */
-    val TARGET = LatLon(52.37671, 4.88840)
+    /** The canal ring's ground frame (data/regions/places.py: grachten's origin). */
+    private val GRACHTEN = RegionFrame.region(LatLon(52.372, 4.891))
+
+    /** The board's target: the Prinsengracht by the Westermarkt, the view's (-177, -521) in the canal ring's frame. */
+    val TARGET = LatLon(GRACHTEN.lat(-177.0, -521.0), GRACHTEN.lon(-177.0, -521.0))
 
     const val BEARING = 52.0
 
@@ -39,23 +41,21 @@ object HomeView {
     val camera = CameraPosition(TARGET, ZOOM, BEARING, PITCH)
 
     /**
-     * The board's map: the real daylight (or night), labels, 3D buildings, shadows and trees, and no points of interest
-     * from the tiles; the home's own markers stand for places.
+     * The Westerkerk's living map (amsterdam.py's main camera: target 10 m west and 30 m north of 52.3746 N 4.8840 E,
+     * yaw 52°, 38° below the horizon, 430 m away), the view the app's bundled region draws at once.
      */
+    val westerkerk: CameraPosition by lazy {
+        val f = RegionFrame.living()
+        val t = LatLon(f.lat(-10.0, -30.0), f.lon(-10.0, -30.0))
+        CameraPosition(t, zoomForDistance(430.0, HEIGHT_DP, t.lat), 52.0, 52.0)
+    }
+
+    /** The board's map: the live moment, and the home's own markers on it. */
     val style = MapStyle(layers = setOf(MapLayer.LABELS, MapLayer.BUILDINGS_3D, MapLayer.SHADOWS, MapLayer.TREES))
 
     /** Content padding that puts the principal point at [PRINCIPAL_Y] of a view [heightDp] tall (35 dp at the bottom on the board). */
     fun padding(heightDp: Float = HEIGHT_DP): PaddingValues = PaddingValues(bottom = ((1f - 2f * PRINCIPAL_Y) * heightDp).dp)
 
-    /**
-     * The zoom whose camera stands [distanceM] from its target on a view [heightDp] tall at the map view's 36° field of
-     * view: the camera stands back so that, looking straight down, a dp at the target spans the zoom's Mercator metres.
-     */
-    fun zoomForDistance(distanceM: Double, heightDp: Float, lat: Double): Double {
-        val focalDp = heightDp / 2.0 / tan(FOV_DEG * PI / 360)
-        val metresPerDp = distanceM / focalDp
-        return ln(Mercator.metresPerUnit(lat) / (256.0 * metresPerDp)) / ln(2.0)
-    }
-
-    private const val FOV_DEG = 36.0
+    /** The zoom whose camera stands [distanceM] from its target on a view [heightDp] tall, at the engine's 36° field of view. */
+    fun zoomForDistance(distanceM: Double, heightDp: Float, lat: Double): Double = LiveCamera.zoom(lat, distanceM, heightDp.toDouble())
 }

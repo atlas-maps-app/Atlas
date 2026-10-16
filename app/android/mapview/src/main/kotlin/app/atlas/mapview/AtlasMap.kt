@@ -21,26 +21,29 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import app.atlas.engine.Extras
+import androidx.compose.ui.semantics.stateDescription
 import app.atlas.geo.LatLon
-import app.atlas.geo.TileId
 import app.atlas.geo.UnitSystem
 import app.atlas.tiles.TileSource
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
 /**
- * The map: Atlas's own engine drawn on a Canvas, with gestures (pan, pinch, rotate, two-finger tilt, double tap,
- * long press, two-finger measure) and the overlays on top.
+ * The map: Atlas's engine, the 1:1 port of the renderer the screens were drawn with (`app.atlas.render`), from the
+ * region packs [MapEngine] is wired to, with gestures (pan, pinch, rotate, two-finger tilt, double tap, long press,
+ * two-finger measure) and the overlays on top.
  *
- * Scenes are built and frames are made off the main thread; the main thread only draws them (one `drawVertices` per
- * batch) and the overlays, projected with the frame's own camera. Nothing is redrawn unless the camera, the overlays,
- * an animation or newly built scenes change something. [extras] gives real trees for a tile from the app's place
- * store; [debug] shows frame time, tiles and vertices over the map; [units] are the measuring tape's.
+ * Exact frames are rendered, parsed and rasterised off the main thread; while the next one is made, the last is drawn
+ * warped to the camera at once, then the new one fades in. The overlays are projected with the engine's camera in the
+ * region's own frame. The light is the live moment (the clock and the forecast) unless [style] fixes one.
+ * [tiles] is no longer drawn (the engine reads region packs); it stays for the screens that still pass it.
+ * [debug] shows the frame's timings over the map; [units] are the measuring tape's.
  */
 @Composable
 fun AtlasMap(
@@ -54,10 +57,10 @@ fun AtlasMap(
     onLongPress: (LatLon) -> Unit = {},
     onCameraMove: (camera: CameraPosition, byUser: Boolean) -> Unit = { _, _ -> },
     debug: Boolean = false,
-    extras: (suspend (TileId) -> Extras?)? = null,
     units: UnitSystem = UnitSystem.forLocale(Locale.getDefault()),
 ) {
     val density = LocalDensity.current
+    val assets = LocalContext.current.assets
     val direction = LocalLayoutDirection.current
     val scope = rememberCoroutineScope()
     val controller = remember(state) { MapController(state, scope) }
@@ -84,8 +87,7 @@ fun AtlasMap(
         controller.onTap = { tap(it) }
         controller.onLongPress = { longPress(it) }
         controller.onCameraMove = { c, u -> cameraMove(c, u) }
-        controller.setSource(tiles)
-        controller.setExtras(extras)
+        if (controller.fonts == null) controller.fonts = MapEngine.fonts(assets)
     }
     DisposableEffect(controller) {
         controller.attach()
@@ -98,16 +100,32 @@ fun AtlasMap(
             snapshotFlow {
                 Inputs(
                     state.camera, state.time, controller.style, controller.size, controller.insets, controller.lookAhead,
-                    controller.overlays.location,
+                    controller.overlays.location, controller.frame,
                 )
             }.collect { controller.update() }
+        }
+        // The live moment moves on with the clock.
+        launch {
+            while (true) {
+                delay(60_000)
+                if (state.time == null) controller.update()
+            }
         }
         snapshotFlow { state.follow to controller.overlays.location }.collect { controller.followUpdate() }
     }
     Box(
         modifier
             .clipToBounds()
-            .semantics { contentDescription = "Map" }
+            .semantics {
+                contentDescription = "Map"
+                // what the picture is: tests and accessibility services can tell a drawn map from one still on its way
+                stateDescription = when (val st = state.status) {
+                    is MapStatus.Ready -> "ready"
+                    is MapStatus.Loading -> "loading"
+                    is MapStatus.Downloading -> "downloading"
+                    is MapStatus.NoData -> "no map data: ${st.reason}"
+                }
+            }
             .onSizeChanged { controller.size = it.width to it.height }
             .pointerInput(controller) { pointers(controller) }
             .drawBehind {
@@ -128,6 +146,8 @@ private data class Inputs(
     val lookAhead: Float,
     /** A new fix: the moment moved on, so the light may have. */
     val location: UserLocation?,
+    /** The region drawn changed: its frame is the gestures' and the overlays'. */
+    val frame: app.atlas.render.live.RegionFrame?,
 )
 
 /** Feeds the pointer events of the view to the controller's gesture machine, with its timeouts. */

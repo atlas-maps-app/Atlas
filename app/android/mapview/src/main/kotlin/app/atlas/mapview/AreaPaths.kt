@@ -2,7 +2,6 @@ package app.atlas.mapview
 
 import android.graphics.Path
 import app.atlas.geo.LatLon
-import app.atlas.geo.Mercator
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -21,8 +20,8 @@ class AreaPaths {
      * the centre, in pixels, is returned; 0 when nothing of it shows. */
     fun circle(g: GroundView, centre: LatLon, radiusM: Double, path: Path): Float {
         path.rewind()
-        // Metres at the centre's own latitude, in the camera's frame (whose scale is the target's).
-        val r = radiusM / Mercator.metresPerUnit(centre.lat) * g.metresPerUnit
+        // Metres at the centre's own latitude, in the camera's frame.
+        val r = g.metresToLocal(radiusM, centre.lat)
         val ox = g.localX(centre)
         val oy = g.localY(centre)
         for (k in 0 until SEGMENTS) {

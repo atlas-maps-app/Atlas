@@ -37,7 +37,9 @@ android {
 }
 
 dependencies {
-    api(project(":engine"))
+    // The engine: the 1:1 port of render/ (and its region packs); the screens still hand the map a tile source.
+    api(project(":render"))
+    api(project(":tiles"))
     api(project(":places"))
     implementation(libs.androidx.core)
     implementation(platform(libs.androidx.compose.bom))

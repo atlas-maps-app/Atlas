@@ -16,8 +16,20 @@ FAIL=0
 for s in $SCREENS; do
   adb shell am force-stop app.atlas
   adb shell dumpsys gfxinfo app.atlas reset >/dev/null 2>&1
+  SEEN=$(adb logcat -d -s AtlasMap:I | grep -c -e "drawn in" -e "filter probe sblur")
   adb shell am start -W -n app.atlas/.MainActivity --es atlas.screen "$s" --ez atlas.ci true > "$OUT/$s.start.txt"
   sleep 12
+  # The home's map is the engine's exact frame of the bundled Westerkerk, and the filters screen runs the SVG filter
+  # probes through AGSL: wait (up to 3 minutes) until the frame is drawn or the last probe is done. The engine's lines
+  # (logcat tag AtlasMap: load, render, parse, raster and draw times) are kept per screen.
+  if [ "$s" = "home" ] || [ "$s" = "filters" ]; then
+    for i in $(seq 1 85); do
+      [ "$(adb logcat -d -s AtlasMap:I | grep -c -e "drawn in" -e "filter probe sblur")" -gt "$SEEN" ] && break
+      sleep 2
+    done
+    sleep 2
+  fi
+  adb logcat -d -s AtlasMap:I > "$OUT/$s.atlasmap.txt"
   adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1
   sleep 1
   adb exec-out screencap -p > "$OUT/$s.png"

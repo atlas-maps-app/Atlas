@@ -7,6 +7,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -14,15 +15,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.RememberObserver
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
-import app.atlas.engine.Extras
-import app.atlas.engine.Hit
 import app.atlas.geo.BBox
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
-import app.atlas.geo.TileId
 import app.atlas.geo.UnitSystem
-import app.atlas.model.Place
-import app.atlas.tiles.TileSource
+import app.atlas.mapview.svg.SvgCamera
+import app.atlas.mapview.svg.SvgFonts
+import app.atlas.render.live.LiveCamera
+import app.atlas.render.live.LiveView
+import app.atlas.render.live.Moment
+import app.atlas.render.live.RegionFrame
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -36,26 +38,28 @@ import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 /** Content padding in pixels: left, top, right, bottom. */
 data class Insets(val left: Float = 0f, val top: Float = 0f, val right: Float = 0f, val bottom: Float = 0f)
 
 /**
- * The map view's engine room, one per [AtlasMap]: tiles to scenes ([ScenePipeline]), scenes to frames on a thread of
- * its own ([FrameLoop]), frames and overlays to the canvas, gestures to camera moves, and the camera's animations
+ * The map view's engine room, one per [AtlasMap]: the camera to the 1:1 engine's exact frames on a thread of their own
+ * ([EngineFrames]), the newest frame warped to the camera at once and cross-faded into the next, the overlays on top
+ * (projected with the engine's camera, in the region's own frame), gestures to camera moves, and the camera's animations
  * (fly-to, zoom steps, flings, the snap to north, following the phone).
  *
- * Everything here runs on the main thread except what the pipeline and the frame loop do on theirs.
+ * Everything here runs on the main thread except what the frame thread does.
  */
 internal class MapController(val state: MapState, private val scope: CoroutineScope) : GestureListener, RememberObserver {
     private val main = Handler(Looper.getMainLooper())
-    private val typefaces = LabelTypefaces()
-    val cache = SceneCache(SceneCache.defaultBudget())
-    val pipeline = ScenePipeline(cache, onChange = { loop.invalidate() })
-    val loop: FrameLoop = FrameLoop(AndroidTextMeasurer(typefaces), pipeline, onFrame = { main.post(published) })
-    private val drawer = FrameDrawer(typefaces)
 
-    /** Bumped on the main thread whenever a new frame is ready; the view's draw reads it. */
+    /** The engine's typefaces, set by the view from its assets. */
+    var fonts: SvgFonts? = null
+    val frames: EngineFrames = EngineFrames(fonts = { fonts ?: SvgFonts.system() }, onChange = { main.post(published) })
+    private val engineChanged: () -> Unit = { frames.invalidate() }
+
+    /** Bumped on the main thread whenever there is something new to draw; the view's draw reads it. */
     val frameTick = mutableIntStateOf(0)
     var style by mutableStateOf(MapStyle())
     var overlays by mutableStateOf(MapOverlays())
@@ -63,6 +67,10 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     var tape by mutableStateOf<Tape?>(null)
     var size by mutableStateOf(0 to 0)
     var insets by mutableStateOf(Insets())
+
+    /** The ground frame of the region drawn: gestures and overlays use the engine's own. */
+    var frame by mutableStateOf<RegionFrame?>(null)
+        private set
 
     /** 0..1: how far the navigation view's look ahead has moved the target down the screen. */
     var lookAhead by mutableFloatStateOf(0f)
@@ -83,59 +91,69 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     var onCameraMove: (CameraPosition, Boolean) -> Unit = { _, _ -> }
 
     val gestures = GestureMachine(GestureConfig.forDensity(1f), this)
+
     /** The overlays' painter, made at the first draw (and again when the density changes). */
     var painter: OverlayPainter? = null
         private set
     private var animation: Job? = null
     private var lookAheadJob: Job? = null
     private var tapeJob: Job? = null
+    private var fadeJob: Job? = null
     private var touching = false
     private var lastPanX = 0f
     private var lastPanY = 0f
     private var lastWritten: CameraPosition? = null
     private var lastWrittenByUser = false
     private var lastReported: CameraPosition? = null
-    private var lastLook: ResolvedLook? = null
     private var lastFix: LatLon? = null
     private var course: Double? = null
-    private var lastSubmitted: CameraPosition? = null
-    private var lastViewport: Viewport? = null
-    private var lastSubmittedLook: ResolvedLook? = null
-    private var lastSubmittedStyle: MapStyle? = null
-    private var lastLookCell = 0L
-    private var lastLookStyle: MapStyle? = null
+    private var lastRequest: EngineFrames.Request? = null
+
     @Volatile
     private var warming = false
     private val warmNames = HashSet<String>()
     private val warmLogos = HashSet<String>()
 
+    // The frame shown and the one it fades from.
+    private var shown: EngineFrame? = null
+    private var previous: EngineFrame? = null
+    private var fade = 1f
+    private var lastDrawnNumber = 0L
+
     // Debug figures.
     private var drawMillis = 0.0
-    private var frameMillis = 0.0
-    private var fps = 0.0
-    private var lastFrameNumber = 0L
-    private var lastFrameAt = 0L
     private val debugText = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE; color = Color.WHITE }
     private val debugPanel = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xB0141619.toInt() }
     private val debugRect = RectF()
+    private val statusText = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textAlign = Paint.Align.CENTER }
+    private val statusPanel = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xD0141619.toInt() }
 
     private val published = Runnable {
         frameTick.intValue++
-        val f = loop.latest
-        val loading = f != null && f.loading > 0
+        val f = frames.latest
+        if (frame != frames.frame) frame = frames.frame
+        if (f != null && f !== shown) {
+            previous = shown
+            shown = f
+            startFade()
+        }
+        val status = frames.status
+        if (state.status != status) state.status = status
+        val loading = status !is MapStatus.Ready && status !is MapStatus.NoData || frames.busy
         if (state.loading != loading) state.loading = loading
     }
 
-    /** The view as the camera sees it: its size, density and the principal point the padding and look ahead move. */
+    /** The view as the camera sees it: its size, density, the principal point the padding and look ahead move, the region's frame. */
     fun viewport(): Viewport {
         val (w, h) = size
         val i = insets
         val inner = max(0f, h - i.top - i.bottom)
-        return Viewport(w, h, density, offsetY = ((i.top - i.bottom) / 2 + lookAhead * LOOK_AHEAD * inner).toDouble())
+        return Viewport(w, h, density, offsetY = ((i.top - i.bottom) / 2 + lookAhead * LOOK_AHEAD * inner).toDouble(), frame = frame)
     }
 
     fun attach() {
         state.controller = this
+        MapEngine.register(engineChanged)
         // Callers may be on any dispatcher; the camera's animations start on the main thread.
         state.animator = { target, ms -> await(withContext(Dispatchers.Main.immediate) { flyTo(target, ms, byUser = false) }) }
         state.fitter = { box, pad -> await(withContext(Dispatchers.Main.immediate) { fit(box, pad) }) }
@@ -168,61 +186,62 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
 
     private var closed = false
 
-    /** Stops the frame thread and every load; idempotent. */
+    /** Stops the frame thread; idempotent. */
     private fun close() {
         if (closed) return
         closed = true
-        loop.close()
-        pipeline.close()
+        MapEngine.unregister(engineChanged)
+        frames.close()
     }
 
     override fun onRemembered() {}
 
     override fun onForgotten() = close()
 
-    /** Composition was dropped before it applied: the threads started for it must not linger. */
+    /** Composition was dropped before it applied: the thread started for it must not linger. */
     override fun onAbandoned() = close()
 
-    fun setSource(tiles: TileSource?) {
-        if (pipeline.setSource(tiles)) loop.invalidate()
-    }
-
-    fun setExtras(extras: (suspend (TileId) -> Extras?)?) {
-        pipeline.extras = extras
-    }
-
-    /** True when nothing is loading, being made, animating or waiting to be drawn: the picture is final. */
+    /** True when nothing is loading, being made, fading, animating or waiting to be drawn: the picture is final. */
     val settled: Boolean
         get() {
-            val f = loop.latest ?: return false
-            return pipeline.pending == 0 && !loop.busy && !f.fading && f.loading == 0 && animation?.isActive != true &&
-                !warming && f.number == lastFrameNumber
+            if (frames.busy || fade < 1f || animation?.isActive == true || warming) return false
+            val status = frames.status
+            if (status is MapStatus.Loading || status is MapStatus.Downloading) return false
+            val f = frames.latest
+            return f == null || f.number == lastDrawnNumber
         }
 
+    /** The engine's view of [cam] in [v]: the screen in dp (whole, as the engine's frame), the principal point in those dp. */
+    fun liveView(cam: CameraPosition, v: Viewport): LiveView {
+        val wDp = (v.width / v.density).roundToInt().coerceAtLeast(1)
+        val hDp = (v.height / v.density).roundToInt().coerceAtLeast(1)
+        val principalY = v.height / 2.0 + v.offsetY
+        return LiveView(cam.target.lat, cam.target.lon, cam.zoom, cam.bearing, cam.pitch, wDp, hDp, principalY * hDp / v.height)
+    }
+
+    /** The moment to draw for [style] at [time]: the live one (the clock and the forecast) unless the style fixes one. */
+    private fun momentOf(s: MapStyle, time: Instant?, at: LatLon): Moment = when (s.theme) {
+        Theme.DAY -> Moment.Named("sunny")
+        Theme.NIGHT -> Moment.Named("night")
+        Theme.GRAY -> Moment.Named("grey")
+        Theme.AUTO, Theme.CHART -> Moment.Live(quantise(time ?: Instant.now()), MapEngine.weather?.hours(at))
+    }
+
     /**
-     * Asks for a frame of the current camera, look and style; reports the camera when it moved. With no fixed
-     * [MapState.time] the light follows the clock, checked whenever the camera or the phone's position changes.
+     * Asks for a frame of the current camera, style and moment; reports the camera when it moved. With no fixed
+     * [MapState.time] the light follows the clock, in steps of [MOMENT_STEP_S].
      */
     fun update() {
         val v = viewport()
         if (v.isEmpty) return
         val cam = state.camera
         val s = style
-        val time = state.time ?: Instant.now()
-        // The look changes with the light's grid cell or the style, not with every move of the camera.
-        val cell = Looks.cell(time, cam.target)
-        val look = lastLook?.takeIf { cell == lastLookCell && s == lastLookStyle } ?: Looks.resolve(s, time, cam.target).also {
-            lastLook = it
-            lastLookCell = cell
-            lastLookStyle = s
-        }
-        // A frame only when something it is made of changed (a new fix alone checks the light, nothing more).
-        if (cam != lastSubmitted || v != lastViewport || look !== lastSubmittedLook || s != lastSubmittedStyle) {
-            lastSubmitted = cam
-            lastViewport = v
-            lastSubmittedLook = look
-            lastSubmittedStyle = s
-            loop.submit(RenderInput(CameraOps.camera(cam, v), look, Looks.frameStyle(s, cam.zoom)))
+        val view = liveView(cam, v)
+        val moment = momentOf(s, state.time, cam.target)
+        val req = EngineFrames.Request(view, moment, density, MapEngine.options, moment == Moment.Named("night"))
+        if (req != lastRequest) {
+            lastRequest = req
+            frames.submit(req)
         }
         val bounds = CameraOps.visibleBounds(cam, v)
         if (bounds != state.visibleBounds) state.visibleBounds = bounds
@@ -231,6 +250,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             lastReported = cam
             onCameraMove(cam, byUser)
         }
+        frameTick.intValue++
     }
 
     /**
@@ -254,55 +274,104 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         }
     }
 
+    private fun startFade() {
+        fadeJob?.cancel()
+        if (previous == null) {
+            fade = 1f
+            return
+        }
+        fade = 0f
+        fadeJob = scope.launch {
+            var start = -1L
+            while (true) {
+                val now = withFrameNanos { it }
+                if (start < 0) start = now
+                fade = ((now - start) / 1e6 / FADE_MS).coerceIn(0.0, 1.0).toFloat()
+                frameTick.intValue++
+                if (fade >= 1f) break
+            }
+            previous = null
+        }
+    }
+
     // -------------------------------------------------------------------------------------------------------------
     // Drawing.
 
     private fun painter(): OverlayPainter = painter ?: OverlayPainter(density).also { painter = it }
 
-    /** Draws the newest frame and the overlays over it. */
-    fun draw(canvas: Canvas) {
-        val t0 = System.nanoTime()
-        val f = loop.latest
-        val night = f?.input?.look?.night ?: false
-        canvas.drawColor(f?.input?.look?.look?.theme?.earth ?: if (night) 0xFF1B2230.toInt() else DAY_EARTH)
-        if (f == null) return
-        drawer.drawGeometry(canvas, f.frame)
-        val g = GroundView(f.camera)
-        val p = painter()
-        val ov = overlays
-        p.layoutMarkers(g, ov.markers)
-        p.drawGround(canvas, g, ov)
-        drawer.drawLabels(canvas, f.frame)
-        drawer.drawPois(canvas, f.frame, Looks.POI_SIZE_DP * density, 1.5f * density, p.markerBoxes, p.markerCount, if (night) NIGHT_RING else Color.WHITE)
-        p.drawMarkers(canvas)
-        ov.location?.let { p.drawLocation(canvas, g, it) }
-        tape?.let { p.drawTape(canvas, g, it, units, Locale.getDefault()) }
-        val t1 = System.nanoTime()
-        drawMillis = drawMillis * 0.8 + (t1 - t0) / 1e6 * 0.2
-        frameMillis = frameMillis * 0.8 + f.renderNanos / 1e6 * 0.2
-        if (f.number != lastFrameNumber) {
-            if (lastFrameAt > 0) {
-                val dt = (t1 - lastFrameAt) / 1e9
-                if (dt in 0.001..1.0) fps = fps * 0.8 + (1 / dt) * 0.2
-            }
-            lastFrameAt = t1
-            lastFrameNumber = f.number
-        }
-        if (debug) drawDebug(canvas, f, p)
-        loop.drawn(f.number)
+    /** The engine camera of the current view, in the frame of [f] and at its ground level, in CSS pixels. */
+    private fun cameraFor(f: EngineFrame, v: Viewport): SvgCamera {
+        val lv = liveView(state.camera, v)
+        val r = f.frame
+        return SvgCamera(
+            r.x(lv.lat, lv.lon), f.camera.targetY, r.z(lv.lat, lv.lon), LiveCamera.bearing(lv.bearing), LiveCamera.enginePitch(lv.pitch),
+            lv.distance, LiveCamera.FOV, lv.widthDp.toDouble(), lv.heightDp.toDouble(), cx = lv.widthDp / 2.0, cy = lv.cyDp,
+        )
     }
 
-    private fun drawDebug(canvas: Canvas, f: DrawnFrame, p: OverlayPainter) {
-        val s = f.frame.stats
-        val c = f.camera
+    /** Draws the newest frame (warped to the camera, cross-faded from the one before) and the overlays over it. */
+    fun draw(canvas: Canvas) {
+        val t0 = System.nanoTime()
+        val v = viewport()
+        val f = shown
+        canvas.drawColor(if (f?.moment == "night") NIGHT_EARTH else DAY_EARTH)
+        if (f != null && !v.isEmpty) {
+            val lv = liveView(state.camera, v)
+            canvas.save()
+            canvas.scale(v.width / lv.widthDp.toFloat(), v.height / lv.heightDp.toFloat())
+            val p = previous
+            if (p != null && fade < 1f && p.frame == f.frame) p.draw(canvas, cameraFor(p, v))
+            f.draw(canvas, cameraFor(f, v), if (p != null && p.frame == f.frame) fade else 1f)
+            canvas.restore()
+        }
+        if (!v.isEmpty) {
+            val g = GroundView(CameraOps.camera(state.camera, v))
+            val pt = painter()
+            val ov = overlays
+            pt.layoutMarkers(g, ov.markers)
+            pt.drawGround(canvas, g, ov)
+            pt.drawMarkers(canvas)
+            ov.location?.let { pt.drawLocation(canvas, g, it) }
+            tape?.let { pt.drawTape(canvas, g, it, units, Locale.getDefault()) }
+            drawStatus(canvas)
+            if (debug) drawDebug(canvas, f, pt)
+        }
+        val t1 = System.nanoTime()
+        drawMillis = drawMillis * 0.8 + (t1 - t0) / 1e6 * 0.2
+        if (f != null && f.number != lastDrawnNumber) {
+            lastDrawnNumber = f.number
+            Log.i(EngineFrames.TAG, "frame ${f.number} drawn in %.2f ms (a warp of it: the same or less)".format(Locale.ROOT, (t1 - t0) / 1e6))
+        }
+    }
+
+    /** The map's honest state, when it is not simply the picture: loading, downloading with its size, no data here. */
+    private fun drawStatus(canvas: Canvas) {
+        val text = when (val s = frames.status) {
+            is MapStatus.Ready -> return
+            is MapStatus.Loading -> if (shown == null) "Loading the map…" else return
+            is MapStatus.Downloading -> if (s.building) "Fetching this area from OpenStreetMap…"
+            else if (s.bytes > 0) "Downloading map data · %.1f of %.1f MB".format(Locale.getDefault(), s.done / 1e6, s.bytes / 1e6)
+            else "Downloading map data…"
+            is MapStatus.NoData -> if (shown == null) "No map data here" else return
+        }
+        statusText.textSize = 13f * density
+        val w = statusText.measureText(text) + 24f * density
+        val h = 30f * density
+        val cx = size.first / 2f
+        val top = insets.top + 12f * density
+        debugRect.set(cx - w / 2, top, cx + w / 2, top + h)
+        canvas.drawRoundRect(debugRect, h / 2, h / 2, statusPanel)
+        canvas.drawText(text, cx, top + h / 2 + statusText.textSize * 0.35f, statusText)
+    }
+
+    private fun drawDebug(canvas: Canvas, f: EngineFrame?, p: OverlayPainter) {
+        val c = state.camera
+        val t = f?.timings
         val lines = arrayOf(
-            "frame %.1f ms make · %.1f ms draw · %.0f fps%s".format(
-                Locale.ROOT, frameMillis, drawMillis, fps, if (loop.failures > 0) " · ${loop.failures} failed" else "",
-            ),
-            "tiles %d wanted · %d drawn · %d loading".format(Locale.ROOT, f.wanted, f.drawnTiles, f.loading),
-            "cache %d scenes · %.0f MB · %d built".format(Locale.ROOT, cache.size, cache.bytes / 1048576.0, pipeline.built),
-            "vertices %,d · triangles %,d · batches %d".format(Locale.ROOT, s.vertices + p.routeVertices, s.triangles, s.batches),
-            "labels %d · pois %d · markers %d/%d".format(Locale.ROOT, s.labels, s.pois, p.markerCount, overlays.markers.size),
+            if (t == null) "no frame yet" else "frame %d: load %d · render %d · parse %d · raster %d ms".format(Locale.ROOT, f.number, t.load, t.render, t.parse, t.raster),
+            "draw %.1f ms%s".format(Locale.ROOT, drawMillis, if (frames.failures > 0) " · ${frames.failures} failed" else ""),
+            if (f == null) "-" else "%s · %s · %s · band %.2f m".format(Locale.ROOT, f.region, f.view ?: "between views", f.moment, f.tolerance),
+            "markers %d/%d · vertices %d".format(Locale.ROOT, p.markerCount, overlays.markers.size, p.routeVertices),
             "z %.2f · bearing %.0f° · pitch %.0f°".format(Locale.ROOT, c.zoom, c.bearing, c.pitch),
         )
         debugText.textSize = 11f * density
@@ -311,7 +380,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         var w = 0f
         for (l in lines) w = max(w, debugText.measureText(l))
         val left = insets.left + pad
-        val top = insets.top + pad
+        val top = insets.top + pad + 40f * density
         debugRect.set(left, top, left + w + 2 * pad, top + lines.size * lh + 2 * pad - 3f * density)
         canvas.drawRoundRect(debugRect, 8f * density, 8f * density, debugPanel)
         for ((i, l) in lines.withIndex()) canvas.drawText(l, left + pad, top + pad + (i + 1) * lh - 4f * density, debugText)
@@ -544,11 +613,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             onTap(MapHit.OnMarker(it, it.at))
             return
         }
-        val f = loop.latest
-        val cam = f?.camera ?: CameraOps.camera(state.camera, v)
-        val at = cam.unproject(x.toDouble(), y.toDouble()) ?: return
-        val hit = f?.let { loop.hitTest(it.frame, x, y) }
-        onTap(hit?.let { featureHit(it, at) } ?: MapHit.Empty(at))
+        val at = CameraOps.groundAt(state.camera, v, x, y) ?: return
+        onTap(MapHit.Empty(at))
     }
 
     override fun onLongPress(x: Float, y: Float) {
@@ -586,28 +652,19 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         if (rotated && animation?.isActive != true) snapNorth()
     }
 
-    private fun featureHit(hit: Hit, at: LatLon): MapHit = when (hit) {
-        is Hit.Poi -> {
-            val st = PoiStyles.of(hit.poi)
-            val tags = LinkedHashMap<String, String>()
-            st.key?.let { tags[it] = st.value }
-            hit.poi.name?.let { tags["name"] = it }
-            MapHit.OnFeature(Place(hit.poi.osmId, hit.location, tags), hit.location)
-        }
-        is Hit.Building -> {
-            val info = hit.info
-            val tags = LinkedHashMap<String, String>()
-            tags["building"] = info.kind.ifEmpty { "yes" }
-            if (info.height > 0f) tags["height"] = "%.1f".format(Locale.ROOT, info.height)
-            if (info.minHeight > 0f) tags["min_height"] = "%.1f".format(Locale.ROOT, info.minHeight)
-            tags["roof:shape"] = info.roof.tag
-            MapHit.OnFeature(Place(info.osmId, hit.location, tags, BBox.of(hit.footprint)), at)
-        }
-    }
-
     companion object {
-        const val DAY_EARTH = 0xFFECE9E3.toInt()
-        const val NIGHT_RING = 0xFF2A3140.toInt()
+        const val DAY_EARTH = 0xFFE4E0D8.toInt()
+        const val NIGHT_EARTH = 0xFF0B0F1A.toInt()
+
+        /** How long a new exact frame takes to fade in over the last, ms. */
+        const val FADE_MS = 180.0
+
+        /** The live moment moves on in steps of this many seconds (each step is a new frame). */
+        const val MOMENT_STEP_S = 300L
+
+        /** [t] rounded down to a [MOMENT_STEP_S] step. */
+        fun quantise(t: Instant): Instant = Instant.ofEpochSecond(t.epochSecond - Math.floorMod(t.epochSecond, MOMENT_STEP_S))
+
         const val FIT_MS = 650
         const val ZOOM_STEP_MS = 280L
         const val SNAP_MS = 220L

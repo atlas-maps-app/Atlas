@@ -17,8 +17,8 @@ import kotlin.math.sqrt
  * of pixels on screen are merged. Buffers are kept between frames.
  */
 class RouteRibbons {
-    /** A route's points in unit Mercator with their distance along it, computed once per route. */
-    private class Prepared(val ux: DoubleArray, val uy: DoubleArray, val s: DoubleArray, val n: Int) {
+    /** A route's points (latitude, longitude) with their distance along it in true metres, computed once per route. */
+    private class Prepared(val lat: DoubleArray, val lon: DoubleArray, val s: DoubleArray, val n: Int) {
         val length: Double get() = if (n == 0) 0.0 else s[n - 1]
     }
 
@@ -67,16 +67,13 @@ class RouteRibbons {
         this.minHalfPx = minHalfPx
         if (collectChip) chipN = 0
         val far = ground.camera.far
-        val tx = ground.targetX
-        val ty = ground.targetY
-        val k = ground.metresPerUnit
         n = 0
-        var prevX = (p.ux[0] - tx) * k
-        var prevY = (p.uy[0] - ty) * k
+        var prevX = ground.localX(p.lat[0], p.lon[0])
+        var prevY = ground.localY(p.lat[0], p.lon[0])
         var prevD = ground.depth(prevX, prevY)
         for (i in 1 until p.n) {
-            val x = (p.ux[i] - tx) * k
-            val y = (p.uy[i] - ty) * k
+            val x = ground.localX(p.lat[i], p.lon[i])
+            val y = ground.localY(p.lat[i], p.lon[i])
             val d = ground.depth(x, y)
             // The part of the segment between the near clip and the haze.
             var t0 = 0.0
@@ -140,21 +137,21 @@ class RouteRibbons {
         prepared[route]?.let { return it }
         val pts = route.points
         val m = pts.size
-        val ux = DoubleArray(m)
-        val uy = DoubleArray(m)
+        val lat = DoubleArray(m)
+        val lon = DoubleArray(m)
         val s = DoubleArray(m)
         for (i in 0 until m) {
-            ux[i] = Mercator.x(pts[i].lon)
-            uy[i] = Mercator.y(pts[i].lat)
+            lat[i] = pts[i].lat
+            lon[i] = pts[i].lon
             if (i > 0) {
                 // True metres: unit Mercator scaled at the segment's own latitude.
-                val dx = ux[i] - ux[i - 1]
-                val dy = uy[i] - uy[i - 1]
+                val dx = Mercator.x(lon[i]) - Mercator.x(lon[i - 1])
+                val dy = Mercator.y(lat[i]) - Mercator.y(lat[i - 1])
                 val k = Mercator.metresPerUnit((pts[i].lat + pts[i - 1].lat) / 2)
                 s[i] = s[i - 1] + sqrt(dx * dx + dy * dy) * k
             }
         }
-        return Prepared(ux, uy, s, m).also { prepared[route] = it }
+        return Prepared(lat, lon, s, m).also { prepared[route] = it }
     }
 
     /** Adds a point to the run, merging it into the last when they are under 1.5 px apart (unless [force]). */

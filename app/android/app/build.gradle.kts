@@ -75,11 +75,11 @@ android {
 }
 
 dependencies {
-    // Every Atlas module: the shared model, tiles, the engine and the map view, OSM knowledge, providers, search,
-    // routing and the guide.
+    // Every Atlas module: the shared model, tiles, the engine (render) and the map view, OSM knowledge, providers,
+    // search, routing and the guide.
     implementation(project(":core"))
     implementation(project(":tiles"))
-    implementation(project(":engine"))
+    implementation(project(":render"))
     implementation(project(":places"))
     implementation(project(":providers"))
     implementation(project(":search"))

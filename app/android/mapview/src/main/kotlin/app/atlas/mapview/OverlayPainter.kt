@@ -8,7 +8,6 @@ import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
-import app.atlas.engine.Colours
 import app.atlas.geo.Geo
 import app.atlas.geo.Quantity
 import app.atlas.geo.UnitSystem

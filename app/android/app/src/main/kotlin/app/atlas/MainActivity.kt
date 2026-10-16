@@ -34,7 +34,15 @@ class MainActivity : ComponentActivity() {
             finish()
             return
         }
-        if (intent.getBooleanExtra(EXTRA_CI, false)) services.useDemoLocation(Services.WESTERKERK)
+        if (intent.getBooleanExtra(EXTRA_CI, false)) {
+            services.ciDemo = true
+            services.useDemoLocation(Services.WESTERKERK)
+        }
+        // CI's debug screen: the SVG filter probes through the GPU's AGSL path (the map view's FilterProbesScreen)
+        if (intent.getStringExtra(EXTRA_SCREEN) == SCREEN_FILTERS) {
+            setContent { app.atlas.mapview.FilterProbesScreen() }
+            return
+        }
 
         val camera = services.startCamera
         splash.setKeepOnScreenCondition { !camera.isCompleted }
@@ -55,11 +63,18 @@ class MainActivity : ComponentActivity() {
             writeScreenList()
             return
         }
-        if (intent.getBooleanExtra(EXTRA_CI, false)) services.useDemoLocation(Services.WESTERKERK)
+        if (intent.getBooleanExtra(EXTRA_CI, false)) {
+            services.ciDemo = true
+            services.useDemoLocation(Services.WESTERKERK)
+        }
+        if (intent.getStringExtra(EXTRA_SCREEN) == SCREEN_FILTERS) {
+            setContent { app.atlas.mapview.FilterProbesScreen() }
+            return
+        }
         stackFor(intent)?.let { navigator?.reset(it) }
     }
 
-    private fun writeScreenList() = File(filesDir, CI_SCREENS_FILE).writeText(CiScreens.list())
+    private fun writeScreenList() = File(filesDir, CI_SCREENS_FILE).writeText(screenList())
 
     companion object {
         /** CI: the screen to open, by its name in [CiScreens] (or a route); "list" writes the names and finishes. */
@@ -68,7 +83,13 @@ class MainActivity : ComponentActivity() {
         /** CI: true puts the app at the demo location (the Westerkerk) instead of the phone's GPS. */
         const val EXTRA_CI = "atlas.ci"
         const val SCREEN_LIST = "list"
+
+        /** CI: the map view's SVG filter probes through AGSL, the GPU path, against the CPU's. */
+        const val SCREEN_FILTERS = "filters"
         const val CI_SCREENS_FILE = "ci_screens.txt"
+
+        /** Every screen CI opens: the app's ([CiScreens]) and the map view's filter probes. */
+        fun screenList(): String = CiScreens.list() + " " + SCREEN_FILTERS
 
         /** The back stack an intent asks for, or null to keep what is there. */
         fun stackFor(intent: Intent): List<Dest>? {

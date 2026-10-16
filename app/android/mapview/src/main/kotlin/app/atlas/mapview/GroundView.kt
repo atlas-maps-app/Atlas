@@ -1,14 +1,13 @@
 package app.atlas.mapview
 
-import app.atlas.engine.Camera
 import app.atlas.geo.LatLon
-import app.atlas.geo.Mercator
 
 /**
- * The ground as one frame's camera sees it, for overlays: local metres around the target (x east, y south), depth
- * along the view, and the projection to screen pixels, without allocating.
+ * The ground as one frame's camera sees it, for overlays: local metres around the target (x east, y south) in the
+ * camera's frame (the engine's own for a region), depth along the view, and the projection to screen pixels, without
+ * allocating.
  */
-class GroundView(val camera: Camera) {
+class GroundView(val camera: MapCamera) {
     private val ex = camera.eyeX
     private val ey = camera.eyeY
     private val ez = camera.eyeZ
@@ -23,9 +22,6 @@ class GroundView(val camera: Camera) {
     val focal = camera.focal
     private val px = camera.principalX
     private val py = camera.principalY
-    val targetX = camera.targetX
-    val targetY = camera.targetY
-    val metresPerUnit = camera.metresPerUnit
 
     /** The nearest depth overlays are drawn at: a little beyond the near plane. */
     val nearClip = camera.near * 1.5
@@ -33,12 +29,15 @@ class GroundView(val camera: Camera) {
     val width = camera.width.toFloat()
     val height = camera.height.toFloat()
 
-    /** Local metres of a unit-Mercator point. */
-    fun localX(unitX: Double) = (unitX - targetX) * metresPerUnit
-    fun localY(unitY: Double) = (unitY - targetY) * metresPerUnit
+    /** Local metres of a point on Earth. */
+    fun localX(lat: Double, lon: Double) = camera.localX(lat, lon)
+    fun localY(lat: Double, lon: Double) = camera.localY(lat, lon)
 
-    fun localX(p: LatLon) = localX(Mercator.x(p.lon))
-    fun localY(p: LatLon) = localY(Mercator.y(p.lat))
+    fun localX(p: LatLon) = camera.localX(p.lat, p.lon)
+    fun localY(p: LatLon) = camera.localY(p.lat, p.lon)
+
+    /** [metres] of true ground at [lat], in local metres. */
+    fun metresToLocal(metres: Double, lat: Double): Double = metres * camera.scaleAt(lat)
 
     /** Depth of a ground point (local metres) along the view. */
     fun depth(x: Double, y: Double): Double = (x - ex) * fx + (y - ey) * fy - ez * fz
@@ -48,7 +47,7 @@ class GroundView(val camera: Camera) {
 
     fun screenY(x: Double, y: Double, d: Double): Float = (py - focal * ((x - ex) * ux + (y - ey) * uy - ez * uz) / d).toFloat()
 
-    /** Pixels per metre of ground at depth [d]. */
+    /** Pixels per local metre of ground at depth [d]. */
     fun pixelsPerMetre(d: Double): Double = focal / d
 
     /** Screen pixel of [p] on the ground into [out] (x, y), or false when it is behind the near plane. */

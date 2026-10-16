@@ -1,9 +1,9 @@
 package app.atlas.mapview
 
-import app.atlas.engine.Camera
 import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
 import app.atlas.geo.Mercator
+import app.atlas.render.live.RegionFrame
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.ln
@@ -13,9 +13,10 @@ import kotlin.math.sin
 
 /**
  * The view a camera is drawn into: [width] × [height] physical pixels at [density] pixels per dp, the principal point
- * moved [offsetY] pixels down from the centre (content padding, or the navigation view's look ahead).
+ * moved [offsetY] pixels down from the centre (content padding, or the navigation view's look ahead), over the ground
+ * [frame] of the region the engine draws (null: Web Mercator).
  */
-data class Viewport(val width: Int, val height: Int, val density: Float, val offsetY: Double = 0.0) {
+data class Viewport(val width: Int, val height: Int, val density: Float, val offsetY: Double = 0.0, val frame: RegionFrame? = null) {
     val isEmpty: Boolean get() = width <= 0 || height <= 0
 }
 
@@ -27,12 +28,15 @@ object CameraOps {
     const val MIN_ZOOM = 1.0
     const val MAX_ZOOM = 20.5
 
-    /** The steepest pitch gestures reach (the engine draws up to [Camera.MAX_PITCH]). */
+    /** The steepest pitch gestures reach (the camera allows up to [MapCamera.MAX_PITCH]). */
     const val MAX_PITCH = 70.0
 
-    /** The engine camera for [p] in [v]. */
-    fun camera(p: CameraPosition, v: Viewport): Camera =
-        Camera(p.target, p.zoom, p.bearing, p.pitch, max(1, v.width), max(1, v.height), v.density, offsetY = v.offsetY)
+    /** The camera for [p] in [v]: the engine's, in the region's own frame when [v] has one. */
+    fun camera(p: CameraPosition, v: Viewport): MapCamera =
+        MapCamera(
+            p.target, p.zoom, p.bearing, p.pitch, max(1, v.width), max(1, v.height), v.density, v.offsetY,
+            v.frame?.let { GroundFrame.Region(it) } ?: GroundFrame.Mercator(p.target.lat),
+        )
 
     /** The steepest pitch allowed at [zoom]: flat at world scale, the full tilt from zoom 8. */
     fun maxPitch(zoom: Double): Double = when {
@@ -65,7 +69,7 @@ object CameraOps {
         val c = camera(p, v)
         val out = DoubleArray(3)
         if (!c.unprojectLocal(x.toDouble(), y.toDouble(), out) || out[2] > c.far) return null
-        return LatLon(Mercator.lat(c.unitY(out[1])), Mercator.lon(c.unitX(out[0])))
+        return c.latLonOf(out[0], out[1])
     }
 
     /**
@@ -74,19 +78,16 @@ object CameraOps {
      */
     fun place(p: CameraPosition, v: Viewport, anchor: LatLon, x: Float, y: Float): CameraPosition {
         var cur = p
-        val ax = Mercator.x(anchor.lon)
-        val ay = Mercator.y(anchor.lat)
-        // A rigid shift of the camera over the ground moves every pixel's ground point by the same amount; the frame's
-        // scale changes slightly with latitude, so two rounds settle it.
+        // A rigid shift of the camera over the ground moves every pixel's ground point by the same amount; the scale of
+        // a Mercator frame changes slightly with latitude, so two rounds settle it.
         repeat(2) {
             val c = camera(cur, v)
             val out = DoubleArray(3)
             if (!c.unprojectLocal(x.toDouble(), y.toDouble(), out)) return cur
-            val ux = c.unitX(out[0])
-            val uy = c.unitY(out[1])
-            val tx = Mercator.x(cur.target.lon) + (ax - ux)
-            val ty = (Mercator.y(cur.target.lat) + (ay - uy)).coerceIn(0.0, 1.0)
-            cur = cur.copy(target = LatLon(Mercator.lat(ty), Mercator.lon(tx)))
+            val ax = c.localX(anchor.lat, anchor.lon)
+            val ay = c.localY(anchor.lat, anchor.lon)
+            val t = c.latLonOf(ax - out[0], ay - out[1])
+            cur = cur.copy(target = LatLon(t.lat.coerceIn(-Mercator.MAX_LAT, Mercator.MAX_LAT), t.lon))
         }
         return clamp(cur)
     }

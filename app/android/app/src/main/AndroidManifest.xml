@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Knowing whether the phone is online, so screens say "offline" instead of waiting on the network. -->
@@ -8,6 +9,8 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- The mine package: an offline region downloads in a WorkManager worker with a progress notification. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- The guidance notification as a Live Update (Android 16+); not a runtime permission. -->
@@ -33,12 +36,14 @@
         </intent>
     </queries>
 
+    <!-- largeHeap: the map engine keeps a region's scene in memory (about 40 MB for the Westerkerk, 280 MB for the canal ring). -->
     <application
         android:name=".AtlasApp"
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:allowBackup="false"
+        android:largeHeap="true"
         android:supportsRtl="true"
         android:enableOnBackInvokedCallback="true"
         android:theme="@style/Theme.Atlas.Starting">
@@ -89,6 +94,12 @@
             android:name=".ui.go.NavigationService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <!-- The mine package: WorkManager's foreground service, typed for the region downloads (long, resumable, with progress). -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
 
     </application>
 

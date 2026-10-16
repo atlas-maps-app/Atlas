@@ -38,7 +38,6 @@ import app.atlas.services.DemoLocationSource
 import app.atlas.services.FixedConnectivity
 import app.atlas.services.KeyStore
 import app.atlas.services.LayeredPlaceFinder
-import app.atlas.services.LibraryRegionManager
 import app.atlas.services.AndroidLocationSource
 import app.atlas.services.NoVoice
 import app.atlas.services.PlaceCache
@@ -51,7 +50,6 @@ import app.atlas.services.SystemConnectivity
 import app.atlas.services.Voice
 import app.atlas.tiles.MbTiles
 import app.atlas.tiles.OpenFreeMapSource
-import app.atlas.tiles.RegionDownloader
 import app.atlas.tiles.RegionLibrary
 import app.atlas.tiles.TileCache
 import app.atlas.tiles.TileSource
@@ -91,6 +89,8 @@ data class ServicesConfig(
     val placeStores: List<PlaceSource>? = null,
     /** The time and time zone screens show and reason with (tests: a fixed evening in Amsterdam). */
     val clock: Clock = Clock.systemDefaultZone(),
+    /** Wire the map engine to this app's region packs ([MapData]); null: yes, unless test [tiles] are given. */
+    val mapEngine: Boolean? = null,
 )
 
 /** The folders Atlas keeps its data in. */
@@ -327,9 +327,26 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
     /** Routes and guidance: the trip being guided, Ears only, and what the Go tab keeps (the go package). */
     val go: app.atlas.ui.go.GoHub by lazy { app.atlas.ui.go.GoHub(this) }
 
-    /** The offline regions; the mine package provides the full manager. */
-    val regions: RegionManager by lazy {
-        LibraryRegionManager(regionLibrary, { RegionDownloader(openFreeMap) }, scope, ::reloadRegions)
+    /** The mine package's long-lived part: offline regions, where you have been, the barometer's log, the voice settings. */
+    val mine: app.atlas.ui.mine.MineHub by lazy { app.atlas.ui.mine.MineHub(this) }
+
+    /** The local package's long-lived part: the space station's orbit and passes, the zoom ladder's pictures, the waste calendar. */
+    val local: app.atlas.ui.local.LocalHub by lazy { app.atlas.ui.local.LocalHub(this) }
+
+    /** The offline regions: map, places, routing and voice layers, downloaded in the background (the mine package). */
+    val regions: RegionManager by lazy { mine.offline }
+
+    // ---- The map's engine ----------------------------------------------------------------------------------------
+
+    /** The map's region packs and the live moment's forecast, wired to every map (the 1:1 engine draws from them). */
+    val mapData: app.atlas.services.MapData by lazy { app.atlas.services.MapData(this) }
+
+    /** CI's demo (`atlas.ci`): the home opens on the bundled Westerkerk, drawn at once without the network. */
+    @Volatile
+    var ciDemo: Boolean = false
+
+    init {
+        if (config.mapEngine ?: (config.tiles == null)) mapData.wire()
     }
 
     override fun close() {

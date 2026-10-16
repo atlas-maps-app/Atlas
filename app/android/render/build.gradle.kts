@@ -10,6 +10,8 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    // The live map's pack downloads, against a local server.
+    testImplementation(libs.okhttp.mockwebserver)
 }
 
 tasks.test {

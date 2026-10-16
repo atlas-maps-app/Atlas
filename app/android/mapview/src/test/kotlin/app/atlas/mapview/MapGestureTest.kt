@@ -34,7 +34,7 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
-/** Gestures, taps, animations and following through the real [AtlasMap], with injected touches. */
+/** Gestures, taps, animations and following through the real [AtlasMap], with injected touches (no region data: the camera alone). */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [34], qualifiers = "w412dp-h915dp-xhdpi")
@@ -211,7 +211,7 @@ class MapGestureTest {
     }
 
     @Test
-    fun tapsFindMarkersThenTheMapsOwnPlacesThenGround() {
+    fun tapsFindMarkersThenGround() {
         val camera = CameraPosition(Fixtures.westermarkt, 17.0)
         val state = stateAt(camera)
         val v = Viewport(824, 1830, 2f)
@@ -221,22 +221,12 @@ class MapGestureTest {
         compose.onRoot().performTouchInput { click(Offset(412f, 600f - 40f)) }
         pass()
         assertEquals(MapHit.OnMarker(pin, pin.at), hits.single())
-        // A symbol the engine placed.
-        val f = state.controller!!.loop.latest!!
-        val poi = f.frame.pois.firstOrNull { abs(it.y - 600f) > 150f && it.alpha >= 1f }
-        assertNotNull("the engine placed symbols at zoom 17", poi)
-        poi!!
-        compose.onRoot().performTouchInput { click(Offset(poi.x, poi.y)) }
-        pass()
-        val hit = hits.last()
-        assertTrue("$hit", hit is MapHit.OnFeature)
-        assertEquals(poi.poi.osmId, (hit as MapHit.OnFeature).place.id)
-        // Bare ground (or a building) somewhere else.
+        // Bare ground somewhere else (the engine's own places are not hit-tested yet).
         compose.onRoot().performTouchInput { click(Offset(100f, 1700f)) }
         pass()
         val last = hits.last()
-        assertTrue(last is MapHit.Empty || last is MapHit.OnFeature)
-        assertTrue(Geo.distance(last.at, state.screenToLatLon(100f, 1700f)!!) < 30.0)
+        assertTrue(last is MapHit.Empty)
+        assertTrue(Geo.distance(last.at, state.screenToLatLon(100f, 1700f)!!) < 0.5)
     }
 
     @Test

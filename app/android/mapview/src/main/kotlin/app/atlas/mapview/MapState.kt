@@ -36,11 +36,15 @@ class MapState(initial: CameraPosition) {
     var visibleBounds: BBox? by mutableStateOf(null)
         internal set
 
-    /** The moment the light and shadows are drawn for; null means now. */
+    /** The moment the light and shadows are drawn for (with the forecast for it); null means now. */
     var time: Instant? by mutableStateOf(null)
 
-    /** True while scenes for the view are still loading or building. */
+    /** True while the map's data or its next exact frame is on its way. */
     var loading: Boolean by mutableStateOf(false)
+        internal set
+
+    /** What the map can say about its picture: drawn, loading, downloading (with the size), or no data here. */
+    var status: MapStatus by mutableStateOf<MapStatus>(MapStatus.Loading(null))
         internal set
 
     internal var animator: (suspend (CameraPosition, Int) -> Unit)? = null
