@@ -31,6 +31,8 @@ android {
                 providers.systemProperty("atlas.svg.only").orNull?.let { only -> it.systemProperty("atlas.svg.only", only) }
                 providers.systemProperty("atlas.svg.file").orNull?.let { file -> it.systemProperty("atlas.svg.file", file) }
                 providers.systemProperty("atlas.svg.mode").orNull?.let { mode -> it.systemProperty("atlas.svg.mode", mode) }
+                // -Datlas.calibrate=true reruns the likeness calibration over every D8 case and rewrites likeness.json (G1)
+                providers.systemProperty("atlas.calibrate").orNull?.let { c -> it.systemProperty("atlas.calibrate", c) }
             }
         }
     }
