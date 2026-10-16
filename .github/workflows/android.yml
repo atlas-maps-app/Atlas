@@ -109,13 +109,17 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - uses: reactivecircus/android-emulator-runner@v2
+        env:
+          ATLAS_PYMATH_HASH: 77476b808456a6f0 # K3b: the host build's and the port's numerics hash; smoke.sh fails on any other
         with:
           api-level: 35
           arch: x86_64
           target: google_apis
           profile: pixel_7
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          # lavapipe: Mesa's Vulkan for the guest (the driver the host tests use) and the emulator's own software GLES. The
+          # deprecated swiftshader_indirect hung HWUI's first program compile on its host GL pipe on every debug-first run.
+          emulator-options: -no-window -gpu lavapipe -noaudio -no-boot-anim -camera-back none
           script: ATLAS_SCREENS="${{ inputs.screens }}" ATLAS_MAP_WAIT="${{ inputs.wait || 180 }}" ATLAS_BENCH="${{ github.event_name == 'workflow_dispatch' && inputs.bench == false && '0' || '1' }}" bash app/android/ci/smoke.sh apk shots apk-bench
       - name: Keep the screenshots
         if: always()
