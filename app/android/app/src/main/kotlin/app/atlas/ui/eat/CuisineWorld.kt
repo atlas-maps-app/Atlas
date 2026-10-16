@@ -36,6 +36,8 @@ data class CuisineWorld(
     val ticket: String,
     /** What a closed button says before its opening time ("準備中", "in preparation"). */
     val preparing: String,
+    /** The face of the native words (CSS family): the Ramen board's Shippori Mincho for Japanese. */
+    val face: String = "Shippori Mincho",
 ) {
     /** Every cuisine value of the world. */
     val cuisines: Set<String> = planks.flatMapTo(HashSet()) { it.cuisines }

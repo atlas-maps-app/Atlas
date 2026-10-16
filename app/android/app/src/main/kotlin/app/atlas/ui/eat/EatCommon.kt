@@ -89,7 +89,10 @@ internal fun opensText(s: OpenSay.Opens, lang: String): String =
 /**
  * A printed menu line: [start] (a name) as wide as it needs up to what is left, a dotted leader filling the gap
  * (dots of [dot] every [gap], [lift] above the bottom, as a CSS dotted border moved up), and [end] (counts, minutes)
- * flush right. The name gives way first, so the right-hand column always lines up.
+ * flush right, [pad] from the leader. The name gives way first, so the right-hand column always lines up.
+ *
+ * A board row lined up on its baseline gives its own geometry instead: the row's [height], and the tops of [start],
+ * [end] and the dots' band ([dotsTop]) within it.
  */
 @Composable
 internal fun LeaderLine(
@@ -99,24 +102,34 @@ internal fun LeaderLine(
     gap: Dp = 4.dp,
     dot: Dp = 1.2.dp,
     lift: Dp? = null,
+    pad: Dp = 8.dp,
+    height: Dp? = null,
+    startTop: Dp = 0.dp,
+    endTop: Dp = 0.dp,
+    dotsTop: Dp? = null,
     start: @Composable () -> Unit,
     end: @Composable () -> Unit,
 ) {
     androidx.compose.ui.layout.Layout(
-        contents = listOf(start, { Canvas(Modifier) { dots(colour, gap.toPx(), dot.toPx(), lift?.toPx()) } }, end),
+        contents = listOf(start, { Canvas(Modifier) { if (dotsTop != null) dotsAt(colour, gap.toPx(), dot.toPx(), dotsTop.toPx()) else dots(colour, gap.toPx(), dot.toPx(), lift?.toPx()) } }, end),
         modifier = modifier,
     ) { (s, l, e), c ->
-        val pad = 8.dp.roundToPx()
-        val endP = e.first().measure(c.copy(minWidth = 0))
-        val room = (c.maxWidth - endP.width - minLeader.roundToPx() - 2 * pad).coerceAtLeast(0)
-        val startP = s.first().measure(c.copy(minWidth = 0, maxWidth = room))
-        val leaderW = (c.maxWidth - endP.width - startP.width - 2 * pad).coerceAtLeast(0)
-        val h = maxOf(startP.height, endP.height)
+        val padPx = pad.roundToPx()
+        val endP = e.first().measure(c.copy(minWidth = 0, minHeight = 0))
+        val room = (c.maxWidth - endP.width - minLeader.roundToPx() - 2 * padPx).coerceAtLeast(0)
+        val startP = s.first().measure(c.copy(minWidth = 0, maxWidth = room, minHeight = 0))
+        val leaderW = (c.maxWidth - endP.width - startP.width - 2 * padPx).coerceAtLeast(0)
+        val h = height?.roundToPx() ?: maxOf(startP.height, endP.height)
         val leaderP = l.first().measure(androidx.compose.ui.unit.Constraints.fixed(leaderW, h))
         layout(c.maxWidth, h) {
-            startP.place(0, (h - startP.height) / 2)
-            leaderP.place(startP.width + pad, 0)
-            endP.place(c.maxWidth - endP.width, (h - endP.height) / 2)
+            if (height != null) {
+                startP.place(0, startTop.roundToPx())
+                endP.place(c.maxWidth - endP.width, endTop.roundToPx())
+            } else {
+                startP.place(0, (h - startP.height) / 2)
+                endP.place(c.maxWidth - endP.width, (h - endP.height) / 2)
+            }
+            leaderP.place(startP.width + padPx, 0)
         }
     }
 }
@@ -128,6 +141,16 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.dots(colour: Color,
     var x = r
     while (x < size.width) {
         drawCircle(colour, r, Offset(x, y))
+        x += step
+    }
+}
+
+/** Dots of [dot] every [step] in a band [top] px down, as a CSS dotted border of that width. */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.dotsAt(colour: Color, step: Float, dot: Float, top: Float) {
+    val r = dot / 2f
+    var x = r
+    while (x < size.width) {
+        drawCircle(colour, r, Offset(x, top + r))
         x += step
     }
 }

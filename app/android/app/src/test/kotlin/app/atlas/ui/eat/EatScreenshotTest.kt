@@ -96,10 +96,12 @@ class EatScreenshotTest {
     @Test
     fun order() {
         val services = EatFixtures.services()
+        // The Order board's own check: Japanese or Korean, not fast food, outside and vegan, step-free, dogs and quiet,
+        // up to $$ by card, a 10-minute walk.
         EatRepository.of(services).orders.set(
             OrderPad(
-                time = LocalTime.of(19, 30), party = 2, minutes = 120, cuisines = listOf("italian", "japanese"), not = listOf(OrderPad.FAST_FOOD),
-                outside = true, wishes = setOf(Wish.DOGS, Wish.QUIET), maxWalk = 10,
+                time = LocalTime.of(19, 30), party = 2, minutes = 120, cuisines = listOf("japanese", "korean"), not = listOf(OrderPad.FAST_FOOD),
+                outside = true, vegan = true, stepFree = true, wishes = setOf(Wish.DOGS, Wish.QUIET), maxPrice = 2, card = true, maxWalk = 10,
             ),
         )
         show(Dest.Eat("order"), services)

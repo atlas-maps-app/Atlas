@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
@@ -42,13 +41,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -57,14 +56,11 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
@@ -72,7 +68,8 @@ import app.atlas.nav.Dest
 import app.atlas.nav.Navigator
 import app.atlas.places.Cuisine
 import app.atlas.ui.kit.Atlas
-import app.atlas.ui.kit.SansFamily
+import app.atlas.ui.kit.CssBorder
+import app.atlas.ui.kit.CssShadow
 import app.atlas.ui.kit.Symbol
 import kotlinx.coroutines.launch
 
@@ -91,6 +88,17 @@ private val CREAM = Color(0xFFF3E9D8)
 private val GUTTER = 50.dp
 private val COUNT = 58.dp
 private val ROW = 40.dp
+
+/* The board's type: Caveat (500 to 700, so its 400 draws at 500) in ink, Geist and Geist Mono for the print. */
+private val HAND = cssText("Caveat", 27f, 600, colour = 0xFF1D3C8F, lineHeight = 40f)
+private val HAND_SOFT = cssText("Caveat", 25f, 500, colour = 0xFF4F66AE, lineHeight = 32f)
+private val HAND_26 = cssText("Caveat", 26f, 600, colour = 0xFF1D3C8F, lineHeight = 33f)
+private val FEATURE = cssText("Caveat", 26f, 600, colour = 0xFF1D3C8F, lineHeight = 30f)
+private val COUNT_HAND = cssText("Caveat", 22f, 500, colour = 0xFF6E6457, lineHeight = 27.5f, tnum = true)
+private val BADGE = cssText("Geist", 10f, 700, lineHeight = 13f, spacing = 1.2f)
+private val HEAD = cssText("Geist", 11f, 700, colour = 0xFFFBEFE0, lineHeight = 14f, spacing = 2.42f, tnum = true)
+private val SMALL_CAPS_LABEL = cssText("Geist", 10f, 700, colour = 0xFF8A7F6E, lineHeight = 13f, spacing = 2f)
+private val CHIP_TEXT = cssText("Geist", 13f, 600, lineHeight = 17f)
 
 /**
  * The order pad, as on the Order board: a red-headed guest check on dark wood. Each handwritten line is one clause of
@@ -121,54 +129,55 @@ fun OrderScreen(nav: Navigator) {
     val number = remember(ctx.at) { "Nº " + ctx.at.format(java.time.format.DateTimeFormatter.ofPattern("MMdd")) }
 
     Box(Modifier.fillMaxSize().background(WOOD).drawBehind { drawWood() }) {
-        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars)) {
-            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.fillMaxSize()) {
+            // The top row at 40 px, 16 px in, 8 apart: back, the QL export and clear (44 px, 12 % white).
+            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = boardTop(40.dp)), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val back = stringResource(R.string.kit_back)
-                Box(Modifier.size(44.dp).clip(CircleShape).background(Color(0x1FFFFFFF)).clickable { nav.back() }.semantics { contentDescription = back }, contentAlignment = Alignment.Center) {
-                    BoardIcon(EatGlyphs.backBold, CREAM, 20.dp)
+                Box(Modifier.size(44.dp).cssBox(bg = 0x1FFFFFFF, r = round(44f)).clip(CircleShape).clickable { nav.back() }.semantics { contentDescription = back }, contentAlignment = Alignment.Center) {
+                    Symbol("ui.back", tint = CREAM, size = 20.dp)
                 }
                 Spacer(Modifier.weight(1f))
                 Row(
-                    Modifier.height(44.dp).clip(CircleShape).background(Color(0x1FFFFFFF)).clickable { showQl = !showQl }.padding(horizontal = 12.dp)
+                    Modifier.height(44.dp).cssBox(bg = 0x1FFFFFFF, r = round(44f)).clip(CircleShape).clickable { showQl = !showQl }.padding(horizontal = 12.dp)
                         .semantics(mergeDescendants = true) { contentDescription = "Overpass QL" },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    BoardIcon(EatGlyphs.braces, CREAM, 16.dp)
-                    Text("QL", style = TextStyle(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium, fontSize = 12.sp, color = CREAM))
+                    Symbol("ui.code", tint = CREAM, size = 16.dp)
+                    CssLine("QL", cssText("Geist Mono", 12f, 500, colour = 0xFFF3E9D8, lineHeight = 15.5f))
                 }
                 val clear = stringResource(R.string.eat_order_clear)
                 Box(
-                    Modifier.size(44.dp).clip(CircleShape).background(Color(0x1FFFFFFF))
+                    Modifier.size(44.dp).cssBox(bg = 0x1FFFFFFF, r = round(44f)).clip(CircleShape)
                         .clickable { book.set(OrderPad(party = ctx.table.party)); served = false; editing = null; adding = true }
                         .semantics { contentDescription = clear },
                     contentAlignment = Alignment.Center,
-                ) { BoardIcon(EatGlyphs.trash, CREAM, 18.dp) }
+                ) { Symbol("ui.trash", tint = CREAM, size = 18.dp) }
             }
-            // The check itself: 376 wide on the board, turned -0.8°.
+            // The check itself: 376 wide from 98 px to 25 px off the foot, turned -0.8°.
             Column(
                 Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(start = 18.dp, end = 18.dp, top = 14.dp, bottom = 12.dp)
+                    .padding(start = 18.dp, end = 18.dp, top = 14.dp, bottom = 25.dp)
                     .windowInsetsPadding(WindowInsets.navigationBars)
                     .rotate(-0.8f)
-                    .boxShadow(RectangleShape, 1f, 20f, 40f, Color(0x73000000))
-                    .boxShadow(RectangleShape, 1f, 2f, 4f, Color(0x4D000000))
-                    .background(CHECK_PAPER),
+                    .cssBox(shadows = listOf(CssShadow(0f, 20f, 40f, 0f, 0x73000000), CssShadow(0f, 2f, 4f, 0f, 0x4C000000))),
             ) {
                 Row(
                     Modifier.fillMaxWidth().height(36.dp).background(RED).padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    val head = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 0.22.em, color = Color(0xFFFBEFE0))
                     Rivet()
-                    Text(stringResource(R.string.eat_guest_check).uppercase(), style = head)
+                    CssLine(stringResource(R.string.eat_guest_check).uppercase(), HEAD)
                     Spacer(Modifier.weight(1f))
-                    Text(number, style = head)
+                    CssLine(number, HEAD)
                     Rivet()
                 }
+                // The paper under the head: the lines, the perforation and the foot, with the margins ruled over all of
+                // them (the board's margins are positioned, so they cross the foot and its Serve button too).
+                Column(Modifier.weight(1f).fillMaxWidth().drawWithContent { drawContent(); drawMargins() }) {
                 BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                     val viewport = maxHeight
                     Column(
@@ -176,6 +185,7 @@ fun OrderScreen(nav: Navigator) {
                             .fillMaxWidth()
                             .verticalScroll(scroll)
                             .heightIn(min = viewport)
+                            .background(CHECK_PAPER)
                             .drawBehind { drawRules() }
                             .padding(top = 6.dp),
                     ) {
@@ -206,18 +216,16 @@ fun OrderScreen(nav: Navigator) {
                     served = true
                     scope.launch { scroll.animateScrollTo(scroll.maxValue) }
                 })
+                }
             }
         }
     }
 }
 
-/** A grey rivet of the check's red head (6 px). */
+/** A grey rivet of the check's red head (6 px, 0 1 0 shadow at 40 %). */
 @Composable
 private fun Rivet() {
-    Canvas(Modifier.size(6.dp)) {
-        drawCircle(Color(0x66000000), size.minDimension / 2f, center + Offset(0f, 1.dp.toPx()))
-        drawCircle(Color(0xFFD9D4C8), size.minDimension / 2f)
-    }
+    Box(Modifier.size(6.dp).cssBox(bg = 0xFFD9D4C8, r = round(6f), shadows = listOf(CssShadow(0f, 1f, 0f, 0f, 0x66000000))))
 }
 
 /** One handwritten clause with its gutter mark and the places left after it. */
@@ -226,7 +234,7 @@ private fun Rivet() {
 private fun PadLine(line: Line, pad: OrderPad, count: Int?, isLast: Boolean, ctx: EatContext, showAdd: Boolean, onAdd: () -> Unit, onTap: () -> Unit) {
     val soft = line == Line.WISHES
     val addLabel = stringResource(R.string.eat_add_line)
-    val hand = TextStyle(fontFamily = EatType.hand, fontWeight = FontWeight.SemiBold, fontSize = 27.sp, lineHeight = 40.sp, color = INK)
+    val hand = HAND
     Row(
         Modifier.fillMaxWidth().heightIn(min = ROW).clickable(onClick = onTap).semantics(mergeDescendants = true) {},
         verticalAlignment = Alignment.CenterVertically,
@@ -242,62 +250,64 @@ private fun PadLine(line: Line, pad: OrderPad, count: Int?, isLast: Boolean, ctx
                 Line.TIME -> {
                     val moment = OrderModel.momentOf(pad, ctx.at)
                     val parts = listOfNotNull(moment.format(HM), stringResource(R.string.eat_order_for, pad.party), durationText(pad.minutes).takeIf { pad.minutes > 1 })
-                    Text(parts.joinToString(" · "), style = hand, maxLines = 1)
+                    CssLine(parts.joinToString(" · "), hand)
                 }
                 Line.CUISINES -> pad.cuisines.forEachIndexed { i, c ->
                     if (i > 0) Badge(stringResource(R.string.eat_order_or), filled = false)
-                    Text(Cuisine.name(c, ctx.lang), style = hand)
+                    CssLine(Cuisine.name(c, ctx.lang), hand)
                 }
                 Line.NOT -> {
                     Badge(stringResource(R.string.eat_order_not), filled = true)
                     for (n in pad.not) {
                         val word = if (n == OrderPad.FAST_FOOD) stringResource(R.string.eat_order_fast_food) else Cuisine.name(n, ctx.lang).lowercase()
-                        Text(word, style = hand.copy(fontWeight = FontWeight.Normal, fontSize = 25.sp, color = RED, textDecoration = TextDecoration.LineThrough))
+                        CssLine(word, hand.copy(fontWeight = FontWeight.Medium, fontSize = 25.sp, color = RED, textDecoration = TextDecoration.LineThrough))
                     }
                 }
                 Line.FEATURES -> {
-                    if (pad.outside) Feature(EatGlyphs.umbrella, stringResource(R.string.eat_order_outside), INK)
-                    if (pad.vegan) Feature(EatGlyphs.leaf, stringResource(R.string.eat_diet_vegan).lowercase(), Color(0xFF2F6B34))
-                    else if (pad.vegetarian) Feature(EatGlyphs.leaf, stringResource(R.string.eat_diet_vegetarian).lowercase(), Color(0xFF2F6B34))
+                    if (pad.outside) Feature("fact.terrace", stringResource(R.string.eat_order_outside), INK)
+                    if (pad.vegan) Feature("fact.vegan", stringResource(R.string.eat_diet_vegan).lowercase(), Color(0xFF2F6B34))
+                    else if (pad.vegetarian) Feature("fact.vegan", stringResource(R.string.eat_diet_vegetarian).lowercase(), Color(0xFF2F6B34))
                 }
-                Line.ACCESS -> Feature(EatGlyphs.stepFree, stringResource(R.string.eat_order_step_free), INK)
+                Line.ACCESS -> Feature("fact.wheelchair", stringResource(R.string.eat_order_step_free), INK)
                 Line.WISHES -> for (w in pad.wishes) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        wishGlyph(w)?.let { BoardIcon(it, INK_SOFT, 17.dp) } ?: Symbol(w.symbol, tint = INK_SOFT, size = 17.dp)
-                        Text(stringResource(wishName(w)), style = hand.copy(fontWeight = FontWeight.Normal, fontSize = 25.sp, color = INK_SOFT))
+                        Symbol(wishSymbol(w), tint = INK_SOFT, size = 17.dp)
+                        CssLine(stringResource(wishName(w)), HAND_SOFT)
                     }
                 }
                 Line.PAYMENT -> {
-                    pad.maxPrice?.let { Text("≤ " + "$".repeat(it), style = hand.copy(fontSize = 26.sp)) }
+                    pad.maxPrice?.let { CssLine("≤ " + "$".repeat(it), HAND_26) }
                     if (pad.card) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            BoardIcon(EatGlyphs.card, INK, 18.dp)
-                            Text(stringResource(R.string.eat_order_card), style = hand.copy(fontSize = 26.sp))
+                            Symbol("fact.card", tint = INK, size = 18.dp)
+                            CssLine(stringResource(R.string.eat_order_card), HAND_26)
                         }
                     }
                 }
-                Line.WALK -> pad.maxWalk?.let { Text(stringResource(R.string.eat_order_walk, it), style = hand.copy(fontSize = 26.sp)) }
+                Line.WALK -> pad.maxWalk?.let { CssLine(stringResource(R.string.eat_order_walk, it), HAND_26) }
             }
             if (showAdd) {
                 Box(
                     Modifier
-                        .size(30.dp)
+                        .size(33.dp)
                         .drawBehind {
-                            drawCircle(Color(0xFF8A9CD0), size.minDimension / 2f - 0.75.dp.toPx(), style = Stroke(1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx()))))
+                            // CSS: a 30 px circle inside a 1.5 px dashed border (33 px across), dashes three times the width
+                            drawCircle(Color(0xFF8A9CD0), size.minDimension / 2f - 0.75.dp.toPx(), style = Stroke(1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.5.dp.toPx(), 3.dp.toPx()))))
                         }
                         .clip(CircleShape)
                         .clickable(onClick = onAdd)
                         .semantics { contentDescription = addLabel },
                     contentAlignment = Alignment.Center,
-                ) { BoardIcon(EatGlyphs.plus, INK_SOFT, 14.dp) }
+                ) { Symbol("ui.plus", tint = INK_SOFT, size = 14.dp) }
             }
         }
         Box(Modifier.width(COUNT), contentAlignment = Alignment.Center) {
             when {
-                soft -> BoardIcon(EatGlyphs.upArrow, INK_SOFT, 16.dp, contentDescription = stringResource(R.string.eat_order_ranks_up))
-                count != null -> Text(
+                soft -> Symbol("ui.boost", tint = INK_SOFT, size = 16.dp, contentDescription = stringResource(R.string.eat_order_ranks_up))
+                count != null -> CssLine(
                     count.toString(),
-                    style = TextStyle(fontFamily = EatType.hand, fontWeight = if (isLast) FontWeight.Bold else FontWeight.Normal, fontSize = if (isLast) 24.sp else 22.sp, color = if (isLast) RED else COUNT_INK),
+                    if (isLast) COUNT_HAND.copy(fontWeight = FontWeight.Bold, fontSize = 24.sp, lineHeight = 30.sp) else COUNT_HAND,
+                    color = if (isLast) RED else COUNT_INK,
                 )
             }
         }
@@ -308,19 +318,19 @@ private fun PadLine(line: Line, pad: OrderPad, count: Int?, isLast: Boolean, ctx
 @Composable
 private fun Gutter(line: Line) {
     when (line) {
-        Line.TIME -> BoardIcon(EatGlyphs.clockGutter, PENCIL, 20.dp)
-        Line.CUISINES -> BoardIcon(EatGlyphs.cutleryGutter, PENCIL, 20.dp)
-        Line.FEATURES -> Canvas(Modifier.size(24.dp, 20.dp)) { drawBoardGlyph(EatGlyphs.mustHave, INK, side = size.width) }
-        Line.WISHES -> BoardIcon(EatGlyphs.tick, Color(0xFF6E7FB8), 16.dp)
-        Line.PAYMENT -> Text("$", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = PENCIL))
-        Line.WALK -> BoardIcon(EatGlyphs.pin, PENCIL, 18.dp)
+        Line.TIME -> Symbol("ui.clock", tint = PENCIL, size = 20.dp)
+        Line.CUISINES -> Symbol("cat.eat", tint = PENCIL, size = 20.dp)
+        Line.FEATURES -> BoxSymbol("ui.check-double", 24f, 20f, INK)
+        Line.WISHES -> Symbol("ui.check.2", tint = Color(0xFF6E7FB8), size = 16.dp)
+        Line.PAYMENT -> CssLine("$", cssText("Geist", 16f, 700, colour = 0xFF8A7F6E, lineHeight = 20.5f))
+        Line.WALK -> Symbol("ui.pin", tint = PENCIL, size = 18.dp)
         Line.NOT, Line.ACCESS -> Unit
     }
 }
 
-/** A must-have written with its symbol and a double underline. */
+/** A must-have written with its symbol (18 px, 4 apart) on a 30 px line over a 3 px double underline. */
 @Composable
-private fun Feature(glyph: BoardGlyph, word: String, tint: Color) {
+private fun Feature(symbol: String, word: String, tint: Color) {
     Row(
         Modifier.drawBehind {
             val y = size.height - 1.dp.toPx()
@@ -330,22 +340,25 @@ private fun Feature(glyph: BoardGlyph, word: String, tint: Color) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        BoardIcon(glyph, tint, 18.dp)
-        Text(word, style = TextStyle(fontFamily = EatType.hand, fontWeight = FontWeight.SemiBold, fontSize = 26.sp, lineHeight = 30.sp, color = INK))
+        Symbol(symbol, tint = tint, size = 18.dp)
+        CssLine(word, FEATURE, Modifier.padding(bottom = 3.dp))
     }
 }
 
 /** "OR" ringed in red, "NOT" on a red tag (Geist 700 10 px, letter-spaced). */
 @Composable
 private fun Badge(text: String, filled: Boolean) {
-    Text(
-        text.uppercase(),
+    val ring = 0xFF8E2B24
+    Box(
         Modifier
-            .clip(RoundedCornerShape(9.dp))
-            .then(if (filled) Modifier.background(RED) else Modifier.border(1.5.dp, RED, RoundedCornerShape(9.dp)))
+            .then(
+                if (filled) Modifier.cssBox(bg = ring, r = corners(9f))
+                else Modifier.cssBox(r = corners(9f), border = CssBorder(1.5f, 1.5f, 1.5f, 1.5f, longArrayOf(ring, ring, ring, ring))).padding(1.5.dp),
+            )
             .padding(horizontal = 6.dp, vertical = if (filled) 2.dp else 1.dp),
-        style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 0.12.em, color = if (filled) Color.White else RED),
-    )
+    ) {
+        CssLine(text.uppercase(), BADGE, color = if (filled) Color.White else RED)
+    }
 }
 
 /** Minutes as the pad writes them: "45′", "1 h", "1½ h", "2 h". */
@@ -379,9 +392,7 @@ private fun LineEditor(line: Line, pad: OrderPad, ctx: EatContext, onChange: (Or
         Modifier
             .fillMaxWidth()
             .padding(start = GUTTER + 8.dp, end = 12.dp, top = 2.dp, bottom = 8.dp)
-            .boxShadow(RoundedCornerShape(14.dp), 1f, 2f, 10f, Color(0x22000000))
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color.White)
+            .cssBox(bg = 0xFFFFFFFF, r = corners(14f), shadows = listOf(CssShadow(0f, 2f, 10f, 0f, 0x22000000)))
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -471,13 +482,13 @@ private fun PadChip(text: String, on: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
             .height(30.dp)
+            .cssBox(bg = if (on) 0xFF1D3C8F else 0xFFEFE7D6, r = round(30f))
             .clip(CircleShape)
-            .background(if (on) INK else CHIP)
             .toggleable(on, role = Role.Checkbox) { onClick() }
             .padding(horizontal = 11.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = if (on) Color.White else Color(0xFF14161B)))
+        CssLine(text, CHIP_TEXT, color = if (on) Color.White else Color(0xFF14161B))
     }
 }
 
@@ -485,7 +496,7 @@ private fun PadChip(text: String, on: Boolean, onClick: () -> Unit) {
 @Composable
 private fun RankedBy(rank: List<RankKey>, onToggle: (RankKey) -> Unit) {
     Column(Modifier.fillMaxWidth().height(80.dp).padding(start = 62.dp, end = 14.dp), verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically)) {
-        Text(stringResource(R.string.eat_order_ranked_by).uppercase(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 0.2.em, color = PENCIL))
+        CssLine(stringResource(R.string.eat_order_ranked_by).uppercase(), SMALL_CAPS_LABEL)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             for (k in RankKey.entries) {
                 val i = rank.indexOf(k)
@@ -495,9 +506,11 @@ private fun RankedBy(rank: List<RankKey>, onToggle: (RankKey) -> Unit) {
                     Box(
                         Modifier
                             .size(38.dp)
+                            .then(
+                                if (on) Modifier.cssBox(bg = 0xFF1D3C8F, r = round(38f))
+                                else Modifier.cssBox(r = round(38f), shadows = listOf(CssShadow(0f, 0f, 0f, 1.5f, 0xFFC9C0B0, inset = true))),
+                            )
                             .clip(CircleShape)
-                            .background(if (on) INK else Color.Transparent)
-                            .then(if (on) Modifier else Modifier.border(1.5.dp, Color(0xFFC9C0B0), CircleShape))
                             .toggleable(on, role = Role.Checkbox) { onToggle(k) }
                             .semantics { contentDescription = name },
                         contentAlignment = Alignment.Center,
@@ -508,12 +521,12 @@ private fun RankedBy(rank: List<RankKey>, onToggle: (RankKey) -> Unit) {
                             else -> Color.White
                         }
                         when (k) {
-                            RankKey.RATING -> BoardIcon(EatGlyphs.star, tint, 17.dp)
-                            RankKey.WALK -> BoardIcon(EatGlyphs.walkThin, tint, 17.dp)
-                            RankKey.TRENDING -> BoardIcon(EatGlyphs.flame, tint, 16.dp)
-                            RankKey.LATE -> BoardIcon(EatGlyphs.moon, tint, 16.dp)
-                            RankKey.NEW -> BoardIcon(EatGlyphs.sparkle, tint, 16.dp)
-                            RankKey.PRICE -> Text("$", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = tint))
+                            RankKey.RATING -> Symbol("ui.star", tint = tint, size = 17.dp)
+                            RankKey.WALK -> Symbol("mode.walk", tint = tint, size = 17.dp)
+                            RankKey.TRENDING -> Symbol("fact.trending", tint = tint, size = 16.dp)
+                            RankKey.LATE -> Symbol("ui.moon", tint = tint, size = 16.dp)
+                            RankKey.NEW -> Symbol("fact.new", tint = tint, size = 16.dp)
+                            RankKey.PRICE -> CssLine("$", cssText("Geist", 14f, 700, lineHeight = 18f), color = tint)
                         }
                     }
                     if (on) {
@@ -521,7 +534,7 @@ private fun RankedBy(rank: List<RankKey>, onToggle: (RankKey) -> Unit) {
                             Modifier.align(Alignment.TopEnd).offset(x = 3.dp, y = (-3).dp).size(16.dp).clip(CircleShape).background(RED),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Text((i + 1).toString(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White))
+                            CssLine((i + 1).toString(), cssText("Geist", 10f, 700, colour = 0xFFFFFFFF, lineHeight = 13f))
                         }
                     }
                 }
@@ -546,18 +559,18 @@ private fun Presets(saved: OrderPad?, onPreset: (OrderPad) -> Unit, onBookmark: 
         if (saved != null && !bookmarked) PadChip(stringResource(R.string.eat_preset_mine), false) { onPreset(saved) }
         val label = stringResource(R.string.eat_order_bookmark)
         Box(
-            Modifier.size(30.dp).clip(CircleShape).background(if (bookmarked) RED else INK).clickable(onClick = onBookmark).semantics { contentDescription = label },
+            Modifier.size(30.dp).cssBox(bg = if (bookmarked) 0xFF8E2B24 else 0xFF1D3C8F, r = round(30f)).clip(CircleShape).clickable(onClick = onBookmark).semantics { contentDescription = label },
             contentAlignment = Alignment.Center,
-        ) { BoardIcon(EatGlyphs.bookmark, Color.White, 14.dp) }
+        ) { Symbol("ui.bookmark", tint = Color.White, size = 14.dp) }
     }
 }
 
 /** The places served: handwritten, numbered, nearest walk on the right; each opens its place, and can be jotted. */
 @Composable
 private fun Served(r: OrderResult, ctx: EatContext, jotted: Set<String>, onPlace: (app.atlas.model.Place) -> Unit, onJot: (app.atlas.model.Place) -> Unit) {
-    val hand = TextStyle(fontFamily = EatType.hand, fontWeight = FontWeight.SemiBold, fontSize = 25.sp, color = INK)
+    val hand = cssText("Caveat", 25f, 600, colour = 0xFF1D3C8F, lineHeight = 32f)
     Column(Modifier.padding(top = 10.dp)) {
-        Text(stringResource(R.string.eat_order_served).uppercase(), Modifier.padding(start = 62.dp), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 0.2.em, color = PENCIL))
+        CssLine(stringResource(R.string.eat_order_served).uppercase(), SMALL_CAPS_LABEL, Modifier.padding(start = 62.dp))
         if (r.served.isEmpty()) {
             Text(stringResource(R.string.eat_order_none), Modifier.padding(start = 62.dp, top = 8.dp), style = hand.copy(fontSize = 22.sp, color = PENCIL))
         }
@@ -575,7 +588,7 @@ private fun Served(r: OrderResult, ctx: EatContext, jotted: Set<String>, onPlace
                     Modifier.size(30.dp).clip(CircleShape).background(if (on) INK else CHIP).toggleable(on, role = Role.Checkbox) { onJot(h.place) }
                         .semantics { contentDescription = label },
                     contentAlignment = Alignment.Center,
-                ) { if (on) Symbol("ui-check", tint = Color.White, size = 14.dp) else BoardIcon(EatGlyphs.plus, INK, 14.dp) }
+                ) { if (on) Symbol("ui-check", tint = Color.White, size = 14.dp) else Symbol("ui.plus", tint = INK, size = 14.dp) }
                 Box(Modifier.width(COUNT), contentAlignment = Alignment.Center) {
                     Text(p?.let { "${it.walkMinutes}′" } ?: "", style = hand.copy(fontSize = 22.sp, fontWeight = FontWeight.Normal, color = COUNT_INK))
                 }
@@ -588,20 +601,20 @@ private fun Served(r: OrderResult, ctx: EatContext, jotted: Set<String>, onPlace
 @Composable
 private fun OnThePad(items: List<Jotted>, onOpen: (Jotted) -> Unit) {
     Column(Modifier.padding(top = 10.dp)) {
-        Text(stringResource(R.string.eat_order_on_pad).uppercase(), Modifier.padding(start = 62.dp), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 0.2.em, color = PENCIL))
+        CssLine(stringResource(R.string.eat_order_on_pad).uppercase(), SMALL_CAPS_LABEL, Modifier.padding(start = 62.dp))
         for (j in items) {
             Row(Modifier.fillMaxWidth().heightIn(min = ROW).clickable { onOpen(j) }, verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.width(GUTTER), contentAlignment = Alignment.Center) { BoardIcon(EatGlyphs.bookmark, PENCIL, 14.dp) }
-                Text(j.name, Modifier.padding(start = 12.dp), style = TextStyle(fontFamily = EatType.hand, fontWeight = FontWeight.SemiBold, fontSize = 25.sp, color = INK), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Box(Modifier.width(GUTTER), contentAlignment = Alignment.Center) { Symbol("ui.bookmark", tint = PENCIL, size = 14.dp) }
+                CssLine(j.name, cssText("Caveat", 25f, 600, colour = 0xFF1D3C8F, lineHeight = 32f), Modifier.padding(start = 12.dp))
             }
         }
     }
 }
 
-/** The tear line: a dashed rule over holes punched every 16 px, showing the wood. */
+/** The tear line on the paper: a 2 px dashed rule over holes (4 px) punched every 16 px, showing the wood. */
 @Composable
 private fun Perforation() {
-    Canvas(Modifier.fillMaxWidth().height(14.dp)) {
+    Canvas(Modifier.fillMaxWidth().height(14.dp).background(CHECK_PAPER)) {
         drawLine(Color(0xFFD6CCBA), Offset(0f, 1.dp.toPx()), Offset(size.width, 1.dp.toPx()), 2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx())))
         val step = 16.dp.toPx()
         var x = 7.dp.toPx()
@@ -615,20 +628,20 @@ private fun Perforation() {
 /** "6 of 214 · 0.03 s" and the Serve cloche. */
 @Composable
 private fun Footer(r: OrderResult?, onServe: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(96.dp).padding(start = 18.dp, end = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(r?.total?.toString() ?: "…", style = TextStyle(fontFamily = EatType.hand, fontWeight = FontWeight.Bold, fontSize = 54.sp, lineHeight = 54.sp, color = RED))
+    Row(Modifier.fillMaxWidth().height(96.dp).background(CHECK_PAPER).padding(start = 18.dp, end = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        CssLine(r?.total?.toString() ?: "…", cssText("Caveat", 54f, 700, colour = 0xFF8E2B24, lineHeight = 54f, tnum = true))
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(r?.let { stringResource(R.string.eat_order_of, it.base) } ?: "", style = TextStyle(fontFamily = SansFamily, fontSize = 12.sp, color = COUNT_INK))
-            Text(r?.let { String.format(java.util.Locale.ROOT, "%.2f s", it.micros / 1e6) } ?: "", style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = COUNT_INK))
+            CssLine(r?.let { stringResource(R.string.eat_order_of, it.base) } ?: "", cssText("Geist", 12f, colour = 0xFF6E6457, lineHeight = 16f, tnum = true))
+            CssLine(r?.let { String.format(java.util.Locale.ROOT, "%.2f s", it.micros / 1e6) } ?: "", cssText("Geist Mono", 12f, colour = 0xFF6E6457, lineHeight = 16f, tnum = true))
         }
         Spacer(Modifier.weight(1f))
         Row(
-            Modifier.height(56.dp).clip(CircleShape).background(INK).clickable(onClick = onServe).padding(start = 18.dp, end = 22.dp),
+            Modifier.height(56.dp).cssBox(bg = 0xFF1D3C8F, r = round(56f)).clip(CircleShape).clickable(onClick = onServe).padding(start = 18.dp, end = 22.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            BoardIcon(EatGlyphs.cloche, Color.White, 22.dp)
-            Text(stringResource(R.string.eat_order_serve), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = Color.White))
+            Symbol("food.serve", tint = Color.White, size = 22.dp)
+            CssLine(stringResource(R.string.eat_order_serve), cssText("Geist", 16f, 600, colour = 0xFFFFFFFF, lineHeight = 21f))
         }
     }
 }
@@ -646,7 +659,7 @@ private fun QlCard(ql: String, onClose: () -> Unit) {
             .padding(12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            BoardIcon(EatGlyphs.braces, Color(0xFFE8E4DA), 16.dp)
+            Symbol("ui.code", tint = Color(0xFFE8E4DA), size = 16.dp)
             Text("Overpass QL", Modifier.weight(1f), style = Atlas.type.label, color = Color(0xFFE8E4DA))
             val copy = stringResource(R.string.eat_order_copy)
             Box(Modifier.size(34.dp).clip(CircleShape).background(Color(0x22FFFFFF)).clickable { clipboard.setText(AnnotatedString(ql)) }.semantics { contentDescription = copy }, contentAlignment = Alignment.Center) {
@@ -683,22 +696,27 @@ private fun DrawScope.drawWood() {
     }
 }
 
-/** The check's ruling: a blue line every 40 px, the red margin at 50 px and the count column's rule 58 px from the right. */
+/** The check's ruling, from the top of the paper: a 1 px blue line closing every 40 px (39 to 40, 79 to 80…). */
 private fun DrawScope.drawRules() {
     val step = ROW.toPx()
-    var y = 6.dp.toPx() + step - 1.dp.toPx()
+    var y = step - 1.dp.toPx()
     while (y < size.height) {
-        drawLine(RULE, Offset(0f, y), Offset(size.width, y), 1.dp.toPx())
+        drawRect(RULE, Offset(0f, y), Size(size.width, 1.dp.toPx()))
         y += step
     }
-    drawRect(MARGIN, Offset(GUTTER.toPx(), 0f), Size(1.5.dp.toPx(), size.height))
-    drawRect(Color(0xFFE8DCC8), Offset(size.width - COUNT.toPx(), 0f), Size(1.dp.toPx(), size.height))
 }
 
-private fun wishGlyph(w: Wish): BoardGlyph? = when (w) {
-    Wish.DOGS -> EatGlyphs.paw
-    Wish.QUIET -> EatGlyphs.quiet
-    else -> null
+/** The red margin (1.5 px) at 50 px and the count column's 1 px rule ending 58 px from the right, top to bottom. */
+private fun DrawScope.drawMargins() {
+    drawRect(MARGIN, Offset(GUTTER.toPx(), 0f), Size(1.5.dp.toPx(), size.height))
+    drawRect(Color(0xFFE8DCC8), Offset(size.width - COUNT.toPx() - 1.dp.toPx(), 0f), Size(1.dp.toPx(), size.height))
+}
+
+/** The board's symbol for a wish (the board draws dogs and quiet; the rest keep their own). */
+private fun wishSymbol(w: Wish): String = when (w) {
+    Wish.DOGS -> "fact.dog"
+    Wish.QUIET -> "fact.queue"
+    else -> w.symbol
 }
 
 private fun lineName(l: Line): Int = when (l) {

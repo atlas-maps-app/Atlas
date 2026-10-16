@@ -18,7 +18,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.draw.innerShadow
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
@@ -38,24 +37,20 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontStyle
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.em
-import androidx.compose.ui.unit.sp
-import app.atlas.ui.kit.SansFamily
-import kotlin.math.hypot
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.kit.Symbol
+import app.atlas.ui.kit.cssRadial
+import app.atlas.ui.kit.cssShadow
 
 /*
  * The six objects on the table, ported from the Menus board (`canvas/project/Menus.dc.html`): each object's shape,
  * gradient, frame, shadows, type and icon as the board states them, in board pixels scaled by [u] (1 at 412 dp wide).
  */
 
-/** A CSS box-shadow: offset ([x], [y]), [blur] and colour, in board px scaled by [u]. */
+/** A CSS box-shadow: offset ([x], [y]), [blur] and colour, in board px scaled by [u] (CSS's blur is a shadow radius of 0.866 × blur). */
 internal fun Modifier.boxShadow(shape: Shape, u: Float, y: Float, blur: Float, colour: Color, x: Float = 0f): Modifier =
-    dropShadow(shape, BoxShadow(radius = (blur * u / 2f).dp, color = colour, offset = DpOffset((x * u).dp, (y * u).dp)))
+    cssShadow(shape, y = (y * u).dp, blur = (blur * u).dp, colour = colour, x = (x * u).dp)
 
 /** One object lying on the table: tilted by [tilt] degrees and a button that says [description]. */
 @Composable
@@ -85,9 +80,7 @@ internal fun LeatherMenu(count: EatArea.Count?, label: String, u: Float) {
             .boxShadow(shape, u, 3f, 6f, Color(0x4D321408))
             .clip(shape)
             .drawBehind {
-                val c = Offset(size.width * 0.3f, size.height * 0.25f)
-                val r = hypot(size.width * 0.7f, size.height * 0.75f)
-                drawRect(Brush.radialGradient(0f to Color(0xFF7A2A28), 0.7f to Color(0xFF4E1817), center = c, radius = r))
+                drawRect(cssRadial(false, size.width / density * 0.3f, size.height / density * 0.25f, 0f to 0xFF7A2A28, 0.7f to 0xFF4E1817).brush(size, density))
                 // The spine: inset 6 px #3A1010 over 7 px #6A2422.
                 drawRect(Color(0xFF6A2422), size = Size(7 * u * density, size.height))
                 drawRect(Color(0xFF3A1010), size = Size(6 * u * density, size.height))
@@ -101,21 +94,15 @@ internal fun LeatherMenu(count: EatArea.Count?, label: String, u: Float) {
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy((12 * u).dp)) {
-            BoardIcon(EatGlyphs.cutlery, Color(0xFFD6B060), (34 * u).dp)
-            Text(
-                label,
-                style = TextStyle(
-                    fontFamily = EatType.cormorant, fontStyle = FontStyle.Italic, fontWeight = FontWeight.SemiBold, fontSize = (46 * u).sp, lineHeight = (46 * u).sp,
-                    brush = Brush.verticalGradient(0f to Color(0xFFF6E2A8), 0.55f to Color(0xFFC9973E), 1f to Color(0xFFF1D38A)),
-                ),
-            )
+            Symbol("cat.eat", tint = Color(0xFFD6B060), size = (34 * u).dp)
+            CssLine(label, cssText("Cormorant Garamond", 46 * u, 600, italic = true, lineHeight = 46 * u, brush = Brush.verticalGradient(0f to Color(0xFFF6E2A8), 0.55f to Color(0xFFC9973E), 1f to Color(0xFFF1D38A))))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy((5 * u).dp)) {
                 count?.let { c ->
                     Canvas(Modifier.size((6 * u).dp)) {
                         if (c.open) drawCircle(Color(0xFF7EE0A4)) else drawCircle(Color(0xFF7EE0A4), style = Stroke(1.2f * density))
                     }
                 }
-                Text(count?.value?.toString() ?: "…", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = (13 * u).sp, color = Color(0xFFE8CF8E)))
+                CssLine(count?.value?.toString() ?: "…", cssText("Geist", 13 * u, 600, colour = 0xFFE8CF8E, lineHeight = 17 * u, tnum = true))
             }
         }
     }
@@ -142,20 +129,16 @@ internal fun Chalkboard(count: EatArea.Count?, label: String, u: Float) {
             Modifier
                 .fillMaxSize()
                 .clip(slate)
-                .drawBehind {
-                    val c = Offset(size.width * 0.4f, size.height * 0.3f)
-                    drawRect(Brush.radialGradient(0f to Color(0xFF3A403B), 0.75f to Color(0xFF262A27), center = c, radius = hypot(size.width * 0.6f, size.height * 0.7f)))
-                }
-                .innerShadow(slate, BoxShadow(radius = (6 * u).dp, color = Color(0x80000000))),
+                .drawBehind { drawRect(cssRadial(false, size.width / density * 0.4f, size.height / density * 0.3f, 0f to 0xFF3A403B, 0.75f to 0xFF262A27).brush(size, density)) }
+                .innerShadow(slate, BoxShadow(radius = (12 * 0.866f * u).dp, color = Color(0x80000000))),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy((6 * u).dp, Alignment.CenterVertically),
         ) {
-            Canvas(Modifier.size((44 * u).dp, (40 * u).dp)) { drawBoardGlyph(EatGlyphs.chalkCup, Color(0xFFEDEBE2).copy(alpha = 0.85f), side = size.width) }
-            Text(
-                label,
-                style = TextStyle(fontFamily = EatType.hand, fontWeight = FontWeight.Bold, fontSize = (42 * u).sp, lineHeight = (38 * u).sp, color = Color(0xFFF2F0E6).copy(alpha = 0.92f), shadow = Shadow(Color(0x80FFFFFF), blurRadius = 1f)),
-            )
-            Text(count?.value?.toString() ?: "…", style = TextStyle(fontFamily = EatType.hand, fontSize = (20 * u).sp, color = Color(0xFFCFE8C9)))
+            BoxSymbol("place.cafe.4", 44 * u, 40 * u, Color(0xFFEDEBE2).copy(alpha = 0.85f))
+            // At 92 % (on the ink and its glow rather than a layer, which would clip the script's overhang).
+            CssLine(label, cssText("Caveat", 42 * u, 700, colour = 0xEBF2F0E6, lineHeight = 37.8f * u, shadow = CssShadow(0f, 0f, 1f, 0f, 0x75FFFFFF)))
+            // The page loads Caveat at 600 and 700 only, so the count's 400 draws at 600.
+            CssLine(count?.value?.toString() ?: "…", cssText("Caveat", 20 * u, 600, colour = 0xFFCFE8C9, lineHeight = 25 * u, tnum = true))
         }
     }
 }
@@ -187,7 +170,7 @@ internal fun NeonLate(count: EatArea.Count?, until: String?, label: String, u: F
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy((2 * u).dp, Alignment.CenterVertically),
         ) {
-            NeonText(label, (38 * u), Color(0xFFFFD6F2), listOf(4f to Color(0xFFFF4FD8), 12f to Color(0xFFFF4FD8), 24f to Color(0xFFC2189B)), u)
+            NeonText(label, (38 * u), Color(0xFFFFD6F2), listOf(4f to Color(0xFFFF4FD8), 12f to Color(0xFFFF4FD8), 24f to Color(0xFFC2189B)), u, lineHeight = 38f)
             val line = when {
                 count == null -> "…"
                 // Without mapped hours nobody can say who is open late; while a fuller answer may still come, say so.
@@ -195,19 +178,22 @@ internal fun NeonLate(count: EatArea.Count?, until: String?, label: String, u: F
                 until != null -> "${count.value} · $until"
                 else -> count.value.toString()
             }
-            NeonText(line, (18 * u), Color(0xFFD6FBFF), listOf(4f to Color(0xFF36E3FF), 10f to Color(0xFF0FB8E0)), u)
+            NeonText(line, (18 * u), Color(0xFFD6FBFF), listOf(4f to Color(0xFF36E3FF), 10f to Color(0xFF0FB8E0)), u, lineHeight = 24f, tnum = true)
         }
     }
 }
 
-/** Tilt Neon text in [colour] with the board's stacked glows ([glows]: blur in board px to colour). */
+/**
+ * Tilt Neon text in [colour] on its CSS line ([lineHeight] board px) with the board's stacked glows ([glows]: CSS
+ * text-shadow blur in board px to colour, a shadow radius of 0.866 × blur).
+ */
 @Composable
-internal fun NeonText(text: String, sizeSp: Float, colour: Color, glows: List<Pair<Float, Color>>, u: Float, modifier: Modifier = Modifier) {
-    val base = TextStyle(fontFamily = EatType.tiltNeon, fontSize = sizeSp.sp, lineHeight = sizeSp.sp)
+internal fun NeonText(text: String, sizeSp: Float, colour: Color, glows: List<Pair<Float, Color>>, u: Float, modifier: Modifier = Modifier, lineHeight: Float = sizeSp / u, tnum: Boolean = false) {
+    val base = cssText("Tilt Neon", sizeSp, lineHeight = lineHeight * u, tnum = tnum)
     Box(modifier, contentAlignment = Alignment.Center) {
         // Each glow is a layer of its own, under the tube: the board stacks three text-shadows.
-        for ((blur, c) in glows.reversed()) Text(text, style = base.copy(color = c, shadow = Shadow(c, blurRadius = blur * u * 2f)))
-        Text(text, style = base.copy(color = colour))
+        for ((blur, c) in glows.reversed()) CssLine(text, base.copy(color = c, shadow = Shadow(c, blurRadius = blur * u)))
+        CssLine(text, base.copy(color = colour))
     }
 }
 
@@ -245,15 +231,9 @@ internal fun DecoCard(count: EatArea.Count?, label: String, u: Float) {
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy((10 * u).dp)) {
-            Text(
-                label,
-                style = TextStyle(
-                    fontFamily = EatType.poiret, fontSize = (48 * u).sp, lineHeight = (48 * u).sp, letterSpacing = 0.06.em,
-                    brush = Brush.verticalGradient(0f to Color(0xFFF6E2A8), 0.6f to Color(0xFFB98A36), 1f to Color(0xFFF1D38A)),
-                ),
-            )
-            BoardIcon(EatGlyphs.martini, Color(0xFFC9A45C), (30 * u).dp)
-            Text(count?.value?.toString() ?: "…", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = (13 * u).sp, color = Color(0xFFE8CF8E)))
+            CssLine(label, cssText("Poiret One", 48 * u, lineHeight = 48 * u, spacing = 2.88f * u, brush = Brush.verticalGradient(0f to Color(0xFFF6E2A8), 0.6f to Color(0xFFB98A36), 1f to Color(0xFFF1D38A))))
+            Symbol("food.bar.4", tint = Color(0xFFC9A45C), size = (30 * u).dp)
+            CssLine(count?.value?.toString() ?: "…", cssText("Geist", 13 * u, 600, colour = 0xFFE8CF8E, lineHeight = 17 * u, tnum = true))
         }
     }
 }
@@ -302,8 +282,9 @@ internal fun TicketStub(count: EatArea.Count?, label: String, u: Float) {
                 drawCircle(Color(0xFFB8E3C9), 6 * k, Offset(23 * k, 15 * k))
                 drawCircle(Color(0xFFD93A3A), 2.2f * k, Offset(20 * k, 4 * k))
             }
-            Text(label, style = TextStyle(fontFamily = EatType.fredoka, fontWeight = FontWeight.SemiBold, fontSize = (32 * u).sp, lineHeight = (32 * u).sp, color = Color(0xFFB2345A)))
-            Text(count?.value?.toString() ?: "…", style = TextStyle(fontFamily = EatType.fredoka, fontSize = (14 * u).sp, color = Color(0xFF8F2A4A)))
+            CssLine(label, cssText("Fredoka", 32 * u, 600, colour = 0xFFB2345A, lineHeight = 32 * u))
+            // The page loads Fredoka at 500 and 600 only, so the count's 400 draws at 500.
+            CssLine(count?.value?.toString() ?: "…", cssText("Fredoka", 14 * u, 500, colour = 0xFF8F2A4A, lineHeight = 17 * u, tnum = true))
         }
     }
 }
@@ -337,9 +318,9 @@ internal fun KraftTag(count: EatArea.Count?, label: String, u: Float) {
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy((4 * u).dp)) {
-            Canvas(Modifier.size((32 * u).dp, (30 * u).dp)) { drawBoardGlyph(EatGlyphs.stall, Color(0xFF3E2F1C), Offset((size.width - size.height) / 2f, 0f), size.height) }
-            Text(label.uppercase(), style = TextStyle(fontFamily = EatType.specialElite, fontSize = (25 * u).sp, letterSpacing = 0.04.em, color = Color(0xFF2E2214)))
-            Text(count?.value?.toString() ?: "…", style = TextStyle(fontFamily = EatType.specialElite, fontSize = (14 * u).sp, color = Color(0xFF5A4428)))
+            BoxSymbol("place.market", 32 * u, 30 * u, Color(0xFF3E2F1C))
+            Text(label.uppercase(), style = cssText("Special Elite", 25 * u, colour = 0xFF2E2214, spacing = 1f * u))
+            Text(count?.value?.toString() ?: "…", style = cssText("Special Elite", 14 * u, colour = 0xFF5A4428, tnum = true))
         }
     }
 }

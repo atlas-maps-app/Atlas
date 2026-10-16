@@ -1,6 +1,5 @@
 package app.atlas.ui.eat
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,20 +7,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -35,24 +30,29 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontStyle
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.Navigator
 import app.atlas.places.Cuisine
-import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.HonestyFooter
-import app.atlas.ui.kit.SerifFamily
 import app.atlas.ui.kit.Symbol
-import app.atlas.ui.kit.SymbolButton
 import java.util.Locale
 
-/** One line of the carte opened: every place of a cuisine, nearest first, on the same printed menu paper. */
+/* The Carte board's type, which a cuisine's page keeps (the page has no board of its own). */
+private val PAGE_FAMILY = cssText("Cormorant Garamond", 15f, 700, lineHeight = 18.5f, spacing = 3f, smallCaps = true)
+private val PAGE_TITLE = cssText("Cormorant Garamond", 46f, 600, italic = true, colour = 0xFF2A1D14, lineHeight = 46f)
+private val PAGE_COUNT = cssText("Cormorant Garamond", 15f, 600, colour = 0xFF6B5A45, lineHeight = 18.5f, spacing = 1.8f, tnum = true, smallCaps = true)
+private val PLACE_NAME = cssText("Cormorant Garamond", 21f, 700, lineHeight = 25.5f)
+private val PLACE_WALK = cssText("Geist", 13f, 500, lineHeight = 17f, tnum = true)
+private val PLACE_META = cssText("Geist", 12f, 500, lineHeight = 15.5f, tnum = true)
+private val PLACE_OTHERS = cssText("Cormorant Garamond", 16f, 500, italic = true, colour = 0xFF7A6A55, lineHeight = 19.5f)
+
+/**
+ * One line of the carte opened: every place of a cuisine, nearest first, on the same printed menu paper, under the
+ * Carte board's top row, its chapter word, the cuisine as the carte's title and the count in small caps.
+ */
 @Composable
 fun CuisinePage(cuisine: String, nav: Navigator) {
     val ctx = rememberEatContext()
@@ -67,18 +67,15 @@ fun CuisinePage(cuisine: String, nav: Navigator) {
     }
     val family = CarteModel.familyOf(cuisine, ctx.area.country)
     Box(Modifier.fillMaxSize().drawBehind { drawMenuPaper() }) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 28.dp, end = 18.dp, bottom = bottomRoom(32.dp))) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 30.dp, end = 30.dp, bottom = bottomRoom(32.dp))) {
+            item { CarteTopRow(pad.size, onBack = { nav.back() }, onSurprise = null, onPad = { nav.go(Dest.Eat("order")) }) }
             item {
-                Column(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(top = 76.dp, bottom = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(stringResource(familyName(family)).uppercase(), style = EatType.smallCaps.copy(fontFamily = SerifFamily, fontSize = 12.sp), color = Color(family.colour))
-                    Text(title, Modifier.semantics { heading() }, style = Atlas.type.display.copy(fontStyle = FontStyle.Italic, fontWeight = FontWeight.Bold, fontSize = 40.sp), color = MENU_INK)
+                Column(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    CssLine(stringResource(familyName(family)).lowercase(), PAGE_FAMILY, color = Color(family.colour))
+                    CssLine(title, PAGE_TITLE, Modifier.semantics { heading() })
                     if (worked.value != null) {
                         val open = places.count { it.openness(ctx.at, ctx.area.hours).isOpen }
-                        Text(
-                            stringResource(R.string.eat_page_count, places.size, open, ctx.at.format(HM)).uppercase(),
-                            style = EatType.smallCaps.copy(fontFamily = SerifFamily, fontSize = 12.sp),
-                            color = MENU_SOFT,
-                        )
+                        CssLine(stringResource(R.string.eat_page_count, places.size, open, ctx.at.format(HM)).lowercase(Locale.forLanguageTag(ctx.lang)), PAGE_COUNT)
                     }
                 }
             }
@@ -88,18 +85,13 @@ fun CuisinePage(cuisine: String, nav: Navigator) {
             if (ctx.area.waiting || !worked.fresh) item { Looking(MENU_SOFT) }
             item { sourceLine(ctx.area)?.let { HonestyFooter(it) } }
         }
-        Row(
-            Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(start = 22.dp, end = 16.dp, top = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            SymbolButton("ui-chevron-left", stringResource(R.string.kit_back), { nav.back() }, size = 48.dp, background = Color(0xFFF1E9DC), tint = MENU_INK, elevation = 0.dp)
-            Spacer(Modifier.weight(1f))
-            OrderPadButton(pad.size, { nav.go(Dest.Eat("order")) }, background = BURGUNDY)
-        }
     }
 }
 
-/** A place on the printed menu: name, leaders, walk; the open line, other cuisines and diets; and the pad's tick. */
+/**
+ * A place on the printed menu as the carte sets its lines: the name (21 px), the dotted leader and the walk; under it
+ * the open line, its stars, other cuisines in italics and its diet; and the pad's tick (34 px).
+ */
 @Composable
 internal fun MenuPlaceRow(p: EatPlace, ctx: EatContext, onPad: Boolean, onToggle: () -> Unit, onClick: () -> Unit) {
     val open = openWords(p, ctx)
@@ -107,21 +99,21 @@ internal fun MenuPlaceRow(p: EatPlace, ctx: EatContext, onPad: Boolean, onToggle
     val ink = if (closed) MENU_SOFT else MENU_INK
     Row(Modifier.fillMaxWidth().heightIn(min = 58.dp).clickable(onClick = onClick).padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            LeaderLine(MENU_SOFT.copy(alpha = 0.5f), Modifier.fillMaxWidth(), start = {
-                Text(p.name, style = EatType.menu.copy(fontWeight = FontWeight.Bold, fontSize = 21.sp), color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            LeaderLine(Color(0xFFC9B89B), Modifier.fillMaxWidth(), gap = 4.dp, dot = 2.dp, height = 25.5.dp, endTop = 6.5.dp, dotsTop = 18.dp, start = {
+                CssLine(p.name, PLACE_NAME, color = ink)
             }) {
-                Text("${p.walkMinutes}′", style = EatType.menu.copy(fontSize = 18.sp), color = ink)
+                CssLine("${p.walkMinutes}′", PLACE_WALK, color = MENU_SOFT)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                open?.let { (w, c) -> Text(w, style = Atlas.type.caption, color = c) }
+                open?.let { (w, c) -> CssLine(w, PLACE_META, color = c) }
                 ctx.ratings.stars(p.key)?.let { s ->
-                    Symbol("ui-star", tint = MENU_SOFT, size = 12.dp)
-                    Text(String.format(Locale.ROOT, "%.1f", s), style = Atlas.type.caption, color = MENU_SOFT)
+                    Symbol("ui.star", tint = MENU_SOFT, size = 12.dp)
+                    CssLine(String.format(Locale.ROOT, "%.1f", s), PLACE_META, color = MENU_SOFT)
                 }
                 val others = p.cuisines.drop(1).take(2).joinToString(", ") { Cuisine.name(it, ctx.lang).lowercase() }
-                if (others.isNotEmpty()) Text(others, style = EatType.menuItalic.copy(fontSize = 14.sp), color = MENU_SOFT, maxLines = 1)
-                if (p.diet("vegan")) Symbol("ui-vegan", tint = Color(0xFF3E8E4E), size = 14.dp, contentDescription = stringResource(R.string.eat_diet_vegan))
-                else if (p.diet("vegetarian")) Symbol("ui-leaf", tint = Color(0xFF3E8E4E), size = 14.dp, contentDescription = stringResource(R.string.eat_diet_vegetarian))
+                if (others.isNotEmpty()) CssLine(others, PLACE_OTHERS)
+                if (p.diet("vegan")) Symbol("fact.vegan", tint = Color(0xFF3E8E4E), size = 14.dp, contentDescription = stringResource(R.string.eat_diet_vegan))
+                else if (p.diet("vegetarian")) Symbol("fact.vegan", tint = Color(0xFF3E8E4E), size = 14.dp, contentDescription = stringResource(R.string.eat_diet_vegetarian))
             }
         }
         Spacer(Modifier.width(10.dp))
@@ -129,13 +121,13 @@ internal fun MenuPlaceRow(p: EatPlace, ctx: EatContext, onPad: Boolean, onToggle
         Box(
             Modifier
                 .size(34.dp)
+                .cssBox(bg = if (onPad) 0xFF7A2A28 else 0x147A2A28, r = round(34f))
                 .clip(CircleShape)
-                .background(if (onPad) BURGUNDY else Color(0xFFF1E9DC))
                 .toggleable(onPad, role = Role.Checkbox) { onToggle() }
                 .semantics { contentDescription = label },
             contentAlignment = Alignment.Center,
         ) {
-            Symbol(if (onPad) "ui-check" else "ui-plus", tint = if (onPad) Color.White else MENU_INK, size = 16.dp)
+            Symbol(if (onPad) "ui-check" else "ui.plus", tint = if (onPad) Color.White else BURGUNDY, size = 16.dp)
         }
     }
 }

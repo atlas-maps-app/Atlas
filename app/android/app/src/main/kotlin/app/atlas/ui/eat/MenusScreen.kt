@@ -1,13 +1,6 @@
 package app.atlas.ui.eat
 
 import androidx.compose.foundation.Canvas
-import app.atlas.ui.kit.SerifFamily
-import app.atlas.ui.kit.SansFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.unit.DpOffset
-import androidx.compose.ui.graphics.shadow.Shadow as BoxShadow
-import androidx.compose.ui.draw.dropShadow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,12 +13,10 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
@@ -48,23 +39,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.Navigator
 import app.atlas.ui.kit.Atlas
+import app.atlas.ui.kit.CssBorder
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.kit.cssRadial
 import app.atlas.ui.kit.Hairline
 import app.atlas.ui.kit.PillButton
 import app.atlas.ui.kit.Symbol
@@ -110,13 +99,13 @@ fun MenusScreen(nav: Navigator) {
         Column(
             Modifier
                 .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.statusBars)
                 .verticalScroll(rememberScrollState()),
         ) {
+            // The board's top: the header row at 46 px, the waiter's field at 108, the table from 168.
             Column(Modifier.padding(horizontal = 16.dp)) {
                 TableHeader(ctx, padCount = pad.size, onMap = { nav.go(Dest.Eat("map")) }, onPad = { nav.go(Dest.Eat("order")) }, onPick = { picking = if (picking == it) null else it })
                 picking?.let { p -> TablePicker(p, ctx, onDone = { picking = null }) }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(13.dp))
                 AskField(
                     text = question,
                     onText = { question = it; if (it.isBlank()) answer = null },
@@ -127,7 +116,7 @@ fun MenusScreen(nav: Navigator) {
                     Spacer(Modifier.height(10.dp))
                     WaiterCard(a, ctx, onPlace = { ctx.open(nav, it.place) }, onClose = { answer = null; question = "" })
                 }
-                if (ctx.area.waiting || !worked.fresh) Looking(MUTED, vertical = 1.dp) else Spacer(Modifier.height(18.dp))
+                if (ctx.area.waiting || !worked.fresh) Looking(MUTED, vertical = 1.dp) else Spacer(Modifier.height(10.dp))
             }
             TableTop(counts, loading = ctx.area.loading, onOpen = { kind -> nav.go(Dest.Eat(kind)) })
             Column(Modifier.padding(horizontal = 16.dp)) {
@@ -145,7 +134,7 @@ fun MenusScreen(nav: Navigator) {
             }
             Spacer(Modifier.height(bottomRoom(96.dp)))
         }
-        // The board's foot: the dark Map pill and the die, 26 px from the bottom.
+        // The board's foot, 26 px from the bottom: the dark Map pill (318 × 54) and the die (54), 8 px apart.
         Row(
             Modifier
                 .align(Alignment.BottomCenter)
@@ -156,12 +145,12 @@ fun MenusScreen(nav: Navigator) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Row(
-                Modifier.weight(1f).height(54.dp).clip(CircleShape).background(INK).clickable { nav.go(Dest.Eat("map")) },
+                Modifier.weight(1f).height(54.dp).cssBox(bg = 0xFF14161B, r = round(54f)).clip(CircleShape).clickable { nav.go(Dest.Eat("map")) },
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                BoardIcon(EatGlyphs.map, Color.White, 19.dp)
-                Text(stringResource(R.string.eat_map), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = Color.White))
+                Symbol("tab.map", tint = Color.White, size = 19.dp)
+                CssLine(stringResource(R.string.eat_map), cssText("Geist", 15f, 600, colour = 0xFFFFFFFF, lineHeight = 19.5f))
             }
             Dice(
                 description = stringResource(R.string.eat_surprise),
@@ -178,16 +167,21 @@ fun MenusScreen(nav: Navigator) {
 private val INK = Color(0xFF14161B)
 private val MUTED = Color(0xFF5A5347)
 
-/** The board's light buttons: 70 % white with a warm 0 2 8 shadow. */
-private fun Modifier.paleButton(alpha: Float = 0.7f): Modifier = this
-    .dropShadow(CircleShape, BoxShadow(radius = 4.dp, color = Color(0x1F3C280A), offset = DpOffset(0.dp, 2.dp)))
-    .clip(CircleShape)
-    .background(Color.White.copy(alpha = alpha))
+/** The board's light buttons: 70 % white (78 % for the die) with a warm 0 2 8 shadow at 12 %. */
+private fun Modifier.paleButton(alpha: Float = 0.7f): Modifier =
+    cssBox(bg = Color.White.copy(alpha = alpha).css(), r = round(48f), shadows = listOf(CssShadow(0f, 2f, 8f, 0f, 0x1F3C280A))).clip(CircleShape)
 
 /** What the header's time and party open when tapped. */
 internal enum class Picker { TIME, PARTY }
 
-/** "Dinner", its time and party, the map button and the order pad with its shortlist badge, as on the board. */
+private val MEAL = cssText("Instrument Serif", 30f, colour = 0xFF14161B, lineHeight = 30f)
+private val META = cssText("Geist", 13f, colour = 0xFF5A5347, lineHeight = 17f, tnum = true)
+
+/**
+ * The header row at 46 px, 10 px between its parts: the map button (48), "Dinner" (30 px on a 30 px line) over its
+ * time and party (13 px, 2 px below, the two 10 px apart, each symbol 3 px from its figure), the order pad (48) with
+ * its shortlist badge.
+ */
 @Composable
 private fun TableHeader(ctx: EatContext, padCount: Int, onMap: () -> Unit, onPad: () -> Unit, onPick: (Picker) -> Unit) {
     val mapLabel = stringResource(R.string.eat_map)
@@ -195,32 +189,29 @@ private fun TableHeader(ctx: EatContext, padCount: Int, onMap: () -> Unit, onPad
     val time = dayTime(ctx.at, LocalDateTime.now(ctx.services.clock), ctx.lang, HM_PADDED)
     val timeLabel = stringResource(R.string.eat_time_at, time)
     val partyLabel = stringResource(R.string.eat_party_of, ctx.table.party)
-    Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    Row(Modifier.fillMaxWidth().padding(top = boardTop(46.dp)), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Box(
             Modifier.size(48.dp).paleButton().clickable(onClick = onMap).semantics { contentDescription = mapLabel },
             contentAlignment = Alignment.Center,
-        ) { BoardIcon(EatGlyphs.map, INK, 21.dp) }
+        ) { Symbol("tab.map", tint = INK, size = 21.dp) }
         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(stringResource(mealName(Meal.at(ctx.at.toLocalTime()))), style = TextStyle(fontFamily = SerifFamily, fontSize = 30.sp, lineHeight = 32.sp, color = INK))
+            CssLine(stringResource(mealName(Meal.at(ctx.at.toLocalTime()))), MEAL)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                val meta = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, color = MUTED)
                 Row(
-                    Modifier.clip(CircleShape).clickable { onPick(Picker.TIME) }.padding(horizontal = 4.dp, vertical = 2.dp)
-                        .semantics(mergeDescendants = true) { contentDescription = timeLabel },
+                    Modifier.clickable { onPick(Picker.TIME) }.semantics(mergeDescendants = true) { contentDescription = timeLabel },
                     horizontalArrangement = Arrangement.spacedBy(3.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    BoardIcon(EatGlyphs.clock, MUTED, 13.dp)
-                    Text(time, style = meta)
+                    Symbol("ui.clock", tint = MUTED, size = 13.dp)
+                    CssLine(time, META)
                 }
                 Row(
-                    Modifier.clip(CircleShape).clickable { onPick(Picker.PARTY) }.padding(horizontal = 4.dp, vertical = 2.dp)
-                        .semantics(mergeDescendants = true) { contentDescription = partyLabel },
+                    Modifier.clickable { onPick(Picker.PARTY) }.semantics(mergeDescendants = true) { contentDescription = partyLabel },
                     horizontalArrangement = Arrangement.spacedBy(3.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    BoardIcon(EatGlyphs.party, MUTED, 13.dp)
-                    Text(ctx.table.party.toString(), style = meta)
+                    Symbol("fact.groups", tint = MUTED, size = 13.dp)
+                    CssLine(ctx.table.party.toString(), META)
                 }
             }
         }
@@ -228,7 +219,10 @@ private fun TableHeader(ctx: EatContext, padCount: Int, onMap: () -> Unit, onPad
     }
 }
 
-/** The board's dark order-pad button (48 px) with the orange badge counting the shortlist. */
+/**
+ * The board's dark order-pad button (48 px, 0 4 12 shadow) with the orange badge counting the shortlist: 20 px in a
+ * 2 px ring of the table's colour, 2 px over the button's top right.
+ */
 @Composable
 internal fun OrderPadButton(count: Int, onClick: () -> Unit, background: Color = INK, edge: Color = Color(0xFFEDE6DA)) {
     val description = if (count > 0) stringResource(R.string.eat_pad_count, count) else stringResource(R.string.eat_pad)
@@ -236,19 +230,20 @@ internal fun OrderPadButton(count: Int, onClick: () -> Unit, background: Color =
         Box(
             Modifier
                 .size(48.dp)
-                .dropShadow(CircleShape, BoxShadow(radius = 6.dp, color = Color(0x4014161B), offset = DpOffset(0.dp, 4.dp)))
+                .cssBox(bg = background.css(), r = round(48f), shadows = listOf(CssShadow(0f, 4f, 12f, 0f, 0x4014161B)))
                 .clip(CircleShape)
-                .background(background)
                 .clickable(onClick = onClick)
                 .semantics { contentDescription = description },
             contentAlignment = Alignment.Center,
-        ) { BoardIcon(EatGlyphs.pad, Color.White, 20.dp) }
+        ) { Symbol("ui.order", tint = Color.White, size = 20.dp) }
         if (count > 0) {
+            val ring = edge.css()
             Box(
-                Modifier.align(Alignment.TopEnd).offset(x = 2.dp, y = (-2).dp).size(20.dp).clip(CircleShape).background(edge).padding(2.dp).clip(CircleShape).background(Color(0xFFE8622C)),
+                Modifier.align(Alignment.TopEnd).offset(x = 2.dp, y = (-2).dp).size(24.dp)
+                    .cssBox(bg = 0xFFE8622C, r = corners(10f), border = CssBorder(2f, 2f, 2f, 2f, longArrayOf(ring, ring, ring, ring))),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(count.toString(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White))
+                CssLine(count.toString(), cssText("Geist", 11f, 700, colour = 0xFFFFFFFF, lineHeight = 14f))
             }
         }
     }
@@ -292,7 +287,7 @@ private fun TablePicker(picker: Picker, ctx: EatContext, onDone: () -> Unit) {
     }
 }
 
-/** "Ask the waiter": the violet sparkle, the field and the mic, on 78 % white, 50 px high. */
+/** "Ask the waiter" at 108 px: 50 px of 78 % white, 0 2 8 shadow at 10 %, 16 px in, 10 apart: the violet sparkle (18), the field (Geist 500 16) and the mic (19). */
 @Composable
 private fun AskField(text: String, onText: (String) -> Unit, onAsk: () -> Unit, onMic: () -> Unit) {
     val micLabel = stringResource(R.string.kit_mic)
@@ -301,29 +296,28 @@ private fun AskField(text: String, onText: (String) -> Unit, onAsk: () -> Unit, 
         Modifier
             .fillMaxWidth()
             .height(50.dp)
-            .dropShadow(CircleShape, BoxShadow(radius = 4.dp, color = Color(0x1A3C280A), offset = DpOffset(0.dp, 2.dp)))
-            .clip(CircleShape)
-            .background(Color(0xC7FFFFFF))
+            .cssBox(bg = 0xC7FFFFFF, r = round(50f), shadows = listOf(CssShadow(0f, 2f, 8f, 0f, 0x1A3C280A)))
             .padding(start = 16.dp, end = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        BoardIcon(EatGlyphs.sparkle, Color(0xFF7B4DFF), 18.dp)
+        Symbol("fact.new", tint = Color(0xFF7B4DFF), size = 18.dp)
         Box(Modifier.weight(1f)) {
-            val style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Medium, fontSize = 16.sp)
-            if (text.isEmpty()) Text(stringResource(R.string.eat_ask), style = style, color = Color(0xFF8B857B))
+            val style = cssText("Geist", 16f, 500, lineHeight = 20.5f)
+            if (text.isEmpty()) CssLine(stringResource(R.string.eat_ask), style, color = Color(0xFFA9A9A9))
             BasicTextField(
                 value = text,
                 onValueChange = onText,
                 singleLine = true,
-                textStyle = style.copy(color = INK),
+                textStyle = style.copy(color = INK, lineHeight = androidx.compose.ui.unit.TextUnit.Unspecified),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { onAsk() }),
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = askLabel },
             )
         }
+        // The mic in a 40 px target whose centre is the board's (16 px in from the field's end).
         Box(Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onMic).semantics { contentDescription = micLabel }, contentAlignment = Alignment.Center) {
-            BoardIcon(EatGlyphs.mic, MUTED, 19.dp)
+            Symbol("ui.mic", tint = MUTED, size = 19.dp)
         }
     }
 }
@@ -427,14 +421,15 @@ private fun Dice(description: String, onRoll: () -> Unit) {
     Box(
         Modifier
             .size(54.dp)
-            .paleButton(0.78f)
+            .cssBox(bg = 0xC7FFFFFF, r = round(54f), shadows = listOf(CssShadow(0f, 2f, 8f, 0f, 0x1F3C280A)))
+            .clip(CircleShape)
             .clickable(onClick = onRoll)
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
-    ) { BoardIcon(EatGlyphs.dice, INK, 22.dp) }
+    ) { Symbol("ui.surprise.2", tint = INK, size = 22.dp) }
 }
 
-/** The tablecloth: #EDE6DA woven with faint 1 px threads every 3 px both ways, darkening towards the edges. */
+/** The tablecloth: #EDE6DA woven with faint 1 px threads every 3 px both ways, darkening to the edges (an ellipse at 50 % 45 %). */
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawLinen() {
     drawRect(Color(0xFFEDE6DA))
     val step = 3.dp.toPx()
@@ -449,9 +444,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawLinen() {
         drawRect(thread, Offset(0f, y), androidx.compose.ui.geometry.Size(size.width, 1.dp.toPx()))
         y += step
     }
-    val c = Offset(size.width * 0.5f, size.height * 0.45f)
-    val r = kotlin.math.hypot(size.width * 0.5f, size.height * 0.55f)
-    drawRect(Brush.radialGradient(0f to Color(0x00FFFFFF), 0.55f to Color(0x00FFFFFF), 1f to Color(0x29503C1E), center = c, radius = r))
+    drawRect(cssRadial(false, size.width / density / 2f, size.height / density * 0.45f, 0.55f to 0x00FFFFFF, 1f to 0x29503C1E).brush(size, density))
 }
 
 internal val HM: DateTimeFormatter = DateTimeFormatter.ofPattern("H:mm")

@@ -1,16 +1,13 @@
 package app.atlas.ui.eat
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.ui.unit.em
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.foundation.border
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -19,17 +16,14 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
@@ -60,10 +54,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -80,12 +72,14 @@ import app.atlas.nav.Navigator
 import app.atlas.places.Symbols
 import app.atlas.providers.Rating
 import app.atlas.ui.kit.Atlas
-import app.atlas.ui.kit.SansFamily
-import app.atlas.ui.kit.SerifFamily
+import app.atlas.ui.kit.CssCorners
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.kit.LocalBackdrop
+import app.atlas.ui.kit.backdropSource
+import app.atlas.ui.kit.cssShadow
+import app.atlas.ui.kit.frosted
 import app.atlas.ui.kit.Symbol
-import app.atlas.ui.kit.SymbolButton
 import app.atlas.ui.kit.rememberSpeechInput
-import app.atlas.ui.kit.softShadow
 import java.text.NumberFormat
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -96,6 +90,20 @@ private val INK = Color(0xFF16151A)
 private val FLAME = Color(0xFFE8622C)
 private val OPEN_GREEN = Color(0xFF178A4E)
 private val MUTED = Color(0xFF464C5A)
+
+/* The board's type: Geist, Instrument Serif for the cards' names. */
+private val FIELD = cssText("Geist", 16f, 500, colour = 0xFF14161B, lineHeight = 20.5f)
+private val PRICE = cssText("Geist", 14f, 700, lineHeight = 18f, spacing = 0.28f)
+private val TAB_TEXT = cssText("Geist", 14f, 600, lineHeight = 18f)
+private val COUNT = cssText("Geist", 13f, colour = 0xFF464C5A, lineHeight = 17f, tnum = true)
+private val CARD_NAME = cssText("Instrument Serif", 25f, colour = 0xFF14161B, lineHeight = 25f)
+private val CARD_WALK = cssText("Geist", 13f, colour = 0xFF464C5A, lineHeight = 17f, tnum = true)
+private val CARD_SCORE = cssText("Geist", 26f, 700, colour = 0xFF14161B, lineHeight = 26f, tnum = true)
+private val CHIP = cssText("Geist", 11f, 600, colour = 0xFF14161B, lineHeight = 14f, tnum = true)
+private val SOURCES = cssText("Geist", 11f, colour = 0xFF464C5A, lineHeight = 14f, tnum = true)
+private val CARD_NOTE = cssText("Geist", 13f, 600, colour = 0xFF464C5A, lineHeight = 17f)
+private val CARD_PRICE = cssText("Geist", 13f, 700, lineHeight = 17f, spacing = 0.26f)
+private val OPEN_TIME = cssText("Geist", 13f, 600, lineHeight = 17f, tnum = true)
 
 /**
  * The eat map, as on the Eat board: places to eat as pins (a ring for how long each stays open, a flame when its
@@ -154,9 +162,9 @@ fun EatMapScreen(nav: Navigator) {
         AtlasMap(
             state = map,
             tiles = tiles,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().backdropSource(LocalBackdrop.current),
             overlays = MapOverlays(markers = markers, location = fix?.let { UserLocation(it.location, it.accuracy, it.bearing, it.speed) }),
-            contentPadding = PaddingValues(top = 150.dp, bottom = 380.dp),
+            contentPadding = PaddingValues(top = 150.dp, bottom = 408.dp),
             onTap = { hit ->
                 when (hit) {
                     is MapHit.OnMarker -> places.indexOfFirst { it.key == hit.marker.id }.takeIf { it >= 0 }?.let { scope.launch { carousel.animateScrollToItem(it) } }
@@ -165,14 +173,15 @@ fun EatMapScreen(nav: Navigator) {
                 }
             },
         )
+        // The top at 44 px, 12 px in: back (52 px of frosted glass) and the search pill, 8 apart; the filters 10 under.
         Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = boardTop(44.dp)), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val back = stringResource(R.string.kit_back)
                 Box(
-                    Modifier.size(52.dp).boxShadow(CircleShape, 1f, 6f, 20f, Color(0x1F181C30)).clip(CircleShape).background(Color(0xDBFFFFFF))
+                    Modifier.size(52.dp).cssShadow(CircleShape, y = 6.dp, blur = 20.dp, colour = Color(0x1F181C30)).frosted(CircleShape, Color(0xDBFFFFFF), 22.dp).clip(CircleShape)
                         .clickable { nav.back() }.semantics { contentDescription = back },
                     contentAlignment = Alignment.Center,
-                ) { BoardIcon(EatGlyphs.backMap, INK, 22.dp) }
+                ) { Symbol("ui.back", tint = Color(0xFF14161B), size = 22.dp) }
                 SearchPill(
                     question,
                     hint = stringResource(mealName(Meal.at(ctx.at.toLocalTime()))).lowercase() + " " + stringResource(R.string.eat_order_for, ctx.table.party),
@@ -189,40 +198,30 @@ fun EatMapScreen(nav: Navigator) {
                 }
             }
         }
-        val sheet = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)
+        // The sheet: 408 px up from the foot (its top at 507 on the board), the handle 10 px down, the tabs 14 under it,
+        // the cards 14 under the tabs.
         Column(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .boxShadow(sheet, 1f, -10f, 40f, Color(0x29181C30))
-                .clip(sheet)
-                .background(Color(0xFFFBFAF7))
-                .windowInsetsPadding(WindowInsets.navigationBars)
-                .padding(bottom = 16.dp),
+                .height(408.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding())
+                .cssBox(bg = 0xFFFBFAF7, r = CssCorners(32f, 32f, 0f, 0f), shadows = listOf(CssShadow(0f, -10f, 40f, 0f, 0x29181C30)))
+                .clip(RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp))
+                .windowInsetsPadding(WindowInsets.navigationBars),
         ) {
-            Box(Modifier.align(Alignment.CenterHorizontally).padding(top = 10.dp).size(width = 40.dp, height = 5.dp).clip(CircleShape).background(Color(0xFFD8D4CC)))
+            Box(Modifier.align(Alignment.CenterHorizontally).padding(top = 10.dp).size(width = 40.dp, height = 5.dp).cssBox(bg = 0xFFD8D4CC, r = corners(3f)))
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 answer?.let { a ->
-                    TabPill(a.parsed.chips.joinToString(" · ") { it.label }.ifEmpty { a.text }, EatGlyphs.sparkle, on = true, tint = Color(0xFF7B4DFF)) { answer = null; question = "" }
+                    TabPill(a.parsed.chips.joinToString(" · ") { it.label }.ifEmpty { a.text }, "fact.new", on = true, tint = Color(0xFF7B4DFF)) { answer = null; question = "" }
                 } ?: run {
-                    TabPill(stringResource(R.string.eat_tab_trending), EatGlyphs.flame, on = tab == EatTab.TRENDING, tint = Color(0xFFFF8A4C)) { tab = EatTab.TRENDING }
-                    TabBall(EatGlyphs.star, stringResource(R.string.eat_tab_top), on = tab == EatTab.TOP, tint = INK) { tab = EatTab.TOP }
-                    TabBall(EatGlyphs.sparkle, stringResource(R.string.eat_tab_new), on = tab == EatTab.NEW, tint = Color(0xFF8A5A00)) { tab = EatTab.NEW }
-                    TabBall(EatGlyphs.heart, stringResource(R.string.eat_tab_loved), on = tab == EatTab.LOVED, tint = Color(0xFF7B4DFF)) { tab = EatTab.LOVED }
+                    TabPill(stringResource(R.string.eat_tab_trending), "fact.trending", on = tab == EatTab.TRENDING, tint = Color(0xFFFF8A4C)) { tab = EatTab.TRENDING }
+                    TabBall("ui.star", stringResource(R.string.eat_tab_top), on = tab == EatTab.TOP, tint = INK) { tab = EatTab.TOP }
+                    TabBall("fact.new", stringResource(R.string.eat_tab_new), on = tab == EatTab.NEW, tint = Color(0xFF8A5A00)) { tab = EatTab.NEW }
+                    TabBall("ui.heart", stringResource(R.string.eat_tab_loved), on = tab == EatTab.LOVED, tint = Color(0xFF7B4DFF)) { tab = EatTab.LOVED }
                 }
                 Spacer(Modifier.weight(1f))
-                Text(places.size.toString(), style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, color = MUTED))
+                CssLine(places.size.toString(), COUNT)
             }
-            if (answer == null && view != null && !view.ranked) {
-                Text(
-                    stringResource(honestNote(tab, ctx.ratings.state)),
-                    Modifier.padding(horizontal = 18.dp).padding(bottom = 8.dp),
-                    style = Atlas.type.caption,
-                    color = Atlas.colors.inkSoft,
-                    maxLines = 2,
-                )
-            }
-            if (ctx.area.waiting || !worked.fresh) Looking(Atlas.colors.inkSoft, vertical = 4.dp)
             if (ctx.area.error != null && ctx.area.places.isEmpty()) EatProblem(ctx.area)
             if (places.isEmpty() && view != null && !ctx.area.loading) {
                 Text(stringResource(R.string.eat_map_none), Modifier.padding(18.dp), style = Atlas.type.body, color = Atlas.colors.inkSoft)
@@ -233,6 +232,16 @@ fun EatMapScreen(nav: Navigator) {
                     EatCard(p, ctx, aggregates[p.key]?.sources, onOpen = { ctx.open(nav, p.place) })
                 }
             }
+            // What the tab could not go on, under the cards, where the board's sheet has room, so the cards keep their place.
+            if (answer == null && view != null && !view.ranked) {
+                Text(
+                    stringResource(honestNote(tab, ctx.ratings.state)),
+                    Modifier.padding(start = 18.dp, end = 18.dp, top = 10.dp),
+                    style = cssText("Geist", 12f, colour = 0xFF464C5A, lineHeight = 16f),
+                    maxLines = 2,
+                )
+            }
+            if (ctx.area.waiting || !worked.fresh) Looking(Atlas.colors.inkSoft, vertical = 4.dp)
         }
     }
     LaunchedEffect(selected) {
@@ -241,30 +250,30 @@ fun EatMapScreen(nav: Navigator) {
     }
 }
 
-/** The search pill (52 px, white): the cutlery chip, the waiter's field ("dinner for 2") and the mic. */
+/** The search pill (52 px, white, 0 6 20 shadow, 16 px in, 10 apart): the cutlery chip (30), the waiter's field ("dinner for 2") and the mic (20). */
 @Composable
 private fun SearchPill(text: String, hint: String, onText: (String) -> Unit, onAsk: () -> Unit, onMic: () -> Unit, modifier: Modifier) {
     val micLabel = stringResource(R.string.kit_mic)
     val askLabel = stringResource(R.string.eat_ask)
     Row(
-        modifier.height(52.dp).boxShadow(CircleShape, 1f, 6f, 20f, Color(0x1F181C30)).clip(CircleShape).background(Color.White).padding(start = 16.dp, end = 8.dp),
+        modifier.height(52.dp).cssBox(bg = 0xFFFFFFFF, r = round(52f), shadows = listOf(CssShadow(0f, 6f, 20f, 0f, 0x1F181C30))).padding(start = 16.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Box(Modifier.size(30.dp).clip(CircleShape).background(Color(0xFFFCE5D8)), contentAlignment = Alignment.Center) { BoardIcon(EatGlyphs.cutleryChip, Color(0xFFB8461A), 17.dp) }
+        Box(Modifier.size(30.dp).cssBox(bg = 0xFFFCE5D8, r = round(30f)), contentAlignment = Alignment.Center) { Symbol("cat.eat", tint = Color(0xFFB8461A), size = 17.dp) }
         Box(Modifier.weight(1f)) {
-            val style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Medium, fontSize = 16.sp, color = INK)
-            if (text.isEmpty()) Text(hint, style = style)
+            if (text.isEmpty()) CssLine(hint, FIELD)
             BasicTextField(
                 value = text, onValueChange = onText, singleLine = true,
-                textStyle = style,
+                textStyle = FIELD.copy(lineHeight = androidx.compose.ui.unit.TextUnit.Unspecified),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { onAsk() }),
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = askLabel },
             )
         }
+        // The mic in a 36 px target whose centre is the board's (16 px in from the pill's end).
         Box(Modifier.size(36.dp).clip(CircleShape).clickable(onClick = onMic).semantics { contentDescription = micLabel }, contentAlignment = Alignment.Center) {
-            BoardIcon(EatGlyphs.mic, MUTED, 20.dp)
+            Symbol("ui.mic", tint = MUTED, size = 20.dp)
         }
     }
 }
@@ -285,8 +294,8 @@ private fun FilterBall(f: EatFilter, description: String, on: Boolean, enabled: 
         Modifier
             .height(42.dp)
             .then(if (f == EatFilter.PRICE) Modifier else Modifier.size(42.dp))
+            .cssBox(bg = if (on) 0xFF14161B else 0xE0FFFFFF, r = round(42f))
             .clip(CircleShape)
-            .background(if (on) INK else Color(0xE0FFFFFF))
             .toggleable(on, enabled = enabled || on, role = Role.Switch) { onClick() }
             .semantics { contentDescription = description }
             .then(if (f == EatFilter.PRICE) Modifier.padding(horizontal = 12.dp) else Modifier),
@@ -298,44 +307,45 @@ private fun FilterBall(f: EatFilter, description: String, on: Boolean, enabled: 
                     withStyle(SpanStyle(color = (if (on) Color.White else INK).copy(alpha = alpha))) { append("$$") }
                     withStyle(SpanStyle(color = Color(0xFF9AA0AC).copy(alpha = alpha))) { append("$") }
                 },
-                style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp, letterSpacing = 0.02.em),
+                Modifier.lineBox(18f),
+                style = PRICE.copy(lineHeight = androidx.compose.ui.unit.TextUnit.Unspecified),
             )
-            else -> BoardIcon(filterGlyph(f), tint, 19.dp)
+            else -> Symbol(filterSymbol(f), tint = tint, size = 19.dp)
         }
     }
 }
 
-private fun filterGlyph(f: EatFilter): BoardGlyph = when (f) {
-    EatFilter.OPEN -> EatGlyphs.clockFilter
-    EatFilter.RATED -> EatGlyphs.star
-    EatFilter.VEGAN -> EatGlyphs.leafFilter
-    EatFilter.TERRACE -> EatGlyphs.umbrella
-    EatFilter.WHEELCHAIR -> EatGlyphs.stepFree
-    EatFilter.DOGS -> EatGlyphs.paw
-    EatFilter.RESERVE -> EatGlyphs.calendar
-    EatFilter.PRICE -> EatGlyphs.star
+private fun filterSymbol(f: EatFilter): String = when (f) {
+    EatFilter.OPEN -> "ui.clock"
+    EatFilter.RATED -> "ui.star"
+    EatFilter.VEGAN -> "fact.vegan"
+    EatFilter.TERRACE -> "fact.terrace"
+    EatFilter.WHEELCHAIR -> "fact.wheelchair"
+    EatFilter.DOGS -> "fact.dog"
+    EatFilter.RESERVE -> "ui.calendar"
+    EatFilter.PRICE -> "ui.star"
 }
 
-/** The chosen tab's pill (40 px, dark): its glyph and name. */
+/** The chosen tab's pill (40 px, dark, 11 and 14 px in): its symbol (16) and name, 7 apart. */
 @Composable
-private fun TabPill(text: String, glyph: BoardGlyph, on: Boolean, tint: Color, onClick: () -> Unit) {
+private fun TabPill(text: String, symbol: String, on: Boolean, tint: Color, onClick: () -> Unit) {
     Row(
-        Modifier.height(40.dp).clip(CircleShape).background(if (on) INK else Color(0xFFF1EEE8)).selectable(on, role = Role.Tab, onClick = onClick).padding(start = 11.dp, end = 14.dp),
+        Modifier.height(40.dp).cssBox(bg = if (on) 0xFF14161B else 0xFFF1EEE8, r = round(40f)).clip(CircleShape).selectable(on, role = Role.Tab, onClick = onClick).padding(start = 11.dp, end = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        BoardIcon(glyph, tint, 16.dp)
-        Text(text, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = if (on) Color.White else INK), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Symbol(symbol, tint = tint, size = 16.dp)
+        CssLine(text, TAB_TEXT, color = if (on) Color.White else INK)
     }
 }
 
-/** A tab not chosen (44 × 40, #F1EEE8) with its glyph; dark when chosen. */
+/** A tab not chosen (44 × 40, #F1EEE8) with its symbol (17); dark when chosen. */
 @Composable
-private fun TabBall(glyph: BoardGlyph, description: String, on: Boolean, tint: Color, onClick: () -> Unit) {
+private fun TabBall(symbol: String, description: String, on: Boolean, tint: Color, onClick: () -> Unit) {
     Box(
-        Modifier.size(44.dp, 40.dp).clip(CircleShape).background(if (on) INK else Color(0xFFF1EEE8)).selectable(on, role = Role.Tab, onClick = onClick).semantics { contentDescription = description },
+        Modifier.size(44.dp, 40.dp).cssBox(bg = if (on) 0xFF14161B else 0xFFF1EEE8, r = round(40f)).clip(CircleShape).selectable(on, role = Role.Tab, onClick = onClick).semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
-    ) { BoardIcon(glyph, if (on && tint == INK) Color.White else tint, 17.dp) }
+    ) { Symbol(symbol, tint = if (on && tint == INK) Color.White else tint, size = 17.dp) }
 }
 
 /**
@@ -350,43 +360,44 @@ private fun EatCard(p: EatPlace, ctx: EatContext, sources: List<Rating>?, onOpen
     val rated = (sources?.filter { it.stars != null } ?: listOfNotNull(single?.takeIf { it.stars != null }))
     val dish = remember(p.key) { dishOf(p, area.country) }
     Column(
-        Modifier.width(300.dp).boxShadow(shape, 1f, 2f, 10f, Color(0x14181C30)).clip(shape).background(Color.White).border(1.dp, Color(0x0D14161B), shape).clickable(onClick = onOpen),
+        Modifier.width(300.dp)
+            .cssBox(bg = 0xFFFFFFFF, r = corners(24f), shadows = listOf(CssShadow(0f, 2f, 10f, 0f, 0x14181C30), CssShadow(0f, 0f, 0f, 1f, 0x0D14161B)))
+            .clip(shape).clickable(onClick = onOpen),
     ) {
         Canvas(Modifier.fillMaxWidth().height(116.dp)) { drawPlate(dish, p.key.hashCode()) }
+        // 12 14 14 px in, 10 between the rows: the name on its 25 px line (the walk on its baseline, 6 px down), the
+        // ratings (35 px, centred), the facts (22 px, centred).
         Column(Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(p.name, Modifier.weight(1f), style = TextStyle(fontFamily = SerifFamily, fontSize = 25.sp, lineHeight = 26.sp, color = INK), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    BoardIcon(EatGlyphs.walkCard, MUTED, 13.dp)
-                    Text("${p.walkMinutes}′", style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, color = MUTED))
+            Row(Modifier.height(25.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CssLine(p.name, CARD_NAME, Modifier.weight(1f))
+                Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Symbol("mode.walk", tint = MUTED, size = 13.dp)
+                    CssLine("${p.walkMinutes}′", CARD_WALK)
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (rated.isNotEmpty()) {
                     val score = rated.mapNotNull { it.stars }.average()
-                    Text(starsText(score), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 26.sp, lineHeight = 26.sp, color = INK))
+                    CssLine(starsText(score), CARD_SCORE)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { for (r in rated.take(3)) ProviderChip(r) }
                         val count = rated.sumOf { it.count }
-                        Text(
-                            stringResource(R.string.eat_card_sources, NumberFormat.getIntegerInstance(Locale.forLanguageTag(ctx.lang)).format(count), rated.size),
-                            style = TextStyle(fontFamily = SansFamily, fontSize = 11.sp, color = MUTED),
-                        )
+                        CssLine(stringResource(R.string.eat_card_sources, NumberFormat.getIntegerInstance(Locale.forLanguageTag(ctx.lang)).format(count), rated.size), SOURCES)
                     }
                 } else {
                     Column(Modifier.weight(1f)) {
-                        Text(stringResource(R.string.eat_no_ratings_yet), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = MUTED))
-                        Text(stringResource(R.string.eat_card_write_one), Modifier.clickable(onClick = onOpen), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color(0xFF2E5BFF)))
+                        CssLine(stringResource(R.string.eat_no_ratings_yet), CARD_NOTE)
+                        CssLine(stringResource(R.string.eat_card_write_one), CARD_NOTE, Modifier.clickable(onClick = onOpen), color = Color(0xFF2E5BFF))
                     }
                 }
                 EatMapModel.sparkline(single?.trend)?.let { Sparkline(it, Modifier.size(width = 64.dp, height = 28.dp)) }
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.height(22.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 PriceLevel(single?.priceLevel ?: sources?.firstNotNullOfOrNull { it.priceLevel })
-                if (p.outside) BoardIcon(EatGlyphs.umbrella, MUTED, 18.dp, contentDescription = stringResource(R.string.eat_fact_terrace))
-                if (p.diet("vegan") || p.diet("vegetarian")) BoardIcon(EatGlyphs.leafFilter, Color(0xFF2F6B34), 18.dp, contentDescription = stringResource(R.string.eat_diet_vegetarian))
-                if (p.stepFree) BoardIcon(EatGlyphs.stepFree, MUTED, 18.dp, contentDescription = stringResource(R.string.eat_order_step_free))
-                if (EatFilter.RESERVE.has(p, ctx.at, area, ctx.ratings)) BoardIcon(EatGlyphs.calendar, MUTED, 18.dp, contentDescription = stringResource(R.string.eat_wish_reservable))
+                if (p.outside) Symbol("fact.terrace", tint = MUTED, size = 18.dp, contentDescription = stringResource(R.string.eat_fact_terrace))
+                if (p.diet("vegan") || p.diet("vegetarian")) Symbol("fact.vegan", tint = Color(0xFF2F6B34), size = 18.dp, contentDescription = stringResource(R.string.eat_diet_vegetarian))
+                if (p.stepFree) Symbol("fact.wheelchair", tint = MUTED, size = 18.dp, contentDescription = stringResource(R.string.eat_order_step_free))
+                if (EatFilter.RESERVE.has(p, ctx.at, area, ctx.ratings)) Symbol("ui.calendar", tint = MUTED, size = 18.dp, contentDescription = stringResource(R.string.eat_wish_reservable))
                 Spacer(Modifier.weight(1f))
                 OpenUntil(p, ctx)
             }
@@ -405,13 +416,12 @@ private fun ProviderChip(r: Rating) {
         else -> Color(0xFF1F5F99)
     }
     Row(
-        Modifier.height(18.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xFFF1EEE8)).padding(horizontal = 5.dp),
+        Modifier.height(18.dp).cssBox(bg = 0xFFF1EEE8, r = corners(5f)).padding(horizontal = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        val style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, color = INK)
-        Text(r.provider.take(1).uppercase(), style = style.copy(fontWeight = FontWeight.Bold, color = colour))
-        Text(r.stars?.let { starsText(it) } ?: "–", style = style)
+        CssLine(r.provider.take(1).uppercase(), CHIP.copy(fontWeight = FontWeight.Black), color = colour)
+        CssLine(r.stars?.let { starsText(it) } ?: "–", CHIP)
     }
 }
 
@@ -424,7 +434,8 @@ private fun PriceLevel(level: Int?) {
             withStyle(SpanStyle(color = INK)) { append("$".repeat(level)) }
             withStyle(SpanStyle(color = Color(0xFFB5B9C2))) { append("$".repeat(4 - level)) }
         },
-        style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 0.02.em),
+        Modifier.lineBox(17f),
+        style = CARD_PRICE.copy(lineHeight = androidx.compose.ui.unit.TextUnit.Unspecified),
     )
 }
 
@@ -471,7 +482,7 @@ private fun OpenUntil(p: EatPlace, ctx: EatContext) {
             val a = Math.toRadians((now.hour * 60 + now.minute) / 1440.0 * 360.0 - 90.0)
             drawLine(INK, c, c + Offset((kotlin.math.cos(a) * 7.5 * k).toFloat(), (kotlin.math.sin(a) * 7.5 * k).toFloat()), 1.6f * k, StrokeCap.Round)
         }
-        Text(text.removePrefix("→ "), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = ink))
+        CssLine(text.removePrefix("→ "), OPEN_TIME, color = ink)
     }
 }
 

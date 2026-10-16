@@ -2,7 +2,6 @@ package app.atlas.ui.eat
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,8 +30,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.innerShadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -43,25 +40,23 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
-import androidx.compose.ui.graphics.shadow.Shadow as BoxShadow
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.SansFamily
-import kotlin.math.hypot
+import app.atlas.ui.kit.CssCorners
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.kit.Symbol
+import app.atlas.ui.kit.cssLinear
+import app.atlas.ui.kit.cssRadial
+import app.atlas.ui.kit.cssRepeatingLinear
 
 /* The Sweets board's pinks (`canvas/project/Sweets.dc.html`). */
 private val RASPBERRY = Color(0xFFB2345A)
@@ -70,6 +65,15 @@ private val PLUM = Color(0xFF4A2034)
 private val CREAM = Color(0xFFFFF7F2)
 private val AWNING = Color(0xFFF59CB5)
 private val AWNING_LIGHT = Color(0xFFFFF3EE)
+
+/* The board's type: Fredoka (400 to 700), Geist for the figures, and Arial on the tub labels (the board's buttons keep the browser's own face). */
+private val TITLE = cssText("Fredoka", 46f, 700, colour = 0xFFB2345A, lineHeight = 46f)
+private val TITLE_COUNT = cssText("Fredoka", 18f, 500, colour = 0xFF8F2A4A, lineHeight = 21.5f, tnum = true)
+private val TUB_LABEL = cssText("Arial", 12f, 600, lineHeight = 13.5f, tnum = true)
+private val PILL_TEXT = cssText("Fredoka", 14f, 600, lineHeight = 17f)
+private val ROW_NAME = cssText("Fredoka", 19f, 600, colour = 0xFF4A2034, lineHeight = 23f)
+private val ROW_META = cssText("Geist", 13f, colour = 0xFF8F2A4A, lineHeight = 17f, tnum = true)
+private val ROW_STARS = cssText("Fredoka", 18f, 600, colour = 0xFF4A2034, lineHeight = 21.5f, tnum = true)
 
 /**
  * Sweets, as on the Sweets board: a striped awning, a frosted gelato case whose tubs count ice cream, bakeries,
@@ -88,17 +92,10 @@ fun SweetsScreen(nav: Navigator) {
     Box(Modifier.fillMaxSize().background(CREAM)) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = bottomRoom(40.dp))) {
             item {
-                Row(Modifier.fillMaxWidth().padding(top = boardTop(132.dp)), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.Bottom) {
-                    Text(
-                        stringResource(R.string.eat_sweets),
-                        Modifier.semantics { heading() }.alignByBaseline(),
-                        style = TextStyle(fontFamily = EatType.fredoka, fontWeight = FontWeight.Bold, fontSize = 46.sp, lineHeight = 46.sp, color = RASPBERRY),
-                    )
-                    Text(
-                        case?.open?.toString() ?: "…",
-                        Modifier.alignByBaseline(),
-                        style = TextStyle(fontFamily = EatType.fredoka, fontWeight = FontWeight.Medium, fontSize = 18.sp, color = WINE),
-                    )
+                // "Sweets" (46 on 46) at 132 px and its count 10 px on, on one baseline (the count's line 22.5 px down).
+                Row(Modifier.fillMaxWidth().padding(top = boardTop(132.dp)), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)) {
+                    CssLine(stringResource(R.string.eat_sweets), TITLE, Modifier.semantics { heading() })
+                    CssLine(case?.open?.toString() ?: "…", TITLE_COUNT, Modifier.padding(top = 22.5.dp))
                 }
             }
             item { GelatoCase(case?.tubs.orEmpty(), tub, Modifier.padding(top = 18.dp).bleed(2.dp)) { t -> tub = if (tub == t) null else t } }
@@ -118,26 +115,34 @@ fun SweetsScreen(nav: Navigator) {
                     Text(
                         stringResource(if (ctx.area.places.isEmpty()) R.string.eat_none_here else R.string.eat_sweets_none),
                         Modifier.fillMaxWidth().padding(vertical = 24.dp),
-                        style = TextStyle(fontFamily = EatType.fredoka, fontSize = 15.sp, color = PLUM.copy(alpha = 0.7f)),
+                        style = cssText("Fredoka", 15f, colour = 0xB34A2034, lineHeight = 18f),
                         textAlign = TextAlign.Center,
                     )
                 }
                 if (ctx.area.waiting || !worked.fresh) Looking(PLUM.copy(alpha = 0.6f))
                 if (ctx.area.error != null && ctx.area.places.isEmpty()) EatProblem(ctx.area)
                 sourceLine(ctx.area)?.let {
-                    Text(it, Modifier.fillMaxWidth().padding(top = 16.dp), style = TextStyle(fontFamily = SansFamily, fontSize = 11.sp), color = PLUM.copy(alpha = 0.55f), textAlign = TextAlign.Center)
+                    Text(it, Modifier.fillMaxWidth().padding(top = 16.dp), style = cssText("Geist", 11f, colour = 0x8C4A2034, lineHeight = 14f, align = TextAlign.Center))
                 }
             }
         }
-        Canvas(Modifier.fillMaxWidth().height(boardTop(104.dp) + 18.dp)) { drawAwning(18.dp.toPx()) }
+        // The awning: stripes down to 104 px (its hem shaded, inset 0 -10 16), then the scalloped edge from 100 px.
+        val awning = boardTop(104.dp)
+        Box(
+            Modifier.fillMaxWidth().height(awning).cssBox(
+                grad = listOf(cssRepeatingLinear(90f, 68f, 0f to 0xFFF59CB5, 34f to 0xFFF59CB5, 34f to 0xFFFFF3EE, 68f to 0xFFFFF3EE)),
+                shadows = listOf(CssShadow(0f, -10f, 16f, 0f, 0x1F781E3C, inset = true)),
+            ),
+        )
+        Canvas(Modifier.padding(top = awning - 4.dp).fillMaxWidth().height(22.dp)) { drawScallops() }
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = boardTop(44.dp))) {
-            PaleRound(EatGlyphs.backRound, stringResource(R.string.kit_back), 20) { nav.back() }
+            PaleRound("ui.back", stringResource(R.string.kit_back), 20) { nav.back() }
             Spacer(Modifier.weight(1f))
             Box {
-                PaleRound(EatGlyphs.padRound, stringResource(R.string.eat_pad), 19) { nav.go(Dest.Eat("order")) }
+                PaleRound("ui.order", stringResource(R.string.eat_pad), 19) { nav.go(Dest.Eat("order")) }
                 if (pad.isNotEmpty()) {
                     Box(Modifier.align(Alignment.TopEnd).size(18.dp).clip(CircleShape).background(Color(0xFFE8622C)), contentAlignment = Alignment.Center) {
-                        Text(pad.size.toString(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White))
+                        CssLine(pad.size.toString(), cssText("Geist", 10f, 700, colour = 0xFFFFFFFF, lineHeight = 13f))
                     }
                 }
             }
@@ -145,45 +150,31 @@ fun SweetsScreen(nav: Navigator) {
     }
 }
 
-/** A white round button of the awning (44 px, 88 % white, a pink shadow). */
+/** A white round button of the awning (44 px, 88 % white, 0 3 10 shadow of raspberry at 18 %). */
 @Composable
-private fun PaleRound(glyph: BoardGlyph, description: String, sizeDp: Int, onClick: () -> Unit) {
+private fun PaleRound(symbol: String, description: String, sizeDp: Int, onClick: () -> Unit) {
     Box(
         Modifier
             .size(44.dp)
-            .boxShadow(CircleShape, 1f, 3f, 10f, Color(0x2E781E3C))
+            .cssBox(bg = 0xE0FFFFFF, r = round(44f), shadows = listOf(CssShadow(0f, 3f, 10f, 0f, 0x2E781E3C)))
             .clip(CircleShape)
-            .background(Color(0xE0FFFFFF))
             .clickable(onClick = onClick)
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
-    ) { BoardIcon(glyph, RASPBERRY, sizeDp.dp) }
+    ) { Symbol(symbol, tint = RASPBERRY, size = sizeDp.dp) }
 }
 
-/**
- * The awning: pink and white stripes 34 px wide down to [hem] above the canvas foot, darkening at the hem, then the
- * board's scalloped edge (teeth 34 px wide, 14 deep).
- */
-private fun DrawScope.drawAwning(hem: Float) {
-    val k = density
-    val body = size.height - hem
-    var x = 0f
-    var i = 0
-    while (x < size.width) {
-        drawRect(if (i % 2 == 0) AWNING else AWNING_LIGHT, Offset(x, 0f), Size(34 * k, body))
-        x += 34 * k
-        i++
-    }
-    drawRect(Brush.verticalGradient(listOf(Color(0x00781E3C), Color(0x1F781E3C)), body - 16 * k, body), Offset(0f, body - 16 * k), Size(size.width, 16 * k))
-    val top = body - 4 * k
+/** The board's scalloped edge (412 × 22): a 4 px band, then teeth 34 px wide and 14 deep, drawn from the right. */
+private fun DrawScope.drawScallops() {
+    val k = size.width / 412f
     val p = Path().apply {
-        moveTo(0f, top)
-        lineTo(size.width, top)
-        lineTo(size.width, top + 4 * k)
+        moveTo(0f, 0f)
+        lineTo(size.width, 0f)
+        lineTo(size.width, 4 * k)
         var px = size.width
         while (px > 0f) {
-            cubicTo(px - 8.5f * k, top + 4 * k, px - 17 * k, top + 18 * k, px - 17 * k, top + 18 * k)
-            cubicTo(px - 17 * k, top + 18 * k, px - 25.5f * k, top + 4 * k, px - 34 * k, top + 4 * k)
+            cubicTo(px - 8.5f * k, 4 * k, px - 17 * k, 18 * k, px - 17 * k, 18 * k)
+            cubicTo(px - 17 * k, 18 * k, px - 25.5f * k, 4 * k, px - 34 * k, 4 * k)
             px -= 34 * k
         }
         close()
@@ -200,17 +191,14 @@ private fun GelatoCase(counts: Map<Tub, Int>, chosen: Tub?, modifier: Modifier, 
         modifier
             .fillMaxWidth()
             .height(330.dp)
-            .boxShadow(outer, 1f, 14f, 28f, Color(0x2E3C283C))
-            .clip(outer)
-            .background(Brush.verticalGradient(listOf(Color(0xFFE4ECEF), Color(0xFFCBD6DB))))
+            .cssBox(grad = listOf(cssLinear(180f, 0f to 0xFFE4ECEF, 1f to 0xFFCBD6DB)), r = CssCorners(40f, 40f, 14f, 14f), shadows = listOf(CssShadow(0f, 14f, 28f, 0f, 0x2E3C283C)))
             .padding(12.dp),
     ) {
         Column(
             Modifier
                 .fillMaxSize()
+                .cssBox(bg = 0xFFF2FAF7, r = CssCorners(30f, 30f, 8f, 8f), shadows = listOf(CssShadow(0f, 6f, 16f, 0f, 0x1F3C5A5A, inset = true)))
                 .clip(inner)
-                .background(Color(0xFFF2FAF7))
-                .innerShadow(inner, BoxShadow(radius = 8.dp, color = Color(0x1F3C5A5A), offset = DpOffset(0.dp, 6.dp)))
                 .padding(start = 10.dp, end = 10.dp, top = 30.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -240,19 +228,21 @@ private fun TubCell(t: Tub, n: Int, on: Boolean, modifier: Modifier, onClick: ()
         contentAlignment = Alignment.BottomCenter,
     ) {
         Canvas(Modifier.fillMaxWidth().height(if (on) 100.dp else 64.dp).alpha(if (n > 0 || on) 1f else 0.5f)) { drawTub(t, on) }
-        Text(
-            "$name $n",
+        // The label: 22 px, 7 px either side; the chosen one raspberry at (6, 36), the others white, 50 px over the cell's foot.
+        Box(
             Modifier
                 .align(if (on) Alignment.TopStart else Alignment.BottomCenter)
-                .padding(bottom = if (on) 0.dp else 50.dp, top = if (on) 0.dp else 0.dp)
-                .then(if (on) Modifier else Modifier.boxShadow(CircleShape, 1f, 1f, 3f, Color(0x1F000000)))
-                .clip(CircleShape)
-                .background(if (on) RASPBERRY else Color.White)
-                .padding(horizontal = 7.dp, vertical = 3.dp),
-            style = TextStyle(fontFamily = EatType.fredoka, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = if (on) Color.White else PLUM.copy(alpha = if (n > 0) 1f else 0.45f)),
-            maxLines = 1,
-            softWrap = false,
-        )
+                .padding(start = if (on) 6.dp else 0.dp, top = if (on) 36.dp else 0.dp, bottom = if (on) 0.dp else 50.dp)
+                .height(22.dp)
+                .then(
+                    if (on) Modifier.cssBox(bg = 0xFFB2345A, r = round(22f))
+                    else Modifier.cssBox(bg = 0xFFFFFFFF, r = round(22f), shadows = listOf(CssShadow(0f, 1f, 3f, 0f, 0x1F000000))),
+                )
+                .padding(horizontal = 7.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            CssLine("$name $n", TUB_LABEL, color = if (on) Color.White else PLUM.copy(alpha = if (n > 0) 1f else 0.45f))
+        }
     }
 }
 
@@ -321,19 +311,21 @@ private fun SweetPillButton(s: SweetPill, description: String, on: Boolean, enab
     Box(
         Modifier
             .size(width = 60.dp, height = 44.dp)
+            .then(
+                if (on) Modifier.cssBox(bg = 0xFFD6F0DC, r = round(44f), shadows = listOf(CssShadow(0f, 0f, 0f, 2f, 0xFF7CC08A, inset = true)))
+                else Modifier.cssBox(bg = 0xFFFBEBEF, r = round(44f)),
+            )
             .clip(CircleShape)
-            .background(if (on) Color(0xFFD6F0DC) else Color(0xFFFBEBEF))
-            .then(if (on) Modifier.border(2.dp, Color(0xFF7CC08A), CircleShape) else Modifier)
             .toggleable(on, enabled = enabled || on, role = Role.Switch) { onClick() }
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
         when (s) {
-            SweetPill.VEGAN -> BoardIcon(EatGlyphs.leafPill, ink, 20.dp)
-            SweetPill.GLUTEN_FREE -> Text("GF", style = TextStyle(fontFamily = EatType.fredoka, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = ink))
-            SweetPill.LATE -> BoardIcon(EatGlyphs.moonFilled, ink, 19.dp)
-            SweetPill.SEATS -> BoardIcon(EatGlyphs.bench, ink, 20.dp)
-            SweetPill.KIDS -> BoardIcon(EatGlyphs.child, ink, 20.dp)
+            SweetPill.VEGAN -> Symbol("fact.vegan", tint = ink, size = 20.dp)
+            SweetPill.GLUTEN_FREE -> CssLine("GF", PILL_TEXT, color = ink)
+            SweetPill.LATE -> Symbol("ui.moon", tint = ink, size = 19.dp)
+            SweetPill.SEATS -> Symbol("place.bench", tint = ink, size = 20.dp)
+            SweetPill.KIDS -> Symbol("fact.kids", tint = ink, size = 20.dp)
         }
     }
 }
@@ -348,39 +340,39 @@ private fun SweetRow(s: SweetSpot, ctx: EatContext, modifier: Modifier, onClick:
             .fillMaxWidth()
             .height(76.dp)
             .alpha(if (closed) 0.7f else 1f)
-            .boxShadow(shape, 1f, 4f, 14f, Color(0x1A781E3C))
+            .cssBox(bg = 0xFFFFFFFF, r = round(76f), shadows = listOf(CssShadow(0f, 4f, 14f, 0f, 0x1A781E3C)))
             .clip(shape)
-            .background(Color.White)
             .clickable(onClick = onClick)
             .padding(start = 10.dp, end = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Canvas(Modifier.size(56.dp)) {
-            val (light, mid, dark) = s.tub.scoop
-            val c = Offset(size.width * 0.35f, size.height * 0.3f)
-            drawCircle(Brush.radialGradient(0f to Color(light), 0.6f to Color(mid), 1f to Color(dark), center = c, radius = hypot(size.width * 0.65f, size.height * 0.7f)))
-            drawArc(Color(0x14000000), 20f, 140f, false, Offset(2.dp.toPx(), 0f), Size(size.width - 4.dp.toPx(), size.height - 2.dp.toPx()), style = Stroke(4.dp.toPx()))
-        }
+        // The scoop: 56 px, lit at 35 % 30 %, shaded inset 0 -4 0 at 8 %.
+        val (light, mid, dark) = s.tub.scoop
+        Box(
+            Modifier.size(56.dp).cssBox(
+                grad = listOf(cssRadial(true, 19.6f, 16.8f, 0f to light, 0.6f to mid, 1f to dark)), r = round(56f),
+                shadows = listOf(CssShadow(0f, -4f, 0f, 0f, 0x14000000, inset = true)),
+            ),
+        )
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(s.place.name, style = TextStyle(fontFamily = EatType.fredoka, fontWeight = FontWeight.SemiBold, fontSize = 19.sp, color = PLUM), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            CssLine(s.place.name, ROW_NAME)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                val meta = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, color = WINE)
-                Text("${s.place.walkMinutes}′", style = meta)
+                CssLine("${s.place.walkMinutes}′", ROW_META)
                 when {
-                    s.place.alwaysOpen -> Text("24/7", style = meta)
-                    s.closes != null -> Text("→ " + s.closes.format(HM_PADDED), style = meta)
-                    closed -> s.place.opensAt(ctx.at, ctx.area.hours)?.let { Text(stringResource(R.string.eat_opens_at, opensText(OpenSay.Opens(it, it.toLocalDate() == ctx.at.toLocalDate()), ctx.lang)), style = meta) }
+                    s.place.alwaysOpen -> CssLine("24/7", ROW_META)
+                    s.closes != null -> CssLine("→ " + s.closes.format(HM_PADDED), ROW_META)
+                    closed -> s.place.opensAt(ctx.at, ctx.area.hours)?.let { CssLine(stringResource(R.string.eat_opens_at, opensText(OpenSay.Opens(it, it.toLocalDate() == ctx.at.toLocalDate()), ctx.lang)), ROW_META) }
                 }
                 if (s.vegan) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        BoardIcon(EatGlyphs.leafKey, Color(0xFF2F6B34), 12.dp, contentDescription = stringResource(R.string.eat_diet_vegan))
-                        if (s.allVegan) Text(stringResource(R.string.eat_sweets_all_vegan), style = meta)
+                        Symbol("fact.vegan.2", tint = Color(0xFF2F6B34), size = 12.dp, contentDescription = stringResource(R.string.eat_diet_vegan))
+                        if (s.allVegan) CssLine(stringResource(R.string.eat_sweets_all_vegan), ROW_META)
                     }
                 }
             }
         }
-        ctx.ratings.stars(s.place.key)?.let { Text(starsText(it), style = TextStyle(fontFamily = EatType.fredoka, fontWeight = FontWeight.SemiBold, fontSize = 18.sp, color = PLUM)) }
+        ctx.ratings.stars(s.place.key)?.let { CssLine(starsText(it), ROW_STARS) }
     }
 }
 

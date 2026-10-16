@@ -72,12 +72,3 @@ fun BoardIcon(glyph: BoardGlyph, tint: Color, size: Dp, modifier: Modifier = Mod
     val m = if (contentDescription != null) modifier.semantics { this.contentDescription = contentDescription } else modifier
     Canvas(m.size(size)) { drawBoardGlyph(glyph, tint) }
 }
-
-/** SVG path data for a circle, as the boards' `<circle>`. */
-internal fun circleD(cx: Float, cy: Float, r: Float): String =
-    "M${cx - r} ${cy}a$r $r 0 1 0 ${2 * r} 0a$r $r 0 1 0 ${-2 * r} 0z"
-
-/** SVG path data for a rectangle with round corners [rx], as the boards' `<rect>`. */
-internal fun rectD(x: Float, y: Float, w: Float, h: Float, rx: Float = 0f): String =
-    if (rx <= 0f) "M$x ${y}h${w}v${h}h${-w}z"
-    else "M${x + rx} ${y}h${w - 2 * rx}a$rx $rx 0 0 1 $rx ${rx}v${h - 2 * rx}a$rx $rx 0 0 1 ${-rx} ${rx}h${-(w - 2 * rx)}a$rx $rx 0 0 1 ${-rx} ${-rx}v${-(h - 2 * rx)}a$rx $rx 0 0 1 $rx ${-rx}z"
