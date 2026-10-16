@@ -253,3 +253,233 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## The boards' other typefaces (`src/main/res/font/`, `ui/kit/BoardFonts.kt`)
+
+Every face the boards set, from github.com/google/fonts (Gelasio from the engine's own copy). Each is under the SIL Open
+Font License 1.1 reproduced above, except Permanent Marker (Apache License 2.0, below). Files marked *subset* are cut to
+the characters the boards and screens set (with fontTools); none of those reserves its font name.
+
+| File | Family | Copyright | Licence |
+|---|---|---|---|
+| `geist_mono.ttf` | Geist Mono | Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font.git) | SIL Open Font License 1.1 |
+| `arimo.ttf` | Arimo | Copyright 2020 The Arimo Project Authors (https://github.com/googlefonts/arimo) | SIL Open Font License 1.1 |
+| `gelasio.ttf` | Gelasio | Copyright 2022 The Gelasio Project Authors (https://github.com/SorkinType/Gelasio) | SIL Open Font License 1.1 |
+| `gelasio_italic.ttf` | Gelasio | Copyright 2022 The Gelasio Project Authors (https://github.com/SorkinType/Gelasio) | SIL Open Font License 1.1 |
+| `libre_caslon_text.ttf` | Libre Caslon Text | Copyright 2020 The Libre Caslon Text Project Authors (https://github.com/thundernixon/Libre-Caslon) | SIL Open Font License 1.1 |
+| `eb_garamond.ttf` | EB Garamond | Copyright 2017 The EB Garamond Project Authors (https://github.com/octaviopardo/EBGaramond12) | SIL Open Font License 1.1 |
+| `eb_garamond_italic.ttf` | EB Garamond | Copyright 2017 The EB Garamond Project Authors (https://github.com/octaviopardo/EBGaramond12) | SIL Open Font License 1.1 |
+| `stardos_stencil.ttf` | Stardos Stencil | Copyright (c) 2011 by vernon adams. All rights reserved. | SIL Open Font License 1.1 |
+| `stardos_stencil_bold.ttf` | Stardos Stencil | Copyright (c) 2011 by vernon adams. All rights reserved. | SIL Open Font License 1.1 |
+| `share_tech_mono.ttf` | Share Tech Mono | Copyright (c) 2012, Carrois Type Design, Ralph du Carrois (post@carrois.com www.carrois.com), with Reserved Font Name 'Share' | SIL Open Font License 1.1 |
+| `shippori_mincho_bold.ttf` (subset) | Shippori Mincho | Copyright 2021 The Shippori Mincho Project Authors (https://github.com/fontdasu/ShipporiMincho) | SIL Open Font License 1.1 |
+| `shippori_mincho_extrabold.ttf` (subset) | Shippori Mincho | Copyright 2021 The Shippori Mincho Project Authors (https://github.com/fontdasu/ShipporiMincho) | SIL Open Font License 1.1 |
+| `bebas_neue.ttf` | Bebas Neue | Copyright 2019 The Bebas Neue Project Authors (https://github.com/dharmatype/Bebas-Neue) | SIL Open Font License 1.1 |
+| `bodoni_moda.ttf` | Bodoni Moda | Copyright 2020 The Bodoni Moda Project Authors (https://github.com/indestructible-type/Bodoni) | SIL Open Font License 1.1 |
+| `bodoni_moda_italic.ttf` | Bodoni Moda | Copyright 2020 The Bodoni Moda Project Authors (https://github.com/indestructible-type/Bodoni) | SIL Open Font License 1.1 |
+| `fraunces.ttf` | Fraunces | Copyright 2020 The Fraunces Project Authors (github.com/undercasetype/Fraunces) | SIL Open Font License 1.1 |
+| `fraunces_italic.ttf` | Fraunces | Copyright 2020 The Fraunces Project Authors (github.com/undercasetype/Fraunces) | SIL Open Font License 1.1 |
+| `space_grotesk.ttf` | Space Grotesk Light | Copyright 2020 The Space Grotesk Project Authors (https://github.com/floriankarsten/space-grotesk) | SIL Open Font License 1.1 |
+| `big_shoulders_stencil_display.ttf` | Big Shoulders Stencil Display Thin | Copyright 2019 The Big Shoulders Project Authors (https://github.com/xotypeco/big_shoulders) | SIL Open Font License 1.1 |
+| `amiri.ttf` | Amiri | Copyright 2010-2022 The Amiri Project Authors (https://github.com/aliftype/amiri). | SIL Open Font License 1.1 |
+| `amiri_bold.ttf` | Amiri | Copyright 2010-2022 The Amiri Project Authors (https://github.com/aliftype/amiri). | SIL Open Font License 1.1 |
+| `permanent_marker.ttf` | Permanent Marker | Copyright (c) 2010 by Font Diner, Inc. All rights reserved. | Apache License 2.0 |
+| `orbitron.ttf` | Orbitron | Copyright 2018 The Orbitron Project Authors (https://github.com/theleagueof/orbitron), with Reserved Font Name: "Orbitron". | SIL Open Font License 1.1 |
+| `dm_serif_display.ttf` | DM Serif Display | Copyright 2014 - 2017 Adobe Systems Incorporated (http://www.adobe.com/), with Reserved Font Name 'Source'. Copyright 2019 Google LLC. | SIL Open Font License 1.1 |
+| `yatra_one.ttf` | Yatra One | Copyright 2014 The Yatra Project Authors. | SIL Open Font License 1.1 |
+| `zcool_xiaowei.ttf` (subset) | ZCOOL XiaoWei | Copyright 2018 The ZCOOL XiaoWei Project Authors (https://www.github.com/googlefonts/xiaowei) | SIL Open Font License 1.1 |
+| `gowun_batang_bold.ttf` (subset) | Gowun Batang | Copyright 2021 The Gowun Batang Project Authors (https://github.com/yangheeryu/Gowun-Batang) | SIL Open Font License 1.1 |
+| `chonburi.ttf` | Chonburi | Copyright (c) 2015, Cadson Demak (info@cadsondemak.com) | SIL Open Font License 1.1 |
+| `be_vietnam_pro_semibold.ttf` | Be Vietnam Pro SemiBold | Copyright 2021 The Be Vietnam Pro Project Authors (https://github.com/bettergui/BeVietnamPro) | SIL Open Font License 1.1 |
+| `noto_serif_ethiopic.ttf` (subset) | Noto Serif Ethiopic | Copyright 2022 The Noto Project Authors (https://github.com/notofonts/ethiopic) | SIL Open Font License 1.1 |
+| `italiana.ttf` | Italiana | Copyright (c) 2011 by Santiago Orozco (hi@typemade.mx) with reserved name Italiana | SIL Open Font License 1.1 |
+| `righteous.ttf` | Righteous | Copyright (c) 2011 by Brian J. Bonislawsky DBA Astigmatic (AOETI) (astigma@astigmatic.com), with Reserved | SIL Open Font License 1.1 |
+| `Font Name "Righteous".ttf` | This Font Software is licensed under the SIL Open Font Licen |  | SIL Open Font License 1.1 |
+| `im_fell_english.ttf` | IM FELL English | © 2007 Igino Marini (www.iginomarini.com) With Reserved Font Name IM FELL English Roman | SIL Open Font License 1.1 |
+| `im_fell_english_italic.ttf` | IM FELL English | © 2007 Igino Marini (www.iginomarini.com) With Reserved Font Name IM FELL English Italic | SIL Open Font License 1.1 |
+| `noto_serif_jp.ttf` (subset) | Noto Serif JP ExtraLight | (c) 2017-2024 Adobe (http://www.adobe.com/). | SIL Open Font License 1.1 |
+| `noto_serif_kr.ttf` (subset) | Noto Serif KR ExtraLight | (c) 2017-2024 Adobe (http://www.adobe.com/). | SIL Open Font License 1.1 |
+| `noto_serif_devanagari.ttf` (subset) | Noto Serif Devanagari | Copyright 2022 The Noto Project Authors (https://github.com/notofonts/devanagari) | SIL Open Font License 1.1 |
+
+## Apache License 2.0 (Permanent Marker)
+
+```
+Copyright (c) 2010 by Font Diner, Inc. All rights reserved.
+
+                              Apache License
+                        Version 2.0, January 2004
+                     http://www.apache.org/licenses/
+
+TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+1. Definitions.
+
+   "License" shall mean the terms and conditions for use, reproduction,
+   and distribution as defined by Sections 1 through 9 of this document.
+
+   "Licensor" shall mean the copyright owner or entity authorized by
+   the copyright owner that is granting the License.
+
+   "Legal Entity" shall mean the union of the acting entity and all
+   other entities that control, are controlled by, or are under common
+   control with that entity. For the purposes of this definition,
+   "control" means (i) the power, direct or indirect, to cause the
+   direction or management of such entity, whether by contract or
+   otherwise, or (ii) ownership of fifty percent (50%) or more of the
+   outstanding shares, or (iii) beneficial ownership of such entity.
+
+   "You" (or "Your") shall mean an individual or Legal Entity
+   exercising permissions granted by this License.
+
+   "Source" form shall mean the preferred form for making modifications,
+   including but not limited to software source code, documentation
+   source, and configuration files.
+
+   "Object" form shall mean any form resulting from mechanical
+   transformation or translation of a Source form, including but
+   not limited to compiled object code, generated documentation,
+   and conversions to other media types.
+
+   "Work" shall mean the work of authorship, whether in Source or
+   Object form, made available under the License, as indicated by a
+   copyright notice that is included in or attached to the work
+   (an example is provided in the Appendix below).
+
+   "Derivative Works" shall mean any work, whether in Source or Object
+   form, that is based on (or derived from) the Work and for which the
+   editorial revisions, annotations, elaborations, or other modifications
+   represent, as a whole, an original work of authorship. For the purposes
+   of this License, Derivative Works shall not include works that remain
+   separable from, or merely link (or bind by name) to the interfaces of,
+   the Work and Derivative Works thereof.
+
+   "Contribution" shall mean any work of authorship, including
+   the original version of the Work and any modifications or additions
+   to that Work or Derivative Works thereof, that is intentionally
+   submitted to Licensor for inclusion in the Work by the copyright owner
+   or by an individual or Legal Entity authorized to submit on behalf of
+   the copyright owner. For the purposes of this definition, "submitted"
+   means any form of electronic, verbal, or written communication sent
+   to the Licensor or its representatives, including but not limited to
+   communication on electronic mailing lists, source code control systems,
+   and issue tracking systems that are managed by, or on behalf of, the
+   Licensor for the purpose of discussing and improving the Work, but
+   excluding communication that is conspicuously marked or otherwise
+   designated in writing by the copyright owner as "Not a Contribution."
+
+   "Contributor" shall mean Licensor and any individual or Legal Entity
+   on behalf of whom a Contribution has been received by Licensor and
+   subsequently incorporated within the Work.
+
+2. Grant of Copyright License. Subject to the terms and conditions of
+   this License, each Contributor hereby grants to You a perpetual,
+   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+   copyright license to reproduce, prepare Derivative Works of,
+   publicly display, publicly perform, sublicense, and distribute the
+   Work and such Derivative Works in Source or Object form.
+
+3. Grant of Patent License. Subject to the terms and conditions of
+   this License, each Contributor hereby grants to You a perpetual,
+   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+   (except as stated in this section) patent license to make, have made,
+   use, offer to sell, sell, import, and otherwise transfer the Work,
+   where such license applies only to those patent claims licensable
+   by such Contributor that are necessarily infringed by their
+   Contribution(s) alone or by combination of their Contribution(s)
+   with the Work to which such Contribution(s) was submitted. If You
+   institute patent litigation against any entity (including a
+   cross-claim or counterclaim in a lawsuit) alleging that the Work
+   or a Contribution incorporated within the Work constitutes direct
+   or contributory patent infringement, then any patent licenses
+   granted to You under this License for that Work shall terminate
+   as of the date such litigation is filed.
+
+4. Redistribution. You may reproduce and distribute copies of the
+   Work or Derivative Works thereof in any medium, with or without
+   modifications, and in Source or Object form, provided that You
+   meet the following conditions:
+
+   (a) You must give any other recipients of the Work or
+       Derivative Works a copy of this License; and
+
+   (b) You must cause any modified files to carry prominent notices
+       stating that You changed the files; and
+
+   (c) You must retain, in the Source form of any Derivative Works
+       that You distribute, all copyright, patent, trademark, and
+       attribution notices from the Source form of the Work,
+       excluding those notices that do not pertain to any part of
+       the Derivative Works; and
+
+   (d) If the Work includes a "NOTICE" text file as part of its
+       distribution, then any Derivative Works that You distribute must
+       include a readable copy of the attribution notices contained
+       within such NOTICE file, excluding those notices that do not
+       pertain to any part of the Derivative Works, in at least one
+       of the following places: within a NOTICE text file distributed
+       as part of the Derivative Works; within the Source form or
+       documentation, if provided along with the Derivative Works; or,
+       within a display generated by the Derivative Works, if and
+       wherever such third-party notices normally appear. The contents
+       of the NOTICE file are for informational purposes only and
+       do not modify the License. You may add Your own attribution
+       notices within Derivative Works that You distribute, alongside
+       or as an addendum to the NOTICE text from the Work, provided
+       that such additional attribution notices cannot be construed
+       as modifying the License.
+
+   You may add Your own copyright statement to Your modifications and
+   may provide additional or different license terms and conditions
+   for use, reproduction, or distribution of Your modifications, or
+   for any such Derivative Works as a whole, provided Your use,
+   reproduction, and distribution of the Work otherwise complies with
+   the conditions stated in this License.
+
+5. Submission of Contributions. Unless You explicitly state otherwise,
+   any Contribution intentionally submitted for inclusion in the Work
+   by You to the Licensor shall be under the terms and conditions of
+   this License, without any additional terms or conditions.
+   Notwithstanding the above, nothing herein shall supersede or modify
+   the terms of any separate license agreement you may have executed
+   with Licensor regarding such Contributions.
+
+6. Trademarks. This License does not grant permission to use the trade
+   names, trademarks, service marks, or product names of the Licensor,
+   except as required for reasonable and customary use in describing the
+   origin of the Work and reproducing the content of the NOTICE file.
+
+7. Disclaimer of Warranty. Unless required by applicable law or
+   agreed to in writing, Licensor provides the Work (and each
+   Contributor provides its Contributions) on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+   implied, including, without limitation, any warranties or conditions
+   of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+   PARTICULAR PURPOSE. You are solely responsible for determining the
+   appropriateness of using or redistributing the Work and assume any
+   risks associated with Your exercise of permissions under this License.
+
+8. Limitation of Liability. In no event and under no legal theory,
+   whether in tort (including negligence), contract, or otherwise,
+   unless required by applicable law (such as deliberate and grossly
+   negligent acts) or agreed to in writing, shall any Contributor be
+   liable to You for damages, including any direct, indirect, special,
+   incidental, or consequential damages of any character arising as a
+   result of this License or out of the use or inability to use the
+   Work (including but not limited to damages for loss of goodwill,
+   work stoppage, computer failure or malfunction, or any and all
+   other commercial damages or losses), even if such Contributor
+   has been advised of the possibility of such damages.
+
+9. Accepting Warranty or Additional Liability. While redistributing
+   the Work or Derivative Works thereof, You may choose to offer,
+   and charge a fee for, acceptance of support, warranty, indemnity,
+   or other liability obligations and/or rights consistent with this
+   License. However, in accepting such obligations, You may act only
+   on Your own behalf and on Your sole responsibility, not on behalf
+   of any other Contributor, and only if You agree to indemnify,
+   defend, and hold each Contributor harmless for any liability
+   incurred by, or claims asserted against, such Contributor by reason
+   of your accepting any such warranty or additional liability.
+
+END OF TERMS AND CONDITIONS
+```
