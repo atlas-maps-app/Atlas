@@ -62,6 +62,6 @@ jobs:
           cp app/build/outputs/apk/$KIND/*.apk "$APK"
           SIGNED="signed with the Atlas release key"
           [ -n "$ATLAS_KEYSTORE" ] || SIGNED="signed with a debug key: install it fresh, later releases may need an uninstall first"
-          printf '%s\n\nThe APK (%s build) is %s. The map is drawn by Atlas's own engine from OpenStreetMap data (© OpenStreetMap contributors, ODbL); routing by BRouter.\n' \
+          printf '%s\n\nThe APK (%s build) is %s. The map is drawn by the Atlas engine from OpenStreetMap data (© OpenStreetMap contributors, ODbL); routing by BRouter.\n' \
             "$(git tag -l --format='%(contents)' "$TAG")" "$KIND" "$SIGNED" > "$RUNNER_TEMP/notes.md"
           gh release create "$TAG" "$APK" --title "Atlas $TAG" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag $PRE
