@@ -31,8 +31,14 @@ import kotlin.math.sqrt
  * caps, joins and dashes; linear and radial gradients in both unit systems; patterns as a [BitmapShader] of a recorded
  * tile; clip paths; group opacity and `mix-blend-mode` through layers; text in the bundled typefaces; and filters.
  *
- * Filters run on the CPU by default ([SvgFilterRaster], exact on every Android version). On API 33 and later a
+ * Filters run on the CPU by default ([SvgFilterRaster], exact on every Android version): a large one in up to [bands]
+ * horizontal bands at once on the filter workers, its turbulence kept in [noise] across frames. Neither changes a byte:
+ * each band is the chain prepared for its own rows, and a kept noise tile is the noise. On API 33 and later a
  * hardware-accelerated canvas runs them as AGSL shaders ([SvgShaderFilters]) when [filters] allows it.
+ *
+ * The shapes themselves are drawn in one pass, in painter's order: Skia's anti-aliasing is not the same when a path is
+ * cut at a band's edge (measured 16 October: 0.6 % of the Westerkerk's pixels differ, by up to 18 levels), so only the
+ * filters, most of a frame's time, run in bands.
  *
  * One instance keeps caches (paths of clips, pattern tiles, filter chains) and is not thread-safe.
  */
@@ -40,6 +46,10 @@ class SvgCanvas(
     val doc: SvgDocument,
     private val fonts: SvgFonts,
     var filters: FilterMode = FilterMode.AUTO,
+    /** Bands a large CPU filter is split into (1: one band, on the drawing thread). */
+    var bands: Int = DEFAULT_BANDS,
+    /** Where the CPU filters' turbulence is kept; null computes it every time. */
+    private val noise: TurbulenceCache? = TurbulenceCache.shared,
 ) {
     /** How filters are drawn. */
     enum class FilterMode {
@@ -481,7 +491,7 @@ class SvgCanvas(
             val sf = shaderFilters ?: SvgShaderFilters().also { shaderFilters = it }
             if (sf.draw(c, f, region, sx, sy, visible) { canvas -> content(canvas, n) }) return
         }
-        val raster = rasters.getOrPut(f) { SvgFilterRaster(f) }
+        val raster = rasters.getOrPut(f) { SvgFilterRaster(f, noise) }
         if (!raster.prepare(region, sx, sy, visible)) return
         val t0 = System.nanoTime()
         val sr = raster.sourceRect
@@ -502,7 +512,7 @@ class SvgCanvas(
         val t1 = System.nanoTime()
         val o = raster.outputRect
         val out = IntArray(o.width * o.height)
-        raster.run(pixels, out)
+        raster.run(pixels, out, bands)
         if (opacity < 1f) for (i in out.indices) out[i] = fade(out[i], opacity)
         stats.sourceNanos += t1 - t0
         stats.filterNanos += System.nanoTime() - t1
@@ -580,6 +590,9 @@ class SvgCanvas(
 
     companion object {
         private const val MAX_FILTER_AREA = 4096.0 * 4096.0
+
+        /** One band per filter worker. */
+        val DEFAULT_BANDS: Int get() = SvgFilterRaster.WORKERS
 
         /** Sub-stops per pair of stops whose opacities differ. */
         private const val SUBSTOPS = 32

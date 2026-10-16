@@ -29,6 +29,12 @@ class Turbulence(seed: Float) {
     /** The lattice selector's first 2B + 2 entries (each 0 … 255). */
     val lattice: IntArray get() = latticeSelector.copyOf()
 
+    /**
+     * The gradients [noise2WebKit] and [colorWebKit] read, exactly: per channel (0 … 3) and lattice entry (0 … 255), x
+     * then y, as WebKit normalises them in single precision. A GPU port uploads these floats as they are.
+     */
+    val gradientsWebKit: FloatArray get() = gradientF.copyOf()
+
     init {
         var s = seed.toLong()
         if (s <= 0) s = -(s % (RAND_M - 1)) + 1
@@ -309,6 +315,42 @@ class Turbulence(seed: Float) {
     }
 
     /**
+     * WebKit's turbulence over a block of filter pixels: [width] × [height] pixels from ([left], [top]), on the grid of
+     * [invX] × [invY] user units per filter pixel (one over the filter scale, as a float). Pixel (x, y) is the noise at
+     * the user point ((x + 1) · [invX], (y + 1) · [invY]), its far corner, as SVG filters sample it; it is packed as
+     * [colorWebKit] packs it, with the channels outside [need] left at 0 (alpha at 255). Row r goes to [out] from
+     * [offset] + r · [stride].
+     *
+     * A pixel depends only on its own coordinates, so any block of a field equals the same pixels of any other block
+     * that covers them, bit for bit: what [TurbulenceCache] keeps and the GPU's turbulence is checked against.
+     */
+    fun fillWebKit(
+        left: Int,
+        top: Int,
+        width: Int,
+        height: Int,
+        invX: Float,
+        invY: Float,
+        baseX: Float,
+        baseY: Float,
+        octaves: Int,
+        fractal: Boolean,
+        need: Int,
+        out: IntArray,
+        offset: Int = 0,
+        stride: Int = width,
+    ) {
+        val sums = FloatArray(4)
+        for (r in 0 until height) {
+            val uy = (top + r + 1).toFloat() * invY
+            var i = offset + r * stride
+            for (x in left until left + width) {
+                out[i++] = colorWebKit((x + 1).toFloat() * invX, uy, baseX, baseY, octaves, fractal, need, sums)
+            }
+        }
+    }
+
+    /**
      * One channel of WebKit's turbulence at the filter pixel whose far corner is [x], [y] (already divided by the filter
      * scale), as the byte it stores: `(int)(value · 255)` clamped to 0 … 255.
      */
@@ -336,6 +378,17 @@ class Turbulence(seed: Float) {
         private const val RAND_A = 16807L
         private const val RAND_Q = 127773L
         private const val RAND_R = 2836L
+
+        /** Generators already made, by seed: they never change once made, so every filter and thread shares them. */
+        private val made = java.util.concurrent.ConcurrentHashMap<Int, Turbulence>()
+
+        /** The generator for [seed], made once per process (at most a few dozen seeds are kept). */
+        fun of(seed: Float): Turbulence {
+            val key = java.lang.Float.floatToIntBits(seed)
+            made[key]?.let { return it }
+            if (made.size >= 64) made.clear()
+            return made.getOrPut(key) { Turbulence(seed) }
+        }
 
         private fun smooth(t: Float) = t * t * ExactMath.fma(-2f, t, 3f)
 

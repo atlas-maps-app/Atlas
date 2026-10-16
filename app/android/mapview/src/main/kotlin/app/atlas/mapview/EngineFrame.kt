@@ -14,6 +14,7 @@ import app.atlas.mapview.svg.SvgCanvas
 import app.atlas.mapview.svg.SvgDocument
 import app.atlas.mapview.svg.SvgFonts
 import app.atlas.mapview.svg.SvgWarp
+import app.atlas.mapview.svg.TurbulenceCache
 import app.atlas.render.Raster
 import app.atlas.render.live.RegionFrame
 import kotlin.math.abs
@@ -40,6 +41,21 @@ class EngineFrame(
     val tolerance: Double,
     val timings: Timings,
 ) {
+    /** What a raster's CPU filters cost: [filterMillis] running them, [sourceMillis] drawing what they read. */
+    class RasterStats {
+        var filtered = 0
+        var filterPixels = 0L
+        var filterMillis = 0.0
+        var sourceMillis = 0.0
+
+        internal fun add(s: SvgCanvas.Stats) {
+            filtered += s.filtered
+            filterPixels += s.filterPixels
+            filterMillis += s.filterNanos / 1e6
+            sourceMillis += s.sourceNanos / 1e6
+        }
+    }
+
     /** How long each step took, milliseconds; [svgChars] is the size of the SVG text. */
     data class Timings(val load: Long, val render: Long, val parse: Long, val raster: Long, val svgChars: Int) {
         val total: Long get() = load + render + parse + raster
@@ -94,23 +110,44 @@ class EngineFrame(
         /**
          * Rasterises a render's [layers] (ground first) into one bitmap at [scale] device pixels per CSS pixel, with the
          * relief [raster] (regions.py's `t` image) between the ground and the objects, on [background].
+         *
+         * The shapes are drawn in one pass; each large CPU filter runs in up to [bands] horizontal bands at once on the
+         * filter workers, and its noise comes from [noise] when it was made before. Neither changes a pixel: the result
+         * is byte for byte the one-band raster without a cache ([SvgCanvas]). [stats], when given, adds up the time the
+         * filters took.
          */
         fun rasterise(
             layers: List<SvgDocument>, raster: Raster?, fonts: SvgFonts, scale: Float, filters: SvgCanvas.FilterMode = SvgCanvas.FilterMode.CPU,
             background: Int = Color.TRANSPARENT,
+            bands: Int = SvgCanvas.DEFAULT_BANDS,
+            noise: TurbulenceCache? = TurbulenceCache.shared,
+            stats: RasterStats? = null,
         ): Bitmap {
             val first = layers.first()
-            val w = Math.round(first.width * scale).coerceAtLeast(1)
-            val h = Math.round(first.height * scale).coerceAtLeast(1)
+            val w = pixels(first.width, scale)
+            val h = pixels(first.height, scale)
             val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
             val c = Canvas(bmp)
             if (background != Color.TRANSPARENT) c.drawColor(background)
             for ((i, doc) in layers.withIndex()) {
-                SvgCanvas(doc, fonts, filters).draw(c, w.toFloat(), h.toFloat())
+                val sc = SvgCanvas(doc, fonts, filters, bands, noise)
+                sc.draw(c, w.toFloat(), h.toFloat())
+                stats?.add(sc.stats)
                 if (i == 0 && raster != null) drawRaster(c, raster, first.width, first.height, scale)
             }
             return bmp
         }
+
+        /** The device pixels [rasterise] gives a frame side of [css] CSS pixels at [scale]. */
+        fun pixels(css: Float, scale: Float): Int = Math.round(css * scale).coerceAtLeast(1)
+
+        /**
+         * The filter scale (filter pixels per CSS pixel) of a frame of [width] × [height] CSS pixels rasterised at
+         * [scale]: the view-box fit [SvgCanvas.draw] makes, as the float the noise is keyed by. The screen-wide filters'
+         * noise is warmed up for it ([TurbulenceCache.warmUp]).
+         */
+        fun filterScale(width: Float, height: Float, scale: Float): Float =
+            minOf(pixels(width, scale).toFloat() / width, pixels(height, scale).toFloat() / height)
 
         /** The relief image over the whole frame, inside its outline when it has one. */
         private fun drawRaster(c: Canvas, r: Raster, w: Float, h: Float, scale: Float) {

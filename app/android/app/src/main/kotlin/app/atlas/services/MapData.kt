@@ -85,6 +85,9 @@ class MapData(private val services: Services) {
     /** Hands the map engine its data. */
     fun wire() {
         LiveEngine.workDir = File(services.dirs.cache, "engine")
+        // the CPU filters' noise, kept across frames and launches and warmed up for the screen now (in the app's own
+        // cache, not in a test's folder)
+        if (services.config.root == null) MapEngine.useCacheDir(File(services.dirs.cache, "engine"))
         MapEngine.weather = weather
         MapEngine.regions = regions
     }

@@ -18,14 +18,17 @@ import kotlin.math.sqrt
  * lies on the same grid however the element is placed. As in WebKit, every primitive's result is an 8-bit buffer over
  * its part of the filter region: premultiplied or not as the primitive writes it, in its own colour space, with
  * conversions between formats and colour spaces done on bytes. The source graphic is held in linear RGB (WebKit draws
- * it into a linear-RGB buffer), turbulence is computed in single precision ([Turbulence.channelWebKit]), the arithmetic
- * composite truncates like WebKit's NEON code, colour matrices round like `Uint8ClampedArray`, displacement offsets are
- * truncated, and equal blur sizes run as vImage's three edge-extended box blurs.
+ * it into a linear-RGB buffer), turbulence is computed in single precision ([Turbulence.colorWebKit], kept in [noise]
+ * when there is one), the arithmetic composite truncates like WebKit's NEON code, colour matrices round like
+ * `Uint8ClampedArray`, displacement offsets are truncated, and equal blur sizes run as vImage's three edge-extended box
+ * blurs.
  *
  * Each primitive is computed only over the rectangle later primitives read, which [prepare] works out backwards from
- * the visible output.
+ * the visible output. The same working-out makes bands exact: [run] can split the output into horizontal bands, each a
+ * chain of its own prepared for its rows (so it gets its blur and displacement margins), run in parallel; every pixel
+ * of a band is the pixel the whole chain makes.
  */
-class SvgFilterRaster(private val filter: SvgFilter) {
+class SvgFilterRaster(private val filter: SvgFilter, private val noise: TurbulenceCache? = TurbulenceCache.shared) {
     /** Integer rectangle in filter pixels: left, top, right, bottom (exclusive). */
     class Rect(var left: Int, var top: Int, var right: Int, var bottom: Int) {
         val width get() = right - left
@@ -62,34 +65,61 @@ class SvgFilterRaster(private val filter: SvgFilter) {
         fun at(x: Int, y: Int): Int = if (rect.contains(x, y)) px[(y - rect.top) * rect.width + (x - rect.left)] else 0
     }
 
-    private abstract inner class Node {
-        /** The rectangle consumers read; the node is computed over it (within the region). */
-        var needRect = Rect.EMPTY
+    /**
+     * A pixel converted from one format to another (premultiplied or not, linear RGB or sRGB), corrected to valid
+     * premultiplied colour first when [correct]: exactly what [Chain.convert] after [Chain.corrected] does to a buffer.
+     */
+    private class Conversion(fromPremul: Boolean, fromLinear: Boolean, private val premul: Boolean, private val linear: Boolean, private val correct: Boolean) {
+        private val mode = when {
+            fromPremul == premul && fromLinear == linear -> SAME
+            fromLinear == linear -> if (premul) PREMULTIPLY else UNPREMULTIPLY
+            fromPremul -> FROM_PREMULTIPLIED
+            else -> FROM_UNPREMULTIPLIED
+        }
 
-        /** Channels (bit 0 = red … bit 3 = alpha) consumers read, before any premultiplication. */
-        var need = 0
-        var result: Buf? = null
+        fun map(raw: Int): Int {
+            var p = raw
+            if (correct) {
+                val a = p ushr 24
+                p = (a shl 24) or (min((p shr 16) and 0xFF, a) shl 16) or (min((p shr 8) and 0xFF, a) shl 8) or min(p and 0xFF, a)
+            }
+            return when (mode) {
+                SAME -> p
+                PREMULTIPLY -> Bytes.premultiply(p)
+                UNPREMULTIPLY -> Bytes.unpremultiply(p)
+                else -> {
+                    val u = if (mode == FROM_PREMULTIPLIED) Bytes.unpremultiplyExact(p, linear) else Bytes.mapUnpremultiplied(p, linear)
+                    val q = Bytes.premultiply(u)
+                    if (premul) q else Bytes.unpremultiply(q)
+                }
+            }
+        }
 
-        /** The colour space the result is in. */
-        abstract val linear: Boolean
-
-        abstract fun compute(rect: Rect): Buf
-
-        /** Records what this node needs of its inputs, given [needRect] and [need]. */
-        open fun propagate() = Unit
-
-        fun require(n: Node, r: Rect, channels: Int = 15) {
-            n.needRect = n.needRect.union(r.intersect(regionRect))
-            n.need = n.need or channels
+        private companion object {
+            const val SAME = 0
+            const val PREMULTIPLY = 1
+            const val UNPREMULTIPLY = 2
+            const val FROM_PREMULTIPLIED = 3
+            const val FROM_UNPREMULTIPLIED = 4
         }
     }
 
-    private val nodes = ArrayList<Node>()
-    private lateinit var output: Node
-    private lateinit var src: SourceNode
-    private lateinit var srcAlpha: SourceAlphaNode
+    /** A [Buf] read through a [Conversion]: each pixel converted as it is read, without making a converted buffer. */
+    private class View(buf: Buf, premul: Boolean, linear: Boolean, correct: Boolean) {
+        private val rect = buf.rect
+        private val px = buf.px
+        private val width = rect.width
+        val conversion = Conversion(buf.premul, buf.linear, premul, linear, correct && !buf.valid)
+
+        fun at(x: Int, y: Int): Int = if (rect.contains(x, y)) conversion.map(px[(y - rect.top) * width + (x - rect.left)]) else 0
+    }
+
+    /** What a node computes from noise alone: its field in the cache, and the map from the noise to its pixels. */
+    private class Noise(val field: NoiseField, val map: NoiseMap?)
+
     private var sx = 1.0
     private var sy = 1.0
+    private var main: Chain? = null
 
     /** The filter region in filter pixels, set by [prepare]. */
     lateinit var regionRect: Rect
@@ -113,219 +143,312 @@ class SvgFilterRaster(private val filter: SvgFilter) {
         sy = scaleY
         regionRect = Rect.enclosing(region[0] * sx, region[1] * sy, region[2] * sx, region[3] * sy)
         outRect = regionRect.intersect(visible)
+        main = null
         if (outRect.isEmpty) return false
-        nodes.clear()
-        src = SourceNode()
-        srcAlpha = SourceAlphaNode()
-        val named = HashMap<String, Node>()
-        var previous: Node = src
-        for (fe in filter.primitives) {
-            fun input(name: String?): Node = when (name) {
-                null -> previous
-                SvgFe.SOURCE_GRAPHIC -> src
-                SvgFe.SOURCE_ALPHA -> srcAlpha
-                else -> named[name] ?: if (name in STANDARD_INPUTS) {
-                    throw SvgFormatException("filter input '$name' is not written by the engine")
-                } else {
-                    previous
-                }
-            }
-            val node: Node = when (fe) {
-                is SvgFe.Turbulence -> TurbulenceNode(fe)
-                is SvgFe.DisplacementMap -> DisplacementNode(fe, input(fe.input), input(fe.input2))
-                is SvgFe.ColorMatrix -> MatrixNode(fe, input(fe.input))
-                is SvgFe.Composite -> CompositeNode(fe, input(fe.input), input(fe.input2))
-                is SvgFe.GaussianBlur -> BlurNode(fe, input(fe.input))
-                is SvgFe.Offset -> OffsetNode(fe, input(fe.input))
-                is SvgFe.Flood -> FloodNode(fe)
-                is SvgFe.Merge -> MergeNode(fe, fe.inputs.map { input(it) })
-            }
-            nodes.add(node)
-            fe.result?.let { named[it] = node }
-            previous = node
-        }
-        output = previous
-        output.needRect = outRect.copy()
-        output.need = 15
-        for (i in nodes.indices.reversed()) nodes[i].propagate()
-        sourceRect = src.needRect.union(srcAlpha.needRect).intersect(regionRect)
+        val c = Chain(outRect)
+        main = c
+        sourceRect = c.sourceRect
         return true
     }
 
-    private var source = IntArray(0)
-
     /**
      * Runs the filter. [pixels] are the element drawn in sRGB over [sourceRect] (premultiplied ARGB, row-major); the
-     * result over [outputRect], premultiplied sRGB ARGB, goes into [out].
+     * result over [outputRect], premultiplied sRGB ARGB, goes into [out]. With [bands] above 1 a large output is made in
+     * up to that many horizontal bands at once, on the filter workers; the pixels are the same.
      */
-    fun run(pixels: IntArray, out: IntArray) {
-        source = pixels
-        src.result = null
-        srcAlpha.result = null
-        for (n in nodes) n.result = null
+    fun run(pixels: IntArray, out: IntArray, bands: Int = 1) {
+        val whole = main ?: throw IllegalStateException("run before a successful prepare")
         val o = outRect
-        val r = result(output, o)
-        val fin = convert(r, premul = true, linear = false)
-        var i = 0
-        for (y in o.top until o.bottom) for (x in o.left until o.right) out[i++] = fin.at(x, y)
-        for (n in nodes) n.result = null
-        src.result = null
-        srcAlpha.result = null
-        source = IntArray(0)
-    }
-
-    /** [n]'s result, computing it (over its needed rectangle) on first use. */
-    private fun result(n: Node, fallback: Rect = n.needRect): Buf {
-        n.result?.let { return it }
-        val rect = (if (n.needRect.isEmpty) fallback else n.needRect).intersect(regionRect)
-        val b = if (rect.isEmpty) Buf(Rect.EMPTY, IntArray(0), true, n.linear) else n.compute(rect)
-        n.result = b
-        return b
-    }
-
-    /** [n]'s result as premultiplied or not, in linear RGB or sRGB, corrected to valid premultiplied colour. */
-    private fun input(n: Node, premul: Boolean, linear: Boolean, correct: Boolean = true): Buf {
-        var b = result(n)
-        if (correct && !b.valid) b = corrected(b)
-        return convert(b, premul, linear)
-    }
-
-    private fun corrected(b: Buf): Buf {
-        val px = IntArray(b.px.size)
-        for (i in px.indices) {
-            val p = b.px[i]
-            val a = p ushr 24
-            px[i] = (a shl 24) or (min((p shr 16) and 0xFF, a) shl 16) or (min((p shr 8) and 0xFF, a) shl 8) or min(p and 0xFF, a)
+        val tops = bandTops(o, bands)
+        if (tops.size <= 2) {
+            whole.run(pixels, sourceRect, out, 0)
+            return
         }
-        return Buf(b.rect, px, b.premul, b.linear)
+        val n = tops.size - 1
+        val chains = Array(n) { k -> Chain(Rect(o.left, tops[k], o.right, tops[k + 1])) }
+        val area = sourceRect
+        parallel(n) { k -> chains[k].run(pixels, area, out, (tops[k] - o.top) * o.width) }
     }
 
-    private fun convert(b: Buf, premul: Boolean, linear: Boolean): Buf {
-        if (b.premul == premul && b.linear == linear) return b
-        val px = IntArray(b.px.size)
-        if (b.linear == linear) {
-            for (i in px.indices) px[i] = if (premul) Bytes.premultiply(b.px[i]) else Bytes.unpremultiply(b.px[i])
-        } else {
-            // A colour space change goes through a premultiplied buffer of the other space, as Core Graphics draws it.
-            for (i in px.indices) {
-                val u = if (b.premul) Bytes.unpremultiplyExact(b.px[i], linear) else Bytes.mapUnpremultiplied(b.px[i], linear)
-                val p = Bytes.premultiply(u)
-                px[i] = if (premul) p else Bytes.unpremultiply(p)
-            }
-        }
-        return Buf(b.rect, px, premul, linear)
-    }
+    /**
+     * The chain of primitives prepared for the output pixels [visible]: each node computed over what its consumers read
+     * of it, within the region.
+     */
+    private inner class Chain(visible: Rect) {
+        private val nodes = ArrayList<Node>()
+        private val output: Node
+        private val src = SourceNode()
+        private val srcAlpha = SourceAlphaNode()
+        val outRect: Rect = regionRect.intersect(visible)
 
-    private inner class SourceNode : Node() {
-        override val linear = true
+        /** The source pixels this chain reads. */
+        val sourceRect: Rect
 
-        override fun compute(rect: Rect): Buf {
-            val sr = sourceRect
-            val w = sr.width
-            val px = IntArray(rect.width * rect.height)
-            var i = 0
-            for (y in rect.top until rect.bottom) for (x in rect.left until rect.right) {
-                px[i++] = if (sr.contains(x, y)) Bytes.srgbToLinearPremultiplied(source[(y - sr.top) * w + (x - sr.left)]) else 0
-            }
-            return Buf(rect, px, true, true)
-        }
-    }
+        private var source = IntArray(0)
+        private var sourceArea = Rect.EMPTY
 
-    private inner class SourceAlphaNode : Node() {
-        override val linear = true
-
-        override fun compute(rect: Rect): Buf {
-            val sr = sourceRect
-            val w = sr.width
-            val px = IntArray(rect.width * rect.height)
-            var i = 0
-            for (y in rect.top until rect.bottom) for (x in rect.left until rect.right) {
-                px[i++] = if (sr.contains(x, y)) source[(y - sr.top) * w + (x - sr.left)] and (0xFF shl 24) else 0
-            }
-            return Buf(rect, px, true, true)
-        }
-    }
-
-    private inner class TurbulenceNode(val fe: SvgFe.Turbulence) : Node() {
-        override val linear = fe.linearRgb
-        private val noise = Turbulence(fe.seed)
-
-        override fun compute(rect: Rect): Buf {
-            if (fe.stitch && fe.baseX > 0f && fe.baseY > 0f) throw SvgFormatException("stitchTiles is not written by the engine")
-            val ix = 1f / sx.toFloat()
-            val iy = 1f / sy.toFloat()
-            val px = IntArray(rect.width * rect.height)
-            val w = rect.width
-            val need = need
-            // WebKit splits turbulence over threads too; rows are independent.
-            rows(rect.height, w) { y0, y1 ->
-                val sums = FloatArray(4)
-                for (r in y0 until y1) {
-                    val uy = (rect.top + r + 1).toFloat() * iy
-                    var i = r * w
-                    for (x in rect.left until rect.right) {
-                        px[i++] = noise.colorWebKit((x + 1).toFloat() * ix, uy, fe.baseX, fe.baseY, fe.octaves, fe.fractal, need, sums)
+        init {
+            val named = HashMap<String, Node>()
+            var previous: Node = src
+            for (fe in filter.primitives) {
+                fun input(name: String?): Node = when (name) {
+                    null -> previous
+                    SvgFe.SOURCE_GRAPHIC -> src
+                    SvgFe.SOURCE_ALPHA -> srcAlpha
+                    else -> named[name] ?: if (name in STANDARD_INPUTS) {
+                        throw SvgFormatException("filter input '$name' is not written by the engine")
+                    } else {
+                        previous
                     }
                 }
+                val node: Node = when (fe) {
+                    is SvgFe.Turbulence -> TurbulenceNode(fe)
+                    is SvgFe.DisplacementMap -> DisplacementNode(fe, input(fe.input), input(fe.input2))
+                    is SvgFe.ColorMatrix -> MatrixNode(fe, input(fe.input))
+                    is SvgFe.Composite -> CompositeNode(fe, input(fe.input), input(fe.input2))
+                    is SvgFe.GaussianBlur -> BlurNode(fe, input(fe.input))
+                    is SvgFe.Offset -> OffsetNode(fe, input(fe.input))
+                    is SvgFe.Flood -> FloodNode(fe)
+                    is SvgFe.Merge -> MergeNode(fe, fe.inputs.map { input(it) })
+                }
+                nodes.add(node)
+                for (i in node.inputs) i.uses++
+                fe.result?.let { named[it] = node }
+                previous = node
             }
-            return Buf(rect, px, false, linear)
+            output = previous
+            output.needRect = outRect.copy()
+            output.need = 15
+            for (i in nodes.indices.reversed()) nodes[i].propagate()
+            sourceRect = src.needRect.union(srcAlpha.needRect).intersect(regionRect)
         }
-    }
 
-    private inner class DisplacementNode(val fe: SvgFe.DisplacementMap, val input: Node, val map: Node) : Node() {
-        override val linear get() = input.linear
-        private val absX = (fe.scale * sx).toFloat()
-        private val absY = (fe.scale * sy).toFloat()
-        private val reachX = ceil(abs(absX) / 2.0 + 1).toInt()
-        private val reachY = ceil(abs(absY) / 2.0 + 1).toInt()
-
-        override fun compute(rect: Rect): Buf {
-            // WebKit reads the input premultiplied in its own colour space and the map unpremultiplied, unconverted.
-            val inp = input(input, premul = true, linear = input.linear)
-            val m = input(map, premul = false, linear = map.linear, correct = false)
-            val scaleForColorX = (absX / 255.0).toFloat()
-            val scaleForColorY = (absY / 255.0).toFloat()
-            val offsetX = (0.5 - absX * 0.5).toFloat()
-            val offsetY = (0.5 - absY * 0.5).toFloat()
-            val shiftX = 16 - 8 * fe.xChannel
-            val shiftY = 16 - 8 * fe.yChannel
-            val region = regionRect
-            val px = IntArray(rect.width * rect.height)
-            var i = 0
-            for (y in rect.top until rect.bottom) for (x in rect.left until rect.right) {
-                val mp = m.at(x, y)
-                val cx = channel(mp, fe.xChannel, shiftX)
-                val cy = channel(mp, fe.yChannel, shiftY)
-                val srcX = x + ExactMath.fma(scaleForColorX, cx.toFloat(), offsetX).toInt()
-                val srcY = y + ExactMath.fma(scaleForColorY, cy.toFloat(), offsetY).toInt()
-                px[i++] = if (region.contains(srcX, srcY)) inp.at(srcX, srcY) else 0
+        /**
+         * Runs the chain on [pixels], the element drawn over [area] (which holds this chain's [sourceRect]), writing the
+         * rows of [outRect] into [out] from [offset], [outRect]'s width apart.
+         */
+        fun run(pixels: IntArray, area: Rect, out: IntArray, offset: Int) {
+            source = pixels
+            sourceArea = area
+            for (n in nodes) n.reset()
+            src.reset()
+            srcAlpha.reset()
+            try {
+                val o = outRect
+                val r = result(output, o)
+                // the result as premultiplied sRGB, converted as it is written (never corrected: WebKit writes it as is)
+                val fin = View(r, premul = true, linear = false, correct = false)
+                var i = offset
+                for (y in o.top until o.bottom) for (x in o.left until o.right) out[i++] = fin.at(x, y)
+            } finally {
+                for (n in nodes) n.reset()
+                src.reset()
+                srcAlpha.reset()
+                source = IntArray(0)
             }
-            return Buf(rect, px, true, inp.linear)
         }
 
-        private fun channel(p: Int, c: Int, shift: Int) = if (c == 3) p ushr 24 else (p shr shift) and 0xFF
-
-        override fun propagate() {
-            require(map, needRect, (1 shl fe.xChannel) or (1 shl fe.yChannel))
-            require(input, needRect.inset(reachX, reachY))
+        /** [n]'s result, computing it (over its needed rectangle) on first use; inputs no one else reads are let go. */
+        private fun result(n: Node, fallback: Rect = n.needRect): Buf {
+            n.result?.let { return it }
+            val rect = (if (n.needRect.isEmpty) fallback else n.needRect).intersect(regionRect)
+            val b = if (rect.isEmpty) Buf(Rect.EMPTY, IntArray(0), true, n.linear) else n.compute(rect)
+            n.result = b
+            for (i in n.inputs) if (--i.pending == 0) i.result = null
+            return b
         }
-    }
 
-    private inner class MatrixNode(val fe: SvgFe.ColorMatrix, val input: Node) : Node() {
-        override val linear = fe.linearRgb
-        private val m = fe.matrix
+        /** [n]'s result read as premultiplied or not, in linear RGB or sRGB, corrected to valid premultiplied colour. */
+        private fun view(n: Node, premul: Boolean, linear: Boolean, correct: Boolean = true) = View(result(n), premul, linear, correct)
 
-        /** WebKit hands matrices without offsets (and saturate) to vImage's integer matrix multiply. */
-        private val integer = m[4] == 0f && m[9] == 0f && m[14] == 0f && m[19] == 0f
-        private val q = IntArray(16) { k -> Math.round(m[(k % 4) * 5 + k / 4] * 256f) }
+        /** [n]'s result made into a buffer that is premultiplied or not, in linear RGB or sRGB, corrected. */
+        private fun input(n: Node, premul: Boolean, linear: Boolean, correct: Boolean = true): Buf {
+            var b = result(n)
+            if (correct && !b.valid) b = corrected(b)
+            return convert(b, premul, linear)
+        }
 
-        override fun compute(rect: Rect): Buf {
-            // WebKit draws the input into a premultiplied buffer, then reads that back unpremultiplied.
-            val inp = convert(input(input, premul = true, linear = linear), premul = false, linear = linear)
-            val px = IntArray(rect.width * rect.height)
-            var i = 0
-            for (y in rect.top until rect.bottom) for (x in rect.left until rect.right) {
-                val p = inp.at(x, y)
+        private fun corrected(b: Buf): Buf {
+            val px = IntArray(b.px.size)
+            for (i in px.indices) {
+                val p = b.px[i]
+                val a = p ushr 24
+                px[i] = (a shl 24) or (min((p shr 16) and 0xFF, a) shl 16) or (min((p shr 8) and 0xFF, a) shl 8) or min(p and 0xFF, a)
+            }
+            return Buf(b.rect, px, b.premul, b.linear)
+        }
+
+        private fun convert(b: Buf, premul: Boolean, linear: Boolean): Buf {
+            if (b.premul == premul && b.linear == linear) return b
+            val c = Conversion(b.premul, b.linear, premul, linear, correct = false)
+            val px = IntArray(b.px.size)
+            for (i in px.indices) px[i] = c.map(b.px[i])
+            return Buf(b.rect, px, premul, linear)
+        }
+
+        private abstract inner class Node {
+            /** The rectangle consumers read; the node is computed over it (within the region). */
+            var needRect = Rect.EMPTY
+
+            /** Channels (bit 0 = red … bit 3 = alpha) consumers read, before any premultiplication. */
+            var need = 0
+            var result: Buf? = null
+
+            /** How many times other nodes read this one, and how many of those reads are still to come in a run. */
+            var uses = 0
+            var pending = 0
+
+            /** The colour space the result is in. */
+            abstract val linear: Boolean
+
+            /** The nodes this one reads, once per read. */
+            open val inputs: List<Node> get() = emptyList()
+
+            abstract fun compute(rect: Rect): Buf
+
+            /** What this node computes from noise alone, for the cache, or null when it reads anything else. */
+            open fun noise(): Noise? = null
+
+            /** Records what this node needs of its inputs, given [needRect] and [need]. */
+            open fun propagate() = Unit
+
+            fun reset() {
+                result = null
+                pending = uses
+            }
+
+            fun require(n: Node, r: Rect, channels: Int = 15) {
+                n.needRect = n.needRect.union(r.intersect(regionRect))
+                n.need = n.need or channels
+            }
+        }
+
+        private inner class SourceNode : Node() {
+            override val linear = true
+
+            override fun compute(rect: Rect): Buf {
+                val sr = sourceArea
+                val w = sr.width
+                val px = IntArray(rect.width * rect.height)
+                var i = 0
+                for (y in rect.top until rect.bottom) for (x in rect.left until rect.right) {
+                    px[i++] = if (sr.contains(x, y)) Bytes.srgbToLinearPremultiplied(source[(y - sr.top) * w + (x - sr.left)]) else 0
+                }
+                return Buf(rect, px, true, true)
+            }
+        }
+
+        private inner class SourceAlphaNode : Node() {
+            override val linear = true
+
+            override fun compute(rect: Rect): Buf {
+                val sr = sourceArea
+                val w = sr.width
+                val px = IntArray(rect.width * rect.height)
+                var i = 0
+                for (y in rect.top until rect.bottom) for (x in rect.left until rect.right) {
+                    px[i++] = if (sr.contains(x, y)) source[(y - sr.top) * w + (x - sr.left)] and (0xFF shl 24) else 0
+                }
+                return Buf(rect, px, true, true)
+            }
+        }
+
+        private inner class TurbulenceNode(val fe: SvgFe.Turbulence) : Node() {
+            override val linear = fe.linearRgb
+
+            override fun noise(): Noise? =
+                if (need == 0 || stitched) null else Noise(NoiseField(fe.seed, fe.baseX, fe.baseY, fe.octaves, fe.fractal, sx.toFloat(), sy.toFloat(), need), null)
+
+            private val stitched get() = fe.stitch && fe.baseX > 0f && fe.baseY > 0f
+
+            override fun compute(rect: Rect): Buf {
+                if (stitched) throw SvgFormatException("stitchTiles is not written by the engine")
+                val w = rect.width
+                val px = IntArray(w * rect.height)
+                val fx = sx.toFloat()
+                val fy = sy.toFloat()
+                val cache = noise
+                val n = if (cache != null) noise() else null
+                if (cache != null && n != null) {
+                    cache.fill(n.field, rect.left, rect.top, w, rect.height, px)
+                } else {
+                    val t = Turbulence.of(fe.seed)
+                    val need = need
+                    // WebKit splits turbulence over threads too; rows are independent.
+                    rows(rect.height, w) { y0, y1 ->
+                        t.fillWebKit(rect.left, rect.top + y0, w, y1 - y0, 1f / fx, 1f / fy, fe.baseX, fe.baseY, fe.octaves, fe.fractal, need, px, y0 * w, w)
+                    }
+                }
+                return Buf(rect, px, false, linear)
+            }
+        }
+
+        private inner class DisplacementNode(val fe: SvgFe.DisplacementMap, val input: Node, val map: Node) : Node() {
+            override val linear get() = input.linear
+            override val inputs = listOf(input, map)
+            private val absX = (fe.scale * sx).toFloat()
+            private val absY = (fe.scale * sy).toFloat()
+            private val reachX = ceil(abs(absX) / 2.0 + 1).toInt()
+            private val reachY = ceil(abs(absY) / 2.0 + 1).toInt()
+
+            override fun compute(rect: Rect): Buf {
+                // WebKit reads the input premultiplied in its own colour space and the map unpremultiplied, unconverted.
+                val inp = view(input, premul = true, linear = input.linear)
+                val m = view(map, premul = false, linear = map.linear, correct = false)
+                val scaleForColorX = (absX / 255.0).toFloat()
+                val scaleForColorY = (absY / 255.0).toFloat()
+                val offsetX = (0.5 - absX * 0.5).toFloat()
+                val offsetY = (0.5 - absY * 0.5).toFloat()
+                val shiftX = 16 - 8 * fe.xChannel
+                val shiftY = 16 - 8 * fe.yChannel
+                val region = regionRect
+                val px = IntArray(rect.width * rect.height)
+                var i = 0
+                for (y in rect.top until rect.bottom) for (x in rect.left until rect.right) {
+                    val mp = m.at(x, y)
+                    val cx = channel(mp, fe.xChannel, shiftX)
+                    val cy = channel(mp, fe.yChannel, shiftY)
+                    val srcX = x + ExactMath.fma(scaleForColorX, cx.toFloat(), offsetX).toInt()
+                    val srcY = y + ExactMath.fma(scaleForColorY, cy.toFloat(), offsetY).toInt()
+                    px[i++] = if (region.contains(srcX, srcY)) inp.at(srcX, srcY) else 0
+                }
+                return Buf(rect, px, true, input.linear)
+            }
+
+            private fun channel(p: Int, c: Int, shift: Int) = if (c == 3) p ushr 24 else (p shr shift) and 0xFF
+
+            override fun propagate() {
+                require(map, needRect, (1 shl fe.xChannel) or (1 shl fe.yChannel))
+                require(input, needRect.inset(reachX, reachY))
+            }
+        }
+
+        private inner class MatrixNode(val fe: SvgFe.ColorMatrix, val input: Node) : Node() {
+            override val linear = fe.linearRgb
+            override val inputs = listOf(input)
+            private val m = fe.matrix
+
+            /** WebKit hands matrices without offsets (and saturate) to vImage's integer matrix multiply. */
+            private val integer = m[4] == 0f && m[9] == 0f && m[14] == 0f && m[19] == 0f
+            private val q = IntArray(16) { k -> Math.round(m[(k % 4) * 5 + k / 4] * 256f) }
+
+            override fun compute(rect: Rect): Buf {
+                val px = IntArray(rect.width * rect.height)
+                val cache = noise
+                val n = if (cache != null) noise() else null
+                if (cache != null && n != null) {
+                    cache.fill(n.field, rect.left, rect.top, rect.width, rect.height, px, map = n.map)
+                    return Buf(rect, px, true, linear)
+                }
+                // WebKit draws the input into a premultiplied buffer, then reads that back unpremultiplied.
+                val inp = view(input, premul = true, linear = linear)
+                var i = 0
+                for (y in rect.top until rect.bottom) for (x in rect.left until rect.right) px[i++] = apply(Bytes.unpremultiply(inp.at(x, y)))
+                return Buf(rect, px, true, linear)
+            }
+
+            /** The matrix on one unpremultiplied pixel of the input, premultiplied. */
+            private fun apply(p: Int): Int {
                 val r = ((p shr 16) and 0xFF)
                 val g = ((p shr 8) and 0xFF)
                 val b = (p and 0xFF)
@@ -344,174 +467,208 @@ class SvgFilterRaster(private val filter: SvgFilter) {
                     val af = a.toFloat()
                     (row(15, rf, gf, bf, af) shl 24) or (row(0, rf, gf, bf, af) shl 16) or (row(5, rf, gf, bf, af) shl 8) or row(10, rf, gf, bf, af)
                 }
-                px[i++] = Bytes.premultiply(u)
+                return Bytes.premultiply(u)
             }
-            return Buf(rect, px, true, linear)
+
+            /**
+             * On noise (or on a matrix on noise) the result is noise alone, pixel by pixel: kept under a name that says
+             * every input of the map, the input's format and this matrix.
+             */
+            override fun noise(): Noise? {
+                val n = input.noise() ?: return null
+                val inPremul = input is MatrixNode
+                val conv = Conversion(inPremul, input.linear, true, linear, correct = false)
+                val before = n.map
+                val name = StringBuilder(n.field.steps).append('m')
+                    .append(if (input.linear) 'L' else 'S').append(if (inPremul) 'P' else 'U').append(if (linear) 'L' else 'S')
+                for (v in m) name.append(':').append(Integer.toHexString(java.lang.Float.floatToRawIntBits(v)))
+                name.append(';')
+                val map = if (before == null) {
+                    NoiseMap { raw -> apply(Bytes.unpremultiply(conv.map(raw))) }
+                } else {
+                    NoiseMap { raw -> apply(Bytes.unpremultiply(conv.map(before.map(raw)))) }
+                }
+                return Noise(n.field.copy(steps = name.toString()), map)
+            }
+
+            /** One row of the matrix as WebKit's float code computes it, stored like `Uint8ClampedArray`. */
+            private fun row(k: Int, r: Float, g: Float, b: Float, a: Float): Int {
+                var t = ExactMath.fma(m[k], r, m[k + 1] * g)
+                t = ExactMath.fma(m[k + 2], b, t)
+                t = ExactMath.fma(m[k + 3], a, t)
+                t = ExactMath.fma(m[k + 4], 255f, t)
+                return Bytes.clamped(t.toDouble())
+            }
+
+            private fun vimage(sum: Int): Int = ((sum + 128) shr 8).coerceIn(0, 255)
+
+            override fun propagate() = require(input, needRect)
         }
 
-        /** One row of the matrix as WebKit's float code computes it, stored like `Uint8ClampedArray`. */
-        private fun row(k: Int, r: Float, g: Float, b: Float, a: Float): Int {
-            var t = ExactMath.fma(m[k], r, m[k + 1] * g)
-            t = ExactMath.fma(m[k + 2], b, t)
-            t = ExactMath.fma(m[k + 3], a, t)
-            t = ExactMath.fma(m[k + 4], 255f, t)
-            return Bytes.clamped(t.toDouble())
-        }
+        private inner class CompositeNode(val fe: SvgFe.Composite, val a: Node, val b: Node) : Node() {
+            override val linear = fe.linearRgb
+            override val inputs = listOf(a, b)
 
-        private fun vimage(sum: Int): Int = ((sum + 128) shr 8).coerceIn(0, 255)
-
-        override fun propagate() = require(input, needRect)
-    }
-
-    private inner class CompositeNode(val fe: SvgFe.Composite, val a: Node, val b: Node) : Node() {
-        override val linear = fe.linearRgb
-
-        override fun compute(rect: Rect): Buf {
-            val arithmetic = fe.operator == SvgFe.Composite.Operator.ARITHMETIC
-            val ia = input(a, premul = true, linear = linear, correct = !arithmetic)
-            val ib = input(b, premul = true, linear = linear, correct = !arithmetic)
-            val px = IntArray(rect.width * rect.height)
-            var i = 0
-            if (arithmetic) {
-                val k1 = fe.k1 / 255f
-                val k2 = fe.k2
-                val k3 = fe.k3
-                val k4 = fe.k4 * 255f
-                val b1 = fe.k1 != 0f
-                val b4 = fe.k4 != 0f
+            override fun compute(rect: Rect): Buf {
+                val arithmetic = fe.operator == SvgFe.Composite.Operator.ARITHMETIC
+                val ia = view(a, premul = true, linear = linear, correct = !arithmetic)
+                val ib = view(b, premul = true, linear = linear, correct = !arithmetic)
+                val px = IntArray(rect.width * rect.height)
+                var i = 0
+                if (arithmetic) {
+                    val k1 = fe.k1 / 255f
+                    val k2 = fe.k2
+                    val k3 = fe.k3
+                    val k4 = fe.k4 * 255f
+                    val b1 = fe.k1 != 0f
+                    val b4 = fe.k4 != 0f
+                    for (y in rect.top until rect.bottom) for (x in rect.left until rect.right) {
+                        val s = ia.at(x, y)
+                        val d = ib.at(x, y)
+                        var o = 0
+                        var sh = 24
+                        while (sh >= 0) {
+                            val i1 = ((s ushr sh) and 0xFF).toFloat()
+                            val i2 = ((d ushr sh) and 0xFF).toFloat()
+                            var r = i1 * k2
+                            r += i2 * k3
+                            if (b1) r += (i1 * i2) * k1
+                            if (b4) r += k4
+                            val v = if (r <= 0f) 0 else min(r.toInt(), 255)
+                            o = o or (v shl sh)
+                            sh -= 8
+                        }
+                        px[i++] = o
+                    }
+                    return Buf(rect, px, true, linear).also { it.valid = false }
+                }
                 for (y in rect.top until rect.bottom) for (x in rect.left until rect.right) {
                     val s = ia.at(x, y)
                     val d = ib.at(x, y)
+                    px[i++] = when (fe.operator) {
+                        SvgFe.Composite.Operator.IN -> Bytes.scale(s, d ushr 24)
+                        SvgFe.Composite.Operator.OUT -> Bytes.scale(s, 255 - (d ushr 24))
+                        SvgFe.Composite.Operator.ATOP -> Bytes.add(Bytes.scale(s, d ushr 24), Bytes.scale(d, 255 - (s ushr 24)))
+                        SvgFe.Composite.Operator.XOR -> Bytes.add(Bytes.scale(s, 255 - (d ushr 24)), Bytes.scale(d, 255 - (s ushr 24)))
+                        else -> Bytes.over(s, d)
+                    }
+                }
+                return Buf(rect, px, true, linear)
+            }
+
+            override fun propagate() {
+                require(a, needRect)
+                require(b, needRect)
+            }
+        }
+
+        private inner class OffsetNode(val fe: SvgFe.Offset, val input: Node) : Node() {
+            override val linear = fe.linearRgb
+            override val inputs = listOf(input)
+            private val dx = fe.dx * sx
+            private val dy = fe.dy * sy
+            private val ix = floor(dx).toInt()
+            private val iy = floor(dy).toInt()
+            private val fx = dx - ix
+            private val fy = dy - iy
+
+            override fun compute(rect: Rect): Buf {
+                val px = IntArray(rect.width * rect.height)
+                var i = 0
+                if (fx == 0.0 && fy == 0.0) {
+                    val inp = view(input, premul = true, linear = linear)
+                    for (y in rect.top until rect.bottom) for (x in rect.left until rect.right) px[i++] = inp.at(x - ix, y - iy)
+                    return Buf(rect, px, true, linear)
+                }
+                // The input drawn at a fractional offset: bilinear on premultiplied bytes.
+                val inp = input(input, premul = true, linear = linear)
+                val w00 = (1 - fx) * (1 - fy)
+                val w10 = fx * (1 - fy)
+                val w01 = (1 - fx) * fy
+                val w11 = fx * fy
+                for (y in rect.top until rect.bottom) for (x in rect.left until rect.right) {
+                    val p00 = inp.at(x - ix, y - iy)
+                    val p10 = inp.at(x - ix - 1, y - iy)
+                    val p01 = inp.at(x - ix, y - iy - 1)
+                    val p11 = inp.at(x - ix - 1, y - iy - 1)
                     var o = 0
-                    for (sh in intArrayOf(24, 16, 8, 0)) {
-                        val i1 = ((s ushr sh) and 0xFF).toFloat()
-                        val i2 = ((d ushr sh) and 0xFF).toFloat()
-                        var r = i1 * k2
-                        r += i2 * k3
-                        if (b1) r += (i1 * i2) * k1
-                        if (b4) r += k4
-                        val v = if (r <= 0f) 0 else min(r.toInt(), 255)
-                        o = o or (v shl sh)
+                    var sh = 24
+                    while (sh >= 0) {
+                        var acc = 0.0
+                        if (w00 != 0.0) acc += w00 * ((p00 ushr sh) and 0xFF)
+                        if (w10 != 0.0) acc += w10 * ((p10 ushr sh) and 0xFF)
+                        if (w01 != 0.0) acc += w01 * ((p01 ushr sh) and 0xFF)
+                        if (w11 != 0.0) acc += w11 * ((p11 ushr sh) and 0xFF)
+                        o = o or (acc.roundToInt().coerceIn(0, 255) shl sh)
+                        sh -= 8
                     }
                     px[i++] = o
                 }
-                return Buf(rect, px, true, linear).also { it.valid = false }
+                return Buf(rect, px, true, linear)
             }
-            for (y in rect.top until rect.bottom) for (x in rect.left until rect.right) {
-                val s = ia.at(x, y)
-                val d = ib.at(x, y)
-                px[i++] = when (fe.operator) {
-                    SvgFe.Composite.Operator.IN -> Bytes.scale(s, d ushr 24)
-                    SvgFe.Composite.Operator.OUT -> Bytes.scale(s, 255 - (d ushr 24))
-                    SvgFe.Composite.Operator.ATOP -> Bytes.add(Bytes.scale(s, d ushr 24), Bytes.scale(d, 255 - (s ushr 24)))
-                    SvgFe.Composite.Operator.XOR -> Bytes.add(Bytes.scale(s, 255 - (d ushr 24)), Bytes.scale(d, 255 - (s ushr 24)))
-                    else -> Bytes.over(s, d)
+
+            override fun propagate() {
+                val r = needRect
+                require(input, Rect(r.left - ix - 1, r.top - iy - 1, r.right - ix + 1, r.bottom - iy + 1))
+            }
+        }
+
+        private inner class FloodNode(val fe: SvgFe.Flood) : Node() {
+            override val linear = fe.linearRgb
+
+            override fun compute(rect: Rect): Buf {
+                val c = fe.argb
+                val u = if (linear) Bytes.mapUnpremultiplied(c, true) else c
+                val p = Bytes.premultiply(u)
+                return Buf(rect, IntArray(rect.width * rect.height) { p }, true, linear)
+            }
+        }
+
+        private inner class MergeNode(val fe: SvgFe.Merge, override val inputs: List<Node>) : Node() {
+            override val linear = fe.linearRgb
+
+            override fun compute(rect: Rect): Buf {
+                val views = inputs.map { view(it, premul = true, linear = linear) }
+                val px = IntArray(rect.width * rect.height)
+                var i = 0
+                for (y in rect.top until rect.bottom) for (x in rect.left until rect.right) {
+                    var d = 0
+                    for (v in views) d = Bytes.over(v.at(x, y), d)
+                    px[i++] = d
                 }
+                return Buf(rect, px, true, linear)
             }
-            return Buf(rect, px, true, linear)
-        }
 
-        override fun propagate() {
-            require(a, needRect)
-            require(b, needRect)
-        }
-    }
-
-    private inner class OffsetNode(val fe: SvgFe.Offset, val input: Node) : Node() {
-        override val linear = fe.linearRgb
-        private val dx = fe.dx * sx
-        private val dy = fe.dy * sy
-        private val ix = floor(dx).toInt()
-        private val iy = floor(dy).toInt()
-        private val fx = dx - ix
-        private val fy = dy - iy
-
-        override fun compute(rect: Rect): Buf {
-            val inp = input(input, premul = true, linear = linear)
-            val px = IntArray(rect.width * rect.height)
-            var i = 0
-            for (y in rect.top until rect.bottom) for (x in rect.left until rect.right) {
-                px[i++] = if (fx == 0.0 && fy == 0.0) {
-                    inp.at(x - ix, y - iy)
-                } else {
-                    // The input drawn at a fractional offset: bilinear on premultiplied bytes.
-                    var o = 0
-                    for (sh in intArrayOf(24, 16, 8, 0)) {
-                        var acc = 0.0
-                        for (k in 0 until 4) {
-                            val ox = k and 1
-                            val oy = k shr 1
-                            val w = (if (ox == 0) 1 - fx else fx) * (if (oy == 0) 1 - fy else fy)
-                            if (w != 0.0) acc += w * ((inp.at(x - ix - ox, y - iy - oy) ushr sh) and 0xFF)
-                        }
-                        o = o or (acc.roundToInt().coerceIn(0, 255) shl sh)
-                    }
-                    o
-                }
+            override fun propagate() {
+                for (n in inputs) require(n, needRect)
             }
-            return Buf(rect, px, true, linear)
         }
 
-        override fun propagate() {
-            val r = needRect
-            require(input, Rect(r.left - ix - 1, r.top - iy - 1, r.right - ix + 1, r.bottom - iy + 1))
-        }
-    }
+        /** WebKit's Gaussian blur: three box blurs on premultiplied bytes. */
+        private inner class BlurNode(val fe: SvgFe.GaussianBlur, val input: Node) : Node() {
+            override val linear = fe.linearRgb
+            override val inputs = listOf(input)
+            private val kx = kernel(fe.deviationX * sx)
+            private val ky = kernel(fe.deviationY * sy)
+            private val reachX = 3 * (kx / 2 + 1)
+            private val reachY = 3 * (ky / 2 + 1)
 
-    private inner class FloodNode(val fe: SvgFe.Flood) : Node() {
-        override val linear = fe.linearRgb
-
-        override fun compute(rect: Rect): Buf {
-            val c = fe.argb
-            val u = if (linear) Bytes.mapUnpremultiplied(c, true) else c
-            val p = Bytes.premultiply(u)
-            return Buf(rect, IntArray(rect.width * rect.height) { p }, true, linear)
-        }
-    }
-
-    private inner class MergeNode(val fe: SvgFe.Merge, val inputs: List<Node>) : Node() {
-        override val linear = fe.linearRgb
-
-        override fun compute(rect: Rect): Buf {
-            val bufs = inputs.map { input(it, premul = true, linear = linear) }
-            val px = IntArray(rect.width * rect.height)
-            var i = 0
-            for (y in rect.top until rect.bottom) for (x in rect.left until rect.right) {
-                var d = 0
-                for (b in bufs) d = Bytes.over(b.at(x, y), d)
-                px[i++] = d
+            override fun compute(rect: Rect): Buf {
+                val inp = input(input, premul = true, linear = linear)
+                // Blur over the rectangle the input was computed on; its edges are the region's or lie beyond the reach.
+                val r = inp.rect
+                if (r.isEmpty) return Buf(rect, IntArray(rect.width * rect.height), true, linear)
+                val buf = if (inp.px === result(input).px) inp.px.copyOf() else inp.px
+                boxBlurs(buf, r.width, r.height, kx, ky)
+                val blurred = Buf(r, buf, true, linear)
+                val px = IntArray(rect.width * rect.height)
+                var i = 0
+                for (y in rect.top until rect.bottom) for (x in rect.left until rect.right) px[i++] = blurred.at(x, y)
+                return Buf(rect, px, true, linear)
             }
-            return Buf(rect, px, true, linear)
+
+            override fun propagate() = require(input, needRect.inset(reachX, reachY))
         }
-
-        override fun propagate() {
-            for (n in inputs) require(n, needRect)
-        }
-    }
-
-    /** WebKit's Gaussian blur: three box blurs on premultiplied bytes. */
-    private inner class BlurNode(val fe: SvgFe.GaussianBlur, val input: Node) : Node() {
-        override val linear = fe.linearRgb
-        private val kx = kernel(fe.deviationX * sx)
-        private val ky = kernel(fe.deviationY * sy)
-        private val reachX = 3 * (kx / 2 + 1)
-        private val reachY = 3 * (ky / 2 + 1)
-
-        override fun compute(rect: Rect): Buf {
-            val inp = input(input, premul = true, linear = linear)
-            // Blur over the rectangle the input was computed on; its edges are the region's or lie beyond the reach.
-            val r = inp.rect
-            if (r.isEmpty) return Buf(rect, IntArray(rect.width * rect.height), true, linear)
-            val buf = inp.px.copyOf()
-            boxBlurs(buf, r.width, r.height, kx, ky)
-            val blurred = Buf(r, buf, true, linear)
-            val px = IntArray(rect.width * rect.height)
-            var i = 0
-            for (y in rect.top until rect.bottom) for (x in rect.left until rect.right) px[i++] = blurred.at(x, y)
-            return Buf(rect, px, true, linear)
-        }
-
-        override fun propagate() = require(input, needRect.inset(reachX, reachY))
     }
 
     /** Byte arithmetic as WebKit, vImage and Core Graphics do it. */
@@ -617,30 +774,86 @@ class SvgFilterRaster(private val filter: SvgFilter) {
     }
 
     companion object {
+        /** Output pixels below which a filter is run as one band: splitting it would cost more than it saves. */
+        private const val MIN_BAND_PIXELS = 65_536
+
+        /** The fewest rows a band has. */
+        private const val MIN_BAND_ROWS = 32
+
+        /** The filter workers: one per core, at most eight. */
+        val WORKERS = Runtime.getRuntime().availableProcessors().coerceIn(1, 8)
+
+        /**
+         * The rows where the bands of [o] start, and its bottom: [bands] bands at most, none under [MIN_BAND_ROWS] rows,
+         * their edges on the turbulence tiles' rows where they can be, so bands rarely need the same tile. One band
+         * (two entries) when [o] is small or [bands] is 1.
+         */
+        internal fun bandTops(o: Rect, bands: Int): IntArray {
+            if (bands <= 1 || o.width.toLong() * o.height < MIN_BAND_PIXELS) return intArrayOf(o.top, o.bottom)
+            val n = min(bands, o.height / MIN_BAND_ROWS)
+            if (n <= 1) return intArrayOf(o.top, o.bottom)
+            val tops = ArrayList<Int>(n + 1)
+            tops.add(o.top)
+            val t = TurbulenceCache.T
+            for (k in 1 until n) {
+                val even = o.top + (o.height.toLong() * k / n).toInt()
+                // the nearest tile row, when that leaves both neighbours at least MIN_BAND_ROWS rows
+                val snapped = Math.floorDiv(even + t / 2, t) * t
+                val at = if (o.height / n >= 2 * t) snapped else even
+                if (at - tops.last() >= MIN_BAND_ROWS && o.bottom - at >= MIN_BAND_ROWS) tops.add(at)
+            }
+            tops.add(o.bottom)
+            return tops.toIntArray()
+        }
+
+        /** True on a filter worker: work started there runs inline (a pool waiting on itself would deadlock). */
+        private fun onWorker() = Thread.currentThread().name == WORKER_NAME
+
+        /**
+         * Runs [body] for 0 until [count], on the filter workers when there is more than one and this is not a worker,
+         * and returns when all are done. An exception in any is thrown here.
+         */
+        internal fun parallel(count: Int, body: (Int) -> Unit) {
+            if (count <= 0) return
+            if (count == 1 || WORKERS == 1 || onWorker()) {
+                for (i in 0 until count) body(i)
+                return
+            }
+            val tasks = (0 until count).map { i -> java.util.concurrent.Callable { body(i) } }
+            for (f in pool.invokeAll(tasks)) {
+                try {
+                    f.get()
+                } catch (e: java.util.concurrent.ExecutionException) {
+                    throw e.cause ?: e
+                }
+            }
+        }
+
         /** Runs [body] over row ranges of a [height] × [width] image, in parallel when the image is large. */
         internal fun rows(height: Int, width: Int, body: (Int, Int) -> Unit) {
-            val threads = Runtime.getRuntime().availableProcessors().coerceIn(1, 8)
-            // small work, one core, or already on a worker (a pool waiting on itself would deadlock): inline
-            if (threads == 1 || height.toLong() * width < 32_768 || height < 2 * threads || Thread.currentThread().name == "atlas-filter") {
+            val threads = WORKERS
+            // small work, one core, or already on a worker: inline
+            if (threads == 1 || height.toLong() * width < 32_768 || height < 2 * threads || onWorker()) {
                 body(0, height)
                 return
             }
             val chunk = (height + threads * 4 - 1) / (threads * 4)
-            val tasks = (0 until (height + chunk - 1) / chunk).map { k -> java.util.concurrent.Callable { body(k * chunk, min(height, (k + 1) * chunk)) } }
-            for (f in pool.invokeAll(tasks)) f.get()
+            val n = (height + chunk - 1) / chunk
+            parallel(n) { k -> body(k * chunk, min(height, (k + 1) * chunk)) }
         }
+
+        private const val WORKER_NAME = "atlas-filter"
 
         /**
          * The filters' workers, at Android's background priority: a frame being made shares the cores with the screen and
          * must never starve it (on a 4-core phone a full-priority raster froze the app at launch, 16 October).
          */
         private val pool: java.util.concurrent.ExecutorService by lazy {
-            val n = Runtime.getRuntime().availableProcessors().coerceIn(1, 8)
-            java.util.concurrent.Executors.newFixedThreadPool(n) { r ->
+            java.util.concurrent.Executors.newFixedThreadPool(WORKERS) { r ->
                 Thread({
                     runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND) }
                     r.run()
-                }, "atlas-filter").apply { isDaemon = true }
+                }, WORKER_NAME).apply { isDaemon = true }
             }
         }
 
@@ -661,8 +874,10 @@ class SvgFilterRaster(private val filter: SvgFilter) {
         fun boxBlurs(buf: IntArray, w: Int, h: Int, kx: Int, ky: Int) {
             if (kx == ky && kx > 0) {
                 val k = if (kx % 2 == 0) kx + 1 else kx
-                val tmp = IntArray(buf.size)
-                repeat(3) { boxSquare(buf, tmp, w, h, k) }
+                val n = w * h
+                val sums = Array(4) { IntArray(n) }
+                val tmp = IntArray(n)
+                repeat(3) { boxSquare(buf, tmp, w, h, k, sums) }
                 return
             }
             val tmp = IntArray(buf.size)
@@ -765,15 +980,18 @@ class SvgFilterRaster(private val filter: SvgFilter) {
             }
         }
 
-        /** One k × k box (k odd), edge pixels repeated, the sum divided once with rounding; [buf] is replaced. */
-        private fun boxSquare(buf: IntArray, tmp: IntArray, w: Int, h: Int, k: Int) {
+        /**
+         * One k × k box (k odd), edge pixels repeated, the sum divided once with rounding; [buf] is replaced. [sums] is
+         * scratch: four arrays of w · h.
+         */
+        private fun boxSquare(buf: IntArray, tmp: IntArray, w: Int, h: Int, k: Int, sums: Array<IntArray>) {
             val half = k / 2
             val area = k * k
             // Column sums per channel would overflow nothing: 255 · 1001 fits easily. First pass: horizontal sums.
-            val ha = IntArray(w * h)
-            val hr = IntArray(w * h)
-            val hg = IntArray(w * h)
-            val hb = IntArray(w * h)
+            val ha = sums[0]
+            val hr = sums[1]
+            val hg = sums[2]
+            val hb = sums[3]
             for (y in 0 until h) {
                 val row = y * w
                 var sa = 0
