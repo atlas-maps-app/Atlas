@@ -7,6 +7,7 @@ import app.atlas.render.City.P
 import app.atlas.render.City.area
 import app.atlas.render.City.clamp
 import app.atlas.render.py.Dict
+import app.atlas.render.py.GridMap
 import app.atlas.render.py.PyFmt
 import app.atlas.render.py.PyHash
 import app.atlas.render.py.PyJson
@@ -21,6 +22,8 @@ import app.atlas.render.py.pyNum
 import app.atlas.render.py.pySortBy
 import app.atlas.render.py.str
 import app.atlas.render.py.truthy
+import java.lang.ref.SoftReference
+import java.lang.ref.WeakReference
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.util.regex.Matcher
@@ -171,6 +174,17 @@ object Real {
         var ins = false; val n = poly.size; var j = n - 1
         for (i in 0 until n) {
             val (xi, zi) = poly[i]; val (xj, zj) = poly[j]
+            if ((zi > z) != (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi + 1e-12) + xi) ins = !ins
+            j = i
+        }
+        return ins
+    }
+
+    /** [pip] over a footprint held as x, z pairs: the same test, in the same order of operations. */
+    fun pipXZ(x: Double, z: Double, xz: DoubleArray): Boolean {
+        var ins = false; val n = xz.size / 2; var j = n - 1
+        for (i in 0 until n) {
+            val xi = xz[2 * i]; val zi = xz[2 * i + 1]; val xj = xz[2 * j]; val zj = xz[2 * j + 1]
             if ((zi > z) != (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi + 1e-12) + xi) ins = !ins
             j = i
         }
@@ -492,30 +506,137 @@ object Real {
 
     // ------------------------------------------------------------------ sunlight: ray march over a grid of prisms
 
-    // render/real.py:232 Shadows
-    /** Sunlight over prisms: a ray march toward the sun [L] through a 16 m grid of the buildings' bounding boxes. */
-    class Shadows(buildings: List<Prism>, val L: V3) {
-        val cell = 16.0
-        private val grid = HashMap<Long, ArrayList<Prism>>()
-        val maxh: Double
+    /**
+     * Shadows' sun-free indexes ([Shadows.Index], or what wraps one), kept outside the scenes: per scene object (by identity, held
+     * weakly) and reused only while the scene's buildings are as they were when it was built. The caller names what the index
+     * read: [get]'s tokens are compared by identity (each building, its footprint, the `bb` the index gave it) and its numbers bit
+     * for bit (the heights), so a changed scene builds afresh and every frame stays as Python draws it. An index is held softly:
+     * the collector may drop it (it is then built again), so a scene let go of never stays in memory through its index.
+     */
+    object ShadowIndexes {
+        /** At most this many scenes keep an index. */
+        const val CAPACITY = 2
 
-        init {
-            maxh = City.pyMaxOf(buildings.map { it.h })
-            for (b in buildings) {
-                val xs = b.poly.map { it[0] }; val zs = b.poly.map { it[1] }
-                val bb = doubleArrayOf(City.pyMinOf(xs), City.pyMaxOf(xs), City.pyMinOf(zs), City.pyMaxOf(zs))
-                b.bb = bb
-                for (i in PyMath.floorInt(bb[0] / cell)..PyMath.floorInt(bb[1] / cell)) {
-                    for (j in PyMath.floorInt(bb[2] / cell)..PyMath.floorInt(bb[3] / cell)) {
-                        grid.getOrPut(key(i, j)) { ArrayList() }.add(b)
+        private class Held(val tokens: Array<Any?>, val numbers: DoubleArray, val value: Any)
+
+        private class Entry(val scene: WeakReference<Any>, val held: SoftReference<Held>)
+
+        private val entries = ArrayList<Entry>()
+
+        /** The index kept for [scene] while its [tokens] and [numbers] are unchanged, else [make]'s (kept from now on). */
+        @Suppress("UNCHECKED_CAST")
+        fun <T : Any> get(scene: Any, tokens: () -> Array<Any?>, numbers: () -> DoubleArray, make: () -> T): T {
+            val nm = numbers()
+            synchronized(this) {
+                entries.removeAll { it.scene.get() == null || it.held.get() == null }
+                val e = entries.firstOrNull { it.scene.get() === scene }
+                val h = e?.held?.get()
+                if (e != null && h != null && same(h, tokens(), nm)) {
+                    entries.remove(e); entries.add(e)
+                    return h.value as T
+                }
+                if (e != null) entries.remove(e)
+            }
+            val v = make()
+            val after = tokens() // with what building the index wrote (the boxes): a later frame must find them unchanged
+            synchronized(this) {
+                entries.removeAll { it.scene.get() === scene }
+                entries.add(Entry(WeakReference(scene), SoftReference(Held(after, nm, v))))
+                while (entries.size > CAPACITY) entries.removeAt(0)
+            }
+            return v
+        }
+
+        private fun same(h: Held, tk: Array<Any?>, nm: DoubleArray): Boolean {
+            if (h.tokens.size != tk.size || h.numbers.size != nm.size) return false
+            for (i in tk.indices) if (h.tokens[i] !== tk[i]) return false
+            for (i in nm.indices) if (java.lang.Double.doubleToRawLongBits(h.numbers[i]) != java.lang.Double.doubleToRawLongBits(nm[i])) return false
+            return true
+        }
+
+        /** Drops every kept index. */
+        @Synchronized
+        fun clear() = entries.clear()
+
+        /** How many scenes have an index kept. */
+        val size: Int
+            @Synchronized get() = entries.count { it.scene.get() != null && it.held.get() != null }
+    }
+
+    /** [Shadows] over [S]'s buildings toward [L], its grid kept for the scene while the buildings stay as they were. */
+    fun shadowsOf(S: RealData, L: V3): Shadows {
+        val bs = S.buildings
+        val index = ShadowIndexes.get(S, { Array(bs.size * 3) { k -> val b = bs[k / 3]; when (k % 3) { 0 -> b; 1 -> b.poly; else -> b.bb } } },
+            { DoubleArray(bs.size) { bs[it].h } }) { Shadows.Index(bs) }
+        return Shadows(index, L)
+    }
+
+    // render/real.py:232 Shadows
+    /**
+     * Sunlight over prisms: a ray march toward the sun [L] through a 16 m grid of the buildings' bounding boxes. The grid does
+     * not depend on the sun, so one [Index] serves every moment of a scene ([ShadowIndexes]).
+     */
+    class Shadows(val index: Index, val L: V3) {
+        constructor(buildings: List<Prism>, L: V3) : this(Index(buildings), L)
+
+        val cell: Double get() = index.cell
+        private val grid = index.grid
+        private val prisms = index.prisms
+        private val hs = index.hs
+        private val bbs = index.bbs
+        private val polys = index.polys
+        val maxh: Double get() = index.maxh
+
+        /**
+         * Shadows' grid and greatest height over [buildings]; building it sets each building's `bb`, as `Shadows.__init__` does.
+         * The cells list the buildings by their place in [buildings], in that order, and the heights, boxes and footprints are kept
+         * beside them (each building's `h`, `bb` and `poly` as this index found and wrote them), so a ray reads no dict.
+         */
+        class Index(buildings: List<Prism>) {
+            val cell = 16.0
+            val maxh: Double
+            internal val prisms: Array<Prism> = buildings.toTypedArray()
+            internal val hs = DoubleArray(prisms.size) { prisms[it].h }
+            internal val bbs = DoubleArray(prisms.size * 4)
+            /** Each footprint as x, z pairs, for [pipXZ]. */
+            internal val polys: Array<DoubleArray> = Array(prisms.size) { k ->
+                val p = prisms[k].poly
+                DoubleArray(2 * p.size).also { a -> for (i in p.indices) { a[2 * i] = p[i].x; a[2 * i + 1] = p[i].y } }
+            }
+            internal val grid = GridMap<IntArray>(prisms.size * 2)
+
+            init {
+                maxh = City.pyMaxOf(buildings.map { it.h })
+                val lists = GridMap<IntList>(prisms.size * 2)
+                for ((k, b) in prisms.withIndex()) {
+                    val xs = b.poly.map { it[0] }; val zs = b.poly.map { it[1] }
+                    val bb = doubleArrayOf(City.pyMinOf(xs), City.pyMaxOf(xs), City.pyMinOf(zs), City.pyMaxOf(zs))
+                    b.bb = bb
+                    System.arraycopy(bb, 0, bbs, 4 * k, 4)
+                    for (i in PyMath.floorInt(bb[0] / cell)..PyMath.floorInt(bb[1] / cell)) {
+                        for (j in PyMath.floorInt(bb[2] / cell)..PyMath.floorInt(bb[3] / cell)) {
+                            lists.getOrPut(GridMap.key(i, j)) { IntList() }.add(k)
+                        }
                     }
                 }
+                lists.forEach { key, l -> grid[key] = l.toArray() }
+            }
+
+            /** A growable list of ints, for building the cells. */
+            internal class IntList {
+                private var a = IntArray(4)
+                private var n = 0
+                fun add(v: Int) {
+                    if (n == a.size) a = a.copyOf(n * 2)
+                    a[n++] = v
+                }
+                fun toArray(): IntArray = a.copyOf(n)
             }
         }
 
-        private fun key(i: Long, j: Long): Long = (i shl 32) xor (j and 0xffffffffL)
+        private fun key(i: Long, j: Long): Long = GridMap.key(i, j)
 
-        private fun at(x: Double, z: Double): List<Prism>? = grid[key(PyMath.floorInt(x / cell), PyMath.floorInt(z / cell))]
+        private fun cellKey(x: Double, z: Double): Long = key(PyMath.floorInt(x / cell), PyMath.floorInt(z / cell))
 
         // render/real.py:243 Shadows.lit
         /** True when the ray from [p] toward the sun leaves every building, within [reach] metres. */
@@ -523,14 +644,18 @@ object Real {
             if (L[1] <= 0) return false
             val tmax = PyMath.min(reach, (maxh - p[1]) / L[1])
             var t = 0.8
+            var lastKey = 0L; var cellList: IntArray? = null; var first = true // steps of 1.6 m mostly stay in one 16 m cell
             while (t < tmax) {
                 val x = p[0] + L[0] * t; val y = p[1] + L[1] * t; val z = p[2] + L[2] * t
-                val cellList = at(x, z)
-                if (cellList != null) {
-                    for (b in cellList) {
-                        if (b === skip || y > b.h) continue
-                        val bb = b.bb!!
-                        if (bb[0] <= x && x <= bb[1] && bb[2] <= z && z <= bb[3] && pip(x, z, b.poly)) return false
+                val ck = cellKey(x, z)
+                if (first || ck != lastKey) { cellList = grid[ck]; lastKey = ck; first = false }
+                val ks = cellList
+                if (ks != null) {
+                    for (k in ks) {
+                        val b = prisms[k]
+                        if (b === skip || y > hs[k]) continue
+                        val o = 4 * k
+                        if (bbs[o] <= x && x <= bbs[o + 1] && bbs[o + 2] <= z && z <= bbs[o + 3] && pipXZ(x, z, polys[k])) return false
                     }
                 }
                 t += 1.6
@@ -576,14 +701,18 @@ object Real {
             if (L[1] <= 0) return 1e9
             val hl = PyMath.hypot(L[0], L[2]).let { if (it == 0.0) 1e-6 else it }
             val tmax = maxh / L[1]; var best = -1e9; var t = 0.25 / hl
+            var lastKey = 0L; var cellList: IntArray? = null; var first = true
             while (t < tmax) {
                 val px = x + L[0] * t; val pz = z + L[2] * t; val climb = L[1] * t
-                val cellList = at(px, pz)
-                if (cellList != null) {
-                    for (b in cellList) {
-                        if (b === skip || b.h - climb <= best) continue
-                        val bb = b.bb!!
-                        if (bb[0] <= px && px <= bb[1] && bb[2] <= pz && pz <= bb[3] && pip(px, pz, b.poly)) {
+                val ck = cellKey(px, pz)
+                if (first || ck != lastKey) { cellList = grid[ck]; lastKey = ck; first = false }
+                val ks = cellList
+                if (ks != null) {
+                    for (k in ks) {
+                        val b = prisms[k]
+                        if (b === skip || hs[k] - climb <= best) continue
+                        val o = 4 * k
+                        if (bbs[o] <= px && px <= bbs[o + 1] && bbs[o + 2] <= pz && pz <= bbs[o + 3] && pipXZ(px, pz, polys[k])) {
                             val c = top(b, px, pz) - climb
                             if (c > best) best = c
                         }
@@ -670,7 +799,7 @@ object Real {
         val L = if (el > 0) Living.sunVector(az, el) else V3(0.0, -1.0, 0.0)
         val th = LinkedHashMap(th0); th["_L"] = L
         val night = th.flag("night"); val truth = th.flag("truth")
-        val sh = Shadows(S.buildings, L)
+        val sh = shadowsOf(S, L)
         val sc = Living.Scene(emptyList(), th, cam, L, emptyList())
         sc.roofK = roofK
         // real.py: LV.sunlit = lambda scene, p, skip=None: (not night) and sh.lit(p, skip=None)

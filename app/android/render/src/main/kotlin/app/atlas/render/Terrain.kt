@@ -9,6 +9,8 @@ import app.atlas.render.City.tohex
 import app.atlas.render.City.vnorm
 import app.atlas.render.Real.pip
 import app.atlas.render.py.Dict
+import app.atlas.render.py.GridMap
+import app.atlas.render.py.GridSet
 import app.atlas.render.py.PyFmt.pf
 import app.atlas.render.py.PyJson
 import app.atlas.render.py.PyMath
@@ -109,8 +111,8 @@ object Terrain {
         /** Rows of heights above `base`. */
         val g: Array<DoubleArray>
 
-        /** Cells under water: `i + j * nx` (Python's set of (i, j)). */
-        var wet: HashSet<Long> = HashSet()
+        /** Cells under water, by [key] (Python's set of (i, j)). */
+        var wet: GridSet = GridSet()
 
         init {
             if (!fill) {
@@ -148,7 +150,7 @@ object Terrain {
         }
 
         companion object {
-            fun key(i: Int, j: Int): Long = (i.toLong() shl 32) or (j.toLong() and 0xffffffffL)
+            fun key(i: Int, j: Int): Long = GridMap.key(i, j)
         }
     }
 
@@ -200,8 +202,8 @@ object Terrain {
 
     // render/terrain.py:79 wet_mask
     /** Grid cells under water, filled row by row (scanline), so even the sea is quick: keys [Local.key]. */
-    fun wetMask(loc: Local, rings: List<List<V2>>): HashSet<Long> {
-        val wet = HashSet<Long>()
+    fun wetMask(loc: Local, rings: List<List<V2>>): GridSet {
+        val wet = GridSet()
         for (poly in rings) {
             val n = poly.size
             val zmin = City.pyMinOf(poly.map { it.y }); val zmax = City.pyMaxOf(poly.map { it.y })
@@ -241,7 +243,7 @@ object Terrain {
             // where there is water the ground has no slope to show: a mask of the lakes on the same grid
             @Suppress("UNCHECKED_CAST")
             val lakes = S["_lakes"] as List<List<V2>>
-            loc.wet = if (!trace) wetMask(loc, lakes) else HashSet()
+            loc.wet = if (!trace) wetMask(loc, lakes) else GridSet()
             for (poly in (if (trace) lakes else emptyList())) {
                 val xs = poly.map { it.x }; val zs = poly.map { it.y }
                 val xmin = City.pyMinOf(xs); val xmax = City.pyMaxOf(xs); val zmin = City.pyMinOf(zs); val zmax = City.pyMaxOf(zs)
@@ -297,7 +299,7 @@ object Terrain {
         private class Ref(val idx: Int, val bb: DoubleArray)
 
         private val items = ArrayList<It>()
-        private val grid = HashMap<Long, MutableList<Ref>>()
+        private val grid = GridMap<MutableList<Ref>>()
         private val big = ArrayList<Ref>()
         val G = 150.0
 
@@ -317,7 +319,7 @@ object Terrain {
             }
         }
 
-        private fun cell(gx: Long, gz: Long): Long = (gx shl 32) xor (gz and 0xffffffffL)
+        private fun cell(gx: Long, gz: Long): Long = GridMap.key(gx, gz)
 
         // render/terrain.py:162 Cover.at
         fun at(x: Double, z: Double): String? {

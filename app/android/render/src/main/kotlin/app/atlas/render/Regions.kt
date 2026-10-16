@@ -15,6 +15,7 @@ import app.atlas.render.City.vsub
 import app.atlas.render.Real.centroid
 import app.atlas.render.Real.pip
 import app.atlas.render.Real.signedArea
+import app.atlas.render.data.RawSource
 import app.atlas.render.py.CrMath
 import app.atlas.render.py.Dict
 import app.atlas.render.py.PyFmt.pf
@@ -97,7 +98,8 @@ object Regions {
         val sb = StringBuilder(run.size * 14 + 1).append('M')
         for ((i, r) in run.withIndex()) {
             if (i > 0) sb.append('L')
-            sb.append(app.atlas.render.py.PyFmt.fixed(r.x, 1)).append(' ').append(app.atlas.render.py.PyFmt.fixed(r.y, 1))
+            app.atlas.render.py.PyFmt.appendFixed(sb, r.x, 1).append(' ')
+            app.atlas.render.py.PyFmt.appendFixed(sb, r.y, 1)
         }
         return sb.toString()
     }
@@ -430,14 +432,138 @@ object Regions {
         Amsterdam.WATER_Y = -1.5; Amsterdam.QUAY_COL = "#6E5546"; Amsterdam.QUAY_COURSE = 0.0625 // the generic levels, before this region measures its own
         val rawPath = File(File(root, name), "raw.json")
         val S = Amsterdam.load(rawPath)
-        val raw = (PyJson.load(rawPath) as Map<String, Any?>)["elements"] as List<Map<String, Any?>>
+        val raw = RawSource.elements(rawPath)
         val naturalShore = identitySet<Any?>()
         S["land"] = ArrayList<Dict>(); S["aero"] = ArrayList<Dict>(); S["big"] = ArrayList<Dict>(); S["rail"] = ArrayList<Dict>(); S["power"] = ArrayList<Dict>()
         S["towers"] = LinkedHashMap<Long, Pair<V2, Double?>>(); S["turbines"] = ArrayList<Dict>(); S["cranes"] = ArrayList<Dict>(); S["marine"] = ArrayList<Dict>(); S["park"] = ArrayList<Dict>()
         S["natural_shore"] = naturalShore; S["region"] = name; S["R"] = R; S["view"] = view
         S["tradition"] = R["tradition"] // the building tradition its unmapped looks come from (render/traditions)
         val buildings = dicts(S["buildings"]); val parts = dicts(S["parts"])
-        // buildings mapped as multipolygon relations (Notre-Dame, the Louvre): outer ways joined into rings, as for water
+        relationBuildings(raw, buildings, parts)
+        // roof shapes this renderer does not draw are drawn as the closest one it does (the tag itself is kept and shown)
+        val CLOSEST = mapOf("gambrel" to "gabled", "dome" to "pyramidal", "onion" to "pyramidal", "round" to "gabled", "half-hipped" to "hipped", "saltbox" to "gabled", "cone" to "pyramidal")
+        for (b in buildings + parts) {
+            val roof = b["roof"]
+            if (roof in CLOSEST || roof == "mansard") { // a mansard is drawn as itself
+                b["roof"] = CLOSEST[roof] ?: roof
+                if (!truthy(b["roof_h"]) && truthy(b["h"])) {
+                    val rl = Real.num(tagsOf(b)["roof:levels"])
+                    b["roof_h"] = pmin(d(b["h"]) * 0.35, if (rl != null && rl != 0.0) rl * 2.8 else 3.5)
+                    (b.getOrPut("guessed") { LinkedHashMap<String, Any?>() } as Dict)["roof:height"] = true
+                }
+            }
+        }
+        val tol = GENERALISE[view] ?: GENERALISE[view.replace("_detail", "").replace("_kit", "")] ?: GENERALISE[name] ?: 0.0
+        if (tol != 0.0) {
+            for (b in buildings + parts) b["poly"] = simplify(Amsterdam.polyOf(b), tol)
+            for (a in dicts(S["areas"])) a["poly"] = simplify(Amsterdam.polyOf(a), tol)
+        }
+        val coast = ArrayList<List<Map<String, Any?>?>>(); val bays = ArrayList<Map<String, Any?>>()
+        val quays = name == "paris" || name == "port"
+        val land = dicts(S["land"])
+        regionFeatures(S, raw, name, land, coast)
+        // rivers and lakes mapped as multipolygons: outer rings joined from their ways, islands kept as holes
+        val water = rings(S["water"])
+        val seen = HashSet<Triple<Double, Double, Int>>()
+        for (r in water) seen.add(Triple(r1(r[0].x), r1(r[0].y), r.size))
+        val holes = ArrayList<List<V2>>(); S["water_holes"] = holes
+        for (e in raw) {
+            val t = tagsOf(e)
+            if (e["type"] == "relation" && (t["natural"] == "water" || t["waterway"] in setOf("riverbank", "dock", "canal"))) {
+                for (r in ringsOf(e)) if (Triple(r1(r[0].x), r1(r[0].y), r.size) !in seen) water.add(r)
+                holes.addAll(ringsOf(e, "inner"))
+            }
+            if (t["natural"] in setOf("bay", "strait") && e["type"] in setOf("relation", "way")) {
+                bays.add(e) // a named piece of the sea: water by definition, used where the extract holds no coastline to close
+            }
+        }
+        for (r in water) if (!quays) naturalShore.add(r)
+        var seas_ = seaFromCoast(coast, (R["bbox"] as List<Any?>).map { d(it) })
+        if (seas_.isNotEmpty() && buildings.isNotEmpty()) {
+            // a coastline closed round the wrong side covers the town: no sea holds more than a few buildings
+            val cents = every(buildings, Math.max(1, buildings.size / 400)).map { centroid(Amsterdam.polyOf(it)) }
+            seas_ = seas_.filter { poly -> cents.count { c -> pip(c.x, c.y, poly) } <= pmax(2.0, 0.03 * cents.size) }
+        }
+        for (poly in seas_) {
+            water.add(poly)
+            if (name != "bergen") naturalShore.add(poly) // Bergen's harbour is quays all round
+        }
+        if (seas_.isEmpty() && bays.isNotEmpty()) {
+            for (e in bays) for (r in ringsOf(e)) if (absArea(r) > 2000) water.add(r) // a harbour's edges are quays, drawn as such
+        }
+        if (name == "bergen") { Amsterdam.QUAY_COL = "#7F796E"; Amsterdam.QUAY_COURSE = 0.45 } // Bergen's quays are cut stone
+        land.sortWith { a, b ->
+            val oa = LAND.getValue(a["kind"] as String).second; val ob = LAND.getValue(b["kind"] as String).second
+            if (oa != ob) oa.compareTo(ob) else app.atlas.render.py.pyCompare(-absArea(Amsterdam.polyOf(a)), -absArea(Amsterdam.polyOf(b)))
+        }
+        // each building's generic look from its own tags and the land use it stands in (real OSM values, marked guessed)
+        class LU(val k: String, val poly: List<V2>, val bb: DoubleArray)
+        val lu = land.filter { it["kind"] in Generic.LANDUSE_KIND }.map { a ->
+            val p = Amsterdam.polyOf(a)
+            LU(a["kind"] as String, p, doubleArrayOf(City.pyMinOf(p.map { it.x }), City.pyMaxOf(p.map { it.x }), City.pyMinOf(p.map { it.y }), City.pyMaxOf(p.map { it.y })))
+        }
+        val landuseAt: (Dict) -> String? = { b ->
+            val c = centroid(Amsterdam.polyOf(b))
+            lu.firstOrNull { it.bb[0] <= c.x && c.x <= it.bb[1] && it.bb[2] <= c.y && c.y <= it.bb[3] && pip(c.x, c.y, it.poly) }?.k
+        }
+        // each building:part belongs to the outline it stands in: it takes that building's look, and a church's parts get church windows
+        val outl = buildings.map { b ->
+            b to ((b["_bb"] as DoubleArray?) ?: Amsterdam.polyOf(b).let { p -> doubleArrayOf(City.pyMinOf(p.map { it.x }), City.pyMaxOf(p.map { it.x }), City.pyMinOf(p.map { it.y }), City.pyMaxOf(p.map { it.y })) })
+        }
+        for (p_ in parts) {
+            val c = centroid(Amsterdam.polyOf(p_))
+            for ((b, bb) in outl) {
+                if (bb[0] <= c.x && c.x <= bb[1] && bb[2] <= c.y && c.y <= bb[3] && pip(c.x, c.y, Amsterdam.polyOf(b))) {
+                    p_["parent_id"] = b["id"]
+                    val bt = tagsOf(b)
+                    if (bt["building"] in setOf("church", "cathedral", "chapel") || bt["amenity"] == "place_of_worship") p_["in_church"] = true
+                    break
+                }
+            }
+        }
+        Generic.apply(S, name, landuseAt)
+        val demPath = File(File(root, name), "dem.json")
+        drapeTerrain(S, name, view, demPath, water, naturalShore, buildings, parts, land)
+        if (truthy(S["_terrain"])) {
+            S["under"] = { cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, defs: MutableList<String> ->
+                Relief.draw(S, cam, th, far, defs, cfgFor(view), LAND, S["_lines"] as List<Terrain.Line>)
+            } as Amsterdam.SceneLayer
+        } else {
+            S["under"] = { cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, defs: MutableList<String> -> drawUnder(S, cam, th, far, defs) } as Amsterdam.SceneLayer
+        }
+        flatHeights(S, name, view, demPath, water, naturalShore)
+        Amsterdam.QUAY_COL = mapOf("paris" to "#B8AD96", "port" to "#8C8A85", "schiphol" to "#8C8A85")[name] ?: Amsterdam.QUAY_COL
+        Amsterdam.QUAY_COURSE = when (name) { "paris" -> 0.45; "port", "schiphol" -> null; else -> Amsterdam.QUAY_COURSE } // Paris quays are cut stone
+        Amsterdam.WIN_STYLE = if (name == "paris") "paris" else null
+        Amsterdam.TONE = true
+        val light = Woods.Light { th, b, n, l -> Amsterdam.light(th, b, n, l) }
+        if (truthy(R["park"])) {
+            // a theme park: its coaster tracks standing up, each ride's top height from its published profile (park/<name>/pf)
+            val hts = LinkedHashMap<String, Double>(); val kinds = LinkedHashMap<String, String>()
+            val files = File(File(parkRoot, R["park"] as String), "pf").listFiles { f -> f.name.endsWith(".json") }?.sortedBy { it.name } ?: emptyList()
+            for (f in files) {
+                val a_ = PyJson.load(f) as Map<String, Any?>; val rp = (a_["rideProfile"] as Map<String, Any?>?) ?: emptyMap()
+                val stats = (rp["stats"] as Map<String, Any?>?) ?: emptyMap()
+                if (truthy(stats["heightM"])) hts[a_["name"] as String] = pyFloat(stats["heightM"])
+                if ("wooden-coaster" in ((rp["types"] as List<Any?>?) ?: emptyList())) kinds[a_["name"] as String] = "wood"
+            }
+            S["coasters"] = Coasters.load(raw, Amsterdam::XZ, buildings + parts, hts, kinds)
+            val cv = cfgFor(view); val tg = cv["target"] as List<Any?>
+            S["woods"] = Woods.plant(S, d(tg[0]), d(tg[2]), d(cv["radius"])) // its woods: generic trees inside the mapped outlines, off everything mapped in them
+        }
+        if (truthy(R["zoo"])) {
+            // a zoo: its planted woods and shrubberies, the same generic trees inside the mapped outlines (the mapped trees stay as they are)
+            val cv = cfgFor(view); val tg = cv["target"] as List<Any?>
+            S["woods"] = Woods.plant(S, d(tg[0]), d(tg[2]), d(cv["radius"]))
+        }
+        S["over"] = { cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, defs: MutableList<String> -> drawOver(S, cam, th, far, defs, light) } as Amsterdam.SceneLayer
+        S["items"] = { cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, defs: MutableList<String> -> drawItems(S, cam, th, far, defs) } as Amsterdam.SceneItems
+        S["no_facades"] = true
+        return S
+    }
+
+    // render/regions.py:215 load: buildings mapped as multipolygon relations (Notre-Dame, the Louvre), outer ways joined into rings
+    private fun relationBuildings(raw: List<Map<String, Any?>>, buildings: MutableList<Dict>, parts: MutableList<Dict>) {
         val have = HashSet<V2>()
         for (b in buildings + parts) { val p0 = Amsterdam.polyOf(b)[0]; have.add(V2(r1(p0.x), r1(p0.y))) }
         val newB = ArrayList<Dict>(); val newP = ArrayList<Dict>()
@@ -473,27 +599,12 @@ object Regions {
             }
             buildings.addAll(newB); parts.addAll(newP)
         }
-        // roof shapes this renderer does not draw are drawn as the closest one it does (the tag itself is kept and shown)
-        val CLOSEST = mapOf("gambrel" to "gabled", "dome" to "pyramidal", "onion" to "pyramidal", "round" to "gabled", "half-hipped" to "hipped", "saltbox" to "gabled", "cone" to "pyramidal")
-        for (b in buildings + parts) {
-            val roof = b["roof"]
-            if (roof in CLOSEST || roof == "mansard") { // a mansard is drawn as itself
-                b["roof"] = CLOSEST[roof] ?: roof
-                if (!truthy(b["roof_h"]) && truthy(b["h"])) {
-                    val rl = Real.num(tagsOf(b)["roof:levels"])
-                    b["roof_h"] = pmin(d(b["h"]) * 0.35, if (rl != null && rl != 0.0) rl * 2.8 else 3.5)
-                    (b.getOrPut("guessed") { LinkedHashMap<String, Any?>() } as Dict)["roof:height"] = true
-                }
-            }
-        }
-        val tol = GENERALISE[view] ?: GENERALISE[view.replace("_detail", "").replace("_kit", "")] ?: GENERALISE[name] ?: 0.0
-        if (tol != 0.0) {
-            for (b in buildings + parts) b["poly"] = simplify(Amsterdam.polyOf(b), tol)
-            for (a in dicts(S["areas"])) a["poly"] = simplify(Amsterdam.polyOf(a), tol)
-        }
-        val coast = ArrayList<List<Map<String, Any?>?>>(); val bays = ArrayList<Map<String, Any?>>()
-        val quays = name == "paris" || name == "port"
-        val land = dicts(S["land"])
+    }
+
+    // render/regions.py:215 load: what only regions draw, from the extract (land cover, runways, big roads, rails, power, marine works,
+    // cranes, masts, gantries, turbines, towers, parks), and the coastline's ways
+    @Suppress("UNCHECKED_CAST")
+    private fun regionFeatures(S: Dict, raw: List<Map<String, Any?>>, name: String, land: MutableList<Dict>, coast: MutableList<List<Map<String, Any?>?>>) {
         for (e in raw) {
             val t = tagsOf(e)
             if (t.isEmpty()) continue
@@ -556,67 +667,12 @@ object Regions {
                 (S["towers"] as MutableMap<Long, Pair<V2, Double?>>)[(e["id"] as Number).toLong()] = Amsterdam.XZ(d(e["lat"]), d(e["lon"])) to Real.num(t["height"], null)
             }
         }
-        // rivers and lakes mapped as multipolygons: outer rings joined from their ways, islands kept as holes
-        val water = rings(S["water"])
-        val seen = HashSet<Triple<Double, Double, Int>>()
-        for (r in water) seen.add(Triple(r1(r[0].x), r1(r[0].y), r.size))
-        val holes = ArrayList<List<V2>>(); S["water_holes"] = holes
-        for (e in raw) {
-            val t = tagsOf(e)
-            if (e["type"] == "relation" && (t["natural"] == "water" || t["waterway"] in setOf("riverbank", "dock", "canal"))) {
-                for (r in ringsOf(e)) if (Triple(r1(r[0].x), r1(r[0].y), r.size) !in seen) water.add(r)
-                holes.addAll(ringsOf(e, "inner"))
-            }
-            if (t["natural"] in setOf("bay", "strait") && e["type"] in setOf("relation", "way")) {
-                bays.add(e) // a named piece of the sea: water by definition, used where the extract holds no coastline to close
-            }
-        }
-        for (r in water) if (!quays) naturalShore.add(r)
-        var seas_ = seaFromCoast(coast, (R["bbox"] as List<Any?>).map { d(it) })
-        if (seas_.isNotEmpty() && buildings.isNotEmpty()) {
-            // a coastline closed round the wrong side covers the town: no sea holds more than a few buildings
-            val cents = every(buildings, Math.max(1, buildings.size / 400)).map { centroid(Amsterdam.polyOf(it)) }
-            seas_ = seas_.filter { poly -> cents.count { c -> pip(c.x, c.y, poly) } <= pmax(2.0, 0.03 * cents.size) }
-        }
-        for (poly in seas_) {
-            water.add(poly)
-            if (name != "bergen") naturalShore.add(poly) // Bergen's harbour is quays all round
-        }
-        if (seas_.isEmpty() && bays.isNotEmpty()) {
-            for (e in bays) for (r in ringsOf(e)) if (absArea(r) > 2000) water.add(r) // a harbour's edges are quays, drawn as such
-        }
-        if (name == "bergen") { Amsterdam.QUAY_COL = "#7F796E"; Amsterdam.QUAY_COURSE = 0.45 } // Bergen's quays are cut stone
-        land.sortWith { a, b ->
-            val oa = LAND.getValue(a["kind"] as String).second; val ob = LAND.getValue(b["kind"] as String).second
-            if (oa != ob) oa.compareTo(ob) else app.atlas.render.py.pyCompare(-absArea(Amsterdam.polyOf(a)), -absArea(Amsterdam.polyOf(b)))
-        }
-        // each building's generic look from its own tags and the land use it stands in (real OSM values, marked guessed)
-        class LU(val k: String, val poly: List<V2>, val bb: DoubleArray)
-        val lu = land.filter { it["kind"] in Generic.LANDUSE_KIND }.map { a ->
-            val p = Amsterdam.polyOf(a)
-            LU(a["kind"] as String, p, doubleArrayOf(City.pyMinOf(p.map { it.x }), City.pyMaxOf(p.map { it.x }), City.pyMinOf(p.map { it.y }), City.pyMaxOf(p.map { it.y })))
-        }
-        val landuseAt: (Dict) -> String? = { b ->
-            val c = centroid(Amsterdam.polyOf(b))
-            lu.firstOrNull { it.bb[0] <= c.x && c.x <= it.bb[1] && it.bb[2] <= c.y && c.y <= it.bb[3] && pip(c.x, c.y, it.poly) }?.k
-        }
-        // each building:part belongs to the outline it stands in: it takes that building's look, and a church's parts get church windows
-        val outl = buildings.map { b ->
-            b to ((b["_bb"] as DoubleArray?) ?: Amsterdam.polyOf(b).let { p -> doubleArrayOf(City.pyMinOf(p.map { it.x }), City.pyMaxOf(p.map { it.x }), City.pyMinOf(p.map { it.y }), City.pyMaxOf(p.map { it.y })) })
-        }
-        for (p_ in parts) {
-            val c = centroid(Amsterdam.polyOf(p_))
-            for ((b, bb) in outl) {
-                if (bb[0] <= c.x && c.x <= bb[1] && bb[2] <= c.y && c.y <= bb[3] && pip(c.x, c.y, Amsterdam.polyOf(b))) {
-                    p_["parent_id"] = b["id"]
-                    val bt = tagsOf(b)
-                    if (bt["building"] in setOf("church", "cathedral", "chapel") || bt["amenity"] == "place_of_worship") p_["in_church"] = true
-                    break
-                }
-            }
-        }
-        Generic.apply(S, name, landuseAt)
-        val demPath = File(File(root, name), "dem.json")
+    }
+
+    // render/regions.py:215 load: the ground's real shape (AHN, not OSM), with land cover, water and paths draped over it
+    @Suppress("UNCHECKED_CAST")
+    private fun drapeTerrain(S: Dict, name: String, view: String, demPath: File, water: List<List<V2>>, naturalShore: Set<Any?>, buildings: List<Dict>,
+                             parts: List<Dict>, land: MutableList<Dict>) {
         if (name in TERRAIN && demPath.exists()) {
             // the ground's real shape (AHN, not OSM): land cover, water and paths draped over it, buildings standing at their ground height
             val fine = File(File(root, name), "dem5.json")
@@ -673,13 +729,11 @@ object Regions {
             S["no_shadows"] = !town // a town's buildings and trees cast shadows on their own ground
             S["_terrain"] = true
         }
-        if (truthy(S["_terrain"])) {
-            S["under"] = { cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, defs: MutableList<String> ->
-                Relief.draw(S, cam, th, far, defs, cfgFor(view), LAND, S["_lines"] as List<Terrain.Line>)
-            } as Amsterdam.SceneLayer
-        } else {
-            S["under"] = { cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, defs: MutableList<String> -> drawUnder(S, cam, th, far, defs) } as Amsterdam.SceneLayer
-        }
+    }
+
+    // render/regions.py:215 load: where the drawing stays flat, how far each water body lies below its banks, and the relief
+    @Suppress("UNCHECKED_CAST")
+    private fun flatHeights(S: Dict, name: String, view: String, demPath: File, water: List<List<V2>>, naturalShore: Set<Any?>) {
         if (demPath.exists() && !truthy(S["_terrain"])) {
             // the ground's real heights where the drawing stays flat (the streets are the drawing's level 0):
             // how far each water body lies below its banks, and the relief as light and shade
@@ -759,34 +813,6 @@ object Regions {
                 S["_flat"] = Relief.buildFlat(Terrain.DEM(fine), water, d(S["_base"]), extent = doubleArrayOf(TX - GR_, TX + GR_, TZ - GR_, TZ + GR_))
             }
         }
-        Amsterdam.QUAY_COL = mapOf("paris" to "#B8AD96", "port" to "#8C8A85", "schiphol" to "#8C8A85")[name] ?: Amsterdam.QUAY_COL
-        Amsterdam.QUAY_COURSE = when (name) { "paris" -> 0.45; "port", "schiphol" -> null; else -> Amsterdam.QUAY_COURSE } // Paris quays are cut stone
-        Amsterdam.WIN_STYLE = if (name == "paris") "paris" else null
-        Amsterdam.TONE = true
-        val light = Woods.Light { th, b, n, l -> Amsterdam.light(th, b, n, l) }
-        if (truthy(R["park"])) {
-            // a theme park: its coaster tracks standing up, each ride's top height from its published profile (park/<name>/pf)
-            val hts = LinkedHashMap<String, Double>(); val kinds = LinkedHashMap<String, String>()
-            val files = File(File(parkRoot, R["park"] as String), "pf").listFiles { f -> f.name.endsWith(".json") }?.sortedBy { it.name } ?: emptyList()
-            for (f in files) {
-                val a_ = PyJson.load(f) as Map<String, Any?>; val rp = (a_["rideProfile"] as Map<String, Any?>?) ?: emptyMap()
-                val stats = (rp["stats"] as Map<String, Any?>?) ?: emptyMap()
-                if (truthy(stats["heightM"])) hts[a_["name"] as String] = pyFloat(stats["heightM"])
-                if ("wooden-coaster" in ((rp["types"] as List<Any?>?) ?: emptyList())) kinds[a_["name"] as String] = "wood"
-            }
-            S["coasters"] = Coasters.load(raw, Amsterdam::XZ, buildings + parts, hts, kinds)
-            val cv = cfgFor(view); val tg = cv["target"] as List<Any?>
-            S["woods"] = Woods.plant(S, d(tg[0]), d(tg[2]), d(cv["radius"])) // its woods: generic trees inside the mapped outlines, off everything mapped in them
-        }
-        if (truthy(R["zoo"])) {
-            // a zoo: its planted woods and shrubberies, the same generic trees inside the mapped outlines (the mapped trees stay as they are)
-            val cv = cfgFor(view); val tg = cv["target"] as List<Any?>
-            S["woods"] = Woods.plant(S, d(tg[0]), d(tg[2]), d(cv["radius"]))
-        }
-        S["over"] = { cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, defs: MutableList<String> -> drawOver(S, cam, th, far, defs, light) } as Amsterdam.SceneLayer
-        S["items"] = { cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, defs: MutableList<String> -> drawItems(S, cam, th, far, defs) } as Amsterdam.SceneItems
-        S["no_facades"] = true
-        return S
     }
 
     /** Python `float(v)` of a JSON number or numeric string. */

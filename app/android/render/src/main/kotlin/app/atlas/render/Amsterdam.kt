@@ -18,10 +18,12 @@ import app.atlas.render.City.vcross
 import app.atlas.render.City.vdot
 import app.atlas.render.City.vnorm
 import app.atlas.render.City.vsub
+import app.atlas.render.data.RawSource
 import app.atlas.render.Real.centroid
 import app.atlas.render.Real.pip
 import app.atlas.render.Real.signedArea
 import app.atlas.render.py.Dict
+import app.atlas.render.py.GridMap
 import app.atlas.render.py.PyFmt.pf
 import app.atlas.render.py.PyJson
 import app.atlas.render.py.PyMath
@@ -52,6 +54,56 @@ data class RenderOptions(
 
 /** The living map of render/amsterdam.py. Buildings, roads, nodes and the scene `S` are Python-like dicts, as Generic and Closeup read them. */
 object Amsterdam {
+    // ------------------------------------------------------------------ constant sets (a set literal in a loop is built anew each time)
+    /** Waterway=* values mapped as water areas. */
+    private val WATERWAYS = setOf("canal", "riverbank", "dock")
+    /** Streets whose names are written along them. */
+    private val NAMED_STREETS = setOf("residential", "tertiary", "pedestrian", "living_street", "unclassified")
+    /** Leisure=* drawn as green. */
+    private val GREEN_LEISURE = setOf("park", "garden", "playground")
+    /** Amenity=* drawn as shops. */
+    private val SHOP_AMENITIES = setOf("restaurant", "cafe", "bar", "pub", "fast_food", "ice_cream", "pharmacy")
+    /** Tourism=* drawn as shops. */
+    private val SHOP_TOURISM = setOf("museum", "hotel", "gallery")
+    /** Building=* never given a guessed gable. */
+    private val NEVER_GABLED = setOf("church", "houseboat", "industrial", "roof", "shed")
+    /** Roof shapes that take a guessed roof height. */
+    private val ROOFS_WITH_HEIGHT = setOf("gabled", "hipped", "pyramidal", "skillion", "quadruple_saltbox", "mansard")
+    /** Roof shapes whose height the reflections take off the walls. */
+    private val ROOFS_REFLECTED = setOf("gabled", "hipped", "skillion", "quadruple_saltbox", "pyramidal")
+    /** Bridge=* values that are no bridge. */
+    private val NO_BRIDGE = setOf(null, "no")
+    /** Areas drawn in their mapped surface. */
+    private val SURFACED_AREAS = setOf("pedestrian", "square", "parking")
+    /** Amenity=* drawn as street furniture. */
+    private val FURNITURE = setOf("bench", "bicycle_parking", "waste_basket")
+    /** Barrier=* drawn as bollards. */
+    private val BOLLARDS = setOf("bollard", "block")
+    /** Building kinds clad in sheet metal. */
+    private val METAL_SHEDS = setOf("industrial", "hangar", "sports", "shed", "terminal", "canopy", null)
+    /** Materials of stone fronts. */
+    private val STONE_FRONTS = setOf("limestone", "stone", "plaster")
+    /** Building kinds with stone fronts. */
+    private val STONE_FRONT_KINDS = setOf("home", "office", "hotel")
+    /** Roof shapes drawn pitched. */
+    private val PITCHED = setOf("gabled", "pyramidal", "hipped", "skillion", "mansard")
+    /** Building=* of churches. */
+    private val CHURCHES = setOf("church", "cathedral", "chapel")
+    /** Building=* of warehouses. */
+    private val WAREHOUSES = setOf("industrial", "warehouse", "service")
+    /** Building=* with a shop floor. */
+    private val SHOP_FLOORS = setOf("retail", "commercial")
+    /** Roof shapes with a ridge. */
+    private val RIDGED = setOf("gabled", "hipped")
+    /** Materials of Paris fronts. */
+    private val PARIS_FRONTS = setOf("limestone", "plaster", "stone", "sandstone")
+    /** Roof materials laid in tiles. */
+    private val TILED = setOf("roof_tiles", "slate")
+    /** Shop categories with an awning. */
+    private val AWNING_CATS = setOf("food", "grocery", "stay")
+    /** Outdoor_seating=* values with tables outside. */
+    private val OUTDOOR_SEATING = setOf("yes", "sidewalk", "pedestrian_zone", "limited")
+
     // ------------------------------------------------------------------ the place (regions.py moves it)
     var LAT0 = 52.3746
     var LON0 = 4.8840
@@ -204,9 +256,25 @@ object Amsterdam {
     }
 
     /** `Shadows(solids, L)` over building dicts: `skip` is a dict, compared by identity as Python's `is`. */
-    class Shade(solids: List<Dict>, L: V3) {
-        private val prisms = IdentityHashMap<Dict, DictPrism>()
-        val shadows: Real.Shadows = Real.Shadows(solids.map { b -> DictPrism(b).also { prisms[b] = it } }, L)
+    class Shade private constructor(private val prisms: IdentityHashMap<Dict, DictPrism>, val shadows: Real.Shadows) {
+        constructor(solids: List<Dict>, L: V3) : this(Grid(solids), L)
+        private constructor(g: Grid, L: V3) : this(g.prisms, Real.Shadows(g.index, L))
+
+        /** The sun-free half: a prism per solid, and the shadows' grid over them. */
+        class Grid(solids: List<Dict>) {
+            val prisms = IdentityHashMap<Dict, DictPrism>()
+            val index = Real.Shadows.Index(solids.map { b -> DictPrism(b).also { prisms[b] = it } })
+        }
+
+        companion object {
+            /** `Shadows(solids, L)` for the scene [S]: the grid is kept for the scene while the solids stay as they were. */
+            fun of(S: Any, solids: List<Dict>, L: V3): Shade {
+                val g = Real.ShadowIndexes.get(S,
+                    { Array(solids.size * 3) { k -> val b = solids[k / 3]; when (k % 3) { 0 -> b; 1 -> b["poly"]; else -> b["bb"] } } },
+                    { DoubleArray(solids.size) { pyNum(solids[it]["h"]) } }) { Grid(solids) }
+                return Shade(g, L)
+            }
+        }
 
         /** `sh.lit(p, skip=b)`. */
         fun lit(p: V3, skip: Dict? = null): Boolean = shadows.lit(p, skip?.let { prisms[it] })
@@ -237,7 +305,7 @@ object Amsterdam {
     /** The scene from an Overpass extract (the Westerkerk one when [rawPath] is null): buildings, parts, water, roads, rails, areas, trees, nodes, places, labels. */
     @Suppress("UNCHECKED_CAST")
     fun load(rawPath: File? = null, opts: RenderOptions = RenderOptions()): Dict {
-        val raw = ((PyJson.load(rawPath ?: amsRaw) as Map<String, Any?>)["elements"]) as List<Map<String, Any?>>
+        val raw = RawSource.elements(rawPath ?: amsRaw)
         val buildings = ArrayList<Dict>(); val parts = ArrayList<Dict>(); val water = ArrayList<List<V2>>(); val roads = ArrayList<Dict>()
         val rails = ArrayList<List<V2>>(); val areas = ArrayList<Dict>(); val trees = ArrayList<Dict>(); val nodes = ArrayList<Dict>()
         val pois = ArrayList<Dict>(); val labels = ArrayList<Dict>()
@@ -278,7 +346,7 @@ object Amsterdam {
                 }
                 continue
             }
-            if ((t["natural"] == "water" || t["waterway"] in setOf("canal", "riverbank", "dock")) && type != "node") {
+            if ((t["natural"] == "water" || t["waterway"] in WATERWAYS) && type != "node") {
                 for (r in rings(e)) if (closed(r)) water.add(clean(r))
                 if (truthy(t["name"]) && t["waterway"] == "canal" && type == "way") {
                     val g = if (e["geometry"] != null) geom(e["geometry"]) else emptyList()
@@ -296,7 +364,7 @@ object Amsterdam {
                     val w = Real.num(t["width"], w0)!!
                     roads.add(dictOf("pts" to pts, "w" to w, "hw" to hw, "tags" to t, "bridge" to truthy(t["bridge"]), "layer" to Real.num(t["layer"], 0.0), "id" to id,
                         "wguess" to !truthy(t["width"])))
-                    if (truthy(t["name"]) && hw in setOf("residential", "tertiary", "pedestrian", "living_street", "unclassified")) {
+                    if (truthy(t["name"]) && hw in NAMED_STREETS) {
                         labels.add(dictOf("pts" to pts, "name" to t["name"], "kind" to "street"))
                     }
                 }
@@ -305,7 +373,7 @@ object Amsterdam {
             if (type == "way" && t["railway"] == "tram" && "geometry" in e) {
                 rails.add(geom(e["geometry"])); continue
             }
-            if (type != "node" && (t["leisure"] in setOf("park", "garden", "playground") || t["landuse"] == "grass" || t["man_made"] == "bridge" ||
+            if (type != "node" && (t["leisure"] in GREEN_LEISURE || t["landuse"] == "grass" || t["man_made"] == "bridge" ||
                     t["amenity"] == "parking" || t["place"] == "square" || t["historic"] == "memorial")
             ) {
                 for (r in rings(e)) {
@@ -321,8 +389,8 @@ object Amsterdam {
                 val n: Dict = dictOf("x" to xz.x, "z" to xz.y, "tags" to t, "id" to id)
                 if (t["natural"] == "tree") trees.add(n)
                 nodes.add(n)
-                if ("shop" in t || t["amenity"] in setOf("restaurant", "cafe", "bar", "pub", "fast_food", "ice_cream", "pharmacy") ||
-                    t["tourism"] in setOf("museum", "hotel", "gallery")
+                if ("shop" in t || t["amenity"] in SHOP_AMENITIES ||
+                    t["tourism"] in SHOP_TOURISM
                 ) pois.add(n)
             }
         }
@@ -342,8 +410,8 @@ object Amsterdam {
                 Generic.apply(S, "ams", landuseAt, keepHomes = true)
             }
         }
-        val grid = HashMap<Long, MutableList<Dict>>()
-        fun key(gx: Long, gz: Long): Long = (gx shl 32) xor (gz and 0xffffffffL)
+        val grid = GridMap<MutableList<Dict>>()
+        fun key(gx: Long, gz: Long): Long = GridMap.key(gx, gz)
         for (b in buildings + parts) {
             val poly = polyOf(b)
             val xs = poly.map { it.x }; val zs = poly.map { it.y }
@@ -395,7 +463,7 @@ object Amsterdam {
                 if (t["building:levels"] == null) g["building:levels"] = true
                 if (!truthy(b["roof"])) {
                     g["roof:shape"] = true
-                    b["roof"] = if (old && narrow && t["building"] !in setOf("church", "houseboat", "industrial", "roof", "shed") && d(b["h"]) > 8) "gabled" else "flat"
+                    b["roof"] = if (old && narrow && t["building"] !in NEVER_GABLED && d(b["h"]) > 8) "gabled" else "flat"
                     if (b["roof"] == "gabled") {
                         b["roof_h"] = pmin(5.0, pmax(3.0, edges[0] * 0.55)); g["roof:height"] = true
                         b["orient"] = "along"
@@ -417,7 +485,7 @@ object Amsterdam {
                     b["rcol"] = if (b["roof"] == "gabled") rnd.choice(listOf("#4A3E3A", "#56504C", "#3E4248")) else rnd.choice(listOf("#7E7A74", "#8C8882", "#6E6A66"))
                 }
             }
-            if (b["roof"] in setOf("gabled", "hipped", "pyramidal", "skillion", "quadruple_saltbox", "mansard") && !truthy(b["roof_h"])) {
+            if (b["roof"] in ROOFS_WITH_HEIGHT && !truthy(b["roof_h"])) {
                 val rl = Real.num(t["roof:levels"])
                 b["roof_h"] = pmin(d(b["h"]) * 0.4, if (rl != null && rl != 0.0) rl * 2.8 else pmax(2.0, pmin(5.0, edges[0] * 0.45))); g["roof:height"] = true
             }
@@ -676,7 +744,7 @@ object Amsterdam {
      * facing out into the water around them. `natural_shore` (rings without a quay) and `_hole_of` are identity maps, as Python's `id(r)` keys.
      */
     fun waterEdges(S: Map<String, Any?>): List<Edge> {
-        val out = ArrayList<Edge>()
+        val out = EdgeList()
         val water = rings(S["water"])
         val shore = S["natural_shore"] as Collection<*>?
         val holeOf = idMap(S["_hole_of"])
@@ -703,7 +771,87 @@ object Amsterdam {
         return out
     }
 
+    /**
+     * The water's edges as [waterEdges] returns them, with a grid of [EdgeGrid.CELL] m cells over their boxes, built on the first
+     * [nearWater] question (and again if the list has changed since), so a question reads only the edges near its points.
+     */
+    class EdgeList : ArrayList<Edge>() {
+        private var grid: EdgeGrid? = null
+        private var gridAt = -1
+
+        /** The grid over the edges as they are now. */
+        fun grid(): EdgeGrid {
+            val g = grid
+            if (g != null && gridAt == modCount) return g
+            return EdgeGrid(this).also { grid = it; gridAt = modCount }
+        }
+
+        // ArrayList.set leaves modCount as it was: a replaced edge must drop the grid too
+        override fun set(index: Int, element: Edge): Edge = super.set(index, element).also { grid = null }
+    }
+
+    /** Edges by the grid cells their boxes cover; an edge whose box covers more than [MAX_CELLS] cells is kept apart and always read. */
+    class EdgeGrid(edges: List<Edge>) {
+        private val all = ArrayList(edges)
+        private val cells = GridMap<ArrayList<Edge>>(edges.size)
+        private val big = ArrayList<Edge>()
+
+        init {
+            for (e in all) {
+                val i0 = cellOf(pmin(e.a[0], e.b[0])); val i1 = cellOf(pmax(e.a[0], e.b[0]))
+                val j0 = cellOf(pmin(e.a[1], e.b[1])); val j1 = cellOf(pmax(e.a[1], e.b[1]))
+                if ((i1 - i0 + 1) * (j1 - j0 + 1) > MAX_CELLS) { big.add(e); continue }
+                for (i in i0..i1) for (j in j0..j1) cells.getOrPut(GridMap.key(i, j)) { ArrayList() }.add(e)
+            }
+        }
+
+        /**
+         * True when [test] holds for an edge whose box meets x in [x0, x1] and z in [z0, z1], widened by [SLACK]: every edge the
+         * box test in [nearWater] lets through is read (some more than once, which an any() does not mind). A box over more cells
+         * than there are edges reads every edge instead.
+         */
+        inline fun any(x0: Double, x1: Double, z0: Double, z1: Double, test: (Edge) -> Boolean): Boolean {
+            val i0 = cellOf(x0 - SLACK); val i1 = cellOf(x1 + SLACK); val j0 = cellOf(z0 - SLACK); val j1 = cellOf(z1 + SLACK)
+            if (i1 >= i0 && j1 >= j0 && (i1 - i0 + 1) * (j1 - j0 + 1) > maxOf(MAX_CELLS.toLong(), allEdges().size.toLong())) {
+                val es = allEdges()
+                for (k in es.indices) if (test(es[k])) return true
+                return false
+            }
+            val bs = bigEdges()
+            for (k in bs.indices) if (test(bs[k])) return true
+            for (i in i0..i1) for (j in j0..j1) {
+                val list = cellAt(i, j) ?: continue
+                for (k in list.indices) if (test(list[k])) return true
+            }
+            return false
+        }
+
+        /** Every edge, in the list's order. */
+        fun allEdges(): List<Edge> = all
+
+        /** The edges kept apart. */
+        fun bigEdges(): List<Edge> = big
+
+        /** The edges listed in cell (i, j), or null. */
+        fun cellAt(i: Long, j: Long): List<Edge>? = cells[GridMap.key(i, j)]
+
+        companion object {
+            /** The cell side, metres. */
+            const val CELL = 64.0
+
+            /** An edge covering more cells than this is read on every question. */
+            const val MAX_CELLS = 64
+
+            /** Metres added around a question's box: far more than the rounding of the box's own arithmetic. */
+            const val SLACK = 1.0
+
+            /** The cell holding coordinate [v]; values far outside any region fall into the end cells. */
+            fun cellOf(v: Double): Long = Math.floor(v / CELL).coerceIn(-1e9, 1e9).toLong()
+        }
+    }
+
     // render/amsterdam.py:359 near_water
+    /** True when one of [pts] lies within [dd] metres of a water edge (an any(): which edge answers does not matter). */
     fun nearWater(edges: List<Edge>, pts: List<V2>, dd: Double): Boolean {
         var px0 = pts[0].x; var px1 = pts[0].x; var pz0 = pts[0].y; var pz1 = pts[0].y
         for (p in pts) {
@@ -712,15 +860,23 @@ object Amsterdam {
             if (p.y > pz1) pz1 = p.y
             if (p.y < pz0) pz0 = p.y
         }
-        for (e in edges) {
-            val a = e.a; val b = e.b
-            if (pmin(a[0], b[0]) - dd > px1 || pmax(a[0], b[0]) + dd < px0) continue
-            if (pmin(a[1], b[1]) - dd > pz1 || pmax(a[1], b[1]) + dd < pz0) continue
-            for (p in pts) {
-                val ux = b[0] - a[0]; val uz = b[1] - a[1]; val L2 = (ux * ux + uz * uz).let { if (it == 0.0) 1.0 else it }
-                val t = pmax(0.0, pmin(1.0, ((p[0] - a[0]) * ux + (p[1] - a[1]) * uz) / L2))
-                if (hypot(a[0] + ux * t - p[0], a[1] + uz * t - p[1]) < dd) return true
-            }
+        val test = { e: Edge -> near(e, pts, dd, px0, px1, pz0, pz1) }
+        if (edges is EdgeList && !(px0 - dd).isNaN() && !(px1 + dd).isNaN() && !(pz0 - dd).isNaN() && !(pz1 + dd).isNaN()) {
+            return edges.grid().any(px0 - dd, px1 + dd, pz0 - dd, pz1 + dd, test)
+        }
+        for (e in edges) if (test(e)) return true
+        return false
+    }
+
+    /** near_water's test of one edge: its box widened by [dd] meets the points' box, and a point is nearer than [dd]. */
+    private fun near(e: Edge, pts: List<V2>, dd: Double, px0: Double, px1: Double, pz0: Double, pz1: Double): Boolean {
+        val a = e.a; val b = e.b
+        if (pmin(a[0], b[0]) - dd > px1 || pmax(a[0], b[0]) + dd < px0) return false
+        if (pmin(a[1], b[1]) - dd > pz1 || pmax(a[1], b[1]) + dd < pz0) return false
+        for (p in pts) {
+            val ux = b[0] - a[0]; val uz = b[1] - a[1]; val L2 = (ux * ux + uz * uz).let { if (it == 0.0) 1.0 else it }
+            val t = pmax(0.0, pmin(1.0, ((p[0] - a[0]) * ux + (p[1] - a[1]) * uz) / L2))
+            if (hypot(a[0] + ux * t - p[0], a[1] + uz * t - p[1]) < dd) return true
         }
         return false
     }
@@ -745,7 +901,7 @@ object Amsterdam {
             if (far(cx, cz) || !nearWater(edges, poly, 16.0)) continue
             val boat = t["building"] == "houseboat"
             val y0 = if (boat) WY + 0.3 else d(b["min"]); val h = if (boat) (d(b["h"]) + WY + 0.3) else d(b["h"])
-            val rh = if (b["roof"] in setOf("gabled", "hipped", "skillion", "quadruple_saltbox", "pyramidal") && truthy(b["roof_h"])) d(b["roof_h"]) else 0.0
+            val rh = if (b["roof"] in ROOFS_REFLECTED && truthy(b["roof_h"])) d(b["roof_h"]) else 0.0
             val top = h - rh
             val base = surfaceColour(b, null); val n = poly.size
             val dk = if (night) 0.5 else (if (truthy(th["sky_k"])) 0.62 else 0.74) // facades read darker than the bright sky the water mirrors
@@ -966,7 +1122,7 @@ object Amsterdam {
         }
         for (a in dicts(S["areas"])) {
             val at = (a["tags"] as Map<String, Any?>?) ?: emptyMap()
-            if (a["kind"] == "bridge" || at["man_made"] == "bridge" || at["bridge"] !in setOf(null, "no")) {
+            if (a["kind"] == "bridge" || at["man_made"] == "bridge" || at["bridge"] !in NO_BRIDGE) {
                 val poly = polyOf(a); val xs = poly.map { it.x }; val zs = poly.map { it.y }
                 decks.add(Deck(poly, null, doubleArrayOf(City.pyMinOf(xs) - 1, City.pyMaxOf(xs) + 1, City.pyMinOf(zs) - 1, City.pyMaxOf(zs) + 1)))
             }
@@ -1098,7 +1254,7 @@ object Amsterdam {
         th["_L"] = L; val night = th["night"] == true
         val wx = truthy(th["wx"])
         val solids = dicts(S["buildings"]).filter { !truthy(it["hidden"]) && truthy(it["h"]) } + dicts(S["parts"]).filter { truthy(it["h"]) }
-        val sh = Shade(solids, L)
+        val sh = Shade.of(S, solids, L)
         val RAD = if ("radius" in cfg) d(cfg["radius"]) else 1e9; val target = v3(cfg["target"]); val TX = target[0]; val TZ = target[2]
         val far: (Double, Double) -> Boolean = { x, z -> hypot(x - TX, z - TZ) > RAD }
         val defs = ArrayList<String>(); val ground = ArrayList<String>(); val marks = ArrayList<String>(); val shadows = ArrayList<String>()
@@ -1122,12 +1278,8 @@ object Amsterdam {
         defs.add(pf("<linearGradient id=\"sky\" gradientUnits=\"userSpaceOnUse\" x1=\"0\" y1=\"%.0f\" x2=\"0\" y2=\"%.0f\"><stop offset=\"0\" stop-color=\"%s\"/><stop offset=\"1\" stop-color=\"%s\"/></linearGradient>", hy - 300, hy, th["sky_top"], th["sky_hor"]))
         if (layer != "front") ground.add(pf("<rect width=\"%d\" height=\"%d\" fill=\"url(#sky)\"/>", W, H))
         if (wx && hy > 4) ground.add(skyLayer(cam, th, W, H, hy, defs, layer))
-        fun gp(pts: List<V2>, fill: String, y: Double = 0.0, extra: String = ""): String {
-            val sp = cam.poly(pts.map { V3(it.x, y, it.y) }, margin = 900.0)
-            return if (sp != null && area(sp) > 0.2) pf("<path d=\"%s\" fill=\"%s\"%s/>", P(sp), fill, extra) else ""
-        }
         val GR = if ("ground_r" in cfg) d(cfg["ground_r"]) else 1500.0
-        ground.add(gp(rect(-GR, GR, -GR, GR), th["ground"] as String))
+        ground.add(groundPath(cam, rect(-GR, GR, -GR, GR), th["ground"] as String))
         (S["under"] as SceneLayer?)?.let { ground.add(it(cam, th, far, defs)) } // other regions: land cover below the water
         var quaySvg = ""
         if (wx) {
@@ -1136,15 +1288,15 @@ object Amsterdam {
             quaySvg = q
             ground.add(wsvg)
         } else {
-            for (r in rings(S["water"])) ground.add(gp(r, th["water"] as String, 0.0))
+            for (r in rings(S["water"])) ground.add(groundPath(cam, r, th["water"] as String, 0.0))
         }
         if (wx) ground.add("<g filter=\"url(#mat)\">") // pavers and setts are never one flat tone either
         for (a in dicts(S["areas"])) {
             var c = AREA[a["kind"]] ?: "#DCD3C4"
             val sf = ((a["tags"] as Map<String, Any?>?) ?: emptyMap())["surface"] as? String
-            if (a["kind"] in setOf("pedestrian", "square", "parking") && sf != null && truthy(SURF[sf]) && TONE) c = SURF.getValue(tagsOf(a)["surface"] as String) // a square in its mapped surface
+            if (a["kind"] in SURFACED_AREAS && sf != null && truthy(SURF[sf]) && TONE) c = SURF.getValue(tagsOf(a)["surface"] as String) // a square in its mapped surface
             if (night) c = tohex(mulc(hx(c), 0.18))
-            ground.add(gp(polyOf(a), c, 0.02))
+            ground.add(groundPath(cam, polyOf(a), c, 0.02))
         }
         // roads in their mapped material; at eye level, pavements where sidewalk=* is mapped, and the joints of each material
         val eye = wx && pitch < 10
@@ -1162,6 +1314,78 @@ object Amsterdam {
             ground.add(pu)
         }
         val roads = dicts(S["roads"])
+        drawRoads(S, cam, th, cfg, roads, wx, night, eye, ground, marks, items)
+        if (paveOver.isNotEmpty()) ground.add(paveOver)
+        (S["over"] as SceneLayer?)?.let { ground.add(it(cam, th, far, defs)) } // other regions: runways, motorway lanes, rails on the ground
+        if (wx) ground.add("</g>")
+        groundMarks(S, cam, th, solids, L, far, wx, night, pitch, marks, shadows)
+        gatherItems(S, cam, th, cfg, wx, pitch, far, defs, items)
+        val drawn = drawObjects(items, split, cam, th, sh, lens)
+        val out = drawn.out; val cut = drawn.cut; val splitD = drawn.splitD
+        // night light: mapped lamps, lit=yes roads, open places
+        val pools = ArrayList<String>()
+        if (night) nightLight(S, cam, th, roads, wx, eye, far, opts, defs, pools, glow)
+        val counts = lensCounts(S, cam, lens, roads, far, W, H, pools, glow)
+        val haze = hazeLayer(cam, th, thn, cfg, target, hy, W, H, eye, defs)
+        val (shadowG, aoG, wfx) = overlays(cam, th, cfg, solids, shadows, far, wx, night, eye, hy, W, H, layer, opts, defs)
+        val head = listOf(
+            pf("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 %d %d\" width=\"%d\" height=\"%d\">", W, H, W, H),
+            pf("<defs><clipPath id=\"vb\"><rect width=\"%d\" height=\"%d\"/></clipPath>%s</defs><g clip-path=\"url(#vb)\">", W, H, defs.joinToString("")),
+        )
+        fun cat(parts: List<String>): String = java.lang.String.join("", parts) // sized once, not grown and copied as a builder is
+        if (split != null) {
+            // three layers for the fill-in quest: everything behind the building, the building itself (one per answer), everything in front
+            val c = cut ?: out.size
+            val base = cat(head + listOf(cat(ground), cat(marks), shadowG, aoG, quaySvg, cat(pools), "<g stroke-linejoin=\"round\">", cat(out.subList(0, c)), "</g></g></svg>"))
+            val front = cat(head + listOf("<g stroke-linejoin=\"round\">", cat(out.subList(c, out.size)), "</g>", cat(glow), wfx, haze, "</g></svg>"))
+            val sd = splitD
+            val variant: (Dict, String?) -> String = { bv, lens_ ->
+                val body = drawBuilding(cam, th, sh, bv, sd ?: throw IllegalStateException("the split building is not in view"), lens_).joinToString("")
+                val dfs = if (truthy(bv["_hatch"])) "<defs><pattern id=\"hatchq\" width=\"7\" height=\"7\" patternUnits=\"userSpaceOnUse\" patternTransform=\"rotate(45)\"><path d=\"M0 0V7\" stroke=\"#8C857A\" stroke-width=\"2.2\"/></pattern></defs>" else ""
+                pf("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 %d %d\" width=\"%d\" height=\"%d\" style=\"position: absolute; left: 0; top: 0\" aria-hidden=\"true\">%s<g stroke-linejoin=\"round\">%s</g></svg>", W, H, W, H, dfs, body)
+            }
+            return Quest(base, front, variant, cam, splitD, az, el)
+        }
+        var fin = if (wx && layer != "front" && !truthy(th["_eye"])) pf("<rect width=\"%d\" height=\"%d\" filter=\"url(#grain)\" opacity=\"%s\" style=\"mix-blend-mode:overlay\"/><rect width=\"%d\" height=\"%d\" fill=\"url(#vig)\"/>", W, H, if (!night) ".09" else ".12", W, H) else ""
+        val mat = if (wx) " filter=\"url(#mat)\"" else ""
+        if (truthy(cfg["no_fin"])) fin = ""
+        val above = (th["_above"] as String?) ?: ""
+        fun info(raster: Boolean): Dict {
+            val i = dictOf("az" to az, "el" to el, "counts" to counts, "doors" to (th["_doors"] ?: 0), "shops" to (th["_shops"] ?: 0), "open" to (th["_open"] ?: 0), "brands" to (th["_brands"] ?: 0))
+            if (raster) i["raster"] = th["_raster"]
+            return i
+        }
+        if (layer == "split") {
+            // two stacked images for dense views: the ground, then everything standing on it (each under the size limit)
+            val up = truthy(S["_town"]) // a town on its terrain: the ground image lies between the layers, so shadows and seams go above it
+            val base = cat(head + listOf(cat(ground), cat(marks), if (up) "" else shadowG, if (up) "" else aoG, quaySvg, cat(pools), "</g></svg>"))
+            // a ground image of its own (terrain, relief) stands between these two on the board; what lies along the ground above it opens the second
+            var objs: List<String> = listOf(cat(head + listOf(above, if (up) shadowG + aoG else "", "<g stroke-linejoin=\"round\"$mat>", cat(out), "</g>", cat(glow), wfx, haze, fin, "</g></svg>")))
+            val limit = cfg["obj_split"]
+            if (truthy(limit) && plen(objs[0]) > d(limit)) {
+                // too much for one image: the far half and the near half, stacked in that order, so nothing changes in what covers what
+                val tot = out.sumOf { plen(it).toLong() }; var acc = 0L; var k = 0
+                while (k < out.size && acc < tot / 2.0) { acc += plen(out[k]); k++ }
+                val far_ = cat(head + listOf(above, if (up) shadowG + aoG else "", "<g stroke-linejoin=\"round\"$mat>", cat(out.subList(0, k)), "</g></g></svg>"))
+                val near_ = cat(head + listOf("<g stroke-linejoin=\"round\"$mat>", cat(out.subList(k, out.size)), "</g>", cat(glow), wfx, haze, fin, "</g></svg>"))
+                objs = listOf(far_, near_)
+            }
+            return Rendered(base, objs, cam, info(true))
+        }
+        val svg = head + listOf(cat(ground), cat(marks), shadowG, aoG, quaySvg, cat(pools), above, "<g stroke-linejoin=\"round\"$mat>", cat(out), "</g>", cat(glow), wfx, haze, fin, "</g></svg>")
+        return Rendered(cat(svg), null, cam, info(false))
+    }
+
+    /** `render`'s ground paths: a polygon on the ground at height [y], drawn when it covers more than a fifth of a pixel. */
+    private fun groundPath(cam: Camera, pts: List<V2>, fill: String, y: Double = 0.0, extra: String = ""): String {
+        val sp = cam.poly(pts.map { V3(it.x, y, it.y) }, margin = 900.0)
+        return if (sp != null && area(sp) > 0.2) pf("<path d=\"%s\" fill=\"%s\"%s/>", P(sp), fill, extra) else ""
+    }
+
+    // render/amsterdam.py:615 render: the roads, in their mapped material, and the bridges' railings and setts
+    @Suppress("UNCHECKED_CAST")
+    private fun drawRoads(S: Dict, cam: Camera, th: Dict, cfg: Map<String, Any?>, roads: List<Dict>, wx: Boolean, night: Boolean, eye: Boolean,
+                          ground: MutableList<String>, marks: MutableList<String>, items: MutableList<Item>) {
         for (hw in ROAD_ORDER) {
             for (r in roads) {
                 if (r["hw"] != hw) continue
@@ -1173,7 +1397,7 @@ object Amsterdam {
                 else if (hw == "cycleway") col = "#C98A7A" // guessed surface:colour=red, the Dutch default
                 if (night) col = tohex(mulc(hx(col), 0.2))
                 val y = 0.05 + (if (bridge) 0.4 else 0.0)
-                ground.add(gp(ribbon(pts, rw / 2), col, y))
+                ground.add(groundPath(cam, ribbon(pts, rw / 2), col, y))
                 if (bridge && wx) {
                     for (s_ in intArrayOf(-1, 1)) {
                         val off = ribbon(pts, rw / 2 + 0.15); val n = pts.size
@@ -1206,9 +1430,12 @@ object Amsterdam {
                 }
             }
         }
-        if (paveOver.isNotEmpty()) ground.add(paveOver)
-        (S["over"] as SceneLayer?)?.let { ground.add(it(cam, th, far, defs)) } // other regions: runways, motorway lanes, rails on the ground
-        if (wx) ground.add("</g>")
+    }
+
+    // render/amsterdam.py:615 render: tram tracks, canal names, and the shadows of buildings and trees on the ground
+    @Suppress("UNCHECKED_CAST")
+    private fun groundMarks(S: Dict, cam: Camera, th: Dict, solids: List<Dict>, L: V3, far: (Double, Double) -> Boolean, wx: Boolean, night: Boolean,
+                            pitch: Double, marks: MutableList<String>, shadows: MutableList<String>) {
         // tram tracks
         for (rl in rings(S["rails"])) {
             for (off in doubleArrayOf(-0.72, 0.72)) {
@@ -1273,6 +1500,12 @@ object Amsterdam {
                 if (sp != null) shadows.add(P(sp))
             }
         }
+    }
+
+    // render/amsterdam.py:615 render: the objects in view (buildings, parts, trees and street furniture, a region's own, facade details)
+    @Suppress("UNCHECKED_CAST")
+    private fun gatherItems(S: Dict, cam: Camera, th: Dict, cfg: Map<String, Any?>, wx: Boolean, pitch: Double, far: (Double, Double) -> Boolean,
+                            defs: MutableList<String>, items: MutableList<Item>) {
         // objects
         for (b in dicts(S["buildings"])) {
             if (truthy(b["hidden"])) continue
@@ -1294,8 +1527,8 @@ object Amsterdam {
             val t = tagsOf(n)
             val k = if (t["natural"] == "tree") "tree"
             else if (t["highway"] == "street_lamp") t["highway"] as String
-            else if (t["amenity"] in setOf("bench", "bicycle_parking", "waste_basket")) t["amenity"] as String
-            else if (t["barrier"] in setOf("bollard", "block")) "bollard" else null
+            else if (t["amenity"] in FURNITURE) t["amenity"] as String
+            else if (t["barrier"] in BOLLARDS) "bollard" else null
             val nx = d(n["x"]); val nz = d(n["z"])
             if (k == null || far(nx, nz)) continue
             val c = cam.cam(V3(nx, 1.0, nz))
@@ -1310,6 +1543,14 @@ object Amsterdam {
                 items.add(if (hz > 0.04 && it.k == "svg") Item(it.d, it.k, pf("<g opacity=\"%.2f\">%s</g>", 1 - 0.8 * hz, it.o)) else it)
             }
         }
+    }
+
+    /** The objects drawn far to near, and where the quest's building [Drawn.cut] them (its depth [Drawn.splitD]). */
+    private class Drawn(val out: ArrayList<String>, val cut: Int?, val splitD: Double?)
+
+    // render/amsterdam.py:615 render: every object, far to near (painter's order); the quest's building is left out, its place kept
+    @Suppress("UNCHECKED_CAST")
+    private fun drawObjects(items: MutableList<Item>, split: Dict?, cam: Camera, th: Dict, sh: Shade, lens: String?): Drawn {
         items.pySortBy { -it.d }
         val out = ArrayList<String>(); var cut: Int? = null; var splitD: Double? = null
         for (it in items) {
@@ -1328,75 +1569,83 @@ object Amsterdam {
                 "svg" -> out.add(o as String)
             }
         }
-        // night light: mapped lamps, lit=yes roads, open places
-        val pools = ArrayList<String>()
-        if (night) {
-            defs.add("<radialGradient id=\"pool\"><stop offset=\"0\" stop-color=\"#FFB45E\" stop-opacity=\".55\"/><stop offset=\".5\" stop-color=\"#FFA848\" stop-opacity=\".18\"/><stop offset=\"1\" stop-color=\"#FFA848\" stop-opacity=\"0\"/></radialGradient>")
-            defs.add("<radialGradient id=\"open\"><stop offset=\"0\" stop-color=\"#FFE2A8\" stop-opacity=\".95\"/><stop offset=\".3\" stop-color=\"#FFC878\" stop-opacity=\".45\"/><stop offset=\"1\" stop-color=\"#FFC878\" stop-opacity=\"0\"/></radialGradient>")
-            defs.add("<filter id=\"litglow\" x=\"-20%\" y=\"-20%\" width=\"140%\" height=\"140%\"><feGaussianBlur stdDeviation=\"2.6\"/></filter>")
-            defs.add("<radialGradient id=\"openpool\"><stop offset=\"0\" stop-color=\"#FFD89A\" stop-opacity=\".75\"/><stop offset=\".45\" stop-color=\"#FFC070\" stop-opacity=\".28\"/><stop offset=\"1\" stop-color=\"#FFB060\" stop-opacity=\"0\"/></radialGradient>")
-            defs.add("<radialGradient id=\"halo\"><stop offset=\"0\" stop-color=\"#FFE9C0\" stop-opacity=\".7\"/><stop offset=\".35\" stop-color=\"#FFC98A\" stop-opacity=\".22\"/><stop offset=\"1\" stop-color=\"#FFB060\" stop-opacity=\"0\"/></radialGradient>")
-            if (!wx) defs.add("<radialGradient id=\"streak\"><stop offset=\"0\" stop-color=\"#FFE3AE\" stop-opacity=\".95\"/><stop offset=\"1\" stop-color=\"#FFB060\" stop-opacity=\"0\"/></radialGradient>")
-            // lit=yes streets: stroked centrelines, width from the street's own width at its depth
-            val lit = ArrayList<String>()
-            for (r in roads) {
-                if (tagsOf(r)["lit"] != "yes") continue
-                val pts = ptsOf(r); val rw = d(r["w"])
-                if (eye) {
-                    val gw = rw / 2 + 4.0; val segs = ArrayList<String>()
-                    for (i in 0 until pts.size - 1) { // one convex quad per segment, so near-plane clipping stays exact
-                        val (ax, az) = pts[i]; val (bx, bz) = pts[i + 1]; val Lq = hypot(bx - ax, bz - az).let { if (it == 0.0) 1.0 else it }
-                        val nx = -(bz - az) / Lq * gw; val nz = (bx - ax) / Lq * gw
-                        val sp = cam.poly(listOf(V3(ax + nx, 0.06, az + nz), V3(bx + nx, 0.06, bz + nz), V3(bx - nx, 0.06, bz - nz), V3(ax - nx, 0.06, az - nz)), margin = 300.0)
-                        if (sp != null) segs.add(P(sp))
-                    }
-                    if (segs.isNotEmpty()) pools.add(pf("<path d=\"%s\" fill=\"#FFB866\" opacity=\"%s\" filter=\"url(#litglow)\" style=\"mix-blend-mode:screen\"/>", segs.joinToString(""), if (truthy(th["wet"])) ".05" else ".035"))
-                    continue
+        return Drawn(out, cut, splitD)
+    }
+
+    // render/amsterdam.py:615 render: night light (mapped lamps, lit=yes roads, open places)
+    @Suppress("UNCHECKED_CAST")
+    private fun nightLight(S: Dict, cam: Camera, th: Dict, roads: List<Dict>, wx: Boolean, eye: Boolean, far: (Double, Double) -> Boolean, opts: RenderOptions,
+                           defs: MutableList<String>, pools: MutableList<String>, glow: MutableList<String>) {
+        defs.add("<radialGradient id=\"pool\"><stop offset=\"0\" stop-color=\"#FFB45E\" stop-opacity=\".55\"/><stop offset=\".5\" stop-color=\"#FFA848\" stop-opacity=\".18\"/><stop offset=\"1\" stop-color=\"#FFA848\" stop-opacity=\"0\"/></radialGradient>")
+        defs.add("<radialGradient id=\"open\"><stop offset=\"0\" stop-color=\"#FFE2A8\" stop-opacity=\".95\"/><stop offset=\".3\" stop-color=\"#FFC878\" stop-opacity=\".45\"/><stop offset=\"1\" stop-color=\"#FFC878\" stop-opacity=\"0\"/></radialGradient>")
+        defs.add("<filter id=\"litglow\" x=\"-20%\" y=\"-20%\" width=\"140%\" height=\"140%\"><feGaussianBlur stdDeviation=\"2.6\"/></filter>")
+        defs.add("<radialGradient id=\"openpool\"><stop offset=\"0\" stop-color=\"#FFD89A\" stop-opacity=\".75\"/><stop offset=\".45\" stop-color=\"#FFC070\" stop-opacity=\".28\"/><stop offset=\"1\" stop-color=\"#FFB060\" stop-opacity=\"0\"/></radialGradient>")
+        defs.add("<radialGradient id=\"halo\"><stop offset=\"0\" stop-color=\"#FFE9C0\" stop-opacity=\".7\"/><stop offset=\".35\" stop-color=\"#FFC98A\" stop-opacity=\".22\"/><stop offset=\"1\" stop-color=\"#FFB060\" stop-opacity=\"0\"/></radialGradient>")
+        if (!wx) defs.add("<radialGradient id=\"streak\"><stop offset=\"0\" stop-color=\"#FFE3AE\" stop-opacity=\".95\"/><stop offset=\"1\" stop-color=\"#FFB060\" stop-opacity=\"0\"/></radialGradient>")
+        // lit=yes streets: stroked centrelines, width from the street's own width at its depth
+        val lit = ArrayList<String>()
+        for (r in roads) {
+            if (tagsOf(r)["lit"] != "yes") continue
+            val pts = ptsOf(r); val rw = d(r["w"])
+            if (eye) {
+                val gw = rw / 2 + 4.0; val segs = ArrayList<String>()
+                for (i in 0 until pts.size - 1) { // one convex quad per segment, so near-plane clipping stays exact
+                    val (ax, az) = pts[i]; val (bx, bz) = pts[i + 1]; val Lq = hypot(bx - ax, bz - az).let { if (it == 0.0) 1.0 else it }
+                    val nx = -(bz - az) / Lq * gw; val nz = (bx - ax) / Lq * gw
+                    val sp = cam.poly(listOf(V3(ax + nx, 0.06, az + nz), V3(bx + nx, 0.06, bz + nz), V3(bx - nx, 0.06, bz - nz), V3(ax - nx, 0.06, az - nz)), margin = 300.0)
+                    if (sp != null) segs.add(P(sp))
                 }
-                val run = ArrayList<Pair<V2, Double>>()
-                for (k in 0..pts.size) {
-                    val pt = if (k < pts.size) pts[k] else null
-                    val c = if (pt != null && !far(pt.x, pt.y)) cam.cam(V3(pt.x, 0.06, pt.y)) else null
-                    if (c != null && c[2] > 2) { run.add(cam.pc(c) to c[2]); continue }
-                    if (run.size > 1) {
-                        val wpx = (rw + (if (wx) 1.0 else 3.0)) * cam.focal / (PyMath.sumOf(run) { it.second } / run.size)
-                        lit.add(pf("<path d=\"M%s\" stroke-width=\"%.1f\"/>", run.joinToString("L") { pf("%.1f %.1f", it.first.x, it.first.y) }, pmax(0.8, wpx)))
-                    }
-                    run.clear()
+                if (segs.isNotEmpty()) pools.add(pf("<path d=\"%s\" fill=\"#FFB866\" opacity=\"%s\" filter=\"url(#litglow)\" style=\"mix-blend-mode:screen\"/>", segs.joinToString(""), if (truthy(th["wet"])) ".05" else ".035"))
+                continue
+            }
+            val run = ArrayList<Pair<V2, Double>>()
+            for (k in 0..pts.size) {
+                val pt = if (k < pts.size) pts[k] else null
+                val c = if (pt != null && !far(pt.x, pt.y)) cam.cam(V3(pt.x, 0.06, pt.y)) else null
+                if (c != null && c[2] > 2) { run.add(cam.pc(c) to c[2]); continue }
+                if (run.size > 1) {
+                    val wpx = (rw + (if (wx) 1.0 else 3.0)) * cam.focal / (PyMath.sumOf(run) { it.second } / run.size)
+                    lit.add(pf("<path d=\"M%s\" stroke-width=\"%.1f\"/>", run.joinToString("L") { pf("%.1f %.1f", it.first.x, it.first.y) }, pmax(0.8, wpx)))
                 }
-            }
-            pools.add(pf("<g fill=\"none\" stroke=\"#FFB866\" stroke-linecap=\"round\" stroke-linejoin=\"round\" opacity=\"%s\" filter=\"url(#litglow)\" style=\"mix-blend-mode:screen\">%s</g>", if (wx) ".3" else ".4", lit.joinToString("")))
-            if (truthy(th["wet"])) {
-                val core = lit.map { x -> STROKE_W.replace(x) { m -> pf("stroke-width=\"%.1f\"", m.groupValues[1].toDouble() * 0.3) } }
-                pools.add(pf("<g fill=\"none\" stroke=\"#FFE2B0\" stroke-linecap=\"round\" stroke-linejoin=\"round\" opacity=\".22\" style=\"mix-blend-mode:screen\">%s</g>", core.joinToString("")))
-            }
-            for (n in dicts(S["nodes"])) {
-                val nx = d(n["x"]); val nz = d(n["z"])
-                if (tagsOf(n)["highway"] != "street_lamp" || far(nx, nz)) continue
-                val cm = lift(cam, n)
-                val c = cm.cam(V3(nx, 0.0, nz))
-                if (c[2] < 2) continue
-                val p = cam.pc(c); val rx = 10 * cam.focal / c[2]
-                val q = cm.proj(V3(nx, 0.0, nz + 10)) ?: p
-                pools.add(pf("<ellipse cx=\"%.1f\" cy=\"%.1f\" rx=\"%.1f\" ry=\"%.1f\" fill=\"url(#pool)\"/>", p[0], p[1], rx, pmax(0.6, Math.abs(q[1] - p[1]))))
-            }
-            for (n in dicts(S["pois"])) {
-                val nx = d(n["x"]); val nz = d(n["z"])
-                val oh = tagsOf(n)["opening_hours"] as String?
-                if (far(nx, nz) || oh.isNullOrEmpty() || !openNow(oh, th)) continue
-                val c = cam.cam(V3(nx, 1.5, nz))
-                if (c[2] < 2) continue
-                val p = cam.pc(c); var r = pmax(3.0, 5 * cam.focal / c[2])
-                if (opts.daylight) {
-                    val g0 = cam.cam(V3(nx, 0.05, nz)); val pg = cam.pc(g0); val rg = 11 * cam.focal / g0[2]
-                    val qg = cam.proj(V3(nx, 0.05, nz + 11)) ?: pg
-                    pools.add(pf("<ellipse cx=\"%.1f\" cy=\"%.1f\" rx=\"%.1f\" ry=\"%.1f\" fill=\"url(#openpool)\"/>", pg[0], pg[1], rg, pmax(1.0, Math.abs(qg[1] - pg[1]))))
-                    r = pmax(4.0, 8 * cam.focal / c[2])
-                }
-                glow.add(pf("<circle cx=\"%.1f\" cy=\"%.1f\" r=\"%.1f\" fill=\"url(#open)\"/>", p[0], p[1], r))
+                run.clear()
             }
         }
-        // tag lens: streets and places coloured by whether the tag is mapped; counts are for what is in view
+        pools.add(pf("<g fill=\"none\" stroke=\"#FFB866\" stroke-linecap=\"round\" stroke-linejoin=\"round\" opacity=\"%s\" filter=\"url(#litglow)\" style=\"mix-blend-mode:screen\">%s</g>", if (wx) ".3" else ".4", lit.joinToString("")))
+        if (truthy(th["wet"])) {
+            val core = lit.map { x -> STROKE_W.replace(x) { m -> pf("stroke-width=\"%.1f\"", m.groupValues[1].toDouble() * 0.3) } }
+            pools.add(pf("<g fill=\"none\" stroke=\"#FFE2B0\" stroke-linecap=\"round\" stroke-linejoin=\"round\" opacity=\".22\" style=\"mix-blend-mode:screen\">%s</g>", core.joinToString("")))
+        }
+        for (n in dicts(S["nodes"])) {
+            val nx = d(n["x"]); val nz = d(n["z"])
+            if (tagsOf(n)["highway"] != "street_lamp" || far(nx, nz)) continue
+            val cm = lift(cam, n)
+            val c = cm.cam(V3(nx, 0.0, nz))
+            if (c[2] < 2) continue
+            val p = cam.pc(c); val rx = 10 * cam.focal / c[2]
+            val q = cm.proj(V3(nx, 0.0, nz + 10)) ?: p
+            pools.add(pf("<ellipse cx=\"%.1f\" cy=\"%.1f\" rx=\"%.1f\" ry=\"%.1f\" fill=\"url(#pool)\"/>", p[0], p[1], rx, pmax(0.6, Math.abs(q[1] - p[1]))))
+        }
+        for (n in dicts(S["pois"])) {
+            val nx = d(n["x"]); val nz = d(n["z"])
+            val oh = tagsOf(n)["opening_hours"] as String?
+            if (far(nx, nz) || oh.isNullOrEmpty() || !openNow(oh, th)) continue
+            val c = cam.cam(V3(nx, 1.5, nz))
+            if (c[2] < 2) continue
+            val p = cam.pc(c); var r = pmax(3.0, 5 * cam.focal / c[2])
+            if (opts.daylight) {
+                val g0 = cam.cam(V3(nx, 0.05, nz)); val pg = cam.pc(g0); val rg = 11 * cam.focal / g0[2]
+                val qg = cam.proj(V3(nx, 0.05, nz + 11)) ?: pg
+                pools.add(pf("<ellipse cx=\"%.1f\" cy=\"%.1f\" rx=\"%.1f\" ry=\"%.1f\" fill=\"url(#openpool)\"/>", pg[0], pg[1], rg, pmax(1.0, Math.abs(qg[1] - pg[1]))))
+                r = pmax(4.0, 8 * cam.focal / c[2])
+            }
+            glow.add(pf("<circle cx=\"%.1f\" cy=\"%.1f\" r=\"%.1f\" fill=\"url(#open)\"/>", p[0], p[1], r))
+        }
+    }
+
+    // render/amsterdam.py:615 render: the tag lens, and what it counts in view
+    @Suppress("UNCHECKED_CAST")
+    private fun lensCounts(S: Dict, cam: Camera, lens: String?, roads: List<Dict>, far: (Double, Double) -> Boolean, W: Double, H: Double,
+                           pools: MutableList<String>, glow: MutableList<String>): LinkedHashMap<String, Any?> {
         val lensk = if (lens != null && lens.startsWith("tag:")) lens.substring(4) else null
         val counts = LinkedHashMap<String, Any?>()
         fun count(k: String) { counts[k] = ((counts[k] as Int?) ?: 0) + 1 }
@@ -1443,6 +1692,12 @@ object Amsterdam {
                 count(tagState(n, lensk!!, "tree"))
             }
         }
+        return counts
+    }
+
+    // render/amsterdam.py:615 render: the haze by ground depth (a soft band on the horizon at eye level), and the golden wash
+    private fun hazeLayer(cam: Camera, th: Dict, thn: String, cfg: Map<String, Any?>, target: V3, hy: Double, W: Double, H: Double, eye: Boolean,
+                          defs: MutableList<String>): String {
         var stops = ArrayList<String>(); var top = pmax(0.0, hy)
         val haze0 = if ("haze0" in cfg) d(cfg["haze0"]) else 380.0; val haze1 = if ("haze1" in cfg) d(cfg["haze1"]) else 800.0
         val hazeMax = d(th["haze_max"])
@@ -1475,6 +1730,14 @@ object Amsterdam {
             defs.add("<linearGradient id=\"wash\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\".35\"><stop offset=\"0\" stop-color=\"#FFB25E\" stop-opacity=\".14\"/><stop offset=\".45\" stop-color=\"#FFC98A\" stop-opacity=\".05\"/><stop offset=\"1\" stop-color=\"#FFC98A\" stop-opacity=\"0\"/></linearGradient>")
             haze += pf("<rect width=\"%d\" height=\"%d\" fill=\"url(#wash)\"/>", W, H)
         }
+        return haze
+    }
+
+    // render/amsterdam.py:615 render: the shadow group, the footprints' seams (ATLAS_AO), cloud shadows and drizzle
+    @Suppress("UNCHECKED_CAST")
+    private fun overlays(cam: Camera, th: Dict, cfg: Map<String, Any?>, solids: List<Dict>, shadows: List<String>, far: (Double, Double) -> Boolean,
+                         wx: Boolean, night: Boolean, eye: Boolean, hy: Double, W: Double, H: Double, layer: String?, opts: RenderOptions,
+                         defs: MutableList<String>): Triple<String, String, String> {
         var sfx = ""
         if (shadows.isNotEmpty() && truthy(th["shadow_blur"])) {
             defs.add(pf("<filter id=\"sblur\" x=\"-10%%\" y=\"-10%%\" width=\"120%%\" height=\"120%%\"><feGaussianBlur stdDeviation=\"%.1f\"/></filter>", th["shadow_blur"]))
@@ -1514,52 +1777,7 @@ object Amsterdam {
                 if (layer != "front") wfx += pf("<rect width=\"%d\" height=\"%d\" fill=\"url(#rain)\" opacity=\".45\"/>", W, H)
             }
         }
-        val head = listOf(
-            pf("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 %d %d\" width=\"%d\" height=\"%d\">", W, H, W, H),
-            pf("<defs><clipPath id=\"vb\"><rect width=\"%d\" height=\"%d\"/></clipPath>%s</defs><g clip-path=\"url(#vb)\">", W, H, defs.joinToString("")),
-        )
-        fun cat(parts: List<String>): String = parts.joinToString("")
-        if (split != null) {
-            // three layers for the fill-in quest: everything behind the building, the building itself (one per answer), everything in front
-            val c = cut ?: out.size
-            val base = cat(head + listOf(cat(ground), cat(marks), shadowG, aoG, quaySvg, cat(pools), "<g stroke-linejoin=\"round\">", cat(out.subList(0, c)), "</g></g></svg>"))
-            val front = cat(head + listOf("<g stroke-linejoin=\"round\">", cat(out.subList(c, out.size)), "</g>", cat(glow), wfx, haze, "</g></svg>"))
-            val sd = splitD
-            val variant: (Dict, String?) -> String = { bv, lens_ ->
-                val body = drawBuilding(cam, th, sh, bv, sd ?: throw IllegalStateException("the split building is not in view"), lens_).joinToString("")
-                val dfs = if (truthy(bv["_hatch"])) "<defs><pattern id=\"hatchq\" width=\"7\" height=\"7\" patternUnits=\"userSpaceOnUse\" patternTransform=\"rotate(45)\"><path d=\"M0 0V7\" stroke=\"#8C857A\" stroke-width=\"2.2\"/></pattern></defs>" else ""
-                pf("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 %d %d\" width=\"%d\" height=\"%d\" style=\"position: absolute; left: 0; top: 0\" aria-hidden=\"true\">%s<g stroke-linejoin=\"round\">%s</g></svg>", W, H, W, H, dfs, body)
-            }
-            return Quest(base, front, variant, cam, splitD, az, el)
-        }
-        var fin = if (wx && layer != "front" && !truthy(th["_eye"])) pf("<rect width=\"%d\" height=\"%d\" filter=\"url(#grain)\" opacity=\"%s\" style=\"mix-blend-mode:overlay\"/><rect width=\"%d\" height=\"%d\" fill=\"url(#vig)\"/>", W, H, if (!night) ".09" else ".12", W, H) else ""
-        val mat = if (wx) " filter=\"url(#mat)\"" else ""
-        if (truthy(cfg["no_fin"])) fin = ""
-        val above = (th["_above"] as String?) ?: ""
-        fun info(raster: Boolean): Dict {
-            val i = dictOf("az" to az, "el" to el, "counts" to counts, "doors" to (th["_doors"] ?: 0), "shops" to (th["_shops"] ?: 0), "open" to (th["_open"] ?: 0), "brands" to (th["_brands"] ?: 0))
-            if (raster) i["raster"] = th["_raster"]
-            return i
-        }
-        if (layer == "split") {
-            // two stacked images for dense views: the ground, then everything standing on it (each under the size limit)
-            val up = truthy(S["_town"]) // a town on its terrain: the ground image lies between the layers, so shadows and seams go above it
-            val base = cat(head + listOf(cat(ground), cat(marks), if (up) "" else shadowG, if (up) "" else aoG, quaySvg, cat(pools), "</g></svg>"))
-            // a ground image of its own (terrain, relief) stands between these two on the board; what lies along the ground above it opens the second
-            var objs: List<String> = listOf(cat(head + listOf(above, if (up) shadowG + aoG else "", "<g stroke-linejoin=\"round\"$mat>", cat(out), "</g>", cat(glow), wfx, haze, fin, "</g></svg>")))
-            val limit = cfg["obj_split"]
-            if (truthy(limit) && plen(objs[0]) > d(limit)) {
-                // too much for one image: the far half and the near half, stacked in that order, so nothing changes in what covers what
-                val tot = out.sumOf { plen(it).toLong() }; var acc = 0L; var k = 0
-                while (k < out.size && acc < tot / 2.0) { acc += plen(out[k]); k++ }
-                val far_ = cat(head + listOf(above, if (up) shadowG + aoG else "", "<g stroke-linejoin=\"round\"$mat>", cat(out.subList(0, k)), "</g></g></svg>"))
-                val near_ = cat(head + listOf("<g stroke-linejoin=\"round\"$mat>", cat(out.subList(k, out.size)), "</g>", cat(glow), wfx, haze, fin, "</g></svg>"))
-                objs = listOf(far_, near_)
-            }
-            return Rendered(base, objs, cam, info(true))
-        }
-        val svg = head + listOf(cat(ground), cat(marks), shadowG, aoG, quaySvg, cat(pools), above, "<g stroke-linejoin=\"round\"$mat>", cat(out), "</g>", cat(glow), wfx, haze, fin, "</g></svg>")
-        return Rendered(cat(svg), null, cam, info(false))
+        return Triple(shadowG, aoG, wfx)
     }
 
     // ------------------------------------------------------------------ the lenses
@@ -1715,13 +1933,13 @@ object Amsterdam {
                 if (n > 1) for (k in 1 until n) segs.add(line(k.toDouble() / n, y0, k.toDouble() / n, top))
             }
             if (segs.isNotEmpty()) out.add(pf("<path d=\"%s\" fill=\"none\" stroke=\"%s\" stroke-width=\".55\" opacity=\".7\"/>", segs.joinToString(""), if (!night) "#E4ECF0" else "#2A3240"))
-        } else if (md == "metal" && kind in setOf("industrial", "hangar", "sports", "shed", "terminal", "canopy", null)) {
+        } else if (md == "metal" && kind in METAL_SHEDS) {
             val step = if (ppm >= 2.6) 1.0 else (if (ppm >= 1.4) 2.0 else null)
             if (step != null && !night) {
                 val n = (elen / step).toInt(); val segs = (1 until n).map { k -> line(k.toDouble() / n, y0 + 0.3, k.toDouble() / n, top - 0.15) }
                 if (segs.isNotEmpty()) out.add(pf("<path d=\"%s\" fill=\"none\" stroke=\"%s\" stroke-width=\".5\" opacity=\".38\"/>", segs.joinToString(""), tohex(mulc(base, 0.62))))
             }
-        } else if (md in setOf("limestone", "stone", "plaster") && lv >= 5 && kind in setOf("home", "office", "hotel") && fh * ppm > 2.2) {
+        } else if (md in STONE_FRONTS && lv >= 5 && kind in STONE_FRONT_KINDS && fh * ppm > 2.2) {
             // the continuous iron balconies of a tall stone front, at the second floor and below the top
             val rows = listOf(2) + (if (lv >= 6) listOf(lv - 1) else emptyList())
             val segs = rows.map { r -> line(0.02, y0 + r * fh + 0.12, 0.98, y0 + r * fh + 0.12, 0.25) }
@@ -1763,15 +1981,14 @@ object Amsterdam {
         val g = guessedOf(b)
         var roof = if (!(lens == "truth" && truthy(g["roof:shape"]))) b["roof"] as String? else "flat"
         if (roof == "quadruple_saltbox") roof = "hipped" // closest shape this renderer draws
-        val rh = if (roof in setOf("gabled", "pyramidal", "hipped", "skillion", "mansard") && truthy(b["roof_h"])) d(b["roof_h"]) else 0.0
-        var win = Win()
+        val rh = if (roof in PITCHED && truthy(b["roof_h"])) d(b["roof_h"]) else 0.0
         val wallTop = h - rh
         val btype = tags["building"] as String?; val yr = (b["year"] as Number?)?.toInt() ?: 0
-        val modern = yr >= 1960 && btype !in setOf("church", "cathedral", "chapel")
-        val warehouse = btype in setOf("industrial", "warehouse", "service")
+        val modern = yr >= 1960 && btype !in CHURCHES
+        val warehouse = btype in WAREHOUSES
         val places = (b["places"] as List<Dict>?) ?: emptyList()
-        val church = btype in setOf("church", "cathedral", "chapel") || tags["building:part"] == "church" || truthy(b["in_church"])
-        val shopfloor = wx && lens == null && (places.isNotEmpty() || btype in setOf("retail", "commercial"))
+        val church = btype in CHURCHES || tags["building:part"] == "church" || truthy(b["in_church"])
+        val shopfloor = wx && lens == null && (places.isNotEmpty() || btype in SHOP_FLOORS)
         var openHere = false; val plinth = ArrayList<String>(); val cornice = ArrayList<String>()
         if (night && places.isNotEmpty()) {
             openHere = places.any { p -> val oh = tagsOf(p)["opening_hours"] as String?; !oh.isNullOrEmpty() && openNow(oh, th) }
@@ -1786,7 +2003,7 @@ object Amsterdam {
         val n = poly.size
         val TD = if (lens == null && wx) b["trad"] as Map<String, Any?>? else null
         val td = truthy(TD)
-        val ridgeU = if (td && roof in setOf("gabled", "hipped") && rh != 0.0) tradRidge(b, poly) else null
+        val ridgeU = if (td && roof in RIDGED && rh != 0.0) tradRidge(b, poly) else null
         val winD = d(th["_win_d"] ?: 390)
         for (i in 0 until n) {
             val a = poly[i]; val bb = poly[(i + 1) % n]
@@ -1876,75 +2093,7 @@ object Amsterdam {
             if (church && dd < 520 && (lens == null || lens == "year") && wx) {
                 out.addAll(Closeup.churchWindows(cam, th, a, bb, ex, ez, elen, nrm, y0, wallTop, dd, tohex(light(th, mulc(base, 0.55), nrm, false)), night))
             } else if (dd < winD && (lens == null || lens == "year") && elen > 2.2 && !part && btype != "houseboat" && !truthy(b["no_win"])) {
-                val lv = (b["levels"] as Number).toInt(); val fh = (wallTop - y0) / Math.max(1, lv)
-                val deep = wx && lens == null && dd < 160 // close up, a window is a hole in the wall: reveal, recessed glass, sill
-                val paris = WIN_STYLE == "paris" && !modern && b["mat_draw"] in setOf("limestone", "plaster", "stone", "sandstone")
-                var wcols = Math.max(1, (elen / (if (paris) 2.9 else if (modern) 3.4 else 2.1)).toInt())
-                val TW = if (td) TD!!["win"] as Map<String, Any?>? else null; val shut = if (td) TD!!["shutter"] as String? else null
-                val tw = truthy(TW); val leaves = ArrayList<String>()
-                if (tw) wcols = Math.max(1, (elen / d(TW!!["bay"])).toInt())
-                for (r_ in (if (shopfloor) 1 else 0) until lv) {
-                    var ya = y0 + r_ * fh + fh * (if (r_ != 0) 0.22 else 0.3); var yb = ya + fh * (if (r_ != 0) (if (modern) 0.62 else 0.58) else 0.5)
-                    if (paris) { ya = y0 + r_ * fh + fh * 0.13; yb = ya + fh * 0.73 } // French windows, nearly floor to ceiling
-                    if (tw) { ya = y0 + r_ * fh + fh * d(TW!!["top"]); yb = ya + fh * d(TW["h"]) }
-                    for (c_ in 0 until wcols) {
-                        var u0 = (c_ + (if (modern) 0.1 else if (paris) 0.31 else 0.28)) / wcols; var u1 = (c_ + (if (modern) 0.9 else if (paris) 0.69 else 0.72)) / wcols
-                        if (tw) { u0 = (c_ + 0.5 - d(TW!!["w"]) / 2) / wcols; u1 = (c_ + 0.5 + d(TW["w"]) / 2) / wcols }
-                        if ((truthy(shut) && r_ > 0) || (truthy(shut) && !shopfloor && r_ == 0)) {
-                            val lw = (u1 - u0) * 0.52
-                            for ((s0, s1) in listOf((u0 - lw) to (u0 - 0.004), (u1 + 0.004) to (u1 + lw))) {
-                                val lq = cam.poly(Living.quadAt(a, bb, ya, yb, s0, s1, 0.07, nrm), margin = 300.0)
-                                if (lq != null && area(lq) > 0.12) leaves.add(P(lq))
-                            }
-                        }
-                        val wl: Boolean
-                        if (prof != null) {
-                            val um = (u0 + u1) / 2; val k = Math.min(prof.size - 2, (um * (prof.size - 1)).toInt()); val f = um * (prof.size - 1) - k
-                            wl = (ya + yb) / 2 > prof[k].second * (1 - f) + prof[k + 1].second * f
-                        } else wl = facing && sh.lit(V3(a[0] + ex * (u0 + u1) / 2 + nrm[0] * 0.2, (ya + yb) / 2, a[1] + ez * (u0 + u1) / 2 + nrm[2] * 0.2), skip = b)
-                        var sp = cam.poly(Living.quadAt(a, bb, ya, yb, u0, u1, 0.04, nrm), margin = 300.0)
-                        var rec = 0.04
-                        if (deep && sp != null && area(sp) > 70) {
-                            win.rev.add(P(sp)); rec = -0.16
-                            sp = cam.poly(Living.quadAt(a, bb, ya, yb, u0, u1, rec, nrm), margin = 300.0)
-                            val du = 0.07 / elen
-                            val sl = cam.poly(Living.quadAt(a, bb, ya - 0.11, ya, u0 - du, u1 + du, 0.07, nrm), margin = 300.0)
-                            if (sl != null) win.sill.add(P(sl))
-                        }
-                        if (sp != null && area(sp) > 0.25) (if (wl) win.lit else win.dark).add(P(sp))
-                        if (sp != null && dd < 140 && area(sp) > 30) { // close up, the sash bars of a canal-house window
-                            val q4 = Living.quadAt(a, bb, ya, yb, u0, u1, rec + 0.01, nrm)
-                            val m1 = cam.proj(V3((q4[0][0] + q4[1][0]) / 2, (q4[0][1] + q4[1][1]) / 2, (q4[0][2] + q4[1][2]) / 2))
-                            val m2 = cam.proj(V3((q4[2][0] + q4[3][0]) / 2, (q4[2][1] + q4[3][1]) / 2, (q4[2][2] + q4[3][2]) / 2))
-                            val h1 = cam.proj(V3(q4[0][0] + (q4[3][0] - q4[0][0]) * 0.42, q4[0][1] + (q4[3][1] - q4[0][1]) * 0.42, q4[0][2] + (q4[3][2] - q4[0][2]) * 0.42))
-                            val h2 = cam.proj(V3(q4[1][0] + (q4[2][0] - q4[1][0]) * 0.42, q4[1][1] + (q4[2][1] - q4[1][1]) * 0.42, q4[1][2] + (q4[2][2] - q4[1][2]) * 0.42))
-                            if (m1 != null && m2 != null && h1 != null && h2 != null) win.fr.add(pf("M%.1f %.1fL%.1f %.1fM%.1f %.1fL%.1f %.1f", m1[0], m1[1], m2[0], m2[1], h1[0], h1[1], h2[0], h2[1]))
-                        }
-                    }
-                }
-                var fr = if (!night) "#F2EEE6" else "#3A3F4E"
-                var gd: String; var gl: String
-                if (wx && !night) { gd = "url(#glass)"; gl = "url(#glassLit)" } else { gd = if (!night) "#2E3440" else "#141824"; gl = "#9FB2C4" }
-                if (warehouse && wx) { gd = if (!night) "#2C4A3B" else "#0E1612"; gl = gd } // warehouse shutters, not glass
-                if (paris && !night) gl = gd // tall panes in a pale stone front read dark, sun or not
-                if (tw) {
-                    fr = if (!night) TW!!["frame"] as String else "#3A3F4E"
-                    if (TW!!["glass"] == "dark" && !night) gl = gd
-                }
-                if (leaves.isNotEmpty()) { // open shutters either side of each window, in the paint of the house
-                    out.add(pf("<path d=\"%s\" fill=\"%s\"/>", leaves.joinToString(""), tohex(light(th, hx(shut!!), nrm, facing && !night))))
-                }
-                val fw = if (deep) pmax(0.7, 0.07 * cam.focal / pmax(dd, 1.0)) else 0.7
-                val hz = (th["_hz"] as Number?)?.toDouble() ?: 0.0
-                val go = if (hz > 0.04) pf(" fill-opacity=\"%.2f\"", 1 - 0.85 * hz) else ""
-                fr = hzc(th, fr)
-                if (win.rev.isNotEmpty()) out.add(pf("<path d=\"%s\" fill=\"%s\"/>", win.rev.joinToString(""), tohex(light(th, mulc(base, 0.55), nrm, false))))
-                if (win.dark.isNotEmpty()) out.add(pf("<path d=\"%s\" fill=\"%s\" stroke=\"%s\" stroke-width=\"%.1f\"%s/>", win.dark.joinToString(""), gd, fr, fw, go))
-                if (win.lit.isNotEmpty()) out.add(pf("<path d=\"%s\" fill=\"%s\" stroke=\"%s\" stroke-width=\"%.1f\"%s/>", win.lit.joinToString(""), gl, fr, fw, go))
-                if (win.fr.isNotEmpty()) out.add(pf("<path d=\"%s\" fill=\"none\" stroke=\"%s\" stroke-width=\"%.1f\"/>", win.fr.joinToString(""), fr,
-                    if (deep) pmax(0.7, 0.045 * cam.focal / pmax(dd, 1.0)) else pmax(0.7, 9 / pmax(dd, 1.0))))
-                if (win.sill.isNotEmpty()) out.add(pf("<path d=\"%s\" fill=\"%s\"/>", win.sill.joinToString(""), hzc(th, if (!night) "#DAD5CA" else "#2E323E")))
-                win = Win()
+                windows(cam, th, sh, b, a, bb, ex, ez, elen, nrm, y0, wallTop, dd, lens, night, wx, modern, td, TD, shopfloor, facing, prof, base, warehouse, out)
             }
         }
         if (plinth.isNotEmpty()) out.add(pf("<path d=\"%s\" fill=\"%s\"/>", plinth.joinToString(""), hzc(th, if (!night) "#47443F" else "#121318")))
@@ -1962,58 +2111,10 @@ object Amsterdam {
                 if (vdot(nr, vsub(cam.C, c)) <= 0) continue
                 out.add(face(cam, tri, tohex(light(th, rbase, nr, !night && vdot(nr, L) > 0 && sh.lit(c, skip = b)))))
             }
-        } else if (roof in setOf("gabled", "hipped") && rh != 0.0 && td) {
+        } else if (roof in RIDGED && rh != 0.0 && td) {
             out.addAll(tradRoof(cam, th, sh, b, TD!!, poly, wallTop, h, rh, roof!!, rbase, base, edge, dd, night, ridgeU!!))
-        } else if (roof in setOf("gabled", "hipped") && rh != 0.0) {
-            // ridge along the longest side unless roof:orientation=across; a hipped roof pulls the ridge in at both ends
-            val i0 = longestLast(poly)
-            val a0 = poly[i0]; val b0 = poly[(i0 + 1) % n]
-            var ux = b0[0] - a0[0]; var uz = b0[1] - a0[1]; val Lg = hypot(ux, uz); ux /= Lg; uz /= Lg
-            if (b["orient"] == "across") { val t = ux; ux = -uz; uz = t }
-            val ce = centroid(poly); val cx = ce.x; val cz = ce.y
-            val proj = poly.map { (it[0] - cx) * ux + (it[1] - cz) * uz }
-            val s0 = City.pyMinOf(proj); val s1 = City.pyMaxOf(proj)
-            val gab = ArrayList<String>(); val slopes = ArrayList<String>() // gable walls first, so the roof covers any hidden notch
-            for (i in 0 until n) {
-                val a = poly[i]; val bb = poly[(i + 1) % n]
-                val pa = V3(a[0], wallTop, a[1]); val pb = V3(bb[0], wallTop, bb[1])
-                // project each eave point onto the ridge line
-                val inset = if (roof == "hipped") pmin(rh, (s1 - s0) / 2) else 0.0
-                fun onRidge(p: V3): V3 {
-                    val sv = pmin(s1 - inset, pmax(s0 + inset, (p[0] - cx) * ux + (p[2] - cz) * uz))
-                    return V3(cx + ux * sv, h, cz + uz * sv)
-                }
-                val qa = onRidge(pa); val qb = onRidge(pb)
-                if (dist3(qa, qb) < 0.3 && roof == "hipped") {
-                    val tri = listOf(pa, pb, qa)
-                    var nr = vnorm(vcross(vsub(tri[1], tri[0]), vsub(tri[2], tri[0])))
-                    if (nr[1] < 0) nr = neg(nr)
-                    val c = cen(tri)
-                    if (vdot(nr, vsub(cam.C, c)) <= 0) continue
-                    slopes.add(face(cam, tri, tohex(light(th, rbase, nr, !night && vdot(nr, L) > 0 && sh.lit(c, skip = b))), pf(" stroke=\"%s\" stroke-width=\".25\"", edge)))
-                    continue
-                }
-                if (dist3(qa, qb) < 0.3) {
-                    // gable end: a vertical wall triangle in the wall material
-                    val tri = listOf(pa, pb, V3((qa[0] + qb[0]) / 2, h, (qa[2] + qb[2]) / 2))
-                    val nr = vnorm(V3(bb[1] - a[1], 0.0, -(bb[0] - a[0])))
-                    val c = cen(tri)
-                    if (vdot(nr, vsub(cam.C, c)) <= 0) continue
-                    if (wx && lens == null && yr != 0 && yr < 1850 && dd < 260) { // the hoist beam under an old gable
-                        val ap = tri[2]; val hb0 = cam.proj(V3(ap[0], h - rh * 0.25, ap[2])); val hb1 = cam.proj(V3(ap[0] + nr[0] * 0.7, h - rh * 0.25, ap[2] + nr[2] * 0.7))
-                        if (hb0 != null && hb1 != null) slopes.add(pf("<path d=\"M%.1f %.1fL%.1f %.1f\" stroke=\"#2A221C\" stroke-width=\"%.2f\" stroke-linecap=\"round\"/>", hb0[0], hb0[1], hb1[0], hb1[1], pmax(0.5, 0.12 * cam.focal / dd)))
-                    }
-                    gab.add(face(cam, tri, tohex(light(th, base, nr, !night && vdot(nr, L) > 0 && sh.lit(V3(c[0] + nr[0] * .2, c[1], c[2] + nr[2] * .2), skip = b))), pf(" stroke=\"%s\" stroke-width=\".25\"", edge)))
-                    continue
-                }
-                val q = listOf(pa, pb, qb, qa)
-                var nr = vnorm(vcross(vsub(q[1], q[0]), vsub(q[3], q[0])))
-                if (nr[1] < 0) nr = neg(nr)
-                val c = cen(q)
-                if (vdot(nr, vsub(cam.C, c)) <= 0) continue
-                slopes.add(face(cam, q, tohex(light(th, rbase, nr, !night && vdot(nr, L) > 0 && sh.lit(c, skip = b))), pf(" stroke=\"%s\" stroke-width=\".25\"", edge)))
-            }
-            out.addAll(gab + slopes)
+        } else if (roof in RIDGED && rh != 0.0) {
+            out.addAll(gableRoof(cam, th, sh, b, poly, wallTop, h, rh, roof, rbase, base, edge, L, night, wx, lens, yr, dd))
         } else if (roof == "skillion" && rh != 0.0) {
             val s_ = rh / span; val nr = vnorm(V3(dirv[0] * s_, 1.0, dirv[1] * s_))
             val ce = centroid(poly); val c = V3(ce.x, h - rh / 2, ce.y)
@@ -2032,6 +2133,141 @@ object Amsterdam {
             out.addAll(tradChimneys(cam, th, sh, b, TD, poly, wallTop, h, rh, roof, ridgeU, night))
         }
         return out
+    }
+
+    // render/amsterdam.py:1119 _draw_building: the windows of one wall (building:levels, guessed or mapped), deep and barred close up
+    @Suppress("UNCHECKED_CAST")
+    private fun windows(
+        cam: Camera, th: Dict, sh: Shade, b: Dict, a: V2, bb: V2, ex: Double, ez: Double, elen: Double, nrm: V3, y0: Double, wallTop: Double, dd: Double,
+        lens: String?, night: Boolean, wx: Boolean, modern: Boolean, td: Boolean, TD: Map<String, Any?>?, shopfloor: Boolean, facing: Boolean,
+        prof: List<Pair<Double, Double>>?, base: V3, warehouse: Boolean, out: MutableList<String>,
+    ) {
+        val win = Win()
+        val lv = (b["levels"] as Number).toInt(); val fh = (wallTop - y0) / Math.max(1, lv)
+        val deep = wx && lens == null && dd < 160 // close up, a window is a hole in the wall: reveal, recessed glass, sill
+        val paris = WIN_STYLE == "paris" && !modern && b["mat_draw"] in PARIS_FRONTS
+        var wcols = Math.max(1, (elen / (if (paris) 2.9 else if (modern) 3.4 else 2.1)).toInt())
+        val TW = if (td) TD!!["win"] as Map<String, Any?>? else null; val shut = if (td) TD!!["shutter"] as String? else null
+        val tw = truthy(TW); val leaves = ArrayList<String>()
+        if (tw) wcols = Math.max(1, (elen / d(TW!!["bay"])).toInt())
+        for (r_ in (if (shopfloor) 1 else 0) until lv) {
+            var ya = y0 + r_ * fh + fh * (if (r_ != 0) 0.22 else 0.3); var yb = ya + fh * (if (r_ != 0) (if (modern) 0.62 else 0.58) else 0.5)
+            if (paris) { ya = y0 + r_ * fh + fh * 0.13; yb = ya + fh * 0.73 } // French windows, nearly floor to ceiling
+            if (tw) { ya = y0 + r_ * fh + fh * d(TW!!["top"]); yb = ya + fh * d(TW["h"]) }
+            for (c_ in 0 until wcols) {
+                var u0 = (c_ + (if (modern) 0.1 else if (paris) 0.31 else 0.28)) / wcols; var u1 = (c_ + (if (modern) 0.9 else if (paris) 0.69 else 0.72)) / wcols
+                if (tw) { u0 = (c_ + 0.5 - d(TW!!["w"]) / 2) / wcols; u1 = (c_ + 0.5 + d(TW["w"]) / 2) / wcols }
+                if ((truthy(shut) && r_ > 0) || (truthy(shut) && !shopfloor && r_ == 0)) {
+                    val lw = (u1 - u0) * 0.52
+                    for ((s0, s1) in listOf((u0 - lw) to (u0 - 0.004), (u1 + 0.004) to (u1 + lw))) {
+                        val lq = cam.poly(Living.quadAt(a, bb, ya, yb, s0, s1, 0.07, nrm), margin = 300.0)
+                        if (lq != null && area(lq) > 0.12) leaves.add(P(lq))
+                    }
+                }
+                val wl: Boolean
+                if (prof != null) {
+                    val um = (u0 + u1) / 2; val k = Math.min(prof.size - 2, (um * (prof.size - 1)).toInt()); val f = um * (prof.size - 1) - k
+                    wl = (ya + yb) / 2 > prof[k].second * (1 - f) + prof[k + 1].second * f
+                } else wl = facing && sh.lit(V3(a[0] + ex * (u0 + u1) / 2 + nrm[0] * 0.2, (ya + yb) / 2, a[1] + ez * (u0 + u1) / 2 + nrm[2] * 0.2), skip = b)
+                var sp = cam.poly(Living.quadAt(a, bb, ya, yb, u0, u1, 0.04, nrm), margin = 300.0)
+                var rec = 0.04
+                if (deep && sp != null && area(sp) > 70) {
+                    win.rev.add(P(sp)); rec = -0.16
+                    sp = cam.poly(Living.quadAt(a, bb, ya, yb, u0, u1, rec, nrm), margin = 300.0)
+                    val du = 0.07 / elen
+                    val sl = cam.poly(Living.quadAt(a, bb, ya - 0.11, ya, u0 - du, u1 + du, 0.07, nrm), margin = 300.0)
+                    if (sl != null) win.sill.add(P(sl))
+                }
+                if (sp != null && area(sp) > 0.25) (if (wl) win.lit else win.dark).add(P(sp))
+                if (sp != null && dd < 140 && area(sp) > 30) { // close up, the sash bars of a canal-house window
+                    val q4 = Living.quadAt(a, bb, ya, yb, u0, u1, rec + 0.01, nrm)
+                    val m1 = cam.proj(V3((q4[0][0] + q4[1][0]) / 2, (q4[0][1] + q4[1][1]) / 2, (q4[0][2] + q4[1][2]) / 2))
+                    val m2 = cam.proj(V3((q4[2][0] + q4[3][0]) / 2, (q4[2][1] + q4[3][1]) / 2, (q4[2][2] + q4[3][2]) / 2))
+                    val h1 = cam.proj(V3(q4[0][0] + (q4[3][0] - q4[0][0]) * 0.42, q4[0][1] + (q4[3][1] - q4[0][1]) * 0.42, q4[0][2] + (q4[3][2] - q4[0][2]) * 0.42))
+                    val h2 = cam.proj(V3(q4[1][0] + (q4[2][0] - q4[1][0]) * 0.42, q4[1][1] + (q4[2][1] - q4[1][1]) * 0.42, q4[1][2] + (q4[2][2] - q4[1][2]) * 0.42))
+                    if (m1 != null && m2 != null && h1 != null && h2 != null) win.fr.add(pf("M%.1f %.1fL%.1f %.1fM%.1f %.1fL%.1f %.1f", m1[0], m1[1], m2[0], m2[1], h1[0], h1[1], h2[0], h2[1]))
+                }
+            }
+        }
+        var fr = if (!night) "#F2EEE6" else "#3A3F4E"
+        var gd: String; var gl: String
+        if (wx && !night) { gd = "url(#glass)"; gl = "url(#glassLit)" } else { gd = if (!night) "#2E3440" else "#141824"; gl = "#9FB2C4" }
+        if (warehouse && wx) { gd = if (!night) "#2C4A3B" else "#0E1612"; gl = gd } // warehouse shutters, not glass
+        if (paris && !night) gl = gd // tall panes in a pale stone front read dark, sun or not
+        if (tw) {
+            fr = if (!night) TW!!["frame"] as String else "#3A3F4E"
+            if (TW!!["glass"] == "dark" && !night) gl = gd
+        }
+        if (leaves.isNotEmpty()) { // open shutters either side of each window, in the paint of the house
+            out.add(pf("<path d=\"%s\" fill=\"%s\"/>", leaves.joinToString(""), tohex(light(th, hx(shut!!), nrm, facing && !night))))
+        }
+        val fw = if (deep) pmax(0.7, 0.07 * cam.focal / pmax(dd, 1.0)) else 0.7
+        val hz = (th["_hz"] as Number?)?.toDouble() ?: 0.0
+        val go = if (hz > 0.04) pf(" fill-opacity=\"%.2f\"", 1 - 0.85 * hz) else ""
+        fr = hzc(th, fr)
+        if (win.rev.isNotEmpty()) out.add(pf("<path d=\"%s\" fill=\"%s\"/>", win.rev.joinToString(""), tohex(light(th, mulc(base, 0.55), nrm, false))))
+        if (win.dark.isNotEmpty()) out.add(pf("<path d=\"%s\" fill=\"%s\" stroke=\"%s\" stroke-width=\"%.1f\"%s/>", win.dark.joinToString(""), gd, fr, fw, go))
+        if (win.lit.isNotEmpty()) out.add(pf("<path d=\"%s\" fill=\"%s\" stroke=\"%s\" stroke-width=\"%.1f\"%s/>", win.lit.joinToString(""), gl, fr, fw, go))
+        if (win.fr.isNotEmpty()) out.add(pf("<path d=\"%s\" fill=\"none\" stroke=\"%s\" stroke-width=\"%.1f\"/>", win.fr.joinToString(""), fr,
+            if (deep) pmax(0.7, 0.045 * cam.focal / pmax(dd, 1.0)) else pmax(0.7, 9 / pmax(dd, 1.0))))
+        if (win.sill.isNotEmpty()) out.add(pf("<path d=\"%s\" fill=\"%s\"/>", win.sill.joinToString(""), hzc(th, if (!night) "#DAD5CA" else "#2E323E")))
+    }
+
+    // render/amsterdam.py:1119 _draw_building: a gabled or hipped roof without a tradition, its gable walls first so the roof covers any notch
+    private fun gableRoof(
+        cam: Camera, th: Dict, sh: Shade, b: Dict, poly: List<V2>, wallTop: Double, h: Double, rh: Double, roof: String?, rbase: V3, base: V3, edge: String,
+        L: V3, night: Boolean, wx: Boolean, lens: String?, yr: Int, dd: Double,
+    ): List<String> {
+        val n = poly.size
+        // ridge along the longest side unless roof:orientation=across; a hipped roof pulls the ridge in at both ends
+        val i0 = longestLast(poly)
+        val a0 = poly[i0]; val b0 = poly[(i0 + 1) % n]
+        var ux = b0[0] - a0[0]; var uz = b0[1] - a0[1]; val Lg = hypot(ux, uz); ux /= Lg; uz /= Lg
+        if (b["orient"] == "across") { val t = ux; ux = -uz; uz = t }
+        val ce = centroid(poly); val cx = ce.x; val cz = ce.y
+        val proj = poly.map { (it[0] - cx) * ux + (it[1] - cz) * uz }
+        val s0 = City.pyMinOf(proj); val s1 = City.pyMaxOf(proj)
+        val gab = ArrayList<String>(); val slopes = ArrayList<String>() // gable walls first, so the roof covers any hidden notch
+        for (i in 0 until n) {
+            val a = poly[i]; val bb = poly[(i + 1) % n]
+            val pa = V3(a[0], wallTop, a[1]); val pb = V3(bb[0], wallTop, bb[1])
+            // project each eave point onto the ridge line
+            val inset = if (roof == "hipped") pmin(rh, (s1 - s0) / 2) else 0.0
+            fun onRidge(p: V3): V3 {
+                val sv = pmin(s1 - inset, pmax(s0 + inset, (p[0] - cx) * ux + (p[2] - cz) * uz))
+                return V3(cx + ux * sv, h, cz + uz * sv)
+            }
+            val qa = onRidge(pa); val qb = onRidge(pb)
+            if (dist3(qa, qb) < 0.3 && roof == "hipped") {
+                val tri = listOf(pa, pb, qa)
+                var nr = vnorm(vcross(vsub(tri[1], tri[0]), vsub(tri[2], tri[0])))
+                if (nr[1] < 0) nr = neg(nr)
+                val c = cen(tri)
+                if (vdot(nr, vsub(cam.C, c)) <= 0) continue
+                slopes.add(face(cam, tri, tohex(light(th, rbase, nr, !night && vdot(nr, L) > 0 && sh.lit(c, skip = b))), pf(" stroke=\"%s\" stroke-width=\".25\"", edge)))
+                continue
+            }
+            if (dist3(qa, qb) < 0.3) {
+                // gable end: a vertical wall triangle in the wall material
+                val tri = listOf(pa, pb, V3((qa[0] + qb[0]) / 2, h, (qa[2] + qb[2]) / 2))
+                val nr = vnorm(V3(bb[1] - a[1], 0.0, -(bb[0] - a[0])))
+                val c = cen(tri)
+                if (vdot(nr, vsub(cam.C, c)) <= 0) continue
+                if (wx && lens == null && yr != 0 && yr < 1850 && dd < 260) { // the hoist beam under an old gable
+                    val ap = tri[2]; val hb0 = cam.proj(V3(ap[0], h - rh * 0.25, ap[2])); val hb1 = cam.proj(V3(ap[0] + nr[0] * 0.7, h - rh * 0.25, ap[2] + nr[2] * 0.7))
+                    if (hb0 != null && hb1 != null) slopes.add(pf("<path d=\"M%.1f %.1fL%.1f %.1f\" stroke=\"#2A221C\" stroke-width=\"%.2f\" stroke-linecap=\"round\"/>", hb0[0], hb0[1], hb1[0], hb1[1], pmax(0.5, 0.12 * cam.focal / dd)))
+                }
+                gab.add(face(cam, tri, tohex(light(th, base, nr, !night && vdot(nr, L) > 0 && sh.lit(V3(c[0] + nr[0] * .2, c[1], c[2] + nr[2] * .2), skip = b))), pf(" stroke=\"%s\" stroke-width=\".25\"", edge)))
+                continue
+            }
+            val q = listOf(pa, pb, qb, qa)
+            var nr = vnorm(vcross(vsub(q[1], q[0]), vsub(q[3], q[0])))
+            if (nr[1] < 0) nr = neg(nr)
+            val c = cen(q)
+            if (vdot(nr, vsub(cam.C, c)) <= 0) continue
+            slopes.add(face(cam, q, tohex(light(th, rbase, nr, !night && vdot(nr, L) > 0 && sh.lit(c, skip = b))), pf(" stroke=\"%s\" stroke-width=\".25\"", edge)))
+        }
+        return gab + slopes
     }
 
     // ------------------------------------------------------------------ the kit: details a building tradition gives (render/traditions)
@@ -2152,7 +2388,7 @@ object Amsterdam {
             }
         }
         val E = if (truthy(TD["eaves"])) d(TD["eaves"]) else 0.0
-        if (E != 0.0 && !night && roof in setOf("gabled", "hipped") && (roof == "hipped" || (ridgeU != null && Math.abs(ex * ridgeU[0] + ez * ridgeU[1]) / pmax(elen, 1e-6) > 0.7))) {
+        if (E != 0.0 && !night && roof in RIDGED && (roof == "hipped" || (ridgeU != null && Math.abs(ex * ridgeU[0] + ez * ridgeU[1]) / pmax(elen, 1e-6) > 0.7))) {
             val f = face(cam, Living.quadAt(a, bb, wallTop - pmin(1.1, E * 1.7), wallTop, 0.0, 1.0, 0.025, nrm), "#141822", " opacity=\".26\"")
             if (f.isNotEmpty()) out.add(f)
         }
@@ -2199,7 +2435,7 @@ object Amsterdam {
         val (s0, s1) = onRidgeF(ring); val ye = wallTop - E * slope
         val inset = if (roof == "hipped") pmin(rh + E, (s1 - s0) / 2) else 0.0
         val r0 = V3(cx + ux * (s0 + inset), h, cz + uz * (s0 + inset)); val r1 = V3(cx + ux * (s1 - inset), h, cz + uz * (s1 - inset))
-        val tiles = b["rmat_draw"] in setOf("roof_tiles", "slate") && !night
+        val tiles = b["rmat_draw"] in TILED && !night
         val rstep = if (b["rmat_draw"] == "roof_tiles") 0.33 else 0.26
         val ppm = cam.focal / pmax(dd, 1.0)
         val m = ring.size
@@ -2256,7 +2492,7 @@ object Amsterdam {
             if (kind == "party") { val t = ux; ux = -uz; uz = t } // a flat-roofed terrace: stacks on the side walls
         }
         val proj = poly.map { (it[0] - cx) * ux + (it[1] - cz) * uz }; val s0 = City.pyMinOf(proj); val s1 = City.pyMaxOf(proj)
-        val top = if (roof in setOf("gabled", "hipped")) h else wallTop
+        val top = if (roof in RIDGED) h else wallTop
         val pots = hx((C["pots"] ?: "#B06A45") as String)
         val party = b["party"] as List<Pair<V2, V2>>?
         if (kind == "party" && !party.isNullOrEmpty()) {
@@ -2492,18 +2728,18 @@ object Amsterdam {
 
     // ------------------------------------------------------------------ doors and shopfronts
     @Suppress("UNCHECKED_CAST")
-    private fun roadGrid(S: Dict): Map<Long, List<Pair<V2, V2>>> {
+    private fun roadGrid(S: Dict): GridMap<MutableList<Pair<V2, V2>>> {
         val got = S["_rg"]
-        if (got != null) return got as Map<Long, List<Pair<V2, V2>>>
+        if (got != null) return got as GridMap<MutableList<Pair<V2, V2>>>
         // render/amsterdam.py:1709 road_grid
-        val g = HashMap<Long, MutableList<Pair<V2, V2>>>()
+        val g = GridMap<MutableList<Pair<V2, V2>>>()
         for (r in dicts(S["roads"])) {
             val pts = ptsOf(r)
             for (i in 0 until pts.size - 1) {
                 val a = pts[i]; val b = pts[i + 1]
                 for (gx in PyMath.floorDiv(pmin(a[0], b[0]), 20.0).toLong() - 1 until PyMath.floorDiv(pmax(a[0], b[0]), 20.0).toLong() + 2) {
                     for (gz in PyMath.floorDiv(pmin(a[1], b[1]), 20.0).toLong() - 1 until PyMath.floorDiv(pmax(a[1], b[1]), 20.0).toLong() + 2) {
-                        g.getOrPut((gx shl 32) xor (gz and 0xffffffffL)) { ArrayList() }.add(a to b)
+                        g.getOrPut(GridMap.key(gx, gz)) { ArrayList() }.add(a to b)
                     }
                 }
             }
@@ -2517,7 +2753,7 @@ object Amsterdam {
     fun roadDist(S: Dict, x: Double, z: Double): Double {
         var best = 99.0
         val gx = PyMath.floorDiv(x, 20.0).toLong(); val gz = PyMath.floorDiv(z, 20.0).toLong()
-        for ((a, b) in roadGrid(S)[(gx shl 32) xor (gz and 0xffffffffL)] ?: emptyList()) {
+        for ((a, b) in roadGrid(S)[GridMap.key(gx, gz)] ?: emptyList()) {
             val ux = b[0] - a[0]; val uz = b[1] - a[1]; val L2 = (ux * ux + uz * uz).let { if (it == 0.0) 1.0 else it }
             val t = pmax(0.0, pmin(1.0, ((x - a[0]) * ux + (z - a[1]) * uz) / L2))
             best = pmin(best, hypot(a[0] + ux * t - x, a[1] + uz * t - z))
@@ -2647,7 +2883,7 @@ object Amsterdam {
             if (a != null && b != null) sv += pf("<path d=\"M%.1f %.1fL%.1f %.1f\" stroke=\"#2A2C2E\" stroke-width=\"%.2f\"/>", a[0], a[1], b[0], b[1], pmax(0.5, 0.06 * s))
         }
         val col = hx(st.col); val brand = st.brand?.takeIf { it.isNotEmpty() }
-        if (st.cat in setOf("food", "grocery", "stay") || brand != null) { // an awning, out over the pavement
+        if (st.cat in AWNING_CATS || brand != null) { // an awning, out over the pavement
             val aw = tohex(mulc(col, if (night) 0.5 else 0.95))
             sv += face(cam, listOf(p3(-W2 - 0.1, 3.0, 0.1), p3(W2 + 0.1, 3.0, 0.1), p3(W2 + 0.1, 2.55, 1.15), p3(-W2 - 0.1, 2.55, 1.15)), aw, pf(" stroke=\"%s\" stroke-width=\".4\"", tohex(mulc(col, 0.6))))
             if (st.cat == "food" && brand == null) {
@@ -2705,7 +2941,7 @@ object Amsterdam {
             out.add(Item(cb[2], "svg", bsv))
         }
         // a terrace: outdoor_seating=yes puts tables and chairs on the pavement, and a parasol by day
-        if (t["outdoor_seating"] in setOf("yes", "sidewalk", "pedestrian_zone", "limited") && st.cat == "food") {
+        if (t["outdoor_seating"] in OUTDOOR_SEATING && st.cat == "food") {
             for ((k, spot) in listOf(-1.1 to 2.0, 1.1 to 2.0, 0.0 to 3.4).withIndex()) {
                 val (du, off) = spot
                 val x = qx + ux * du + nrm[0] * off; val z = qz + uz * du + nrm[2] * off

@@ -15,42 +15,91 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object PyFmt {
     private val POW10 = DoubleArray(23).also { var p = 1.0; for (i in it.indices) { it[i] = p; p *= 10.0 } }
+    private val POW10L = LongArray(16).also { var p = 1L; for (i in it.indices) { it[i] = p; p *= 10L } }
+    private const val TWO52 = 4503599627370496.0
+    private const val SPLIT = 134217729.0 // 2^27 + 1, Veltkamp's splitter
+    private const val HALF_ULP = 1.1102230246251565e-16 // 2^-53: half an ulp, relative
 
     // ---------------------------------------------------------------- floats
 
     /** `'%.{prec}f' % x`. */
     fun fixed(x: Double, prec: Int): String {
-        if (!x.isFinite()) return nonFinite(x)
-        val neg = x < 0 || (x == 0.0 && 1.0 / x < 0)
+        if (prec !in 0..15 || !x.isFinite()) return fixedExact(x, prec)
         val a = Math.abs(x)
-        if (prec <= 15) {
-            val s = a * POW10[prec]
-            if (s < 1e15) {
-                val r = Math.floor(s)
-                val f = s - r
-                if (Math.abs(f - 0.5) > Math.ulp(s) * 2) {
-                    val k = (if (f < 0.5) r else r + 1.0).toLong()
-                    return digitsWithPoint(neg, k, prec)
-                }
+        val s = a * POW10[prec]
+        if (s >= TWO52) return fixedExact(x, prec)
+        // the digits of the rounded value, written from the last one back, then the sign
+        var k = scaledRound(a, POW10[prec], s)
+        val buf = CharArray(prec + 21)
+        var i = buf.size
+        if (prec > 0) {
+            for (n in 0 until prec) {
+                val q = k / 10
+                buf[--i] = ('0'.code + (k - q * 10).toInt()).toChar(); k = q
             }
+            buf[--i] = '.'
         }
-        val body = BigDecimal(a).setScale(prec, RoundingMode.HALF_EVEN).toPlainString()
-        return if (neg) "-$body" else body
+        do {
+            val q = k / 10
+            buf[--i] = ('0'.code + (k - q * 10).toInt()).toChar(); k = q
+        } while (k != 0L)
+        if (x < 0 || (x == 0.0 && 1.0 / x < 0)) buf[--i] = '-'
+        return String(buf, i, buf.size - i)
     }
 
-    private fun digitsWithPoint(neg: Boolean, k: Long, prec: Int): String {
-        val ds = k.toString()
-        val sb = StringBuilder(ds.length + prec + 3)
-        if (neg) sb.append('-')
-        if (prec == 0) return sb.append(ds).toString()
-        if (ds.length <= prec) {
-            sb.append("0.")
-            for (i in 0 until prec - ds.length) sb.append('0')
-            sb.append(ds)
-        } else {
-            sb.append(ds, 0, ds.length - prec).append('.').append(ds, ds.length - prec, ds.length)
+    /**
+     * Appends `'%.{prec}f' % x` to [sb]: the exact binary value of [x] rounded half to even, as CPython does. Values whose scaled
+     * magnitude reaches 2^52 (and precisions over 15) take the exact decimal path; the rest are decided in doubles without error.
+     */
+    fun appendFixed(sb: StringBuilder, x: Double, prec: Int): StringBuilder {
+        if (prec !in 0..15 || !x.isFinite()) return sb.append(fixedExact(x, prec))
+        val m = POW10[prec]
+        val a = Math.abs(x)
+        val s = a * m
+        if (s >= TWO52) return sb.append(fixedExact(x, prec))
+        val k = scaledRound(a, m, s)
+        if (x < 0 || (x == 0.0 && 1.0 / x < 0)) sb.append('-')
+        if (prec == 0) return sb.append(k)
+        val p = POW10L[prec]
+        sb.append(k / p).append('.')
+        val frac = k % p
+        var d = p / 10
+        while (d > 0) {
+            sb.append(('0'.code + ((frac / d) % 10).toInt()).toChar())
+            d /= 10
         }
-        return sb.toString()
+        return sb
+    }
+
+    /**
+     * `a * m` (both positive and finite, `s` its double product, below 2^52) rounded to an integer half to even, from its exact
+     * value: Python's `'%.Nf'` of `a` with `m = 10^N`, as digits.
+     */
+    private fun scaledRound(a: Double, m: Double, s: Double): Long {
+        val r = Math.floor(s)
+        // s - r is exact (s < 2^52), and so is t = f - 0.5 once f >= 0.25; below that t stays clearly negative.
+        val t = (s - r) - 0.5
+        val k = r.toLong()
+        // a * m = s + err exactly, |err| <= ulp(s) / 2 <= s * 2^-53: a t beyond that already has the exact sum's sign. Nearer a
+        // half, err comes from Dekker's product (which needs no fma: ART computes Math.fma through BigDecimal), and t + err,
+        // rounded to nearest, has the sign of the exact sum, and is zero only when the sum is.
+        val u = if (Math.abs(t) > s * HALF_ULP) t else t + productError(a, m, s)
+        return if (u > 0 || (u == 0.0 && (k and 1L) == 1L)) k + 1 else k
+    }
+
+    /** The rounding error of `s = a * m` (both positive, finite, the product below 2^52): `a * m - s`, exactly. */
+    private fun productError(a: Double, m: Double, s: Double): Double {
+        val ca = SPLIT * a; val ah = ca - (ca - a); val al = a - ah
+        val cm = SPLIT * m; val mh = cm - (cm - m); val ml = m - mh
+        return ((ah * mh - s) + ah * ml + al * mh) + al * ml
+    }
+
+    /** `'%.{prec}f' % x` through the exact decimal value. */
+    private fun fixedExact(x: Double, prec: Int): String {
+        if (!x.isFinite()) return nonFinite(x)
+        val neg = x < 0 || (x == 0.0 && 1.0 / x < 0)
+        val body = BigDecimal(Math.abs(x)).setScale(prec, RoundingMode.HALF_EVEN).toPlainString()
+        return if (neg) "-$body" else body
     }
 
     private fun nonFinite(x: Double): String = if (x.isNaN()) "nan" else if (x > 0) "inf" else "-inf"
@@ -336,6 +385,15 @@ object PyFmt {
     }
 
     private fun conv(sb: StringBuilder, s: Spec, v: Any?) {
+        // the common cases, straight into the output: '%.Nf' of a float and '%d' of an int, unpadded and unsigned by flags
+        if (s.width == 0 && !s.plus && !s.space) {
+            if (s.type == 'f' && v is Double && (!s.alt || s.prec != 0)) {
+                appendFixed(sb, v, if (s.prec < 0) 6 else s.prec); return
+            }
+            if (s.type == 'd' && s.prec < 0 && (v is Int || v is Long)) {
+                sb.append((v as Number).toLong()); return
+            }
+        }
         var sign = ""
         var body: String
         var numeric = true

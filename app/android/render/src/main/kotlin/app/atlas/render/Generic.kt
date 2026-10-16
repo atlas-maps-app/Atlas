@@ -5,6 +5,7 @@
 package app.atlas.render
 
 import app.atlas.render.py.Dict
+import app.atlas.render.py.GridMap
 import app.atlas.render.py.PyFmt.pf
 import app.atlas.render.py.PyJson
 import app.atlas.render.py.PyMath
@@ -294,8 +295,8 @@ object Generic {
     /** Neither height nor building:levels mapped: the median levels of the mapped buildings within r metres (guessed), where there are three or more. */
     fun neighbourLevels(S: Map<String, Any?>, r: Double = 80.0): Int {
         class Mapped(val x: Double, val z: Double, val lv: Any?)
-        val grid = HashMap<Long, ArrayList<Mapped>>()
-        fun key(i: Long, j: Long): Long = (i shl 32) xor (j and 0xffffffffL)
+        val grid = GridMap<ArrayList<Mapped>>()
+        fun key(i: Long, j: Long): Long = GridMap.key(i, j)
         @Suppress("UNCHECKED_CAST")
         val buildings = S["buildings"] as List<Dict>
         for (b in buildings) {
@@ -578,8 +579,8 @@ object Generic {
     fun partyWalls(S: Map<String, Any?>, tol: Double = 0.8) {
         val cell = 12.0
         class Edge(val k: Int, val a: V2, val c: V2)
-        val grid = HashMap<Long, ArrayList<Edge>>()
-        fun key(i: Long, j: Long): Long = (i shl 32) xor (j and 0xffffffffL)
+        val grid = GridMap<ArrayList<Edge>>()
+        fun key(i: Long, j: Long): Long = GridMap.key(i, j)
         @Suppress("UNCHECKED_CAST")
         val bs = (S["buildings"] as List<Dict>).filter { !truthy(it["hidden"]) }
         fun dist(a: V2, c: V2): Double = PyMath.dist(doubleArrayOf(a.x, a.y), doubleArrayOf(c.x, c.y))

@@ -2,6 +2,7 @@
 // and the vector, colour and camera helpers every other module imports. Ported line by line.
 package app.atlas.render
 
+import app.atlas.render.live.WorldTape
 import app.atlas.render.py.Dict
 import app.atlas.render.py.PyFmt
 import app.atlas.render.py.PyHash
@@ -110,7 +111,8 @@ object City {
         for (i in sp.indices) {
             if (i > 0) sb.append('L')
             val p = sp[i]
-            sb.append(PyFmt.fixed(p.x, 1)).append(' ').append(PyFmt.fixed(p.y, 1))
+            PyFmt.appendFixed(sb, p.x, 1).append(' ')
+            PyFmt.appendFixed(sb, p.y, 1)
         }
         return sb.append('Z').toString()
     }
@@ -146,13 +148,20 @@ object City {
             this.cy = cy ?: (H / 2)
         }
 
+        /** The world tape this camera records its projections into (a render's, see [WorldTape]), or null: no effect on output. */
+        val tape: WorldTape? = WorldTape.attach(this)
+
         // render/city.py:33 Camera.cam
         open fun cam(p: V3): V3 {
             val d = vsub(p, C); return V3(vdot(d, r), vdot(d, u), vdot(d, f))
         }
 
         // render/city.py:36 Camera.pc
-        fun pc(c: V3): V2 = V2(cx + focal * c[0] / c[2], cy - focal * c[1] / c[2])
+        fun pc(c: V3): V2 {
+            val p = V2(cx + focal * c[0] / c[2], cy - focal * c[1] / c[2])
+            tape?.record(c.z, p.x, p.y)
+            return p
+        }
 
         // render/city.py:38 Camera.proj
         fun proj(p: V3): V2? {

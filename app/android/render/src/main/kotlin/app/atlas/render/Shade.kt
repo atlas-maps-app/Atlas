@@ -2,6 +2,7 @@
 // real building heights and street-tree crowns at a given moment. Ported line by line.
 package app.atlas.render
 
+import app.atlas.render.py.GridMap
 import app.atlas.render.py.PyJson
 import app.atlas.render.py.PyMath
 import app.atlas.render.py.truthy
@@ -65,7 +66,7 @@ object Shade {
     /** Street-tree crowns as spheres on a 20 m grid: how much sun reaches a point through them. */
     class TreeShade(trees: List<Real.Tree>) {
         val cell = 20.0
-        private val grid = HashMap<Long, MutableList<DoubleArray>>()
+        private val grid = GridMap<MutableList<DoubleArray>>()
 
         init {
             for (t in trees) {
@@ -75,7 +76,7 @@ object Shade {
             }
         }
 
-        private fun key(i: Long, j: Long): Long = (i shl 32) xor (j and 0xffffffffL)
+        private fun key(i: Long, j: Long): Long = GridMap.key(i, j)
 
         // render/shade.py:40 TreeShade.trans
         /** 1 in the open, [TREE_T] behind a crown, along the sun vector [L] from [p]. */

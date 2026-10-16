@@ -3,11 +3,18 @@ package app.atlas.render.py
 /** A Python dict with str keys: insertion-ordered, values of any Python-like type. */
 typealias Dict = MutableMap<String, Any?>
 
-/** `dict(k=v, …)`, keeping the order given. */
-fun dictOf(vararg pairs: Pair<String, Any?>): Dict = linkedMapOf(*pairs)
+/** `dict(k=v, …)`, keeping the order given: a [CompactDict] of exactly that size. */
+fun dictOf(vararg pairs: Pair<String, Any?>): Dict {
+    val d = CompactDict<String, Any?>(pairs.size)
+    for ((k, v) in pairs) d[k] = v
+    return d
+}
+
+/** `{}`: an empty dict, with room for [capacity] keys before it grows. */
+fun emptyDict(capacity: Int = 0): Dict = CompactDict(capacity)
 
 /** `dict(d)`: a shallow, ordered copy. */
-fun Map<String, Any?>.copyDict(): Dict = LinkedHashMap(this)
+fun Map<String, Any?>.copyDict(): Dict = CompactDict(this)
 
 /** Python truthiness: None, False, 0, 0.0, "" and empty containers are false. */
 fun truthy(v: Any?): Boolean = when (v) {
