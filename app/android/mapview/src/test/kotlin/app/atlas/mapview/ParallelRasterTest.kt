@@ -124,11 +124,13 @@ class ParallelRasterTest {
     @Test
     fun theNextLaunchWarmsUpTheNoiseTheLastOneKept() {
         val sunny = westerkerk(listOf("sunny")).getValue("sunny")
-        val ref = SvgCanvas.premultipliedPixels(raster(sunny, 2f, 1, null))
+        // the frames' scale on a phone of density 2.625, as the app rasterises them (the screen's density, up to the cap)
+        val scale = minOf(2.625f, MapEngine.maxRasterScale)
+        val ref = SvgCanvas.premultipliedPixels(raster(sunny, scale, 1, null))
         val d = dir()
         MapEngine.useCacheDir(d, warm = false)
         val kept = TurbulenceCache.shared!!
-        raster(sunny, 2f, SvgCanvas.DEFAULT_BANDS, kept)
+        raster(sunny, scale, SvgCanvas.DEFAULT_BANDS, kept)
         kept.close()
         val screens = TurbulenceCache(File(d, "noise")).kept().filter { it.steps.isEmpty() }
         assertTrue("$screens", screens.size >= 4)
@@ -139,7 +141,7 @@ class ParallelRasterTest {
         val warmed = TurbulenceCache.shared!!
         val s = warmed.stats()
         assertTrue("$s", s.tilesFromDisk > 1000 && s.tilesMade == 0L)
-        assertEquals(0, differing(ref, raster(sunny, 2f, SvgCanvas.DEFAULT_BANDS, warmed)))
+        assertEquals(0, differing(ref, raster(sunny, scale, SvgCanvas.DEFAULT_BANDS, warmed)))
         assertEquals("the first frame makes no noise", 0L, warmed.stats().tilesMade)
         println("warm-up from disk: ${warmed.stats()}")
     }
