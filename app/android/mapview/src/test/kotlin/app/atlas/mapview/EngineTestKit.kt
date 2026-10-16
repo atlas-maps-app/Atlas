@@ -26,10 +26,18 @@ object EngineTestKit {
 
     val fonts: SvgFonts by lazy { SvgFonts.fromDirectory(File(repo, "app/android/mapview/src/main/assets/svgfonts")) }
 
+    /** The library and work folders of the last [wire], deleted by [unwire], by the next [wire] or when the JVM exits. */
+    private var dir: File? = null
+
+    init {
+        Runtime.getRuntime().addShutdownHook(Thread { dir?.deleteRecursively() })
+    }
+
     /** Wires [MapEngine] to a fresh library holding [packs] (id to file), offline; returns the regions. */
     fun wire(vararg packs: Pair<String, File>): LiveRegions {
         PyCompat.minor = 9
-        val dir = Files.createTempDirectory("engine").toFile()
+        unwire()
+        val dir = Files.createTempDirectory("engine").toFile().also { this.dir = it }
         LiveEngine.workDir = File(dir, "work")
         LiveEngine.forget()
         val lib = PackLibrary(File(dir, "packs"), emptyList())
@@ -45,6 +53,8 @@ object EngineTestKit {
     fun unwire() {
         MapEngine.regions = null
         LiveEngine.forget()
+        dir?.deleteRecursively()
+        dir = null
     }
 
     /** SVG layers rasterised as the map does, on the map's background, at [scale]. */
