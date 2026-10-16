@@ -41,9 +41,13 @@ object MapEngine {
     @Volatile
     var options: RenderOptions = RenderOptions()
 
-    /** Largest raster scale (device pixels per dp) for exact frames; the screen's density when lower. */
+    /**
+     * Largest raster scale (device pixels per dp) for exact frames; the screen's density when lower. The frames are drawn
+     * at the screen's own pixels, as sharp as the boards' vectors: a phone 1080 px wide shows the 412 dp board at 2.62
+     * device pixels per dp, and a frame drawn at 2 and stretched there was visibly soft beside the board.
+     */
     @Volatile
-    var maxRasterScale: Float = 2f
+    var maxRasterScale: Float = 4f
 
     @Volatile
     private var fonts: SvgFonts? = null
