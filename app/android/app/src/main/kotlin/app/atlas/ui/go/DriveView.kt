@@ -53,13 +53,13 @@ import app.atlas.model.Vehicle
 import app.atlas.route.HazardKind
 import app.atlas.services.Units
 import app.atlas.ui.kit.AtlasTheme
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.RoadSign
 import app.atlas.ui.kit.SignKind
 import app.atlas.ui.kit.softShadow
 import kotlin.math.roundToInt
 
-private val Figures = TextStyle(fontFamily = InterFamily, fontFeatureSettings = "tnum")
+private val Figures = TextStyle(fontFamily = SansFamily, fontFeatureSettings = "tnum")
 
 /**
  * Drive: cars, motorbikes and campers (and, with [truck], lorries) on the night road of the Drive board. The maneuver
@@ -211,7 +211,7 @@ private fun SpeedLimit(maxspeed: String?, units: Units) {
         drawRoundRect(Color.White, cornerRadius = r)
         val inset = 3.dp.toPx()
         drawRoundRect(Color(0xFF111111), Offset(inset, inset), Size(size.width - 2 * inset, size.height - 2 * inset), androidx.compose.ui.geometry.CornerRadius(5.dp.toPx()), style = Stroke(2.dp.toPx()))
-        val small = TextStyle(fontFamily = InterFamily, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF111111))
+        val small = TextStyle(fontFamily = SansFamily, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF111111))
         for ((i, word) in listOf("SPEED", "LIMIT").withIndex()) {
             val l = measurer.measure(word, small)
             drawText(l, topLeft = Offset((size.width - l.size.width) / 2f, 9.dp.toPx() + i * 10.dp.toPx()))

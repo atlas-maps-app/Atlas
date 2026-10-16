@@ -53,7 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.atlas.R
 import app.atlas.ui.kit.Atlas
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.SerifFamily
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssShadow
@@ -98,7 +98,7 @@ internal val CourierFamily = androidx.compose.ui.text.font.FontFamily(
 
 /** The board's sans (Inter here, for Geist) at [size] and [weight]; [tabular] for figures that change. */
 internal fun mt(size: Float, weight: Int = 600, tabular: Boolean = false, spacing: Float = 0f, line: Float = 0f): TextStyle = TextStyle(
-    fontFamily = InterFamily,
+    fontFamily = SansFamily,
     fontWeight = FontWeight(weight),
     fontSize = size.sp,
     letterSpacing = spacing.sp,

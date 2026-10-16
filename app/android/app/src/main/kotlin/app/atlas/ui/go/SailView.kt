@@ -142,7 +142,7 @@ private object SailColours {
     val marina = Color(0xFFE6F1FB)
 }
 
-private val SailFigures = androidx.compose.ui.text.TextStyle(fontFamily = app.atlas.ui.kit.InterFamily, fontFeatureSettings = "tnum")
+private val SailFigures = androidx.compose.ui.text.TextStyle(fontFamily = app.atlas.ui.kit.SansFamily, fontFeatureSettings = "tnum")
 
 @Composable
 private fun Pill(description: String, height: androidx.compose.ui.unit.Dp, content: @Composable () -> Unit) {

@@ -64,7 +64,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import kotlin.math.hypot
 
 /* The Cafe board's chalk and slate (`canvas/project/Cafe.dc.html`). */
@@ -115,7 +115,7 @@ fun CafeScreen(nav: Navigator) {
                             ChalkRing(EatGlyphs.pad, stringResource(R.string.eat_pad), 19) { nav.go(Dest.Eat("order")) }
                             if (pad.isNotEmpty()) {
                                 Box(Modifier.align(Alignment.TopEnd).size(18.dp).clip(CircleShape).background(Color(0xFFE8622C)), contentAlignment = Alignment.Center) {
-                                    Text(pad.size.toString(), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White))
+                                    Text(pad.size.toString(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White))
                                 }
                             }
                         }

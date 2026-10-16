@@ -12,7 +12,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import app.atlas.R
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.SerifFamily
 
 /**
@@ -57,20 +57,20 @@ object EatType {
     val menuItalic = menu.copy(fontStyle = FontStyle.Italic)
 
     /** Letter-spaced small caps for the menu's chapters and tabs. */
-    val smallCaps = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 0.18.em)
+    val smallCaps = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 0.18.em)
 
     val chalk = TextStyle(fontFamily = hand, fontSize = 22.sp, lineHeight = 26.sp, color = Color(0xFFF3F0E6))
     val ink = TextStyle(fontFamily = hand, fontWeight = FontWeight.Bold, fontSize = 26.sp, lineHeight = 30.sp, color = Color(0xFF1F3A93))
 
     /** Art Deco caps: a light, wide-set grotesque. */
-    val deco = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Light, letterSpacing = 0.06.em)
+    val deco = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Light, letterSpacing = 0.06.em)
     val decoSerif = TextStyle(fontFamily = SerifFamily, letterSpacing = 0.08.em)
 
     val typewriter = TextStyle(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium, letterSpacing = 0.04.em)
 
     /** Neon: [colour] text with a glow of itself. */
     fun neon(colour: Color, size: Float, glow: Float = 18f) = TextStyle(
-        fontFamily = InterFamily,
+        fontFamily = SansFamily,
         fontWeight = FontWeight.Medium,
         fontSize = size.sp,
         color = lerp(colour, Color.White, 0.4f),

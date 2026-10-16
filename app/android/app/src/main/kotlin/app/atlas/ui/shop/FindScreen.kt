@@ -64,7 +64,7 @@ import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.PillButton
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
@@ -167,7 +167,7 @@ private fun TopBar(text: String, onText: (String) -> Unit, openNow: Boolean, onO
             horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
         ) {
             BoardArt(ShopBoards.SPARKLE, tint = Color(0xFF7B4DFF))
-            val style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = Ink)
+            val style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = Ink)
             Box(Modifier.weight(1f)) {
                 BasicTextField(
                     text, onText, singleLine = true, textStyle = style,
@@ -272,7 +272,7 @@ private fun BigPillSmall(text: String, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
         Symbol("mode.walk", tint = Color.White, size = 18.dp)
-        Text(text, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, fontFeatureSettings = "tnum"), color = Color.White)
+        Text(text, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, fontFeatureSettings = "tnum"), color = Color.White)
     }
 }
 
@@ -285,7 +285,7 @@ private fun Tab(s: FindSeller, paper: Color, modifier: Modifier, small: Boolean,
         horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(s.label, style = TextStyle(fontFamily = ShopType.typewriter, fontSize = if (small) 13.sp else 14.sp), color = if (small) Color(0xFF5A4A35) else Ink, maxLines = 1)
-        Text(dots(s.likelihood, tab = small), style = TextStyle(fontFamily = InterFamily, fontSize = 11.sp))
+        Text(dots(s.likelihood, tab = small), style = TextStyle(fontFamily = SansFamily, fontSize = 11.sp))
     }
 }
 

@@ -74,7 +74,7 @@ import androidx.compose.ui.unit.sp
 import app.atlas.R
 import java.time.LocalDateTime
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 
 /* The Ramen board's paper, inks and metals (`canvas/project/Ramen.dc.html`). */
 private val WASHI = Color(0xFFF3EEE3)
@@ -132,7 +132,7 @@ fun WorldScreen(world: CuisineWorld, plank: Int, nav: Navigator) {
             if (ctx.area.waiting || !worked.fresh) Looking(META)
             if (ctx.area.error != null && ctx.area.places.isEmpty()) EatProblem(ctx.area)
             sourceLine(ctx.area)?.let {
-                Text(it, Modifier.fillMaxWidth().padding(16.dp), style = TextStyle(fontFamily = InterFamily, fontSize = 11.sp), color = Color(0xFF8A847A), textAlign = TextAlign.Center)
+                Text(it, Modifier.fillMaxWidth().padding(16.dp), style = TextStyle(fontFamily = SansFamily, fontSize = 11.sp), color = Color(0xFF8A847A), textAlign = TextAlign.Center)
             }
             Spacer(Modifier.windowInsetsPadding(WindowInsets.navigationBars).height(if (picked != null) 150.dp else 24.dp))
         }
@@ -214,7 +214,7 @@ private fun Noren(world: CuisineWorld, plank: Plank, count: Int?) {
             )
             Text(
                 plank.latin + (count?.let { " · $it" } ?: ""),
-                style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, letterSpacing = 0.3.em, color = Color(world.reading)),
+                style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, letterSpacing = 0.3.em, color = Color(world.reading)),
             )
         }
     }
@@ -254,7 +254,7 @@ private fun PlankTab(p: Plank, count: Int, on: Boolean, enabled: Boolean, onClic
         verticalArrangement = Arrangement.spacedBy(1.dp, Alignment.CenterVertically),
     ) {
         Text(p.native, style = TextStyle(fontFamily = SERIF_CJK, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, lineHeight = 17.sp, color = ink), maxLines = 1)
-        Text("${p.latin} $count", style = TextStyle(fontFamily = InterFamily, fontWeight = if (on) FontWeight.Bold else FontWeight.SemiBold, fontSize = 10.sp, letterSpacing = 0.08.em, color = ink), maxLines = 1)
+        Text("${p.latin} $count", style = TextStyle(fontFamily = SansFamily, fontWeight = if (on) FontWeight.Bold else FontWeight.SemiBold, fontSize = 10.sp, letterSpacing = 0.08.em, color = ink), maxLines = 1)
     }
 }
 
@@ -313,7 +313,7 @@ private fun TicketMachine(m: Machine, ctx: EatContext, picked: String?, modifier
             Text(
                 stringResource(if (m.plankCounts[m.plank.id] == 0) R.string.eat_world_none_here else R.string.eat_world_none),
                 Modifier.fillMaxWidth().padding(vertical = 26.dp),
-                style = TextStyle(fontFamily = InterFamily, fontSize = 15.sp, color = Color(0xFF4A4C52)),
+                style = TextStyle(fontFamily = SansFamily, fontSize = 15.sp, color = Color(0xFF4A4C52)),
                 textAlign = TextAlign.Center,
             )
         }
@@ -375,9 +375,9 @@ private fun MachineKey(b: MachineButton, world: CuisineWorld, at: LocalDateTime,
         contentAlignment = Alignment.CenterStart,
     ) {
         Column(Modifier.padding(end = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(b.place.name, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(b.place.name, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (closed) 6.dp else 8.dp)) {
-                val small = TextStyle(fontFamily = InterFamily, fontSize = 12.sp, color = if (closed) ink else META)
+                val small = TextStyle(fontFamily = SansFamily, fontSize = 12.sp, color = if (closed) ink else META)
                 if (closed) {
                     Text(world.preparing, style = small.copy(fontFamily = SERIF_CJK, fontWeight = FontWeight.ExtraBold))
                     b.opens?.let { Text(dayTime(it, at, lang, HM_PADDED), style = small) }
@@ -437,11 +437,11 @@ private fun PaperTicket(t: MealTicket, world: CuisineWorld, at: LocalDateTime, l
         Column(Modifier.weight(1f).fillMaxHeight().clickable(onClick = onPlace).padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(world.ticket, style = TextStyle(fontFamily = SERIF_CJK, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = INDIGO))
-                Text("No. ${t.number}", style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 0.16.em, color = INDIGO))
+                Text("No. ${t.number}", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 0.16.em, color = INDIGO))
             }
-            Text(t.button.place.name, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = SUMI), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(t.button.place.name, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = SUMI), maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                val small = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, color = INDIGO)
+                val small = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, color = INDIGO)
                 val state = when {
                     t.button.place.alwaysOpen -> "24/7"
                     t.button.closes != null -> "→ " + t.button.closes.format(HM_PADDED)
@@ -477,7 +477,7 @@ private fun PaperTicket(t: MealTicket, world: CuisineWorld, at: LocalDateTime, l
             verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
         ) {
             BoardIcon(EatGlyphs.turn, KEY_BLUE, 26.dp)
-            Text("${t.walkMinutes}′", style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = KEY_BLUE))
+            Text("${t.walkMinutes}′", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = KEY_BLUE))
         }
     }
 }

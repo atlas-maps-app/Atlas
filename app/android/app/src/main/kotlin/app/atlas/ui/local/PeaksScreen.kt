@@ -59,7 +59,7 @@ import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.ui.go.CompassHeadings
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.SerifFamily
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.appClock
@@ -166,7 +166,7 @@ private fun layout(view: List<Pair<Peak, Double>>, heading: Double, pitch: Doubl
 @Composable
 private fun Tape(heading: Double) {
     val measurer = rememberTextMeasurer()
-    val text = remember(measurer) { BoardText(measurer, InterFamily) }
+    val text = remember(measurer) { BoardText(measurer, SansFamily) }
     val label = stringResource(R.string.peaks_heading_label, compassName(heading), heading.roundToInt() % 360)
     val names = mapOf(0 to stringResource(R.string.cosmos_compass_n), 45 to stringResource(R.string.cosmos_compass_ne), 90 to stringResource(R.string.cosmos_compass_e), 135 to stringResource(R.string.cosmos_compass_se), 180 to stringResource(R.string.cosmos_compass_s), 225 to stringResource(R.string.cosmos_compass_sw), 270 to stringResource(R.string.cosmos_compass_w), 315 to stringResource(R.string.cosmos_compass_nw))
     Canvas(Modifier.fillMaxWidth().height(40.dp).semantics { contentDescription = label }) {

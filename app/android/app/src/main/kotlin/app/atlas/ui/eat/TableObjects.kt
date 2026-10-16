@@ -45,7 +45,7 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import kotlin.math.hypot
 
 /*
@@ -115,7 +115,7 @@ internal fun LeatherMenu(count: EatArea.Count?, label: String, u: Float) {
                         if (c.open) drawCircle(Color(0xFF7EE0A4)) else drawCircle(Color(0xFF7EE0A4), style = Stroke(1.2f * density))
                     }
                 }
-                Text(count?.value?.toString() ?: "…", style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = (13 * u).sp, color = Color(0xFFE8CF8E)))
+                Text(count?.value?.toString() ?: "…", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = (13 * u).sp, color = Color(0xFFE8CF8E)))
             }
         }
     }
@@ -253,7 +253,7 @@ internal fun DecoCard(count: EatArea.Count?, label: String, u: Float) {
                 ),
             )
             BoardIcon(EatGlyphs.martini, Color(0xFFC9A45C), (30 * u).dp)
-            Text(count?.value?.toString() ?: "…", style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = (13 * u).sp, color = Color(0xFFE8CF8E)))
+            Text(count?.value?.toString() ?: "…", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = (13 * u).sp, color = Color(0xFFE8CF8E)))
         }
     }
 }

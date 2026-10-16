@@ -37,7 +37,7 @@ import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.appClock
 import app.atlas.ui.kit.rememberHere
 import java.time.LocalDate
@@ -68,7 +68,7 @@ fun YearScreen(args: Dest.Year, nav: Navigator) {
     val now = remember(region, today, here) { YearCalendar.now(region, today, here.lat < 0) }
     val picks = remember(now) { YearCalendar.highlights(now) }
     val measurer = rememberTextMeasurer()
-    val text = remember(measurer) { BoardText(measurer, InterFamily) }
+    val text = remember(measurer) { BoardText(measurer, SansFamily) }
     val letters = remember { (1..12).map { Month.of(it).getDisplayName(TextStyle.NARROW, Locale.getDefault()).uppercase() } }
     val datePos = today.monthValue - 1 + (today.dayOfMonth - 0.5) / today.lengthOfMonth()
     val third = when (YearCalendar.third(today)) { 0 -> stringResource(R.string.year_early); 1 -> stringResource(R.string.year_mid); else -> stringResource(R.string.year_late) }

@@ -58,7 +58,7 @@ import app.atlas.geo.Geo
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.SerifFamily
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.appClock
@@ -117,7 +117,7 @@ fun ParklandScreen(args: Dest.Parkland, nav: Navigator) {
     var kind by remember(park) { mutableStateOf(park?.let { p -> ParkKind.entries.firstOrNull { k -> p.pois.any { it.kind == k } } }) }
     var picked by remember(park) { mutableStateOf<ParkPoi?>(null) }
     val measurer = rememberTextMeasurer()
-    val text = remember(measurer) { BoardText(measurer, InterFamily) }
+    val text = remember(measurer) { BoardText(measurer, SansFamily) }
     val youLabel = stringResource(R.string.park_you)
 
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color(0xFFBFD6E6), 0.55f to Color(0xFFD8E6CC), 1f to Color(0xFFBCD3A8)))) {

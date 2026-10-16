@@ -80,7 +80,7 @@ import app.atlas.nav.Navigator
 import app.atlas.places.Symbols
 import app.atlas.providers.Rating
 import app.atlas.ui.kit.Atlas
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.SerifFamily
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.SymbolButton
@@ -211,7 +211,7 @@ fun EatMapScreen(nav: Navigator) {
                     TabBall(EatGlyphs.heart, stringResource(R.string.eat_tab_loved), on = tab == EatTab.LOVED, tint = Color(0xFF7B4DFF)) { tab = EatTab.LOVED }
                 }
                 Spacer(Modifier.weight(1f))
-                Text(places.size.toString(), style = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, color = MUTED))
+                Text(places.size.toString(), style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, color = MUTED))
             }
             if (answer == null && view != null && !view.ranked) {
                 Text(
@@ -253,7 +253,7 @@ private fun SearchPill(text: String, hint: String, onText: (String) -> Unit, onA
     ) {
         Box(Modifier.size(30.dp).clip(CircleShape).background(Color(0xFFFCE5D8)), contentAlignment = Alignment.Center) { BoardIcon(EatGlyphs.cutleryChip, Color(0xFFB8461A), 17.dp) }
         Box(Modifier.weight(1f)) {
-            val style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Medium, fontSize = 16.sp, color = INK)
+            val style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Medium, fontSize = 16.sp, color = INK)
             if (text.isEmpty()) Text(hint, style = style)
             BasicTextField(
                 value = text, onValueChange = onText, singleLine = true,
@@ -298,7 +298,7 @@ private fun FilterBall(f: EatFilter, description: String, on: Boolean, enabled: 
                     withStyle(SpanStyle(color = (if (on) Color.White else INK).copy(alpha = alpha))) { append("$$") }
                     withStyle(SpanStyle(color = Color(0xFF9AA0AC).copy(alpha = alpha))) { append("$") }
                 },
-                style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp, letterSpacing = 0.02.em),
+                style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp, letterSpacing = 0.02.em),
             )
             else -> BoardIcon(filterGlyph(f), tint, 19.dp)
         }
@@ -325,7 +325,7 @@ private fun TabPill(text: String, glyph: BoardGlyph, on: Boolean, tint: Color, o
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         BoardIcon(glyph, tint, 16.dp)
-        Text(text, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = if (on) Color.White else INK), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(text, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = if (on) Color.White else INK), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -358,25 +358,25 @@ private fun EatCard(p: EatPlace, ctx: EatContext, sources: List<Rating>?, onOpen
                 Text(p.name, Modifier.weight(1f), style = TextStyle(fontFamily = SerifFamily, fontSize = 25.sp, lineHeight = 26.sp, color = INK), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     BoardIcon(EatGlyphs.walkCard, MUTED, 13.dp)
-                    Text("${p.walkMinutes}′", style = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, color = MUTED))
+                    Text("${p.walkMinutes}′", style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, color = MUTED))
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (rated.isNotEmpty()) {
                     val score = rated.mapNotNull { it.stars }.average()
-                    Text(starsText(score), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 26.sp, lineHeight = 26.sp, color = INK))
+                    Text(starsText(score), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 26.sp, lineHeight = 26.sp, color = INK))
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { for (r in rated.take(3)) ProviderChip(r) }
                         val count = rated.sumOf { it.count }
                         Text(
                             stringResource(R.string.eat_card_sources, NumberFormat.getIntegerInstance(Locale.forLanguageTag(ctx.lang)).format(count), rated.size),
-                            style = TextStyle(fontFamily = InterFamily, fontSize = 11.sp, color = MUTED),
+                            style = TextStyle(fontFamily = SansFamily, fontSize = 11.sp, color = MUTED),
                         )
                     }
                 } else {
                     Column(Modifier.weight(1f)) {
-                        Text(stringResource(R.string.eat_no_ratings_yet), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = MUTED))
-                        Text(stringResource(R.string.eat_card_write_one), Modifier.clickable(onClick = onOpen), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color(0xFF2E5BFF)))
+                        Text(stringResource(R.string.eat_no_ratings_yet), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = MUTED))
+                        Text(stringResource(R.string.eat_card_write_one), Modifier.clickable(onClick = onOpen), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color(0xFF2E5BFF)))
                     }
                 }
                 EatMapModel.sparkline(single?.trend)?.let { Sparkline(it, Modifier.size(width = 64.dp, height = 28.dp)) }
@@ -409,7 +409,7 @@ private fun ProviderChip(r: Rating) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        val style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, color = INK)
+        val style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, color = INK)
         Text(r.provider.take(1).uppercase(), style = style.copy(fontWeight = FontWeight.Bold, color = colour))
         Text(r.stars?.let { starsText(it) } ?: "–", style = style)
     }
@@ -424,7 +424,7 @@ private fun PriceLevel(level: Int?) {
             withStyle(SpanStyle(color = INK)) { append("$".repeat(level)) }
             withStyle(SpanStyle(color = Color(0xFFB5B9C2))) { append("$".repeat(4 - level)) }
         },
-        style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 0.02.em),
+        style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 0.02.em),
     )
 }
 
@@ -471,7 +471,7 @@ private fun OpenUntil(p: EatPlace, ctx: EatContext) {
             val a = Math.toRadians((now.hour * 60 + now.minute) / 1440.0 * 360.0 - 90.0)
             drawLine(INK, c, c + Offset((kotlin.math.cos(a) * 7.5 * k).toFloat(), (kotlin.math.sin(a) * 7.5 * k).toFloat()), 1.6f * k, StrokeCap.Round)
         }
-        Text(text.removePrefix("→ "), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = ink))
+        Text(text.removePrefix("→ "), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = ink))
     }
 }
 

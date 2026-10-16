@@ -150,7 +150,7 @@ internal object TruckColours {
     val green = Color(0xFF7CFF6B)
 }
 
-internal val TruckType = TextStyle(fontFamily = app.atlas.ui.kit.InterFamily)
+internal val TruckType = TextStyle(fontFamily = app.atlas.ui.kit.SansFamily)
 
 /** The board symbol for a vehicle of the form's row. */
 private fun vehicleSymbol(m: Mode): String = when (m) {

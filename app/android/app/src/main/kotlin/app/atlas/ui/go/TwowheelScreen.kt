@@ -45,7 +45,7 @@ import app.atlas.model.Mode
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.softShadow
 import app.atlas.ui.kit.walkMinutes
@@ -64,7 +64,7 @@ private object TwoColours {
     val note = Color(0xFF7A8E80)
 }
 
-private val TwoType = androidx.compose.ui.text.TextStyle(fontFamily = InterFamily)
+private val TwoType = androidx.compose.ui.text.TextStyle(fontFamily = SansFamily)
 
 /** The kinds in the board's grid, two rows of four. */
 private val GRID_KINDS = listOf(ParkKind.STANDS, ParkKind.COVERED, ParkKind.LOCKERS, ParkKind.GARAGE, ParkKind.CARGO, ParkKind.MOTORBIKE, ParkKind.SCOOTER, ParkKind.CHARGE)

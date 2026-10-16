@@ -1,0 +1,144 @@
+package app.atlas.ui.kit
+
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Shader
+import android.os.Build
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.addOutline
+import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.layer.GraphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
+import kotlin.math.ceil
+
+/**
+ * What lies behind the boards' frosted glass: the content a screen marks with [backdropSource] (the Map home's map and
+ * its wash), recorded every frame into [layer], which [frosted] surfaces blur behind themselves. One per app, provided
+ * by the root; [active] while a source is on screen.
+ */
+@Stable
+class Backdrop internal constructor(internal val layer: GraphicsLayer) {
+    @Volatile
+    internal var origin = Offset.Zero
+
+    @Volatile
+    internal var active = false
+}
+
+val LocalBackdrop = staticCompositionLocalOf<Backdrop?> { null }
+
+@Composable
+fun rememberBackdrop(): Backdrop {
+    val layer = rememberGraphicsLayer()
+    return remember(layer) { Backdrop(layer) }
+}
+
+/** Marks this content as what the frosted surfaces above it blur: it is recorded into the backdrop and drawn from it. */
+fun Modifier.backdropSource(backdrop: Backdrop?): Modifier = if (backdrop == null) this else composed {
+    DisposableEffect(backdrop) {
+        backdrop.active = true
+        onDispose { backdrop.active = false }
+    }
+    this
+        .onGloballyPositioned { backdrop.origin = it.positionInRoot() }
+        .drawWithContent {
+            backdrop.layer.record { this@drawWithContent.drawContent() }
+            drawLayer(backdrop.layer)
+        }
+}
+
+/**
+ * The boards' frosted glass, CSS `background: [tint]; backdrop-filter: blur([blur]) saturate([saturate])`: what lies
+ * behind (the [LocalBackdrop]) blurred by a Gaussian of σ = [blur] and saturated, inside [shape], under [tint]. Without
+ * a backdrop on screen, or before Android 12 (no RenderEffect), the tint alone.
+ */
+fun Modifier.frosted(shape: Shape, tint: Color, blur: Dp, saturate: Float = 1f): Modifier = composed {
+    val backdrop = LocalBackdrop.current
+    if (backdrop == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return@composed drawWithCache {
+        val path = Path().apply { addOutline(shape.createOutline(size, layoutDirection, this@drawWithCache)) }
+        onDrawBehind { drawPath(path, tint) }
+    }
+    val glass = rememberGraphicsLayer()
+    val at = remember { FloatArray(2) }
+    this
+        .onGloballyPositioned { val p = it.positionInRoot(); at[0] = p.x; at[1] = p.y }
+        .drawWithCache {
+            val path = Path().apply { addOutline(shape.createOutline(size, layoutDirection, this@drawWithCache)) }
+            val sigma = blur.toPx()
+            // three σ of what lies around the surface feed its blur, as the browser's blur reads past the edges
+            val margin = ceil(sigma * 3f)
+            // Android's blur radius r is a Gaussian of σ = 0.57735 r + 0.5 px (hwui's convertRadiusToSigma)
+            val radius = ((sigma - 0.5f) / 0.57735f).coerceAtLeast(0.01f)
+            val blurEffect = android.graphics.RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP)
+            glass.renderEffect = (
+                if (saturate == 1f) blurEffect
+                else android.graphics.RenderEffect.createChainEffect(
+                    android.graphics.RenderEffect.createColorFilterEffect(ColorMatrixColorFilter(saturation(saturate))),
+                    blurEffect,
+                )
+                ).asComposeRenderEffect()
+            val glassSize = IntSize((size.width + 2 * margin).toInt(), (size.height + 2 * margin).toInt())
+            onDrawBehind {
+                if (backdrop.active) {
+                    val dx = backdrop.origin.x - at[0] + margin
+                    val dy = backdrop.origin.y - at[1] + margin
+                    glass.record(glassSize) { translate(dx, dy) { drawLayer(backdrop.layer) } }
+                    clipPath(path) { translate(-margin, -margin) { drawLayer(glass) } }
+                }
+                drawPath(path, tint)
+            }
+        }
+}
+
+/** CSS `saturate(s)` as a colour matrix (Filter Effects 1, `feColorMatrix type="saturate"`), in sRGB as browsers apply it. */
+private fun saturation(s: Float): FloatArray = floatArrayOf(
+    0.213f + 0.787f * s, 0.715f - 0.715f * s, 0.072f - 0.072f * s, 0f, 0f,
+    0.213f - 0.213f * s, 0.715f + 0.285f * s, 0.072f - 0.072f * s, 0f, 0f,
+    0.213f - 0.213f * s, 0.715f - 0.715f * s, 0.072f + 0.928f * s, 0f, 0f,
+    0f, 0f, 0f, 1f, 0f,
+)
+
+/** The boards' width in CSS pixels: every board is drawn on a 412 × 915 phone. */
+const val BOARD_WIDTH = 412f
+
+/**
+ * Lays [content] out in board pixels: on a phone held upright, one dp is the screen's width over [BOARD_WIDTH], so every
+ * screen is its board, in proportion, at the phone's own resolution (the boards' 412 × 915 is the 20:9 of most phones).
+ * Tablets and landscape keep the system's density.
+ */
+@Composable
+fun BoardScale(content: @Composable () -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val system = LocalDensity.current
+        val upright = constraints.maxHeight > constraints.maxWidth
+        val widthDp = constraints.maxWidth / system.density
+        if (!upright || widthDp < 300f || widthDp > 520f || !constraints.hasBoundedWidth) {
+            content()
+        } else {
+            CompositionLocalProvider(LocalDensity provides Density(constraints.maxWidth / BOARD_WIDTH, system.fontScale), content = content)
+        }
+    }
+}

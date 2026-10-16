@@ -258,7 +258,7 @@ private fun EndRow(text: String, modifier: Modifier = Modifier, lead: Art? = nul
     }
 }
 
-private val RouteType = androidx.compose.ui.text.TextStyle(fontFamily = app.atlas.ui.kit.InterFamily)
+private val RouteType = androidx.compose.ui.text.TextStyle(fontFamily = app.atlas.ui.kit.SansFamily)
 
 @Composable
 private fun TinyButton(symbol: String, description: String, size: Int = 32, onClick: () -> Unit) {

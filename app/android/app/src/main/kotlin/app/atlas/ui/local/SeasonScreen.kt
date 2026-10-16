@@ -55,7 +55,7 @@ import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.places.OpeningHours
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.WalkTime
 import app.atlas.ui.kit.appClock
@@ -145,7 +145,7 @@ fun SeasonScreen(args: Dest.Season, nav: Navigator) {
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Symbol(if (alertAt != null) "ui.check" else "ui.bell", tint = Color.White, size = 20.dp)
-                    Text(label, color = Color.White, fontFamily = InterFamily, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(end = 8.dp))
+                    Text(label, color = Color.White, fontFamily = SansFamily, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(end = 8.dp))
                 }
             }
         },
@@ -159,7 +159,7 @@ fun SeasonScreen(args: Dest.Season, nav: Navigator) {
         val monthShort = Month.of(season.month).getDisplayName(TextStyle.SHORT, Locale.getDefault()).uppercase().trimEnd('.')
         val week = today.get(IsoFields.WEEK_OF_WEEK_BASED_YEAR)
         val measurer = rememberTextMeasurer()
-        val text = remember(measurer) { BoardText(measurer, InterFamily) }
+        val text = remember(measurer) { BoardText(measurer, SansFamily) }
         val art = hub.art
         val weekLabel = stringResource(R.string.season_week, week)
         val summary = season.wheel.map { foodName(it.id) }.joinToString()

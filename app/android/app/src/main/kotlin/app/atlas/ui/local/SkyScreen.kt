@@ -47,7 +47,7 @@ import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.providers.Forecast
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.appClock
 import app.atlas.ui.kit.rememberHere
@@ -230,7 +230,7 @@ private fun SkyRow(symbol: String, tile: Color, title: String, line: String, tra
 @Composable
 private fun NowcastCard(quarters: List<Double>, haveForecast: Boolean) {
     val measurer = rememberTextMeasurer()
-    val text = remember(measurer) { BoardText(measurer, InterFamily) }
+    val text = remember(measurer) { BoardText(measurer, SansFamily) }
     val labels = listOf(stringResource(R.string.sky_now), "+30", "+60", "+90", "+120")
     val desc = stringResource(R.string.sky_nowcast_desc)
     Canvas(Modifier.fillMaxWidth().height(260.dp).clip(RoundedCornerShape(22.dp)).semantics { contentDescription = desc }) {

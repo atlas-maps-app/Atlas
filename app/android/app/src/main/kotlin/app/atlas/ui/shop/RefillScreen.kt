@@ -62,7 +62,7 @@ import app.atlas.geo.Geo
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.SerifFamily
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
@@ -134,7 +134,7 @@ internal fun RefillScreen(nav: Navigator, start: RefillKind? = null) {
                     Text(
                         stringResource(R.string.shop_refill_sub, view.total),
                         Modifier.background(Wall).padding(horizontal = 8.dp),
-                        style = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Soft,
+                        style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Soft,
                     )
                 }
             }
@@ -152,7 +152,7 @@ internal fun RefillScreen(nav: Navigator, start: RefillKind? = null) {
             Spacer(Modifier.height(20.dp))
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 when {
-                    area.waiting -> Text(stringResource(R.string.shop_loading), style = TextStyle(fontFamily = InterFamily, fontSize = 14.sp), color = Soft)
+                    area.waiting -> Text(stringResource(R.string.shop_loading), style = TextStyle(fontFamily = SansFamily, fontSize = 14.sp), color = Soft)
                     area.places.isEmpty() && area.error != null -> StateMessage("ui-cloud-off", stringResource(R.string.shop_problem), text = area.error, tint = Color(0xFFD23C3C))
                     view.rows.isEmpty() -> StateMessage(
                         "refill.jar",
@@ -166,7 +166,7 @@ internal fun RefillScreen(nav: Navigator, start: RefillKind? = null) {
             Text(
                 stringResource(R.string.shop_refill_source),
                 Modifier.padding(horizontal = 24.dp, vertical = 14.dp).fillMaxWidth().background(Wall),
-                style = TextStyle(fontFamily = InterFamily, fontSize = 10.sp, lineHeight = 13.5.sp), color = Color(0xFF5A6A6E), textAlign = TextAlign.Center,
+                style = TextStyle(fontFamily = SansFamily, fontSize = 10.sp, lineHeight = 13.5.sp), color = Color(0xFF5A6A6E), textAlign = TextAlign.Center,
             )
         }
     }
@@ -194,7 +194,7 @@ private fun Jars(view: RefillView, selected: String, onPick: (RefillKind) -> Uni
                 ) {
                     Text(
                         "$label $count",
-                        style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, fontFeatureSettings = "tnum"),
+                        style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, fontFeatureSettings = "tnum"),
                         color = if (on) Color.White else Ink, maxLines = 1,
                     )
                 }
@@ -209,7 +209,7 @@ private fun WaterCard(water: ShopPlace?, heading: Float?, here: app.atlas.geo.La
         if (!area.waiting) Text(
             stringResource(R.string.shop_refill_no_water),
             Modifier.padding(horizontal = 16.dp).fillMaxWidth().background(Color.White, RoundedCornerShape(24.dp)).padding(16.dp),
-            style = TextStyle(fontFamily = InterFamily, fontSize = 14.sp), color = Soft,
+            style = TextStyle(fontFamily = SansFamily, fontSize = 14.sp), color = Soft,
         )
         return
     }
@@ -233,8 +233,8 @@ private fun WaterCard(water: ShopPlace?, heading: Float?, here: app.atlas.geo.La
     ) {
         Box(Modifier.size(54.dp).background(Color.White.copy(alpha = 0.14f), CircleShape), contentAlignment = Alignment.Center) { Symbol("need.water.2", tint = Color.White, size = 28.dp) }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(dist, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 30.sp, lineHeight = 30.sp, fontFeatureSettings = "tnum"), color = Color.White)
-            Text(sub, style = TextStyle(fontFamily = InterFamily, fontSize = 13.sp), color = Color(0xFFCFE8F1))
+            Text(dist, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 30.sp, lineHeight = 30.sp, fontFeatureSettings = "tnum"), color = Color.White)
+            Text(sub, style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp), color = Color(0xFFCFE8F1))
         }
         // The arrow points at the water relative to where the phone faces: straight up when it is dead ahead.
         Symbol("ui.arrow-up.2", Modifier.rotate(bearing - (heading ?: 0f)), tint = Color.White, size = 44.dp)
@@ -263,7 +263,7 @@ private fun Filters(view: RefillView, on: Set<RefillFilter>, onToggle: (RefillFi
                 horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
             ) {
                 Symbol(symbol, tint = if (selected) Color.White else if (dim) Soft.copy(alpha = 0.4f) else Ink, size = if (wide) 16.dp else 17.dp)
-                if (wide) Text(text, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp), color = Color.White)
+                if (wide) Text(text, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp), color = Color.White)
             }
         }
     }
@@ -294,15 +294,15 @@ private fun RefillCard(r: RefillRow, area: ShopArea, now: java.time.LocalDateTim
             ) { Box(Modifier.fillMaxWidth().fillMaxHeight(r.fill.coerceIn(0f, 1f)).background(colour)) }
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(r.place.name, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 17.sp), color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(r.place.name, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 17.sp), color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                val st = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, fontFeatureSettings = "tnum")
+                val st = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum")
                 openLine(r.place, area, now)?.let { (t, _) -> Text(t, style = st, color = Soft, maxLines = 1) }
                 listOfNotNull(r.tagline, stringResource(R.string.shop_refill_f_organic).lowercase().takeIf { r.organic }).joinToString(" · ").ifEmpty { null }
                     ?.let { Text(it, Modifier.weight(1f, fill = false), style = st, color = Soft, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
         }
-        Text("${r.place.walkMinutes}′", style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, fontFeatureSettings = "tnum"), color = Ink)
+        Text("${r.place.walkMinutes}′", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, fontFeatureSettings = "tnum"), color = Ink)
     }
 }
 
@@ -313,7 +313,7 @@ private fun Containers(items: List<Container>, onAdd: () -> Unit, onRemove: (Con
         Text(
             stringResource(R.string.shop_refill_containers),
             Modifier.background(Wall).padding(end = 6.dp),
-            style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, letterSpacing = 1.4.sp), color = Soft,
+            style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, letterSpacing = 1.4.sp), color = Soft,
         )
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             for (c in items) {
@@ -327,8 +327,8 @@ private fun Containers(items: List<Container>, onAdd: () -> Unit, onRemove: (Con
                     horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box(Modifier.size(22.dp).background(Color(0xFFE3F0F2), RoundedCornerShape(6.dp)), contentAlignment = Alignment.Center) { Symbol("fact.container", tint = Color(0xFF1B6B7A), size = 14.dp) }
-                    Text(c.name, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp), color = Ink, maxLines = 1)
-                    Text("${c.tareGrams} g", style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Soft, maxLines = 1)
+                    Text(c.name, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp), color = Ink, maxLines = 1)
+                    Text("${c.tareGrams} g", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Soft, maxLines = 1)
                 }
             }
             Row(
@@ -336,10 +336,10 @@ private fun Containers(items: List<Container>, onAdd: () -> Unit, onRemove: (Con
                 horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
             ) {
                 Symbol("ui.plus", tint = Soft, size = 14.dp)
-                Text(stringResource(R.string.shop_refill_add), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp), color = Soft, maxLines = 1)
+                Text(stringResource(R.string.shop_refill_add), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp), color = Soft, maxLines = 1)
             }
         }
-        if (items.isEmpty()) Text(stringResource(R.string.shop_refill_add_hint), style = TextStyle(fontFamily = InterFamily, fontSize = 12.sp), color = Soft)
+        if (items.isEmpty()) Text(stringResource(R.string.shop_refill_add_hint), style = TextStyle(fontFamily = SansFamily, fontSize = 12.sp), color = Soft)
     }
 }
 

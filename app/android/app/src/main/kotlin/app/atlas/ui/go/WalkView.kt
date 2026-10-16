@@ -45,7 +45,7 @@ import app.atlas.guide.Side
 import app.atlas.mapview.Theme
 import app.atlas.model.ManeuverType
 import app.atlas.ui.kit.AtlasTheme
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.softShadow
 
 /** The WalkLiving board's colours (canvas/project/WalkLiving.dc.html). */
@@ -60,7 +60,7 @@ private object WalkColours {
     val note = Color(0xFF676D7C)
 }
 
-private val Figures = TextStyle(fontFamily = InterFamily, fontFeatureSettings = "tnum")
+private val Figures = TextStyle(fontFamily = SansFamily, fontFeatureSettings = "tnum")
 
 /**
  * Walk: the arrow and the distance over the living map, as on the WalkLiving board. A dark banner with the turn in a

@@ -49,7 +49,7 @@ import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.SerifFamily
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
@@ -116,7 +116,7 @@ fun HelpScreen(nav: Navigator) {
                     horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Symbol("ui.lock.2", tint = Soft, size = 16.dp)
-                    Text(stringResource(R.string.shop_help_not_saved), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.sp), color = Soft)
+                    Text(stringResource(R.string.shop_help_not_saved), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.sp), color = Soft)
                 }
             }
             BoardArt(ShopBoards.FRIDGE, Modifier.padding(top = 0.dp))
@@ -125,7 +125,7 @@ fun HelpScreen(nav: Navigator) {
             Spacer(Modifier.height(4.dp))
             Text(
                 if (area.waiting || view.total == 0) stringResource(R.string.shop_help_sub_none) else stringResource(R.string.shop_help_sub, view.total),
-                style = TextStyle(fontFamily = InterFamily, fontSize = 14.sp), color = Soft,
+                style = TextStyle(fontFamily = SansFamily, fontSize = 14.sp), color = Soft,
             )
             Spacer(Modifier.height(20.dp))
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -138,14 +138,14 @@ fun HelpScreen(nav: Navigator) {
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
                     ) {
                         Symbol(k.symbol(), tint = if (on) Green else Ink, size = 24.dp)
-                        Text("${stringResource(k.label())} ${if (area.waiting) "" else n}".trim(), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.sp), color = if (on) Green else Ink, maxLines = 1)
+                        Text("${stringResource(k.label())} ${if (area.waiting) "" else n}".trim(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.sp), color = if (on) Green else Ink, maxLines = 1)
                     }
                 }
             }
             Spacer(Modifier.height(18.dp))
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 when {
-                    area.waiting -> Text(stringResource(R.string.shop_loading), style = TextStyle(fontFamily = InterFamily, fontSize = 14.sp), color = Soft)
+                    area.waiting -> Text(stringResource(R.string.shop_loading), style = TextStyle(fontFamily = SansFamily, fontSize = 14.sp), color = Soft)
                     area.places.isEmpty() && area.error != null -> StateMessage("ui-cloud-off", stringResource(R.string.shop_problem), text = area.error, tint = Color(0xFFD23C3C))
                     view.rows.isEmpty() -> StateMessage("place.fridge", stringResource(R.string.shop_help_none), text = stringResource(R.string.shop_help_none_text), tint = Soft)
                     else -> view.rows.forEach { r -> HelpCard(r, area, now) { services.remember(r.place.place); nav.go(Dest.Place.of(r.place.place)) } }
@@ -186,8 +186,8 @@ private fun HelpCard(r: HelpRow, area: ShopArea, now: java.time.LocalDateTime, o
             Symbol(r.kind.symbol(), tint = if (r.kind == HelpKind.FRIDGE) Green else Ink, size = 24.dp)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(p.name, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 17.sp), color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            val st = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, fontFeatureSettings = "tnum")
+            Text(p.name, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 17.sp), color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val st = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum")
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 val status = when {
                     p.alwaysOpen || (!p.hasHours && r.kind == HelpKind.WATER) -> stringResource(R.string.shop_help_always) to true
@@ -204,6 +204,6 @@ private fun HelpCard(r: HelpRow, area: ShopArea, now: java.time.LocalDateTime, o
                 if (p.stepFree && days.isEmpty()) Text(stringResource(R.string.shop_help_stepfree), style = st, color = Soft, maxLines = 1)
             }
         }
-        Text("${p.walkMinutes}′", style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, fontFeatureSettings = "tnum"), color = Ink)
+        Text("${p.walkMinutes}′", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, fontFeatureSettings = "tnum"), color = Ink)
     }
 }

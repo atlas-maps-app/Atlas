@@ -66,7 +66,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.Symbol
 import kotlin.math.hypot
 
@@ -184,7 +184,7 @@ fun BarScreen(nav: Navigator) {
                 if (ctx.area.waiting || !worked.fresh) Looking(GOLD_META)
                 if (ctx.area.error != null && ctx.area.places.isEmpty()) EatProblem(ctx.area)
                 sourceLine(ctx.area)?.let {
-                    Text(it, Modifier.padding(top = 18.dp), style = TextStyle(fontFamily = InterFamily, fontSize = 11.sp), color = GOLD_META.copy(alpha = 0.7f), textAlign = TextAlign.Center)
+                    Text(it, Modifier.padding(top = 18.dp), style = TextStyle(fontFamily = SansFamily, fontSize = 11.sp), color = GOLD_META.copy(alpha = 0.7f), textAlign = TextAlign.Center)
                 }
             }
         }
@@ -196,7 +196,7 @@ fun BarScreen(nav: Navigator) {
                 GoldRing(EatGlyphs.padThin, stringResource(R.string.eat_pad)) { nav.go(Dest.Eat("order")) }
                 if (pad.isNotEmpty()) {
                     Box(Modifier.align(Alignment.TopEnd).size(18.dp).clip(CircleShape).background(Color(0xFFE8622C)), contentAlignment = Alignment.Center) {
-                        Text(pad.size.toString(), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White))
+                        Text(pad.size.toString(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White))
                     }
                 }
             }
@@ -304,7 +304,7 @@ private fun VenueEntry(v: Venue, ctx: EatContext, inCrawl: Boolean, onOpen: () -
             val price = priceText(ctx.ratings[v.place.key]?.priceLevel)
             Text(
                 metaLine(v.place.walkMinutes, open, stars, price),
-                style = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, letterSpacing = 0.04.em, color = GOLD_META.copy(alpha = alpha)),
+                style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, letterSpacing = 0.04.em, color = GOLD_META.copy(alpha = alpha)),
             )
             val label = stringResource(if (inCrawl) R.string.eat_crawl_remove else R.string.eat_crawl_add)
             Box(
@@ -360,7 +360,7 @@ private fun CrawlTray(c: Crawl, modifier: Modifier, onStop: (EatPlace) -> Unit, 
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             BoardIcon(EatGlyphs.walk, PILL_TEXT, 18.dp)
-            Text("${c.minutes}′", style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = PILL_TEXT))
+            Text("${c.minutes}′", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = PILL_TEXT))
         }
     }
 }

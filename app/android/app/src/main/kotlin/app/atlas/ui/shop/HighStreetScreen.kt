@@ -54,7 +54,7 @@ import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.SerifFamily
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssShadow
@@ -155,7 +155,7 @@ fun HighStreetScreen(nav: Navigator) {
                                 Text(
                                     stringResource(art.label) + if (c != null && !area.waiting) " ${c.value}" else "",
                                     Modifier.offset(y = (-4).dp).background(Color(0xFF1A1A1A), RoundedCornerShape(4.dp)).padding(horizontal = 8.dp, vertical = 2.dp),
-                                    style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, fontFeatureSettings = "tnum"), color = Color(0xFFF4EBDD), maxLines = 1,
+                                    style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, fontFeatureSettings = "tnum"), color = Color(0xFFF4EBDD), maxLines = 1,
                                 )
                             }
                         }
@@ -186,7 +186,7 @@ private fun IndieSwitch(on: Boolean, onChange: (Boolean) -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
         Symbol("place.shop", tint = Color(0xFF14161B), size = 18.dp)
-        Text(stringResource(R.string.shop_indie), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp), color = Color(0xFF14161B))
+        Text(stringResource(R.string.shop_indie), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp), color = Color(0xFF14161B))
         Box(Modifier.size(44.dp, 28.dp).background(if (on) Color(0xFF1E7A46) else Color(0xFF9AA0A8), RoundedCornerShape(14.dp))) {
             Box(Modifier.align(if (on) Alignment.CenterEnd else Alignment.CenterStart).padding(horizontal = 3.dp).size(22.dp).cssShadow(CircleShape, y = 1.dp, blur = 3.dp, colour = Color(0x4D000000)).background(Color.White, CircleShape))
         }
@@ -211,7 +211,7 @@ private fun Plaque(counts: StreetCounts, area: ShopArea) {
             counts.total.open -> stringResource(R.string.shop_highstreet_sub_here, counts.total.value)
             else -> stringResource(R.string.shop_highstreet_sub_here_all, counts.total.value)
         }
-        if (sub != null) Text(sub, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 3.sp), color = Color(0xFFC8322A), maxLines = 1)
+        if (sub != null) Text(sub, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 3.sp), color = Color(0xFFC8322A), maxLines = 1)
     }
 }
 
@@ -227,7 +227,7 @@ private fun StreetSearch(nav: Navigator) {
     ) {
         BoardArt(ShopBoards.SPARKLE, tint = Color(0xFF7B4DFF))
         Box(Modifier.weight(1f)) {
-            val style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Medium, fontSize = 16.sp, color = Color(0xFF14161B))
+            val style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Medium, fontSize = 16.sp, color = Color(0xFF14161B))
             BasicTextField(
                 text, { text = it }, singleLine = true, textStyle = style,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),

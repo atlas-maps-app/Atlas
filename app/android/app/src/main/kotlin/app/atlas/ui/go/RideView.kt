@@ -52,7 +52,7 @@ import app.atlas.model.Route
 import app.atlas.model.Turn
 import app.atlas.route.HazardKind
 import app.atlas.ui.kit.Atlas
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.AtlasTheme
 import app.atlas.ui.kit.ProgressRing
 import kotlin.math.abs
@@ -75,7 +75,7 @@ internal object RideColours {
 }
 
 /** The boards' type in sp: the Ride board's huge distance and its tabular figures. */
-private val Figures = TextStyle(fontFamily = InterFamily, fontFeatureSettings = "tnum")
+private val Figures = TextStyle(fontFamily = SansFamily, fontFeatureSettings = "tnum")
 
 /**
  * Ride: the bike, eyes-free, black for OLED as on the Ride board. The status row (voice, vibrations, screen off,

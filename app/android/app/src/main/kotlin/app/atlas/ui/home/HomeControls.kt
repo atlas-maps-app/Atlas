@@ -51,10 +51,11 @@ import app.atlas.places.PathSink
 import app.atlas.places.SvgPath
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.CurrentWeather
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.MainSymbols
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssShadow
+import app.atlas.ui.kit.frosted
 import kotlin.math.roundToInt
 
 /** Whether the area on screen works without a connection. */
@@ -147,7 +148,7 @@ private val tight = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeight
 
 /** The board's sans at [size] and [weight], tabular, its line box trimmed so rows centre it as CSS does. */
 internal fun boardText(size: Float, weight: FontWeight, numbers: Boolean = false) = TextStyle(
-    fontFamily = InterFamily,
+    fontFamily = SansFamily,
     fontWeight = weight,
     fontSize = size.sp,
     lineHeight = (size * 1.2f).sp,
@@ -172,8 +173,8 @@ fun WeatherChip(weather: CurrentWeather?, offline: OfflineState, onClick: () -> 
         modifier
             .height(44.dp)
             .cssShadow(CircleShape, y = 6.dp, blur = 24.dp, colour = look.shadow)
+            .frosted(CircleShape, look.frost, blur = 22.dp, saturate = 1.6f)
             .clip(CircleShape)
-            .background(look.frost)
             .clickable(role = Role.Button, onClick = onClick)
             .semantics(mergeDescendants = true) { contentDescription = description }
             .padding(start = 12.dp, end = 14.dp),
@@ -242,8 +243,8 @@ fun NeedsPill(onWater: () -> Unit, onFood: () -> Unit, onToilet: () -> Unit, mod
         modifier
             .height(44.dp)
             .cssShadow(CircleShape, y = 6.dp, blur = 24.dp, colour = look.shadow)
-            .clip(CircleShape)
-            .background(look.frostStrong),
+            .frosted(CircleShape, look.frostStrong, blur = 22.dp)
+            .clip(CircleShape),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         NeedButton(NEED_WATER, stringResource(R.string.home_need_water), onWater, start = 10.dp, end = 2.dp) {
@@ -295,8 +296,8 @@ fun ControlColumn(
         modifier
             .width(48.dp)
             .cssShadow(shape, y = 6.dp, blur = 24.dp, colour = look.shadow)
-            .clip(shape)
-            .background(look.frost),
+            .frosted(shape, look.frost, blur = 22.dp, saturate = 1.6f)
+            .clip(shape),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         val compass = stringResource(R.string.home_compass)
@@ -433,8 +434,8 @@ fun CategoryRow(selected: String?, onSelect: (String) -> Unit, modifier: Modifie
                     Modifier
                         .size(width, 44.dp)
                         .cssShadow(shape, y = 4.dp, blur = 14.dp, colour = look.shadow.copy(alpha = look.shadow.alpha * 0.1f / 0.12f))
+                        .then(if (on) Modifier.background(board.colour, shape) else Modifier.frosted(shape, look.frostStrong, blur = 20.dp))
                         .clip(shape)
-                        .background(if (on) board.colour else look.frostStrong)
                         .toggleable(on, role = Role.Switch) { onSelect(id) }
                         .semantics { contentDescription = name },
                     contentAlignment = Alignment.Center,

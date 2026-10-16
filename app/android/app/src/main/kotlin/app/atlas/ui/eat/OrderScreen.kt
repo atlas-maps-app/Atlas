@@ -72,7 +72,7 @@ import app.atlas.nav.Dest
 import app.atlas.nav.Navigator
 import app.atlas.places.Cuisine
 import app.atlas.ui.kit.Atlas
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.Symbol
 import kotlinx.coroutines.launch
 
@@ -162,7 +162,7 @@ fun OrderScreen(nav: Navigator) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    val head = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 0.22.em, color = Color(0xFFFBEFE0))
+                    val head = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 0.22.em, color = Color(0xFFFBEFE0))
                     Rivet()
                     Text(stringResource(R.string.eat_guest_check).uppercase(), style = head)
                     Spacer(Modifier.weight(1f))
@@ -312,7 +312,7 @@ private fun Gutter(line: Line) {
         Line.CUISINES -> BoardIcon(EatGlyphs.cutleryGutter, PENCIL, 20.dp)
         Line.FEATURES -> Canvas(Modifier.size(24.dp, 20.dp)) { drawBoardGlyph(EatGlyphs.mustHave, INK, side = size.width) }
         Line.WISHES -> BoardIcon(EatGlyphs.tick, Color(0xFF6E7FB8), 16.dp)
-        Line.PAYMENT -> Text("$", style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = PENCIL))
+        Line.PAYMENT -> Text("$", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = PENCIL))
         Line.WALK -> BoardIcon(EatGlyphs.pin, PENCIL, 18.dp)
         Line.NOT, Line.ACCESS -> Unit
     }
@@ -344,7 +344,7 @@ private fun Badge(text: String, filled: Boolean) {
             .clip(RoundedCornerShape(9.dp))
             .then(if (filled) Modifier.background(RED) else Modifier.border(1.5.dp, RED, RoundedCornerShape(9.dp)))
             .padding(horizontal = 6.dp, vertical = if (filled) 2.dp else 1.dp),
-        style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 0.12.em, color = if (filled) Color.White else RED),
+        style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 0.12.em, color = if (filled) Color.White else RED),
     )
 }
 
@@ -477,7 +477,7 @@ private fun PadChip(text: String, on: Boolean, onClick: () -> Unit) {
             .padding(horizontal = 11.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = if (on) Color.White else Color(0xFF14161B)))
+        Text(text, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = if (on) Color.White else Color(0xFF14161B)))
     }
 }
 
@@ -485,7 +485,7 @@ private fun PadChip(text: String, on: Boolean, onClick: () -> Unit) {
 @Composable
 private fun RankedBy(rank: List<RankKey>, onToggle: (RankKey) -> Unit) {
     Column(Modifier.fillMaxWidth().height(80.dp).padding(start = 62.dp, end = 14.dp), verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically)) {
-        Text(stringResource(R.string.eat_order_ranked_by).uppercase(), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 0.2.em, color = PENCIL))
+        Text(stringResource(R.string.eat_order_ranked_by).uppercase(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 0.2.em, color = PENCIL))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             for (k in RankKey.entries) {
                 val i = rank.indexOf(k)
@@ -513,7 +513,7 @@ private fun RankedBy(rank: List<RankKey>, onToggle: (RankKey) -> Unit) {
                             RankKey.TRENDING -> BoardIcon(EatGlyphs.flame, tint, 16.dp)
                             RankKey.LATE -> BoardIcon(EatGlyphs.moon, tint, 16.dp)
                             RankKey.NEW -> BoardIcon(EatGlyphs.sparkle, tint, 16.dp)
-                            RankKey.PRICE -> Text("$", style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = tint))
+                            RankKey.PRICE -> Text("$", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = tint))
                         }
                     }
                     if (on) {
@@ -521,7 +521,7 @@ private fun RankedBy(rank: List<RankKey>, onToggle: (RankKey) -> Unit) {
                             Modifier.align(Alignment.TopEnd).offset(x = 3.dp, y = (-3).dp).size(16.dp).clip(CircleShape).background(RED),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Text((i + 1).toString(), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White))
+                            Text((i + 1).toString(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White))
                         }
                     }
                 }
@@ -557,7 +557,7 @@ private fun Presets(saved: OrderPad?, onPreset: (OrderPad) -> Unit, onBookmark: 
 private fun Served(r: OrderResult, ctx: EatContext, jotted: Set<String>, onPlace: (app.atlas.model.Place) -> Unit, onJot: (app.atlas.model.Place) -> Unit) {
     val hand = TextStyle(fontFamily = EatType.hand, fontWeight = FontWeight.SemiBold, fontSize = 25.sp, color = INK)
     Column(Modifier.padding(top = 10.dp)) {
-        Text(stringResource(R.string.eat_order_served).uppercase(), Modifier.padding(start = 62.dp), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 0.2.em, color = PENCIL))
+        Text(stringResource(R.string.eat_order_served).uppercase(), Modifier.padding(start = 62.dp), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 0.2.em, color = PENCIL))
         if (r.served.isEmpty()) {
             Text(stringResource(R.string.eat_order_none), Modifier.padding(start = 62.dp, top = 8.dp), style = hand.copy(fontSize = 22.sp, color = PENCIL))
         }
@@ -588,7 +588,7 @@ private fun Served(r: OrderResult, ctx: EatContext, jotted: Set<String>, onPlace
 @Composable
 private fun OnThePad(items: List<Jotted>, onOpen: (Jotted) -> Unit) {
     Column(Modifier.padding(top = 10.dp)) {
-        Text(stringResource(R.string.eat_order_on_pad).uppercase(), Modifier.padding(start = 62.dp), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 0.2.em, color = PENCIL))
+        Text(stringResource(R.string.eat_order_on_pad).uppercase(), Modifier.padding(start = 62.dp), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 0.2.em, color = PENCIL))
         for (j in items) {
             Row(Modifier.fillMaxWidth().heightIn(min = ROW).clickable { onOpen(j) }, verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.width(GUTTER), contentAlignment = Alignment.Center) { BoardIcon(EatGlyphs.bookmark, PENCIL, 14.dp) }
@@ -618,7 +618,7 @@ private fun Footer(r: OrderResult?, onServe: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(96.dp).padding(start = 18.dp, end = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(r?.total?.toString() ?: "…", style = TextStyle(fontFamily = EatType.hand, fontWeight = FontWeight.Bold, fontSize = 54.sp, lineHeight = 54.sp, color = RED))
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(r?.let { stringResource(R.string.eat_order_of, it.base) } ?: "", style = TextStyle(fontFamily = InterFamily, fontSize = 12.sp, color = COUNT_INK))
+            Text(r?.let { stringResource(R.string.eat_order_of, it.base) } ?: "", style = TextStyle(fontFamily = SansFamily, fontSize = 12.sp, color = COUNT_INK))
             Text(r?.let { String.format(java.util.Locale.ROOT, "%.2f s", it.micros / 1e6) } ?: "", style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = COUNT_INK))
         }
         Spacer(Modifier.weight(1f))
@@ -628,7 +628,7 @@ private fun Footer(r: OrderResult?, onServe: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             BoardIcon(EatGlyphs.cloche, Color.White, 22.dp)
-            Text(stringResource(R.string.eat_order_serve), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = Color.White))
+            Text(stringResource(R.string.eat_order_serve), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = Color.White))
         }
     }
 }

@@ -4,16 +4,16 @@ The app's own code is MIT, like the rest of Atlas. It bundles these works by oth
 
 | What | Where | Licence |
 |---|---|---|
-| Inter (variable font, Rasmus Andersson and contributors), from github.com/google/fonts `ofl/inter` | `src/main/res/font/inter.ttf` | SIL Open Font License 1.1 |
+| Geist (variable font, The Geist Project Authors), from github.com/vercel/geist-font, the boards' sans | `src/main/res/font/geist.ttf` | SIL Open Font License 1.1 |
 | Instrument Serif, regular and italic (The Instrument Serif Project Authors), from github.com/google/fonts `ofl/instrumentserif` | `src/main/res/font/instrument_serif*.ttf` | SIL Open Font License 1.1 |
 | Lucide icons `map`, `corner-up-right`, `book-open`, `calendar-days`, `cloud-*`, `rotate-3d`, `navigation-2`, `crosshair`, `locate-fixed`, `map-pinned`, `waypoints` (path data only), from github.com/lucide-icons/lucide | `src/main/kotlin/app/atlas/ui/kit/AppSymbols.kt` | ISC |
 
 The map symbols, the UI symbol set and brand glyphs come from `:places` (see `places/LICENSES.md`).
 
-## SIL Open Font License 1.1 (Inter)
+## SIL Open Font License 1.1 (Geist)
 
 ```
-Copyright 2020 The Inter Project Authors (https://github.com/rsms/inter)
+Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:

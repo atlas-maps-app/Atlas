@@ -9,12 +9,17 @@ import androidx.compose.ui.graphics.Color
 import app.atlas.R
 
 /** The bottom bar's tabs, with their symbol, label and the tint of their selected pill (from the boards). */
-enum class Tab(val symbol: String, @StringRes val label: Int, val accent: Color, val accentSoft: Color) {
-    MAP("ui-map", R.string.tab_map, Color(0xFFE0592A), Color(0xFFFBE2D6)),
-    GO("ui-corner-up-right", R.string.tab_go, Color(0xFF2E5BFF), Color(0xFFE3EAFF)),
-    SOON("ui-calendar-days", R.string.tab_soon, Color(0xFF7B4FD6), Color(0xFFECE4FB)),
-    LOCAL("ui-book-open", R.string.tab_local, Color(0xFF8A5A2B), Color(0xFFF1E5D3)),
-    MINE("ui-user", R.string.tab_mine, Color(0xFF14161B), Color(0xFFE6E2DA));
+/**
+ * The five tabs, as the tab boards draw their bar: the board's own symbol (with its stroke width in the symbol set, so
+ * the bar can draw it at the boards' 2.1 selected and 1.8 otherwise) and the selected tab's colour (Main #B8461A, Go
+ * #2E5BFF, Soon #7B4DFF, Mine #14161B; the Local board's bar is dark, its selected tab white).
+ */
+enum class Tab(val symbol: String, val symbolStroke: Float, @StringRes val label: Int, val accent: Color) {
+    MAP("tab.map", 1.9f, R.string.tab_map, Color(0xFFB8461A)),
+    GO("tab.go", 2.0f, R.string.tab_go, Color(0xFF2E5BFF)),
+    SOON("tab.soon", 1.8f, R.string.tab_soon, Color(0xFF7B4DFF)),
+    LOCAL("tab.local", 1.8f, R.string.tab_local, Color(0xFFFFFFFF)),
+    MINE("tab.mine", 1.8f, R.string.tab_mine, Color(0xFF14161B));
 
     /** The tab's home screen. */
     val root: Dest

@@ -37,7 +37,7 @@ import app.atlas.geo.LatLon
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.SerifFamily
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
@@ -91,7 +91,7 @@ fun NamedAfterScreen(args: Dest.NamedAfter, nav: Navigator) {
             contentAlignment = Alignment.Center,
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(name ?: stringResource(R.string.named_here), color = Color.White, fontFamily = InterFamily, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, letterSpacing = (-0.01).sp, modifier = Modifier.padding(horizontal = 12.dp))
+                Text(name ?: stringResource(R.string.named_here), color = Color.White, fontFamily = SansFamily, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, letterSpacing = (-0.01).sp, modifier = Modifier.padding(horizontal = 12.dp))
                 if (place != null) Text(place, color = Color(0xCCFFFFFF), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
             }
         }

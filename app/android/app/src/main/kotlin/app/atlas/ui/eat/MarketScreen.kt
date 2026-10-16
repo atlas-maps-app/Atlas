@@ -67,7 +67,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.TextStyle as DateTextStyle
@@ -143,7 +143,7 @@ fun MarketScreen(nav: Navigator) {
                 KraftButton(EatGlyphs.pad, stringResource(R.string.eat_pad), 19) { nav.go(Dest.Eat("order")) }
                 if (pad.isNotEmpty()) {
                     Box(Modifier.align(Alignment.TopEnd).size(18.dp).clip(CircleShape).background(Color(0xFFE8622C)), contentAlignment = Alignment.Center) {
-                        Text(pad.size.toString(), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White))
+                        Text(pad.size.toString(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White))
                     }
                 }
             }

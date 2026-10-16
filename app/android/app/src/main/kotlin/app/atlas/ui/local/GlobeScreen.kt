@@ -77,7 +77,7 @@ import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.nav.Tab
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.appClock
 import app.atlas.ui.kit.rememberHere
@@ -168,7 +168,7 @@ fun CosmosScreen(initial: CosmosStop, nav: Navigator) {
     val iss = remember(outlook, now) { issFrame(outlook, now) }
     val moon = remember(now) { Moon.phase(now) }
     val textMeasurer = rememberTextMeasurer()
-    val boardText = remember(textMeasurer) { BoardText(textMeasurer, InterFamily) }
+    val boardText = remember(textMeasurer) { BoardText(textMeasurer, SansFamily) }
     val planetNames = planetNames()
     val youLabel = stringResource(R.string.cosmos_art_you)
     val hereLabel = stringResource(R.string.cosmos_art_here)
@@ -314,7 +314,7 @@ private fun Header(stop: CosmosStop, onBack: () -> Unit) {
             contentAlignment = Alignment.Center,
         ) { Symbol("ui.back", tint = Color.White, size = 20.dp) }
         Column(Modifier.weight(1f)) {
-            Text(stringResource(title), color = Color.White, fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 28.sp, lineHeight = 28.sp, letterSpacing = (-0.01).sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(stringResource(title), color = Color.White, fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 28.sp, lineHeight = 28.sp, letterSpacing = (-0.01).sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(stringResource(sub), color = Dim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
         }
     }

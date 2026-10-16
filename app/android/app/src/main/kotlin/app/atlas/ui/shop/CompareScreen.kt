@@ -63,7 +63,7 @@ import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.places.Brands
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.PillButton
 import app.atlas.ui.kit.SerifFamily
 import app.atlas.ui.kit.StateMessage
@@ -122,7 +122,7 @@ fun CompareScreen(nav: Navigator) {
                     "cat.groceries", stringResource(R.string.shop_cmp_no_list), text = stringResource(R.string.shop_cmp_no_list_text),
                     action = { PillButton(onClick = { nav.go(Dest.Groceries("list")) }) { Text(stringResource(R.string.shop_cmp_open_list), style = app.atlas.ui.kit.Atlas.type.label) } },
                 )
-                data == null -> Text(stringResource(R.string.shop_loading), Modifier.padding(horizontal = 16.dp), style = TextStyle(fontFamily = InterFamily, fontSize = 14.sp), color = Soft)
+                data == null -> Text(stringResource(R.string.shop_loading), Modifier.padding(horizontal = 16.dp), style = TextStyle(fontFamily = SansFamily, fontSize = 14.sp), color = Soft)
                 cmp.empty -> StateMessage(
                     "ui.tag",
                     stringResource(if (data!!.error != null) R.string.shop_cmp_offline_title else R.string.shop_cmp_empty_title),
@@ -168,7 +168,7 @@ private fun Header(nav: Navigator, cmp: Comparison, items: Int, loading: Boolean
         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
             Text(stringResource(R.string.shop_basket), style = TextStyle(fontFamily = SerifFamily, fontSize = 32.sp, lineHeight = 32.sp), color = Ink)
             val sub = if (cmp.baskets.isEmpty() || loading) stringResource(R.string.shop_basket_sub_none, items) else stringResource(R.string.shop_basket_sub, items, cmp.baskets.size)
-            Text(sub, style = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Soft)
+            Text(sub, style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Soft)
         }
         RoundSymbolButton("ui.camera", stringResource(R.string.shop_note_price), onNote, size = 44.dp, fill = Ink, tint = Color.White, iconSize = 19.dp)
     }
@@ -219,7 +219,7 @@ private fun Compared(cmp: Comparison, plan: String, onPlan: (String) -> Unit, sn
                 Text(
                     if (age.last == 0) stringResource(R.string.shop_reported_today)
                     else stringResource(R.string.shop_reported_ago, if (age.first == age.last) "${age.first}" else "${age.first}–${age.last}"),
-                    style = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Soft,
+                    style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Soft,
                 )
             }
         }
@@ -308,12 +308,12 @@ private fun PlanCard(on: Boolean, symbol: String, title: String, sub: String, pr
             Symbol(symbol, tint = if (on) Color(0xFF2E5BFF) else Ink, size = 22.dp)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp), color = Ink)
-            Text(sub, style = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Soft, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp), color = Ink)
+            Text(sub, style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Soft, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Column(horizontalAlignment = Alignment.End) {
-            Text(price, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, fontFeatureSettings = "tnum"), color = Ink)
-            if (saving != null) Text(saving, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, fontFeatureSettings = "tnum"), color = Green)
+            Text(price, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, fontFeatureSettings = "tnum"), color = Ink)
+            if (saving != null) Text(saving, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, fontFeatureSettings = "tnum"), color = Green)
         }
     }
 }
@@ -329,13 +329,13 @@ private fun MoneyCard(gap: PriceGap, currency: String, snapped: Boolean, onNote:
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-            Text(stringResource(R.string.shop_money_where, gap.entry.text.uppercase()), Modifier.weight(1f), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, letterSpacing = 1.4.sp), color = Color(0xFF5A5F6C), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(stringResource(R.string.shop_money_where, gap.entry.text.uppercase()), Modifier.weight(1f), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, letterSpacing = 1.4.sp), color = Color(0xFF5A5F6C), maxLines = 1, overflow = TextOverflow.Ellipsis)
             val what = gap.product?.quantity ?: gap.product?.name
-            if (what != null) Text(what, Modifier.padding(start = 8.dp), style = TextStyle(fontFamily = InterFamily, fontSize = 11.sp), color = Grey, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (what != null) Text(what, Modifier.padding(start = 8.dp), style = TextStyle(fontFamily = SansFamily, fontSize = 11.sp), color = Grey, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         for ((store, price) in gap.rows) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(store.name, Modifier.width(76.dp), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp), color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(store.name, Modifier.width(76.dp), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp), color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Box(Modifier.weight(1f).height(10.dp)) {
                     if (price != null) {
                         Box(Modifier.fillMaxSize().background(Color(0xFFEEF0F3), RoundedCornerShape(5.dp)))
@@ -351,7 +351,7 @@ private fun MoneyCard(gap: PriceGap, currency: String, snapped: Boolean, onNote:
                 Text(
                     if (price == null) stringResource(R.string.shop_no_price) else String.format(Locale.getDefault(), "%.2f", price) + if (price == best) " " + stringResource(R.string.shop_best_word) else "",
                     Modifier.width(74.dp),
-                    style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, fontFeatureSettings = "tnum"),
+                    style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, fontFeatureSettings = "tnum"),
                     color = if (price == null) Color(0xFF8A8F9C) else if (price == best) Green else Ink,
                     textAlign = TextAlign.End,
                     maxLines = 1,
@@ -365,7 +365,7 @@ private fun MoneyCard(gap: PriceGap, currency: String, snapped: Boolean, onNote:
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Symbol(if (snapped) "ui.check" else "ui.camera", tint = if (snapped) Color(0xFF1F6B3E) else Ink, size = 16.dp)
-            Text(label, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp), color = if (snapped) Color(0xFF1F6B3E) else Ink, maxLines = 1)
+            Text(label, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp), color = if (snapped) Color(0xFF1F6B3E) else Ink, maxLines = 1)
         }
     }
 }

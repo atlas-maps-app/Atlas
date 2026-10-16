@@ -57,7 +57,7 @@ import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssShadow
@@ -155,7 +155,7 @@ internal fun AislesScreen(spec: AisleSpec, nav: Navigator, indie: Boolean = fals
             Spacer(Modifier.height(16.dp))
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 when {
-                    area.waiting -> Text(stringResource(R.string.shop_loading), style = TextStyle(fontFamily = InterFamily, fontSize = 14.sp), color = Grey)
+                    area.waiting -> Text(stringResource(R.string.shop_loading), style = TextStyle(fontFamily = SansFamily, fontSize = 14.sp), color = Grey)
                     area.places.isEmpty() && area.error != null -> StateMessage("ui-cloud-off", stringResource(R.string.shop_problem), text = area.error, tint = Color(0xFFD23C3C))
                     view.all.isEmpty() -> StateMessage(spec.glyph, stringResource(R.string.shop_aisle_empty))
                     view.shown.isEmpty() -> StateMessage("ui.filter", stringResource(R.string.shop_aisle_none_match))
@@ -232,7 +232,7 @@ private fun Sign(number: Int, name: String, sub: String?, modifier: Modifier = M
                 color = Color.White,
                 maxLines = 1,
             )
-            if (sub != null) Text(sub, style = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Color(0xFFCFE0F2))
+            if (sub != null) Text(sub, style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Color(0xFFCFE0F2))
         }
     }
 }
@@ -261,7 +261,7 @@ private fun BrandRow(brands: List<BrandChip>, selected: String?, onPick: (String
                 }
                 Text(
                     "$name ${b.count}",
-                    style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp),
+                    style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp),
                     color = if (on) Color.White else Ink,
                     maxLines = 1,
                 )
@@ -300,11 +300,11 @@ private fun Toggles(view: AisleView, on: Set<AisleFilter>, onToggle: (AisleFilte
                 when (f) {
                     AisleFilter.SUNDAY -> {
                         Symbol("ui.calendar", tint = fg, size = 16.dp)
-                        Text(stringResource(R.string.shop_f_sunday), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp), color = fg)
+                        Text(stringResource(R.string.shop_f_sunday), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp), color = fg)
                     }
                     AisleFilter.SELF_CHECKOUT -> Symbol("shop.self-checkout", tint = fg, size = 18.dp)
                     AisleFilter.DELIVERY -> Symbol("fact.delivery", tint = fg, size = 18.dp)
-                    AisleFilter.PARKING -> Text("P", style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp), color = fg, modifier = Modifier.width(18.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    AisleFilter.PARKING -> Text("P", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp), color = fg, modifier = Modifier.width(18.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     AisleFilter.STEP_FREE -> Symbol("fact.wheelchair", tint = fg, size = 18.dp)
                 }
             }
@@ -331,7 +331,7 @@ private fun SortTabs(selected: AisleSort, cheapest: Boolean, onPick: (AisleSort)
                 Modifier.tap(label) { onPick(s) }.semantics { this.selected = on }
                     .drawBehind { if (on) drawRect(Ink, topLeft = Offset(0f, size.height - 2.dp.toPx()), size = androidx.compose.ui.geometry.Size(size.width, 2.dp.toPx())) }
                     .padding(bottom = 5.dp),
-                style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp),
+                style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp),
                 color = if (on) Ink else Grey,
             )
         }
@@ -363,9 +363,9 @@ private fun ShelfLabel(p: ShopPlace, spec: AisleSpec, area: ShopArea, now: java.
                 }
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(p.name, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 17.sp), color = Ink, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                Text(p.name, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 17.sp), color = Ink, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val details = TextStyle(fontFamily = InterFamily, fontSize = 12.sp, fontFeatureSettings = "tnum")
+                    val details = TextStyle(fontFamily = SansFamily, fontSize = 12.sp, fontFeatureSettings = "tnum")
                     openLine(p, area, now)?.let { (t, c) -> Text(t, style = details, color = if (isCheapest) ink else c, maxLines = 1) }
                     p.footprintM2?.let { Text(stringResource(R.string.shop_footprint, "%,d".format(Locale.getDefault(), it)), style = details, color = ink, maxLines = 1) }
                     rating?.stars?.let { Text("★ " + "%.1f".format(Locale.getDefault(), it), style = details, color = ink, maxLines = 1) }
@@ -379,11 +379,11 @@ private fun ShelfLabel(p: ShopPlace, spec: AisleSpec, area: ShopArea, now: java.
                         append(p.walkMinutes.toString())
                         withStyle(SpanStyle(fontSize = 22.sp)) { append("′") }
                     },
-                    style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 38.sp, lineHeight = 38.sp, letterSpacing = (-0.02f).em(), fontFeatureSettings = "tnum"),
+                    style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 38.sp, lineHeight = 38.sp, letterSpacing = (-0.02f).em(), fontFeatureSettings = "tnum"),
                     color = Ink,
                     maxLines = 1,
                 )
-                Text(stringResource(R.string.shop_walk), style = TextStyle(fontFamily = InterFamily, fontSize = 11.sp), color = if (isCheapest) ink else Grey)
+                Text(stringResource(R.string.shop_walk), style = TextStyle(fontFamily = SansFamily, fontSize = 11.sp), color = if (isCheapest) ink else Grey)
             }
         }
     }

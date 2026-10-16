@@ -53,7 +53,7 @@ import app.atlas.geo.LatLon
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.SerifFamily
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.rememberHere
@@ -109,7 +109,7 @@ fun BinsScreen(nav: Navigator) {
                     horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Symbol("ui.pin", tint = Soft, size = 14.dp)
-                    Text(town ?: stringResource(R.string.shop_bins_as_mapped), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp), color = Soft, maxLines = 1)
+                    Text(town ?: stringResource(R.string.shop_bins_as_mapped), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp), color = Soft, maxLines = 1)
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -124,7 +124,7 @@ fun BinsScreen(nav: Navigator) {
                     val d = stringResource(R.string.shop_stream_dist, stringResource(art.label), dist)
                     Column(Modifier.width(58.dp).tap(d) { nav.go(Dest.Groceries("drop:" + s.name.lowercase())) }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         BoardSymbol(art.symbol, art.w.dp, art.h.dp, Modifier.then(if (t == null) Modifier.background(Color.Transparent) else Modifier))
-                        Text(dist, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, fontFeatureSettings = "tnum"), color = Ink, maxLines = 1)
+                        Text(dist, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, fontFeatureSettings = "tnum"), color = Ink, maxLines = 1)
                     }
                 }
             }
@@ -134,22 +134,22 @@ fun BinsScreen(nav: Navigator) {
                 ShortCard("fact.second-hand", Color(0xFF7B4DFF), stringResource(R.string.shop_bins_reuse), Modifier.weight(1f)) { nav.go(Dest.Groceries("street:vintage")) }
             }
             Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(22.dp)).padding(horizontal = 16.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(stringResource(R.string.shop_bins_wrong), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, letterSpacing = 1.4.sp), color = Soft)
+                Text(stringResource(R.string.shop_bins_wrong), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, letterSpacing = 1.4.sp), color = Soft)
                 for ((i, item) in WasteGuide.tricky.withIndex()) {
                     val a = WasteGuide.lookup(item, "en") ?: continue
                     val symbol = listOf("bin.pizza-box", "bin.plastic-bag", "bin.takeout-tub")[i]
                     Row(Modifier.fillMaxWidth().heightIn(min = 30.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                         Symbol(symbol, size = 26.dp)
                         Column(Modifier.weight(1f)) {
-                            Text(stringResource(itemRes(item)), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp), color = Ink)
-                            a.noteRes?.let { Text(stringResource(it), style = TextStyle(fontFamily = InterFamily, fontSize = 11.sp, lineHeight = 14.sp), color = Soft) }
+                            Text(stringResource(itemRes(item)), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp), color = Ink)
+                            a.noteRes?.let { Text(stringResource(it), style = TextStyle(fontFamily = SansFamily, fontSize = 11.sp, lineHeight = 14.sp), color = Soft) }
                         }
                         StreamChip(a)
                     }
                 }
-                Text(stringResource(R.string.shop_bins_goes_none), style = TextStyle(fontFamily = InterFamily, fontSize = 12.sp), color = Soft)
+                Text(stringResource(R.string.shop_bins_goes_none), style = TextStyle(fontFamily = SansFamily, fontSize = 12.sp), color = Soft)
             }
-            Text(stringResource(R.string.shop_bins_source), Modifier.padding(horizontal = 8.dp, vertical = 6.dp).fillMaxWidth(), style = TextStyle(fontFamily = InterFamily, fontSize = 11.sp, lineHeight = 15.sp), color = Color(0xFF676D7C), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Text(stringResource(R.string.shop_bins_source), Modifier.padding(horizontal = 8.dp, vertical = 6.dp).fillMaxWidth(), style = TextStyle(fontFamily = SansFamily, fontSize = 11.sp, lineHeight = 15.sp), color = Color(0xFF676D7C), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
     }
 }
@@ -177,7 +177,7 @@ private fun BigBin(t: BinTarget?, colour: Color, symbol: String, w: Int, h: Int,
         val (n, unit) = if (t == null) "–" to "" else if (t.distanceM >= 1000) String.format(Locale.getDefault(), "%.1f", t.distanceM / 1000.0) to " km" else "${(Math.round(t.distanceM / 10.0) * 10).toInt()}" to " m"
         Text(
             buildAnnotatedString { append(n); withStyle(SpanStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.sp)) { append(unit) } },
-            style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Black, fontSize = 40.sp, lineHeight = 40.sp, letterSpacing = (-0.8).sp, fontFeatureSettings = "tnum"), color = Color.White,
+            style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Black, fontSize = 40.sp, lineHeight = 40.sp, letterSpacing = (-0.8).sp, fontFeatureSettings = "tnum"), color = Color.White,
         )
     }
 }
@@ -189,7 +189,7 @@ private fun ShortCard(symbol: String, tint: Color, label: String, modifier: Modi
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
     ) {
         Symbol(symbol, tint = tint, size = 22.dp)
-        Text(label, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp), color = Ink)
+        Text(label, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp), color = Ink)
     }
 }
 
@@ -205,7 +205,7 @@ private fun StreamChip(a: WasteAnswer) {
         Box(Modifier.size(8.dp).background(c, RoundedCornerShape(2.dp)))
         Text(
             stringResource(StreamArts.getValue(s).label),
-            style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp), color = if (s == Stream.RUBBISH) Ink else c, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp), color = if (s == Stream.RUBBISH) Ink else c, maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -220,14 +220,14 @@ private fun GoesWhere(open: Boolean, onOpen: (Boolean) -> Unit, text: String, on
             horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
         ) {
             Symbol("ui.search", tint = Color.White, size = 26.dp)
-            Text(label, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp), color = Color.White)
+            Text(label, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp), color = Color.White)
         }
         return
     }
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(Ink).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Symbol("ui.search", tint = Color.White, size = 22.dp)
-            val style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Color.White)
+            val style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Color.White)
             Box(Modifier.weight(1f)) {
                 BasicTextField(
                     text, onText, singleLine = true, textStyle = style, cursorBrush = androidx.compose.ui.graphics.SolidColor(Color.White),
@@ -239,7 +239,7 @@ private fun GoesWhere(open: Boolean, onOpen: (Boolean) -> Unit, text: String, on
         }
         if (text.isNotBlank()) {
             if (answer?.stream == null) {
-                Text(stringResource(R.string.shop_bins_goes_none), style = TextStyle(fontFamily = InterFamily, fontSize = 13.sp), color = Color.White.copy(alpha = 0.75f))
+                Text(stringResource(R.string.shop_bins_goes_none), style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp), color = Color.White.copy(alpha = 0.75f))
             } else {
                 val s = answer.stream
                 val nearest = BinsFinder.forStream(area, here, s).firstOrNull()
@@ -249,10 +249,10 @@ private fun GoesWhere(open: Boolean, onOpen: (Boolean) -> Unit, text: String, on
                 ) {
                     BoardSymbol(StreamArts.getValue(s).symbol, (StreamArts.getValue(s).w / 1.6).dp, (StreamArts.getValue(s).h / 1.6).dp)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(stringResource(StreamArts.getValue(s).label), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp), color = Ink)
-                        answer.noteRes?.let { Text(stringResource(it), style = TextStyle(fontFamily = InterFamily, fontSize = 12.sp), color = Soft) }
+                        Text(stringResource(StreamArts.getValue(s).label), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp), color = Ink)
+                        answer.noteRes?.let { Text(stringResource(it), style = TextStyle(fontFamily = SansFamily, fontSize = 12.sp), color = Soft) }
                     }
-                    Text(nearest?.let { shortDistance(it.distanceM) } ?: "–", style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Black, fontSize = 17.sp, fontFeatureSettings = "tnum"), color = Ink)
+                    Text(nearest?.let { shortDistance(it.distanceM) } ?: "–", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Black, fontSize = 17.sp, fontFeatureSettings = "tnum"), color = Ink)
                 }
             }
         }

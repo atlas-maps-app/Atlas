@@ -44,7 +44,7 @@ import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.appClock
 import app.atlas.ui.kit.rememberHere
@@ -90,7 +90,7 @@ fun MomentsScreen(args: Dest.Moments, nav: Navigator) {
             val date = DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.getDefault()).format(now.atZone(zone))
             Text(date, color = Color.White.copy(alpha = 0.85f), fontSize = 15.sp, fontWeight = FontWeight.Bold)
             Text(
-                DateTimeFormatter.ofPattern("H:mm").format(now.atZone(zone)), color = Color.White, fontFamily = InterFamily, fontSize = 92.sp, lineHeight = 96.sp,
+                DateTimeFormatter.ofPattern("H:mm").format(now.atZone(zone)), color = Color.White, fontFamily = SansFamily, fontSize = 92.sp, lineHeight = 96.sp,
                 fontWeight = FontWeight.Light, letterSpacing = (-0.03).sp,
             )
             Spacer(Modifier.height(24.dp))

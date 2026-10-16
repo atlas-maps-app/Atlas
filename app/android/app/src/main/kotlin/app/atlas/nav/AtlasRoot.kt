@@ -31,6 +31,9 @@ import androidx.navigation3.ui.NavDisplay
 import app.atlas.Services
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.AtlasTheme
+import app.atlas.ui.kit.BoardScale
+import app.atlas.ui.kit.LocalBackdrop
+import app.atlas.ui.kit.rememberBackdrop
 
 /** The app's services, for any screen: `LocalServices.current.weather`. */
 val LocalServices = staticCompositionLocalOf<Services> { error("No Services here: the screen must run inside AtlasRoot or ProvideServices") }
@@ -64,14 +67,22 @@ fun ProvideServices(services: Services, dark: Boolean = false, content: @Composa
  * Every entry keeps its own saved state and view models while it is on the stack.
  */
 @Composable
-fun AtlasRoot(services: Services, navigator: BackStackNavigator, dark: Boolean = androidx.compose.foundation.isSystemInDarkTheme()) {
+fun AtlasRoot(services: Services, navigator: BackStackNavigator, dark: Boolean = false) = BoardScale {
+    // the frosted glass of the bars and pills blurs what a screen puts behind it (the Map home's map)
+    val backdrop = rememberBackdrop()
+    CompositionLocalProvider(LocalBackdrop provides backdrop) { Root(services, navigator, dark) }
+}
+
+@Composable
+private fun Root(services: Services, navigator: BackStackNavigator, dark: Boolean) {
     ProvideServices(services, dark) {
         val chrome = remember { Chrome() }
-        val navInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+        // the bar's 64 px and the margin under it: what a tab home ends above
+        val barTop = 64.dp + bottomBarMargin()
         Box(Modifier.fillMaxSize().background(Atlas.colors.paper)) {
             val showBar = navigator.current.isTabRoot && !chrome.barHidden
             CompositionLocalProvider(
-                LocalBottomBarInset provides if (navigator.current.isTabRoot) BottomBarHeight + navInset else 0.dp,
+                LocalBottomBarInset provides if (navigator.current.isTabRoot) barTop else 0.dp,
                 LocalChrome provides chrome,
             ) {
                 NavDisplay(

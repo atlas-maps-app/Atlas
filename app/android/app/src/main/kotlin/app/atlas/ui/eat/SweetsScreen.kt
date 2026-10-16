@@ -60,7 +60,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import kotlin.math.hypot
 
 /* The Sweets board's pinks (`canvas/project/Sweets.dc.html`). */
@@ -125,7 +125,7 @@ fun SweetsScreen(nav: Navigator) {
                 if (ctx.area.waiting || !worked.fresh) Looking(PLUM.copy(alpha = 0.6f))
                 if (ctx.area.error != null && ctx.area.places.isEmpty()) EatProblem(ctx.area)
                 sourceLine(ctx.area)?.let {
-                    Text(it, Modifier.fillMaxWidth().padding(top = 16.dp), style = TextStyle(fontFamily = InterFamily, fontSize = 11.sp), color = PLUM.copy(alpha = 0.55f), textAlign = TextAlign.Center)
+                    Text(it, Modifier.fillMaxWidth().padding(top = 16.dp), style = TextStyle(fontFamily = SansFamily, fontSize = 11.sp), color = PLUM.copy(alpha = 0.55f), textAlign = TextAlign.Center)
                 }
             }
         }
@@ -137,7 +137,7 @@ fun SweetsScreen(nav: Navigator) {
                 PaleRound(EatGlyphs.padRound, stringResource(R.string.eat_pad), 19) { nav.go(Dest.Eat("order")) }
                 if (pad.isNotEmpty()) {
                     Box(Modifier.align(Alignment.TopEnd).size(18.dp).clip(CircleShape).background(Color(0xFFE8622C)), contentAlignment = Alignment.Center) {
-                        Text(pad.size.toString(), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White))
+                        Text(pad.size.toString(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White))
                     }
                 }
             }
@@ -365,7 +365,7 @@ private fun SweetRow(s: SweetSpot, ctx: EatContext, modifier: Modifier, onClick:
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(s.place.name, style = TextStyle(fontFamily = EatType.fredoka, fontWeight = FontWeight.SemiBold, fontSize = 19.sp, color = PLUM), maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                val meta = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, color = WINE)
+                val meta = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, color = WINE)
                 Text("${s.place.walkMinutes}′", style = meta)
                 when {
                     s.place.alwaysOpen -> Text("24/7", style = meta)

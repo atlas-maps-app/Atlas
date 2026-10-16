@@ -53,7 +53,7 @@ import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.places.TagFilter
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.appClock

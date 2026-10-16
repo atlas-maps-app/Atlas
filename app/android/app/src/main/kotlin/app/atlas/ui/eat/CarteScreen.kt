@@ -68,7 +68,7 @@ import app.atlas.nav.Dest
 import app.atlas.nav.Navigator
 import app.atlas.places.Cuisine
 import app.atlas.ui.kit.HonestyFooter
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import kotlinx.coroutines.launch
 
 /** The Carte board's paper, inks and burgundy (`canvas/project/Carte.dc.html`). */
@@ -232,7 +232,7 @@ private fun CarteTopRow(padCount: Int, onBack: () -> Unit, onSurprise: () -> Uni
                 Box(
                     Modifier.align(Alignment.TopEnd).offset(x = 3.dp, y = (-3).dp).size(18.dp).clip(CircleShape).background(PAPER).padding(2.dp).clip(CircleShape).background(Color(0xFFE8622C)),
                     contentAlignment = Alignment.Center,
-                ) { Text(padCount.toString(), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 9.sp, color = Color.White)) }
+                ) { Text(padCount.toString(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 9.sp, color = Color.White)) }
             }
         }
     }
@@ -337,12 +337,12 @@ private fun CarteLineRow(line: CarteLine, countsOpen: Boolean, unmappedNote: Str
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     if (closed) line.places.size.toString() else line.open.toString(),
-                    style = TextStyle(fontFamily = InterFamily, fontWeight = if (world) FontWeight.Bold else FontWeight.SemiBold, fontSize = 14.sp, color = ink, fontStyle = if (closed) FontStyle.Italic else FontStyle.Normal),
+                    style = TextStyle(fontFamily = SansFamily, fontWeight = if (world) FontWeight.Bold else FontWeight.SemiBold, fontSize = 14.sp, color = ink, fontStyle = if (closed) FontStyle.Italic else FontStyle.Normal),
                 )
                 Text(
                     "${line.nearestWalk}′",
                     Modifier.width(30.dp),
-                    style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Medium, fontSize = 13.sp, color = if (world) ink else MENU_SOFT),
+                    style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Medium, fontSize = 13.sp, color = if (world) ink else MENU_SOFT),
                     textAlign = TextAlign.End,
                 )
             }
@@ -370,7 +370,7 @@ private fun ThumbIndex(present: Set<CuisineFamily>, current: CuisineFamily?, mod
                 Text(
                     f.code,
                     Modifier.rotate(90f),
-                    style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 0.1.em, color = Color.White),
+                    style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 0.1.em, color = Color.White),
                     maxLines = 1,
                     softWrap = false,
                 )
@@ -409,7 +409,7 @@ private fun DietBar(diets: Set<Diet>, counts: Map<Diet, Int>, onToggle: (Diet) -
                         .semantics { contentDescription = name },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(d.code, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = if (on) Color.White else Color(0xFFE9DCC4).copy(alpha = if (none) 0.45f else 1f)))
+                    Text(d.code, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = if (on) Color.White else Color(0xFFE9DCC4).copy(alpha = if (none) 0.45f else 1f)))
                 }
             }
             Spacer(Modifier.weight(1f))

@@ -5,7 +5,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import app.atlas.R
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.SerifFamily
 
 /**
@@ -43,7 +43,7 @@ internal object ShopType {
             "special elite" in f -> typewriter
             "courier" in f || "mono" in f -> receipt
             "tilt neon" in f -> neon
-            else -> InterFamily
+            else -> SansFamily
         }
     }
 }

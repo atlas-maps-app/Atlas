@@ -50,7 +50,7 @@ import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.places.TagFilter
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.appClock
@@ -210,7 +210,7 @@ private fun FeaturedCard(name: String, water: Double?, bits: List<String>, tide:
 @Composable
 private fun TideClock(tide: TideNow, now: java.time.Instant, modifier: Modifier) {
     val measurer = rememberTextMeasurer()
-    val text = remember(measurer) { BoardText(measurer, InterFamily) }
+    val text = remember(measurer) { BoardText(measurer, SansFamily) }
     val high = stringResource(R.string.swim_clock_high)
     val low = stringResource(R.string.swim_clock_low)
     val phase = tide.phase(now)

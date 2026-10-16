@@ -60,7 +60,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import kotlin.math.hypot
 
 /* The Street board's night (`canvas/project/Street.dc.html`). */
@@ -165,7 +165,7 @@ fun LateScreen(nav: Navigator) {
                 if (ctx.area.waiting || !worked.fresh) Looking(CHIP_OFF)
                 if (ctx.area.error != null && ctx.area.places.isEmpty()) EatProblem(ctx.area)
                 sourceLine(ctx.area)?.let {
-                    Text(it, Modifier.fillMaxWidth().padding(top = 16.dp), style = TextStyle(fontFamily = InterFamily, fontSize = 11.sp), color = Color(0xFF8C8598), textAlign = TextAlign.Center)
+                    Text(it, Modifier.fillMaxWidth().padding(top = 16.dp), style = TextStyle(fontFamily = SansFamily, fontSize = 11.sp), color = Color(0xFF8C8598), textAlign = TextAlign.Center)
                 }
             }
         }
@@ -182,7 +182,7 @@ fun LateScreen(nav: Navigator) {
                 }
                 if (pad.isNotEmpty()) {
                     Box(Modifier.align(Alignment.TopEnd).size(18.dp).clip(CircleShape).background(Color(0xFFE8622C)), contentAlignment = Alignment.Center) {
-                        Text(pad.size.toString(), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White))
+                        Text(pad.size.toString(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White))
                     }
                 }
             }
@@ -206,12 +206,12 @@ fun LateScreen(nav: Navigator) {
             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
         ) {
             BoardIcon(EatGlyphs.map, PALE, 18.dp)
-            Text(stringResource(R.string.eat_map), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = PALE))
+            Text(stringResource(R.string.eat_map), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = PALE))
         }
     }
 }
 
-private fun pillText(c: Color) = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = c)
+private fun pillText(c: Color) = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = c)
 
 /** The board's glyph for a bite, with its own drawing box (the SVG's width and height). */
 private fun biteArt(b: Bite): Triple<BoardGlyph, Float, Float> = when (b) {
@@ -320,9 +320,9 @@ private fun NeonCard(s: LateSpot, index: Int, ctx: EatContext, modifier: Modifie
             else BoardIcon(EatGlyphs.cutlery, Color(0xFFFFD6F2), 24.dp)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(s.place.name, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 19.sp, letterSpacing = (-0.01).em, color = CARD_INK), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(s.place.name, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 19.sp, letterSpacing = (-0.01).em, color = CARD_INK), maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                val meta = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = CARD_META)
+                val meta = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = CARD_META)
                 when {
                     s.place.alwaysOpen -> Text("24/7", style = meta.copy(color = Color(0xFF0A7A93)))
                     s.until != null -> Text("→ " + s.until.format(HM), style = meta.copy(color = Color(0xFFB0147E)))
@@ -333,7 +333,7 @@ private fun NeonCard(s: LateSpot, index: Int, ctx: EatContext, modifier: Modifie
                 if (s.place.yes("drive_through")) BoardIcon(EatGlyphs.driveThrough, CARD_META, 13.dp, contentDescription = stringResource(R.string.eat_late_drive_through))
             }
         }
-        ctx.ratings.stars(s.place.key)?.let { Text(starsText(it), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = CARD_INK)) }
+        ctx.ratings.stars(s.place.key)?.let { Text(starsText(it), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = CARD_INK)) }
     }
 }
 

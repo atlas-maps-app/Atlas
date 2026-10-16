@@ -57,7 +57,7 @@ import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.ui.go.CompassHeadings
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssShadow
@@ -120,7 +120,7 @@ fun NeedsScreen(args: Dest.Needs, nav: Navigator) {
             NeedDial(look.dial, look.dialSize.dp, heading, top?.bearing?.toFloat(), desc)
             Spacer(Modifier.height(if (kind == NeedKind.FOOD) 12.dp else 14.dp))
             when {
-                area.waiting -> Text(stringResource(R.string.shop_loading), style = TextStyle(fontFamily = InterFamily, fontSize = 16.sp), color = look.soft)
+                area.waiting -> Text(stringResource(R.string.shop_loading), style = TextStyle(fontFamily = SansFamily, fontSize = 16.sp), color = look.soft)
                 top == null -> Column(Modifier.padding(horizontal = 24.dp)) {
                     StateMessage(
                         look.badgeSymbol ?: "need.toilet",
@@ -131,8 +131,8 @@ fun NeedsScreen(args: Dest.Needs, nav: Navigator) {
                 else -> {
                     Distance(top.distanceM, look)
                     val sub = if (kind == NeedKind.FOOD) stringResource(R.string.shop_need_eat_in, top.place.name, top.walkMinutes) else stringResource(R.string.shop_need_min_walk, top.walkMinutes)
-                    Text(sub, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = if (kind == NeedKind.FOOD) 15.sp else 16.sp, fontFeatureSettings = "tnum"), color = look.soft, textAlign = TextAlign.Center)
-                    if (heading == null) Text(stringResource(R.string.shop_need_no_compass), Modifier.padding(horizontal = 32.dp, vertical = 6.dp), style = TextStyle(fontFamily = InterFamily, fontSize = 12.sp), color = look.soft, textAlign = TextAlign.Center)
+                    Text(sub, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = if (kind == NeedKind.FOOD) 15.sp else 16.sp, fontFeatureSettings = "tnum"), color = look.soft, textAlign = TextAlign.Center)
+                    if (heading == null) Text(stringResource(R.string.shop_need_no_compass), Modifier.padding(horizontal = 32.dp, vertical = 6.dp), style = TextStyle(fontFamily = SansFamily, fontSize = 12.sp), color = look.soft, textAlign = TextAlign.Center)
                     Spacer(Modifier.height(18.dp))
                     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(if (kind == NeedKind.FOOD) 10.dp else 8.dp)) {
                         when (kind) {
@@ -197,7 +197,7 @@ private fun TopBar(kind: NeedKind, look: NeedLook, on: Set<NeedFilter>, nav: Nav
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(if (kind == NeedKind.FOOD) 8.dp else 10.dp), verticalAlignment = Alignment.CenterVertically) {
         RoundSymbolButton("ui.back", stringResource(R.string.shop_back_map), { nav.back() }, size = 44.dp, fill = Color.White, tint = look.ink, iconSize = 20.dp)
         Box(Modifier.size(44.dp).background(look.accent, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-            if (look.badgeSymbol == null) Text(stringResource(R.string.shop_need_badge_wc), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Black, fontSize = 16.sp), color = Color.White)
+            if (look.badgeSymbol == null) Text(stringResource(R.string.shop_need_badge_wc), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Black, fontSize = 16.sp), color = Color.White)
             else Symbol(look.badgeSymbol, tint = Color.White, size = 24.dp)
         }
         Spacer(Modifier.weight(1f))
@@ -221,7 +221,7 @@ private fun TopBar(kind: NeedKind, look: NeedLook, on: Set<NeedFilter>, nav: Nav
                 horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (symbol != null) Symbol(symbol, tint = fg, size = if (text == null) 18.dp else 16.dp)
-                if (text != null) Text(text, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = if (f == NeedFilter.CHEAP) 13.sp else 12.sp), color = fg, maxLines = 1)
+                if (text != null) Text(text, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = if (f == NeedFilter.CHEAP) 13.sp else 12.sp), color = fg, maxLines = 1)
             }
         }
     }
@@ -248,7 +248,7 @@ private fun Distance(metres: Double, look: NeedLook) {
             append(n)
             withStyle(SpanStyle(fontSize = look.unitSize.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.sp)) { append(unit) }
         },
-        style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Black, fontSize = look.distanceSize.sp, lineHeight = look.distanceSize.sp, letterSpacing = (-0.03f * look.distanceSize).sp, fontFeatureSettings = "tnum"),
+        style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Black, fontSize = look.distanceSize.sp, lineHeight = look.distanceSize.sp, letterSpacing = (-0.03f * look.distanceSize).sp, fontFeatureSettings = "tnum"),
         color = look.ink,
     )
 }
@@ -264,8 +264,8 @@ private fun DetailCard(t: Target, kind: NeedKind, look: NeedLook, area: ShopArea
         if (kind == NeedKind.WATER) BoardSymbol("place.drinking-fountain", 56.dp, 76.dp)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (kind == NeedKind.WATER) 8.dp else 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(t.place.name, Modifier.weight(1f), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp), color = look.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (kind != NeedKind.WATER) openLine(t.place, area, now)?.let { (text, c) -> Text(text, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp, fontFeatureSettings = "tnum"), color = if (c == Color(0xFF464C5A)) Color(0xFF1E7A46) else c, maxLines = 1) }
+                Text(t.place.name, Modifier.weight(1f), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp), color = look.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (kind != NeedKind.WATER) openLine(t.place, area, now)?.let { (text, c) -> Text(text, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp, fontFeatureSettings = "tnum"), color = if (c == Color(0xFF464C5A)) Color(0xFF1E7A46) else c, maxLines = 1) }
             }
             FactRow(t, kind, look)
         }
@@ -283,7 +283,7 @@ private fun FactRow(t: Target, kind: NeedKind, look: NeedLook) {
                 horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (symbol != null) Symbol(symbol, tint = fg, size = 14.dp)
-                Text(text, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = if (small) 12.sp else 13.sp, fontFeatureSettings = "tnum"), color = fg, maxLines = 1)
+                Text(text, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = if (small) 12.sp else 13.sp, fontFeatureSettings = "tnum"), color = fg, maxLines = 1)
             }
         }
         @Composable
@@ -315,16 +315,16 @@ private fun AltRow(t: Target, look: NeedLook, area: ShopArea, now: java.time.Loc
         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
         Symbol("nav.direction", Modifier.rotate(rel), tint = look.accent, size = 22.dp)
-        Text(t.place.name, Modifier.weight(1f), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp), color = look.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(t.place.name, Modifier.weight(1f), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp), color = look.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
         val label = when {
             t.refill && Fact.FREE in t.facts && Fact.BOTTLE in t.facts -> stringResource(R.string.shop_fact_free_refill) to true
             Fact.CUSTOMERS in t.facts -> stringResource(R.string.shop_fact_customers) to false
             Fact.FREE in t.facts -> stringResource(R.string.shop_fact_free) to true
             else -> null
         }
-        label?.let { (text, strong) -> Text(text, style = TextStyle(fontFamily = InterFamily, fontWeight = if (strong) FontWeight.ExtraBold else FontWeight.Bold, fontSize = 12.sp), color = if (strong) look.accent else look.soft, maxLines = 1) }
-        openLine(t.place, area, now)?.let { (text, _) -> Text(text, style = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = look.soft, maxLines = 1) }
-        Text(shortDistance(t.distanceM), Modifier.width(58.dp), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, fontFeatureSettings = "tnum"), color = look.ink, textAlign = TextAlign.End, maxLines = 1)
+        label?.let { (text, strong) -> Text(text, style = TextStyle(fontFamily = SansFamily, fontWeight = if (strong) FontWeight.ExtraBold else FontWeight.Bold, fontSize = 12.sp), color = if (strong) look.accent else look.soft, maxLines = 1) }
+        openLine(t.place, area, now)?.let { (text, _) -> Text(text, style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = look.soft, maxLines = 1) }
+        Text(shortDistance(t.distanceM), Modifier.width(58.dp), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, fontFeatureSettings = "tnum"), color = look.ink, textAlign = TextAlign.End, maxLines = 1)
     }
 }
 
@@ -348,9 +348,9 @@ private fun FoodRow(t: Target, look: NeedLook, area: ShopArea, now: java.time.Lo
             Symbol(symbol, tint = if (free) Color(0xFF2F6B55) else look.accent, size = 24.dp)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(t.place.name, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp), color = look.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(t.place.name, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp), color = look.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val st = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, fontFeatureSettings = "tnum")
+                val st = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum")
                 if (free) Text(stringResource(R.string.shop_fact_free), style = st.copy(fontWeight = FontWeight.ExtraBold), color = Color(0xFF2F6B55))
                 else if (Fact.CHEAP in t.facts) Text("$", style = st.copy(fontWeight = FontWeight.ExtraBold), color = look.soft)
                 openLine(t.place, area, now)?.let { (text, _) -> Text(text, style = st, color = if (free) Color(0xFF2F6B55) else look.soft, maxLines = 1) }
@@ -358,6 +358,6 @@ private fun FoodRow(t: Target, look: NeedLook, area: ShopArea, now: java.time.Lo
             }
         }
         Symbol("nav.direction", Modifier.rotate(rel), tint = look.accent, size = 22.dp)
-        Text(shortDistance(t.distanceM), Modifier.width(if (t.distanceM >= 100) 64.dp else 50.dp), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Black, fontSize = 17.sp, fontFeatureSettings = "tnum"), color = look.ink, textAlign = TextAlign.End, maxLines = 1)
+        Text(shortDistance(t.distanceM), Modifier.width(if (t.distanceM >= 100) 64.dp else 50.dp), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Black, fontSize = 17.sp, fontFeatureSettings = "tnum"), color = look.ink, textAlign = TextAlign.End, maxLines = 1)
     }
 }

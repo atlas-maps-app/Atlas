@@ -54,7 +54,7 @@ import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.SerifFamily
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
@@ -132,7 +132,7 @@ fun ErrandsScreen(nav: Navigator) {
                         plan?.openTill != null -> stringResource(R.string.shop_errands_picked, picks.size, plan.openTill.hm())
                         else -> stringResource(R.string.shop_errands_picked_open, picks.size)
                     }
-                    Text(sub, style = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Soft)
+                    Text(sub, style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Soft)
                 }
             }
             Spacer(Modifier.height(14.dp))
@@ -147,8 +147,8 @@ fun ErrandsScreen(nav: Navigator) {
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 when {
-                    picks.isEmpty() -> Text(stringResource(R.string.shop_errands_none), style = TextStyle(fontFamily = InterFamily, fontSize = 14.sp), color = Soft)
-                    plan == null -> Text(stringResource(R.string.shop_errand_loading), style = TextStyle(fontFamily = InterFamily, fontSize = 14.sp), color = Soft)
+                    picks.isEmpty() -> Text(stringResource(R.string.shop_errands_none), style = TextStyle(fontFamily = SansFamily, fontSize = 14.sp), color = Soft)
+                    plan == null -> Text(stringResource(R.string.shop_errand_loading), style = TextStyle(fontFamily = SansFamily, fontSize = 14.sp), color = Soft)
                     area.places.isEmpty() && area.error != null -> StateMessage("ui-cloud-off", stringResource(R.string.shop_problem), text = area.error, tint = Color(0xFFD23C3C))
                     else -> {
                         plan.stops.forEachIndexed { i, s ->
@@ -160,14 +160,14 @@ fun ErrandsScreen(nav: Navigator) {
                         }
                         for (m in plan.missing) {
                             Row(Modifier.fillMaxWidth().height(48.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.size(32.dp).border(2.dp, Color(m.colour), CircleShape), contentAlignment = Alignment.Center) { Text("?", style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp), color = Color(m.colour)) }
+                                Box(Modifier.size(32.dp).border(2.dp, Color(m.colour), CircleShape), contentAlignment = Alignment.Center) { Text("?", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp), color = Color(m.colour)) }
                                 Column {
-                                    Text(stringResource(m.label), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp), color = Ink)
-                                    Text(stringResource(R.string.shop_errand_nowhere), style = TextStyle(fontFamily = InterFamily, fontSize = 13.sp), color = Color(0xFFB03A3A))
+                                    Text(stringResource(m.label), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp), color = Ink)
+                                    Text(stringResource(R.string.shop_errand_nowhere), style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp), color = Color(0xFFB03A3A))
                                 }
                             }
                         }
-                        if (plan.late) Text(stringResource(R.string.shop_errand_late), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.sp), color = Color(0xFFB03A3A))
+                        if (plan.late) Text(stringResource(R.string.shop_errand_late), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.sp), color = Color(0xFFB03A3A))
                     }
                 }
             }
@@ -235,7 +235,7 @@ private fun Fob(e: Errand, on: Boolean, order: Int?, missing: Boolean, angle: Fl
         ) {
             val sym = e.symbol
             if (sym != null) Symbol(sym, tint = Color.White, size = 28.dp)
-            else Text("$", style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Black, fontSize = 26.sp), color = Color.White)
+            else Text("$", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Black, fontSize = 26.sp), color = Color.White)
             Text(
                 if (missing) "?" else order?.toString() ?: "+",
                 style = TextStyle(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 11.sp), color = Color.White,
@@ -263,11 +263,11 @@ private fun MoreErrands(picks: List<Errand>, toggle: (Errand) -> Unit) {
 private fun StopRow(n: Int, s: ErrandStop, area: ShopArea, now: java.time.LocalDateTime, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(62.dp).tap(s.place.name, onClick), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(32.dp).background(Color(s.errand.colour), CircleShape), contentAlignment = Alignment.Center) {
-            Text(n.toString(), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp), color = Color.White)
+            Text(n.toString(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp), color = Color.White)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(s.place.name, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp), color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            val st = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, fontFeatureSettings = "tnum")
+            Text(s.place.name, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp), color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val st = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum")
             if (s.first && s.closesAt != null) {
                 Text(stringResource(R.string.shop_errand_closes_first, s.closesAt.hm()), style = st.copy(fontWeight = FontWeight.Bold), color = Color(0xFFB03A3A), maxLines = 1)
             } else {
@@ -275,6 +275,6 @@ private fun StopRow(n: Int, s: ErrandStop, area: ShopArea, now: java.time.LocalD
                 Text(listOfNotNull(line?.first, stringResource(s.errand.label).takeIf { s.place.name != stringResource(s.errand.label) }).joinToString(" · "), style = st, color = Soft, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        Text("${s.walkMinutes}′", style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, fontFeatureSettings = "tnum"), color = Ink)
+        Text("${s.walkMinutes}′", style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, fontFeatureSettings = "tnum"), color = Ink)
     }
 }

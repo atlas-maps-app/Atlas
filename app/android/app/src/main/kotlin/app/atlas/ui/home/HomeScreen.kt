@@ -60,7 +60,9 @@ import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.places.Categories
 import app.atlas.places.Symbols
+import app.atlas.ui.kit.LocalBackdrop
 import app.atlas.ui.kit.SheetStop
+import app.atlas.ui.kit.backdropSource
 import app.atlas.ui.kit.rememberSheetState
 import app.atlas.ui.kit.rememberSpeechInput
 import java.time.Instant
@@ -152,6 +154,9 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
     val context = LocalContext.current
     val debuggable = remember(context) { context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0 }
     BoxWithConstraints(Modifier.fillMaxSize()) {
+      val screenHeight = maxHeight
+      // The map and its wash are what the frosted pills, the control column and the tab bar blur behind them.
+      Box(Modifier.fillMaxSize().backdropSource(LocalBackdrop.current)) {
         AtlasMap(
             state = vm.map,
             tiles = tiles,
@@ -159,7 +164,7 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
             style = style,
             overlays = overlays,
             // The board's principal point: 440 of 915 dp down.
-            contentPadding = HomeView.padding(maxHeight.value),
+            contentPadding = HomeView.padding(screenHeight.value),
             onTap = { hit ->
                 when (hit) {
                     is MapHit.OnMarker -> hit.marker.place?.let(openPlace)
@@ -180,6 +185,7 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
                 .height(170.dp)
                 .background(scrim(if (mapNight) NIGHT_PAPER else look.scrim)),
         )
+      }
 
         // Top left: the weather and offline state, what is coming up, the quick needs.
         Column(Modifier.padding(start = 16.dp, top = top)) {
@@ -225,7 +231,7 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
                 .fillMaxWidth()
                 // Read in the layout phase only: dragging the sheet moves the row without recomposing the screen.
                 .offset { IntOffset(0, if (showingResults) -sheet.visibleHeightPx.roundToInt() else 0) }
-                .padding(start = 12.dp, end = 12.dp, bottom = if (showingResults) 8.dp else barInset + 6.dp),
+                .padding(start = 12.dp, end = 12.dp, bottom = if (showingResults) 8.dp else barInset + 12.dp),
         ) {
             Text(
                 stringResource(R.string.home_attribution),

@@ -73,7 +73,7 @@ import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssShadow
 import app.atlas.ui.kit.rememberHere
@@ -221,12 +221,12 @@ private fun Notepad(items: List<ListEntry>, run: Run?, repo: ShopRepository) {
                         maxLines = 1,
                     )
                     if (e.atHome) {
-                        Text(stringResource(R.string.shop_list_at_home), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.sp), color = HandSoft)
+                        Text(stringResource(R.string.shop_list_at_home), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.sp), color = HandSoft)
                     } else {
                         e.kind?.let { k -> Symbol(k.glyph, tint = hueOf(k.glyph) ?: Ink, size = 22.dp) }
                         stopOf[e.text]?.let { n ->
                             Box(Modifier.size(22.dp).background(Ink, CircleShape), contentAlignment = Alignment.Center) {
-                                Text(n.toString(), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp), color = Color.White)
+                                Text(n.toString(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp), color = Color.White)
                             }
                         }
                     }
@@ -274,7 +274,7 @@ private fun Suggestions(repo: ShopRepository) {
     val lang = remember { Locale.getDefault().language }
     val names = remember(lang) { listOf("milk", "bread", "eggs", "apples", "cheese", "coffee").mapNotNull { id -> ShopItems.byId(id)?.name(lang) } }
     Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(stringResource(R.string.shop_list_suggest), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.sp), color = HandSoft)
+        Text(stringResource(R.string.shop_list_suggest), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.sp), color = HandSoft)
         for (row in names.chunked(3)) {
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 for (n in row) {
@@ -320,7 +320,7 @@ private fun PlanPills(selected: PlanBy, canCheap: Boolean, onPick: (PlanBy) -> U
                     when (p) { PlanBy.FEWEST -> "ui.route"; PlanBy.BEST -> "ui.star"; PlanBy.CHEAPEST -> "ui.tag" },
                     tint = fg, size = if (p == PlanBy.FEWEST) 16.dp else 15.dp,
                 )
-                Text(label, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp), color = fg, maxLines = 1)
+                Text(label, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp), color = fg, maxLines = 1)
             }
         }
     }

@@ -34,7 +34,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.softShadow
 import kotlin.math.cos
 import kotlin.math.sin
@@ -57,7 +57,7 @@ object SignColours {
 }
 
 /** The Go board's type: Overpass in the boards, the app's sans here, with tabular figures. */
-internal val SignType = TextStyle(fontFamily = InterFamily)
+internal val SignType = TextStyle(fontFamily = SansFamily)
 
 /** The motorway gantry's truss across the width, as the Go board draws it: chords, the zigzag, hangers and bolts. */
 @Composable

@@ -118,7 +118,7 @@ internal fun BigPill(
             androidx.compose.material3.Text(
                 text,
                 style = androidx.compose.ui.text.TextStyle(
-                    fontFamily = app.atlas.ui.kit.InterFamily,
+                    fontFamily = app.atlas.ui.kit.SansFamily,
                     fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
                     fontSize = 16.sp,
                     fontFeatureSettings = "tnum",

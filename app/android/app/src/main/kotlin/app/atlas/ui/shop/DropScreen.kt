@@ -53,7 +53,7 @@ import app.atlas.mapview.UserLocation
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssShadow
@@ -144,12 +144,12 @@ fun DropScreen(stream: String?, nav: Navigator) {
                 Box(Modifier.size(30.dp).background(colour, CircleShape), contentAlignment = Alignment.Center) {
                     if (sel == Stream.BATTERIES) Symbol("bin.battery", tint = Color.White, size = 14.dp) else Box(Modifier.size(10.dp, 14.dp).background(Color.White, RoundedCornerShape(2.dp)))
                 }
-                Text(stringResource(StreamArts.getValue(sel).label), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp), color = Ink)
-                if (!area.waiting) Text(stringResource(R.string.shop_drop_nearby, mine.size), style = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Color(0xFF676D7C))
+                Text(stringResource(StreamArts.getValue(sel).label), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp), color = Ink)
+                if (!area.waiting) Text(stringResource(R.string.shop_drop_nearby, mine.size), style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Color(0xFF676D7C))
             }
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).windowInsetsPadding(WindowInsets.navigationBars), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 when {
-                    area.waiting -> Text(stringResource(R.string.shop_loading), style = TextStyle(fontFamily = InterFamily, fontSize = 14.sp), color = Soft)
+                    area.waiting -> Text(stringResource(R.string.shop_loading), style = TextStyle(fontFamily = SansFamily, fontSize = 14.sp), color = Soft)
                     area.places.isEmpty() && area.error != null -> StateMessage("ui-cloud-off", stringResource(R.string.shop_problem), text = area.error, tint = Color(0xFFD23C3C))
                     streetOnes.isEmpty() && centres.isEmpty() -> StateMessage("bin.recycling", stringResource(R.string.shop_drop_none), text = stringResource(R.string.shop_drop_none_text), tint = Soft)
                     else -> {
@@ -182,18 +182,18 @@ private fun DropRow(t: BinTarget, area: ShopArea, now: java.time.LocalDateTime, 
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
                 if (special) stringResource(R.string.shop_drop_special) else t.place.name,
-                style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp), color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp), color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 for (s in t.streams.filter { it != Stream.RUBBISH }.take(6)) {
                     Box(Modifier.size(12.dp, 16.dp).background(Color(s.colour), RoundedCornerShape(2.dp)))
                 }
-                val st = TextStyle(fontFamily = InterFamily, fontSize = 12.sp, fontFeatureSettings = "tnum")
+                val st = TextStyle(fontFamily = SansFamily, fontSize = 12.sp, fontFeatureSettings = "tnum")
                 openLine(t.place, area, now)?.let { (text, _) -> Text(text, style = st, color = Soft, maxLines = 1) }
                 val takes = t.streams.filter { it != Stream.RUBBISH }.take(3).map { stringResource(StreamArts.getValue(it).label).lowercase() }.joinToString(" · ")
                 if (special) Text(takes, Modifier.weight(1f, fill = false), style = st, color = Soft, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        Text(shortDistance(t.distanceM), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Black, fontSize = 17.sp, fontFeatureSettings = "tnum"), color = Ink)
+        Text(shortDistance(t.distanceM), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Black, fontSize = 17.sp, fontFeatureSettings = "tnum"), color = Ink)
     }
 }

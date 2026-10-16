@@ -61,7 +61,7 @@ import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.SerifFamily
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
@@ -183,7 +183,7 @@ fun StrollScreen(nav: Navigator) {
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color(0xFFCFE0EC), 0.16f to Color(0xFFEDE6DA), 1f to Color(0xFFEDE6DA)))) {
         if (street == null) {
             Column(Modifier.align(Alignment.Center).padding(24.dp)) {
-                if (area.waiting) Text(stringResource(R.string.shop_loading), style = TextStyle(fontFamily = InterFamily, fontSize = 14.sp), color = Color(0xFF464C5A))
+                if (area.waiting) Text(stringResource(R.string.shop_loading), style = TextStyle(fontFamily = SansFamily, fontSize = 14.sp), color = Color(0xFF464C5A))
                 else StateMessage("place.shop-front", stringResource(R.string.shop_stroll_none), text = area.error, tint = Color(0xFF464C5A))
             }
         } else {
@@ -226,7 +226,7 @@ fun StrollScreen(nav: Navigator) {
                         Text(street.direction + " " + Stroll.arrow(street.direction), style = TextStyle(fontFamily = ShopType.overpass, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp), color = Color.White.copy(alpha = 0.85f), maxLines = 1)
                     }
                 }
-                Text(stringResource(R.string.shop_stroll_count, index + 1, street.shops.size), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Color(0xFF464C5A))
+                Text(stringResource(R.string.shop_stroll_count, index + 1, street.shops.size), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = Color(0xFF464C5A))
             }
             RoundSymbolButton("ui.back", stringResource(R.string.shop_stroll_back), { at = (index - 1).coerceAtLeast(0) }, Modifier.align(Alignment.TopStart).padding(start = 10.dp, top = 340.dp), size = 44.dp, fill = Color.White.copy(alpha = 0.9f), iconSize = 20.dp, weight = 1.1f)
             RoundSymbolButton("ui.chevron-right", stringResource(R.string.shop_stroll_on), { at = (index + 1).coerceAtMost(street.shops.lastIndex) }, Modifier.align(Alignment.TopEnd).padding(end = 10.dp, top = 340.dp), size = 44.dp, fill = Color.White.copy(alpha = 0.9f), iconSize = 20.dp, weight = 1.1f)
@@ -261,7 +261,7 @@ private fun ShopCard(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(p.name, style = TextStyle(fontFamily = SerifFamily, fontSize = 30.sp, lineHeight = 30.sp), color = Color(0xFF14161B), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    val st = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, fontFeatureSettings = "tnum")
+                    val st = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum")
                     openLine(p, area, now)?.let { (t, c) -> Text(t, style = st.copy(fontWeight = if (c == Color(0xFF464C5A)) FontWeight.Bold else FontWeight.Normal), color = if (c == Color(0xFF464C5A)) Color(0xFF1E7A46) else c, maxLines = 1) }
                     rating?.stars?.let { Text("★ " + String.format(java.util.Locale.getDefault(), "%.1f", it), style = st, color = Color(0xFF464C5A)) }
                     p.kindName(java.util.Locale.getDefault().language)?.takeIf { !it.equals(p.name, ignoreCase = true) }?.let { Text(it, Modifier.weight(1f, fill = false), style = st, color = Color(0xFF464C5A), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
@@ -274,7 +274,7 @@ private fun ShopCard(
                 horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically,
             ) {
                 Symbol("fact.independent", tint = Color(0xFF12663A), size = 14.dp)
-                Text(stringResource(R.string.shop_indie), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp), color = Color(0xFF12663A))
+                Text(stringResource(R.string.shop_indie), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp), color = Color(0xFF12663A))
             }
             if (p.tags["second_hand"] in setOf("yes", "only") || p.tags["shop"] in setOf("second_hand", "charity")) FactDot("fact.second-hand", stringResource(R.string.shop_stroll_secondhand))
             if (p.stepFree) FactDot("fact.wheelchair", stringResource(R.string.shop_stroll_stepfree))
@@ -287,7 +287,7 @@ private fun ShopCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
             ) {
                 Symbol("ui.camera", tint = Color.White, size = 19.dp)
-                Text(peek, style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp), color = Color.White)
+                Text(peek, style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp), color = Color.White)
             }
             RoundSymbolButton(if (saved) "ui.bookmark" else "ui.bookmark", stringResource(if (saved) R.string.shop_stroll_saved else R.string.shop_stroll_save), onSave, size = 54.dp, fill = if (saved) Color(0xFFE4EAFF) else Color(0xFFF1EEE8), iconSize = 20.dp)
             if (phone != null) RoundSymbolButton("ui.phone", stringResource(R.string.shop_stroll_phone), { onPhone(phone) }, size = 54.dp, fill = Color(0xFFF1EEE8), iconSize = 19.dp)

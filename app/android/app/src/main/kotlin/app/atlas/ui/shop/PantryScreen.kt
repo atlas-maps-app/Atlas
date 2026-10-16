@@ -55,7 +55,7 @@ import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.ui.kit.Atlas
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.PillButton
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.SerifFamily
@@ -161,7 +161,7 @@ private fun PantryHeader(nav: Navigator, counts: PantryCounts, area: ShopArea, t
                 total.open -> stringResource(R.string.shop_pantry_open, total.value, now.hm())
                 else -> stringResource(R.string.shop_pantry_shops, total.value, now.hm())
             }
-            Text(line, style = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = InkSoft)
+            Text(line, style = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, fontFeatureSettings = "tnum"), color = InkSoft)
         }
         Box(
             Modifier.size(48.dp).clip(CircleShape).background(Ink).tap(
@@ -174,7 +174,7 @@ private fun PantryHeader(nav: Navigator, counts: PantryCounts, area: ShopArea, t
                 Box(
                     Modifier.align(Alignment.TopEnd).offset(x = 2.dp, y = (-2).dp).size(20.dp).clip(CircleShape).background(PaperWarm).padding(2.dp).clip(CircleShape).background(Color(0xFFE8622C)),
                     contentAlignment = Alignment.Center,
-                ) { Text(toBuy.toString(), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp), color = Color.White) }
+                ) { Text(toBuy.toString(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp), color = Color.White) }
             }
         }
     }
@@ -194,7 +194,7 @@ private fun PantrySearch(nav: Navigator) {
     ) {
         BoardArt(ShopBoards.SPARKLE, tint = Color(0xFF7B4DFF))
         Box(Modifier.weight(1f)) {
-            val style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Medium, fontSize = 16.sp, color = Ink)
+            val style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Medium, fontSize = 16.sp, color = Ink)
             BasicTextField(
                 value = text,
                 onValueChange = { text = it },
@@ -231,7 +231,7 @@ private fun ShelfRow(shelves: List<Shelf>, height: Dp, counts: PantryCounts, are
                     Text(
                         text,
                         Modifier.cssShadow(RoundedCornerShape(2.dp), y = 1.dp, blur = 2.dp, colour = Color(0x33000000)).background(Color(0xFFFFFDF6), RoundedCornerShape(2.dp)).padding(horizontal = 6.dp, vertical = 1.dp),
-                        style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, fontFeatureSettings = "tnum"),
+                        style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, fontFeatureSettings = "tnum"),
                         color = Ink,
                         maxLines = 1,
                     )
@@ -266,7 +266,7 @@ private fun PantryNote(area: ShopArea, retry: () -> Unit) {
         Text(
             stringResource(R.string.shop_sketch_note),
             Modifier.padding(horizontal = 24.dp, vertical = 16.dp).fillMaxWidth(),
-            style = TextStyle(fontFamily = InterFamily, fontSize = 12.sp), color = InkSoft, textAlign = TextAlign.Center,
+            style = TextStyle(fontFamily = SansFamily, fontSize = 12.sp), color = InkSoft, textAlign = TextAlign.Center,
         )
     }
 }

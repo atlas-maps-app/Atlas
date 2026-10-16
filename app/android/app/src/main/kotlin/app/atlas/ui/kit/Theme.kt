@@ -1,6 +1,5 @@
 package app.atlas.ui.kit
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -123,18 +122,18 @@ val NightColors = DarkColors.copy(
     ring = Color(0xFFB4F05A),
 )
 
-/** Inter for the interface, from one variable font file. */
-val InterFamily = FontFamily(
-    interFont(FontWeight.Normal),
-    interFont(FontWeight.Medium),
-    interFont(FontWeight.SemiBold),
-    interFont(FontWeight.Bold),
-    interFont(FontWeight.ExtraBold),
-    interFont(FontWeight.Black),
+/** Geist for the interface, as every board sets it (`font-family: Geist`), from one variable font file. */
+val SansFamily = FontFamily(
+    geistFont(FontWeight.Normal),
+    geistFont(FontWeight.Medium),
+    geistFont(FontWeight.SemiBold),
+    geistFont(FontWeight.Bold),
+    geistFont(FontWeight.ExtraBold),
+    geistFont(FontWeight.Black),
 )
 
-private fun interFont(weight: FontWeight) =
-    Font(R.font.inter, weight, variationSettings = FontVariation.Settings(FontVariation.weight(weight.weight)))
+private fun geistFont(weight: FontWeight) =
+    Font(R.font.geist, weight, variationSettings = FontVariation.Settings(FontVariation.weight(weight.weight)))
 
 /** Instrument Serif for display titles: upright for nouns, italic for moods ("Ears only"). */
 val SerifFamily = FontFamily(
@@ -166,15 +165,15 @@ val Type = AtlasType(
     display = TextStyle(fontFamily = SerifFamily, fontSize = 42.sp, lineHeight = 46.sp, letterSpacing = (-0.01).em),
     displayItalic = TextStyle(fontFamily = SerifFamily, fontStyle = FontStyle.Italic, fontSize = 42.sp, lineHeight = 46.sp),
     title = TextStyle(fontFamily = SerifFamily, fontSize = 30.sp, lineHeight = 34.sp),
-    headline = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 20.sp, lineHeight = 26.sp, letterSpacing = (-0.01).em),
-    name = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 17.sp, lineHeight = 22.sp, letterSpacing = (-0.01).em),
-    body = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Normal, fontSize = 15.sp, lineHeight = 21.sp),
-    bodyStrong = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, lineHeight = 21.sp),
-    label = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, lineHeight = 17.sp, lineHeightStyle = trim),
-    caption = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Medium, fontSize = 12.sp, lineHeight = 16.sp),
-    kicker = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, lineHeight = 14.sp, letterSpacing = 0.12.em),
-    numeral = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 30.sp, lineHeight = 32.sp, letterSpacing = (-0.02).em),
-    numeralSmall = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, lineHeight = 22.sp, letterSpacing = (-0.01).em),
+    headline = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 20.sp, lineHeight = 26.sp, letterSpacing = (-0.01).em),
+    name = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 17.sp, lineHeight = 22.sp, letterSpacing = (-0.01).em),
+    body = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Normal, fontSize = 15.sp, lineHeight = 21.sp),
+    bodyStrong = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, lineHeight = 21.sp),
+    label = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, lineHeight = 17.sp, lineHeightStyle = trim),
+    caption = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Medium, fontSize = 12.sp, lineHeight = 16.sp),
+    kicker = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, lineHeight = 14.sp, letterSpacing = 0.12.em),
+    numeral = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 30.sp, lineHeight = 32.sp, letterSpacing = (-0.02).em),
+    numeralSmall = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, lineHeight = 22.sp, letterSpacing = (-0.01).em),
     mono = TextStyle(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium, fontSize = 13.sp, lineHeight = 18.sp),
 )
 
@@ -190,11 +189,12 @@ object Atlas {
 }
 
 /**
- * Atlas's look. It follows the system's dark setting; [night] switches to the black-and-lime look of navigation after
- * dark. Material components inside get a matching colour scheme, so a stray Material widget does not look foreign.
+ * Atlas's look: the boards', which are drawn light only, so the system's dark setting does not change it; [night]
+ * switches to the black-and-lime look of navigation after dark (the Ride board). Material components inside get a
+ * matching colour scheme, so a stray Material widget does not look foreign.
  */
 @Composable
-fun AtlasTheme(dark: Boolean = isSystemInDarkTheme(), night: Boolean = false, content: @Composable () -> Unit) {
+fun AtlasTheme(dark: Boolean = false, night: Boolean = false, content: @Composable () -> Unit) {
     val colors = when {
         night -> NightColors
         dark -> DarkColors

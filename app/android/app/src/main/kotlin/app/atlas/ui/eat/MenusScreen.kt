@@ -2,7 +2,7 @@ package app.atlas.ui.eat
 
 import androidx.compose.foundation.Canvas
 import app.atlas.ui.kit.SerifFamily
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.DpOffset
@@ -161,7 +161,7 @@ fun MenusScreen(nav: Navigator) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 BoardIcon(EatGlyphs.map, Color.White, 19.dp)
-                Text(stringResource(R.string.eat_map), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = Color.White))
+                Text(stringResource(R.string.eat_map), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = Color.White))
             }
             Dice(
                 description = stringResource(R.string.eat_surprise),
@@ -203,7 +203,7 @@ private fun TableHeader(ctx: EatContext, padCount: Int, onMap: () -> Unit, onPad
         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(stringResource(mealName(Meal.at(ctx.at.toLocalTime()))), style = TextStyle(fontFamily = SerifFamily, fontSize = 30.sp, lineHeight = 32.sp, color = INK))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                val meta = TextStyle(fontFamily = InterFamily, fontSize = 13.sp, color = MUTED)
+                val meta = TextStyle(fontFamily = SansFamily, fontSize = 13.sp, color = MUTED)
                 Row(
                     Modifier.clip(CircleShape).clickable { onPick(Picker.TIME) }.padding(horizontal = 4.dp, vertical = 2.dp)
                         .semantics(mergeDescendants = true) { contentDescription = timeLabel },
@@ -248,7 +248,7 @@ internal fun OrderPadButton(count: Int, onClick: () -> Unit, background: Color =
                 Modifier.align(Alignment.TopEnd).offset(x = 2.dp, y = (-2).dp).size(20.dp).clip(CircleShape).background(edge).padding(2.dp).clip(CircleShape).background(Color(0xFFE8622C)),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(count.toString(), style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White))
+                Text(count.toString(), style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White))
             }
         }
     }
@@ -310,7 +310,7 @@ private fun AskField(text: String, onText: (String) -> Unit, onAsk: () -> Unit, 
     ) {
         BoardIcon(EatGlyphs.sparkle, Color(0xFF7B4DFF), 18.dp)
         Box(Modifier.weight(1f)) {
-            val style = TextStyle(fontFamily = InterFamily, fontWeight = FontWeight.Medium, fontSize = 16.sp)
+            val style = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Medium, fontSize = 16.sp)
             if (text.isEmpty()) Text(stringResource(R.string.eat_ask), style = style, color = Color(0xFF8B857B))
             BasicTextField(
                 value = text,

@@ -46,7 +46,7 @@ import androidx.compose.ui.unit.sp
 import app.atlas.nav.LocalServices
 import app.atlas.places.Icon
 import app.atlas.R
-import app.atlas.ui.kit.InterFamily
+import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.SerifFamily
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.drawIcon
@@ -140,7 +140,7 @@ internal fun BoardPage(
 /** The letter-spaced small caps line that heads a group ("BEST NOW"). */
 @Composable
 internal fun SmallCaps(text: String, colour: Color, modifier: Modifier = Modifier, size: Int = 12) {
-    Text(text.uppercase(), modifier, color = colour, fontSize = size.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (size * 0.12f).sp, fontFamily = InterFamily)
+    Text(text.uppercase(), modifier, color = colour, fontSize = size.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (size * 0.12f).sp, fontFamily = SansFamily)
 }
 
 /** The board's dotted paper: a dot every 16 px, 1 px across, in warm brown at 16 per cent. */
