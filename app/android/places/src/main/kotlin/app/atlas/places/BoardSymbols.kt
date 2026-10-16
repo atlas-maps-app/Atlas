@@ -41,10 +41,12 @@ object BoardSymbols {
 
     private fun load(): Data {
         val root = Resources.jsonOrNull("board_symbols.json")?.obj ?: return Data(emptyList(), emptyMap(), emptyMap(), emptyMap())
-        val all = root["symbols"]?.arr?.mapNotNull { e ->
+        // board_art.json, when the classpath has it: the boards' drawings for drawing generated boards (local tests only)
+        val art = Resources.jsonOrNull("board_art.json")?.obj?.get("symbols")?.arr.orEmpty()
+        val all = (root["symbols"]?.arr.orEmpty() + art).mapNotNull { e ->
             val o = e.obj ?: return@mapNotNull null
             BoardSymbol(o["id"]?.str ?: return@mapNotNull null, o["n"]?.num?.toInt() ?: 0, o["h"]?.str ?: "", argb(o["k"]?.str), o)
-        } ?: emptyList()
+        }
         val byId = all.associateBy { it.id }
         val aliases = root["aliases"].stringMap().filterValues { it in byId }
         val reverse = aliases.entries.groupBy({ it.value }, { it.key })
