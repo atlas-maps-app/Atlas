@@ -1,0 +1,608 @@
+# key|English|Nederlands|Deutsch|Francais
+offline_channel|Offline maps|Offline kaarten|Offline-Karten|Cartes hors ligne
+offline_notification|Offline: %1$s|Offline: %1$s|Offline: %1$s|Hors ligne : %1$s
+offline_cancel|Cancel|Annuleer|Abbrechen|Annuler
+# carried over from the first placeholders
+mine_settings|Settings|Instellingen|Einstellungen|Réglages
+mine_settings_title|Your Atlas|Jouw Atlas|Dein Atlas|Votre Atlas
+mine_units|Units|Eenheden|Einheiten|Unités
+mine_offline|Offline regions|Offline gebieden|Offline-Gebiete|Régions hors ligne
+mine_data|Data sources & keys|Gegevensbronnen & sleutels|Datenquellen & Schlüssel|Sources de données et clés
+mine_privacy|On this phone|Op deze telefoon|Auf diesem Telefon|Sur ce téléphone
+mine_privacy_head|No account. No ads. No trackers.|Geen account. Geen reclame. Geen trackers.|Kein Konto. Keine Werbung. Keine Tracker.|Pas de compte. Pas de pub. Pas de traqueurs.
+mine_privacy_text|Nothing about you leaves the phone unless you share it.|Niets over jou verlaat de telefoon, tenzij je het deelt.|Nichts über dich verlässt das Telefon, außer du teilst es.|Rien à votre sujet ne quitte le téléphone, sauf si vous le partagez.
+mine_about|About & licences|Over & licenties|Info & Lizenzen|À propos et licences
+mine_about_text|Map data © OpenStreetMap contributors (ODbL). Tiles by OpenFreeMap. Routing by BRouter. Weather by Open-Meteo.com (CC BY 4.0). Reviews by Mangrove (CC BY 4.0). Fonts: Inter and Instrument Serif (OFL). Symbols: Maki, Temaki (CC0) and Lucide (ISC).|Kaartgegevens © OpenStreetMap-bijdragers (ODbL). Tegels van OpenFreeMap. Routes door BRouter. Weer van Open-Meteo.com (CC BY 4.0). Reviews van Mangrove (CC BY 4.0). Lettertypen: Inter en Instrument Serif (OFL). Symbolen: Maki, Temaki (CC0) en Lucide (ISC).|Kartendaten © OpenStreetMap-Mitwirkende (ODbL). Kacheln von OpenFreeMap. Routen mit BRouter. Wetter von Open-Meteo.com (CC BY 4.0). Bewertungen von Mangrove (CC BY 4.0). Schriften: Inter und Instrument Serif (OFL). Symbole: Maki, Temaki (CC0) und Lucide (ISC).|Données cartographiques © contributeurs OpenStreetMap (ODbL). Tuiles d'OpenFreeMap. Itinéraires par BRouter. Météo d'Open-Meteo.com (CC BY 4.0). Avis de Mangrove (CC BY 4.0). Polices : Inter et Instrument Serif (OFL). Symboles : Maki, Temaki (CC0) et Lucide (ISC).
+mine_welcome|Welcome|Welkom|Willkommen|Bienvenue
+mine_welcome_text|Everything works with no signal: maps, routes, places, voice.|Alles werkt zonder bereik: kaarten, routes, plekken, stem.|Alles funktioniert ohne Empfang: Karten, Routen, Orte, Stimme.|Tout marche sans réseau : cartes, itinéraires, lieux, voix.
+mine_layers|Map look|Kaartstijl|Kartenstil|Style de carte
+mine_layers_3d|3D buildings|3D-gebouwen|3D-Gebäude|Bâtiments 3D
+mine_theme_auto|Auto|Auto|Auto|Auto
+mine_theme_day|Day|Dag|Tag|Jour
+mine_theme_night|Night|Nacht|Nacht|Nuit
+mine_weather|Weather|Weer|Wetter|Météo
+mine_weather_none|No forecast: no connection, and none kept on the phone for here.|Geen verwachting: geen verbinding, en niets bewaard voor hier.|Keine Vorhersage: keine Verbindung und nichts für hier gespeichert.|Pas de prévisions : pas de connexion, et rien de gardé pour ici.
+mine_weather_kept|Kept forecast from %1$s|Bewaarde verwachting van %1$s|Gespeicherte Vorhersage von %1$s|Prévisions gardées de %1$s
+mine_regions_none|No regions yet. Add one to use the map with no signal.|Nog geen gebieden. Voeg er een toe om de kaart zonder bereik te gebruiken.|Noch keine Gebiete. Füge eines hinzu, um die Karte ohne Empfang zu nutzen.|Pas encore de régions. Ajoutez-en une pour utiliser la carte sans réseau.
+mine_region_add|Add a region|Gebied toevoegen|Gebiet hinzufügen|Ajouter une région
+mine_region_pick|Take this area offline|Dit gebied offline nemen|Dieses Gebiet offline nehmen|Emporter cette zone
+mine_region_name|Around here|Hier in de buurt|In der Nähe|Autour d'ici
+mine_region_download|Download the map|Kaart downloaden|Karte laden|Télécharger la carte
+mine_charge|Charge|Laden|Laden|Recharge
+mine_charging_route|Charging route|Laadroute|Laderoute|Itinéraire avec recharge
+mine_charging_route_text|A route with charging stops, from OpenStreetMap and Open Charge Map.|Een route met laadstops, uit OpenStreetMap en Open Charge Map.|Eine Route mit Ladestopps, aus OpenStreetMap und Open Charge Map.|Un itinéraire avec arrêts de recharge, d'OpenStreetMap et Open Charge Map.
+mine_key_set|key set|sleutel ingesteld|Schlüssel gesetzt|clé définie
+mine_key_needed|needs a key|sleutel nodig|braucht einen Schlüssel|clé requise
+# Offline
+offline_title|Offline|Offline|Offline|Hors ligne
+offline_works|Everything works without a connection|Alles werkt zonder verbinding|Alles funktioniert ohne Verbindung|Tout fonctionne sans connexion
+offline_storage_cd|Storage used: %1$s of %2$s|Opslag gebruikt: %1$s van %2$s|Speicher belegt: %1$s von %2$s|Stockage utilisé : %1$s sur %2$s
+offline_age_cd|Refreshed %1$s ago|%1$s geleden ververst|Vor %1$s aktualisiert|Actualisé il y a %1$s
+offline_layer_map|Map tiles|Kaartgegevens|Karte|Carte
+offline_layer_routes|Routing graphs|Routegegevens|Routen|Itinéraires
+offline_layer_search|Places and search index|Plaatsen en zoekindex|Orte und Suche|Lieux et recherche
+offline_layer_terrain|Terrain and 3D|Terrein en 3D|Gelände und 3D|Relief et 3D
+offline_layer_voices|Voices|Stemmen|Stimmen|Voix
+offline_none_title|No regions yet|Nog geen gebieden|Noch keine Gebiete|Pas encore de régions
+offline_none_text|Take a country, a city or an area with you: the map, search and routes then work with no signal.|Neem een land, stad of gebied mee: kaart, zoeken en routes werken dan zonder bereik.|Nimm ein Land, eine Stadt oder ein Gebiet mit: Karte, Suche und Routen funktionieren dann ohne Netz.|Emportez un pays, une ville ou une zone : carte, recherche et itinéraires marchent alors sans réseau.
+offline_add_area|Draw an area to download|Teken een gebied om te downloaden|Gebiet zum Download zeichnen|Dessiner une zone à télécharger
+offline_add_route|Download along a route|Download langs een route|Entlang einer Route laden|Télécharger le long d'un itinéraire
+offline_add_country|Download a whole country|Download een heel land|Ein ganzes Land laden|Télécharger un pays entier
+offline_add_auto|Download automatically around home, work and your trips|Download automatisch rond thuis, werk en je reizen|Automatisch um Zuhause, Arbeit und Reisen laden|Télécharger automatiquement autour du domicile, du travail et des trajets
+offline_auto_on|Automatic downloads are on|Automatische downloads staan aan|Automatische Downloads sind an|Téléchargements automatiques activés
+offline_voices|Voices|Stemmen|Stimmen|Voix
+offline_voice_missing|%1$s voice data is not on this phone. Tap to install it.|Stemgegevens voor %1$s staan niet op deze telefoon. Tik om te installeren.|Stimmdaten für %1$s fehlen. Tippen zum Installieren.|Les voix %1$s ne sont pas sur ce téléphone. Touchez pour les installer.
+offline_wifi_only|Update over Wi-Fi only|Alleen via wifi bijwerken|Nur über WLAN aktualisieren|Mettre à jour en Wi-Fi uniquement
+offline_update_chip|+%1$s|+%1$s|+%1$s|+%1$s
+offline_up_to_date|Up to date|Actueel|Aktuell|À jour
+offline_waiting_wifi|waiting for Wi-Fi|wacht op wifi|wartet auf WLAN|attend le Wi-Fi
+offline_waiting_net|waiting for a connection|wacht op verbinding|wartet auf Verbindung|attend une connexion
+offline_stopped|stopped|gestopt|angehalten|arrêté
+offline_actions_update|Update|Bijwerken|Aktualisieren|Mettre à jour
+offline_actions_delete|Delete|Verwijderen|Löschen|Supprimer
+offline_actions_cancel|Stop|Stop|Stopp|Arrêter
+offline_actions_retry|Try again|Opnieuw|Erneut|Réessayer
+offline_delete_title|Delete %1$s?|%1$s verwijderen?|%1$s löschen?|Supprimer %1$s ?
+offline_delete_text|This frees %1$s. The map, search and routes there then need a connection.|Dit maakt %1$s vrij. Kaart, zoeken en routes daar hebben dan verbinding nodig.|Das gibt %1$s frei. Karte, Suche und Routen dort brauchen dann Verbindung.|Cela libère %1$s. La carte, la recherche et les itinéraires y demandent alors une connexion.
+offline_delete_confirm|Delete|Verwijder|Löschen|Supprimer
+offline_keep|Keep|Bewaar|Behalten|Garder
+offline_footer|Maps and places: OpenStreetMap contributors (ODbL) · routing: BRouter · packs built by Atlas on GitHub|Kaarten en plaatsen: OpenStreetMap-bijdragers (ODbL) · routes: BRouter · pakketten door Atlas op GitHub|Karten und Orte: OpenStreetMap-Mitwirkende (ODbL) · Routen: BRouter · Pakete von Atlas auf GitHub|Cartes et lieux : contributeurs OpenStreetMap (ODbL) · itinéraires : BRouter · paquets construits par Atlas sur GitHub
+offline_mini_name|%1$s on the phone|%1$s op de telefoon|%1$s auf dem Telefon|%1$s sur le téléphone
+# Mine
+title|Mine|Mijn|Meins|Moi
+no_account|No account · all on this phone|Geen account · alles op deze telefoon|Kein Konto · alles auf diesem Telefon|Pas de compte · tout sur ce téléphone
+passport_cd|Passport: %1$s|Paspoort: %1$s|Reisepass: %1$s|Passeport : %1$s
+passport_places|%1$d places|%1$d plekken|%1$d Orte|%1$d lieux
+passport_off|off|uit|aus|off
+passport_where|where I've been|waar ik was|wo ich war|où j'ai été
+passport_label|PASSPORT|PASPOORT|REISEPASS|PASSEPORT
+lists_cd|Lists: %1$d, %2$d places|Lijsten: %1$d, %2$d plekken|Listen: %1$d, %2$d Orte|Listes : %1$d, %2$d lieux
+lists_label|Lists|Lijsten|Listen|Listes
+lists_sub|%1$d lists · %2$d places|%1$d lijsten · %2$d plekken|%1$d Listen · %2$d Orte|%1$d listes · %2$d lieux
+offline_cd|Offline maps: %1$d regions, %2$s|Offline kaarten: %1$d gebieden, %2$s|Offline-Karten: %1$d Gebiete, %2$s|Cartes hors ligne : %1$d régions, %2$s
+offline_sub|%1$d regions · %2$s|%1$d gebieden · %2$s|%1$d Gebiete · %2$s|%1$d régions · %2$s
+offline_none_sub|none yet|nog geen|noch keine|aucune
+fixes_cd|Quests: %1$d map fixes|Quests: %1$d kaartcorrecties|Quests: %1$d Kartenkorrekturen|Quêtes : %1$d corrections
+fixes_label|FIXES|FIXES|FIXES|CORRECTIONS
+car_label|Charge|Laden|Laden|Recharge
+car_sub_none|pick your car|kies je auto|Auto wählen|choisir la voiture
+car_cd|Charging: %1$s|Laden: %1$s|Laden: %1$s|Recharge : %1$s
+sources_label|SOURCES|BRONNEN|QUELLEN|SOURCES
+sources_on|%1$d on|%1$d aan|%1$d an|%1$d actives
+sources_keys|%1$d keys|%1$d sleutels|%1$d Schlüssel|%1$d clés
+sources_cd|Data sources: %1$d on, %2$d keys|Gegevensbronnen: %1$d aan, %2$d sleutels|Datenquellen: %1$d an, %2$d Schlüssel|Sources : %1$d actives, %2$d clés
+btn_settings|Settings|Instellingen|Einstellungen|Réglages
+btn_look|Map look|Kaartstijl|Kartenstil|Style
+btn_watch|Watch & car|Horloge & auto|Uhr & Auto|Montre & voiture
+btn_satellites|Satellites|Satellieten|Satelliten|Satellites
+btn_privacy|Privacy|Privacy|Datenschutz|Vie privée
+btn_tour|Tour|Rondleiding|Rundgang|Visite
+nothing_uploaded|Nothing here is uploaded. Export or wipe it any time in Privacy.|Niets hier wordt geüpload. Exporteer of wis het altijd in Privacy.|Nichts hier wird hochgeladen. Exportiere oder lösche es jederzeit unter Datenschutz.|Rien ici n'est envoyé. Exportez ou effacez-le à tout moment dans Vie privée.
+# Settings
+settings_title|Your Atlas|Jouw Atlas|Dein Atlas|Votre Atlas
+voice_on|Voice: on|Stem: aan|Stimme: an|Voix : activée
+voice_off|Voice: off, turns are felt|Stem: uit, bochten voel je|Stimme: aus, Abbiegungen fühlbar|Voix : coupée, les virages se sentent
+voice_sub_ready|on the phone, no signal needed|op de telefoon, geen bereik nodig|auf dem Telefon, kein Netz nötig|sur le téléphone, sans réseau
+voice_sub_none|no speech engine on this phone|geen spraakmotor op deze telefoon|keine Sprachausgabe auf diesem Telefon|pas de synthèse vocale sur ce téléphone
+voice_sample|Play sample|Voorbeeld|Beispiel|Écouter
+voice_sample_text|In two hundred metres, turn right onto the canal.|Over tweehonderd meter rechtsaf, de gracht op.|In zweihundert Metern rechts abbiegen.|Dans deux cents mètres, tournez à droite.
+voice_haptics|Vibrations|Trillingen|Vibration|Vibrations
+voice_engine|Voice settings|Steminstellingen|Spracheinstellungen|Réglages de la voix
+settings_units|Units|Eenheden|Einheiten|Unités
+settings_km|km|km|km|km
+settings_mi|mi|mi|mi|mi
+settings_nm|nm|nm|sm|nm
+settings_celsius|°C|°C|°C|°C
+settings_fahrenheit|°F|°F|°F|°F
+settings_24h|24 h|24 u|24 h|24 h
+settings_12h|12 h|12 u|12 h|12 h
+settings_look|Map look|Kaartstijl|Kartenstil|Style de carte
+settings_look_auto|auto day / night|auto dag / nacht|Auto Tag / Nacht|auto jour / nuit
+settings_names|Names on the map|Namen op de kaart|Namen auf der Karte|Noms sur la carte
+settings_names_local|local names|lokale namen|lokale Namen|noms locaux
+settings_text_size|Text size|Tekstgrootte|Schriftgröße|Taille du texte
+settings_text_size_value|%1$d%%|%1$d%%|%1$d%%|%1$d%%
+settings_ears|Ears only|Alleen luisteren|Nur hören|Oreilles seules
+settings_ears_on|on|aan|an|activé
+settings_ears_off|off|uit|aus|désactivé
+settings_home|Home|Thuis|Zuhause|Domicile
+settings_work|Work|Werk|Arbeit|Travail
+settings_not_set|not set|niet ingesteld|nicht gesetzt|non défini
+settings_saved|Saved places|Bewaarde plekken|Gespeicherte Orte|Lieux enregistrés
+settings_saved_value|%1$d lists|%1$d lijsten|%1$d Listen|%1$d listes
+settings_offline|Offline regions|Offline gebieden|Offline-Gebiete|Régions hors ligne
+settings_offline_none|none yet|nog geen|noch keine|aucune
+settings_offline_value|%1$d · %2$s|%1$d · %2$s|%1$d · %2$s|%1$d · %2$s
+settings_car|My car|Mijn auto|Mein Auto|Ma voiture
+settings_car_none|not chosen|niet gekozen|nicht gewählt|non choisie
+settings_data|Data sources & keys|Gegevensbronnen & sleutels|Datenquellen & Schlüssel|Sources et clés
+settings_data_value|%1$d on|%1$d aan|%1$d an|%1$d actives
+settings_privacy|On this phone|Op deze telefoon|Auf diesem Telefon|Sur ce téléphone
+settings_privacy_value|privacy|privacy|Datenschutz|vie privée
+settings_new_phone|Move to a new phone|Naar een nieuwe telefoon|Auf ein neues Telefon|Passer à un nouveau téléphone
+settings_new_phone_value|one file|één bestand|eine Datei|un fichier
+settings_about|About & licences|Over & licenties|Info & Lizenzen|À propos et licences
+settings_footer|Atlas %1$s · open source · map data © OpenStreetMap contributors|Atlas %1$s · open source · kaartgegevens © OpenStreetMap-bijdragers|Atlas %1$s · Open Source · Kartendaten © OpenStreetMap-Mitwirkende|Atlas %1$s · open source · données © contributeurs OpenStreetMap
+pick_title_home|Home|Thuis|Zuhause|Domicile
+pick_title_work|Work|Werk|Arbeit|Travail
+pick_here|Use where I am now|Gebruik waar ik nu ben|Meinen Standort verwenden|Utiliser ma position
+pick_search|Search for an address or a place|Zoek een adres of plek|Adresse oder Ort suchen|Chercher une adresse ou un lieu
+pick_clear|Forget it|Vergeet het|Vergessen|Oublier
+pick_none|Nothing found|Niets gevonden|Nichts gefunden|Rien trouvé
+pick_close|Close|Sluiten|Schließen|Fermer
+names_local|Local names|Lokale namen|Lokale Namen|Noms locaux
+names_title|Names on the map|Namen op de kaart|Namen auf der Karte|Noms sur la carte
+theme_chart|Chart|Zeekaart|Seekarte|Carte marine
+theme_calm|Calm|Rustig|Ruhig|Calme
+# Privacy
+privacy_kept|Kept here|Hier bewaard|Hier gespeichert|Gardé ici
+privacy_online|What goes online, and why|Wat online gaat, en waarom|Was ins Netz geht, und warum|Ce qui part en ligne, et pourquoi
+privacy_online_none|Nothing: every online source is off.|Niets: alle online bronnen staan uit.|Nichts: alle Online-Quellen sind aus.|Rien : toutes les sources en ligne sont désactivées.
+privacy_export|Export all|Alles exporteren|Alles exportieren|Tout exporter
+privacy_delete|Delete everything|Alles verwijderen|Alles löschen|Tout supprimer
+privacy_exported|Saved as %1$s|Bewaard als %1$s|Gespeichert als %1$s|Enregistré sous %1$s
+privacy_clear|Clear|Wis|Leeren|Effacer
+privacy_delete_title|Delete everything on this phone?|Alles op deze telefoon verwijderen?|Alles auf diesem Telefon löschen?|Tout supprimer sur ce téléphone ?
+privacy_delete_text|Settings, keys, lists and saved places, searches, where you have been and kept forecasts are removed. Offline regions stay; delete them in Offline.|Instellingen, sleutels, lijsten en bewaarde plekken, zoekopdrachten, waar je was en bewaarde voorspellingen worden verwijderd. Offline gebieden blijven; verwijder ze bij Offline.|Einstellungen, Schlüssel, Listen und gespeicherte Orte, Suchen, wo du warst und gespeicherte Vorhersagen werden entfernt. Offline-Gebiete bleiben; lösche sie unter Offline.|Réglages, clés, listes et lieux enregistrés, recherches, trajets et prévisions gardées sont effacés. Les régions hors ligne restent ; supprimez-les dans Hors ligne.
+kept_trail|Where you have been|Waar je bent geweest|Wo du gewesen bist|Où vous êtes allé
+kept_trail_off|off · never recorded|uit · nooit opgenomen|aus · nie aufgezeichnet|désactivé · jamais enregistré
+kept_trail_on|on · %1$s · %2$s, only on this phone|aan · %1$s · %2$s, alleen op deze telefoon|an · %1$s · %2$s, nur auf diesem Telefon|activé · %1$s · %2$s, seulement sur ce téléphone
+kept_pressure|Pressure for the forecast|Luchtdruk voor de voorspelling|Luftdruck für die Vorhersage|Pression pour les prévisions
+kept_pressure_off|off · last 48 hours only when on|uit · alleen de laatste 48 uur als het aan staat|aus · nur die letzten 48 Stunden, wenn an|désactivé · 48 dernières heures seulement
+kept_pressure_on|last 48 hours only · %1$s|alleen laatste 48 uur · %1$s|nur letzte 48 Stunden · %1$s|48 dernières heures seulement · %1$s
+kept_pressure_none|this phone has no barometer|deze telefoon heeft geen barometer|dieses Telefon hat kein Barometer|ce téléphone n'a pas de baromètre
+kept_lists|Lists & saved places|Lijsten & bewaarde plekken|Listen & gespeicherte Orte|Listes et lieux enregistrés
+kept_lists_sub|%1$s · %2$s · yours until you delete|%1$s · %2$s · van jou tot je ze verwijdert|%1$s · %2$s · deine, bis du löschst|%1$s · %2$s · à vous jusqu'à suppression
+kept_searches|Searches|Zoekopdrachten|Suchen|Recherches
+kept_searches_sub|%1$s · on this phone|%1$s · op deze telefoon|%1$s · auf diesem Telefon|%1$s · sur ce téléphone
+kept_homework|Home & work|Thuis & werk|Zuhause & Arbeit|Domicile et travail
+sent_area|the area you look at, nothing about you|het gebied waar je naar kijkt, niets over jou|das Gebiet, das du ansiehst, nichts über dich|la zone que vous regardez, rien sur vous
+sent_words|the words you search for|de woorden waarop je zoekt|die Suchwörter|les mots que vous cherchez
+sent_mangrove|a place's id; a review only when you write one|de id van een plek; een review alleen als je er een schrijft|die Kennung eines Ortes; eine Bewertung nur wenn du sie schreibst|l'identifiant d'un lieu ; un avis seulement si vous en écrivez un
+sent_ratings|a place's name and spot, with your own key|naam en plek van een plaats, met je eigen sleutel|Name und Lage eines Ortes, mit deinem Schlüssel|nom et position d'un lieu, avec votre clé
+sent_weather|where you are, to about 10 m, for the forecast|waar je bent, tot 10 m, voor de voorspelling|wo du bist, auf 10 m genau, für die Vorhersage|où vous êtes, à 10 m près, pour les prévisions
+sent_wikidata|the Wikidata id of a place|de Wikidata-id van een plek|die Wikidata-Kennung eines Ortes|l'identifiant Wikidata d'un lieu
+sent_notes|a note, only when you leave one|een notitie, alleen als je er een achterlaat|eine Notiz, nur wenn du eine hinterlässt|une note, seulement si vous en laissez une
+sent_transit|your stop and the time, when you open a timetable|je halte en de tijd, als je een dienstregeling opent|deine Haltestelle und die Zeit, wenn du einen Fahrplan öffnest|votre arrêt et l'heure, quand vous ouvrez un horaire
+sent_fuel|the area you look at, with your key|het gebied waar je naar kijkt, met je sleutel|das Gebiet, das du ansiehst, mit deinem Schlüssel|la zone que vous regardez, avec votre clé
+# Data sources
+data_crumb|Settings · Data|Instellingen · Gegevens|Einstellungen · Daten|Réglages · Données
+data_title|Where every number comes from|Waar elk getal vandaan komt|Woher jede Zahl kommt|D'où vient chaque chiffre
+data_text|Open data, a partner's yes, or a link out. Atlas never pretends to be a browser or a person to copy another app, and names the source of every number. %1$d sources are on now.|Open data, een ja van een partner, of een link naar buiten. Atlas doet zich nooit voor als browser of persoon om een andere app te kopiëren, en noemt de bron van elk getal. %1$d bronnen staan nu aan.|Offene Daten, das Ja eines Partners oder ein Link nach außen. Atlas gibt sich nie als Browser oder Person aus, um eine andere App zu kopieren, und nennt die Quelle jeder Zahl. %1$d Quellen sind jetzt an.|Données ouvertes, l'accord d'un partenaire ou un lien. Atlas ne se fait jamais passer pour un navigateur ou une personne, et nomme la source de chaque chiffre. %1$d sources sont actives.
+data_open|On by default: open data|Standaard aan: open data|Standardmäßig an: offene Daten|Actives par défaut : données ouvertes
+data_keyed|Needs a key or a yes|Heeft een sleutel of een ja nodig|Braucht einen Schlüssel oder ein Ja|Demande une clé ou un accord
+data_outside|Outside Atlas|Buiten Atlas|Außerhalb von Atlas|En dehors d'Atlas
+data_google|Google|Google|Google|Google
+data_google_text|Google is not part of Atlas. There is no Google code, key field or link in this app; the owner keeps an optional module outside it, which this build does not include.|Google is geen onderdeel van Atlas. Er zit geen Google-code, sleutelveld of link in deze app; de eigenaar heeft een optionele module daarbuiten, die deze versie niet bevat.|Google ist kein Teil von Atlas. Diese App enthält keinen Google-Code, kein Schlüsselfeld und keinen Link; der Eigentümer pflegt ein optionales Modul außerhalb, das diese Version nicht enthält.|Google ne fait pas partie d'Atlas. Cette appli n'a ni code, ni champ de clé, ni lien Google ; le propriétaire garde un module facultatif à part, que cette version n'inclut pas.
+data_sent_link|What each source is sent, and what stays on this phone|Wat elke bron krijgt, en wat op deze telefoon blijft|Was jede Quelle erhält und was auf diesem Telefon bleibt|Ce que reçoit chaque source, et ce qui reste sur ce téléphone
+data_footer|%1$d keys are kept on this phone, in a file of their own that is not backed up, and are never logged or exported.|%1$d sleutels staan op deze telefoon, in een eigen bestand zonder back-up, en worden nooit gelogd of geëxporteerd.|%1$d Schlüssel liegen auf diesem Telefon, in einer eigenen Datei ohne Backup, und werden nie protokolliert oder exportiert.|%1$d clés sont gardées sur ce téléphone, dans un fichier à part sans sauvegarde, jamais journalisées ni exportées.
+data_key|key|sleutel|Schlüssel|clé
+data_partner|partner|partner|Partner|partenaire
+data_add_key|Add key|Sleutel toevoegen|Schlüssel hinzufügen|Ajouter une clé
+data_key_hint|Paste your %1$s key|Plak je %1$s-sleutel|Füge deinen %1$s-Schlüssel ein|Collez votre clé %1$s
+data_key_replace|Paste a new key to replace it|Plak een nieuwe sleutel om te vervangen|Neuen Schlüssel einfügen zum Ersetzen|Collez une nouvelle clé pour la remplacer
+data_save|Save|Bewaar|Speichern|Enregistrer
+data_remove|Remove|Verwijder|Entfernen|Retirer
+data_key_note|Kept on this phone only.|Alleen op deze telefoon bewaard.|Nur auf diesem Telefon gespeichert.|Gardée sur ce téléphone seulement.
+# About
+about_tag|A native maps app on OpenStreetMap and open data. Everything works offline. Open source, MIT licence.|Een native kaartenapp op OpenStreetMap en open data. Alles werkt offline. Open source, MIT-licentie.|Eine native Karten-App auf OpenStreetMap und offenen Daten. Alles funktioniert offline. Open Source, MIT-Lizenz.|Une appli de cartes native sur OpenStreetMap et données ouvertes. Tout marche hors ligne. Open source, licence MIT.
+about_map_data|Map data|Kaartgegevens|Kartendaten|Données cartographiques
+about_osm|© OpenStreetMap contributors|© OpenStreetMap-bijdragers|© OpenStreetMap-Mitwirkende|© contributeurs OpenStreetMap
+about_osm_text|The map, the places, the routes and the addresses are OpenStreetMap data, available under the Open Database Licence (ODbL 1.0). openstreetmap.org/copyright|De kaart, de plekken, de routes en de adressen zijn OpenStreetMap-gegevens onder de Open Database Licence (ODbL 1.0). openstreetmap.org/copyright|Karte, Orte, Routen und Adressen sind OpenStreetMap-Daten unter der Open Database Licence (ODbL 1.0). openstreetmap.org/copyright|La carte, les lieux, les itinéraires et les adresses sont des données OpenStreetMap sous Open Database Licence (ODbL 1.0). openstreetmap.org/copyright
+about_credits|Credits every source asks for|Vermeldingen die elke bron vraagt|Nennungen, die jede Quelle verlangt|Mentions demandées par chaque source
+about_s_providers|Data bundled with the providers|Gegevens bij de bronnen|Mit den Quellen gelieferte Daten|Données livrées avec les sources
+about_s_places|Symbols, presets and brands|Symbolen, voorinstellingen en merken|Symbole, Vorlagen und Marken|Symboles, préréglages et marques
+about_s_code|Fonts, ported code and data|Lettertypen, overgenomen code en gegevens|Schriften, übernommener Code und Daten|Polices, code repris et données
+about_s_libs|Libraries|Bibliotheken|Bibliotheken|Bibliothèques
+about_mit|Atlas itself is under the MIT licence. The full texts of the licences ship with the app's source in each module's LICENSES.md.|Atlas zelf valt onder de MIT-licentie. De volledige teksten van de licenties staan in de broncode in de LICENSES.md van elke module.|Atlas selbst steht unter der MIT-Lizenz. Die vollen Lizenztexte liegen im Quellcode in der LICENSES.md jedes Moduls.|Atlas est sous licence MIT. Les textes complets des licences sont dans le code source, dans le LICENSES.md de chaque module.
+# New phone
+phone_title|New phone|Nieuwe telefoon|Neues Telefon|Nouveau téléphone
+phone_text|Take your settings, saved places and lists to another phone as one plain file: put it on a drive, send it to yourself, then open it there. Nothing goes through Atlas.|Neem je instellingen, bewaarde plekken en lijsten mee naar een andere telefoon als één gewoon bestand: zet het op een schijf, stuur het naar jezelf en open het daar. Niets gaat via Atlas.|Nimm Einstellungen, gespeicherte Orte und Listen als eine einfache Datei auf ein anderes Telefon mit: auf ein Laufwerk legen, an dich selbst senden, dort öffnen. Nichts geht über Atlas.|Emportez réglages, lieux enregistrés et listes sur un autre téléphone dans un simple fichier : mettez-le sur un disque, envoyez-le-vous, ouvrez-le là-bas. Rien ne passe par Atlas.
+phone_in_file|In the file|In het bestand|In der Datei|Dans le fichier
+phone_lists|%1$d lists|%1$d lijsten|%1$d Listen|%1$d listes
+phone_places|%1$d places|%1$d plekken|%1$d Orte|%1$d lieux
+phone_settings|settings|instellingen|Einstellungen|réglages
+phone_trail|Include where I have been|Neem waar ik was mee|Wo ich war einschließen|Inclure où j'ai été
+phone_export|Export to a file|Exporteer naar een bestand|In eine Datei exportieren|Exporter dans un fichier
+phone_import|Bring in a file|Haal een bestand binnen|Datei einlesen|Importer un fichier
+phone_exported|Saved. Open it on the new phone with "Bring in a file".|Bewaard. Open het op de nieuwe telefoon met "Haal een bestand binnen".|Gespeichert. Auf dem neuen Telefon mit "Datei einlesen" öffnen.|Enregistré. Ouvrez-le sur le nouveau téléphone avec « Importer un fichier ».
+phone_imported|Brought over: %1$d settings, %2$d lists, %3$d new places.|Overgenomen: %1$d instellingen, %2$d lijsten, %3$d nieuwe plekken.|Übernommen: %1$d Einstellungen, %2$d Listen, %3$d neue Orte.|Repris : %1$d réglages, %2$d listes, %3$d nouveaux lieux.
+phone_failed|That file could not be read.|Dat bestand kon niet gelezen worden.|Diese Datei konnte nicht gelesen werden.|Ce fichier n'a pas pu être lu.
+phone_regions|Offline regions|Offline gebieden|Offline-Gebiete|Régions hors ligne
+phone_regions_none|none on this phone|geen op deze telefoon|keine auf diesem Telefon|aucune sur ce téléphone
+phone_regions_sub|%1$s · %2$s: download them again on the new phone|%1$s · %2$s: download ze opnieuw op de nieuwe telefoon|%1$s · %2$s: auf dem neuen Telefon erneut laden|%1$s · %2$s : à retélécharger sur le nouveau téléphone
+phone_keys|Provider keys stay on this phone and are not in the file: enter them again in Data sources.|Sleutels van bronnen blijven op deze telefoon en staan niet in het bestand: voer ze opnieuw in bij Gegevensbronnen.|Schlüssel der Quellen bleiben auf diesem Telefon und stehen nicht in der Datei: gib sie unter Datenquellen neu ein.|Les clés des sources restent sur ce téléphone et ne sont pas dans le fichier : saisissez-les de nouveau dans Sources.
+feeds_overpass|every place, tag, path and building|elke plek, tag, pad en gebouw|jeder Ort, jedes Tag, jeder Weg und jedes Gebäude|chaque lieu, tag, chemin et bâtiment
+feeds_nominatim|addresses and places by name, online|adressen en plekken op naam, online|Adressen und Orte nach Name, online|adresses et lieux par nom, en ligne
+feeds_photon|search, when your downloaded places have too little|zoeken, als je gedownloade plekken te weinig hebben|Suche, wenn deine geladenen Orte zu wenig haben|recherche, quand vos lieux téléchargés ne suffisent pas
+feeds_mangrove|reviews, read and written, one open pool|reviews, gelezen en geschreven, één open pool|Bewertungen, gelesen und geschrieben, ein offener Pool|avis, lus et écrits, un bassin ouvert
+feeds_ocm|chargers worldwide: power, plugs, operators|laders wereldwijd: vermogen, stekkers, exploitanten|Ladepunkte weltweit: Leistung, Stecker, Betreiber|bornes dans le monde : puissance, prises, opérateurs
+feeds_osm_chargers|chargers mapped by volunteers|laders in kaart gebracht door vrijwilligers|von Freiwilligen kartierte Ladepunkte|bornes cartographiées par des bénévoles
+feeds_ndw|every public charger in the Netherlands, live|elke openbare lader in Nederland, live|jede öffentliche Ladesäule in den Niederlanden, live|chaque borne publique aux Pays-Bas, en direct
+feeds_bnetza|Germany's charger register|het Duitse laderregister|das deutsche Ladesäulenregister|le registre allemand des bornes
+feeds_afdc|chargers in the United States|laders in de Verenigde Staten|Ladepunkte in den USA|bornes aux États-Unis
+feeds_weather|the sky, rain, wind, the real light|de lucht, regen, wind, het echte licht|Himmel, Regen, Wind, das echte Licht|le ciel, la pluie, le vent, la vraie lumière
+feeds_wikidata|facts about places and brands|feiten over plekken en merken|Fakten zu Orten und Marken|faits sur les lieux et les marques
+feeds_notes|notes for mappers, anonymous|notities voor kaartmakers, anoniem|Notizen für Kartierer, anonym|notes pour les cartographes, anonymes
+feeds_transit|timetables and departures|dienstregelingen en vertrektijden|Fahrpläne und Abfahrten|horaires et départs
+feeds_foursquare|ratings and popular hours, licensed|beoordelingen en drukke uren, gelicentieerd|Bewertungen und Stoßzeiten, lizenziert|notes et heures d'affluence, sous licence
+feeds_ratings|ratings, shown apart from the others|beoordelingen, apart getoond|Bewertungen, getrennt gezeigt|notes, affichées à part
+feeds_chargemap|prices and live status: partners only, no public API|prijzen en live status: alleen partners, geen publieke API|Preise und Live-Status: nur Partner, keine öffentliche API|prix et état en direct : partenaires seulement, pas d'API publique
+feeds_fuel|fuel prices in Germany, live|brandstofprijzen in Duitsland, live|Kraftstoffpreise in Deutschland, live|prix des carburants en Allemagne, en direct
+feeds_other|data for the screens that need it|gegevens voor de schermen die ze nodig hebben|Daten für Bildschirme, die sie brauchen|données pour les écrans qui en ont besoin
+# Plurals: key#|en one|en other|nl one|nl other|de one|de other|fr one|fr other
+n_lists#|%1$d list|%1$d lists|%1$d lijst|%1$d lijsten|%1$d Liste|%1$d Listen|%1$d liste|%1$d listes
+n_places#|%1$d place|%1$d places|%1$d plek|%1$d plekken|%1$d Ort|%1$d Orte|%1$d lieu|%1$d lieux
+n_regions#|%1$d region|%1$d regions|%1$d gebied|%1$d gebieden|%1$d Gebiet|%1$d Gebiete|%1$d région|%1$d régions
+n_points#|%1$d point|%1$d points|%1$d punt|%1$d punten|%1$d Punkt|%1$d Punkte|%1$d point|%1$d points
+n_readings#|%1$d reading|%1$d readings|%1$d meting|%1$d metingen|%1$d Messung|%1$d Messungen|%1$d mesure|%1$d mesures
+n_kept#|%1$d kept|%1$d kept|%1$d bewaard|%1$d bewaard|%1$d gespeichert|%1$d gespeichert|%1$d gardée|%1$d gardées
+# Satellites
+sat_title|Satellites|Satellieten|Satelliten|Satellites
+sat_none|No satellites heard|Geen satellieten gehoord|Keine Satelliten empfangen|Aucun satellite reçu
+sat_none_text|The phone's GPS is off, or it cannot see the sky (indoors, or a demo location). Go outside and open this screen again.|De gps van de telefoon staat uit of ziet de lucht niet (binnen, of een democlocatie). Ga naar buiten en open dit scherm opnieuw.|Das GPS des Telefons ist aus oder sieht den Himmel nicht (drinnen oder Demo-Standort). Geh nach draußen und öffne diesen Bildschirm erneut.|Le GPS du téléphone est coupé ou ne voit pas le ciel (à l'intérieur, ou position de démonstration). Sortez et rouvrez cet écran.
+sat_plot_cd|Sky plot: %1$d satellites in view from %2$d systems, %3$d used for your position|Hemelkaart: %1$d satellieten in zicht van %2$d systemen, %3$d gebruikt voor je positie|Himmelskarte: %1$d Satelliten in Sicht aus %2$d Systemen, %3$d für deine Position genutzt|Carte du ciel : %1$d satellites en vue de %2$d systèmes, %3$d utilisés pour votre position
+sat_gps|GPS|GPS|GPS|GPS
+sat_galileo|Galileo|Galileo|Galileo|Galileo
+sat_glonass|GLONASS|GLONASS|GLONASS|GLONASS
+sat_beidou|BeiDou|BeiDou|BeiDou|BeiDou
+sat_strength|Signal strength · dB-Hz|Signaalsterkte · dB-Hz|Signalstärke · dB-Hz|Force du signal · dB-Hz
+sat_in_use|in use|in gebruik|genutzt|utilisés
+sat_systems|systems|systemen|Systeme|systèmes
+sat_fix_age|since last fix|sinds laatste fix|seit letztem Fix|depuis le dernier fix
+sat_footer|Straight from your phone's satellite chip · layout after the open-source GPSTest app|Rechtstreeks van de satellietchip van je telefoon · opzet naar de open-source app GPSTest|Direkt vom Satellitenchip deines Telefons · Aufbau nach der Open-Source-App GPSTest|Directement de la puce satellite du téléphone · présentation d'après l'appli libre GPSTest
+# Watch
+watch_title|On the wrist|Om de pols|Am Handgelenk|Au poignet
+watch_preview|preview|voorbeeld|Vorschau|aperçu
+watch_cd|Watch: %1$s, %2$s|Horloge: %1$s, %2$s|Uhr: %1$s, %2$s|Montre : %1$s, %2$s
+watch_feel|Feel the way · no looking|Voel de weg · zonder kijken|Den Weg fühlen · ohne Hinsehen|Sentir le chemin · sans regarder
+watch_feel_it|Feel it on this phone|Voel het op deze telefoon|Auf diesem Telefon fühlen|Le sentir sur ce téléphone
+watch_left|turn left|links af|links abbiegen|tournez à gauche
+watch_right|turn right|rechts af|rechts abbiegen|tournez à droite
+watch_wrong|wrong way, turn around|verkeerde kant, keer om|falsche Richtung, wenden|mauvais sens, faites demi-tour
+watch_arrived|you have arrived|je bent er|du bist angekommen|vous êtes arrivé
+watch_speeds|Taps speed up as the turn gets closer. Tap a row to feel it here.|Tikken versnellen naarmate de bocht dichterbij komt. Tik op een rij om het hier te voelen.|Die Impulse werden schneller, je näher die Abbiegung kommt. Tippe auf eine Zeile, um es hier zu fühlen.|Les impulsions s'accélèrent à l'approche du virage. Touchez une ligne pour le sentir ici.
+# Weather
+weather_models|models|modellen|Modelle|modèles
+weather_sources|sources →|bronnen →|Quellen →|sources →
+weather_kept_chip|kept %1$s|bewaard %1$s|gespeichert %1$s|gardée %1$s
+weather_now|now|nu|jetzt|ici
+weather_means|What it means for you|Wat het voor jou betekent|Was es für dich bedeutet|Ce que cela signifie pour vous
+weather_none|No forecast|Geen voorspelling|Keine Vorhersage|Pas de prévision
+weather_none_text|No connection, and none kept on the phone for here. Open the weather once with a connection and it stays.|Geen verbinding, en geen bewaarde voor hier. Open het weer één keer met verbinding en het blijft bewaard.|Keine Verbindung und keine gespeicherte für hier. Öffne das Wetter einmal mit Verbindung, dann bleibt es.|Pas de connexion, et rien de gardé ici. Ouvrez la météo une fois avec une connexion et elle reste.
+weather_footer|Weather data by Open-Meteo.com (CC BY 4.0) · offline: the forecast kept on the phone and its barometer|Weergegevens van Open-Meteo.com (CC BY 4.0) · offline: de bewaarde voorspelling en de barometer van de telefoon|Wetterdaten von Open-Meteo.com (CC BY 4.0) · offline: die gespeicherte Vorhersage und das Barometer des Telefons|Données météo d'Open-Meteo.com (CC BY 4.0) · hors ligne : la prévision gardée et le baromètre du téléphone
+weather_raining|raining|het regent|es regnet|il pleut
+weather_rain_at|rain at %1$s|regen om %1$s|Regen um %1$s|pluie à %1$s
+weather_wind|wind %1$s|wind %1$s|Wind %1$s|vent %1$s
+weather_golden|golden %1$s|goud %1$s|golden %1$s|doré %1$s
+sky_clear|clear|helder|klar|dégagé
+sky_mainly_clear|mainly clear|overwegend helder|überwiegend klar|plutôt dégagé
+sky_partly|partly cloudy|half bewolkt|teils bewölkt|partiellement nuageux
+sky_cloudy|cloudy|bewolkt|bewölkt|nuageux
+sky_fog|fog|mist|Nebel|brouillard
+sky_drizzle|drizzle|motregen|Nieselregen|bruine
+sky_rain|rain|regen|Regen|pluie
+sky_snow|snow|sneeuw|Schnee|neige
+sky_thunder|thunderstorm|onweer|Gewitter|orage
+baro_stormy|STORMY|STORM|STURM|ORAGE
+baro_rain|RAIN|REGEN|REGEN|PLUIE
+baro_change|CHANGE|WISSELEND|WECHSEL|VARIABLE
+baro_fair|FAIR|MOOI|SCHÖN|BEAU
+baro_phone|phone|telefoon|Telefon|téléphone
+baro_forecast|forecast|voorspelling|Vorhersage|prévision
+baro_none|no pressure|geen druk|kein Druck|pas de pression
+baro_cd|Barometer: %1$s|Barometer: %1$s|Barometer: %1$s|Baromètre : %1$s
+adv_rain_now|Raining now, stops %1$s|Het regent, stopt %1$s|Regen jetzt, endet %1$s|Il pleut, s'arrête à %1$s
+adv_rain_soon|Rain from %1$s|Regen vanaf %1$s|Regen ab %1$s|Pluie dès %1$s
+adv_rain_soon_until|Rain %1$s–%2$s|Regen %1$s–%2$s|Regen %1$s–%2$s|Pluie %1$s–%2$s
+adv_rain_cafe|%1$s is near, a dry place to wait|%1$s is vlakbij, een droge plek om te wachten|%1$s ist nah, ein trockener Ort zum Warten|%1$s est tout près, un endroit sec où attendre
+adv_rain_plain|take a coat, or wait it out indoors|neem een jas mee, of wacht binnen|nimm eine Jacke mit oder warte drinnen|prenez un manteau, ou attendez à l'intérieur
+adv_dry|Dry for the whole forecast|Droog voor de hele voorspelling|Trocken für die ganze Vorhersage|Sec pendant toute la prévision
+adv_dry_sub|no rain forecast: a good time to be out|geen regen voorspeld: een goed moment om buiten te zijn|kein Regen vorhergesagt: eine gute Zeit draußen|pas de pluie prévue : bon moment pour sortir
+adv_windy|Gusts to %1$s|Windstoten tot %1$s|Böen bis %1$s|Rafales jusqu'à %1$s
+adv_windy_sub|around %1$s · bridges and bikes feel it|rond %1$s · bruggen en fietsen voelen het|gegen %1$s · Brücken und Räder spüren es|vers %1$s · ponts et vélos le sentent
+adv_frost|Frost at %1$s|Vorst om %1$s|Frost um %1$s|Gel à %1$s
+adv_frost_sub|bridges icy · leave 10 minutes early|bruggen glad · ga 10 minuten eerder weg|Brücken glatt · 10 Minuten früher los|ponts verglacés · partez 10 minutes plus tôt
+adv_hot|A warm day ahead: %1$d°|Een warme dag in aantocht: %1$d°|Ein warmer Tag voraus: %1$d°|Journée chaude : %1$d°
+adv_hot_sub|water, shade and an early start|water, schaduw en vroeg vertrekken|Wasser, Schatten und früher Start|eau, ombre et départ matinal
+adv_uv|Strong sun: UV %1$d|Sterke zon: UV %1$d|Starke Sonne: UV %1$d|Soleil fort : UV %1$d
+adv_uv_sub|sun cream, and shade around noon|zonnebrand, en schaduw rond de middag|Sonnencreme und Schatten um die Mittagszeit|crème solaire, et de l'ombre vers midi
+adv_fog|Fog ahead|Mist op komst|Nebel voraus|Brouillard à venir
+adv_fog_sub|low visibility: slower, lights on|slecht zicht: langzamer, lichten aan|schlechte Sicht: langsamer, Licht an|visibilité réduite : plus lentement, feux allumés
+adv_snow|Snow ahead|Sneeuw op komst|Schnee voraus|Neige à venir
+adv_snow_sub|slippery: allow more time|glad: reken op meer tijd|glatt: mehr Zeit einplanen|glissant : prévoyez plus de temps
+n_models#|%1$d model|%1$d models|%1$d model|%1$d modellen|%1$d Modell|%1$d Modelle|%1$d modèle|%1$d modèles
+# Forecast sources
+forecast_title|Forecast sources|Voorspellingsbronnen|Vorhersage-Quellen|Sources des prévisions
+forecast_temp|Next 48 h · temperature|Komende 48 u · temperatuur|Nächste 48 Std. · Temperatur|48 h à venir · température
+forecast_frost|%1$s night: %2$d of %3$d say frost|%1$s nacht: %2$d van %3$d zeggen vorst|%1$s Nacht: %2$d von %3$d sagen Frost|nuit de %1$s : %2$d sur %3$d prévoient du gel
+forecast_rain|Rain · how many models agree|Regen · hoeveel modellen het eens zijn|Regen · wie viele Modelle einig sind|Pluie · combien de modèles s'accordent
+forecast_chart_cd|Temperature from %1$d models over 48 hours, drawn together|Temperatuur van %1$d modellen over 48 uur, samen getekend|Temperatur von %1$d Modellen über 48 Stunden, zusammen gezeichnet|Température de %1$d modèles sur 48 heures, tracés ensemble
+forecast_who|Who makes it|Wie het maakt|Wer es macht|Qui les fait
+forecast_open|open data|open data|offene Daten|données ouvertes
+forecast_cc|open source|open source|Open Source|libre
+forecast_openmeteo|one open API for many national models|één open API voor veel nationale modellen|eine offene API für viele nationale Modelle|une API ouverte pour de nombreux modèles nationaux
+forecast_baro|Your phone's barometer|De barometer van je telefoon|Das Barometer deines Telefons|Le baromètre de votre téléphone
+forecast_baro_sub|works with no internet at all|werkt helemaal zonder internet|funktioniert ganz ohne Internet|marche sans aucun internet
+forecast_offline|offline|offline|offline|hors ligne
+forecast_none|No models to compare|Geen modellen om te vergelijken|Keine Modelle zum Vergleichen|Aucun modèle à comparer
+forecast_none_text|No connection, and no earlier answer kept for here. Open this screen once with a connection.|Geen verbinding, en geen eerder antwoord voor hier bewaard. Open dit scherm één keer met verbinding.|Keine Verbindung und keine frühere Antwort für hier gespeichert. Öffne diesen Bildschirm einmal mit Verbindung.|Pas de connexion, et aucune réponse gardée pour ici. Ouvrez cet écran une fois avec une connexion.
+forecast_footer|Atlas asks several models about the same place and shows how far they agree. It does not issue warnings: when your national weather service does, trust it over any model.|Atlas vraagt meerdere modellen over dezelfde plek en toont hoe ver ze het eens zijn. Het geeft geen waarschuwingen: als je nationale weerdienst dat doet, vertrouw die dan boven elk model.|Atlas fragt mehrere Modelle zum selben Ort und zeigt, wie weit sie übereinstimmen. Es gibt keine Warnungen aus: tut es dein nationaler Wetterdienst, vertraue ihm mehr als jedem Modell.|Atlas interroge plusieurs modèles sur le même lieu et montre leur accord. Il n'émet pas d'alertes : quand votre service météo national le fait, fiez-vous à lui plus qu'à tout modèle.
+# Layers
+layers_layers|Layers|Lagen|Ebenen|Couches
+layers_shadows|Shadows|Schaduwen|Schatten|Ombres
+layers_trees|Trees|Bomen|Bäume|Arbres
+layers_pois|Places|Plekken|Orte|Lieux
+layers_labels|Labels|Namen|Beschriftung|Étiquettes
+layers_hillshade|Hillshade|Reliëfschaduw|Schummerung|Ombrage
+layers_contours|Contours|Hoogtelijnen|Höhenlinien|Courbes
+layers_transit|Transit|Openbaar vervoer|Nahverkehr|Transports
+layers_cycle|Cycle routes|Fietsroutes|Radrouten|Pistes cyclables
+layers_hiking|Hiking|Wandelen|Wandern|Randonnée
+layers_seamarks|Sea marks|Zeetekens|Seezeichen|Balisage
+layers_light|Time of light|Tijd van het licht|Tageslicht|Heure de la lumière
+layers_light_cd|Time of light %1$s|Tijd van het licht %1$s|Tageslicht %1$s|Heure de la lumière %1$s
+layers_sunrise|Sunrise|Zonsopgang|Sonnenaufgang|Lever
+layers_noon|Noon|Middag|Mittag|Midi
+layers_sunset|Sunset|Zonsondergang|Sonnenuntergang|Coucher
+layers_now|Now|Nu|Jetzt|Maintenant
+layers_names|Names on the map|Namen op de kaart|Namen auf der Karte|Noms sur la carte
+layers_local|Local|Lokaal|Lokal|Local
+layers_known|What is known here|Wat hier bekend is|Was hier bekannt ist|Ce qui est connu ici
+layers_known_pct|%1$d%% known|%1$d%% bekend|%1$d%% bekannt|%1$d%% connu
+layers_known_none|Needs a connection: the streets' tags are read from OpenStreetMap.|Heeft verbinding nodig: de tags van de straten worden uit OpenStreetMap gelezen.|Braucht Verbindung: die Tags der Straßen werden aus OpenStreetMap gelesen.|Demande une connexion : les tags des rues sont lus dans OpenStreetMap.
+layers_known_help|From the tags of the streets within 400 m. Tap to fill gaps with quests.|Uit de tags van de straten binnen 400 m. Tik om gaten met quests aan te vullen.|Aus den Tags der Straßen im Umkreis von 400 m. Tippe, um Lücken mit Quests zu füllen.|D'après les tags des rues à moins de 400 m. Touchez pour combler les manques avec les quêtes.
+layers_lighting|Lighting|Verlichting|Beleuchtung|Éclairage
+layers_surfaces|Surfaces|Wegdek|Beläge|Revêtements
+layers_sidewalks|Sidewalks|Trottoirs|Gehwege|Trottoirs
+layers_parking|Parking|Parkeren|Parken|Stationnement
+# Charge
+move_fuel|Fuel|Brandstof|Tanken|Carburant
+move_charge|Charge|Laden|Laden|Recharge
+move_park|Park|Parkeren|Parken|Parking
+move_bike|Bike|Fiets|Rad|Vélo
+charge_any|any|alle|alle|tous
+charge_sites|sites|locaties|Standorte|sites
+charge_free_now|free now|nu vrij|jetzt frei|libres
+charge_min|min|min|min|min
+charge_none|No charging sites found|Geen laadpunten gevonden|Keine Ladepunkte gefunden|Aucune borne trouvée
+charge_none_text|Nothing within 5 km that fits your plugs and power. Loosen a filter, or look further.|Niets binnen 5 km dat bij je stekkers en vermogen past. Maak een filter ruimer, of kijk verder.|Nichts im Umkreis von 5 km passt zu deinen Steckern und deiner Leistung. Lockere einen Filter oder such weiter.|Rien à moins de 5 km pour vos prises et votre puissance. Assouplissez un filtre, ou cherchez plus loin.
+charge_none_offline|No connection, and no downloaded region here has chargers. Download this area to see them offline.|Geen verbinding, en geen gedownload gebied hier heeft laders. Download dit gebied om ze offline te zien.|Keine Verbindung, und kein geladenes Gebiet hier hat Ladepunkte. Lade dieses Gebiet, um sie offline zu sehen.|Pas de connexion, et aucune région téléchargée ici n'a de bornes. Téléchargez cette zone pour les voir hors ligne.
+charge_download|Download this area|Download dit gebied|Dieses Gebiet laden|Télécharger cette zone
+charge_available_only|Only sites with a free point|Alleen locaties met een vrij punt|Nur Standorte mit freiem Ladepunkt|Seulement les sites avec une borne libre
+charge_trip|Plan a long trip with stops|Plan een lange reis met stops|Lange Reise mit Stopps planen|Planifier un long trajet avec arrêts
+charge_site|Charging site|Laadpunt|Ladepunkt|Borne de recharge
+charge_free_of|%1$d/%2$d free|%1$d/%2$d vrij|%1$d/%2$d frei|%1$d/%2$d libres
+charge_free_fee|free of charge|gratis|kostenlos|gratuit
+charge_no_details|no details mapped yet|nog geen details in kaart|noch keine Details kartiert|pas encore de détails
+charge_no_sockets|No plugs are mapped at this site yet. Add them in OpenStreetMap and they appear here.|Op deze locatie zijn nog geen stekkers in kaart gebracht. Voeg ze toe in OpenStreetMap en ze verschijnen hier.|An diesem Standort sind noch keine Stecker kartiert. Füge sie in OpenStreetMap hinzu, dann erscheinen sie hier.|Aucune prise cartographiée ici. Ajoutez-les dans OpenStreetMap et elles apparaîtront.
+charge_pick_car|Pick your car to see the time to charge|Kies je auto voor de laadtijd|Wähle dein Auto für die Ladezeit|Choisissez votre voiture pour voir le temps de charge
+charge_no_plan|Your car cannot use this site's plugs, or its power is not mapped|Je auto past niet op de stekkers hier, of het vermogen staat niet in kaart|Dein Auto passt nicht zu den Steckern hier, oder die Leistung ist nicht kartiert|Votre voiture ne va pas avec les prises d'ici, ou la puissance n'est pas cartographiée
+charge_chargemap|Find on Chargemap|Zoek op Chargemap|Auf Chargemap finden|Trouver sur Chargemap
+charge_plan_cd|From %1$d percent, charge to %2$d percent in %3$s|Van %1$d procent laden tot %2$d procent in %3$s|Von %1$d Prozent auf %2$d Prozent laden in %3$s|De %1$d pour cent à %2$d pour cent en %3$s
+car_pick|Pick your car|Kies je auto|Auto wählen|Choisir la voiture
+car_title|My car|Mijn auto|Mein Auto|Ma voiture
+car_search|Search your make and model|Zoek je merk en model|Marke und Modell suchen|Chercher marque et modèle
+car_facts|%1$d kWh · %2$d kW DC · %3$d kWh/100 km|%1$d kWh · %2$d kW DC · %3$d kWh/100 km|%1$d kWh · %2$d kW DC · %3$d kWh/100 km|%1$d kWh · %2$d kW DC · %3$d kWh/100 km
+car_forget|Forget the car|Vergeet de auto|Auto vergessen|Oublier la voiture
+car_credit|Open EV Data (github.com/KilowattApp/open-ev-data) and OpenEV Data, with their licences, in About.|Open EV Data (github.com/KilowattApp/open-ev-data) en OpenEV Data, met hun licenties, bij Over.|Open EV Data (github.com/KilowattApp/open-ev-data) und OpenEV Data, mit ihren Lizenzen, unter Info.|Open EV Data (github.com/KilowattApp/open-ev-data) et OpenEV Data, avec leurs licences, dans À propos.
+route_to|To|Naar|Nach|Vers
+route_choose|Choose a place|Kies een plek|Ort wählen|Choisir un lieu
+route_battery|%1$d%% · %2$s range|%1$d%% · %2$s bereik|%1$d%% · %2$s Reichweite|%1$d%% · %2$s d'autonomie
+route_waiting|Where to?|Waarheen?|Wohin?|Où aller ?
+route_planning|Planning the stops…|De stops plannen…|Stopps werden geplant…|Planification des arrêts…
+route_nocar|Pick your car first|Kies eerst je auto|Wähle zuerst dein Auto|Choisissez d'abord votre voiture
+route_nocar_text|The stops depend on your battery, your plugs and how fast the car charges.|De stops hangen af van je accu, je stekkers en hoe snel de auto laadt.|Die Stopps hängen von deinem Akku, deinen Steckern und der Ladegeschwindigkeit ab.|Les arrêts dépendent de votre batterie, de vos prises et de la vitesse de charge.
+route_nodata|No routes for this trip yet|Nog geen routes voor deze reis|Noch keine Routen für diese Reise|Pas encore d'itinéraires pour ce trajet
+route_nodata_text|Routing works offline from downloaded data. Take the region of this trip offline, over Wi-Fi.|Routes werken offline met gedownloade gegevens. Neem het gebied van deze reis offline, via wifi.|Routen funktionieren offline mit geladenen Daten. Lade das Gebiet dieser Reise über WLAN.|Les itinéraires marchent hors ligne avec des données téléchargées. Téléchargez la région de ce trajet en Wi-Fi.
+route_failed|No route found|Geen route gevonden|Keine Route gefunden|Aucun itinéraire trouvé
+route_total|trip|reis|Reise|trajet
+route_stops|stops|stops|Stopps|arrêts
+route_charging|charging|laden|Laden|recharge
+route_no_stops|Your charge is enough for this trip: no stops needed.|Je acculading is genoeg voor deze reis: geen stops nodig.|Dein Ladestand reicht für diese Reise: keine Stopps nötig.|Votre charge suffit pour ce trajet : aucun arrêt nécessaire.
+route_stops_title|Charging stops|Laadstops|Ladestopps|Arrêts de recharge
+route_start|Start|Start|Start|Démarrer
+route_chart_cd|Charge along the trip with %1$d stops|Lading onderweg met %1$d stops|Ladestand unterwegs mit %1$d Stopps|Charge en route avec %1$d arrêts
+route_footer|Chargers from OpenStreetMap and, when that source is on, Open Charge Map. Stops keep a reserve of 10%, so a charger being busy or broken is not the end of the trip.|Laders uit OpenStreetMap en, als die bron aanstaat, Open Charge Map. Stops houden 10% reserve, zodat een bezette of kapotte lader niet het einde van de reis is.|Ladepunkte aus OpenStreetMap und, wenn die Quelle an ist, Open Charge Map. Die Stopps halten 10% Reserve, damit ein besetzter oder defekter Ladepunkt nicht das Ende der Reise ist.|Bornes d'OpenStreetMap et, si cette source est active, d'Open Charge Map. Les arrêts gardent 10% de réserve : une borne occupée ou en panne n'est pas la fin du trajet.
+# Pump
+pump_tank|%1$s tank|%1$s tank|%1$s Tank|%1$s réservoir
+pump_full|full tank|volle tank|voller Tank|plein
+pump_empty|empty tank|lege tank|leerer Tank|réservoir vide
+pump_to_fill|%1$d L to fill of %2$d L|%1$d L bij te vullen van %2$d L|%1$d L nachzufüllen von %2$d L|%1$d L à remplir sur %2$d L
+pump_to_pay|To pay €|Te betalen €|Zu zahlen €|À payer €
+pump_litres|Litres|Liters|Liter|Litres
+pump_per_litre|€ / litre|€ / liter|€ / Liter|€ / litre
+pump_gauge_cd|Fuel gauge: %1$d percent|Brandstofmeter: %1$d procent|Kraftstoffanzeige: %1$d Prozent|Jauge : %1$d pour cent
+pump_station|Station|Tankstation|Tankstelle|Station
+pump_save|save %1$s|bespaar %1$s|spare %1$s|économisez %1$s
+pump_closest|closest|dichtstbij|am nächsten|plus proche
+pump_none|No fuel stations found|Geen tankstations gevonden|Keine Tankstellen gefunden|Aucune station trouvée
+pump_none_grade|No station nearby sells %1$s|Geen station in de buurt verkoopt %1$s|Keine Tankstelle in der Nähe verkauft %1$s|Aucune station proche ne vend du %1$s
+pump_none_text|Within 5 km, in the places on this phone. Download this area, or press another fuel.|Binnen 5 km, in de plekken op deze telefoon. Download dit gebied, of druk op een andere brandstof.|Im Umkreis von 5 km, in den Orten auf diesem Telefon. Lade dieses Gebiet oder wähle einen anderen Kraftstoff.|À moins de 5 km, dans les lieux de ce téléphone. Téléchargez cette zone ou choisissez un autre carburant.
+pump_offline|The network failed and this phone has no stations for here. Try again with a connection.|Het netwerk viel uit en deze telefoon heeft geen stations voor hier. Probeer opnieuw met verbinding.|Das Netz ist ausgefallen und dieses Telefon hat hier keine Tankstellen. Versuch es mit Verbindung erneut.|Le réseau a échoué et ce téléphone n'a pas de stations ici. Réessayez avec une connexion.
+pump_source_tk|Prices: Tankerkönig (CC BY 4.0), live. Stations and what is there: OpenStreetMap.|Prijzen: Tankerkönig (CC BY 4.0), live. Stations en wat er is: OpenStreetMap.|Preise: Tankerkönig (CC BY 4.0), live. Tankstellen und Ausstattung: OpenStreetMap.|Prix : Tankerkönig (CC BY 4.0), en direct. Stations et équipements : OpenStreetMap.
+pump_source_none|No open price source exists for here, so the display shows no price and guesses none. Stations come from OpenStreetMap. In Germany, add a free Tankerkönig key in Data sources for live prices.|Voor hier bestaat geen open prijsbron, dus het display toont geen prijs en raadt er geen. Stations komen uit OpenStreetMap. In Duitsland kun je bij Gegevensbronnen een gratis Tankerkönig-sleutel toevoegen voor live prijzen.|Für hier gibt es keine offene Preisquelle, daher zeigt die Anzeige keinen Preis und rät keinen. Tankstellen aus OpenStreetMap. In Deutschland: kostenlosen Tankerkönig-Schlüssel unter Datenquellen für Live-Preise.|Aucune source de prix ouverte pour ici : l'écran n'affiche aucun prix et n'en devine aucun. Stations d'OpenStreetMap. En Allemagne, ajoutez une clé Tankerkönig gratuite dans Sources pour les prix en direct.
+pump_tank_title|Your tank|Je tank|Dein Tank|Votre réservoir
+pump_tank_size|Tank: %1$d L|Tank: %1$d L|Tank: %1$d L|Réservoir : %1$d L
+pump_tank_level|In it now: %1$d%%|Er zit nu in: %1$d%%|Jetzt drin: %1$d%%|Dedans : %1$d%%
+# Power
+power_title|Power|Stroom|Strom|Énergie
+power_saver|battery saver|batterijbesparing|Energiesparmodus|économiseur de batterie
+power_saver_on|battery saver on|batterijbesparing aan|Energiesparmodus an|économiseur actif
+power_battery_none|Battery level unavailable|Batterijniveau onbekend|Akkustand nicht verfügbar|Niveau de batterie indisponible
+power_battery_cd|Phone battery %1$d percent|Telefoonbatterij %1$d procent|Telefonakku %1$d Prozent|Batterie du téléphone %1$d pour cent
+power_charging|charging now|laadt nu op|lädt gerade|en charge
+power_left|about %1$s left at this rate|nog ongeveer %1$s in dit tempo|noch etwa %1$s in diesem Tempo|environ %1$s restantes à ce rythme
+power_left_unknown|this phone does not say how long it lasts|deze telefoon zegt niet hoe lang hij meegaat|dieses Telefon sagt nicht, wie lange es hält|ce téléphone n'indique pas son autonomie
+power_fastest|Fastest ways to power|Snelste manieren om op te laden|Schnellste Wege zu Strom|Moyens les plus rapides de recharger
+power_none|No charging spots mapped near|Geen oplaadpunten in de buurt in kaart|Keine Ladestellen in der Nähe kartiert|Aucun point de charge cartographié à proximité
+power_none_text|Within 1.5 km, in the places on this phone: cafés, libraries and stations with outlets, power-bank lockers. Download this area, or map one you know.|Binnen 1,5 km, in de plekken op deze telefoon: cafés, bibliotheken en stations met stopcontacten, powerbank-lockers. Download dit gebied, of breng er een in kaart die je kent.|Im Umkreis von 1,5 km, in den Orten auf diesem Telefon: Cafés, Bibliotheken und Bahnhöfe mit Steckdosen, Powerbank-Schließfächer. Lade dieses Gebiet oder kartiere einen, den du kennst.|À moins de 1,5 km, dans les lieux de ce téléphone : cafés, bibliothèques et gares avec prises, casiers de batteries. Téléchargez cette zone ou cartographiez-en une que vous connaissez.
+power_k_locker|Power-bank locker|Powerbank-locker|Powerbank-Schließfach|Casier de batteries
+power_k_cafe|Café with outlets|Café met stopcontacten|Café mit Steckdosen|Café avec prises
+power_k_pillar|Charging pillar|Oplaadzuil|Ladesäule|Borne de charge
+power_k_library|Library|Bibliotheek|Bibliothek|Bibliothèque
+power_k_solar|Solar bench|Zonnebank|Solarbank|Banc solaire
+power_k_outlet|Outlet|Stopcontact|Steckdose|Prise
+power_off_grid|Off the grid|Off the grid|Abseits des Netzes|Hors réseau
+power_panel|100 W panel today|100 W-paneel vandaag|100-W-Panel heute|Panneau de 100 W aujourd'hui
+power_clouds|clouds ~%1$s|wolken ~%1$s|Wolken ~%1$s|nuages ~%1$s
+power_bank|Your %1$s mAh bank|Je powerbank van %1$s mAh|Deine Powerbank mit %1$s mAh|Votre batterie de %1$s mAh
+power_bank_set|Your power bank|Je powerbank|Deine Powerbank|Votre batterie externe
+power_bank_help|tap to say how big it is|tik om te zeggen hoe groot hij is|tippe, um die Größe anzugeben|touchez pour dire sa taille
+power_bank_worth|≈ %1$s phone charges · %2$s laptop|≈ %1$s telefoonladingen · %2$s laptop|≈ %1$s Handyladungen · %2$s Laptop|≈ %1$s charges de téléphone · %2$s portable
+power_bank_title|Your power bank, in mAh|Je powerbank, in mAh|Deine Powerbank in mAh|Votre batterie externe, en mAh
+power_hookup|Campsite hook-up|Camping met stroom|Campingplatz mit Strom|Camping avec électricité
+power_solar_cd|Solar yield today: about %1$d watt-hours|Zonne-opbrengst vandaag: ongeveer %1$d wattuur|Solarertrag heute: etwa %1$d Wattstunden|Production solaire aujourd'hui : environ %1$d wattheures
+power_footer|Charging spots: OpenStreetMap power_supply, socket and device_charging_station tags · Solar: the sun's height today, thinned by the forecast's cloud (Open-Meteo), 80% to the battery|Oplaadplekken: OpenStreetMap-tags power_supply, socket en device_charging_station · Zon: de zonnehoogte vandaag, gedempt door de wolken uit de voorspelling (Open-Meteo), 80% naar de accu|Ladestellen: OpenStreetMap-Tags power_supply, socket und device_charging_station · Solar: heutige Sonnenhöhe, gedämpft durch die Wolken der Vorhersage (Open-Meteo), 80% zum Akku|Points de charge : tags OpenStreetMap power_supply, socket et device_charging_station · Solaire : hauteur du soleil aujourd'hui, atténuée par les nuages de la prévision (Open-Meteo), 80% vers la batterie
+# Water
+water_title|Water out there|Water onderweg|Wasser unterwegs|De l'eau en chemin
+water_on_trail|On your trail|Op je route|Auf deiner Route|Sur votre trajet
+water_around|Around you|Om je heen|In deiner Nähe|Autour de vous
+water_none|No water mapped near|Geen water in de buurt in kaart|Kein Wasser in der Nähe kartiert|Aucune eau cartographiée à proximité
+water_none_text|No springs, taps or wells within 6 km in the places on this phone. Download the area, or carry more.|Geen bronnen, kranen of putten binnen 6 km in de plekken op deze telefoon. Download het gebied, of neem meer mee.|Keine Quellen, Hähne oder Brunnen im Umkreis von 6 km in den Orten auf diesem Telefon. Lade das Gebiet oder nimm mehr mit.|Aucune source, robinet ni puits à moins de 6 km dans les lieux de ce téléphone. Téléchargez la zone, ou emportez-en plus.
+water_enough|Enough until|Genoeg tot|Reicht bis|Suffisant jusqu'à
+water_km|%1$s %2$s|%1$s %2$s|%1$s %2$s|%1$s %2$s
+water_lasts|~%1$s at %2$s|~%1$s bij %2$s|~%1$s bei %2$s|~%1$s à %2$s
+water_mild|15°|15°|15°|15°
+water_next|%1$s is %2$s away|%1$s is %2$s ver|%1$s ist %2$s entfernt|%1$s est à %2$s
+water_source|water|water|Wasser|eau
+water_fine|you're fine|je bent goed|alles gut|tout va bien
+water_tight|ration it|verdeel het|einteilen|rationnez
+water_low|refill now|vul nu bij|jetzt auffüllen|remplissez maintenant
+water_nosource|no source known|geen bron bekend|keine Quelle bekannt|aucune source connue
+water_potable|potable|drinkbaar|trinkbar|potable
+water_seasonal|dry?|droog?|trocken?|sec ?
+water_not_drinking|not for drinking|niet drinkbaar|kein Trinkwasser|non potable
+water_unsaid|check it|controleer|prüfen|à vérifier
+water_sub_potable|drinking water, mapped as such|drinkwater, zo in kaart gebracht|Trinkwasser, so kartiert|eau potable, ainsi cartographiée
+water_sub_seasonal|seasonal: it may be dry|seizoensgebonden: kan droog staan|saisonal: kann trocken sein|saisonnier : peut être à sec
+water_sub_not|mapped as not for drinking|in kaart als niet drinkbaar|als nicht trinkbar kartiert|cartographiée comme non potable
+water_sub_unsaid|nothing mapped about drinking it: filter or boil|niets in kaart over drinken: filter of kook|nichts zum Trinken kartiert: filtern oder abkochen|rien de cartographié sur sa potabilité : filtrez ou faites bouillir
+water_k_spring|Spring|Bron|Quelle|Source
+water_k_tap|Tap|Kraan|Wasserhahn|Robinet
+water_k_well|Well or pump|Put of pomp|Brunnen oder Pumpe|Puits ou pompe
+water_k_point|Drinking water|Drinkwater|Trinkwasser|Eau potable
+water_k_fountain|Fountain|Fontein|Brunnen|Fontaine
+water_report|Was it flowing? Leave a note for the next hiker and the mappers.|Liep het? Laat een notitie achter voor de volgende wandelaar en de kaartmakers.|Floss es? Hinterlasse eine Notiz für den nächsten Wanderer und die Kartierer.|Coulait-il ? Laissez une note pour le prochain randonneur et les cartographes.
+water_on_map|Show them on the map|Toon ze op de kaart|Auf der Karte zeigen|Les voir sur la carte
+water_footer|Springs, wells, taps: OpenStreetMap · your bottle and what is left: you|Bronnen, putten, kranen: OpenStreetMap · je fles en wat erin zit: jij|Quellen, Brunnen, Hähne: OpenStreetMap · deine Flasche und der Rest: du|Sources, puits, robinets : OpenStreetMap · votre gourde et ce qu'il reste : vous
+water_bottle_cd|Your bottle: %1$s litres left|Je fles: nog %1$s liter|Deine Flasche: noch %1$s Liter|Votre gourde : %1$s litre restant
+water_bottle_title|Your bottle|Je fles|Deine Flasche|Votre gourde
+water_bottle_size|Bottle: %1$s L|Fles: %1$s L|Flasche: %1$s L|Gourde : %1$s L
+water_bottle_left|Left in it: %1$s L|Er zit nog in: %1$s L|Noch drin: %1$s L|Il reste : %1$s L
+# Welcome and the region picker
+welcome_step_cd|Step %1$d of %2$d|Stap %1$d van %2$d|Schritt %1$d von %2$d|Étape %1$d sur %2$d
+welcome_loc_title|Find yourself on the map|Vind jezelf op de kaart|Finde dich auf der Karte|Retrouvez-vous sur la carte
+welcome_loc_text|Atlas shows where you are, from this phone only. Your position is never sent anywhere.|Atlas toont waar je bent, alleen vanaf deze telefoon. Je positie wordt nergens naartoe gestuurd.|Atlas zeigt, wo du bist, nur von diesem Telefon aus. Deine Position wird nirgendwohin gesendet.|Atlas montre où vous êtes, depuis ce téléphone seulement. Votre position n'est envoyée nulle part.
+welcome_loc_p1|Places and routes start where you stand|Plekken en routes beginnen waar je staat|Orte und Routen beginnen dort, wo du stehst|Les lieux et itinéraires partent d'où vous êtes
+welcome_loc_p2|Directions follow you as you move|De route volgt je terwijl je beweegt|Die Wegbeschreibung folgt dir unterwegs|Le guidage vous suit pendant que vous bougez
+welcome_loc_p3|It all stays on this phone|Alles blijft op deze telefoon|Alles bleibt auf diesem Telefon|Tout reste sur ce téléphone
+welcome_loc_allow|Allow location|Locatie toestaan|Standort erlauben|Autoriser la position
+welcome_loc_settings|Open settings|Instellingen openen|Einstellungen öffnen|Ouvrir les réglages
+welcome_loc_on|Location is on|Locatie staat aan|Standort ist an|La position est activée
+welcome_later|Later|Later|Später|Plus tard
+welcome_next|Continue|Verder|Weiter|Continuer
+welcome_take_title|Take the map with you|Neem de kaart mee|Nimm die Karte mit|Emportez la carte
+welcome_take_text|Everything works with no signal: maps, routes, places, voice. Here is what the area around you takes.|Alles werkt zonder bereik: kaarten, routes, plekken, stem. Dit kost het gebied om je heen.|Alles funktioniert ohne Empfang: Karten, Routen, Orte, Stimme. Das braucht das Gebiet um dich herum.|Tout marche sans réseau : cartes, itinéraires, lieux, voix. Voici ce que prend la zone autour de vous.
+welcome_radius|%1$d km|%1$d km|%1$d km|%1$d km
+welcome_have|%1$s is already on this phone (%2$s)|%1$s staat al op deze telefoon (%2$s)|%1$s ist schon auf diesem Telefon (%2$s)|%1$s est déjà sur ce téléphone (%2$s)
+welcome_wifi|Only on Wi‑Fi|Alleen via wifi|Nur über WLAN|Seulement en Wi‑Fi
+welcome_download|Download & continue|Downloaden en verder|Laden und weiter|Télécharger et continuer
+welcome_voice_title|How should Atlas speak?|Hoe moet Atlas praten?|Wie soll Atlas sprechen?|Comment Atlas doit-il parler ?
+welcome_voice_text|Pick the languages to hear directions in. Their voices are kept with your regions, so they work with no signal.|Kies de talen voor de routestem. Hun stemmen worden bij je gebieden bewaard, zodat ze zonder bereik werken.|Wähle die Sprachen für die Ansagen. Ihre Stimmen werden mit deinen Gebieten gespeichert und funktionieren ohne Empfang.|Choisissez les langues du guidage. Leurs voix sont gardées avec vos régions et marchent sans réseau.
+welcome_units_title|Units|Eenheden|Einheiten|Unités
+welcome_u_metric|Metric|Metrisch|Metrisch|Métrique
+welcome_u_imperial|Imperial|Brits-Amerikaans|Imperial|Impérial
+welcome_u_nautical|Nautical|Nautisch|Nautisch|Nautique
+welcome_done|Start exploring|Begin met ontdekken|Los geht's|C'est parti
+est_map|Map & 3D buildings|Kaart en 3D-gebouwen|Karte und 3D-Gebäude|Carte et bâtiments 3D
+est_routes|Routes: walk, bike, car|Routes: lopen, fietsen, auto|Routen: Gehen, Rad, Auto|Itinéraires : marche, vélo, voiture
+est_places|Places, menus, opening hours|Plekken, menu's, openingstijden|Orte, Speisekarten, Öffnungszeiten|Lieux, menus, horaires
+est_voices|Voices, offline|Stemmen, offline|Stimmen, offline|Voix, hors ligne
+est_unknown|size unknown|grootte onbekend|Größe unbekannt|taille inconnue
+est_working|working it out…|aan het uitrekenen…|wird berechnet …|calcul en cours…
+est_on_phone|on the phone|op de telefoon|auf dem Telefon|sur le téléphone
+picker_title_route|Take a route offline|Een route offline nemen|Eine Route offline nehmen|Emporter un itinéraire
+picker_title_country|Take a country offline|Een land offline nemen|Ein Land offline nehmen|Emporter un pays
+picker_hint_area|Draw a loop around what you want with your finger, or set the radius.|Teken met je vinger een lus om wat je wilt, of stel de straal in.|Zeichne mit dem Finger eine Schleife um das Gewünschte oder stelle den Radius ein.|Dessinez du doigt une boucle autour de ce que vous voulez, ou réglez le rayon.
+picker_radius|Radius %1$d km|Straal %1$d km|Radius %1$d km|Rayon %1$d km
+picker_drawn|%1$s × %2$s km|%1$s × %2$s km|%1$s × %2$s km|%1$s × %2$s km
+picker_clear|Clear|Wissen|Löschen|Effacer
+picker_map_cd|Map of the area to take offline|Kaart van het gebied dat offline gaat|Karte des Gebiets für offline|Carte de la zone à emporter
+picker_name_area|Around %1$s|Rond %1$s|Um %1$s|Autour de %1$s
+picker_name_route|Route to %1$s|Route naar %1$s|Route nach %1$s|Itinéraire vers %1$s
+picker_name_route_plain|Along the route|Langs de route|Entlang der Route|Le long de l'itinéraire
+picker_name_part|part|deel|Teil|partie
+picker_route_none|No route to follow|Geen route om te volgen|Keine Route zum Folgen|Aucun itinéraire à suivre
+picker_route_none_text|Start a route first; then come back to take its corridor offline.|Start eerst een route; kom dan terug om de strook eromheen offline te nemen.|Starte zuerst eine Route; komm dann zurück, um ihren Korridor offline zu nehmen.|Démarrez d'abord un itinéraire ; revenez ensuite emporter son couloir.
+picker_corridor|%1$d km each side|%1$d km aan elke kant|%1$d km pro Seite|%1$d km de chaque côté
+picker_parts|%1$d parts|%1$d delen|%1$d Teile|%1$d parties
+picker_country_loading|Reading the pack list…|De lijst met pakketten wordt gelezen…|Die Paketliste wird gelesen …|Lecture de la liste des paquets…
+picker_country_none|No country packs listed|Geen landpakketten gevonden|Keine Länderpakete gelistet|Aucun paquet de pays listé
+picker_country_none_text|The list of published packs could not be read. Check your connection, or draw an area instead.|De lijst met gepubliceerde pakketten kon niet worden gelezen. Controleer je verbinding, of teken een gebied.|Die Liste der veröffentlichten Pakete konnte nicht gelesen werden. Prüfe deine Verbindung oder zeichne ein Gebiet.|La liste des paquets publiés n'a pas pu être lue. Vérifiez votre connexion, ou dessinez une zone.
+picker_from_pack|from Atlas's published pack|uit Atlas' gepubliceerde pakket|aus Atlas' veröffentlichtem Paket|depuis le paquet publié d'Atlas
+picker_built|built on this phone from OpenStreetMap|op deze telefoon gebouwd uit OpenStreetMap|auf diesem Telefon aus OpenStreetMap gebaut|construit sur ce téléphone depuis OpenStreetMap
+picker_tiles|vector tiles from the tile server|vectortegels van de tegelserver|Vektorkacheln vom Kachelserver|tuiles vectorielles du serveur de tuiles
+picker_too_big|Too big to build here: pick a country pack instead, or draw a smaller area.|Te groot om hier te bouwen: kies een landpakket, of teken een kleiner gebied.|Zu groß, um es hier zu bauen: wähle ein Länderpaket oder zeichne ein kleineres Gebiet.|Trop grand pour être construit ici : choisissez un paquet de pays, ou dessinez une zone plus petite.
+picker_failed|The size could not be worked out. Try again in a moment.|De grootte kon niet worden berekend. Probeer het zo opnieuw.|Die Größe konnte nicht berechnet werden. Versuche es gleich noch einmal.|La taille n'a pas pu être calculée. Réessayez dans un instant.
+picker_wifi|Only on Wi‑Fi|Alleen via wifi|Nur über WLAN|Seulement en Wi‑Fi
+picker_download|Download|Downloaden|Laden|Télécharger
+picker_download_size|Download %1$s|%1$s downloaden|%1$s laden|Télécharger %1$s
+picker_layer_map|Map|Kaart|Karte|Carte
+picker_layer_routes|Routes|Routes|Routen|Itinéraires
+picker_layer_places|Places|Plekken|Orte|Lieux
+picker_layer_map|Map|Kaart|Karte|Carte
+picker_layer_routes|Routes|Routes|Routen|Itinéraires
+picker_layer_places|Places|Plekken|Orte|Lieux
+auto_home|Around home|Rond thuis|Um Zuhause|Autour du domicile
+auto_work|Around work|Rond werk|Um die Arbeit|Autour du travail
+# review: ages, minutes, downloads in the privacy list, key field, backup errors, power details
+age_now|now|nu|jetzt|à l'instant
+age_min|%1$d min|%1$d min|%1$d Min.|%1$d min
+age_h|%1$d h|%1$d u|%1$d Std.|%1$d h
+age_d|%1$d d|%1$d d|%1$d T.|%1$d j
+age_w|%1$d w|%1$d w|%1$d Wo.|%1$d sem.
+min_n|%1$d min|%1$d min|%1$d Min.|%1$d min
+h_n|%1$d h|%1$d u|%1$d Std.|%1$d h
+privacy_downloads|Downloads you start|Downloads die je start|Downloads, die du startest|Téléchargements que vous lancez
+sent_pack|which map and place packs you ask for|welke kaart- en plekkenpakketten je vraagt|welche Karten- und Ortspakete du anforderst|les paquets de carte et de lieux que vous demandez
+sent_routing|the routing tiles of the area you take offline|de routetegels van het gebied dat je offline neemt|die Routenkacheln des Gebiets, das du offline nimmst|les tuiles d'itinéraire de la zone que vous emportez
+sent_tiles|the map tiles you look at, when no region is on the phone|de kaarttegels die je bekijkt, als er geen gebied op de telefoon staat|die Kartenkacheln, die du ansiehst, wenn kein Gebiet auf dem Telefon ist|les tuiles de carte que vous regardez, sans région sur le téléphone
+charge_live|LIVE|LIVE|LIVE|LIVE
+data_key_show|Show the key|Toon de sleutel|Schlüssel anzeigen|Afficher la clé
+data_key_hide|Hide the key|Verberg de sleutel|Schlüssel verbergen|Masquer la clé
+phone_not_backup|This is not an Atlas backup.|Dit is geen Atlas-back-up.|Das ist keine Atlas-Sicherung.|Ce n'est pas une sauvegarde Atlas.
+phone_newer|This backup is from a newer Atlas.|Deze back-up komt van een nieuwere Atlas.|Diese Sicherung stammt von einem neueren Atlas.|Cette sauvegarde vient d'un Atlas plus récent.
+phone_too_big|That file is too big to be a backup.|Dat bestand is te groot voor een back-up.|Diese Datei ist zu groß für eine Sicherung.|Ce fichier est trop gros pour une sauvegarde.
+power_d_usb|USB|USB|USB|USB
+power_d_plugs|plugs|stopcontacten|Steckdosen|prises
+power_d_outlets|outlets|stopcontacten|Steckdosen|prises
+power_d_free|free|gratis|kostenlos|gratuit
+power_d_fee|fee|betaald|kostenpflichtig|payant
+power_d_fee_x|fee: %1$s|betaald: %1$s|kostenpflichtig: %1$s|payant : %1$s
+power_d_24h|24/7|24/7|24/7|24h/24
+h_x|%1$s h|%1$s u|%1$s Std.|%1$s h
+phone_export_failed|The backup could not be saved.|De back-up kon niet worden opgeslagen.|Die Sicherung konnte nicht gespeichert werden.|La sauvegarde n'a pas pu être enregistrée.
+car_gauge_cd|Battery %1$d%%, %2$s range|Accu %1$d%%, bereik %2$s|Akku %1$d%%, Reichweite %2$s|Batterie %1$d %%, autonomie %2$s
+charge_any_power|Any power|Elk vermogen|Beliebige Leistung|Toute puissance
+charge_min_power|≥ %1$d kW|≥ %1$d kW|≥ %1$d kW|≥ %1$d kW
