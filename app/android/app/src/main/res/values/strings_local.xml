@@ -171,12 +171,11 @@
     <string name="soon_tool_lists">Lists</string>
     <string name="soon_tool_lists_sub">your places</string>
     <string name="soon_source">Forecasts: national weather services and Open-Meteo (CC BY 4.0) · sun, moon and sky worked out on this phone</string>
-    <string name="soon_tomorrow">tomorrow</string>
     <!-- Sky -->
     <string name="sky_title">The sky</string>
     <string name="sky_pill">%1$d° · wind %2$s →</string>
     <string name="sky_now">now</string>
-    <string name="sky_nowcast_desc">Rain in the next two hours at your spot, a bar for every quarter hour</string>
+    <string name="sky_nowcast_desc">Rain at your spot in the next hour, a colour for every quarter hour</string>
     <string name="sky_rain_in">Rain in %1$d min</string>
     <string name="sky_rain_in_lasts">Rain in %1$d min · about %2$d min long</string>
     <string name="sky_raining_until">Raining now · until %1$s</string>
@@ -211,7 +210,7 @@
     <string name="local_status_dry">no rain</string>
     <string name="local_status_sunset">sunset</string>
     <string name="local_status_moon">moon</string>
-    <string name="local_drawer_named">Named after</string>
+    <string name="local_drawer_named">Names</string>
     <string name="local_drawer_building">Building</string>
     <string name="local_drawer_collect">Collect</string>
     <string name="local_drawer_seasons">Seasons</string>

@@ -60,6 +60,14 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
+import androidx.compose.ui.semantics.heading
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.compositeOver
+import app.atlas.ui.kit.cssRepeatingLinear
+import app.atlas.ui.kit.argb
+import app.atlas.ui.kit.Argb
+import app.atlas.ui.kit.CssShadow
 
 private val Ink = Color(0xFF1C2A1E)
 private val Forest = Color(0xFF1F4A28)
@@ -117,38 +125,43 @@ fun PicnicScreen(args: Dest.Picnic, nav: Navigator) {
             (!wc || nearestWithin(f.place, toilets, 150.0) != null) && (!step || t["wheelchair"] == "yes")
     }
 
-    Box(Modifier.fillMaxSize().background(Color(0xFF8DBB66)).grassStripes()) {
+    // The board's lawn: the green with its mown stripes, two fine repeating gradients.
+    Box(Modifier.fillMaxSize().background(Color(0xFF8DBB66)).boardBox(grad = LAWN, clip = false)) {
         BoardPage(background = Color.Transparent) {
-            BoardTitleBar(
-                stringResource(R.string.picnic_title), onBack = { nav.back() }, italic = false, size = 34, colour = Color.White, backBackground = Color.White.copy(alpha = 0.9f),
-                trailing = {
-                    val w = weather
-                    val label = listOfNotNull(w?.let { "${it.temperature.roundToInt()}°" }, sunset?.let { DateTimeFormatter.ofPattern("H:mm").format(it) }).joinToString(" · ")
-                    if (label.isNotEmpty()) Row(
-                        Modifier.height(38.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.9f)).padding(horizontal = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        w?.let { Symbol(it.symbol, tint = Color(0xFFF2A71B), size = 16.dp) } ?: Symbol("weather.sunset", tint = Color(0xFFF2A71B), size = 16.dp)
-                        Text(label, color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                    }
-                },
-            )
-            Spacer(Modifier.height(16.dp))
+            // The header: back at (16, 42), the title at (72, 46) in white with its shadow, the weather pill 16 px from the right at 48.
+            Box(Modifier.fillMaxWidth().height(86.dp)) {
+                BackCircle({ nav.back() }, Modifier.padding(top = 42.dp), background = Color(0xE6FFFFFF), tint = Ink)
+                BoardLine(
+                    stringResource(R.string.picnic_title), boardStyle(34f, 400, 0xFFFFFFFF, 34f, SERIF, shadow = CssShadow(0f, 2f, 6f, 0f, 0x59002800)),
+                    Modifier.padding(start = 56.dp, top = 46.dp).semantics { heading() },
+                )
+                val w = weather
+                val label = listOfNotNull(w?.let { "${it.temperature.roundToInt()}°" }, sunset?.let { DateTimeFormatter.ofPattern("H:mm").format(it) }).joinToString(" · ")
+                if (label.isNotEmpty()) Row(
+                    Modifier.align(Alignment.TopEnd).padding(top = 48.dp).height(38.dp).boardBox(0xE6FFFFFF, corners(19f)).padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    w?.let { Symbol(it.symbol, tint = Color(0xFFF2A71B), size = 16.dp) } ?: Symbol("weather.sunset", tint = Color(0xFFF2A71B), size = 16.dp)
+                    BoardLine(label, boardStyle(13f, 700, Ink.css(), 17f, tnum = true))
+                }
+            }
+            Spacer(Modifier.height(22.dp))
             Cloth(PLATES, found, plate, onPick = { plate = it })
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(24.dp))
             if (plate == "play") {
+                // The children's filters: 40 px chips, 8 apart.
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(stringResource(R.string.picnic_age_chip), null, toddler, stringResource(R.string.picnic_age_desc)) { toddler = !toddler }
-                    FilterChip(stringResource(R.string.picnic_fenced), "ui.lock", fence, stringResource(R.string.picnic_fenced)) { fence = !fence }
-                    FilterChip(stringResource(R.string.picnic_wc), null, wc, stringResource(R.string.picnic_wc_desc)) { wc = !wc }
+                    FilterChip(stringResource(R.string.picnic_fenced), "fact.fenced", fence, stringResource(R.string.picnic_fenced)) { fence = !fence }
+                    FilterChip(stringResource(R.string.picnic_wc), null, wc, stringResource(R.string.picnic_wc_desc), ink = 0xFF4B34B8) { wc = !wc }
                     FilterChip(null, "fact.wheelchair", step, stringResource(R.string.picnic_step_desc)) { step = !step }
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(20.dp))
             }
             val result = found?.get(plate)
             when {
-                found == null -> Text(stringResource(R.string.kit_loading), color = Color.White, fontSize = 14.sp)
-                items.isEmpty() -> Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Color(0xBFFBFAF4))) {
+                found == null -> BoardLine(stringResource(R.string.kit_loading), boardStyle(14f, 700, 0xFFFFFFFF, 18f))
+                items.isEmpty() -> Box(Modifier.fillMaxWidth().boardBox(0xBFFBFAF4, corners(24f))) {
                     StateMessage(
                         if (result?.error != null) "ui-cloud-off" else chosen.symbol, stringResource(if (result?.error != null) R.string.picnic_offline else R.string.picnic_none, shortDistance(RADIUS)),
                         text = if (result?.error == null && result?.origin == app.atlas.services.PlaceOrigin.STORE && !services.local.online()) stringResource(R.string.picnic_offline_text) else null,
@@ -166,7 +179,11 @@ fun PicnicScreen(args: Dest.Picnic, nav: Navigator) {
                             if (t["covered"] == "yes") add(stringResource(R.string.picnic_covered))
                             t["surface"]?.takeIf { plate == "play" }?.let { add(it.replace('_', ' ')) }
                         }
-                        PlaceCard(f, here, facts.take(4), local, symbol = chosen.symbol, tile = Color(chosen.tint.toInt()), onClick = { services.remember(f.place); nav.go(Dest.Place.of(f.place)) })
+                        val shut = remember(f, local) { isShut(f.place, here, local) }
+                        PlaceCard(
+                            f, here, facts.take(4), local, PICNIC_CARD, tile = { dim -> PlateTile(chosen, dim) }, dim = shut,
+                            onClick = { services.remember(f.place); nav.go(Dest.Place.of(f.place)) },
+                        )
                     }
                 }
             }
@@ -174,73 +191,114 @@ fun PicnicScreen(args: Dest.Picnic, nav: Navigator) {
     }
 }
 
-/** Mown-grass stripes over the lawn colour, as the board's background. */
-private fun Modifier.grassStripes(): Modifier = this.drawBehind {
-    var x = 0f
-    val light = Color(0x0DFFFFFF)
-    while (x < size.width) { drawRect(light, Offset(x, 0f), Size(2.dp.toPx(), size.height)); x += 6.dp.toPx() }
+/** The board's lawn stripes: `repeating-linear-gradient(100deg, white 5% 0 2px, clear 2px 6px)` over `(80deg, green 6% 0 1px, clear 1px 5px)`. */
+private val LAWN = listOf(
+    cssRepeatingLinear(100f, 6f, 0f to 0x0DFFFFFF, 2f to 0x0DFFFFFF, 2f to 0x00FFFFFF, 6f to 0x00FFFFFF),
+    cssRepeatingLinear(80f, 5f, 0f to 0x0F003C00, 1f to 0x0F003C00, 1f to 0x00003C00, 5f to 0x00003C00),
+)
+
+/** The board's picnic card: 86 px, radius 24, warm white with a green-tinged shadow; a shut place fades and loses its shadow. */
+private val PICNIC_CARD = CardLook(
+    bg = 0xFFFBFAF4, radius = 24f, minHeight = 86f, shadows = shadow(0f, 6f, 14f, 0x2E14320A), ink = 0xFF1C2A1E, soft = 0xFF4E5E50,
+    walkSize = 18f, walkLine = 23.5f, factGap = 8f, dimBg = 0xBFFBFAF4, dimShadows = emptyList(), dimWalk = 0xFF676D7C,
+)
+
+/** True when the place's hours say it is shut now (closed, or opening later). */
+internal fun isShut(place: app.atlas.model.Place, here: app.atlas.geo.LatLon, now: LocalDateTime): Boolean {
+    val s = app.atlas.ui.kit.PlaceSummary.of(place, here, null, now)
+    val w = app.atlas.ui.kit.OpenWords.of(s, now)
+    return w is app.atlas.ui.kit.OpenWords.Opens || w == app.atlas.ui.kit.OpenWords.Closed
 }
 
+/** The light ground and ring of a plate's tile: the board's for the playground and the splash pad, else the colour at 10 and 22 per cent. */
+private fun light(p: Plate): Pair<Argb, Argb> = when (p.id) {
+    "play" -> 0xFFFFF3E6 to 0xFFFFE0C4
+    "splash" -> 0xFFE4F0FB to mix(p.tint, 0.22f)
+    else -> mix(p.tint, 0.10f) to mix(p.tint, 0.22f)
+}
+
+private fun mix(c: Argb, a: Float): Argb = argb(c).copy(alpha = a).compositeOver(Color.White).css()
+
+/** A card's tile: a 54 px circle of the plate's light colour with a 5 px ring (none when shut) and its 26 px symbol. */
+@Composable
+private fun PlateTile(p: Plate, dim: Boolean) {
+    val (ground, ring) = light(p)
+    Box(Modifier.size(54.dp).boardBox(ground, corners(27f), if (dim) emptyList() else shadow(0f, 0f, 0f, ring, spread = 5f, inset = true)), contentAlignment = Alignment.Center) {
+        Glyph(p.symbol, argb(p.tint), 26.dp)
+    }
+}
+
+/**
+ * The gingham cloth: 376 x 330 turned 2 degrees anticlockwise, cream with red bands of half a 44 px square both ways
+ * (darker where they cross), radius 4 and its shadow; the eight plates on it, turned back upright, 14 by 18 px in.
+ */
 @Composable
 private fun Cloth(plates: List<Plate>, found: Map<String, FindResult>?, selected: String, onPick: (String) -> Unit) {
-    val shape = RoundedCornerShape(4.dp)
-    Box(Modifier.fillMaxWidth().height(330.dp).rotate(-2f).cssShadow(shape, 14.dp, 26.dp, Color(0x59143204)).clip(shape).background(Color(0xFFFFFDF8))) {
-        // The gingham: red stripes a half-cell wide every 44 dp, both ways, so the squares where they cross are darker.
-        Canvas(Modifier.fillMaxSize()) {
-            val cell = 44.dp.toPx()
-            val red = Color(0x8CC8322A)
-            var x = 0f
-            while (x < size.width) { drawRect(red, Offset(x, 0f), Size(cell / 2, size.height)); x += cell }
-            var y = 0f
-            while (y < size.height) { drawRect(red, Offset(0f, y), Size(size.width, cell / 2)); y += cell }
-        }
-        Column(Modifier.fillMaxWidth().rotate(2f).padding(horizontal = 14.dp, vertical = 18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Box(
+        Modifier.padding(start = 2.dp).size(376.dp, 330.dp).rotate(-2f)
+            .boardBox(0xFFFFFDF8, corners(4f), shadow(0f, 14f, 26f, 0x5914320A), clip = false)
+            .drawBehind {
+                val cell = 44.dp.toPx()
+                val half = cell / 2
+                val red = Color(0x8CC8322A)
+                clipRect {
+                    var x = 0f
+                    while (x < size.width) { drawRect(red, Offset(x, 0f), Size(half, size.height)); x += cell }
+                    var y = half
+                    while (y < size.height) { drawRect(red, Offset(0f, y), Size(size.width, half)); y += cell }
+                }
+            },
+    ) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 18.dp).rotate(2f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             for (row in plates.chunked(4)) {
-                Row(Modifier.fillMaxWidth().height(140.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    for (p in row) PlateButton(p, found?.get(p.id)?.places?.size, p.id == selected, Modifier.weight(1f)) { onPick(p.id) }
+                Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    for (p in row) PlateButton(p, found?.get(p.id)?.places?.size, p.id == selected, Modifier.weight(1f).fillMaxHeight()) { onPick(p.id) }
                 }
             }
         }
     }
 }
 
-
+/**
+ * A plate: 74 px white with a 7 px rim and its shadow, the 30 px symbol, the count on a white tag 4 px under it (Arial
+ * 12 at 800, as the board's buttons draw it); the chosen one 80 px in apricot with an orange ring, raised 4 px.
+ */
 @Composable
 private fun PlateButton(p: Plate, count: Int?, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val label = stringResource(p.label)
-    val tint = Color(p.tint.toInt())
     val text = if (count != null) "$label $count" else label
     val desc = stringResource(p.desc) + (count?.let { ", $it" } ?: "")
     Column(
         modifier.clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick).semantics { contentDescription = desc; selected = on }.offset(y = if (on) (-4).dp else 0.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
     ) {
-        val size = if (on) 80.dp else 74.dp
-        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(size)) {
-            Canvas(Modifier.size(size)) {
-                val r = this.size.minDimension / 2
-                drawCircle(Color(0x33000000), r, Offset(center.x, center.y + 3.dp.toPx()))
-                if (on) drawCircle(Color(0xFFE8622C), r + 3.dp.toPx(), center)
-                drawCircle(if (on) Color(0xFFFFF3E6) else Color.White, r, center)
-                drawCircle(if (on) Color(0xFFFFE0C4) else Color(0xFFF4F1EA), r - 3.5.dp.toPx(), center, style = Stroke(7.dp.toPx()))
-            }
-            Glyph(p.symbol, if (on) Color(0xFFE8622C) else tint, if (on) 34.dp else 30.dp)
+        val side = if (on) 80f else 74f
+        Box(
+            Modifier.size(side.dp).boardBox(
+                if (on) 0xFFFFF3E6 else 0xFFFFFFFF, corners(side / 2),
+                if (on) listOf(CssShadow(0f, 0f, 0f, 7f, 0xFFFFE0C4, inset = true), CssShadow(0f, 0f, 0f, 3f, 0xFFE8622C), CssShadow(0f, 8f, 12f, 0f, 0x40000000))
+                else listOf(CssShadow(0f, 0f, 0f, 7f, 0xFFF4F1EA, inset = true), CssShadow(0f, 4f, 8f, 0f, 0x33000000)),
+                clip = false,
+            ),
+            contentAlignment = Alignment.Center,
+        ) { Glyph(p.symbol, if (on) Color(0xFFE8622C) else argb(p.tint), if (on) 34.dp else 30.dp) }
+        Box(Modifier.height(16.dp).boardBox(if (on) 0xFFE8622C else 0xFFFFFFFF, corners(8f)).padding(horizontal = 7.dp), contentAlignment = Alignment.Center) {
+            BoardLine(text, boardStyle(12f, 800, if (on) 0xFFFFFFFF else 0xFF000000, 13.5f, "Arial", tnum = true))
         }
-        Text(
-            text, color = if (on) Color.White else Ink, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1,
-            modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(if (on) Color(0xFFE8622C) else Color.White).padding(horizontal = 7.dp, vertical = 1.dp),
-        )
     }
 }
 
+/** A filter chip of the board: 40 px, radius 20; forest green when on; 12 px in for words, 10 before a 16 px symbol, a 40 px circle for a symbol alone. */
 @Composable
-private fun FilterChip(text: String?, symbol: String?, on: Boolean, description: String, onClick: () -> Unit) {
+private fun FilterChip(text: String?, symbol: String?, on: Boolean, description: String, ink: Argb = 0xFF1C2A1E, onClick: () -> Unit) {
     Row(
-        Modifier.height(40.dp).clip(CircleShape).background(if (on) Forest else Color.White.copy(alpha = 0.9f)).clickable(role = androidx.compose.ui.semantics.Role.Switch, onClick = onClick)
-            .semantics { contentDescription = description; selected = on }.padding(horizontal = if (text == null) 11.dp else 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically,
+        Modifier.height(40.dp).then(if (text == null) Modifier.width(40.dp) else Modifier).boardBox(if (on) Forest.css() else 0xE6FFFFFF, corners(20f))
+            .clickable(role = androidx.compose.ui.semantics.Role.Switch, onClick = onClick)
+            .semantics { contentDescription = description; selected = on }
+            .padding(start = if (text == null) 0.dp else if (symbol != null) 10.dp else 12.dp, end = if (text == null) 0.dp else 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (symbol != null) Glyph(symbol, if (on) Color.White else Ink, 16.dp)
-        if (text != null) Text(text, color = if (on) Color.White else Color(0xFF4B34B8).takeIf { text == "WC" } ?: Ink, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+        if (symbol != null) Glyph(symbol, if (on) Color.White else Ink, if (text == null) 17.dp else 16.dp)
+        if (text != null) BoardLine(text, boardStyle(12f, 800, if (on) 0xFFFFFFFF else ink, 15.5f, tnum = true))
     }
 }

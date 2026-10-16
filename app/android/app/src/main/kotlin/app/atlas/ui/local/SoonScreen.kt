@@ -75,6 +75,15 @@ import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle as DateStyle
 import java.util.Locale
 import kotlin.math.roundToInt
+import androidx.compose.ui.geometry.Size
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.compositeOver
+import app.atlas.ui.kit.cssRepeatingLinear
+import app.atlas.ui.kit.argb
+import app.atlas.ui.kit.CssShadow
 
 private val Ink = Color(0xFF14161B)
 private val Soft = Color(0xFF6A5F4E)
@@ -98,33 +107,45 @@ fun SoonScreen(args: Dest.Soon, nav: Navigator) {
     val selected = if (picked in days.indices) picked else best
 
     Box(Modifier.fillMaxSize().background(Color(0xFFF5EFE2)).dotGrid()) {
-        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-            Row(Modifier.fillMaxWidth().padding(top = 18.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column {
-                    Text(stringResource(R.string.soon_title), style = TextStyle(fontFamily = SerifFamily, fontStyle = FontStyle.Italic, fontSize = 40.sp, lineHeight = 40.sp, color = Ink))
+        Column(Modifier.fillMaxSize().padding(top = boardShift()).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+            // The head, 50 px at 44: Soon in Fraunces, the date and place 4 px under it, the planner's pill at the right.
+            Row(Modifier.fillMaxWidth().padding(top = 44.dp).height(50.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f, fill = false).wrapContentHeight(unbounded = true)) {
+                    BoardLine(stringResource(R.string.soon_title), boardStyle(36f, 600, Ink.css(), 36f, FRAUNCES, italic = true), Modifier.semantics { heading() }, overflow = TextOverflow.Visible)
                     val date = DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.getDefault()).format(now.atZone(zone))
-                    Text(listOfNotNull(date, place).joinToString(" · "), color = Soft, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    BoardLine(listOfNotNull(date, place).joinToString(" · "), boardStyle(12f, 400, Soft.css(), 15.5f), Modifier.padding(top = 4.dp))
                 }
                 Row(
-                    Modifier.height(42.dp).clip(CircleShape).background(Ink).clickable { nav.go(Dest.Ask()) }.padding(start = 12.dp, end = 14.dp),
+                    Modifier.padding(start = 8.dp).height(42.dp).boardBox(Ink.css(), corners(21f)).clickable { nav.go(Dest.Ask()) }.padding(start = 12.dp, end = 14.dp),
                     horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Symbol("ui.sparkles", tint = Color(0xFFC9B6FF), size = 17.dp)
-                    Text(stringResource(R.string.soon_plan), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                    Symbol("fact.new", tint = Color(0xFFC9B6FF), size = 17.dp)
+                    BoardLine(stringResource(R.string.soon_plan), boardStyle(14f, 700, 0xFFFFFFFF, 18f))
                 }
             }
             Spacer(Modifier.height(16.dp))
             WeekCard(days, selected, best, snap?.noForecast == true, zone, now, onPick = { picked = it }, onOpen = { nav.go(Dest.Weather()) })
-            Spacer(Modifier.height(14.dp))
-            Text(stringResource(R.string.soon_coming_up), style = TextStyle(fontFamily = SerifFamily, fontStyle = FontStyle.Italic, fontSize = 24.sp, color = Ink))
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(12.dp))
+            BoardLine(stringResource(R.string.soon_coming_up), boardStyle(21f, 600, Ink.css(), 26f, FRAUNCES, italic = true), Modifier.semantics { heading() })
+            Spacer(Modifier.height(10.dp))
             val moments = snap?.moments.orEmpty().take(5)
             if (snap == null) {
-                Text(stringResource(R.string.kit_loading), color = Soft, fontSize = 13.sp)
+                BoardLine(stringResource(R.string.kit_loading), boardStyle(13f, 400, Soft.css(), 17f))
             } else if (moments.isEmpty()) {
-                Text(stringResource(R.string.soon_nothing), color = Soft, fontSize = 13.sp)
+                BoardLine(stringResource(R.string.soon_nothing), boardStyle(13f, 400, Soft.css(), 17f))
             } else {
-                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                // The timeline: a dotted rule 2 px wide at 41 from 12 px above the first row to 2 px above the last one's foot, rows 14 apart.
+                Column(
+                    Modifier.drawBehind {
+                        val x = 25.dp.toPx()
+                        val w = 2.dp.toPx()
+                        var y = -12.dp.toPx()
+                        val end = size.height - 2.dp.toPx()
+                        val dash = 5.dp.toPx()
+                        while (y < end) { drawRect(Color(0xFFC9BDA4), Offset(x, y), Size(w, minOf(dash, end - y))); y += 2 * dash }
+                    },
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
                     for ((i, m) in moments.withIndex()) {
                         val v = momentView(m, now, zone, here)
                         val first = i == 0 || moments[i - 1].at.atZone(zone).toLocalDate() != m.at.atZone(zone).toLocalDate()
@@ -132,73 +153,76 @@ fun SoonScreen(args: Dest.Soon, nav: Navigator) {
                     }
                 }
             }
-            Spacer(Modifier.height(16.dp))
-            Text(stringResource(R.string.soon_tools), style = TextStyle(fontFamily = SerifFamily, fontStyle = FontStyle.Italic, fontSize = 24.sp, color = Ink))
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(22.dp))
+            BoardLine(stringResource(R.string.soon_tools), boardStyle(21f, 600, Ink.css(), 26f, FRAUNCES, italic = true), Modifier.semantics { heading() })
+            Spacer(Modifier.height(8.dp))
             val tools = listOf(
-                Tool(R.string.soon_tool_forecast, R.string.soon_tool_forecast_sub, "weather.partly-cloudy", 0xFFE89A0C, Dest.Forecast),
+                Tool(R.string.soon_tool_forecast, R.string.soon_tool_forecast_sub, "weather.partly-cloudy.2", 0xFFE89A0C, Dest.Forecast),
                 Tool(R.string.soon_tool_year, R.string.soon_tool_year_sub, "nature.season", 0xFF1E9E5A, Dest.Year),
                 Tool(R.string.soon_tool_sky, R.string.soon_tool_sky_sub, "ui.moon", 0xFF2E5BFF, Dest.Sky),
                 Tool(R.string.soon_tool_moments, R.string.soon_tool_moments_sub, "ui.bell", 0xFF7B4DFF, Dest.Moments),
                 Tool(R.string.soon_tool_season, R.string.soon_tool_season_sub, "food.apple.2", 0xFFC4452F, Dest.Season),
-                Tool(R.string.soon_tool_lists, R.string.soon_tool_lists_sub, "ui.bookmark", 0xFF8A6A1E, Dest.Lists()),
+                Tool(R.string.soon_tool_lists, R.string.soon_tool_lists_sub, "tab.local", 0xFF8A6A1E, Dest.Lists()),
             )
-            for (row in tools.chunked(3)) {
-                Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for (t in row) ToolCard(t, Modifier.weight(1f)) { nav.go(t.dest) }
-                    repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (row in tools.chunked(3)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        for (t in row) ToolCard(t, Modifier.weight(1f)) { nav.go(t.dest) }
+                        repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                    }
                 }
             }
-            Text(
-                stringResource(R.string.soon_source), color = Soft, fontSize = 11.sp, lineHeight = 15.sp,
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
-            )
+            Spacer(Modifier.height(12.dp))
+            BoardPara(stringResource(R.string.soon_source), boardStyle(11f, 400, Soft.css(), 14.85f), Modifier.padding(horizontal = 4.dp))
             Spacer(Modifier.height(LocalBottomBarInset.current + 8.dp))
         }
     }
 }
 
+/** The board's display face for the Soon tab: Fraunces at 600. */
+private const val FRAUNCES = "Fraunces"
+
 private class Tool(val title: Int, val sub: Int, val symbol: String, val colour: Long, val dest: Dest)
 
+/** A tool of the board: 60 px, radius 12, its colour's 3 px top edge and soft shadow; the 20 px symbol 10 in, the name and a word 8 after it. */
 @Composable
 private fun ToolCard(t: Tool, modifier: Modifier, onClick: () -> Unit) {
-    val c = Color(t.colour.toInt())
-    val shape = RoundedCornerShape(12.dp)
     Row(
-        modifier.height(60.dp).cssShadow(shape, 4.dp, 10.dp, Color(0x14503C14)).clip(shape).background(PaperCard).clickable(onClick = onClick)
-            .drawTopEdge(c).padding(start = 10.dp, end = 8.dp, top = 3.dp),
+        modifier.height(60.dp)
+            .boardBox(PaperCard.css(), corners(12f), listOf(CssShadow(0f, 3f, 0f, 0f, t.colour, inset = true), CssShadow(0f, 4f, 10f, 0f, 0x14503C14), CssShadow(0f, 0f, 0f, 1f, 0x14503C14)))
+            .clickable(onClick = onClick).padding(start = 10.dp, end = 8.dp, top = 3.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Symbol(t.symbol, tint = c, size = 20.dp)
+        Symbol(t.symbol, tint = argb(t.colour), size = 20.dp)
         Column(Modifier.weight(1f)) {
-            Text(stringResource(t.title), color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(stringResource(t.sub), color = Soft, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BoardLine(stringResource(t.title), boardStyle(13f, 700, Ink.css(), 15.6f))
+            BoardLine(stringResource(t.sub), boardStyle(11f, 400, Soft.css(), 13.2f))
         }
     }
 }
 
-/** The card's coloured top edge (the board's `inset 0 3px 0 colour`). */
-private fun Modifier.drawTopEdge(c: Color): Modifier = this.drawWithContent {
-    drawContent()
-    drawRect(c, Offset.Zero, androidx.compose.ui.geometry.Size(size.width, 3.dp.toPx()))
-}
-
+/**
+ * The week card of the board: 142 px, radius 18, warm white with its light top edge, shadow and hairline; 12 px down and
+ * 10 in. "This week →" and the hand-written note 6 px in on one baseline, then the seven days 8 px under them, 3 apart:
+ * the letter, the date, the 24 px sky, the high and the chance of rain; the chosen day ringed by the board's hand.
+ */
 @Composable
 private fun WeekCard(days: List<WeatherDay>, selected: Int, best: Int, noForecast: Boolean, zone: ZoneId, now: Instant, onPick: (Int) -> Unit, onOpen: () -> Unit) {
-    val shape = RoundedCornerShape(18.dp)
     Column(
-        Modifier.fillMaxWidth().cssShadow(shape, 8.dp, 20.dp, Color(0x1A503C14)).clip(shape).background(PaperCard).padding(start = 10.dp, end = 10.dp, top = 12.dp, bottom = 10.dp),
+        Modifier.fillMaxWidth().height(142.dp)
+            .boardBox(PaperCard.css(), corners(18f), listOf(CssShadow(0f, 1f, 0f, 0f, 0xCCFFFFFF, inset = true), CssShadow(0f, 8f, 20f, 0f, 0x1A503C14), CssShadow(0f, 0f, 0f, 1f, 0x14503C14)), clip = false)
+            .padding(start = 10.dp, end = 10.dp, top = 12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-            Text(stringResource(R.string.soon_this_week), Modifier.clickable(onClick = onOpen), color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.3.sp)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            BoardLine(stringResource(R.string.soon_this_week), boardStyle(13f, 700, Ink.css(), 17f, spacing = 0.26f), Modifier.alignByBaseline().clickable(onClick = onOpen))
             val note = if (days.isNotEmpty()) dayNoteText(days[selected], selected == best) else ""
-            Text(note, color = Violet, fontFamily = LocalType.hand, fontWeight = FontWeight.Bold, fontSize = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BoardLine(note, boardStyle(19f, 700, Violet.css(), 23.5f, CAVEAT), Modifier.alignByBaseline().padding(start = 8.dp))
         }
         if (days.isEmpty()) {
             Row(Modifier.fillMaxWidth().height(86.dp), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
                 Symbol(if (noForecast) "ui-cloud-off" else "weather.cloud", tint = Soft, size = 22.dp)
-                Text(stringResource(if (noForecast) R.string.soon_no_forecast else R.string.kit_loading), color = Soft, fontSize = 13.sp)
+                BoardLine(stringResource(if (noForecast) R.string.soon_no_forecast else R.string.kit_loading), boardStyle(13f, 400, Soft.css(), 17f))
             }
         } else {
             BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -206,19 +230,24 @@ private fun WeekCard(days: List<WeatherDay>, selected: Int, best: Int, noForecas
                 Row(Modifier.fillMaxWidth()) {
                     for ((i, d) in days.withIndex()) DayColumn(d, i == selected, Modifier.weight(1f), zone, onClick = { onPick(i) })
                 }
-                // The hand-drawn circle round the chosen day.
-                val circle = Violet
-                // The board's own path data, with its smooth curves.
+                // The board's hand-drawn ring round the chosen day: 54 x 104, 3 px left of the column's middle, 7.5 px above it.
                 val handCircle = remember { BoardPaths.parse("M27 3C44 3 51 20 51 50s-6 50-24 50S3 82 3 52 9 5 29 4") }
-                Canvas(Modifier.offset(x = col * selected + (col - 54.dp) / 2, y = (-2).dp).size(54.dp, 104.dp)) {
+                Canvas(Modifier.offset(x = col * selected + col / 2 - 30.dp, y = (-7.5).dp).size(54.dp, 104.dp)) {
                     val s = size.width / 54f
-                    scale(s, s, Offset.Zero) {
-                        drawPath(handCircle, circle, style = Stroke(2f, cap = StrokeCap.Round))
-                    }
+                    scale(s, s, Offset.Zero) { drawPath(handCircle, Violet, style = Stroke(2f, cap = StrokeCap.Round)) }
                 }
             }
         }
     }
+}
+
+/** The board's sky for a day of the week: its own rain, sun, sun-and-cloud and cloud; the kit's for snow, storms and fog. */
+private fun daySymbol(sky: Sky): String = when (sky) {
+    Sky.DRIZZLE, Sky.FREEZING_DRIZZLE, Sky.RAIN, Sky.FREEZING_RAIN, Sky.SHOWERS -> "weather.rain.3"
+    Sky.CLEAR, Sky.MAINLY_CLEAR -> "weather.sun"
+    Sky.PARTLY_CLOUDY -> "weather.partly-cloudy.2"
+    Sky.OVERCAST, Sky.UNKNOWN -> "weather.cloud"
+    else -> skySymbol(sky, day = true)
 }
 
 @Composable
@@ -226,22 +255,21 @@ private fun DayColumn(d: WeatherDay, on: Boolean, modifier: Modifier, zone: Zone
     val name = d.date.dayOfWeek.getDisplayName(DateStyle.FULL, Locale.getDefault())
     val letter = d.date.dayOfWeek.getDisplayName(DateStyle.NARROW, Locale.getDefault()).uppercase()
     val rain = d.precipitationProbabilityMax.roundToInt()
-    val symbol = skySymbol(d.sky, day = true)
     val tint = when {
-        d.sky.wet -> Color(0xFF2E7BC4)
-        d.sky == Sky.CLEAR || d.sky == Sky.MAINLY_CLEAR -> Color(0xFFE89A0C)
-        d.sky == Sky.PARTLY_CLOUDY -> Color(0xFFC98A1A)
-        else -> Color(0xFF6F7686)
+        d.sky.wet -> 0xFF2E7BC4
+        d.sky == Sky.CLEAR || d.sky == Sky.MAINLY_CLEAR -> 0xFFE89A0C
+        d.sky == Sky.PARTLY_CLOUDY -> 0xFFC98A1A
+        else -> 0xFF6F7686
     }
     Column(
         modifier.clickable(onClick = onClick).semantics { contentDescription = "$name ${d.date.dayOfMonth}: ${d.temperatureMax.roundToInt()}°, $rain%"; selected = on },
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        Text(letter, color = if (on) Violet else Ink, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
-        Text(d.date.dayOfMonth.toString(), color = Soft, fontSize = 11.sp)
-        Box(Modifier.height(24.dp), contentAlignment = Alignment.Center) { Symbol(symbol, tint = tint, size = 22.dp) }
-        Text("${d.temperatureMax.roundToInt()}°", color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-        Text("$rain%", color = if (rain >= 20) Color(0xFF2E7BC4) else Color(0xFF8A8170), fontSize = 11.sp)
+        BoardLine(letter, boardStyle(12f, 800, if (on) Violet.css() else Ink.css(), 15.5f, tnum = true))
+        BoardLine(d.date.dayOfMonth.toString(), boardStyle(11f, 400, Soft.css(), 14f, tnum = true))
+        Box(Modifier.height(24.dp), contentAlignment = Alignment.Center) { Symbol(daySymbol(d.sky), tint = argb(tint), size = 22.dp) }
+        BoardLine("${d.temperatureMax.roundToInt()}°", boardStyle(14f, 700, Ink.css(), 18f, tnum = true))
+        BoardLine("$rain%", boardStyle(11f, 400, if (rain >= 20) 0xFF2E7BC4 else 0xFF8A8170, 14f, tnum = true))
     }
 }
 
@@ -262,43 +290,43 @@ private fun dayNoteText(d: WeatherDay, best: Boolean): String {
     return stringResource(R.string.soon_note, short, stringResource(phrase))
 }
 
+/**
+ * One row of the board's timeline: the 52 px date column (the day in capitals, the time in Fraunces 26, the date), and
+ * 12 px on the 66 px card (radius 14, its shadow and hairline; 16 px in): the title in Fraunces 17 and a line 3 under it,
+ * the moment's 42 px tile; a strip of washi tape over its corner, left and right in turn.
+ */
 @Composable
 private fun TimelineRow(v: MomentView, now: Instant, zone: ZoneId, firstOfDay: Boolean, index: Int, onClick: () -> Unit) {
     val at = v.moment.at.atZone(zone)
     val today = LocalDate.ofInstant(now, zone) == at.toLocalDate()
-    val tomorrow = LocalDate.ofInstant(now, zone).plusDays(1) == at.toLocalDate()
-    val colour = Color(v.colour.toInt())
-    Row(Modifier.fillMaxWidth().heightIn(min = 66.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.width(52.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            val day = when {
-                today -> stringResource(R.string.soon_today)
-                tomorrow -> stringResource(R.string.soon_tomorrow)
-                else -> at.dayOfWeek.getDisplayName(DateStyle.SHORT, Locale.getDefault()).trimEnd('.')
+    Box(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+            Column(Modifier.width(52.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                // The board's column is 52 px: today says so, other days by their short name ("SAT") over the date.
+                val day = if (today) stringResource(R.string.soon_today) else at.dayOfWeek.getDisplayName(DateStyle.SHORT, Locale.getDefault()).trimEnd('.')
+                if (firstOfDay) BoardLine(day.uppercase(), boardStyle(11f, 800, Soft.css(), 11.55f, spacing = 0.66f, tnum = true), overflow = TextOverflow.Visible)
+                BoardLine(DateTimeFormatter.ofPattern("H:mm").format(at), boardStyle(26f, 600, Ink.css(), 32f, FRAUNCES, tnum = true), overflow = TextOverflow.Visible)
+                if (firstOfDay && !today) BoardLine("${at.dayOfMonth} ${at.month.getDisplayName(DateStyle.SHORT, Locale.getDefault()).uppercase().trimEnd('.')}", boardStyle(11f, 700, Soft.css(), 11.55f, tnum = true), overflow = TextOverflow.Visible)
             }
-            if (firstOfDay) Text(day.uppercase(), color = Soft, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.6.sp, maxLines = 1)
-            Text(DateTimeFormatter.ofPattern("H:mm").format(at), style = TextStyle(fontFamily = SerifFamily, fontSize = 22.sp, lineHeight = 26.sp, color = Ink), maxLines = 1)
-            if (firstOfDay && !today) Text("${at.dayOfMonth} ${at.month.getDisplayName(DateStyle.SHORT, Locale.getDefault()).uppercase().trimEnd('.')}", color = Soft, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-        }
-        val shape = RoundedCornerShape(14.dp)
-        Box(Modifier.weight(1f)) {
             Row(
-                Modifier.fillMaxWidth().heightIn(min = 66.dp).cssShadow(shape, 6.dp, 16.dp, Color(0x17503C14)).clip(shape).background(PaperCard)
-                    .clickable(enabled = v.dest != null, onClick = onClick).padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 10.dp),
+                Modifier.weight(1f).height(66.dp).boardBox(PaperCard.css(), corners(14f), listOf(CssShadow(0f, 6f, 16f, 0f, 0x17503C14), CssShadow(0f, 0f, 0f, 1f, 0x14503C14)))
+                    .clickable(enabled = v.dest != null, onClick = onClick).padding(start = 16.dp, end = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(v.title, style = TextStyle(fontFamily = SerifFamily, fontSize = 18.sp, lineHeight = 20.sp, color = Ink), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(v.line, color = Soft, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    BoardLine(v.title, boardStyle(17f, 600, Ink.css(), 21f, FRAUNCES))
+                    BoardLine(v.line, boardStyle(12f, 400, Soft.css(), 15.5f, tnum = true))
                 }
-                Box(Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(colour.copy(alpha = 0.12f)), contentAlignment = Alignment.Center) {
-                    Symbol(v.symbol, tint = colour, size = 22.dp)
+                Box(Modifier.size(42.dp).boardBox(argb(v.colour).copy(alpha = 0.12f).compositeOver(PaperCard).css(), corners(12f)), contentAlignment = Alignment.Center) {
+                    Symbol(v.symbol, tint = argb(v.colour), size = 22.dp)
                 }
             }
-            // A strip of washi tape over the corner, as the board's cards have.
-            Box(
-                Modifier.align(Alignment.TopStart).offset(x = (-22).dp, y = (-9).dp).rotate(if (index % 2 == 0) -8f else 7f).size(58.dp, 18.dp)
-                    .background(colour.copy(alpha = 0.40f)),
-            )
         }
+        // The washi tape: 58 x 18, the moment's colour at 45 per cent with white stripes, at 85 per cent.
+        val left = index % 2 == 0
+        Box(
+            Modifier.offset(x = if (left) 42.dp else 292.dp, y = (-7).dp).rotate(if (left) -8f else 7f).size(58.dp, 18.dp).alpha(0.85f)
+                .boardBox(argb(v.colour).copy(alpha = 0.45f).css(), grad = listOf(cssRepeatingLinear(45f, 8f, 0f to 0x59FFFFFF, 4f to 0x59FFFFFF, 4f to 0x00FFFFFF, 8f to 0x00FFFFFF))),
+        )
     }
 }

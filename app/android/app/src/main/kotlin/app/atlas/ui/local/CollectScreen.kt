@@ -71,6 +71,12 @@ import java.time.ZoneId
 import java.time.format.TextStyle as DateStyle
 import java.time.temporal.TemporalAdjusters
 import java.util.Locale
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.graphics.compositeOver
+import app.atlas.ui.kit.CssCorners
+import app.atlas.ui.kit.Argb
+import app.atlas.ui.kit.cssRadial
+import app.atlas.ui.kit.cssLinear
 
 private val Ink = Color(0xFF15181C)
 private val Soft = Color(0xFF464C5A)
@@ -177,46 +183,52 @@ fun CollectScreen(args: Dest.Collect, nav: Navigator) {
         reschedule()
     }
 
-    BoardPage(background = Color(0xFFEDF0F2)) {
+    // The board's page: a cool grey, lighter at 45 per cent across.
+    BoardPage(background = Color.Transparent, modifier = Modifier.boardBox(grad = listOf(cssLinear(90f, 0f to 0xFFE4E8EB, 0.45f to 0xFFF2F4F5, 1f to 0xFFE6EAED)), clip = false)) {
         BoardTitleBar(stringResource(R.string.collect_title), onBack = { nav.back() }, italic = false, size = 32, colour = Ink) {
             val name = waste?.name ?: hub.waste.source
-            if (name != null) Text(name, color = Soft, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(120.dp), textAlign = TextAlign.End)
+            if (name != null) BoardLine(name, boardStyle(13f, 600, Soft.css(), 17f, align = TextAlign.End), Modifier.widthIn(max = 160.dp))
         }
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(18.dp))
         WallPage(next, today, hour, onImport = { pick.launch(arrayOf("text/calendar", "text/*", "application/octet-stream", "*/*")) })
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(24.dp))
         if (waste != null) {
+            // The week: seven days of 86 px, 4 apart.
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 for (i in 0 until 7) WeekCell(monday.plusDays(i.toLong()), week[monday.plusDays(i.toLong())], today, next?.date, Modifier.weight(1f))
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(18.dp))
             ReminderRow(remind, hour, onToggle = ::toggleRemind, onHour = { hour = if (hour >= 22) 18 else hour + 1; hub.prefs.putInt("collect.hour", hour); reschedule() })
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(16.dp))
             // The special days the calendar itself lists (bulky waste, chemical waste), with its own words for them.
             for (p in specials) {
                 SpecialCard(p, today)
                 Spacer(Modifier.height(8.dp))
             }
         }
-        val shape = RoundedCornerShape(20.dp)
-        Column(Modifier.fillMaxWidth().clip(shape).background(Color.White).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFFE8EBEE)), contentAlignment = Alignment.Center) { Symbol("ui.download", tint = Color(0xFF3E4A56), size = 24.dp) }
-                Column(Modifier.weight(1f)) {
-                    Text(stringResource(if (waste == null) R.string.collect_import else R.string.collect_import_again), color = Ink, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
-                    Text(stringResource(R.string.collect_import_sub), color = Soft, fontSize = 12.sp, lineHeight = 16.sp)
-                }
-                Box(
-                    Modifier.size(44.dp).clip(CircleShape).background(Color(0xFFF1EEE8)).clickable { pick.launch(arrayOf("text/calendar", "text/*", "application/octet-stream", "*/*")) }
-                        .semantics { contentDescription = importLabel },
-                    contentAlignment = Alignment.Center,
-                ) { Symbol("ui.chevron-right", tint = Ink, size = 18.dp) }
+        // Bringing a calendar: the board's e-waste card (76 px, the grey tile, the round chevron).
+        Row(
+            Modifier.fillMaxWidth().height(76.dp).boardBox(0xFFFFFFFF, corners(20f)).padding(horizontal = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(48.dp).boardBox(0xFFE8EBEE, corners(14f)), contentAlignment = Alignment.Center) { Symbol("ui.download", tint = Color(0xFF3E4A56), size = 24.dp) }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                BoardLine(stringResource(if (waste == null) R.string.collect_import else R.string.collect_import_again), boardStyle(16f, 800, Ink.css(), 20.5f))
+                BoardPara(stringResource(R.string.collect_import_sub), boardStyle(12f, 400, Soft.css(), 15.5f), lines = 2)
             }
-            if (error != null) Text(stringResource(R.string.collect_import_bad), color = Color(0xFFC8322A), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            Text(stringResource(R.string.collect_scope), color = Soft, fontSize = 12.sp, lineHeight = 16.sp)
-            if (waste != null) Text(
-                stringResource(R.string.collect_remove), color = Color(0xFFC8322A), fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                modifier = Modifier.clickable { hub.waste.clear(); remind = false; hub.prefs.putBool("collect.remind", false); reschedule() },
+            Box(
+                Modifier.size(44.dp).boardBox(0xFFF1EEE8, corners(22f)).clickable { pick.launch(arrayOf("text/calendar", "text/*", "application/octet-stream", "*/*")) }
+                    .semantics { contentDescription = importLabel },
+                contentAlignment = Alignment.Center,
+            ) { Symbol("ui.chevron-right", tint = Ink, size = 18.dp) }
+        }
+        Spacer(Modifier.height(12.dp))
+        Column(Modifier.padding(horizontal = 2.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (error != null) BoardLine(stringResource(R.string.collect_import_bad), boardStyle(12f, 700, 0xFFC8322A, 15.5f))
+            BoardPara(stringResource(R.string.collect_scope), boardStyle(12f, 400, Soft.css(), 15.5f))
+            if (waste != null) BoardLine(
+                stringResource(R.string.collect_remove), boardStyle(13f, 700, 0xFFC8322A, 17f),
+                Modifier.clickable { hub.waste.clear(); remind = false; hub.prefs.putBool("collect.remind", false); reschedule() },
             )
         }
     }
@@ -226,125 +238,142 @@ fun CollectScreen(args: Dest.Collect, nav: Navigator) {
 @Composable
 private fun SpecialCard(p: Pickup, today: LocalDate) {
     val hazard = Stream.HAZARDOUS in p.streams
-    val shape = RoundedCornerShape(20.dp)
     val title = p.labels.firstOrNull { WasteCalendar.classify(it).special } ?: p.labels.firstOrNull() ?: ""
     val days = WasteCalendar.daysBetween(today, p.date).toInt()
     val date = p.date.dayOfWeek.getDisplayName(DateStyle.SHORT, Locale.getDefault()).trimEnd('.') + " " + p.date.dayOfMonth + " " + p.date.month.getDisplayName(DateStyle.SHORT, Locale.getDefault()).trimEnd('.')
     Row(
-        Modifier.fillMaxWidth().height(76.dp).clip(shape).background(if (hazard) Color(0xFFFFF6DC) else Color.White).then(if (hazard) Modifier.border(1.5.dp, Color(0xFFF2D27A), shape) else Modifier).padding(horizontal = 14.dp),
+        Modifier.fillMaxWidth().height(76.dp)
+            .boardBox(if (hazard) 0xFFFFF6DC else 0xFFFFFFFF, corners(20f), if (hazard) shadow(0f, 0f, 0f, 0xFFF2D27A, spread = 1.5f, inset = true) else emptyList())
+            .padding(horizontal = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(if (hazard) Color.White else Color(0xFFEDE7F8)), contentAlignment = Alignment.Center) {
-            Symbol(if (hazard) "sign.warning" else Stream.BULKY.symbol, size = 26.dp)
+        Box(Modifier.size(48.dp).boardBox(if (hazard) 0xFFFFFFFF else 0xFFEDE7F8, corners(14f)), contentAlignment = Alignment.Center) {
+            if (hazard) Symbol("sign.warning", tint = Ink, size = 26.dp) else BoxSymbol(Stream.BULKY.symbol, 28f, 24f, Color(0xFF6B45B8))
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(title, color = Ink, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(date, color = if (hazard) Color(0xFF5A4A20) else Soft, fontSize = 12.sp, maxLines = 1)
+            BoardLine(title, boardStyle(16f, 800, Ink.css(), 20.5f))
+            BoardLine(date, boardStyle(12f, 400, if (hazard) 0xFF5A4A20 else Soft.css(), 15.5f, tnum = true))
         }
-        Text(
-            if (days == 0) stringResource(R.string.collect_out_today) else stringResource(R.string.collect_in_days, days), color = Ink, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1,
-        )
+        BoardLine(if (days == 0) stringResource(R.string.collect_out_today) else stringResource(R.string.collect_in_days, days), boardStyle(16f, 900, Ink.css(), 20.5f, tnum = true))
     }
 }
 
-/** The pinned wall-calendar page: weekday, big date, the bins, and when to put them out. */
+/**
+ * The pinned wall-calendar page, 300 x 250 turned 1.5 degrees: the page 240 high from 10 down (radius 10, the board's
+ * shadow), the weekday band of 56, the big date and the bins 22 apart, the night line of 44 under a dashed rule, the pin.
+ */
 @Composable
 private fun WallPage(next: Pickup?, today: LocalDate, hour: Int, onImport: () -> Unit) {
-    Box(Modifier.fillMaxWidth().height(264.dp), contentAlignment = Alignment.TopCenter) {
-        val shape = RoundedCornerShape(10.dp)
-        Column(
-            Modifier.padding(top = 10.dp).width(300.dp).height(240.dp).rotate(-1.5f).cssShadow(shape, 12.dp, 24.dp, Color(0x24000000)).clip(shape).background(Color.White),
-        ) {
-            val first = next?.streams?.firstOrNull { !it.special } ?: next?.streams?.firstOrNull()
-            val band = first?.let { Color(it.colour.toInt()) } ?: Color(0xFF1B5FA8)
-            Box(Modifier.fillMaxWidth().height(56.dp).background(band), contentAlignment = Alignment.Center) {
-                Text(
-                    (next?.date?.dayOfWeek?.getDisplayName(DateStyle.FULL, Locale.getDefault()) ?: stringResource(R.string.collect_no_calendar)).uppercase(),
-                    color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Black, letterSpacing = 3.6.sp, maxLines = 1,
-                )
-            }
-            if (next == null) {
-                Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                    Text(stringResource(R.string.collect_empty), color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-                    Spacer(Modifier.height(10.dp))
-                    Box(Modifier.height(44.dp).clip(CircleShape).background(Ink).clickable(onClick = onImport).padding(horizontal = 18.dp), contentAlignment = Alignment.Center) {
-                        Text(stringResource(R.string.collect_import), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
-                    }
-                }
-            } else {
-                Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-                    Text(next.date.dayOfMonth.toString(), style = TextStyle(fontFamily = SerifFamily, fontSize = 96.sp, lineHeight = 96.sp, color = Ink))
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Bottom) {
-                        for (s in next.streams.filter { it != Stream.OTHER }.take(3)) Symbol(s.symbol, size = 44.dp, contentDescription = streamName(s))
-                    }
-                }
-                val days = WasteCalendar.daysBetween(today, next.date).toInt()
-                Row(
-                    Modifier.fillMaxWidth().height(44.dp).dashedTop(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Symbol("ui.moon", tint = Soft, size = 16.dp)
-                    Text(
-                        if (days == 1) stringResource(R.string.collect_out_tonight, hour) else if (days == 0) stringResource(R.string.collect_out_today) else stringResource(R.string.collect_in_days, days),
-                        color = Soft, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+    Box(Modifier.fillMaxWidth().height(250.dp), contentAlignment = Alignment.TopCenter) {
+        Box(Modifier.width(300.dp).height(250.dp).rotate(-1.5f)) {
+            Column(Modifier.padding(top = 10.dp).fillMaxWidth().height(240.dp).boardBox(0xFFFFFFFF, corners(10f), shadow(0f, 12f, 24f, 0x24000000))) {
+                val first = next?.streams?.firstOrNull { !it.special } ?: next?.streams?.firstOrNull()
+                val band = first?.colour ?: 0xFF1B5FA8
+                Box(Modifier.fillMaxWidth().height(56.dp).boardBox(band), contentAlignment = Alignment.Center) {
+                    BoardLine(
+                        (next?.date?.dayOfWeek?.getDisplayName(DateStyle.FULL, Locale.getDefault()) ?: stringResource(R.string.collect_no_calendar)).uppercase(),
+                        boardStyle(18f, 900, 0xFFFFFFFF, 27.41f, spacing = 3.6f),
                     )
                 }
+                if (next == null) {
+                    Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        BoardPara(stringResource(R.string.collect_empty), boardStyle(16f, 700, Ink.css(), 20.5f, align = TextAlign.Center))
+                        Spacer(Modifier.height(10.dp))
+                        Box(Modifier.height(44.dp).boardBox(Ink.css(), corners(22f)).clickable(onClick = onImport).padding(horizontal = 18.dp), contentAlignment = Alignment.Center) {
+                            BoardLine(stringResource(R.string.collect_import), boardStyle(14f, 800, 0xFFFFFFFF, 18f))
+                        }
+                    }
+                } else {
+                    Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(22.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+                        BoardLine(next.date.dayOfMonth.toString(), boardStyle(96f, 400, Ink.css(), 96f, SERIF, tnum = true), overflow = TextOverflow.Visible)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Bottom) {
+                            for (s in next.streams.filter { it != Stream.OTHER }.take(3)) {
+                                val name = streamName(s)
+                                BoxSymbol(s.symbol, 44f, 64f, Ink, Modifier.semantics { contentDescription = name })
+                            }
+                        }
+                    }
+                    val days = WasteCalendar.daysBetween(today, next.date).toInt()
+                    Row(
+                        Modifier.fillMaxWidth().height(44.dp).dashedTop(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Symbol("ui.moon", tint = Soft, size = 16.dp)
+                        BoardLine(
+                            if (days == 1) stringResource(R.string.collect_out_tonight, hour) else if (days == 0) stringResource(R.string.collect_out_today) else stringResource(R.string.collect_in_days, days),
+                            boardStyle(14f, 700, Soft.css(), 22.1f, tnum = true),
+                        )
+                    }
+                }
             }
+            // The pin: 28 px at 136 across, a red bead lit from 35 per cent across and 30 down.
+            Box(
+                Modifier.offset(x = 136.dp).size(28.dp)
+                    .boardBox(r = corners(14f), shadows = shadow(0f, 4f, 6f, 0x4D000000), grad = listOf(cssRadial(true, 9.8f, 8.4f, 0f to 0xFFFF9A76, 0.6f to 0xFFE8622C, 1f to 0xFFB8441B))),
+            )
         }
-        // The pin.
-        Box(
-            Modifier.align(Alignment.TopCenter).offset(x = (-14).dp).size(28.dp).cssShadow(CircleShape, 4.dp, 6.dp, Color(0x4D000000)).clip(CircleShape)
-                .background(Brush.radialGradient(0f to Color(0xFFFF9A76), 0.6f to Color(0xFFE8622C), 1f to Color(0xFFB8441B), center = androidx.compose.ui.geometry.Offset(10f, 9f), radius = 40f)),
-        )
     }
 }
 
 private fun Modifier.dashedTop(): Modifier = this.drawBehind {
-    drawLine(Color(0xFFD0D4D8), androidx.compose.ui.geometry.Offset(0f, 0f), androidx.compose.ui.geometry.Offset(size.width, 0f), 1.dp.toPx(), pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx())))
+    drawLine(Color(0xFFD0D4D8), androidx.compose.ui.geometry.Offset(0f, 0.5.dp.toPx()), androidx.compose.ui.geometry.Offset(size.width, 0.5.dp.toPx()), 1.dp.toPx(), pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 3.dp.toPx())))
 }
 
+/** The pale ground of the day the next bins go out: the board's for the blue bin, else the bin's colour at 9 per cent. */
+private fun dayTint(s: Stream): Argb = if (s == Stream.PACKAGING) 0xFFEAF2FB else Color(s.colour.toInt()).copy(alpha = 0.09f).compositeOver(Color.White).css()
+
+/** One day of the week strip: 86 px, its letter 12 px at 800 and its bins 6 below, centred; today ringed in ink. */
 @Composable
 private fun WeekCell(day: LocalDate, pickup: Pickup?, today: LocalDate, nextDate: LocalDate?, modifier: Modifier) {
     val isToday = day == today
     val special = pickup?.streams?.any { it.special } == true
     val bins = pickup?.streams?.filter { !it.special && it != Stream.OTHER }.orEmpty()
-    val accent = bins.firstOrNull()?.let { Color(it.colour.toInt()) }
+    val accent = bins.firstOrNull()
     val bg = when {
-        special -> Color(0xFFFFF6DC)
-        day == nextDate && accent != null -> accent.copy(alpha = 0.10f)
-        else -> Color.White
+        special -> 0xFFFFF6DC
+        day == nextDate && accent != null -> dayTint(accent)
+        else -> 0xFFFFFFFF
+    }
+    val ink = when {
+        special -> 0xFF8A5A00
+        day == nextDate && accent != null -> accent.colour
+        isToday -> Ink.css()
+        else -> 0xFF676D7C
     }
     val letter = day.dayOfWeek.getDisplayName(DateStyle.NARROW, Locale.getDefault()).uppercase()
     val streamNames = pickup?.streams?.map { streamName(it).lowercase() }
     val desc = day.dayOfWeek.getDisplayName(DateStyle.FULL, Locale.getDefault()) + ": " + (streamNames?.joinToString() ?: "-")
     Column(
-        modifier.height(86.dp).clip(RoundedCornerShape(14.dp)).background(bg).then(if (isToday) Modifier.border(2.dp, Ink, RoundedCornerShape(14.dp)) else Modifier).semantics { contentDescription = desc },
+        modifier.height(86.dp).boardBox(bg, corners(14f), if (isToday) shadow(0f, 0f, 0f, Ink.css(), spread = 2f, inset = true) else emptyList()).semantics { contentDescription = desc },
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically),
     ) {
-        Text(letter, color = if (day == nextDate && accent != null) accent else if (isToday) Ink else Soft.copy(alpha = 0.9f), fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
-        Box(Modifier.height(22.dp), contentAlignment = Alignment.Center) {
-            if (special) Symbol("sign.warning", size = 18.dp)
-            else Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                for (s in bins.take(3)) Box(Modifier.size(if (bins.size == 1) 16.dp else 10.dp, 22.dp).clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp, bottomStart = 5.dp, bottomEnd = 5.dp)).background(Color(s.colour.toInt())))
+        BoardLine(letter, boardStyle(12f, 800, ink, 15.5f))
+        if (special) {
+            Symbol("bin.hazardous", tint = Color(0xFF8A5A00), size = 18.dp)
+        } else Box(Modifier.height(22.dp), contentAlignment = Alignment.Center) {
+            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                val one = bins.size == 1
+                for (s in bins.take(3)) Box(Modifier.size(if (one) 16.dp else 10.dp, 22.dp).boardBox(s.colour, if (one) CssCorners(3f, 3f, 5f, 5f) else CssCorners(2f, 2f, 4f, 4f)))
             }
         }
     }
 }
 
+/** The board's reminder bar: 70 px of ink, 18 px in on the left and 12 on the right, the bell, the line, the hour and the switch 12 apart. */
 @Composable
 private fun ReminderRow(on: Boolean, hour: Int, onToggle: () -> Unit, onHour: () -> Unit) {
     val stateLabel = stringResource(if (on) R.string.local_on else R.string.local_off)
     Row(
-        Modifier.fillMaxWidth().height(70.dp).clip(RoundedCornerShape(22.dp)).background(Ink).padding(start = 18.dp, end = 12.dp),
+        Modifier.fillMaxWidth().height(70.dp).boardBox(Ink.css(), corners(22f)).padding(start = 18.dp, end = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
         Symbol("ui.bell", tint = Color(0xFFFFD166), size = 22.dp)
-        Text(stringResource(R.string.collect_remind), Modifier.weight(1f), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 2)
-        Text("%d:00".format(hour), Modifier.clickable(onClick = onHour), color = Color(0xFFFFD166), fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+        BoardPara(stringResource(R.string.collect_remind), boardStyle(15f, 700, 0xFFFFFFFF, 19.5f), Modifier.weight(1f), lines = 2)
+        BoardLine("%d:00".format(hour), boardStyle(14f, 800, 0xFFFFD166, 18f, tnum = true), Modifier.clickable(onClick = onHour))
         Box(
-            Modifier.width(48.dp).height(30.dp).clip(CircleShape).background(if (on) Color(0xFF1E9E5A) else Color(0xFF4A505C)).clickable(onClick = onToggle)
+            Modifier.width(48.dp).height(30.dp).boardBox(if (on) 0xFF1E9E5A else 0xFF4A505C, corners(15f)).clickable(onClick = onToggle)
                 .semantics { contentDescription = stateLabel; role = androidx.compose.ui.semantics.Role.Switch },
         ) {
-            Box(Modifier.align(if (on) Alignment.CenterEnd else Alignment.CenterStart).padding(3.dp).size(24.dp).clip(CircleShape).background(Color.White))
+            Box(Modifier.align(if (on) Alignment.CenterEnd else Alignment.CenterStart).padding(3.dp).size(24.dp).boardBox(0xFFFFFFFF, corners(12f)))
         }
     }
 }

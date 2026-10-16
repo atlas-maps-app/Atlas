@@ -71,12 +71,22 @@ import java.time.LocalDate
 import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.roundToInt
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.foundation.layout.fillMaxHeight
+import app.atlas.ui.kit.Symbol
+import app.atlas.ui.kit.cssLinear
+import app.atlas.ui.kit.cssRadial
+import app.atlas.ui.kit.Argb
+import app.atlas.ui.kit.CssGradient
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.kit.CssCorners
 
 private val Paper = Color(0xFFF4EAD6)
 private val Ink = Color(0xFF2A1E10)
 private val Sepia = Color(0xFF7A6A50)
 private val Brass = Color(0xFF8A6A40)
-private val Thumb = Brush.radialGradient(listOf(Color(0xFFF6D98A), Color(0xFFB98A36), Color(0xFF7A5A20)))
 
 /** The board's stage: 412 x 540, one metre of ground to one drawing unit. */
 private const val STAGE_W = 412f
@@ -99,21 +109,26 @@ fun TimeScreen(args: Dest.Time, nav: Navigator) {
 
     Box(Modifier.fillMaxSize().background(Paper)) {
         when {
-            all == null -> Column(Modifier.windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 16.dp)) {
-                BoardTitleBar(stringResource(R.string.time_title), onBack = { nav.back() }, colour = Ink)
-                Text(stringResource(R.string.kit_loading), Modifier.padding(top = 24.dp), color = Sepia, fontSize = 14.sp)
+            all == null -> Column(Modifier.padding(top = boardShift()).padding(horizontal = 16.dp)) {
+                BoardTitleBar(stringResource(R.string.time_title), onBack = { nav.back() }, colour = Ink, size = 32, backBackground = Color(0xE6FFFFFF), backTint = Color(0xFF14161B))
+                Spacer(Modifier.height(24.dp))
+                BoardLine(stringResource(R.string.kit_loading), boardStyle(14f, 400, Sepia.css(), 18f))
             }
-            all.none { it.year != null } -> Column(Modifier.windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 16.dp)) {
-                BoardTitleBar(stringResource(R.string.time_title), onBack = { nav.back() }, colour = Ink)
+            all.none { it.year != null } -> Column(Modifier.padding(top = boardShift()).padding(horizontal = 16.dp)) {
+                BoardTitleBar(stringResource(R.string.time_title), onBack = { nav.back() }, colour = Ink, size = 32, backBackground = Color(0xE6FFFFFF), backTint = Color(0xFF14161B))
                 Spacer(Modifier.height(24.dp))
                 StateMessage("ui-landmark", stringResource(R.string.time_none), text = if (all.isEmpty()) stringResource(R.string.time_none_text) else stringResource(R.string.time_nodates, all.size), tint = Sepia)
             }
             else -> {
                 Stage(all, here, year, split, today, onSplit = { split = it })
                 Chip(all, year, Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = 436.dp))
-                Box(Modifier.fillMaxWidth().height(120.dp).background(Brush.verticalGradient(listOf(Paper.copy(alpha = 0.95f), Paper.copy(alpha = 0.8f), Color.Transparent))))
-                Column(Modifier.windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 16.dp)) {
-                    BoardTitleBar(stringResource(R.string.time_title), onBack = { nav.back() }, colour = Ink, backBackground = Color.White.copy(alpha = 0.9f))
+                // The board's header over the picture: the back button at 90 per cent white, the title in white with its shadow.
+                Row(
+                    Modifier.padding(top = boardShift()).padding(horizontal = 16.dp).padding(top = 42.dp).fillMaxWidth().height(44.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BackCircle({ nav.back() }, background = Color(0xE6FFFFFF), tint = Color(0xFF14161B))
+                    BoardLine(stringResource(R.string.time_title), boardStyle(32f, 400, 0xFFFFFFFF, 32f, SERIF, italic = true, shadow = CssShadow(0f, 2f, 8f, 0f, 0x80000000)), Modifier.weight(1f))
                 }
                 Sheet(all, year, today, onYear = { year = it }, modifier = Modifier.padding(top = 520.dp))
             }
@@ -121,12 +136,12 @@ fun TimeScreen(args: Dest.Time, nav: Navigator) {
     }
 }
 
-/** The pill that says how many of the buildings stood. */
+/** The pill that says how many of the buildings stood, in the board's dark caption chip: 24 px, 8 in, Geist 11 at 800. */
 @Composable
 private fun Chip(all: List<Footprint>, year: Int, modifier: Modifier) {
     val s = TimeMachine.slice(all, year)
-    Box(modifier.height(24.dp).clip(RoundedCornerShape(12.dp)).background(Ink.copy(alpha = 0.85f)).padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
-        Text(stringResource(R.string.time_stood, s.stood, s.total, year), color = Paper, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+    Box(modifier.height(24.dp).boardBox(0xD92A1E10, corners(12f)).padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
+        BoardLine(stringResource(R.string.time_stood, s.stood, s.total, year), boardStyle(11f, 800, Paper.css(), 14f))
     }
 }
 
@@ -151,30 +166,38 @@ private fun Stage(all: List<Footprint>, at: LatLon, year: Int, split: Float, tod
                     if (f.year == null) fillFootprint(r, k, Color(0xFF8A6A40), 0.22f)
                     else if (TimeMachine.stood(f, year)) fillFootprint(r, k, Color(0xFF5B3E1E), 1f)
                 }
-                drawRect(Brush.radialGradient(listOf(Color.Transparent, Color(0x593C2814)), center = Offset(splitX / 2, size.height / 2), radius = size.height * 0.75f))
+                // The board's vignette over the past: clear to 55 per cent of the way out, then warm brown at 35 per cent.
+                drawRect(VIGNETTE.brush(Size(splitX, size.height), drawContext.density.density), size = Size(splitX, size.height))
             }
-            // The seam.
-            drawRect(Paper, Offset(splitX - 2.dp.toPx(), 0f), Size(4.dp.toPx(), size.height))
         }
         val handleX = with(density) { (widthPx * split).toDp() }
+        // The seam: 4 px of paper with its 10 px shadow.
+        Box(Modifier.offset(x = handleX - 2.dp).width(4.dp).fillMaxHeight().boardBox(Paper.css(), shadows = shadow(0f, 0f, 10f, 0x66000000), clip = false))
         Box(
-            Modifier.offset(x = handleX - 24.dp, y = 300.dp).size(48.dp).clip(CircleShape).background(Thumb)
+            Modifier.offset(x = handleX - 24.dp, y = 300.dp).size(48.dp).boardBox(r = corners(24f), shadows = shadow(0f, 6f, 14f, 0x66000000), grad = listOf(brass(48f)))
                 .pointerInput(Unit) { detectDragGestures { change, drag -> change.consume(); if (widthPx > 0) onSplit((split + drag.x / widthPx).coerceIn(0.08f, 0.92f)) } }
                 .semantics { contentDescription = label },
             contentAlignment = Alignment.Center,
-        ) { PathGlyph(BoardPaths.CHEVRONS, tint = Ink, size = 22.dp, strokeWidth = 2.4f) }
-        Pill("$year", Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = 100.dp), Ink.copy(alpha = 0.8f), Paper)
-        Pill("$today", Modifier.align(Alignment.TopEnd).padding(end = 16.dp, top = 100.dp), Color.White.copy(alpha = 0.9f), Color(0xFF14161B))
+        ) { Symbol("ui.code.2", tint = Ink, size = 22.dp) }
+        Pill("$year", Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = 100.dp), 0xCC2A1E10, Paper.css())
+        Pill("$today", Modifier.align(Alignment.TopEnd).padding(end = 16.dp, top = 100.dp), 0xE6FFFFFF, 0xFF14161B)
         Legend(Modifier.align(Alignment.BottomCenter).padding(bottom = 26.dp))
     }
 }
 
+/** The board's year pill over the picture: 30 px, 12 in, Instrument Serif 20. */
 @Composable
-private fun Pill(text: String, modifier: Modifier, background: Color, ink: Color) {
-    Box(modifier.height(30.dp).clip(RoundedCornerShape(15.dp)).background(background).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
-        Text(text, color = ink, style = TextStyle(fontFamily = SerifFamily, fontSize = 20.sp), maxLines = 1)
+private fun Pill(text: String, modifier: Modifier, background: Argb, ink: Argb) {
+    Box(modifier.height(30.dp).boardBox(background, corners(15f)).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+        BoardLine(text, boardStyle(20f, 400, ink, 26f, SERIF))
     }
 }
+
+/** The board's brass bead: lit from 35 per cent across and 30 down, for a [side] px circle. */
+private fun brass(side: Float) = cssRadial(true, side * 0.35f, side * 0.3f, 0f to 0xFFF6D98A, 0.7f to 0xFFB98A36, 1f to 0xFF7A5A20)
+
+/** The vignette over the past (CSS `radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(60,40,20,.35))`), centred on its box. */
+private val VIGNETTE = CssGradient { s, d -> cssRadial(false, s.width / 2f / d, s.height / 2f / d, 0.55f to 0x003C2814, 1f to 0x593C2814).brush(s, d) }
 
 @Composable
 private fun Legend(modifier: Modifier) {
@@ -218,12 +241,12 @@ private fun DrawScope.fillFootprint(r: Rect, k: Float, colour: Color, alpha: Flo
     if (alpha > 0.5f) drawRect(Color.Black.copy(alpha = 0.22f), tl, sz, style = Stroke(0.6f * k))
 }
 
-/** The sheet under the stage: the year slider and the buildings that mark the year. */
+/** The board's sheet from 520: paper with radius 28, 18 px down and 16 in, 12 apart: the year slider, the cards, the notes. */
 @Composable
 private fun Sheet(all: List<Footprint>, year: Int, today: Int, onYear: (Int) -> Unit, modifier: Modifier) {
     val cards = remember(all, year) { TimeMachine.cards(all, year) }
     Column(
-        modifier.fillMaxSize().clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)).background(Paper).verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 24.dp),
+        modifier.fillMaxSize().boardBox(Paper.css(), CssCorners(28f, 28f, 0f, 0f)).verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         YearSlider(year, today, onYear)
@@ -237,28 +260,41 @@ private fun Sheet(all: List<Footprint>, year: Int, today: Int, onYear: (Int) -> 
             cards.planned?.let { YearCard(today.toString(), it.name ?: it.place.tags["construction"]?.replace('_', ' ')?.replaceFirstChar { c -> c.titlecase() } ?: "", stringResource(R.string.time_planned), true) }
         }
         val unknown = all.count { it.year == null }
-        if (unknown > 0) Text(stringResource(R.string.time_unknown_note, unknown), color = Sepia, fontSize = 11.sp, lineHeight = 15.sp)
-        Text(stringResource(R.string.time_footer), color = Color(0xFF8A7A60), fontSize = 10.sp, lineHeight = 14.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        if (unknown > 0) BoardPara(stringResource(R.string.time_unknown_note, unknown), boardStyle(11f, 400, Sepia.css(), 14f))
+        BoardPara(stringResource(R.string.time_footer), boardStyle(10f, 400, 0xFF8A7A60, 13f, align = TextAlign.Center), Modifier.fillMaxWidth())
     }
 }
 
+/** A card of the board: 64 px, radius 18, 14 in; the year in Instrument Serif 22 in a 52 px column, the title and line 2 apart. Planned work is dashed. */
 @Composable
 private fun YearCard(year: String, title: String, sub: String?, dashed: Boolean) {
-    val shape = RoundedCornerShape(18.dp)
     Row(
-        Modifier.fillMaxWidth().height(64.dp).clip(shape).background(if (dashed) Color.White.copy(alpha = 0.6f) else Color.White)
-            .then(if (dashed) Modifier.border(1.5.dp, Color(0xFFC9A26A), shape) else Modifier).padding(horizontal = 14.dp),
+        Modifier.fillMaxWidth().height(64.dp).boardBox(if (dashed) 0x99FFFFFF else 0xFFFFFFFF, corners(18f))
+            .then(if (dashed) Modifier.dashedBorder() else Modifier).padding(horizontal = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(year, Modifier.width(52.dp), style = TextStyle(fontFamily = SerifFamily, fontSize = 22.sp, color = Brass), maxLines = 1)
+        BoardLine(year, boardStyle(22f, 400, Brass.css(), 29f, SERIF), Modifier.width(52.dp))
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, color = Ink, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (sub != null) Text(sub, color = Sepia, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BoardLine(title, boardStyle(14f, 800, Ink.css(), 18f))
+            if (sub != null) BoardLine(sub, boardStyle(12f, 400, Sepia.css(), 15.5f))
         }
     }
 }
 
-/** The brass timeline: 1500 to 2030, a thumb to drag, the years that matter ticked. */
+/** CSS `border: 1.5px dashed #C9A26A` on the card's radius 18: dashes of three widths, as a browser draws them. */
+private fun Modifier.dashedBorder(): Modifier = drawBehind {
+    val w = 1.5.dp.toPx()
+    val r = 18.dp.toPx() - w / 2
+    drawRoundRect(
+        Color(0xFFC9A26A), Offset(w / 2, w / 2), Size(size.width - w, size.height - w), CornerRadius(r, r),
+        style = Stroke(w, pathEffect = PathEffect.dashPathEffect(floatArrayOf(3 * w, 3 * w))),
+    )
+}
+
+/**
+ * The board's brass timeline, 56 px high and 16 px in from the sheet: the 8 px track (its inset shadow) at 14, a tick of
+ * 2 x 16 at 10 and its year at 34 for the years that matter, the 24 px bead at the year.
+ */
 @Composable
 private fun YearSlider(year: Int, today: Int, onYear: (Int) -> Unit) {
     val label = stringResource(R.string.time_year)
@@ -276,17 +312,20 @@ private fun YearSlider(year: Int, today: Int, onYear: (Int) -> Unit) {
                 setProgress { v -> onYear(v.roundToInt().coerceIn(TimeMachine.FROM, TimeMachine.TO)); true }
             },
     ) {
-        Box(Modifier.fillMaxWidth().padding(top = 14.dp).height(8.dp).clip(RoundedCornerShape(4.dp)).background(Brush.horizontalGradient(0f to Color(0xFF8A6A40), 0.8f to Color(0xFFC9A26A), 1f to Color(0xFFE8D8B8))))
+        Box(
+            Modifier.fillMaxWidth().padding(top = 14.dp).height(8.dp)
+                .boardBox(r = corners(4f), shadows = shadow(0f, 1f, 2f, 0x4C000000, inset = true), grad = listOf(cssLinear(90f, 0f to 0xFF8A6A40, 0.8f to 0xFFC9A26A, 1f to 0xFFE8D8B8))),
+        )
         val widthDp = with(density) { widthPx.toDp() }
-        for ((y, strong) in listOf(1500 to false, 1700 to false, 1900 to false, today to true)) {
+        for (y in listOf(1500, 1700, 1900, today)) {
             val x = widthDp * ((y - TimeMachine.FROM) / span)
             Box(Modifier.offset(x = x - 1.dp, y = 10.dp).size(2.dp, 16.dp).background(Color(0xFF6B4A20)))
-            Text(
-                "$y", Modifier.offset(x = (x - 20.dp).coerceIn((-16).dp, maxOf((-16).dp, widthDp - 24.dp)), y = 34.dp).width(40.dp),
-                color = if (strong) Ink else Brass, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center,
+            BoardLine(
+                "$y", boardStyle(12f, 800, if (y > today) Brass.css() else Ink.css(), 15.5f, align = TextAlign.Center),
+                Modifier.offset(x = x - 20.dp, y = 34.dp).width(40.dp), overflow = TextOverflow.Visible,
             )
         }
         val thumbX = widthDp * ((year - TimeMachine.FROM) / span)
-        Box(Modifier.offset(x = thumbX - 12.dp, y = 6.dp).size(24.dp).clip(CircleShape).background(Thumb))
+        Box(Modifier.offset(x = thumbX - 12.dp, y = 6.dp).size(24.dp).boardBox(r = corners(12f), shadows = shadow(0f, 3f, 8f, 0x59000000), grad = listOf(brass(24f)), clip = false))
     }
 }

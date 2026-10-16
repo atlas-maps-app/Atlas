@@ -139,13 +139,15 @@ fun SeasonScreen(args: Dest.Season, nav: Navigator) {
             if (watched != null && title != null) {
                 val monthName = Month.of(watched.span.start).getDisplayName(TextStyle.FULL, Locale.getDefault())
                 val label = if (alertAt != null) stringResource(R.string.season_alert_set, title, monthName) else stringResource(R.string.season_tell_me, title)
+                // The board's button: 56 px, Ink, the bell and the line centred 8 px apart.
                 Row(
-                    Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(28.dp)).background(Ink)
-                        .clickable { if (Build.VERSION.SDK_INT >= 33 && alertAt == null) permission.launch(Manifest.permission.POST_NOTIFICATIONS) else toggle() },
+                    Modifier.fillMaxWidth().height(56.dp).boardBox(0xFF1C2433, corners(28f))
+                        .clickable { if (Build.VERSION.SDK_INT >= 33 && alertAt == null) permission.launch(Manifest.permission.POST_NOTIFICATIONS) else toggle() }
+                        .padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Symbol(if (alertAt != null) "ui.check" else "ui.bell", tint = Color.White, size = 20.dp)
-                    Text(label, color = Color.White, fontFamily = SansFamily, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(end = 8.dp))
+                    Symbol(if (alertAt != null) "ui.check" else "ui.bell.2", tint = Color.White, size = 20.dp)
+                    BoardLine(label, boardStyle(15f, 800, 0xFFFFFFFF, 19.5f), Modifier.weight(1f, fill = false))
                 }
             }
         },
@@ -163,31 +165,30 @@ fun SeasonScreen(args: Dest.Season, nav: Navigator) {
         val art = hub.art
         val weekLabel = stringResource(R.string.season_week, week)
         val summary = season.wheel.map { foodName(it.id) }.joinToString()
-        Canvas(
-            Modifier.fillMaxWidth().aspectRatio(380f / 382f).semantics { contentDescription = summary },
-        ) {
+        // The wheel: 380 x 382 at (16, 98).
+        Canvas(Modifier.size(380.dp, 382.dp).semantics { contentDescription = summary }) {
             val s = size.width / 380f
             scale(s, s, Offset.Zero) { drawYearWheel(season.wheel.map { WheelArc(it.span.arc.first, it.span.arc.second, it.colour, it.glyph) }, season.month - 1 + 0.5, monthLetters, season.month - 1, monthShort, weekLabel, art, text) }
         }
-        Spacer(Modifier.height(10.dp))
-        SmallCaps(stringResource(R.string.season_best), Muted, Modifier.padding(start = 2.dp))
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(12.dp))
+        SmallCaps(stringResource(R.string.season_best), Muted, Modifier.padding(start = 2.dp), size = 12, spacing = 0.14f, lineHeight = 15.5f)
+        Spacer(Modifier.height(4.5.dp))
         if (season.best.isEmpty()) {
-            Text(stringResource(R.string.season_nothing_peak), color = Muted, fontSize = 13.sp)
+            BoardLine(stringResource(R.string.season_nothing_peak), boardStyle(13f, 400, Muted.css(), 17f))
         } else {
+            // Four tiles of 89 x 92, 8 apart: the food's 34 px symbol, its name and peak or new, centred 4 apart.
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (f in season.best.take(4)) {
                     val tag = stringResource(if (f.span.atPeak(season.month)) R.string.season_peak else R.string.season_new)
                     val name = foodName(f.id)
                     Column(
-                        Modifier.weight(1f).height(92.dp).clip(RoundedCornerShape(20.dp)).background(Color.White)
-                            .then(if (watched?.id == f.id) Modifier.border(2.dp, Ink, RoundedCornerShape(20.dp)) else Modifier)
+                        Modifier.weight(1f).height(92.dp).boardBox(0xFFFFFFFF, corners(20f))
                             .semantics(mergeDescendants = true) { contentDescription = "$name, $tag" },
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
                     ) {
                         Glyph(f.glyph, Color(f.colour.toInt()), 34.dp)
-                        Text(name, color = Ink, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 4.dp))
-                        Text(tag, color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        BoardLine(name, boardStyle(12f, 800, 0xFF1C2433, 15.5f, align = TextAlign.Center), Modifier.padding(horizontal = 4.dp))
+                        BoardLine(tag, boardStyle(10f, 700, 0xFF8A7E66, 13f))
                     }
                 }
                 repeat(4 - season.best.take(4).size) { Spacer(Modifier.weight(1f)) }
@@ -205,40 +206,40 @@ fun SeasonScreen(args: Dest.Season, nav: Navigator) {
     }
 }
 
+/** The board's last-chance and coming cards: 92 px, 14 px in, the capitals at 12 from the top, the foods 8 below, 10 apart. */
 @Composable
 private fun FoodGroup(modifier: Modifier, title: String, colour: Color, foods: List<FoodItem>, onPick: (String) -> Unit) {
-    Column(
-        modifier.heightIn(min = 92.dp).clip(RoundedCornerShape(20.dp)).background(Color.White).padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        SmallCaps(title, colour, size = 11)
+    Column(modifier.heightIn(min = 92.dp).boardBox(0xFFFFFFFF, corners(20f)).padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 12.dp)) {
+        SmallCaps(title, colour, size = 11, spacing = 0.12f, lineHeight = 14f)
+        Spacer(Modifier.height(8.dp))
         if (foods.isEmpty()) {
-            Text("–", color = Muted, fontSize = 14.sp)
+            BoardLine("–", boardStyle(14f, 700, Muted.css(), 18f))
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 for (f in foods) Column(Modifier.clickable { onPick(f.id) }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Glyph(f.glyph, Color(f.colour.toInt()), 28.dp)
-                    Text(foodName(f.id), color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    BoardLine(foodName(f.id), boardStyle(11f, 700, 0xFF1C2433, 14f))
                 }
             }
         }
     }
 }
 
+/** The board's green market card: 64 px, the stall at 16 px in, name and hours 12 px after it, the walk at the right. */
 @Composable
 private fun MarketCard(m: MarketNow, onClick: () -> Unit) {
     val walkSeconds = WalkTime.seconds(m.distanceM)
     val trailing = if (walkSeconds > 45 * 60) shortDistance(m.distanceM) else walkMinutes(walkSeconds)
     Row(
-        Modifier.fillMaxWidth().height(64.dp).clip(RoundedCornerShape(20.dp)).background(Color(0xFF2F7A3A)).clickable(onClick = onClick).padding(horizontal = 16.dp),
+        Modifier.fillMaxWidth().height(64.dp).boardBox(0xFF2F7A3A, corners(20f)).clickable(onClick = onClick).padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
         Glyph("place.market.2", Color.White, 26.dp)
         Column(Modifier.weight(1f)) {
-            Text(m.name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            m.opens?.let { Text(it, color = Color(0xFFCFE6D2), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            BoardLine(m.name, boardStyle(15f, 800, 0xFFFFFFFF, 19.5f))
+            m.opens?.let { BoardLine(it, boardStyle(12f, 400, 0xFFCFE6D2, 15.5f, tnum = true)) }
         }
-        Text(trailing, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Black, maxLines = 1)
+        BoardLine(trailing, boardStyle(16f, 900, 0xFFFFFFFF, 20.5f, tnum = true))
     }
 }
 
@@ -289,7 +290,7 @@ internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawYearWheel(
     val c = Offset(190f, 190f)
     fun at(angleDeg: Double, r: Float) = Offset(c.x + r * cos(angleDeg * PI / 180).toFloat(), c.y + r * sin(angleDeg * PI / 180).toFloat())
     fun angle(pos: Double) = -90.0 + (pos - centrePos) * 30.0
-    drawCircle(Color(0x1F000000), 186f, Offset(190f, 192f))
+    drawCircle(Color(if (wedge) 0x1F000000 else 0x1A000000), 186f, Offset(190f, 192f))
     drawCircle(Color(0xFFFBF6EA), 186f, c)
     drawCircle(Color(0xFFD9CCAE), 186f, c, style = Stroke(2f))
     for (j in 0 until 12) {
@@ -311,7 +312,7 @@ internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawYearWheel(
             if (arc.letter != null) {
                 drawCircle(Color.White, 8f, p)
                 drawCircle(colour, 8f, p, style = Stroke(2f))
-                text.draw(this, arc.letter, p.x, p.y + 3f, 8f, colour, bold = true, anchor = 0.5f)
+                text.draw(this, arc.letter, p.x, p.y + 3f, 8f, colour, anchor = 0.5f, weight = 900)
             } else drawGlyph(arc.glyph, Offset(p.x - 6f, p.y - 6f), 12f, colour, art)
         }
     }
@@ -333,7 +334,7 @@ internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawYearWheel(
         val on = k == currentIndex
         val a = angle(k + 0.5)
         val p = at(a, 170f)
-        text.draw(this, letters[k], p.x, p.y + if (on) 5.5f else 4.5f, if (on) 15f else if (wedge) 12f else 11f, if (on) Ink else Muted, bold = true, anchor = 0.5f)
+        text.draw(this, letters[k], p.x, p.y + if (on) 5.5f else 4.5f, if (on) 15f else if (wedge) 12f else 11f, if (on) Ink else Muted, anchor = 0.5f, weight = if (on) 900 else if (wedge) 700 else 800)
     }
     if (needle) {
         drawLine(Color(0xFFC8322A), Offset(190f, 4f), Offset(190f, 44f), 3f)
@@ -341,10 +342,10 @@ internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawYearWheel(
     }
     drawCircle(Ink, 40f, c)
     if (hubSize > 13f) {
-        text.draw(this, hubTop, 190f, 186f, hubSize, Color.White, bold = true, anchor = 0.5f)
-        text.draw(this, hubBottom, 190f, 203f, 10f, Color(0xFFC9D2DE), bold = true, anchor = 0.5f)
+        text.draw(this, hubTop, 190f, 186f, hubSize, Color.White, anchor = 0.5f, weight = 900)
+        text.draw(this, hubBottom, 190f, 203f, 10f, Color(0xFFC9D2DE), anchor = 0.5f, weight = 700)
     } else {
-        text.draw(this, hubTop, 190f, 187f, 13f, Color.White, bold = true, anchor = 0.5f)
-        text.draw(this, hubBottom, 190f, 203f, 13f, Color.White, bold = true, anchor = 0.5f)
+        text.draw(this, hubTop, 190f, 187f, 13f, Color.White, anchor = 0.5f, weight = 900)
+        text.draw(this, hubBottom, 190f, 203f, 13f, Color.White, anchor = 0.5f, weight = 900)
     }
 }

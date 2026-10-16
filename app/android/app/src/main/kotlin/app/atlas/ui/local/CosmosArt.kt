@@ -72,11 +72,11 @@ private fun argb(c: Long) = Color(c.toInt())
 
 /**
  * Text in the board's pixels: SVG `text` at (x, y) with `y` the baseline, `anchor` 0 for start, 0.5 for middle. Laid out
- * with [measurer] in the app's Inter, bold or medium, and drawn inside [inBoardFrame] so it scales with the picture.
+ * with [measurer] in the board's face at the SVG's weight (bold 700, else medium 500), and drawn inside [inBoardFrame] so it scales with the picture.
  */
 internal class BoardText(private val measurer: TextMeasurer, private val family: FontFamily) {
-    fun draw(scope: DrawScope, text: String, x: Float, y: Float, size: Float, colour: Color, bold: Boolean = false, anchor: Float = 0f) {
-        val style = TextStyle(color = colour, fontSize = with(scope) { size.toSp() }, fontFamily = family, fontWeight = if (bold) FontWeight.Bold else FontWeight.Medium)
+    fun draw(scope: DrawScope, text: String, x: Float, y: Float, size: Float, colour: Color, bold: Boolean = false, anchor: Float = 0f, weight: Int = if (bold) 700 else 500) {
+        val style = TextStyle(color = colour, fontSize = with(scope) { size.toSp() }, fontFamily = family, fontWeight = FontWeight(weight))
         val laid = measurer.measure(text, style, softWrap = false, maxLines = 1)
         scope.drawText(laid, topLeft = Offset(x - laid.size.width * anchor, y - laid.firstBaseline))
     }

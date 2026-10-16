@@ -80,14 +80,15 @@ fun YearScreen(args: Dest.Year, nav: Navigator) {
         bottomRoom = 56.dp,
         bottom = {
             Row(
-                Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(28.dp)).background(Color(0xFF14203A)).clickable { nav.go(Dest.Ask(services.local.askAboutSeasons(today))) },
+                Modifier.fillMaxWidth().height(56.dp).boardBox(0xFF14203A, corners(28f)).clickable { nav.go(Dest.Ask(services.local.askAboutSeasons(today))) },
                 horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
-            ) { Text(stringResource(R.string.year_plan), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold) }
+            ) { BoardLine(stringResource(R.string.year_plan), boardStyle(15f, 800, 0xFFFFFFFF, 19.5f)) }
         },
     ) {
-        BoardTitleBar(stringResource(R.string.year_title), onBack = { nav.back() }, trailing = { HeaderPill(stringResource(R.string.year_food)) { nav.go(Dest.Season) } })
-        Spacer(Modifier.height(12.dp))
-        Canvas(Modifier.fillMaxWidth().aspectRatio(380f / 382f).semantics { contentDescription = summary }) {
+        BoardTitleBar(stringResource(R.string.year_title), onBack = { nav.back() }, trailing = { HeaderPill(stringResource(R.string.year_food), size = 12f, lineHeight = 15.5f) { nav.go(Dest.Season) } })
+        Spacer(Modifier.height(10.dp))
+        // The wheel: 380 x 382 at (16, 96).
+        Canvas(Modifier.size(380.dp, 382.dp).semantics { contentDescription = summary }) {
             val s = size.width / 380f
             scale(s, s, Offset.Zero) {
                 drawYearWheel(
@@ -96,25 +97,29 @@ fun YearScreen(args: Dest.Year, nav: Navigator) {
                 )
             }
         }
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(16.dp))
+        // The legend: four columns of 89 px, 8 apart, rows 6 apart; a 10 px dot, the name 5 px after it.
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             for (row in now.chunked(4)) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 0.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (a in row) Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(10.dp).clip(CircleShape).background(Color(a.activity.colour.toInt())))
-                        Text(activityName(a.activity.id), color = Color(0xFF6A5A40), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Box(Modifier.size(10.dp).boardBox(a.activity.colour, corners(5f)))
+                        BoardLine(activityName(a.activity.id), boardStyle(11f, 700, 0xFF6A5A40, 14f))
                     }
+                    repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
         }
-        Spacer(Modifier.height(16.dp))
-        SmallCaps(stringResource(R.string.year_now_next), Muted, Modifier.padding(start = 2.dp))
-        Spacer(Modifier.height(8.dp))
-        if (picks.isEmpty()) Text(stringResource(R.string.year_nothing), color = Muted, fontSize = 13.sp)
-        for (row in picks.chunked(2)) {
-            Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (a in row) PickCard(a, today, Modifier.weight(1f)) { a.activity.dest?.let(nav::go) }
-                repeat(2 - row.size) { Spacer(Modifier.weight(1f)) }
+        Spacer(Modifier.height(28.dp))
+        SmallCaps(stringResource(R.string.year_now_next), Muted, Modifier.padding(start = 2.dp), size = 12, spacing = 0.12f, lineHeight = 15.5f)
+        Spacer(Modifier.height(6.5.dp))
+        if (picks.isEmpty()) BoardLine(stringResource(R.string.year_nothing), boardStyle(13f, 400, Muted.css(), 17f))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (row in picks.chunked(2)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (a in row) PickCard(a, today, Modifier.weight(1f)) { a.activity.dest?.let(nav::go) }
+                    repeat(2 - row.size) { Spacer(Modifier.weight(1f)) }
+                }
             }
         }
     }
@@ -130,12 +135,13 @@ private fun PickCard(a: ActivityNow, today: LocalDate, modifier: Modifier, onCli
         Phase.ON -> stringResource(R.string.year_phase_on, end)
         else -> stringResource(R.string.year_phase_soon, start)
     }
+    // The board's card: 186 x 64, 12 px in and 10 down; the colour's 22 x 6 bar, the name and the line 3 apart.
     Column(
-        modifier.clip(RoundedCornerShape(18.dp)).background(Color.White).clickable(enabled = a.activity.dest != null, onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
+        modifier.height(64.dp).boardBox(0xFFFFFFFF, corners(18f)).clickable(enabled = a.activity.dest != null, onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        Box(Modifier.size(22.dp, 6.dp).clip(RoundedCornerShape(3.dp)).background(Color(a.activity.colour.toInt())))
-        Text(activityName(a.activity.id), color = Ink, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
-        Text(line, color = Color(0xFF7A6A58), fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Box(Modifier.size(22.dp, 6.dp).boardBox(a.activity.colour, corners(3f)))
+        BoardLine(activityName(a.activity.id), boardStyle(14f, 800, 0xFF1C2433, 18f))
+        BoardLine(line, boardStyle(11f, 400, 0xFF7A6A58, 14f))
     }
 }

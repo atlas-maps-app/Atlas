@@ -97,6 +97,12 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.max
 import kotlin.math.roundToInt
+import androidx.compose.ui.semantics.heading
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.ColumnScope
+import app.atlas.ui.kit.Argb
+import app.atlas.ui.kit.CssShadow
+import androidx.compose.foundation.layout.IntrinsicSize
 
 /** The stops of the zoom ladder, from the street out to the galaxy. */
 enum class CosmosStop(val symbol: String) {
@@ -222,10 +228,10 @@ fun CosmosScreen(initial: CosmosStop, nav: Navigator) {
         }
         if (stop == CosmosStop.EARTH.ordinal) PinLabel(OrthoView(((lon0 + 540f) % 360f - 180f).toDouble(), tilt.toDouble()), here, placeName)
 
-        val statusTop = maxOf(WindowInsets.statusBars.asPaddingValues().calculateTopPadding(), 24.dp)
-        Column(Modifier.fillMaxWidth().padding(top = statusTop + 18.dp, start = 12.dp, end = 12.dp)) {
+        // The board's head: the glass back button at (16, 45), the title and its line 12 px after it; the zoom rail at 104.
+        Column(Modifier.fillMaxWidth().padding(top = boardShift()).padding(top = 45.dp, start = 12.dp, end = 12.dp)) {
             Header(CosmosStop.entries[stop], onBack = { nav.back() })
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(15.dp))
             Rail(
                 stop,
                 onPick = { picked -> if (picked == CosmosStop.STREET.ordinal) nav.tab(Tab.MAP) else stop = picked },
@@ -234,14 +240,16 @@ fun CosmosScreen(initial: CosmosStop, nav: Navigator) {
             )
         }
 
+        // The board's card: 388 wide, 204 at least, 16 px from the foot, radius 28, dark glass with its hairline and shadow;
+        // 16 px down and 18 in, its rows 10 apart and the sources at the foot.
         Column(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .padding(start = 12.dp, end = 12.dp, bottom = 16.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding())
-                .clip(RoundedCornerShape(28.dp))
-                .background(Color(0xCC0C101C))
                 .heightIn(min = 204.dp)
+                .height(IntrinsicSize.Min)
+                .boardBox(0xCC0C101C, corners(28f), listOf(CssShadow(0f, 0f, 0f, 1f, 0x14FFFFFF, inset = true), CssShadow(0f, -10f, 30f, 0f, 0x59000000)), blur = 20f, clip = false)
                 .padding(start = 18.dp, end = 18.dp, top = 16.dp, bottom = 14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -297,6 +305,7 @@ private fun issFrame(outlook: IssOutlook?, now: Instant): IssFrame? {
     return IssFrame(here, track, pass)
 }
 
+/** The head of the board: the 44 px glass back button, then 12 px on the title in Space Grotesk 28 and its line 4 under it. */
 @Composable
 private fun Header(stop: CosmosStop, onBack: () -> Unit) {
     val back = stringResource(R.string.kit_back)
@@ -307,19 +316,24 @@ private fun Header(stop: CosmosStop, onBack: () -> Unit) {
         CosmosStop.PLANETS -> R.string.cosmos_title_planets to R.string.cosmos_sub_planets
         CosmosStop.GALAXY -> R.string.cosmos_title_galaxy to R.string.cosmos_sub_galaxy
     }
-    Row(Modifier.fillMaxWidth().heightIn(min = 50.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().padding(start = 4.dp).height(44.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(
-            Modifier.size(44.dp).clip(CircleShape).background(Color(0x1FFFFFFF)).clickable(role = Role.Button, onClick = onBack)
+            Modifier.size(44.dp).boardBox(0x1FFFFFFF, corners(22f), blur = 12f).clickable(role = Role.Button, onClick = onBack)
                 .semantics { contentDescription = back },
             contentAlignment = Alignment.Center,
         ) { Symbol("ui.back", tint = Color.White, size = 20.dp) }
-        Column(Modifier.weight(1f)) {
-            Text(stringResource(title), color = Color.White, fontFamily = SansFamily, fontWeight = FontWeight.Bold, fontSize = 28.sp, lineHeight = 28.sp, letterSpacing = (-0.01).sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(stringResource(sub), color = Dim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+        Column(Modifier.weight(1f).wrapContentHeight(unbounded = true)) {
+            BoardLine(stringResource(title), boardStyle(28f, 700, 0xFFFFFFFF, 28f, "Space Grotesk", spacing = -0.28f), Modifier.semantics { heading() })
+            BoardLine(stringResource(sub), boardStyle(12f, 400, Dim.css(), 15.5f), Modifier.padding(top = 4.dp))
         }
     }
 }
 
+/**
+ * The board's zoom rail: 62 px, radius 31, dark glass with its hairline and shadow, 6 px in; the zoom buttons at the
+ * ends, 2 px from the five stops; a 2 px track and the white 34 px bead at the chosen stop; each stop's 18 px symbol
+ * in a 34 px circle and its name 3 px under it.
+ */
 @Composable
 private fun Rail(stop: Int, onPick: (Int) -> Unit, onIn: () -> Unit, onOut: () -> Unit) {
     val labels = listOf(R.string.cosmos_street, R.string.cosmos_earth, R.string.cosmos_moon, R.string.cosmos_planets, R.string.cosmos_galaxy)
@@ -327,33 +341,33 @@ private fun Rail(stop: Int, onPick: (Int) -> Unit, onIn: () -> Unit, onOut: () -
         Modifier
             .fillMaxWidth()
             .height(62.dp)
-            .clip(CircleShape)
-            .background(Color(0xB80E121E))
+            .boardBox(0xB80E121E, corners(31f), listOf(CssShadow(0f, 0f, 0f, 1f, 0x17FFFFFF, inset = true), CssShadow(0f, 10f, 30f, 0f, 0x59000000)), blur = 18f, clip = false)
             .padding(horizontal = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         RoundButton("+", stringResource(R.string.cosmos_zoom_in), onIn)
         BoxWithConstraints(Modifier.weight(1f).height(62.dp)) {
-            val frac by animateFloatAsState(0.1f + 0.2f * stop, tween(600, easing = ZoomEase), label = "thumb")
-            Box(Modifier.padding(horizontal = 27.dp - 0.dp).offset(y = 23.dp).fillMaxWidth().height(2.dp).background(Color(0x24FFFFFF)))
+            val slot = maxWidth / CosmosStop.entries.size
+            val at by animateFloatAsState(stop.toFloat(), tween(600, easing = ZoomEase), label = "thumb")
+            Box(Modifier.padding(horizontal = 27.dp).offset(y = 23.dp).fillMaxWidth().height(2.dp).background(Color(0x24FFFFFF)))
             Box(
-                Modifier.offset(x = maxWidth * frac - 17.dp, y = 6.dp).size(34.dp)
-                    .background(Color(0x24FFFFFF), CircleShape).padding(2.dp).background(Color.White, CircleShape),
+                Modifier.offset(x = slot * (at + 0.5f) - 17.dp, y = 6.dp).size(34.dp)
+                    .boardBox(0xFFFFFFFF, corners(17f), listOf(CssShadow(0f, 0f, 0f, 4f, 0x24FFFFFF), CssShadow(0f, 4f, 12f, 0f, 0x66000000)), clip = false),
             )
-            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
                 for ((i, stopEntry) in CosmosStop.entries.withIndex()) {
                     val on = i == stop
                     val name = stringResource(labels[i])
                     val fg by animateFloatAsState(if (on) 1f else 0f, tween(300), label = "fg$i")
                     Column(
-                        Modifier.width(54.dp).clickable(role = Role.Button) { onPick(i) }.semantics { contentDescription = name; selected = on },
+                        Modifier.weight(1f).clickable(role = Role.Button) { onPick(i) }.semantics { contentDescription = name; selected = on },
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp),
                     ) {
                         Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) {
                             Symbol(stopEntry.symbol, tint = androidx.compose.ui.graphics.lerp(Color(0xFFC9D2E6), Color(0xFF0B0F1A), fg), size = 18.dp)
                         }
-                        Text(name, color = androidx.compose.ui.graphics.lerp(Color(0xFF8C97AE), Color.White, fg), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                        BoardLine(name, boardStyle(11f, 700, androidx.compose.ui.graphics.lerp(Faint, Color.White, fg).css(), 14f))
                     }
                 }
             }
@@ -362,12 +376,13 @@ private fun Rail(stop: Int, onPick: (Int) -> Unit, onIn: () -> Unit, onOut: () -
     }
 }
 
+/** A 40 px zoom button: white at 10 per cent, the sign in Geist 22 at 600. */
 @Composable
 private fun RoundButton(glyph: String, description: String, onClick: () -> Unit) {
     Box(
-        Modifier.size(40.dp).clip(CircleShape).background(Color(0x1AFFFFFF)).clickable(role = Role.Button, onClick = onClick).semantics { contentDescription = description },
+        Modifier.size(40.dp).boardBox(0x1AFFFFFF, corners(20f)).clickable(role = Role.Button, onClick = onClick).semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
-    ) { Text(glyph, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold) }
+    ) { BoardLine(glyph, boardStyle(22f, 600, 0xFFFFFFFF, 28.5f)) }
 }
 
 /** The "You · place" chip beside the pin on the globe. */
@@ -381,44 +396,52 @@ private fun PinLabel(view: OrthoView, here: LatLon, place: String?) {
         val px = ox + at.x * s
         val py = oy + at.y * s
         val left = if (at.x > 250f) px - 140f * s else px + 12f * s
-        Text(
-            if (place != null) stringResource(R.string.cosmos_you_at, place) else stringResource(R.string.cosmos_art_you),
-            Modifier.offset(x = left.dp, y = (py - 30f * s).dp).clip(RoundedCornerShape(11.dp)).background(Color(0xCC0A0E18)).padding(horizontal = 9.dp, vertical = 3.dp),
-            color = Gold, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+        BoardLine(
+            if (place != null) stringResource(R.string.cosmos_you_at, place) else stringResource(R.string.cosmos_art_you), boardStyle(12f, 700, Gold.css(), 15.5f),
+            Modifier.offset(x = left.dp, y = (py - 30f * s).dp).boardBox(0xCC0A0E18, corners(11f)).padding(horizontal = 9.dp, vertical = 3.dp),
         )
     }
 }
 
+/** A row's tile: 32 px, radius 10. */
 @Composable
 private fun Tile(background: Color, content: @Composable () -> Unit) {
-    Box(Modifier.size(32.dp).clip(RoundedCornerShape(10.dp)).background(background), contentAlignment = Alignment.Center) { content() }
+    Box(Modifier.size(32.dp).boardBox(background.css(), corners(10f)), contentAlignment = Alignment.Center) { content() }
 }
 
+/** The gold tile with the sun's dot: 10 px of FFD24A with its 3 px halo. */
+@Composable
+private fun SunTile() = Tile(Gold) { Box(Modifier.size(10.dp).boardBox(0xFFFFD24A, corners(5f), shadow(0f, 0f, 0f, 0x59FFD24A, spread = 3f), clip = false)) }
+
+/** A row of the card: the tile, then 10 px on the title in Geist 14 at 700 and its line. */
 @Composable
 private fun InfoRow(tile: @Composable () -> Unit, title: String, sub: String, modifier: Modifier = Modifier) {
     Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         tile()
         Column(Modifier.weight(1f)) {
-            Text(title, color = Color(0xFFEEF2FA), fontSize = 14.sp, fontWeight = FontWeight.Bold, lineHeight = 17.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(sub, color = Dim, fontSize = 12.sp, lineHeight = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            BoardLine(title, boardStyle(14f, 700, 0xFFEEF2FA, 17.5f))
+            BoardPara(sub, boardStyle(12f, 400, Dim.css(), 15f), lines = 2)
         }
     }
 }
 
+/** A pill of the card: 40 px, radius 20, 14 px in, white at 12 per cent (or the given colour), an optional 14 px symbol 7 before the word. */
 @Composable
-private fun Pill(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, background: Color = Color(0x1FFFFFFF), icon: String? = null) {
+private fun Pill(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, background: Argb = 0x1FFFFFFF, icon: String? = null) {
     Row(
-        modifier.height(40.dp).clip(CircleShape).background(background).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 14.dp),
+        modifier.height(40.dp).boardBox(background, corners(20f)).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
         if (icon != null) Symbol(icon, tint = Color.White, size = 14.dp)
-        Text(text, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        BoardLine(text, boardStyle(13f, 700, 0xFFFFFFFF, 17f))
     }
 }
 
+/** The sources at the card's foot: Geist 10, 13.5 apart. */
 @Composable
-private fun Footer(text: String) {
-    Text(text, Modifier.fillMaxWidth(), color = Faint, fontSize = 10.sp, lineHeight = 13.5.sp)
+private fun ColumnScope.Footer(text: String) {
+    Spacer(Modifier.weight(1f))
+    BoardPara(text, boardStyle(10f, 400, Faint.css(), 13.5f), Modifier.fillMaxWidth())
 }
 
 private val HM = DateTimeFormatter.ofPattern("H:mm")
@@ -427,7 +450,7 @@ private val HM = DateTimeFormatter.ofPattern("H:mm")
 internal val NAKED_EYE = listOf(Planet.MERCURY, Planet.VENUS, Planet.MARS, Planet.JUPITER, Planet.SATURN)
 
 @Composable
-private fun EarthCard(
+private fun ColumnScope.EarthCard(
     now: Instant, here: LatLon, zone: ZoneId, outlook: IssOutlook?,
     spinning: Boolean, onSpin: () -> Unit, onFaceMe: () -> Unit, onSky: () -> Unit, onGps: () -> Unit,
 ) {
@@ -441,7 +464,7 @@ private fun EarthCard(
         else -> stringResource(R.string.cosmos_you_time, clockNow)
     }
     InfoRow(
-        tile = { Tile(Gold) { Box(Modifier.size(10.dp).clip(CircleShape).background(Color(0xFFFFD24A))) } },
+        tile = { SunTile() },
         title = title, sub = stringResource(R.string.cosmos_lights),
     )
     val pass = outlook?.nextVisible
@@ -472,7 +495,7 @@ private fun EarthCard(
 private val DAY = DateTimeFormatter.ofPattern("d MMM", Locale.getDefault())
 
 @Composable
-private fun MoonCard(now: Instant, here: LatLon, illumination: Double, phase: Double, onSky: () -> Unit, onPlanets: () -> Unit) {
+private fun ColumnScope.MoonCard(now: Instant, here: LatLon, illumination: Double, phase: Double, onSky: () -> Unit, onPlanets: () -> Unit) {
     val zone = appClock().zone
     val pos = remember(now, here) { Moon.position(now, here.lat, here.lon) }
     val age = (phase * 29.530588).roundToInt()
@@ -486,7 +509,7 @@ private fun MoonCard(now: Instant, here: LatLon, illumination: Double, phase: Do
     val km = String.format(Locale.getDefault(), "%,d", pos.distanceKm.roundToInt())
     val seconds = String.format(Locale.getDefault(), "%.1f", pos.distanceKm / 299_792.458)
     InfoRow(
-        tile = { Tile(Color(0xFF9CC8F0)) { Text("$seconds s", color = Color(0xFF0B0F1A), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1) } },
+        tile = { Tile(Color(0xFF9CC8F0)) { BoardLine("$seconds s", boardStyle(11f, 800, 0xFF0B0F1A, 14f)) } },
         title = stringResource(R.string.cosmos_moon_distance, km), sub = stringResource(R.string.cosmos_moon_light, seconds),
     )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -516,20 +539,20 @@ internal fun nextFullAndNew(now: Instant): Pair<Instant, Instant> {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun PlanetsCard(now: Instant, dayOffset: Float, flowing: Boolean, zone: ZoneId, here: LatLon, onFlow: () -> Unit, onToday: () -> Unit) {
+private fun ColumnScope.PlanetsCard(now: Instant, dayOffset: Float, flowing: Boolean, zone: ZoneId, here: LatLon, onFlow: () -> Unit, onToday: () -> Unit) {
     val at = now.plusSeconds((dayOffset * 86400).toLong())
     val label = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.getDefault()).format(at.atZone(zone))
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Column(Modifier.weight(1f)) {
-            Text(stringResource(R.string.cosmos_where_they_are), color = Dim, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.0.sp, maxLines = 1)
-            Text(label, color = Color(0xFFEEF2FA), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            BoardPara(stringResource(R.string.cosmos_where_they_are).uppercase(), boardStyle(12f, 800, Dim.css(), 14.4f, spacing = 1.44f), lines = 2)
+            BoardLine(label, boardStyle(18f, 700, 0xFFEEF2FA, 23f, "Space Grotesk", tnum = true))
         }
         Pill(stringResource(if (flowing) R.string.cosmos_pause else R.string.cosmos_let_time_run), onFlow, icon = if (flowing) "ui.pause" else "ui.play")
         Pill(stringResource(R.string.cosmos_today), onToday)
     }
     val tonight = remember(now, here) { Tonight.planets(now, here.lat, here.lon, zone, NAKED_EYE).filter { it.view != NightView.NOT_UP } }
     if (tonight.isEmpty()) {
-        Text(stringResource(R.string.cosmos_planet_none), color = Dim, fontSize = 12.sp)
+        BoardLine(stringResource(R.string.cosmos_planet_none), boardStyle(12f, 400, Dim.css(), 15f))
     } else {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             for (p in tonight) PlanetChip(p)
@@ -554,26 +577,26 @@ private fun PlanetChip(p: PlanetNight) {
         else -> stringResource(R.string.cosmos_planet_late, name, low)
     }
     Row(
-        Modifier.height(28.dp).clip(RoundedCornerShape(14.dp)).background(Color(0x1AFFFFFF)).padding(horizontal = 10.dp),
+        Modifier.height(28.dp).boardBox(0x1AFFFFFF, corners(14f)).padding(horizontal = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(planetColour(p.planet)))
-        Text(text, color = Color(0xFFEEF2FA), fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Box(Modifier.size(8.dp).boardBox(planetColour(p.planet).css(), corners(4f)))
+        BoardLine(text, boardStyle(12f, 700, 0xFFEEF2FA, 15.5f))
     }
 }
 
 @Composable
-private fun GalaxyCard(onSky: () -> Unit, onEarth: () -> Unit) {
+private fun ColumnScope.GalaxyCard(onSky: () -> Unit, onEarth: () -> Unit) {
     InfoRow(
         tile = { Tile(Color(0xFFC9B8FF)) { Symbol("zoom.galaxy", tint = Color(0xFF0B0F1A), size = 18.dp) } },
         title = stringResource(R.string.cosmos_galaxy_line), sub = stringResource(R.string.cosmos_galaxy_orbit),
     )
     InfoRow(
-        tile = { Tile(Gold) { Box(Modifier.size(10.dp).clip(CircleShape).background(Color(0xFFFFD24A))) } },
+        tile = { SunTile() },
         title = stringResource(R.string.cosmos_galaxy_here), sub = stringResource(R.string.cosmos_galaxy_centre),
     )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Pill(stringResource(R.string.cosmos_tonights_sky), onSky, background = Color(0xFF5B3FD6))
+        Pill(stringResource(R.string.cosmos_tonights_sky), onSky, background = 0xFF5B3FD6)
         Pill(stringResource(R.string.cosmos_earth), onEarth)
     }
     Footer(stringResource(R.string.cosmos_galaxy_source))

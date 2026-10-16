@@ -59,6 +59,15 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.math.max
 import kotlin.math.roundToInt
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.draw.drawWithContent
+import app.atlas.ui.kit.Argb
+import app.atlas.ui.kit.cssLinear
 
 private val Navy = Color(0xFF14203A)
 private val Slate = Color(0xFF5A6A88)
@@ -120,19 +129,22 @@ fun SkyScreen(args: Dest.Sky, nav: Navigator) {
 
     BoardPage(
         background = Color(0xFFE3EAF3),
-        bottomRoom = 76.dp,
+        bottomRoom = 120.dp,
         bottom = {
-            val canRemind = rainMoment is Moment.RainStarts || reminderAt != null
-            if (canRemind) {
-                val label = if (reminderAt != null) stringResource(R.string.sky_reminder_set, hm.format(reminderAt!!.atZone(zone))) else stringResource(R.string.sky_remind)
-                Row(
-                    Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(28.dp)).background(Navy)
-                        .clickable { if (Build.VERSION.SDK_INT >= 33 && reminderAt == null) permission.launch(Manifest.permission.POST_NOTIFICATIONS) else toggle() },
-                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Symbol(if (reminderAt != null) "ui.check" else "ui.bell", tint = Color.White, size = 20.dp)
-                    Text(label, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
+            Column {
+                // The sources, pinned 92 px from the foot as the board pins them; then the reminder, 56 px of navy.
+                BoardPara(stringResource(R.string.sky_source), boardStyle(10f, 400, 0xFF6A7A98, 13f, align = TextAlign.Center), Modifier.fillMaxWidth().padding(horizontal = 4.dp))
+                Spacer(Modifier.height(8.dp))
+                val canRemind = rainMoment is Moment.RainStarts || reminderAt != null
+                if (canRemind) {
+                    val label = if (reminderAt != null) stringResource(R.string.sky_reminder_set, hm.format(reminderAt!!.atZone(zone))) else stringResource(R.string.sky_remind)
+                    Box(
+                        Modifier.fillMaxWidth().height(56.dp).boardBox(Navy.css(), corners(28f))
+                            .clickable { if (Build.VERSION.SDK_INT >= 33 && reminderAt == null) permission.launch(Manifest.permission.POST_NOTIFICATIONS) else toggle() }
+                            .padding(horizontal = 16.dp),
+                        contentAlignment = Alignment.Center,
+                    ) { BoardLine(label, boardStyle(15f, 800, 0xFFFFFFFF, 19.5f)) }
+                } else Spacer(Modifier.height(56.dp))
             }
         },
     ) {
@@ -141,19 +153,22 @@ fun SkyScreen(args: Dest.Sky, nav: Navigator) {
             trailing = {
                 val cur = app.atlas.ui.kit.CurrentWeather.of(f, now)
                 val wind = f?.now?.let { "${compassName(it.windDirection)} ${it.windSpeed.roundToInt()}" }
-                if (cur != null && wind != null) HeaderPill(stringResource(R.string.sky_pill, cur.temperature.roundToInt(), wind), ink = Navy) { nav.go(Dest.Weather()) }
+                if (cur != null && wind != null) HeaderPill(stringResource(R.string.sky_pill, cur.temperature.roundToInt(), wind), ink = Navy, size = 12f, lineHeight = 15.5f) { nav.go(Dest.Weather()) }
             },
         )
         Spacer(Modifier.height(12.dp))
-        NowcastCard(quarters, covers)
+        RadarCard()
         Spacer(Modifier.height(10.dp))
+        Timeline(quarters)
+        Spacer(Modifier.height(6.dp))
         val headline = when (rainMoment) {
             is Moment.RainStarts -> if (rainMoment.lasts != null) stringResource(R.string.sky_rain_in_lasts, rainMoment.minutes, rainMoment.lasts) else stringResource(R.string.sky_rain_in, rainMoment.minutes)
             is Moment.RainStops -> stringResource(R.string.sky_raining_until, hm.format(rainMoment.at.atZone(zone)))
             else -> if (!covers) stringResource(R.string.sky_no_forecast) else stringResource(R.string.sky_dry)
         }
-        Text(headline, color = Navy, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
-        Spacer(Modifier.height(14.dp))
+        BoardLine(headline, boardStyle(16f, 800, Navy.css(), 20.5f))
+        Spacer(Modifier.height(47.5.dp))
+        // The board's cards: 72 px, 8 apart.
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val outlook = snap?.outlook
             val pass = outlook?.nextVisible
@@ -168,9 +183,9 @@ fun SkyScreen(args: Dest.Sky, nav: Navigator) {
                     outlook.noData -> stringResource(R.string.cosmos_iss_nodata)
                     else -> stringResource(R.string.cosmos_iss_none)
                 }
-                SkyRow("sky.satellite", Color(0xFF5A7ACA), v, line, trailing = stringResource(R.string.sky_orbit), onClick = { nav.go(Dest.Globe) })
+                SkyRow("sky.satellite", 0xFF5A7ACA, v, line, trailing = stringResource(R.string.sky_orbit), onClick = { nav.go(Dest.Globe) })
                 // Orbit data over ten days old moves a pass by minutes: say so, as the Earth card does.
-                if (outlook.orbit?.stale == true) Text(stringResource(R.string.cosmos_iss_stale, outlook.orbit.ageDays.roundToInt()), color = Slate, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 4.dp))
+                if (outlook.orbit?.stale == true) BoardPara(stringResource(R.string.cosmos_iss_stale, outlook.orbit.ageDays.roundToInt()), boardStyle(11f, 400, Slate.css(), 14f), Modifier.padding(horizontal = 4.dp))
             }
             val up = snap?.planets?.filter { it.view != NightView.NOT_UP }.orEmpty()
             val clearFrom = remember(f, now, here) { clearFrom(f, now, zone, here) }
@@ -180,18 +195,16 @@ fun SkyScreen(args: Dest.Sky, nav: Navigator) {
                 else -> stringResource(R.string.sky_cloudy_tonight)
             }
             val names = up.take(3).map { planetLabel(it.planet) }.joinToString(", ")
-            SkyRow("ui.star", Navy, tonightTitle, if (names.isNotEmpty()) names else stringResource(R.string.sky_no_planets), trailing = stringResource(R.string.sky_planets_link), onClick = { nav.go(Dest.Planets) })
+            SkyRow("ui.star.2", Navy.css(), tonightTitle, if (names.isNotEmpty()) names else stringResource(R.string.sky_no_planets), trailing = stringResource(R.string.sky_planets_link), onClick = { nav.go(Dest.Planets) })
             val moon = remember(now) { Moon.phase(now) }
             val times = remember(now, here) { Moon.times(LocalDate.ofInstant(now, zone), here.lat, here.lon, zone) }
             val rise = times.rise?.let { hm.format(it) }
             SkyRow(
-                "ui.moon", Color(0xFF3A3A40), stringResource(if (moon.waxing) R.string.cosmos_moon_title_waxing else R.string.cosmos_moon_title_waning, (moon.illumination * 100).roundToInt()),
+                "ui.moon", 0xFF3A3A40, stringResource(if (moon.waxing) R.string.cosmos_moon_title_waxing else R.string.cosmos_moon_title_waning, (moon.illumination * 100).roundToInt()),
                 listOfNotNull(rise?.let { stringResource(R.string.sky_moonrise, it) }, times.set?.let { stringResource(R.string.sky_moonset, hm.format(it)) }).joinToString(" · ").ifEmpty { " " },
                 trailing = null, onClick = { nav.go(Dest.Moon) },
             )
         }
-        Spacer(Modifier.height(10.dp))
-        Text(stringResource(R.string.sky_source), color = Color(0xFF6A7A98), fontSize = 10.sp, modifier = Modifier.fillMaxWidth(), lineHeight = 14.sp)
     }
 }
 
@@ -211,49 +224,82 @@ internal fun clearFrom(f: Forecast?, now: Instant, zone: ZoneId, here: app.atlas
     return f.hours.firstOrNull { !it.time.isBefore(from) && it.time.isBefore(night.second) && it.cloudCover < 40.0 }?.time
 }
 
+/** One of the board's sky cards: 72 px, 14 px in, the 44 px tile (radius 14) and its 24 px symbol, title and line 2 apart, a link at the right. */
 @Composable
-private fun SkyRow(symbol: String, tile: Color, title: String, line: String, trailing: String?, onClick: () -> Unit) {
+private fun SkyRow(symbol: String, tile: Argb, title: String, line: String, trailing: String?, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().height(72.dp).clip(RoundedCornerShape(20.dp)).background(Color.White).clickable(onClick = onClick).padding(horizontal = 14.dp),
+        Modifier.fillMaxWidth().height(72.dp).boardBox(0xFFFFFFFF, corners(20f)).clickable(onClick = onClick).padding(horizontal = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(tile), contentAlignment = Alignment.Center) { Symbol(symbol, tint = Color.White, size = 24.dp) }
+        Box(Modifier.size(44.dp).boardBox(tile, corners(14f)), contentAlignment = Alignment.Center) { Symbol(symbol, tint = Color.White, size = 24.dp) }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, color = Navy, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(line, color = Slate, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BoardLine(title, boardStyle(15f, 800, Navy.css(), 19.5f))
+            BoardLine(line, boardStyle(12f, 400, Slate.css(), 15.5f, tnum = true))
         }
-        if (trailing != null) Text(trailing, color = Slate, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+        if (trailing != null) BoardLine(trailing, boardStyle(12f, 800, Slate.css(), 15.5f))
     }
 }
 
-/** The next two hours of rain at your spot: a bar for each quarter hour in the radar's colours, you at the left. */
+/**
+ * The board's radar card, 380 x 260 with radius 22: the street grid, the river's bank and you. The rain field itself
+ * comes from radar pictures the app does not fetch, so it is left out; the rain at your spot is on the timeline below.
+ */
 @Composable
-private fun NowcastCard(quarters: List<Double>, haveForecast: Boolean) {
-    val measurer = rememberTextMeasurer()
-    val text = remember(measurer) { BoardText(measurer, SansFamily) }
-    val labels = listOf(stringResource(R.string.sky_now), "+30", "+60", "+90", "+120")
-    val desc = stringResource(R.string.sky_nowcast_desc)
-    Canvas(Modifier.fillMaxWidth().height(260.dp).clip(RoundedCornerShape(22.dp)).semantics { contentDescription = desc }) {
+private fun RadarCard() {
+    Canvas(Modifier.size(380.dp, 260.dp)) {
         val s = size.width / 380f
         scale(s, s, Offset.Zero) {
-            drawRect(Color(0xFFE9EEF4))
-            // The street-map grid of the board's radar card, in white.
-            for (y in listOf(80f, 180f)) drawLine(Color.White, Offset(0f, y), Offset(380f, y), 6f)
-            for (x in listOf(110f, 250f)) drawLine(Color.White, Offset(x, 0f), Offset(x, 260f), 6f)
-            drawRect(Color(0xFFCFE0F0), Offset(0f, 215f), Size(380f, 45f))
-            if (quarters.isEmpty()) return@scale
-            val n = quarters.size
-            val slot = 340f / n
-            for ((i, mm) in quarters.withIndex()) {
-                val level = Intensity.of(mm)
-                val h = if (level == Intensity.NONE) 6f else (24f + (mm / 2.0).coerceIn(0.0, 1.0).toFloat() * 150f)
-                drawRoundRect(level.colour.copy(alpha = if (level == Intensity.NONE) 0.9f else 0.95f), Offset(20f + slot * i + 4f, 200f - h), Size(slot - 8f, h), CornerRadius(6f, 6f))
+            val card = Path().apply { addRoundRect(androidx.compose.ui.geometry.RoundRect(0f, 0f, 380f, 260f, CornerRadius(22f, 22f))) }
+            clipPath(card) {
+                drawRect(Color(0xFFE9EEF4))
+                for (y in listOf(80f, 180f)) drawLine(Color.White, Offset(0f, y), Offset(380f, y), 6f)
+                for (x in listOf(110f, 250f)) drawLine(Color.White, Offset(x, 0f), Offset(x, 260f), 6f)
+                drawPath(BANK, Color(0xFFCFE0F0))
             }
-            // You, at the foot of the first bar.
-            drawCircle(Color.White, 12f, Offset(40f, 226f))
-            drawCircle(Color(0xFF2E5BFF), 9f, Offset(40f, 226f))
-            for ((i, l) in labels.withIndex()) text.draw(this, l, 20f + 340f * i / 4f, 252f, 11f, if (i == 0) Navy else Color(0xFF7A8AA8), bold = true, anchor = if (i == 0) 0f else 0.5f)
+            drawCircle(Color(0xFF2E5BFF), 9f, Offset(250f, 120f))
+            drawCircle(Color.White, 9f, Offset(250f, 120f), style = Stroke(3f))
         }
     }
-    if (!haveForecast) Text(stringResource(R.string.sky_no_forecast), color = Slate, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+}
+
+/** The board's bank: `M0 200c60-20 120 20 180 0s120-30 200-10v70H0z`. */
+private val BANK = Path().apply {
+    moveTo(0f, 200f)
+    cubicTo(60f, 180f, 120f, 220f, 180f, 200f)
+    cubicTo(240f, 180f, 300f, 170f, 380f, 190f)
+    lineTo(380f, 260f)
+    lineTo(0f, 260f)
+    close()
+}
+
+/**
+ * The next hour at your spot, as the board's timeline: an 8 px bar coloured by quarter hour in the radar's colours (hard
+ * stops), the 18 px knob at now with its white ring, and now, +15 … +60 under it, 6 px apart.
+ */
+@Composable
+private fun Timeline(quarters: List<Double>) {
+    val stops = remember(quarters) {
+        val levels = List(4) { i -> quarters.getOrNull(i)?.let { Intensity.of(it) } ?: Intensity.NONE }
+        levels.flatMapIndexed { i, l -> listOf(i / 4f to l.colour.css(), (i + 1) / 4f to l.colour.css()) }.toTypedArray()
+    }
+    val desc = stringResource(R.string.sky_nowcast_desc)
+    Column(Modifier.semantics(mergeDescendants = true) { contentDescription = desc }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(
+            Modifier.fillMaxWidth().height(8.dp)
+                .drawWithContent {
+                    drawContent()
+                    // The knob: 18 px at the bar's start, 5 px above it, ringed by a 3 px white spread.
+                    val c = Offset(9.dp.toPx(), 4.dp.toPx())
+                    drawCircle(Color.White, 12.dp.toPx(), c)
+                    drawCircle(Navy, 9.dp.toPx(), c)
+                }
+                .boardBox(r = corners(4f), grad = listOf(cssLinear(90f, *stops))),
+        )
+        Row(Modifier.fillMaxWidth()) {
+            val labels = listOf(stringResource(R.string.sky_now), "+15", "+30", "+45", "+60")
+            for ((i, l) in labels.withIndex()) {
+                BoardLine(l, boardStyle(11f, 800, if (i == 0) Navy.css() else 0xFF7A8AA8, 14f, tnum = true, align = TextAlign.Center), Modifier.weight(1f))
+            }
+        }
+    }
 }

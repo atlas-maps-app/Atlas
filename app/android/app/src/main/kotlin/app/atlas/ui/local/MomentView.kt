@@ -44,12 +44,12 @@ internal fun momentView(m: Moment, now: Instant, zone: ZoneId, here: LatLon, orb
     fun t(i: Instant) = HM.format(i.atZone(zone))
     return when (m) {
         is Moment.RainStarts -> MomentView(
-            m, "weather.rain", 0xFF5A7ACA, stringResource(R.string.moment_rain_from, t(m.at)),
+            m, "weather.rain.2", 0xFF5A7ACA, stringResource(R.string.moment_rain_from, t(m.at)),
             if (m.lasts != null) stringResource(R.string.moment_rain_lasts, inLabel(m.at, now), m.lasts) else inLabel(m.at, now),
             stringResource(R.string.moment_because_forecast), Dest.Sky,
         )
         is Moment.RainStops -> MomentView(
-            m, "weather.rain", 0xFF5A7ACA, stringResource(R.string.moment_rain_until, t(m.at)), stringResource(R.string.moment_raining_now),
+            m, "weather.rain.2", 0xFF5A7ACA, stringResource(R.string.moment_rain_until, t(m.at)), stringResource(R.string.moment_raining_now),
             stringResource(R.string.moment_because_forecast), Dest.Sky,
         )
         is Moment.Sunset -> MomentView(m, "weather.sunset", 0xFFE0592A, stringResource(R.string.moment_sunset, t(m.at)), inLabel(m.at, now), stringResource(R.string.moment_because_place), Dest.Weather())

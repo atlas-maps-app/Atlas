@@ -70,17 +70,21 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.tan
+import app.atlas.ui.kit.Symbol
+import app.atlas.ui.kit.CssBorder
+import app.atlas.ui.kit.CssCorners
+import androidx.compose.foundation.layout.Spacer
 
 private val Ink = Color(0xFF14161B)
 private val Soft = Color(0xFF676D7C)
 private val Brown = Color(0xFF6E4A2A)
-private val Dark = Color(0xD1141619)
+private val Dark = Color(0xD114161B)
 
 private const val FRAME_W = 412f
 private const val HORIZON_AT_REST = 250f
 private const val WANT_Y = 165f
 private const val LABEL_W = 140f
-private const val LABEL_H = 54f
+private const val LABEL_H = 42f
 
 /** Where one peak's dot and label go in the 412 wide drawing. */
 private class Spot(val peak: Peak, val angle: Double, val x: Float, val y: Float, val boxX: Float, val boxY: Float)
@@ -106,9 +110,13 @@ fun PeaksScreen(args: Dest.Peaks, nav: Navigator) {
 
     Box(Modifier.fillMaxSize().background(Color(0xFFE6ECF2))) {
         when {
-            peaks == null -> Text(stringResource(R.string.kit_loading), Modifier.windowInsetsPadding(WindowInsets.statusBars).padding(24.dp), color = Soft, fontSize = 14.sp)
-            peaks.isEmpty() -> Column(Modifier.windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 16.dp)) {
-                BoardTitleBar(stringResource(R.string.peaks_title), onBack = { nav.back() }, colour = Ink, size = 30)
+            peaks == null -> Column(Modifier.padding(top = boardShift()).padding(horizontal = 16.dp)) {
+                BoardTitleBar(stringResource(R.string.peaks_title), onBack = { nav.back() }, colour = Ink, size = 30, backBackground = Color(0xE6FFFFFF), backTint = Ink)
+                Spacer(Modifier.height(16.dp))
+                BoardLine(stringResource(R.string.kit_loading), boardStyle(14f, 400, Soft.css(), 18f))
+            }
+            peaks.isEmpty() -> Column(Modifier.padding(top = boardShift()).padding(horizontal = 16.dp)) {
+                BoardTitleBar(stringResource(R.string.peaks_title), onBack = { nav.back() }, colour = Ink, size = 30, backBackground = Color(0xE6FFFFFF), backTint = Ink)
                 StateMessage("nature.peak", stringResource(R.string.peaks_none), text = stringResource(R.string.peaks_none_text), tint = Soft)
             }
             else -> {
@@ -126,13 +134,14 @@ fun PeaksScreen(args: Dest.Peaks, nav: Navigator) {
                 Ridge(peaks, heading, pitch, f, eye, spots, current, onTurn = { turned = Geo.normalize(heading + it) })
                 Labels(spots, current) { p -> picked = p }
                 Tape(heading)
-                Row(Modifier.windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 16.dp).padding(top = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    BackCircle({ nav.back() }, background = Color.White.copy(alpha = 0.9f), tint = Ink)
-                    Text(stringResource(R.string.peaks_title), style = TextStyle(fontFamily = SerifFamily, fontStyle = FontStyle.Italic, fontSize = 30.sp, lineHeight = 30.sp, color = Ink), maxLines = 1)
-                }
-                if (spots.isEmpty()) Text(
-                    stringResource(R.string.peaks_no_view), Modifier.align(Alignment.TopCenter).padding(top = 200.dp, start = 40.dp, end = 40.dp).clip(RoundedCornerShape(12.dp)).background(Dark).padding(12.dp),
-                    color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
+                BoardTitleBar(
+                    stringResource(R.string.peaks_title), onBack = { nav.back() }, Modifier.padding(top = boardShift()).padding(horizontal = 16.dp),
+                    colour = Ink, size = 30, backBackground = Color(0xE6FFFFFF), backTint = Ink,
+                )
+                // Nothing named in view: the message in the labels' own dark pill.
+                if (spots.isEmpty()) BoardPara(
+                    stringResource(R.string.peaks_no_view), boardStyle(13f, 800, 0xFFFFFFFF, 17f, align = TextAlign.Center),
+                    Modifier.align(Alignment.TopCenter).padding(top = 200.dp, start = 40.dp, end = 40.dp).boardBox(Dark.css(), corners(10f)).padding(horizontal = 9.dp, vertical = 5.dp),
                 )
                 SheetBottom(
                     Modifier.align(Alignment.BottomCenter), placeName, elevation, sun, ranked, current, here, eye, elevation != null,
@@ -171,7 +180,7 @@ private fun Tape(heading: Double) {
     val names = mapOf(0 to stringResource(R.string.cosmos_compass_n), 45 to stringResource(R.string.cosmos_compass_ne), 90 to stringResource(R.string.cosmos_compass_e), 135 to stringResource(R.string.cosmos_compass_se), 180 to stringResource(R.string.cosmos_compass_s), 225 to stringResource(R.string.cosmos_compass_sw), 270 to stringResource(R.string.cosmos_compass_w), 315 to stringResource(R.string.cosmos_compass_nw))
     Canvas(Modifier.fillMaxWidth().height(40.dp).semantics { contentDescription = label }) {
         val s = size.width / FRAME_W
-        drawRect(Brush.verticalGradient(listOf(Color(0x73141619), Color.Transparent)))
+        drawRect(Brush.verticalGradient(listOf(Color(0x7314161B), Color(0x0014161B))))
         scale(s, s, Offset.Zero) {
             val pxPerDeg = FRAME_W / Peaks.FOV.toFloat()
             val first = (Math.floor((heading - Peaks.FOV / 2 - 5) / 5).toInt()) * 5
@@ -181,7 +190,7 @@ private fun Tape(heading: Double) {
                 val norm = ((d % 360) + 360) % 360
                 val major = norm % 15 == 0
                 drawLine(Color.White, Offset(x, 0f), Offset(x, if (major) 12f else 6f), if (major) 1.6f else 1f)
-                if (major) text.draw(this, names[norm] ?: norm.toString(), x, 24f, 10f, Color.White, bold = true, anchor = 0.5f)
+                if (major) text.draw(this, names[norm] ?: norm.toString(), x, 24f, 10f, Color.White, anchor = 0.5f, weight = 800)
                 d += 5
             }
             val marker = Path().apply { moveTo(206f, 0f); lineTo(201f, 8f); lineTo(211f, 8f); close() }
@@ -256,13 +265,14 @@ private fun Labels(spots: List<Spot>, current: Peak?, onPick: (Peak) -> Unit) {
             val km = distanceText(p.distanceM)
             val detail = if (p.eleM != null) stringResource(R.string.peaks_label_detail, p.eleM.roundToInt(), km, p.bearing.roundToInt() % 360) else stringResource(R.string.peaks_label_detail_noele, km, p.bearing.roundToInt() % 360)
             val desc = if (p.eleM != null) stringResource(R.string.peaks_desc, p.name, p.eleM.roundToInt(), km.removeSuffix(" km")) else stringResource(R.string.peaks_desc_noele, p.name, km.removeSuffix(" km"))
+            // The board's label: 140 x 42, ink at 82 per cent, radius 10, 9 by 5 px in; the name and the numbers 1 px apart.
             Column(
-                Modifier.offset(x = (sp.boxX * scale).dp, y = (sp.boxY * scale).dp).width((LABEL_W * scale).dp).clip(RoundedCornerShape(10.dp))
-                    .background(if (p === current) Color(0xE6141619) else Dark).clickable(role = Role.Button) { onPick(p) }.padding(horizontal = 9.dp, vertical = 5.dp).semantics { contentDescription = desc },
+                Modifier.offset(x = (sp.boxX * scale).dp, y = (sp.boxY * scale).dp).width((LABEL_W * scale).dp).boardBox(Dark.css(), corners(10f))
+                    .clickable(role = Role.Button) { onPick(p) }.padding(horizontal = 9.dp, vertical = 5.dp).semantics { contentDescription = desc },
                 verticalArrangement = Arrangement.spacedBy(1.dp),
             ) {
-                Text(p.name, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(detail, color = Color(0xFFC9D6E6), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                BoardLine(p.name, boardStyle(13f, 800, 0xFFFFFFFF, 17f))
+                BoardLine(detail, boardStyle(11f, 700, 0xFFC9D6E6, 14f, tnum = true))
             }
         }
     }
@@ -274,54 +284,57 @@ private fun distanceText(m: Double): String {
     return stringResource(R.string.peaks_km, km)
 }
 
-/** The sheet: where you stand and how high, the sunset behind a peak, the three nearest rows, the hike. */
+/**
+ * The board's sheet: white from 593 (radius 30, its shadow), 10 px down and 16 in, 10 apart: the grabber, where you
+ * stand and the sunset behind a peak, the three nearest rows of 48 under hairlines, the hike, the sources.
+ */
 @Composable
 private fun SheetBottom(
     modifier: Modifier, place: String?, eleHere: Double?, sun: Peaks.SunBehind?, ranked: List<Peak>, current: Peak?, here: app.atlas.geo.LatLon, eye: Double, eyeKnown: Boolean,
     onPick: (Peak) -> Unit, onHike: (Peak) -> Unit,
 ) {
-    val shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)
     val time = DateTimeFormatter.ofPattern("HH:mm")
     Column(
-        modifier.fillMaxWidth().shadow(20.dp, shape).clip(shape).background(Color.White).windowInsetsPadding(WindowInsets.navigationBars).padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
+        modifier.fillMaxWidth().boardBox(0xFFFFFFFF, CssCorners(30f, 30f, 0f, 0f), shadow(0f, -10f, 30f, 0x29000000), clip = false)
+            .windowInsetsPadding(WindowInsets.navigationBars).padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Box(Modifier.align(Alignment.CenterHorizontally).size(40.dp, 5.dp).clip(RoundedCornerShape(3.dp)).background(Color(0xFFD5D8DE)))
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.align(Alignment.CenterHorizontally).size(40.dp, 5.dp).boardBox(0xFFD5D8DE, corners(3f)))
+        Row(Modifier.height(26.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val head = when {
                 place != null && eleHere != null -> stringResource(R.string.peaks_here, place, eleHere.roundToInt())
                 place != null -> place
                 eleHere != null -> stringResource(R.string.peaks_here_unnamed, eleHere.roundToInt())
                 else -> stringResource(R.string.peaks_here_flat)
             }
-            Text(head.uppercase(), Modifier.weight(1f), color = Soft, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.4.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (sun != null) Box(Modifier.height(26.dp).clip(RoundedCornerShape(13.dp)).background(Color(0xFFFFF1D6)).padding(horizontal = 9.dp), contentAlignment = Alignment.Center) {
-                Text(stringResource(R.string.peaks_sunset_behind, sun.peak.name, time.format(sun.at)), color = Color(0xFF8A5A00), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+            BoardLine(head.uppercase(), boardStyle(12f, 800, Soft.css(), 15.5f, spacing = 1.44f), Modifier.weight(1f))
+            if (sun != null) Box(Modifier.height(26.dp).boardBox(0xFFFFF1D6, corners(13f)).padding(horizontal = 9.dp), contentAlignment = Alignment.Center) {
+                BoardLine(stringResource(R.string.peaks_sunset_behind, sun.peak.name, time.format(sun.at)), boardStyle(11f, 800, 0xFF8A5A00, 14f))
             }
         }
-        if (!eyeKnown) Text(stringResource(R.string.peaks_eye_unknown), color = Soft, fontSize = 11.sp, lineHeight = 14.sp)
+        if (!eyeKnown) BoardPara(stringResource(R.string.peaks_eye_unknown), boardStyle(11f, 400, Soft.css(), 14f))
         Column {
             for (p in ranked.take(3)) {
                 val detail = if (p.eleM != null) stringResource(R.string.peaks_row_detail, p.eleM.roundToInt(), distanceText(p.distanceM)) else stringResource(R.string.peaks_row_detail_noele, distanceText(p.distanceM))
+                // A row of the board: a 1 px hairline above, 48 px, the peak's symbol, the name 12 px after it, the numbers at the right.
                 Row(
-                    Modifier.fillMaxWidth().height(48.dp).background(if (p === current) Color(0xFFF7F1EA) else Color.Transparent).clickable(role = Role.Button) { onPick(p) },
+                    Modifier.fillMaxWidth().height(49.dp).boardBox(border = CssBorder(1f, 0f, 0f, 0f, longArrayOf(0xFFEEF0F4, 0, 0, 0))).clickable(role = Role.Button) { onPick(p) }.padding(top = 1.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    PathGlyph(BoardPaths.PEAK, tint = Brown, size = 22.dp)
-                    Text(p.name, Modifier.weight(1f), color = Ink, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(detail, color = Soft, fontSize = 13.sp, maxLines = 1)
+                    Symbol("nature.peak", tint = Brown, size = 22.dp)
+                    BoardLine(p.name, boardStyle(15f, 800, Ink.css(), 19.5f), Modifier.weight(1f))
+                    BoardLine(detail, boardStyle(13f, 400, Soft.css(), 17f, tnum = true))
                 }
-                Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFEEF0F4)))
             }
         }
         if (current != null) {
             // A time needs both heights: with your own unknown (sea level assumed) the climb would be wildly too long.
             val minutes = if (current.eleM != null && eyeKnown) Peaks.hikeMinutes(current.distanceM, current.eleM - eye) else null
             val span = minutes?.let { if (it >= 60) stringResource(R.string.peaks_hike_hm, it / 60, it % 60) else stringResource(R.string.peaks_hike_m, it) }
-            Box(Modifier.fillMaxWidth().height(52.dp).clip(RoundedCornerShape(26.dp)).background(Brown).clickable(role = Role.Button) { onHike(current) }, contentAlignment = Alignment.Center) {
-                Text(if (span != null) stringResource(R.string.peaks_hike, current.name, span) else stringResource(R.string.peaks_hike_plain, current.name), Modifier.padding(horizontal = 16.dp), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Box(Modifier.fillMaxWidth().height(52.dp).boardBox(Brown.css(), corners(26f)).clickable(role = Role.Button) { onHike(current) }.padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
+                BoardLine(if (span != null) stringResource(R.string.peaks_hike, current.name, span) else stringResource(R.string.peaks_hike_plain, current.name), boardStyle(14f, 800, 0xFFFFFFFF, 18f))
             }
         }
-        Text(stringResource(R.string.peaks_footer), Modifier.fillMaxWidth(), color = Color(0xFF8A8F98), fontSize = 10.sp, lineHeight = 13.sp, textAlign = TextAlign.Center)
+        BoardPara(stringResource(R.string.peaks_footer), boardStyle(10f, 400, 0xFF8A8F98, 13f, align = TextAlign.Center), Modifier.fillMaxWidth())
     }
 }

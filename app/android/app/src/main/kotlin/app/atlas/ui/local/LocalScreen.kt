@@ -72,6 +72,14 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.zIndex
+import app.atlas.ui.kit.cssRepeatingLinear
+import app.atlas.ui.kit.cssRadial
+import app.atlas.ui.kit.cssLinear
+import app.atlas.ui.kit.CssCorners
+import app.atlas.ui.kit.CssShadow
 
 private val Walnut = Color(0xFF3A2415)
 private val Gold = Color(0xFFE8C878)
@@ -120,81 +128,84 @@ fun LocalScreen(args: Dest.Local, nav: Navigator) {
     val wasteCal by services.local.waste.calendar.collectAsState()
     val collect = wasteCal?.next(LocalDate.ofInstant(now, zone))?.let { p -> pickupLine(p, LocalDate.ofInstant(now, zone)) }
 
-    Box(Modifier.fillMaxSize().walnut()) {
-        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-            Row(Modifier.fillMaxWidth().padding(top = 18.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(
+    Box(Modifier.fillMaxSize().background(Walnut).boardBox(grad = WALNUT, clip = false)) {
+        Column(Modifier.fillMaxSize().padding(top = boardShift()).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+            // The head, 58 px at 42: Local in gilt Cormorant, the place and its coordinates 3 px under it, the question pill.
+            Row(Modifier.fillMaxWidth().padding(top = 42.dp).height(58.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f, fill = false).wrapContentHeight(unbounded = true)) {
+                    BoardLine(
                         stringResource(R.string.local_title),
-                        style = TextStyle(
-                            fontFamily = LocalType.cormorant, fontStyle = FontStyle.Italic, fontWeight = FontWeight.SemiBold, fontSize = 48.sp, lineHeight = 46.sp,
-                            brush = Brush.verticalGradient(listOf(Color(0xFFF6E2A8), Color(0xFFC9973E), Color(0xFFF1D38A))),
-                        ),
+                        boardStyle(44f, 600, 0xFF000000, 41.8f, CORMORANT, italic = true).copy(brush = Brush.verticalGradient(0f to Color(0xFFF6E2A8), 0.6f to Color(0xFFC9973E), 1f to Color(0xFFF1D38A))),
+                        Modifier.semantics { heading() }, overflow = TextOverflow.Visible,
                     )
                     val coords = coordsLabel(here)
-                    Text(listOfNotNull(place, coords).joinToString(" · "), color = Color(0xFFE0C9A0), fontSize = 12.sp, modifier = Modifier.padding(top = 3.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    BoardLine(listOfNotNull(place, coords).joinToString(" · "), boardStyle(12f, 400, 0xFFE0C9A0, 15.5f, tnum = true), Modifier.padding(top = 3.dp))
                 }
                 Row(
-                    Modifier.height(42.dp).clip(CircleShape).background(Color(0x1FF4ECD8)).border(1.dp, Color(0x80E8C878), CircleShape).clickable { nav.go(Dest.Ask()) }.padding(start = 12.dp, end = 14.dp),
+                    Modifier.padding(start = 8.dp).height(42.dp).boardBox(0x1FF4ECD8, corners(21f), shadow(0f, 0f, 0f, 0x80E8C878, spread = 1f, inset = true)).clickable { nav.go(Dest.Ask()) }.padding(start = 12.dp, end = 14.dp),
                     horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Symbol("ui.sparkles", tint = Gold, size = 16.dp)
-                    Text(stringResource(R.string.local_ask), color = Color(0xFFF4E3B8), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    Symbol("fact.new", tint = Gold, size = 16.dp)
+                    BoardLine(stringResource(R.string.local_ask), boardStyle(14f, 600, 0xFFF4E3B8, 18f))
                 }
             }
             Spacer(Modifier.height(16.dp))
             LabelCard(open?.let { id -> all.firstOrNull { it.id == id } }, all, snap, season, collect, zone, now, onClose = { open = null }, onOpen = { nav.go(it.dest) }, onGo = { nav.go(it) })
             Spacer(Modifier.height(16.dp))
+            // The cabinet: 388 wide from 12, 8 px in, radius 8, its sunken shadow; drawers three a row, 7 apart.
             Column(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color(0xFF24150B)).padding(8.dp),
+                Modifier.fillMaxWidth().outdent(4.dp)
+                    .boardBox(0xFF24150B, corners(8f), listOf(CssShadow(0f, 2f, 6f, 0f, 0x99000000, inset = true), CssShadow(0f, 1f, 0f, 0f, 0x14FFDCAA)), clip = false)
+                    .padding(8.dp),
                 verticalArrangement = Arrangement.spacedBy(7.dp),
             ) {
                 for (row in all.chunked(3)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Row(Modifier.fillMaxWidth().zIndex(if (row.any { it.id == open }) 2f else 1f), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         for (d in row) DrawerFront(d, d.id == open, Modifier.weight(1f)) { open = if (open == d.id) null else d.id }
                         repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
             }
-            Text(
-                stringResource(R.string.local_sources), color = Color(0xB3E0C9A0), fontSize = 11.sp, lineHeight = 15.sp, textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 14.dp),
-            )
+            Spacer(Modifier.height(25.dp))
+            BoardPara(stringResource(R.string.local_sources), boardStyle(11f, 400, 0xFFD9C3A0, 14.85f), Modifier.padding(horizontal = 4.dp))
             Spacer(Modifier.height(LocalBottomBarInset.current + 8.dp))
         }
     }
 }
 
-/** The walnut: a vertical wash and the grain, long fine lines a little apart. */
-private fun Modifier.walnut(): Modifier = this.drawBehind {
-    drawRect(Brush.verticalGradient(listOf(Color(0xFF4A2E1B), Color(0xFF2A190E))))
-    var x = 0f
-    val dark = Color(0x17000000)
-    val light = Color(0x0DFFDCAA)
-    while (x < size.width) { drawRect(dark, Offset(x, 0f), Size(2.dp.toPx(), size.height)); x += 9.dp.toPx() }
-    x = 4.dp.toPx()
-    while (x < size.width) { drawRect(light, Offset(x, 0f), Size(1.dp.toPx(), size.height)); x += 13.dp.toPx() }
-}
+/** The walnut: CSS `repeating-linear-gradient(91deg, black 9% 0 2px, clear 2px 9px)`, `(88deg, cream 5% 0 1px, clear 1px 13px)` over a dark wash. */
+private val WALNUT = listOf(
+    cssRepeatingLinear(91f, 9f, 0f to 0x17000000, 2f to 0x17000000, 2f to 0x00000000, 9f to 0x00000000),
+    cssRepeatingLinear(88f, 13f, 0f to 0x0DFFDCAA, 1f to 0x0DFFDCAA, 1f to 0x00FFDCAA, 13f to 0x00FFDCAA),
+    cssLinear(180f, 0f to 0xFF4A2E1B, 1f to 0xFF2A190E),
+)
 
+/**
+ * The parchment card of the board: 92 px at least, radius 6, its two soft lights, shadow and hairline, 12 px down and 6
+ * in; the brass pin it hangs from. Closed, what is true here now; opened, the drawer's label and what it holds.
+ */
 @Composable
 private fun LabelCard(
     drawer: Drawer?, all: List<Drawer>, snap: SoonSnapshot?, season: SeasonNow, collect: String?, zone: java.time.ZoneId, now: java.time.Instant,
     onClose: () -> Unit, onOpen: (Drawer) -> Unit, onGo: (Dest) -> Unit,
 ) {
-    val shape = RoundedCornerShape(6.dp)
-    Box(
-        Modifier.fillMaxWidth().heightIn(min = 92.dp).cssShadow(shape, 10.dp, 24.dp, Color(0x66000000)).clip(shape)
-            .background(Parchment).drawBehind {
-                drawRect(Brush.radialGradient(listOf(Color(0x73FFFFFF), Color(0x00FFFFFF)), center = Offset(size.width * 0.3f, size.height * 0.2f), radius = size.width * 0.6f))
-            }.padding(start = 6.dp, end = 6.dp, top = 12.dp, bottom = 10.dp),
-    ) {
-        // The brass pin the card hangs from.
+    Box(Modifier.fillMaxWidth()) {
         Box(
-            Modifier.align(Alignment.TopCenter).offset(y = (-18).dp).size(12.dp).clip(CircleShape)
-                .background(Brush.radialGradient(listOf(Color(0xFFF7DC8C), Color(0xFFA87C2A)), center = Offset(4f, 4f), radius = 14f)),
+            Modifier.fillMaxWidth().heightIn(min = 92.dp)
+                .boardBox(
+                    Parchment.css(), corners(6f), listOf(CssShadow(0f, 10f, 24f, 0f, 0x66000000), CssShadow(0f, 0f, 0f, 1f, 0x4078501E, inset = true)),
+                    grad = listOf(cssRadialAt(0.3f, 0.2f, 0f to 0x73FFFFFF, 0.6f to 0x00FFFFFF), cssRadialAt(0.9f, 1f, 0f to 0x2EA06E32, 0.55f to 0x00A06E32)),
+                )
+                .padding(start = 6.dp, end = 6.dp, top = 12.dp, bottom = 10.dp),
+        ) {
+            if (drawer == null) StatusRow(snap, now, zone, onGo)
+            else OpenedLabel(drawer, all.indexOf(drawer) + 1, factFor(drawer, snap, season, collect, zone, now), onClose = onClose, onOpen = { onOpen(drawer) })
+        }
+        // The brass pin, 12 px, 7 px above the card's top.
+        Box(
+            Modifier.align(Alignment.TopCenter).offset(y = (-7).dp).size(12.dp)
+                .boardBox(r = corners(6f), shadows = shadow(0f, 2f, 3f, 0x80000000), grad = listOf(cssRadial(true, 4.2f, 3.6f, 0f to 0xFFF7DC8C, 1f to 0xFFA87C2A)), clip = false),
         )
-        if (drawer == null) StatusRow(snap, now, zone, onGo)
-        else OpenedLabel(drawer, all.indexOf(drawer) + 1, factFor(drawer, snap, season, collect, zone, now), onClose = onClose, onOpen = { onOpen(drawer) })
     }
 }
 
@@ -229,7 +240,7 @@ private fun factFor(d: Drawer, snap: SoonSnapshot?, season: SeasonNow, collect: 
     else -> stringResource(R.string.local_fact_water)
 }
 
-/** The closed card: what is true here now, four things in a row. */
+/** The closed card: what is true here now, four things in a row, each its 24 px symbol, a value in Libre Caslon and a word, 3 apart. */
 @Composable
 private fun StatusRow(snap: SoonSnapshot?, now: java.time.Instant, zone: java.time.ZoneId, onGo: (Dest) -> Unit) {
     val here = rememberHere()
@@ -246,7 +257,7 @@ private fun StatusRow(snap: SoonSnapshot?, now: java.time.Instant, zone: java.ti
                 is Moment.RainStops -> hm.format(rain.at.atZone(zone)) to stringResource(R.string.local_status_rain_until)
                 else -> "–" to stringResource(R.string.local_status_dry)
             }
-            StatusItem("weather.rain", Color(0xFF5A7ACA), value, label, Modifier.weight(1f)) { onGo(Dest.Sky) }
+            StatusItem("weather.rain.2", Color(0xFF5A7ACA), value, label, Modifier.weight(1f)) { onGo(Dest.Sky) }
         }
         sunset?.let { StatusItem("weather.sunset", Color(0xFFC2641A), hm.format(it), stringResource(R.string.local_status_sunset), Modifier.weight(1f)) { onGo(Dest.Sky) } }
         StatusItem("ui.moon", Color(0xFF6B5438), "${(moon.illumination * 100).roundToInt()}%", stringResource(R.string.local_status_moon), Modifier.weight(1f)) { onGo(Dest.Moon) }
@@ -257,66 +268,80 @@ private fun StatusRow(snap: SoonSnapshot?, now: java.time.Instant, zone: java.ti
 private fun StatusItem(symbol: String, tint: Color, value: String, label: String, modifier: Modifier, onClick: () -> Unit) {
     Column(modifier.clickable(onClick = onClick), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Symbol(symbol, tint = tint, size = 24.dp)
-        Text(value, style = TextStyle(fontFamily = SerifFamily, fontSize = 20.sp, lineHeight = 22.sp, color = Inkwell), maxLines = 1)
-        Text(label, color = Sepia, fontSize = 11.sp, maxLines = 1)
+        BoardLine(value, boardStyle(16f, 700, Inkwell.css(), 17.6f, CASLON, tnum = true))
+        BoardLine(label, boardStyle(11f, 400, Sepia.css(), 14f, tnum = true))
     }
 }
 
+/** The board's face for the cabinet's labels and values. */
+private const val CASLON = "Libre Caslon Text"
+
+/** The opened label: "No. 03", the drawer's name in Libre Caslon 17, Open → and the close button, 8 apart; what it holds under them. */
 @Composable
 private fun OpenedLabel(d: Drawer, number: Int, fact: String, onClose: () -> Unit, onOpen: () -> Unit) {
     Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.local_drawer_no, number), color = Color(0xFF8A6A3A), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp)
-            Text(stringResource(d.title), Modifier.weight(1f), style = TextStyle(fontFamily = SerifFamily, fontSize = 22.sp, lineHeight = 24.sp, color = Inkwell), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Box(Modifier.height(30.dp).clip(CircleShape).background(Inkwell).clickable(onClick = onOpen).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
-                Text(stringResource(R.string.local_open), color = Color(0xFFF4E3B8), fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            BoardLine(stringResource(R.string.local_drawer_no, number), boardStyle(11f, 700, 0xFF8A6A3A, 14f, spacing = 1.32f))
+            BoardLine(stringResource(d.title), boardStyle(17f, 700, Inkwell.css(), 21f, CASLON), Modifier.weight(1f))
+            Box(Modifier.height(30.dp).boardBox(Inkwell.css(), corners(15f)).clickable(onClick = onOpen).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+                BoardLine(stringResource(R.string.local_open), boardStyle(12f, 700, 0xFFF4E3B8, 15.5f))
             }
             val close = stringResource(R.string.local_close)
-            Box(Modifier.size(30.dp).clip(CircleShape).background(Color(0x1A3C2814)).clickable(onClick = onClose).semantics { contentDescription = close }, contentAlignment = Alignment.Center) {
+            Box(Modifier.size(30.dp).boardBox(0x1A3C2814, corners(15f)).clickable(onClick = onClose).semantics { contentDescription = close }, contentAlignment = Alignment.Center) {
                 Symbol("ui.close", tint = Inkwell, size = 14.dp)
             }
         }
-        Text(fact, color = Color(0xFF3A2616), fontSize = 13.sp, lineHeight = 17.5.sp)
+        BoardPara(fact, boardStyle(13f, 400, 0xFF3A2616, 17.55f))
     }
 }
 
-/** A drawer's front: a brass label holder with the paper label in it, and a brass pull; pulled out a little when open. */
+/**
+ * A drawer of the board: 80 px, radius 5, the walnut front with its lit top edge, dark foot and hairline; 11 px down,
+ * the 100 x 34 brass holder with the paper label (the symbol and the name in Libre Caslon 13, 5 apart), and 9 under it
+ * the brass pull. Pulled out 7 px when open, lighter, with its deeper shadow.
+ */
 @Composable
 private fun DrawerFront(d: Drawer, open: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val dy by animateDpAsState(if (open) 7.dp else 0.dp, tween(250), label = "pull")
-    val shape = RoundedCornerShape(5.dp)
     val title = stringResource(d.title)
-    Box(modifier.height(80.dp).offset(y = dy)) {
-        Column(
-            Modifier.fillMaxSize()
-                .then(if (open) Modifier.cssShadow(shape, 12.dp, 16.dp, Color(0x99000000)) else Modifier.cssShadow(shape, 2.dp, 3.dp, Color(0x59000000)))
-                .clip(shape)
-                .background(Brush.verticalGradient(if (open) listOf(Color(0xFF6E4629), Color(0xFF573520)) else listOf(Color(0xFF5E3B22), Color(0xFF4A2D18))))
-                .drawWithContent {
-                    drawContent()
-                    drawRect(Color(0x33FFDCAA), Offset.Zero, Size(size.width, 1.dp.toPx()))
-                    drawRect(Color(0x59000000), Offset(0f, size.height - 3.dp.toPx()), Size(size.width, 3.dp.toPx()))
-                }
-                .clickable(onClick = onClick).semantics { contentDescription = title },
-            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(9.dp),
-        ) {
-            Spacer(Modifier.height(2.dp))
-            Box(
-                Modifier.padding(top = 9.dp).width(100.dp).height(34.dp).clip(RoundedCornerShape(3.dp))
-                    .background(Brush.verticalGradient(0f to Color(0xFFF0D48A), 0.55f to Color(0xFFB38A36), 1f to Color(0xFFE2C06E))).padding(2.dp),
-            ) {
-                Row(
-                    Modifier.fillMaxSize().clip(RoundedCornerShape(2.dp)).background(if (open) Color(0xFFFFF7DE) else Color(0xFFF4ECD8)),
-                    horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Symbol(d.symbol, tint = Color(0xFF6B4A22), size = 15.dp)
-                    Text(title, style = TextStyle(fontFamily = SerifFamily, fontSize = 14.sp, color = Inkwell), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                }
-            }
-            Box(
-                Modifier.width(44.dp).height(11.dp).clip(RoundedCornerShape(bottomStart = 22.dp, bottomEnd = 22.dp))
-                    .background(Brush.verticalGradient(listOf(Color(0xFFE8C878), Color(0xFFA8802F)))),
+    Column(
+        modifier.height(80.dp).offset(y = dy)
+            .boardBox(
+                r = corners(5f), clip = false,
+                shadows = if (open) OPEN_SHADOWS else SHUT_SHADOWS,
+                grad = listOf(if (open) cssLinear(180f, 0f to 0xFF6E4629, 1f to 0xFF573520) else cssLinear(180f, 0f to 0xFF5E3B22, 1f to 0xFF4A2D18)),
             )
+            .clickable(onClick = onClick).semantics { contentDescription = title }
+            .padding(top = 11.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        Box(
+            Modifier.size(100.dp, 34.dp)
+                .boardBox(r = corners(3f), shadows = shadow(0f, 1f, 2f, 0x80000000), grad = listOf(cssLinear(180f, 0f to 0xFFF0D48A, 0.55f to 0xFFB38A36, 1f to 0xFFE2C06E)), clip = false)
+                .padding(2.dp),
+        ) {
+            Row(
+                Modifier.fillMaxSize().boardBox(if (open) 0xFFFFF7DE else 0xFFF4ECD8, corners(2f), shadow(0f, 1f, 2f, 0x59503214, inset = true)).padding(horizontal = 3.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Symbol(d.symbol, tint = Color(0xFF6B4A22), size = 15.dp)
+                BoardLine(title, boardStyle(13f, 700, Inkwell.css(), 16f, CASLON), Modifier.weight(1f, fill = false))
+            }
         }
+        Box(
+            Modifier.size(44.dp, 11.dp).boardBox(
+                r = CssCorners(0f, 0f, 22f, 22f), clip = false,
+                shadows = listOf(CssShadow(0f, 3f, 4f, 0f, 0x80000000), CssShadow(0f, 1f, 0f, 0f, 0x66FFFFFF, inset = true)),
+                grad = listOf(cssLinear(180f, 0f to 0xFFE8C878, 1f to 0xFFA8802F)),
+            ),
+        )
     }
 }
+
+private val SHUT_SHADOWS = listOf(
+    CssShadow(0f, 1f, 0f, 0f, 0x33FFDCAA, inset = true), CssShadow(0f, -3f, 0f, 0f, 0x59000000, inset = true),
+    CssShadow(0f, 0f, 0f, 1f, 0x40000000, inset = true), CssShadow(0f, 2f, 3f, 0f, 0x59000000),
+)
+private val OPEN_SHADOWS = listOf(
+    CssShadow(0f, 12f, 16f, 0f, 0x99000000), CssShadow(0f, 1f, 0f, 0f, 0x4DFFDCAA, inset = true), CssShadow(0f, 0f, 0f, 1f, 0x40000000, inset = true),
+)

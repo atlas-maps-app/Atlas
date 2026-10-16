@@ -70,16 +70,19 @@ internal fun Glyph(id: String, tint: Color, size: Dp, modifier: Modifier = Modif
     }
 }
 
-/** The round white back button of the boards' header. */
+/** The round back button of the boards' header: 44 px, the board's 20 px back arrow. */
 @Composable
-internal fun BackCircle(onBack: () -> Unit, modifier: Modifier = Modifier, background: Color = Color.White, tint: Color = Color(0xFF1C2433), label: String = stringResource(R.string.kit_back)) {
+internal fun BackCircle(onBack: () -> Unit, modifier: Modifier = Modifier, background: Color = Color.White, tint: Color = Color(0xFF1C2433), label: String = stringResource(R.string.kit_back), shadows: List<app.atlas.ui.kit.CssShadow> = emptyList(), blur: Float = 0f) {
     Box(
-        modifier.size(44.dp).clip(CircleShape).background(background).clickable(role = Role.Button, onClick = onBack).semantics { contentDescription = label },
+        modifier.size(44.dp).boardBox(background.css(), corners(22f), shadows, blur = blur).clickable(role = Role.Button, onClick = onBack).semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) { Symbol("ui.back", tint = tint, size = 20.dp) }
 }
 
-/** The header the local boards share: back, a serif title (italic for moods), and something at the right. */
+/**
+ * The header the local boards share, its row at y 42 (the board's top 40 px are the status bar): the 44 px back
+ * button, the Instrument Serif title 10 px after it at line height 1 (italic for moods), and something at the right.
+ */
 @Composable
 internal fun BoardTitleBar(
     title: String,
@@ -89,32 +92,31 @@ internal fun BoardTitleBar(
     backBackground: Color = Color.White,
     italic: Boolean = true,
     size: Int = 34,
+    backTint: Color? = null,
+    shadow: app.atlas.ui.kit.CssShadow? = null,
     trailing: (@Composable RowScope.() -> Unit)? = null,
 ) {
-    Row(modifier.fillMaxWidth().padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (onBack != null) BackCircle(onBack, background = backBackground, tint = if (backBackground.luminance() > 0.5f) Color(0xFF1C2433) else colour)
-        Text(
-            title, Modifier.weight(1f).semantics { heading() },
-            style = TextStyle(fontFamily = SerifFamily, fontStyle = if (italic) FontStyle.Italic else FontStyle.Normal, fontSize = size.sp, lineHeight = size.sp, color = colour),
-            maxLines = 1, overflow = TextOverflow.Ellipsis,
-        )
+    Row(modifier.fillMaxWidth().padding(top = 42.dp).height(44.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (onBack != null) BackCircle(onBack, background = backBackground, tint = backTint ?: if (backBackground.luminance() > 0.5f) Color(0xFF1C2433) else colour)
+        BoardLine(title, boardStyle(size.toFloat(), 400, colour.css(), size.toFloat(), SERIF, italic, shadow = shadow), Modifier.weight(1f).semantics { heading() })
         trailing?.invoke(this)
     }
 }
 
-/** A white pill with a short bold word, at the right of a header ("Veloria", "food →"). */
+/** The white pill at the right of a header ("Veloria", "food →"): 34 px high, 12 px in, Geist at 800 ([size] 13 or 12). */
 @Composable
-internal fun HeaderPill(text: String, modifier: Modifier = Modifier, ink: Color = Color(0xFF1C2433), onClick: (() -> Unit)? = null) {
+internal fun HeaderPill(text: String, modifier: Modifier = Modifier, ink: Color = Color(0xFF1C2433), background: Color = Color.White, size: Float = 13f, lineHeight: Float = 17f, onClick: (() -> Unit)? = null) {
     Box(
-        modifier.height(34.dp).clip(CircleShape).background(Color.White)
+        modifier.height(34.dp).boardBox(background.css(), corners(17f))
             .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier).padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center,
-    ) { Text(text, color = ink, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1) }
+    ) { BoardLine(text, boardStyle(size, 800, ink.css(), lineHeight)) }
 }
 
 /**
- * A scrolling page on a board's own background, with the status bar and the system navigation bar kept clear and a
- * [bottom] bar pinned under the content (a call to action), the content's last line ending above it.
+ * A scrolling page on a board's own background, laid out in board px from the board's top (its first 40 px are the
+ * status bar; a taller one moves the page down), 16 px in from the sides, with a [bottom] bar pinned 28 px above the
+ * foot (a call to action) and the content's last line ending above it.
  */
 @Composable
 internal fun BoardPage(
@@ -126,7 +128,7 @@ internal fun BoardPage(
 ) {
     Box(modifier.fillMaxSize().background(background)) {
         Column(
-            Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+            Modifier.fillMaxSize().padding(top = boardShift()).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             content = {
                 content()
                 androidx.compose.foundation.layout.Spacer(Modifier.height(bottomRoom + 24.dp))
@@ -137,20 +139,22 @@ internal fun BoardPage(
     }
 }
 
-/** The letter-spaced small caps line that heads a group ("BEST NOW"). */
+/** The letter-spaced capitals that head a group ("BEST NOW"): Geist at 800, [spacing] em apart, in a line box of [lineHeight]. */
 @Composable
-internal fun SmallCaps(text: String, colour: Color, modifier: Modifier = Modifier, size: Int = 12) {
-    Text(text.uppercase(), modifier, color = colour, fontSize = size.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (size * 0.12f).sp, fontFamily = SansFamily)
+internal fun SmallCaps(text: String, colour: Color, modifier: Modifier = Modifier, size: Int = 12, spacing: Float = 0.12f, lineHeight: Float = 0f) {
+    val lh = if (lineHeight > 0f) lineHeight else if (size >= 12) size * 1.2917f else size * 1.2727f
+    BoardLine(text.uppercase(), boardStyle(size.toFloat(), 800, colour.css(), lh, spacing = size * spacing), modifier)
 }
 
-/** The board's dotted paper: a dot every 16 px, 1 px across, in warm brown at 16 per cent. */
+/** The board's dotted paper: CSS `radial-gradient(circle, rgba(90,70,40,.16) 1px, transparent 1.3px)` every 16 px from the corner. */
 internal fun Modifier.dotGrid(): Modifier = this.drawWithContent {
     val step = 16.dp.toPx()
     val dot = Color(0x29 shl 24 or 0x5A4628)
-    var y = step / 2
-    while (y < size.height) {
-        var x = step / 2
-        while (x < size.width) { drawCircle(dot, 0.65.dp.toPx(), Offset(x, y)); x += step }
+    val r = 1.15.dp.toPx()
+    var y = 0f
+    while (y < size.height + r) {
+        var x = 0f
+        while (x < size.width + r) { drawCircle(dot, r, Offset(x, y)); x += step }
         y += step
     }
     drawContent()

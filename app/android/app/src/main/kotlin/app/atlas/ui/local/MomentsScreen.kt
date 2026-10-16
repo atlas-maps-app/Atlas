@@ -51,6 +51,8 @@ import app.atlas.ui.kit.rememberHere
 import java.time.Duration
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import app.atlas.ui.kit.backdropSource
+import app.atlas.ui.kit.LocalBackdrop
 
 /** The moments worth a glance now: at most four, by how soon and how much they matter. */
 internal fun pickMoments(all: List<Moment>, now: java.time.Instant, limit: Int = 4): List<Moment> =
@@ -70,70 +72,77 @@ fun MomentsScreen(args: Dest.Moments, nav: Navigator) {
     val snap by produceState<SoonSnapshot?>(null, here, now) { value = loadSoon(services, here, now, zone) }
     val picked = remember(snap) { pickMoments(snap?.moments.orEmpty(), now) }
 
-    Box(
-        Modifier.fillMaxSize().background(Color(0xFF101320)).drawBehind {
-            drawRect(Brush.verticalGradient(listOf(Color(0xFF1B2440), Color(0xFF0C0F1A))))
-            drawCircle(Brush.radialGradient(listOf(Color(0x59E8922A), Color(0x00E8922A)), center = Offset(size.width * 0.85f, size.height * 0.2f), radius = size.width * 0.7f), size.width * 0.7f, Offset(size.width * 0.85f, size.height * 0.2f))
-            drawCircle(Brush.radialGradient(listOf(Color(0x4D36A6A0), Color(0x0036A6A0)), center = Offset(size.width * 0.1f, size.height * 0.55f), radius = size.width * 0.8f), size.width * 0.8f, Offset(size.width * 0.1f, size.height * 0.55f))
-            drawCircle(Brush.radialGradient(listOf(Color(0x552E5BFF), Color(0x002E5BFF)), center = Offset(size.width * 0.7f, size.height * 0.85f), radius = size.width * 0.8f), size.width * 0.8f, Offset(size.width * 0.7f, size.height * 0.85f))
-        },
-    ) {
+    val backdrop = LocalBackdrop.current
+    Box(Modifier.fillMaxSize().background(Color(0xFF101320))) {
+        // The board's lock screen lies over a blurred, darkened photograph the app does not have: a dark sky with soft
+        // glows stands in, and the glass cards blur it as the board's blur the photograph.
+        Box(
+            Modifier.fillMaxSize().backdropSource(backdrop).drawBehind {
+                drawRect(Brush.verticalGradient(listOf(Color(0xFF1B2440), Color(0xFF0C0F1A))))
+                drawCircle(Brush.radialGradient(listOf(Color(0x59E8922A), Color(0x00E8922A)), center = Offset(size.width * 0.85f, size.height * 0.2f), radius = size.width * 0.7f), size.width * 0.7f, Offset(size.width * 0.85f, size.height * 0.2f))
+                drawCircle(Brush.radialGradient(listOf(Color(0x4D36A6A0), Color(0x0036A6A0)), center = Offset(size.width * 0.1f, size.height * 0.55f), radius = size.width * 0.8f), size.width * 0.8f, Offset(size.width * 0.1f, size.height * 0.55f))
+                drawCircle(Brush.radialGradient(listOf(Color(0x552E5BFF), Color(0x002E5BFF)), center = Offset(size.width * 0.7f, size.height * 0.85f), radius = size.width * 0.8f), size.width * 0.8f, Offset(size.width * 0.7f, size.height * 0.85f))
+            },
+        )
         Column(
-            Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars).windowInsetsPadding(WindowInsets.navigationBars).verticalScroll(rememberScrollState()).padding(horizontal = 14.dp),
+            Modifier.fillMaxSize().padding(top = boardShift()).verticalScroll(rememberScrollState()).padding(horizontal = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Spacer(Modifier.height(18.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                val back = stringResource(R.string.kit_back)
-                Box(Modifier.size(40.dp).clip(CircleShape).background(Color(0x24FFFFFF)).clickable(role = androidx.compose.ui.semantics.Role.Button) { nav.back() }.semantics { contentDescription = back }, contentAlignment = Alignment.Center) { Symbol("ui.back", tint = Color.White, size = 20.dp) }
-            }
+            // The date at 70, the time's line box of 92 under it, the cards from 250.
+            Spacer(Modifier.height(70.dp))
             val date = DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.getDefault()).format(now.atZone(zone))
-            Text(date, color = Color.White.copy(alpha = 0.85f), fontSize = 15.sp, fontWeight = FontWeight.Bold)
-            Text(
-                DateTimeFormatter.ofPattern("H:mm").format(now.atZone(zone)), color = Color.White, fontFamily = SansFamily, fontSize = 92.sp, lineHeight = 96.sp,
-                fontWeight = FontWeight.Light, letterSpacing = (-0.03).sp,
-            )
-            Spacer(Modifier.height(24.dp))
+            BoardLine(date, boardStyle(15f, 700, 0xD9FFFFFF, 19.5f))
+            BoardLine(DateTimeFormatter.ofPattern("H:mm").format(now.atZone(zone)), boardStyle(92f, 300, 0xFFFFFFFF, 92f, spacing = -2.76f, tnum = true), overflow = TextOverflow.Visible)
+            Spacer(Modifier.height(68.5.dp))
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (snap == null) {
-                    Text(stringResource(R.string.kit_loading), color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+                    BoardLine(stringResource(R.string.kit_loading), boardStyle(13f, 400, 0xB3FFFFFF, 17f))
                 } else if (picked.isEmpty()) {
-                    Text(stringResource(R.string.moments_none), color = Color.White.copy(alpha = 0.85f), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    BoardLine(stringResource(R.string.moments_none), boardStyle(15f, 700, 0xD9FFFFFF, 19.5f))
                 }
                 for (m in picked) {
                     val v = momentView(m, now, zone, here)
-                    val shape = RoundedCornerShape(24.dp)
+                    // The board's glass card: white at 16 per cent over a 24 px blur, a 1 px inner ring, 12 by 14 px in.
                     Column(
-                        Modifier.fillMaxWidth().clip(shape).background(Color(0x29FFFFFF)).border(1.dp, Color(0x2EFFFFFF), shape)
+                        Modifier.fillMaxWidth().boardBox(0x29FFFFFF, corners(24f), shadow(0f, 0f, 0f, 0x2EFFFFFF, spread = 1f, inset = true), blur = 24f)
                             .clickable(enabled = v.dest != null) { v.dest?.let(nav::go) }.padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(36.dp).clip(RoundedCornerShape(12.dp)).background(Color(v.colour.toInt())), contentAlignment = Alignment.Center) { Symbol(v.symbol, tint = Color.White, size = 20.dp) }
-                            Column(Modifier.weight(1f)) {
-                                Text(v.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                Text(v.line, color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Box(Modifier.size(36.dp).boardBox(v.colour, corners(12f)), contentAlignment = Alignment.Center) { Symbol(v.symbol, tint = Color.White, size = 20.dp) }
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                BoardLine(v.title, boardStyle(15f, 800, 0xFFFFFFFF, 19.5f))
+                                BoardLine(v.line, boardStyle(12f, 400, 0xCCFFFFFF, 15.5f, tnum = true))
                             }
                         }
-                        Text(v.because, color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
+                        BoardPara(v.because, boardStyle(11f, 400, 0x99FFFFFF, 14f))
                     }
                 }
             }
-            Spacer(Modifier.height(24.dp))
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Symbol("ui.lock", tint = Color.White.copy(alpha = 0.75f), size = 14.dp)
-                    Text(stringResource(R.string.moments_footer, picked.size), color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
-                Row(
-                    Modifier.height(48.dp).clip(CircleShape).background(Color(0x2EFFFFFF)).clickable { nav.go(Dest.Ask()) }.padding(horizontal = 20.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Symbol("ui.mic", tint = Color.White, size = 18.dp)
-                    Text(stringResource(R.string.moments_ask), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
-                }
-            }
-            Spacer(Modifier.height(30.dp))
+            Spacer(Modifier.height(140.dp))
+            Spacer(Modifier.windowInsetsPadding(WindowInsets.navigationBars))
         }
+        // The foot, 30 px up: why these few, and the way to ask for more.
+        Column(
+            Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars).padding(bottom = 30.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Symbol("ui.lock", tint = Color(0xBFFFFFFF), size = 14.dp)
+                BoardLine(stringResource(R.string.moments_footer, picked.size), boardStyle(12f, 700, 0xBFFFFFFF, 15.5f))
+            }
+            Row(
+                Modifier.height(48.dp).boardBox(0x2EFFFFFF, corners(24f)).clickable { nav.go(Dest.Ask()) }.padding(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Symbol("ui.mic", tint = Color.White, size = 18.dp)
+                BoardLine(stringResource(R.string.moments_ask), boardStyle(14f, 800, 0xFFFFFFFF, 18f))
+            }
+        }
+        // The board is a lock screen and has no back; the app's sits where the other boards keep theirs, in the same glass.
+        BackCircle(
+            { nav.back() }, Modifier.padding(start = 16.dp, top = 42.dp + boardShift()), background = Color(0x29FFFFFF), tint = Color.White,
+            shadows = shadow(0f, 0f, 0f, 0x2EFFFFFF, spread = 1f, inset = true), blur = 24f,
+        )
     }
 }

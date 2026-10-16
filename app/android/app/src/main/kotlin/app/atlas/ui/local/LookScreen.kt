@@ -85,10 +85,12 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.tan
+import app.atlas.ui.kit.Symbol
+import app.atlas.ui.kit.CssCorners
+import androidx.compose.foundation.layout.Spacer
 
 private val Ink = Color(0xFF14161B)
 private val Soft = Color(0xFF676D7C)
-private val Sheet = Color(0xFFFFFFFF)
 private val Pale = Color(0xFFEEF0F4)
 private val Blue = Color(0xFF2E5BFF)
 
@@ -143,9 +145,13 @@ fun LookScreen(args: Dest.Look, nav: Navigator) {
     Box(Modifier.fillMaxSize().background(Color(0xFFE6ECF2))) {
         val a = around
         when {
-            a == null -> Text(stringResource(R.string.kit_loading), Modifier.windowInsetsPadding(WindowInsets.statusBars).padding(24.dp), color = Soft, fontSize = 14.sp)
-            a.buildings.isEmpty() && photo == null -> Column(Modifier.windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 16.dp)) {
-                BoardTitleBar(stringResource(R.string.look_title), onBack = { nav.back() }, colour = Ink, size = 32)
+            a == null -> Column(Modifier.padding(top = boardShift()).padding(horizontal = 16.dp)) {
+                BoardTitleBar(stringResource(R.string.look_title), onBack = { nav.back() }, colour = Ink, size = 32, backBackground = Color(0xF0FFFFFF), backTint = Ink)
+                Spacer(Modifier.height(16.dp))
+                BoardLine(stringResource(R.string.kit_loading), boardStyle(14f, 400, Soft.css(), 18f))
+            }
+            a.buildings.isEmpty() && photo == null -> Column(Modifier.padding(top = boardShift()).padding(horizontal = 16.dp)) {
+                BoardTitleBar(stringResource(R.string.look_title), onBack = { nav.back() }, colour = Ink, size = 32, backBackground = Color(0xF0FFFFFF), backTint = Ink)
                 StateMessage("ui-landmark", stringResource(R.string.look_empty), text = stringResource(R.string.look_empty_text), tint = Soft)
             }
             else -> {
@@ -171,23 +177,23 @@ private sealed interface PhotoState {
     class Found(val image: StreetPhotoImage) : PhotoState
 }
 
-/** The back button, the title and the compass pill ("N 354°") over the picture. */
+/** The board's header at 42: the back button and the compass pill ("N 354°") in white at 94 per cent, the serif title. */
 @Composable
 private fun Header(heading: Double, onBack: () -> Unit) {
     val name = compassName(heading)
     val label = stringResource(R.string.look_heading_label, name, heading.roundToInt() % 360)
     Row(
-        Modifier.windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 16.dp).padding(top = 18.dp).fillMaxWidth(),
+        Modifier.padding(top = boardShift()).padding(horizontal = 16.dp).padding(top = 42.dp).fillMaxWidth().height(44.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        BackCircle(onBack, background = Color.White.copy(alpha = 0.94f), tint = Ink)
-        Text(stringResource(R.string.look_title), Modifier.weight(1f), style = TextStyle(fontFamily = SerifFamily, fontStyle = FontStyle.Italic, fontSize = 32.sp, lineHeight = 32.sp, color = Ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        BackCircle(onBack, background = Color(0xF0FFFFFF), tint = Ink)
+        BoardLine(stringResource(R.string.look_title), boardStyle(32f, 400, Ink.css(), 32f, SERIF, italic = true), Modifier.weight(1f))
         Row(
-            Modifier.height(34.dp).clip(RoundedCornerShape(17.dp)).background(Color.White.copy(alpha = 0.94f)).padding(horizontal = 12.dp).semantics { contentDescription = label },
+            Modifier.height(34.dp).boardBox(0xF0FFFFFF, corners(17f)).padding(horizontal = 12.dp).semantics { contentDescription = label },
             horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
         ) {
-            PathGlyph(BoardPaths.HEADING, tint = Color(0xFFC8322A), size = 14.dp, filled = true)
-            Text("$name ${heading.roundToInt() % 360}°", color = Ink, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+            Symbol("nav.north", tint = Color(0xFFC8322A), size = 14.dp)
+            BoardLine("$name ${heading.roundToInt() % 360}°", boardStyle(12f, 800, Ink.css(), 15.5f, tnum = true))
         }
     }
 }
@@ -247,8 +253,6 @@ private fun Scene(a: Around, at: LatLon, heading: Double, photo: StreetPhotoImag
     }
 }
 
-private fun Modifier.androidx_widthIn(): Modifier = this.then(Modifier.widthIn(max = 150.dp))
-
 private data class Chevron(val x: Float, val y: Float, val scale: Float, val opacity: Float)
 
 private val CHEVRONS = listOf(
@@ -292,30 +296,35 @@ private fun Marks(marks: List<LookScene.Mark>, now: LocalDateTime, show: Boolean
                 else -> stringResource(R.string.look_opens, time.format(s.second)) to Soft
             }
             val desc = if (text != null) stringResource(R.string.look_mark_desc, m.name, text) else m.name
+            // The board's label: 6 by 10 px in, radius 12, white at 94 per cent, its shadow; name and hours 1 px apart.
             Column(
-                Modifier.offset(x = left.dp, y = top.dp).androidx_widthIn().shadow(6.dp, RoundedCornerShape(12.dp)).clip(RoundedCornerShape(12.dp)).background(Color.White.copy(alpha = 0.94f)).padding(horizontal = 10.dp, vertical = 6.dp).semantics { contentDescription = desc },
+                Modifier.offset(x = left.dp, y = top.dp).widthIn(max = 150.dp).boardBox(0xF0FFFFFF, corners(12f), shadow(0f, 6f, 16f, 0x2E000000))
+                    .padding(horizontal = 10.dp, vertical = 6.dp).semantics { contentDescription = desc },
                 verticalArrangement = Arrangement.spacedBy(1.dp),
             ) {
-                Text(m.name, color = Ink, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (text != null) Text(text, color = colour, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                BoardLine(m.name, boardStyle(13f, 800, Ink.css(), 17f))
+                if (text != null) BoardLine(text, boardStyle(11f, 700, colour.css(), 14f))
             }
         }
     }
 }
 
-/** The sheet at the bottom: the view switch, the step buttons with where you look, the photo note. */
+/**
+ * The board's sheet: 300 px of white from 615 (radius 30, its shadow), 10 px down and 16 in, 12 apart: the grabber, the
+ * view switch, the step buttons with where you look, the photo note and the sources.
+ */
 @Composable
 private fun Bottom(
     modifier: Modifier, tab: LookTab, onTab: (LookTab) -> Unit, photoState: PhotoState, street: String?, heading: Double, marks: List<LookScene.Mark>, onStep: (Double) -> Unit,
 ) {
-    val shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)
     Column(
-        modifier.fillMaxWidth().shadow(20.dp, shape).clip(shape).background(Sheet).windowInsetsPadding(WindowInsets.navigationBars).padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
+        modifier.fillMaxWidth().boardBox(0xFFFFFFFF, CssCorners(30f, 30f, 0f, 0f), shadow(0f, -10f, 30f, 0x29000000), clip = false)
+            .windowInsetsPadding(WindowInsets.navigationBars).height(300.dp).padding(start = 16.dp, end = 16.dp, top = 10.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(Modifier.align(Alignment.CenterHorizontally).size(40.dp, 5.dp).clip(RoundedCornerShape(3.dp)).background(Color(0xFFD5D8DE)))
+        Box(Modifier.align(Alignment.CenterHorizontally).size(40.dp, 5.dp).boardBox(0xFFD5D8DE, corners(3f)))
         val viewLabel = stringResource(R.string.look_tab_view)
-        Row(Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(20.dp)).background(Pale).padding(4.dp).semantics { contentDescription = viewLabel }, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth().height(40.dp).boardBox(Pale.css(), corners(20f)).padding(4.dp).semantics { contentDescription = viewLabel }, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Segment(stringResource(R.string.look_tab_3d), tab == LookTab.SCENE, true, Modifier.weight(1f)) { onTab(LookTab.SCENE) }
             val photoText = when (photoState) {
                 PhotoState.Looking -> stringResource(R.string.look_tab_photo_wait)
@@ -325,42 +334,39 @@ private fun Bottom(
             Segment(photoText, tab == LookTab.PHOTO, photoState is PhotoState.Found, Modifier.weight(1f)) { onTab(LookTab.PHOTO) }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            StepButton(BoardPaths.STEP_BACK, Pale, Ink, stringResource(R.string.look_step_back)) { onStep(-15.0) }
+            StepButton("ui.arrow-down", Pale, Ink, stringResource(R.string.look_step_back)) { onStep(-15.0) }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 val dir = directionWord(heading)
-                Text(
+                BoardLine(
                     if (street != null) stringResource(R.string.look_street, street, dir) else stringResource(R.string.look_looking, dir),
-                    color = Ink, fontSize = 16.sp, lineHeight = 19.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    boardStyle(16f, 800, Ink.css(), 20.5f),
                 )
                 val ahead = LookScene.ahead(marks)
-                Text(
+                BoardLine(
                     when {
                         ahead == null -> stringResource(R.string.look_nothing)
                         abs(ahead.relative) < 8 -> stringResource(R.string.look_ahead_straight, ahead.name, ahead.distanceM.roundToInt())
                         else -> stringResource(R.string.look_ahead, ahead.name, ahead.distanceM.roundToInt(), stringResource(if (ahead.relative < 0) R.string.look_side_left else R.string.look_side_right))
                     },
-                    color = Soft, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    boardStyle(12f, 400, Soft.css(), 15.5f),
                 )
             }
-            StepButton(BoardPaths.STEP_FORWARD, Blue, Color.White, stringResource(R.string.look_step_forward)) { onStep(15.0) }
+            StepButton("ui.arrow-up", Blue, Color.White, stringResource(R.string.look_step_forward)) { onStep(15.0) }
         }
         val found = (photoState as? PhotoState.Found)?.image?.photo
         Row(
-            Modifier.fillMaxWidth().height(64.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFFFFF1D6)).padding(horizontal = 14.dp),
+            Modifier.fillMaxWidth().height(64.dp).boardBox(0xFFFFF1D6, corners(18f)).padding(horizontal = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(Modifier.size(26.dp)) {
-                PathGlyph(BoardPaths.CAMERA, tint = Color(0xFF8A5A00), size = 26.dp)
-                PathGlyph(BoardPaths.CAMERA_LENS, tint = Color(0xFF8A5A00), size = 26.dp)
-            }
+            Symbol("ui.camera.2", tint = Color(0xFF8A5A00), size = 26.dp)
             val services = LocalServices.current
-            Text(
+            BoardPara(
                 if (found != null) stringResource(R.string.look_photo_credit, found.author ?: "Panoramax", found.takenOn ?: "", found.license?.replace("-", " ") ?: "")
                 else stringResource(if (!services.local.online()) R.string.look_offline_photo else R.string.look_nophoto),
-                Modifier.weight(1f), color = Color(0xFF6A4A00), fontSize = 13.sp, fontWeight = FontWeight.Bold, lineHeight = 17.sp, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                boardStyle(13f, 700, 0xFF6A4A00, 17f), Modifier.weight(1f), lines = 3,
             )
         }
-        Text(stringResource(R.string.look_footer), Modifier.fillMaxWidth(), color = Color(0xFF8A8F98), fontSize = 10.sp, lineHeight = 13.sp, textAlign = TextAlign.Center)
+        BoardPara(stringResource(R.string.look_footer), boardStyle(10f, 400, 0xFF8A8F98, 13f, align = TextAlign.Center), Modifier.fillMaxWidth())
     }
 }
 
@@ -372,21 +378,23 @@ private fun directionWord(heading: Double): String = when (app.atlas.ui.local.as
     "W" -> stringResource(R.string.look_dir_w); else -> stringResource(R.string.look_dir_nw)
 }
 
+/** One tab of the view switch: radius 16, ink when chosen, Geist 12 at 800. */
 @Composable
 private fun Segment(text: String, selected: Boolean, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
     Box(
-        modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)).background(if (selected) Ink else Color.Transparent)
+        modifier.fillMaxSize().boardBox(if (selected) Ink.css() else 0, corners(16f))
             .then(if (enabled) Modifier.clickable(role = Role.Tab, onClick = onClick) else Modifier).semantics { this.selected = selected; role = Role.Tab },
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, color = if (selected) Color.White else if (enabled) Ink else Color(0xFFA0A4AE), fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+        BoardLine(text, boardStyle(12f, 800, if (selected) 0xFFFFFFFF else if (enabled) Ink.css() else 0xFFA0A4AE, 15.5f))
     }
 }
 
+/** A 52 px round step button with the board's 22 px arrow. */
 @Composable
-private fun StepButton(path: String, background: Color, ink: Color, label: String, onClick: () -> Unit) {
+private fun StepButton(symbol: String, background: Color, ink: Color, label: String, onClick: () -> Unit) {
     Box(
-        Modifier.size(52.dp).clip(CircleShape).background(background).clickable(role = Role.Button, onClick = onClick).semantics { contentDescription = label },
+        Modifier.size(52.dp).boardBox(background.css(), corners(26f)).clickable(role = Role.Button, onClick = onClick).semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
-    ) { PathGlyph(path, tint = ink, size = 22.dp, strokeWidth = 2.4f) }
+    ) { Symbol(symbol, tint = ink, size = 22.dp) }
 }

@@ -171,12 +171,11 @@
     <string name="soon_tool_lists">Lijsten</string>
     <string name="soon_tool_lists_sub">je plekken</string>
     <string name="soon_source">Voorspellingen: nationale weerdiensten en Open-Meteo (CC BY 4.0) · zon, maan en hemel uitgerekend op deze telefoon</string>
-    <string name="soon_tomorrow">morgen</string>
     <!-- Hemel -->
     <string name="sky_title">De hemel</string>
     <string name="sky_pill">%1$d° · wind %2$s →</string>
     <string name="sky_now">nu</string>
-    <string name="sky_nowcast_desc">Regen de komende twee uur op jouw plek, een balk per kwartier</string>
+    <string name="sky_nowcast_desc">Regen op jouw plek het komende uur, een kleur per kwartier</string>
     <string name="sky_rain_in">Regen over %1$d min</string>
     <string name="sky_rain_in_lasts">Regen over %1$d min · zo\'n %2$d min lang</string>
     <string name="sky_raining_until">Het regent nu · tot %1$s</string>

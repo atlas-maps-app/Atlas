@@ -64,6 +64,8 @@ import java.time.LocalDateTime
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import app.atlas.ui.kit.cssLinear
+import app.atlas.ui.kit.CssShadow
 
 private val Ink = Color(0xFF2A2A26)
 private val Cream = Color(0xFFF6EFD8)
@@ -123,12 +125,13 @@ fun RelaxScreen(args: Dest.Relax, nav: Navigator) {
         !freeOnly || f.place.tags["fee"] == "no" || (!chosen.commercial && f.place.tags["fee"] != "yes")
     }
 
-    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFFE4E6DD), Color(0xFFEDEAE2))))) {
+    Box(Modifier.fillMaxSize().boardBox(grad = listOf(cssLinear(180f, 0f to 0xFFE4E6DD, 1f to 0xFFEDEAE2)), clip = false)) {
         BoardPage(background = Color.Transparent) {
-            BoardTitleBar(stringResource(R.string.relax_title), onBack = { nav.back() }, colour = Ink)
-            Spacer(Modifier.height(14.dp))
+            BoardTitleBar(stringResource(R.string.relax_title), onBack = { nav.back() }, colour = Ink, size = 32)
+            Spacer(Modifier.height(18.dp))
             SoundMeterCard(reading, listening, onTap = ::onTapMeter)
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(20.dp))
+            // The ways to unwind: four tiles of 78 px a row, 8 apart, and the free-only switch.
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 val cells: List<Way?> = WAYS + listOf(null)
                 for (row in cells.chunked(4)) {
@@ -138,10 +141,10 @@ fun RelaxScreen(args: Dest.Relax, nav: Navigator) {
                     }
                 }
             }
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(24.dp))
             when {
-                found == null -> Text(stringResource(R.string.kit_loading), color = Soft, fontSize = 14.sp)
-                items.isEmpty() -> Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Color.White)) {
+                found == null -> BoardLine(stringResource(R.string.kit_loading), boardStyle(14f, 400, Soft.css(), 18f))
+                items.isEmpty() -> Box(Modifier.fillMaxWidth().boardBox(0xFFFFFFFF, corners(22f))) {
                     val err = found?.get(kind)?.error
                     StateMessage(
                         if (err != null) "ui-cloud-off" else chosen.symbol, stringResource(if (err != null) R.string.swim_offline else R.string.relax_none, app.atlas.ui.kit.shortDistance(RADIUS)),
@@ -156,7 +159,17 @@ fun RelaxScreen(args: Dest.Relax, nav: Navigator) {
                             if (t["wheelchair"] == "yes") add(stringResource(R.string.picnic_step_free))
                             if (t["internet_access"] == "wlan" && kind == "library") add("Wi-Fi")
                         }
-                        PlaceCard(f, here, facts, local, background = Color.White, ink = Ink, soft = Soft, symbol = chosen.symbol, tile = Color(chosen.tint.toInt()), height = 82, onClick = { services.remember(f.place); nav.go(Dest.Place.of(f.place)) })
+                        // The board fades a place that costs, and marks it "$$" on a stone tile.
+                        val paid = t["fee"] == "yes"
+                        PlaceCard(
+                            f, here, facts, local, RELAX_CARD, dim = paid,
+                            tile = { dim ->
+                                Box(Modifier.size(48.dp).boardBox(if (dim) 0xFF6A6450 else Ink.css(), corners(14f)), contentAlignment = Alignment.Center) {
+                                    if (dim) BoardLine("$$", boardStyle(15f, 900, Cream.css(), 19.5f)) else Glyph(chosen.symbol, Cream, 26.dp)
+                                }
+                            },
+                            onClick = { services.remember(f.place); nav.go(Dest.Place.of(f.place)) },
+                        )
                     }
                 }
             }
@@ -164,66 +177,79 @@ fun RelaxScreen(args: Dest.Relax, nav: Navigator) {
     }
 }
 
+/** The board's quiet card: 82 px, radius 22, white; one that costs at 70 per cent. */
+private val RELAX_CARD = CardLook(bg = 0xFFFFFFFF, radius = 22f, minHeight = 82f, shadows = emptyList(), ink = 0xFF2A2A26, soft = 0xFF6A6450, walkSize = 17f, walkLine = 22f, dimBg = 0xB2FFFFFF)
+
+/** A way to unwind: 78 px, radius 20, its 26 px symbol and name 4 apart; ink with cream when chosen. */
 @Composable
 private fun WayCell(w: Way, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val label = stringResource(w.label)
     val desc = stringResource(w.desc)
     Column(
-        modifier.height(78.dp).clip(RoundedCornerShape(20.dp)).background(if (on) Ink else Color.White).clickable(role = androidx.compose.ui.semantics.Role.Tab, onClick = onClick)
+        modifier.height(78.dp).boardBox(if (on) Ink.css() else 0xFFFFFFFF, corners(20f)).clickable(role = androidx.compose.ui.semantics.Role.Tab, onClick = onClick)
             .semantics { contentDescription = desc; selected = on },
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
     ) {
         Glyph(w.symbol, if (on) Cream else Color(w.tint.toInt()), 26.dp)
-        Text(label, color = if (on) Cream else Ink, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+        BoardLine(label, boardStyle(12f, 800, if (on) Cream.css() else Ink.css(), 15.5f))
     }
 }
 
+/** The free-only switch: FREE in Geist 13 at 900 over "only" at 11, green on mint when on. */
 @Composable
 private fun FreeCell(on: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val freeLabel = stringResource(R.string.relax_free_only)
     Column(
-        modifier.height(78.dp).clip(RoundedCornerShape(20.dp)).background(if (on) Color(0xFFE1F2EA) else Color.White).clickable(role = androidx.compose.ui.semantics.Role.Switch, onClick = onClick)
+        modifier.height(78.dp).boardBox(if (on) 0xFFE1F2EA else 0xFFFFFFFF, corners(20f)).clickable(role = androidx.compose.ui.semantics.Role.Switch, onClick = onClick)
             .semantics { contentDescription = freeLabel; selected = on },
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
     ) {
-        Text(stringResource(R.string.relax_free), color = if (on) Color(0xFF12663A) else Soft, fontSize = 13.sp, fontWeight = FontWeight.Black)
-        Text(stringResource(R.string.relax_only), color = if (on) Color(0xFF12663A) else Soft, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        val ink = if (on) 0xFF12663A else Soft.css()
+        BoardLine(stringResource(R.string.relax_free), boardStyle(13f, 900, ink, 17f))
+        BoardLine(stringResource(R.string.relax_only), boardStyle(11f, 700, ink, 14f))
     }
 }
 
-/** The sound level meter of the board: a dark case, a cream dial with green, amber and red arcs, and a needle. */
+/** Where the board's scale puts a reading on the dial: 30 dB at 198.8 degrees round to 90 dB at 341.2 (screen angles). */
+private fun dialAngle(db: Double): Double = Math.toRadians(198.8 + (db.coerceIn(30.0, 90.0) - 30.0) * 142.4 / 60.0)
+
+/** The board's numbers round the dial, at their own places. */
+private val DIAL_LABELS = listOf("30" to Offset(40f, 92f), "40" to Offset(66f, 60f), "50" to Offset(108f, 38f), "60" to Offset(146f, 30f), "70" to Offset(184f, 38f), "80" to Offset(226f, 60f), "90" to Offset(252f, 92f))
+
+/** The board's ticks: `M46 100l8 4M72 66l6 6M110 44l4 7M146 36v8M182 44l-4 7M220 66l-6 6M246 100l-8 4`. */
+private val DIAL_TICKS = listOf(46f to 100f, 54f to 104f, 72f to 66f, 78f to 72f, 110f to 44f, 114f to 51f, 146f to 36f, 146f to 44f, 182f to 44f, 178f to 51f, 220f to 66f, 214f to 72f, 246f to 100f, 238f to 104f)
+
+/**
+ * The sound level meter of the board: a 320 x 210 case (dark gradient, radius 18, its shadow and 2 px inner rim, 14 px
+ * in), the cream dial of 150 px with its inner shadow, the green, amber and red arcs, the numbers and the needle, and
+ * the reading in Geist Mono with its lamp. The phone's microphone is a guide, not an instrument: the scale says dB, not dB(A).
+ */
 @Composable
 private fun SoundMeterCard(reading: Reading?, listening: Boolean, onTap: () -> Unit) {
     val measurer = rememberTextMeasurer()
-    val text = remember(measurer) { BoardText(measurer, FontFamily.Monospace) }
+    val text = remember(measurer) { BoardText(measurer, app.atlas.ui.kit.BoardFonts.GeistMono) }
     val db = reading?.db
-    val desc = if (db != null) stringResource(R.string.relax_meter_desc, db.roundToInt()) else stringResource(R.string.relax_meter_tap)
-    val shape = RoundedCornerShape(18.dp)
+    val note = stringResource(R.string.relax_meter_note)
+    val desc = (if (db != null) stringResource(R.string.relax_meter_desc, db.roundToInt()) else stringResource(R.string.relax_meter_tap)) + ". " + note
     Column(
-        Modifier.fillMaxWidth().padding(horizontal = 30.dp).cssShadow(shape, 16.dp, 28.dp, Color(0x4D000000)).clip(shape)
-            .background(Brush.verticalGradient(listOf(Color(0xFF3A3D3A), Color(0xFF25272A)))).border(2.dp, Color(0xFF4A4D4A), shape).padding(14.dp)
-            .clickable(onClick = onTap).semantics { contentDescription = desc },
+        Modifier.padding(start = 30.dp).size(320.dp, 210.dp)
+            .boardBox(r = corners(18f), shadows = listOf(CssShadow(0f, 16f, 28f, 0f, 0x4C000000), CssShadow(0f, 0f, 0f, 2f, 0xFF4A4D4A, inset = true)), grad = listOf(cssLinear(180f, 0f to 0xFF3A3D3A, 1f to 0xFF25272A)), clip = false)
+            .clickable(onClick = onTap).semantics { contentDescription = desc }.padding(14.dp),
     ) {
-        Canvas(Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(10.dp)).background(Brush.verticalGradient(listOf(Color(0xFFF6EFD8), Color(0xFFE9DFC0))))) {
+        Canvas(Modifier.fillMaxWidth().height(150.dp).boardBox(r = corners(10f), shadows = shadow(0f, 3f, 8f, 0x59000000, inset = true), grad = listOf(cssLinear(180f, 0f to 0xFFF6EFD8, 1f to 0xFFE9DFC0)))) {
             val s = size.width / 292f
             scale(s, s, Offset.Zero) {
                 val arc = androidx.compose.ui.geometry.Rect(Offset(34f, 16f), Size(224f, 224f))
                 drawArc(Ink, 180f, 180f, false, arc.topLeft, arc.size, style = Stroke(1.5f))
-                drawArc(Color(0xFF5A9E6A), 180f, 55.5f, false, arc.topLeft, arc.size, style = Stroke(8f))
-                drawArc(Color(0xFFE9B84A), 235.5f, 66.7f, false, arc.topLeft, arc.size, style = Stroke(8f))
-                drawArc(Color(0xFFC8322A), 302.2f, 57.8f, false, arc.topLeft, arc.size, style = Stroke(8f))
+                drawArc(Color(0xFF5A9E6A), 180f, 56.31f, false, arc.topLeft, arc.size, style = Stroke(8f))
+                drawArc(Color(0xFFE9B84A), 236.31f, 66.43f, false, arc.topLeft, arc.size, style = Stroke(8f))
+                drawArc(Color(0xFFC8322A), 302.74f, 57.26f, false, arc.topLeft, arc.size, style = Stroke(8f))
+                for (i in DIAL_TICKS.indices step 2) drawLine(Ink, Offset(DIAL_TICKS[i].first, DIAL_TICKS[i].second), Offset(DIAL_TICKS[i + 1].first, DIAL_TICKS[i + 1].second), 1.5f)
+                for ((v, at) in DIAL_LABELS) text.draw(this, v, at.x, at.y, 10f, Ink, anchor = 0.5f, weight = 700)
+                text.draw(this, "dB", 146f, 108f, 11f, Soft, anchor = 0.5f, weight = 700)
                 val centre = Offset(146f, 128f)
-                for (v in listOf(30, 40, 50, 60, 70, 80, 90)) {
-                    val a = Math.toRadians(160.0 - (v - 30) * 140.0 / 60.0)
-                    val c = cos(a).toFloat()
-                    val sn = sin(a).toFloat()
-                    drawLine(Ink, Offset(centre.x + 100f * c, centre.y - 100f * sn), Offset(centre.x + 108f * c, centre.y - 108f * sn), 1.5f)
-                    text.draw(this, v.toString(), centre.x + 88f * c, centre.y - 88f * sn + 3.5f, 10f, Ink, bold = true, anchor = 0.5f)
-                }
-                text.draw(this, "dB", 146f, 108f, 11f, Soft, bold = true, anchor = 0.5f)
-                val level = (db ?: 30.0).coerceIn(30.0, 90.0)
-                val a = Math.toRadians(160.0 - (level - 30) * 140.0 / 60.0)
-                drawLine(Color(0xFF1A1A18), centre, Offset(centre.x + 91f * cos(a).toFloat(), centre.y - 91f * sin(a).toFloat()), 3f, StrokeCap.Round)
+                val a = dialAngle(db ?: 30.0)
+                drawLine(Color(0xFF1A1A18), centre, Offset(centre.x + 91.6f * cos(a).toFloat(), centre.y + 91.6f * sin(a).toFloat()), 3f, StrokeCap.Round)
                 drawCircle(Ink, 10f, centre)
             }
         }
@@ -234,9 +260,9 @@ private fun SoundMeterCard(reading: Reading?, listening: Boolean, onTap: () -> U
                 reading != null -> stringResource(R.string.relax_no_mic)
                 else -> stringResource(R.string.relax_tap)
             }
-            Text(label, color = Color(0xFFE9DFC0), fontFamily = FontFamily.Monospace, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            Box(Modifier.size(10.dp).clip(CircleShape).background(if (db != null && !listening) Color(0xFF7CFF6B) else if (listening) Color(0xFFE9B84A) else Color(0xFF4A4D4A)))
+            BoardLine(label, boardStyle(13f, 700, 0xFFE9DFC0, 17f, GEIST_MONO))
+            val lamp = if (db != null && !listening) 0xFF7CFF6B else if (listening) 0xFFE9B84A else 0xFF4A4D4A
+            Box(Modifier.size(10.dp).boardBox(lamp, corners(5f), if (db != null && !listening) shadow(0f, 0f, 6f, 0xFF7CFF6B) else emptyList(), clip = false))
         }
-        Text(stringResource(R.string.relax_meter_note), Modifier.padding(top = 6.dp, start = 4.dp, end = 4.dp), color = Color(0xFFB9B29A), fontSize = 11.sp, lineHeight = 14.sp)
     }
 }

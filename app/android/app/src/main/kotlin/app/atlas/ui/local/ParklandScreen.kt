@@ -68,6 +68,13 @@ import app.atlas.ui.kit.shortDistance
 import java.time.LocalDate
 import java.time.LocalDateTime
 import kotlin.math.hypot
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import app.atlas.ui.kit.cssLinear
+import app.atlas.ui.kit.CssShadow
 
 private val Cream = Color(0xFFF1E7CE)
 private val Board = Color(0xFF1F4A28)
@@ -80,15 +87,9 @@ private fun kindName(k: ParkKind): String = stringResource(
     },
 )
 
-/** The picture of a park drawn on its notice board: 348 wide, as tall as the park's shape asks (between a wide and a tall plan). */
+/** The picture of a park on its notice board: the board's 348 x 400, the park fitted inside it. */
 private const val PLAN_W = 348f
-
-private fun planHeight(box: app.atlas.geo.BBox): Float {
-    val w = Geo.distance(app.atlas.geo.LatLon(box.south, box.west), app.atlas.geo.LatLon(box.south, box.east))
-    val h = Geo.distance(app.atlas.geo.LatLon(box.south, box.west), app.atlas.geo.LatLon(box.north, box.west))
-    val aspect = (w / kotlin.math.max(h, 1.0)).coerceIn(0.8, 2.6)
-    return (PLAN_W / aspect).toFloat()
-}
+private const val PLAN_H = 400f
 
 /**
  * A park's own plan, on the green notice board at its gate: the outline from the map, its paths and trees, a round marker for
@@ -120,58 +121,72 @@ fun ParklandScreen(args: Dest.Parkland, nav: Navigator) {
     val text = remember(measurer) { BoardText(measurer, SansFamily) }
     val youLabel = stringResource(R.string.park_you)
 
-    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color(0xFFBFD6E6), 0.55f to Color(0xFFD8E6CC), 1f to Color(0xFFBCD3A8)))) {
-        BoardPage(background = Color.Transparent) {
-            Spacer(Modifier.height(18.dp))
-            BackCircle({ nav.back() }, background = Color.White.copy(alpha = 0.85f), tint = Color(0xFF1C2A1E))
-            Spacer(Modifier.height(12.dp))
-            when {
-                !state.first -> Text(stringResource(R.string.kit_loading), color = Color(0xFF1C2A1E), fontSize = 14.sp)
-                park == null -> Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Color(0xBFFBFAF4))) {
-                    StateMessage("place.park", stringResource(R.string.park_none), text = stringResource(if (services.local.online()) R.string.park_none_text else R.string.picnic_offline_text), tint = Color(0xFF4E5E50))
-                }
-                else -> {
-                    val shape = RoundedCornerShape(10.dp)
-                    Box {
-                        // The two posts the board stands on.
-                        for (side in listOf(Alignment.BottomStart, Alignment.BottomEnd)) Box(
-                            Modifier.align(side).padding(horizontal = 28.dp).offset(y = 150.dp).size(16.dp, 330.dp).background(Brush.horizontalGradient(listOf(Color(0xFF4A3420), Color(0xFF6E4E30), Color(0xFF4A3420)))),
-                        )
-                        Column(Modifier.fillMaxWidth().clip(shape).background(Board).padding(4.dp).clip(RoundedCornerShape(7.dp)).padding(8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-                                Text(
-                                    (park.name ?: stringResource(R.string.park_unnamed)).uppercase(), Modifier.weight(1f, fill = false),
-                                    style = TextStyle(fontFamily = SerifFamily, fontSize = 28.sp, lineHeight = 30.sp, letterSpacing = 2.sp, color = Cream), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                )
-                                Parkland.todaysSpan(park.hours, today)?.let { Text(it, color = Cream, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 8.dp), maxLines = 1) }
+    Box(Modifier.fillMaxSize().boardBox(grad = listOf(cssLinear(180f, 0f to 0xFFBFD6E6, 0.55f to 0xFFD8E6CC, 1f to 0xFFBCD3A8)), clip = false)) {
+        Box(Modifier.fillMaxSize().padding(top = boardShift()).verticalScroll(rememberScrollState())) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                Spacer(Modifier.height(98.dp))
+                when {
+                    !state.first -> BoardLine(stringResource(R.string.kit_loading), boardStyle(14f, 400, 0xFF1C2A1E, 18f))
+                    park == null -> Box(Modifier.fillMaxWidth().boardBox(0xBFFBFAF4, corners(24f))) {
+                        StateMessage("place.park", stringResource(R.string.park_none), text = stringResource(if (services.local.online()) R.string.park_none_text else R.string.picnic_offline_text), tint = Color(0xFF4E5E50))
+                    }
+                    else -> {
+                        Box(Modifier.fillMaxWidth().height(480.dp)) {
+                            // The two posts the board stands on: 16 x 330 from 500, 44 px in from each side.
+                            for (left in listOf(28.dp, 336.dp)) Box(
+                                Modifier.offset(x = left, y = 402.dp).size(16.dp, 330.dp).boardBox(grad = listOf(cssLinear(90f, 0f to 0xFF4A3420, 0.5f to 0xFF6E4E30, 1f to 0xFF4A3420))),
+                            )
+                            // The board: 372 x 480 from (20, 98), radius 10, its 4 px inner rim and shadow, 12 px in, 10 apart.
+                            Column(
+                                Modifier.padding(horizontal = 4.dp).fillMaxSize()
+                                    .boardBox(Board.css(), corners(10f), listOf(CssShadow(0f, 0f, 0f, 4f, 0xFF173A1F, inset = true), CssShadow(0f, 18f, 30f, 0f, 0x59142814)), clip = false)
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Row(Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    BoardLine(
+                                        (park.name ?: stringResource(R.string.park_unnamed)).uppercase(), boardStyle(30f, 400, Cream.css(), 30f, SERIF, spacing = 2.4f),
+                                        Modifier.weight(1f, fill = false).alignByBaseline(),
+                                    )
+                                    Parkland.todaysSpan(park.hours, today)?.let { BoardLine(it, boardStyle(13f, 700, Cream.css(), 17f, tnum = true), Modifier.padding(start = 8.dp).alignByBaseline()) }
+                                }
+                                Plan(park, here, kind, picked, text, youLabel, onPick = { p -> picked = p; kind = p.kind })
                             }
-                            Plan(park, here, kind, picked, text, youLabel, onPick = { p -> picked = p; kind = p.kind })
                         }
-                    }
-                    Spacer(Modifier.height(14.dp))
-                    val kinds = ParkKind.entries.filter { k -> park.pois.any { it.kind == k } }
-                    if (kinds.isEmpty()) {
-                        Text(stringResource(R.string.park_nothing_marked), color = Color(0xFF1C2A1E), fontSize = 13.sp)
-                    } else {
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            for (k in kinds) KindChip(k, k == kind, park.pois.count { it.kind == k }, park.pois.firstOrNull { it.kind == k }) { kind = k; picked = null }
+                        Spacer(Modifier.height(22.dp))
+                        val kinds = ParkKind.entries.filter { k -> park.pois.any { it.kind == k } }
+                        if (kinds.isEmpty()) {
+                            BoardLine(stringResource(R.string.park_nothing_marked), boardStyle(13f, 700, 0xFF1C2A1E, 17f))
+                        } else {
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                for (k in kinds) KindChip(k, k == kind, park.pois.count { it.kind == k }, park.pois.firstOrNull { it.kind == k }) { kind = k; picked = null }
+                            }
                         }
+                        Spacer(Modifier.height(150.dp))
+                        Spacer(Modifier.windowInsetsPadding(WindowInsets.navigationBars))
                     }
-                    Spacer(Modifier.height(14.dp))
-                    val current = picked ?: kind?.let { k -> park.pois.filter { it.kind == k }.minByOrNull { Geo.distance(here, it.place.location) } }
-                    if (current != null) DetailCard(current, park, here, local, onGo = {
-                        val l = current.place.location
-                        nav.go(Dest.Route(l.lat, l.lon, app.atlas.places.Localise.name(current.place.tags, null), mode = "WALK"))
-                    })
                 }
             }
         }
+        // The back button, over the sky.
+        BackCircle({ nav.back() }, Modifier.padding(start = 16.dp, top = 42.dp + boardShift()), background = Color(0xD9FFFFFF), tint = Color(0xFF1C2A1E))
+        // The chosen thing, pinned 26 px from the foot as the board pins it.
+        val p = park
+        val current = p?.let { picked ?: kind?.let { k -> p.pois.filter { it.kind == k }.minByOrNull { Geo.distance(here, it.place.location) } } }
+        if (p != null && current != null) DetailCard(
+            current, p, here, local,
+            Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars).padding(start = 16.dp, end = 16.dp, bottom = 26.dp),
+            onGo = {
+                val l = current.place.location
+                nav.go(Dest.Route(l.lat, l.lon, app.atlas.places.Localise.name(current.place.tags, null), mode = "WALK"))
+            },
+        )
     }
 }
 
 @Composable
 private fun Plan(park: Park, here: app.atlas.geo.LatLon, kind: ParkKind?, picked: ParkPoi?, text: BoardText, youLabel: String, onPick: (ParkPoi) -> Unit) {
-    val planH = remember(park) { planHeight(park.box) }
+    val planH = PLAN_H
     val proj = remember(park) { ParkProjection(park.box, PLAN_W, planH, 16f) }
     val markers = remember(park) { park.pois.map { it to Offset(proj.x(it.place.location.lon), proj.y(it.place.location.lat)) } }
     // Markers of one kind that sit on top of each other are drawn once, with their number.
@@ -186,7 +201,7 @@ private fun Plan(park: Park, here: app.atlas.geo.LatLon, kind: ParkKind?, picked
     }
     val desc = stringResource(R.string.park_plan_desc, park.name ?: "", park.pois.size)
     Canvas(
-        Modifier.fillMaxWidth().aspectRatio(PLAN_W / planH).clip(RoundedCornerShape(6.dp)).semantics { contentDescription = desc }.pointerInput(park) {
+        Modifier.size(PLAN_W.dp, PLAN_H.dp).clip(RoundedCornerShape(6.dp)).semantics { contentDescription = desc }.pointerInput(park) {
             detectTapGestures { tap ->
                 val s = size.width / PLAN_W
                 drawn.minByOrNull { hypot(it.second.x * s - tap.x, it.second.y * s - tap.y) }?.takeIf { hypot(it.second.x * s - tap.x, it.second.y * s - tap.y) < 26f * s }?.let { onPick(it.first) }
@@ -242,25 +257,34 @@ private fun DrawScope.drawGlyphIn(symbol: String, at: Offset, side: Float) {
     drawSymbol(symbol, Offset(at.x - side / 2, at.y - side / 2), side, Color.White, weight = 1.1f)
 }
 
+/**
+ * A chip of the board: 40 px, radius 20. The chosen kind in its colour with its 18 px symbol and a word (the ages, or the
+ * count) 6 px after it, 8 px in before and 12 after; the others white, a symbol alone in a 40 px circle, WC in its violet.
+ */
 @Composable
 private fun KindChip(k: ParkKind, on: Boolean, count: Int, first: ParkPoi?, onClick: () -> Unit) {
     val name = kindName(k)
     val c = Color(k.colour.toInt())
     val label = if (on) (if (k == ParkKind.PLAYGROUND) first?.place?.tags?.let { ageRange(it) } else null) ?: count.toString() else null
+    val wc = k.symbol == "WC"
     Row(
-        Modifier.height(40.dp).clip(CircleShape).background(if (on) c else Color.White).clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick).semantics { contentDescription = "$name, $count"; selected = on }
-            .padding(start = if (on) 8.dp else 0.dp, end = if (on) 12.dp else 0.dp).then(if (on) Modifier else Modifier.width(40.dp)),
+        Modifier.height(40.dp).then(if (!on && !wc) Modifier.width(40.dp) else Modifier).boardBox(if (on) k.colour else 0xFFFFFFFF, corners(20f))
+            .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick).semantics { contentDescription = "$name, $count"; selected = on }
+            .padding(start = if (wc) 12.dp else if (on) 8.dp else 0.dp, end = if (on || wc) 12.dp else 0.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (k.symbol == "WC") Text("WC", color = if (on) Color.White else c, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold)
-        else Glyph(k.symbol, if (on) Color.White else c, 18.dp)
-        if (label != null) Text(label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        if (wc) BoardLine("WC", boardStyle(13f, 800, if (on) 0xFFFFFFFF else k.colour, 17f))
+        else Glyph(k.symbol, if (on) Color.White else c, if (k == ParkKind.WATER) 17.dp else 18.dp)
+        if (label != null) BoardLine(label, boardStyle(13f, 700, 0xFFFFFFFF, 17f, tnum = true))
     }
 }
 
+/**
+ * The board's card for the chosen thing: 108 px, radius 26, 14 by 16 px in, 14 apart: its 56 px disc, the name, its
+ * facts 8 apart and what is near, and the walk on the dark green disc.
+ */
 @Composable
-private fun DetailCard(poi: ParkPoi, park: Park, here: app.atlas.geo.LatLon, now: LocalDateTime, onGo: () -> Unit) {
-    val c = Color(poi.kind.colour.toInt())
+private fun DetailCard(poi: ParkPoi, park: Park, here: app.atlas.geo.LatLon, now: LocalDateTime, modifier: Modifier, onGo: () -> Unit) {
     val t = poi.place.tags
     val name = app.atlas.places.Localise.name(t, java.util.Locale.getDefault().language) ?: kindName(poi.kind)
     val facts = buildList {
@@ -278,19 +302,19 @@ private fun DetailCard(poi: ParkPoi, park: Park, here: app.atlas.geo.LatLon, now
     val walk = walkOrDistance(Geo.distance(here, poi.place.location))
     val walkLabel = stringResource(R.string.parkland_walk_there, walk)
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(Color(0xFFFBFAF4)).padding(horizontal = 16.dp, vertical = 14.dp),
+        modifier.fillMaxWidth().height(108.dp).boardBox(0xFFFBFAF4, corners(26f)).padding(horizontal = 16.dp, vertical = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(56.dp).clip(CircleShape).background(c), contentAlignment = Alignment.Center) {
-            if (poi.kind.symbol == "WC") Text("WC", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold) else Glyph(poi.kind.symbol, Color.White, 30.dp)
+        Box(Modifier.size(56.dp).boardBox(poi.kind.colour, corners(28f)), contentAlignment = Alignment.Center) {
+            if (poi.kind.symbol == "WC") BoardLine("WC", boardStyle(17f, 800, 0xFFFFFFFF, 22f)) else Glyph(poi.kind.symbol, Color.White, 30.dp)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(name, color = Color(0xFF1C2A1E), fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (facts.isNotEmpty()) Text(facts.joinToString(" · "), color = Color(0xFF4E5E50), fontSize = 13.sp, maxLines = 2)
-            if (near.isNotEmpty()) Text(near.joinToString(" · "), color = Color(0xFF4E5E50), fontSize = 12.sp, maxLines = 1)
+            BoardLine(name, boardStyle(17f, 800, 0xFF1C2A1E, 22f))
+            if (facts.isNotEmpty()) GapLine(8f) { for (f in facts) BoardLine(f, boardStyle(13f, 400, 0xFF4E5E50, 17f, tnum = true), overflow = TextOverflow.Clip) }
+            if (near.isNotEmpty()) BoardLine(near.joinToString(" · "), boardStyle(12f, 400, 0xFF4E5E50, 15.5f))
         }
-        Box(Modifier.size(56.dp).clip(CircleShape).background(Board).clickable(onClick = onGo).semantics { contentDescription = walkLabel }, contentAlignment = Alignment.Center) {
-            Text(walk, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+        Box(Modifier.size(56.dp).boardBox(Board.css(), corners(28f)).clickable(onClick = onGo).semantics { contentDescription = walkLabel }, contentAlignment = Alignment.Center) {
+            BoardLine(walk, boardStyle(15f, 800, 0xFFFFFFFF, 19.5f, tnum = true))
         }
     }
 }

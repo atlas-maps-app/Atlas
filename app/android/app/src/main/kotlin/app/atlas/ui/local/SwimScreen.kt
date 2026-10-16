@@ -61,6 +61,9 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import app.atlas.ui.kit.drawSymbol
+import app.atlas.ui.kit.cssRepeatingLinear
+import app.atlas.ui.kit.CssShadow
 
 private val Navy = Color(0xFF0C2A40)
 private val Blue = Color(0xFF1560A8)
@@ -98,22 +101,27 @@ fun SwimScreen(args: Dest.Swim, nav: Navigator) {
     val first = items.firstOrNull()
     val hm = DateTimeFormatter.ofPattern("H:mm")
 
-    Box(Modifier.fillMaxSize().background(Color(0xFF9ED3EA)).poolTiles()) {
+    // The board's pool: blue with a white grid every 22 px and two soft lights.
+    Box(Modifier.fillMaxSize().background(Color(0xFF9ED3EA)).poolTiles().boardBox(grad = LIGHTS, clip = false)) {
         BoardPage(
             background = Color.Transparent,
             bottomRoom = 72.dp,
             bottom = {
                 Row(
-                    Modifier.fillMaxWidth().height(56.dp).clip(CircleShape).background(Navy).clickable { nav.go(Dest.Relax("sauna")) },
+                    Modifier.fillMaxWidth().height(56.dp).boardBox(Navy.css(), corners(28f)).clickable { nav.go(Dest.Relax("sauna")) },
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Symbol("place.sauna", tint = Color.White, size = 20.dp)
-                    Text(stringResource(R.string.swim_sauna_after), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    BoardLine(stringResource(R.string.swim_sauna_after), boardStyle(15f, 700, 0xFFFFFFFF, 19.5f))
                 }
             },
         ) {
-            BoardTitleBar(stringResource(R.string.swim_title), onBack = { nav.back() }, italic = false, size = 34, colour = Color.White)
-            Spacer(Modifier.height(18.dp))
+            BoardTitleBar(
+                stringResource(R.string.swim_title), onBack = { nav.back() }, italic = false, size = 34, colour = Color.White, backTint = Navy,
+                shadow = CssShadow(0f, 2f, 6f, 0f, 0x590C2A40),
+            )
+            Spacer(Modifier.height(14.dp))
+            // The kinds of water: four tiles of 76 px, 8 apart, navy when chosen.
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (w in WATERS) {
                     val on = w.id == kind
@@ -121,19 +129,19 @@ fun SwimScreen(args: Dest.Swim, nav: Navigator) {
                     val label = stringResource(w.label) + (n?.let { " $it" } ?: "")
                     val wdesc = stringResource(w.desc)
                     Column(
-                        Modifier.weight(1f).height(76.dp).clip(RoundedCornerShape(18.dp)).background(if (on) Navy else Color.White.copy(alpha = 0.92f))
+                        Modifier.weight(1f).height(76.dp).boardBox(if (on) Navy.css() else 0xEBFFFFFF, corners(18f))
                             .clickable(role = androidx.compose.ui.semantics.Role.Tab) { kind = w.id }.semantics { contentDescription = "$wdesc, ${n ?: 0}"; selected = on },
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
                     ) {
                         Glyph(w.symbol, if (on) Color.White else Navy, 26.dp)
-                        Text(label, color = if (on) Color.White else Navy, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+                        BoardLine(label, boardStyle(12f, 800, if (on) 0xFFFFFFFF else Navy.css(), 15.5f))
                     }
                 }
             }
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(18.dp))
             when {
-                found == null -> Text(stringResource(R.string.kit_loading), color = Color.White, fontSize = 14.sp)
-                first == null -> Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(Color(0xFFFBF7EE))) {
+                found == null -> BoardLine(stringResource(R.string.kit_loading), boardStyle(14f, 700, 0xFFFFFFFF, 18f))
+                first == null -> Box(Modifier.fillMaxWidth().boardBox(0xFFFBF7EE, corners(28f))) {
                     val err = found?.get(kind)?.error
                     StateMessage(
                         if (err != null) "ui-cloud-off" else chosen.symbol, stringResource(if (err != null) R.string.swim_offline else R.string.swim_none, app.atlas.ui.kit.shortDistance(RADIUS)),
@@ -150,7 +158,7 @@ fun SwimScreen(args: Dest.Swim, nav: Navigator) {
                         when (tags["fee"]) { "yes" -> add(stringResource(R.string.swim_paid)); "no" -> add(stringResource(R.string.swim_free)) }
                     }
                     FeaturedCard(name, water, bits, tide.takeIf { kind == "sea" || kind == "lakes" }, now, chosen.symbol, app.atlas.ui.kit.shortDistance(first.distanceM))
-                    Spacer(Modifier.height(14.dp))
+                    Spacer(Modifier.height(18.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         for (f in items.drop(1).take(5)) {
                             val t = f.place.tags
@@ -159,54 +167,81 @@ fun SwimScreen(args: Dest.Swim, nav: Navigator) {
                                 when (t["fee"]) { "yes" -> add(stringResource(R.string.swim_paid)); "no" -> add(stringResource(R.string.swim_free)) }
                                 t["wheelchair"]?.takeIf { it == "yes" }?.let { add(stringResource(R.string.picnic_step_free)) }
                             }
-                            PlaceCard(f, here, facts, local, background = Color.White.copy(alpha = 0.94f), ink = Navy, soft = Muted, symbol = chosen.symbol, tile = Blue, height = 80, onClick = { services.remember(f.place); nav.go(Dest.Place.of(f.place)) })
+                            val shut = remember(f, local) { isShut(f.place, here, local) }
+                            PlaceCard(
+                                f, here, facts, local, SWIM_CARD, caution = shut,
+                                tile = { Box(Modifier.size(46.dp).boardBox(0xFFE4F2FA, corners(14f)), contentAlignment = Alignment.Center) { Glyph(chosen.symbol, Blue, 24.dp) } },
+                                onClick = { services.remember(f.place); nav.go(Dest.Place.of(f.place)) },
+                            )
                         }
                     }
                 }
             }
         }
-        // The lane rope along the top edge.
-        Box(Modifier.fillMaxWidth().height(12.dp).drawBehind {
-            var x = 0f
-            var red = true
-            while (x < size.width) { drawRect(if (red) Color(0xFFD93A3A) else Color.White, Offset(x, 0f), Size(14.dp.toPx(), size.height)); x += 14.dp.toPx(); red = !red }
-        })
+        // The lane rope along the top edge: red and white every 14 px.
+        Box(Modifier.fillMaxWidth().height(12.dp).boardBox(grad = listOf(cssRepeatingLinear(90f, 28f, 0f to 0xFFD93A3A, 14f to 0xFFD93A3A, 14f to 0xFFFFFFFF, 28f to 0xFFFFFFFF))))
     }
 }
 
-/** The pool tiles: a white grid every 22 dp and two soft lights. */
+/** The board's swim card: 80 px, radius 22, white at 94 per cent, no shadow. */
+private val SWIM_CARD = CardLook(bg = 0xF0FFFFFF, radius = 22f, minHeight = 80f, shadows = emptyList(), ink = 0xFF0C2A40, soft = 0xFF5A6E80, walkSize = 17f, walkLine = 22f)
+
+/** The two soft lights over the pool: ellipses at 30 / 20 per cent (white 35 per cent to clear at 40) and 70 / 70 (25 per cent to clear at 35). */
+private val LIGHTS = listOf(
+    cssRadialAt(0.3f, 0.2f, 0f to 0x59FFFFFF, 0.4f to 0x00FFFFFF),
+    cssRadialAt(0.7f, 0.7f, 0f to 0x40FFFFFF, 0.35f to 0x00FFFFFF),
+)
+
+/** The pool tiles: in each 22 px square, a 1.5 px white line at 35 per cent along the left and the bottom. */
 private fun Modifier.poolTiles(): Modifier = this.drawBehind {
     val step = 22.dp.toPx()
+    val w = 1.5.dp.toPx()
     val line = Color(0x59FFFFFF)
     var x = 0f
-    while (x < size.width) { drawLine(line, Offset(x, 0f), Offset(x, size.height), 1.5.dp.toPx()); x += step }
-    var y = 0f
-    while (y < size.height) { drawLine(line, Offset(0f, y), Offset(size.width, y), 1.5.dp.toPx()); y += step }
-    drawCircle(Brush.radialGradient(listOf(Color(0x59FFFFFF), Color(0x00FFFFFF)), center = Offset(size.width * 0.3f, size.height * 0.2f), radius = size.width * 0.5f), size.width * 0.5f, Offset(size.width * 0.3f, size.height * 0.2f))
+    while (x < size.width) { drawRect(line, Offset(x, 0f), Size(w, size.height)); x += step }
+    var y = step - w
+    while (y < size.height) { drawRect(line, Offset(0f, y), Size(size.width, w)); y += step }
 }
 
+/**
+ * The board's featured card: 250 px, radius 28, cream with its navy shadow, 18 px in; the 170 px tide clock (or the same
+ * brass ring round the kind's symbol where there is no tide), then 16 px on: the name, the water's warmth (or the
+ * distance) and the small facts, 10 apart.
+ */
 @Composable
 private fun FeaturedCard(name: String, water: Double?, bits: List<String>, tide: TideNow?, now: java.time.Instant, symbol: String, distance: String) {
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(Color(0xFFFBF7EE)).padding(18.dp),
+        Modifier.fillMaxWidth().height(250.dp).boardBox(0xFFFBF7EE, corners(28f), shadow(0f, 14f, 28f, 0x400C2A40), clip = false).padding(18.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (tide != null) TideClock(tide, now, Modifier.size(150.dp))
-        else Box(Modifier.size(110.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFFF6E2A8), Color(0xFFB98A36), Color(0xFFE9C977)))).padding(8.dp).clip(CircleShape).background(Color(0xFF0E3A5C)), contentAlignment = Alignment.Center) {
-            Glyph(symbol, Color.White, 44.dp)
+        if (tide != null) TideClock(tide, now, Modifier.size(170.dp))
+        else Canvas(Modifier.size(170.dp)) {
+            val s = size.width / 170f
+            scale(s, s, Offset.Zero) {
+                drawCircle(Color(0x260C2A40), 80f, Offset(85f, 87f))
+                drawCircle(BRASS, 80f, Offset(85f, 85f))
+                drawCircle(Color(0xFF0E3A5C), 70f, Offset(85f, 85f))
+            }
+            drawSymbol(symbol, Offset(size.width / 2 - 28.dp.toPx(), size.height / 2 - 28.dp.toPx()), 56.dp.toPx(), Color.White)
         }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(name, color = Navy, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, lineHeight = 20.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (water != null) Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("${water.roundToInt()}°", color = Navy, fontSize = 30.sp, fontWeight = FontWeight.Black)
-                Text(stringResource(R.string.swim_water), color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 5.dp))
-            } else Text(distance, color = Navy, fontSize = 26.sp, fontWeight = FontWeight.Black)
-            if (bits.isNotEmpty()) Text(bits.joinToString(" · "), color = Muted, fontSize = 12.sp, lineHeight = 16.sp)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            BoardPara(name, boardStyle(18f, 800, Navy.css(), 19.8f), lines = 2)
+            if (water != null) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                BoardLine("${water.roundToInt()}°", boardStyle(30f, 900, Navy.css(), 39f, tnum = true), Modifier.alignByBaseline())
+                BoardLine(stringResource(R.string.swim_water), boardStyle(12f, 700, Muted.css(), 15.5f), Modifier.alignByBaseline())
+            } else BoardLine(distance, boardStyle(30f, 900, Navy.css(), 39f, tnum = true))
+            if (bits.isNotEmpty()) BoardPara(bits.joinToString(" · "), boardStyle(12f, 400, Muted.css(), 15.5f, tnum = true))
         }
     }
 }
 
-/** The brass tide clock of the board: HIGH at the top, LOW at the bottom, the gold hand at where the sea is in its cycle. */
+/** The board's brass: a diagonal gradient, light, dark and light again. */
+private val BRASS = Brush.linearGradient(0f to Color(0xFFF6E2A8), 0.5f to Color(0xFFB98A36), 1f to Color(0xFFE9C977), start = Offset(5f, 5f), end = Offset(165f, 165f))
+
+/**
+ * The brass tide clock of the board: HIGH at the top and LOW at the bottom, the hours to them round the face (Geist at
+ * 800), the gold hand at where the sea is in its cycle and, while it rises, the way still to come to high water.
+ */
 @Composable
 private fun TideClock(tide: TideNow, now: java.time.Instant, modifier: Modifier) {
     val measurer = rememberTextMeasurer()
@@ -220,22 +255,25 @@ private fun TideClock(tide: TideNow, now: java.time.Instant, modifier: Modifier)
         scale(s, s, Offset.Zero) {
             val c = Offset(85f, 85f)
             drawCircle(Color(0x260C2A40), 80f, Offset(85f, 87f))
-            drawCircle(Brush.linearGradient(listOf(Color(0xFFF6E2A8), Color(0xFFB98A36), Color(0xFFE9C977)), Offset(0f, 0f), Offset(170f, 170f)), 80f, c)
+            drawCircle(BRASS, 80f, c)
             drawCircle(Color(0xFF0E3A5C), 70f, c)
             // The way the sea has still to come to high water: from the hand clockwise to the top.
             val handAngle = (phase * 2 * PI - PI / 2).toFloat()
             val start = Math.toDegrees(handAngle.toDouble()).toFloat()
             val sweep = (270f - start).let { if (it < 0) it + 360f else it }.let { if (tide.rising) it else 0f }
             if (sweep > 0f) drawArc(Color(0x801560A8), start, sweep, true, Offset(15f, 15f), Size(140f, 140f), style = Fill)
-            text.draw(this, high, 85f, 34f, 11f, Color.White, bold = true, anchor = 0.5f)
-            text.draw(this, low, 85f, 146f, 11f, Color.White, bold = true, anchor = 0.5f)
-            for ((label, ang) in listOf("3" to 0.0, "2" to 45.0, "4" to 135.0)) {
-                val x = 85f + 49f * cos(Math.toRadians(ang)).toFloat()
-                val y = 89f + 49f * sin(Math.toRadians(ang)).toFloat()
-                text.draw(this, label, x, y, 10f, Color.White, bold = true, anchor = 0.5f)
-            }
-            drawLine(Color(0xFFFFD24A), c, Offset(c.x + 42f * cos(handAngle), c.y + 42f * sin(handAngle)), 5f, StrokeCap.Round)
-            drawCircle(Brush.linearGradient(listOf(Color(0xFFF6E2A8), Color(0xFFB98A36), Color(0xFFE9C977)), Offset(77f, 77f), Offset(93f, 93f)), 8f, c)
+            text.draw(this, high, 85f, 34f, 11f, Color.White, anchor = 0.5f, weight = 800)
+            text.draw(this, low, 85f, 146f, 11f, Color.White, anchor = 0.5f, weight = 800)
+            for ((label, x, y, size) in HOURS) text.draw(this, label, x, y, size, Color.White, anchor = 0.5f, weight = 800)
+            drawLine(Color(0xFFFFD24A), c, Offset(c.x + 50f * cos(handAngle), c.y + 50f * sin(handAngle)), 5f, StrokeCap.Round)
+            drawCircle(Brush.linearGradient(0f to Color(0xFFF6E2A8), 0.5f to Color(0xFFB98A36), 1f to Color(0xFFE9C977), start = Offset(77f, 77f), end = Offset(93f, 93f)), 8f, c)
         }
     }
 }
+
+/** The hours round the board's tide clock: to high water on the left, to low water on the right. */
+private data class Hour(val label: String, val x: Float, val y: Float, val size: Float)
+
+private val HOURS = listOf(
+    Hour("3", 36f, 89f, 11f), Hour("3", 134f, 89f, 11f), Hour("2", 52f, 54f, 10f), Hour("4", 118f, 54f, 10f), Hour("4", 52f, 124f, 10f), Hour("2", 118f, 124f, 10f),
+)
