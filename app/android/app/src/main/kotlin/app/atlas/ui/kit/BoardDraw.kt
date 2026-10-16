@@ -25,7 +25,8 @@ import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.addOutline
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextStyle
@@ -190,13 +191,19 @@ fun El(
         transformOrigin = androidx.compose.ui.graphics.TransformOrigin(ox / size.width.coerceAtLeast(1f), oy / size.height.coerceAtLeast(1f))
     }
     if (alpha < 1f) m = m.graphicsLayer { this.alpha = alpha }
-    for (s in shadows) if (!s.inset) m = m.cssShadow(shape, y = s.y.dp, blur = s.blur.dp, colour = argb(s.colour), x = s.x.dp, spread = s.spread.dp)
+    // CSS paints a list's first shadow on top: the last is drawn first
+    for (s in shadows.asReversed()) if (!s.inset) m = m.cssShadow(shape, y = s.y.dp, blur = s.blur.dp, colour = argb(s.colour), x = s.x.dp, spread = s.spread.dp)
     if (blur > 0f) m = m.frosted(shape, argb(bg), blur.dp, saturate)
     m = m.drawBehind {
         val outline = shape.createOutline(size, layoutDirection, this)
         val path = Path().apply { addOutline(outline) }
         if (blur <= 0f && bg != 0L) drawPath(path, argb(bg))
         for (g in grad.asReversed()) drawPath(path, g.brush(size, density))
+        // CSS: inset shadows lie inside the padding box, above the background and below the border; the first on top
+        if (shadows.any { it.inset }) {
+            val pad = paddingBox(size, density, r ?: RectangleShapeCss, border)
+            for (s in shadows.asReversed()) if (s.inset) drawInset(pad, s)
+        }
         border?.let { b ->
             // CSS: the border is the ring between the outer rounded box and the inner one, inset by the widths, whose
             // corner radii shrink by the adjacent widths (never below 0)
@@ -227,12 +234,71 @@ fun El(
                 }
             }
         }
-        for (s in shadows) if (s.inset) clipPath(path) {
-            drawPath(path, argb(s.colour), style = Stroke(width = (s.blur + s.spread) * density))
-        }
     }
     if (clip) m = m.clip(shape)
     Box(m, content = content)
+}
+
+/** CSS's padding box in px: the box inside its border, with its radii shrunk by the border widths (never below 0). */
+private class PaddingBox(val left: Float, val top: Float, val right: Float, val bottom: Float, val radii: FloatArray) {
+    fun path(inset: Float = 0f, dx: Float = 0f, dy: Float = 0f): Path? {
+        if (right - left - 2 * inset <= 0f || bottom - top - 2 * inset <= 0f) return null
+        return Path().apply {
+            addRoundRect(
+                androidx.compose.ui.geometry.RoundRect(
+                    left + inset + dx, top + inset + dy, right - inset + dx, bottom - inset + dy,
+                    topLeftCornerRadius = androidx.compose.ui.geometry.CornerRadius(max(0f, radii[0] - inset), max(0f, radii[1] - inset)),
+                    topRightCornerRadius = androidx.compose.ui.geometry.CornerRadius(max(0f, radii[2] - inset), max(0f, radii[3] - inset)),
+                    bottomRightCornerRadius = androidx.compose.ui.geometry.CornerRadius(max(0f, radii[4] - inset), max(0f, radii[5] - inset)),
+                    bottomLeftCornerRadius = androidx.compose.ui.geometry.CornerRadius(max(0f, radii[6] - inset), max(0f, radii[7] - inset)),
+                ),
+            )
+        }
+    }
+}
+
+private fun paddingBox(size: Size, d: Float, r: CssCorners, b: CssBorder?): PaddingBox {
+    val o = r.radiiPx(size, d)
+    val l = (b?.left ?: 0f) * d
+    val t = (b?.top ?: 0f) * d
+    val rt = (b?.right ?: 0f) * d
+    val bt = (b?.bottom ?: 0f) * d
+    return PaddingBox(
+        l, t, size.width - rt, size.height - bt,
+        floatArrayOf(max(0f, o[0] - l), max(0f, o[0] - t), max(0f, o[1] - rt), max(0f, o[1] - t), max(0f, o[2] - rt), max(0f, o[2] - bt), max(0f, o[3] - l), max(0f, o[3] - bt)),
+    )
+}
+
+/**
+ * One inset `box-shadow`, as CSS draws it: inside the padding box, the colour everywhere outside a hole that is the
+ * padding box shrunk by the spread and moved by the offset, blurred by a Gaussian of σ = blur / 2.
+ */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawInset(pad: PaddingBox, s: CssShadow) {
+    val clip = pad.path() ?: return
+    val d = density
+    val colour = argb(s.colour)
+    val hole = pad.path(s.spread * d, s.x * d, s.y * d)
+    clipPath(clip) {
+        if (hole == null) {
+            drawRect(colour)
+        } else if (s.blur <= 0f) {
+            clipPath(hole, clipOp = androidx.compose.ui.graphics.ClipOp.Difference) { drawRect(colour) }
+        } else {
+            val sigma = s.blur * d / 2f
+            val m = 3f * sigma + abs(s.x * d) + abs(s.y * d) + abs(s.spread * d)
+            val ring = Path().apply {
+                fillType = androidx.compose.ui.graphics.PathFillType.EvenOdd
+                addRect(androidx.compose.ui.geometry.Rect(-m, -m, size.width + m, size.height + m))
+                addPath(hole)
+            }
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = s.colour.toInt()
+                // Skia's blur radius: σ = 0.57735 · radius + 0.5
+                if (sigma > 0.5f) maskFilter = android.graphics.BlurMaskFilter((sigma - 0.5f) / 0.57735f, android.graphics.BlurMaskFilter.Blur.NORMAL)
+            }
+            drawContext.canvas.nativeCanvas.drawPath(ring.asAndroidPath(), paint)
+        }
+    }
 }
 
 private val RectangleShapeCss = CssCorners(0f, 0f, 0f, 0f)
@@ -248,6 +314,7 @@ fun Tx(
     lineHeight: Float = 0f, spacing: Float = 0f, align: TextAlign = TextAlign.Start, decoration: TextDecoration? = null,
     shadow: CssShadow? = null, tnum: Boolean = false, wrap: Boolean = false,
 ) {
+    val d = androidx.compose.ui.platform.LocalDensity.current.density
     Text(
         text,
         Modifier.offset(x.dp, y.dp).requiredSize(w.dp + if (wrap) 0.dp else 2.dp, h.dp),
@@ -262,7 +329,8 @@ fun Tx(
             textAlign = align,
             textDecoration = decoration,
             fontFeatureSettings = if (tnum) "tnum" else null,
-            shadow = shadow?.let { androidx.compose.ui.graphics.Shadow(argb(it.colour), Offset(it.x, it.y), it.blur) },
+            // text-shadow in board px; Skia's blur radius for CSS's σ = blur / 2 (σ = 0.57735 · radius + 0.5)
+            shadow = shadow?.let { androidx.compose.ui.graphics.Shadow(argb(it.colour), Offset(it.x * d, it.y * d), max(0f, (it.blur * d / 2f - 0.5f) / 0.57735f)) },
         ),
         color = argb(colour),
         softWrap = wrap,
@@ -270,10 +338,26 @@ fun Tx(
     )
 }
 
-/** A board symbol ([id], from the board symbol set) in its box, tinted with the CSS `color` (`currentColor`). */
+/**
+ * A board symbol ([id], from the board symbol set) in its box, tinted with the CSS `color` (`currentColor`): its viewBox
+ * scaled to fit and centred, as the board's SVG (`xMidYMid meet`) draws it, so a 36 × 20 waveform fills its 36 × 20 box.
+ */
 @Composable
-fun Sy(id: String, x: Float, y: Float, w: Float, h: Float, tint: Argb = 0xFF14161B, alpha: Float = 1f) {
-    Symbol(id, Modifier.offset(x.dp, y.dp).requiredSize(w.dp, h.dp).then(if (alpha < 1f) Modifier.graphicsLayer { this.alpha = alpha } else Modifier), tint = argb(tint), size = min(w, h).dp)
+fun Sy(id: String, x: Float, y: Float, w: Float, h: Float, tint: Argb = 0xFF14161B, alpha: Float = 1f, rotate: Float = 0f, scale: Float = 1f) {
+    var m = Modifier.offset(x.dp, y.dp).requiredSize(w.dp, h.dp)
+    if (alpha < 1f || rotate != 0f || scale != 1f) m = m.graphicsLayer {
+        this.alpha = alpha
+        rotationZ = rotate
+        scaleX = scale
+        scaleY = scale
+    }
+    val colour = argb(tint)
+    androidx.compose.foundation.Canvas(m) {
+        val vb = SymbolPaths.of(id)?.viewBox
+        val side = if (vb == null || vb.width <= 0f || vb.height <= 0f) size.minDimension
+        else min(size.width / vb.width, size.height / vb.height) * max(vb.width, vb.height)
+        drawSymbol(id, Offset((size.width - side) / 2f, (size.height - side) / 2f), side, colour)
+    }
 }
 
 /** The board's 412 × 915 frame, its children placed by their board px. */
