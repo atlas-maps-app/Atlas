@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.addOutline
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
@@ -90,8 +91,11 @@ fun Modifier.frosted(shape: Shape, tint: Color, blur: Dp, saturate: Float = 1f):
             val sigma = blur.toPx()
             // three σ of what lies around the surface feed its blur, as the browser's blur reads past the edges
             val margin = ceil(sigma * 3f)
+            // The blur runs on a copy at 1 / DOWN of the resolution with σ / DOWN, then scales back up: the same picture
+            // for blurs this wide (σ of 20 px and more), at a sixteenth of the work.
+            val down = if (sigma >= 8f) DOWN else 1f
             // Android's blur radius r is a Gaussian of σ = 0.57735 r + 0.5 px (hwui's convertRadiusToSigma)
-            val radius = ((sigma - 0.5f) / 0.57735f).coerceAtLeast(0.01f)
+            val radius = ((sigma / down - 0.5f) / 0.57735f).coerceAtLeast(0.01f)
             val blurEffect = android.graphics.RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP)
             glass.renderEffect = (
                 if (saturate == 1f) blurEffect
@@ -100,18 +104,21 @@ fun Modifier.frosted(shape: Shape, tint: Color, blur: Dp, saturate: Float = 1f):
                     blurEffect,
                 )
                 ).asComposeRenderEffect()
-            val glassSize = IntSize((size.width + 2 * margin).toInt(), (size.height + 2 * margin).toInt())
+            val glassSize = IntSize(ceil((size.width + 2 * margin) / down).toInt(), ceil((size.height + 2 * margin) / down).toInt())
             onDrawBehind {
                 if (backdrop.active) {
                     val dx = backdrop.origin.x - at[0] + margin
                     val dy = backdrop.origin.y - at[1] + margin
-                    glass.record(glassSize) { translate(dx, dy) { drawLayer(backdrop.layer) } }
-                    clipPath(path) { translate(-margin, -margin) { drawLayer(glass) } }
+                    glass.record(glassSize) { scale(1f / down, 1f / down, Offset.Zero) { translate(dx, dy) { drawLayer(backdrop.layer) } } }
+                    clipPath(path) { translate(-margin, -margin) { scale(down, down, Offset.Zero) { drawLayer(glass) } } }
                 }
                 drawPath(path, tint)
             }
         }
 }
+
+/** How much smaller the copy that a wide blur runs on is. */
+private const val DOWN = 4f
 
 /** CSS `saturate(s)` as a colour matrix (Filter Effects 1, `feColorMatrix type="saturate"`), in sRGB as browsers apply it. */
 private fun saturation(s: Float): FloatArray = floatArrayOf(

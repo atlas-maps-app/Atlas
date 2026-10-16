@@ -334,7 +334,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             ov.location?.let { pt.drawLocation(canvas, g, it) }
             tape?.let { pt.drawTape(canvas, g, it, units, Locale.getDefault()) }
             drawStatus(canvas)
-            if (debug) drawDebug(canvas, f, pt)
+            // the timings show while the map is loading or working; a finished map is the board's, with nothing over it
+            if (debug && (f == null || frames.busy || frames.status !is MapStatus.Ready)) drawDebug(canvas, f, pt)
         }
         val t1 = System.nanoTime()
         drawMillis = drawMillis * 0.8 + (t1 - t0) / 1e6 * 0.2
@@ -395,8 +396,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         var w = 0f
         for (l in lines) w = max(w, debugText.measureText(l))
         val left = insets.left + pad
-        // Below the boards' top-left pills (the home's weather and needs reach about 140 dp down).
-        val top = insets.top + 150f * density
+        // Below the boards' top-left pills (the home's weather, moments and needs reach 190 px down).
+        val top = insets.top + 200f * density
         debugRect.set(left, top, left + w + 2 * pad, top + lines.size * lh + 2 * pad - 3f * density)
         canvas.drawRoundRect(debugRect, 8f * density, 8f * density, debugPanel)
         for ((i, l) in lines.withIndex()) canvas.drawText(l, left + pad, top + pad + (i + 1) * lh - 4f * density, debugText)

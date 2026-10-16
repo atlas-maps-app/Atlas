@@ -152,6 +152,8 @@ internal class EngineFrames(
     }
 
     private fun loop() {
+        // the engine works behind the screen: background priority, so a frame being made never starves the UI thread
+        runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND) }
         while (true) {
             val r: Request
             synchronized(lock) {

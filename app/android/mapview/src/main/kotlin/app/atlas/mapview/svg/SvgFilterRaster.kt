@@ -620,13 +620,27 @@ class SvgFilterRaster(private val filter: SvgFilter) {
         /** Runs [body] over row ranges of a [height] × [width] image, in parallel when the image is large. */
         internal fun rows(height: Int, width: Int, body: (Int, Int) -> Unit) {
             val threads = Runtime.getRuntime().availableProcessors().coerceIn(1, 8)
-            if (threads == 1 || height.toLong() * width < 32_768 || height < 2 * threads) {
+            // small work, one core, or already on a worker (a pool waiting on itself would deadlock): inline
+            if (threads == 1 || height.toLong() * width < 32_768 || height < 2 * threads || Thread.currentThread().name == "atlas-filter") {
                 body(0, height)
                 return
             }
             val chunk = (height + threads * 4 - 1) / (threads * 4)
-            java.util.stream.IntStream.range(0, (height + chunk - 1) / chunk).parallel().forEach { k ->
-                body(k * chunk, min(height, (k + 1) * chunk))
+            val tasks = (0 until (height + chunk - 1) / chunk).map { k -> java.util.concurrent.Callable { body(k * chunk, min(height, (k + 1) * chunk)) } }
+            for (f in pool.invokeAll(tasks)) f.get()
+        }
+
+        /**
+         * The filters' workers, at Android's background priority: a frame being made shares the cores with the screen and
+         * must never starve it (on a 4-core phone a full-priority raster froze the app at launch, 16 October).
+         */
+        private val pool: java.util.concurrent.ExecutorService by lazy {
+            val n = Runtime.getRuntime().availableProcessors().coerceIn(1, 8)
+            java.util.concurrent.Executors.newFixedThreadPool(n) { r ->
+                Thread({
+                    runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND) }
+                    r.run()
+                }, "atlas-filter").apply { isDaemon = true }
             }
         }
 
