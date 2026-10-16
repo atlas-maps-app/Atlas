@@ -344,11 +344,18 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         }
     }
 
+    /** "Loading the map…", with the seconds once it takes a while. */
+    private fun loadingText(): String {
+        val since = frames.workSince
+        val secs = if (since == 0L) 0L else (frames.now() - since) / 1000
+        return if (secs < 3) "Loading the map…" else "Loading the map… %d s".format(Locale.getDefault(), secs)
+    }
+
     /** The map's honest state, when it is not simply the picture: loading, downloading with its size, no data here. */
     private fun drawStatus(canvas: Canvas) {
         val text = when (val s = frames.status) {
             is MapStatus.Ready -> return
-            is MapStatus.Loading -> if (shown == null) "Loading the map…" else return
+            is MapStatus.Loading -> if (shown == null) loadingText() else return
             is MapStatus.Downloading -> if (s.building) "Fetching this area from OpenStreetMap…"
             else if (s.bytes > 0) "Downloading map data · %.1f of %.1f MB".format(Locale.getDefault(), s.done / 1e6, s.bytes / 1e6)
             else "Downloading map data…"
@@ -369,6 +376,14 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         val t = f?.timings
         val lines = arrayOf(
             if (t == null) "no frame yet" else "frame %d: load %d · render %d · parse %d · raster %d ms".format(Locale.ROOT, f.number, t.load, t.render, t.parse, t.raster),
+            frames.stage.let { st ->
+                if (st.isEmpty()) "idle" else "now: %s%s · %d s".format(Locale.ROOT, st, frames.stageRegion?.let { " $it" } ?: "", (frames.now() - frames.stageSince) / 1000)
+            },
+            when (val s = frames.status) {
+                is MapStatus.NoData -> "status: ${s.reason}".take(90)
+                is MapStatus.Downloading -> "status: ${if (s.building) "building" else "downloading"} ${s.region} ${s.done / 1000} of ${s.bytes / 1000} KB"
+                else -> frames.lastError?.let { "last error: $it".take(90) } ?: "status: ${s::class.simpleName}"
+            },
             "draw %.1f ms%s".format(Locale.ROOT, drawMillis, if (frames.failures > 0) " · ${frames.failures} failed" else ""),
             if (f == null) "-" else "%s · %s · %s · band %.2f m".format(Locale.ROOT, f.region, f.view ?: "between views", f.moment, f.tolerance),
             "markers %d/%d · vertices %d".format(Locale.ROOT, p.markerCount, overlays.markers.size, p.routeVertices),

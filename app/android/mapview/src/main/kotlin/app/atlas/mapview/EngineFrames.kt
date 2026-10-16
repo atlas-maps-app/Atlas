@@ -69,6 +69,27 @@ internal class EngineFrames(
     var lastError: Throwable? = null
         private set
 
+    /** What the frame being made is doing now ("loading", "rendering", "rasterising"…), for which region, since when (ms). */
+    @Volatile
+    var stage: String = ""
+        private set
+
+    @Volatile
+    var stageRegion: String? = null
+        private set
+
+    @Volatile
+    var stageSince: Long = 0
+        private set
+
+    /** When the frame being made was started (ms on [clock]), 0 when none is. */
+    @Volatile
+    var workSince: Long = 0
+        private set
+
+    /** Milliseconds now, on the clock the stages are timed with. */
+    fun now(): Long = clock()
+
     private val lock = Object()
     private var want: Request? = null
     private var last: Request? = null
@@ -82,6 +103,21 @@ internal class EngineFrames(
     private val thread = Thread({ loop() }, "atlas-engine").apply {
         isDaemon = true
         priority = Thread.NORM_PRIORITY
+        start()
+    }
+
+    // While a frame is being made, a tick a second, so the stage and its seconds on screen keep counting.
+    private val ticker = Thread({
+        while (synchronized(lock) { !closed }) {
+            try {
+                Thread.sleep(1000)
+            } catch (_: InterruptedException) {
+                return@Thread
+            }
+            if (working) onChange()
+        }
+    }, "atlas-engine-tick").apply {
+        isDaemon = true
         start()
     }
 
@@ -131,6 +167,7 @@ internal class EngineFrames(
                 want = null
                 last = r
                 working = true
+                workSince = clock()
             }
             try {
                 make(r)
@@ -147,14 +184,23 @@ internal class EngineFrames(
                 // an engine fault (a place it has nothing to stand on, a broken pack) is no picture: say so
                 if (latest == null || frame == null) status = MapStatus.NoData("the engine could not draw this place: ${e.message ?: e}")
                 Log.w(TAG, "a frame failed: $e", e)
+            } catch (e: Throwable) {
+                // an error that is not memory (a stack overflow, a class that would not load): never a silent stall
+                failures++
+                lastError = e
+                if (latest == null || frame == null) status = MapStatus.NoData("the engine stopped: $e")
+                Log.e(TAG, "a frame failed: $e", e)
             } finally {
                 working = false
+                workSince = 0
+                setStage("", null)
                 onChange()
             }
         }
     }
 
     private fun make(r: Request) {
+        setStage("choosing the region", null)
         val regions = MapEngine.regions
         if (regions == null) {
             setStatus(MapStatus.NoData("no map data"))
@@ -181,13 +227,16 @@ internal class EngineFrames(
             region, r.view, r.moment, r.opts,
             progress = { p ->
                 if (p.stage == LiveProgress.Stage.LOADING) setStatus(MapStatus.Loading(p.region))
+                setStage(p.stage.name.lowercase(), p.region)
             },
             cancelled = { synchronized(lock) { closed } },
         ) ?: return
+        setStage("parsing", region.id)
         val t0 = System.nanoTime()
         val docs = res.layers.map { SvgParser.parse(it) }
         val t1 = System.nanoTime()
         val scale = min(r.density, MapEngine.maxRasterScale)
+        setStage("rasterising", region.id)
         // the CPU filters: exact on every Android version (the AGSL ones need a hardware canvas, see the filters screen)
         val image = EngineFrame.rasterise(docs, res.raster, fonts(), scale, SvgCanvas.FilterMode.CPU, background = if (r.night) NIGHT else Color.TRANSPARENT)
         val t2 = System.nanoTime()
@@ -202,6 +251,15 @@ internal class EngineFrames(
                 "load ${timings.load} ms, render ${timings.render} ms, parse ${timings.parse} ms, raster ${timings.raster} ms, " +
                 "total ${timings.total} ms; svg ${timings.svgChars / 1024} KB; scenes ${LiveEngine.sceneCount} (${LiveEngine.sceneBytes / 1_000_000} MB)",
         )
+    }
+
+    private fun setStage(name: String, region: String?) {
+        if (stage == name && stageRegion == region) return
+        stage = name
+        stageRegion = region
+        stageSince = clock()
+        if (name.isNotEmpty()) Log.i(TAG, "stage: $name${region?.let { " $it" } ?: ""}")
+        onChange()
     }
 
     private fun setStatus(s: MapStatus) {
