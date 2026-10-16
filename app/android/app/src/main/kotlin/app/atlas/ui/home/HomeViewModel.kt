@@ -73,15 +73,19 @@ class HomeViewModel(
 ) : ViewModel() {
     private val saved: SavedCamera? = services.startCameraNow()
 
-    /** True when the camera came from nowhere in particular: the first fix may move it. */
-    private var cameraUnset = focus == null && saved == null
+    /**
+     * True when the camera came from nowhere in particular (the first fix may move it) or is the demo's: either way it is
+     * not saved until the user moves the map, so the demo never replaces the view the user left.
+     */
+    private var cameraUnset = focus == null && (saved == null || services.ciDemo)
 
     val map = MapState(
         when {
             focus != null -> CameraPosition(focus, focusZoom ?: 17.0, 0.0, DEFAULT_PITCH)
-            saved != null -> CameraPosition(saved.target, saved.zoom, saved.bearing, saved.pitch)
-            // CI's demo opens on the bundled Westerkerk, which the engine draws at once without the network
+            // CI's demo (and the bench shortcut) opens on the bundled Westerkerk, which the engine draws at once without the
+            // network, whatever view was saved: the same frame on the emulator and on a phone
             services.ciDemo -> HomeView.westerkerk
+            saved != null -> CameraPosition(saved.target, saved.zoom, saved.bearing, saved.pitch)
             else -> FirstLook.around(services.location.last.value?.location)
         },
     ).apply { time = clock() }

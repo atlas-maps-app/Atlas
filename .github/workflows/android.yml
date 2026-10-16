@@ -1,5 +1,7 @@
 # Builds Atlas's Android app, runs every unit test (Robolectric draws real pixels for the screenshot tests)
-# and keeps the debug APK, the test reports and the screenshots as artifacts.
+# and keeps the debug APK, the bench APK (a non-debuggable build with the timings overlay: what a phone runs),
+# the test reports and the screenshots as artifacts. The emulator job opens both APKs and keeps the engine's timings,
+# memory, a simpleperf profile and the GL capabilities (app/android/ci/smoke.sh). Releases do not carry the bench APK.
 name: Android
 
 on:
@@ -24,6 +26,10 @@ on:
         description: Seconds to wait for the home's map and the filter probes
         type: number
         default: 180
+      bench:
+        description: Also run the bench APK (as installed and compiled, memory, simpleperf, GL capabilities)
+        type: boolean
+        default: true
 
 concurrency:
   group: android-${{ github.ref }}
@@ -48,9 +54,9 @@ jobs:
       - name: Test and build
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.tests }}" = "false" ]; then
-            ./gradlew assembleDebug --stacktrace
+            ./gradlew assembleDebug assembleBench --stacktrace
           else
-            ./gradlew test testDebugUnitTest assembleDebug --continue --stacktrace
+            ./gradlew test testDebugUnitTest assembleDebug assembleBench --continue --stacktrace
           fi
       - name: Keep the APK
         if: always()
@@ -58,6 +64,13 @@ jobs:
         with:
           name: atlas-debug-apk
           path: app/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: ignore
+      - name: Keep the bench APK
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: atlas-bench-apk
+          path: app/android/app/build/outputs/apk/bench/*.apk
           if-no-files-found: ignore
       - name: Keep the reports and pictures
         if: always()
@@ -78,13 +91,18 @@ jobs:
     needs: build
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           name: atlas-debug-apk
           path: apk
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: atlas-bench-apk
+          path: apk-bench
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -98,7 +116,7 @@ jobs:
           profile: pixel_7
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: ATLAS_SCREENS="${{ inputs.screens }}" ATLAS_MAP_WAIT="${{ inputs.wait || 180 }}" bash app/android/ci/smoke.sh apk shots
+          script: ATLAS_SCREENS="${{ inputs.screens }}" ATLAS_MAP_WAIT="${{ inputs.wait || 180 }}" ATLAS_BENCH="${{ github.event_name == 'workflow_dispatch' && inputs.bench == false && '0' || '1' }}" bash app/android/ci/smoke.sh apk shots apk-bench
       - name: Keep the screenshots
         if: always()
         uses: actions/upload-artifact@v7

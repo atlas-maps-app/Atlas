@@ -22,7 +22,7 @@ android {
 
     // The release key comes from the environment (CI secrets, see .github/workflows/release.yml); without it the
     // release build is signed with the debug key so it still installs. Alphas are debug builds signed with the release
-    // key, so they update one another and a later release.
+    // key, so they update one another and a later release. The bench build (below) is signed the same way.
     val releaseKey = System.getenv("ATLAS_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
     signingConfigs {
         if (releaseKey != null) create("release") {
@@ -34,12 +34,30 @@ android {
     }
 
     buildTypes {
+        // BuildConfig.TIMINGS gates the frame-timings overlay on the home map (the engine's load, render, parse and
+        // raster times of each exact frame): on in debug and bench, off in release. The overlay used to follow
+        // FLAG_DEBUGGABLE, which a non-debuggable build does not have.
         debug {
             if (releaseKey != null) signingConfig = signingConfigs.getByName("release")
+            buildConfigField("boolean", "TIMINGS", "true")
         }
         release {
             isMinifyEnabled = false
             signingConfig = if (releaseKey != null) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
+            buildConfigField("boolean", "TIMINGS", "false")
+        }
+        // The bench build: what a user's phone runs (not debuggable, so ART compiles and runs it as a release app does,
+        // and the numbers are the phone's) with the timings overlay kept. Same key as the others, so it installs over them.
+        // Profileable, so simpleperf (and Android Studio's profilers) can sample it on a phone without root.
+        // CI builds and runs it next to the debug APK (ci/smoke.sh); releases do not carry it.
+        create("bench") {
+            initWith(getByName("release"))
+            isDebuggable = false
+            isProfileable = true
+            isMinifyEnabled = false
+            signingConfig = if (releaseKey != null) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
+            matchingFallbacks += "release"
+            buildConfigField("boolean", "TIMINGS", "true")
         }
     }
     compileOptions {
@@ -49,6 +67,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         // Licence notices several jars carry under the same name; the app keeps its own in About & licences.

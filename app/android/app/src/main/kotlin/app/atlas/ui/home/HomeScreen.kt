@@ -30,7 +30,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -39,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.atlas.BuildConfig
 import app.atlas.R
 import app.atlas.geo.LatLon
 import app.atlas.geo.Sun
@@ -151,8 +151,6 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
     // The board's overlays start 48 dp down; a taller status bar pushes them below it.
     val top = maxOf(48.dp, statusTop + 8.dp)
 
-    val context = LocalContext.current
-    val debuggable = remember(context) { context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0 }
     BoxWithConstraints(Modifier.fillMaxSize()) {
       val screenHeight = maxHeight
       // The map and its wash are what the frosted pills, the control column and the tab bar blur behind them.
@@ -174,8 +172,8 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
             },
             onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
             onCameraMove = vm::onCameraMove,
-            // Debug builds (the alphas) show each exact frame's timings, so a phone can be read without logcat.
-            debug = debuggable,
+            // Debug and bench builds show each exact frame's timings, so a phone can be read without logcat.
+            debug = BuildConfig.TIMINGS,
         )
 
         // The board's wash over the top 170 dp, so the pills read over the far, busy part of the view.
