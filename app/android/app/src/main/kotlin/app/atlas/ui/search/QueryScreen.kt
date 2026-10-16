@@ -1,6 +1,12 @@
 package app.atlas.ui.search
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.ui.draw.drawBehind
+import app.atlas.ui.kit.CssCorners
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.kit.LocalBackdrop
+import app.atlas.ui.kit.SheetLook
+import app.atlas.ui.kit.backdropSource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,16 +20,13 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -58,9 +61,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -83,37 +83,61 @@ import app.atlas.search.Chip
 import app.atlas.search.ChipKind
 import app.atlas.search.Hit
 import app.atlas.search.ParsedQuery
-import app.atlas.services.SettingsKeys
 import app.atlas.ui.kit.Atlas
-import app.atlas.ui.kit.Hairline
 import app.atlas.ui.kit.Kicker
 import app.atlas.ui.kit.PrimaryButton
 import app.atlas.ui.kit.Sheet
 import app.atlas.ui.kit.SheetStop
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
-import app.atlas.ui.kit.SymbolButton
-import app.atlas.ui.kit.WalkTime
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.rememberSheetState
-import app.atlas.ui.kit.softShadow
-import app.atlas.ui.kit.walkMinutes
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-/** The colours of the ↳ rows, in order: blue, green, purple, amber (as the Query board's circles). */
-internal val CLAUSE_COLOURS = longArrayOf(0xFF2E5BFF, 0xFF1F9D55, 0xFF7B4FD6, 0xFFE29A12)
+/** The colours of the ↳ rows, in order: blue, green, purple, amber (as the Query board's circles and chips). */
+internal val CLAUSE_COLOURS = longArrayOf(0xFF2E5BFF, 0xFF178A4E, 0xFF7B4DFF, 0xFFE29A12)
+
+/**
+ * A ↳ row's chip colours as the Query board pairs them: the strong colour (the subject's symbol), the ink of the
+ * distance, the pale fill of the distance chip and the ring of the subject chip.
+ */
+private class ClauseLook(val strong: Long, val ink: Long, val fill: Long, val ring: Long)
+
+private val CLAUSE_LOOKS = listOf(
+    ClauseLook(0xFF2E5BFF, 0xFF1F3FC7, 0xFFE4EAFF, 0xFFC9D3FF),
+    ClauseLook(0xFF178A4E, 0xFF12663A, 0xFFDDF1E5, 0xFFBFE3CD),
+    ClauseLook(0xFF7B4DFF, 0xFF5A32D6, 0xFFECE6FF, 0xFFD6CCFF),
+    ClauseLook(0xFFE29A12, 0xFF8A5A00, 0xFFFFF7E0, 0xFFF3E2B0),
+)
+
+private fun clauseLook(i: Int) = CLAUSE_LOOKS[i % CLAUSE_LOOKS.size]
+
+/** The Query board's ink, greys, warm buttons and the sheet's paper. */
+private const val INK = 0xFF14161B
+private const val GREY = 0xFF464C5A
+private const val WARM = 0xFFF1EEE8
+private const val SHEET = 0xFFFBFAF7
 
 /** The placeholder flag "alert me" sets: queries to watch, kept in settings. */
 internal val ALERTS = stringSetPreferencesKey("search.alerts")
 
+/** The Query board's sheet: #FBFAF7, corners 30, its shadow 0 −10 30 of the night ink at 14 %, a #D8D4CC grabber. */
+private val QUERY_SHEET = SheetLook(
+    Modifier.boardBox(SHEET, CssCorners(30f, 30f, 0f, 0f), listOf(CssShadow(0f, -10f, 30f, 0f, 0x24181C30))),
+    Color(0xFFD8D4CC),
+)
+
+/** The share of the screen the Query board's sheet takes: 290 of 915 px. */
+private const val SHEET_HALF = 290f / 915f
+
 /**
  * The query builder, "A near B", as on the Query board: the sentence read into chips (what, and ↳ near what, within a
- * distance you can dial), the map with the circles around the "B"s and the ranked "A" pins, and the sheet with how many
- * there are, how fast the phone found them, save as a layer, alert me, download, and `{} QL`.
+ * distance you can dial) in a glass card at the top, the map with the circles around the "B"s and the ranked "A" pins,
+ * and the sheet with how many there are, how fast the phone found them, save as a layer, alert me, download, and `{} QL`.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -132,7 +156,6 @@ fun QueryScreen(args: Dest.Query, nav: Navigator) {
     val alerts by remember { services.settings.flow(ALERTS, emptySet()) }.collectAsStateWithLifecycle(emptySet())
     val map = remember { MapState(CameraPosition(here, 16.0)) }
     val sheet = rememberSheetState(SheetStop.HALF, setOf(SheetStop.PEEK, SheetStop.HALF, SheetStop.FULL))
-    val c = Atlas.colors
     val parsed = state.parsed
     val hits = state.result?.hits.orEmpty()
 
@@ -149,13 +172,13 @@ fun QueryScreen(args: Dest.Query, nav: Navigator) {
         BBox.of(pts)?.let { b -> runCatching { map.fit(b.buffer(80.0), 40) } }
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(c.paper)) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xFFEFE5DA))) {
         AtlasMap(
             state = map,
             tiles = tiles,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().backdropSource(LocalBackdrop.current),
             overlays = MapOverlays(markers = markers, areas = areas, location = UserLocation(here, 15.0)),
-            contentPadding = PaddingValues(top = 260.dp, bottom = maxHeight * 0.42f),
+            contentPadding = PaddingValues(top = 262.dp, bottom = maxHeight * SHEET_HALF),
             onTap = { hit ->
                 val p = when (hit) {
                     is MapHit.OnMarker -> hit.marker.place
@@ -167,26 +190,24 @@ fun QueryScreen(args: Dest.Query, nav: Navigator) {
             onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
         )
 
-        // The sentence and its chips, in a card over the map.
+        // The sentence and its chips, in the board's glass card over the map: 12 px from the sides at 44, 12 px in.
         Column(
             Modifier
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 12.dp, vertical = 10.dp)
+                .padding(top = boardShift())
+                .padding(start = 12.dp, end = 12.dp, top = 44.dp)
                 .fillMaxWidth()
-                .softShadow(RoundedCornerShape(28.dp), c.shadow, 14.dp)
-                .clip(RoundedCornerShape(28.dp))
-                .background(c.card)
-                .padding(10.dp),
+                .boardBox(0xEBFFFFFF, round(28f), listOf(CssShadow(0f, 10f, 30f, 0f, 0x29181C30)), blur = 24f, saturate = 1.5f)
+                .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SymbolButton("ui-chevron-left", stringResource(R.string.kit_back), { nav.back() }, size = 44.dp, elevation = 0.dp, background = c.cardMuted)
-                Symbol("ui-sparkles", tint = c.ask, size = 20.dp)
+                BoardRoundButton("ui.back", stringResource(R.string.kit_back), { nav.back() }, side = 40f, bg = WARM, tint = INK)
+                BoardSymbol("ui.sparkles", 18f, 0xFF7B4DFF)
                 BasicTextField(
                     field, { field = it; vm.onText(it) }, Modifier.weight(1f),
-                    textStyle = Atlas.type.bodyStrong.copy(color = c.ink, fontSize = 16.sp), cursorBrush = SolidColor(c.go), maxLines = 2,
+                    textStyle = boardText(15f, 500, 19.5f).copy(color = Color(INK)), cursorBrush = SolidColor(Color(INK)), maxLines = 2,
                     decorationBox = { inner ->
-                        if (field.isEmpty()) Text(stringResource(R.string.query_hint), style = Atlas.type.body, color = c.inkFaint)
+                        if (field.isEmpty()) BoardLine(stringResource(R.string.query_hint), boardText(15f, 500, 19.5f), 0xFF9AA0AC)
                         inner()
                     },
                 )
@@ -202,45 +223,45 @@ fun QueryScreen(args: Dest.Query, nav: Navigator) {
             }
         }
 
-        Sheet(sheet, peekHeight = 120.dp, halfFraction = 0.42f, fullTopGap = 150.dp) {
+        Sheet(sheet, peekHeight = 120.dp, halfFraction = SHEET_HALF, fullTopGap = 150.dp, look = QUERY_SHEET) {
             Row(
-                Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, bottom = 6.dp),
+                Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 6.dp).height(44.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 val total = state.result?.total
-                Text(total?.toString() ?: "–", style = Atlas.type.numeral, color = c.ink)
-                parsed?.let { QueryEdit.mainChips(it).firstOrNull { ch -> ch.kind == ChipKind.KIND } }?.let { Symbol(it.symbol, tint = c.ink, size = 22.dp) }
+                BoardLine(total?.toString() ?: "–", boardText(28f, 700, 28f, tnum = true), INK)
+                parsed?.let { QueryEdit.mainChips(it).firstOrNull { ch -> ch.kind == ChipKind.KIND } }?.let { BoardSymbol(it.symbol, 18f, GREY) }
                 state.result?.let { r ->
                     val secs = String.format(Locale.ROOT, "%.2f s", r.micros / 1_000_000.0)
                     val where = stringResource(if (state.online) R.string.query_online else R.string.query_on_phone)
                     Row(
-                        Modifier.clip(CircleShape).background(c.openSoft).padding(horizontal = 10.dp, vertical = 5.dp)
+                        Modifier.height(24.dp).boardBox(0xFFE7F4EC, round(12f)).padding(horizontal = 8.dp)
                             .semantics(mergeDescendants = true) { contentDescription = "$where $secs" },
-                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Symbol(if (state.online) "ui-cloud" else "ui-smartphone", tint = c.open, size = 14.dp)
-                        Text(secs, style = Atlas.type.label, color = c.open)
+                        BoardSymbol(if (state.online) "ui-cloud" else "ui.offline", 12f, 0xFF12663A)
+                        BoardLine(secs, boardText(12f, 600, 15.5f), 0xFF12663A)
                     }
                 }
                 Spacer(Modifier.weight(1f))
                 val text = state.text.trim()
                 val kept = layers.any { it.text == text }
                 val alerting = text in alerts
-                SymbolButton("ui-layers", stringResource(if (kept) R.string.query_layer_kept else R.string.query_layer), {
+                BoardRoundButton("ui.layer-add", stringResource(if (kept) R.string.query_layer_kept else R.string.query_layer), {
                     if (text.isNotEmpty()) services.scope.launch(Dispatchers.IO) { runCatching { if (kept) services.saved.removeLayer(text) else services.saved.keepLayer(text, alerting) } }
-                }, size = 44.dp, elevation = 0.dp, background = c.cardMuted, selected = kept)
-                SymbolButton("ui-bell", stringResource(if (alerting) R.string.query_alert_on else R.string.query_alert), {
+                }, glyph = 19f, bg = if (kept) INK else WARM, tint = if (kept) 0xFFFFFFFF else INK)
+                BoardRoundButton("ui.bell", stringResource(if (alerting) R.string.query_alert_on else R.string.query_alert), {
                     if (text.isNotEmpty()) services.scope.launch {
                         services.settings.edit { p -> val now = p[ALERTS].orEmpty(); p[ALERTS] = if (alerting) now - text else now + text }
                     }
-                }, size = 44.dp, elevation = 0.dp, background = c.cardMuted, selected = alerting)
-                SymbolButton("ui-download", stringResource(R.string.query_download), {
+                }, glyph = 19f, bg = if (alerting) INK else WARM, tint = if (alerting) 0xFFFFFFFF else INK)
+                BoardRoundButton("ui.download", stringResource(R.string.query_download), {
                     val b = BBox.of(hits.map { it.record.location })
                     val centre = b?.center ?: here
                     nav.go(Dest.RegionPicker(centre.lat, centre.lon))
-                }, size = 44.dp, elevation = 0.dp, background = c.cardMuted)
+                }, glyph = 19f, bg = WARM, tint = INK)
             }
             QueryResults(state, parsed, here, lang, vm, onPlace = { p -> services.remember(p); nav.go(Dest.Place.of(p)) })
         }
@@ -274,7 +295,11 @@ private fun markersOf(hits: List<Hit>, circles: List<NearCircle>): List<Marker> 
     }
 }
 
-/** The chips of the query: the main row, then a ↳ row per "near" with its distance dial and what it is near. */
+/**
+ * The chips of the query as the board's chip board (#F6F4EF, corners 20, 10 px in, rows 8 px apart, chips 36 px and
+ * 6 px apart): the main row, then a ↳ row per "near" with its distance dial and what it is near, and `{} QL` at the end
+ * of the last row.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ChipBoard(
@@ -286,114 +311,113 @@ private fun ChipBoard(
     onDial: (QueryEdit.NearRow) -> Unit,
     onQl: () -> Unit,
 ) {
-    val c = Atlas.colors
     val rows = remember(parsed) { QueryEdit.rows(parsed) }
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.cardMuted).padding(10.dp),
+        Modifier.fillMaxWidth().boardBox(0xFFF6F4EF, round(20f)).padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp), itemVerticalAlignment = Alignment.CenterVertically) {
                 QueryEdit.mainChips(parsed).forEachIndexed { i, chip -> TokenChip(chip, dark = i == 0 && chip.kind == ChipKind.KIND, onClick = { onRemove(chip) }) }
                 val addLabel = stringResource(R.string.query_add)
-                Canvas(Modifier.size(40.dp).clip(CircleShape).clickable(role = Role.Button, onClick = onAdd).semantics { contentDescription = addLabel }) {
-                    dashedCircle(c.inkFaint, 1.5.dp.toPx())
-                    val s = 6.dp.toPx()
-                    drawLine(c.inkSoft, Offset(center.x - s, center.y), Offset(center.x + s, center.y), 2.dp.toPx(), StrokeCap.Round)
-                    drawLine(c.inkSoft, Offset(center.x, center.y - s), Offset(center.x, center.y + s), 2.dp.toPx(), StrokeCap.Round)
-                }
+                Box(
+                    Modifier.size(36.dp).clip(CircleShape).clickable(role = Role.Button, onClick = onAdd).semantics { contentDescription = addLabel }
+                        .drawBehind { dashedCircle(Color(0xFFB5B0A5), density) },
+                    contentAlignment = Alignment.Center,
+                ) { BoardSymbol("ui.plus", 16f, GREY) }
             }
-            QlPill(onQl)
+            if (rows.isEmpty()) QlPill(onQl)
         }
         rows.forEachIndexed { i, r ->
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("↳", style = Atlas.type.headline, color = c.inkFaint)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(Modifier.width(20.dp), contentAlignment = Alignment.Center) { BoardSymbol("ui.subitem", 14f, 0xFF9AA0AC) }
                 val metres = state.distances[r.row] ?: r.metres
-                val col = Color(CLAUSE_COLOURS[i % CLAUSE_COLOURS.size])
+                val look = clauseLook(i)
                 val dialLabel = stringResource(if (r.negated) R.string.query_dial_away else R.string.query_dial, metres.toInt())
                 Row(
-                    Modifier.heightIn(min = 40.dp).clip(CircleShape).background(col.copy(alpha = 0.14f)).clickable(role = Role.Button, onClickLabel = dialLabel) { onDial(r) }
-                        .padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    Modifier.height(36.dp).boardBox(look.fill, round(18f)).clickable(role = Role.Button, onClickLabel = dialLabel) { onDial(r) }
+                        .padding(start = 9.dp, end = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    DialGlyph(metres, col)
-                    Text((if (r.negated) "≥ " else "") + "${metres.toInt()} m", style = Atlas.type.bodyStrong, color = col)
+                    BoardSymbol("ui.radius", 17f, look.ink)
+                    BoardLine((if (r.negated) "≥ " else "") + "${metres.toInt()} m", boardText(14f, 600, 18f, tnum = true), look.ink)
                 }
-                QueryEdit.subjectOf(parsed, r.row)?.let { TokenChip(it, dark = false, onClick = { onRemove(it) }) }
+                QueryEdit.subjectOf(parsed, r.row)?.let { TokenChip(it, dark = false, ring = look.ring, tint = look.strong, onClick = { onRemove(it) }) }
+                if (i == rows.lastIndex) {
+                    Spacer(Modifier.weight(1f))
+                    QlPill(onQl)
+                }
             }
         }
         if (parsed.unknown.isNotEmpty()) {
-            Text(stringResource(R.string.query_unknown, parsed.unknown.joinToString(", ")), style = Atlas.type.caption, color = c.caution)
+            BoardLine(stringResource(R.string.query_unknown, parsed.unknown.joinToString(", ")), boardText(12f, 400, 15.5f), 0xFF8A5A00, lines = 2)
         }
     }
 }
 
-/** A chip of the query: dark for what is sought, white with a symbol for the rest; tap takes it out. */
+/**
+ * A chip of the query, as the board's: dark (#14161B, a warm symbol, white words) for what is sought, a white 36 px
+ * disc with only its symbol for a property, else white with a symbol and words; rings of #E3DED4 or the clause's own.
+ * A tap takes it out.
+ */
 @Composable
-private fun TokenChip(chip: Chip, dark: Boolean, onClick: () -> Unit) {
-    val c = Atlas.colors
-    val bg = if (dark) c.pill else c.card
-    val fg = if (dark) c.onPill else c.ink
+private fun TokenChip(chip: Chip, dark: Boolean, onClick: () -> Unit, ring: Long = 0xFFE3DED4, tint: Long = INK) {
     val iconOnly = chip.kind == ChipKind.PROPERTY || chip.kind == ChipKind.OPEN || chip.kind == ChipKind.PREFERENCE
     val remove = stringResource(R.string.query_remove, chip.label)
     Row(
-        Modifier.heightIn(min = 40.dp).clip(CircleShape).background(bg).then(if (!dark) Modifier.border(1.dp, c.line, CircleShape) else Modifier)
+        Modifier.height(36.dp).then(if (iconOnly) Modifier.width(36.dp) else Modifier)
+            .boardBox(if (dark) INK else 0xFFFFFFFF, round(18f), border = if (dark) null else ring(1f, ring))
             .clickable(role = Role.Button, onClickLabel = remove, onClick = onClick)
             .semantics(mergeDescendants = true) { contentDescription = chip.label }
-            .padding(horizontal = if (iconOnly) 10.dp else 14.dp),
+            .then(if (iconOnly) Modifier else Modifier.padding(start = 8.dp, end = 12.dp)),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = if (iconOnly) Arrangement.Center else Arrangement.spacedBy(6.dp),
     ) {
-        Symbol(chip.symbol, tint = if (chip.kind == ChipKind.OPEN) c.open else fg, size = 18.dp)
-        if (!iconOnly) Text(chip.label, style = Atlas.type.bodyStrong, color = fg, maxLines = 1)
+        val symbolTint = when {
+            dark -> 0xFFF0C38E
+            chip.kind == ChipKind.OPEN -> 0xFF178A4E
+            else -> tint
+        }
+        BoardSymbol(chip.symbol, if (iconOnly) 17f else 18f, symbolTint)
+        if (!iconOnly) BoardLine(chip.label, boardText(14f, 600, 18f), if (dark) 0xFFFFFFFF else INK)
     }
 }
 
+/** The board's `{} QL`: 36 px, ink, the code symbol and "QL" in Geist Mono 12 / 500. */
 @Composable
 private fun QlPill(onClick: () -> Unit) {
-    val c = Atlas.colors
     val d = stringResource(R.string.query_ql)
     Row(
-        Modifier.heightIn(min = 40.dp).clip(CircleShape).background(c.pill).clickable(role = Role.Button, onClick = onClick)
-            .semantics(mergeDescendants = true) { contentDescription = d }.padding(horizontal = 14.dp),
+        Modifier.height(36.dp).boardBox(INK, round(18f)).clickable(role = Role.Button, onClick = onClick)
+            .semantics(mergeDescendants = true) { contentDescription = d }.padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        Text("{ } QL", style = Atlas.type.mono.copy(fontWeight = FontWeight.Bold), color = c.onPill, maxLines = 1, softWrap = false)
+        BoardSymbol("ui.code", 15f, 0xFFFFFFFF)
+        BoardLine("QL", boardText(12f, 500, 15.5f, family = GEIST_MONO), 0xFFFFFFFF)
     }
 }
 
-/** The little dial of a distance chip: a ring filled to the distance on a 1 km scale. */
-@Composable
-private fun DialGlyph(metres: Double, colour: Color) {
-    Canvas(Modifier.size(18.dp)) {
-        val w = 2.dp.toPx()
-        val r = size.minDimension / 2 - w
-        drawCircle(colour.copy(alpha = 0.3f), r, style = Stroke(w))
-        drawArc(colour, -90f, (metres / 1000.0 * 360.0).toFloat().coerceIn(12f, 360f), false, Offset(center.x - r, center.y - r), Size(2 * r, 2 * r), style = Stroke(w, cap = StrokeCap.Round))
-        drawCircle(colour, w * 0.8f, center)
-    }
-}
-
-/** The ranked answers: number, name, the per-clause distances ("🚲 60 m · 🌲 30 m") and walk minutes. */
+/** The ranked answers as the board's rows, 2 px apart: number, name, the per-clause distances and walk minutes. */
 @Composable
 private fun QueryResults(state: QueryState, parsed: ParsedQuery?, here: app.atlas.geo.LatLon, lang: String, vm: QueryViewModel, onPlace: (app.atlas.model.Place) -> Unit) {
-    val c = Atlas.colors
     val r = state.result
+    val part = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp)
     when {
-        state.text.isBlank() || parsed == null -> StateMessage("ui-near", stringResource(R.string.query_title), text = stringResource(R.string.query_text), tint = c.ask)
-        parsed.steps.isEmpty() -> StateMessage("ui-help", stringResource(R.string.query_not_read), text = stringResource(R.string.query_text), tint = c.caution)
-        state.error != null && r == null -> StateMessage("ui-alert-triangle", stringResource(R.string.query_failed), text = state.error, tint = c.alert)
-        r == null -> Text(stringResource(R.string.kit_loading), Modifier.padding(20.dp), style = Atlas.type.caption, color = c.inkSoft)
+        state.text.isBlank() || parsed == null -> StateMessage("ui-near", stringResource(R.string.query_title), part, text = stringResource(R.string.query_text), tint = Color(0xFF7B4DFF))
+        parsed.steps.isEmpty() -> StateMessage("ui-help", stringResource(R.string.query_not_read), part, text = stringResource(R.string.query_text), tint = Color(0xFF8A5A00))
+        state.error != null && r == null -> StateMessage("ui-alert-triangle", stringResource(R.string.query_failed), part, text = state.error, tint = Color(0xFFC8322A))
+        r == null -> BoardLine(stringResource(R.string.kit_loading), boardText(12f, 400, 15.5f), GREY, part)
         r.hits.isEmpty() -> StateMessage(
-            "ui-search", stringResource(R.string.query_none), text = stringResource(R.string.query_none_text), tint = c.inkSoft,
+            "ui-search", stringResource(R.string.query_none), part, text = stringResource(R.string.query_none_text), tint = Color(GREY),
             action = if (vm.online()) ({ PrimaryButton(stringResource(R.string.query_run_online), onClick = vm::runOnline, symbol = "ui-cloud") }) else null,
         )
         else -> {
             val rows = remember(parsed) { QueryEdit.rows(parsed).filter { !it.negated } }
-            LazyColumn(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+            LazyColumn(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 itemsIndexed(r.hits, key = { _, h -> h.place.key }) { i, h ->
                     val symbols = h.near.map { n -> rows.getOrNull(n.clause)?.let { QueryEdit.subjectOf(parsed, it.row)?.symbol } ?: n.record.symbol }
                     RankedRow(i + 1, h, symbols, lang, onClick = { onPlace(h.place) })
-                    if (i < r.hits.lastIndex) Hairline()
                 }
             }
         }
@@ -401,39 +425,41 @@ private fun QueryResults(state: QueryState, parsed: ParsedQuery?, here: app.atla
 }
 
 /**
- * A ranked answer, as on the Query board: its number on a square (blue for the best), the name, and under it the
- * distance to what each clause asked for in the clause's colour ("🚲 60 m · 🌲 30 m"); walk minutes at the end.
+ * A ranked answer, as on the Query board: 60 px over a #ECE8E1 hairline, its number on a 40 px square (blue for the
+ * best), the name in 16 / 600, and under it the distance to what each clause asked for in the clause's colour
+ * (13 px symbol, 12 px figures, 10 apart); walk minutes at the end in 14 / 700.
  */
 @Composable
 private fun RankedRow(rank: Int, h: Hit, symbols: List<String>, lang: String, onClick: () -> Unit) {
-    val c = Atlas.colors
     val near = h.near.joinToString(", ") { shortMetres(it.distance) }
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable(role = Role.Button, onClick = onClick).padding(vertical = 8.dp)
+        Modifier.fillMaxWidth().heightIn(min = 61.dp)
+            .drawBehind { drawRect(Color(0xFFECE8E1), topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - density), size = androidx.compose.ui.geometry.Size(size.width, density)) }
+            .clickable(role = Role.Button, onClick = onClick).padding(bottom = 1.dp)
             .semantics(mergeDescendants = true) { if (near.isNotEmpty()) contentDescription = near },
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RankTile(rank, 44.dp)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(h.record.name(lang) ?: kindOf(h.place, lang) ?: h.place.key, style = Atlas.type.name, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        RankTile(rank)
+        Column(Modifier.weight(1f).padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            BoardLine(h.record.name(lang) ?: kindOf(h.place, lang) ?: h.place.key, boardText(16f, 600, 20.5f), INK)
             if (h.near.isEmpty()) {
                 listOfNotNull(kindOf(h.place, lang), addressOf(h.place)).joinToString(" · ").takeIf { it.isNotEmpty() }?.let {
-                    Text(it, style = Atlas.type.caption, color = c.inkSoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    BoardLine(it, boardText(12f, 400, 15.5f), GREY)
                 }
             } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     h.near.forEachIndexed { k, n ->
-                        val col = Color(CLAUSE_COLOURS[n.clause % CLAUSE_COLOURS.size])
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Symbol(symbols[k], tint = col, size = 15.dp)
-                            Text(shortMetres(n.distance), style = Atlas.type.label, color = col)
+                        val ink = clauseLook(n.clause).ink
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            BoardSymbol(symbols[k], 13f, ink)
+                            BoardLine(shortMetres(n.distance), boardText(12f, 400, 15.5f, tnum = true), ink)
                         }
                     }
                 }
             }
         }
-        h.distance?.let { Text(walkOrDistance(it), style = Atlas.type.numeralSmall, color = c.ink) }
+        h.distance?.let { BoardLine(walkOrDistance(it), boardText(14f, 700, 18f, tnum = true), INK) }
     }
 }
 

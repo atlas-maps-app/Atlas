@@ -1,6 +1,12 @@
 package app.atlas.ui.search
 
 import android.content.Intent
+import androidx.compose.ui.graphics.Color
+import app.atlas.ui.kit.CssCorners
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.kit.LocalBackdrop
+import app.atlas.ui.kit.SheetLook
+import app.atlas.ui.kit.backdropSource
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -19,12 +25,9 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,9 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -59,11 +60,8 @@ import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.AtlasScreen
 import app.atlas.ui.kit.SheetStop
 import app.atlas.ui.kit.StateMessage
-import app.atlas.ui.kit.Symbol
-import app.atlas.ui.kit.SymbolButton
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.rememberSheetState
-import app.atlas.ui.kit.softShadow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -100,9 +98,7 @@ fun PlaceScreen(args: Dest.Place, nav: Navigator) {
 private fun PlaceView(place: Place, state: PlaceState, vm: PlaceViewModel, nav: Navigator, lang: String) {
     val services = LocalServices.current
     val context = LocalContext.current
-    val density = LocalDensity.current
     val here = rememberHere()
-    val c = Atlas.colors
     val sheet = rememberSheetState(SheetStop.HALF, setOf(SheetStop.HALF, SheetStop.FULL))
     val tiles by services.tiles.collectAsStateWithLifecycle()
     val lists by services.saved.lists.collectAsStateWithLifecycle()
@@ -113,12 +109,12 @@ private fun PlaceView(place: Place, state: PlaceState, vm: PlaceViewModel, nav: 
     val shareText = shareTextOf(place, lang)
     val shareLabel = stringResource(R.string.place_share)
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(c.paper)) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Color(SHEET_PAPER))) {
         val halfDp = maxHeight * SHEET_HALF
         AtlasMap(
             state = map,
             tiles = tiles,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().backdropSource(LocalBackdrop.current),
             overlays = MapOverlays(
                 markers = listOf(Marker(place.key, place.location, symbol, colour.toLong() and 0xFFFFFFFFL, MarkerStyle.PIN, selected = true, priority = 1_000, place = place)),
                 measure = false,
@@ -127,42 +123,43 @@ private fun PlaceView(place: Place, state: PlaceState, vm: PlaceViewModel, nav: 
             onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
         )
 
-        // Over the map, just above the sheet: the level and the photo.
+        // Over the map, 16 px above the sheet: the level, as the board's dark glass pill (40 px, 12 px in).
         Row(
             Modifier
                 .align(Alignment.BottomStart)
                 .offset { IntOffset(0, -sheet.visibleHeightPx.roundToInt()) }
-                .padding(start = 16.dp, bottom = 14.dp),
+                .padding(start = 16.dp, bottom = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             levelOf(place.tags)?.let { level ->
                 val d = stringResource(R.string.place_level, level)
                 Row(
-                    Modifier.height(44.dp).softShadow(CircleShape, c.shadow, 8.dp).clip(CircleShape).background(c.pill)
-                        .semantics(mergeDescendants = true) { contentDescription = d }.padding(horizontal = 14.dp),
+                    Modifier.height(40.dp).boardBox(0xD114161B, round(20f), blur = 16f)
+                        .semantics(mergeDescendants = true) { contentDescription = d }.padding(start = 10.dp, end = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Symbol("ui-layers", tint = c.onPill, size = 18.dp)
-                    Text("L$level", style = Atlas.type.bodyStrong, color = c.onPill)
+                    BoardSymbol("ui.layers", 17f, 0xFFFFFFFF)
+                    BoardLine("L$level", boardText(13f, 600, 17f), 0xFFFFFFFF)
                 }
             }
         }
 
-        // Top: back, share and save.
+        // Top: back, share and save, the board's 48 px glass discs at 44.
+        val glass = listOf(CssShadow(0f, 6f, 20f, 0f, 0x24181C30))
         Row(
-            Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            Modifier.fillMaxWidth().padding(top = boardShift()).padding(start = 16.dp, end = 16.dp, top = 44.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            SymbolButton("ui-chevron-left", stringResource(R.string.kit_back), { nav.back() }, size = 52.dp)
+            BoardRoundButton("ui.back", stringResource(R.string.kit_back), { nav.back() }, side = 48f, glyph = 22f, bg = 0xDBFFFFFF, shadows = glass, blur = 20f)
             Spacer(Modifier.weight(1f))
-            SymbolButton("ui-share", shareLabel, {
+            BoardRoundButton("ui.share", shareLabel, {
                 val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, shareText)
                 runCatching { context.startActivity(Intent.createChooser(send, shareLabel).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            }, size = 52.dp)
+            }, side = 48f, bg = 0xDBFFFFFF, shadows = glass, blur = 20f)
             val saveLabel = stringResource(if (saved) R.string.place_saved else R.string.place_save)
             Box(
-                Modifier.size(52.dp).softShadow(CircleShape, c.shadow, 8.dp).clip(CircleShape).background(if (saved) c.pill else c.card)
+                Modifier.size(48.dp).boardBox(if (saved) 0xFF14161B else 0xDBFFFFFF, round(24f), glass, blur = if (saved) 0f else 20f)
                     .combinedClickable(
                         role = Role.Button,
                         onClickLabel = saveLabel,
@@ -172,14 +169,14 @@ private fun PlaceView(place: Place, state: PlaceState, vm: PlaceViewModel, nav: 
                     .semantics { contentDescription = saveLabel },
                 contentAlignment = Alignment.Center,
             ) {
-                Symbol("ui-bookmark", tint = if (saved) c.onPill else c.ink, size = 24.dp)
+                BoardSymbol("ui.bookmark", 20f, if (saved) 0xFFFFFFFF else 0xFF14161B)
             }
         }
 
-        app.atlas.ui.kit.Sheet(sheet, peekHeight = 200.dp, halfFraction = SHEET_HALF, fullTopGap = 96.dp) {
+        app.atlas.ui.kit.Sheet(sheet, peekHeight = 200.dp, halfFraction = SHEET_HALF, fullTopGap = 96.dp, look = PLACE_SHEET) {
             Column(
-                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, top = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 PlaceSheetContent(place, state, vm, nav, lang, here)
                 Spacer(Modifier.windowInsetsPadding(WindowInsets.navigationBars).height(24.dp))
@@ -210,4 +207,14 @@ private fun shareTextOf(place: Place, lang: String): String = remember(place, la
 
 private const val HERO_ZOOM = 17.6
 private const val HERO_PITCH = 48.0
-private const val SHEET_HALF = 0.56f
+/** The share of the screen the Place board's sheet takes: from 440 to the foot of 915 px. */
+private const val SHEET_HALF = 475f / 915f
+
+/** The Place board's sheet paper. */
+internal const val SHEET_PAPER = 0xFFFBFAF7
+
+/** The Place board's sheet: its paper, corners 30, its shadow 0 −10 30 of the night ink at 12 %, a #D8D4CC grabber. */
+private val PLACE_SHEET = SheetLook(
+    Modifier.boardBox(SHEET_PAPER, CssCorners(30f, 30f, 0f, 0f), listOf(CssShadow(0f, -10f, 30f, 0f, 0x1F181C30))),
+    Color(0xFFD8D4CC),
+)

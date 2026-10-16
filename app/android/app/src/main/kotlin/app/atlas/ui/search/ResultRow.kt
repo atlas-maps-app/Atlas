@@ -17,6 +17,8 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
@@ -42,9 +44,7 @@ import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.OpenWords
 import app.atlas.ui.kit.PlaceSummary
 import app.atlas.ui.kit.Symbol
-import app.atlas.ui.kit.SymbolTile
 import app.atlas.ui.kit.WalkTime
-import app.atlas.ui.kit.contentColourFor
 import app.atlas.ui.kit.shortDistance
 import app.atlas.ui.kit.walkMinutes
 import java.time.LocalDateTime
@@ -60,14 +60,9 @@ fun toneOf(words: OpenWords?): Tone = when (words) {
     is OpenWords.Opens, OpenWords.Closed -> Tone.CLOSED
 }
 
-/** The colour of a [Tone] in the current theme. */
+/** The colour of a [Tone], as the boards colour it. */
 @Composable
-fun toneColour(t: Tone): Color = when (t) {
-    Tone.OPEN -> Atlas.colors.open
-    Tone.SOON -> Atlas.colors.caution
-    Tone.CLOSED -> Atlas.colors.inkSoft
-    Tone.UNKNOWN -> Atlas.colors.ink
-}
+fun toneColour(t: Tone): Color = Color(toneArgb(t))
 
 private const val FAR_WALK_S = 30 * 60.0
 
@@ -102,9 +97,26 @@ data class PlaceLine(val summary: PlaceSummary, val words: OpenWords?, val stepF
     }
 }
 
+/** The Search board's colours for a row's walk minutes: open green, closing amber, closed grey, unknown ink. */
+fun toneArgb(t: Tone): Long = when (t) {
+    Tone.OPEN -> 0xFF12663A
+    Tone.SOON -> 0xFF8A5A00
+    Tone.CLOSED -> ROW_SOFT
+    Tone.UNKNOWN -> ROW_INK
+}
+
+internal const val ROW_INK = 0xFF14161BL
+internal const val ROW_SOFT = 0xFF5A5F6CL
+
+/** The Search board's row text: the name in 15 / 800, the line under it in 12, the walk minutes in 13 / 900. */
+internal val ROW_TITLE = boardText(15f, 800, 19.5f)
+internal val ROW_LINE = boardText(12f, 400, 15.5f)
+internal val ROW_VALUE = boardText(13f, 900, 17f, tnum = true)
+
 /**
- * A row of the result lists: a symbol tile (or a custom [leading] one), the bold name, a line whose first words are the
- * open status in its colour, and a big right-hand value (walk minutes, a distance, an arrow) in [trailingColour].
+ * A row of the result lists, as the Search board draws one: 64 px under a hairline (#EEF0F4), a 40 px tile with corners
+ * 12 (a symbol on the place's colour, or a custom [leading] one), the name over a grey line 2 px apart, 12 px between
+ * them, and a right-hand value (walk minutes, a distance, "→") in [trailingColour].
  */
 @Composable
 fun ResultRow(
@@ -116,41 +128,53 @@ fun ResultRow(
     leading: (@Composable () -> Unit)? = null,
     trailing: String? = null,
     trailingSymbol: String? = null,
-    trailingColour: Color = Atlas.colors.ink,
+    trailingColour: Color = Color(ROW_INK),
     badge: String? = null,
-    titleColour: Color = Atlas.colors.ink,
-    tileSize: Dp = 48.dp,
+    titleColour: Color = Color(ROW_INK),
+    tileSize: Dp = 40.dp,
     titleLines: Int = 1,
+    hairline: Boolean = true,
     onClick: (() -> Unit)? = null,
 ) {
     Row(
         modifier
             .fillMaxWidth()
-            .heightIn(min = 68.dp)
-            .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
-            .padding(vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+            .then(if (hairline) Modifier.drawBehind { drawRect(Color(0xFFEEF0F4), size = Size(size.width, density)) } else Modifier)
+            .padding(top = 1.dp)
+            .heightIn(min = 64.dp)
+            .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         when {
             leading != null -> leading()
-            symbol != null -> SymbolTile(symbol, tile, size = tileSize)
+            symbol != null -> RowTile(symbol, tile, tileSize)
         }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = Atlas.type.name, color = titleColour, maxLines = titleLines, overflow = TextOverflow.Ellipsis)
-            if (line != null) Text(line, style = Atlas.type.caption, color = Atlas.colors.inkSoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.weight(1f).padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = ROW_TITLE, color = titleColour, maxLines = titleLines, overflow = TextOverflow.Ellipsis)
+            if (line != null) Text(line, style = ROW_LINE, color = Color(ROW_SOFT), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        if (badge != null) Symbol(badge, tint = Atlas.colors.go, size = 16.dp)
-        if (trailing != null) Text(trailing, style = Atlas.type.numeralSmall.copy(fontWeight = FontWeight.ExtraBold), color = trailingColour, textAlign = TextAlign.End, maxLines = 1)
-        if (trailingSymbol != null) Symbol(trailingSymbol, tint = trailingColour, size = 20.dp)
+        if (badge != null) Symbol(badge, tint = Color(0xFF2E5BFF), size = 16.dp)
+        if (trailing != null) Text(trailing, style = ROW_VALUE, color = trailingColour, textAlign = TextAlign.End, maxLines = 1)
+        // The board's arrow is a character in the value's face, not a drawing.
+        if (trailingSymbol != null) Text("→", style = ROW_VALUE, color = trailingColour, maxLines = 1)
     }
 }
 
-/** The status words in their colour, then the other [parts] in grey, joined with " · ". */
+/** The board's tile: [symbol] in white on [colour], a [side] px square with corners 12 (the symbol 22 px of 40). */
+@Composable
+internal fun RowTile(symbol: String, colour: Color, side: Dp = 40.dp) {
+    Box(Modifier.size(side).clip(RoundedCornerShape(side * 0.3f)).background(colour), contentAlignment = Alignment.Center) {
+        Symbol(symbol, tint = Color.White, size = side * 0.55f)
+    }
+}
+
+/** The status words, then the other [parts], joined with " · " in the row's grey (the board colours only the minutes). */
 @Composable
 fun statusLine(line: PlaceLine, now: LocalDateTime, vararg parts: String?): AnnotatedString? {
-    val open = openWords(line)?.let { text -> text to toneColour(line.tone) }
-    return joinLine(open, parts.filterNotNull().filter { it.isNotBlank() })
+    val rest = parts.filterNotNull().filter { it.isNotBlank() }
+    val all = listOfNotNull(openWords(line)) + rest
+    return if (all.isEmpty()) null else AnnotatedString(all.joinToString(" · "))
 }
 
 /**
@@ -183,13 +207,11 @@ fun joinLine(status: Pair<String, Color>?, rest: List<String>): AnnotatedString?
     }
 }
 
-/** A numbered square, blue for the first and ink for the rest, as the Query board ranks its results. */
+/** A numbered square as the Query board ranks its results: 40 px, corners 12, blue for the first and ink for the rest. */
 @Composable
-fun RankTile(rank: Int, size: Dp = 48.dp) {
-    val c = Atlas.colors
-    val bg = if (rank == 1) c.go else c.pill
-    Box(Modifier.size(size).clip(RoundedCornerShape(size * 0.28f)).background(bg), contentAlignment = Alignment.Center) {
-        Text(rank.toString(), style = Atlas.type.numeralSmall, color = contentColourFor(bg))
+fun RankTile(rank: Int, size: Dp = 40.dp) {
+    Box(Modifier.size(size).clip(RoundedCornerShape(12.dp)).background(Color(if (rank == 1) 0xFF2E5BFF else ROW_INK)), contentAlignment = Alignment.Center) {
+        Text(rank.toString(), style = boardText(15f, 700, 19.5f), color = Color.White)
     }
 }
 

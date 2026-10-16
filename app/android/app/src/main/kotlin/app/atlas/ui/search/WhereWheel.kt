@@ -22,7 +22,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
@@ -34,6 +33,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.atlas.R
 import app.atlas.places.SvgPath
@@ -77,9 +77,12 @@ internal object WheelArt {
     fun path(d: String): Path = Path().also { SvgPath.parse(d).replay(ComposePathSink(it)) }
 }
 
-/** The wheel: [angle] is how far it has turned (degrees), [places] says which wedges have something to land on. */
+/**
+ * The wheel: [angle] says how far it has turned (degrees), read only while drawing so a spin redraws without
+ * recomposing; [places] says which wedges have something to land on.
+ */
 @Composable
-internal fun Wheel(places: WheelPlaces?, angle: Float, onSpin: () -> Unit, lang: String, modifier: Modifier = Modifier) {
+internal fun Wheel(places: WheelPlaces?, angle: () -> Float, onSpin: () -> Unit, lang: String, modifier: Modifier = Modifier) {
     val wedges = WherePicker.WEDGES
     val spinLabel = stringResource(R.string.where_spin)
     val glyphs = remember { WheelArt.GLYPHS.map { WheelArt.path(it.d) } }
@@ -90,9 +93,12 @@ internal fun Wheel(places: WheelPlaces?, angle: Float, onSpin: () -> Unit, lang:
         Canvas(Modifier.fillMaxWidth().aspectRatio(WheelArt.WIDTH / WheelArt.HEIGHT).semantics { contentDescription = description }) {
             val k = size.width / WheelArt.WIDTH
             scale(k, k, pivot = Offset.Zero) {
+                // The board's order: the pointer first, its tip under the wheel's rim.
+                drawPath(pointer, WheelArt.DARK)
+                drawPath(pointer, WheelArt.CREAM, style = Stroke(3f, join = StrokeJoin.Round))
                 drawCircle(WheelArt.DARK.copy(alpha = 0.12f), 146f, Offset(150f, 172f))
                 translate(150f, 168f) {
-                    rotate(angle + WheelArt.BASE_TURN, Offset.Zero) {
+                    rotate(angle() + WheelArt.BASE_TURN, Offset.Zero) {
                         val sweep = 360f / wedges.size
                         for ((i, w) in wedges.withIndex()) {
                             val base = Color(WheelArt.FILLS[i])
@@ -117,8 +123,6 @@ internal fun Wheel(places: WheelPlaces?, angle: Float, onSpin: () -> Unit, lang:
                         drawCircle(Color.White.copy(alpha = if (places != null && places.of(wedges[1]).isEmpty()) 0.6f else 1f), 9f, Offset(92f, -38f))
                     }
                 }
-                drawPath(pointer, WheelArt.DARK)
-                drawPath(pointer, WheelArt.CREAM, style = Stroke(3f, join = StrokeJoin.Round))
                 drawCircle(WheelArt.CREAM, 30f, Offset(150f, 168f))
                 drawCircle(WheelArt.DARK, 30f, Offset(150f, 168f), style = Stroke(3f))
             }
@@ -140,6 +144,29 @@ internal fun Wheel(places: WheelPlaces?, angle: Float, onSpin: () -> Unit, lang:
                 style = TextStyle(fontWeight = FontWeight.Black, fontSize = (15f * unit).sp, letterSpacing = (15f * unit * 0.06f).sp),
                 color = WheelArt.SPIN_TEXT, maxLines = 1,
             )
+        }
+    }
+}
+
+/**
+ * The white glyph of wedge [index] on its own, [side] px, as the board's result card shows its kind (its 24 px frame
+ * centred on the glyph).
+ */
+@Composable
+internal fun WedgeGlyph(index: Int, side: Float) {
+    val g = WheelArt.GLYPHS[index]
+    val path = remember(index) { WheelArt.path(g.d) }
+    Canvas(Modifier.size(side.dp)) {
+        val k = size.width / 24f
+        scale(k, k, pivot = Offset.Zero) {
+            // The wheel places each glyph by its middle; on the card it sits in the middle of the 24 px frame.
+            // (the card's drop is the wheel's at its own size, as the board draws it in a 24 px frame at 12, 12.5)
+            val (dx, dy) = if (index == 1) (12f - 92f) to (12.5f + 35f) else 12f to 12.5f
+            translate(dx, dy) {
+                if (g.stroke == null) drawPath(path, Color.White)
+                else drawPath(path, Color.White, style = Stroke(g.stroke, cap = if (g.round) StrokeCap.Round else StrokeCap.Butt, join = StrokeJoin.Round))
+                if (index == 1) drawCircle(Color.White, 9f, Offset(92f, -38f))
+            }
         }
     }
 }

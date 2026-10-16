@@ -1,7 +1,16 @@
 package app.atlas.ui.search
 
 import android.content.Intent
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.style.TextAlign
+import app.atlas.ui.kit.CssShadow
+import app.atlas.ui.kit.cssLinear
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -10,18 +19,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.IntrinsicSize
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
@@ -34,7 +39,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -43,9 +47,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -63,15 +65,8 @@ import app.atlas.search.OfflineEvaluator
 import app.atlas.search.ParsedQuery
 import app.atlas.search.QueryParser
 import app.atlas.ui.kit.Atlas
-import app.atlas.ui.kit.AtlasScreen
-import app.atlas.ui.kit.Card
-import app.atlas.ui.kit.Kicker
-import app.atlas.ui.kit.PillButton
 import app.atlas.ui.kit.PrimaryButton
 import app.atlas.ui.kit.StateMessage
-import app.atlas.ui.kit.Symbol
-import app.atlas.ui.kit.SymbolButton
-import app.atlas.ui.kit.ToggleChip
 import app.atlas.ui.kit.WalkTime
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.rememberSpeechInput
@@ -86,7 +81,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.time.LocalDateTime
 import java.time.ZonedDateTime
 import java.util.Locale
 
@@ -157,15 +151,24 @@ class AskViewModel(private val services: Services, initial: String, private val 
     }
 }
 
-/** The colours of a plan's steps, in turn: café brown, purple, red, blue, green, amber (as on the Ask board). */
-private val STEP_COLOURS = longArrayOf(0xFFB5532A, 0xFF7B4FD6, 0xFFD23C3C, 0xFF2E5BFF, 0xFF1F9D55, 0xFFE29A12)
+/** The colours of a plan's steps, in turn, as the Ask board paints them: café brown, green, blue, purple, red, amber. */
+private val STEP_COLOURS = longArrayOf(0xFFB8461A, 0xFF1E9E5A, 0xFF2E6BFF, 0xFF7B4DFF, 0xFFC8322A, 0xFFE29A12)
 
-private fun stepColour(step: Int) = Color(STEP_COLOURS[step % STEP_COLOURS.size])
+private fun stepArgb(step: Int) = STEP_COLOURS[step % STEP_COLOURS.size]
+
+/** The Ask board's page, ink, soft and faint greys, and the green of what is understood. */
+private const val PAGE = 0xFFF6F4EF
+private const val INK = 0xFF1C1B22
+private const val SOFT = 0xFF6B6878
+private const val FAINT = 0xFF8A8698
+private const val GREEN = 0xFF1E9E5A
 
 /**
  * Ask, as on the Ask board: a whole outing in one sentence, read on the phone into coloured parts, and a timed plan of
  * real places, each searched near the one before and chosen open when you get there; refine it (closer, surely open,
- * step-free), see the walk and when it ends, say it differently, or share it.
+ * step-free), see the walk and when it ends, say it differently, open it in the query builder, or share it. The board's
+ * numbers: the sentence card at 100, the plan's kicker 35 px under it, 72 px stops, the totals card 14 px under the
+ * chips, and the two buttons 24 px from the foot.
  */
 @Composable
 fun AskScreen(args: Dest.Ask, nav: Navigator) {
@@ -177,51 +180,68 @@ fun AskScreen(args: Dest.Ask, nav: Navigator) {
     val context = LocalContext.current
     val mic = rememberSpeechInput(onText = vm::onText)
     var editing by remember { mutableStateOf(false) }
-    val c = Atlas.colors
     val shareLabel = stringResource(R.string.place_share)
 
-    AtlasScreen(
-        stringResource(R.string.ask_title), onBack = { nav.back() }, italic = true,
-        actions = {
+    Column(Modifier.fillMaxSize().background(Color(PAGE)).padding(top = boardShift())) {
+        BoardTitleRow(stringResource(R.string.ask_title), INK, onBack = { nav.back() }) {
             Row(
-                Modifier.heightIn(min = 40.dp).clip(CircleShape).background(c.card).padding(horizontal = 14.dp),
+                Modifier.height(34.dp).boardBox(0xFFFFFFFF, round(17f)).padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Symbol("ui-lock", tint = c.ink, size = 16.dp)
-                Text(stringResource(R.string.ask_on_phone), style = Atlas.type.label, color = c.ink)
-            }
-        },
-    ) {
-        Sentence(state, onEdit = { editing = true })
-        when {
-            state.text.isBlank() -> StateMessage("ui-sparkles", stringResource(R.string.ask_empty), text = stringResource(R.string.ask_empty_text), tint = c.ask)
-            state.error != null -> StateMessage("ui-alert-triangle", stringResource(R.string.query_failed), text = state.error, tint = c.alert)
-            state.parsed == null -> Text(stringResource(R.string.kit_loading), style = Atlas.type.caption, color = c.inkSoft)
-            state.plan == null -> StateMessage("ui-help", stringResource(R.string.query_not_read), text = stringResource(R.string.ask_not_read), tint = c.caution)
-            services.placeStores.size == 0 -> StateMessage(
-                "ui-cloud-off", stringResource(R.string.search_no_regions), text = stringResource(R.string.ask_no_region), tint = c.go,
-                action = { app.atlas.ui.kit.Chip(stringResource(R.string.search_download), symbol = "ui-download", onClick = { nav.go(Dest.RegionPicker(here.lat, here.lon)) }) },
-            )
-            else -> {
-                val plan = state.plan!!
-                Kicker(stringResource(R.string.ask_your_plan))
-                Timeline(plan, onPlace = { p -> services.remember(p); nav.go(Dest.Place.of(p)) })
-                Refinements(state.refine, vm::toggle)
-                Totals(plan, state.plan!!.stops.firstOrNull()?.arrive)
+                BoardSymbol("ui.lock", 14f, INK)
+                BoardLine(stringResource(R.string.ask_on_phone), boardText(12f, 800, 15.5f), INK)
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)) {
-            PillButton(onClick = mic, modifier = Modifier.weight(1f).heightIn(min = 58.dp)) {
-                Spacer(Modifier.weight(1f))
-                Symbol("ui-mic", size = 20.dp)
-                Text(stringResource(R.string.ask_say_again), style = Atlas.type.name)
-                Spacer(Modifier.weight(1f))
+        Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
+            Sentence(state, onEdit = { editing = true }, Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp))
+            val part = Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp)
+            when {
+                state.text.isBlank() -> StateMessage("ui-sparkles", stringResource(R.string.ask_empty), part, text = stringResource(R.string.ask_empty_text), tint = Color(0xFF7B4DFF))
+                state.error != null -> StateMessage("ui-alert-triangle", stringResource(R.string.query_failed), part, text = state.error, tint = Color(0xFFC8322A))
+                state.parsed == null -> BoardLine(stringResource(R.string.kit_loading), boardText(12f, 400, 15.5f), SOFT, part)
+                state.plan == null -> StateMessage("ui-help", stringResource(R.string.query_not_read), part, text = stringResource(R.string.ask_not_read), tint = Color(0xFF8A5A00))
+                services.placeStores.size == 0 -> StateMessage(
+                    "ui-cloud-off", stringResource(R.string.search_no_regions), part, text = stringResource(R.string.ask_no_region), tint = Color(0xFF2E5BFF),
+                    action = { app.atlas.ui.kit.Chip(stringResource(R.string.search_download), symbol = "ui-download", onClick = { nav.go(Dest.RegionPicker(here.lat, here.lon)) }) },
+                )
+                else -> {
+                    val plan = state.plan!!
+                    val kicker = boardText(12f, 800, 15.5f, spacing = 1.44f)
+                    Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 35.dp), verticalAlignment = Alignment.CenterVertically) {
+                        BoardLine(stringResource(R.string.ask_your_plan).uppercase(Locale.getDefault()), kicker, FAINT, Modifier.weight(1f))
+                        BoardLine(
+                            shareLabel.uppercase(Locale.getDefault()), kicker, FAINT,
+                            Modifier.clickable(role = Role.Button) {
+                                val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, shareText(state, lang))
+                                runCatching { context.startActivity(Intent.createChooser(send, shareLabel).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                            },
+                        )
+                    }
+                    Timeline(plan, onPlace = { p -> services.remember(p); nav.go(Dest.Place.of(p)) }, Modifier.padding(start = 16.dp, end = 16.dp, top = 2.5.dp))
+                    Refinements(state.refine, vm::toggle, Modifier.padding(horizontal = 16.dp))
+                    Totals(plan, Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp))
+                    BoardLine(stringResource(R.string.ask_estimates), boardText(11f, 400, 14f), FAINT, Modifier.padding(start = 18.dp, end = 18.dp, top = 10.dp), lines = 3)
+                }
             }
-            SymbolButton("ui-share", shareLabel, {
-                val text = shareText(state, lang)
-                val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
-                runCatching { context.startActivity(Intent.createChooser(send, shareLabel).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            }, size = 58.dp)
+            Spacer(Modifier.height(25.dp))
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 24.dp).windowInsetsPadding(WindowInsets.navigationBars),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                Modifier.weight(1f).height(56.dp).boardBox(INK, round(28f)).clickable(role = Role.Button, onClick = mic),
+                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                BoardSymbol("ui.mic", 20f, 0xFFFFFFFF)
+                BoardLine(stringResource(R.string.ask_say_again), boardText(15f, 800, 19.5f), 0xFFFFFFFF)
+            }
+            BoardRoundButton(
+                "ui.query-open", stringResource(R.string.ask_open_query), { nav.go(Dest.Query(state.text)) },
+                side = 56f, glyph = 22f, tint = INK,
+            )
         }
     }
     if (editing) {
@@ -229,49 +249,57 @@ fun AskScreen(args: Dest.Ask, nav: Navigator) {
     }
 }
 
-/** The sentence in serif with its parts as coloured chips in place, and "understood in 0.04 s · 2 parts · 2 places". */
+/**
+ * The sentence as the board's white card (corners 26, 16 · 16 · 12 in, its soft shadow): Instrument Serif 23 with a
+ * line height of 1.55, its parts as 30 px chips in place (7 px before a 16 px symbol, 5 between, 10 after the words in
+ * 15 / 800), and "understood in 0.04 s · 2 parts · 2 places" after a green dot (11 / 700).
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Sentence(state: AskState, onEdit: () -> Unit) {
-    val c = Atlas.colors
+private fun Sentence(state: AskState, onEdit: () -> Unit, modifier: Modifier) {
     val parsed = state.parsed
     val edit = stringResource(R.string.ask_edit)
-    Card(Modifier.fillMaxWidth(), padding = PaddingValues(18.dp), onClick = onEdit, onClickLabel = edit) {
+    Column(
+        modifier.fillMaxWidth().boardBox(0xFFFFFFFF, round(26f), listOf(CssShadow(0f, 10f, 26f, 0f, 0x141C1B22)))
+            .clickable(role = Role.Button, onClickLabel = edit, onClick = onEdit)
+            .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 12.dp),
+    ) {
         val pieces = remember(parsed, state.text) { piecesOf(state.text, parsed) }
-        val serif = Atlas.type.title.copy(fontSize = 24.sp, lineHeight = 34.sp)
-        FlowRow(verticalArrangement = Arrangement.spacedBy(4.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+        val serif = boardText(23f, 400, 35.65f, family = SERIF)
+        val chip = boardText(15f, 800, 23.25f, family = SERIF)
+        FlowRow(verticalArrangement = Arrangement.spacedBy(1.6.dp), itemVerticalAlignment = Alignment.CenterVertically) {
             for (p in pieces) {
                 when (p) {
                     is Piece.Words -> for (w in p.text.split(' ').filter { it.isNotEmpty() }) {
-                        Text("$w ", style = serif, color = c.ink)
+                        Text("$w ", style = serif, color = Color(INK))
                     }
                     is Piece.Token -> {
-                        val col = if (p.chip.kind == ChipKind.KIND) stepColour(p.chip.step) else if (p.chip.kind == ChipKind.DISTANCE || p.chip.kind == ChipKind.AREA) c.go else c.open
-                        Row(Modifier.padding(end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        val col = if (p.chip.kind == ChipKind.KIND) stepArgb(p.chip.step) else GREEN
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Row(
-                                Modifier.clip(RoundedCornerShape(12.dp)).background(col).padding(horizontal = 9.dp, vertical = 4.dp),
+                                Modifier.padding(horizontal = 2.dp, vertical = 3.dp).height(30.dp).boardBox(col, round(15f)).padding(start = 7.dp, end = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp),
                             ) {
-                                Symbol(p.chip.symbol, tint = Color.White, size = 15.dp)
-                                Text(p.text, style = serif.copy(fontSize = 17.sp, lineHeight = 20.sp), color = Color.White, maxLines = 1)
+                                BoardSymbol(p.chip.symbol, 16f, 0xFFFFFFFF)
+                                BoardLine(p.text, chip, 0xFFFFFFFF)
                             }
-                            if (p.trail.isNotEmpty()) Text(p.trail, style = serif, color = c.ink)
+                            Text(p.trail + " ", style = serif, color = Color(INK))
                         }
                     }
                 }
             }
         }
         if (parsed != null && state.plan != null) {
-            Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Box(Modifier.size(7.dp).clip(CircleShape).background(c.open))
+            Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(Modifier.size(6.dp).boardBox(GREEN, round(3f)))
                 val secs = String.format(Locale.getDefault(), "%.2f s", state.micros / 1e6)
-                Text(
+                BoardLine(
                     listOf(
                         stringResource(R.string.ask_understood, secs),
                         pluralStringResource(R.plurals.search_parts, parsed.chips.size, parsed.chips.size),
                         pluralStringResource(R.plurals.ask_places, state.plan.found, state.plan.found),
                     ).joinToString(" · "),
-                    style = Atlas.type.caption, color = c.inkSoft,
+                    boardText(11f, 700, 14f), FAINT,
                 )
             }
         }
@@ -313,41 +341,47 @@ private fun piecesOf(text: String, parsed: ParsedQuery?): List<Piece> {
 
 private const val PUNCTUATION = ",.;:!?"
 
-/** The plan as a timeline: the time you arrive, the node in the step's colour, the place, and why it fits. */
+/**
+ * The plan as the board's timeline: 72 px stops, the time you arrive (13 / 900, right in 44 px), the node in the step's
+ * colour (40 px in a 4 px ring of the page) on a 3 px line shading from one step's colour to the next, the place in
+ * 15 / 800 and why it fits in 12 under it.
+ */
 @Composable
-private fun Timeline(plan: AskPlan, onPlace: (app.atlas.model.Place) -> Unit) {
-    val c = Atlas.colors
+private fun Timeline(plan: AskPlan, onPlace: (app.atlas.model.Place) -> Unit, modifier: Modifier) {
     val lang = remember { Locale.getDefault().language }
-    Column {
-        plan.stops.forEachIndexed { i, s ->
-            val col = if (s.hit != null) stepColour(s.step) else c.inkFaint
-            val next = plan.stops.getOrNull(i + 1)
-            Row(
-                Modifier.fillMaxWidth().height(IntrinsicSize.Min)
-                    .then(if (s.place != null) Modifier.clickable(role = Role.Button) { onPlace(s.place!!) } else Modifier),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text(if (s.hit != null) clock(s.arrive) else "–", Modifier.width(50.dp).padding(top = 12.dp), style = Atlas.type.bodyStrong, color = c.ink)
-                Column(Modifier.width(44.dp).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(Modifier.size(44.dp).clip(CircleShape).background(col), contentAlignment = Alignment.Center) {
-                        Symbol(s.hit?.symbol ?: s.symbol, tint = Color.White, size = 22.dp)
+    val colours = plan.stops.map { if (it.hit != null) stepArgb(it.step) else 0xFFD8D4CC }
+    Box(modifier.fillMaxWidth()) {
+        if (plan.stops.size > 1) {
+            val line = if (colours.size > 1) cssLinear(180f, *colours.mapIndexed { i, c -> i.toFloat() / (colours.size - 1) to c }.toTypedArray()) else null
+            Box(
+                Modifier.padding(start = 75.dp, top = 20.dp).width(3.dp).height((72 * plan.stops.size - 40).dp)
+                    .boardBox(colours.first(), round(2f), grad = listOfNotNull(line)),
+            )
+        }
+        Column {
+            plan.stops.forEachIndexed { i, s ->
+                Row(
+                    Modifier.fillMaxWidth().height(72.dp)
+                        .then(if (s.place != null) Modifier.clickable(role = Role.Button) { onPlace(s.place!!) } else Modifier),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        if (s.hit != null) clock(s.arrive) else "–", Modifier.width(44.dp),
+                        style = boardText(13f, 900, 17f, tnum = true, align = TextAlign.End), color = Color(INK), maxLines = 1,
+                    )
+                    Box(Modifier.size(40.dp).boardBox(colours[i], round(20f), listOf(spreadRing(4f, PAGE))), contentAlignment = Alignment.Center) {
+                        BoardSymbol(s.hit?.symbol ?: s.symbol, 20f, 0xFFFFFFFF)
                     }
-                    if (next != null) {
-                        val nextCol = if (next.hit != null) stepColour(next.step) else c.line
-                        Canvas(Modifier.width(4.dp).weight(1f).heightIn(min = 18.dp)) {
-                            drawLine(col, Offset(size.width / 2, 0f), Offset(size.width / 2, size.height / 2), size.width)
-                            drawLine(nextCol, Offset(size.width / 2, size.height / 2), Offset(size.width / 2, size.height), size.width)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        val hit = s.hit
+                        if (hit == null) {
+                            BoardLine(stringResource(R.string.ask_none_for, s.label), boardText(15f, 800, 19.5f), FAINT)
+                            BoardLine(stringResource(R.string.ask_none_text), boardText(12f, 400, 15.5f), FAINT)
+                        } else {
+                            BoardLine(hit.record.name(lang) ?: kindOf(hit.place, lang) ?: s.label, boardText(15f, 800, 19.5f), INK)
+                            BoardLine(stopLine(s, lang), boardText(12f, 400, 15.5f, tnum = true), SOFT)
                         }
-                    }
-                }
-                Column(Modifier.weight(1f).padding(top = 4.dp, bottom = 14.dp)) {
-                    val hit = s.hit
-                    if (hit == null) {
-                        Text(stringResource(R.string.ask_none_for, s.label), style = Atlas.type.name, color = c.inkSoft)
-                        Text(stringResource(R.string.ask_none_text), style = Atlas.type.caption, color = c.inkFaint)
-                    } else {
-                        Text(hit.record.name(lang) ?: kindOf(hit.place, lang) ?: s.label, style = Atlas.type.name, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(stopLine(s, lang), style = Atlas.type.caption, color = c.inkSoft, maxLines = 2)
                     }
                 }
             }
@@ -371,37 +405,45 @@ private fun stopLine(s: AskStop, lang: String): String {
     return parts.joinToString(" · ")
 }
 
-/** Refine chips: closer together, surely open, step-free. */
+/** Refine chips as the board's: 36 px, 12 px in, a 1.5 px #D8D4CC ring on white, 12 / 800, 6 px apart; on in ink. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Refinements(on: Set<Refine>, onToggle: (Refine) -> Unit) {
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        ToggleChip(stringResource(R.string.ask_closer), Refine.CLOSER in on, { onToggle(Refine.CLOSER) }, symbol = "ui-walk")
-        ToggleChip(stringResource(R.string.ask_surely_open), Refine.OPEN in on, { onToggle(Refine.OPEN) }, symbol = "ui-clock")
-        ToggleChip(stringResource(R.string.search_step_free), Refine.STEP_FREE in on, { onToggle(Refine.STEP_FREE) }, symbol = "ui-wheelchair")
-    }
-}
-
-/** The plan in three numbers: how far on foot, how many stops, and when it ends. */
-@Composable
-private fun Totals(plan: AskPlan, start: LocalDateTime?) {
-    val c = Atlas.colors
-    Card(Modifier.fillMaxWidth(), padding = PaddingValues(vertical = 16.dp, horizontal = 8.dp), elevation = 0.dp) {
-        Row(Modifier.fillMaxWidth()) {
-            Total(shortDistance(plan.walkM), stringResource(R.string.ask_on_foot), Modifier.weight(1f))
-            Total("${plan.found}/${plan.stops.size}", stringResource(R.string.ask_stops), Modifier.weight(1f))
-            Total(plan.end?.let { clock(it) } ?: "–", stringResource(R.string.ask_until), Modifier.weight(1f))
-        }
-        Text(stringResource(R.string.ask_estimates), Modifier.fillMaxWidth().padding(top = 8.dp, start = 12.dp, end = 12.dp), style = Atlas.type.caption, color = c.inkFaint)
+private fun Refinements(on: Set<Refine>, onToggle: (Refine) -> Unit, modifier: Modifier) {
+    FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        RefineChip(stringResource(R.string.ask_closer), Refine.CLOSER in on) { onToggle(Refine.CLOSER) }
+        RefineChip(stringResource(R.string.ask_surely_open), Refine.OPEN in on) { onToggle(Refine.OPEN) }
+        RefineChip(stringResource(R.string.search_step_free), Refine.STEP_FREE in on) { onToggle(Refine.STEP_FREE) }
     }
 }
 
 @Composable
-private fun Total(value: String, label: String, modifier: Modifier) {
-    val c = Atlas.colors
-    Column(modifier.semantics(mergeDescendants = true) { contentDescription = "$value $label" }, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, style = Atlas.type.numeralSmall.copy(fontSize = 24.sp), color = c.ink)
-        Text(label, style = Atlas.type.caption, color = c.inkSoft)
+private fun RefineChip(text: String, on: Boolean, onToggle: () -> Unit) {
+    Box(
+        Modifier.height(36.dp).boardBox(if (on) INK else 0xFFFFFFFF, round(18f), border = ring(1.5f, if (on) INK else 0xFFD8D4CC))
+            .toggleable(on, role = Role.Checkbox) { onToggle() }.padding(horizontal = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) { BoardLine(text, boardText(12f, 800, 15.5f), if (on) 0xFFFFFFFF else INK) }
+}
+
+/** The plan in three numbers on the board's white card (84 px, corners 22, spaced around): on foot, stops, and when it ends. */
+@Composable
+private fun Totals(plan: AskPlan, modifier: Modifier) {
+    Row(
+        modifier.fillMaxWidth().height(84.dp).boardBox(0xFFFFFFFF, round(22f)),
+        horizontalArrangement = Arrangement.SpaceAround,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Total(shortDistance(plan.walkM), stringResource(R.string.ask_on_foot))
+        Total("${plan.found}/${plan.stops.size}", stringResource(R.string.ask_stops))
+        Total(plan.end?.let { clock(it) } ?: "–", stringResource(R.string.ask_until))
+    }
+}
+
+@Composable
+private fun Total(value: String, label: String) {
+    Column(Modifier.semantics(mergeDescendants = true) { contentDescription = "$value $label" }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        BoardLine(value, boardText(20f, 900, 26f, tnum = true), INK)
+        BoardLine(label, boardText(11f, 700, 14f), FAINT)
     }
 }
 

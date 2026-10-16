@@ -210,6 +210,7 @@
     <string name="ask_say_again">Zeg het anders</string>
     <string name="ask_edit">Liever typen</string>
     <string name="ask_plan_it">Plan het</string>
+    <string name="ask_open_query">Openen in de querybouwer</string>
     <string name="ask_understood">begrepen in %1$s</string>
     <plurals name="ask_places">
         <item quantity="one">%d plek</item>

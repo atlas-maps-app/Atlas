@@ -1,6 +1,18 @@
 package app.atlas.ui.search
 
 import android.content.Intent
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import app.atlas.ui.kit.CssCorners
+import app.atlas.ui.kit.CssShadow
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -9,7 +21,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -20,7 +31,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
@@ -45,12 +55,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.geo.LatLon
@@ -59,17 +65,9 @@ import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.places.OpeningHours
 import app.atlas.ui.kit.Atlas
-import app.atlas.ui.kit.AtlasScreen
-import app.atlas.ui.eat.EatType
-import app.atlas.ui.kit.Card
-import app.atlas.ui.kit.HonestyFooter
-import app.atlas.ui.kit.PillButton
 import app.atlas.ui.kit.PrimaryButton
-import app.atlas.ui.kit.Symbol
-import app.atlas.ui.kit.SymbolButton
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.rememberNow
-import app.atlas.ui.kit.cssShadow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -78,13 +76,15 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.util.Locale
 
-/** The page of the Lists board: warm sand. */
-private val SAND = Color(0xFFEDE4D6)
+/** The Lists board's page (warm sand), ink, soft brown and the open place's green. */
+private const val SAND = 0xFFEDE4D6
+private const val INK = 0xFF2A2420
+private const val BROWN = 0xFF7A6A58
 
 /**
  * Saved places, as on the Lists board: each list a notebook with an elastic band and its title by hand, "+" for a
  * new one, and the chosen list open below with its places numbered, open or not; share it as text with links, or
- * export it as GPX or GeoJSON. Lists live on the phone only.
+ * export it as GPX or GeoJSON. Lists live on the phone only. Hold a notebook to empty or delete its list.
  */
 @Composable
 fun ListsScreen(args: Dest.Lists, nav: Navigator) {
@@ -97,17 +97,32 @@ fun ListsScreen(args: Dest.Lists, nav: Navigator) {
     val c = Atlas.colors
     val scope = rememberCoroutineScope()
 
-    AtlasScreen(
-        stringResource(R.string.lists_title), onBack = { nav.back() }, italic = true, background = if (c.isDark) c.paper else SAND,
-        actions = { SymbolButton("ui-plus", stringResource(R.string.lists_new_list), { naming = true }, size = 52.dp, background = c.pill, tint = c.onPill) },
-    ) {
-        Notebooks(lists, chosen?.id, onChoose = { chosenId = it })
-        chosen?.let { l ->
-            ListCard(l, nav, onDelete = { deleting = l })
-            ListActions(l)
+    BoxWithConstraints(Modifier.fillMaxSize().background(Color(SAND))) {
+        val page = maxHeight
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).heightIn(min = page)
+                .padding(top = boardShift()).windowInsetsPadding(WindowInsets.navigationBars),
+        ) {
+            BoardTitleRow(stringResource(R.string.lists_title), INK, onBack = { nav.back() }) {
+                val newList = stringResource(R.string.lists_new_list)
+                Box(
+                    Modifier.size(44.dp).boardBox(INK, round(22f)).clickable(role = Role.Button) { naming = true }
+                        .semantics { contentDescription = newList },
+                    contentAlignment = Alignment.Center,
+                ) { BoardLine("+", boardText(22f, 800, 28.5f), 0xFFFFFFFF) }
+            }
+            Notebooks(lists, chosen?.id, onChoose = { chosenId = it }, onHold = { deleting = it }, Modifier.padding(start = 20.dp, end = 20.dp, top = 22.dp))
+            chosen?.let { l ->
+                ListCard(l, nav, Modifier.padding(start = 16.dp, end = 16.dp, top = 40.dp))
+                ListActions(l, Modifier.padding(start = 16.dp, end = 16.dp, top = 29.dp))
+            }
+            Spacer(Modifier.weight(1f).heightIn(min = 32.dp))
+            Text(
+                stringResource(R.string.lists_footer),
+                Modifier.fillMaxWidth().padding(start = 34.dp, end = 34.dp, bottom = 30.dp),
+                style = boardText(11f, 400, 14f, align = TextAlign.Center), color = Color(BROWN),
+            )
         }
-        HonestyFooter(stringResource(R.string.lists_footer))
-        Spacer(Modifier.heightIn(min = 16.dp))
     }
     if (naming) {
         NewListDialog(onNew = { name ->
@@ -133,13 +148,13 @@ fun ListsScreen(args: Dest.Lists, nav: Navigator) {
 @Composable
 private fun listName(l: SavedList): String = l.name ?: stringResource(R.string.lists_default)
 
-/** The notebooks, three to a row, each tilted a little its own way. */
+/** The notebooks, three to a row as the board's grid: 20 px from the sides, 14 px between them, rows 20 px apart. */
 @Composable
-private fun Notebooks(lists: List<SavedList>, chosen: Int?, onChoose: (Int) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.padding(top = 6.dp, bottom = 6.dp)) {
+private fun Notebooks(lists: List<SavedList>, chosen: Int?, onChoose: (Int) -> Unit, onHold: (SavedList) -> Unit, modifier: Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(20.dp)) {
         for (row in lists.chunked(3)) {
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                for (l in row) Notebook(l, l.id == chosen, Modifier.weight(1f)) { onChoose(l.id) }
+                for (l in row) Notebook(l, l.id == chosen, Modifier.weight(1f), onClick = { onChoose(l.id) }, onHold = { onHold(l) })
                 repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
@@ -147,72 +162,73 @@ private fun Notebooks(lists: List<SavedList>, chosen: Int?, onChoose: (Int) -> U
 }
 
 /**
- * One notebook, as the Lists board writes it: a flat cover in the list's colour (corners 6 and 16), a darker 10 px edge
- * on its left, an elastic band 18 px from its right, the title in Caveat 28 and the count under it, put down at a tilt.
+ * One notebook, as the Lists board writes it: 186 px, a flat cover in the list's colour (corners 6 and 16) with a
+ * 10 px darker edge on its left (an inset shadow) and its drop shadow (0 10 20, black at 25 %), the elastic band 8 px
+ * wide 18 px from its right, padded 16 · 14 · 14 · 22, the title in Caveat 28 / 700 and the count (11 / 800, white at
+ * 85 %) at the foot, put down at its tilt.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Notebook(list: SavedList, chosen: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun Notebook(list: SavedList, chosen: Boolean, modifier: Modifier, onClick: () -> Unit, onHold: () -> Unit) {
     val name = listName(list)
     val count = pluralStringResource(R.plurals.lists_places, list.places.size, list.places.size)
     val tilt = TILTS[Math.floorMod(list.id, TILTS.size)]
-    val shape = RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 16.dp, bottomEnd = 16.dp)
+    val hold = stringResource(if (list.isDefault) R.string.lists_empty else R.string.lists_delete)
     Box(
         modifier
             .height(186.dp)
-            .graphicsLayer { rotationZ = tilt; translationY = if (chosen) -6.dp.toPx() else 0f }
-            .cssShadow(shape, y = 10.dp, blur = 20.dp, colour = Color(0x40000000))
-            .clip(shape)
-            .background(Color(list.colour))
-            .clickable(role = Role.Button, onClick = onClick)
-            .semantics(mergeDescendants = true) { contentDescription = "$name, $count"; selected = chosen },
+            .graphicsLayer { rotationZ = tilt }
+            .boardBox(list.colour.toLong() and 0xFFFFFFFFL, COVER, listOf(CssShadow(0f, 10f, 20f, 0f, 0x40000000)))
+            .combinedClickable(role = Role.Button, onLongClickLabel = hold, onLongClick = onHold, onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "$name, $count"
+                selected = chosen
+                customActions = listOf(CustomAccessibilityAction(hold) { onHold(); true })
+            },
     ) {
         Box(Modifier.fillMaxHeight().width(10.dp).background(Color(0x2E000000)))
         Box(Modifier.align(Alignment.TopEnd).padding(end = 18.dp).fillMaxHeight().width(8.dp).background(Color(0x59000000)))
         Column(Modifier.fillMaxSize().padding(start = 22.dp, end = 14.dp, top = 16.dp, bottom = 14.dp)) {
-            // The board's 28 px, for names that fit; a long word shrinks rather than breaks, and a hyphen may end a line.
+            // The board's 28 px for names that fit; a long word shrinks rather than breaks (its "Quiet corners" is 25).
             val size = when (val longest = name.split(' ', '-').maxOf { it.length }) {
-                in 0..6 -> 28.sp
-                7 -> 24.sp
-                else -> if (longest > 10) 17.sp else 20.sp
+                in 0..6 -> 28f
+                7 -> 25f
+                else -> if (longest > 10) 17f else 21f
             }
-            Text(
-                name.replace("-", "-\u200B"), style = TextStyle(fontFamily = EatType.hand, fontWeight = FontWeight.Bold, fontSize = size, lineHeight = size),
-                color = Color.White, maxLines = 3, overflow = TextOverflow.Ellipsis,
-            )
+            BoardBlock(name.replace("-", "-\u200B"), boardText(size, 700, size, family = CAVEAT), 0xFFFFFFFF, lines = 3)
             Spacer(Modifier.weight(1f))
-            Text(count, style = TextStyle(fontWeight = FontWeight.ExtraBold, fontSize = 11.sp), color = Color.White.copy(alpha = 0.85f), maxLines = 1)
+            BoardLine(count, boardText(11f, 800, 14f), 0xD9FFFFFF)
         }
     }
 }
 
+private val COVER = CssCorners(6f, 16f, 16f, 6f)
+
 /** The tilt of each notebook, in turn: the board's -3, 2, -1, 3, -2 and 1 degrees. */
 private val TILTS = floatArrayOf(-3f, 2f, -1f, 3f, -2f, 1f)
 
-/** The chosen list open: its title in its colour, what was added lately, its places numbered with their status. */
+/**
+ * The chosen list open, as the board's white card (corners 24, 16 px in): its title in Caveat 26 in the list's
+ * colour, what was added lately (12 / 800), and its places numbered, 6 px apart.
+ */
 @Composable
-private fun ListCard(list: SavedList, nav: Navigator, onDelete: () -> Unit) {
+private fun ListCard(list: SavedList, nav: Navigator, modifier: Modifier) {
     val services = LocalServices.current
-    val c = Atlas.colors
-    val colour = Color(list.colour)
+    val colour = list.colour.toLong() and 0xFFFFFFFFL
     val here = rememberHere()
     val lang = remember { Locale.getDefault().language }
     val now = rememberNow(list)
     val zone = remember { ZonedDateTime.now(services.clock).zone }
-    Card(padding = PaddingValues(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                listName(list), Modifier.weight(1f),
-                style = TextStyle(fontFamily = EatType.hand, fontWeight = FontWeight.Bold, fontSize = 26.sp, lineHeight = 30.sp), color = colour,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
-            Text(added(list, now.toLocalDate(), zone), style = Atlas.type.label, color = c.inkSoft)
-            SymbolButton("ui-trash", stringResource(if (list.isDefault) R.string.lists_empty else R.string.lists_delete), onDelete, size = 40.dp, elevation = 0.dp, background = Color.Transparent, tint = c.inkFaint)
+    Column(modifier.fillMaxWidth().boardBox(0xFFFFFFFF, round(24f)).padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 14.dp)) {
+        Row(Modifier.height(33.dp), verticalAlignment = Alignment.CenterVertically) {
+            BoardLine(listName(list), boardText(26f, 700, 33f, family = CAVEAT), colour, Modifier.weight(1f))
+            BoardLine(added(list, now.toLocalDate(), zone), boardText(12f, 800, 15.5f), BROWN)
         }
         if (list.places.isEmpty()) {
-            Text(stringResource(R.string.lists_empty_text), Modifier.padding(top = 8.dp), style = Atlas.type.body, color = c.inkSoft)
-            return@Card
+            BoardLine(stringResource(R.string.lists_empty_text), boardText(12f, 400, 15.5f), BROWN, Modifier.padding(top = 10.dp), lines = 4)
+            return@Column
         }
-        Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             list.places.forEachIndexed { i, s ->
                 SavedRow(i + 1, s, colour, here, lang, now) { services.remember(s.place); nav.go(Dest.Place.of(s.place)) }
             }
@@ -232,27 +248,27 @@ private fun added(list: SavedList, today: LocalDate, zone: ZoneId): String {
     }
 }
 
-/** A saved place: its number on a disc of the list's colour, its name, and open or when it opens. */
+/**
+ * A saved place, as the board's row: 46 px, corners 14, on #F4EDE2, 12 px in; its number (11 / 900) on a 22 px disc of
+ * the list's colour, the name 10 px after it in 14 / 800, and open (green) or when it opens (brown) in 12 / 700.
+ */
 @Composable
-private fun SavedRow(n: Int, saved: SavedPlace, colour: Color, here: LatLon, lang: String, now: java.time.LocalDateTime, onClick: () -> Unit) {
+private fun SavedRow(n: Int, saved: SavedPlace, colour: Long, here: LatLon, lang: String, now: java.time.LocalDateTime, onClick: () -> Unit) {
     val services = LocalServices.current
-    val c = Atlas.colors
     val ctx = remember(here) { HereContext.hours(services, here, ZonedDateTime.now(services.clock).zone) }
     val line = remember(saved, now) { PlaceLine.of(saved.place, here, lang, now, open = OpeningHours.parseOrNull(saved.place.tags["opening_hours"])?.status(now, ctx)) }
     val status = statusWords(line)
-    // The board's row: 46 px high, corners 14, a 22 px disc, the name in 14 / 800 and the status in 12 / 700.
     Row(
-        Modifier.fillMaxWidth().height(46.dp).clip(RoundedCornerShape(14.dp)).background(c.cardMuted).clickable(role = Role.Button, onClick = onClick)
+        Modifier.fillMaxWidth().height(46.dp).boardBox(0xFFF4EDE2, round(14f)).clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Box(Modifier.size(22.dp).clip(CircleShape).background(colour), contentAlignment = Alignment.Center) {
-            Text(n.toString(), style = TextStyle(fontWeight = FontWeight.Black, fontSize = 11.sp), color = Color.White)
+        Box(Modifier.size(22.dp).boardBox(colour, round(11f)), contentAlignment = Alignment.Center) {
+            BoardLine(n.toString(), boardText(11f, 900, 14f), 0xFFFFFFFF)
         }
-        Text(line.summary.name, Modifier.weight(1f), style = Atlas.type.body.copy(fontWeight = FontWeight.ExtraBold, fontSize = 14.sp), color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        status?.let { Text(it, style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 12.sp), color = if (line.tone == Tone.OPEN) c.open else if (line.tone == Tone.SOON) c.caution else c.inkSoft, maxLines = 1) }
-        line.trailing?.let { Text(it, style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 12.sp), color = c.inkSoft) }
+        BoardLine(line.summary.name, boardText(14f, 800, 18f), INK, Modifier.weight(1f))
+        status?.let { BoardLine(it, boardText(12f, 700, 15.5f), if (line.tone == Tone.OPEN) 0xFF12663A else if (line.tone == Tone.SOON) 0xFF8A5A00 else BROWN) }
     }
 }
 
@@ -267,9 +283,12 @@ internal fun statusWords(line: PlaceLine): String? = when (val w = line.words) {
     null -> null
 }
 
-/** Share the list as text with links, and export it as GPX or GeoJSON to a file the user picks. */
+/**
+ * Share the list as text with links, and export it as GPX or GeoJSON to a file the user picks: the board's two 52 px
+ * buttons 8 px apart, the first ink, the second white in a 1.5 px #D8CCBA ring, both 13 / 800.
+ */
 @Composable
-private fun ListActions(list: SavedList) {
+private fun ListActions(list: SavedList, modifier: Modifier) {
     val services = LocalServices.current
     val context = LocalContext.current
     val c = Atlas.colors
@@ -294,27 +313,21 @@ private fun ListActions(list: SavedList) {
             }
         }
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        PillButton(onClick = {
-            if (places.isEmpty()) return@PillButton
-            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_SUBJECT, title).putExtra(Intent.EXTRA_TEXT, SavedExport.text(title, places, lang))
-            runCatching { context.startActivity(Intent.createChooser(send, shareLabel).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-        }, modifier = Modifier.weight(1f).heightIn(min = 54.dp).alpha(if (places.isEmpty()) 0.4f else 1f)) {
-            Spacer(Modifier.weight(1f))
-            Symbol("ui-share", size = 18.dp)
-            Text(shareLabel, style = Atlas.type.bodyStrong)
-            Spacer(Modifier.weight(1f))
-        }
-        Row(
-            Modifier.weight(1f).heightIn(min = 54.dp).clip(CircleShape).background(c.card).border(1.5.dp, c.ink, CircleShape)
-                .clickable(role = Role.Button, enabled = places.isNotEmpty(), onClickLabel = exportLabel) { exporting = true }
-                .semantics(mergeDescendants = true) { contentDescription = exportLabel }.padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Symbol("ui-download", tint = if (places.isEmpty()) c.inkFaint else c.ink, size = 18.dp)
-            Text("GPX · GeoJSON", style = Atlas.type.bodyStrong, color = if (places.isEmpty()) c.inkFaint else c.ink, textAlign = TextAlign.Center, maxLines = 1)
-        }
+    val off = places.isEmpty()
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier.weight(184.5f).height(52.dp).alpha(if (off) 0.4f else 1f).boardBox(INK, round(26f))
+                .clickable(role = Role.Button, enabled = !off) {
+                    val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_SUBJECT, title).putExtra(Intent.EXTRA_TEXT, SavedExport.text(title, places, lang))
+                    runCatching { context.startActivity(Intent.createChooser(send, shareLabel).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                },
+            contentAlignment = Alignment.Center,
+        ) { BoardLine(shareLabel, boardText(13f, 800, 17f), 0xFFFFFFFF) }
+        Box(
+            Modifier.weight(187.5f).height(52.dp).alpha(if (off) 0.4f else 1f).boardBox(0xFFFFFFFF, round(26f), border = ring(1.5f, 0xFFD8CCBA))
+                .clickable(role = Role.Button, enabled = !off, onClickLabel = exportLabel) { exporting = true },
+            contentAlignment = Alignment.Center,
+        ) { BoardLine(exportLabel, boardText(13f, 800, 17f), INK) }
     }
     if (exporting) {
         SearchDialog(stringResource(R.string.lists_export), { exporting = false }) {

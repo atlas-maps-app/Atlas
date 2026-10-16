@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -154,10 +155,13 @@ fun rememberSheetState(
     stops: Set<SheetStop> = setOf(SheetStop.PEEK, SheetStop.HALF, SheetStop.FULL),
 ): SheetState = rememberSaveable(saver = SheetState.saver(stops)) { SheetState(initial, stops) }
 
+/** A board's own sheet: its [surface] (shadow, corners, colour, clipped) and the colour of its [grabber]. */
+class SheetLook(val surface: Modifier, val grabber: Color)
+
 /**
- * A bottom sheet over the map, as on the Place, Route and Charge boards: a white surface with 32 dp top corners, a
- * grabber, and rests at [peekHeight], half the screen ([halfFraction]) and nearly full (leaving [fullTopGap]). Drag the
- * grabber or the content; scrollable content inside hands the drag over at its top.
+ * A bottom sheet over the map, as on the Place, Route and Charge boards: a white surface with 32 dp top corners (or a
+ * board's own [look]), a grabber, and rests at [peekHeight], half the screen ([halfFraction]) and nearly full (leaving
+ * [fullTopGap]). Drag the grabber or the content; scrollable content inside hands the drag over at its top.
  */
 @Composable
 fun Sheet(
@@ -166,6 +170,7 @@ fun Sheet(
     peekHeight: Dp = 148.dp,
     halfFraction: Float = 0.52f,
     fullTopGap: Dp = 72.dp,
+    look: SheetLook? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val density = LocalDensity.current
@@ -194,9 +199,7 @@ fun Sheet(
                 .offset { IntOffset(0, y.roundToInt()) }
                 .fillMaxWidth()
                 .height(with(density) { (h - fullTop).toDp() })
-                .softShadow(Radii.sheet, c.shadow, 16.dp)
-                .clip(Radii.sheet)
-                .background(c.card)
+                .then(look?.surface ?: Modifier.softShadow(Radii.sheet, c.shadow, 16.dp).clip(Radii.sheet).background(c.card))
                 .nestedScroll(connection)
                 .draggable(dragState, Orientation.Vertical, onDragStopped = { v -> state.settle(v) })
                 .semantics {
@@ -208,7 +211,7 @@ fun Sheet(
         ) {
             Box(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp), contentAlignment = Alignment.Center) {
                 Box(
-                    Modifier.size(width = 40.dp, height = 5.dp).clip(CircleShape).background(c.line)
+                    Modifier.size(width = 40.dp, height = 5.dp).clip(CircleShape).background(look?.grabber ?: c.line)
                         .semantics { contentDescription = expand },
                 )
             }

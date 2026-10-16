@@ -1,21 +1,25 @@
 package app.atlas.ui.search
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -26,18 +30,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.layout.width
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.TextStyle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -48,6 +48,7 @@ import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
 import app.atlas.mapview.AtlasMap
 import app.atlas.mapview.CameraPosition
+import app.atlas.mapview.MapHit
 import app.atlas.mapview.MapOverlays
 import app.atlas.mapview.MapState
 import app.atlas.mapview.Marker
@@ -58,16 +59,10 @@ import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.places.FactKind
 import app.atlas.services.PlaceOrigin
-import app.atlas.ui.kit.Atlas
-import app.atlas.ui.kit.AtlasScreen
-import app.atlas.ui.kit.Card
-import app.atlas.ui.kit.HonestyFooter
-import app.atlas.ui.kit.Kicker
+import app.atlas.ui.kit.CssShadow
 import app.atlas.ui.kit.StateMessage
-import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.shortDistance
-import app.atlas.ui.kit.softShadow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -140,11 +135,19 @@ class QuestsViewModel(private val services: Services, private val at: LatLon, pr
     }
 }
 
+/** The Quests board's page, ink, greens, amber and the soft green-grey of its words. */
+private const val PAGE = 0xFFF1F4EC
+private const val INK = 0xFF1B2A1E
+private const val SOFT = 0xFF6A7E6E
+private const val AMBER = 0xFFF2C230
+
 /**
- * Map quests, as on the Quests and FillIn boards: small questions about the places around that nobody has mapped yet,
- * each with the thing drawn and its unknown part a ghost ("Is there a terrace?"), answered Yes, No or skipped. An answer
- * becomes an anonymous OpenStreetMap note for the mappers nearby, sent only after the exact text is shown; Atlas edits
- * nothing itself. The map shows where the questions are; the count is of answers from this phone.
+ * Map quests, as on the Quests board: small questions about the places around that nobody has mapped yet, each with
+ * the thing drawn and its unknown part a ghost ("Is there a terrace?"), answered Yes, No or skipped. An answer becomes
+ * an anonymous OpenStreetMap note for the mappers nearby, sent only after the exact text is shown; Atlas edits nothing
+ * itself. The map shows where the questions are (tap a pin to open its place); the count is of answers from this phone.
+ * The board's numbers: the title row at 42, the map 380 × 230 at 100, the question card at 344, the dark card 37.5 px
+ * under it, the footer 64 px from the foot.
  */
 @Composable
 fun QuestsScreen(args: Dest.Quests, nav: Navigator) {
@@ -156,52 +159,54 @@ fun QuestsScreen(args: Dest.Quests, nav: Navigator) {
     val state by vm.state.collectAsStateWithLifecycle()
     val answers by services.saved.answers.collectAsStateWithLifecycle()
     var confirm by remember { mutableStateOf<Pair<PlaceQuest, Boolean>?>(null) }
-    val c = Atlas.colors
     val month = remember { YearMonth.now(services.clock) }
     val zone = remember { ZonedDateTime.now(services.clock).zone }
     val thisMonth = answers.count { YearMonth.from(it.at.atZone(zone)) == month }
+    val openPlace: (app.atlas.model.Place) -> Unit = { p -> services.remember(p); nav.go(Dest.Place.of(p)) }
 
-    AtlasScreen(
-        stringResource(R.string.quests_title), onBack = { nav.back() }, italic = true,
-        background = if (c.isDark) c.paper else Color(0xFFF1F4EC),
-        actions = {
-            Row(
-                Modifier.heightIn(min = 40.dp).clip(CircleShape).background(c.pill).padding(horizontal = 14.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Symbol("ui-check", tint = c.onPill, size = 16.dp)
-                Text(answers.size.toString(), style = Atlas.type.label, color = c.onPill)
-            }
-        },
-    ) {
-        QuestMap(here, state)
-        val q = state.current
-        when {
-            state.quests == null -> Text(stringResource(R.string.kit_loading), style = Atlas.type.caption, color = c.inkSoft)
-            state.origin == null && state.quests.isNullOrEmpty() -> StateMessage(
-                "ui-cloud-off", stringResource(R.string.search_no_regions), text = stringResource(R.string.quests_no_region), tint = c.go,
-                action = { app.atlas.ui.kit.Chip(stringResource(R.string.search_download), symbol = "ui-download", onClick = { nav.go(Dest.RegionPicker(here.lat, here.lon)) }) },
-            )
-            q == null -> StateMessage("ui-check", stringResource(R.string.quests_done), text = stringResource(R.string.quests_done_text), tint = c.open)
-            else -> QuestCard(
-                q, lang, state.sending.values.lastOrNull(),
-                onYes = { confirm = q to true }, onNo = { confirm = q to false }, onSkip = { vm.skip(q) },
-                onPlace = { services.remember(q.place); nav.go(Dest.Place.of(q.place)) },
-            )
-        }
-        Impact(thisMonth, answers.size)
-        val next = state.next
-        if (next.isNotEmpty()) {
-            Kicker(stringResource(R.string.quests_next))
-            Card(padding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), elevation = 0.dp) {
-                next.take(8).forEachIndexed { i, n ->
-                    NextRow(n, lang, onClick = { services.remember(n.place); nav.go(Dest.Place.of(n.place)) })
-                    if (i < minOf(next.size, 8) - 1) app.atlas.ui.kit.Hairline()
+    BoxWithConstraints(Modifier.fillMaxSize().background(Color(PAGE))) {
+        val page = maxHeight
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).heightIn(min = page)
+                .padding(top = boardShift()).windowInsetsPadding(WindowInsets.navigationBars),
+        ) {
+            BoardTitleRow(stringResource(R.string.quests_title), INK, onBack = { nav.back() }, size = 32f) {
+                val d = pluralStringResource(R.plurals.quests_all, answers.size, answers.size)
+                Row(
+                    Modifier.height(34.dp).boardBox(INK, round(17f)).semantics(mergeDescendants = true) { contentDescription = d }
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    BoardSymbol("ui.check", 14f, AMBER)
+                    BoardLine(answers.size.toString(), boardText(12f, 900, 15.5f, tnum = true), AMBER)
                 }
             }
+            QuestMap(here, state, onPlace = openPlace, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp))
+            val q = state.current
+            val card = Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp)
+            when {
+                state.quests == null -> BoardLine(stringResource(R.string.kit_loading), boardText(12f, 400, 15.5f), SOFT, card)
+                state.origin == null && state.quests.isNullOrEmpty() -> StateMessage(
+                    "ui-cloud-off", stringResource(R.string.search_no_regions), card, text = stringResource(R.string.quests_no_region), tint = Color(0xFF2E5BFF),
+                    action = { app.atlas.ui.kit.Chip(stringResource(R.string.search_download), symbol = "ui-download", onClick = { nav.go(Dest.RegionPicker(here.lat, here.lon)) }) },
+                )
+                q == null -> StateMessage("ui-check", stringResource(R.string.quests_done), card, text = stringResource(R.string.quests_done_text), tint = Color(0xFF2F7A3A))
+                else -> QuestCard(
+                    q, lang, state.sending.values.lastOrNull(),
+                    onYes = { confirm = q to true }, onNo = { confirm = q to false }, onSkip = { vm.skip(q) },
+                    onPlace = { openPlace(q.place) },
+                    modifier = card,
+                )
+            }
+            Impact(thisMonth, answers.size, Modifier.padding(start = 16.dp, end = 16.dp, top = 37.5.dp))
+            if (state.origin == PlaceOrigin.ONLINE) Box(Modifier.padding(start = 18.dp, end = 18.dp, top = 12.dp)) { OriginLine(PlaceOrigin.ONLINE, null) }
+            Spacer(Modifier.weight(1f).heightIn(min = 24.dp))
+            Text(
+                stringResource(R.string.quests_footer),
+                Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 64.dp),
+                style = boardText(11f, 400, 14f, align = TextAlign.Center), color = Color(SOFT),
+            )
         }
-        state.origin?.let { OriginLine(it, null) }
-        HonestyFooter(stringResource(R.string.quests_footer))
     }
     confirm?.let { (q, yes) ->
         ConfirmSend(
@@ -216,11 +221,10 @@ fun QuestsScreen(args: Dest.Quests, nav: Navigator) {
     }
 }
 
-/** A small map with an amber pin at each question, the current one large. */
+/** The board's street card (380 × 230, corners 24, #E8EDE0) as the live map: a pin at each question, the current one large. */
 @Composable
-private fun QuestMap(here: LatLon, state: QuestsState) {
+private fun QuestMap(here: LatLon, state: QuestsState, onPlace: (app.atlas.model.Place) -> Unit, modifier: Modifier) {
     val services = LocalServices.current
-    val c = Atlas.colors
     val tiles by services.tiles.collectAsStateWithLifecycle()
     val map = remember { MapState(CameraPosition(here, 16.2)) }
     val current = state.current
@@ -238,86 +242,84 @@ private fun QuestMap(here: LatLon, state: QuestsState) {
         snapshotFlow { map.visibleBounds }.first { it != null }
         BBox.of(pts + here)?.let { runCatching { map.fit(it.buffer(40.0), 24) } }
     }
-    Box(Modifier.fillMaxWidth().height(200.dp).softShadow(RoundedCornerShape(24.dp), c.shadow, 8.dp).clip(RoundedCornerShape(24.dp))) {
-        AtlasMap(map, tiles, Modifier.fillMaxWidth().height(200.dp), overlays = MapOverlays(markers = markers, location = UserLocation(here, 15.0), measure = false))
+    Box(modifier.fillMaxWidth().height(230.dp).boardBox(0xFFE8EDE0, round(24f))) {
+        AtlasMap(
+            map, tiles, Modifier.fillMaxWidth().height(230.dp),
+            overlays = MapOverlays(markers = markers, location = UserLocation(here, 15.0), measure = false),
+            onTap = { hit -> (hit as? MapHit.OnMarker)?.marker?.place?.let(onPlace) },
+        )
     }
 }
 
-/** The question: where, the thing drawn with its unknown part a ghost, the question in words, Yes, No and skip. */
+/**
+ * The question as the board's white card (corners 28, 16 px in, its shadow 0 12 28 of the ink at 12 %), centred, 10 px
+ * between: where (12 / 800, 0.12 em apart), the thing drawn (200 × 120) with its unknown part a ghost, the question in
+ * 22 / 900, then Yes in green, No in ink and a grey 76 px skip, 56 high, corners 18, 8 px apart.
+ */
 @Composable
-private fun QuestCard(q: PlaceQuest, lang: String, last: Sending?, onYes: () -> Unit, onNo: () -> Unit, onSkip: () -> Unit, onPlace: () -> Unit) {
-    val c = Atlas.colors
+private fun QuestCard(
+    q: PlaceQuest,
+    lang: String,
+    last: Sending?,
+    onYes: () -> Unit,
+    onNo: () -> Unit,
+    onSkip: () -> Unit,
+    onPlace: () -> Unit,
+    modifier: Modifier,
+) {
     val name = app.atlas.places.Localise.name(q.place.tags, lang) ?: ""
     val question = questionOf(q.quest)
-    Card(Modifier.fillMaxWidth(), padding = PaddingValues(18.dp)) {
-        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(role = Role.Button, onClick = onPlace), verticalAlignment = Alignment.CenterVertically) {
-            Kicker("$name · ${shortDistance(q.distanceM)}", Modifier.weight(1f))
-            Symbol("ui-arrow-right", tint = c.inkFaint, size = 16.dp)
-        }
-        QuestArt(q.quest.fact.kind, q.quest.fact.symbol, question, Modifier.fillMaxWidth().height(170.dp).padding(vertical = 8.dp))
-        Text(question, Modifier.fillMaxWidth(), style = Atlas.type.headline, color = c.ink, textAlign = TextAlign.Center)
-        Text(stringResource(R.string.quests_only_see), Modifier.fillMaxWidth().padding(top = 4.dp), style = Atlas.type.caption, color = c.inkSoft, textAlign = TextAlign.Center)
-        // The board's three buttons: Yes in green, No in dark, and a small grey skip; 56 high, corners 18, 900 weight.
-        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            AnswerButton(stringResource(R.string.quests_yes), Color(0xFF2F7A3A), Color.White, Modifier.weight(1f), onYes)
-            AnswerButton(stringResource(R.string.quests_no), Color(0xFF1B2A1E), Color.White, Modifier.weight(1f), onNo)
-            AnswerButton(stringResource(R.string.quests_skip), Color(0xFFEEF1EA), Color(0xFF1B2A1E), Modifier.width(76.dp), onSkip, small = true)
+    Column(
+        modifier.fillMaxWidth().boardBox(0xFFFFFFFF, round(28f), listOf(CssShadow(0f, 12f, 28f, 0f, 0x1F1B2A1E))).padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        BoardLine(
+            "$name · ${shortDistance(q.distanceM)}".uppercase(Locale.getDefault()), boardText(12f, 800, 15.5f, spacing = 1.44f), SOFT,
+            Modifier.align(Alignment.Start).clickable(role = Role.Button, onClick = onPlace),
+        )
+        QuestArt(q.quest.fact.kind, q.quest.fact.symbol, question, Modifier.size(200.dp, 120.dp))
+        Text(question, Modifier.fillMaxWidth(), style = boardText(22f, 900, 28.5f, align = TextAlign.Center), color = Color(INK))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AnswerButton(stringResource(R.string.quests_yes), 0xFF2F7A3A, 0xFFFFFFFF, Modifier.weight(1f), onYes)
+            AnswerButton(stringResource(R.string.quests_no), INK, 0xFFFFFFFF, Modifier.weight(1f), onNo)
+            AnswerButton(stringResource(R.string.quests_skip), 0xFFEEF1EA, INK, Modifier.width(76.dp), onSkip, small = true)
         }
         when (last) {
-            Sending.Busy -> Text(stringResource(R.string.place_note_sending), style = Atlas.type.caption, color = c.inkSoft)
-            is Sending.Done -> Text(stringResource(R.string.place_note_sent), style = Atlas.type.caption, color = c.open)
-            is Sending.Failed -> Text(stringResource(R.string.place_note_failed, last.why), style = Atlas.type.caption, color = c.alert)
+            Sending.Busy -> BoardLine(stringResource(R.string.place_note_sending), boardText(12f, 400, 15.5f), SOFT)
+            is Sending.Done -> BoardLine(stringResource(R.string.place_note_sent), boardText(12f, 400, 15.5f), 0xFF2F7A3A)
+            is Sending.Failed -> BoardLine(stringResource(R.string.place_note_failed, last.why), boardText(12f, 400, 15.5f), 0xFFC8322A, lines = 3)
             else -> Unit
         }
     }
 }
 
 @Composable
-private fun AnswerButton(text: String, background: Color, ink: Color, modifier: Modifier, onClick: () -> Unit, small: Boolean = false) {
+private fun AnswerButton(text: String, background: Long, ink: Long, modifier: Modifier, onClick: () -> Unit, small: Boolean = false) {
     Box(
-        modifier.height(56.dp).clip(RoundedCornerShape(18.dp)).background(background).clickable(role = Role.Button, onClick = onClick),
+        modifier.height(56.dp).boardBox(background, round(18f)).clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text, Modifier.padding(horizontal = 4.dp),
-            style = TextStyle(fontWeight = if (small) FontWeight.ExtraBold else FontWeight.Black, fontSize = if (small) 13.sp else 16.sp), color = ink,
-            textAlign = TextAlign.Center, maxLines = 1,
-        )
+        BoardLine(text, if (small) boardText(13f, 800, 17f) else boardText(16f, 900, 20.5f), ink, Modifier.padding(horizontal = 4.dp))
     }
 }
 
-/** The dark card of what the answers do, as the board has it: how many this month from this phone, and who reads them. */
+/**
+ * The board's dark card of what the answers do (90 px, corners 22, 16 px in, 14 between): how many this month from
+ * this phone in amber 36 / 900, what they are (14 / 800) and who reads them (12, green-grey).
+ */
 @Composable
-private fun Impact(thisMonth: Int, all: Int) {
+private fun Impact(thisMonth: Int, all: Int, modifier: Modifier) {
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 90.dp).clip(RoundedCornerShape(22.dp)).background(Color(0xFF1B2A1E)).padding(horizontal = 16.dp, vertical = 12.dp),
+        modifier.fillMaxWidth().heightIn(min = 90.dp).boardBox(INK, round(22f)).padding(horizontal = 16.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(thisMonth.toString(), style = TextStyle(fontWeight = FontWeight.Black, fontSize = 36.sp), color = Color(0xFFF2C230))
+        BoardLine(thisMonth.toString(), boardText(36f, 900, 46.5f, tnum = true), AMBER)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(pluralStringResource(R.plurals.quests_month, thisMonth, thisMonth), style = TextStyle(fontWeight = FontWeight.ExtraBold, fontSize = 14.sp), color = Color(0xFFEEF4EC))
-            Text(pluralStringResource(R.plurals.quests_all, all, all), style = TextStyle(fontSize = 12.sp), color = Color(0xFFA8C0A8))
+            BoardLine(pluralStringResource(R.plurals.quests_month, thisMonth, thisMonth), boardText(14f, 800, 18f), 0xFFEEF4EC, lines = 2)
+            BoardLine(pluralStringResource(R.plurals.quests_all, all, all), boardText(12f, 400, 15.5f), 0xFFA8C0A8, lines = 2)
         }
-    }
-}
-
-@Composable
-private fun NextRow(q: PlaceQuest, lang: String, onClick: () -> Unit) {
-    val c = Atlas.colors
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(role = Role.Button, onClick = onClick).padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(40.dp).clip(CircleShape).background(questPaper()), contentAlignment = Alignment.Center) {
-            Symbol(q.quest.fact.symbol, tint = questInk(), size = 20.dp)
-        }
-        Column(Modifier.weight(1f)) {
-            Text(app.atlas.places.Localise.name(q.place.tags, lang) ?: "", style = Atlas.type.bodyStrong, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(questionOf(q.quest), style = Atlas.type.caption, color = c.inkSoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        Text(shortDistance(q.distanceM), style = Atlas.type.label, color = c.inkSoft)
     }
 }
 

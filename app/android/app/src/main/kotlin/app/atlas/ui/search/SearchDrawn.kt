@@ -88,9 +88,8 @@ fun StarPicker(stars: Int, onPick: (Int) -> Unit, describe: (Int) -> String, mod
  * stroke through it (as "no Wi-Fi" on the Place board).
  */
 @Composable
-fun FactSymbol(symbol: String, struck: Boolean, tint: Color, description: String, size: Dp = 20.dp) {
-    val paper = Atlas.colors.card
-    Box(Modifier.size(size + 4.dp).semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
+fun FactSymbol(symbol: String, struck: Boolean, tint: Color, description: String, size: Dp = 20.dp, paper: Color = Atlas.colors.card, pad: Dp = 4.dp) {
+    Box(Modifier.size(size + pad).semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
         Symbol(symbol, tint = tint, size = size)
         if (struck) {
             Canvas(Modifier.size(size)) {
@@ -102,16 +101,15 @@ fun FactSymbol(symbol: String, struck: Boolean, tint: Color, description: String
     }
 }
 
-/** A round action under the Place board's route button: a symbol on pale blue. */
+/** A round action under the Place board's route button: a 21 px symbol in blue on a 52 px pale blue (#EEF2FF) disc. */
 @Composable
 fun RoundAction(symbol: String, description: String, onClick: () -> Unit, modifier: Modifier = Modifier, size: Dp = 52.dp) {
-    val c = Atlas.colors
     Box(
-        modifier.size(size).clip(CircleShape).background(c.goSoft).clickable(role = Role.Button, onClick = onClick)
+        modifier.size(size).clip(CircleShape).background(Color(0xFFEEF2FF)).clickable(role = Role.Button, onClick = onClick)
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
-        Symbol(symbol, tint = c.go, size = size * 0.42f)
+        Symbol(symbol, tint = Color(0xFF2E5BFF), size = size * 0.4f)
     }
 }
 
