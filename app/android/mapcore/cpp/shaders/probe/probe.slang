@@ -1,5 +1,5 @@
 // The shader pipeline's probe (plan-vector T6, package K0): an ordinary module with a compute entry and a vertex and
-// fragment pair, through slangc, validation, reflection and embedding. tests/base/shader_test.cpp runs the compute
+// fragment pair, through slangc, validation, reflection and embedding. tests/base/vulkan_vk_test.cpp runs the compute
 // entry on lavapipe and makes every entry's shader module under the validation layer.
 
 struct ProbePush {
@@ -27,9 +27,10 @@ struct VertexOut {
     float2 uv : TEXCOORD0;
 };
 
-// One triangle that covers the screen, from the vertex index alone.
+// One triangle that covers the screen, from the vertex index alone (Vulkan's own, SV_VulkanVertexID: the build refuses
+// SV_VertexID, whose SPIR-V depends on the build host; cmake/Shaders.cmake says why).
 [shader("vertex")]
-VertexOut fullscreen(uint vertex : SV_VertexID) {
+VertexOut fullscreen(uint vertex : SV_VulkanVertexID) {
     float2 uv = float2(float((vertex << 1) & 2u), float(vertex & 2u));
     VertexOut o;
     o.position = float4(uv * 2.0f - 1.0f, 0.0f, 1.0f);

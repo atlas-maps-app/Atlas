@@ -18,12 +18,40 @@
 # operations kept it), so for an exact module step 2 matters there most. gen/layouts.hpp collects every module's
 # push constants and buffer bindings as C++ structs whose offsets and sizes are static_asserted against Slang's layout.
 # The test spirv_lock compares each module's SHA-256 with shaders/<dir>/spirv.lock, so an unintended change of the
-# compiled code shows; the target atlas_spirv_lock writes the lock files from the current build.
+# compiled code shows; the target atlas_spirv_lock writes the lock files from the current build. A module that misses
+# its lock is kept in <build>/spirv-lock-mismatch/ (as embedded, as slangc wrote it, and as spirv-dis's text where
+# SPIRV-Tools is installed), and CI keeps that folder, so another host's bytes can be diffed.
 #
-# Script modes (cmake -DMODE=... -P Shaders.cmake): layouts, lock-check, lock-update.
+# The semantics SV_VertexID and SV_InstanceID are refused. Slang 2026.19 lowers each to a difference of two builtins
+# (gl_VertexIndex - gl_BaseVertex, gl_InstanceIndex - gl_BaseInstance) whose two loads are arguments of one call in its
+# legalisation (slang-ir-glsl-legalize.cpp), so they are emitted in whichever order its own compiler evaluated them:
+# right to left in the x86_64 Linux release (GCC 11.2), left to right in the arm64 Linux (GCC 11.4) and macOS (clang)
+# releases, as their machine code shows. The module's bytes then depend on the host that built it (the probe's did, on
+# CI's x86_64 runners only), and it needs DrawParameters, which a Vulkan 1.1 phone may lack. SV_VulkanVertexID and
+# SV_VulkanInstanceID read Vulkan's own builtins.
+#
+# Script modes (cmake -DMODE=... -P Shaders.cmake): semantics, layouts, lock-check, lock-update.
 
 if(CMAKE_SCRIPT_MODE_FILE)
     cmake_minimum_required(VERSION 3.28...4.1)
+
+    # A module takes no semantic whose SPIR-V depends on the build host (above); run before slangc on every module.
+    if(MODE STREQUAL "semantics")
+        file(READ "${SOURCE}" text)
+        string(REGEX REPLACE "//[^\n]*" "" text "${text}")
+        string(TOLOWER "${text}" text)
+        if(text MATCHES ":[ \t\r\n]*sv_(vertex|instance)id([^a-z0-9_]|$)")
+            if(CMAKE_MATCH_1 STREQUAL "vertex")
+                set(which Vertex)
+            else()
+                set(which Instance)
+            endif()
+            message(FATAL_ERROR "${SOURCE}: SV_${which}ID compiles to SPIR-V that depends on the host that built it "
+                "(Slang 2026.19 emits its two loads in its own compiler's order of evaluation; cmake/Shaders.cmake "
+                "says more). Take SV_Vulkan${which}ID, Vulkan's own index.")
+        endif()
+        return()
+    endif()
 
     # C++ for a reflected type. Sets <out>_type, <out>_size; appends struct definitions to the variable `structs`.
     function(_atlas_cpp_type json out)
@@ -219,6 +247,7 @@ if(CMAKE_SCRIPT_MODE_FILE)
     if(MODE STREQUAL "lock-check" OR MODE STREQUAL "lock-update")
         file(STRINGS "${MANIFEST}" modules)
         set(failures "")
+        set(missed "")
         set(locks "")
         foreach(entry IN LISTS modules)
             string(REPLACE "|" ";" entry "${entry}")
@@ -239,9 +268,43 @@ if(CMAKE_SCRIPT_MODE_FILE)
                 endif()
                 if(NOT expected STREQUAL sha)
                     string(APPEND failures "  ${symbol}: built ${sha}, locked '${expected}' (${lock})\n")
+                    list(APPEND missed "${symbol}|${spv}")
                 endif()
             endif()
         endforeach()
+        # The modules that missed their lock, for a diff with another host's: each as embedded (<symbol>.spv), as
+        # slangc wrote it before nocontract (<symbol>.slangc.spv), with Slang's reflection, and as spirv-dis's text
+        # where SPIRV-Tools is installed. Emptied first, so the folder holds this run's misses only.
+        if(MODE STREQUAL "lock-check" AND KEEP)
+            file(REMOVE_RECURSE "${KEEP}")
+            if(missed)
+                file(MAKE_DIRECTORY "${KEEP}")
+                find_program(spirv_dis NAMES spirv-dis)
+                foreach(entry IN LISTS missed)
+                    string(REPLACE "|" ";" entry "${entry}")
+                    list(GET entry 0 symbol)
+                    list(GET entry 1 spv)
+                    string(REGEX REPLACE "\\.spv$" "" base "${spv}")
+                    file(COPY_FILE "${spv}" "${KEEP}/${symbol}.spv")
+                    foreach(extra IN ITEMS slangc.spv json)
+                        if(EXISTS "${base}.${extra}")
+                            file(COPY_FILE "${base}.${extra}" "${KEEP}/${symbol}.${extra}")
+                        endif()
+                    endforeach()
+                    if(spirv_dis)
+                        foreach(kept IN ITEMS spv slangc.spv)
+                            if(EXISTS "${KEEP}/${symbol}.${kept}")
+                                string(REGEX REPLACE "spv$" "spvasm" text "${KEEP}/${symbol}.${kept}")
+                                execute_process(COMMAND "${spirv_dis}" "${KEEP}/${symbol}.${kept}" -o "${text}"
+                                    RESULT_VARIABLE rc OUTPUT_QUIET ERROR_QUIET)
+                            endif()
+                        endforeach()
+                    endif()
+                endforeach()
+                file(WRITE "${KEEP}/mismatch.txt"
+                    "Built on ${HOST} with Slang ${SLANG} (cmake/Shaders.cmake, lock-check):\n${failures}")
+            endif()
+        endif()
         if(MODE STREQUAL "lock-update")
             list(REMOVE_DUPLICATES locks)
             foreach(lock IN LISTS locks)
@@ -250,9 +313,13 @@ if(CMAKE_SCRIPT_MODE_FILE)
                 message(STATUS "wrote ${lock}")
             endforeach()
         elseif(failures)
+            set(where "")
+            if(KEEP)
+                set(where " The modules as built are in ${KEEP}.")
+            endif()
             message(FATAL_ERROR "The compiled SPIR-V differs from shaders/*/spirv.lock:\n${failures}"
                 "If the change is intended (a shader or Slang changed), rebuild the target atlas_spirv_lock and "
-                "commit the lock files with it.")
+                "commit the lock files with it.${where}")
         endif()
         return()
     endif()
@@ -325,6 +392,7 @@ function(atlas_add_shaders target shaders_dir)
             add_custom_command(
                 OUTPUT "${raw}" "${json}"
                 COMMAND "${CMAKE_COMMAND}" -E make_directory "${work_dir}/${rel_dir}"
+                COMMAND "${CMAKE_COMMAND}" -DMODE=semantics -DSOURCE=${src} -P "${CMAKE_CURRENT_FUNCTION_LIST_FILE}"
                 COMMAND "${CMAKE_COMMAND}" -E env SLANG_RUN_SPIRV_VALIDATION=1
                         "${ATLAS_SLANGC}" "${src}" -target spirv ${route_flags} -std 2026
                         -warnings-as-errors all ${fp_mode} ${define_flags}
@@ -416,6 +484,8 @@ ${module_entries}};
         VERBATIM)
     if(ATLAS_TESTS)
         add_test(NAME spirv_lock
-            COMMAND "${CMAKE_COMMAND}" -DMODE=lock-check -DMANIFEST=${manifest_file} -P "${CMAKE_CURRENT_FUNCTION_LIST_FILE}")
+            COMMAND "${CMAKE_COMMAND}" -DMODE=lock-check -DMANIFEST=${manifest_file}
+                    -DKEEP=${CMAKE_BINARY_DIR}/spirv-lock-mismatch -DHOST=${ATLAS_HOST_PLATFORM}
+                    -DSLANG=${ATLAS_SLANG_VERSION} -P "${CMAKE_CURRENT_FUNCTION_LIST_FILE}")
     endif()
 endfunction()

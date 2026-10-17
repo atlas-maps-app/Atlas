@@ -260,6 +260,30 @@ jobs:
             ${{ env.CP }}/build/feature-probe-*.txt
             ${{ env.CP }}/build/bench-*.txt
           if-no-files-found: ignore
+      # A module that missed its spirv.lock (cmake/Shaders.cmake keeps it, as embedded and as slangc wrote it, with its
+      # reflection): with spirv-dis's text beside it, so it can be diffed with another host's instead of guessed at.
+      - name: The SPIR-V that missed its lock, disassembled
+        if: startsWith(matrix.task, 'host-') && failure()
+        working-directory: ${{ env.CP }}
+        run: |
+          kept="build/$TASK/spirv-lock-mismatch"
+          [ -d "$kept" ] || { echo "no module missed its lock"; exit 0; }
+          command -v spirv-dis > /dev/null || sudo apt-get install -y -q --no-install-recommends spirv-tools > /dev/null ||
+            echo "::warning::spirv-tools did not install: the modules are kept without their text"
+          for module in "$kept"/*.spv; do
+            if [ ! -e "${module%.spv}.spvasm" ] && command -v spirv-dis > /dev/null; then
+              spirv-dis "$module" -o "${module%.spv}.spvasm" || echo "::warning::spirv-dis could not read $module"
+            fi
+          done
+          cat "$kept/mismatch.txt"
+          ls -l "$kept"
+      - name: Keep the SPIR-V that missed its lock
+        if: startsWith(matrix.task, 'host-') && failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: core-spirv-lock-${{ matrix.task }}-${{ matrix.arch }}
+          path: ${{ env.CP }}/build/${{ matrix.task }}/spirv-lock-mismatch/
+          if-no-files-found: ignore
 
       # ---- fuzz: every fuzz/fuzz_*.cpp under libFuzzer, ASan and UBSan, as many at once as the runner has cores; 60 s
       # each on a push, and nightly up to 30 minutes each within 120 minutes in all.
@@ -440,6 +464,12 @@ jobs:
             'void main(uint3 id : SV_DispatchThreadID) { data[0] = sqrt(data[1]) / data[2]; }' > shaders/probe/exact_planted.slang
           expect_failure build/exact.log 'NOT EXACT' cmake --build build/canary-asan --target atlas_core_shaders
           rm shaders/probe/exact_planted.slang
+          # So does SV_VertexID, whose SPIR-V depends on the host that built it (cmake/Shaders.cmake).
+          printf '%s\n' '[shader("vertex")]' \
+            'float4 main(uint vertex : SV_VertexID) : SV_Position { return float4(float(vertex), 0.0f, 0.0f, 1.0f); }' \
+            > shaders/probe/planted_vertex_id.slang
+          expect_failure build/vertex-id.log 'SV_VertexID compiles to SPIR-V' cmake --build build/canary-asan --target atlas_core_shaders
+          rm shaders/probe/planted_vertex_id.slang
       - name: CMake configures with no network
         if: matrix.task == 'canaries'
         working-directory: ${{ env.CP }}
