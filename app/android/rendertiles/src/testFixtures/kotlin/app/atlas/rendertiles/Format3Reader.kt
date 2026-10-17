@@ -30,9 +30,9 @@ import java.util.zip.CRC32
  * SHA-256, the sections' CRC-32) and its one rule for what a reader does not know (a layer, a column, a section: skipped;
  * a known column in another codec: an error). The Kotlin twin of `CP/tiles/`, for tests and the core's checks.
  *
- * Two checks go beyond what the core can make, to hold the writer to the format: the CRC-32 of the whole `chunks`
- * section ([checkChunksCrc]; a reader by ranges relies on each chunk's SHA-256), and each tile's bounds recomputed with
- * [Grid.tileBox] (the core takes them from the header).
+ * One check goes beyond what the core can make, to hold the writer to the format: the CRC-32 of the whole `chunks`
+ * section ([checkChunksCrc]; a reader by ranges relies on each chunk's SHA-256). Each tile's bounds must be
+ * [Grid.tileBox]'s, here as in the core.
  */
 class Format3Reader(private val bytes: ByteArray, private val checkChunksCrc: Boolean = true) {
     /** One section of the directory. */

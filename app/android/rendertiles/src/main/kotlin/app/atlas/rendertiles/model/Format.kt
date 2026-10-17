@@ -22,8 +22,8 @@ package app.atlas.rendertiles.model
  * - `rhead`, stored, and `style`, one zstd frame: binary, little-endian ([RenderHead], [StyleTables]); the core needs
  *   no JSON parser.
  *
- * **Everything inside the payload is little-endian.** Varints are unsigned LEB128 of at most 10 bytes (64 bits); signed
- * values are zig-zag coded.
+ * **Everything inside the payload is little-endian.** Varints are unsigned LEB128 in their shortest form, of at most 10
+ * bytes (64 bits); signed values are zig-zag coded.
  *
  * **A tile** (one decompressed chunk, at most [MAX_TILE_BYTES]):
  * ```
@@ -40,8 +40,8 @@ package app.atlas.rendertiles.model
  *      u32 offset, u32 length
  * ```
  * Offsets count from the tile's first byte; every block lies inside the tile (the reader checks each before use). The
- * header's level, column and row equal the chunk table's. The reader takes the bounds from the header; recomputing them
- * (as the reference reader does, to check the writer) needs `StrictMath`'s `sinh` and `atan`.
+ * header's level, column and row equal the chunk table's. A reader checks that the header's bounds are the grid's own
+ * ([Grid.tileBox], with `StrictMath`'s `sinh` and `atan`) and then draws by them, never by a box it computes itself.
  * - The string table: a varint count, then per string a varint byte length and its UTF-8 bytes. Columns refer to
  *   strings by index.
  * - The cell table: for each of the n × n cells, row by row from the north-west: a varint count of the features whose

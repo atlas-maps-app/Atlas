@@ -60,7 +60,11 @@ jobs:
         run: |
           export ATLAS_VERSION="${TAG#v}"
           case "$TAG" in *alpha*) TASK=assembleBench ;; *) TASK=assembleRelease ;; esac
-          ./gradlew test "$TASK" --stacktrace
+          # :mapcorecheck's tests build the map core for this machine with LLVM's clang and libc++, which android.yml's
+          # build job installs to run them on every push; a release leaves them out (a tag from before them has none).
+          skip=()
+          if [ -d mapcorecheck ]; then skip=(-x :mapcorecheck:test); fi
+          ./gradlew test "$TASK" "${skip[@]}" --stacktrace
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}

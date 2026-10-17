@@ -394,6 +394,69 @@ class CodecTest {
     }
 
     @Test
+    fun `a reader refuses a varint longer than its shortest form`() {
+        // what the writer writes reads back, from 0 to the 10-byte maximum
+        for (v in listOf(0L, 1L, 127L, 128L, 16_383L, 16_384L, Long.MAX_VALUE, -1L)) {
+            val b = LeSink(16).also { it.varU(v) }.toByteArray()
+            assertEquals(v, LeSource(b).varU())
+        }
+        // 0 and 1 in two bytes, 127 in three, 2^56 - 1 in ten: each has a shorter form
+        val overlong = listOf(
+            byteArrayOf(0x80.toByte(), 0x00), byteArrayOf(0x81.toByte(), 0x00), byteArrayOf(0xFF.toByte(), 0x80.toByte(), 0x00),
+            byteArrayOf(0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(),
+                0xFF.toByte(), 0x80.toByte(), 0x00),
+        )
+        for (b in overlong) try {
+            LeSource(b).varU()
+            fail("read ${b.joinToString(" ") { "%02x".format(it) }}")
+        } catch (e: TileFormatException) {
+            assertTrue(e.message!!, e.message!!.contains("overlong") || e.message!!.contains("too long"))
+        }
+        // a string table whose count is written in two bytes where one is enough is refused
+        val table = LeSink(16).also { it.bytes(byteArrayOf(0x81.toByte(), 0x00)); it.utf8("hw") }.toByteArray()
+        try {
+            StringTable.read(LeSource(table))
+            fail("a string table with an overlong count read")
+        } catch (e: TileFormatException) {
+            assertTrue(e.message!!, e.message!!.contains("overlong"))
+        }
+        assertEquals(listOf("hw"), StringTable.read(LeSource(LeSink(16).also { it.varU(1); it.utf8("hw") }.toByteArray())))
+    }
+
+    @Test
+    fun `a reader refuses a string that is not UTF-8`() {
+        // a lone continuation byte, an overlong '/', a surrogate, past U+10FFFF, a sequence cut short
+        val bad = listOf(
+            byteArrayOf(0x80.toByte()), byteArrayOf(0xC0.toByte(), 0xAF.toByte()), byteArrayOf(0xED.toByte(), 0xA0.toByte(), 0x80.toByte()),
+            byteArrayOf(0xF4.toByte(), 0x90.toByte(), 0x80.toByte(), 0x80.toByte()), byteArrayOf(0x41, 0xE2.toByte(), 0x82.toByte()),
+        )
+        for (b in bad) {
+            val sink = LeSink(16).also { it.varU(b.size.toLong()); it.bytes(b) }
+            try {
+                LeSource(sink.toByteArray()).utf8()
+                fail("read ${b.joinToString(" ") { "%02x".format(it) }}")
+            } catch (e: TileFormatException) {
+                assertTrue(e.message!!, e.message!!.contains("UTF-8"))
+            }
+        }
+        val good = LeSink(64).also { it.utf8("Prinsengracht · € \uD834\uDD1E") }
+        assertEquals("Prinsengracht · € \uD834\uDD1E", LeSource(good.toByteArray()).utf8())
+        // a damaged string in a tile's string table is refused, not read with U+FFFD in its place
+        val tile = Format3Writer.encodeTile(roadTile())
+        val table = LeSource(tile, LeSource(tile, 32).u32().toInt())
+        table.varCount()
+        val first = table.varCount()
+        assertTrue(first > 0)
+        val damaged = tile.copyOf().also { it[table.pos] = 0xFF.toByte() }
+        try {
+            Format3Reader.decodeTile(damaged)
+            fail("a tile with a damaged string read")
+        } catch (e: TileFormatException) {
+            assertTrue(e.message!!, e.message!!.contains("UTF-8"))
+        }
+    }
+
+    @Test
     fun `the reach section reads back, newer entries skipped, damage refused`() {
         val rs = listOf(Reach(-5, -6, 7, 8, 120), Reach(523_700_000, 48_800_000, 523_800_000, 48_900_000, 0))
         val b = Format3Writer.reachBytes(rs)

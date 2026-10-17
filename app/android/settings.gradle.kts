@@ -31,3 +31,5 @@ include(":packer")
 include(":rendertiles")
 // Android library: the vector engine's core (plan-vector), C++23 built by CMake into libatlasmap.so with pinned tools.
 include(":mapcore")
+// Tests only, on the JVM: the core's host build through JNI, held to the Kotlin side (the tile reader to the writer).
+include(":mapcorecheck")

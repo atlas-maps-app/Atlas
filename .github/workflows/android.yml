@@ -30,6 +30,10 @@ on:
         description: Also run the bench APK (as installed and compiled, memory, simpleperf, GL capabilities)
         type: boolean
         default: true
+      sweeps:
+        description: Also run the core's full sweeps (pymath's parity at 10^7 a function, 60,000 damaged tiles; nightly always)
+        type: boolean
+        default: false
 
 concurrency:
   group: android-${{ github.ref }}
@@ -76,12 +80,62 @@ jobs:
           path: ~/.cache/ccache
           key: ccache-mapcore-${{ hashFiles('app/android/mapcore/cpp/cmake/**', 'app/android/mapcore/build.gradle.kts', 'app/android/mapcore/tools.properties') }}-${{ github.sha }}
           restore-keys: ccache-mapcore-${{ hashFiles('app/android/mapcore/cpp/cmake/**', 'app/android/mapcore/build.gradle.kts', 'app/android/mapcore/tools.properties') }}-
+      # The map core's host build for :mapcorecheck's JNI tests (the tile reader's L0, the style's parity, the likeness
+      # candidates; mapcorecheck/build.gradle.kts's coreHost task): LLVM's clang and libc++, as core.yml installs them
+      # (Ubuntu's own clang lacks libc++'s C++23), and lavapipe with the validation layer from the pinned emulator package,
+      # as core.yml's x86_64 jobs get it. They reach only that task and those tests (ATLAS_HOST_* and ATLAS_LAVAPIPE_DIR),
+      # never the APK's NDK build or the other tests.
+      - name: "Map core host build: LLVM's clang and libc++"
+        run: |
+          LLVM=$(grep -m1 "^  LLVM: '" ../../.github/workflows/core.yml | cut -d"'" -f2) # core.yml's pin: NDK r30's major
+          [ -n "$LLVM" ] || { echo "::error::core.yml names no LLVM version"; exit 1; }
+          codename=$(lsb_release -cs)
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/keyrings/apt.llvm.org.asc > /dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.asc] http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$LLVM main" |
+            sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends clang-$LLVM lld-$LLVM libc++-$LLVM-dev libc++abi-$LLVM-dev \
+            libclang-rt-$LLVM-dev
+          {
+            echo "ATLAS_HOST_CC=clang-$LLVM"
+            echo "ATLAS_HOST_CXX=clang++-$LLVM"
+            echo "ATLAS_HOST_CXXFLAGS=-stdlib=libc++"
+            echo "ATLAS_HOST_LDFLAGS=-stdlib=libc++"
+          } >> "$GITHUB_ENV"
+          clang++-$LLVM --version | head -1
+      - name: "Map core host build: the emulator package's pin"
+        run: echo "EMULATOR_SHA1=$(grep '^emulator.linux-x86_64.sha1=' mapcore/tools.properties | cut -d= -f2-)" >> "$GITHUB_ENV"
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/emulator-vulkan
+          key: emulator-vulkan-${{ env.EMULATOR_SHA1 }}
+      - name: "Map core host build: lavapipe from the pinned emulator package"
+        run: |
+          dir="$RUNNER_TEMP/emulator-vulkan"
+          if [ ! -e "$dir/lvp_icd.json" ]; then
+            file=$(grep '^emulator.linux-x86_64.file=' mapcore/tools.properties | cut -d= -f2-)
+            curl -fsSLo "$RUNNER_TEMP/$file" "https://dl.google.com/android/repository/$file"
+            echo "$EMULATOR_SHA1  $RUNNER_TEMP/$file" | sha1sum -c -
+            unzip -q "$RUNNER_TEMP/$file" 'emulator/lib64/vulkan/*' -d "$RUNNER_TEMP/emulator"
+            rm "$RUNNER_TEMP/$file"
+            mv "$RUNNER_TEMP/emulator/emulator/lib64/vulkan" "$dir"
+            rm -f "$dir"/*swiftshader* "$dir"/*MoltenVK* "$dir"/*kosmickrisp* "$dir"/glslangValidator
+          fi
+          ls -la "$dir" "$dir/layers" || true
+          echo "ATLAS_LAVAPIPE_DIR=$dir" >> "$GITHUB_ENV"
+          if [ ! -e "$dir/libvulkan.so.1" ] && [ ! -e "$dir/libvulkan.so" ]; then
+            sudo apt-get install -y -q libvulkan1 > /dev/null
+            echo "ATLAS_VULKAN_LOADER=/usr/lib/x86_64-linux-gnu/libvulkan.so.1" >> "$GITHUB_ENV"
+          fi
+      # pymath's parity sweep (:mapcorecheck's MT/numerics) runs 10^5 arguments a function here, and the tile reader's
+      # differential check 1,500 damaged tiles; the sweeps job runs the plan's 10^7 and 60,000 nightly.
       - name: Test and build
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.tests }}" = "false" ]; then
             ./gradlew assembleDebug assembleBench --stacktrace
           else
-            ./gradlew test testDebugUnitTest assembleDebug assembleBench --continue --stacktrace
+            ./gradlew test testDebugUnitTest assembleDebug assembleBench -Datlas.numerics.n=100000 --continue --stacktrace
           fi
       - name: Keep the APK
         if: always()
@@ -161,4 +215,61 @@ jobs:
         with:
           name: atlas-emulator
           path: shots/
+          if-no-files-found: ignore
+
+  sweeps:
+    # The core's full sweeps, on a Release host build: pymath's parity (L0 d, plan-vector D16, K3b), 10^7 arguments a
+    # function bit for bit against StrictMath and PyMath (and its sin timing, reported); and the tile reader's
+    # differential check (L0 b, K3), 60,000 damaged tiles of the bundled packs through the core and the Kotlin reader,
+    # which must agree on every one (about a minute). Nightly, and on dispatch with sweeps; the build job runs 10^5 and
+    # 1,500.
+    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.sweeps) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: app/android
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # the nightly runs from the default branch's workflow; it judges the work branch
+          ref: ${{ github.event_name == 'schedule' && 'app' || github.ref }}
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Android SDK 37
+        # the SDK's CMake builds the core's host library (:mapcorecheck's coreHost, app/android/mapcore/tools.properties)
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" "ndk;30.0.16248370" "cmake;4.1.2" > /dev/null
+      - name: "Map core host build: LLVM's clang and libc++"
+        run: |
+          LLVM=$(grep -m1 "^  LLVM: '" ../../.github/workflows/core.yml | cut -d"'" -f2) # core.yml's pin: NDK r30's major
+          [ -n "$LLVM" ] || { echo "::error::core.yml names no LLVM version"; exit 1; }
+          codename=$(lsb_release -cs)
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/keyrings/apt.llvm.org.asc > /dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.asc] http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$LLVM main" |
+            sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends clang-$LLVM lld-$LLVM libc++-$LLVM-dev libc++abi-$LLVM-dev \
+            libclang-rt-$LLVM-dev
+          {
+            echo "ATLAS_HOST_CC=clang-$LLVM"
+            echo "ATLAS_HOST_CXX=clang++-$LLVM"
+            echo "ATLAS_HOST_CXXFLAGS=-stdlib=libc++"
+            echo "ATLAS_HOST_LDFLAGS=-stdlib=libc++"
+          } >> "$GITHUB_ENV"
+          clang++-$LLVM --version | head -1
+      - name: The sweeps
+        run: >-
+          ./gradlew :mapcorecheck:test --tests 'app.atlas.mapcorecheck.numerics.*'
+          --tests 'app.atlas.mapcorecheck.tiles.L0DecodeTest.onDamagedTilesTheCoreAgreesWithTheKotlinReader'
+          -Datlas.l0.damages=60000 -Patlas.mapcore.buildType=Release --stacktrace
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sweeps
+          path: app/android/mapcorecheck/build/reports/tests/
           if-no-files-found: ignore

@@ -138,6 +138,7 @@ class LeSource(private val buf: ByteArray, var pos: Int = 0, val end: Int = buf.
 
     fun f64(): Double = java.lang.Double.longBitsToDouble(u64())
 
+    /** An unsigned LEB128 varint in its shortest form: one byte string per value, so a longer one is refused. */
     fun varU(): Long {
         var result = 0L
         var shift = 0
@@ -145,7 +146,10 @@ class LeSource(private val buf: ByteArray, var pos: Int = 0, val end: Int = buf.
             val b = u8()
             if (shift == 63 && b > 1) throw TileFormatException("a varint is too long")
             result = result or ((b and 0x7F).toLong() shl shift)
-            if (b and 0x80 == 0) return result
+            if (b and 0x80 == 0) {
+                if (b == 0 && shift > 0) throw TileFormatException("an overlong varint")
+                return result
+            }
             shift += 7
             if (shift > 63) throw TileFormatException("a varint is too long")
         }
@@ -170,10 +174,15 @@ class LeSource(private val buf: ByteArray, var pos: Int = 0, val end: Int = buf.
         return r
     }
 
+    /** A varint byte length and that many bytes of UTF-8; a string that is not UTF-8 is refused, never read as U+FFFD. */
     fun utf8(): String {
         val n = varCount()
         need(n)
-        val s = String(buf, pos, n, Charsets.UTF_8)
+        val s = try {
+            Charsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(buf, pos, n)).toString()
+        } catch (e: java.nio.charset.CharacterCodingException) {
+            throw TileFormatException("a string that is not UTF-8")
+        }
         pos += n
         return s
     }
