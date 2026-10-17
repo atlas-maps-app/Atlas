@@ -33,3 +33,5 @@ include(":rendertiles")
 include(":mapcore")
 // Tests only, on the JVM: the core's host build through JNI, held to the Kotlin side (the tile reader to the writer).
 include(":mapcorecheck")
+// Tests only, on Robolectric's Skia: the likeness harness's oracle, the port's exact references the core is judged by.
+include(":likeness")

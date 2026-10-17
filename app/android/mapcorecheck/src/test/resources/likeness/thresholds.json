@@ -1,0 +1,619 @@
+{
+  "about": "plan-vector D16's likeness gates, every one fixed before its first run (K4). Per gate and platform, each metric has `fixed` (written now, from D16's tables, the allowances of N9 and G1's calibration in anchor/src/test/resources/likeness.json), `threshold` (the one in force: never looser than `fixed` unless `history` carries the owner's reason), `measured` and `commit` (the last green run), and `history`. Only the coordinator edits this file; CI proposes tightened values (Ratchet.kt) after a green run on app.",
+  "format": 1,
+  "stage": "A0",
+  "stages": ["A1", "A2", "A3", "A4"],
+  "metrics": {
+    "mad": "max",
+    "within2": "min",
+    "p99": "max",
+    "block": "max",
+    "flat": "max",
+    "medianMad": "max",
+    "p90Mad": "max",
+    "madOverStructural": "max",
+    "ownersIoU": "min",
+    "labelMissing": "max",
+    "labelPx": "max",
+    "labelDeg": "max",
+    "l1Unmatched": "max",
+    "l1StepShare": "max",
+    "l2Frame": "max",
+    "l2Within2": "min",
+    "l2Vertex": "max",
+    "fields": "max",
+    "l0Records": "max",
+    "l0Geometry": "max",
+    "l0Bits": "max",
+    "popsOverPort": "max",
+    "handOverMad": "max",
+    "handOverBlock": "max",
+    "bandStep": "max"
+  },
+  "allowance": {
+    "about": "the platform allowance (N9): two conformant Vulkan drivers drew one dense frame 0.6-1.0 MAD apart",
+    "lavapipe": 0.8,
+    "phone": 1.2
+  },
+  "ratchet": {
+    "about": "after a green run on app, CI proposes each threshold tightened to the measured value plus this (never loosened); the coordinator alone commits",
+    "mad": 0.1,
+    "medianMad": 0.1,
+    "p90Mad": 0.1,
+    "madOverStructural": 0.1,
+    "within2": -0.005,
+    "p99": 2,
+    "block": 0.5,
+    "flat": "x1.5",
+    "ownersIoU": -0.01,
+    "labelPx": 0.1,
+    "labelDeg": 0.1,
+    "l2Frame": 0.1,
+    "l2Within2": -0.005,
+    "popsOverPort": 0.0,
+    "handOverMad": 0.1,
+    "handOverBlock": 0.5,
+    "bandStep": 0.0
+  },
+  "phoneRule": {
+    "about": "a phone's VK check gates: lavapipe-x86_64's plus the difference of the two allowances, its within-2 shares 2 points lower, L2 at the phone's allowance; written per model when its VK facts arrive (`phone:<manufacturer model>/<driver version>`)",
+    "mad": 0.4,
+    "medianMad": 0.4,
+    "p90Mad": 0.4,
+    "within2": -0.02,
+    "l2Frame": 1.2,
+    "l2Within2": 0.92
+  },
+  "platforms": {
+    "lavapipe-x86_64": {
+      "role": "gate",
+      "about": "CI's ubuntu-24.04 runner, lavapipe from the emulator package (T10)",
+      "gates": {
+        "HOME_SUNNY": {
+          "about": "The Westerkerk home, sunny: frame MAD (D16 row 1)",
+          "class": "westerkerk",
+          "stages": {
+            "A1": {
+              "mad": {"fixed": 8.0, "threshold": 8.0, "measured": null, "commit": null, "history": []}
+            },
+            "A2": {
+              "mad": {"fixed": 7.0, "threshold": 7.0, "measured": null, "commit": null, "history": []}
+            },
+            "A3": {
+              "mad": {"fixed": 2.5, "threshold": 2.5, "measured": null, "commit": null, "history": []}
+            },
+            "A4": {
+              "mad": {"fixed": 1.536, "threshold": 1.536, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "BOARD_SUNNY": {
+          "about": "The Main board (grachten_home), sunny: frame MAD (D16 row 2)",
+          "class": "canal",
+          "stages": {
+            "A1": {
+              "mad": {"fixed": 3.0, "threshold": 3.0, "measured": null, "commit": null, "history": []}
+            },
+            "A2": {
+              "mad": {"fixed": 2.5, "threshold": 2.5, "measured": null, "commit": null, "history": []}
+            },
+            "A3": {
+              "mad": {"fixed": 2.0, "threshold": 2.0, "measured": null, "commit": null, "history": []}
+            },
+            "A4": {
+              "mad": {"fixed": 1.8055, "threshold": 1.8055, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "BOARD": {
+          "about": "Boards, every moment: frame MAD; at A4 the case's own calibrated MAD + 0.10 + the allowance, else its class's p90 (D16 row 3)",
+          "stages": {
+            "A1": {
+              "mad": {"fixed": 9.0, "threshold": 9.0, "measured": null, "commit": null, "history": []}
+            },
+            "A2": {
+              "mad": {"fixed": 8.0, "threshold": 8.0, "measured": null, "commit": null, "history": []}
+            },
+            "A3": {
+              "mad": {"fixed": 3.0, "threshold": 3.0, "measured": null, "commit": null, "history": []}
+            },
+            "A4": {
+              "classes": {
+                "westerkerk": {
+                  "mad": {"fixed": 1.6605, "threshold": 1.6605, "measured": null, "commit": null, "history": []}
+                },
+                "canal": {
+                  "mad": {"fixed": 2.2116, "threshold": 2.2116, "measured": null, "commit": null, "history": []}
+                }
+              },
+              "cases": {
+                "home sunny S1": {
+                  "mad": {"fixed": 1.536, "threshold": 1.536, "measured": null, "commit": null, "history": []}
+                },
+                "home grey S1": {
+                  "mad": {"fixed": 1.5019, "threshold": 1.5019, "measured": null, "commit": null, "history": []}
+                },
+                "home wet S1": {
+                  "mad": {"fixed": 1.494, "threshold": 1.494, "measured": null, "commit": null, "history": []}
+                },
+                "home night S1": {
+                  "mad": {"fixed": 1.2466, "threshold": 1.2466, "measured": null, "commit": null, "history": []}
+                },
+                "board sunny S1": {
+                  "mad": {"fixed": 1.8055, "threshold": 1.8055, "measured": null, "commit": null, "history": []}
+                },
+                "board grey S1": {
+                  "mad": {"fixed": 1.8586, "threshold": 1.8586, "measured": null, "commit": null, "history": []}
+                },
+                "board wet S1": {
+                  "mad": {"fixed": 1.7897, "threshold": 1.7897, "measured": null, "commit": null, "history": []}
+                }
+              }
+            }
+          }
+        },
+        "SWEEP_W": {
+          "about": "Sweeps in the Westerkerk's class: median and p90 of the frame MAD over the tier's sweep cases (D16 row 4)",
+          "class": "westerkerk",
+          "aggregate": "sweep",
+          "stages": {
+            "A1": {
+              "medianMad": {"fixed": 9.0, "threshold": 9.0, "measured": null, "commit": null, "history": []},
+              "p90Mad": {"fixed": 14.0, "threshold": 14.0, "measured": null, "commit": null, "history": []}
+            },
+            "A2": {
+              "medianMad": {"fixed": 8.0, "threshold": 8.0, "measured": null, "commit": null, "history": []},
+              "p90Mad": {"fixed": 12.0, "threshold": 12.0, "measured": null, "commit": null, "history": []}
+            },
+            "A3": {
+              "medianMad": {"fixed": 3.0, "threshold": 3.0, "measured": null, "commit": null, "history": []},
+              "p90Mad": {"fixed": 5.0, "threshold": 5.0, "measured": null, "commit": null, "history": []}
+            },
+            "A4": {
+              "medianMad": {"fixed": 1.5, "threshold": 1.5, "measured": null, "commit": null, "history": []},
+              "p90Mad": {"fixed": 2.5, "threshold": 2.5, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "SWEEP_C": {
+          "about": "Sweeps in the canal ring's and the regions' class: median and p90 of the frame MAD (D16 row 4)",
+          "class": "canal",
+          "aggregate": "sweep",
+          "stages": {
+            "A1": {
+              "medianMad": {"fixed": 9.0, "threshold": 9.0, "measured": null, "commit": null, "history": []},
+              "p90Mad": {"fixed": 14.0, "threshold": 14.0, "measured": null, "commit": null, "history": []}
+            },
+            "A2": {
+              "medianMad": {"fixed": 8.0, "threshold": 8.0, "measured": null, "commit": null, "history": []},
+              "p90Mad": {"fixed": 12.0, "threshold": 12.0, "measured": null, "commit": null, "history": []}
+            },
+            "A3": {
+              "medianMad": {"fixed": 3.0, "threshold": 3.0, "measured": null, "commit": null, "history": []},
+              "p90Mad": {"fixed": 5.0, "threshold": 5.0, "measured": null, "commit": null, "history": []}
+            },
+            "A4": {
+              "medianMad": {"fixed": 1.8, "threshold": 1.8, "measured": null, "commit": null, "history": []},
+              "p90Mad": {"fixed": 2.8, "threshold": 2.8, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "WITHIN2": {
+          "about": "The share of pixels within 2 levels; at A4 the case's calibrated share - 1 point - 2 points of platform allowance (D16 row 5)",
+          "stages": {
+            "A1": {
+              "within2": {"fixed": 0.8, "threshold": 0.8, "measured": null, "commit": null, "history": []}
+            },
+            "A2": {
+              "within2": {"fixed": 0.83, "threshold": 0.83, "measured": null, "commit": null, "history": []}
+            },
+            "A3": {
+              "within2": {"fixed": 0.9, "threshold": 0.9, "measured": null, "commit": null, "history": []}
+            },
+            "A4": {
+              "classes": {
+                "westerkerk": {
+                  "within2": {"fixed": 0.91504, "threshold": 0.91504, "measured": null, "commit": null, "history": []}
+                },
+                "canal": {
+                  "within2": {"fixed": 0.84692, "threshold": 0.84692, "measured": null, "commit": null, "history": []}
+                }
+              },
+              "cases": {
+                "home sunny S1": {
+                  "within2": {"fixed": 0.9247, "threshold": 0.9247, "measured": null, "commit": null, "history": []}
+                },
+                "home grey S1": {
+                  "within2": {"fixed": 0.92973, "threshold": 0.92973, "measured": null, "commit": null, "history": []}
+                },
+                "home wet S1": {
+                  "within2": {"fixed": 0.92201, "threshold": 0.92201, "measured": null, "commit": null, "history": []}
+                },
+                "home night S1": {
+                  "within2": {"fixed": 0.95409, "threshold": 0.95409, "measured": null, "commit": null, "history": []}
+                },
+                "board sunny S1": {
+                  "within2": {"fixed": 0.85542, "threshold": 0.85542, "measured": null, "commit": null, "history": []}
+                },
+                "board grey S1": {
+                  "within2": {"fixed": 0.84692, "threshold": 0.84692, "measured": null, "commit": null, "history": []}
+                },
+                "board wet S1": {
+                  "within2": {"fixed": 0.862, "threshold": 0.862, "measured": null, "commit": null, "history": []}
+                }
+              }
+            }
+          }
+        },
+        "FLAT": {
+          "about": "Flat misses (structural only); at A4 the case's calibrated share x 3 (D16 row 6)",
+          "stages": {
+            "A1": {
+              "flat": {"fixed": 0.08, "threshold": 0.08, "measured": null, "commit": null, "history": []}
+            },
+            "A2": {
+              "flat": {"fixed": 0.07, "threshold": 0.07, "measured": null, "commit": null, "history": []}
+            },
+            "A3": {
+              "flat": {"fixed": 0.03, "threshold": 0.03, "measured": null, "commit": null, "history": []}
+            },
+            "A4": {
+              "classes": {
+                "westerkerk": {
+                  "flat": {"fixed": 0.00074919, "threshold": 0.00074919, "measured": null, "commit": null, "history": []}
+                },
+                "canal": {
+                  "flat": {"fixed": 0.00019413, "threshold": 0.00019413, "measured": null, "commit": null, "history": []}
+                }
+              },
+              "cases": {
+                "home sunny S1": {
+                  "flat": {"fixed": 0.00010623, "threshold": 0.00010623, "measured": null, "commit": null, "history": []}
+                },
+                "home grey S1": {
+                  "flat": {"fixed": 8.532e-05, "threshold": 8.532e-05, "measured": null, "commit": null, "history": []}
+                },
+                "home wet S1": {
+                  "flat": {"fixed": 0.00043089, "threshold": 0.00043089, "measured": null, "commit": null, "history": []}
+                },
+                "home night S1": {
+                  "flat": {"fixed": 5.82e-06, "threshold": 5.82e-06, "measured": null, "commit": null, "history": []}
+                },
+                "board sunny S1": {
+                  "flat": {"fixed": 0.00016065, "threshold": 0.00016065, "measured": null, "commit": null, "history": []}
+                },
+                "board grey S1": {
+                  "flat": {"fixed": 0.00016074, "threshold": 0.00016074, "measured": null, "commit": null, "history": []}
+                },
+                "board wet S1": {
+                  "flat": {"fixed": 0.00081102, "threshold": 0.00081102, "measured": null, "commit": null, "history": []}
+                }
+              }
+            }
+          }
+        },
+        "OWNERS": {
+          "about": "The share of building and part owner pixels whose owner has IoU >= 0.85 (D16 row 7)",
+          "stages": {
+            "A1": {
+              "ownersIoU": {"fixed": 0.85, "threshold": 0.85, "measured": null, "commit": null, "history": []}
+            },
+            "A2": {
+              "ownersIoU": {"fixed": 0.88, "threshold": 0.88, "measured": null, "commit": null, "history": []}
+            },
+            "A3": {
+              "ownersIoU": {"fixed": 0.94, "threshold": 0.94, "measured": null, "commit": null, "history": []}
+            },
+            "A4": {
+              "ownersIoU": {"fixed": 0.97, "threshold": 0.97, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "LABELS": {
+          "about": "Every canal name present; the worst centre error (device px) and angle error (degrees) of the canal names (D16 row 8)",
+          "stages": {
+            "A2": {
+              "labelMissing": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []},
+              "labelPx": {"fixed": 1.0, "threshold": 1.0, "measured": null, "commit": null, "history": []},
+              "labelDeg": {"fixed": 1.0, "threshold": 1.0, "measured": null, "commit": null, "history": []}
+            },
+            "A3": {
+              "labelMissing": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []},
+              "labelPx": {"fixed": 1.0, "threshold": 1.0, "measured": null, "commit": null, "history": []},
+              "labelDeg": {"fixed": 1.0, "threshold": 1.0, "measured": null, "commit": null, "history": []}
+            },
+            "A4": {
+              "labelMissing": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []},
+              "labelPx": {"fixed": 0.5, "threshold": 0.5, "measured": null, "commit": null, "history": []},
+              "labelDeg": {"fixed": 0.5, "threshold": 0.5, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "FULL": {
+          "about": "Full mode: the frame MAD above the same case's structural MAD (D16 row 9; a ONEPASS phone + 0.3)",
+          "stages": {
+            "A2": {
+              "madOverStructural": {"fixed": 0.5, "threshold": 0.5, "measured": null, "commit": null, "history": []}
+            },
+            "A3": {
+              "madOverStructural": {"fixed": 0.5, "threshold": 0.5, "measured": null, "commit": null, "history": []}
+            },
+            "A4": {
+              "madOverStructural": {"fixed": 0.5, "threshold": 0.5, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "EFFECTS": {
+          "about": "Each effect alone on its probe scene, against SvgFilterRaster: frame MAD (D16 row 10)",
+          "stages": {
+            "A2": {
+              "mad": {"fixed": 0.5, "threshold": 0.5, "measured": null, "commit": null, "history": []}
+            },
+            "A3": {
+              "mad": {"fixed": 0.5, "threshold": 0.5, "measured": null, "commit": null, "history": []}
+            },
+            "A4": {
+              "mad": {"fixed": 0.5, "threshold": 0.5, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "TERRAIN": {
+          "about": "Terrain regions (K28), structural frame MAD (D16 row 11)",
+          "stages": {
+            "A4": {
+              "mad": {"fixed": 3.0, "threshold": 3.0, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "GLOBE": {
+          "about": "The globe (K22) outside the night zone: frame MAD and the share within 2 (D16 row 12)",
+          "stages": {
+            "A4": {
+              "mad": {"fixed": 1.5, "threshold": 1.5, "measured": null, "commit": null, "history": []},
+              "within2": {"fixed": 0.92, "threshold": 0.92, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "CEILING": {
+          "about": "Any case: frame MAD (D16 row 13; terrain regions 3.0 at A4)",
+          "stages": {
+            "A1": {
+              "mad": {"fixed": 20.0, "threshold": 20.0, "measured": null, "commit": null, "history": []}
+            },
+            "A2": {
+              "mad": {"fixed": 15.0, "threshold": 15.0, "measured": null, "commit": null, "history": []}
+            },
+            "A3": {
+              "mad": {"fixed": 6.0, "threshold": 6.0, "measured": null, "commit": null, "history": []}
+            },
+            "A4": {
+              "mad": {"fixed": 2.5, "threshold": 2.5, "measured": null, "commit": null, "history": []},
+              "classes": {
+                "terrain": {
+                  "mad": {"fixed": 3.0, "threshold": 3.0, "measured": null, "commit": null, "history": []}
+                }
+              }
+            }
+          }
+        },
+        "L1": {
+          "about": "Primitive parity (D16 L1): elements of the landed packages' E0-E2 features left unmatched, and the share of vertices one print step apart",
+          "stages": {
+            "A1": {
+              "l1Unmatched": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []},
+              "l1StepShare": {"fixed": 0.001, "threshold": 0.001, "measured": null, "commit": null, "history": []}
+            },
+            "A2": {
+              "l1Unmatched": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []},
+              "l1StepShare": {"fixed": 0.001, "threshold": 0.001, "measured": null, "commit": null, "history": []}
+            },
+            "A3": {
+              "l1Unmatched": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []},
+              "l1StepShare": {"fixed": 0.001, "threshold": 0.001, "measured": null, "commit": null, "history": []}
+            },
+            "A4": {
+              "l1Unmatched": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []},
+              "l1StepShare": {"fixed": 0.001, "threshold": 0.001, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "L2": {
+          "about": "GPU against its twin (D16 L2): (b) the frame against RefRaster of the twin (MAD, share within 2), (a) vertex positions (CSS px), (c) noise field bytes different",
+          "stages": {
+            "A1": {
+              "l2Frame": {"fixed": 0.8, "threshold": 0.8, "measured": null, "commit": null, "history": []},
+              "l2Within2": {"fixed": 0.94, "threshold": 0.94, "measured": null, "commit": null, "history": []},
+              "l2Vertex": {"fixed": 0.001, "threshold": 0.001, "measured": null, "commit": null, "history": []},
+              "fields": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []}
+            },
+            "A2": {
+              "l2Frame": {"fixed": 0.8, "threshold": 0.8, "measured": null, "commit": null, "history": []},
+              "l2Within2": {"fixed": 0.94, "threshold": 0.94, "measured": null, "commit": null, "history": []},
+              "l2Vertex": {"fixed": 0.001, "threshold": 0.001, "measured": null, "commit": null, "history": []},
+              "fields": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []}
+            },
+            "A3": {
+              "l2Frame": {"fixed": 0.8, "threshold": 0.8, "measured": null, "commit": null, "history": []},
+              "l2Within2": {"fixed": 0.94, "threshold": 0.94, "measured": null, "commit": null, "history": []},
+              "l2Vertex": {"fixed": 0.001, "threshold": 0.001, "measured": null, "commit": null, "history": []},
+              "fields": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []}
+            },
+            "A4": {
+              "l2Frame": {"fixed": 0.8, "threshold": 0.8, "measured": null, "commit": null, "history": []},
+              "l2Within2": {"fixed": 0.94, "threshold": 0.94, "measured": null, "commit": null, "history": []},
+              "l2Vertex": {"fixed": 0.001, "threshold": 0.001, "measured": null, "commit": null, "history": []},
+              "fields": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "L0": {
+          "about": "Data parity (D16 L0): records different, geometry (m), pymath bits different",
+          "stages": {
+            "A1": {
+              "l0Records": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []},
+              "l0Geometry": {"fixed": 1e-06, "threshold": 1e-06, "measured": null, "commit": null, "history": []},
+              "l0Bits": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []}
+            },
+            "A2": {
+              "l0Records": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []},
+              "l0Geometry": {"fixed": 1e-06, "threshold": 1e-06, "measured": null, "commit": null, "history": []},
+              "l0Bits": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []}
+            },
+            "A3": {
+              "l0Records": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []},
+              "l0Geometry": {"fixed": 1e-06, "threshold": 1e-06, "measured": null, "commit": null, "history": []},
+              "l0Bits": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []}
+            },
+            "A4": {
+              "l0Records": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []},
+              "l0Geometry": {"fixed": 1e-06, "threshold": 1e-06, "measured": null, "commit": null, "history": []},
+              "l0Bits": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "CONTINUITY": {
+          "about": "Along the paths: pops (pixels changing by more than 32 between frames) above the port's own, per frame; the hand-over at 4.5 km after an 8 x 8 box filter (MAD, worst block); band F's largest step between frames 1 % of zoom apart (levels)",
+          "stages": {
+            "A1": {
+              "popsOverPort": {"fixed": 0.0005, "threshold": 0.0005, "measured": null, "commit": null, "history": []},
+              "handOverMad": {"fixed": 3.0, "threshold": 3.0, "measured": null, "commit": null, "history": []},
+              "handOverBlock": {"fixed": 6.0, "threshold": 6.0, "measured": null, "commit": null, "history": []},
+              "bandStep": {"fixed": 2.0, "threshold": 2.0, "measured": null, "commit": null, "history": []}
+            },
+            "A2": {
+              "popsOverPort": {"fixed": 0.0005, "threshold": 0.0005, "measured": null, "commit": null, "history": []},
+              "handOverMad": {"fixed": 3.0, "threshold": 3.0, "measured": null, "commit": null, "history": []},
+              "handOverBlock": {"fixed": 6.0, "threshold": 6.0, "measured": null, "commit": null, "history": []},
+              "bandStep": {"fixed": 2.0, "threshold": 2.0, "measured": null, "commit": null, "history": []}
+            },
+            "A3": {
+              "popsOverPort": {"fixed": 0.0005, "threshold": 0.0005, "measured": null, "commit": null, "history": []},
+              "handOverMad": {"fixed": 3.0, "threshold": 3.0, "measured": null, "commit": null, "history": []},
+              "handOverBlock": {"fixed": 6.0, "threshold": 6.0, "measured": null, "commit": null, "history": []},
+              "bandStep": {"fixed": 2.0, "threshold": 2.0, "measured": null, "commit": null, "history": []}
+            },
+            "A4": {
+              "popsOverPort": {"fixed": 0.0005, "threshold": 0.0005, "measured": null, "commit": null, "history": []},
+              "handOverMad": {"fixed": 3.0, "threshold": 3.0, "measured": null, "commit": null, "history": []},
+              "handOverBlock": {"fixed": 6.0, "threshold": 6.0, "measured": null, "commit": null, "history": []},
+              "bandStep": {"fixed": 2.0, "threshold": 2.0, "measured": null, "commit": null, "history": []}
+            }
+          }
+        }
+      }
+    },
+    "lavapipe-arm64": {
+      "role": "guidance",
+      "about": "CI's ubuntu-24.04-arm runner: reported, not gated",
+      "sameAs": "lavapipe-x86_64"
+    },
+    "lavapipe-macos": {
+      "role": "guidance",
+      "about": "this Mac's lavapipe from the emulator package: reported, not gated",
+      "sameAs": "lavapipe-x86_64"
+    },
+    "stub": {
+      "role": "self-test",
+      "about": "the harness's own check: the oracle drawn again stands in for the engine (PlantedTest). D16's final rule with the stub's floor 0 and allowance 0; every planted failure must fail these, the unplanted stub must pass",
+      "stage": "A4",
+      "gates": {
+        "HOME_SUNNY": {
+          "stages": {
+            "A4": {
+              "mad": {"fixed": 0.1, "threshold": 0.1, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "BOARD_SUNNY": {
+          "stages": {
+            "A4": {
+              "mad": {"fixed": 0.1, "threshold": 0.1, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "BOARD": {
+          "stages": {
+            "A4": {
+              "mad": {"fixed": 0.1, "threshold": 0.1, "measured": null, "commit": null, "history": []},
+              "within2": {"fixed": 0.99, "threshold": 0.99, "measured": null, "commit": null, "history": []},
+              "p99": {"fixed": 2, "threshold": 2, "measured": null, "commit": null, "history": []},
+              "block": {"fixed": 1.0, "threshold": 1.0, "measured": null, "commit": null, "history": []},
+              "flat": {"fixed": 0.0, "threshold": 0.0, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "WITHIN2": {
+          "stages": {
+            "A4": {
+              "within2": {"fixed": 0.99, "threshold": 0.99, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "FLAT": {
+          "stages": {
+            "A4": {
+              "flat": {"fixed": 0.0, "threshold": 0.0, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "OWNERS": {
+          "stages": {
+            "A4": {
+              "ownersIoU": {"fixed": 0.97, "threshold": 0.97, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "LABELS": {
+          "stages": {
+            "A4": {
+              "labelMissing": {"fixed": 0, "threshold": 0, "measured": null, "commit": null, "history": []},
+              "labelPx": {"fixed": 0.5, "threshold": 0.5, "measured": null, "commit": null, "history": []},
+              "labelDeg": {"fixed": 0.5, "threshold": 0.5, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "SWEEP_W": {
+          "stages": {
+            "A4": {
+              "medianMad": {"fixed": 0.1, "threshold": 0.1, "measured": null, "commit": null, "history": []},
+              "p90Mad": {"fixed": 0.1, "threshold": 0.1, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "SWEEP_C": {
+          "stages": {
+            "A4": {
+              "medianMad": {"fixed": 0.1, "threshold": 0.1, "measured": null, "commit": null, "history": []},
+              "p90Mad": {"fixed": 0.1, "threshold": 0.1, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "CEILING": {
+          "stages": {
+            "A4": {
+              "mad": {"fixed": 0.1, "threshold": 0.1, "measured": null, "commit": null, "history": []},
+              "within2": {"fixed": 0.99, "threshold": 0.99, "measured": null, "commit": null, "history": []},
+              "p99": {"fixed": 2, "threshold": 2, "measured": null, "commit": null, "history": []},
+              "block": {"fixed": 1.0, "threshold": 1.0, "measured": null, "commit": null, "history": []},
+              "flat": {"fixed": 0.0, "threshold": 0.0, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "FULL": {
+          "stages": {
+            "A4": {
+              "madOverStructural": {"fixed": 0.1, "threshold": 0.1, "measured": null, "commit": null, "history": []}
+            }
+          }
+        },
+        "EFFECTS": {
+          "stages": {
+            "A4": {
+              "mad": {"fixed": 0.1, "threshold": 0.1, "measured": null, "commit": null, "history": []}
+            }
+          }
+        }
+      }
+    }
+  }
+}
