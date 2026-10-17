@@ -201,6 +201,8 @@ jobs:
           elif [ -n "$LAVAPIPE_IMAGE_X86_64" ]; then
             id=$(docker create "$LAVAPIPE_IMAGE_X86_64" /none) && sudo mkdir -p /opt/vulkan && sudo docker cp "$id:/opt/vulkan/." /opt/vulkan/
             echo "VK_ADD_LAYER_PATH=/opt/vulkan/share/vulkan/explicit_layer.d" >> "$RUNNER_TEMP/vulkan.env"
+            # The image's layer manifest names its library without a path, for the loader to find on LD_LIBRARY_PATH.
+            echo "LD_LIBRARY_PATH=$dir:/opt/vulkan/lib" >> "$RUNNER_TEMP/vulkan.env"
           else
             echo "::error::the emulator package has no validation layer and LAVAPIPE_IMAGE_X86_64 is not pinned" && exit 1
           fi
@@ -657,6 +659,8 @@ jobs:
       contents: read
       packages: write
     strategy:
+      # Each architecture's image stands alone: a failure on one runner must not cancel the other's build.
+      fail-fast: false
       matrix:
         include:
           - { runner: ubuntu-24.04, arch: x86_64 }
