@@ -43,8 +43,9 @@ struct Counters {
 /// The stand-in.
 class StandIn final : public gpu::Content {
 public:
-    /// The stand-in, with the pipelines every configuration shares. `watch` (the crash guard) is told about each
-    /// pipeline before it is made, from these to every configuration's that prepare makes (gpu/Pipelines.hpp).
+    /// The stand-in, with the pipelines every configuration shares. `watch` (the crash guard) is told about each shader
+    /// module and each pipeline before it is made, from these to every configuration's that prepare makes
+    /// (gpu/Pipelines.hpp).
     [[nodiscard]] static gpu::Result<std::unique_ptr<StandIn>> create(const gpu::Device& device,
                                                                       const gpu::PipelineCache& cache,
                                                                       std::shared_ptr<const City> city,

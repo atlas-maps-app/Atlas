@@ -192,8 +192,9 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_VK_BENCH = "atlas.vk.bench"
 
         /**
-         * Debug and bench builds: a crash-guard stage to abort at (instance, device, cache, pipelines, frames);
-         * `pipelines` aborts at the stage's first pipeline, `pipelines:<name>` at that one (`pipelines:composite`).
+         * Debug and bench builds: a crash-guard stage to abort at (instance, device, cache, pipelines, frames, colour);
+         * `pipelines` aborts at the stage's first pipeline, `pipelines:<name>` at that pipeline or shader module
+         * (`pipelines:composite`), `colour` and `colour:<name>` the same in VK bench's 10-bit colour stage.
          */
         const val EXTRA_VK_PLANT = "atlas.vk.plant"
 

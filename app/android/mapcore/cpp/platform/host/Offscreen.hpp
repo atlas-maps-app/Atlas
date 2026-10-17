@@ -1,9 +1,10 @@
 // The host build's output (plan-vector T10, K1): frames drawn into offscreen images instead of a swapchain, read back
 // to memory for the tests (identical across runs and frame routes), the likeness harness's candidates and VK check's
-// twin later. The images take the frame's colour as a phone's swapchain does (gpu/Facts.hpp): 10 bits a channel where
-// the device draws the frame in them (colour_offscreen, as if a surface offered every format; lavapipe does), else
-// R8G8B8A8_UNORM, or 8 bits when asked; the frame leaves them ready to copy. A frame reads back at 8 bits a channel
-// either way, a 10-bit one converted exactly (to_rgba8), so its bytes, its hash and the likeness gates see 8 bits.
+// twin later. The images take the frame's colour as a phone's swapchain does (gpu/Facts.hpp): R8G8B8A8_UNORM by
+// default, or where asked (Depth::deepest, as VK bench's colour stage asks) 10 bits a channel where the device draws
+// the frame in them (colour_offscreen, as if a surface offered every format; lavapipe does); the frame leaves them
+// ready to copy. A frame reads back at 8 bits a channel either way, a 10-bit one converted exactly (to_rgba8), so its
+// bytes, its hash and the likeness gates see 8 bits.
 #pragma once
 
 #include "gpu/Device.hpp"
@@ -68,11 +69,11 @@ struct Packed {
 /// Offscreen images that stand in for a swapchain.
 class Offscreen final : public gpu::Output {
 public:
-    /// `images` images of `extent` in the frame's colour offscreen at `depth` (10 bits where the device draws the
-    /// frame in them, or 8).
+    /// `images` images of `extent` in the frame's colour offscreen at `depth` (8 bits by default; at Depth::deepest
+    /// 10 where the device draws the frame in them).
     [[nodiscard]] static gpu::Result<std::unique_ptr<Offscreen>> create(const gpu::Device& device, vk::Extent2D extent,
                                                                         std::uint32_t images = 2,
-                                                                        gpu::Depth depth = gpu::Depth::deepest);
+                                                                        gpu::Depth depth = gpu::default_depth);
     /// The same in `format`, which the frame's attachments then take too: the tests' reference at 16 bits a channel
     /// (R16G16B16A16_UNORM), where the device draws the frame in it.
     [[nodiscard]] static gpu::Result<std::unique_ptr<Offscreen>> create(const gpu::Device& device, vk::Extent2D extent,

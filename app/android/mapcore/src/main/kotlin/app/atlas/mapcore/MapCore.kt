@@ -66,60 +66,87 @@ class MapCore private constructor(private val handle: Long, private val config: 
             Native.load()?.let { "pymath unavailable: the core did not load ($it)" } ?: Native.numericsLine()
 
         /**
-         * VK facts' "Reset guard" (debug and bench builds, D5.10): forgets every crash and every driver the crash guard
-         * turned off, and the pipeline cache, so that the next start (or [shared], while no core is made) tries Vulkan
-         * again. One line saying what it forgot. Off the main thread.
+         * VK facts' "Reset guard" (debug and bench builds, D5.10): forgets every crash, every driver the crash guard
+         * turned off and every 10 bits it turned off (VK bench's colour stage), and the pipeline cache, so that the next
+         * start tries Vulkan and 10 bits again. Only with no core alive: a live core writes its pipeline cache back (on
+         * trim, on close, after its first 120 frames), which would undo the reset, and the core refuses a reset while
+         * one is. So the process's core is closed first, writing its cache one last time, and the next [shared] makes a
+         * new one, which reads the guard afresh. One line saying what it forgot. Off the main thread.
          */
-        fun resetGuard(config: CoreConfig): String =
-            Native.load()?.let { "vk guard reset: the core did not load ($it)" } ?: Native.resetGuard(config.cacheDir, config.guardDir)
+        @Synchronized
+        fun resetGuard(config: CoreConfig): String {
+            Native.load()?.let { return "vk guard reset: the core did not load ($it)" }
+            val alive = process
+            alive?.close()
+            val said = Native.resetGuard(config.cacheDir, config.guardDir)
+            return if (alive != null) "$said (the process's core was closed first)" else said
+        }
     }
 
+    /** Set by [close]: the handle is gone, and every call after it does nothing (a view let go late, a reset). */
     @Volatile
     private var closed = false
 
     /** This core's facts, the surface's included once one is attached. */
-    fun facts(): List<String> = Native.facts(handle, config.cacheDir, config.guardDir, config.system, config.flags).lines().filter { it.isNotEmpty() }
+    fun facts(): List<String> {
+        if (closed) return listOf("vulkan: the core is closed")
+        return Native.facts(handle, config.cacheDir, config.guardDir, config.system, config.flags).lines().filter { it.isNotEmpty() }
+    }
 
     /**
      * Draws into [surface]'s window ([widthPx] × [heightPx]); the core asks [source] for the camera at each paced vsync
      * after [requestFrame]. False with the reason in [lastAttachError].
      */
     fun attach(surface: Surface, widthPx: Int, heightPx: Int, source: FrameSource, camera: CameraState): Boolean =
-        Native.attach(handle, surface, widthPx, heightPx, source, camera.buffer)
+        !closed && Native.attach(handle, surface, widthPx, heightPx, source, camera.buffer)
 
     /** Why the last [attach] failed. */
-    fun lastAttachError(): String = Native.lastError()
+    fun lastAttachError(): String = if (closed) "the core is closed" else Native.lastError()
 
-    fun resize(widthPx: Int, heightPx: Int) = Native.resize(handle, widthPx, heightPx)
+    fun resize(widthPx: Int, heightPx: Int) {
+        if (!closed) Native.resize(handle, widthPx, heightPx)
+    }
 
     /** Returns after the core let go of the surface. */
-    fun detach() = Native.detach(handle)
+    fun detach() {
+        if (!closed) Native.detach(handle)
+    }
 
     /** Something changed: the core will ask the source for the camera at its next paced vsync. */
-    fun requestFrame() = Native.requestFrame(handle)
+    fun requestFrame() {
+        if (!closed) Native.requestFrame(handle)
+    }
 
     /**
      * VK bench (bench and debug builds): the stand-in drawn in [config] by [route] as [form] into [target]; [pills]
-     * draws the frosted pills in the core (the SurfaceView host); [texture] says the host is a TextureView; [rgba8]
-     * draws at 8 bits a channel where the frame's colour has 10 (the facts' `colour:`). "" or why the device cannot.
+     * draws the frosted pills in the core (the SurfaceView host); [texture] says the host is a TextureView. The frame
+     * is 8 bits a channel; [tenBit] is VK bench's colour stage, the frame at 10 where the surface offers them (the
+     * facts' `colour.stage:`), behind the crash guard's own stage, so that a driver's crash there turns off 10 bits
+     * only. "" or why the device cannot.
      */
-    fun bench(on: Boolean, config: Int, route: Int, form: Int, target: Int, pills: Boolean, texture: Boolean, rgba8: Boolean = false): String =
-        Native.bench(
-            handle, if (on) 1 else 0, config, route, form, target,
-            (if (pills) 1 else 0) or (if (texture) 2 else 0) or (if (rgba8) 4 else 0),
-        )
+    fun bench(on: Boolean, config: Int, route: Int, form: Int, target: Int, pills: Boolean, texture: Boolean, tenBit: Boolean = false): String =
+        if (closed) {
+            "the core is closed"
+        } else {
+            Native.bench(
+                handle, if (on) 1 else 0, config, route, form, target,
+                (if (pills) 1 else 0) or (if (texture) 2 else 0) or (if (tenBit) 4 else 0),
+            )
+        }
 
     /** Copies the frame records not read yet into [out] ([FrameRecords.allocate]); how many. */
-    fun records(out: ByteBuffer): Int = Native.records(handle, out)
+    fun records(out: ByteBuffer): Int = if (closed) 0 else Native.records(handle, out)
 
     /** The panel's line. */
-    fun stats(): String = Native.stats(handle)
+    fun stats(): String = if (closed) "vk no core" else Native.stats(handle)
 
     /** The app went to the background or memory is short: the pipeline cache is written back. */
-    fun trimMemory(level: Int) = Native.trimMemory(handle, level)
+    fun trimMemory(level: Int) {
+        if (!closed) Native.trimMemory(handle, level)
+    }
 
     /** VK bench's first-launch and warm pipeline creation ([Native.pipelines]); off the main thread. */
-    fun pipelines(): String = Native.pipelines(handle)
+    fun pipelines(): String = if (closed) "vkbench pipelines: the core is closed" else Native.pipelines(handle)
 
     override fun close() {
         synchronized(this) {

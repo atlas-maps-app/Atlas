@@ -17,6 +17,11 @@ void announce(const PipelineLabel& label, PipelineWatch* watch) {
     if (watch != nullptr) watch->before(label);
 }
 
+void announce_module(std::string_view module, PipelineWatch* watch) {
+    log::info("vk module {}", module);
+    if (watch != nullptr) watch->before_module(module);
+}
+
 bool Blend::reads_destination_alpha() const noexcept {
     if (!enable) return false;
     auto reads = [](vk::BlendFactor f) {

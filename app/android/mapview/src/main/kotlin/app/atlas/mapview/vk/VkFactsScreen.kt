@@ -58,9 +58,11 @@ const val VK_HONEST = "This phone's graphics driver can't draw the Atlas map."
  * `vkfacts done`. Copy puts the whole report on the clipboard for the paste back.
  *
  * The crash guard's state (D5.10) leads the report: what this start found (`guard:`, the `vk guard` line naming the
- * stage and the pipeline a driver crashed in), the core's build ID and every driver turned off, for which build. In the
- * debug and bench builds ([guardReset]) "Reset guard" forgets those crashes and the pipeline cache, and reads the
- * facts again, so the owner can retry Vulkan by hand.
+ * stage and the pipeline or shader module a driver crashed in), the core's build ID and every driver turned off, or
+ * turned 10 bits off for (VK bench's colour stage crashed: the frame keeps its 8, and `colour:` says so), for which
+ * build. In the debug and bench builds ([guardReset]) "Reset guard" closes the core (a live one would write its
+ * pipeline cache back), forgets those crashes and the pipeline cache, and reads the facts again with a new core, so
+ * the owner can retry Vulkan, and 10 bits, by hand.
  */
 @Composable
 fun VkFactsScreen(config: CoreConfig, modifier: Modifier = Modifier, guardReset: Boolean = false) {
@@ -122,11 +124,15 @@ fun VkFactsScreen(config: CoreConfig, modifier: Modifier = Modifier, guardReset:
                 if (guardReset) {
                     Button("Reset guard") {
                         scope.launch {
+                            // The reset closes the process's core first: this screen lets go of it (and of its small
+                            // window) before, and the reading after it makes a new one.
+                            report = emptyList()
+                            status = "Resetting the guard…"
+                            surfaceDone = false
+                            core = null
                             reset = withContext(Dispatchers.Default) { MapCore.resetGuard(config) }
                             Log.i(EngineFrames.TAG, "vkfacts $reset")
-                            report = emptyList()
                             status = "Reading the device again…"
-                            surfaceDone = false
                             reading++
                         }
                     }

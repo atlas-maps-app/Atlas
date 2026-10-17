@@ -46,6 +46,14 @@ struct Spirv {
     std::span<const std::uint32_t> words;
 };
 
+/// The shader module of `spirv`, announced first (the log, the crash guard), so that a driver crashing in
+/// vkCreateShaderModule is known by the module.
+[[nodiscard]] gpu::Result<vk::raii::ShaderModule> module_of(const gpu::Device& device, const Spirv& spirv,
+                                                            gpu::PipelineWatch* watch) {
+    gpu::announce_module(spirv.name, watch);
+    return gpu::make_module(device.handle(), spirv.words);
+}
+
 /// The composite's modules for the samples it reads (one module per sample count: the core's modules hold no
 /// specialization constants), as Slang's own SPIR-V and through its GLSL route. At one sample in the dynamic route
 /// (`loc1`), the composite writes colour attachment 1.
@@ -405,10 +413,13 @@ gpu::Result<void> StandIn::create_fixed() {
         .apply(d);
 
     // The shaders.
-    ATLAS_GPU_LET(standin, gpu::make_module(d, spirv::standin_standin));
-    ATLAS_GPU_LET(standin_onepass, gpu::make_module(d, spirv::standin_standin_onepass));
-    ATLAS_GPU_LET(blur_module, gpu::make_module(d, spirv::standin_blur));
-    ATLAS_GPU_LET(frost_module, gpu::make_module(d, spirv::standin_frosted));
+    ATLAS_GPU_LET(standin, module_of(device_, {.name = "standin_standin", .words = spirv::standin_standin}, watch_));
+    ATLAS_GPU_LET(
+        standin_onepass,
+        module_of(device_, {.name = "standin_standin_onepass", .words = spirv::standin_standin_onepass}, watch_));
+    ATLAS_GPU_LET(blur_module, module_of(device_, {.name = "standin_blur", .words = spirv::standin_blur}, watch_));
+    ATLAS_GPU_LET(frost_module,
+                  module_of(device_, {.name = "standin_frosted", .words = spirv::standin_frosted}, watch_));
     standin_module_ = std::move(standin);
     standin_onepass_module_ = std::move(standin_onepass);
     blur_module_ = std::move(blur_module);
@@ -586,7 +597,6 @@ gpu::Result<void> StandIn::prepare_offscreen(const gpu::MainPass& pass, const gp
 }
 
 gpu::Result<void> StandIn::prepare_pipelines(const gpu::MainPass& pass, const gpu::Output& output) {
-    const vk::raii::Device& d = device_.handle();
     const gpu::Configuration& c = pass.spec().config;
     // As the log and the crash guard name it, with the frame's colour: a driver compiles a pipeline for its render
     // pass's formats, so a crash in a 10-bit frame's is told from one in an 8-bit frame's.
@@ -661,11 +671,11 @@ gpu::Result<void> StandIn::prepare_pipelines(const gpu::MainPass& pass, const gp
         ATLAS_GPU_LET(modules, composite_modules(c.samples(), loc1));
         composite_glsl_ = !device_.facts().takes_read_without_format();
         composite_module_.clear();
-        ATLAS_GPU_LET(module, gpu::make_module(d, modules.direct.words));
+        ATLAS_GPU_LET(module, module_of(device_, modules.direct, watch_));
         composite_module_ = std::move(module);
         vk::raii::ShaderModule glsl_module{nullptr};
         if (composite_glsl_) {
-            ATLAS_GPU_LET(m, gpu::make_module(d, modules.glsl.words));
+            ATLAS_GPU_LET(m, module_of(device_, modules.glsl, watch_));
             glsl_module = std::move(m);
         }
         const std::string module_names = composite_glsl_

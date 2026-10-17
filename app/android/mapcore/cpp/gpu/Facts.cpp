@@ -108,6 +108,12 @@ void read_profiles(Facts& facts, const Instance& instance, const vk::raii::Physi
     vpDestroyFunctions(vp, nullptr);
 }
 
+/// The reason of the frame's 8-bit colour (default_depth).
+constexpr std::string_view eight_bits = "the frame's default in this alpha, 8 bits a channel";
+
+/// The reason of an 8-bit colour where 10 bits were asked for and the crash guard has them off, before its line.
+constexpr std::string_view ten_bits_off = "10 bits are off for this driver and build: ";
+
 /// The frame's colour formats, in the order the choice takes them (10 bits first).
 constexpr std::array<vk::Format, 4> colour_candidates{vk::Format::eA2B10G10R10UnormPack32,
                                                       vk::Format::eA2R10G10B10UnormPack32, vk::Format::eR8G8B8A8Unorm,
@@ -395,7 +401,8 @@ std::string Facts::unfit_for_frame(vk::Format format) const {
 }
 
 Colour colour_for_surface(const Facts& facts, std::span<const vk::SurfaceFormatKHR> offered, Depth depth) {
-    if (depth == Depth::eight) return eight_bit(offered, "8 bits asked for");
+    if (depth == Depth::eight) return eight_bit(offered, std::string(eight_bits));
+    if (!facts.ten_bit_off.empty()) return eight_bit(offered, std::string(ten_bits_off) + facts.ten_bit_off);
     std::string refused;
     for (const vk::Format format : {vk::Format::eA2B10G10R10UnormPack32, vk::Format::eA2R10G10B10UnormPack32}) {
         const bool offers = std::ranges::any_of(offered, [&](const vk::SurfaceFormatKHR& f) {
@@ -419,7 +426,8 @@ Colour colour_for_surface(const Facts& facts, std::span<const vk::SurfaceFormatK
 }
 
 Colour colour_offscreen(const Facts& facts, Depth depth) {
-    if (depth == Depth::eight) return {.reason = "offscreen: 8 bits asked for"};
+    if (depth == Depth::eight) return {.reason = std::format("offscreen: {}", eight_bits)};
+    if (!facts.ten_bit_off.empty()) return {.reason = std::format("offscreen: {}{}", ten_bits_off, facts.ten_bit_off)};
     std::string refused;
     for (const vk::Format format : {vk::Format::eA2B10G10R10UnormPack32, vk::Format::eA2R10G10B10UnormPack32}) {
         if (const std::string unfit = facts.unfit_for_frame(format); !unfit.empty()) {
@@ -431,6 +439,24 @@ Colour colour_offscreen(const Facts& facts, Depth depth) {
                 .reason = "offscreen: the device draws the frame in 10 bits"};
     }
     return {.reason = "offscreen: the device cannot draw the frame in 10 bits: " + refused};
+}
+
+void decide_colour(Facts& facts) {
+    if (facts.surface.formats.empty()) {
+        facts.colour = colour_offscreen(facts, default_depth);
+        facts.deepest = colour_offscreen(facts, Depth::deepest);
+    } else {
+        facts.colour = colour_for_surface(facts, facts.surface.formats, default_depth);
+        facts.deepest = colour_for_surface(facts, facts.surface.formats, Depth::deepest);
+    }
+}
+
+std::string colour_stage(const Facts& facts) {
+    if (!facts.ten_bit_off.empty()) return std::format("off ({}{})", ten_bits_off, facts.ten_bit_off);
+    const Colour& d = facts.deepest;
+    if (!d.ten_bit()) return std::format("none ({})", d.reason);
+    return std::format("{} ({} in {}: {})", colour_name(d.format), vk::to_string(d.format), vk::to_string(d.space),
+                       d.reason);
 }
 
 std::string Facts::driver_key() const {
@@ -634,7 +660,7 @@ Facts collect_facts(const Instance& instance, const vk::raii::PhysicalDevice& de
                                                    facts.driver_id != vk::DriverId::eGoogleSwiftshader));
     check_requirements(facts, present);
     choose_configuration(facts, false);
-    facts.colour = colour_offscreen(facts, Depth::deepest);
+    decide_colour(facts);
     return facts;
 }
 
@@ -646,7 +672,7 @@ void collect_surface(Facts& facts, const vk::raii::PhysicalDevice& device, vk::S
     if (auto caps = device.getSurfaceCapabilitiesKHR(surface)) s.capabilities = *caps;
     if (auto formats = device.getSurfaceFormatsKHR(surface)) s.formats = std::move(*formats);
     if (auto modes = device.getSurfacePresentModesKHR(surface)) s.present_modes = std::move(*modes);
-    facts.colour = colour_for_surface(facts, s.formats, Depth::deepest);
+    decide_colour(facts);
 }
 
 std::vector<std::string> facts_lines(const Facts& f) {
@@ -686,13 +712,28 @@ std::vector<std::string> facts_lines(const Facts& f) {
     line("route: {} ({})", name_of(f.choice.route), f.route_reason);
     line("composite: {} ({})", name_of(f.choice.target), f.target_reason);
     line("form: {}", name_of(f.choice.form));
-    line("colour: {} ({} in {}: {})", colour_name(f.colour.format), vk::to_string(f.colour.format),
-         vk::to_string(f.colour.space), f.colour.reason);
+    // The frame's colour, and what becomes of 10 bits: drawn by VK bench's colour stage only, off after a crash there,
+    // or not to be had; `colour.stage:` says the same for VK bench to read.
+    std::string ten;
+    if (!f.ten_bit_off.empty()) {
+        ten = std::format("off, {}{}", ten_bits_off, f.ten_bit_off);
+    } else if (f.deepest.ten_bit()) {
+        ten = std::format("{}, drawn only in VK bench's colour stage", colour_name(f.deepest.format));
+    } else {
+        ten = std::format("none, {}", f.deepest.reason);
+    }
+    line("colour: {} ({} in {}: {}; 10 bits: {})", colour_name(f.colour.format), vk::to_string(f.colour.format),
+         vk::to_string(f.colour.space), f.colour.reason, ten);
+    line("colour.stage: {}", colour_stage(f));
     std::string drawable;
     for (const ColourFormat& c : f.colour_formats) {
         const std::string unfit = f.unfit_for_frame(c.format);
+        // A 10-bit format's lazily allocated samples are asked of the device only in VK bench's colour stage.
+        const bool unasked = unfit.empty() && f.lazy_memory && !c.lazy_checked && ten_bit(c.format);
         drawable += std::format("{}{} {}", drawable.empty() ? "" : ", ", colour_name(c.format),
-                                unfit.empty() ? std::string("yes") : "no (" + unfit + ")");
+                                !unfit.empty() ? "no (" + unfit + ")"
+                                : unasked ? std::string("yes (its lazily allocated samples asked in the colour stage)")
+                                          : std::string("yes"));
     }
     line("colour.formats: {} (the frame drawn in each)", drawable);
     line("configs.available: A {}, B {}, C {}, 1x {}", yes_no(f.supports(FrameConfig::a)),

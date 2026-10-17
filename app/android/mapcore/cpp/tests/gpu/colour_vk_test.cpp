@@ -1,8 +1,9 @@
-// The frame's colour depth (plan-vector D5, "Colour depth"; gpu/Facts.hpp): the choice of 10 bits a channel where the
-// surface offers them in sRGB and the device can draw the frame in them, else 8 bits as before, with its reasons; the
-// exact conversion of a 10-bit frame to the 8 bits a channel the tests, the hashes and the likeness gates read
-// (platform/host); and the rule that keeps rgb10a2's 2 bits of alpha harmless: no blend reads the destination's alpha.
-// None of these needs a device: the facts are written by hand, as a phone's would read.
+// The frame's colour depth (plan-vector D5, "Colour depth"; gpu/Facts.hpp): 8 bits a channel by default in this alpha;
+// for VK bench's colour stage the choice of 10 bits a channel where the surface offers them in sRGB, the device can
+// draw the frame in them and the crash guard has not turned them off, else 8 bits as before, with its reasons, as
+// VkFacts' colour lines say it; the exact conversion of a 10-bit frame to the 8 bits a channel the tests, the hashes
+// and the likeness gates read (platform/host); and the rule that keeps rgb10a2's 2 bits of alpha harmless: no blend
+// reads the destination's alpha. None of these needs a device: the facts are written by hand, as a phone's would read.
 #include "gpu/Facts.hpp"
 #include "gpu/Pipelines.hpp"
 #include "tests/base/require.hpp"
@@ -66,12 +67,13 @@ TEST_CASE("the frame takes 10 bits where the surface offers them in sRGB and the
     CHECK(deep.space == S::eSrgbNonlinear);
     CHECK(deep.ten_bit());
     CHECK(deep.reason == "the surface offers it in sRGB and the frame's attachments follow it");
-    // VK bench's 8-bit frame on the same surface.
-    const gpu::Colour eight = gpu::colour_for_surface(f, usual, gpu::Depth::eight);
+    // The frame's own colour on the same surface: 8 bits, the default in this alpha.
+    CHECK(gpu::default_depth == gpu::Depth::eight);
+    const gpu::Colour eight = gpu::colour_for_surface(f, usual, gpu::default_depth);
     CHECK(eight.format == F::eR8G8B8A8Unorm);
     CHECK(eight.space == S::eSrgbNonlinear);
     CHECK_FALSE(eight.ten_bit());
-    CHECK(eight.reason == "8 bits asked for");
+    CHECK(eight.reason == "the frame's default in this alpha, 8 bits a channel");
     // bgr10a2 where rgb10a2 is not offered.
     const gpu::Colour bgr = gpu::colour_for_surface(
         f, offering({{F::eB8G8R8A8Unorm, S::eSrgbNonlinear}, {F::eA2R10G10B10UnormPack32, S::eSrgbNonlinear}}),
@@ -132,6 +134,8 @@ TEST_CASE("offscreen the frame takes 10 bits where the device draws it in them, 
     CHECK(deep.format == F::eA2B10G10R10UnormPack32);
     CHECK(deep.reason == "offscreen: the device draws the frame in 10 bits");
     CHECK(gpu::colour_offscreen(f, gpu::Depth::eight).format == F::eR8G8B8A8Unorm);
+    CHECK(gpu::colour_offscreen(f, gpu::Depth::eight).reason ==
+          "offscreen: the frame's default in this alpha, 8 bits a channel");
     f.colour_formats[0].attachment = false;
     f.colour_formats[0].lacks = "input attachment";
     CHECK(gpu::colour_offscreen(f, gpu::Depth::deepest).format == F::eA2R10G10B10UnormPack32);
@@ -140,16 +144,75 @@ TEST_CASE("offscreen the frame takes 10 bits where the device draws it in them, 
     CHECK(none.format == F::eR8G8B8A8Unorm);
     CHECK(none.reason == "offscreen: the device cannot draw the frame in 10 bits: rgb10a2 (no input attachment), "
                          "bgr10a2 (no linearly filtered blits)");
-    // The lines VkFacts prints for it.
-    f.colour = none;
+    // The lines VkFacts prints for it: the frame at 8 bits, and no 10 bits to be had for VK bench's colour stage.
+    gpu::decide_colour(f);
+    CHECK(f.colour.format == F::eR8G8B8A8Unorm);
+    CHECK(f.deepest.reason == none.reason);
     const std::vector<std::string> lines = gpu::facts_lines(f);
-    CHECK(std::ranges::find(lines, "colour: rgba8 (R8G8B8A8Unorm in SrgbNonlinear: " + none.reason + ")") !=
-          lines.end());
+    CHECK(std::ranges::find(lines, "colour: rgba8 (R8G8B8A8Unorm in SrgbNonlinear: offscreen: the frame's default in "
+                                   "this alpha, 8 bits a channel; 10 bits: none, " +
+                                       none.reason + ")") != lines.end());
+    CHECK(std::ranges::find(lines, "colour.stage: none (" + none.reason + ")") != lines.end());
     CHECK(std::ranges::find(lines, "colour.formats: rgb10a2 no (no input attachment), bgr10a2 no (no linearly filtered "
                                    "blits), rgba8 yes, bgra8 yes (the frame drawn in each)") != lines.end());
     CHECK(gpu::colour_name(F::eA2B10G10R10UnormPack32) == "rgb10a2");
     CHECK(gpu::colour_name(F::eA2R10G10B10UnormPack32) == "bgr10a2");
     CHECK(gpu::colour_name(F::eR16G16B16A16Sfloat) == "R16G16B16A16Sfloat");
+}
+
+TEST_CASE("the frame keeps 8 bits, and 10 stay off where the crash guard turned them off; VkFacts says which") {
+    gpu::Facts f = phone();
+    f.surface.formats =
+        offering({{F::eR8G8B8A8Unorm, S::eSrgbNonlinear}, {F::eA2B10G10R10UnormPack32, S::eSrgbNonlinear}});
+    // Where 10 bits can be had: the frame at 8, VK bench's colour stage at 10.
+    gpu::decide_colour(f);
+    CHECK(f.colour.format == F::eR8G8B8A8Unorm);
+    CHECK(f.deepest.format == F::eA2B10G10R10UnormPack32);
+    std::vector<std::string> lines = gpu::facts_lines(f);
+    const auto has = [&](const std::string& line) { return std::ranges::find(lines, line) != lines.end(); };
+    CHECK(has("colour: rgba8 (R8G8B8A8Unorm in SrgbNonlinear: the frame's default in this alpha, 8 bits a channel; 10 "
+              "bits: rgb10a2, drawn only in VK bench's colour stage)"));
+    CHECK(has("colour.stage: rgb10a2 (A2B10G10R10UnormPack32 in SrgbNonlinear: the surface offers it in sRGB and the "
+              "frame's attachments follow it)"));
+
+    // After a crash in the colour stage under this driver and build: 10 bits off, on the surface and offscreen.
+    f.ten_bit_off = "vk guard colour ImaginationProprietary 0x00661bd0 attempt 1 pipeline composite (module "
+                    "standin_composite, configuration A renderpass composite resolve rgb10a2) build 0123456789abcdef";
+    const gpu::Colour off = gpu::colour_for_surface(f, f.surface.formats, gpu::Depth::deepest);
+    CHECK(off.format == F::eR8G8B8A8Unorm);
+    CHECK(off.reason == "10 bits are off for this driver and build: " + f.ten_bit_off);
+    CHECK(gpu::colour_offscreen(f, gpu::Depth::deepest).format == F::eR8G8B8A8Unorm);
+    CHECK(gpu::colour_offscreen(f, gpu::Depth::deepest).reason ==
+          "offscreen: 10 bits are off for this driver and build: " + f.ten_bit_off);
+    gpu::decide_colour(f);
+    CHECK_FALSE(f.deepest.ten_bit());
+    lines = gpu::facts_lines(f);
+    CHECK(has("colour: rgba8 (R8G8B8A8Unorm in SrgbNonlinear: the frame's default in this alpha, 8 bits a channel; 10 "
+              "bits: off, 10 bits are off for this driver and build: " +
+              f.ten_bit_off + ")"));
+    CHECK(has("colour.stage: off (10 bits are off for this driver and build: " + f.ten_bit_off + ")"));
+    // Even where the deepest colour was decided before the verdict came, the stage says off.
+    f.deepest = gpu::colour_for_surface(phone(), f.surface.formats, gpu::Depth::deepest);
+    CHECK(f.deepest.ten_bit());
+    CHECK(gpu::colour_stage(f).starts_with("off (10 bits are off for this driver and build: vk guard colour "));
+
+    // The reset: the verdict gone, 10 bits back.
+    f.ten_bit_off.clear();
+    gpu::decide_colour(f);
+    CHECK(f.deepest.format == F::eA2B10G10R10UnormPack32);
+    CHECK(gpu::colour_stage(f).starts_with("rgb10a2 ("));
+
+    // A tiler with lazily allocated memory asks for its 10-bit samples only in the colour stage
+    // (Device::check_ten_bit): until then VkFacts says so, and the stage assumes they fit.
+    f.lazy_memory = true;
+    lines = gpu::facts_lines(f);
+    CHECK(has("colour.formats: rgb10a2 yes (its lazily allocated samples asked in the colour stage), bgr10a2 yes (its "
+              "lazily allocated samples asked in the colour stage), rgba8 yes, bgra8 yes (the frame drawn in each)"));
+    f.colour_formats[0].lazy = false;
+    f.colour_formats[0].lazy_checked = true;
+    gpu::decide_colour(f);
+    CHECK(gpu::colour_stage(f) == "none (the surface's 10-bit sRGB formats are of no use to the frame: rgb10a2 (lazily "
+                                  "allocated memory cannot hold its transient samples (configuration A)))");
 }
 
 TEST_CASE("no blend of the core reads the destination's alpha, and a pipeline that would is refused") {

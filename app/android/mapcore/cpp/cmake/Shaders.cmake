@@ -24,12 +24,13 @@
 # SPIRV-Tools is installed), and CI keeps that folder, so another host's bytes can be diffed.
 #
 # Specialization constants are refused: every module is checked before it is embedded (nocontract constants, a scan of
-# the module for OpSpecConstantTrue, False, Constant, Composite and Op, opcodes 48 to 52), and one that holds any fails
-# the build, naming each. On 17 October 2026 PowerVR's Vulkan driver crashed compiling a pipeline of VK bench, in
-# SpvConstCalculated's destructor in its shader compiler (libufwriter.so): the stand-in's composite took its sample
-# count as a specialization constant and held a constant computed from it (OpSpecConstantOp IAdd). A variant is a
-# module of its own: a "// atlas: variant" line, or a file that defines the macro and includes another
-# (shaders/standin/composite_x2.slang), and the pipeline picks the module.
+# the module for OpSpecConstantTrue, False, Constant, Composite and Op, opcodes 48 to 52, the extensions'
+# OpSpecConstantCompositeReplicateEXT and OpSpecConstantCompositeContinuedINTEL, 4462 and 6092, and any SpecId
+# decoration), and one that holds any fails the build, naming each. On 17 October 2026 PowerVR's Vulkan driver crashed
+# compiling a pipeline of VK bench, in SpvConstCalculated's destructor in its shader compiler (libufwriter.so): the
+# stand-in's composite took its sample count as a specialization constant and held a constant computed from it
+# (OpSpecConstantOp IAdd). A variant is a module of its own: a "// atlas: variant" line, or a file that defines the
+# macro and includes another (shaders/standin/composite_x2.slang), and the pipeline picks the module.
 #
 # The semantics SV_VertexID and SV_InstanceID are refused. Slang 2026.19 lowers each to a difference of two builtins
 # (gl_VertexIndex - gl_BaseVertex, gl_InstanceIndex - gl_BaseInstance) whose two loads are arguments of one call in its

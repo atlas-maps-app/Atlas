@@ -241,3 +241,52 @@ TEST_CASE("specialization constants are found, with their names and SpecIds") {
     REQUIRE(probe.has_value());
     CHECK(specialization_constants(*probe).empty());
 }
+
+TEST_CASE("the extensions' specialization constants and a SpecId on anything are found too") {
+    using namespace atlas::spirv;
+    // A hand-made module: %3 = OpSpecConstantCompositeReplicateEXT of %4 (SPV_EXT_replicated_composites), named "REP";
+    // %5 an OpSpecConstantComposite continued by OpSpecConstantCompositeContinuedINTEL (SPV_INTEL_long_composites),
+    // which has no result of its own; a SpecId on %4, an ordinary constant; a SpecId through OpDecorateId on %6 and one
+    // on member 0 of a struct %7; and an OpDecorate of another decoration (Location 0), which is none of them.
+    std::vector<std::uint32_t> words{magic, 0x00010300U, 0, 16, 0};
+    words.insert(words.end(), {(2U << 16U) | op_capability, 1});        // Shader
+    words.insert(words.end(), {(3U << 16U) | op_name, 3, 0x00504552U}); // "REP"
+    words.insert(words.end(), {(4U << 16U) | op_decorate, 4, decoration_spec_id, 7});
+    words.insert(words.end(), {(4U << 16U) | op_decorate_id, 6, decoration_spec_id, 8});
+    words.insert(words.end(), {(5U << 16U) | op_member_decorate, 7, 0, decoration_spec_id, 9});
+    words.insert(words.end(), {(4U << 16U) | op_decorate, 6, 30, 0}); // Location 0
+    words.insert(words.end(), {(4U << 16U) | 21U, 2, 32, 1});         // OpTypeInt %2 32 1
+    words.insert(words.end(), {(4U << 16U) | 23U, 8, 2, 2});          // OpTypeVector %8 %2 2
+    words.insert(words.end(), {(4U << 16U) | 43U, 2, 4, 1});          // OpConstant %2 %4 1
+    words.insert(words.end(), {(4U << 16U) | op_spec_constant_composite_replicate_ext, 8, 3, 4});
+    words.insert(words.end(), {(5U << 16U) | op_spec_constant_composite, 8, 5, 4, 4});
+    words.insert(words.end(), {(3U << 16U) | op_spec_constant_composite_continued_intel, 4, 4});
+    const auto code = instructions(words);
+    REQUIRE(code.has_value());
+    const auto found = specialization_constants(*code);
+    REQUIRE(found.size() == 6);
+    CHECK(found[0].opcode == op_spec_constant_composite_replicate_ext);
+    CHECK(found[0].id == 3);
+    CHECK(found[0].name == "REP");
+    CHECK(spec_constant_opname(found[0].opcode) == "OpSpecConstantCompositeReplicateEXT");
+    CHECK(found[1].opcode == op_spec_constant_composite);
+    CHECK(found[1].id == 5);
+    CHECK(found[2].opcode == op_spec_constant_composite_continued_intel);
+    CHECK(found[2].id == 0);
+    CHECK(spec_constant_opname(found[2].opcode) == "OpSpecConstantCompositeContinuedINTEL");
+    // The SpecIds on what is no specialization constant, each refused with its own.
+    CHECK(found[3].opcode == op_decorate);
+    CHECK(found[3].id == 4);
+    CHECK(found[3].spec_id == 7U);
+    CHECK(spec_constant_opname(found[3].opcode) == "a SpecId decoration (OpDecorate)");
+    CHECK(found[4].opcode == op_decorate_id);
+    CHECK(found[4].spec_id == 8U);
+    CHECK(found[5].opcode == op_member_decorate);
+    CHECK(found[5].id == 7);
+    CHECK(found[5].spec_id == 9U);
+    for (const std::uint16_t op : {op_spec_constant_true, op_spec_constant_op, op_spec_constant_composite_replicate_ext,
+                                   op_spec_constant_composite_continued_intel})
+        CHECK(makes_spec_constant(op));
+    for (const std::uint16_t op : {std::uint16_t{43}, std::uint16_t{53}, std::uint16_t{4461}, std::uint16_t{6091}})
+        CHECK_FALSE(makes_spec_constant(op));
+}

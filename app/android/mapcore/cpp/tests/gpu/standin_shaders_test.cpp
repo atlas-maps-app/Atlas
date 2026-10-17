@@ -214,23 +214,24 @@ TEST_CASE("no frame shader reads the alpha of the scene's colour samples") {
 
 TEST_CASE("no module the core embeds holds a specialization constant") {
     // The build refuses one (cmake/Shaders.cmake, nocontract constants); this holds every embedded module to it, so a
-    // module embedded some other way is caught too. Opcodes 48 to 52: OpSpecConstantTrue, False, Constant, Composite,
-    // Op.
+    // module embedded some other way is caught too. Opcodes 48 to 52 (OpSpecConstantTrue, False, Constant, Composite,
+    // Op), 4462 and 6092 (the extensions' OpSpecConstantCompositeReplicateEXT and
+    // OpSpecConstantCompositeContinuedINTEL), and SpecId decorations (OpDecorate <id> SpecId).
     std::size_t scanned = 0;
     for (const atlas::spirv::Module& m : atlas::spirv::modules) {
         const auto code = atlas::spirv::instructions(m.words);
         ATLAS_REQUIRE(code.has_value(), m.name << " is not a SPIR-V module");
-        std::size_t opcodes = 0;
-        for (const atlas::spirv::Instruction& in : *code) {
-            opcodes +=
-                in.opcode >= atlas::spirv::op_spec_constant_true && in.opcode <= atlas::spirv::op_spec_constant_op ? 1
-                                                                                                                   : 0;
-        }
+        // Counted here by the specification's numbers, apart from the scanner's.
+        const auto opcodes = std::ranges::count_if(*code, [](const atlas::spirv::Instruction& in) {
+            const auto ops = in.operands();
+            const bool spec_id = in.opcode == 71 && ops.size() >= 2 && ops[1] == 1; // OpDecorate <id> SpecId
+            return (in.opcode >= 48 && in.opcode <= 52) || in.opcode == 4462 || in.opcode == 6092 || spec_id;
+        });
         const auto found = atlas::spirv::specialization_constants(*code);
         CHECK_MESSAGE(found.empty(), m.name << " holds " << found.size() << " specialization constants, the first "
                                             << (found.empty() ? std::string_view()
                                                               : atlas::spirv::spec_constant_opname(found[0].opcode)));
-        CHECK(opcodes == found.size());
+        CHECK((opcodes == 0) == found.empty()); // the scanner misses none (a SpecId joins its constant's entry)
         ++scanned;
     }
     MESSAGE(scanned << " modules scanned");

@@ -7,7 +7,10 @@ import app.atlas.mapcore.FrameRecords
 import app.atlas.mapview.VkFactsLines
 import org.junit.Test
 
-/** VK bench's plan and arithmetic (plan-vector K1): the paths, the matrix, the statistics and the report lines. */
+/**
+ * VK bench's plan and arithmetic (plan-vector K1): the paths, the matrix, the colour stage, the statistics, the report
+ * lines and the report as recorded while the bench runs.
+ */
 class VkBenchTest {
     @Test
     fun thePathsMoveTheCameraAsScripted() {
@@ -88,10 +91,30 @@ class VkBenchTest {
         val line = VkBench.colourLine("board A renderpass composite resolve", "rgb10a2", summary(4.31, 4.5), summary(4.12, 4.33))
         assertEquals("vkbench colour board A renderpass composite resolve: rgb10a2 4.31 ms, rgba8 4.12 ms GPU (p95 4.50 and 4.33; rgb10a2 +0.19 ms)", line)
         assertTrue(VkBench.colourLine("x", "bgr10a2", summary(Double.NaN, Double.NaN), summary(4.0, 4.0)).endsWith("bgr10a2 —)"))
-        assertEquals("rgb10a2", VkBench.tenBitColour("rgb10a2 (A2B10G10R10UnormPack32 in SrgbNonlinear: the surface offers it in sRGB and the frame's attachments follow it)"))
-        assertEquals("bgr10a2", VkBench.tenBitColour("bgr10a2 (A2R10G10B10UnormPack32 in SrgbNonlinear: …)"))
-        assertEquals(null, VkBench.tenBitColour("rgba8 (R8G8B8A8Unorm in SrgbNonlinear: the surface offers no 10-bit format)"))
-        assertEquals(null, VkBench.tenBitColour("?"))
+        // The colour stage as VkFacts' colour.stage line gives it (CP/gpu/Facts.hpp's colour_stage).
+        val deep = VkBench.colourStage("rgb10a2 (A2B10G10R10UnormPack32 in SrgbNonlinear: the surface offers it in sRGB and the frame's attachments follow it)")
+        assertEquals("rgb10a2", deep.format)
+        assertFalse(deep.off)
+        assertEquals("A2B10G10R10UnormPack32 in SrgbNonlinear: the surface offers it in sRGB and the frame's attachments follow it", deep.why)
+        assertEquals("bgr10a2", VkBench.colourStage("bgr10a2 (A2R10G10B10UnormPack32 in SrgbNonlinear: …)").format)
+        val guard = "vk guard colour ImaginationProprietary 0x00661bd0 attempt 1 pipeline composite (module standin_composite, " +
+            "configuration A renderpass composite resolve rgb10a2) build 0123456789abcdef"
+        val off = VkBench.colourStage("off (10 bits are off for this driver and build: $guard)")
+        assertEquals(null, off.format)
+        assertTrue(off.off)
+        assertEquals("10 bits are off for this driver and build: $guard", off.why)
+        assertEquals("vkbench colour: skipped (10 bits are off for this driver and build: $guard)", VkBench.colourSkipped(off))
+        assertEquals("a0 colour: rgba8 (10 bits are off for this driver and build: $guard)", VkBench.a0Colour(off, null, null))
+        val none = VkBench.colourStage("none (the surface offers no 10-bit format)")
+        assertEquals(null, none.format)
+        assertFalse(none.off)
+        assertEquals("vkbench colour: rgba8 only (the surface offers no 10-bit format)", VkBench.colourSkipped(none))
+        assertEquals("a0 colour: rgba8 (the surface offers no 10-bit format)", VkBench.a0Colour(none, null, null))
+        assertEquals(null, VkBench.colourStage("?").format) // a core without the line: no colour stage
+        assertEquals(
+            "a0 colour: rgb10a2 4.31 ms against rgba8 4.12 ms GPU in the picked configuration at the board's view, side by side in the colour stage",
+            VkBench.a0Colour(deep, summary(4.31, 4.5), summary(4.12, 4.33)),
+        )
         // The frame records say which depth each frame was drawn at (CP/jni/Bridge.hpp's frame_flag::ten_bit).
         val records = FrameRecords.allocate(2)
         records.putInt(FrameRecords.FLAGS_AT, FrameRecords.GPU or FrameRecords.TEN_BIT or (2 shl 8))
@@ -99,6 +122,59 @@ class VkBenchTest {
         assertTrue(FrameRecords.read(records, 0).tenBit)
         assertFalse(FrameRecords.read(records, 1).tenBit)
         assertTrue(FrameRecords.read(records, 1).gpuValid)
+    }
+
+    @Test
+    fun theColourStageMakesEachDepthsPipelinesOncePerConfiguration() {
+        // The owner's PowerVR: A, B, C and 1x, both routes, a tiler. The colour stage measures each at 10 bits and at 8
+        // beside it, the order turning with each configuration.
+        val cells = VkBench.matrix(setOf(0, 1, 2, 4), dynamic = true, tiler = true)
+        assertEquals(16, cells.size)
+        val steps = VkBench.colourSteps(cells)
+        assertEquals(2 * cells.size, steps.size)
+        assertEquals(steps.size, steps.map { it.config to it.tenBit }.toSet().size) // each configuration once at each depth
+        for (i in cells.indices) {
+            assertEquals(setOf(true, false), setOf(steps[2 * i].tenBit, steps[2 * i + 1].tenBit))
+            assertEquals(cells[i], steps[2 * i].config)
+            assertEquals(cells[i], steps[2 * i + 1].config)
+            if (i > 0) assertEquals(steps[2 * i - 1].tenBit, steps[2 * i].tenBit) // the depth goes on into the next one
+        }
+        assertTrue(steps.first().tenBit) // the stage opens at 10 bits
+        // The core's work, as Native.bench makes it: a new depth remakes the swapchain and the pipelines, a new
+        // configuration the pipelines. Starting at the frame's 8 bits in the picked configuration (the main runs'), no
+        // configuration's pipelines are made twice at one depth, and the depth changes once a configuration.
+        var depth = false
+        var config: VkBench.Config? = null
+        val made = mutableListOf<Pair<VkBench.Config, Boolean>>()
+        var switches = 0
+        for (step in steps) {
+            if (step.tenBit != depth) switches++
+            if (step.tenBit != depth || step.config != config) made += step.config to step.tenBit
+            depth = step.tenBit
+            config = step.config
+        }
+        assertEquals(made.size, made.toSet().size)
+        assertEquals(steps.size, made.size)
+        assertEquals(cells.size + 1, switches) // into 10 bits, then once a configuration
+        assertTrue(VkBench.colourSteps(emptyList()).isEmpty())
+    }
+
+    @Test
+    fun theReportIsRecordedAsTheBenchRunsAndAnUnfinishedOneIsKept() {
+        val lines = listOf("vkbench start: full bench, Imagination PowerVR", "vkbench board A renderpass composite resolve: p50 16.70")
+        val running = VkBench.recorded(lines, "the colour stage")
+        assertTrue(running.startsWith("atlas vkbench report, recorded at: the colour stage\n"))
+        val (step, kept) = VkBench.unfinished(running) ?: error("an unfinished report was not found")
+        assertEquals("the colour stage", step)
+        assertEquals(lines, kept)
+        // A finished run, or anything else, keeps nothing.
+        assertEquals(null, VkBench.unfinished(VkBench.recorded(lines, VkBench.COMPLETE)))
+        assertEquals(null, VkBench.unfinished(""))
+        assertEquals(null, VkBench.unfinished("vkbench start: not a recorded report"))
+        val section = VkBench.keptSection(step, kept)
+        assertEquals("vkbench kept: the last run ended in the colour stage; the results it recorded before that follow", section.first())
+        assertEquals(lines, section.subList(1, section.size - 1))
+        assertEquals("vkbench kept: end", section.last())
     }
 
     @Test

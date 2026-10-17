@@ -33,7 +33,8 @@ object OtherAbiFacade {
  * The façade on the JVM against the core's host build (plan-vector T9, K1's host acceptance): the layouts both sides
  * share are the same field by field (the camera state Kotlin writes, the frame records it reads), a façade of another
  * ABI is refused at load, the host build starts behind the crash guard and reports its facts, and the guard's state
- * shows in them: a crash this build made twice turns Vulkan off, and VK facts' reset lets it try again (D5.10).
+ * shows in them: a crash this build made twice turns Vulkan off, a crash in VK bench's colour stage turns off 10 bits
+ * only, and VK facts' reset, refused while a core is alive, lets both try again (D5.10).
  */
 class FacadeTest {
     companion object {
@@ -107,9 +108,11 @@ class FacadeTest {
                 assertTrue(facts.joinToString("\n"), facts.any { it.startsWith("gpu: ") })
                 assertTrue(facts.any { it.startsWith("config: ") })
                 assertTrue(facts.any { it == "guard: clear" })
-                // The frame's colour (10 bits a channel where the device draws the frame in them, as lavapipe does;
-                // offscreen here, hosts having no surfaces) and K5's shaderFloat64.
-                assertTrue(facts.joinToString("\n"), facts.any { Regex("colour: (rgb10a2|bgr10a2|rgba8|bgra8) \\(.*\\)").matches(it) })
+                // The frame's colour (8 bits a channel in this alpha; offscreen here, hosts having no surfaces), what VK
+                // bench's colour stage would draw (10 bits where the device draws the frame in them), and K5's
+                // shaderFloat64.
+                assertTrue(facts.joinToString("\n"), facts.any { Regex("colour: (rgba8|bgra8) \\(.*; 10 bits: .*\\)").matches(it) })
+                assertTrue(facts.any { Regex("colour\\.stage: (rgb10a2|bgr10a2|none) \\(.*\\)").matches(it) })
                 assertTrue(facts.any { it.startsWith("colour.formats: rgb10a2 ") })
                 assertTrue(facts.any { Regex("feature\\.shaderFloat64: (yes|no) \\(K5's light: .*\\)").matches(it) })
                 assertTrue(facts.any { it == "feature.shaderInt64: yes" || it == "feature.shaderInt64: no" })
@@ -189,6 +192,57 @@ class FacadeTest {
             }
             assertEquals("vk guard reset: forgot the pipeline cache", Native.resetGuard(dir.path, guard.path))
             assertEquals("vk guard reset: nothing to forget", Native.resetGuard(dir.path, guard.path))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun aCrashInTheColourStageTurnsOffTenBitsOnlyAndTheResetWaitsForNoCore() {
+        val dir = Files.createTempDirectory("atlas-colour").toFile()
+        try {
+            val guard = dir.resolve("vk")
+            val facts = Native.facts(0L, dir.path, guard.path, "jvm-test", 0).lines()
+            val build = facts.first { it.startsWith("guard.build: ") }.removePrefix("guard.build: ")
+            val (driver, version) = facts.first { it.startsWith("guard.driver: ") }.removePrefix("guard.driver: ").split(' ')
+
+            // What VK bench's colour stage leaves when the driver crashes compiling a pipeline of the 10-bit frame: the
+            // next start opens Vulkan, at 8 bits, with 10 bits off for this driver and build, and says so.
+            val pipeline = "composite (module standin_composite, configuration C renderpass composite direct rgb10a2)"
+            guard.mkdirs()
+            guard.resolve("guard").writeText(
+                "stage colour\npipeline $pipeline\ndriver $driver\nversion $version\nbuild $build\nattempt 1\n",
+            )
+            val line = "vk guard colour $driver $version attempt 1 pipeline $pipeline build $build"
+            val handle = Native.create(dir.path, guard.path, "jvm-test", "", 0)
+            assertNotEquals("the start after a crash in the colour stage refused Vulkan: ${Native.lastError()}", 0L, handle)
+            try {
+                val after = Native.facts(handle, dir.path, guard.path, "jvm-test", 0).lines()
+                val text = after.joinToString("\n")
+                assertTrue(text, "guard: $line" in after)
+                assertTrue(text, "colour.stage: off (10 bits are off for this driver and build: $line)" in after)
+                assertTrue(text, after.any { it.startsWith("colour: rgba8 (") && it.endsWith("; 10 bits: off, 10 bits are off for this driver and build: $line)") })
+                assertTrue(text, "guard.off: $driver $version at colour, pipeline $pipeline build $build (this driver and build: 10 bits are off)" in after)
+                assertTrue(text, after.any { it.startsWith("pipeline.cache: miss") }) // started without it
+                // The reset while this core is alive: refused, nothing forgotten (the core would write its cache back).
+                val refused = Native.resetGuard(dir.path, guard.path)
+                assertEquals("vk guard reset: refused, 1 core is alive (it would write its pipeline cache back): close it first", refused)
+                assertTrue(guard.resolve("off").isFile)
+            } finally {
+                Native.close(handle) // which writes the pipeline cache back
+            }
+            assertTrue(guard.resolve("pipelines.bin").isFile)
+            // A later start of this build and driver: still 8 bits, still on.
+            val later = Native.facts(0L, dir.path, guard.path, "jvm-test", 0).lines()
+            assertTrue(later.joinToString("\n"), "guard: clear" in later)
+            assertTrue("colour.stage: off (10 bits are off for this driver and build: $line)" in later)
+
+            // With no core alive, the reset forgets the verdict and the cache written back, and 10 bits are back.
+            assertEquals("vk guard reset: forgot 10 bits turned off for 1 driver and the pipeline cache", Native.resetGuard(dir.path, guard.path))
+            assertFalse(guard.resolve("pipelines.bin").exists())
+            val back = Native.facts(0L, dir.path, guard.path, "jvm-test", 0).lines()
+            assertTrue(back.joinToString("\n"), "guard.off: none" in back)
+            assertTrue(back.any { it.startsWith("colour.stage: ") && !it.startsWith("colour.stage: off") })
         } finally {
             dir.deleteRecursively()
         }

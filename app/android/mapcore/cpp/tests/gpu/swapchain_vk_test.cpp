@@ -1,8 +1,9 @@
 // The phone's frame path on the host (plan-vector K1): the swapchain code on a headless surface
-// (VK_EXT_headless_surface, lavapipe's), acquiring, drawing and presenting through the frames in flight, remade as a
-// resize remakes it, and remade at 8 bits as VK bench remakes it for its colour line (the surface's formats and the
-// frame's colour on it are printed first); and the stand-in drawn at Vulkan 1.1, what the oldest phones offer, on a
-// device opened as such a phone opens it, to present, at 8 bits and at 10; both under the validation layer, silent.
+// (VK_EXT_headless_surface, lavapipe's), acquiring, drawing and presenting through the frames in flight at the frame's
+// 8 bits, remade as a resize remakes it, and remade as deep as the surface allows as VK bench's colour stage remakes it
+// (the surface's formats and the frame's colour on it are printed first); and the stand-in drawn at Vulkan 1.1, what
+// the oldest phones offer, on a device opened as such a phone opens it, to present, at 8 bits and at 10; both under
+// the validation layer, silent.
 // Both need a Vulkan that presents: where the host's cannot (no VK_KHR_swapchain on the device, or for the first no
 // VK_EXT_headless_surface), they skip with the reason, and fail instead only where presentation is expected of it (a
 // Vulkan with a window system, tests/gpu/gpu_fixture.hpp). The arm64 runner's lavapipe has none: there both skip.
@@ -95,14 +96,18 @@ TEST_CASE("the swapchain presents the stand-in on a headless surface and is rema
             ATLAS_REQUIRE(report.has_value(), report.error().text());
             CHECK(report->status == gpu::Acquired::ok);
         }
-        // At 8 bits, as VK bench remakes it for the 8-bit frame against the frame's colour.
+        CHECK_FALSE((*bigger)->colour().ten_bit()); // the frame's 8 bits
+        // As deep as the surface allows, as VK bench's colour stage remakes it (lavapipe's headless surface offers 8
+        // bits only, so 8 again, saying why).
         (*renderer)->drain();
-        auto eight = gpu::Swapchain::create(*s.device, **surface, {.width = 480, .height = 800}, std::move(*bigger),
-                                            gpu::Depth::eight);
-        ATLAS_REQUIRE(eight.has_value(), eight.error().text());
-        CHECK_FALSE((*eight)->colour().ten_bit());
-        auto at_eight = (*renderer)->retarget(**eight);
-        ATLAS_REQUIRE(at_eight.has_value(), at_eight.error().text());
+        auto deep = gpu::Swapchain::create(*s.device, **surface, {.width = 480, .height = 800}, std::move(*bigger),
+                                           gpu::Depth::deepest);
+        ATLAS_REQUIRE(deep.has_value(), deep.error().text());
+        CHECK((*deep)->format() == s.device->facts().deepest.format);
+        MESSAGE("the colour stage's swapchain: " << gpu::colour_name((*deep)->format()) << " ("
+                                                 << (*deep)->colour().reason << ")");
+        auto at_deep = (*renderer)->retarget(**deep);
+        ATLAS_REQUIRE(at_deep.has_value(), at_deep.error().text());
         for (int i = 0; i < 6; ++i) {
             auto report = (*renderer)->draw(0);
             ATLAS_REQUIRE(report.has_value(), report.error().text());
@@ -113,7 +118,7 @@ TEST_CASE("the swapchain presents the stand-in on a headless surface and is rema
         CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
         renderer->reset();
         standin->reset();
-        eight->reset();
+        deep->reset();
         cache = gpu::fail("closed");
         s.device->wait_idle();
         s.device.reset();

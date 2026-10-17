@@ -2,8 +2,11 @@
 // leaves the guard's marker, which names the pipeline being made; the next start reads it, prints the `vk guard` line
 // with that pipeline and retries once without the pipeline cache; when that crashes too, the start after turns Vulkan
 // off for the driver, its version and this build of the core. A new driver version starts again, and so does another
-// build of the core (its build ID), or a reset; off lines and markers from before build IDs turn nothing off. The
-// crashing starts run in child processes: this test binary, spawned with one test case.
+// build of the core (its build ID), or a reset; off lines and markers from before build IDs turn nothing off. A crash
+// making a shader module names the module. VK bench's colour stage is the rung below: a planted abort in a pipeline of
+// the 10-bit frame turns off 10 bits only, the next start draws at 8 bits with them off and says so, and a reset
+// brings them back. The crashing starts run in child processes: this test binary, spawned with one test case.
+#include "base/log.hpp"
 #include "gpu/Frames.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/PipelineCache.hpp"
@@ -48,15 +51,17 @@ namespace {
 namespace fs = std::filesystem;
 
 // The pipeline the crash is planted in: on hosts the composite, which the child makes as it prepares a configuration
-// for the host build's offscreen images (as VK bench's prepare does when PowerVR crashed); the Android build has no
-// offscreen output (platform/host), so there the child makes the pipelines every configuration shares, the shadow's
-// among them.
+// for the host build's offscreen images (as VK bench's prepare does when PowerVR crashed), at the frame's 8 bits and in
+// the colour stage at 10; the Android build has no offscreen output (platform/host), so there the child makes the
+// pipelines every configuration shares, the shadow's among them, in both stages.
 #if defined(__ANDROID__)
 constexpr std::string_view planted = "shadow (module standin_standin";
 constexpr const char* plant_at = "pipelines:shadow";
+constexpr const char* colour_plant_at = "colour:shadow";
 #else
 constexpr std::string_view planted = "composite (module standin_composite";
 constexpr const char* plant_at = "pipelines:composite";
+constexpr const char* colour_plant_at = "colour:composite";
 #endif
 
 [[nodiscard]] std::string self_path() {
@@ -156,29 +161,61 @@ Child spawn_child(const fs::path& dir, const std::string& plant, const std::stri
 
 TEST_CASE("guard child start") {
     // Runs only in the child the guard's test spawns: a guarded start, then the stand-in's pipelines behind the
-    // pipelines stage, those every configuration shares and (on hosts) the configuration's, the composite among them,
-    // each announced to the guard first; the plant (if any) aborts the process there.
+    // pipelines stage at the frame's 8 bits, those every configuration shares and (on hosts) the configuration's, the
+    // composite among them, each shader module and pipeline announced to the guard first; then, as VK bench does after
+    // its 8-bit runs, its colour stage where 10 bits can be had: the configuration's pipelines again at 10 bits (on
+    // Android the shared ones again), inside the guard's colour stage. The plant (if any) aborts the process there.
     const char* dir = std::getenv("ATLAS_GUARD_CHILD"); // NOLINT(concurrency-mt-unsafe)
     if (dir == nullptr) return;
     const char* plant = std::getenv("ATLAS_GUARD_PLANT"); // NOLINT(concurrency-mt-unsafe)
     const char* build = std::getenv("ATLAS_GUARD_BUILD"); // NOLINT(concurrency-mt-unsafe)
     auto started = gpu::start_guarded(options_in(dir, plant == nullptr ? "" : plant, build == nullptr ? "" : build));
     ATLAS_REQUIRE(started.has_value(), started.error().reason);
-    started->guard->enter(gpu::Stage::pipelines);
+    gpu::Guard& guard = *started->guard;
+    const gpu::Facts& facts = started->device->facts();
+    guard.enter(gpu::Stage::pipelines);
     auto city = std::make_shared<const standin::City>(standin::City::generate(32, 13.0));
-    auto standin = standin::StandIn::create(*started->device, *started->cache, city, started->guard.get());
+    auto standin = standin::StandIn::create(*started->device, *started->cache, city, &guard);
     ATLAS_REQUIRE(standin.has_value(), standin.error().text());
 #if !defined(__ANDROID__)
-    auto output = platform::Offscreen::create(*started->device, {.width = 64, .height = 64}, 2);
-    ATLAS_REQUIRE(output.has_value(), output.error().text());
-    auto renderer = gpu::Renderer::create(*started->device, **output, **standin, started->device->facts().choice);
-    ATLAS_REQUIRE(renderer.has_value(), renderer.error().text());
-    renderer->reset();
+    {
+        auto output = platform::Offscreen::create(*started->device, {.width = 64, .height = 64}, 2);
+        ATLAS_REQUIRE(output.has_value(), output.error().text());
+        ATLAS_REQUIRE(!(*output)->colour().ten_bit(), "the frame's default is 10 bits");
+        auto renderer = gpu::Renderer::create(*started->device, **output, **standin, facts.choice);
+        ATLAS_REQUIRE(renderer.has_value(), renderer.error().text());
+        renderer->reset();
+    }
 #endif
-    started->guard->leave();
+    guard.leave();
     // A start that survives writes its cache, as the core does after its pipelines.
     auto saved = started->cache->save();
     ATLAS_REQUIRE(saved.has_value(), saved.error().text());
+
+    // The colour stage, after the 8-bit work: skipped where 10 bits cannot be had or the guard has them off.
+    if (!facts.deepest.ten_bit()) {
+        log::info("guard child: the colour stage skipped ({})", gpu::colour_stage(facts));
+        return;
+    }
+    guard.enter_colour();
+    guard.enter(gpu::Stage::pipelines);
+#if !defined(__ANDROID__)
+    {
+        auto output =
+            platform::Offscreen::create(*started->device, {.width = 64, .height = 64}, 2, gpu::Depth::deepest);
+        ATLAS_REQUIRE(output.has_value(), output.error().text());
+        ATLAS_REQUIRE((*output)->colour().ten_bit(), "the colour stage's output is not 10 bits");
+        auto renderer = gpu::Renderer::create(*started->device, **output, **standin, facts.choice);
+        ATLAS_REQUIRE(renderer.has_value(), renderer.error().text());
+        renderer->reset();
+    }
+#else
+    auto again = standin::StandIn::create(*started->device, *started->cache, city, &guard);
+    ATLAS_REQUIRE(again.has_value(), again.error().text());
+#endif
+    guard.leave();
+    guard.leave_colour();
+    log::info("guard child: the colour stage drawn in {}", gpu::colour_name(facts.deepest.format));
 }
 
 TEST_CASE("the crash guard names the pipeline, retries once without the cache, then turns Vulkan off for that driver "
@@ -236,7 +273,7 @@ TEST_CASE("the crash guard names the pipeline, retries once without the cache, t
     CHECK_FALSE(fs::exists(dir / "guard"));
     const std::string off = read(dir / "off");
     MESSAGE("off: " << off);
-    CHECK(has(off, std::format("|build-a|pipelines|{}", planted)));
+    CHECK(has(off, std::format("|build-a|pipelines|pipeline {}", planted)));
     const std::string off_state = off_line(refused.error().guard, "pipelines");
     CHECK(has(off_state, std::format("pipeline {}", planted)));
     CHECK(has(off_state, "(this build: Vulkan is off for that driver)")); // refused before it read the driver
@@ -327,5 +364,160 @@ TEST_CASE("the crash guard names the pipeline, retries once without the cache, t
         CHECK(has(read(dir / "off"), "system|host-test-system|build-a|instance|\n"));
     }
     CHECK(gpu::start_guarded(options_in(dir, "", "build-b")).has_value());
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("a crash in VK bench's colour stage turns off 10 bits only, for that driver and build; a reset brings them "
+          "back") {
+    if (!test::open_session()) return; // no Vulkan here: nothing to guard
+    const fs::path dir = fs::temp_directory_path() / std::format("atlas-guard-colour-{}", ::getpid());
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    std::string configuration; // the device's, as the child draws it
+    std::string ten;           // the colour stage's colour
+    {
+        auto probe = gpu::start_guarded(options_in(dir, "", "build-a"));
+        ATLAS_REQUIRE(probe.has_value(), probe.error().reason);
+        const gpu::Facts& facts = probe->device->facts();
+        if (!facts.deepest.ten_bit()) {
+            MESSAGE("skipped: no 10 bits here (" << gpu::colour_stage(facts) << ")");
+            fs::remove_all(dir, ec);
+            return;
+        }
+        configuration = gpu::name_of(facts.choice);
+        ten = gpu::colour_name(facts.deepest.format);
+    }
+
+    // 1. A clean start draws its 8 bits, then the colour stage's 10, and leaves no marker.
+    Child child = spawn_child(dir, "", "build-a");
+    ATLAS_REQUIRE(WIFEXITED(child.status), "the clean child did not exit (wait status " << child.status << ")");
+    CHECK(WEXITSTATUS(child.status) == 0);
+    CHECK(has(child.log, "guard child: the colour stage drawn in "));
+    CHECK_FALSE(fs::exists(dir / "guard"));
+
+    // 2. A planted abort in a pipeline of the 10-bit frame: the 8-bit one was made before it, and the marker is the
+    // colour stage's, naming the pipeline and its colour (on Android the shared shadow, made again in the stage).
+    child = spawn_child(dir, colour_plant_at, "build-a");
+    CHECK(aborted(child));
+    const std::string marker = read(dir / "guard");
+    MESSAGE("marker after the colour stage's crash:\n" << marker);
+    CHECK(has(marker, "stage colour\n"));
+    CHECK(has(marker, std::format("\npipeline {}", planted)));
+    CHECK(has(marker, "\nbuild build-a\n"));
+    CHECK(has(marker, "\nattempt 1\n"));
+#if !defined(__ANDROID__)
+    CHECK(has(marker, std::format("{}, configuration {} {})\n", planted, configuration, ten)));
+    CHECK(has(child.log, std::format("vk pipeline {}", planted))); // the 8-bit composite, made first
+    CHECK(has(child.log, " rgba8)"));
+#endif
+    const std::vector<std::string> lines = core_lines(child.log);
+    ATLAS_REQUIRE(!lines.empty(), "the child logged nothing:\n" << child.log);
+    CHECK(has(lines.back(), std::format("vk guard planted crash at colour, pipeline {}", planted)));
+
+    // 3. The next start: Vulkan on, at 8 bits, without the pipeline cache; 10 bits off for this driver and build, and
+    // the facts and the guard's state say so.
+    std::string off;
+    {
+        auto next = gpu::start_guarded(options_in(dir, "", "build-a"));
+        ATLAS_REQUIRE(next.has_value(), "the start after a crash in the colour stage turned Vulkan off: "
+                                            << next.error().line << " (" << next.error().reason << ")");
+        MESSAGE("found: " << next->guard_line);
+        CHECK(next->guard_line.starts_with("vk guard colour "));
+        CHECK(has(next->guard_line, std::format(" attempt 1 pipeline {}", planted)));
+        CHECK(next->guard_line.ends_with(" build build-a"));
+        CHECK(next->retried);
+        CHECK_FALSE(fs::exists(dir / "pipelines.bin"));
+        const gpu::Facts& facts = next->device->facts();
+        CHECK(facts.ten_bit_off.starts_with("vk guard colour "));
+        CHECK(has(facts.ten_bit_off, std::format(" attempt 1 pipeline {}", planted)));
+        CHECK_FALSE(facts.deepest.ten_bit());
+        CHECK_FALSE(facts.colour.ten_bit());
+        CHECK_FALSE(gpu::colour_offscreen(facts, gpu::Depth::deepest).ten_bit());
+        const std::vector<std::string> said = gpu::facts_lines(facts);
+        const auto line_of = [&](std::string_view prefix) {
+            const auto it = std::ranges::find_if(said, [&](const std::string& l) { return l.starts_with(prefix); });
+            return it == said.end() ? std::string() : *it;
+        };
+        MESSAGE(line_of("colour: "));
+        CHECK(has(line_of("colour: "), "; 10 bits: off, 10 bits are off for this driver and build: vk guard colour "));
+        CHECK(line_of("colour.stage: ") ==
+              std::format("colour.stage: off (10 bits are off for this driver and build: {})", facts.ten_bit_off));
+        const std::string state = off_line(next->guard->state(), "colour");
+        MESSAGE(state);
+        CHECK(has(state, std::format("pipeline {}", planted)));
+        CHECK(has(state, "(this driver and build: 10 bits are off)"));
+        CHECK(off_line(next->guard->state(), "pipelines").empty());
+        off = read(dir / "off");
+        CHECK(has(off, std::format("|build-a|colour|pipeline {}", planted)));
+    }
+
+    // 4. Every later start of this driver and build skips the colour stage and draws its 8 bits: the planted pipeline
+    // of the 10-bit frame is never reached, and the start keeps everything else.
+    child = spawn_child(dir, colour_plant_at, "build-a");
+    ATLAS_REQUIRE(WIFEXITED(child.status), "the start after the colour stage's crash did not exit:\n" << child.log);
+    CHECK(WEXITSTATUS(child.status) == 0);
+    CHECK(has(child.log, "guard child: the colour stage skipped (off (10 bits are off for this driver and build: vk "
+                         "guard colour "));
+    // No crash found this time: the verdict stands quietly, no `vk guard` line.
+    CHECK(std::ranges::none_of(core_lines(child.log), [](const std::string& l) {
+        return l.size() > 11 && std::string_view(l).substr(11).starts_with("vk guard ");
+    }));
+    CHECK(fs::exists(dir / "pipelines.bin")); // the 8-bit start wrote its cache
+    CHECK_FALSE(fs::exists(dir / "guard"));
+
+    // 5. Another build of the core is not held to it.
+    {
+        auto other = gpu::start_guarded(options_in(dir, "", "build-b"));
+        ATLAS_REQUIRE(other.has_value(), other.error().line);
+        CHECK(other->device->facts().ten_bit_off.empty());
+        CHECK(other->device->facts().deepest.ten_bit());
+        CHECK(has(off_line(other->guard->state(), "colour"), "(another build of the core: not off for this one)"));
+    }
+
+    // 6. The reset brings 10 bits back: the start after it draws the colour stage again, and the plant aborts there
+    // again.
+    const std::string said = gpu::Guard(dir, "host-test-system", "build-a", "").clear(dir / "pipelines.bin");
+    MESSAGE(said);
+    CHECK(said == "vk guard reset: forgot 10 bits turned off for 1 driver and the pipeline cache");
+    {
+        auto back = gpu::start_guarded(options_in(dir, "", "build-a"));
+        ATLAS_REQUIRE(back.has_value(), back.error().line);
+        CHECK(back->guard_line.empty());
+        CHECK(back->device->facts().ten_bit_off.empty());
+        CHECK(back->device->facts().deepest.ten_bit());
+        CHECK(std::ranges::contains(back->guard->state(), std::string("guard.off: none")));
+    }
+    child = spawn_child(dir, "", "build-a");
+    CHECK(has(child.log, "guard child: the colour stage drawn in "));
+    child = spawn_child(dir, colour_plant_at, "build-a");
+    CHECK(aborted(child));
+    CHECK(has(read(dir / "guard"), "stage colour\n"));
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("the crash guard names the shader module a driver crashes making") {
+    // vkCreateShaderModule runs before any pipeline of the module: the marker names the module, not the pipeline made
+    // before it (the blur's module, made with the shared pipelines' before the first of them).
+    if (!test::open_session()) return;
+    const fs::path dir = fs::temp_directory_path() / std::format("atlas-guard-module-{}", ::getpid());
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    const Child child = spawn_child(dir, "pipelines:standin_blur", "build-m");
+    CHECK(aborted(child));
+    const std::string marker = read(dir / "guard");
+    MESSAGE("marker:\n" << marker);
+    CHECK(has(marker, "stage pipelines\nmodule standin_blur\n"));
+    CHECK_FALSE(has(marker, "\npipeline "));
+    const std::vector<std::string> lines = core_lines(child.log);
+    ATLAS_REQUIRE(lines.size() >= 2, "the child logged " << lines.size() << " lines:\n" << child.log);
+    CHECK(has(lines[lines.size() - 2], "vk module standin_blur"));
+    CHECK(has(lines.back(), "vk guard planted crash at pipelines, module standin_blur"));
+    auto next = gpu::start_guarded(options_in(dir, "", "build-m"));
+    ATLAS_REQUIRE(next.has_value(), next.error().line);
+    MESSAGE("found: " << next->guard_line);
+    CHECK(has(next->guard_line, " attempt 1 module standin_blur build build-m"));
+    CHECK(next->retried);
     fs::remove_all(dir, ec);
 }

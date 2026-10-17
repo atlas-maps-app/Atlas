@@ -2,8 +2,12 @@
 // the render thread (an ALooper at display priority), Choreographer's vsync, the camera pulled from Kotlin at each
 // paced vsync (FrameSource.camera, allocation-free on both sides), the swapchain on the SurfaceView's or the
 // TextureView's window, the frame through the device layer, the ADPF hint, the frame records VK bench reads, the crash
-// guard (keyed by the core's build ID, naming each pipeline before it is made) through its first 120 frames, and
-// device loss rebuilt at most twice a session.
+// guard (keyed by the core's build ID, naming each shader module and pipeline before it is made) through its first 120
+// frames and around VK bench's colour stage, and device loss rebuilt at most twice a session.
+//
+// The frame is 8 bits a channel (gpu/Facts.hpp's default_depth); only VK bench's colour stage (Native.bench's flag 4)
+// draws it at 10, where the surface offers them, the crash guard has not turned them off for this driver and build,
+// and the guard's colour stage marks every step of it on disk (gpu/Guard.hpp).
 #include "jni/Bridge.hpp"
 
 #include "base/build_info.hpp"
@@ -24,6 +28,7 @@
 #endif
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -63,8 +68,11 @@ constexpr std::uint32_t msaa2 = 4U;               // K6's answer: 2x within 0.15
 namespace bench_flag {
 [[maybe_unused]] constexpr std::uint32_t pills = 1U;   // the core draws the frosted pills (the SurfaceView host)
 [[maybe_unused]] constexpr std::uint32_t texture = 2U; // the host is a TextureView (for the log and the records)
-[[maybe_unused]] constexpr std::uint32_t rgba8 = 4U;   // 8 bits a channel, against the 10 the surface may allow
+[[maybe_unused]] constexpr std::uint32_t ten_bit = 4U; // VK bench's colour stage: 10 bits a channel, not the frame's 8
 } // namespace bench_flag
+
+/// The cores alive in this process: the guard's reset waits for none (a live core writes its pipeline cache back).
+std::atomic<int> live_cores{0}; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 /// The hash of the core's shaders, every embedded module's: the pipeline cache's key.
 [[nodiscard]] std::uint64_t core_spirv() noexcept { return gpu::spirv_hash(spirv::hashes); }
@@ -167,7 +175,8 @@ public:
         }
 #endif
         if (started_.device) started_.device->wait_idle();
-        save_cache();
+        save_cache(); // the cache's last write: a reset may forget it from now on
+        live_cores.fetch_sub(1);
     }
 
     [[nodiscard]] std::string facts() {
@@ -292,7 +301,9 @@ public:
 #endif
 
 private:
-    Core(CoreOptions options, gpu::Started started) : options_(std::move(options)), started_(std::move(started)) {}
+    Core(CoreOptions options, gpu::Started started) : options_(std::move(options)), started_(std::move(started)) {
+        live_cores.fetch_add(1);
+    }
 
 #if defined(__ANDROID__)
     // ---- On the render thread.
@@ -327,6 +338,9 @@ private:
             gpu::collect_surface(started_.device->facts(), started_.device->physical(), *surface_,
                                  started_.device->queue_family());
         }
+        // A window come back during VK bench's colour stage: its 10-bit swapchain is made inside the guard's colour
+        // stage again.
+        mark_colour(depth_ == gpu::Depth::deepest);
         auto swapchain = gpu::Swapchain::create(*started_.device, *surface_, wanted_, nullptr, depth_);
         if (!swapchain) {
             why = swapchain.error().text();
@@ -349,12 +363,26 @@ private:
         return true;
     }
 
-    /// The facts' colour as the swapchain made it, a driver having refused the 10 bits it listed perhaps (VK facts'
-    /// `colour:`), unless VK bench asked for 8 bits.
+    /// The facts' colour as the swapchain made it (VK facts' `colour:`), or in VK bench's colour stage their deepest
+    /// one, a driver having refused the 10 bits it listed perhaps (`colour.stage:`).
     void note_colour() {
-        if (!swapchain_ || depth_ != gpu::Depth::deepest) return;
+        if (!swapchain_) return;
         const std::scoped_lock lock(facts_mutex_);
-        started_.device->facts().colour = swapchain_->colour();
+        gpu::Facts& facts = started_.device->facts();
+        (depth_ == gpu::Depth::deepest ? facts.deepest : facts.colour) = swapchain_->colour();
+    }
+
+    /// The crash guard's colour stage (D5.10) is open exactly while 10-bit work may reach the driver: VK bench's colour
+    /// stage with a window attached. Opened before the 10-bit swapchain is made, closed once it and its pipelines are
+    /// gone, so that a crash in between turns off 10 bits only.
+    void mark_colour(bool on) {
+        if (on == colour_marked_) return;
+        colour_marked_ = on;
+        if (on) {
+            started_.guard->enter_colour();
+        } else {
+            started_.guard->leave_colour();
+        }
     }
 
     void release_surface() {
@@ -364,6 +392,7 @@ private:
         surface_.clear();
         window_ = platform::Window();
         requested_ = false;
+        mark_colour(false); // nothing of 10 bits is left; a window come back opens it again (make_surface)
     }
 
     void remake_swapchain() {
@@ -455,27 +484,43 @@ private:
             return std::format("this device has no configuration {}", gpu::name_of(config.config));
         if (config.route == gpu::Route::dynamic && !started_.device->enabled().local_read)
             return "this device has no dynamic rendering with local reads";
+        // VK bench's colour stage: 10 bits where the surface offers them in sRGB and the crash guard has not turned
+        // them off for this driver and build (after its crash in this stage); everything else at the frame's 8.
+        const bool ten = mode == 1 && (flags & bench_flag::ten_bit) != 0;
+        if (ten && !facts.ten_bit_off.empty()) return "10 bits are off for this driver and build: " + facts.ten_bit_off;
+        if (ten && !facts.deepest.ten_bit()) return "no 10 bits here: " + facts.deepest.reason;
         mode_ = mode;
         config_ = config;
         pills_ = (flags & bench_flag::pills) != 0;
         texture_ = (flags & bench_flag::texture) != 0;
-        if (mode_ == 0) {
+        const gpu::Depth depth = ten ? gpu::Depth::deepest : gpu::default_depth;
+        if (mode_ == 0 || depth != depth_) {
             if (renderer_) renderer_->drain();
             renderer_.reset();
-            return {};
         }
-        // Another colour depth (VK bench's 8-bit frame against the 10-bit one): a swapchain of it, and a renderer for
-        // it.
-        const gpu::Depth depth = (flags & bench_flag::rgba8) != 0 ? gpu::Depth::eight : gpu::Depth::deepest;
         if (depth != depth_) {
+            // Into the colour stage: the guard's colour stage first, the 10 bits' lazily allocated samples asked of
+            // the device, then a swapchain of 10 bits and a renderer for it. Out of it: the 8-bit swapchain, then the
+            // guard's colour stage closed, nothing of 10 bits being left.
             depth_ = depth;
-            if (renderer_) renderer_->drain();
-            renderer_.reset();
+            if (depth_ == gpu::Depth::deepest && *surface_) {
+                mark_colour(true);
+                const std::scoped_lock lock(facts_mutex_);
+                started_.device->check_ten_bit();
+            }
             remake_swapchain();
+            if (depth_ != gpu::Depth::deepest) mark_colour(false);
             if (!swapchain_) return "no swapchain of the colour asked for";
         }
+        if (mode_ == 0) return {};
+        if (ten && !swapchain_->colour().ten_bit()) return "no 10 bits here: " + swapchain_->colour().reason;
         if (!renderer_) return make_renderer();
         standin_->set_pills(pills_);
+        if (renderer_->configuration() == config_) {
+            // Drawn already (a host switch's attach made it for this configuration): its pipelines stand, made once.
+            log_configuration();
+            return {};
+        }
         auto done = behind_pipelines([&] { return renderer_->reconfigure(config_); });
         if (!done) {
             renderer_.reset();
@@ -649,13 +694,22 @@ private:
         swapchain_.reset();
         started_.cache.reset();
         started_.device.reset();
-        auto device = gpu::Device::open(*started_.instance, {.surface = *surface_, .present = true});
+        // As the start opened it (K6's answer for configuration B among the options), to present to this surface.
+        gpu::DeviceOptions reopen = started_.device_options;
+        reopen.surface = *surface_;
+        auto device = gpu::Device::open(*started_.instance, reopen);
         if (!device) {
             log::error("vk rebuild failed: {}", device.error().text());
             lost_ = 3;
             return;
         }
         started_.device = std::move(*device);
+        {
+            // The guard's colour verdict, and in VK bench's colour stage the 10 bits' samples asked again.
+            const std::scoped_lock lock(facts_mutex_);
+            started_.device->facts().ten_bit_off = started_.guard->ten_bit_off();
+            if (depth_ == gpu::Depth::deepest) started_.device->check_ten_bit();
+        }
         const gpu::StartOptions o = start_options(options_);
         auto cache = gpu::PipelineCache::open(started_.device->handle(), started_.device->facts(), o.cache_file,
                                               o.spirv, !o.cache_file.empty());
@@ -707,8 +761,9 @@ private:
     jmethodID presented_mid_ = nullptr;
     vk::Extent2D wanted_{};
     gpu::Configuration config_{};
-    /// The swapchain's colour: as deep as the surface allows, or 8 bits (VK bench's 8-bit frame against it).
-    gpu::Depth depth_ = gpu::Depth::deepest;
+    /// The swapchain's colour: the frame's 8 bits, or in VK bench's colour stage as deep as the surface allows.
+    gpu::Depth depth_ = gpu::default_depth;
+    bool colour_marked_ = false; // the guard's colour stage is open (mark_colour)
     int mode_ = 0;
     bool pills_ = false;
     bool texture_ = false;
@@ -767,9 +822,19 @@ jstring native_facts(JNIEnv* env, jclass /*cls*/, jlong handle, jstring cache_di
     return java(env, text);
 }
 
-/// VK facts' "Reset guard" (debug and bench builds): forgets every crash and every driver the guard turned off, and the
-/// pipeline cache, as a fresh install would; the next start tries Vulkan again. What it forgot, in words.
+/// VK facts' "Reset guard" (debug and bench builds): forgets every crash, every driver the guard turned off and every
+/// 10 bits it turned off, and the pipeline cache, as a fresh install would; the next start tries Vulkan, and 10 bits,
+/// again. Only with no core alive: a live core keeps its pipeline cache in memory and writes it back (on trim, on
+/// close, after its first 120 frames), which would undo the reset, so the reset is refused until it is closed
+/// (MapCore.resetGuard closes the process's core first). What it forgot, or why not, in words.
 jstring native_reset_guard(JNIEnv* env, jclass /*cls*/, jstring cache_dir, jstring guard_dir) {
+    if (const int alive = live_cores.load(); alive > 0) {
+        const std::string refused = std::format("vk guard reset: refused, {} core{} alive (it would write its pipeline "
+                                                "cache back): close it first",
+                                                alive, alive == 1 ? " is" : "s are");
+        log::warn("{}", refused);
+        return java(env, refused);
+    }
     const CoreOptions o{.cache_dir = string_of(env, cache_dir), .guard_dir = string_of(env, guard_dir)};
     const gpu::StartOptions start = start_options(o);
     const std::string said = gpu::Guard(start.guard_dir, {}, start.build, {}).clear(start.cache_file);

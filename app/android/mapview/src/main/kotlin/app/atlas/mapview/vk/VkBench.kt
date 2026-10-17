@@ -11,8 +11,10 @@ import kotlin.math.sqrt
 
 /**
  * VK bench's plan and arithmetic (plan-vector K1, A0), apart from the screen so the JVM tests hold it: the scripted
- * camera paths over the stand-in city, the matrix of frame configurations, forms, routes and hosts, the statistics of
- * the frame records (percentiles, drops, the thermal slope) and the report lines `smoke.sh` and the owner's paste read.
+ * camera paths over the stand-in city, the matrix of frame configurations, forms, routes and hosts, the colour stage
+ * (10 bits a channel, after every 8-bit run), the statistics of the frame records (percentiles, drops, the thermal
+ * slope), the report lines `smoke.sh` and the owner's paste read, and the report as it is recorded while the bench
+ * runs.
  */
 object VkBench {
     /**
@@ -217,8 +219,9 @@ object VkBench {
     }
 
     /**
-     * The colour line (plan-vector D5, "Colour depth"): the GPU's median and p95 for the frame of [cell] in the frame's
-     * 10-bit colour ([deepName], rgb10a2 or bgr10a2) against the same frame at 8 bits, and what the 10 bits cost.
+     * The colour line (plan-vector D5, "Colour depth"): the GPU's median and p95 for the frame of [cell] in the colour
+     * stage's 10-bit colour ([deepName], rgb10a2 or bgr10a2) against the same frame at 8 bits beside it, and what the
+     * 10 bits cost.
      */
     fun colourLine(cell: String, deepName: String, deep: Summary, eight: Summary): String {
         val d = deep.gpuP50 - eight.gpuP50
@@ -227,8 +230,77 @@ object VkBench {
             "(p95 ${ms(deep.gpuP95)} and ${ms(eight.gpuP95)}; $deepName $cost)"
     }
 
-    /** The frame's colour from the facts' `colour:` value ("rgb10a2 (A2B10G10R10UnormPack32 in …)"): its name, if 10-bit. */
-    fun tenBitColour(colourFact: String): String? = colourFact.substringBefore(" ").takeIf { it == "rgb10a2" || it == "bgr10a2" }
+    /**
+     * The colour stage as the facts' `colour.stage:` value gives it (`CP/gpu/Facts.hpp`'s colour_stage): the 10-bit
+     * colour it draws ([format], rgb10a2 or bgr10a2), or why it does not run: [off] where the crash guard turned 10 bits
+     * off for this driver and build after a crash in the stage, else none to be had; [why] in the core's words.
+     */
+    data class ColourStage(val format: String?, val off: Boolean, val why: String)
+
+    /** [ColourStage] of a `colour.stage:` value ("rgb10a2 (A2B10G10R10UnormPack32 in …)", "off (…)", "none (…)"). */
+    fun colourStage(fact: String): ColourStage {
+        val word = fact.substringBefore(" ")
+        val why = fact.substringAfter(" (", "").removeSuffix(")").ifEmpty { fact }
+        return when (word) {
+            "rgb10a2", "bgr10a2" -> ColourStage(word, off = false, why = why)
+            "off" -> ColourStage(null, off = true, why = why)
+            else -> ColourStage(null, off = false, why = why)
+        }
+    }
+
+    /** The report's line where the colour stage does not run: skipped after a crash in it, or no 10 bits to be had. */
+    fun colourSkipped(stage: ColourStage): String =
+        if (stage.off) "vkbench colour: skipped (${stage.why})" else "vkbench colour: rgba8 only (${stage.why})"
+
+    /** One measurement of the colour stage: [config] at 10 bits a channel, or at 8 beside it. */
+    data class ColourStep(val config: Config, val tenBit: Boolean)
+
+    /**
+     * The colour stage's measurements, in order: each of [cells] at 10 bits and again at 8 beside it, the same warmth
+     * (the stage runs after the soak), the order turning with each cell (10 then 8, 8 then 10, …), so that the depth
+     * changes once a cell and each cell's pipelines are made once at each depth.
+     */
+    fun colourSteps(cells: List<Config>): List<ColourStep> = cells.flatMapIndexed { i, c ->
+        if (i % 2 == 0) listOf(ColourStep(c, true), ColourStep(c, false)) else listOf(ColourStep(c, false), ColourStep(c, true))
+    }
+
+    /**
+     * The A0 line for the colour depth: the colour stage's 10-bit frame in the picked configuration against the 8-bit
+     * one measured beside it ([ten] and [eight], null where not measured), or why there is none.
+     */
+    fun a0Colour(stage: ColourStage, ten: Summary?, eight: Summary?): String =
+        if (stage.format == null) {
+            "a0 colour: rgba8 (${stage.why})"
+        } else {
+            "a0 colour: ${stage.format} ${ms(ten?.gpuP50 ?: Double.NaN)} ms against rgba8 ${ms(eight?.gpuP50 ?: Double.NaN)} ms GPU " +
+                "in the picked configuration at the board's view, side by side in the colour stage"
+        }
+
+    /** The step a recorded report ends with once its run finished. */
+    const val COMPLETE = "complete"
+
+    /** The first line of a recorded report, before the step its run had reached. */
+    const val REPORT_HEAD = "atlas vkbench report, recorded at: "
+
+    /**
+     * The report as VkBenchScreen records it on disk while the bench runs, the step it has reached ("the colour stage",
+     * …, [COMPLETE]) first: a native crash ends the process, the screen's lines with it, and the next start finds
+     * what was measured before it here ([unfinished]).
+     */
+    fun recorded(lines: List<String>, step: String): String = REPORT_HEAD + step + "\n" + lines.joinToString("\n")
+
+    /** The step an unfinished recorded report's run ended in, and its lines; null for a finished one, or for none. */
+    fun unfinished(text: String): Pair<String, List<String>>? {
+        val head = text.substringBefore("\n")
+        if (!head.startsWith(REPORT_HEAD)) return null
+        val step = head.removePrefix(REPORT_HEAD)
+        if (step == COMPLETE) return null
+        return step to text.substringAfter("\n", "").lines().filter { it.isNotEmpty() }
+    }
+
+    /** An unfinished run's [lines], between two lines saying whose they are, as the next start's report keeps them. */
+    fun keptSection(step: String, lines: List<String>): List<String> =
+        listOf("vkbench kept: the last run ended in $step; the results it recorded before that follow") + lines + "vkbench kept: end"
 
     /** The difference of two GPU medians, as the ONEPASS decision reads it (D5.4: build ONEPASS above 1 ms). */
     fun onepassVerdict(composite: Double, onepass: Double): String {

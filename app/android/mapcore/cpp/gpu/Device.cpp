@@ -36,15 +36,17 @@ namespace {
     return options.present || static_cast<bool>(options.surface);
 }
 
-/// Whether lazily allocated memory holds the samples of configuration A in each colour format the frame may take (its
-/// colour follows the output, gpu/Facts.hpp): by the memory types a 4x transient image of the format may take.
-void probe_lazy(const vk::raii::Device& device, Facts& facts) {
+/// Whether lazily allocated memory holds the samples of configuration A in the colour formats the frame may take (its
+/// colour follows the output, gpu/Facts.hpp), 8-bit or 10-bit ones (`ten`): by the memory types a 4x transient
+/// image of the format may take.
+void probe_lazy(const vk::raii::Device& device, Facts& facts, bool ten) {
     std::uint32_t lazy_types = 0;
     for (std::uint32_t i = 0; i < facts.memory.memoryTypeCount; ++i) {
         if (facts.memory.memoryTypes[i].propertyFlags & vk::MemoryPropertyFlagBits::eLazilyAllocated)
             lazy_types |= 1U << i;
     }
     for (ColourFormat& c : facts.colour_formats) {
+        if (ten_bit(c.format) != ten || c.lazy_checked) continue;
         if (!c.attachment || !(c.samples & vk::SampleCountFlagBits::e4)) continue;
         auto image = device.createImage({.imageType = vk::ImageType::e2D,
                                          .format = c.format,
@@ -69,6 +71,11 @@ Device::~Device() {
     memory_.reset();
     queue_.clear();
     device_.clear();
+}
+
+void Device::check_ten_bit() {
+    if (facts_.lazy_memory) probe_lazy(device_, facts_, true);
+    decide_colour(facts_);
 }
 
 bool Device::can_present(vk::SurfaceKHR surface) const {
@@ -233,9 +240,9 @@ Result<std::unique_ptr<Device>> Device::open(Instance& instance, Picked picked, 
     self->queue_ = self->device_.getQueue(*family, 0);
     ATLAS_GPU_LET(memory, Memory::create(instance, physical, self->device_, version, on.memory_budget));
     self->memory_ = std::move(memory);
-    if (facts.lazy_memory) probe_lazy(self->device_, facts);
-    facts.colour = facts.surface.formats.empty() ? colour_offscreen(facts, Depth::deepest)
-                                                 : colour_for_surface(facts, facts.surface.formats, Depth::deepest);
+    // The 8-bit formats only: no 10-bit image is made before VK bench's colour stage asks (check_ten_bit).
+    if (facts.lazy_memory) probe_lazy(self->device_, facts, false);
+    decide_colour(facts);
     self->facts_ = std::move(facts);
     // The choice may only use what was enabled.
     if (self->facts_.choice.route == Route::dynamic && !on.local_read) {

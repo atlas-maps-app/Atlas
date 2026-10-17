@@ -75,7 +75,8 @@ object Native {
 
     /**
      * VK bench: the stand-in on (mode 1) or off (0) in a configuration; [flags] 1 the core's frosted pills, 2 a
-     * TextureView host, 4 at 8 bits a channel (else the frame's colour, 10 bits where the surface allows). "" or why not.
+     * TextureView host, 4 VK bench's colour stage: 10 bits a channel where the surface offers them, behind the crash
+     * guard's colour stage (else the frame's 8 bits, its colour in this alpha). "" or why not.
      */
     @JvmStatic external fun bench(handle: Long, mode: Int, config: Int, route: Int, form: Int, target: Int, flags: Int): String
 
@@ -93,8 +94,10 @@ object Native {
     @JvmStatic external fun pipelines(handle: Long): String
 
     /**
-     * Forgets every crash and every driver the crash guard turned off in [guardDir], and the pipeline cache under
-     * [cacheDir], as a fresh install would: the next start tries Vulkan again. What it forgot, in words.
+     * Forgets every crash, every driver the crash guard turned off and every 10 bits it turned off in [guardDir], and
+     * the pipeline cache under [cacheDir], as a fresh install would: the next start tries Vulkan and 10 bits again.
+     * Refused (in words) while a core is alive in the process, which would write its pipeline cache back: close it
+     * first. What it forgot, in words.
      */
     @JvmStatic external fun resetGuard(cacheDir: String, guardDir: String): String
 }

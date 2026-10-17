@@ -54,6 +54,7 @@ TEST_CASE("the device opens on the host's Vulkan and prints its facts") {
                                "queue0: ",
                                "ext.VK_KHR_swapchain: ",
                                "colour: ",
+                               "colour.stage: ",
                                "colour.formats: ",
                                "feature.shaderFloat64: ",
                                "feature.shaderInt64: ",
@@ -62,14 +63,16 @@ TEST_CASE("the device opens on the host's Vulkan and prints its facts") {
         CHECK_MESSAGE(has_line(lines, prefix), "no line starts with " << std::string(prefix));
     }
     // lavapipe is a CPU implementation, not a tiler, without lazily allocated memory: configuration C (D5.3). It draws
-    // the frame in 10 bits a channel, so the hosts' offscreen frames take them (gpu/Facts.hpp's colour), and it has
-    // shaderFloat64 (K5's light in binary64).
+    // the frame in 10 bits a channel, so VK bench's colour stage would take them offscreen (gpu/Facts.hpp's deepest)
+    // while the frame keeps its 8 (its colour), and it has shaderFloat64 (K5's light in binary64).
     if (facts.driver_properties && facts.driver_id == vk::DriverId::eMesaLlvmpipe) {
         CHECK_FALSE(facts.hardware);
         CHECK_FALSE(facts.tiler);
         CHECK_FALSE(facts.lazy_memory);
         CHECK(facts.choice.config == gpu::FrameConfig::c);
-        CHECK(facts.colour.format == vk::Format::eA2B10G10R10UnormPack32);
+        CHECK(facts.colour.format == vk::Format::eR8G8B8A8Unorm);
+        CHECK(facts.deepest.format == vk::Format::eA2B10G10R10UnormPack32);
+        CHECK(facts.ten_bit_off.empty());
         CHECK(std::ranges::find(lines, "feature.shaderFloat64: yes (K5's light: binary64, the port's bits (E0), where "
                                        "its probe finds binary64 exact)") != lines.end());
     }

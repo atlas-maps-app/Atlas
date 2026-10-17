@@ -5,8 +5,9 @@
 //
 // No pipeline takes specialization constants: the core's modules hold none (cmake/Shaders.cmake refuses them, after
 // PowerVR's compiler crashed on one), so a variant is a module of its own and the pipeline picks the module. Each
-// pipeline is announced before it is made (announce): the log names it, and the crash guard writes it into its marker,
-// so a driver that crashes compiling it is known by the pipeline at the next start (D5.10).
+// pipeline and each shader module is announced before it is made (announce, announce_module): the log names it, and the
+// crash guard writes it into its marker, so a driver that crashes making it is known by it at the next start (D5.10),
+// a crash in vkCreateShaderModule by its module, not by the pipeline made before it.
 #pragma once
 
 #include "gpu/Error.hpp"
@@ -33,16 +34,21 @@ struct PipelineLabel {
 /// "<name> (module <module>, configuration <configuration>)".
 [[nodiscard]] std::string describe(const PipelineLabel& label);
 
-/// Told about each pipeline just before it is made (the crash guard, D5.10).
+/// Told about each pipeline and each shader module just before it is made (the crash guard, D5.10).
 class PipelineWatch {
 public:
     virtual ~PipelineWatch() = default;
     virtual void before(const PipelineLabel& label) = 0;
+    /// `module` is an embedded module's symbol (standin_composite).
+    virtual void before_module(std::string_view module) = 0;
 };
 
 /// Logs the pipeline about to be made ("vk pipeline <describe>", under the tag AtlasMap, so that a crash's last line in
 /// logcat names it) and tells `watch`, if any.
 void announce(const PipelineLabel& label, PipelineWatch* watch);
+
+/// Logs the shader module about to be made ("vk module <module>") and tells `watch`, if any.
+void announce_module(std::string_view module, PipelineWatch* watch);
 
 /// Where a graphics pipeline draws.
 struct PipelineTarget {
@@ -124,6 +130,7 @@ struct GraphicsDesc {
     std::array<Blend, 4> blends{};
 };
 
+/// Makes a shader module of `spirv` (its caller announced it).
 [[nodiscard]] Result<vk::raii::ShaderModule> make_module(const vk::raii::Device& device,
                                                          std::span<const std::uint32_t> spirv);
 
