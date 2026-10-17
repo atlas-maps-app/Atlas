@@ -410,6 +410,12 @@ jobs:
           cmake --preset host-tsan -B build/canary-tsan -DATLAS_TOOLS_DIR="$TOOLS" -DATLAS_EXTRA_TEST_SOURCES="$PWD/tests/planted/data_race.cpp"
           cmake --build build/canary-tsan --target atlas_tests -j 4
           expect_failure build/tsan.log 'ThreadSanitizer: data race' build/canary-tsan/atlas_tests -tc='planted*'
+          # The platform's sin in pymath's place (ATLAS_PLANTED_PLATFORM_SIN, base/pymath/fdlibm/Trig.cpp) must break
+          # pymath's check, whose total then differs from the port's (plan-vector L0 d). The flags keep CI's CXXFLAGS
+          # (libc++), which a CMAKE_CXX_FLAGS on the command line would replace.
+          cmake --preset host-debug -B build/canary-sin -DATLAS_TOOLS_DIR="$TOOLS" -DCMAKE_CXX_FLAGS="${CXXFLAGS:-} -DATLAS_PLANTED_PLATFORM_SIN"
+          cmake --build build/canary-sin --target atlas_tests -j 4
+          expect_failure build/sin.log 'FAIL expected' build/canary-sin/atlas_tests -sf='*NumericsCheckTest*'
           expect_failure build/tidy.log 'is not bit-exact across libms' \
             clang-tidy-$LLVM tests/planted/transcendental.cpp -- -std=c++23 -stdlib=libc++
           expect_failure build/tidy-minmax.log 'unlike Python min and max' \
