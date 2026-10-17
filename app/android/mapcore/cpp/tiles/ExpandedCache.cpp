@@ -165,12 +165,12 @@ void ExpandedCache::scan() {
                            static_cast<std::uint64_t>(st.st_mtim.tv_nsec);
 #endif
         newest = std::max(newest, mtime);
-        const std::lock_guard lock(mutex_);
+        const std::scoped_lock lock(mutex_);
         index_[name] = {.bytes = static_cast<std::uint64_t>(st.st_size), .used = mtime, .generation = 0};
         total_ += static_cast<std::uint64_t>(st.st_size);
     }
     for (const std::string& path : doomed) (void)::unlink(path.c_str());
-    const std::lock_guard lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     clock_ = newest;
 }
 
@@ -180,7 +180,7 @@ std::optional<ExpandedCache::Entry> ExpandedCache::get(const CacheKey& key) {
     const std::string name = path.substr(directory_.size() + 1);
     std::uint64_t generation = 0;
     {
-        const std::lock_guard lock(mutex_);
+        const std::scoped_lock lock(mutex_);
         const auto it = index_.find(name);
         if (it == index_.end()) return std::nullopt;
         generation = it->second.generation;
@@ -189,7 +189,7 @@ std::optional<ExpandedCache::Entry> ExpandedCache::get(const CacheKey& key) {
     auto payload = file ? check((*file)->view(0, (*file)->size()), &digest) : std::unexpected(file.error());
     if (!payload) {
         // the entry read is gone or damaged: delete it, unless another thread wrote it again meanwhile
-        const std::lock_guard lock(mutex_);
+        const std::scoped_lock lock(mutex_);
         if (const auto it = index_.find(name); it != index_.end() && it->second.generation == generation) {
             total_ -= it->second.bytes;
             index_.erase(it);
@@ -199,7 +199,7 @@ std::optional<ExpandedCache::Entry> ExpandedCache::get(const CacheKey& key) {
     }
     (void)::utimensat(AT_FDCWD, path.c_str(), nullptr, 0); // recency, for the next start
     {
-        const std::lock_guard lock(mutex_);
+        const std::scoped_lock lock(mutex_);
         if (auto it = index_.find(name); it != index_.end()) it->second.used = ++clock_;
     }
     return Entry{.file = std::move(*file), .payload = *payload};
@@ -213,7 +213,7 @@ Result<void> ExpandedCache::put(const CacheKey& key, std::span<const std::byte> 
     const std::string name = path.substr(directory_.size() + 1);
     std::uint64_t serial = 0;
     {
-        const std::lock_guard lock(mutex_);
+        const std::scoped_lock lock(mutex_);
         serial = ++writes_;
     }
     const std::string temp = std::format("{}{}{}-{}", path, temp_marker, ::getpid(), serial);
@@ -227,7 +227,7 @@ Result<void> ExpandedCache::put(const CacheKey& key, std::span<const std::byte> 
         (void)::unlink(temp.c_str());
         return std::unexpected(error(Fault::io, Site::cache, static_cast<std::uint64_t>(e)));
     }
-    const std::lock_guard lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     if (::rename(temp.c_str(), path.c_str()) != 0) {
         const int e = errno;
         (void)::unlink(temp.c_str());
@@ -243,7 +243,7 @@ Result<void> ExpandedCache::put(const CacheKey& key, std::span<const std::byte> 
 void ExpandedCache::remove(const CacheKey& key) {
     const std::string path = path_of(key.digest());
     const std::string name = path.substr(directory_.size() + 1);
-    const std::lock_guard lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     if (const auto it = index_.find(name); it != index_.end()) {
         total_ -= it->second.bytes;
         index_.erase(it);
@@ -252,7 +252,7 @@ void ExpandedCache::remove(const CacheKey& key) {
 }
 
 void ExpandedCache::evict_to(std::uint64_t budget) {
-    const std::lock_guard lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     evict_locked(budget, nullptr);
 }
 
@@ -280,12 +280,12 @@ void ExpandedCache::evict_locked(std::uint64_t budget, const std::string* keep) 
 }
 
 std::uint64_t ExpandedCache::bytes() const {
-    const std::lock_guard lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     return total_;
 }
 
 std::size_t ExpandedCache::entries() const {
-    const std::lock_guard lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     return index_.size();
 }
 

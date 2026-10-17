@@ -1,10 +1,10 @@
 # The map core (app/android/mapcore/cpp; plan-vector T4, T10): every push and pull request to `app` (and `main`) builds
 # and tests it on x86_64 and arm64 Linux with LLVM's clang and libc++, on lavapipe under the Khronos validation layer, in
 # three presets (ASan and UBSan, TSan, the shipped release flags); runs its fuzz targets with libFuzzer; checks changed
-# files with clang-tidy (with the host build's compile database and with NDK r30's for Android) and clang-format; proves
-# each guard still catches its planted failure; configures it with no network; and builds it with NDK r30 for both
-# Android ABIs. A push to `app` that changes the lavapipe image's recipe rebuilds the image. The Android library itself
-# is built by android.yml's Gradle build.
+# files with NDK r30's clang-tidy (over the host build's compile database and the Android build's) and clang-format,
+# the tools the core's local checks run; proves each guard still catches its planted failure; configures it with no
+# network; and builds it with NDK r30 for both Android ABIs. A push to `app` that changes the lavapipe image's recipe
+# rebuilds the image. The Android library itself is built by android.yml's Gradle build.
 #
 # Only the extras need this file on the default branch, where GitHub keeps schedules and runs by hand: the nightly
 # (every fuzz target for up to 30 minutes, clang-tidy and clang-format on every file; it checks out `app`), the MODS
@@ -108,7 +108,9 @@ jobs:
             echo "EMULATOR_SHA1=$(pin emulator.linux-x86_64.sha1)"
           } >> "$GITHUB_ENV"
 
-      - name: LLVM ${{ env.LLVM }} (clang, libc++, lld, clang-tidy, clang-format, llvm-symbolizer) from apt.llvm.org
+      # clang-tidy and clang-format are NDK r30's (the tidy job installs the NDK), which the core's local checks run:
+      # LLVM's 21.1 has checks the NDK's 21.0 lacks, and .clang-tidy takes in every modernize-* check.
+      - name: LLVM ${{ env.LLVM }} (clang, libc++, lld, llvm-symbolizer) from apt.llvm.org
         run: |
           sudo install -d -m 0755 /etc/apt/keyrings
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/keyrings/apt.llvm.org.asc > /dev/null
@@ -117,7 +119,7 @@ jobs:
           sudo apt-get update -q
           # llvm-N carries llvm-symbolizer-N, which the sanitizers' runtimes call to put names and lines in a report.
           sudo apt-get install -y -q --no-install-recommends clang-$LLVM lld-$LLVM libc++-$LLVM-dev libc++abi-$LLVM-dev \
-            libclang-rt-$LLVM-dev clang-tidy-$LLVM clang-format-$LLVM llvm-$LLVM
+            libclang-rt-$LLVM-dev llvm-$LLVM
           symbolizer=/usr/bin/llvm-symbolizer-$LLVM
           "$symbolizer" --version | sed -n 1,2p
           {
@@ -346,15 +348,19 @@ jobs:
           python3 --version
           python3 -I app/android/mapcore/rules/check_rules.py check
 
-      # ---- tidy: clang-format and clang-tidy (the core's .clang-tidy) on the changed files. clang-tidy runs each source
-      # with every build that compiles it: the host build's compile database and NDK r30's for Android, so code that
-      # only Android compiles (platform/android, the __ANDROID__ parts) is checked too, and a source neither compiles
-      # fails. Every file is checked nightly, when a header or the checks' or the build's configuration changes, and
-      # when the base commit is not in the clone.
+      # ---- tidy: NDK r30's clang-format and clang-tidy (the core's .clang-tidy) on the changed files: the tools of the
+      # host-tidy preset (cmake/Tidy.cmake) and of a local replay of this step, so a clean run there is a clean run
+      # here. clang-tidy runs each source with every build that compiles it: the host build's compile database and NDK
+      # r30's for Android, so code that only Android compiles (platform/android, the __ANDROID__ parts) is checked too,
+      # and a source neither compiles fails. Every file is checked nightly, when a header or the checks' or the build's
+      # configuration changes, and when the base commit is not in the clone.
       - name: NDK r30 and the SDK's CMake
-        if: matrix.task == 'tidy' || matrix.task == 'android'
+        if: matrix.task == 'tidy' || matrix.task == 'android' || matrix.task == 'canaries'
         run: |
           { yes || true; } | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" "cmake;$CMAKE_VERSION" > /dev/null
+          bin="$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          "$bin/clang-tidy" --version | sed -n 2p
+          echo "NDK_BIN=$bin" >> "$GITHUB_ENV"
       - name: clang-tidy and clang-format
         if: matrix.task == 'tidy'
         working-directory: ${{ env.CP }}
@@ -387,12 +393,17 @@ jobs:
           fi
           echo "files to check: $(wc -w <<< "$changed")"
           [ -n "$changed" ] || exit 0
-          clang-format-$LLVM --dry-run --Werror $changed
+          "$NDK_BIN/clang-format" --dry-run --Werror $changed
 
           # The compile databases, without precompiled headers (clang-tidy parses every unit from its sources), with the
-          # generated headers the units include.
-          cmake --preset host-debug -B build/tidy -DATLAS_TOOLS_DIR="$TOOLS" -DATLAS_FUZZ=ON -DATLAS_BENCH=ON \
-            -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
+          # generated headers the units include. clang-tidy finds the C++ library beside the compiler a command names,
+          # and its per-target headers by the target's triple, so the host build names LLVM's clang where it lives
+          # (/usr/lib/llvm-N/bin, not /usr/bin's links) and clang-tidy gets that clang's triple, not its own default.
+          host_bin=$(dirname "$(readlink -f "$(command -v "$CXX")")")
+          host_triple=$("$CXX" -print-target-triple)
+          [ -x "$host_bin/clang++" ] || { echo "::error::no clang++ beside LLVM's clang in $host_bin"; exit 1; }
+          CC="$host_bin/clang" CXX="$host_bin/clang++" cmake --preset host-debug -B build/tidy -DATLAS_TOOLS_DIR="$TOOLS" \
+            -DATLAS_FUZZ=ON -DATLAS_BENCH=ON -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
           cmake --build build/tidy --target atlas_core_shaders
           (
             unset CC CXX CXXFLAGS LDFLAGS
@@ -416,13 +427,15 @@ jobs:
             fi
           done
           echo "clang-tidy: ${#host_sources[@]} sources with the host build, ${#android_sources[@]} with the Android build"
-          tidy() { # <database> <sources...>
+          tidy() { # <database> <sources...>, with the clang-tidy options in tidy_options
             local database=$1
             shift
             [ "$#" -gt 0 ] || return 0
-            printf '%s\n' "$@" | xargs -P "$(nproc)" -n 4 clang-tidy-$LLVM -p "$database" --quiet
+            printf '%s\n' "$@" | xargs -P "$(nproc)" -n 4 "$NDK_BIN/clang-tidy" -p "$database" --quiet "${tidy_options[@]}"
           }
+          tidy_options=("--extra-arg-before=--target=$host_triple")
           tidy build/tidy "${host_sources[@]}" || status=1
+          tidy_options=()
           tidy build/tidy-android "${android_sources[@]}" || status=1
           exit "$status"
 
@@ -449,10 +462,29 @@ jobs:
           cmake --preset host-debug -B build/canary-sin -DATLAS_TOOLS_DIR="$TOOLS" -DCMAKE_CXX_FLAGS="${CXXFLAGS:-} -DATLAS_PLANTED_PLATFORM_SIN"
           cmake --build build/canary-sin --target atlas_tests -j 4
           expect_failure build/sin.log 'FAIL expected' build/canary-sin/atlas_tests -sf='*NumericsCheckTest*'
-          expect_failure build/tidy.log 'is not bit-exact across libms' \
-            clang-tidy-$LLVM tests/planted/transcendental.cpp -- -std=c++23 -stdlib=libc++
-          expect_failure build/tidy-minmax.log 'unlike Python min and max' \
-            clang-tidy-$LLVM tests/planted/min_max.cpp -- -std=c++23 -stdlib=libc++
+          # NDK r30's clang-tidy, the tidy job's, must name each planted call in a host unit (LLVM's libc++, std::__1,
+          # through a compile database that names LLVM's clang as the tidy job's does) and in an Android one (the NDK's
+          # sysroot and libc++, std::__ndk1).
+          host_bin=$(dirname "$(readlink -f "$(command -v "$CXX")")")
+          host_triple=$("$CXX" -print-target-triple)
+          mkdir -p build/planted-tidy
+          {
+            echo '['
+            sep=' '
+            for f in tests/planted/transcendental.cpp tests/planted/min_max.cpp; do
+              printf '%s{"directory": "%s", "file": "%s", "arguments": ["%s", "--target=%s", "-std=c++23", "-stdlib=libc++", "-c", "%s"]}\n' \
+                "$sep" "$PWD" "$f" "$host_bin/clang++" "$host_triple" "$f"
+              sep=,
+            done
+            echo ']'
+          } > build/planted-tidy/compile_commands.json
+          for planted in 'transcendental:is not bit-exact across libms' 'min_max:unlike Python min and max'; do
+            name=${planted%%:*}
+            expect_failure "build/tidy-$name-host.log" "${planted#*:}" \
+              "$NDK_BIN/clang-tidy" -p build/planted-tidy "tests/planted/$name.cpp"
+            expect_failure "build/tidy-$name-android.log" "${planted#*:}" \
+              "$NDK_BIN/clang-tidy" "tests/planted/$name.cpp" -- -std=c++23 --target=aarch64-linux-android29
+          done
           # Invalid SPIR-V stops the build (SPIRV-Tools' validator inside slangc), and so does an exact module that
           # uses an operation Vulkan does not round exactly (tools/nocontract).
           printf '%s\n' '[[vk::binding(0, 0)]] RWStructuredBuffer<uint> data;' '[shader("compute")] [numthreads(1, 1, 1)]' \

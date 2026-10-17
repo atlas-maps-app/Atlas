@@ -74,7 +74,7 @@ Result<Pack> Store::open_remote(const PackRef& ref) {
     RangeSource::Fetch fetch = [state, network = ref.fetch](std::uint64_t offset,
                                                             std::span<std::byte> out) -> Result<void> {
         {
-            const std::lock_guard lock(state->mutex);
+            const std::scoped_lock lock(state->mutex);
             for (const auto& r : state->ranges) {
                 if (offset >= r.offset && out.size() <= r.bytes.size() &&
                     offset - r.offset <= r.bytes.size() - out.size()) {
@@ -86,12 +86,12 @@ Result<Pack> Store::open_remote(const PackRef& ref) {
         }
         if (!network) return std::unexpected(error(Fault::io, Site::file, offset));
         if (auto done = network(offset, out); !done) return done;
-        const std::lock_guard lock(state->mutex);
+        const std::scoped_lock lock(state->mutex);
         if (state->recording) state->ranges.push_back({offset, std::vector<std::byte>(out.begin(), out.end())});
         return {};
     };
     {
-        const std::lock_guard lock(state->mutex);
+        const std::scoped_lock lock(state->mutex);
         state->recording = !cached;
     }
     auto pack = Pack::open(std::make_unique<RangeSource>(ref.length, std::move(fetch)));
@@ -103,7 +103,7 @@ Result<Pack> Store::open_remote(const PackRef& ref) {
     if (!pack) return std::unexpected(pack.error());
     std::vector<std::byte> payload;
     {
-        const std::lock_guard lock(state->mutex);
+        const std::scoped_lock lock(state->mutex);
         if (state->recording) payload = encode_ranges(state->ranges);
         state->recording = false;
     }
@@ -134,7 +134,7 @@ Result<void> Store::add(const PackRef& ref) {
     if (!pack->is_render()) return std::unexpected(error(Fault::unsupported, Site::header, pack->format()));
     auto entry = std::make_shared<StorePack>(StorePack{
         .id = ref.id, .kind = ref.kind, .identity = ref.identity, .remote = remote, .pack = std::move(*pack)});
-    const std::lock_guard lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     std::erase_if(packs_, [&](const auto& p) { return p->id == ref.id; });
     const auto at = std::ranges::find_if(packs_, [&](const auto& p) { return p->kind > ref.kind; });
     packs_.insert(at, std::move(entry));
@@ -142,12 +142,12 @@ Result<void> Store::add(const PackRef& ref) {
 }
 
 bool Store::remove(std::string_view id) {
-    const std::lock_guard lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     return std::erase_if(packs_, [&](const auto& p) { return p->id == id; }) > 0;
 }
 
 std::vector<std::shared_ptr<const StorePack>> Store::packs() const {
-    const std::lock_guard lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     return packs_;
 }
 

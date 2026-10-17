@@ -1,5 +1,6 @@
 # The core's C++ layout (plan-vector T10): LLVM's style at the repository's 120 columns and 4-space indent (the width
-# and indent of the Kotlin code beside it). CI checks changed files with `clang-format --dry-run --Werror`.
+# and indent of the Kotlin code beside it). CI checks changed files with NDK r30's `clang-format --dry-run --Werror`,
+# the clang-format to format with (another version may lay a line out differently).
 BasedOnStyle: LLVM
 Language: Cpp
 Standard: Latest
