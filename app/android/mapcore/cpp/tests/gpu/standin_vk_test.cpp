@@ -268,6 +268,7 @@ TEST_CASE("the stand-in's steady S1 frame takes at most half a second, and its p
     auto instance = gpu::Instance::open({.validation = false});
     if (!instance) {
         if (test::vulkan_required()) FAIL(instance.error().text());
+        MESSAGE("skipped: " << instance.error().text());
         return;
     }
     test::Session session;

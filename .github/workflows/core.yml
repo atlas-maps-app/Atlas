@@ -207,8 +207,8 @@ jobs:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ -z "$LAVAPIPE_IMAGE_ARM64" ]; then
+            # Build and test writes the summary's warning, with the test cases that skipped their Vulkan work.
             echo "::warning::LAVAPIPE_IMAGE_ARM64 is not pinned yet: the Vulkan tests are skipped on arm64 (push a change to .github/docker/lavapipe, or run this workflow with image=true, then pin the digest)"
-            echo "**$TASK arm64: the Vulkan tests did not run** (LAVAPIPE_IMAGE_ARM64 is not pinned)." >> "$GITHUB_STEP_SUMMARY"
             echo "ATLAS_REQUIRE_VULKAN=0" > "$RUNNER_TEMP/vulkan.env"
             exit 0
           fi
@@ -244,7 +244,30 @@ jobs:
           export LSAN_OPTIONS="suppressions=$RUNNER_TEMP/lsan.supp"
           cmake --preset "$TASK" -DATLAS_TOOLS_DIR="$TOOLS"
           cmake --build --preset "$TASK" -j 4
-          (set -a; . "$RUNNER_TEMP/vulkan.env"; set +a; ctest --test-dir "build/$TASK" --output-on-failure)
+          # The JUnit file keeps every test's output, passed or not, for the skips below.
+          (set -a; . "$RUNNER_TEMP/vulkan.env"; set +a; ctest --test-dir "build/$TASK" --output-on-failure \
+            --output-junit ctest.xml --test-output-size-passed 8000000)
+          # A test case that finds no Vulkan where none is required skips what needs it and still counts as passed, so a
+          # run without Vulkan (arm64's, until LAVAPIPE_IMAGE_ARM64 is pinned) says so in the summary, naming each case.
+          skipped=$(awk '/^TEST CASE:/ { sub(/^TEST CASE: +/, ""); name = $0 }
+                         /MESSAGE: skipped/ { sub(/.*MESSAGE: /, ""); print name ": " $0 }' "build/$TASK/ctest.xml" |
+            sed -e 's/&lt;/</g; s/&gt;/>/g; s/&quot;/"/g' -e "s/&apos;/'/g; s/&amp;/\&/g" | sort -u)
+          required=$(grep -c -x 'ATLAS_REQUIRE_VULKAN=1' "$RUNNER_TEMP/vulkan.env" || true)
+          if [ -n "$skipped" ] || [ "$required" = 0 ]; then
+            count=$(grep -c . <<< "$skipped" || true)
+            echo "::warning::$TASK ${{ matrix.arch }}: $count test cases skipped their Vulkan work and still count as passed (the job summary names them)"
+            {
+              echo "> [!WARNING]"
+              echo "> **$TASK ${{ matrix.arch }}: $count test cases skipped their Vulkan work and still count as passed.**"
+              if [ "$required" = 0 ]; then
+                pin=
+                if [ "${{ matrix.arch }}" = arm64 ]; then pin=' (LAVAPIPE_IMAGE_ARM64 is not pinned)'; fi
+                echo "> The Vulkan tests did not run: this runner has no Vulkan driver$pin, and none was required."
+              fi
+              echo ">"
+              sed -e '/^$/d' -e 's/^/> - /' <<< "$skipped"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
           "build/$TASK/atlas_tests" --probe | tee "build/feature-probe-$TASK-${{ matrix.arch }}.txt"
           if [ "$TASK" = host-release ]; then
             # Every benchmark executable (bench/*_bench.cpp); a crash fails the step.

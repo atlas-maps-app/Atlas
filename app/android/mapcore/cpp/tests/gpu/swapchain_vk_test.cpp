@@ -23,6 +23,7 @@ TEST_CASE("the swapchain presents the stand-in on a headless surface and is rema
     auto instance = gpu::Instance::open({.validation = true, .require_validation = test::vulkan_required()});
     if (!instance) {
         if (test::vulkan_required()) FAIL(instance.error().text());
+        MESSAGE("skipped: " << instance.error().text());
         return;
     }
     if (!(*instance)->has_extension(vk::EXTHeadlessSurfaceExtensionName)) {
@@ -98,6 +99,7 @@ TEST_CASE("the stand-in draws at Vulkan 1.1 under the validation layer, silent")
         {.validation = true, .require_validation = test::vulkan_required(), .max_version = VK_API_VERSION_1_1});
     if (!instance) {
         if (test::vulkan_required()) FAIL(instance.error().text());
+        MESSAGE("skipped: " << instance.error().text());
         return;
     }
     test::Session s;
