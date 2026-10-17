@@ -30,9 +30,11 @@ android {
                 it.systemProperty("atlas.testdata", rootProject.file("testdata").absolutePath)
                 it.systemProperty("atlas.repo", rootProject.file("../..").absolutePath)
                 // Where the reference sets go (CI caches them), which tier, shard and cases, a phone's size, the packs, the
-                // style version, where a VK check asset goes, the cold build's time budget in seconds.
+                // style version, where a VK check asset goes, the cold build's time budget in seconds, whether every pack
+                // must be there; and the coverage calibration's run (-Datlas.calibrate=true or arch, as ATLAS_CALIBRATE).
                 for (p in listOf("atlas.likeness.refs", "atlas.likeness.tier", "atlas.likeness.shard", "atlas.likeness.only", "atlas.likeness.phone",
-                    "atlas.likeness.packs", "atlas.likeness.style", "atlas.likeness.asset", "atlas.likeness.budget"))
+                    "atlas.likeness.packs", "atlas.likeness.style", "atlas.likeness.asset", "atlas.likeness.budget", "atlas.likeness.require",
+                    "atlas.calibrate"))
                     providers.systemProperty(p).orNull?.let { v -> it.systemProperty(p, v) }
             }
         }

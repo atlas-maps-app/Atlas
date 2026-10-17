@@ -493,6 +493,22 @@ class RefRasterCalibrationTest {
         }
     }
 
+    @Test
+    fun `every other architecture's recorded numbers are within the sanity bound of the calibration's`() {
+        // the bound a first recording is held to admits the architectures recorded since: their Skia's arithmetic
+        val rec = recorded()
+        val base = rec.records.associateBy { it.name }
+        var n = 0
+        for ((arch, rs) in rec.arches) for (r in rs) for (mode in CalMode.entries) for ((v, m) in r.numbers.getValue(mode)) {
+            val c = base[r.name]?.numbers?.getValue(mode)?.get(v) ?: continue
+            val why = beyondSanity(m, c)
+            assertTrue("${r.name}, ${mode.key}, ${v.id} on $arch (calibrated on ${rec.arch}): $why", why == null)
+            n++
+        }
+        val arches = if (rec.arches.isEmpty()) "no other architecture" else rec.arches.keys.joinToString()
+        println("calibration: $arches recorded, $n numbers within the sanity bound of ${rec.arch}'s")
+    }
+
     /** Measures every case (resuming from `ATLAS_CALIBRATE_RECORDS`) and writes likeness.json. */
     private fun calibrateAll(all: List<Case>) {
         val records = System.getenv("ATLAS_CALIBRATE_RECORDS")?.takeIf { it.isNotBlank() }?.let { File(it) }
@@ -555,7 +571,7 @@ class RefRasterCalibrationTest {
      * on every smoke case, run 38953006189). An architecture with no numbers recorded yet has them measured and written,
      * with the calibration, to `ATLAS_CALIBRATE_OUT`, else on CI into the `likeness` artifact's folder
      * (`$GITHUB_WORKSPACE/likeness/likeness-<arch>.json`), ready to replace likeness.json; they are held only to a sanity
-     * bound of the calibration's, [SANITY_MAD] and [SANITY_WITHIN2], which no Skia build's arithmetic comes near.
+     * bound of the calibration's ([beyondSanity]), which a Skia build's arithmetic stays well inside.
      */
     private fun checkSmoke(all: List<Case>) {
         val rec = recorded()
@@ -575,10 +591,9 @@ class RefRasterCalibrationTest {
             println("calibration: $ARCH has no numbers of its own in likeness.json (calibrated on ${rec.arch}): measuring and recording them")
             val base = rec.records.associateBy { it.name }
             for (r in record(all, rec, to)) for (mode in CalMode.entries) for (v in checked) {
-                val m = r[mode, v]; val c = base[r.name]?.get(mode, v) ?: continue
-                val what = "${r.name}, ${mode.key}, ${v.id} on $ARCH (unrecorded; calibrated on ${rec.arch})"
-                assertTrue("$what: MAD ${m.mad} within $SANITY_MAD of the calibration's ${c.mad}", m.mad <= c.mad + SANITY_MAD)
-                assertTrue("$what: within-2 ${m.within2} within $SANITY_WITHIN2 of the calibration's ${c.within2}", m.within2 >= c.within2 - SANITY_WITHIN2)
+                val c = base[r.name]?.get(mode, v) ?: continue
+                val why = beyondSanity(r[mode, v], c)
+                assertTrue("${r.name}, ${mode.key}, ${v.id} on $ARCH (unrecorded; calibrated on ${rec.arch}): $why", why == null)
             }
             return
         }
@@ -714,7 +729,7 @@ class RefRasterCalibrationTest {
             sb.append("\n  }")
         }
         sb.append("\n}\n")
-        to.absoluteFile.parentFile.mkdirs()
+        to.absoluteFile.parentFile?.mkdirs()
         to.writeText(sb.toString())
         // what was decided, and with what
         println("wrote ${to.path}: ${measured.size} cases, ${failures.size} not measured")
@@ -915,15 +930,27 @@ class RefRasterCalibrationTest {
         private val BOARD_CASE = Regex("(home|Main board) (sunny|grey|wet|night) S1")
 
         /** This JVM's architecture: Skia's arithmetic differs between its ARM and x86 builds. */
-        private val ARCH: String = System.getProperty("os.arch")
+        private val ARCH: String = checkNotNull(System.getProperty("os.arch")) { "the JVM names no os.arch" }
 
         /**
          * How far an architecture whose own numbers are not recorded yet may measure from the calibration's while they are
-         * recorded: MAD and within-2 share. CI's x86 Skia measured 0.18–0.36 MAD above the Mac's and 1.2–5.3 points less
-         * within 2 on the smoke cases (hyb4, run 38953006189); a frame drawn wrong is off by far more.
+         * recorded: MAD at most [SANITY_MAD] above, and the share of pixels off by more than 2 (1 − within-2) at most
+         * [SANITY_MISSES] times the calibration's. Another Skia build's arithmetic adds about the same MAD to every case,
+         * but misses in proportion to the case's own: on the smoke and boards' cases, in every variant and both modes,
+         * CI's x86 Skia measured 0.17–0.36 MAD above the Mac's ARM one and 1.0–11.0 points less within 2 (3.9 at most in
+         * the Westerkerk, 11.0 on the Main board wet, structural), which is 1.23–2.04 times the misses in both classes and
+         * both modes (run 39003012329). A frame drawn wrong is off by far more.
          */
         const val SANITY_MAD = 1.0
-        const val SANITY_WITHIN2 = 0.10
+        const val SANITY_MISSES = 3.0
+
+        /** Why [m], from an architecture not recorded yet, is beyond the sanity bound of the calibration's [c], or null. */
+        fun beyondSanity(m: Numbers, c: Numbers): String? = when {
+            m.mad > c.mad + SANITY_MAD -> "MAD ${m.mad}, more than $SANITY_MAD above the calibration's ${c.mad}"
+            1 - m.within2 > SANITY_MISSES * (1 - c.within2) ->
+                "within-2 ${m.within2}: more than $SANITY_MISSES times the calibration's share of pixels off by more than 2 (within-2 ${c.within2})"
+            else -> null
+        }
 
         /** D7's margin, MAD: between MSAA and hyb4, between all-analytic and the rest, between 2x and 4x. */
         const val MARGIN = 0.15

@@ -62,8 +62,11 @@ jobs:
           case "$TAG" in *alpha*) TASK=assembleBench ;; *) TASK=assembleRelease ;; esac
           # :mapcorecheck's tests build the map core for this machine with LLVM's clang and libc++, which android.yml's
           # build job installs to run them on every push; a release leaves them out (a tag from before them has none).
+          # So it does :likeness's: they draw the canal ring from its pack, which android.yml's build job fetches for its
+          # likeness steps, and on CI a missing pack fails them.
           skip=()
           if [ -d mapcorecheck ]; then skip=(-x :mapcorecheck:test); fi
+          if [ -d likeness ]; then skip+=(-x :likeness:testDebugUnitTest); fi
           ./gradlew test "$TASK" "${skip[@]}" --stacktrace
       - name: Publish
         env:
