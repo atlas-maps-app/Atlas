@@ -1,5 +1,5 @@
 {
-  "about": "plan-vector D16's likeness gates, every one fixed before its first run (K4). Per gate and platform, each metric has `fixed` (written now, from D16's tables, the allowances of N9 and G1's calibration in anchor/src/test/resources/likeness.json), `threshold` (the one in force: never looser than `fixed` unless `history` carries the owner's reason), `measured` and `commit` (the last green run), and `history`. Only the coordinator edits this file; CI proposes tightened values (Ratchet.kt) after a green run on app.",
+  "about": "plan-vector D16's likeness gates, every one fixed before its first run (K4). Per gate and platform, each metric has `fixed` (written now, from D16's tables, the allowances of N9 and K6's calibration of the adopted coverage variant, msaa4-standard, on amd64, in anchor/src/test/resources/likeness.json), `threshold` (the one in force: never looser than `fixed` unless `history` carries the owner's reason), `measured` and `commit` (the last green run), and `history`. Only the coordinator edits this file; CI proposes tightened values (Ratchet.kt) after a green run on app.",
   "format": 1,
   "stage": "A0",
   "stages": ["A1", "A2", "A3", "A4"],
@@ -83,7 +83,7 @@
               "mad": {"fixed": 2.5, "threshold": 2.5, "measured": null, "commit": null, "history": []}
             },
             "A4": {
-              "mad": {"fixed": 1.536, "threshold": 1.536, "measured": null, "commit": null, "history": []}
+              "mad": {"fixed": 1.8602, "threshold": 1.8602, "measured": null, "commit": null, "history": []}
             }
           }
         },
@@ -101,7 +101,7 @@
               "mad": {"fixed": 2.0, "threshold": 2.0, "measured": null, "commit": null, "history": []}
             },
             "A4": {
-              "mad": {"fixed": 1.8055, "threshold": 1.8055, "measured": null, "commit": null, "history": []}
+              "mad": {"fixed": 2.1769, "threshold": 2.1769, "measured": null, "commit": null, "history": []}
             }
           }
         },
@@ -120,33 +120,33 @@
             "A4": {
               "classes": {
                 "westerkerk": {
-                  "mad": {"fixed": 1.6605, "threshold": 1.6605, "measured": null, "commit": null, "history": []}
+                  "mad": {"fixed": 1.9504, "threshold": 1.9504, "measured": null, "commit": null, "history": []}
                 },
                 "canal": {
-                  "mad": {"fixed": 2.2116, "threshold": 2.2116, "measured": null, "commit": null, "history": []}
+                  "mad": {"fixed": 2.5396, "threshold": 2.5396, "measured": null, "commit": null, "history": []}
                 }
               },
               "cases": {
                 "home sunny S1": {
-                  "mad": {"fixed": 1.536, "threshold": 1.536, "measured": null, "commit": null, "history": []}
+                  "mad": {"fixed": 1.8602, "threshold": 1.8602, "measured": null, "commit": null, "history": []}
                 },
                 "home grey S1": {
-                  "mad": {"fixed": 1.5019, "threshold": 1.5019, "measured": null, "commit": null, "history": []}
+                  "mad": {"fixed": 1.8274, "threshold": 1.8274, "measured": null, "commit": null, "history": []}
                 },
                 "home wet S1": {
-                  "mad": {"fixed": 1.494, "threshold": 1.494, "measured": null, "commit": null, "history": []}
+                  "mad": {"fixed": 1.8317, "threshold": 1.8317, "measured": null, "commit": null, "history": []}
                 },
                 "home night S1": {
-                  "mad": {"fixed": 1.2466, "threshold": 1.2466, "measured": null, "commit": null, "history": []}
+                  "mad": {"fixed": 1.6232, "threshold": 1.6232, "measured": null, "commit": null, "history": []}
                 },
                 "board sunny S1": {
-                  "mad": {"fixed": 1.8055, "threshold": 1.8055, "measured": null, "commit": null, "history": []}
+                  "mad": {"fixed": 2.1769, "threshold": 2.1769, "measured": null, "commit": null, "history": []}
                 },
                 "board grey S1": {
-                  "mad": {"fixed": 1.8586, "threshold": 1.8586, "measured": null, "commit": null, "history": []}
+                  "mad": {"fixed": 2.2154, "threshold": 2.2154, "measured": null, "commit": null, "history": []}
                 },
                 "board wet S1": {
-                  "mad": {"fixed": 1.7897, "threshold": 1.7897, "measured": null, "commit": null, "history": []}
+                  "mad": {"fixed": 2.2031, "threshold": 2.2031, "measured": null, "commit": null, "history": []}
                 }
               }
             }
@@ -170,8 +170,8 @@
               "p90Mad": {"fixed": 5.0, "threshold": 5.0, "measured": null, "commit": null, "history": []}
             },
             "A4": {
-              "medianMad": {"fixed": 1.5, "threshold": 1.5, "measured": null, "commit": null, "history": []},
-              "p90Mad": {"fixed": 2.5, "threshold": 2.5, "measured": null, "commit": null, "history": []}
+              "medianMad": {"fixed": 1.699, "threshold": 1.699, "measured": null, "commit": null, "history": []},
+              "p90Mad": {"fixed": 2.699, "threshold": 2.699, "measured": null, "commit": null, "history": []}
             }
           }
         },
@@ -193,8 +193,8 @@
               "p90Mad": {"fixed": 5.0, "threshold": 5.0, "measured": null, "commit": null, "history": []}
             },
             "A4": {
-              "medianMad": {"fixed": 1.8, "threshold": 1.8, "measured": null, "commit": null, "history": []},
-              "p90Mad": {"fixed": 2.8, "threshold": 2.8, "measured": null, "commit": null, "history": []}
+              "medianMad": {"fixed": 2.1213, "threshold": 2.1213, "measured": null, "commit": null, "history": []},
+              "p90Mad": {"fixed": 3.1213, "threshold": 3.1213, "measured": null, "commit": null, "history": []}
             }
           }
         },
@@ -213,33 +213,33 @@
             "A4": {
               "classes": {
                 "westerkerk": {
-                  "within2": {"fixed": 0.91504, "threshold": 0.91504, "measured": null, "commit": null, "history": []}
+                  "within2": {"fixed": 0.88205, "threshold": 0.88205, "measured": null, "commit": null, "history": []}
                 },
                 "canal": {
-                  "within2": {"fixed": 0.84692, "threshold": 0.84692, "measured": null, "commit": null, "history": []}
+                  "within2": {"fixed": 0.77196, "threshold": 0.77196, "measured": null, "commit": null, "history": []}
                 }
               },
               "cases": {
                 "home sunny S1": {
-                  "within2": {"fixed": 0.9247, "threshold": 0.9247, "measured": null, "commit": null, "history": []}
+                  "within2": {"fixed": 0.88506, "threshold": 0.88506, "measured": null, "commit": null, "history": []}
                 },
                 "home grey S1": {
-                  "within2": {"fixed": 0.92973, "threshold": 0.92973, "measured": null, "commit": null, "history": []}
+                  "within2": {"fixed": 0.89888, "threshold": 0.89888, "measured": null, "commit": null, "history": []}
                 },
                 "home wet S1": {
-                  "within2": {"fixed": 0.92201, "threshold": 0.92201, "measured": null, "commit": null, "history": []}
+                  "within2": {"fixed": 0.87405, "threshold": 0.87405, "measured": null, "commit": null, "history": []}
                 },
                 "home night S1": {
-                  "within2": {"fixed": 0.95409, "threshold": 0.95409, "measured": null, "commit": null, "history": []}
+                  "within2": {"fixed": 0.93656, "threshold": 0.93656, "measured": null, "commit": null, "history": []}
                 },
                 "board sunny S1": {
-                  "within2": {"fixed": 0.85542, "threshold": 0.85542, "measured": null, "commit": null, "history": []}
+                  "within2": {"fixed": 0.78244, "threshold": 0.78244, "measured": null, "commit": null, "history": []}
                 },
                 "board grey S1": {
-                  "within2": {"fixed": 0.84692, "threshold": 0.84692, "measured": null, "commit": null, "history": []}
+                  "within2": {"fixed": 0.77196, "threshold": 0.77196, "measured": null, "commit": null, "history": []}
                 },
                 "board wet S1": {
-                  "within2": {"fixed": 0.862, "threshold": 0.862, "measured": null, "commit": null, "history": []}
+                  "within2": {"fixed": 0.73551, "threshold": 0.73551, "measured": null, "commit": null, "history": []}
                 }
               }
             }
@@ -260,33 +260,33 @@
             "A4": {
               "classes": {
                 "westerkerk": {
-                  "flat": {"fixed": 0.00074919, "threshold": 0.00074919, "measured": null, "commit": null, "history": []}
+                  "flat": {"fixed": 0.00070869, "threshold": 0.00070869, "measured": null, "commit": null, "history": []}
                 },
                 "canal": {
-                  "flat": {"fixed": 0.00019413, "threshold": 0.00019413, "measured": null, "commit": null, "history": []}
+                  "flat": {"fixed": 4.602e-05, "threshold": 4.602e-05, "measured": null, "commit": null, "history": []}
                 }
               },
               "cases": {
                 "home sunny S1": {
-                  "flat": {"fixed": 0.00010623, "threshold": 0.00010623, "measured": null, "commit": null, "history": []}
+                  "flat": {"fixed": 8.124e-05, "threshold": 8.124e-05, "measured": null, "commit": null, "history": []}
                 },
                 "home grey S1": {
-                  "flat": {"fixed": 8.532e-05, "threshold": 8.532e-05, "measured": null, "commit": null, "history": []}
+                  "flat": {"fixed": 5.583e-05, "threshold": 5.583e-05, "measured": null, "commit": null, "history": []}
                 },
                 "home wet S1": {
-                  "flat": {"fixed": 0.00043089, "threshold": 0.00043089, "measured": null, "commit": null, "history": []}
+                  "flat": {"fixed": 0.00044169, "threshold": 0.00044169, "measured": null, "commit": null, "history": []}
                 },
                 "home night S1": {
-                  "flat": {"fixed": 5.82e-06, "threshold": 5.82e-06, "measured": null, "commit": null, "history": []}
+                  "flat": {"fixed": 1e-05, "threshold": 1e-05, "measured": null, "commit": null, "history": []}
                 },
                 "board sunny S1": {
-                  "flat": {"fixed": 0.00016065, "threshold": 0.00016065, "measured": null, "commit": null, "history": []}
+                  "flat": {"fixed": 1e-05, "threshold": 1e-05, "measured": null, "commit": null, "history": []}
                 },
                 "board grey S1": {
-                  "flat": {"fixed": 0.00016074, "threshold": 0.00016074, "measured": null, "commit": null, "history": []}
+                  "flat": {"fixed": 1e-05, "threshold": 1e-05, "measured": null, "commit": null, "history": []}
                 },
                 "board wet S1": {
-                  "flat": {"fixed": 0.00081102, "threshold": 0.00081102, "measured": null, "commit": null, "history": []}
+                  "flat": {"fixed": 0.00084801, "threshold": 0.00084801, "measured": null, "commit": null, "history": []}
                 }
               }
             }
