@@ -282,6 +282,33 @@ object DeviceFacts {
 }
 
 /**
+ * The Vulkan side of the phone's facts (plan-vector D18: VkFacts replace the GL capabilities; [DeviceFacts] stays, and
+ * the GLES probe above stays until the survey decides whether a GLES fallback is ever built, T2): what Android itself
+ * says about Vulkan (the feature flags, before any driver is opened), then the core's VkFacts, read from the driver
+ * behind the crash guard. Each line is `name: value`; the VK facts screen and logcat print them as `vkfacts name: value`.
+ */
+object VkFactsLines {
+    /** Android's Vulkan feature flags: hardware level and version, compute, and the dEQP level the driver passed. */
+    fun platform(context: Context): List<String> {
+        val features = context.packageManager.systemAvailableFeatures
+        fun feature(name: String) = features.firstOrNull { it.name == name }
+        val version = feature(PackageManager.FEATURE_VULKAN_HARDWARE_VERSION)?.let { DeviceFacts.vulkanVersion(it.version) } ?: "none"
+        val level = feature(PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL)?.version?.toString() ?: "none"
+        val compute = feature(PackageManager.FEATURE_VULKAN_HARDWARE_COMPUTE)?.version?.toString() ?: "none"
+        val deqp = if (Build.VERSION.SDK_INT >= 30) feature(PackageManager.FEATURE_VULKAN_DEQP_LEVEL)?.version?.let { dEqpDate(it) } ?: "none" else "unknown (API ${Build.VERSION.SDK_INT})"
+        return listOf(
+            "android.vulkan.version: $version",
+            "android.vulkan.level: $level",
+            "android.vulkan.compute: $compute",
+            "android.vulkan.deqp: $deqp",
+        )
+    }
+
+    /** A dEQP level (year << 16 | month << 8 | day) as a date, such as 2024-03-01. */
+    fun dEqpDate(v: Int): String = "%04d-%02d-%02d".format(java.util.Locale.ROOT, v ushr 16, (v ushr 8) and 0xff, v and 0xff)
+}
+
+/**
  * A debug screen (`atlas.screen=glcaps`, or the debug and bench builds' "GL facts" launcher shortcut): the phone's facts
  * and the GL capabilities, printed and also sent to logcat (tag `AtlasMap`, each line starting with `glcaps `), so the
  * emulator run and the owner's phone both report them. "Share" sends the report as text, for a phone without adb.

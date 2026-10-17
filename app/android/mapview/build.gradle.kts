@@ -44,6 +44,8 @@ dependencies {
     api(project(":anchor"))
     api(project(":tiles"))
     api(project(":places"))
+    // The map's core (plan-vector D19): the C++23 Vulkan engine and its Kotlin façade.
+    api(project(":mapcore"))
     implementation(libs.androidx.core)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

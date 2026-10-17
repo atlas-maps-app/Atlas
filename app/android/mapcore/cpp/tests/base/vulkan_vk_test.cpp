@@ -12,7 +12,7 @@
 
 #define VMA_STATIC_VULKAN_FUNCTIONS 0
 #define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
-#define VMA_IMPLEMENTATION
+// The allocator's implementation is the core's one copy, in gpu/Memory.cpp, compiled with the same two settings.
 #include <vk_mem_alloc.h>
 
 #define VP_USE_OBJECT

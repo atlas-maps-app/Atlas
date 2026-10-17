@@ -1,0 +1,652 @@
+package app.atlas.mapview.vk
+
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.content.IntentFilter
+import android.graphics.RenderEffect
+import android.graphics.Shader
+import android.os.BatteryManager
+import android.os.Build
+import android.os.Debug
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.PowerManager
+import android.util.Log
+import android.view.FrameMetrics
+import android.view.Window
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import app.atlas.mapcore.CameraState
+import app.atlas.mapcore.CoreConfig
+import app.atlas.mapcore.FrameRecords
+import app.atlas.mapcore.FrameSource
+import app.atlas.mapcore.MapCore
+import app.atlas.mapcore.state.CameraWriter
+import app.atlas.mapview.EngineFrames
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import java.nio.ByteBuffer
+import kotlin.math.PI
+import kotlin.math.roundToInt
+import kotlin.math.sin
+
+/**
+ * VK bench (plan-vector K1, A0; `atlas.screen=vkbench`, or the debug and bench builds' "VK bench" shortcut): the
+ * stand-in, a city-sized frame drawn through the real Vulkan core, measured on the phone's GPU before the renderer
+ * exists. In order:
+ *  1. every frame configuration (A, B, C, and 1x for MSAA's own cost) by both forms (the composite, and one subpass with
+ *     the effects per fragment), both routes (dynamic rendering with local reads, a render pass with two subpasses)
+ *     and, off a tiler, both targets of the composite, at the Main board's view and at pitch 70°;
+ *  2. both hosts (the SurfaceView, the TextureView) with the pills on, under the scripted pan, pinch, orbit and tilt:
+ *     presented intervals, the core's GPU time and HWUI's (`FrameMetrics.GPU_DURATION`), the render thread's time,
+ *     graphics and native memory;
+ *  3. the pills moving over the SurfaceView: how many of the core's frames reach the display on their vsync, and how
+ *     many of the window's frames are late (a pill and its frosted glass drift apart when either is);
+ *  4. a soak: the thermal headroom every 10 s and its slope over minutes 5-10, the battery's charge used (unplugged);
+ * then pipeline creation (this launch's first, and again from an empty cache and from the cache file). Every result is
+ * a `vkbench …` line (logcat, the screen, Copy), then the A0 decisions the numbers point to. The Pills run is step 3
+ * alone, 20 s long, for the phone's own screen recorder to film the pills frame by frame.
+ */
+@Composable
+fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val lines = remember { mutableStateListOf<String>() }
+    var status by remember { mutableStateOf("Starting the core…") }
+    var core by remember { mutableStateOf<MapCore?>(null) }
+    var chosen by remember { mutableStateOf(length) }
+    var host by remember { mutableStateOf(VkHost.SURFACE) }
+    var pillsMoving by remember { mutableStateOf(false) }
+    var pillsOn by remember { mutableStateOf(true) }
+    var surfaceState by remember { mutableStateOf(VkSurfaceState(false, 0, 0)) }
+    var attachWaiter by remember { mutableStateOf<CompletableDeferred<VkSurfaceState>?>(null) }
+    val camera = remember { CameraState() }
+    val source = remember { BenchSource(camera) }
+    val metrics = remember { WindowMetrics() }
+    var refused by remember { mutableStateOf("") }
+    var pillPhaseNs by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(Unit) {
+        val c = withContext(Dispatchers.Default) { MapCore.shared(config) }
+        core = c
+        if (c == null) {
+            refused = MapCore.lastError()
+            status = VK_HONEST
+            val facts = withContext(Dispatchers.Default) { MapCore.facts(config) }
+            lines += "vkbench refused: $refused"
+            lines += facts.map { "vkfacts $it" }
+            for (l in lines) Log.i(EngineFrames.TAG, l)
+            Log.i(EngineFrames.TAG, "vkbench done")
+        } else {
+            status = "Ready. Quick takes about 4 minutes, Full about 20 (keep the phone unplugged for the battery figure). " +
+                "Pills: start the phone's screen recorder first; 20 s of moving pills to film."
+        }
+    }
+    val activity = context.findActivity()
+    DisposableEffect(activity) {
+        activity?.window?.let { metrics.attach(it) }
+        onDispose { metrics.detach() }
+    }
+
+    // The run: a coroutine through the plan; the screen shows its host and its pills.
+    LaunchedEffect(chosen, core) {
+        val c = core ?: return@LaunchedEffect
+        val plan = chosen ?: return@LaunchedEffect
+        val run = BenchRun(context, c, source, metrics, plan) { line ->
+            lines += line
+            Log.i(EngineFrames.TAG, line)
+        }
+        run.hostSwitch = { h ->
+            if (host == h && surfaceState.attached) {
+                surfaceState
+            } else {
+                val waiter = CompletableDeferred<VkSurfaceState>()
+                attachWaiter = waiter
+                host = h
+                waiter.await()
+            }
+        }
+        run.pills = { on, moving ->
+            pillsOn = on
+            pillsMoving = moving
+            pillPhaseNs = System.nanoTime()
+            source.pillsStartNs = pillPhaseNs
+            source.pillsMoving = moving
+        }
+        run.status = { status = it }
+        lines.clear()
+        run.execute(surfaceState)
+        status = "Done. Copy the report and paste it back."
+        Log.i(EngineFrames.TAG, "vkbench done")
+    }
+
+    Column(modifier.fillMaxSize().background(Color.White)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            BasicText("VK bench: the stand-in on this phone's Vulkan", style = TextStyle(fontSize = 15.sp))
+            BasicText(status, style = TextStyle(fontSize = 12.sp, color = if (core == null && refused.isNotEmpty()) Color(0xFFB00020) else Color.Black))
+            Row(Modifier.padding(vertical = 6.dp)) {
+                if (chosen == null && core != null) {
+                    Button("Quick") { chosen = VkBench.Length.QUICK }
+                    Button("Full") { chosen = VkBench.Length.FULL }
+                    Button("Pills") { chosen = VkBench.Length.PILLS }
+                }
+                if (lines.isNotEmpty()) {
+                    Button("Copy") { copy(context, "Atlas VK bench", lines.joinToString("\n")) }
+                    Button("Share") { share(context, "Atlas: VK bench", lines.joinToString("\n")) }
+                }
+            }
+        }
+        val c = core
+        if (c != null) {
+            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+                val density = LocalDensity.current
+                source.pillsOn = pillsOn
+                source.pillsFrosted = host == VkHost.SURFACE
+                androidx.compose.runtime.key(host) {
+                    TextureBackdrop(host == VkHost.TEXTURE) { layerModifier ->
+                        VkSurface(c, host, source, camera, layerModifier.fillMaxSize()) { s ->
+                            surfaceState = s
+                            source.widthPx = s.widthPx
+                            source.heightPx = s.heightPx
+                            source.density = density.density.toDouble()
+                            if (s.attached || s.error.isNotEmpty()) attachWaiter?.complete(s)
+                        }
+                    }
+                }
+                if (pillsOn) Pills(host, pillsMoving, pillPhaseNs)
+            }
+        }
+        Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
+            for (l in lines) BasicText(l, style = TextStyle(fontSize = 10.sp, fontFamily = FontFamily.Monospace))
+        }
+    }
+}
+
+/** The pills' boxes in dp (top and bottom pills, as the home's chrome), shifted by [dx]. */
+internal fun pillBoxes(widthDp: Float, heightDp: Float, dx: Float): List<FloatArray> = listOf(
+    floatArrayOf(16f + dx, 40f, widthDp - 16f + dx, 92f),
+    floatArrayOf(16f + dx, heightDp - 100f, widthDp - 16f + dx, heightDp - 48f),
+)
+
+/** The pills' sideways offset (dp) at [t] seconds of their animation: 40 dp each way, a cycle of 2 s. */
+internal fun pillShift(t: Double): Float = (40.0 * sin(2 * PI * t / 2.0)).toFloat()
+
+/**
+ * The pills Compose draws: on the SurfaceView their tint only (the core draws the frosted glass under them, D5.1); on
+ * the TextureView, HWUI's frosted glass from the recorded window ([TextureBackdrop]) and the tint.
+ */
+@Composable
+private fun Pills(host: VkHost, moving: Boolean, startNs: Long) {
+    var shift by remember { mutableStateOf(0f) }
+    LaunchedEffect(moving, startNs) {
+        if (!moving) {
+            shift = 0f
+            return@LaunchedEffect
+        }
+        while (true) withFrameNanos { now -> shift = pillShift((now - startNs) / 1e9) }
+    }
+    val density = LocalDensity.current.density
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        for (b in pillBoxes(maxWidth.value, maxHeight.value, shift)) {
+            val left = b[0] * density
+            val top = b[1] * density
+            Box(
+                Modifier.offset { IntOffset(left.roundToInt(), top.roundToInt()) }
+                    .width((b[2] - b[0]).dp).height((b[3] - b[1]).dp)
+                    .clip(RoundedCornerShape(26.dp))
+                    .then(if (host == VkHost.TEXTURE) Modifier.frostedFromBackdrop(left, top) else Modifier)
+                    .background(Color(0x99FFFFFF)),
+            )
+        }
+    }
+}
+
+/** The recorded TextureView (HWUI's frosted glass blurs it behind the pills), or nothing for the SurfaceView. */
+private val backdropLayer = androidx.compose.runtime.staticCompositionLocalOf<androidx.compose.ui.graphics.layer.GraphicsLayer?> { null }
+
+@Composable
+private fun TextureBackdrop(record: Boolean, content: @Composable (Modifier) -> Unit) {
+    if (!record) {
+        content(Modifier)
+        return
+    }
+    val layer = rememberGraphicsLayer()
+    androidx.compose.runtime.CompositionLocalProvider(backdropLayer provides layer) {
+        content(Modifier.drawWithContent {
+            layer.record { this@drawWithContent.drawContent() }
+            drawLayer(layer)
+        })
+    }
+}
+
+/**
+ * HWUI's frosting, as the app's Backdrop draws it: the recorded window behind the pill at ([leftPx], [topPx]), blurred
+ * with σ 20 dp (Android's radius r is σ = 0.57735 r + 0.5) and drawn inside it, under the tint.
+ */
+@Composable
+private fun Modifier.frostedFromBackdrop(leftPx: Float, topPx: Float): Modifier {
+    val layer = backdropLayer.current ?: return this
+    if (Build.VERSION.SDK_INT < 31) return this
+    val glass = rememberGraphicsLayer()
+    return this.drawWithContent {
+        val sigma = 20.dp.toPx()
+        val radius = ((sigma - 0.5f) / 0.57735f).coerceAtLeast(0.01f)
+        glass.renderEffect = RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP).asComposeRenderEffect()
+        glass.record { translate(-leftPx, -topPx) { drawLayer(layer) } }
+        drawLayer(glass)
+        drawContent()
+    }
+}
+
+/**
+ * The core's camera source while the bench runs (on the render thread, allocating nothing): the scripted path's camera
+ * at each vsync, and the pills as the chrome's keep-out shapes (frosted by the core on the SurfaceView).
+ */
+internal class BenchSource(private val state: CameraState) : FrameSource {
+    @Volatile var running = false
+    @Volatile var path = VkBench.Path.STILL
+    @Volatile var view = VkBench.View.BOARD
+    @Volatile var periodSeconds = 30.0
+    @Volatile var startNs = 0L
+    @Volatile var widthPx = 0
+    @Volatile var heightPx = 0
+    @Volatile var density = 1.0
+    @Volatile var pillsOn = true
+    @Volatile var pillsFrosted = true
+    @Volatile var pillsMoving = false
+    @Volatile var pillsStartNs = 0L
+    @Volatile var presentedFrames = 0L
+    private val cam = VkBench.Camera()
+
+    override fun camera(vsyncNanos: Long, out: ByteBuffer): Boolean {
+        val w = widthPx
+        val h = heightPx
+        if (!running || w <= 0 || h <= 0) return false
+        val d = density
+        VkBench.cameraAt(path, view, (vsyncNanos - startNs) / 1e9, periodSeconds, cam)
+        state.write(out, 0, cam.latitude, cam.longitude, cam.bearing, cam.pitch, cam.distance, w / d / 2, h / d * 0.48, w, h, d)
+        if (pillsOn) {
+            val shift = if (pillsMoving) pillShift((vsyncNanos - pillsStartNs) / 1e9) else 0f
+            val wd = (w / d).toFloat()
+            val hd = (h / d).toFloat()
+            CameraWriter.keepOuts(out, 2)
+            // The same boxes Compose draws (pillBoxes), written without a list (nothing allocates here).
+            CameraWriter.keepOut(out, 0, 16f + shift, 40f, wd - 16f + shift, 92f, 26f, 20f, 1.8f, pillsFrosted)
+            CameraWriter.keepOut(out, 1, 16f + shift, hd - 100f, wd - 16f + shift, hd - 48f, 26f, 20f, 1.8f, pillsFrosted)
+        } else {
+            CameraWriter.keepOuts(out, 0)
+        }
+        return true
+    }
+
+    override fun presented(frame: Long, nanos: Long, complete: Boolean) {
+        presentedFrames = frame
+    }
+}
+
+/** The window's frames as HWUI reports them (`FrameMetrics`): vsync times, GPU durations, lateness. */
+internal class WindowMetrics {
+    private val lock = Any()
+    private val vsync = LongArray(4096)
+    private val gpu = LongArray(4096)
+    private val late = BooleanArray(4096)
+    private var count = 0L
+    private var window: Window? = null
+    private var thread: HandlerThread? = null
+    private val listener = Window.OnFrameMetricsAvailableListener { _, m, _ ->
+        val v = m.getMetric(FrameMetrics.VSYNC_TIMESTAMP)
+        val g = if (Build.VERSION.SDK_INT >= 31) m.getMetric(FrameMetrics.GPU_DURATION) else -1L
+        val total = m.getMetric(FrameMetrics.TOTAL_DURATION)
+        val deadline = if (Build.VERSION.SDK_INT >= 31) m.getMetric(FrameMetrics.DEADLINE) else 16_666_667L
+        synchronized(lock) {
+            val i = (count % vsync.size).toInt()
+            vsync[i] = v
+            gpu[i] = g
+            late[i] = total > deadline
+            count++
+        }
+    }
+
+    fun attach(w: Window) {
+        val t = HandlerThread("atlas-frame-metrics").also { it.start() }
+        thread = t
+        window = w
+        w.addOnFrameMetricsAvailableListener(listener, Handler(t.looper))
+    }
+
+    fun detach() {
+        runCatching { window?.removeOnFrameMetricsAvailableListener(listener) }
+        thread?.quitSafely()
+        window = null
+    }
+
+    /** The frames since [fromNs]: their vsync intervals (ms), HWUI's GPU milliseconds, and how many were late. */
+    fun since(fromNs: Long): Triple<DoubleArray, DoubleArray, Int> = synchronized(lock) {
+        val n = minOf(count, vsync.size.toLong()).toInt()
+        val first = count - n
+        val times = ArrayList<Long>()
+        val gpus = ArrayList<Double>()
+        var lateFrames = 0
+        for (k in 0 until n) {
+            val i = ((first + k) % vsync.size).toInt()
+            if (vsync[i] < fromNs) continue
+            times += vsync[i]
+            if (gpu[i] >= 0) gpus += gpu[i] / 1e6
+            if (late[i]) lateFrames++
+        }
+        val intervals = DoubleArray(maxOf(0, times.size - 1)) { (times[it + 1] - times[it]) / 1e6 }
+        Triple(intervals, gpus.toDoubleArray(), lateFrames)
+    }
+}
+
+/** The bench's steps, run in order by [execute]. */
+private class BenchRun(
+    private val context: Context,
+    private val core: MapCore,
+    private val source: BenchSource,
+    private val metrics: WindowMetrics,
+    private val plan: VkBench.Length,
+    private val emit: (String) -> Unit,
+) {
+    var hostSwitch: suspend (VkHost) -> VkSurfaceState = { VkSurfaceState(false, 0, 0) }
+    var pills: (Boolean, Boolean) -> Unit = { _, _ -> }
+    var status: (String) -> Unit = {}
+    private val records = FrameRecords.allocate(512)
+    private val targetMs = 1000.0 / 60.0
+    private val gpuByCell = HashMap<String, Double>()
+
+    suspend fun execute(initial: VkSurfaceState) {
+        val facts = withContext(Dispatchers.Default) { core.facts() }
+        fun fact(name: String) = facts.firstOrNull { it.startsWith("$name: ") }?.substringAfter(": ") ?: "?"
+        emit("vkbench start: ${plan.name.lowercase()} bench, ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+        for (k in listOf("gpu", "vendor", "api", "driver", "driver.version", "hardware", "tiler", "lazily.allocated.memory", "config", "route", "composite",
+                         "configs.available", "depth.stencil", "samples", "profiles", "quirks", "guard", "pipeline.cache")) emit("vkfacts $k: ${fact(k)}")
+        val available = buildSet {
+            val line = fact("configs.available")
+            if (line.contains("A yes")) add(0)
+            if (line.contains("B yes")) add(1)
+            if (line.contains("C yes")) add(2)
+            if (line.contains("1x yes")) add(4)
+        }
+        val dynamic = fact("feature.dynamicRenderingLocalRead") == "yes" && fact("feature.dynamicRendering") == "yes"
+        val tiler = fact("tiler").startsWith("yes")
+
+        // The configuration the core picks, for everything after the matrix.
+        val pick = facts.firstOrNull { it.startsWith("config: ") }?.substringAfter(": ")?.substringBefore(" ") ?: "C"
+        val pickCode = VkBench.CONFIG_NAMES.indexOf(pick).coerceAtLeast(0)
+        val pickRoute = if (fact("route").startsWith("dynamic")) 1 else 0
+        val pickTarget = if (fact("composite").startsWith("direct")) 1 else 0
+
+        // 1. The matrix, on the SurfaceView with the pills on.
+        var surface = if (initial.attached) initial else hostSwitch(VkHost.SURFACE)
+        pills(true, false)
+        if (!surface.attached) {
+            emit("vkbench surface: the SurfaceView did not attach (${surface.error})")
+            return
+        }
+        if (plan == VkBench.Length.PILLS) {
+            // The pills alone, for the screen recorder: the film shows whether each pill and its frosted glass move in
+            // the same frame.
+            status("the pills moving for ${plan.pillSeconds.roundToInt()} s: film them with the screen recorder")
+            pillPhase(pickCode, pickRoute, pickTarget, filmed = true)
+            core.bench(false, pickCode, pickRoute, 0, pickTarget, pills = false, texture = false)
+            source.running = false
+            return
+        }
+        val matrix = VkBench.matrix(available, dynamic, tiler)
+        status("1/4: ${matrix.size} configurations × 2 views")
+        for (view in VkBench.View.entries) {
+            for (cfg in matrix) {
+                val why = core.bench(true, cfg.config, cfg.route, cfg.form, cfg.target, pills = true, texture = false)
+                if (why.isNotEmpty()) {
+                    emit("vkbench ${view.label} ${cfg.name}: unavailable ($why)")
+                    continue
+                }
+                val s = measure(VkBench.Path.STILL, view, plan.cellSeconds, VkHost.SURFACE)
+                gpuByCell["${view.label} ${cfg.name}"] = s.gpuP50
+                emit(VkBench.line("${view.label} ${cfg.name}", s, graphicsMb(), nativeMb()))
+            }
+        }
+
+        // 2. Both hosts with the pills, under the scripted paths, in the configuration the core picks.
+        status("2/4: both hosts × 4 paths")
+        val hostP95 = HashMap<VkHost, Double>()
+        for (h in VkHost.entries) {
+            surface = hostSwitch(h)
+            if (!surface.attached) {
+                emit("vkbench ${h.label}: did not attach (${surface.error})")
+                continue
+            }
+            val why = core.bench(true, pickCode, pickRoute, 0, pickTarget, pills = h == VkHost.SURFACE, texture = h == VkHost.TEXTURE)
+            if (why.isNotEmpty()) {
+                emit("vkbench ${h.label}: unavailable ($why)")
+                continue
+            }
+            var worst = 0.0
+            for (path in listOf(VkBench.Path.PAN, VkBench.Path.PINCH, VkBench.Path.ORBIT, VkBench.Path.TILT)) {
+                val s = measure(path, VkBench.View.BOARD, plan.pathSeconds, h)
+                worst = maxOf(worst, s.presentedP95.takeUnless { it.isNaN() } ?: 0.0)
+                emit(VkBench.line("${h.label} ${path.label}", s, graphicsMb(), nativeMb()))
+            }
+            hostP95[h] = worst
+        }
+
+        // 3. The pills moving over the SurfaceView.
+        status("3/4: the pills over the SurfaceView")
+        pillPhase(pickCode, pickRoute, pickTarget, filmed = false)
+
+        // 4. The soak, in the picked configuration on the SurfaceView.
+        if (plan.soakSeconds > 0) {
+            status("4/4: the soak (${(plan.soakSeconds / 60).roundToInt()} minutes)")
+            soak(pickCode, pickRoute, pickTarget)
+        }
+
+        // First-launch and warm pipeline creation, in the picked configuration on the SurfaceView: this launch's first
+        // pipelines, then the same made again from an empty cache and from the cache file.
+        status("pipelines: from an empty cache and from the cache file")
+        surface = hostSwitch(VkHost.SURFACE)
+        if (surface.attached && core.bench(true, pickCode, pickRoute, 0, pickTarget, pills = true, texture = false).isEmpty()) {
+            emit(withContext(Dispatchers.Default) { core.pipelines() })
+        } else {
+            emit("vkbench pipelines: the SurfaceView did not attach (${surface.error})")
+        }
+
+        // The A0 decisions the numbers point to (T2's rule and D5.3, D5.4).
+        val viewKey = VkBench.View.BOARD.label
+        val composite = gpuByCell["$viewKey ${VkBench.Config(pickCode, pickRoute, 0, pickTarget).name}"] ?: Double.NaN
+        val onepass = gpuByCell["$viewKey ${VkBench.Config(pickCode, pickRoute, 1, 0).name}"] ?: Double.NaN
+        emit("a0 onepass: ${VkBench.onepassVerdict(composite, onepass)}")
+        val best = gpuByCell.filterKeys { it.startsWith("pitch70 ") && !it.contains("onepass") && !it.startsWith("pitch70 1x") }
+            .minByOrNull { it.value }
+        emit("a0 configuration: the facts pick $pick; at pitch 70° the cheapest composite is ${best?.key?.removePrefix("pitch70 ") ?: "—"} (${VkBench.ms(best?.value ?: Double.NaN)} ms GPU)")
+        val routes = listOf(0, 1).associateWith { r -> gpuByCell["$viewKey ${VkBench.Config(pickCode, r, 0, if (r == 1) 0 else pickTarget).name}"] }
+        emit("a0 route: renderpass ${VkBench.ms(routes[0] ?: Double.NaN)} ms, dynamic ${VkBench.ms(routes[1] ?: Double.NaN)} ms GPU at the board's view")
+        emit("a0 host: SurfaceView p95 ${VkBench.ms(hostP95[VkHost.SURFACE] ?: Double.NaN)} ms, TextureView p95 ${VkBench.ms(hostP95[VkHost.TEXTURE] ?: Double.NaN)} ms (worst path)")
+        core.bench(false, pickCode, pickRoute, 0, pickTarget, pills = false, texture = false)
+        source.running = false
+    }
+
+    /**
+     * The pills moving over the SurfaceView in the picked configuration: how many of the core's frames reach the
+     * display on their vsync (display timing) and how many of the window's frames are late; a pill and its frosted
+     * glass drift apart when either is. [filmed]: the run is the pills-only one, filmed by the phone's screen recorder.
+     */
+    private suspend fun pillPhase(config: Int, route: Int, target: Int, filmed: Boolean) {
+        val surface = hostSwitch(VkHost.SURFACE)
+        val why = if (surface.attached) core.bench(true, config, route, 0, target, pills = true, texture = false) else surface.error
+        if (why.isNotEmpty()) {
+            emit("vkbench pills: unavailable ($why)")
+            return
+        }
+        pills(true, true)
+        val from = System.nanoTime()
+        val s = measure(VkBench.Path.STILL, VkBench.View.BOARD, plan.pillSeconds, VkHost.SURFACE, keep = true)
+        val onTime = kept.count { it.presented && VkBench.onTime(it.presentedNs, it.desiredNs, 16_666_667L) }
+        val presented = kept.count { it.presented }
+        val (uiIntervals, _, lateUi) = metrics.since(from)
+        emit("vkbench pills: core frames on their vsync ${if (presented == 0) "— (no display timing)" else "$onTime of $presented"}, " +
+            "window frames late $lateUi of ${uiIntervals.size + 1}; p95 ${VkBench.ms(s.presentedP95)}; " +
+            if (filmed) "filmed: by the screen recorder (step through the video frame by frame)" else "filmed: in the Pills run")
+        pills(true, false)
+    }
+
+    private var kept: List<FrameRecords.Record> = emptyList()
+
+    /** Runs [path] at [view] for [seconds] (after half a second of warm-up) and summarises its frames. */
+    private suspend fun measure(path: VkBench.Path, view: VkBench.View, seconds: Double, host: VkHost, keep: Boolean = false): VkBench.Summary {
+        source.path = path
+        source.view = view
+        source.periodSeconds = seconds
+        source.startNs = System.nanoTime()
+        source.running = true
+        core.requestFrame()
+        delay(500)
+        drain()
+        val from = System.nanoTime()
+        val got = ArrayList<FrameRecords.Record>()
+        val endAt = from + (seconds * 1e9).toLong()
+        while (System.nanoTime() < endAt) {
+            delay(100)
+            got += drain().filter { it.startNs >= from }
+            core.requestFrame()
+        }
+        delay(250) // the last records' presentation times
+        got += drain().filter { it.startNs >= from }
+        if (keep) kept = got
+        val frames = got.filter { !it.skipped }.sortedBy { it.frame }
+        val presented = frames.filter { it.presented }
+        val intervals: DoubleArray
+        val presentedBy: String
+        if (host == VkHost.TEXTURE) {
+            intervals = metrics.since(from).first
+            presentedBy = "frame-metrics"
+        } else if (presented.size >= 2) {
+            intervals = DoubleArray(presented.size - 1) { (presented[it + 1].presentedNs - presented[it].presentedNs) / 1e6 }
+            presentedBy = "display-timing"
+        } else {
+            intervals = DoubleArray(maxOf(0, frames.size - 1)) { (frames[it + 1].vsyncNs - frames[it].vsyncNs) / 1e6 }
+            presentedBy = "vsync"
+        }
+        val gpu = frames.filter { it.gpuValid }.map { it.gpuMs.toDouble() }.toDoubleArray()
+        val cpu = frames.map { it.cpuMs }.toDoubleArray()
+        val record = frames.map { it.recordMs.toDouble() }.toDoubleArray()
+        val prepare = frames.map { it.prepareMs.toDouble() }.toDoubleArray()
+        val hwui = metrics.since(from).second
+        val fragments = frames.filter { it.fragmentsK > 0 }
+        return VkBench.summarise(
+            intervals, intervals.size, presentedBy,
+            gpu, gpu.size, cpu, record, prepare, cpu.size, hwui, hwui.size,
+            fragments.sumOf { it.fragmentsK.toLong() }, fragments.size, source.widthPx.toLong() * source.heightPx,
+            frames.lastOrNull()?.draws ?: 0, frames.lastOrNull()?.trianglesK ?: 0, targetMs,
+        )
+    }
+
+    private fun drain(): List<FrameRecords.Record> {
+        val out = ArrayList<FrameRecords.Record>()
+        while (true) {
+            records.clear()
+            val n = core.records(records)
+            for (i in 0 until n) out += FrameRecords.read(records, i)
+            if (n < 512) break
+        }
+        return out
+    }
+
+    private suspend fun soak(config: Int, route: Int, target: Int) {
+        val surface = hostSwitch(VkHost.SURFACE)
+        if (!surface.attached || core.bench(true, config, route, 0, target, pills = true, texture = false).isNotEmpty()) {
+            emit("vkbench soak: the SurfaceView did not attach")
+            return
+        }
+        val power = context.getSystemService(PowerManager::class.java)
+        val battery = context.getSystemService(BatteryManager::class.java)
+        val plugged = (context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0) != 0
+        val charge0 = battery?.getLongProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER) ?: Long.MIN_VALUE
+        val samples = (plan.soakSeconds / 10).toInt() + 1
+        val minutes = DoubleArray(samples)
+        val headroom = DoubleArray(samples)
+        var currents = 0.0
+        var currentCount = 0
+        val start = System.nanoTime()
+        var n = 0
+        var lastP50 = Double.NaN
+        val paths = listOf(VkBench.Path.PAN, VkBench.Path.PINCH, VkBench.Path.ORBIT, VkBench.Path.TILT)
+        while (n < samples) {
+            val path = paths[n % paths.size]
+            val s = measure(path, VkBench.View.BOARD, 9.5, VkHost.SURFACE)
+            lastP50 = s.presentedP50
+            minutes[n] = (System.nanoTime() - start) / 60e9
+            headroom[n] = if (Build.VERSION.SDK_INT >= 30) power?.getThermalHeadroom(10)?.toDouble() ?: Double.NaN else Double.NaN
+            val current = battery?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_AVERAGE) ?: Int.MIN_VALUE
+            if (current != Int.MIN_VALUE && current != 0) {
+                currents += kotlin.math.abs(current) / 1000.0
+                currentCount++
+            }
+            emit("vkbench soak ${"%.1f".format(java.util.Locale.ROOT, minutes[n])} min: headroom ${if (headroom[n].isNaN()) "—" else "%.3f".format(java.util.Locale.ROOT, headroom[n])} status ${power?.currentThermalStatus ?: -1} p50 ${VkBench.ms(s.presentedP50)} gpu ${VkBench.ms(s.gpuP50)}")
+            n++
+        }
+        val charge1 = battery?.getLongProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER) ?: Long.MIN_VALUE
+        val usedMah = if (charge0 == Long.MIN_VALUE || charge1 == Long.MIN_VALUE || charge0 <= 0) Double.NaN else (charge0 - charge1) / 1000.0
+        emit(VkBench.soakLine(minutes, headroom, n, usedMah, if (currentCount == 0) Double.NaN else currents / currentCount, plugged, lastP50))
+    }
+
+    /**
+     * The process's graphics memory now (`Debug.MemoryInfo`'s summary, read from the process itself: ActivityManager's
+     * copy is throttled from Android 10), as MB of 10^6 bytes; off the main thread, the read takes tens of ms.
+     */
+    private suspend fun graphicsMb(): Double = withContext(Dispatchers.Default) {
+        val info = Debug.MemoryInfo()
+        Debug.getMemoryInfo(info)
+        (info.getMemoryStat("summary.graphics")?.toDoubleOrNull() ?: Double.NaN) * 1024.0 / 1e6 // KiB
+    }
+
+    private fun nativeMb(): Double = Debug.getNativeHeapAllocatedSize() / 1e6
+}
+
+/** The activity of a Compose context, if it has one. */
+internal tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}

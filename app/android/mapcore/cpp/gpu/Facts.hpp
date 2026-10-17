@@ -1,0 +1,170 @@
+// VkFacts (plan-vector T1, D5.3, A0): what the phone's Vulkan offers, read once from its physical device and printed
+// as "name: value" lines (logcat's "vkfacts " lines, the VK facts screen, smoke.sh's vkfacts.txt). The facts also
+// decide the frame: the frame configuration (A, B, C, or D), the frame route (dynamic rendering with local reads, or a
+// render pass with two subpasses) and where the composite writes, each with its reason, so the owner's paste
+// explains what the core would do on that phone.
+#pragma once
+
+#include "gpu/Instance.hpp"
+
+#include <array>
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace atlas::gpu {
+
+/// The frame configurations (D5.3): A 4x with transient attachments in lazily allocated memory; B 2x; C 4x in
+/// ordinary memory; D 1x with analytic coverage (only if FA is built); X1 is VK bench's 1x reference, never a choice.
+enum class FrameConfig : std::uint8_t { a, b, c, d, x1 };
+
+/// The two frame routes (T1): dynamic rendering with local reads, or a VkRenderPass with two subpasses.
+enum class Route : std::uint8_t { renderpass, dynamic };
+
+/// The frame forms: the composite subpass (D5.4), or one subpass with the effects per fragment (ONEPASS).
+enum class FrameForm : std::uint8_t { composite, onepass };
+
+/// Where the composite writes: into the samples, resolved on chip (tilers), or straight into the 1x image (a GPU that
+/// is not a tiler; the render-pass route only).
+enum class CompositeTarget : std::uint8_t { resolve, direct };
+
+/// One way of drawing the frame: the configuration, the route, the form and the composite's target.
+struct Configuration {
+    FrameConfig config = FrameConfig::c;
+    Route route = Route::renderpass;
+    FrameForm form = FrameForm::composite;
+    CompositeTarget target = CompositeTarget::resolve;
+
+    [[nodiscard]] vk::SampleCountFlagBits samples() const noexcept;
+    /// Transient attachments in lazily allocated memory (configuration A).
+    [[nodiscard]] bool lazy() const noexcept { return config == FrameConfig::a; }
+    friend bool operator==(const Configuration&, const Configuration&) = default;
+};
+
+[[nodiscard]] std::string_view name_of(FrameConfig config) noexcept;
+[[nodiscard]] std::string_view name_of(Route route) noexcept;
+[[nodiscard]] std::string_view name_of(FrameForm form) noexcept;
+[[nodiscard]] std::string_view name_of(CompositeTarget target) noexcept;
+
+/// The features the core uses or reports (T1), as the device offers them.
+struct FeatureFacts {
+    bool sample_rate_shading = false;
+    bool clip_distance = false;
+    bool astc_ldr = false;
+    bool etc2 = false;
+    bool dual_src_blend = false;
+    bool pipeline_statistics = false;
+    bool shader_int16 = false;
+    bool independent_blend = false;
+    bool fragment_stores = false;
+    bool vertex_stores = false;
+    bool sampler_anisotropy = false;
+    bool read_without_format = false; // shaderStorageImageReadWithoutFormat
+    bool draw_parameters = false;
+    bool timeline_semaphore = false;
+    bool host_query_reset = false;
+    bool separate_depth_stencil_layouts = false;
+    bool dynamic_rendering = false;
+    bool local_read = false;
+    bool synchronization2 = false;
+    bool pipeline_cache_control = false;
+    bool maintenance4 = false;
+    bool shader_fma32 = false;
+    bool swapchain_maintenance1 = false;
+    bool rasterization_order = false;
+    bool multisampled_to_single = false;
+};
+
+/// The surface's facts, once a surface exists (the VK facts screen and VK bench attach one).
+struct SurfaceFacts {
+    bool present = false;
+    vk::SurfaceCapabilitiesKHR capabilities{};
+    std::vector<vk::SurfaceFormatKHR> formats;
+    std::vector<vk::PresentModeKHR> present_modes;
+};
+
+/// Everything VK facts prints, read from one physical device.
+struct Facts {
+    // The loader and the instance.
+    std::string loader_path;
+    std::uint32_t loader_version = 0;
+    std::uint32_t instance_version = 0;
+    bool validation = false;
+    // The device.
+    std::string name;
+    vk::PhysicalDeviceType type = vk::PhysicalDeviceType::eOther;
+    std::uint32_t vendor_id = 0;
+    std::uint32_t device_id = 0;
+    std::uint32_t api_version = 0;
+    std::uint32_t driver_version = 0;
+    bool driver_properties = false;
+    vk::DriverId driver_id{};
+    std::string driver_name;
+    std::string driver_info;
+    vk::ConformanceVersion conformance{};
+    std::array<std::uint8_t, VK_UUID_SIZE> pipeline_cache_uuid{};
+    std::array<std::uint8_t, VK_UUID_SIZE> driver_uuid{};
+    std::size_t devices = 0; // how many physical devices the loader listed
+    // Its memory, queues, limits, formats, features, extensions and profiles.
+    vk::PhysicalDeviceMemoryProperties memory{};
+    std::vector<vk::QueueFamilyProperties> queues;
+    vk::PhysicalDeviceLimits limits{};
+    vk::Format depth_stencil = vk::Format::eUndefined;
+    bool d24s8 = false;
+    bool d32s8 = false;
+    bool rgba8_input = false; // R8G8B8A8_UNORM as a colour and input attachment (the composite)
+    FeatureFacts features;
+    std::vector<std::string> extensions;
+    std::vector<std::pair<std::string, bool>> profiles;
+    std::string profiles_status;
+    // What the facts decide.
+    bool hardware = false;
+    bool tiler = false;
+    std::string tiler_reason;
+    bool lazy_memory = false;
+    bool host_visible_device_local = false;
+    std::vector<std::string> missing; // the requirements of T1 the device lacks (empty: the core can run)
+    Configuration choice;
+    std::string config_reason;
+    std::string route_reason;
+    std::string target_reason;
+    std::string quirks; // the quirk table's entries for this device ("none")
+    SurfaceFacts surface;
+
+    [[nodiscard]] bool has_extension(std::string_view extension) const noexcept;
+    [[nodiscard]] bool supports(FrameConfig config) const noexcept;
+    /// "vendor 0x13b5 device 0x... driver 2 version 0x..." for the guard and the cache key.
+    [[nodiscard]] std::string driver_key() const;
+    /// Whether the device takes SPIR-V declaring StorageImageReadWithoutFormat (Slang's subpass loads do): Vulkan 1.3,
+    /// VK_KHR_format_feature_flags2 or the feature. Else the composite goes through Slang's GLSL route.
+    [[nodiscard]] bool takes_read_without_format() const noexcept;
+};
+
+/// Reads the facts of `device` (one of `instance`'s), and what they decide.
+[[nodiscard]] Facts collect_facts(const Instance& instance, const vk::raii::PhysicalDevice& device,
+                                  std::size_t device_count);
+
+/// Adds the surface's facts.
+void collect_surface(Facts& facts, const vk::raii::PhysicalDevice& device, vk::SurfaceKHR surface,
+                     std::uint32_t queue_family);
+
+/// The facts as "name: value" lines, in a fixed order.
+[[nodiscard]] std::vector<std::string> facts_lines(const Facts& facts);
+
+/// Whether a GPU draws in tiles, from its driver (where known) or its vendor, with the reason.
+struct TilerVerdict {
+    bool tiler;
+    std::string_view reason;
+};
+[[nodiscard]] TilerVerdict classify_tiler(std::uint32_t vendor_id, bool has_driver_id, vk::DriverId driver_id,
+                                          vk::PhysicalDeviceType type) noexcept;
+
+/// The vendor's name for a PCI or Khronos vendor ID ("unknown" otherwise).
+[[nodiscard]] std::string_view vendor_name(std::uint32_t vendor_id) noexcept;
+
+/// The configuration the core picks from the facts (D5.3), with the reasons. `msaa2_close` is K6's answer to
+/// configuration B's condition (2x within 0.15 MAD of 4x in both classes); until K6 answers, false.
+void choose_configuration(Facts& facts, bool msaa2_close);
+
+} // namespace atlas::gpu

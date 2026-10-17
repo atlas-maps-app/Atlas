@@ -13,14 +13,22 @@
 #   home.simpleperf.txt                      a simpleperf profile of the bench build's first home frame, split into Skia,
 #                                            filter primitives and Turbulence (ci/perfsplit.py)
 #   glcaps.txt                               the device's facts and OpenGL ES capabilities (the glcaps screen)
+#   vkfacts.txt, vkbench.txt, vkguard.txt    the Vulkan core (plan-vector K1, Appendix C): VK facts through the guest's
+#                                            Vulkan, VK bench in CI's length (the stand-in in every configuration the
+#                                            guest has, both hosts, the pills), and the crash guard's planted crash
+#                                            ending in the honest state on the next launch; pymath.txt, the core's
+#                                            numerics on Bionic (K3b), which must read `pymath $ATLAS_PYMATH_HASH ok`
 # Each measured run starts from the installed state (`pm clear`, the install's permissions granted again), so earlier
 # screens' downloads and kept scenes do not change what the home draws. `run-as` needs a debuggable APK, so the bench
 # phase never uses it: the screen list comes from the debug run and the timings from logcat (tag AtlasMap).
 #
-# Fails (exit 1) on a crash, "a frame failed" or "out of memory". A frame that never comes is "NO FRAME", a warning.
+# Fails (exit 1) on a crash (a native one symbolised with ndk-stack from the APK's own unstripped libraries), "a frame
+# failed", "out of memory", "device lost", a `vk guard` line outside the planted-crash case, a guest without a Vulkan
+# device, a VK bench that does not finish or exceeds configuration C's graphics ceiling, a pymath line other than
+# `pymath $ATLAS_PYMATH_HASH ok`. A frame that never comes is "NO FRAME", a warning.
 # Environment: ATLAS_SCREENS (the debug loop's screens, default: all), ATLAS_MAP_WAIT (seconds to wait for the home's map),
 # ATLAS_IDLE (seconds the home is watched at rest, default 20), ATLAS_BENCH=0 (skip the bench phase), ATLAS_PROFILE=0
-# (skip simpleperf).
+# (skip simpleperf), ATLAS_PYMATH_HASH (the numerics hash the host build and the port compute; android.yml sets it).
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 APK=$(ls "$1"/*.apk | head -1); OUT=$2; mkdir -p "$OUT"
@@ -165,11 +173,17 @@ measure() {
   adb exec-out screencap -p > "$OUT/$s.$run.png"
   adb shell dumpsys gfxinfo $PKG > "$OUT/$s.$run.gfxinfo.txt"
   # The stage fails on a failed frame, an out-of-memory or a crash.
-  if grep -q -e "a frame failed" -e "out of memory" "$OUT/$s.$run.atlasmap.txt"; then
-    echo "FRAME FAILED on $s ($run)"; grep -e "a frame failed" -e "out of memory" "$OUT/$s.$run.atlasmap.txt" | head -3; FAIL=1
+  if grep -q -e "a frame failed" -e "out of memory" -e "device lost" "$OUT/$s.$run.atlasmap.txt"; then
+    echo "FRAME FAILED on $s ($run)"; grep -e "a frame failed" -e "out of memory" -e "device lost" "$OUT/$s.$run.atlasmap.txt" | head -3; FAIL=1
+  fi
+  # The crash guard speaks only when a driver crashed (Appendix C): outside the planted case, a failure.
+  if grep -q "AtlasMap: vk guard" "$OUT/$s.$run.atlasmap.txt"; then
+    echo "VK GUARD on $s ($run)"; grep "AtlasMap: vk guard" "$OUT/$s.$run.atlasmap.txt" | head -3; FAIL=1
   fi
   if adb logcat -d -b crash | grep -q "$PKG"; then
-    echo "CRASH on $s ($run)"; adb logcat -d -b crash > "$OUT/$s.$run.crash.txt"; FAIL=1; adb logcat -c
+    echo "CRASH on $s ($run)"; adb logcat -d -b crash > "$OUT/$s.$run.crash.txt"; FAIL=1
+    native_trace "$OUT/$s.$run.crash.txt" "$OUT/$s.$run.native.txt"
+    adb logcat -c
   fi
   # An ANR (the main thread held for 5 s) fails the stage too, with the main thread's stack from /data/anr (root on the
   # Google APIs image), so the cause is in the artifacts.
@@ -181,6 +195,30 @@ measure() {
     done
     [ -s "$OUT/$s.$run.anr.txt" ] && sed -n '/"main"/,/^$/p' "$OUT/$s.$run.anr.txt" | head -40
   fi
+}
+
+# A native crash's trace (a tombstone in the crash buffer, $1), symbolised by the NDK's ndk-stack against the installed
+# APK's own libraries (debug and bench builds keep their symbols), into $2; nothing when the crash was Java's.
+native_trace() {
+  grep -q -e "Fatal signal" -e "backtrace:" "$1" 2>/dev/null || return 0
+  echo "NATIVE CRASH: $(grep -m1 -o 'Fatal signal [^,]*' "$1")"
+  local ndk=${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-}} abi dir
+  abi=$(adb shell getprop ro.product.cpu.abi | tr -d '\r')
+  dir="$OUT/.symbols/$abi"
+  mkdir -p "$dir"
+  [ -f "$dir/libatlasmap.so" ] || unzip -q -o -j "$APK" "lib/$abi/*.so" -d "$dir" 2>/dev/null
+  if [ -n "$ndk" ] && [ -x "$ndk/ndk-stack" ]; then
+    "$ndk/ndk-stack" -sym "$dir" -i "$1" > "$2" 2>&1 && sed -n '1,40p' "$2"
+  else
+    echo "  (no ndk-stack: the raw backtrace is in $1)"
+  fi
+}
+
+# Waits up to $2 seconds for a line matching $3 among the AtlasMap lines since marker $1; 0 when it came.
+wait_line() {
+  local i
+  for i in $(seq 1 "$2"); do since_marker "$1" | grep -q -e "$3" && return 0; sleep 1; done
+  return 1
 }
 
 # --- the debug loop: every screen, at the debug build's first launch ---------------------------------------------------
@@ -212,6 +250,97 @@ for s in $SCREENS; do
   if [ "$s" != home ] && [ "$s" != filters ]; then rm -f "$OUT/$s.debug-first.atlasmap.txt"; fi
 done
 adb logcat -d > "$OUT/logcat.txt"
+
+# --- the Vulkan core: VK facts, VK bench, the crash guard (plan-vector K1, Appendix C) --------------------------------
+
+# A launch of the core's screens: $1 the marker, then the activity's extras.
+vk_launch() {
+  local label=$1; shift
+  adb shell am force-stop $PKG
+  adb shell log -t AtlasMap "run-marker $label"
+  adb shell am start -W -n $PKG/.MainActivity "$@" > /dev/null
+}
+
+# The crash buffer after a run: a crash fails (and is symbolised), unless $2 says it was planted.
+vk_crashes() {
+  if adb logcat -d -b crash | grep -q "$PKG"; then
+    adb logcat -d -b crash > "$OUT/$1.crash.txt"
+    if [ "${2:-}" = planted ]; then
+      echo "planted crash ($1): $(grep -m1 -o 'Abort message: .*' "$OUT/$1.crash.txt" || echo 'the process died')"
+    else
+      echo "CRASH on $1"; FAIL=1
+      native_trace "$OUT/$1.crash.txt" "$OUT/$1.native.txt"
+    fi
+    adb logcat -b crash -c
+  fi
+}
+
+vk_phase() {
+  # VK facts through the guest's Vulkan (the emulator's lavapipe): there must be a device.
+  fresh_state
+  vk_launch vkfacts --es atlas.screen vkfacts
+  wait_line vkfacts 120 "vkfacts done" || echo "VK FACTS: no 'vkfacts done' within 120 s"
+  since_marker vkfacts | grep "AtlasMap: vkfacts " | sed 's/.*AtlasMap: vkfacts //' | grep -v '^done$' > "$OUT/vkfacts.txt"
+  adb exec-out screencap -p > "$OUT/vkfacts.png"
+  if ! grep -q '^gpu: ' "$OUT/vkfacts.txt"; then
+    echo "VK FACTS FAILED: the emulator's guest has no Vulkan device the core can run on"
+    grep -e '^vulkan\.' -e '^guard' "$OUT/vkfacts.txt" | head -5; FAIL=1
+  fi
+  grep -E '^(gpu|api|driver|tiler|lazily\.allocated\.memory|config|route|composite|configs\.available|profiles|surface\.(usage|present\.modes)|core\.build):' "$OUT/vkfacts.txt"
+  # The core's numerics on Bionic (K3b's acceptance, L0 d): VK facts logs `pymath <hash> ok`, and the hash must be
+  # the one the host build and the port compute (ATLAS_PYMATH_HASH, from android.yml).
+  since_marker vkfacts | grep -o 'AtlasMap: pymath .*' | sed 's/AtlasMap: //' | tr -d '\r' | head -1 > "$OUT/pymath.txt"
+  echo "pymath: $(cat "$OUT/pymath.txt")"
+  if [ -z "${ATLAS_PYMATH_HASH:-}" ]; then
+    echo "PYMATH FAILED: ATLAS_PYMATH_HASH is not set (android.yml's emulator job sets the expected hash)"; FAIL=1
+  elif ! grep -qx "pymath $ATLAS_PYMATH_HASH ok" "$OUT/pymath.txt"; then
+    echo "PYMATH FAILED: the emulator's numerics read '$(cat "$OUT/pymath.txt")', not 'pymath $ATLAS_PYMATH_HASH ok'"; FAIL=1
+  fi
+  vk_crashes vkfacts
+
+  # VK bench in CI's length: every configuration the guest has, both hosts with the pills, the pills moving.
+  vk_launch vkbench --es atlas.screen vkbench --es atlas.vk.bench ci --ez atlas.vk.ci true
+  local done_ok=1
+  wait_line vkbench 900 "vkbench done" || { echo "VK BENCH FAILED: no 'vkbench done' within 900 s"; FAIL=1; done_ok=0; }
+  since_marker vkbench | grep -E 'AtlasMap: (vkbench|vkfacts|vk config|vk path|vk surface|vk frame|a0 |a frame failed|device lost)' |
+    sed 's/.*AtlasMap: //' > "$OUT/vkbench.txt"
+  adb exec-out screencap -p > "$OUT/vkbench.png"
+  if [ "$done_ok" = 1 ]; then
+    grep -e '^vkbench ' -e '^a0 ' "$OUT/vkbench.txt" | grep -v '^vkbench soak' | head -60
+    grep -q '^vk config C ' "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: configuration C never took effect (no 'vk config C' line)"; FAIL=1; }
+    grep -q '^vkbench board C ' "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: no line for configuration C at the board's view"; FAIL=1; }
+    grep -q -e '^a frame failed' -e '^device lost' "$OUT/vkbench.txt" && { echo "VK BENCH FAILED: a frame failed"; FAIL=1; }
+    # Configuration C's graphics memory ceiling at S1 (plan-vector §3: 225 MB; the emulator's pixel_7 is 1080 × 2400).
+    awk '/^vkbench (board|pitch70|surface|texture) / { for (i = 1; i < NF; i++) if ($i == "graphics" && $(i + 1) + 0 > 225) { print; bad = 1 } }
+         END { exit bad }' "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: graphics memory above configuration C's 225 MB"; FAIL=1; }
+  fi
+  vk_crashes vkbench
+
+  # The crash guard: a crash planted in pipeline creation, twice (the second start retries without the cache), then
+  # the next launch shows the honest state with the guard's line (D5.10).
+  fresh_state
+  local attempt
+  for attempt in 1 2; do
+    vk_launch "vkguard$attempt" --es atlas.screen vkbench --es atlas.vk.bench ci --es atlas.vk.plant pipelines
+    wait_line "vkguard$attempt" 120 "vk guard planted crash" || echo "VK GUARD: attempt $attempt did not reach the planted stage"
+    sleep 3
+    vk_crashes "vkguard$attempt" planted
+  done
+  vk_launch vkguard3 --es atlas.screen vkfacts
+  wait_line vkguard3 120 "vkfacts done"
+  since_marker vkguard1 | grep -E 'AtlasMap: (vk guard|vkfacts vulkan|vkfacts guard)' | sed 's/.*AtlasMap: //' > "$OUT/vkguard.txt"
+  adb exec-out screencap -p > "$OUT/vkguard.png"
+  cat "$OUT/vkguard.txt"
+  if grep -q '^vk guard pipelines .* attempt 2' "$OUT/vkguard.txt" && grep -q "^vkfacts vulkan.state: This phone's graphics driver can't draw the Atlas map." "$OUT/vkguard.txt"; then
+    echo "VK GUARD: the planted crash ended in the honest state"
+  else
+    echo "VK GUARD FAILED: no 'vk guard pipelines … attempt 2' and honest state after two planted crashes"; FAIL=1
+  fi
+  vk_crashes vkguard3
+  fresh_state
+}
+vk_phase
+adb logcat -d > "$OUT/logcat.vk.txt"
 
 # --- the truth phase: the same frames as a phone runs them -------------------------------------------------------------
 
