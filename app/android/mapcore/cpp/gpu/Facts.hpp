@@ -16,11 +16,14 @@
 // In this alpha the frame is 8 bits a channel on every phone (default_depth): the map, VK facts and VK bench's runs.
 // 10 bits are drawn only by VK bench's colour stage, after its 8-bit runs are recorded, behind the crash guard's own
 // stage (gpu/Guard.hpp's Stage::colour): a driver that crashes there has 10 bits turned off for it and this build of
-// the core (Facts::ten_bit_off), and nothing else. Nothing of 10 bits reaches the driver before that stage, not even a
-// query: the facts ask the device about the 8-bit formats only, and the 10-bit ones (their format features, their
-// sample counts, a tiler's lazily allocated samples) are asked as the stage begins (Device::check_ten_bit). Until then
-// VkFacts says so, and what the stage would draw is the surface's offer (decide_colour). 10 bits become the frame's
-// default only when a later alpha's evidence shows them safe.
+// the core (Facts::ten_bit_off), and nothing else. Nothing of 10 bits reaches the driver at the start: the facts ask
+// the device about the 8-bit formats only, and the 10-bit ones (their format features, their sample counts, a tiler's
+// lazily allocated samples) are asked as the colour stage begins (Device::check_ten_bit). Until then VkFacts says so,
+// and what the stage would draw is the surface's offer (decide_colour). The one other reader of the 10-bit formats is
+// the Vulkan Profiles library, whose checks of Android's profiles cover A2B10G10R10 and A2R10G10B10: they decide
+// nothing (VkFacts' `profiles:` line reports them), so they run in a guarded stage of their own (Stage::profiles),
+// only when VK facts or VK bench asks for the facts, never on the start's path and never inside the colour stage
+// (read_profiles). 10 bits become the frame's default only when a later alpha's evidence shows them safe.
 #pragma once
 
 #include "gpu/Instance.hpp"
@@ -190,8 +193,13 @@ struct Facts {
     FeatureFacts features;
     std::vector<std::string> extensions; // without the ones the host tests hide (Instance::hidden)
     std::vector<std::string> hidden;     // the extensions the host tests hide, which read as absent
+    /// Android's Vulkan profiles and whether the device meets each, once read (read_profiles), and how the reading
+    /// went.
     std::vector<std::pair<std::string, bool>> profiles;
-    std::string profiles_status;
+    std::string profiles_status = "not read yet (VK facts and VK bench read them, in the crash guard's profiles stage)";
+    /// The crash guard's `vk guard profiles …` line when the profiles check crashed under this driver and this build of
+    /// the core: the check is off for them (D5.10), and the profiles go unread. Empty otherwise.
+    std::string profiles_off;
     // What the facts decide.
     bool hardware = false;
     bool tiler = false;
@@ -235,9 +243,16 @@ struct Facts {
 };
 
 /// Reads the facts of `device` (one of `instance`'s), and what they decide for a device that presents (`present`) or
-/// one that works offscreen. Of the frame's colour formats it asks about the 8-bit ones only (the file's head).
+/// one that works offscreen. Of the frame's colour formats it asks about the 8-bit ones only, and it leaves Android's
+/// profiles unread (the file's head).
 [[nodiscard]] Facts collect_facts(const Instance& instance, const vk::raii::PhysicalDevice& device,
                                   std::size_t device_count, bool present);
+
+/// Reads Android's Vulkan profiles through the Profiles library's object API (no global state): each profile's name and
+/// whether `device` meets it. Its checks ask the device about formats the frame does not take at the start, the 10-bit
+/// ones among them, so the core runs it behind the crash guard's profiles stage, only when VK facts or VK bench asks
+/// (standin/Session.hpp), never in the colour stage.
+void read_profiles(Facts& facts, const Instance& instance, const vk::raii::PhysicalDevice& device);
 
 /// Asks `device` what it does with the frame's 10-bit colour formats (`ten`) or its 8-bit ones: their format features
 /// and their sample counts as the main pass's transient input attachments (Facts::colour_formats).

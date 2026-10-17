@@ -35,7 +35,7 @@ object FacadeHost {
 /** A façade class built against another core: the core must refuse it. */
 object OtherAbiFacade {
     @Suppress("unused")
-    const val ABI = 3
+    const val ABI = 4
 }
 
 /**
@@ -100,9 +100,9 @@ class FacadeTest {
     fun theFacadesAbiIsTheCoresAndAnotherIsRefusedAtLoad() {
         assertEquals(Native.ABI, Native.abi())
         assertEquals(Native.ABI, FacadeHost.coreAbi())
-        // The same check JNI_OnLoad runs before RegisterNatives: a class of ABI 3 is refused, with the reason.
+        // The same check JNI_OnLoad runs before RegisterNatives: a class of ABI 4 is refused, with the reason.
         val refused = FacadeHost.registerInto(OtherAbiFacade::class.java)
-        assertTrue(refused, refused.contains("ABI 3") && refused.contains("ABI ${Native.ABI}"))
+        assertTrue(refused, refused.contains("ABI 4") && refused.contains("ABI ${Native.ABI}"))
         // And the real façade registers again cleanly.
         assertEquals("", FacadeHost.registerInto(Native::class.java))
     }
@@ -112,10 +112,10 @@ class FacadeTest {
         val dir = Files.createTempDirectory("atlas-facade").toFile()
         try {
             val guard = dir.resolve("vk").path
-            val handle = Native.create(dir.path, guard, "jvm-test", "", 0)
+            val handle = Native.create(dir.path, guard, "jvm-test", "", 0, "", 0L)
             assertNotEquals("create refused: ${Native.lastError()}", 0L, handle)
             try {
-                val facts = Native.facts(handle, dir.path, guard, "jvm-test", 0).lines()
+                val facts = Native.facts(handle, dir.path, guard, "jvm-test", 0, "", 0L).lines()
                 assertTrue(facts.joinToString("\n"), facts.any { it.startsWith("gpu: ") })
                 assertTrue(facts.any { it.startsWith("config: ") })
                 assertTrue(facts.any { it == "guard: clear" })
@@ -127,6 +127,8 @@ class FacadeTest {
                 assertTrue(facts.any { it.startsWith("colour.formats: rgb10a2 ") })
                 assertTrue(facts.any { Regex("feature\\.shaderFloat64: (yes|no) \\(K5's light: .*\\)").matches(it) })
                 assertTrue(facts.any { it == "feature.shaderInt64: yes" || it == "feature.shaderInt64: no" })
+                // Android's profiles, read for the facts behind the guard's profiles stage (never at the start).
+                assertTrue(facts.joinToString("\n"), facts.any { it.startsWith("profiles: VP_ANDROID_") })
                 assertTrue(Native.buildInfo().startsWith("atlasmap "))
                 // K3b's numerics line, as VK facts logs it for smoke.sh.
                 val pymath = Native.numericsLine()
@@ -145,9 +147,11 @@ class FacadeTest {
             }
             // The core kept its facts for the honest state, and its pipeline cache folder exists.
             assertTrue(dir.resolve("vk/facts").isFile)
-            // Without a core: a guarded start of its own.
-            val alone = Native.facts(0L, dir.path, guard, "jvm-test", 0).lines()
+            // Without a core: a guarded start of its own, its profiles read too, closed behind the close stage.
+            val alone = Native.facts(0L, dir.path, guard, "jvm-test", 0, "", 0L).lines()
             assertTrue(alone.any { it.startsWith("gpu: ") })
+            assertTrue(alone.any { it.startsWith("profiles: VP_ANDROID_") })
+            assertFalse(dir.resolve("vk/guard").exists())
         } finally {
             dir.deleteRecursively()
         }
@@ -159,7 +163,7 @@ class FacadeTest {
         try {
             val guard = dir.resolve("vk")
             // A clean start: the guard found nothing; the facts name this build and the driver the guard keys by.
-            val facts = Native.facts(0L, dir.path, guard.path, "jvm-test", 0).lines()
+            val facts = Native.facts(0L, dir.path, guard.path, "jvm-test", 0, "", 0L).lines()
             assertTrue(facts.joinToString("\n"), "guard: clear" in facts)
             assertTrue("guard.off: none" in facts)
             val build = facts.first { it.startsWith("guard.build: ") }.removePrefix("guard.build: ")
@@ -175,11 +179,11 @@ class FacadeTest {
             guard.resolve("guard").writeText(
                 "stage pipelines\npipeline $pipeline\ndriver $driver\nversion $version\nbuild $build\nattempt 2\n",
             )
-            assertEquals(0L, Native.create(dir.path, guard.path, "jvm-test", "", 0))
+            assertEquals(0L, Native.create(dir.path, guard.path, "jvm-test", "", 0, "", 0L))
             val why = Native.lastError()
             assertTrue(why, why.startsWith("vk guard pipelines $driver $version attempt 2 pipeline $pipeline build $build: "))
-            assertEquals(0L, Native.create(dir.path, guard.path, "jvm-test", "", 0))
-            val off = Native.facts(0L, dir.path, guard.path, "jvm-test", 0).lines()
+            assertEquals(0L, Native.create(dir.path, guard.path, "jvm-test", "", 0, "", 0L))
+            val off = Native.facts(0L, dir.path, guard.path, "jvm-test", 0, "", 0L).lines()
             assertTrue(off.joinToString("\n"), off.any { it.startsWith("vulkan: off (") })
             assertTrue(off.any { it.startsWith("guard: vk guard pipelines ") })
             assertTrue(
@@ -192,10 +196,10 @@ class FacadeTest {
             guard.resolve("pipelines.bin").writeText("a cache")
             assertEquals("vk guard reset: forgot 1 driver turned off and the pipeline cache", Native.resetGuard(dir.path, guard.path))
             assertFalse(guard.resolve("pipelines.bin").exists())
-            val handle = Native.create(dir.path, guard.path, "jvm-test", "", 0)
+            val handle = Native.create(dir.path, guard.path, "jvm-test", "", 0, "", 0L)
             assertNotEquals("create refused after the reset: ${Native.lastError()}", 0L, handle)
             try {
-                val after = Native.facts(handle, dir.path, guard.path, "jvm-test", 0).lines()
+                val after = Native.facts(handle, dir.path, guard.path, "jvm-test", 0, "", 0L).lines()
                 assertTrue(after.joinToString("\n"), "guard: clear" in after)
                 assertTrue("guard.off: none" in after)
             } finally {
@@ -213,7 +217,7 @@ class FacadeTest {
         val dir = Files.createTempDirectory("atlas-colour").toFile()
         try {
             val guard = dir.resolve("vk")
-            val facts = Native.facts(0L, dir.path, guard.path, "jvm-test", 0).lines()
+            val facts = Native.facts(0L, dir.path, guard.path, "jvm-test", 0, "", 0L).lines()
             val build = facts.first { it.startsWith("guard.build: ") }.removePrefix("guard.build: ")
             val (driver, version) = facts.first { it.startsWith("guard.driver: ") }.removePrefix("guard.driver: ").split(' ')
 
@@ -225,16 +229,17 @@ class FacadeTest {
                 "stage colour\npipeline $pipeline\ndriver $driver\nversion $version\nbuild $build\nattempt 1\n",
             )
             val line = "vk guard colour $driver $version attempt 1 pipeline $pipeline build $build"
-            val handle = Native.create(dir.path, guard.path, "jvm-test", "", 0)
+            val handle = Native.create(dir.path, guard.path, "jvm-test", "", 0, "", 0L)
             assertNotEquals("the start after a crash in the colour stage refused Vulkan: ${Native.lastError()}", 0L, handle)
             try {
-                val after = Native.facts(handle, dir.path, guard.path, "jvm-test", 0).lines()
+                val after = Native.facts(handle, dir.path, guard.path, "jvm-test", 0, "", 0L).lines()
                 val text = after.joinToString("\n")
                 assertTrue(text, "guard: $line" in after)
                 assertTrue(text, "colour.stage: off (10 bits are off for this driver and build: $line)" in after)
                 assertTrue(text, after.any { it.startsWith("colour: rgba8 (") && it.endsWith("; 10 bits: off, 10 bits are off for this driver and build: $line)") })
                 assertTrue(text, "guard.off: $driver $version at colour, pipeline $pipeline build $build (this driver and build: 10 bits are off)" in after)
-                assertTrue(text, after.any { it.startsWith("pipeline.cache: miss") }) // started without it
+                // None written yet; a crash in the colour stage keeps the cache (below), which never holds a 10-bit pipeline.
+                assertTrue(text, after.any { it.startsWith("pipeline.cache: miss: no file") })
                 // The reset while this core is alive: refused, nothing forgotten (the core would write its cache back).
                 val refused = Native.resetGuard(dir.path, guard.path)
                 assertEquals("vk guard reset: refused, 1 core is alive (it would write its pipeline cache back): close it first", refused)
@@ -244,23 +249,128 @@ class FacadeTest {
             }
             assertTrue(guard.resolve("pipelines.bin").isFile)
             // A later start of this build and driver: still 8 bits, still on.
-            val later = Native.facts(0L, dir.path, guard.path, "jvm-test", 0).lines()
+            val later = Native.facts(0L, dir.path, guard.path, "jvm-test", 0, "", 0L).lines()
             assertTrue(later.joinToString("\n"), "guard: clear" in later)
             assertTrue("colour.stage: off (10 bits are off for this driver and build: $line)" in later)
+            // Another crash in the colour stage keeps the pipeline cache written back: the stage's pipelines go through a
+            // cache of its own, so the one on disk holds no 10-bit pipeline.
+            guard.resolve("guard").writeText(
+                "stage colour\npipeline $pipeline\ndriver $driver\nversion $version\nbuild $build\nattempt 1\n",
+            )
+            val kept = Native.create(dir.path, guard.path, "jvm-test", "", 0, "", 0L)
+            assertNotEquals("the start after a second crash in the colour stage refused Vulkan: ${Native.lastError()}", 0L, kept)
+            try {
+                val again = Native.facts(kept, dir.path, guard.path, "jvm-test", 0, "", 0L).lines()
+                assertTrue(again.joinToString("\n"), "pipeline.cache: hit" in again)
+                assertTrue("guard: $line" in again)
+            } finally {
+                Native.close(kept)
+            }
 
-            // With no core alive, the reset forgets the verdict and the cache written back, and 10 bits are back.
+            // With no core alive, the reset forgets the verdict (once: the second crash found it on file) and the cache
+            // written back, and 10 bits are back.
             assertEquals("vk guard reset: forgot 10 bits turned off for 1 driver and the pipeline cache", Native.resetGuard(dir.path, guard.path))
             assertFalse(guard.resolve("pipelines.bin").exists())
-            val back = Native.facts(0L, dir.path, guard.path, "jvm-test", 0).lines()
+            val back = Native.facts(0L, dir.path, guard.path, "jvm-test", 0, "", 0L).lines()
             assertTrue(back.joinToString("\n"), "guard.off: none" in back)
             assertTrue(back.any { it.startsWith("colour.stage: ") && !it.startsWith("colour.stage: off") })
         } finally {
             dir.deleteRecursively()
         }
     }
+    @Test
+    fun aMarkerOfAProcessThatWasStoppedNotCrashedCountsForNothing() {
+        // Kills are not crashes (D5.10): a marker survives a swipe-away, a low-memory kill or a force-stop as it survives
+        // a crash, so the façade passes the app's process exits as Android records them (MK/ProcessExits.kt's text) and
+        // the guard looks the marker's process up among them: by its id, the first exit after its start.
+        val dir = Files.createTempDirectory("atlas-exits").toFile()
+        try {
+            val guard = dir.resolve("vk")
+            val facts = Native.facts(0L, dir.path, guard.path, "jvm-test", 0, "", 0L).lines()
+            val build = facts.first { it.startsWith("guard.build: ") }.removePrefix("guard.build: ")
+            val (driver, version) = facts.first { it.startsWith("guard.driver: ") }.removePrefix("guard.driver: ").split(' ')
+            // A marker of the 120-frame stage, left by process 9001, which started at 1000 ms.
+            fun leave(attempt: Int, pid: Long = 9001) = guard.resolve("guard").writeText(
+                "stage frames\ndriver $driver\nversion $version\nbuild $build\nattempt $attempt\npid $pid\nstart 1000\n",
+            )
+            fun started(exits: String): Long {
+                val handle = Native.create(dir.path, guard.path, "jvm-test", "", 0, exits, 0L)
+                assertNotEquals("refused: ${Native.lastError()}", 0L, handle)
+                return handle
+            }
+            fun factsOf(handle: Long) = Native.facts(handle, dir.path, guard.path, "jvm-test", 0, "", 0L).lines()
+            // Swiped away three times running (an older process of the same id crashed before this one started): never
+            // counted, nothing turned off, VK facts saying so.
+            repeat(3) {
+                leave(1)
+                val handle = started("9001 500 1 crash-native\n9001 5000 0 user-requested")
+                try {
+                    val after = factsOf(handle)
+                    val text = after.joinToString("\n")
+                    assertTrue(text, "guard: clear" in after)
+                    assertTrue(text, "vk guard: frames marker after user-requested, not counted" in after)
+                    assertTrue(text, "guard.off: none" in after)
+                } finally {
+                    Native.close(handle)
+                }
+                assertFalse(guard.resolve("guard").exists())
+            }
+            // A low-memory kill of a retry: not counted, and the start goes on as the retry, without the cache.
+            leave(2)
+            started("9001 5000 0 low-memory").let { handle ->
+                try {
+                    val after = factsOf(handle)
+                    assertTrue(after.joinToString("\n"), "vk guard: frames marker after low-memory, not counted" in after)
+                    assertTrue("guard: clear" in after)
+                    assertTrue(after.any { it.startsWith("pipeline.cache: miss") })
+                } finally {
+                    Native.close(handle)
+                }
+            }
+            // A marker of this very process: an earlier core in it left it, and it runs.
+            leave(1, ProcessHandle.current().pid())
+            started("none").let { handle ->
+                try {
+                    assertTrue("vk guard: frames marker of this running process, not counted" in factsOf(handle))
+                } finally {
+                    Native.close(handle)
+                }
+            }
+            // A native crash counts: the retry, and VK facts says how the process ended.
+            leave(1)
+            started("9001 5000 1 crash-native").let { handle ->
+                try {
+                    val after = factsOf(handle)
+                    val text = after.joinToString("\n")
+                    assertTrue(text, "guard: vk guard frames $driver $version attempt 1 build $build" in after)
+                    assertTrue(text, after.any { it.startsWith("guard.exit: crash-native") })
+                } finally {
+                    Native.close(handle)
+                }
+            }
+            // No record of the process at all counts too: the retry's crash turns Vulkan off.
+            leave(2)
+            assertEquals(0L, Native.create(dir.path, guard.path, "jvm-test", "", 0, "none", 0L))
+            assertTrue(Native.lastError(), Native.lastError().startsWith("vk guard frames $driver $version attempt 2 build $build: "))
+            // (the earlier cores wrote their pipeline cache back at their close).
+            assertEquals("vk guard reset: forgot 1 driver turned off and the pipeline cache", Native.resetGuard(dir.path, guard.path))
+            // Exits not known (API 29): every marker counts, as before.
+            leave(1)
+            started("").let { handle ->
+                try {
+                    assertTrue("guard: vk guard frames $driver $version attempt 1 build $build" in factsOf(handle))
+                } finally {
+                    Native.close(handle)
+                }
+            }
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
     /** A host core in [dir] (its cache and guard there), behind a [CoreHandle] as MapCore holds it. */
     private fun hostCore(dir: File): CoreHandle {
-        val handle = Native.create(dir.path, dir.resolve("vk").path, "jvm-test", "", 0)
+        val handle = Native.create(dir.path, dir.resolve("vk").path, "jvm-test", "", 0, "", 0L)
         assertNotEquals("create refused: ${Native.lastError()}", 0L, handle)
         return CoreHandle(handle)
     }
@@ -335,7 +445,7 @@ class FacadeTest {
                                     inCall.incrementAndGet()
                                     try {
                                         when (kind % 4) {
-                                            0 -> check(Native.facts(handle, dir.path, guard, "jvm-test", 0).contains("gpu: "))
+                                            0 -> check(Native.facts(handle, dir.path, guard, "jvm-test", 0, "", 0L).contains("gpu: "))
                                             1 -> check(Native.stats(handle) == "vk no frames")
                                             2 -> check(Native.records(handle, records) == 0)
                                             else -> Native.trimMemory(handle, 0)

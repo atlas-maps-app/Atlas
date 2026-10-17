@@ -28,23 +28,15 @@ namespace atlas::gpu {
 /// A headless surface (VK_EXT_headless_surface): the host tests present through the real swapchain code with it.
 [[nodiscard]] Result<vk::raii::SurfaceKHR> make_headless_surface(const Instance& instance);
 
-/// What a presentation really did (VK_GOOGLE_display_timing).
-struct PresentedTiming {
-    std::uint32_t present_id = 0;
-    std::uint64_t desired_ns = 0;
-    std::uint64_t actual_ns = 0;
-    std::uint64_t earliest_ns = 0;
-    std::uint64_t margin_ns = 0;
-};
-
 /// The swapchain on a surface.
 class Swapchain final : public Output {
 public:
-    /// Makes a swapchain of `wanted` pixels (used where the surface leaves the size to the swapchain), retiring `old`,
-    /// in the frame's colour at `depth` (8 bits by default; as deep as the surface and the device allow in VK bench's
-    /// colour stage).
+    /// Makes a swapchain of `wanted` pixels (used where the surface leaves the size to the swapchain), retiring `old`
+    /// (the swapchain it is, if any: Output::swapchain), which goes once the new one is made or refused, in the
+    /// frame's colour at `depth` (8 bits by default; as deep as the surface and the device allow in VK bench's colour
+    /// stage).
     [[nodiscard]] static Result<std::unique_ptr<Swapchain>> create(const Device& device, vk::SurfaceKHR surface,
-                                                                   vk::Extent2D wanted, std::unique_ptr<Swapchain> old,
+                                                                   vk::Extent2D wanted, std::unique_ptr<Output> old,
                                                                    Depth depth = default_depth);
     Swapchain(const Swapchain&) = delete;
     Swapchain& operator=(const Swapchain&) = delete;
@@ -54,6 +46,9 @@ public:
 
     [[nodiscard]] vk::Extent2D extent() const noexcept override { return extent_; }
     [[nodiscard]] vk::Format format() const noexcept override { return format_; }
+    /// The frame's colour on this swapchain, and why (gpu/Facts.hpp).
+    [[nodiscard]] const Colour& colour() const noexcept override { return colour_; }
+    [[nodiscard]] vk::SwapchainKHR swapchain() const noexcept override { return *swapchain_; }
     [[nodiscard]] std::span<const vk::Image> images() const noexcept override { return images_; }
     [[nodiscard]] std::span<const vk::ImageView> views() const noexcept override { return view_handles_; }
     [[nodiscard]] vk::ImageLayout final_layout() const noexcept override { return vk::ImageLayout::ePresentSrcKHR; }
@@ -63,12 +58,10 @@ public:
     [[nodiscard]] vk::Semaphore rendered(std::uint32_t index) const noexcept override { return *rendered_[index]; }
     [[nodiscard]] Acquired present(std::uint32_t index, std::uint64_t frame, std::uint64_t desired_ns) override;
 
-    /// The frame's colour on this swapchain, and why (gpu/Facts.hpp).
-    [[nodiscard]] const Colour& colour() const noexcept { return colour_; }
     /// The display's refresh period where the device says (VK_GOOGLE_display_timing), else 0.
     [[nodiscard]] std::uint64_t refresh_ns() const noexcept { return refresh_ns_; }
     /// The presentations completed since the last call, oldest first (VK_GOOGLE_display_timing; empty otherwise).
-    void past_timings(std::vector<PresentedTiming>& out);
+    void past_timings(std::vector<PresentedTiming>& out) override;
     /// Whether the swapchain should be made again (suboptimal or out of date).
     [[nodiscard]] bool stale() const noexcept { return stale_; }
 

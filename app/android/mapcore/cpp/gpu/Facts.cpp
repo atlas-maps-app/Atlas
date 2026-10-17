@@ -75,39 +75,6 @@ namespace {
     return out;
 }
 
-/// Android's Vulkan profiles through the Profiles library's object API (no global state): name and support.
-void read_profiles(Facts& facts, const Instance& instance, const vk::raii::PhysicalDevice& device) {
-    const auto* global = instance.context().getDispatcher();
-    VpFunctionsCreateInfo info{};
-    info.GetInstanceProcAddr = global->vkGetInstanceProcAddr;
-    info.EnumerateInstanceVersion = global->vkEnumerateInstanceVersion;
-    info.EnumerateInstanceExtensionProperties = global->vkEnumerateInstanceExtensionProperties;
-    info.CreateInstance = global->vkCreateInstance;
-    VpFunctions vp = nullptr;
-    if (const VkResult created = vpCreateFunctions(&info, nullptr, &vp); created != VK_SUCCESS) {
-        facts.profiles_status = std::format("the profiles library could not start ({})", static_cast<int>(created));
-        return;
-    }
-    const VkResult globals = vpInitializeGlobalFunctions(vp, info.GetInstanceProcAddr);
-    const VkResult instance_functions = vpInitializeInstanceFunctions(vp, *instance.handle(), 0);
-    std::uint32_t count = 0;
-    if (globals != VK_SUCCESS || instance_functions != VK_SUCCESS || vpGetProfiles(vp, &count, nullptr) != VK_SUCCESS) {
-        facts.profiles_status = "the profiles library could not read the device";
-        vpDestroyFunctions(vp, nullptr);
-        return;
-    }
-    std::vector<VpProfileProperties> all(count);
-    (void)vpGetProfiles(vp, &count, all.data());
-    for (const VpProfileProperties& p : all) {
-        VkBool32 supported = VK_FALSE;
-        const VkResult r = vpGetPhysicalDeviceProfileSupport(vp, *instance.handle(), *device, &p, &supported);
-        facts.profiles.emplace_back(p.profileName, r == VK_SUCCESS && supported == VK_TRUE);
-    }
-    std::ranges::sort(facts.profiles);
-    facts.profiles_status = "read";
-    vpDestroyFunctions(vp, nullptr);
-}
-
 /// The reason of the frame's 8-bit colour (default_depth).
 constexpr std::string_view eight_bits = "the frame's default in this alpha, 8 bits a channel";
 
@@ -638,6 +605,39 @@ void choose_configuration(Facts& facts, bool msaa2_close) {
     }
 }
 
+void read_profiles(Facts& facts, const Instance& instance, const vk::raii::PhysicalDevice& device) {
+    facts.profiles.clear();
+    const auto* global = instance.context().getDispatcher();
+    VpFunctionsCreateInfo info{};
+    info.GetInstanceProcAddr = global->vkGetInstanceProcAddr;
+    info.EnumerateInstanceVersion = global->vkEnumerateInstanceVersion;
+    info.EnumerateInstanceExtensionProperties = global->vkEnumerateInstanceExtensionProperties;
+    info.CreateInstance = global->vkCreateInstance;
+    VpFunctions vp = nullptr;
+    if (const VkResult created = vpCreateFunctions(&info, nullptr, &vp); created != VK_SUCCESS) {
+        facts.profiles_status = std::format("the profiles library could not start ({})", static_cast<int>(created));
+        return;
+    }
+    const VkResult globals = vpInitializeGlobalFunctions(vp, info.GetInstanceProcAddr);
+    const VkResult instance_functions = vpInitializeInstanceFunctions(vp, *instance.handle(), 0);
+    std::uint32_t count = 0;
+    if (globals != VK_SUCCESS || instance_functions != VK_SUCCESS || vpGetProfiles(vp, &count, nullptr) != VK_SUCCESS) {
+        facts.profiles_status = "the profiles library could not read the device";
+        vpDestroyFunctions(vp, nullptr);
+        return;
+    }
+    std::vector<VpProfileProperties> all(count);
+    (void)vpGetProfiles(vp, &count, all.data());
+    for (const VpProfileProperties& p : all) {
+        VkBool32 supported = VK_FALSE;
+        const VkResult r = vpGetPhysicalDeviceProfileSupport(vp, *instance.handle(), *device, &p, &supported);
+        facts.profiles.emplace_back(p.profileName, r == VK_SUCCESS && supported == VK_TRUE);
+    }
+    std::ranges::sort(facts.profiles);
+    facts.profiles_status = "read";
+    vpDestroyFunctions(vp, nullptr);
+}
+
 Facts collect_facts(const Instance& instance, const vk::raii::PhysicalDevice& device, std::size_t device_count,
                     bool present) {
     Facts facts;
@@ -703,8 +703,9 @@ Facts collect_facts(const Instance& instance, const vk::raii::PhysicalDevice& de
     // The 8-bit formats only: the 10-bit ones are asked as VK bench's colour stage begins (Device::check_ten_bit).
     query_colour_formats(facts, device, false);
 
+    // Android's profiles are not read here: the Profiles library's checks take the 10-bit formats, and the profiles
+    // decide nothing, so the core reads them in a stage of their own when VK facts or VK bench asks (read_profiles).
     read_features(facts, device, version);
-    read_profiles(facts, instance, device);
 
     const TilerVerdict tiler = classify_tiler(facts.vendor_id, facts.driver_properties, facts.driver_id, facts.type);
     facts.tiler = tiler.tiler;
@@ -780,8 +781,8 @@ std::vector<std::string> facts_lines(const Facts& f) {
     line("colour: {} ({} in {}: {}; 10 bits: {})", colour_name(f.colour.format), vk::to_string(f.colour.format),
          vk::to_string(f.colour.space), f.colour.reason, ten);
     line("colour.stage: {}", colour_stage(f));
-    // Each format as the device answered, or a 10-bit one not asked yet: nothing of 10 bits reaches the driver before
-    // VK bench's colour stage (Device::check_ten_bit).
+    // Each format as the device answered, or a 10-bit one not asked yet: the core asks about 10 bits only as VK bench's
+    // colour stage begins (Device::check_ten_bit).
     std::string drawable;
     for (const ColourFormat& c : f.colour_formats) {
         const std::string unfit = f.unfit_for_frame(c.format);
@@ -803,9 +804,13 @@ std::vector<std::string> facts_lines(const Facts& f) {
          sample_counts(f.limits.framebufferStencilSampleCounts), sample_counts(f.limits.sampledImageColorSampleCounts),
          yes_no(f.limits.standardSampleLocations == vk::True));
     line("quirks: {} ({} rows in the table)", f.quirks, quirk_rows());
+    // Android's profiles, once the profiles stage read them; until then, or where the check crashed under this driver
+    // and build (off), why not.
     std::string profiles;
     for (const auto& [name, ok] : f.profiles)
         profiles += std::format("{}{} {}", profiles.empty() ? "" : ", ", name, yes_no(ok));
+    if (!f.profiles_off.empty())
+        profiles = std::format("off (the check crashed under this driver and build: {})", f.profiles_off);
     line("profiles: {}", profiles.empty() ? f.profiles_status : profiles);
     line("validation: {}", f.validation ? "on (synchronization validation)" : "off");
     line("loader: {}", f.loader_path);

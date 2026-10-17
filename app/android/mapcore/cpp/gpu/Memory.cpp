@@ -113,6 +113,12 @@ Result<Buffer> Memory::buffer(vk::DeviceSize size, vk::BufferUsageFlags usage, M
     return buffer;
 }
 
+vk::DeviceSize Memory::allocated() const {
+    VmaTotalStatistics total{};
+    vmaCalculateStatistics(allocator_, &total);
+    return total.total.statistics.allocationBytes;
+}
+
 MemoryStats Memory::stats() const {
     MemoryStats out;
     VmaTotalStatistics total{};

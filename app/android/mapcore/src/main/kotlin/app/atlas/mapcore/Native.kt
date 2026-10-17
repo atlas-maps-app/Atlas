@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 2
+    const val ABI = 3
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -54,12 +54,18 @@ object Native {
 
     /**
      * VkFacts, one "name: value" per line: of the core [handle], or (0) of a guarded start of their own, which needs no
-     * core. When the crash guard has Vulkan off, the guard's line and the facts kept before.
+     * core ([exits] and [processStart] as [create] takes them). When the crash guard has Vulkan off, the guard's line and
+     * the facts kept before. Android's profiles are read for them (the guard's profiles stage), once a device.
      */
-    @JvmStatic external fun facts(handle: Long, cacheDir: String, guardDir: String, system: String, flags: Int): String
+    @JvmStatic external fun facts(handle: Long, cacheDir: String, guardDir: String, system: String, flags: Int, exits: String, processStart: Long): String
 
-    /** Makes the process's core behind the crash guard; 0 when it refuses (the reason in [lastError]). */
-    @JvmStatic external fun create(cacheDir: String, guardDir: String, system: String, plant: String, flags: Int): Long
+    /**
+     * Makes the process's core behind the crash guard; 0 when it refuses (the reason in [lastError]). [exits] is how the
+     * app's last processes ended ([ProcessExits.text]: "" where none are known), [processStart] when this one started
+     * (ms since the epoch, 0 for unknown): the guard reads a marker by them, and one a stopped process left counts for
+     * nothing.
+     */
+    @JvmStatic external fun create(cacheDir: String, guardDir: String, system: String, plant: String, flags: Int, exits: String, processStart: Long): Long
 
     @JvmStatic external fun close(handle: Long)
 
@@ -94,8 +100,9 @@ object Native {
     @JvmStatic external fun pipelines(handle: Long): String
 
     /**
-     * Forgets every crash, every driver the crash guard turned off and every 10 bits it turned off in [guardDir], and
-     * the pipeline cache under [cacheDir], as a fresh install would: the next start tries Vulkan and 10 bits again.
+     * Forgets every crash, every driver the crash guard turned off and everything it turned off for one (10 bits, the
+     * profiles check) in [guardDir], and the pipeline cache under [cacheDir], as a fresh install would: the next start
+     * tries Vulkan, 10 bits and the profiles again.
      * Refused (in words) while a core is alive in the process, which would write its pipeline cache back: close it
      * first. What it forgot, in words.
      */

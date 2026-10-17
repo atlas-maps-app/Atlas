@@ -15,16 +15,20 @@
 #   glcaps.txt                               the device's facts and OpenGL ES capabilities (the glcaps screen)
 #   vkfacts.txt, vkbench.txt, vkguard.txt    the Vulkan core (plan-vector K1, Appendix C): VK facts through the guest's
 #                                            Vulkan, VK bench in CI's length (the stand-in in every configuration the
-#                                            guest has, both hosts, the pills), and the crash guard's planted crash
-#                                            ending in the honest state on the next launch; pymath.txt, the core's
-#                                            numerics on Bionic (K3b), which must read `pymath $ATLAS_PYMATH_HASH ok`
+#                                            guest has, both hosts, the pills, the colour stage with the app sent to the
+#                                            background and brought back in it; then the crash guard's marker gone and
+#                                            VK facts' guard clear), and the crash guard's planted crash ending in the
+#                                            honest state on the next launch; pymath.txt, the core's numerics on Bionic
+#                                            (K3b), which must read `pymath $ATLAS_PYMATH_HASH ok`
 # Each measured run starts from the installed state (`pm clear`, the install's permissions granted again), so earlier
 # screens' downloads and kept scenes do not change what the home draws. `run-as` needs a debuggable APK, so the bench
 # phase never uses it: the screen list comes from the debug run and the timings from logcat (tag AtlasMap).
 #
 # Fails (exit 1) on a crash (a native one symbolised with ndk-stack from the APK's own unstripped libraries), "a frame
-# failed", "out of memory", "device lost", a `vk guard` line outside the planted-crash case, a guest without a Vulkan
-# device, a VK bench that does not finish or exceeds configuration C's graphics ceiling, a pymath line other than
+# failed", "out of memory", "device lost", a `vk guard` line outside the planted-crash case (a marker the guard
+# discarded because its process was stopped, not crashed, `vk guard: … not counted`, is reported, not failed), a guest
+# without a Vulkan device, a VK bench that does not finish within 900 s, exceeds configuration C's graphics ceiling,
+# loses its window in the colour stage for good or leaves the guard's marker behind, a pymath line other than
 # `pymath $ATLAS_PYMATH_HASH ok`. A frame that never comes is "NO FRAME", a warning.
 # Environment: ATLAS_SCREENS (the debug loop's screens, default: all), ATLAS_MAP_WAIT (seconds to wait for the home's map),
 # ATLAS_IDLE (seconds the home is watched at rest, default 20), ATLAS_BENCH=0 (skip the bench phase), ATLAS_PROFILE=0
@@ -176,9 +180,12 @@ measure() {
   if grep -q -e "a frame failed" -e "out of memory" -e "device lost" "$OUT/$s.$run.atlasmap.txt"; then
     echo "FRAME FAILED on $s ($run)"; grep -e "a frame failed" -e "out of memory" -e "device lost" "$OUT/$s.$run.atlasmap.txt" | head -3; FAIL=1
   fi
-  # The crash guard speaks only when a driver crashed (Appendix C): outside the planted case, a failure.
-  if grep -q "AtlasMap: vk guard" "$OUT/$s.$run.atlasmap.txt"; then
+  # The crash guard speaks only when a driver crashed (Appendix C): outside the planted case, a failure. A marker it
+  # discarded because its process was stopped (`vk guard: … not counted`; a force-stop between runs) is reported only.
+  if grep "AtlasMap: vk guard" "$OUT/$s.$run.atlasmap.txt" | grep -q -v ' not counted$'; then
     echo "VK GUARD on $s ($run)"; grep "AtlasMap: vk guard" "$OUT/$s.$run.atlasmap.txt" | head -3; FAIL=1
+  elif grep -q "AtlasMap: vk guard" "$OUT/$s.$run.atlasmap.txt"; then
+    echo "vk guard on $s ($run): $(grep -m1 -o 'vk guard: .*' "$OUT/$s.$run.atlasmap.txt")"
   fi
   if adb logcat -d -b crash | grep -q "$PKG"; then
     echo "CRASH on $s ($run)"; adb logcat -d -b crash > "$OUT/$s.$run.crash.txt"; FAIL=1
@@ -275,6 +282,38 @@ vk_crashes() {
   fi
 }
 
+# An ANR of the app since marker $1 fails (the system's lines are not under AtlasMap).
+vk_anr() {
+  if since_marker_all "$1" | grep -q "ANR in $PKG"; then
+    echo "ANR on $1"; since_marker_all "$1" | grep -A3 "ANR in $PKG" | head -8; FAIL=1
+  fi
+}
+
+# During VK bench's colour stage (marker $1): the app to the background and back, as an app switch does, so that the
+# stage's window goes and comes back (or, where the SurfaceView keeps its surface, the stage runs on in the background)
+# and the bench must go on to its end with nothing left on the crash guard's disk. Where the colour stage never begins,
+# says so.
+vk_background() {
+  local label=$1 line i
+  for i in $(seq 1 840); do
+    since_marker "$label" | grep -q -e 'vkbench colour stage: ' -e 'vkbench done' && break
+    sleep 1
+  done
+  if ! since_marker "$label" | grep -q 'vkbench colour stage: '; then
+    echo "VK BENCH: no colour stage began (the bench ended first, or not within 840 s); the app was not sent to the background"
+    return
+  fi
+  line=$(since_marker "$label" | grep -m1 -o 'vkbench colour stage: .*')
+  echo "vk background: $line"
+  sleep 1
+  adb shell input keyevent KEYCODE_HOME
+  sleep 4
+  # The task's own intent again (no extras, the same filter as its root): Android brings the task back as it was.
+  adb shell am start -n $PKG/.MainActivity > /dev/null 2>&1
+  adb shell log -t AtlasMap "vk background: the app was sent to the background in the colour stage and brought back"
+  echo "vk background: the app went to the background in the colour stage and came back"
+}
+
 vk_phase() {
   # VK facts through the guest's Vulkan (the emulator's lavapipe): there must be a device.
   fresh_state
@@ -302,11 +341,15 @@ vk_phase() {
   fi
   vk_crashes vkfacts
 
-  # VK bench in CI's length: every configuration the guest has, both hosts with the pills, the pills moving.
+  # VK bench in CI's length: every configuration the guest has, both hosts with the pills, the pills moving, then the
+  # colour stage, with the app sent to the background and brought back in it (the colour stage runs at 8 bits alone,
+  # saying so, where the guest's surface offers no 10 bits). 900 s in all, the colour stage's wait included.
   vk_launch vkbench --es atlas.screen vkbench --es atlas.vk.bench ci --ez atlas.vk.ci true
-  local done_ok=1
-  wait_line vkbench 900 "vkbench done" || { echo "VK BENCH FAILED: no 'vkbench done' within 900 s"; FAIL=1; done_ok=0; }
-  since_marker vkbench | grep -E 'AtlasMap: (vkbench|vkfacts|vk config|vk path|vk surface|vk frame|a0 |a frame failed|device lost)' |
+  local done_ok=1 bench_start=$SECONDS left
+  vk_background vkbench
+  left=$((900 - (SECONDS - bench_start))); [ "$left" -gt 0 ] || left=1
+  wait_line vkbench "$left" "vkbench done" || { echo "VK BENCH FAILED: no 'vkbench done' within 900 s"; FAIL=1; done_ok=0; }
+  since_marker vkbench | grep -E 'AtlasMap: (vkbench|vkfacts|vk config|vk path|vk surface|vk frame|vk guard|a0 |a frame failed|device lost)' |
     sed 's/.*AtlasMap: //' > "$OUT/vkbench.txt"
   adb exec-out screencap -p > "$OUT/vkbench.png"
   if [ "$done_ok" = 1 ]; then
@@ -320,8 +363,33 @@ vk_phase() {
     # Configuration C's graphics memory ceiling at S1 (plan-vector §3: 225 MB; the emulator's pixel_7 is 1080 × 2400).
     awk '/^vkbench (board|pitch70|surface|texture) / { for (i = 1; i < NF; i++) if ($i == "graphics" && $(i + 1) + 0 > 225) { print; bad = 1 } }
          END { exit bad }' "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: graphics memory above configuration C's 225 MB"; FAIL=1; }
+    # The window gone in the colour stage came back, and no wait ran out.
+    grep -q -e 'the colour stage ends here' -e 'window came within' "$OUT/vkbench.txt" &&
+      { echo "VK BENCH FAILED: a window did not come back"; grep -e 'the colour stage ends here' -e 'window came within' "$OUT/vkbench.txt" | head -3; FAIL=1; }
+    if grep -q 'vkbench colour: the window went away' "$OUT/vkbench.txt" && ! grep -q 'vkbench colour: the window came back' "$OUT/vkbench.txt"; then
+      echo "VK BENCH FAILED: the window went away in the colour stage and never came back"; FAIL=1
+    fi
+    # Nothing of the bench left a marker: the crash guard's file is gone once it is done (the debug APK: run-as).
+    if adb shell run-as $PKG ls no_backup/vk/guard > /dev/null 2>&1; then
+      echo "VK BENCH FAILED: the crash guard's marker is still on disk after the bench:"
+      adb shell run-as $PKG cat no_backup/vk/guard | tr -d '\r' | head -3; FAIL=1
+    else
+      echo "VK BENCH: the crash guard's marker is gone after the bench"
+    fi
   fi
   vk_crashes vkbench
+  vk_anr vkbench
+  # VK facts after the bench: the guard clear, and no marker left for it to find (stopped or crashed).
+  vk_launch vkafter --es atlas.screen vkfacts
+  wait_line vkafter 120 "vkfacts done" || echo "VK FACTS: no 'vkfacts done' after the bench within 120 s"
+  since_marker vkafter | grep -E 'AtlasMap: vkfacts (guard|vk guard)' | sed 's/.*AtlasMap: vkfacts //' > "$OUT/vkfacts-after.txt"
+  cat "$OUT/vkfacts-after.txt"
+  if grep -qx 'guard: clear' "$OUT/vkfacts-after.txt" && ! grep -q '^vk guard' "$OUT/vkfacts-after.txt"; then
+    echo "VK FACTS: the guard is clear after the bench"
+  else
+    echo "VK FACTS FAILED: the guard is not clear after the bench"; FAIL=1
+  fi
+  vk_crashes vkafter
 
   # The crash guard: a crash planted in pipeline creation, twice (the second start retries without the cache), then
   # the next launch shows the honest state with the guard's line (D5.10).

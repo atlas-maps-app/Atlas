@@ -67,6 +67,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
@@ -89,11 +90,13 @@ import kotlin.math.sin
  *  4. a soak: the thermal headroom every 10 s and its slope over minutes 5-10, the battery's charge used (unplugged);
  * then pipeline creation (this launch's first, and again from an empty cache and from the cache file) and the A0
  * decisions the numbers point to; then, once all of that is recorded,
- *  5. the colour stage (plan-vector D5, "Colour depth"), where the surface offers 10 bits a channel: each configuration
- *     at the board's view at 10 bits and again at 8 beside it, the `vkbench colour` lines (what the 10 bits cost), all
- *     behind the crash guard's colour stage. A driver that crashes there has 10 bits turned off for it and this build
+ *  5. the colour stage (plan-vector D5, "Colour depth"): where the surface offers 10 bits a channel, each configuration
+ *     at the board's view at 10 bits and again at 8 beside it, the `vkbench colour` lines (what the 10 bits cost), the
+ *     10-bit frames behind the crash guard's colour stage; where it offers none, each at 8 bits alone, saying so, so
+ *     the stage's flow runs on every surface. A driver that crashes there has 10 bits turned off for it and this build
  *     (VK facts' `colour:` says so) and nothing else: the next start skips the stage, saying so, and shows the crashed
- *     run's report as recorded before it (Copy keeps it).
+ *     run's report as recorded before it (Copy keeps it). A window that goes during the stage is waited for, at most
+ *     [VkBench.WINDOW_WAIT_SECONDS] seconds; then the stage ends, saying so.
  * Every result is a `vkbench …` line (logcat, the screen, Copy); the report is recorded on disk as each step begins, so
  * a native crash cannot cost what was measured before it. The Pills run is step 3 alone, 20 s long, for the phone's own
  * screen recorder to film the pills frame by frame.
@@ -167,7 +170,12 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
                 val waiter = CompletableDeferred<VkSurfaceState>()
                 attachWaiter = waiter
                 host = h
-                waiter.await()
+                // Never a hang: a window that does not come (a refused attach brings no callback again, a phone left on
+                // another app) ends the wait, and the step says why.
+                withTimeoutOrNull(VkBench.WINDOW_WAIT_SECONDS * 1000L) { waiter.await() }
+                    ?: VkSurfaceState(false, 0, 0, VkBench.windowTimedOut(h.label)).also {
+                        Log.w(EngineFrames.TAG, "vkbench ${h.label}: ${it.error}")
+                    }
             }
         }
         run.pills = { on, moving ->
@@ -569,24 +577,33 @@ private class BenchRun(
         // Why the core refused the first 10-bit frame: it asks the device about 10 bits only as the stage begins, so
         // a device that cannot draw the frame in them says so here, not in the facts read before.
         var tenRefused: String? = null
-        if (format == null) {
+        if (stage.off) {
             emit(VkBench.colourSkipped(stage))
         } else {
+            // Where the surface offers no 10 bits the stage still runs, each configuration at 8 bits alone, saying so.
             val cells = matrix.filter { "$viewKey ${it.name}" in gpuByCell }
-            status("5/5: the colour stage, ${cells.size} configurations at 10 bits and at 8 beside them")
-            emit("vkbench colour stage: $format (${stage.why}); each configuration at the board's view at 10 bits and at 8 beside it")
+            status(
+                if (format != null) "5/5: the colour stage, ${cells.size} configurations at 10 bits and at 8 beside them"
+                else "5/5: the colour stage, ${cells.size} configurations at 8 bits (no 10 bits here)",
+            )
+            emit(VkBench.colourStageLine(stage))
             surface = hostSwitch(VkHost.SURFACE)
             val unavailable = HashSet<String>()
-            for (step in VkBench.colourSteps(cells)) {
+            for (step in VkBench.colourSteps(cells, ten = format != null)) {
                 val cell = "$viewKey ${step.config.name}"
                 if (cell in unavailable) continue
                 val c = step.config
                 // The window as it is now, not as the stage found it: on Android 10 to 13 the SurfaceView's goes with
-                // an app switch or the screen off, and the core has nothing to draw into until it comes back.
+                // an app switch or the screen off, and the core has nothing to draw into until it comes back. The wait
+                // ends: a window that does not come back ends the stage.
                 if (!surfaceNow().attached) {
-                    emit("vkbench colour: the window went away before $cell; the stage waits for it")
+                    emit("vkbench colour: the window went away before $cell; the stage waits for it (at most ${VkBench.WINDOW_WAIT_SECONDS} s)")
                     surface = hostSwitch(VkHost.SURFACE)
-                    if (surface.attached) emit("vkbench colour: the window came back")
+                    if (!surface.attached) {
+                        emit("vkbench colour: the window did not come back (${surface.error.ifEmpty { "the SurfaceView did not attach" }}); the colour stage ends here")
+                        break
+                    }
+                    emit("vkbench colour: the window came back")
                 }
                 inColour = step.tenBit
                 val why = if (!surface.attached) {
@@ -604,7 +621,11 @@ private class BenchRun(
                 (if (step.tenBit) tenByCell else eightByCell)[cell] = s
                 val ten = tenByCell[cell]
                 val eight = eightByCell[cell]
-                if (ten != null && eight != null) emit(VkBench.colourLine(cell, format, ten, eight))
+                if (format == null && eight != null) {
+                    emit(VkBench.colourEightLine(cell, eight, stage.why))
+                } else if (format != null && ten != null && eight != null) {
+                    emit(VkBench.colourLine(cell, format, ten, eight))
+                }
             }
             leaveColour()
         }

@@ -33,7 +33,7 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
                 refusal = it
                 return null
             }
-            val handle = Native.create(config.cacheDir, config.guardDir, config.system, config.plant, config.flags)
+            val handle = Native.create(config.cacheDir, config.guardDir, config.system, config.plant, config.flags, config.exits(), config.processStartMs)
             if (handle == 0L) {
                 refusal = Native.lastError()
                 return null
@@ -59,7 +59,8 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
         fun facts(config: CoreConfig): List<String> {
             Native.load()?.let { return listOf("vulkan: the core did not load ($it)") }
             process?.let { return it.facts() }
-            return Native.facts(0L, config.cacheDir, config.guardDir, config.system, config.flags).lines().filter { it.isNotEmpty() }
+            return Native.facts(0L, config.cacheDir, config.guardDir, config.system, config.flags, config.exits(), config.processStartMs)
+                .lines().filter { it.isNotEmpty() }
         }
 
         /** The core's build: compiler, C++ level, flags, Slang. */
@@ -71,8 +72,8 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
         /**
          * VK facts' "Reset guard" (debug and bench builds, D5.10): forgets every crash, every driver the crash guard
-         * turned off and every 10 bits it turned off (VK bench's colour stage), and the pipeline cache, so that the next
-         * start tries Vulkan and 10 bits again. Only with no core alive: a live core writes its pipeline cache back (on
+         * turned off and everything it turned off for one (10 bits after VK bench's colour stage, the profiles check),
+         * and the pipeline cache, so that the next start tries Vulkan, 10 bits and the profiles again. Only with no core alive: a live core writes its pipeline cache back (on
          * trim, on close, after its first 120 frames), which would undo the reset, and the core refuses a reset while
          * one is. So the process's core is closed first, writing its cache one last time, and the next [shared] makes a
          * new one, which reads the guard afresh. One line saying what it forgot. Off the main thread.
@@ -92,7 +93,7 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
     /** This core's facts, the surface's included once one is attached. */
     fun facts(): List<String> =
-        core.call(null) { Native.facts(it, config.cacheDir, config.guardDir, config.system, config.flags) }
+        core.call(null) { Native.facts(it, config.cacheDir, config.guardDir, config.system, config.flags, "", 0L) }
             ?.lines()?.filter { it.isNotEmpty() } ?: listOf("vulkan: the core is closed")
 
     /**

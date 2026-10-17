@@ -140,7 +140,11 @@ public:
 
     [[nodiscard]] Result<Image> image(const vk::ImageCreateInfo& info, MemoryUse use) const;
     [[nodiscard]] Result<Buffer> buffer(vk::DeviceSize size, vk::BufferUsageFlags usage, MemoryUse use) const;
+    /// Everything above. The budget asks the driver (VK_EXT_memory_budget: VMA fetches it now and then), so it is read
+    /// only behind a crash guard's stage, as every driver call is (gpu/Guard.hpp).
     [[nodiscard]] MemoryStats stats() const;
+    /// The bytes in the core's allocations alone, from the allocator's own books: no driver call.
+    [[nodiscard]] vk::DeviceSize allocated() const;
     [[nodiscard]] VmaAllocator handle() const noexcept { return allocator_; }
 
 private:

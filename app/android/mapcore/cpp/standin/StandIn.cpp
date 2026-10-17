@@ -279,10 +279,11 @@ gpu::Result<std::unique_ptr<StandIn>> StandIn::create(const gpu::Device& device,
     return self;
 }
 
-gpu::Result<void> StandIn::make_pipeline(const gpu::GraphicsDesc& desc, vk::raii::Pipeline& out, double& ms) {
+gpu::Result<void> StandIn::make_pipeline(const gpu::GraphicsDesc& desc, vk::raii::Pipeline& out, double& ms,
+                                         const gpu::PipelineCache& cache) {
     gpu::announce(desc.label, watch_);
     const auto started = clock::now();
-    ATLAS_GPU_LET(pipeline, gpu::make_graphics(device_.handle(), cache_.handle(), desc));
+    ATLAS_GPU_LET(pipeline, gpu::make_graphics(device_.handle(), cache.handle(), desc));
     ms += ms_since(started);
     out = std::move(pipeline);
     return {};
@@ -452,14 +453,14 @@ gpu::Result<void> StandIn::create_fixed() {
                                  .fragment = "atlas_fs",
                                  .layout = *scene_pipeline_layout_};
     atlas_desc.target = {.render_pass = *atlas_clear_pass_, .subpass = 0, .colour_count = 1};
-    ATLAS_GPU_CHECK(make_pipeline(atlas_desc, atlas_pipeline_, fixed_pipelines_ms_));
+    ATLAS_GPU_CHECK(make_pipeline(atlas_desc, atlas_pipeline_, fixed_pipelines_ms_, cache_));
     gpu::GraphicsDesc shadow_desc{.label = {.name = "shadow", .module = "standin_standin"},
                                   .module = *standin_module_,
                                   .vertex = "shadow_vs",
                                   .fragment = "shadow_fs",
                                   .layout = *scene_pipeline_layout_};
     shadow_desc.target = {.render_pass = *shadow_pass_, .subpass = 0, .colour_count = 1};
-    ATLAS_GPU_CHECK(make_pipeline(shadow_desc, shadow_pipeline_, fixed_pipelines_ms_));
+    ATLAS_GPU_CHECK(make_pipeline(shadow_desc, shadow_pipeline_, fixed_pipelines_ms_, cache_));
     const gpu::PipelineLabel blur_label{.name = "blur", .module = "standin_blur"};
     gpu::announce(blur_label, watch_);
     const auto started = clock::now();
@@ -613,8 +614,10 @@ gpu::Result<void> StandIn::prepare_pipelines(const gpu::MainPass& pass, const gp
     std::array<gpu::Blend, 4> scene_blends{};
     if (scene.colour_count == 2)
         scene_blends[1] = gpu::Blend::untouched(); // the 1x dynamic route's output, written by the composite only
+    // Through the cache prepare is given (VK bench's colour stage's own), else the stand-in's.
+    const gpu::PipelineCache& cache = prepare_cache_ != nullptr ? *prepare_cache_ : cache_;
     auto make = [&](const gpu::GraphicsDesc& desc, vk::raii::Pipeline& out) -> gpu::Result<void> {
-        ATLAS_GPU_CHECK(make_pipeline(desc, out, ms));
+        ATLAS_GPU_CHECK(make_pipeline(desc, out, ms, cache));
         ++made;
         return {};
     };

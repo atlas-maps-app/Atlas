@@ -65,7 +65,7 @@ void Swapchain::retire_presents() {
 }
 
 Result<std::unique_ptr<Swapchain>> Swapchain::create(const Device& device, vk::SurfaceKHR surface, vk::Extent2D wanted,
-                                                     std::unique_ptr<Swapchain> old, Depth depth) {
+                                                     std::unique_ptr<Output> old, Depth depth) {
     if (!device.enabled().swapchain) {
         return fail(std::format("{} was opened for offscreen work, without VK_KHR_swapchain: it cannot present",
                                 device.facts().name));
@@ -108,7 +108,7 @@ Result<std::unique_ptr<Swapchain>> Swapchain::create(const Device& device, vk::S
                                     .compositeAlpha = pick_alpha(caps.supportedCompositeAlpha),
                                     .presentMode = vk::PresentModeKHR::eFifo,
                                     .clipped = vk::True,
-                                    .oldSwapchain = old ? *old->swapchain_ : vk::SwapchainKHR{}};
+                                    .oldSwapchain = old ? old->swapchain() : vk::SwapchainKHR{}};
     auto made = device.handle().createSwapchainKHR(info);
     if (!made && self->colour_.ten_bit()) {
         // A driver that lists a 10-bit format it cannot make a swapchain of: the frame at 8 bits, saying so. The old

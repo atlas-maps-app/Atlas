@@ -168,9 +168,9 @@ void Renderer::release_frame() {
     if (prepared_) {
         // Named by the pass's configuration and colour, as its pipelines are: a driver crashing as a 10-bit frame goes
         // is told from one crashing as an 8-bit frame goes.
-        announce_release(std::format("frame (configuration {} {})", name_of(pass_->spec().config),
-                                     colour_name(pass_->spec().colour_format)),
-                         watch_);
+        const std::string detail = std::format("(configuration {} {})", name_of(pass_->spec().config),
+                                               colour_name(pass_->spec().colour_format));
+        announce_release({.kind = "frame", .detail = detail, .ten_bit = ten_bit(pass_->spec().colour_format)}, watch_);
         content_.release();
         prepared_ = false;
     }

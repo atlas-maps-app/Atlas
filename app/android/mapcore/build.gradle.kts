@@ -193,6 +193,13 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    // The façade's own JVM tests (ProcessExitsTest) run on Robolectric at SDK 34, the highest JDK 17 runs.
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 androidComponents {
@@ -206,4 +213,5 @@ tasks.matching { it.name.startsWith("configureCMake") }.configureEach { dependsO
 
 dependencies {
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
 }

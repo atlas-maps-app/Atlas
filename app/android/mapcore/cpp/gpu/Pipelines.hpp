@@ -5,9 +5,10 @@
 //
 // No pipeline takes specialization constants: the core's modules hold none (cmake/Shaders.cmake refuses them, after
 // PowerVR's compiler crashed on one), so a variant is a module of its own and the pipeline picks the module. Each
-// pipeline and each shader module is announced before it is made (announce, announce_module), and a frame's pipelines,
-// passes and images before they are destroyed (announce_release): the log names it, and the crash guard writes it into
-// its marker, so a driver that crashes making or destroying it is known by it at the next start (D5.10), a crash in
+// pipeline and each shader module is announced before it is made (announce, announce_module), and whatever the core
+// destroys as a whole before it goes (announce_release: a frame's pipelines, passes and images, a swapchain, a pipeline
+// cache, the stand-in, the device, the instance): the log names it, and the crash guard writes it into its marker, so a
+// driver that crashes making or destroying it is known by it at the next start (D5.10), a crash in
 // vkCreateShaderModule by its module, not by the pipeline made before it.
 #pragma once
 
@@ -35,18 +36,32 @@ struct PipelineLabel {
 /// "<name> (module <module>, configuration <configuration>)".
 [[nodiscard]] std::string describe(const PipelineLabel& label);
 
-/// Told about each pipeline and each shader module just before it is made, and about a frame's objects just before they
-/// are destroyed (the crash guard, D5.10).
+/// What the core is about to destroy as a whole, as the log and the crash guard name it: "<kind> <detail>".
+struct Release {
+    /// What kind of thing goes, each a name of its own, which the crash guard's plants take (gpu/Guard.hpp):
+    /// "frame" (a renderer's main pass and everything it prepared in its content: the configuration's pipelines,
+    /// passes, framebuffers and images), "swapchain" (the window's output: a swapchain on the phone, the images that
+    /// stand in for one on hosts), "cache" (a pipeline cache: VK bench's colour stage's own), "standin" (the stand-in's
+    /// shared pipelines, modules, buffers and atlas), "device" (the device and its allocator), "instance".
+    std::string_view kind;
+    /// Which: "(configuration A renderpass composite resolve rgb10a2)", "rgb10a2", "(the colour stage's)", ….
+    std::string_view detail;
+    /// Whether it holds 10 bits a channel (a 10-bit frame or swapchain, the colour stage's cache).
+    bool ten_bit = false;
+};
+
+/// "<kind> <detail>" ("frame (configuration C renderpass composite direct rgb10a2)", "swapchain rgba8").
+[[nodiscard]] std::string describe(const Release& release);
+
+/// Told about each pipeline and each shader module just before it is made, and about what goes just before it is
+/// destroyed (the crash guard, D5.10).
 class PipelineWatch {
 public:
     virtual ~PipelineWatch() = default;
     virtual void before(const PipelineLabel& label) = 0;
     /// `module` is an embedded module's symbol (standin_composite).
     virtual void before_module(std::string_view module) = 0;
-    /// `what` is what goes: "frame (configuration A renderpass composite resolve rgb10a2)" (a renderer's main pass and
-    /// everything it prepared in its content: the configuration's pipelines, passes, framebuffers and images), or
-    /// "swapchain rgb10a2".
-    virtual void before_release(std::string_view what) = 0;
+    virtual void before_release(const Release& release) = 0;
 };
 
 /// Logs the pipeline about to be made ("vk pipeline <describe>", under the tag AtlasMap, so that a crash's last line in
@@ -56,8 +71,8 @@ void announce(const PipelineLabel& label, PipelineWatch* watch);
 /// Logs the shader module about to be made ("vk module <module>") and tells `watch`, if any.
 void announce_module(std::string_view module, PipelineWatch* watch);
 
-/// Logs what is about to be destroyed ("vk release <what>") and tells `watch`, if any.
-void announce_release(std::string_view what, PipelineWatch* watch);
+/// Logs what is about to be destroyed ("vk release <kind> <detail>") and tells `watch`, if any.
+void announce_release(const Release& release, PipelineWatch* watch);
 
 /// Where a graphics pipeline draws.
 struct PipelineTarget {

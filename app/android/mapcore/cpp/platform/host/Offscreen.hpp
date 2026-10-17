@@ -83,7 +83,7 @@ public:
     [[nodiscard]] vk::Extent2D extent() const noexcept override { return extent_; }
     [[nodiscard]] vk::Format format() const noexcept override { return colour_.format; }
     /// The images' colour, and why (gpu/Facts.hpp's colour_offscreen).
-    [[nodiscard]] const gpu::Colour& colour() const noexcept { return colour_; }
+    [[nodiscard]] const gpu::Colour& colour() const noexcept override { return colour_; }
     [[nodiscard]] std::span<const vk::Image> images() const noexcept override { return handles_; }
     [[nodiscard]] std::span<const vk::ImageView> views() const noexcept override { return view_handles_; }
     [[nodiscard]] vk::ImageLayout final_layout() const noexcept override {

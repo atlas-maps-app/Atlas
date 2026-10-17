@@ -252,17 +252,47 @@ object VkBench {
     fun colourSkipped(stage: ColourStage): String =
         if (stage.off) "vkbench colour: skipped (${stage.why})" else "vkbench colour: rgba8 only (${stage.why})"
 
+    /**
+     * The colour stage's first line: what it draws and why. Where the surface offers no 10 bits the stage still runs,
+     * each configuration at 8 bits alone, saying so: its flow (the window going and coming back, the waits) is the same
+     * on every phone and on CI's emulator, whatever their surfaces offer.
+     */
+    fun colourStageLine(stage: ColourStage): String =
+        if (stage.format != null) {
+            "vkbench colour stage: ${stage.format} (${stage.why}); each configuration at the board's view at 10 bits and at 8 beside it"
+        } else {
+            "vkbench colour stage: rgba8 only (${stage.why}): no 10 bits here, so each configuration at the board's view at 8 bits alone"
+        }
+
+    /** The colour stage's line for [cell] where there are no 10 bits: its 8-bit frame alone, and why. */
+    fun colourEightLine(cell: String, eight: Summary, why: String): String =
+        "vkbench colour $cell: rgba8 ${ms(eight.gpuP50)} ms GPU (p95 ${ms(eight.gpuP95)}; no 10 bits here: $why)"
+
     /** One measurement of the colour stage: [config] at 10 bits a channel, or at 8 beside it. */
     data class ColourStep(val config: Config, val tenBit: Boolean)
 
     /**
      * The colour stage's measurements, in order: each of [cells] at 10 bits and again at 8 beside it, the same warmth
      * (the stage runs after the soak), the order turning with each cell (10 then 8, 8 then 10, …), so that the depth
-     * changes once a cell and each cell's pipelines are made once at each depth.
+     * changes once a cell and each cell's pipelines are made once at each depth. Without [ten] bits, each at 8 alone.
      */
-    fun colourSteps(cells: List<Config>): List<ColourStep> = cells.flatMapIndexed { i, c ->
-        if (i % 2 == 0) listOf(ColourStep(c, true), ColourStep(c, false)) else listOf(ColourStep(c, false), ColourStep(c, true))
-    }
+    fun colourSteps(cells: List<Config>, ten: Boolean = true): List<ColourStep> =
+        if (!ten) {
+            cells.map { ColourStep(it, false) }
+        } else {
+            cells.flatMapIndexed { i, c ->
+                if (i % 2 == 0) listOf(ColourStep(c, true), ColourStep(c, false)) else listOf(ColourStep(c, false), ColourStep(c, true))
+            }
+        }
+
+    /**
+     * The longest VK bench waits for a window to come (a host switch) or come back (gone with an app switch or the
+     * screen off, in the colour stage): the wait always ends, the step saying why where none came.
+     */
+    const val WINDOW_WAIT_SECONDS = 60
+
+    /** Why a step has no window after waiting for one. */
+    fun windowTimedOut(host: String, seconds: Int = WINDOW_WAIT_SECONDS): String = "no $host window came within $seconds s"
 
     /**
      * The A0 line for the colour depth: the colour stage's 10-bit frame in the picked configuration against the 8-bit

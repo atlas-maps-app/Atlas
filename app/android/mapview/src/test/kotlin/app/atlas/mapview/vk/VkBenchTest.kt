@@ -160,6 +160,36 @@ class VkBenchTest {
     }
 
     @Test
+    fun theColourStageRunsWhereThereAreNoTenBitsSayingSo() {
+        // CI's emulator, or a phone whose surface offers no 10-bit sRGB format: the stage still runs, each configuration
+        // at 8 bits alone, so its flow (the window going and coming back, the bounded waits) runs on every surface.
+        fun summary(p50: Double, p95: Double) = VkBench.summarise(
+            doubleArrayOf(16.7), 1, "vsync", doubleArrayOf(p50, p50, p95), 3, doubleArrayOf(1.0), doubleArrayOf(0.5), doubleArrayOf(0.2), 1,
+            doubleArrayOf(), 0, 0L, 0, 1000L, 263, 677, 1000.0 / 60.0,
+        )
+        val none = VkBench.colourStage("none (the surface offers no 10-bit format)")
+        assertEquals(
+            "vkbench colour stage: rgba8 only (the surface offers no 10-bit format): no 10 bits here, so each configuration at the board's view at 8 bits alone",
+            VkBench.colourStageLine(none),
+        )
+        val deep = VkBench.colourStage("rgb10a2 (A2B10G10R10UnormPack32 in SrgbNonlinear: the surface offers it in sRGB and the frame's attachments follow it)")
+        assertTrue(VkBench.colourStageLine(deep).startsWith("vkbench colour stage: rgb10a2 (A2B10G10R10UnormPack32 in SrgbNonlinear: "))
+        assertTrue(VkBench.colourStageLine(deep).endsWith("; each configuration at the board's view at 10 bits and at 8 beside it"))
+        assertEquals(
+            "vkbench colour board C renderpass composite resolve: rgba8 4.12 ms GPU (p95 4.33; no 10 bits here: the surface offers no 10-bit format)",
+            VkBench.colourEightLine("board C renderpass composite resolve", summary(4.12, 4.33), none.why),
+        )
+        val cells = VkBench.matrix(setOf(2, 4), dynamic = true, tiler = false)
+        val eightOnly = VkBench.colourSteps(cells, ten = false)
+        assertEquals(cells, eightOnly.map { it.config })
+        assertTrue(eightOnly.none { it.tenBit })
+        assertEquals(VkBench.colourSteps(cells), VkBench.colourSteps(cells, ten = true))
+        // Every wait for a window ends, and says why it ended without one.
+        assertEquals("no surface window came within 60 s", VkBench.windowTimedOut("surface"))
+        assertEquals(60, VkBench.WINDOW_WAIT_SECONDS)
+    }
+
+    @Test
     fun theReportIsRecordedAsTheBenchRunsAndAnUnfinishedOneIsKept() {
         val lines = listOf("vkbench start: full bench, Imagination PowerVR", "vkbench board A renderpass composite resolve: p50 16.70")
         val running = VkBench.recorded(lines, "the colour stage")

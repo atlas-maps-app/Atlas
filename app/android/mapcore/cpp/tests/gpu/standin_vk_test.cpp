@@ -512,7 +512,7 @@ TEST_CASE("a renderer's end releases everything it prepared in the stand-in, ann
         std::uint32_t made = 0;
         void before(const gpu::PipelineLabel& /*label*/) override { ++made; }
         void before_module(std::string_view /*module*/) override {}
-        void before_release(std::string_view what) override { released.emplace_back(what); }
+        void before_release(const gpu::Release& release) override { released.push_back(gpu::describe(release)); }
     };
     auto session = test::open_session();
     if (!session) return;

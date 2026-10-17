@@ -180,7 +180,7 @@ val bundledTiles = tasks.register<JavaExec>("bundledTiles") {
 
 /** :mapcore's Kotlin (the façade's package), and its files that use Android's types, which this module leaves out. */
 val mapcoreKotlin: File = mapcoreDir.resolve("src/main/kotlin/app/atlas/mapcore")
-val mapcoreAndroidOnly: List<String> = listOf("MapCore.kt", "CoreConfig.kt")
+val mapcoreAndroidOnly: List<String> = listOf("MapCore.kt", "CoreConfig.kt", "ProcessExits.kt")
 
 sourceSets {
     // The façade's pure Kotlin (K1) and the camera and theme writers (K5) are in :mapcore, an Android library: compiled

@@ -62,6 +62,10 @@ public:
     /// Makes the configuration's pipelines and the images, passes and framebuffers of the output's size, after letting
     /// go of the last ones (release).
     [[nodiscard]] gpu::Result<void> prepare(const gpu::MainPass& pass, const gpu::Output& output) override;
+    /// The pipeline cache prepare makes the configuration's pipelines through from now on: `cache`, or (nullptr) the
+    /// stand-in's own, create's. VK bench's colour stage gives one of its own, which goes with the stage, so that the
+    /// pipeline cache on disk never holds a 10-bit pipeline (gpu/Guard.hpp). The shared pipelines stay the stand-in's.
+    void use_prepare_cache(const gpu::PipelineCache* cache) noexcept { prepare_cache_ = cache; }
     /// Lets go of everything prepare made: the configuration's pipelines (made for the main pass's colour, 10 bits a
     /// channel in VK bench's colour stage) and its composite's module, the frosted pass (of the output's format) and
     /// its framebuffers on the output's images, the offscreen images, their views, passes and framebuffers. What create
@@ -85,8 +89,10 @@ private:
     StandIn(const gpu::Device& device, const gpu::PipelineCache& cache, std::shared_ptr<const City> city,
             gpu::PipelineWatch* watch);
     [[nodiscard]] gpu::Result<void> create_fixed();
-    /// Announces the pipeline (the log, the watch), then makes it, adding the time its creation took to `ms`.
-    [[nodiscard]] gpu::Result<void> make_pipeline(const gpu::GraphicsDesc& desc, vk::raii::Pipeline& out, double& ms);
+    /// Announces the pipeline (the log, the watch), then makes it through `cache`, adding the time its creation took to
+    /// `ms`.
+    [[nodiscard]] gpu::Result<void> make_pipeline(const gpu::GraphicsDesc& desc, vk::raii::Pipeline& out, double& ms,
+                                                  const gpu::PipelineCache& cache);
     [[nodiscard]] gpu::Result<void> prepare_offscreen(const gpu::MainPass& pass, const gpu::Output& output);
     [[nodiscard]] gpu::Result<void> prepare_pipelines(const gpu::MainPass& pass, const gpu::Output& output);
     void write_frame(std::uint32_t slot);
@@ -98,6 +104,8 @@ private:
 
     const gpu::Device& device_;
     const gpu::PipelineCache& cache_;
+    const gpu::PipelineCache* prepare_cache_ =
+        nullptr; // the configuration's pipelines' (use_prepare_cache), else cache_
     std::shared_ptr<const City> city_;
     gpu::PipelineWatch* watch_ = nullptr;
     std::unique_ptr<Ranks> ranks_;

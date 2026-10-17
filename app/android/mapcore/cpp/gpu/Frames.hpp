@@ -20,6 +20,15 @@ namespace atlas::gpu {
 /// The outcome of asking the output for an image.
 enum class Acquired : std::uint8_t { ok, suboptimal, out_of_date, timeout, lost };
 
+/// What a presentation really did (VK_GOOGLE_display_timing).
+struct PresentedTiming {
+    std::uint32_t present_id = 0;
+    std::uint64_t desired_ns = 0;
+    std::uint64_t actual_ns = 0;
+    std::uint64_t earliest_ns = 0;
+    std::uint64_t margin_ns = 0;
+};
+
 /// Where frames go.
 class Output {
 public:
@@ -32,6 +41,13 @@ public:
 
     [[nodiscard]] virtual vk::Extent2D extent() const noexcept = 0;
     [[nodiscard]] virtual vk::Format format() const noexcept = 0;
+    /// The frame's colour on it, and why (gpu/Facts.hpp).
+    [[nodiscard]] virtual const Colour& colour() const noexcept = 0;
+    /// The swapchain it is, for a new one to retire (null offscreen).
+    [[nodiscard]] virtual vk::SwapchainKHR swapchain() const noexcept { return {}; }
+    /// The presentations completed since the last call, oldest first (a swapchain with VK_GOOGLE_display_timing;
+    /// none otherwise).
+    virtual void past_timings(std::vector<PresentedTiming>& out) { (void)out; }
     [[nodiscard]] virtual std::span<const vk::Image> images() const noexcept = 0;
     [[nodiscard]] virtual std::span<const vk::ImageView> views() const noexcept = 0;
     /// The layout the main pass leaves the image in.
