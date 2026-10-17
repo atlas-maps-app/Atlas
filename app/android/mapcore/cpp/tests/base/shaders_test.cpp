@@ -8,6 +8,7 @@
 #include "gen/spirv/probe/layout_probe.hpp"
 #include "gen/spirv/probe/probe.hpp"
 #include "tools/nocontract/capabilities.hpp"
+#include "tools/nocontract/constants.hpp"
 #include "tools/nocontract/exactness.hpp"
 #include "tools/nocontract/spirv.hpp"
 
@@ -204,4 +205,39 @@ TEST_CASE("nested structs, arrays, float3 padding and tail padding keep Slang's 
     static_assert(offsetof(lp::Record, kind) == 12 && offsetof(lp::Record, uv) == 16 && sizeof(lp::Record) == 32);
     static_assert(lp::echo.binding == 1);
     CHECK(sizeof(Push) == 64);
+}
+
+TEST_CASE("specialization constants are found, with their names and SpecIds") {
+    using namespace atlas::spirv;
+    // A hand-made module: %3 SAMPLES (SpecId 1) = 4, %4 = SAMPLES + 1 (OpSpecConstantOp IAdd), an unnamed %5 (SpecId 0)
+    // = false, and an ordinary constant %6 that is none of them.
+    std::vector<std::uint32_t> words{magic, 0x00010300U, 0, 16, 0};
+    words.insert(words.end(), {(2U << 16U) | op_capability, 1});                     // Shader
+    words.insert(words.end(), {(4U << 16U) | op_name, 3, 0x504D4153U, 0x0053454CU}); // "SAMPLES"
+    words.insert(words.end(), {(4U << 16U) | op_decorate, 3, decoration_spec_id, 1});
+    words.insert(words.end(), {(4U << 16U) | op_decorate, 5, decoration_spec_id, 0});
+    words.insert(words.end(), {(4U << 16U) | 21U, 2, 32, 1}); // OpTypeInt %2 32 1
+    words.insert(words.end(), {(4U << 16U) | op_spec_constant, 2, 3, 4});
+    words.insert(words.end(), {(6U << 16U) | op_spec_constant_op, 2, 4, 128, 3, 6}); // IAdd %3 %6
+    words.insert(words.end(), {(3U << 16U) | op_spec_constant_false, 7, 5});
+    words.insert(words.end(), {(4U << 16U) | 43U, 2, 6, 1}); // OpConstant %2 %6 1
+    const auto code = instructions(words);
+    REQUIRE(code.has_value());
+    const auto found = specialization_constants(*code);
+    REQUIRE(found.size() == 3);
+    CHECK(found[0].id == 3);
+    CHECK(found[0].opcode == op_spec_constant);
+    CHECK(found[0].name == "SAMPLES");
+    CHECK(found[0].spec_id == 1U);
+    CHECK(found[1].id == 4);
+    CHECK(found[1].opcode == op_spec_constant_op);
+    CHECK(found[1].operation == 128);
+    CHECK_FALSE(found[1].spec_id.has_value());
+    CHECK(found[2].opcode == op_spec_constant_false);
+    CHECK(found[2].spec_id == 0U);
+    CHECK(spec_constant_opname(found[1].opcode) == "OpSpecConstantOp");
+    // The probe, as embedded, holds none.
+    const auto probe = instructions(probe_probe);
+    REQUIRE(probe.has_value());
+    CHECK(specialization_constants(*probe).empty());
 }

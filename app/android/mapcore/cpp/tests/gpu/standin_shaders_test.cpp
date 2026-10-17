@@ -1,16 +1,23 @@
 // The stand-in's SPIR-V as the build embeds it (plan-vector K1, T6): no capability a Vulkan 1.1 phone may lack
 // (StorageImageReadWithoutFormat and WriteWithoutFormat, which Slang declares for subpass loads and K0's capability
-// pass drops; DrawParameters, which SV_VertexID would bring), and the dynamic route's 1x composite writing colour
-// attachment 1 (Slang 2026.19 numbers a lone output 0 unless the location is explicit).
+// pass drops; DrawParameters, which SV_VertexID would bring), the dynamic route's 1x composite writing colour
+// attachment 1 (Slang 2026.19 numbers a lone output 0 unless the location is explicit), and no specialization
+// constant in any module the core embeds (PowerVR's compiler crashed on one; each variant is a module of its own).
+#include "gen/spirv/modules.hpp"
 #include "gen/spirv/standin/blur.hpp"
 #include "gen/spirv/standin/composite.hpp"
 #include "gen/spirv/standin/composite_glsl_composite_fs.hpp"
 #include "gen/spirv/standin/composite_x1.hpp"
+#include "gen/spirv/standin/composite_x1_glsl_composite_fs.hpp"
 #include "gen/spirv/standin/composite_x1_loc1.hpp"
 #include "gen/spirv/standin/composite_x1_loc1_glsl_composite_fs.hpp"
+#include "gen/spirv/standin/composite_x2.hpp"
+#include "gen/spirv/standin/composite_x2_glsl_composite_fs.hpp"
 #include "gen/spirv/standin/frosted.hpp"
 #include "gen/spirv/standin/standin.hpp"
+#include "gen/spirv/standin/standin_onepass.hpp"
 #include "tests/base/require.hpp"
+#include "tools/nocontract/constants.hpp"
 
 #include <doctest/doctest.h>
 
@@ -70,12 +77,16 @@ std::vector<std::uint32_t> output_locations(std::span<const std::uint32_t> words
 
 TEST_CASE("the stand-in's shaders declare nothing a Vulkan 1.1 phone may lack") {
     const std::span<const std::uint32_t> modules[] = {atlas::spirv::standin_standin,
+                                                      atlas::spirv::standin_standin_onepass,
                                                       atlas::spirv::standin_composite,
+                                                      atlas::spirv::standin_composite_x2,
                                                       atlas::spirv::standin_composite_x1,
                                                       atlas::spirv::standin_composite_x1_loc1,
                                                       atlas::spirv::standin_blur,
                                                       atlas::spirv::standin_frosted,
                                                       atlas::spirv::standin_composite_glsl_composite_fs,
+                                                      atlas::spirv::standin_composite_x2_glsl_composite_fs,
+                                                      atlas::spirv::standin_composite_x1_glsl_composite_fs,
                                                       atlas::spirv::standin_composite_x1_loc1_glsl_composite_fs};
     for (const auto words : modules) {
         ATLAS_REQUIRE(words.size() > 5, "a module of " << words.size() << " words");
@@ -98,9 +109,39 @@ TEST_CASE("the dynamic route's 1x composite writes colour attachment 1, the othe
         CHECK(locations[0] == 1);
     }
     for (const auto words : {std::span<const std::uint32_t>(atlas::spirv::standin_composite),
-                             std::span<const std::uint32_t>(atlas::spirv::standin_composite_x1)}) {
+                             std::span<const std::uint32_t>(atlas::spirv::standin_composite_x2),
+                             std::span<const std::uint32_t>(atlas::spirv::standin_composite_x1),
+                             std::span<const std::uint32_t>(atlas::spirv::standin_composite_glsl_composite_fs),
+                             std::span<const std::uint32_t>(atlas::spirv::standin_composite_x2_glsl_composite_fs),
+                             std::span<const std::uint32_t>(atlas::spirv::standin_composite_x1_glsl_composite_fs)}) {
         const auto locations = output_locations(words);
         ATLAS_REQUIRE(locations.size() == 1, locations.size() << " outputs");
         CHECK(locations[0] == 0);
     }
+}
+
+TEST_CASE("no module the core embeds holds a specialization constant") {
+    // The build refuses one (cmake/Shaders.cmake, nocontract constants); this holds every embedded module to it, so a
+    // module embedded some other way is caught too. Opcodes 48 to 52: OpSpecConstantTrue, False, Constant, Composite,
+    // Op.
+    std::size_t scanned = 0;
+    for (const atlas::spirv::Module& m : atlas::spirv::modules) {
+        const auto code = atlas::spirv::instructions(m.words);
+        ATLAS_REQUIRE(code.has_value(), m.name << " is not a SPIR-V module");
+        std::size_t opcodes = 0;
+        for (const atlas::spirv::Instruction& in : *code) {
+            opcodes +=
+                in.opcode >= atlas::spirv::op_spec_constant_true && in.opcode <= atlas::spirv::op_spec_constant_op ? 1
+                                                                                                                   : 0;
+        }
+        const auto found = atlas::spirv::specialization_constants(*code);
+        CHECK_MESSAGE(found.empty(), m.name << " holds " << found.size() << " specialization constants, the first "
+                                            << (found.empty() ? std::string_view()
+                                                              : atlas::spirv::spec_constant_opname(found[0].opcode)));
+        CHECK(opcodes == found.size());
+        ++scanned;
+    }
+    MESSAGE(scanned << " modules scanned");
+    CHECK(scanned == atlas::spirv::modules.size());
+    CHECK(scanned >= 20);
 }

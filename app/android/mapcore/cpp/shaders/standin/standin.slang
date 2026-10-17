@@ -3,13 +3,18 @@
 // front to back with painter-rank depth and the objects bit; a ground with roads, shadows and a water box; tree
 // sprites from an atlas by alpha-to-coverage; screen-blended glows; and the offscreen passes before the main pass:
 // shadow footprints into an R8 mask, a mirrored city into the water's box, crowns into a 2048² atlas. The composite
-// (shaders/standin/composite*.slang) finishes the frame; with ONEPASS the scene's fragments apply the haze and the
-// vignette themselves, as the one-subpass form does.
+// (shaders/standin/composite*.slang) finishes the frame; in standin_onepass (ONEPASS) the scene's fragments apply the
+// haze and the vignette themselves, as the one-subpass form does. Each form is a module of its own: the core's modules
+// hold no specialization constants (cmake/Shaders.cmake).
 //
 // Sets: 0 per frame (the frame's uniforms, the ranks, the draw order, the shadow casters), 1 the scene (boxes, trees,
 // the shadow mask, the water box, the atlas). Nothing here is held to the port: it is a load, not the map.
+//
+// atlas: variant onepass ONEPASS=1
 
-[[vk::constant_id(0)]] const bool ONEPASS = false;
+#ifndef ONEPASS
+#define ONEPASS 0
+#endif
 
 // The frame's uniforms (StandIn.cpp fills them; gen/layouts.hpp checks the layout).
 struct Frame {
@@ -176,7 +181,9 @@ BoxOut box_mirror_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanI
 [shader("fragment")]
 float4 box_fs(BoxOut v) : SV_Target0 {
     float3 c = v.colour;
-    if (ONEPASS) c = finish(c, v.position.xy);
+#if ONEPASS
+    c = finish(c, v.position.xy);
+#endif
     return float4(c, 1.0f);
 }
 
@@ -252,7 +259,9 @@ float4 ground_fs(GroundOut v) : SV_Target0 {
         float3 mirror = water_box.SampleLevel(saturate(box + ripple), 0.0f).rgb;
         c = lerp(float3(0.36f, 0.50f, 0.56f), mirror, 0.45f) * (1.0f - 0.2f * shade);
     }
-    if (ONEPASS) c = finish(c, v.position.xy);
+#if ONEPASS
+    c = finish(c, v.position.xy);
+#endif
     return float4(c, 1.0f);
 }
 
@@ -287,7 +296,9 @@ float4 tree_fs(TreeOut v) : SV_Target0 {
     float2 cell = float2(float(v.sprite & 15u), float(v.sprite >> 4)) / 16.0f;
     float4 s = atlas.SampleLevel(cell + v.uv / 16.0f, 0.0f);
     float3 c = v.colour * (0.6f + 0.4f * s.rgb);
-    if (ONEPASS) c = finish(c, v.position.xy);
+#if ONEPASS
+    c = finish(c, v.position.xy);
+#endif
     return float4(c, s.a);
 }
 

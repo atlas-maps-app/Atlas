@@ -270,6 +270,11 @@ std::string_view name_of(CompositeTarget target) noexcept {
     return target == CompositeTarget::direct ? "direct" : "resolve";
 }
 
+std::string name_of(const Configuration& configuration) {
+    return std::format("{} {} {} {}", name_of(configuration.config), name_of(configuration.route),
+                       name_of(configuration.form), name_of(configuration.target));
+}
+
 bool Facts::has_extension(std::string_view extension) const noexcept {
     return std::ranges::binary_search(extensions, extension, std::less<>{});
 }

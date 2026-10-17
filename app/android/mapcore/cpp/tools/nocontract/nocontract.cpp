@@ -4,10 +4,14 @@
 //   nocontract fix <in.spv> <out.spv>            add NoContraction to every float add, subtract and multiply lacking it
 //   nocontract capabilities <in.spv> <out.spv>   remove capabilities the module declares but does not need
 //                                                (capabilities.hpp); run on every module, exact or not
+//   nocontract constants <module.spv> <source>   exit 0 when the module holds no specialization constant, else name
+//                                                each, say why the core refuses them (constants.hpp) and exit 1; run
+//                                                on every module, before it is embedded
 //
 // Slang 2026.19 emits NoContraction on every float operation under -fp-mode precise, so fix adds nothing today; it
 // stays in the build so a compiler that stops emitting it still yields exact modules, and check still proves them.
 #include "capabilities.hpp"
+#include "constants.hpp"
 #include "exactness.hpp"
 #include "spirv.hpp"
 
@@ -52,9 +56,10 @@ bool write_file(const char* path, std::span<const std::uint32_t> words) {
 }
 
 int usage() {
-    (void)std::fputs("usage: nocontract check <module.spv>\n       nocontract fix <in.spv> <out.spv>\n"
-                     "       nocontract capabilities <in.spv> <out.spv>\n",
-                     stderr);
+    (void)std::fputs(
+        "usage: nocontract check <module.spv>\n       nocontract fix <in.spv> <out.spv>\n"
+        "       nocontract capabilities <in.spv> <out.spv>\n       nocontract constants <module.spv> <source>\n",
+        stderr);
     return 2;
 }
 
@@ -100,6 +105,28 @@ int main(int argc, char** argv) {
         }
         if (removed > 0) (void)std::printf("nocontract: %s: removed %zu unneeded capabilities\n", input, removed);
         return 0;
+    }
+    if (mode == "constants" && args.size() == 4) {
+        const std::vector<atlas::spirv::SpecConstant> found = atlas::spirv::specialization_constants(*code);
+        if (found.empty()) return 0;
+        for (const atlas::spirv::SpecConstant& c : found) {
+            const std::string_view op = atlas::spirv::spec_constant_opname(c.opcode);
+            (void)std::fprintf(stderr, "nocontract: %s: %%%u%s%s: %.*s", input, c.id, c.name.empty() ? "" : " ",
+                               c.name.c_str(), static_cast<int>(op.size()), op.data());
+            if (c.spec_id) (void)std::fprintf(stderr, ", SpecId %u", *c.spec_id);
+            if (c.opcode == atlas::spirv::op_spec_constant_op)
+                (void)std::fprintf(stderr, ", operation %u", c.operation);
+            (void)std::fputc('\n', stderr);
+        }
+        (void)std::fprintf(
+            stderr,
+            "%s: the module holds %zu specialization constant instructions, and no module of the core may "
+            "hold one: PowerVR's shader compiler crashed on a constant computed from one "
+            "(SpvConstCalculated::~SpvConstCalculated in libufwriter.so, VK bench, 17 October 2026). A "
+            "variant is a module of its own: a \"// atlas: variant <suffix> <MACRO>=<value>\" line, or a "
+            "file that defines the macro and includes this one (cmake/Shaders.cmake).\n",
+            args[3], found.size());
+        return 1;
     }
     return usage();
 }

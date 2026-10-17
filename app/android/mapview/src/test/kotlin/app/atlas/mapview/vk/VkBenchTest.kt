@@ -99,6 +99,26 @@ class VkBenchTest {
     }
 
     @Test
+    fun theGuardsLinesLeadTheFacts() {
+        val report = listOf(
+            "atlas.vkfacts: 1",
+            "gpu: PowerVR",
+            "guard: vk guard pipelines ImaginationProprietary 0x00661bd0 attempt 1 pipeline composite (module standin_composite, " +
+                "configuration A renderpass composite resolve) build 0123456789abcdef",
+            "guard.build: fedcba9876543210",
+            "guard.driver: ImaginationProprietary 0x00661bd0",
+            "guard.off: none",
+            "guarded: not a guard line",
+            "core.build: atlasmap 0.1.0",
+        )
+        val guard = VkFactsLines.guard(report)
+        assertEquals(4, guard.size)
+        assertTrue(guard[0].contains("pipeline composite (module standin_composite"))
+        assertEquals("guard.off: none", guard.last())
+        assertTrue(VkFactsLines.guard(listOf("gpu: x")).isEmpty())
+    }
+
+    @Test
     fun thePillsMoveWithinTheirStrip() {
         assertEquals(0f, pillShift(0.0), 1e-6f)
         assertEquals(40f, pillShift(0.5), 1e-4f)

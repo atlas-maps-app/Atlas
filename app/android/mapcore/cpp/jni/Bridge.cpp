@@ -2,18 +2,14 @@
 // the render thread (an ALooper at display priority), Choreographer's vsync, the camera pulled from Kotlin at each
 // paced vsync (FrameSource.camera, allocation-free on both sides), the swapchain on the SurfaceView's or the
 // TextureView's window, the frame through the device layer, the ADPF hint, the frame records VK bench reads, the crash
-// guard's first 120 frames, and device loss rebuilt at most twice a session.
+// guard (keyed by the core's build ID, naming each pipeline before it is made) through its first 120 frames, and
+// device loss rebuilt at most twice a session.
 #include "jni/Bridge.hpp"
 
 #include "base/build_info.hpp"
 #include "base/log.hpp"
 #include "check/NumericsCheck.hpp"
-#include "gen/spirv/standin/blur.hpp"
-#include "gen/spirv/standin/composite.hpp"
-#include "gen/spirv/standin/composite_x1.hpp"
-#include "gen/spirv/standin/composite_x1_loc1.hpp"
-#include "gen/spirv/standin/frosted.hpp"
-#include "gen/spirv/standin/standin.hpp"
+#include "gen/spirv/modules.hpp"
 #include "gpu/Facts.hpp"
 #include "gpu/Frames.hpp"
 #include "gpu/Guard.hpp"
@@ -69,13 +65,8 @@ namespace bench_flag {
 [[maybe_unused]] constexpr std::uint32_t texture = 2U; // the host is a TextureView (for the log and the records)
 } // namespace bench_flag
 
-/// The hash of the core's shaders: the pipeline cache's key.
-[[nodiscard]] std::uint64_t core_spirv() noexcept {
-    const std::array<std::string_view, 6> hashes{
-        spirv::standin_standin_sha256,           spirv::standin_composite_sha256, spirv::standin_composite_x1_sha256,
-        spirv::standin_composite_x1_loc1_sha256, spirv::standin_blur_sha256,      spirv::standin_frosted_sha256};
-    return gpu::spirv_hash(hashes);
-}
+/// The hash of the core's shaders, every embedded module's: the pipeline cache's key.
+[[nodiscard]] std::uint64_t core_spirv() noexcept { return gpu::spirv_hash(spirv::hashes); }
 
 [[nodiscard, maybe_unused]] std::uint32_t config_bits(const gpu::Configuration& c, bool texture, bool pills) noexcept {
     auto b = static_cast<std::uint32_t>(c.config);
@@ -103,6 +94,7 @@ struct CoreOptions {
             .cache_file = o.cache_dir.empty() ? std::filesystem::path()
                                               : std::filesystem::path(o.cache_dir) / "vk" / "pipelines.bin",
             .system = o.system,
+            .build = std::string(build_id()),
             .plant = o.plant,
             .validation = (o.flags & core_flag::validation) != 0,
             .require_validation = false,
@@ -111,19 +103,27 @@ struct CoreOptions {
             .spirv = core_spirv()};
 }
 
+/// The core's build and the linker's identity of its library, which its build ID hashes (base/build_info.hpp).
+[[nodiscard]] std::string build_text() {
+    const std::string_view linker = linker_id();
+    return std::format("build: {}\nbuild.linker: {}\n", build_info(), linker.empty() ? "none" : linker);
+}
+
 [[nodiscard]] std::string facts_text(const gpu::Facts& facts, const gpu::Started& s) {
-    std::string out = std::format("build: {}\n", build_info());
+    std::string out = build_text();
     for (const std::string& l : gpu::facts_lines(facts)) out += l + "\n";
     out += std::format("pipeline.cache: {}\n", s.cache ? s.cache->status() : std::string("none"));
     out += std::format("guard: {}\n", s.guard_line.empty() ? std::string("clear") : s.guard_line);
+    for (const std::string& l : s.guard->state()) out += l + "\n";
     return out;
 }
 
-/// A refused start, as the facts show it: the guard's line, why, and the facts an earlier start kept.
+/// A refused start, as the facts show it: the guard's line and state, why, and the facts an earlier start kept.
 [[nodiscard]] std::string refusal_text(const gpu::StartRefusal& r) {
-    std::string out = std::format("build: {}\n", build_info());
+    std::string out = build_text();
     out += std::format("vulkan: off ({})\n", r.reason);
     if (!r.line.empty()) out += std::format("guard: {}\n", r.line);
+    for (const std::string& l : r.guard) out += l + "\n";
     if (!r.kept_facts.empty()) {
         out += "kept: the facts below were read before Vulkan was turned off\n";
         out += r.kept_facts;
@@ -379,7 +379,7 @@ private:
         std::string why = behind_pipelines([&]() -> std::string {
             if (!standin_) {
                 if (!city_) city_ = std::make_shared<const standin::City>(standin::City::generate());
-                auto standin = standin::StandIn::create(*started_.device, *started_.cache, city_);
+                auto standin = standin::StandIn::create(*started_.device, *started_.cache, city_, started_.guard.get());
                 if (!standin) return standin.error().text();
                 standin_ = std::move(*standin);
             }
@@ -418,7 +418,7 @@ private:
                                                           from_file ? o.cache_file : std::filesystem::path(), o.spirv,
                                                           from_file));
             return behind_pipelines([&]() -> gpu::Result<Made> {
-                ATLAS_GPU_LET(standin, standin::StandIn::create(*started_.device, cache, city_));
+                ATLAS_GPU_LET(standin, standin::StandIn::create(*started_.device, cache, city_, started_.guard.get()));
                 ATLAS_GPU_CHECK(standin->prepare(renderer_->pass(), *swapchain_));
                 return Made{
                     .ms = standin->pipelines_ms(), .count = standin->pipeline_count(), .bytes = cache.loaded_bytes()};
@@ -734,6 +734,16 @@ jstring native_facts(JNIEnv* env, jclass /*cls*/, jlong handle, jstring cache_di
     return java(env, text);
 }
 
+/// VK facts' "Reset guard" (debug and bench builds): forgets every crash and every driver the guard turned off, and the
+/// pipeline cache, as a fresh install would; the next start tries Vulkan again. What it forgot, in words.
+jstring native_reset_guard(JNIEnv* env, jclass /*cls*/, jstring cache_dir, jstring guard_dir) {
+    const CoreOptions o{.cache_dir = string_of(env, cache_dir), .guard_dir = string_of(env, guard_dir)};
+    const gpu::StartOptions start = start_options(o);
+    const std::string said = gpu::Guard(start.guard_dir, {}, start.build, {}).clear(start.cache_file);
+    log::info("{}", said);
+    return java(env, said);
+}
+
 jlong native_create(JNIEnv* env, jclass /*cls*/, jstring cache_dir, jstring guard_dir, jstring system, jstring plant,
                     jint flags) {
     const CoreOptions o{.cache_dir = string_of(env, cache_dir),
@@ -849,8 +859,8 @@ jstring native_build_info(JNIEnv* env, jclass /*cls*/) { return java(env, std::s
 /// K3b's numerics check, run once (about 6 ms): `pymath <hash> ok` or `pymath <hash> FAIL expected <hash>`.
 jstring native_numerics_line(JNIEnv* env, jclass /*cls*/) { return java(env, std::string(check::numerics_line())); }
 
-const std::array<JNINativeMethod, 17>& methods() {
-    static const std::array<JNINativeMethod, 17> table{{
+const std::array<JNINativeMethod, 18>& methods() {
+    static const std::array<JNINativeMethod, 18> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -871,6 +881,7 @@ const std::array<JNINativeMethod, 17>& methods() {
         method("buildInfo", "()Ljava/lang/String;", fn(&native_build_info)),
         method("numericsLine", "()Ljava/lang/String;", fn(&native_numerics_line)),
         method("pipelines", "(J)Ljava/lang/String;", fn(&native_pipelines)),
+        method("resetGuard", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", fn(&native_reset_guard)),
     }};
     return table;
 }

@@ -306,6 +306,13 @@ object VkFactsLines {
 
     /** A dEQP level (year << 16 | month << 8 | day) as a date, such as 2024-03-01. */
     fun dEqpDate(v: Int): String = "%04d-%02d-%02d".format(java.util.Locale.ROOT, v ushr 16, (v ushr 8) and 0xff, v and 0xff)
+
+    /**
+     * The crash guard's lines of a VK facts report (plan-vector D5.10): `guard:` (what this start found: `clear`, or the
+     * `vk guard` line naming the stage and the pipeline a driver crashed in), then `guard.build`, `guard.driver` and a
+     * `guard.off` line per driver turned off, in the report's order.
+     */
+    fun guard(report: List<String>): List<String> = report.filter { it.startsWith("guard:") || it.startsWith("guard.") }
 }
 
 /**

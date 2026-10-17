@@ -46,6 +46,8 @@ struct Configuration {
 [[nodiscard]] std::string_view name_of(Route route) noexcept;
 [[nodiscard]] std::string_view name_of(FrameForm form) noexcept;
 [[nodiscard]] std::string_view name_of(CompositeTarget target) noexcept;
+/// "<config> <route> <form> <target>", as VK bench and the log name a configuration ("A renderpass composite resolve").
+[[nodiscard]] std::string name_of(const Configuration& configuration);
 
 /// The features the core uses or reports (T1), as the device offers them.
 struct FeatureFacts {

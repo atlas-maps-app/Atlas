@@ -114,7 +114,8 @@ class MainActivity : ComponentActivity() {
         if (screen != SCREEN_VKFACTS && screen != SCREEN_VKBENCH) return false
         val config = coreConfig(this, intent)
         if (screen == SCREEN_VKFACTS) {
-            setContent { VkFactsScreen(config) }
+            // The crash guard's reset only in the debug and bench builds (D5.10: the owner's retry by hand).
+            setContent { VkFactsScreen(config, guardReset = BuildConfig.TIMINGS) }
         } else {
             val length = when (intent.getStringExtra(EXTRA_VK_BENCH)) {
                 "full" -> VkBench.Length.FULL
@@ -190,7 +191,10 @@ class MainActivity : ComponentActivity() {
         /** VK bench's length: "quick", "full" or "ci" (absent: the owner chooses on the screen). */
         const val EXTRA_VK_BENCH = "atlas.vk.bench"
 
-        /** Debug and bench builds: a crash-guard stage to abort at (instance, device, cache, pipelines, frames). */
+        /**
+         * Debug and bench builds: a crash-guard stage to abort at (instance, device, cache, pipelines, frames);
+         * `pipelines` aborts at the stage's first pipeline, `pipelines:<name>` at that one (`pipelines:composite`).
+         */
         const val EXTRA_VK_PLANT = "atlas.vk.plant"
 
         /** Debug builds: the Khronos validation layer packaged in the APK, on. */

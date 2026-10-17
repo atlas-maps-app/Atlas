@@ -43,8 +43,12 @@ struct Counters {
 /// The stand-in.
 class StandIn final : public gpu::Content {
 public:
-    [[nodiscard]] static gpu::Result<std::unique_ptr<StandIn>>
-    create(const gpu::Device& device, const gpu::PipelineCache& cache, std::shared_ptr<const City> city);
+    /// The stand-in, with the pipelines every configuration shares. `watch` (the crash guard) is told about each
+    /// pipeline before it is made, from these to every configuration's that prepare makes (gpu/Pipelines.hpp).
+    [[nodiscard]] static gpu::Result<std::unique_ptr<StandIn>> create(const gpu::Device& device,
+                                                                      const gpu::PipelineCache& cache,
+                                                                      std::shared_ptr<const City> city,
+                                                                      gpu::PipelineWatch* watch = nullptr);
     ~StandIn() override;
 
     /// The camera of the next frame (the gesture camera, as FrameSource wrote it).
@@ -58,8 +62,8 @@ public:
     void record(const gpu::FrameContext& frame) override;
 
     [[nodiscard]] const Counters& counters() const noexcept { return counters_; }
-    /// The milliseconds spent creating the pipelines the last prepare needs (the fixed ones made at create, and the
-    /// configuration's), and how many they are.
+    /// The milliseconds the driver spent creating the pipelines the last prepare needs (the fixed ones made at create,
+    /// and the configuration's; their announcements excepted), and how many they are.
     [[nodiscard]] double pipelines_ms() const noexcept { return pipelines_ms_; }
     [[nodiscard]] std::uint32_t pipeline_count() const noexcept { return pipeline_count_; }
     /// Whether the composite runs through Slang's GLSL route (the device may not take Slang's own SPIR-V for it).
@@ -68,8 +72,11 @@ public:
     [[nodiscard]] vk::DeviceSize bytes() const noexcept;
 
 private:
-    StandIn(const gpu::Device& device, const gpu::PipelineCache& cache, std::shared_ptr<const City> city);
+    StandIn(const gpu::Device& device, const gpu::PipelineCache& cache, std::shared_ptr<const City> city,
+            gpu::PipelineWatch* watch);
     [[nodiscard]] gpu::Result<void> create_fixed();
+    /// Announces the pipeline (the log, the watch), then makes it, adding the time its creation took to `ms`.
+    [[nodiscard]] gpu::Result<void> make_pipeline(const gpu::GraphicsDesc& desc, vk::raii::Pipeline& out, double& ms);
     [[nodiscard]] gpu::Result<void> prepare_offscreen(const gpu::MainPass& pass, const gpu::Output& output);
     [[nodiscard]] gpu::Result<void> prepare_pipelines(const gpu::MainPass& pass, const gpu::Output& output);
     void write_frame(std::uint32_t slot);
@@ -82,6 +89,7 @@ private:
     const gpu::Device& device_;
     const gpu::PipelineCache& cache_;
     std::shared_ptr<const City> city_;
+    gpu::PipelineWatch* watch_ = nullptr;
     std::unique_ptr<Ranks> ranks_;
     style::CameraState camera_{};
     double seconds_ = 0;
@@ -109,8 +117,10 @@ private:
     struct Offsets {
         vk::DeviceSize frame, haze, ranks, order, casters;
     } offsets_{};
-    vk::raii::ShaderModule standin_module_{nullptr}, composite_module_{nullptr}, blur_module_{nullptr},
-        frost_module_{nullptr};
+    // The scene's modules, one per frame form (the one-subpass form's fragments apply the screen effects), and the
+    // composite's for the configuration's samples.
+    vk::raii::ShaderModule standin_module_{nullptr}, standin_onepass_module_{nullptr}, composite_module_{nullptr},
+        blur_module_{nullptr}, frost_module_{nullptr};
     gpu::Image atlas_;
     vk::raii::ImageView atlas_view_{nullptr};
     vk::raii::RenderPass atlas_clear_pass_{nullptr}, atlas_load_pass_{nullptr}, shadow_pass_{nullptr};

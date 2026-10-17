@@ -2,10 +2,20 @@
 #include "gpu/Pipelines.hpp"
 
 #include "base/assert.hpp"
+#include "base/log.hpp"
 
 #include <format>
 
 namespace atlas::gpu {
+
+std::string describe(const PipelineLabel& label) {
+    return std::format("{} (module {}, configuration {})", label.name, label.module, label.configuration);
+}
+
+void announce(const PipelineLabel& label, PipelineWatch* watch) {
+    log::info("vk pipeline {}", describe(label));
+    if (watch != nullptr) watch->before(label);
+}
 
 Result<vk::raii::ShaderModule> make_module(const vk::raii::Device& device, std::span<const std::uint32_t> spirv) {
     ATLAS_VK_LET(module, device.createShaderModule({.codeSize = spirv.size_bytes(), .pCode = spirv.data()}),
@@ -30,14 +40,10 @@ Result<vk::raii::Pipeline> make_graphics(const vk::raii::Device& device, const v
                                          const GraphicsDesc& d) {
     ATLAS_ASSERT(d.target.colour_count <= d.blends.size(), "at most four colour attachments");
     const std::array<vk::PipelineShaderStageCreateInfo, 2> stages{{
-        {.stage = vk::ShaderStageFlagBits::eVertex,
-         .module = d.module,
-         .pName = d.vertex,
-         .pSpecializationInfo = d.specialization},
+        {.stage = vk::ShaderStageFlagBits::eVertex, .module = d.module, .pName = d.vertex},
         {.stage = vk::ShaderStageFlagBits::eFragment,
          .module = d.fragment_module ? d.fragment_module : d.module,
-         .pName = d.fragment,
-         .pSpecializationInfo = d.specialization},
+         .pName = d.fragment},
     }};
     const vk::PipelineVertexInputStateCreateInfo
         vertex_input{}; // every pipeline pulls its vertices from storage buffers
@@ -104,20 +110,18 @@ Result<vk::raii::Pipeline> make_graphics(const vk::raii::Device& device, const v
                                                        .layout = d.layout,
                                                        .renderPass = d.target.render_pass,
                                                        .subpass = d.target.subpass}),
-                 std::format("the graphics pipeline {} / {}", d.vertex, d.fragment));
+                 std::format("the graphics pipeline {} ({} / {})", describe(d.label), d.vertex, d.fragment));
     return std::move(pipeline);
 }
 
 Result<vk::raii::Pipeline> make_compute(const vk::raii::Device& device, const vk::raii::PipelineCache& cache,
-                                        vk::ShaderModule module, const char* entry, vk::PipelineLayout layout,
-                                        const vk::SpecializationInfo* specialization) {
+                                        const PipelineLabel& label, vk::ShaderModule module, const char* entry,
+                                        vk::PipelineLayout layout) {
     ATLAS_VK_LET(pipeline,
-                 device.createComputePipeline(cache, {.stage = {.stage = vk::ShaderStageFlagBits::eCompute,
-                                                                .module = module,
-                                                                .pName = entry,
-                                                                .pSpecializationInfo = specialization},
-                                                      .layout = layout}),
-                 std::format("the compute pipeline {}", entry));
+                 device.createComputePipeline(
+                     cache, {.stage = {.stage = vk::ShaderStageFlagBits::eCompute, .module = module, .pName = entry},
+                             .layout = layout}),
+                 std::format("the compute pipeline {} ({})", describe(label), entry));
     return std::move(pipeline);
 }
 

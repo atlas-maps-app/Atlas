@@ -5,10 +5,11 @@
 # files are included by modules and, through base/hlsl.hpp, by the twin's C++. For each module:
 #   1. slangc writes SPIR-V 1.3 and its reflection; SLANG_RUN_SPIRV_VALIDATION=1 makes it run SPIRV-Tools' validator
 #      (spirv-val) on the result, and Slang warnings are errors;
-#   2. tools/nocontract removes capabilities the module declares without needing them (capabilities.hpp: Slang
-#      declares StorageImageReadWithoutFormat for subpass inputs, which Vulkan 1.1 phones may not support); an exact
-#      module (file name exact_*.slang, or a line "// atlas: exact") compiles with -fp-mode precise, then nocontract
-#      adds NoContraction wherever it is missing and checks every exact-module rule (tools/nocontract/exactness.hpp);
+#   2. tools/nocontract refuses a module that holds a specialization constant (below), then removes the capabilities
+#      the module declares without needing them (capabilities.hpp: Slang declares StorageImageReadWithoutFormat for
+#      subpass inputs, which Vulkan 1.1 phones may not support); an exact module (file name exact_*.slang, or a line
+#      "// atlas: exact") compiles with -fp-mode precise, then nocontract adds NoContraction wherever it is missing and
+#      checks every exact-module rule (tools/nocontract/exactness.hpp);
 #   3. Embed.cmake writes gen/spirv/<dir>/<name>.hpp: atlas::spirv::<dir>_<name>, its words and SHA-256.
 # A line "// atlas: variant <suffix> <MACRO>[=<value>]" compiles the module once more with the macro defined, as
 # <name>_<suffix> (for instance the OpFmaKHR variant of an exact module). A line "// atlas: glsl-route <entry>:<stage>"
@@ -21,6 +22,14 @@
 # compiled code shows; the target atlas_spirv_lock writes the lock files from the current build. A module that misses
 # its lock is kept in <build>/spirv-lock-mismatch/ (as embedded, as slangc wrote it, and as spirv-dis's text where
 # SPIRV-Tools is installed), and CI keeps that folder, so another host's bytes can be diffed.
+#
+# Specialization constants are refused: every module is checked before it is embedded (nocontract constants, a scan of
+# the module for OpSpecConstantTrue, False, Constant, Composite and Op, opcodes 48 to 52), and one that holds any fails
+# the build, naming each. On 17 October 2026 PowerVR's Vulkan driver crashed compiling a pipeline of VK bench, in
+# SpvConstCalculated's destructor in its shader compiler (libufwriter.so): the stand-in's composite took its sample
+# count as a specialization constant and held a constant computed from it (OpSpecConstantOp IAdd). A variant is a
+# module of its own: a "// atlas: variant" line, or a file that defines the macro and includes another
+# (shaders/standin/composite_x2.slang), and the pipeline picks the module.
 #
 # The semantics SV_VertexID and SV_InstanceID are refused. Slang 2026.19 lowers each to a difference of two builtins
 # (gl_VertexIndex - gl_BaseVertex, gl_InstanceIndex - gl_BaseInstance) whose two loads are arguments of one call in its
@@ -341,6 +350,7 @@ function(atlas_add_shaders target shaders_dir)
     set(manifest "")
     set(module_includes "")
     set(module_entries "")
+    set(module_hashes "")
     foreach(rel IN LISTS sources)
         set(src "${shaders_dir}/${rel}")
         get_filename_component(rel_dir "${rel}" DIRECTORY)
@@ -404,9 +414,13 @@ function(atlas_add_shaders target shaders_dir)
                 VERBATIM)
             # Every module loses the capabilities it declares without needing them (tools/nocontract/capabilities.hpp:
             # Slang declares StorageImageReadWithoutFormat for subpass inputs); an exact module is then made exact.
+            # Every module is first refused if it holds a specialization constant (above), on slangc's output, so a
+            # refused module never reaches ${spv} and the next build checks it again.
+            set(module_name "shaders/${rel} (${symbol})")
             if(exact)
                 add_custom_command(
                     OUTPUT "${spv}"
+                    COMMAND ${ATLAS_NOCONTRACT} constants "${raw}" "${module_name}"
                     COMMAND ${ATLAS_NOCONTRACT} capabilities "${raw}" "${spv}"
                     COMMAND ${ATLAS_NOCONTRACT} fix "${spv}" "${spv}"
                     COMMAND ${ATLAS_NOCONTRACT} check "${spv}"
@@ -416,6 +430,7 @@ function(atlas_add_shaders target shaders_dir)
             else()
                 add_custom_command(
                     OUTPUT "${spv}"
+                    COMMAND ${ATLAS_NOCONTRACT} constants "${raw}" "${module_name}"
                     COMMAND ${ATLAS_NOCONTRACT} capabilities "${raw}" "${spv}"
                     DEPENDS "${raw}" ${ATLAS_NOCONTRACT_DEPENDS}
                     COMMENT "nocontract capabilities ${rel}${suffix}"
@@ -432,6 +447,7 @@ function(atlas_add_shaders target shaders_dir)
             list(APPEND reflections "${json}")
             string(APPEND module_includes "#include \"gen/spirv/${rel_dir}/${name}${suffix}.hpp\"\n")
             string(APPEND module_entries "    Module{\"${symbol}\", ${symbol}},\n")
+            string(APPEND module_hashes "    ${symbol}_sha256,\n")
             string(APPEND manifest "${symbol}|${spv}|${json}|${shaders_dir}/${rel_dir}/spirv.lock\n")
         endforeach()
     endforeach()
@@ -440,7 +456,9 @@ function(atlas_add_shaders target shaders_dir)
     set(manifest_file "${work_dir}/manifest.txt")
     file(CONFIGURE OUTPUT "${manifest_file}" CONTENT "${manifest}" @ONLY)
     # gen/spirv/modules.hpp: every module as embedded, so a test can hand each to the validation layer, whose SPIRV-Tools
-    # validates the words nocontract last rewrote (slangc's validator saw them before that).
+    # validates the words nocontract last rewrote (slangc's validator saw them before that); and every module's SHA-256
+    # alone, which the core's build ID and its pipeline cache's key hash without taking any module's words into the
+    # library.
     list(LENGTH headers module_count)
     file(CONFIGURE OUTPUT "${gen_dir}/spirv/modules.hpp" @ONLY CONTENT
 "// Generated by cmake/Shaders.cmake: every embedded SPIR-V module. Do not edit.
@@ -462,6 +480,10 @@ struct Module {
 
 inline constexpr std::array<Module, ${module_count}> modules = {
 ${module_entries}};
+
+/// Every module's SHA-256, in the order of `modules`.
+inline constexpr std::array<std::string_view, ${module_count}> hashes = {
+${module_hashes}};
 
 } // namespace atlas::spirv
 ")

@@ -64,6 +64,14 @@ class MapCore private constructor(private val handle: Long, private val config: 
         /** The core's numerics line ([Native.numericsLine]); off the main thread, its first call takes about 6 ms. */
         fun numericsLine(): String =
             Native.load()?.let { "pymath unavailable: the core did not load ($it)" } ?: Native.numericsLine()
+
+        /**
+         * VK facts' "Reset guard" (debug and bench builds, D5.10): forgets every crash and every driver the crash guard
+         * turned off, and the pipeline cache, so that the next start (or [shared], while no core is made) tries Vulkan
+         * again. One line saying what it forgot. Off the main thread.
+         */
+        fun resetGuard(config: CoreConfig): String =
+            Native.load()?.let { "vk guard reset: the core did not load ($it)" } ?: Native.resetGuard(config.cacheDir, config.guardDir)
     }
 
     @Volatile

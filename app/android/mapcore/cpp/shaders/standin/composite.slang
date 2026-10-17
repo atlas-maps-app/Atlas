@@ -4,10 +4,11 @@
 // light), then the haze from the frame's 17 stops and the vignette, once per pixel. It writes the finished colour to
 // the samples, which resolve unchanged into the output, or (COMPOSITE_X1, or the direct target) to the 1x output.
 //
-// Variants: this file reads 4x or 2x samples (SAMPLES); composite_x1.slang reads one sample, composite_x1_loc1.slang
-// one sample written to colour attachment 1 (the dynamic route at 1x). Each has Slang's GLSL route as well, used where
-// the device may not take Slang's own SPIR-V for subpass loads (it declares StorageImageReadWithoutFormat, which
-// Vulkan allows from 1.3, with VK_KHR_format_feature_flags2, or with shaderStorageImageReadWithoutFormat).
+// Variants, each a module of its own (the core's modules hold no specialization constants, cmake/Shaders.cmake): this
+// file reads 4x samples, composite_x2.slang 2x (SAMPLES), composite_x1.slang one sample, composite_x1_loc1.slang one
+// sample written to colour attachment 1 (the dynamic route at 1x). Each has Slang's GLSL route as well, used where the
+// device may not take Slang's own SPIR-V for subpass loads (it declares StorageImageReadWithoutFormat, which Vulkan
+// allows from 1.3, with VK_KHR_format_feature_flags2, or with shaderStorageImageReadWithoutFormat).
 //
 // atlas: glsl-route composite_fs:fragment
 
@@ -15,7 +16,10 @@
 #define COMPOSITE_X1 0
 #endif
 
-[[vk::constant_id(1)]] const int SAMPLES = 4;
+// The samples of a pixel the composite reads (4 or 2; the 1x variants read one).
+#ifndef SAMPLES
+#define SAMPLES 4
+#endif
 
 struct Haze {
     float4 screen;      // x, y the output's pixels; z, w their reciprocals

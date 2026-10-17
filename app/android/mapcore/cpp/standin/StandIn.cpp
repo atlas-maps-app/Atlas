@@ -10,14 +10,19 @@
 #include "gen/spirv/standin/composite_x1_glsl_composite_fs.hpp"
 #include "gen/spirv/standin/composite_x1_loc1.hpp"
 #include "gen/spirv/standin/composite_x1_loc1_glsl_composite_fs.hpp"
+#include "gen/spirv/standin/composite_x2.hpp"
+#include "gen/spirv/standin/composite_x2_glsl_composite_fs.hpp"
 #include "gen/spirv/standin/frosted.hpp"
 #include "gen/spirv/standin/standin.hpp"
+#include "gen/spirv/standin/standin_onepass.hpp"
 #include "gpu/Sync.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <format>
+#include <string>
+#include <string_view>
 
 namespace atlas::standin {
 
@@ -28,6 +33,52 @@ using Push = lay::Push;
 using Haze = layouts::standin_composite::Haze;
 using BlurPush = layouts::standin_blur::BlurPush;
 using FrostPush = layouts::standin_frosted::FrostPush;
+
+// A variant differs from its module by a macro only, so it reads the same uniforms, buffers and push constants.
+static_assert(sizeof(layouts::standin_standin_onepass::Frame) == sizeof(lay::Frame));
+static_assert(sizeof(layouts::standin_standin_onepass::Push) == sizeof(Push));
+static_assert(sizeof(layouts::standin_composite_x2::Haze) == sizeof(Haze));
+static_assert(sizeof(layouts::standin_composite_x1::Haze) == sizeof(Haze));
+
+/// An embedded module and its symbol, by which the log and the crash guard name it.
+struct Spirv {
+    std::string_view name;
+    std::span<const std::uint32_t> words;
+};
+
+/// The composite's modules for the samples it reads (one module per sample count: the core's modules hold no
+/// specialization constants), as Slang's own SPIR-V and through its GLSL route. At one sample in the dynamic route
+/// (`loc1`), the composite writes colour attachment 1.
+struct CompositeModules {
+    Spirv direct;
+    Spirv glsl;
+};
+
+[[nodiscard]] gpu::Result<CompositeModules> composite_modules(vk::SampleCountFlagBits samples, bool loc1) {
+    using S = vk::SampleCountFlagBits;
+    switch (samples) {
+    case S::e4:
+        return CompositeModules{.direct = {.name = "standin_composite", .words = spirv::standin_composite},
+                                .glsl = {.name = "standin_composite_glsl_composite_fs",
+                                         .words = spirv::standin_composite_glsl_composite_fs}};
+    case S::e2:
+        return CompositeModules{.direct = {.name = "standin_composite_x2", .words = spirv::standin_composite_x2},
+                                .glsl = {.name = "standin_composite_x2_glsl_composite_fs",
+                                         .words = spirv::standin_composite_x2_glsl_composite_fs}};
+    case S::e1:
+        if (loc1) {
+            return CompositeModules{
+                .direct = {.name = "standin_composite_x1_loc1", .words = spirv::standin_composite_x1_loc1},
+                .glsl = {.name = "standin_composite_x1_loc1_glsl_composite_fs",
+                         .words = spirv::standin_composite_x1_loc1_glsl_composite_fs}};
+        }
+        return CompositeModules{.direct = {.name = "standin_composite_x1", .words = spirv::standin_composite_x1},
+                                .glsl = {.name = "standin_composite_x1_glsl_composite_fs",
+                                         .words = spirv::standin_composite_x1_glsl_composite_fs}};
+    default:
+        return gpu::fail(std::format("the stand-in has no composite module for {} samples", vk::to_string(samples)));
+    }
+}
 
 constexpr std::uint32_t box_chunks = 256; // the boxes' draws (D5.7: 130-300 a frame)
 constexpr std::uint32_t atlas_size = 2048;
@@ -205,18 +256,28 @@ std::uint32_t quarter_turns_of(vk::SurfaceTransformFlagBitsKHR transform) noexce
     }
 }
 
-StandIn::StandIn(const gpu::Device& device, const gpu::PipelineCache& cache, std::shared_ptr<const City> city)
-    : device_(device), cache_(cache), city_(std::move(city)) {}
+StandIn::StandIn(const gpu::Device& device, const gpu::PipelineCache& cache, std::shared_ptr<const City> city,
+                 gpu::PipelineWatch* watch)
+    : device_(device), cache_(cache), city_(std::move(city)), watch_(watch) {}
 
 StandIn::~StandIn() = default;
 
 gpu::Result<std::unique_ptr<StandIn>> StandIn::create(const gpu::Device& device, const gpu::PipelineCache& cache,
-                                                      std::shared_ptr<const City> city) {
+                                                      std::shared_ptr<const City> city, gpu::PipelineWatch* watch) {
     std::unique_ptr<StandIn> self(
-        new StandIn(device, cache, std::move(city))); // NOLINT(cppcoreguidelines-owning-memory)
+        new StandIn(device, cache, std::move(city), watch)); // NOLINT(cppcoreguidelines-owning-memory)
     self->ranks_ = std::make_unique<Ranks>(*self->city_);
     ATLAS_GPU_CHECK(self->create_fixed());
     return self;
+}
+
+gpu::Result<void> StandIn::make_pipeline(const gpu::GraphicsDesc& desc, vk::raii::Pipeline& out, double& ms) {
+    gpu::announce(desc.label, watch_);
+    const auto started = clock::now();
+    ATLAS_GPU_LET(pipeline, gpu::make_graphics(device_.handle(), cache_.handle(), desc));
+    ms += ms_since(started);
+    out = std::move(pipeline);
+    return {};
 }
 
 vk::DeviceSize StandIn::bytes() const noexcept {
@@ -345,9 +406,11 @@ gpu::Result<void> StandIn::create_fixed() {
 
     // The shaders.
     ATLAS_GPU_LET(standin, gpu::make_module(d, spirv::standin_standin));
+    ATLAS_GPU_LET(standin_onepass, gpu::make_module(d, spirv::standin_standin_onepass));
     ATLAS_GPU_LET(blur_module, gpu::make_module(d, spirv::standin_blur));
     ATLAS_GPU_LET(frost_module, gpu::make_module(d, spirv::standin_frosted));
     standin_module_ = std::move(standin);
+    standin_onepass_module_ = std::move(standin_onepass);
     blur_module_ = std::move(blur_module);
     frost_module_ = std::move(frost_module);
 
@@ -370,21 +433,29 @@ gpu::Result<void> StandIn::create_fixed() {
     ATLAS_GPU_LET(shadow_pass, make_pass(device_, {.colour = vk::Format::eR8Unorm}));
     shadow_pass_ = std::move(shadow_pass);
 
-    const auto started = clock::now();
-    gpu::GraphicsDesc atlas_desc{
-        .module = *standin_module_, .vertex = "atlas_vs", .fragment = "atlas_fs", .layout = *scene_pipeline_layout_};
+    // The pipelines every configuration shares, made once.
+    fixed_pipelines_ms_ = 0;
+    gpu::GraphicsDesc atlas_desc{.label = {.name = "atlas", .module = "standin_standin"},
+                                 .module = *standin_module_,
+                                 .vertex = "atlas_vs",
+                                 .fragment = "atlas_fs",
+                                 .layout = *scene_pipeline_layout_};
     atlas_desc.target = {.render_pass = *atlas_clear_pass_, .subpass = 0, .colour_count = 1};
-    ATLAS_GPU_LET(atlas_pipeline, gpu::make_graphics(d, cache_.handle(), atlas_desc));
-    atlas_pipeline_ = std::move(atlas_pipeline);
-    gpu::GraphicsDesc shadow_desc{
-        .module = *standin_module_, .vertex = "shadow_vs", .fragment = "shadow_fs", .layout = *scene_pipeline_layout_};
+    ATLAS_GPU_CHECK(make_pipeline(atlas_desc, atlas_pipeline_, fixed_pipelines_ms_));
+    gpu::GraphicsDesc shadow_desc{.label = {.name = "shadow", .module = "standin_standin"},
+                                  .module = *standin_module_,
+                                  .vertex = "shadow_vs",
+                                  .fragment = "shadow_fs",
+                                  .layout = *scene_pipeline_layout_};
     shadow_desc.target = {.render_pass = *shadow_pass_, .subpass = 0, .colour_count = 1};
-    ATLAS_GPU_LET(shadow_pipeline, gpu::make_graphics(d, cache_.handle(), shadow_desc));
-    shadow_pipeline_ = std::move(shadow_pipeline);
+    ATLAS_GPU_CHECK(make_pipeline(shadow_desc, shadow_pipeline_, fixed_pipelines_ms_));
+    const gpu::PipelineLabel blur_label{.name = "blur", .module = "standin_blur"};
+    gpu::announce(blur_label, watch_);
+    const auto started = clock::now();
     ATLAS_GPU_LET(blur_pipeline,
-                  gpu::make_compute(d, cache_.handle(), *blur_module_, "blur_cs", *blur_pipeline_layout_));
+                  gpu::make_compute(d, cache_.handle(), blur_label, *blur_module_, "blur_cs", *blur_pipeline_layout_));
+    fixed_pipelines_ms_ += ms_since(started);
     blur_pipeline_ = std::move(blur_pipeline);
-    fixed_pipelines_ms_ = ms_since(started);
     pipelines_ms_ = fixed_pipelines_ms_;
     pipeline_count_ = 3;
     return {};
@@ -517,12 +588,13 @@ gpu::Result<void> StandIn::prepare_offscreen(const gpu::MainPass& pass, const gp
 gpu::Result<void> StandIn::prepare_pipelines(const gpu::MainPass& pass, const gpu::Output& output) {
     const vk::raii::Device& d = device_.handle();
     const gpu::Configuration& c = pass.spec().config;
-    const auto started = clock::now();
+    const std::string configuration = gpu::name_of(c);
+    double ms = 0;
     std::uint32_t made = 0;
-    const vk::Bool32 onepass = c.form == gpu::FrameForm::onepass ? vk::True : vk::False;
-    const vk::SpecializationMapEntry onepass_entry{.constantID = 0, .offset = 0, .size = sizeof(vk::Bool32)};
-    const vk::SpecializationInfo onepass_info{
-        .mapEntryCount = 1, .pMapEntries = &onepass_entry, .dataSize = sizeof onepass, .pData = &onepass};
+    // The scene's module for the frame's form: in one subpass its fragments apply the screen effects themselves.
+    const bool onepass = c.form == gpu::FrameForm::onepass;
+    const vk::ShaderModule scene_module = onepass ? *standin_onepass_module_ : *standin_module_;
+    const std::string_view scene_name = onepass ? "standin_standin_onepass" : "standin_standin";
 
     // The objects: opaque, rank depth, the objects bit (stencil bit 7) on every sample they cover.
     const vk::StencilOpState objects_bit{.failOp = vk::StencilOp::eKeep,
@@ -537,15 +609,14 @@ gpu::Result<void> StandIn::prepare_pipelines(const gpu::MainPass& pass, const gp
     if (scene.colour_count == 2)
         scene_blends[1] = gpu::Blend::untouched(); // the 1x dynamic route's output, written by the composite only
     auto make = [&](const gpu::GraphicsDesc& desc, vk::raii::Pipeline& out) -> gpu::Result<void> {
-        ATLAS_GPU_LET(pipeline, gpu::make_graphics(d, cache_.handle(), desc));
-        out = std::move(pipeline);
+        ATLAS_GPU_CHECK(make_pipeline(desc, out, ms));
         ++made;
         return {};
     };
-    gpu::GraphicsDesc box{.module = *standin_module_,
+    gpu::GraphicsDesc box{.label = {.name = "box", .module = scene_name, .configuration = configuration},
+                          .module = scene_module,
                           .vertex = "box_vs",
                           .fragment = "box_fs",
-                          .specialization = &onepass_info,
                           .layout = *scene_pipeline_layout_,
                           .target = scene,
                           .cull = vk::CullModeFlagBits::eBack,
@@ -558,18 +629,21 @@ gpu::Result<void> StandIn::prepare_pipelines(const gpu::MainPass& pass, const gp
                           .blends = scene_blends};
     ATLAS_GPU_CHECK(make(box, box_pipeline_));
     gpu::GraphicsDesc tree = box;
+    tree.label.name = "tree";
     tree.vertex = "tree_vs";
     tree.fragment = "tree_fs";
     tree.cull = vk::CullModeFlagBits::eNone;
     tree.alpha_to_coverage = true;
     ATLAS_GPU_CHECK(make(tree, tree_pipeline_));
     gpu::GraphicsDesc ground = box;
+    ground.label.name = "ground";
     ground.vertex = "ground_vs";
     ground.fragment = "ground_fs";
     ground.cull = vk::CullModeFlagBits::eNone;
     ground.stencil_test = false;
     ATLAS_GPU_CHECK(make(ground, ground_pipeline_));
     gpu::GraphicsDesc glow = ground;
+    glow.label.name = "glow";
     glow.vertex = "glow_vs";
     glow.fragment = "glow_fs";
     glow.depth_write = false;
@@ -580,36 +654,28 @@ gpu::Result<void> StandIn::prepare_pipelines(const gpu::MainPass& pass, const gp
     // The composite: the module for the samples it reads, through Slang's own SPIR-V or its GLSL route.
     composite_pipeline_.clear();
     if (pass.composite()) {
-        const bool one = c.samples() == vk::SampleCountFlagBits::e1;
-        const bool loc1 = one && c.route == gpu::Route::dynamic;
+        const bool loc1 = c.samples() == vk::SampleCountFlagBits::e1 && c.route == gpu::Route::dynamic;
+        ATLAS_GPU_LET(modules, composite_modules(c.samples(), loc1));
         composite_glsl_ = !device_.facts().takes_read_without_format();
-        std::span<const std::uint32_t> direct =
-            one ? (loc1 ? std::span<const std::uint32_t>(spirv::standin_composite_x1_loc1)
-                        : std::span<const std::uint32_t>(spirv::standin_composite_x1))
-                : std::span<const std::uint32_t>(spirv::standin_composite);
-        std::span<const std::uint32_t> glsl =
-            one ? (loc1 ? std::span<const std::uint32_t>(spirv::standin_composite_x1_loc1_glsl_composite_fs)
-                        : std::span<const std::uint32_t>(spirv::standin_composite_x1_glsl_composite_fs))
-                : std::span<const std::uint32_t>(spirv::standin_composite_glsl_composite_fs);
         composite_module_.clear();
-        ATLAS_GPU_LET(module, gpu::make_module(d, direct));
+        ATLAS_GPU_LET(module, gpu::make_module(d, modules.direct.words));
         composite_module_ = std::move(module);
         vk::raii::ShaderModule glsl_module{nullptr};
         if (composite_glsl_) {
-            ATLAS_GPU_LET(m, gpu::make_module(d, glsl));
+            ATLAS_GPU_LET(m, gpu::make_module(d, modules.glsl.words));
             glsl_module = std::move(m);
         }
-        const auto samples = static_cast<std::int32_t>(c.samples());
-        const vk::SpecializationMapEntry samples_entry{.constantID = 1, .offset = 0, .size = sizeof samples};
-        const vk::SpecializationInfo samples_info{
-            .mapEntryCount = 1, .pMapEntries = &samples_entry, .dataSize = sizeof samples, .pData = &samples};
-        gpu::GraphicsDesc composite{.module = *composite_module_,
-                                    .vertex = "fullscreen_vs",
-                                    .fragment = composite_glsl_ ? "main" : "composite_fs",
-                                    .fragment_module = *glsl_module,
-                                    .specialization = &samples_info,
-                                    .layout = *composite_pipeline_layout_,
-                                    .target = pass.composite_target()};
+        const std::string module_names = composite_glsl_
+                                             ? std::format("{} and {}", modules.direct.name, modules.glsl.name)
+                                             : std::string(modules.direct.name);
+        gpu::GraphicsDesc composite{
+            .label = {.name = "composite", .module = module_names, .configuration = configuration},
+            .module = *composite_module_,
+            .vertex = "fullscreen_vs",
+            .fragment = composite_glsl_ ? "main" : "composite_fs",
+            .fragment_module = *glsl_module,
+            .layout = *composite_pipeline_layout_,
+            .target = pass.composite_target()};
         if (composite.target.colour_count == 2) {
             composite.blends[0] = gpu::Blend::untouched();
             composite.blends[1] = gpu::Blend::opaque();
@@ -618,10 +684,10 @@ gpu::Result<void> StandIn::prepare_pipelines(const gpu::MainPass& pass, const gp
     }
 
     // The water's mirrored boxes, at the configuration's samples; mirrored, so their faces turn the other way.
-    gpu::GraphicsDesc mirror{.module = *standin_module_,
+    gpu::GraphicsDesc mirror{.label = {.name = "mirror", .module = scene_name, .configuration = configuration},
+                             .module = scene_module,
                              .vertex = "box_mirror_vs",
                              .fragment = "box_fs",
-                             .specialization = &onepass_info,
                              .layout = *scene_pipeline_layout_,
                              .cull = vk::CullModeFlagBits::eBack,
                              .front = vk::FrontFace::eClockwise,
@@ -630,13 +696,16 @@ gpu::Result<void> StandIn::prepare_pipelines(const gpu::MainPass& pass, const gp
                              .depth_op = vk::CompareOp::eLess};
     mirror.target = {.render_pass = *water_pass_, .subpass = 0, .samples = c.samples(), .colour_count = 1};
     ATLAS_GPU_CHECK(make(mirror, mirror_pipeline_));
-    gpu::GraphicsDesc frost{
-        .module = *frost_module_, .vertex = "frosted_vs", .fragment = "frosted_fs", .layout = *frost_pipeline_layout_};
+    gpu::GraphicsDesc frost{.label = {.name = "frosted", .module = "standin_frosted", .configuration = configuration},
+                            .module = *frost_module_,
+                            .vertex = "frosted_vs",
+                            .fragment = "frosted_fs",
+                            .layout = *frost_pipeline_layout_};
     frost.target = {.render_pass = *frost_pass_, .subpass = 0, .colour_count = 1};
     frost.blends[0] = gpu::Blend::over();
     ATLAS_GPU_CHECK(make(frost, frost_pipeline_));
     (void)output;
-    pipelines_ms_ = fixed_pipelines_ms_ + ms_since(started);
+    pipelines_ms_ = fixed_pipelines_ms_ + ms;
     pipeline_count_ = 3 + made;
     return {};
 }

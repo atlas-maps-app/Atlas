@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 1
+    const val ABI = 2
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -88,4 +88,10 @@ object Native {
      * empty cache and from the cache file (`vkbench pipelines: …`). Blocks while the render thread makes them.
      */
     @JvmStatic external fun pipelines(handle: Long): String
+
+    /**
+     * Forgets every crash and every driver the crash guard turned off in [guardDir], and the pipeline cache under
+     * [cacheDir], as a fresh install would: the next start tries Vulkan again. What it forgot, in words.
+     */
+    @JvmStatic external fun resetGuard(cacheDir: String, guardDir: String): String
 }

@@ -551,6 +551,16 @@ jobs:
             > shaders/probe/planted_vertex_id.slang
           expect_failure build/vertex-id.log 'SV_VertexID compiles to SPIR-V' cmake --build build/canary-asan --target atlas_core_shaders
           rm shaders/probe/planted_vertex_id.slang
+          # And so does a specialization constant, which no module of the core may hold (cmake/Shaders.cmake): PowerVR's
+          # shader compiler crashed on a constant computed from one (SpvConstCalculated, VK bench, 17 October 2026). The
+          # planted one has that kind too: PLANTED + 1 is an OpSpecConstantOp.
+          printf '%s\n' '[[vk::constant_id(3)]] const int PLANTED = 2;' '[[vk::binding(0, 0)]] RWStructuredBuffer<int> data;' \
+            '[shader("compute")] [numthreads(1, 1, 1)]' 'void main(uint3 id : SV_DispatchThreadID) { data[0] = PLANTED + 1; }' \
+            > shaders/probe/planted_spec_constant.slang
+          expect_failure build/spec-constant.log 'specialization constant instructions, and no module of the core may hold one' \
+            cmake --build build/canary-asan --target atlas_core_shaders
+          grep -q 'OpSpecConstantOp' build/spec-constant.log || { echo "::error::the refusal does not name the OpSpecConstantOp"; cat build/spec-constant.log; exit 1; }
+          rm shaders/probe/planted_spec_constant.slang
       - name: CMake configures with no network
         if: matrix.task == 'canaries'
         working-directory: ${{ env.CP }}

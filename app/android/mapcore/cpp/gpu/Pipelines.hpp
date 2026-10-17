@@ -2,6 +2,11 @@
 // pipeline cache, for either frame route. A pipeline's target is a subpass of a render pass, or a dynamic rendering
 // scope with its formats and, for the composite, the local-read mapping of colour, depth and stencil to input
 // attachment indices. Viewport and scissor are dynamic; everything else is fixed at creation.
+//
+// No pipeline takes specialization constants: the core's modules hold none (cmake/Shaders.cmake refuses them, after
+// PowerVR's compiler crashed on one), so a variant is a module of its own and the pipeline picks the module. Each
+// pipeline is announced before it is made (announce): the log names it, and the crash guard writes it into its marker,
+// so a driver that crashes compiling it is known by the pipeline at the next start (D5.10).
 #pragma once
 
 #include "gpu/Error.hpp"
@@ -10,9 +15,33 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace atlas::gpu {
+
+/// What a pipeline is, as the log and the crash guard name it: its name, its module or modules (the embedded SPIR-V's
+/// symbols) and the frame configuration it is made for ("any" for one made once for every configuration).
+struct PipelineLabel {
+    std::string_view name;
+    std::string_view module;
+    std::string_view configuration = "any";
+};
+
+/// "<name> (module <module>, configuration <configuration>)".
+[[nodiscard]] std::string describe(const PipelineLabel& label);
+
+/// Told about each pipeline just before it is made (the crash guard, D5.10).
+class PipelineWatch {
+public:
+    virtual ~PipelineWatch() = default;
+    virtual void before(const PipelineLabel& label) = 0;
+};
+
+/// Logs the pipeline about to be made ("vk pipeline <describe>", under the tag AtlasMap, so that a crash's last line in
+/// logcat names it) and tells `watch`, if any.
+void announce(const PipelineLabel& label, PipelineWatch* watch);
 
 /// Where a graphics pipeline draws.
 struct PipelineTarget {
@@ -68,12 +97,13 @@ struct Blend {
 
 /// A graphics pipeline.
 struct GraphicsDesc {
+    /// Its name in the log, the crash guard's marker and errors.
+    PipelineLabel label;
     vk::ShaderModule module;
     const char* vertex = nullptr;
     const char* fragment = nullptr;
     /// The fragment stage's module when it is not `module` (a GLSL-route module, whose entry point is "main").
     vk::ShaderModule fragment_module;
-    const vk::SpecializationInfo* specialization = nullptr; // for both stages
     vk::PipelineLayout layout;
     PipelineTarget target;
     vk::PrimitiveTopology topology = vk::PrimitiveTopology::eTriangleList;
@@ -95,12 +125,14 @@ struct GraphicsDesc {
                                                            std::span<const vk::DescriptorSetLayout> sets,
                                                            std::uint32_t push_bytes, vk::ShaderStageFlags push_stages);
 
+/// Makes the pipeline `desc` describes (its caller announced it).
 [[nodiscard]] Result<vk::raii::Pipeline> make_graphics(const vk::raii::Device& device,
                                                        const vk::raii::PipelineCache& cache, const GraphicsDesc& desc);
 
+/// Makes the compute pipeline of `entry` in `module` (its caller announced it as `label`).
 [[nodiscard]] Result<vk::raii::Pipeline> make_compute(const vk::raii::Device& device,
-                                                      const vk::raii::PipelineCache& cache, vk::ShaderModule module,
-                                                      const char* entry, vk::PipelineLayout layout,
-                                                      const vk::SpecializationInfo* specialization = nullptr);
+                                                      const vk::raii::PipelineCache& cache, const PipelineLabel& label,
+                                                      vk::ShaderModule module, const char* entry,
+                                                      vk::PipelineLayout layout);
 
 } // namespace atlas::gpu

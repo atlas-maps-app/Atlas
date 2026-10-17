@@ -5,6 +5,7 @@ import app.atlas.mapcore.FrameSource
 import app.atlas.mapcore.Native
 import app.atlas.mapcore.state.CameraWriter
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -25,13 +26,14 @@ object FacadeHost {
 /** A façade class built against another core: the core must refuse it. */
 object OtherAbiFacade {
     @Suppress("unused")
-    const val ABI = 2
+    const val ABI = 3
 }
 
 /**
  * The façade on the JVM against the core's host build (plan-vector T9, K1's host acceptance): the layouts both sides
  * share are the same field by field (the camera state Kotlin writes, the frame records it reads), a façade of another
- * ABI is refused at load, and the host build starts behind the crash guard and reports its facts.
+ * ABI is refused at load, the host build starts behind the crash guard and reports its facts, and the guard's state
+ * shows in them: a crash this build made twice turns Vulkan off, and VK facts' reset lets it try again (D5.10).
  */
 class FacadeTest {
     companion object {
@@ -86,9 +88,9 @@ class FacadeTest {
     fun theFacadesAbiIsTheCoresAndAnotherIsRefusedAtLoad() {
         assertEquals(Native.ABI, Native.abi())
         assertEquals(Native.ABI, FacadeHost.coreAbi())
-        // The same check JNI_OnLoad runs before RegisterNatives: a class of ABI 2 is refused, with the reason.
+        // The same check JNI_OnLoad runs before RegisterNatives: a class of ABI 3 is refused, with the reason.
         val refused = FacadeHost.registerInto(OtherAbiFacade::class.java)
-        assertTrue(refused, refused.contains("ABI 2") && refused.contains("ABI ${Native.ABI}"))
+        assertTrue(refused, refused.contains("ABI 3") && refused.contains("ABI ${Native.ABI}"))
         // And the real façade registers again cleanly.
         assertEquals("", FacadeHost.registerInto(Native::class.java))
     }
@@ -126,6 +128,61 @@ class FacadeTest {
             // Without a core: a guarded start of its own.
             val alone = Native.facts(0L, dir.path, guard, "jvm-test", 0).lines()
             assertTrue(alone.any { it.startsWith("gpu: ") })
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun theGuardsStateShowsInTheFactsAndAResetLetsVulkanTryAgain() {
+        val dir = Files.createTempDirectory("atlas-guard").toFile()
+        try {
+            val guard = dir.resolve("vk")
+            // A clean start: the guard found nothing; the facts name this build and the driver the guard keys by.
+            val facts = Native.facts(0L, dir.path, guard.path, "jvm-test", 0).lines()
+            assertTrue(facts.joinToString("\n"), "guard: clear" in facts)
+            assertTrue("guard.off: none" in facts)
+            val build = facts.first { it.startsWith("guard.build: ") }.removePrefix("guard.build: ")
+            assertTrue(build, Regex("[0-9a-f]{16}").matches(build))
+            // The linker's identity of the library, which the build ID hashes (on macOS its LC_UUID; "none" without).
+            assertTrue(facts.joinToString("\n"), facts.any { Regex("build\\.linker: ([0-9a-f]+|none)").matches(it) })
+            val (driver, version) = facts.first { it.startsWith("guard.driver: ") }.removePrefix("guard.driver: ").split(' ')
+            assertNotEquals("unknown", driver)
+
+            // What a start of this build leaves when its retry crashed compiling the composite: the next start turns
+            // Vulkan off and says which pipeline crashed, and every later start of this build and driver stays off.
+            val pipeline = "composite (module standin_composite, configuration C renderpass composite direct)"
+            guard.resolve("guard").writeText(
+                "stage pipelines\npipeline $pipeline\ndriver $driver\nversion $version\nbuild $build\nattempt 2\n",
+            )
+            assertEquals(0L, Native.create(dir.path, guard.path, "jvm-test", "", 0))
+            val why = Native.lastError()
+            assertTrue(why, why.startsWith("vk guard pipelines $driver $version attempt 2 pipeline $pipeline build $build: "))
+            assertEquals(0L, Native.create(dir.path, guard.path, "jvm-test", "", 0))
+            val off = Native.facts(0L, dir.path, guard.path, "jvm-test", 0).lines()
+            assertTrue(off.joinToString("\n"), off.any { it.startsWith("vulkan: off (") })
+            assertTrue(off.any { it.startsWith("guard: vk guard pipelines ") })
+            assertTrue(
+                off.joinToString("\n"),
+                "guard.off: $driver $version at pipelines, pipeline $pipeline build $build (this driver and build: Vulkan is off)" in off,
+            )
+            assertTrue(off.any { it.startsWith("gpu: ") }) // the facts an earlier start kept
+
+            // VK facts' "Reset guard": the crash and the pipeline cache are forgotten, and the next start opens Vulkan.
+            guard.resolve("pipelines.bin").writeText("a cache")
+            assertEquals("vk guard reset: forgot 1 driver turned off and the pipeline cache", Native.resetGuard(dir.path, guard.path))
+            assertFalse(guard.resolve("pipelines.bin").exists())
+            val handle = Native.create(dir.path, guard.path, "jvm-test", "", 0)
+            assertNotEquals("create refused after the reset: ${Native.lastError()}", 0L, handle)
+            try {
+                val after = Native.facts(handle, dir.path, guard.path, "jvm-test", 0).lines()
+                assertTrue(after.joinToString("\n"), "guard: clear" in after)
+                assertTrue("guard.off: none" in after)
+            } finally {
+                Native.close(handle) // which writes the pipeline cache back
+            }
+            assertEquals("vk guard reset: forgot the pipeline cache", Native.resetGuard(dir.path, guard.path))
+            assertEquals("vk guard reset: nothing to forget", Native.resetGuard(dir.path, guard.path))
         } finally {
             dir.deleteRecursively()
         }
