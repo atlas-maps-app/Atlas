@@ -313,6 +313,15 @@ jobs:
             ${{ env.CP }}/build/crashes/
             ${{ env.CP }}/build/fuzz-logs/
 
+      # ---- tidy also holds the rule table (plan-vector K5, VF1) to the renderer: every feature render/*.py draws has its
+      # record in app/android/mapcore/rules/rules.tsv, and no source changed since the recording (Python 3's standard
+      # library only; seconds).
+      - name: The rule table covers the renderer
+        if: matrix.task == 'tidy'
+        run: |
+          python3 --version
+          python3 -I app/android/mapcore/rules/check_rules.py check
+
       # ---- tidy: clang-format and clang-tidy (the core's .clang-tidy) on the changed files. clang-tidy runs each source
       # with every build that compiles it: the host build's compile database and NDK r30's for Android, so code that
       # only Android compiles (platform/android, the __ANDROID__ parts) is checked too, and a source neither compiles

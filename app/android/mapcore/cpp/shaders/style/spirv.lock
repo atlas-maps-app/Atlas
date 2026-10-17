@@ -1,0 +1,3 @@
+# SHA-256 of each compiled module (cmake/Shaders.cmake); update with the target atlas_spirv_lock.
+style_light_probe 2dd2ba4788c603f4b95e516e656b382305b512a036dabb11fa3ce07e9d32a4f7
+style_light_probe_f32 8a0c23442b51f2e73cd0b5c4dac1bbc0932817afda483ecb60cf3ea023379e04
