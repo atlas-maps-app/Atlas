@@ -48,8 +48,8 @@ env:
   LLVM: '21' # the major version of NDK r30's clang: 21.0.0, based on r574158c (measured by K0)
   # The lavapipe images by digest (ghcr.io/<owner>/atlas-lavapipe@sha256:...), from the image job's summary. Until the
   # arm64 one is set, the arm64 runner builds and runs every test except the Vulkan ones, and says so.
-  LAVAPIPE_IMAGE_ARM64: ''
-  LAVAPIPE_IMAGE_X86_64: ''
+  LAVAPIPE_IMAGE_ARM64: 'ghcr.io/atlas-maps-app/atlas-lavapipe@sha256:e59cb264e8bf1537772edfd42fd79dc53f7edc570fb01b8ebf9563c9d1f324bd' # mesa-26.2.5-arm64, run 39011793433
+  LAVAPIPE_IMAGE_X86_64: 'ghcr.io/atlas-maps-app/atlas-lavapipe@sha256:36dc038c992ba7261fc06831e34f952f4d3ea11ca16c24f5544a859eb2ae5413' # mesa-26.2.5-x86_64, run 39011793433
   # TSan's suppressions, by library: lavapipe, its LLVM and the validation layer are not instrumented, and their threads
   # synchronise through atomics, futexes and reference counts that TSan cannot see, so it reports races between them
   # that are none (17 in the first run, every access in their code). A report is dropped when any of its stacks passes
