@@ -50,6 +50,11 @@ env:
   # arm64 one is set, the arm64 runner builds and runs every test except the Vulkan ones, and says so.
   LAVAPIPE_IMAGE_ARM64: ''
   LAVAPIPE_IMAGE_X86_64: ''
+  # TSan's suppressions, by library: lavapipe, its LLVM and the validation layer are not instrumented, and their threads
+  # synchronise through atomics, futexes and reference counts that TSan cannot see, so it reports races between them
+  # that are none (17 in the first run, every access in their code). A report is dropped when any of its stacks passes
+  # through one of them; a race between the core's own threads still fails, as the canaries prove.
+  ATLAS_TSAN_SUPPRESSIONS: race:libvulkan_lvp race:libLLVM race:libVkLayer_khronos_validation
 
 jobs:
   core:
@@ -199,6 +204,11 @@ jobs:
           else
             echo "::error::the emulator package has no validation layer and LAVAPIPE_IMAGE_X86_64 is not pinned" && exit 1
           fi
+          # This lavapipe frees with free() what it allocated with operator new, on its own threads (ASan's
+          # alloc-dealloc-mismatch in the first run: both stacks in libvulkan_lvp.so's own code), and ASan suppresses
+          # that error by function name only, which this stripped build has none of. So the tests on it run without
+          # that one check, and Build and test runs the core's tests once more without Vulkan, with it.
+          echo "ASAN_OPTIONS=$ASAN_OPTIONS:alloc_dealloc_mismatch=0" >> "$RUNNER_TEMP/vulkan.env"
           echo "ATLAS_REQUIRE_VULKAN=1" >> "$RUNNER_TEMP/vulkan.env"
           cat "$RUNNER_TEMP/vulkan.env"
       - name: lavapipe from the pinned image (arm64)
@@ -242,6 +252,8 @@ jobs:
           # LSan sees lavapipe's and LLVM's own process-lifetime allocations; the core's leaks still fail.
           printf 'leak:libvulkan_lvp\nleak:libLLVM\nleak:libvulkan.so\nleak:libVkLayer_khronos_validation\n' > "$RUNNER_TEMP/lsan.supp"
           export LSAN_OPTIONS="suppressions=$RUNNER_TEMP/lsan.supp"
+          printf '%s\n' $ATLAS_TSAN_SUPPRESSIONS > "$RUNNER_TEMP/tsan.supp"
+          export TSAN_OPTIONS="$TSAN_OPTIONS:suppressions=$RUNNER_TEMP/tsan.supp"
           cmake --preset "$TASK" -DATLAS_TOOLS_DIR="$TOOLS"
           cmake --build --preset "$TASK" -j 4
           # The JUnit file keeps every test's output, passed or not, for the skips below.
@@ -267,6 +279,14 @@ jobs:
               echo ">"
               sed -e '/^$/d' -e 's/^/> - /' <<< "$skipped"
             } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # vulkan.env turned one ASan check off for the emulator's lavapipe (its step says why): the tests run once
+          # more with every check and no Vulkan at all (a loader that is not there, so the SDK's emulator package is not
+          # looked for either; the cases that need Vulkan ran above, and skip here).
+          if [ "$TASK" = host-debug ] && grep -q 'alloc_dealloc_mismatch=0' "$RUNNER_TEMP/vulkan.env"; then
+            echo "== every ASan check, no Vulkan"
+            ATLAS_REQUIRE_VULKAN=0 ATLAS_VULKAN_LOADER=/nonexistent/libvulkan.so.1 \
+              ctest --test-dir "build/$TASK" --output-on-failure
           fi
           "build/$TASK/atlas_tests" --probe | tee "build/feature-probe-$TASK-${{ matrix.arch }}.txt"
           if [ "$TASK" = host-release ]; then
@@ -478,6 +498,9 @@ jobs:
           expect_failure build/asan.log 'AddressSanitizer: heap-use-after-free' build/canary-asan/atlas_tests -tc='planted*'
           cmake --preset host-tsan -B build/canary-tsan -DATLAS_TOOLS_DIR="$TOOLS" -DATLAS_EXTRA_TEST_SOURCES="$PWD/tests/planted/data_race.cpp"
           cmake --build build/canary-tsan --target atlas_tests -j 4
+          # With the host jobs' suppressions, which must leave a race in the core's own code a failure.
+          printf '%s\n' $ATLAS_TSAN_SUPPRESSIONS > "$RUNNER_TEMP/tsan.supp"
+          export TSAN_OPTIONS="$TSAN_OPTIONS:suppressions=$RUNNER_TEMP/tsan.supp"
           expect_failure build/tsan.log 'ThreadSanitizer: data race' build/canary-tsan/atlas_tests -tc='planted*'
           # The platform's sin in pymath's place (ATLAS_PLANTED_PLATFORM_SIN, base/pymath/fdlibm/Trig.cpp) must break
           # pymath's check, whose total then differs from the port's (plan-vector L0 d). The flags keep CI's CXXFLAGS
