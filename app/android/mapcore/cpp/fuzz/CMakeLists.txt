@@ -37,7 +37,9 @@ if(ATLAS_SANITIZE STREQUAL "fuzzer")
     if(_cxx11 GREATER -1)
         message(STATUS "libFuzzer's runtime (${_runtime}) is built against libstdc++: the fuzz targets link it beside "
             "the core's libc++")
-        set(_atlas_fuzzer_libraries stdc++)
+        # kept needed: the driver appends the runtime after every library, and GNU ld's --as-needed (Ubuntu's default)
+        # would drop libstdc++ before the runtime's references to it are seen
+        set(_atlas_fuzzer_libraries "-Wl,--push-state,--no-as-needed" stdc++ "-Wl,--pop-state")
     endif()
 endif()
 
