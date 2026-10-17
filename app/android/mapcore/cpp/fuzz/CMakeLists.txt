@@ -37,9 +37,10 @@ if(ATLAS_SANITIZE STREQUAL "fuzzer")
     if(_cxx11 GREATER -1)
         message(STATUS "libFuzzer's runtime (${_runtime}) is built against libstdc++: the fuzz targets link it beside "
             "the core's libc++")
-        # kept needed: the driver appends the runtime after every library, and GNU ld's --as-needed (Ubuntu's default)
-        # would drop libstdc++ before the runtime's references to it are seen
-        set(_atlas_fuzzer_libraries "-Wl,--push-state,--no-as-needed" stdc++ "-Wl,--pop-state")
+        # Given to the linker itself: clang's driver takes -lstdc++ to mean "the C++ standard library" and, under
+        # -stdlib=libc++, links libc++ in its place, so libstdc++ was never linked. --no-as-needed keeps it, since the
+        # driver appends the runtime after every library and GNU ld's --as-needed (Ubuntu's default) would drop it first.
+        set(_atlas_fuzzer_libraries "-Wl,--push-state,--no-as-needed,-l:libstdc++.so.6,--pop-state")
     endif()
 endif()
 
