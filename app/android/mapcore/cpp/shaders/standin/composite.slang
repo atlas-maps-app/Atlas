@@ -10,6 +10,9 @@
 // device may not take Slang's own SPIR-V for subpass loads (it declares StorageImageReadWithoutFormat, which Vulkan
 // allows from 1.3, with VK_KHR_format_feature_flags2, or with shaderStorageImageReadWithoutFormat).
 //
+// It reads its samples' colour only, never their alpha: the samples take the frame's colour, rgb10a2 where it can be,
+// which keeps 2 bits of alpha (gpu/Facts.hpp; tests/gpu/standin_shaders_test.cpp holds every frame shader to it).
+//
 // atlas: glsl-route composite_fs:fragment
 
 #ifndef COMPOSITE_X1

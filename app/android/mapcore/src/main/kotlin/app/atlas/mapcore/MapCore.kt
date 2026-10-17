@@ -100,11 +100,14 @@ class MapCore private constructor(private val handle: Long, private val config: 
 
     /**
      * VK bench (bench and debug builds): the stand-in drawn in [config] by [route] as [form] into [target]; [pills]
-     * draws the frosted pills in the core (the SurfaceView host); [texture] says the host is a TextureView. "" or why
-     * the device cannot.
+     * draws the frosted pills in the core (the SurfaceView host); [texture] says the host is a TextureView; [rgba8]
+     * draws at 8 bits a channel where the frame's colour has 10 (the facts' `colour:`). "" or why the device cannot.
      */
-    fun bench(on: Boolean, config: Int, route: Int, form: Int, target: Int, pills: Boolean, texture: Boolean): String =
-        Native.bench(handle, if (on) 1 else 0, config, route, form, target, (if (pills) 1 else 0) or (if (texture) 2 else 0))
+    fun bench(on: Boolean, config: Int, route: Int, form: Int, target: Int, pills: Boolean, texture: Boolean, rgba8: Boolean = false): String =
+        Native.bench(
+            handle, if (on) 1 else 0, config, route, form, target,
+            (if (pills) 1 else 0) or (if (texture) 2 else 0) or (if (rgba8) 4 else 0),
+        )
 
     /** Copies the frame records not read yet into [out] ([FrameRecords.allocate]); how many. */
     fun records(out: ByteBuffer): Int = Native.records(handle, out)

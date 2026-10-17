@@ -1,9 +1,11 @@
 // The stand-in's SPIR-V as the build embeds it (plan-vector K1, T6): no capability a Vulkan 1.1 phone may lack
 // (StorageImageReadWithoutFormat and WriteWithoutFormat, which Slang declares for subpass loads and K0's capability
 // pass drops; DrawParameters, which SV_VertexID would bring), the dynamic route's 1x composite writing colour
-// attachment 1 (Slang 2026.19 numbers a lone output 0 unless the location is explicit), and no specialization
-// constant in any module the core embeds (PowerVR's compiler crashed on one; each variant is a module of its own).
+// attachment 1 (Slang 2026.19 numbers a lone output 0 unless the location is explicit), no specialization constant in
+// any module the core embeds (PowerVR's compiler crashed on one; each variant is a module of its own), and no frame
+// shader reading the alpha of the scene's colour samples (the frame's colour may be rgb10a2, which keeps 2 bits of it).
 #include "gen/spirv/modules.hpp"
+#include "gen/spirv/probe/input_probe.hpp"
 #include "gen/spirv/standin/blur.hpp"
 #include "gen/spirv/standin/composite.hpp"
 #include "gen/spirv/standin/composite_glsl_composite_fs.hpp"
@@ -21,6 +23,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <span>
 #include <string_view>
@@ -118,6 +121,95 @@ TEST_CASE("the dynamic route's 1x composite writes colour attachment 1, the othe
         ATLAS_REQUIRE(locations.size() == 1, locations.size() << " outputs");
         CHECK(locations[0] == 0);
     }
+}
+
+namespace {
+
+constexpr std::uint16_t op_type_float = 22;
+constexpr std::uint16_t op_type_image = 25;
+constexpr std::uint16_t op_load = 61;
+constexpr std::uint16_t op_vector_shuffle = 79;
+constexpr std::uint16_t op_composite_extract = 81;
+constexpr std::uint16_t op_image_read = 98;
+constexpr std::uint32_t dim_subpass_data = 6;
+
+/// What a module does with the colour it reads from float subpass inputs (subpassLoad): how many reads, and how many
+/// uses of a read that may take its alpha (a shuffle or an extract of component 3, or any other use of the whole).
+struct InputReads {
+    std::size_t reads = 0;
+    std::size_t alpha_uses = 0;
+};
+
+InputReads input_reads(std::span<const atlas::spirv::Instruction> code) {
+    std::vector<std::uint32_t> floats;
+    std::vector<std::uint32_t> images;
+    std::vector<std::uint32_t> loaded;
+    std::vector<std::uint32_t> reads;
+    auto in = [](const std::vector<std::uint32_t>& ids, std::uint32_t id) { return std::ranges::contains(ids, id); };
+    for (const auto& i : code) {
+        const auto o = i.operands();
+        if (i.opcode == op_type_float && !o.empty()) floats.push_back(o[0]);
+        // OpTypeImage: result, sampled type, dim, ...
+        if (i.opcode == op_type_image && o.size() >= 3 && o[2] == dim_subpass_data && in(floats, o[1]))
+            images.push_back(o[0]);
+    }
+    for (const auto& i : code) {
+        const auto o = i.operands();
+        if (i.opcode == op_load && o.size() >= 3 && in(images, o[0])) loaded.push_back(o[1]);
+    }
+    for (const auto& i : code) {
+        const auto o = i.operands();
+        // OpImageRead: result type, result, image, coordinate, ...
+        if (i.opcode == op_image_read && o.size() >= 4 && in(loaded, o[2])) reads.push_back(o[1]);
+    }
+    InputReads out{.reads = reads.size(), .alpha_uses = 0};
+    for (const auto& i : code) {
+        const auto o = i.operands();
+        if (i.opcode == op_image_read) continue;
+        if (i.opcode == op_vector_shuffle && o.size() >= 4) {
+            // Result type, result, vector 1, vector 2, components (0-3 from vector 1, 4-7 from vector 2).
+            for (std::size_t k = 4; k < o.size(); ++k) {
+                if ((o[k] == 3 && in(reads, o[2])) || (o[k] == 7 && in(reads, o[3]))) ++out.alpha_uses;
+            }
+            continue;
+        }
+        if (i.opcode == op_composite_extract && o.size() >= 4) {
+            if (in(reads, o[2]) && o[3] == 3) ++out.alpha_uses;
+            continue;
+        }
+        // Names and decorations only name it (op_name 5, op_member_name 6, op_decorate 71, op_member_decorate 72).
+        if (i.opcode == 5 || i.opcode == 6 || i.opcode == op_decorate || i.opcode == 72) continue;
+        // Any other use of a read takes the whole of it, alpha included.
+        for (const std::uint32_t operand : o) out.alpha_uses += in(reads, operand) ? 1 : 0;
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("no frame shader reads the alpha of the scene's colour samples") {
+    // gpu/Facts.hpp: the scene's and the composite's colour attachments follow the output, rgb10a2 where it can be,
+    // whose 2 bits of alpha hold nothing the composite could use. K0's probes are not the frame's, and read it.
+    std::size_t composites = 0;
+    for (const atlas::spirv::Module& m : atlas::spirv::modules) {
+        if (m.name.starts_with("probe_")) continue;
+        const auto code = atlas::spirv::instructions(m.words);
+        ATLAS_REQUIRE(code.has_value(), m.name << " is not a SPIR-V module");
+        const InputReads r = input_reads(*code);
+        CHECK_MESSAGE(r.alpha_uses == 0,
+                      m.name << " uses the alpha of its colour samples " << r.alpha_uses << " times");
+        if (m.name.find("composite") != std::string_view::npos) {
+            CHECK_MESSAGE(r.reads >= 1, m.name << " reads no colour samples");
+            ++composites;
+        }
+    }
+    CHECK(composites == 8);
+    // The scan sees an alpha read: K0's input probe sums whole samples.
+    const auto probe = atlas::spirv::instructions(atlas::spirv::probe_input_probe);
+    ATLAS_REQUIRE(probe.has_value(), "the input probe is not a SPIR-V module");
+    const InputReads p = input_reads(*probe);
+    CHECK(p.reads >= 2);
+    CHECK(p.alpha_uses >= 1);
 }
 
 TEST_CASE("no module the core embeds holds a specialization constant") {

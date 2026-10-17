@@ -3,6 +3,7 @@ package app.atlas.mapview.vk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import app.atlas.mapcore.FrameRecords
 import app.atlas.mapview.VkFactsLines
 import org.junit.Test
 
@@ -76,6 +77,28 @@ class VkBenchTest {
         assertTrue(line, line.startsWith("vkbench board C renderpass composite direct: p50 16.70 p95 50.00 max 50.00 dropped 3 gpu 9.00"))
         assertTrue(line.contains("graphics 120.5 native 30.3"))
         assertTrue(line.contains("presented-by display-timing"))
+    }
+
+    @Test
+    fun theColourLineSetsTheTenBitFrameAgainstTheEightBitOne() {
+        fun summary(p50: Double, p95: Double) = VkBench.summarise(
+            doubleArrayOf(16.7), 1, "vsync", doubleArrayOf(p50, p50, p95), 3, doubleArrayOf(1.0), doubleArrayOf(0.5), doubleArrayOf(0.2), 1,
+            doubleArrayOf(), 0, 0L, 0, 1000L, 263, 677, 1000.0 / 60.0,
+        )
+        val line = VkBench.colourLine("board A renderpass composite resolve", "rgb10a2", summary(4.31, 4.5), summary(4.12, 4.33))
+        assertEquals("vkbench colour board A renderpass composite resolve: rgb10a2 4.31 ms, rgba8 4.12 ms GPU (p95 4.50 and 4.33; rgb10a2 +0.19 ms)", line)
+        assertTrue(VkBench.colourLine("x", "bgr10a2", summary(Double.NaN, Double.NaN), summary(4.0, 4.0)).endsWith("bgr10a2 —)"))
+        assertEquals("rgb10a2", VkBench.tenBitColour("rgb10a2 (A2B10G10R10UnormPack32 in SrgbNonlinear: the surface offers it in sRGB and the frame's attachments follow it)"))
+        assertEquals("bgr10a2", VkBench.tenBitColour("bgr10a2 (A2R10G10B10UnormPack32 in SrgbNonlinear: …)"))
+        assertEquals(null, VkBench.tenBitColour("rgba8 (R8G8B8A8Unorm in SrgbNonlinear: the surface offers no 10-bit format)"))
+        assertEquals(null, VkBench.tenBitColour("?"))
+        // The frame records say which depth each frame was drawn at (CP/jni/Bridge.hpp's frame_flag::ten_bit).
+        val records = FrameRecords.allocate(2)
+        records.putInt(FrameRecords.FLAGS_AT, FrameRecords.GPU or FrameRecords.TEN_BIT or (2 shl 8))
+        records.putInt(FrameRecords.SIZE + FrameRecords.FLAGS_AT, FrameRecords.GPU)
+        assertTrue(FrameRecords.read(records, 0).tenBit)
+        assertFalse(FrameRecords.read(records, 1).tenBit)
+        assertTrue(FrameRecords.read(records, 1).gpuValid)
     }
 
     @Test

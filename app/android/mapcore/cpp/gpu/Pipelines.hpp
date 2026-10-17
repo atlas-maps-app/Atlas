@@ -22,7 +22,8 @@
 namespace atlas::gpu {
 
 /// What a pipeline is, as the log and the crash guard name it: its name, its module or modules (the embedded SPIR-V's
-/// symbols) and the frame configuration it is made for ("any" for one made once for every configuration).
+/// symbols) and the frame configuration and colour it is made for ("A renderpass composite resolve rgb10a2"; "any"
+/// for one made once for every configuration).
 struct PipelineLabel {
     std::string_view name;
     std::string_view module;
@@ -93,6 +94,11 @@ struct Blend {
     }
     /// Leaves the attachment untouched (an attachment this pipeline does not write).
     [[nodiscard]] static Blend untouched() noexcept { return {.mask = {}}; }
+
+    /// Whether the colour it writes depends on the destination's alpha (DST_ALPHA, ONE_MINUS_DST_ALPHA,
+    /// SRC_ALPHA_SATURATE): never in the core, whose frame may be rgb10a2 with 2 bits of alpha (gpu/Facts.hpp), so
+    /// make_graphics refuses such a blend.
+    [[nodiscard]] bool reads_destination_alpha() const noexcept;
 };
 
 /// A graphics pipeline.
@@ -125,7 +131,8 @@ struct GraphicsDesc {
                                                            std::span<const vk::DescriptorSetLayout> sets,
                                                            std::uint32_t push_bytes, vk::ShaderStageFlags push_stages);
 
-/// Makes the pipeline `desc` describes (its caller announced it).
+/// Makes the pipeline `desc` describes (its caller announced it); refused, before the driver sees it, when a blend
+/// reads the destination's alpha.
 [[nodiscard]] Result<vk::raii::Pipeline> make_graphics(const vk::raii::Device& device,
                                                        const vk::raii::PipelineCache& cache, const GraphicsDesc& desc);
 

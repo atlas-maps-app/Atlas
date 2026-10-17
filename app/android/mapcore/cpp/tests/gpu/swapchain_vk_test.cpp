@@ -1,10 +1,11 @@
 // The phone's frame path on the host (plan-vector K1): the swapchain code on a headless surface
-// (VK_EXT_headless_surface, lavapipe's), acquiring, drawing and presenting through the frames in flight and remade as a
-// resize remakes it; and the stand-in drawn at Vulkan 1.1, what the oldest phones offer, on a device opened as such a
-// phone opens it, to present; both under the validation layer, silent. Both need a Vulkan that presents: where the
-// host's cannot (no VK_KHR_swapchain on the device, or for the first no VK_EXT_headless_surface), they skip with the
-// reason, and fail instead only where presentation is expected of it (a Vulkan with a window system,
-// tests/gpu/gpu_fixture.hpp). The arm64 runner's lavapipe has none: there both skip.
+// (VK_EXT_headless_surface, lavapipe's), acquiring, drawing and presenting through the frames in flight, remade as a
+// resize remakes it, and remade at 8 bits as VK bench remakes it for its colour line (the surface's formats and the
+// frame's colour on it are printed first); and the stand-in drawn at Vulkan 1.1, what the oldest phones offer, on a
+// device opened as such a phone opens it, to present, at 8 bits and at 10; both under the validation layer, silent.
+// Both need a Vulkan that presents: where the host's cannot (no VK_KHR_swapchain on the device, or for the first no
+// VK_EXT_headless_surface), they skip with the reason, and fail instead only where presentation is expected of it (a
+// Vulkan with a window system, tests/gpu/gpu_fixture.hpp). The arm64 runner's lavapipe has none: there both skip.
 #include "gpu/Frames.hpp"
 #include "gpu/Passes.hpp"
 #include "gpu/PipelineCache.hpp"
@@ -35,12 +36,6 @@ TEST_CASE("the swapchain presents the stand-in on a headless surface and is rema
         MESSAGE("skipped: the loader offers no VK_EXT_headless_surface");
         return;
     }
-#if defined(__APPLE__)
-    // The Android emulator package's lavapipe for macOS aborts in Mesa's headless WSI (wsi_common.c, get_blit_type:
-    // "Invalid image type") whatever the swapchain asks; the Linux runners' lavapipe runs this test.
-    MESSAGE(
-        "skipped on macOS: Mesa's headless WSI in the emulator package's lavapipe asserts; the Linux runners run it");
-#else
     auto surface = gpu::make_headless_surface(*s.instance);
     ATLAS_REQUIRE(surface.has_value(), surface.error().text());
     {
@@ -56,10 +51,23 @@ TEST_CASE("the swapchain presents the stand-in on a headless surface and is rema
         s.device = std::move(*device);
         gpu::collect_surface(s.device->facts(), s.device->physical(), **surface, s.device->queue_family());
         for (const std::string& l : gpu::facts_lines(s.device->facts())) {
-            if (l.starts_with("surface.")) MESSAGE("vkfacts " << l);
+            if (l.starts_with("surface.") || l.starts_with("colour")) MESSAGE("vkfacts " << l);
         }
+#if defined(__APPLE__)
+        // The Android emulator package's lavapipe for macOS aborts in Mesa's headless WSI (wsi_common.c,
+        // get_blit_type: "Invalid image type") whatever the swapchain asks; the Linux runners' lavapipe runs the rest.
+        MESSAGE("the rest skipped on macOS: Mesa's headless WSI in the emulator package's lavapipe asserts making a "
+                "swapchain; the Linux runners run it");
+        s.device->wait_idle();
+        s.device.reset();
+    }
+    surface = gpu::fail("closed");
+#else
         auto swapchain = gpu::Swapchain::create(*s.device, **surface, {.width = 360, .height = 640}, nullptr);
         ATLAS_REQUIRE(swapchain.has_value(), swapchain.error().text());
+        CHECK((*swapchain)->format() == s.device->facts().colour.format);
+        MESSAGE("the swapchain: " << gpu::colour_name((*swapchain)->format()) << " (" << (*swapchain)->colour().reason
+                                  << ")");
         auto cache = gpu::PipelineCache::open(s.device->handle(), s.device->facts(), {}, 0, false);
         ATLAS_REQUIRE(cache.has_value(), cache.error().text());
         auto city = std::make_shared<const standin::City>(standin::City::generate(64, 13.0));
@@ -87,12 +95,25 @@ TEST_CASE("the swapchain presents the stand-in on a headless surface and is rema
             ATLAS_REQUIRE(report.has_value(), report.error().text());
             CHECK(report->status == gpu::Acquired::ok);
         }
+        // At 8 bits, as VK bench remakes it for the 8-bit frame against the frame's colour.
+        (*renderer)->drain();
+        auto eight = gpu::Swapchain::create(*s.device, **surface, {.width = 480, .height = 800}, std::move(*bigger),
+                                            gpu::Depth::eight);
+        ATLAS_REQUIRE(eight.has_value(), eight.error().text());
+        CHECK_FALSE((*eight)->colour().ten_bit());
+        auto at_eight = (*renderer)->retarget(**eight);
+        ATLAS_REQUIRE(at_eight.has_value(), at_eight.error().text());
+        for (int i = 0; i < 6; ++i) {
+            auto report = (*renderer)->draw(0);
+            ATLAS_REQUIRE(report.has_value(), report.error().text());
+            CHECK(report->status == gpu::Acquired::ok);
+        }
         (*renderer)->drain();
         const auto messages = s.take_messages();
         CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
         renderer->reset();
         standin->reset();
-        bigger->reset();
+        eight->reset();
         cache = gpu::fail("closed");
         s.device->wait_idle();
         s.device.reset();
@@ -128,33 +149,37 @@ TEST_CASE("the stand-in draws at Vulkan 1.1 under the validation layer, silent")
     ATLAS_REQUIRE(cache.has_value(), cache.error().text());
     auto city = std::make_shared<const standin::City>(standin::City::generate(64, 13.0));
     const vk::Extent2D extent{.width = 270, .height = 600};
-    auto output = platform::Offscreen::create(*s.device, extent, 2);
-    ATLAS_REQUIRE(output.has_value(), output.error().text());
-    for (const gpu::Configuration config : {gpu::Configuration{.config = gpu::FrameConfig::c,
-                                                               .route = gpu::Route::renderpass,
-                                                               .form = gpu::FrameForm::composite,
-                                                               .target = gpu::CompositeTarget::direct},
-                                            gpu::Configuration{.config = gpu::FrameConfig::c,
-                                                               .route = gpu::Route::renderpass,
-                                                               .form = gpu::FrameForm::composite,
-                                                               .target = gpu::CompositeTarget::resolve},
-                                            gpu::Configuration{.config = gpu::FrameConfig::x1,
-                                                               .route = gpu::Route::renderpass,
-                                                               .form = gpu::FrameForm::composite,
-                                                               .target = gpu::CompositeTarget::direct}}) {
-        auto standin = standin::StandIn::create(*s.device, *cache, city);
-        ATLAS_REQUIRE(standin.has_value(), standin.error().text());
-        (*standin)->set_camera(standin::board_view(extent.width, extent.height, 0.6559));
-        auto renderer = gpu::Renderer::create(*s.device, **output, **standin, config);
-        ATLAS_REQUIRE(renderer.has_value(), renderer.error().text());
-        for (int i = 0; i < 3; ++i) {
-            auto report = (*renderer)->draw(0);
-            ATLAS_REQUIRE(report.has_value(), report.error().text());
+    for (const gpu::Depth depth : {gpu::Depth::eight, gpu::Depth::deepest}) {
+        auto output = platform::Offscreen::create(*s.device, extent, 2, depth);
+        ATLAS_REQUIRE(output.has_value(), output.error().text());
+        MESSAGE("at Vulkan 1.1 in " << gpu::colour_name((*output)->format()));
+        for (const gpu::Configuration config : {gpu::Configuration{.config = gpu::FrameConfig::c,
+                                                                   .route = gpu::Route::renderpass,
+                                                                   .form = gpu::FrameForm::composite,
+                                                                   .target = gpu::CompositeTarget::direct},
+                                                gpu::Configuration{.config = gpu::FrameConfig::c,
+                                                                   .route = gpu::Route::renderpass,
+                                                                   .form = gpu::FrameForm::composite,
+                                                                   .target = gpu::CompositeTarget::resolve},
+                                                gpu::Configuration{.config = gpu::FrameConfig::x1,
+                                                                   .route = gpu::Route::renderpass,
+                                                                   .form = gpu::FrameForm::composite,
+                                                                   .target = gpu::CompositeTarget::direct}}) {
+            auto standin = standin::StandIn::create(*s.device, *cache, city);
+            ATLAS_REQUIRE(standin.has_value(), standin.error().text());
+            (*standin)->set_camera(standin::board_view(extent.width, extent.height, 0.6559));
+            auto renderer = gpu::Renderer::create(*s.device, **output, **standin, config);
+            ATLAS_REQUIRE(renderer.has_value(), renderer.error().text());
+            for (int i = 0; i < 3; ++i) {
+                auto report = (*renderer)->draw(0);
+                ATLAS_REQUIRE(report.has_value(), report.error().text());
+            }
+            (*renderer)->drain();
+            const auto messages = s.take_messages();
+            CHECK_MESSAGE(messages.empty(), gpu::colour_name((*output)->format())
+                                                << ": " << (messages.empty() ? std::string() : messages.front()));
+            renderer->reset();
         }
-        (*renderer)->drain();
-        const auto messages = s.take_messages();
-        CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
-        renderer->reset();
     }
     cache = gpu::fail("closed");
 }

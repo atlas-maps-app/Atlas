@@ -30,11 +30,14 @@ object FrameRecords {
     const val FRAGMENTS_K_AT = 88
     const val FLAGS_AT = 92
 
-    // FLAGS: the record's state, and the configuration from bit 8.
+    // FLAGS: the record's state, the configuration in bits 8-15, the colour depth in bit 16.
     const val PRESENTED = 1
     const val SKIPPED = 2
     const val GPU = 4
     const val GUARDED = 8
+
+    /** The frame was drawn in 10 bits a channel (rgb10a2 or bgr10a2), else 8. */
+    const val TEN_BIT = 1 shl 16
 
     /** The layout as (name, offset, size), named as the core's table names its fields. */
     val FIELDS: List<Triple<String, Int, Int>> = listOf(
@@ -96,6 +99,7 @@ object FrameRecords {
         val presented: Boolean get() = flags and PRESENTED != 0
         val skipped: Boolean get() = flags and SKIPPED != 0
         val gpuValid: Boolean get() = flags and GPU != 0
+        val tenBit: Boolean get() = flags and TEN_BIT != 0
         /** The render thread's milliseconds for the frame (from its start to the present returning). */
         val cpuMs: Double get() = (endNs - startNs) / 1e6
     }

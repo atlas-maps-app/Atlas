@@ -6,6 +6,12 @@
 // device (lavapipe on CI and on this Mac) with a few Vulkan calls of its own; once the device layer (CP/gpu, K1) and
 // its offscreen host (CP/platform/host) exist, the case is drawn through them and the pass registry instead.
 //
+// The colour depth (plan-vector D5, "Colour depth"): the pixels are 8 bits a channel, as the gates read them. This
+// clear is drawn into an R8G8B8A8 image of its own (an 8-bit clear colour would come back the same from 10 bits:
+// platform::level8(level10(v)) is v). Drawn through the device layer, the case takes the frame's colour as the phone
+// does, 10 bits a channel where the device draws the frame in them (lavapipe does), and platform::Offscreen::read
+// gives it back at 8 bits exactly (each channel at its nearest level), so the gates see 8 bits either way.
+//
 // The case buffer (256 bytes, little-endian; MT/likeness/Candidate.kt writes it): 0 magic "LKC1", 4 version, 8 width
 // px, 12 height px, 16 density (f64), 24 clear colour (ARGB), 28 mode (0 structural, 1 full, 2 effect), 32 flags (bit
 // 0: engine mode), 36 moment kind (0 named, 1 live), 40 lat, 48 lon, 56 zoom, 64 bearing, 72 map pitch, 80 principal

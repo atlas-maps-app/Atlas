@@ -588,7 +588,10 @@ gpu::Result<void> StandIn::prepare_offscreen(const gpu::MainPass& pass, const gp
 gpu::Result<void> StandIn::prepare_pipelines(const gpu::MainPass& pass, const gpu::Output& output) {
     const vk::raii::Device& d = device_.handle();
     const gpu::Configuration& c = pass.spec().config;
-    const std::string configuration = gpu::name_of(c);
+    // As the log and the crash guard name it, with the frame's colour: a driver compiles a pipeline for its render
+    // pass's formats, so a crash in a 10-bit frame's is told from one in an 8-bit frame's.
+    const std::string configuration =
+        std::format("{} {}", gpu::name_of(c), gpu::colour_name(pass.spec().colour_format));
     double ms = 0;
     std::uint32_t made = 0;
     // The scene's module for the frame's form: in one subpass its fragments apply the screen effects themselves.

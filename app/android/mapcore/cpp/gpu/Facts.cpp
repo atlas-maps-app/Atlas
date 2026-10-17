@@ -108,6 +108,60 @@ void read_profiles(Facts& facts, const Instance& instance, const vk::raii::Physi
     vpDestroyFunctions(vp, nullptr);
 }
 
+/// The frame's colour formats, in the order the choice takes them (10 bits first).
+constexpr std::array<vk::Format, 4> colour_candidates{vk::Format::eA2B10G10R10UnormPack32,
+                                                      vk::Format::eA2R10G10B10UnormPack32, vk::Format::eR8G8B8A8Unorm,
+                                                      vk::Format::eB8G8R8A8Unorm};
+
+/// The main pass's image of the scene's samples (gpu/Passes.cpp): drawn, read by the composite, never stored.
+constexpr vk::ImageUsageFlags sample_usage = vk::ImageUsageFlagBits::eColorAttachment |
+                                             vk::ImageUsageFlagBits::eInputAttachment |
+                                             vk::ImageUsageFlagBits::eTransientAttachment;
+
+/// What the device does with each of the frame's colour formats.
+void read_colour_formats(Facts& facts, const vk::raii::PhysicalDevice& device) {
+    using F = vk::FormatFeatureFlagBits;
+    const vk::FormatFeatureFlags drawn = F::eColorAttachment | F::eColorAttachmentBlend;
+    const vk::FormatFeatureFlags output =
+        drawn | F::eBlitSrc | F::eSampledImageFilterLinear | F::eTransferSrc | F::eTransferDst;
+    facts.colour_formats.clear();
+    for (const vk::Format format : colour_candidates) {
+        ColourFormat c{.format = format};
+        const vk::FormatFeatureFlags have = device.getFormatProperties(format).optimalTilingFeatures;
+        auto lack = [&](vk::FormatFeatureFlags need, std::string_view what) {
+            if ((have & need) != need) c.lacks += std::format("{}{}", c.lacks.empty() ? "" : ", ", what);
+        };
+        lack(F::eColorAttachment, "colour attachment");
+        lack(F::eColorAttachmentBlend, "blending");
+        lack(F::eBlitSrc | F::eSampledImageFilterLinear, "linearly filtered blits");
+        lack(F::eTransferSrc | F::eTransferDst, "copies");
+        c.output = (have & output) == output;
+        if (auto image = device.getImageFormatProperties(format, vk::ImageType::e2D, vk::ImageTiling::eOptimal,
+                                                         sample_usage, {})) {
+            c.samples = image->sampleCounts;
+        }
+        if (!(c.samples & vk::SampleCountFlagBits::e1))
+            c.lacks += std::format("{}{}", c.lacks.empty() ? "" : ", ", "input attachment");
+        c.attachment = (have & drawn) == drawn && static_cast<bool>(c.samples & vk::SampleCountFlagBits::e1);
+        facts.colour_formats.push_back(std::move(c));
+    }
+}
+
+/// The 8-bit colour of the frame on a surface offering `offered` (as before the colour depth): rgba8, else bgra8, in
+/// sRGB-nonlinear, else the surface's first format.
+[[nodiscard]] Colour eight_bit(std::span<const vk::SurfaceFormatKHR> offered, std::string why) {
+    for (const vk::Format wanted : {vk::Format::eR8G8B8A8Unorm, vk::Format::eB8G8R8A8Unorm}) {
+        for (const vk::SurfaceFormatKHR& f : offered) {
+            if (f.format == wanted && f.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)
+                return {.format = f.format, .space = f.colorSpace, .reason = std::move(why)};
+        }
+    }
+    if (offered.empty()) return {.reason = std::move(why)};
+    return {.format = offered.front().format,
+            .space = offered.front().colorSpace,
+            .reason = why + "; the surface offers neither rgba8 nor bgra8 in sRGB: its first format"};
+}
+
 /// The device's features, through the structures its version and extensions allow.
 void read_features(Facts& facts, const vk::raii::PhysicalDevice& device, std::uint32_t version) {
     vk::PhysicalDeviceFeatures2 features2{};
@@ -182,6 +236,8 @@ void read_features(Facts& facts, const vk::raii::PhysicalDevice& device, std::ui
     out.dual_src_blend = f.dualSrcBlend == vk::True;
     out.pipeline_statistics = f.pipelineStatisticsQuery == vk::True;
     out.shader_int16 = f.shaderInt16 == vk::True;
+    out.shader_int64 = f.shaderInt64 == vk::True;
+    out.shader_float64 = f.shaderFloat64 == vk::True;
     out.independent_blend = f.independentBlend == vk::True;
     out.fragment_stores = f.fragmentStoresAndAtomics == vk::True;
     out.vertex_stores = f.vertexPipelineStoresAndAtomics == vk::True;
@@ -297,6 +353,84 @@ bool Facts::supports(FrameConfig config) const noexcept {
 bool Facts::takes_read_without_format() const noexcept {
     return std::min(api_version, instance_version) >= VK_API_VERSION_1_3 || features.read_without_format ||
            has_extension(vk::KHRFormatFeatureFlags2ExtensionName);
+}
+
+bool ten_bit(vk::Format format) noexcept {
+    return format == vk::Format::eA2B10G10R10UnormPack32 || format == vk::Format::eA2R10G10B10UnormPack32;
+}
+
+bool Colour::ten_bit() const noexcept { return gpu::ten_bit(format); }
+
+std::string colour_name(vk::Format format) {
+    switch (format) {
+    case vk::Format::eA2B10G10R10UnormPack32: return "rgb10a2";
+    case vk::Format::eA2R10G10B10UnormPack32: return "bgr10a2";
+    case vk::Format::eR8G8B8A8Unorm: return "rgba8";
+    case vk::Format::eB8G8R8A8Unorm: return "bgra8";
+    default: return vk::to_string(format);
+    }
+}
+
+const ColourFormat* Facts::colour_format(vk::Format format) const noexcept {
+    const auto it = std::ranges::find(colour_formats, format, &ColourFormat::format);
+    return it == colour_formats.end() ? nullptr : &*it;
+}
+
+std::string Facts::unfit_for_frame(vk::Format format) const {
+    const ColourFormat* c = colour_format(format);
+    if (c == nullptr) return "not one of the frame's colour formats";
+    if (!c->lacks.empty()) return "no " + c->lacks;
+    // Every sample count of a configuration the device can draw (D5.3).
+    vk::SampleCountFlags needed = vk::SampleCountFlagBits::e1 | vk::SampleCountFlagBits::e4;
+    if (supports(FrameConfig::b)) needed |= vk::SampleCountFlagBits::e2;
+    std::string counts;
+    for (const auto n : {vk::SampleCountFlagBits::e1, vk::SampleCountFlagBits::e2, vk::SampleCountFlagBits::e4}) {
+        if ((needed & n) && !(c->samples & n))
+            counts += std::format("{}{}x", counts.empty() ? "" : ", ", static_cast<int>(n));
+    }
+    if (!counts.empty()) return std::format("no {} samples as a transient input attachment", counts);
+    if (lazy_memory && c->lazy_checked && !c->lazy)
+        return "lazily allocated memory cannot hold its transient samples (configuration A)";
+    return {};
+}
+
+Colour colour_for_surface(const Facts& facts, std::span<const vk::SurfaceFormatKHR> offered, Depth depth) {
+    if (depth == Depth::eight) return eight_bit(offered, "8 bits asked for");
+    std::string refused;
+    for (const vk::Format format : {vk::Format::eA2B10G10R10UnormPack32, vk::Format::eA2R10G10B10UnormPack32}) {
+        const bool offers = std::ranges::any_of(offered, [&](const vk::SurfaceFormatKHR& f) {
+            return f.format == format && f.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
+        });
+        if (!offers) continue;
+        if (const std::string unfit = facts.unfit_for_frame(format); !unfit.empty()) {
+            refused += std::format("{}{} ({})", refused.empty() ? "" : ", ", colour_name(format), unfit);
+            continue;
+        }
+        return {.format = format,
+                .space = vk::ColorSpaceKHR::eSrgbNonlinear,
+                .reason = "the surface offers it in sRGB and the frame's attachments follow it"};
+    }
+    if (!refused.empty())
+        return eight_bit(offered, "the surface's 10-bit sRGB formats are of no use to the frame: " + refused);
+    const bool ten_elsewhere =
+        std::ranges::any_of(offered, [](const vk::SurfaceFormatKHR& f) { return ten_bit(f.format); });
+    return eight_bit(offered, ten_elsewhere ? "the surface offers 10 bits only outside sRGB (the gamut stays sRGB)"
+                                            : "the surface offers no 10-bit format");
+}
+
+Colour colour_offscreen(const Facts& facts, Depth depth) {
+    if (depth == Depth::eight) return {.reason = "offscreen: 8 bits asked for"};
+    std::string refused;
+    for (const vk::Format format : {vk::Format::eA2B10G10R10UnormPack32, vk::Format::eA2R10G10B10UnormPack32}) {
+        if (const std::string unfit = facts.unfit_for_frame(format); !unfit.empty()) {
+            refused += std::format("{}{} ({})", refused.empty() ? "" : ", ", colour_name(format), unfit);
+            continue;
+        }
+        return {.format = format,
+                .space = vk::ColorSpaceKHR::eSrgbNonlinear,
+                .reason = "offscreen: the device draws the frame in 10 bits"};
+    }
+    return {.reason = "offscreen: the device cannot draw the frame in 10 bits: " + refused};
 }
 
 std::string Facts::driver_key() const {
@@ -487,6 +621,7 @@ Facts collect_facts(const Instance& instance, const vk::raii::PhysicalDevice& de
                                         : vk::Format::eUndefined;
     facts.rgba8_input = attachment(vk::Format::eR8G8B8A8Unorm, vk::FormatFeatureFlagBits::eColorAttachment |
                                                                    vk::FormatFeatureFlagBits::eColorAttachmentBlend);
+    read_colour_formats(facts, device);
 
     read_features(facts, device, version);
     read_profiles(facts, instance, device);
@@ -499,6 +634,7 @@ Facts collect_facts(const Instance& instance, const vk::raii::PhysicalDevice& de
                                                    facts.driver_id != vk::DriverId::eGoogleSwiftshader));
     check_requirements(facts, present);
     choose_configuration(facts, false);
+    facts.colour = colour_offscreen(facts, Depth::deepest);
     return facts;
 }
 
@@ -510,6 +646,7 @@ void collect_surface(Facts& facts, const vk::raii::PhysicalDevice& device, vk::S
     if (auto caps = device.getSurfaceCapabilitiesKHR(surface)) s.capabilities = *caps;
     if (auto formats = device.getSurfaceFormatsKHR(surface)) s.formats = std::move(*formats);
     if (auto modes = device.getSurfacePresentModesKHR(surface)) s.present_modes = std::move(*modes);
+    facts.colour = colour_for_surface(facts, s.formats, Depth::deepest);
 }
 
 std::vector<std::string> facts_lines(const Facts& f) {
@@ -549,6 +686,15 @@ std::vector<std::string> facts_lines(const Facts& f) {
     line("route: {} ({})", name_of(f.choice.route), f.route_reason);
     line("composite: {} ({})", name_of(f.choice.target), f.target_reason);
     line("form: {}", name_of(f.choice.form));
+    line("colour: {} ({} in {}: {})", colour_name(f.colour.format), vk::to_string(f.colour.format),
+         vk::to_string(f.colour.space), f.colour.reason);
+    std::string drawable;
+    for (const ColourFormat& c : f.colour_formats) {
+        const std::string unfit = f.unfit_for_frame(c.format);
+        drawable += std::format("{}{} {}", drawable.empty() ? "" : ", ", colour_name(c.format),
+                                unfit.empty() ? std::string("yes") : "no (" + unfit + ")");
+    }
+    line("colour.formats: {} (the frame drawn in each)", drawable);
     line("configs.available: A {}, B {}, C {}, 1x {}", yes_no(f.supports(FrameConfig::a)),
          yes_no(f.supports(FrameConfig::b)), yes_no(f.supports(FrameConfig::c)), yes_no(f.supports(FrameConfig::x1)));
     line("depth.stencil: {} (D24S8 {}, D32S8 {})",
@@ -590,6 +736,10 @@ std::vector<std::string> facts_lines(const Facts& f) {
     line("feature.pipelineStatisticsQuery: {}", yes_no(x.pipeline_statistics));
     line("feature.dualSrcBlend: {}", yes_no(x.dual_src_blend));
     line("feature.shaderInt16: {}", yes_no(x.shader_int16));
+    line("feature.shaderInt64: {}", yes_no(x.shader_int64));
+    line("feature.shaderFloat64: {} (K5's light: {})", yes_no(x.shader_float64),
+         x.shader_float64 ? "binary64, the port's bits (E0), where its probe finds binary64 exact"
+                          : "binary32 (E1), within 6e-4 of a level of the port's");
     line("feature.shaderDrawParameters: {}", yes_no(x.draw_parameters));
     line("feature.independentBlend: {}", yes_no(x.independent_blend));
     line("feature.fragmentStoresAndAtomics: {}", yes_no(x.fragment_stores));

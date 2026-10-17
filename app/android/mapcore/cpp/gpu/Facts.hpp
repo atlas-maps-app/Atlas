@@ -1,14 +1,24 @@
 // VkFacts (plan-vector T1, D5.3, A0): what the phone's Vulkan offers, read once from its physical device and printed
 // as "name: value" lines (logcat's "vkfacts " lines, the VK facts screen, smoke.sh's vkfacts.txt). The facts also
 // decide the frame: the frame configuration (A, B, C, or D), the frame route (dynamic rendering with local reads, or a
-// render pass with two subpasses) and where the composite writes, each with its reason, so the owner's paste
-// explains what the core would do on that phone.
+// render pass with two subpasses), where the composite writes and the frame's colour depth, each with its reason, so
+// the owner's paste explains what the core would do on that phone.
+//
+// The colour depth (plan-vector D5, "Colour depth"): the output takes 10 bits a channel where the surface offers it in
+// sRGB-nonlinear (rgb10a2, A2B10G10R10_UNORM_PACK32, else bgr10a2, A2R10G10B10_UNORM_PACK32) and the device can draw
+// the frame in it, else 8 bits (rgba8, else bgra8) as before. The same 32 bits a pixel, so no memory or bandwidth more.
+// The scene's and the composite's colour attachments follow the output, as a resolve needs: so the format must also be
+// a blended colour and input attachment at the frame's sample counts, transient, in lazily allocated memory where
+// configuration A needs it, and nothing may read the destination's alpha (rgb10a2 keeps 2 bits of it): no blend reads
+// it (gpu/Pipelines.cpp refuses one that would), and the composite reads its samples' colour only. The gamut stays
+// sRGB, the renders' palette: Display P3, extended sRGB and HDR are not taken.
 #pragma once
 
 #include "gpu/Instance.hpp"
 
 #include <array>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -49,6 +59,46 @@ struct Configuration {
 /// "<config> <route> <form> <target>", as VK bench and the log name a configuration ("A renderpass composite resolve").
 [[nodiscard]] std::string name_of(const Configuration& configuration);
 
+/// How deep the frame's colour may be: as deep as the surface and the device allow (10 bits a channel where they can),
+/// or 8 bits (VK bench's comparison, the tests' 8-bit frames).
+enum class Depth : std::uint8_t { deepest, eight };
+
+/// What the device does with one of the frame's colour formats (Facts::colour_formats).
+struct ColourFormat {
+    vk::Format format = vk::Format::eUndefined;
+    /// The 1x output: a colour attachment with blending, a blit source with linear filtering (the frosted backdrops'
+    /// copy), copied from and into (the host build's readback and fill).
+    bool output = false;
+    /// The scene's samples: a colour attachment with blending, and the main pass's image of it (colour, input and
+    /// transient attachment) at `samples`.
+    bool attachment = false;
+    vk::SampleCountFlags samples;
+    /// Lazily allocated memory holds its transient samples (configuration A): asked of the device when it opens (by
+    /// the memory types a 4x image may take), assumed until then.
+    bool lazy = true;
+    bool lazy_checked = false;
+    /// The format features it lacks for the output or the samples, in words ("" for none).
+    std::string lacks;
+};
+
+/// The frame's colour: the output's format and colour space, which the scene's and the composite's colour attachments
+/// follow (a resolve keeps one format), and why.
+struct Colour {
+    vk::Format format = vk::Format::eR8G8B8A8Unorm;
+    vk::ColorSpaceKHR space = vk::ColorSpaceKHR::eSrgbNonlinear;
+    std::string reason;
+
+    /// 10 bits a channel (rgb10a2 or bgr10a2, with 2 bits of alpha).
+    [[nodiscard]] bool ten_bit() const noexcept;
+};
+
+/// A colour format's short name: rgb10a2 (A2B10G10R10_UNORM_PACK32), bgr10a2 (A2R10G10B10_UNORM_PACK32), rgba8
+/// (R8G8B8A8_UNORM), bgra8 (B8G8R8A8_UNORM), else Vulkan-Hpp's name.
+[[nodiscard]] std::string colour_name(vk::Format format);
+
+/// Whether `format` holds 10 bits a channel (the two packed formats above).
+[[nodiscard]] bool ten_bit(vk::Format format) noexcept;
+
 /// The features the core uses or reports (T1), as the device offers them.
 struct FeatureFacts {
     bool sample_rate_shading = false;
@@ -58,6 +108,8 @@ struct FeatureFacts {
     bool dual_src_blend = false;
     bool pipeline_statistics = false;
     bool shader_int16 = false;
+    bool shader_int64 = false;
+    bool shader_float64 = false; // K5's light in binary64, the port's bits (E0); without it binary32 (E1)
     bool independent_blend = false;
     bool fragment_stores = false;
     bool vertex_stores = false;
@@ -116,6 +168,8 @@ struct Facts {
     bool d24s8 = false;
     bool d32s8 = false;
     bool rgba8_input = false; // R8G8B8A8_UNORM as a colour and input attachment (the composite)
+    /// The frame's colour formats, in the order the choice takes them: rgb10a2, bgr10a2, rgba8, bgra8.
+    std::vector<ColourFormat> colour_formats;
     FeatureFacts features;
     std::vector<std::string> extensions; // without the ones the host tests hide (Instance::hidden)
     std::vector<std::string> hidden;     // the extensions the host tests hide, which read as absent
@@ -134,10 +188,17 @@ struct Facts {
     std::string route_reason;
     std::string target_reason;
     std::string quirks; // the quirk table's entries for this device ("none")
+    /// The frame's colour: on the surface once one is known (collect_surface), else offscreen (colour_offscreen).
+    Colour colour;
     SurfaceFacts surface;
 
     [[nodiscard]] bool has_extension(std::string_view extension) const noexcept;
     [[nodiscard]] bool supports(FrameConfig config) const noexcept;
+    /// What the device does with `format`, if it is one of the frame's colour formats (else nullptr).
+    [[nodiscard]] const ColourFormat* colour_format(vk::Format format) const noexcept;
+    /// Why the device cannot draw the frame in `format` ("" when it can): the output's and the samples' features, the
+    /// frame's sample counts as an input attachment, lazily allocated memory for configuration A.
+    [[nodiscard]] std::string unfit_for_frame(vk::Format format) const;
     /// "vendor 0x13b5 device 0x... driver 2 version 0x..." for the guard and the cache key.
     [[nodiscard]] std::string driver_key() const;
     /// Whether the device takes SPIR-V declaring StorageImageReadWithoutFormat (Slang's subpass loads do): Vulkan 1.3,
@@ -154,9 +215,17 @@ struct Facts {
 /// or for offscreen work, and `facts.presents` to `present`.
 void check_requirements(Facts& facts, bool present);
 
-/// Adds the surface's facts.
+/// Adds the surface's facts, and the frame's colour on it.
 void collect_surface(Facts& facts, const vk::raii::PhysicalDevice& device, vk::SurfaceKHR surface,
                      std::uint32_t queue_family);
+
+/// The frame's colour on a surface that offers `offered`: rgb10a2, else bgr10a2, in sRGB-nonlinear, where the surface
+/// offers it and the device can draw the frame in it; else rgba8, else bgra8 in sRGB-nonlinear, else the surface's
+/// first format (as before). `Depth::eight` takes the 8-bit one.
+[[nodiscard]] Colour colour_for_surface(const Facts& facts, std::span<const vk::SurfaceFormatKHR> offered, Depth depth);
+
+/// The frame's colour offscreen (the host build's images): the same choice, as if a surface offered every format.
+[[nodiscard]] Colour colour_offscreen(const Facts& facts, Depth depth);
 
 /// The facts as "name: value" lines, in a fixed order.
 [[nodiscard]] std::vector<std::string> facts_lines(const Facts& facts);

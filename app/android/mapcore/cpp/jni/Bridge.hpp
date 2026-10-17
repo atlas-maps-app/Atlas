@@ -45,7 +45,7 @@ struct FrameRecord {
     std::uint32_t draws;
     std::uint32_t triangles_k; // thousands
     std::uint32_t fragments_k; // thousands of fragment invocations (pipeline statistics; 0 where unsupported)
-    std::uint32_t flags;       // FrameFlag bits, and the configuration in bits 8-15
+    std::uint32_t flags;       // FrameFlag bits, the configuration in bits 8-15, the colour depth in bit 16
 
     static constexpr std::uint32_t version = 1;
 };
@@ -60,6 +60,7 @@ inline constexpr std::uint32_t guarded = 1U << 3;   // within the crash guard's 
 /// The configuration: bits 8-10 FrameConfig, 11 route (1 dynamic), 12 form (1 onepass), 13 target (1 direct), 14 host
 /// (1 TextureView), 15 pills.
 inline constexpr std::uint32_t config_shift = 8;
+inline constexpr std::uint32_t ten_bit = 1U << 16; // drawn in 10 bits a channel (rgb10a2 or bgr10a2), else 8
 } // namespace frame_flag
 
 } // namespace atlas::jni

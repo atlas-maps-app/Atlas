@@ -17,6 +17,15 @@ void announce(const PipelineLabel& label, PipelineWatch* watch) {
     if (watch != nullptr) watch->before(label);
 }
 
+bool Blend::reads_destination_alpha() const noexcept {
+    if (!enable) return false;
+    auto reads = [](vk::BlendFactor f) {
+        return f == vk::BlendFactor::eDstAlpha || f == vk::BlendFactor::eOneMinusDstAlpha ||
+               f == vk::BlendFactor::eSrcAlphaSaturate;
+    };
+    return reads(src_colour) || reads(dst_colour);
+}
+
 Result<vk::raii::ShaderModule> make_module(const vk::raii::Device& device, std::span<const std::uint32_t> spirv) {
     ATLAS_VK_LET(module, device.createShaderModule({.codeSize = spirv.size_bytes(), .pCode = spirv.data()}),
                  "a shader module");
@@ -39,6 +48,13 @@ Result<vk::raii::PipelineLayout> make_layout(const vk::raii::Device& device,
 Result<vk::raii::Pipeline> make_graphics(const vk::raii::Device& device, const vk::raii::PipelineCache& cache,
                                          const GraphicsDesc& d) {
     ATLAS_ASSERT(d.target.colour_count <= d.blends.size(), "at most four colour attachments");
+    for (std::uint32_t i = 0; i < d.target.colour_count; ++i) {
+        if (d.blends[i].reads_destination_alpha()) {
+            return fail(std::format("the graphics pipeline {} blends attachment {} by the destination's alpha, which "
+                                    "the frame's colour does not keep (rgb10a2 holds 2 bits of it)",
+                                    describe(d.label), i));
+        }
+    }
     const std::array<vk::PipelineShaderStageCreateInfo, 2> stages{{
         {.stage = vk::ShaderStageFlagBits::eVertex, .module = d.module, .pName = d.vertex},
         {.stage = vk::ShaderStageFlagBits::eFragment,

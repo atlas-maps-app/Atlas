@@ -163,9 +163,11 @@ Result<std::unique_ptr<Renderer>> Renderer::create(const Device& device, Output&
 
 Result<void> Renderer::remake(const Configuration& configuration) {
     pass_.reset();
+    // The scene's and the composite's colour attachments follow the output (gpu/Facts.hpp's colour): a resolve keeps
+    // one format, and the output's colour is one the device draws the frame in.
     const MainPassSpec spec{.config = configuration,
                             .extent = output_->extent(),
-                            .colour_format = vk::Format::eR8G8B8A8Unorm,
+                            .colour_format = output_->format(),
                             .output_format = output_->format(),
                             .depth_stencil = device_.facts().depth_stencil,
                             .output_final = output_->final_layout()};

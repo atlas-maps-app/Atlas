@@ -216,6 +216,20 @@ object VkBench {
             "current ${if (currentMa.isNaN()) "—" else "%.0f mA".format(java.util.Locale.ROOT, currentMa)}"
     }
 
+    /**
+     * The colour line (plan-vector D5, "Colour depth"): the GPU's median and p95 for the frame of [cell] in the frame's
+     * 10-bit colour ([deepName], rgb10a2 or bgr10a2) against the same frame at 8 bits, and what the 10 bits cost.
+     */
+    fun colourLine(cell: String, deepName: String, deep: Summary, eight: Summary): String {
+        val d = deep.gpuP50 - eight.gpuP50
+        val cost = if (d.isNaN()) "—" else "%+.2f ms".format(java.util.Locale.ROOT, d)
+        return "vkbench colour $cell: $deepName ${ms(deep.gpuP50)} ms, rgba8 ${ms(eight.gpuP50)} ms GPU " +
+            "(p95 ${ms(deep.gpuP95)} and ${ms(eight.gpuP95)}; $deepName $cost)"
+    }
+
+    /** The frame's colour from the facts' `colour:` value ("rgb10a2 (A2B10G10R10UnormPack32 in …)"): its name, if 10-bit. */
+    fun tenBitColour(colourFact: String): String? = colourFact.substringBefore(" ").takeIf { it == "rgb10a2" || it == "bgr10a2" }
+
     /** The difference of two GPU medians, as the ONEPASS decision reads it (D5.4: build ONEPASS above 1 ms). */
     fun onepassVerdict(composite: Double, onepass: Double): String {
         if (composite.isNaN() || onepass.isNaN()) return "unknown (no GPU times)"

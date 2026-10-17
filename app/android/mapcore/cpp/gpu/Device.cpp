@@ -36,6 +36,33 @@ namespace {
     return options.present || static_cast<bool>(options.surface);
 }
 
+/// Whether lazily allocated memory holds the samples of configuration A in each colour format the frame may take (its
+/// colour follows the output, gpu/Facts.hpp): by the memory types a 4x transient image of the format may take.
+void probe_lazy(const vk::raii::Device& device, Facts& facts) {
+    std::uint32_t lazy_types = 0;
+    for (std::uint32_t i = 0; i < facts.memory.memoryTypeCount; ++i) {
+        if (facts.memory.memoryTypes[i].propertyFlags & vk::MemoryPropertyFlagBits::eLazilyAllocated)
+            lazy_types |= 1U << i;
+    }
+    for (ColourFormat& c : facts.colour_formats) {
+        if (!c.attachment || !(c.samples & vk::SampleCountFlagBits::e4)) continue;
+        auto image = device.createImage({.imageType = vk::ImageType::e2D,
+                                         .format = c.format,
+                                         .extent = {.width = 64, .height = 64, .depth = 1},
+                                         .mipLevels = 1,
+                                         .arrayLayers = 1,
+                                         .samples = vk::SampleCountFlagBits::e4,
+                                         .tiling = vk::ImageTiling::eOptimal,
+                                         .usage = vk::ImageUsageFlagBits::eColorAttachment |
+                                                  vk::ImageUsageFlagBits::eInputAttachment |
+                                                  vk::ImageUsageFlagBits::eTransientAttachment,
+                                         .initialLayout = vk::ImageLayout::eUndefined});
+        if (!image) continue;
+        c.lazy = (image->getMemoryRequirements().memoryTypeBits & lazy_types) != 0;
+        c.lazy_checked = true;
+    }
+}
+
 } // namespace
 
 Device::~Device() {
@@ -206,6 +233,9 @@ Result<std::unique_ptr<Device>> Device::open(Instance& instance, Picked picked, 
     self->queue_ = self->device_.getQueue(*family, 0);
     ATLAS_GPU_LET(memory, Memory::create(instance, physical, self->device_, version, on.memory_budget));
     self->memory_ = std::move(memory);
+    if (facts.lazy_memory) probe_lazy(self->device_, facts);
+    facts.colour = facts.surface.formats.empty() ? colour_offscreen(facts, Depth::deepest)
+                                                 : colour_for_surface(facts, facts.surface.formats, Depth::deepest);
     self->facts_ = std::move(facts);
     // The choice may only use what was enabled.
     if (self->facts_.choice.route == Route::dynamic && !on.local_read) {

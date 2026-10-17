@@ -1,6 +1,8 @@
-// The surface and the swapchain (plan-vector D5.1, D5.2): R8G8B8A8_UNORM in sRGB-nonlinear (blending on encoded values,
-// as the renders composite), FIFO, three images or the surface's minimum, opaque, the surface's current transform
-// applied by the frame itself (pre-rotation), and a copy source where the surface allows it (the frosted backdrops).
+// The surface and the swapchain (plan-vector D5.1, D5.2): 10 bits a channel where the surface offers them and the
+// device can draw the frame in them (rgb10a2, else bgr10a2; 8 bits again where the driver then refuses the swapchain),
+// else R8G8B8A8_UNORM (else B8G8R8A8), always in sRGB-nonlinear (blending on encoded values, as the renders composite;
+// gpu/Facts.hpp's colour), FIFO, three images or the surface's minimum, opaque, the surface's current transform applied
+// by the frame itself (pre-rotation), and a copy source where the surface allows it (the frosted backdrops).
 // One render-finished semaphore per image; with VK_EXT_swapchain_maintenance1 a fence per present, so a retired
 // swapchain is destroyed once its presents are done; with VK_GOOGLE_display_timing each present asks for the vsync's
 // presentation time and the past presentations' real times are read back for VK bench.
@@ -37,9 +39,11 @@ struct PresentedTiming {
 /// The swapchain on a surface.
 class Swapchain final : public Output {
 public:
-    /// Makes a swapchain of `wanted` pixels (used where the surface leaves the size to the swapchain), retiring `old`.
+    /// Makes a swapchain of `wanted` pixels (used where the surface leaves the size to the swapchain), retiring `old`,
+    /// in the frame's colour at `depth` (as deep as the surface and the device allow, or 8 bits).
     [[nodiscard]] static Result<std::unique_ptr<Swapchain>> create(const Device& device, vk::SurfaceKHR surface,
-                                                                   vk::Extent2D wanted, std::unique_ptr<Swapchain> old);
+                                                                   vk::Extent2D wanted, std::unique_ptr<Swapchain> old,
+                                                                   Depth depth = Depth::deepest);
     Swapchain(const Swapchain&) = delete;
     Swapchain& operator=(const Swapchain&) = delete;
     Swapchain(Swapchain&&) = delete;
@@ -57,6 +61,8 @@ public:
     [[nodiscard]] vk::Semaphore rendered(std::uint32_t index) const noexcept override { return *rendered_[index]; }
     [[nodiscard]] Acquired present(std::uint32_t index, std::uint64_t frame, std::uint64_t desired_ns) override;
 
+    /// The frame's colour on this swapchain, and why (gpu/Facts.hpp).
+    [[nodiscard]] const Colour& colour() const noexcept { return colour_; }
     /// The display's refresh period where the device says (VK_GOOGLE_display_timing), else 0.
     [[nodiscard]] std::uint64_t refresh_ns() const noexcept { return refresh_ns_; }
     /// The presentations completed since the last call, oldest first (VK_GOOGLE_display_timing; empty otherwise).
@@ -78,6 +84,7 @@ private:
     std::vector<bool> fence_pending_;
     vk::Extent2D extent_;
     vk::Format format_ = vk::Format::eUndefined;
+    Colour colour_;
     vk::SurfaceTransformFlagBitsKHR transform_ = vk::SurfaceTransformFlagBitsKHR::eIdentity;
     std::uint64_t refresh_ns_ = 0;
     bool transfer_source_ = false;

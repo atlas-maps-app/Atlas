@@ -7,13 +7,26 @@
 namespace atlas::platform {
 
 gpu::Result<std::unique_ptr<Offscreen>> Offscreen::create(const gpu::Device& device, vk::Extent2D extent,
-                                                          std::uint32_t images) {
+                                                          std::uint32_t images, gpu::Depth depth) {
+    return make(device, extent, images, gpu::colour_offscreen(device.facts(), depth));
+}
+
+gpu::Result<std::unique_ptr<Offscreen>> Offscreen::create(const gpu::Device& device, vk::Extent2D extent,
+                                                          std::uint32_t images, vk::Format format) {
+    if (words_per_pixel(format) == 0) return gpu::fail("offscreen images of " + vk::to_string(format));
+    return make(device, extent, images, {.format = format, .reason = "offscreen: asked for"});
+}
+
+gpu::Result<std::unique_ptr<Offscreen>> Offscreen::make(const gpu::Device& device, vk::Extent2D extent,
+                                                        std::uint32_t images, gpu::Colour colour) {
     std::unique_ptr<Offscreen> self(new Offscreen()); // NOLINT(cppcoreguidelines-owning-memory): private constructor
     self->device_ = &device;
     self->extent_ = extent;
+    self->colour_ = std::move(colour);
+    const vk::Format format = self->colour_.format;
     for (std::uint32_t i = 0; i < images; ++i) {
         ATLAS_GPU_LET(image, device.memory().image({.imageType = vk::ImageType::e2D,
-                                                    .format = vk::Format::eR8G8B8A8Unorm,
+                                                    .format = format,
                                                     .extent = {extent.width, extent.height, 1},
                                                     .mipLevels = 1,
                                                     .arrayLayers = 1,
@@ -28,7 +41,7 @@ gpu::Result<std::unique_ptr<Offscreen>> Offscreen::create(const gpu::Device& dev
             view,
             device.handle().createImageView({.image = image.handle(),
                                              .viewType = vk::ImageViewType::e2D,
-                                             .format = vk::Format::eR8G8B8A8Unorm,
+                                             .format = format,
                                              .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
                                                                   .levelCount = 1,
                                                                   .layerCount = 1}}),
@@ -53,8 +66,13 @@ gpu::Acquired Offscreen::present(std::uint32_t index, std::uint64_t /*frame*/, s
 }
 
 gpu::Result<Pixels> Offscreen::read(std::uint32_t index) const {
+    ATLAS_GPU_LET(packed, read_packed(index));
+    return to_rgba8(packed);
+}
+
+gpu::Result<Packed> Offscreen::read_packed(std::uint32_t index) const {
     const vk::raii::Device& d = device_->handle();
-    const vk::DeviceSize bytes = vk::DeviceSize{extent_.width} * extent_.height * 4;
+    const vk::DeviceSize bytes = vk::DeviceSize{extent_.width} * extent_.height * 4 * words_per_pixel(colour_.format);
     ATLAS_GPU_LET(buffer,
                   device_->memory().buffer(bytes, vk::BufferUsageFlagBits::eTransferDst, gpu::MemoryUse::readback));
     ATLAS_VK_LET(pool,
@@ -101,10 +119,10 @@ gpu::Result<Pixels> Offscreen::read(std::uint32_t index) const {
     if (const vk::Result r = d.waitForFences(*fence, vk::True, UINT64_MAX); r != vk::Result::eSuccess)
         return gpu::fail(r, "the readback");
     buffer.invalidate();
-    Pixels out{.width = extent_.width, .height = extent_.height, .rgba = {}};
+    Packed out{.width = extent_.width, .height = extent_.height, .format = colour_.format, .words = {}};
     const auto mapped = buffer.bytes();
-    out.rgba.resize(static_cast<std::size_t>(bytes));
-    std::memcpy(out.rgba.data(), mapped.data(), out.rgba.size());
+    out.words.resize(static_cast<std::size_t>(bytes) / 4);
+    std::memcpy(out.words.data(), mapped.data(), static_cast<std::size_t>(bytes));
     return out;
 }
 

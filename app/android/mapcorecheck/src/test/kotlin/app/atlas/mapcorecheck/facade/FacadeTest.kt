@@ -107,6 +107,12 @@ class FacadeTest {
                 assertTrue(facts.joinToString("\n"), facts.any { it.startsWith("gpu: ") })
                 assertTrue(facts.any { it.startsWith("config: ") })
                 assertTrue(facts.any { it == "guard: clear" })
+                // The frame's colour (10 bits a channel where the device draws the frame in them, as lavapipe does;
+                // offscreen here, hosts having no surfaces) and K5's shaderFloat64.
+                assertTrue(facts.joinToString("\n"), facts.any { Regex("colour: (rgb10a2|bgr10a2|rgba8|bgra8) \\(.*\\)").matches(it) })
+                assertTrue(facts.any { it.startsWith("colour.formats: rgb10a2 ") })
+                assertTrue(facts.any { Regex("feature\\.shaderFloat64: (yes|no) \\(K5's light: .*\\)").matches(it) })
+                assertTrue(facts.any { it == "feature.shaderInt64: yes" || it == "feature.shaderInt64: no" })
                 assertTrue(Native.buildInfo().startsWith("atlasmap "))
                 // K3b's numerics line, as VK facts logs it for smoke.sh.
                 val pymath = Native.numericsLine()

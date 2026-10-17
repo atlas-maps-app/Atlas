@@ -63,19 +63,21 @@ constexpr std::uint32_t msaa2 = 4U;               // K6's answer: 2x within 0.15
 namespace bench_flag {
 [[maybe_unused]] constexpr std::uint32_t pills = 1U;   // the core draws the frosted pills (the SurfaceView host)
 [[maybe_unused]] constexpr std::uint32_t texture = 2U; // the host is a TextureView (for the log and the records)
+[[maybe_unused]] constexpr std::uint32_t rgba8 = 4U;   // 8 bits a channel, against the 10 the surface may allow
 } // namespace bench_flag
 
 /// The hash of the core's shaders, every embedded module's: the pipeline cache's key.
 [[nodiscard]] std::uint64_t core_spirv() noexcept { return gpu::spirv_hash(spirv::hashes); }
 
-[[nodiscard, maybe_unused]] std::uint32_t config_bits(const gpu::Configuration& c, bool texture, bool pills) noexcept {
+[[nodiscard, maybe_unused]] std::uint32_t config_bits(const gpu::Configuration& c, bool texture, bool pills,
+                                                      bool ten_bit) noexcept {
     auto b = static_cast<std::uint32_t>(c.config);
     b |= (c.route == gpu::Route::dynamic ? 1U : 0U) << 3;
     b |= (c.form == gpu::FrameForm::onepass ? 1U : 0U) << 4;
     b |= (c.target == gpu::CompositeTarget::direct ? 1U : 0U) << 5;
     b |= (texture ? 1U : 0U) << 6;
     b |= (pills ? 1U : 0U) << 7;
-    return b << frame_flag::config_shift;
+    return (b << frame_flag::config_shift) | (ten_bit ? frame_flag::ten_bit : 0U);
 }
 
 /// The options Native.create passes.
@@ -325,16 +327,18 @@ private:
             gpu::collect_surface(started_.device->facts(), started_.device->physical(), *surface_,
                                  started_.device->queue_family());
         }
-        auto swapchain = gpu::Swapchain::create(*started_.device, *surface_, wanted_, nullptr);
+        auto swapchain = gpu::Swapchain::create(*started_.device, *surface_, wanted_, nullptr, depth_);
         if (!swapchain) {
             why = swapchain.error().text();
             return false;
         }
         swapchain_ = std::move(*swapchain);
+        note_colour();
         frame_rate_ = window_.set_frame_rate(60.0F);
-        log::info("vk surface {} x {} transform {} images {} copy-source {} frame-rate {}", swapchain_->extent().width,
-                  swapchain_->extent().height, vk::to_string(swapchain_->transform()), swapchain_->images().size(),
-                  swapchain_->transfer_source() ? "yes" : "no", frame_rate_ ? "60 asked" : "not available");
+        log::info("vk surface {} x {} transform {} images {} copy-source {} frame-rate {} colour {}",
+                  swapchain_->extent().width, swapchain_->extent().height, vk::to_string(swapchain_->transform()),
+                  swapchain_->images().size(), swapchain_->transfer_source() ? "yes" : "no",
+                  frame_rate_ ? "60 asked" : "not available", gpu::colour_name(swapchain_->format()));
         if (!hint_.active() && loop_) (void)hint_.open(loop_->tid(), 16'666'667);
         if (mode_ == 1) {
             if (std::string w = make_renderer(); !w.empty()) {
@@ -343,6 +347,14 @@ private:
             }
         }
         return true;
+    }
+
+    /// The facts' colour as the swapchain made it, a driver having refused the 10 bits it listed perhaps (VK facts'
+    /// `colour:`), unless VK bench asked for 8 bits.
+    void note_colour() {
+        if (!swapchain_ || depth_ != gpu::Depth::deepest) return;
+        const std::scoped_lock lock(facts_mutex_);
+        started_.device->facts().colour = swapchain_->colour();
     }
 
     void release_surface() {
@@ -357,13 +369,14 @@ private:
     void remake_swapchain() {
         if (!*surface_) return;
         if (renderer_) renderer_->drain();
-        auto swapchain = gpu::Swapchain::create(*started_.device, *surface_, wanted_, std::move(swapchain_));
+        auto swapchain = gpu::Swapchain::create(*started_.device, *surface_, wanted_, std::move(swapchain_), depth_);
         if (!swapchain) {
             log::error("vk swapchain: {}", swapchain.error().text());
             renderer_.reset();
             return;
         }
         swapchain_ = std::move(*swapchain);
+        note_colour();
         if (renderer_) {
             auto retargeted = behind_pipelines([&] { return renderer_->retarget(*swapchain_); });
             if (!retargeted) {
@@ -451,6 +464,16 @@ private:
             renderer_.reset();
             return {};
         }
+        // Another colour depth (VK bench's 8-bit frame against the 10-bit one): a swapchain of it, and a renderer for
+        // it.
+        const gpu::Depth depth = (flags & bench_flag::rgba8) != 0 ? gpu::Depth::eight : gpu::Depth::deepest;
+        if (depth != depth_) {
+            depth_ = depth;
+            if (renderer_) renderer_->drain();
+            renderer_.reset();
+            remake_swapchain();
+            if (!swapchain_) return "no swapchain of the colour asked for";
+        }
         if (!renderer_) return make_renderer();
         standin_->set_pills(pills_);
         auto done = behind_pipelines([&] { return renderer_->reconfigure(config_); });
@@ -465,9 +488,10 @@ private:
     void log_configuration() const {
         const gpu::Facts& f = started_.device->facts();
         const gpu::Enabled& e = started_.device->enabled();
-        log::info("vk config {} route={} frame={} host={} target={} pills={}", gpu::name_of(config_.config),
+        log::info("vk config {} route={} frame={} host={} target={} pills={} colour={}", gpu::name_of(config_.config),
                   gpu::name_of(config_.route), gpu::name_of(config_.form), texture_ ? "texture" : "surface",
-                  gpu::name_of(config_.target), pills_ ? "on" : "off");
+                  gpu::name_of(config_.target), pills_ ? "on" : "off",
+                  swapchain_ ? gpu::colour_name(swapchain_->format()) : std::string("none"));
         log::info("vk path samples={} lazy={} depth={} sync2={} timing={} shaderfma={} route={} cache={} pipelines "
                   "{:.1f} ms ({} made) hint={}",
                   static_cast<int>(config_.samples()), config_.lazy() ? "yes" : "no",
@@ -566,7 +590,7 @@ private:
         r.triangles_k = static_cast<std::uint32_t>(c.triangles / 1000);
         r.fragments_k = static_cast<std::uint32_t>(report->gpu.fragments / 1000);
         r.flags = (report->gpu.valid ? frame_flag::gpu : 0U) | (guarding_ ? frame_flag::guarded : 0U) |
-                  config_bits(config_, texture_, pills_);
+                  config_bits(config_, texture_, pills_, swapchain_->colour().ten_bit());
         const bool stale = report->status == gpu::Acquired::out_of_date || report->status == gpu::Acquired::suboptimal;
         if (report->status == gpu::Acquired::out_of_date || report->status == gpu::Acquired::timeout)
             r.flags |= frame_flag::skipped;
@@ -642,13 +666,20 @@ private:
         }
         started_.cache = std::make_unique<gpu::PipelineCache>(std::move(*cache));
         if (*surface_) {
-            auto swapchain = gpu::Swapchain::create(*started_.device, *surface_, wanted_, nullptr);
+            {
+                // The new device's facts, with the surface's and the frame's colour on it, as the attach read them.
+                const std::scoped_lock lock(facts_mutex_);
+                gpu::collect_surface(started_.device->facts(), started_.device->physical(), *surface_,
+                                     started_.device->queue_family());
+            }
+            auto swapchain = gpu::Swapchain::create(*started_.device, *surface_, wanted_, nullptr, depth_);
             if (!swapchain) {
                 log::error("vk rebuild: {}", swapchain.error().text());
                 lost_ = 3;
                 return;
             }
             swapchain_ = std::move(*swapchain);
+            note_colour();
         }
         if (mode_ == 1) {
             if (const std::string why = make_renderer(); !why.empty()) log::error("vk rebuild: {}", why);
@@ -676,6 +707,8 @@ private:
     jmethodID presented_mid_ = nullptr;
     vk::Extent2D wanted_{};
     gpu::Configuration config_{};
+    /// The swapchain's colour: as deep as the surface allows, or 8 bits (VK bench's 8-bit frame against it).
+    gpu::Depth depth_ = gpu::Depth::deepest;
     int mode_ = 0;
     bool pills_ = false;
     bool texture_ = false;

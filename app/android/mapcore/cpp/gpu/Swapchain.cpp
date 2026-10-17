@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <format>
+#include <string>
 #include <tuple>
 
 namespace atlas::gpu {
@@ -15,17 +16,6 @@ namespace {
     using T = vk::SurfaceTransformFlagBitsKHR;
     return t == T::eRotate90 || t == T::eRotate270 || t == T::eHorizontalMirrorRotate90 ||
            t == T::eHorizontalMirrorRotate270;
-}
-
-[[nodiscard]] vk::SurfaceFormatKHR pick_format(const std::vector<vk::SurfaceFormatKHR>& formats) noexcept {
-    for (const vk::Format wanted : {vk::Format::eR8G8B8A8Unorm, vk::Format::eB8G8R8A8Unorm}) {
-        for (const vk::SurfaceFormatKHR& f : formats) {
-            if (f.format == wanted && f.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear) return f;
-        }
-    }
-    return formats.empty() ? vk::SurfaceFormatKHR{.format = vk::Format::eR8G8B8A8Unorm,
-                                                  .colorSpace = vk::ColorSpaceKHR::eSrgbNonlinear}
-                           : formats.front();
 }
 
 [[nodiscard]] vk::CompositeAlphaFlagBitsKHR pick_alpha(vk::CompositeAlphaFlagsKHR supported) noexcept {
@@ -75,7 +65,7 @@ void Swapchain::retire_presents() {
 }
 
 Result<std::unique_ptr<Swapchain>> Swapchain::create(const Device& device, vk::SurfaceKHR surface, vk::Extent2D wanted,
-                                                     std::unique_ptr<Swapchain> old) {
+                                                     std::unique_ptr<Swapchain> old, Depth depth) {
     if (!device.enabled().swapchain) {
         return fail(std::format("{} was opened for offscreen work, without VK_KHR_swapchain: it cannot present",
                                 device.facts().name));
@@ -85,8 +75,7 @@ Result<std::unique_ptr<Swapchain>> Swapchain::create(const Device& device, vk::S
     const vk::raii::PhysicalDevice& physical = device.physical();
     ATLAS_VK_LET(caps, physical.getSurfaceCapabilitiesKHR(surface), "the surface's capabilities");
     ATLAS_VK_LET(formats, physical.getSurfaceFormatsKHR(surface), "the surface's formats");
-    const vk::SurfaceFormatKHR format = pick_format(formats);
-    self->format_ = format.format;
+    self->colour_ = colour_for_surface(device.facts(), formats, depth);
 
     vk::Extent2D extent = caps.currentExtent;
     if (extent.width == UINT32_MAX) {
@@ -107,22 +96,36 @@ Result<std::unique_ptr<Swapchain>> Swapchain::create(const Device& device, vk::S
         usage |= vk::ImageUsageFlagBits::eTransferSrc;
         self->transfer_source_ = true;
     }
-    ATLAS_VK_LET(swapchain,
-                 device.handle().createSwapchainKHR({.surface = surface,
-                                                     .minImageCount = count,
-                                                     .imageFormat = format.format,
-                                                     .imageColorSpace = format.colorSpace,
-                                                     .imageExtent = extent,
-                                                     .imageArrayLayers = 1,
-                                                     .imageUsage = usage,
-                                                     .imageSharingMode = vk::SharingMode::eExclusive,
-                                                     .preTransform = self->transform_,
-                                                     .compositeAlpha = pick_alpha(caps.supportedCompositeAlpha),
-                                                     .presentMode = vk::PresentModeKHR::eFifo,
-                                                     .clipped = vk::True,
-                                                     .oldSwapchain = old ? *old->swapchain_ : vk::SwapchainKHR{}}),
-                 std::format("a swapchain of {} x {}", extent.width, extent.height));
-    self->swapchain_ = std::move(swapchain);
+    vk::SwapchainCreateInfoKHR info{.surface = surface,
+                                    .minImageCount = count,
+                                    .imageFormat = self->colour_.format,
+                                    .imageColorSpace = self->colour_.space,
+                                    .imageExtent = extent,
+                                    .imageArrayLayers = 1,
+                                    .imageUsage = usage,
+                                    .imageSharingMode = vk::SharingMode::eExclusive,
+                                    .preTransform = self->transform_,
+                                    .compositeAlpha = pick_alpha(caps.supportedCompositeAlpha),
+                                    .presentMode = vk::PresentModeKHR::eFifo,
+                                    .clipped = vk::True,
+                                    .oldSwapchain = old ? *old->swapchain_ : vk::SwapchainKHR{}};
+    auto made = device.handle().createSwapchainKHR(info);
+    if (!made && self->colour_.ten_bit()) {
+        // A driver that lists a 10-bit format it cannot make a swapchain of: the frame at 8 bits, saying so. The old
+        // swapchain was retired by the refused call, so the second names none.
+        const std::string refused = std::format("the driver refused a swapchain of {} ({}): 8 bits",
+                                                colour_name(self->colour_.format), vk::to_string(made.error()));
+        log::warn("vk swapchain: {}", refused);
+        self->colour_ = colour_for_surface(device.facts(), formats, Depth::eight);
+        self->colour_.reason = refused;
+        info.imageFormat = self->colour_.format;
+        info.imageColorSpace = self->colour_.space;
+        info.oldSwapchain = vk::SwapchainKHR{};
+        made = device.handle().createSwapchainKHR(info);
+    }
+    if (!made) return fail(made.error(), std::format("a swapchain of {} x {}", extent.width, extent.height));
+    self->swapchain_ = std::move(*made);
+    self->format_ = self->colour_.format;
     old.reset(); // retired once its presents are done (its destructor)
 
     ATLAS_VK_LET(images, self->swapchain_.getImages(), "the swapchain's images");
@@ -132,7 +135,7 @@ Result<std::unique_ptr<Swapchain>> Swapchain::create(const Device& device, vk::S
             view,
             device.handle().createImageView({.image = image,
                                              .viewType = vk::ImageViewType::e2D,
-                                             .format = format.format,
+                                             .format = self->format_,
                                              .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
                                                                   .levelCount = 1,
                                                                   .layerCount = 1}}),

@@ -73,7 +73,10 @@ object Native {
 
     @JvmStatic external fun requestFrame(handle: Long)
 
-    /** VK bench: the stand-in on (mode 1) or off (0) in a configuration; "" or why not. */
+    /**
+     * VK bench: the stand-in on (mode 1) or off (0) in a configuration; [flags] 1 the core's frosted pills, 2 a
+     * TextureView host, 4 at 8 bits a channel (else the frame's colour, 10 bits where the surface allows). "" or why not.
+     */
     @JvmStatic external fun bench(handle: Long, mode: Int, config: Int, route: Int, form: Int, target: Int, flags: Int): String
 
     /** Copies the frame records not read yet into [out] (a direct buffer of [FrameRecords.SIZE]-byte records). */

@@ -288,7 +288,11 @@ object DeviceFacts {
  * behind the crash guard. Each line is `name: value`; the VK facts screen and logcat print them as `vkfacts name: value`.
  */
 object VkFactsLines {
-    /** Android's Vulkan feature flags: hardware level and version, compute, and the dEQP level the driver passed. */
+    /**
+     * Android's Vulkan feature flags: hardware level and version, compute, and the dEQP level the driver passed; and
+     * the screen's colour (a wide gamut, HDR), on which Android maps the core's sRGB frame (plan-vector D5, "Colour
+     * depth": the frame stays in sRGB; Display P3, extended sRGB and HDR are the owner's decision).
+     */
     fun platform(context: Context): List<String> {
         val features = context.packageManager.systemAvailableFeatures
         fun feature(name: String) = features.firstOrNull { it.name == name }
@@ -296,11 +300,14 @@ object VkFactsLines {
         val level = feature(PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL)?.version?.toString() ?: "none"
         val compute = feature(PackageManager.FEATURE_VULKAN_HARDWARE_COMPUTE)?.version?.toString() ?: "none"
         val deqp = if (Build.VERSION.SDK_INT >= 30) feature(PackageManager.FEATURE_VULKAN_DEQP_LEVEL)?.version?.let { dEqpDate(it) } ?: "none" else "unknown (API ${Build.VERSION.SDK_INT})"
+        val screen = context.resources.configuration
+        fun yesNo(b: Boolean) = if (b) "yes" else "no"
         return listOf(
             "android.vulkan.version: $version",
             "android.vulkan.level: $level",
             "android.vulkan.compute: $compute",
             "android.vulkan.deqp: $deqp",
+            "android.screen.colour: wide gamut ${yesNo(screen.isScreenWideColorGamut)}, HDR ${yesNo(screen.isScreenHdr)} (the map's frame is sRGB)",
         )
     }
 

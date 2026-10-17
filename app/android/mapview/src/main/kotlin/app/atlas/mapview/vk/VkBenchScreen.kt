@@ -78,7 +78,8 @@ import kotlin.math.sin
  * exists. In order:
  *  1. every frame configuration (A, B, C, and 1x for MSAA's own cost) by both forms (the composite, and one subpass with
  *     the effects per fragment), both routes (dynamic rendering with local reads, a render pass with two subpasses)
- *     and, off a tiler, both targets of the composite, at the Main board's view and at pitch 70°;
+ *     and, off a tiler, both targets of the composite, at the Main board's view and at pitch 70°; each in the frame's
+ *     colour and, where that is 10 bits a channel, again at 8 (the `vkbench colour` line: what the 10 bits cost);
  *  2. both hosts (the SurfaceView, the TextureView) with the pills on, under the scripted pan, pinch, orbit and tilt:
  *     presented intervals, the core's GPU time and HWUI's (`FrameMetrics.GPU_DURATION`), the render thread's time,
  *     graphics and native memory;
@@ -395,13 +396,14 @@ private class BenchRun(
     private val records = FrameRecords.allocate(512)
     private val targetMs = 1000.0 / 60.0
     private val gpuByCell = HashMap<String, Double>()
+    private val gpuEightByCell = HashMap<String, Double>() // the same cells at 8 bits a channel
 
     suspend fun execute(initial: VkSurfaceState) {
         val facts = withContext(Dispatchers.Default) { core.facts() }
         fun fact(name: String) = facts.firstOrNull { it.startsWith("$name: ") }?.substringAfter(": ") ?: "?"
         emit("vkbench start: ${plan.name.lowercase()} bench, ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
         for (k in listOf("gpu", "vendor", "api", "driver", "driver.version", "hardware", "tiler", "lazily.allocated.memory", "config", "route", "composite",
-                         "configs.available", "depth.stencil", "samples", "profiles", "quirks", "guard", "pipeline.cache")) emit("vkfacts $k: ${fact(k)}")
+                         "configs.available", "depth.stencil", "samples", "feature.shaderFloat64", "profiles", "quirks", "guard", "pipeline.cache")) emit("vkfacts $k: ${fact(k)}")
         val available = buildSet {
             val line = fact("configs.available")
             if (line.contains("A yes")) add(0)
@@ -425,6 +427,12 @@ private class BenchRun(
             emit("vkbench surface: the SurfaceView did not attach (${surface.error})")
             return
         }
+        // The frame's colour on this surface (10 bits a channel where it offers them in sRGB), now that it is attached.
+        val surfaced = withContext(Dispatchers.Default) { core.facts() }
+        fun surfaceFact(name: String) = surfaced.firstOrNull { it.startsWith("$name: ") }?.substringAfter(": ") ?: "?"
+        for (k in listOf("colour", "colour.formats", "surface.formats")) emit("vkfacts $k: ${surfaceFact(k)}")
+        val deep = VkBench.tenBitColour(surfaceFact("colour"))
+        val colourWhy = surfaceFact("colour").substringAfter("(").removeSuffix(")")
         if (plan == VkBench.Length.PILLS) {
             // The pills alone, for the screen recorder: the film shows whether each pill and its frosted glass move in
             // the same frame.
@@ -435,17 +443,30 @@ private class BenchRun(
             return
         }
         val matrix = VkBench.matrix(available, dynamic, tiler)
-        status("1/4: ${matrix.size} configurations × 2 views")
+        status("1/4: ${matrix.size} configurations × 2 views${if (deep != null) " × 2 colour depths" else ""}")
+        if (deep == null) emit("vkbench colour: ${surfaceFact("colour").substringBefore(" ")} only ($colourWhy)")
         for (view in VkBench.View.entries) {
             for (cfg in matrix) {
+                val cell = "${view.label} ${cfg.name}"
                 val why = core.bench(true, cfg.config, cfg.route, cfg.form, cfg.target, pills = true, texture = false)
                 if (why.isNotEmpty()) {
-                    emit("vkbench ${view.label} ${cfg.name}: unavailable ($why)")
+                    emit("vkbench $cell: unavailable ($why)")
                     continue
                 }
-                val s = measure(VkBench.Path.STILL, view, plan.cellSeconds, VkHost.SURFACE)
-                gpuByCell["${view.label} ${cfg.name}"] = s.gpuP50
-                emit(VkBench.line("${view.label} ${cfg.name}", s, graphicsMb(), nativeMb()))
+                val s = measure(VkBench.Path.STILL, view, plan.cellSeconds, VkHost.SURFACE, tenBit = deep != null)
+                gpuByCell[cell] = s.gpuP50
+                emit(VkBench.line(cell, s, graphicsMb(), nativeMb()))
+                // The same frame at 8 bits a channel, against the frame's 10.
+                if (deep != null) {
+                    val eight = core.bench(true, cfg.config, cfg.route, cfg.form, cfg.target, pills = true, texture = false, rgba8 = true)
+                    if (eight.isNotEmpty()) {
+                        emit("vkbench colour $cell: rgba8 unavailable ($eight)")
+                        continue
+                    }
+                    val e = measure(VkBench.Path.STILL, view, plan.cellSeconds, VkHost.SURFACE, tenBit = false)
+                    gpuEightByCell[cell] = e.gpuP50
+                    emit(VkBench.colourLine(cell, deep, s, e))
+                }
             }
         }
 
@@ -503,6 +524,12 @@ private class BenchRun(
         val routes = listOf(0, 1).associateWith { r -> gpuByCell["$viewKey ${VkBench.Config(pickCode, r, 0, if (r == 1) 0 else pickTarget).name}"] }
         emit("a0 route: renderpass ${VkBench.ms(routes[0] ?: Double.NaN)} ms, dynamic ${VkBench.ms(routes[1] ?: Double.NaN)} ms GPU at the board's view")
         emit("a0 host: SurfaceView p95 ${VkBench.ms(hostP95[VkHost.SURFACE] ?: Double.NaN)} ms, TextureView p95 ${VkBench.ms(hostP95[VkHost.TEXTURE] ?: Double.NaN)} ms (worst path)")
+        val pickCell = "$viewKey ${VkBench.Config(pickCode, pickRoute, 0, pickTarget).name}"
+        emit(
+            if (deep == null) "a0 colour: ${surfaceFact("colour").substringBefore(" ")} ($colourWhy)"
+            else "a0 colour: $deep ${VkBench.ms(gpuByCell[pickCell] ?: Double.NaN)} ms against rgba8 " +
+                "${VkBench.ms(gpuEightByCell[pickCell] ?: Double.NaN)} ms GPU in the picked configuration at the board's view",
+        )
         core.bench(false, pickCode, pickRoute, 0, pickTarget, pills = false, texture = false)
         source.running = false
     }
@@ -533,8 +560,11 @@ private class BenchRun(
 
     private var kept: List<FrameRecords.Record> = emptyList()
 
-    /** Runs [path] at [view] for [seconds] (after half a second of warm-up) and summarises its frames. */
-    private suspend fun measure(path: VkBench.Path, view: VkBench.View, seconds: Double, host: VkHost, keep: Boolean = false): VkBench.Summary {
+    /**
+     * Runs [path] at [view] for [seconds] (after half a second of warm-up) and summarises its frames; with [tenBit], only
+     * the frames drawn at that colour depth.
+     */
+    private suspend fun measure(path: VkBench.Path, view: VkBench.View, seconds: Double, host: VkHost, keep: Boolean = false, tenBit: Boolean? = null): VkBench.Summary {
         source.path = path
         source.view = view
         source.periodSeconds = seconds
@@ -554,7 +584,7 @@ private class BenchRun(
         delay(250) // the last records' presentation times
         got += drain().filter { it.startNs >= from }
         if (keep) kept = got
-        val frames = got.filter { !it.skipped }.sortedBy { it.frame }
+        val frames = got.filter { !it.skipped && (tenBit == null || it.tenBit == tenBit) }.sortedBy { it.frame }
         val presented = frames.filter { it.presented }
         val intervals: DoubleArray
         val presentedBy: String

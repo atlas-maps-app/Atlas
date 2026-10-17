@@ -26,6 +26,8 @@ namespace atlas::gpu {
 struct MainPassSpec {
     Configuration config;
     vk::Extent2D extent;
+    /// The scene's samples (and at 1x the composite's input): the output's format (gpu/Facts.hpp's colour), which a
+    /// resolve needs; 10 bits a channel where the frame's colour has them.
     vk::Format colour_format = vk::Format::eR8G8B8A8Unorm;
     vk::Format output_format = vk::Format::eR8G8B8A8Unorm;
     vk::Format depth_stencil = vk::Format::eD24UnormS8Uint;

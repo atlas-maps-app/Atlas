@@ -286,7 +286,9 @@ vk_phase() {
     echo "VK FACTS FAILED: the emulator's guest has no Vulkan device the core can run on"
     grep -e '^vulkan\.' -e '^guard' "$OUT/vkfacts.txt" | head -5; FAIL=1
   fi
-  grep -E '^(gpu|api|driver|tiler|lazily\.allocated\.memory|config|route|composite|configs\.available|profiles|surface\.(usage|present\.modes)|core\.build):' "$OUT/vkfacts.txt"
+  grep -E '^(gpu|api|driver|tiler|lazily\.allocated\.memory|config|route|composite|colour|colour\.formats|configs\.available|feature\.shader(Float|Int)64|profiles|surface\.(usage|present\.modes|formats)|android\.screen\.colour|core\.build):' "$OUT/vkfacts.txt"
+  # The frame's colour on the guest's surface (plan-vector D5, "Colour depth"): VK facts names it, from the surface.
+  grep -q -E '^colour: [A-Za-z0-9]+ \(' "$OUT/vkfacts.txt" || { echo "VK FACTS FAILED: no 'colour:' line"; FAIL=1; }
   # The core's numerics on Bionic (K3b's acceptance, L0 d): VK facts logs `pymath <hash> ok`, and the hash must be
   # the one the host build and the port compute (ATLAS_PYMATH_HASH, from android.yml).
   since_marker vkfacts | grep -o 'AtlasMap: pymath .*' | sed 's/AtlasMap: //' | tr -d '\r' | head -1 > "$OUT/pymath.txt"
@@ -309,6 +311,8 @@ vk_phase() {
     grep -e '^vkbench ' -e '^a0 ' "$OUT/vkbench.txt" | grep -v '^vkbench soak' | head -60
     grep -q '^vk config C ' "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: configuration C never took effect (no 'vk config C' line)"; FAIL=1; }
     grep -q '^vkbench board C ' "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: no line for configuration C at the board's view"; FAIL=1; }
+    # The 10-bit frame timed against the 8-bit one, or the reason the surface gives none.
+    grep -q '^vkbench colour' "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: no 'vkbench colour' line"; FAIL=1; }
     grep -q -e '^a frame failed' -e '^device lost' "$OUT/vkbench.txt" && { echo "VK BENCH FAILED: a frame failed"; FAIL=1; }
     # Configuration C's graphics memory ceiling at S1 (plan-vector §3: 225 MB; the emulator's pixel_7 is 1080 × 2400).
     awk '/^vkbench (board|pitch70|surface|texture) / { for (i = 1; i < NF; i++) if ($i == "graphics" && $(i + 1) + 0 > 225) { print; bad = 1 } }
