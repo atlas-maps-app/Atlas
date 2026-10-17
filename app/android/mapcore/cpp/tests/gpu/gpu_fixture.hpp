@@ -66,7 +66,9 @@ struct Session {
 }
 
 /// Opens a session, or reports why not: a failure when Vulkan is required or the instance has no device for it, else a
-/// skip (an empty optional). The device works offscreen unless `options` asks it to present.
+/// skip (an empty optional). The device works offscreen unless `options` asks it to present. The tests draw at both
+/// depths, so the device is asked about its 10-bit formats at once (Device::check_ten_bit), as VK bench's colour stage
+/// asks the phone's as it begins.
 [[nodiscard]] inline std::optional<Session> open_session(const gpu::DeviceOptions& options = {}) {
     Session session;
     session.instance = open_instance({.validation = true, .require_validation = vulkan_required()});
@@ -74,6 +76,7 @@ struct Session {
     auto device = gpu::Device::open(*session.instance, options);
     ATLAS_REQUIRE_OR_RETURN(std::nullopt, device.has_value(), device.error().text());
     session.device = std::move(*device);
+    session.device->check_ten_bit();
     return session;
 }
 

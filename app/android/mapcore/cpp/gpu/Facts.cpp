@@ -114,6 +114,9 @@ constexpr std::string_view eight_bits = "the frame's default in this alpha, 8 bi
 /// The reason of an 8-bit colour where 10 bits were asked for and the crash guard has them off, before its line.
 constexpr std::string_view ten_bits_off = "10 bits are off for this driver and build: ";
 
+/// Why a 10-bit format is not taken before VK bench's colour stage asked the device about it (Device::check_ten_bit).
+constexpr std::string_view not_asked = "not asked of the device yet (VK bench's colour stage asks it first)";
+
 /// The frame's colour formats, in the order the choice takes them (10 bits first).
 constexpr std::array<vk::Format, 4> colour_candidates{vk::Format::eA2B10G10R10UnormPack32,
                                                       vk::Format::eA2R10G10B10UnormPack32, vk::Format::eR8G8B8A8Unorm,
@@ -124,33 +127,23 @@ constexpr vk::ImageUsageFlags sample_usage = vk::ImageUsageFlagBits::eColorAttac
                                              vk::ImageUsageFlagBits::eInputAttachment |
                                              vk::ImageUsageFlagBits::eTransientAttachment;
 
-/// What the device does with each of the frame's colour formats.
-void read_colour_formats(Facts& facts, const vk::raii::PhysicalDevice& device) {
-    using F = vk::FormatFeatureFlagBits;
-    const vk::FormatFeatureFlags drawn = F::eColorAttachment | F::eColorAttachmentBlend;
-    const vk::FormatFeatureFlags output =
-        drawn | F::eBlitSrc | F::eSampledImageFilterLinear | F::eTransferSrc | F::eTransferDst;
-    facts.colour_formats.clear();
-    for (const vk::Format format : colour_candidates) {
-        ColourFormat c{.format = format};
-        const vk::FormatFeatureFlags have = device.getFormatProperties(format).optimalTilingFeatures;
-        auto lack = [&](vk::FormatFeatureFlags need, std::string_view what) {
-            if ((have & need) != need) c.lacks += std::format("{}{}", c.lacks.empty() ? "" : ", ", what);
-        };
-        lack(F::eColorAttachment, "colour attachment");
-        lack(F::eColorAttachmentBlend, "blending");
-        lack(F::eBlitSrc | F::eSampledImageFilterLinear, "linearly filtered blits");
-        lack(F::eTransferSrc | F::eTransferDst, "copies");
-        c.output = (have & output) == output;
-        if (auto image = device.getImageFormatProperties(format, vk::ImageType::e2D, vk::ImageTiling::eOptimal,
-                                                         sample_usage, {})) {
-            c.samples = image->sampleCounts;
-        }
-        if (!(c.samples & vk::SampleCountFlagBits::e1))
-            c.lacks += std::format("{}{}", c.lacks.empty() ? "" : ", ", "input attachment");
-        c.attachment = (have & drawn) == drawn && static_cast<bool>(c.samples & vk::SampleCountFlagBits::e1);
-        facts.colour_formats.push_back(std::move(c));
-    }
+/// Why the frame cannot take 10-bit `format` ("" when it can): as Facts::unfit_for_frame, except that a format the
+/// device was not asked about yet is taken where `tentative` (what VK bench's colour stage would draw, before it asks).
+[[nodiscard]] std::string unfit_ten(const Facts& facts, vk::Format format, bool tentative) {
+    const ColourFormat* c = facts.colour_format(format);
+    if (tentative && c != nullptr && !c->queried) return {};
+    return facts.unfit_for_frame(format);
+}
+
+/// "a (why), b (why)", or `none_asked` when every format was refused only because it was not asked of the device yet.
+[[nodiscard]] std::string refusals(const std::vector<std::pair<vk::Format, std::string>>& refused,
+                                   std::string_view prefix, std::string_view none_asked) {
+    if (std::ranges::all_of(refused, [](const auto& r) { return r.second == not_asked; }))
+        return std::string(none_asked);
+    std::string out(prefix);
+    for (std::size_t i = 0; i < refused.size(); ++i)
+        out += std::format("{}{} ({})", i == 0 ? "" : ", ", colour_name(refused[i].first), refused[i].second);
+    return out;
 }
 
 /// The 8-bit colour of the frame on a surface offering `offered` (as before the colour depth): rgba8, else bgra8, in
@@ -361,6 +354,42 @@ bool Facts::takes_read_without_format() const noexcept {
            has_extension(vk::KHRFormatFeatureFlags2ExtensionName);
 }
 
+bool Facts::ten_bit_queried() const noexcept {
+    return std::ranges::any_of(colour_formats, [](const ColourFormat& c) { return ten_bit(c.format) && c.queried; });
+}
+
+void query_colour_formats(Facts& facts, const vk::raii::PhysicalDevice& device, bool ten) {
+    using F = vk::FormatFeatureFlagBits;
+    const vk::FormatFeatureFlags drawn = F::eColorAttachment | F::eColorAttachmentBlend;
+    const vk::FormatFeatureFlags output =
+        drawn | F::eBlitSrc | F::eSampledImageFilterLinear | F::eTransferSrc | F::eTransferDst;
+    if (facts.colour_formats.empty()) {
+        for (const vk::Format format : colour_candidates) facts.colour_formats.push_back({.format = format});
+    }
+    for (ColourFormat& c : facts.colour_formats) {
+        if (ten_bit(c.format) != ten) continue;
+        const vk::FormatFeatureFlags have = device.getFormatProperties(c.format).optimalTilingFeatures;
+        c.queried = true;
+        c.lacks.clear();
+        auto lack = [&](vk::FormatFeatureFlags need, std::string_view what) {
+            if ((have & need) != need) c.lacks += std::format("{}{}", c.lacks.empty() ? "" : ", ", what);
+        };
+        lack(F::eColorAttachment, "colour attachment");
+        lack(F::eColorAttachmentBlend, "blending");
+        lack(F::eBlitSrc | F::eSampledImageFilterLinear, "linearly filtered blits");
+        lack(F::eTransferSrc | F::eTransferDst, "copies");
+        c.output = (have & output) == output;
+        c.samples = {};
+        if (auto image = device.getImageFormatProperties(c.format, vk::ImageType::e2D, vk::ImageTiling::eOptimal,
+                                                         sample_usage, {})) {
+            c.samples = image->sampleCounts;
+        }
+        if (!(c.samples & vk::SampleCountFlagBits::e1))
+            c.lacks += std::format("{}{}", c.lacks.empty() ? "" : ", ", "input attachment");
+        c.attachment = (have & drawn) == drawn && static_cast<bool>(c.samples & vk::SampleCountFlagBits::e1);
+    }
+}
+
 bool ten_bit(vk::Format format) noexcept {
     return format == vk::Format::eA2B10G10R10UnormPack32 || format == vk::Format::eA2R10G10B10UnormPack32;
 }
@@ -385,6 +414,7 @@ const ColourFormat* Facts::colour_format(vk::Format format) const noexcept {
 std::string Facts::unfit_for_frame(vk::Format format) const {
     const ColourFormat* c = colour_format(format);
     if (c == nullptr) return "not one of the frame's colour formats";
+    if (!c->queried) return std::string(not_asked);
     if (!c->lacks.empty()) return "no " + c->lacks;
     // Every sample count of a configuration the device can draw (D5.3).
     vk::SampleCountFlags needed = vk::SampleCountFlagBits::e1 | vk::SampleCountFlagBits::e4;
@@ -400,54 +430,77 @@ std::string Facts::unfit_for_frame(vk::Format format) const {
     return {};
 }
 
-Colour colour_for_surface(const Facts& facts, std::span<const vk::SurfaceFormatKHR> offered, Depth depth) {
+namespace {
+
+/// colour_for_surface; `tentative`: what VK bench's colour stage would draw before it asks the device about the 10-bit
+/// formats (a format not asked about yet is taken by the surface's offer, and the reason says so).
+[[nodiscard]] Colour on_surface(const Facts& facts, std::span<const vk::SurfaceFormatKHR> offered, Depth depth,
+                                bool tentative) {
     if (depth == Depth::eight) return eight_bit(offered, std::string(eight_bits));
     if (!facts.ten_bit_off.empty()) return eight_bit(offered, std::string(ten_bits_off) + facts.ten_bit_off);
-    std::string refused;
+    std::vector<std::pair<vk::Format, std::string>> refused;
     for (const vk::Format format : {vk::Format::eA2B10G10R10UnormPack32, vk::Format::eA2R10G10B10UnormPack32}) {
         const bool offers = std::ranges::any_of(offered, [&](const vk::SurfaceFormatKHR& f) {
             return f.format == format && f.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
         });
         if (!offers) continue;
-        if (const std::string unfit = facts.unfit_for_frame(format); !unfit.empty()) {
-            refused += std::format("{}{} ({})", refused.empty() ? "" : ", ", colour_name(format), unfit);
+        if (std::string unfit = unfit_ten(facts, format, tentative); !unfit.empty()) {
+            refused.emplace_back(format, std::move(unfit));
             continue;
         }
+        const ColourFormat* c = facts.colour_format(format);
         return {.format = format,
                 .space = vk::ColorSpaceKHR::eSrgbNonlinear,
-                .reason = "the surface offers it in sRGB and the frame's attachments follow it"};
+                .reason = c != nullptr && !c->queried
+                              ? "the surface offers it in sRGB; VK bench's colour stage asks the device for it first"
+                              : "the surface offers it in sRGB and the frame's attachments follow it"};
     }
-    if (!refused.empty())
-        return eight_bit(offered, "the surface's 10-bit sRGB formats are of no use to the frame: " + refused);
+    if (!refused.empty()) {
+        return eight_bit(offered, refusals(refused, "the surface's 10-bit sRGB formats are of no use to the frame: ",
+                                           std::format("the surface's 10-bit sRGB formats are {}", not_asked)));
+    }
     const bool ten_elsewhere =
         std::ranges::any_of(offered, [](const vk::SurfaceFormatKHR& f) { return ten_bit(f.format); });
     return eight_bit(offered, ten_elsewhere ? "the surface offers 10 bits only outside sRGB (the gamut stays sRGB)"
                                             : "the surface offers no 10-bit format");
 }
 
-Colour colour_offscreen(const Facts& facts, Depth depth) {
+/// colour_offscreen; `tentative` as on_surface's.
+[[nodiscard]] Colour offscreen(const Facts& facts, Depth depth, bool tentative) {
     if (depth == Depth::eight) return {.reason = std::format("offscreen: {}", eight_bits)};
     if (!facts.ten_bit_off.empty()) return {.reason = std::format("offscreen: {}{}", ten_bits_off, facts.ten_bit_off)};
-    std::string refused;
+    std::vector<std::pair<vk::Format, std::string>> refused;
     for (const vk::Format format : {vk::Format::eA2B10G10R10UnormPack32, vk::Format::eA2R10G10B10UnormPack32}) {
-        if (const std::string unfit = facts.unfit_for_frame(format); !unfit.empty()) {
-            refused += std::format("{}{} ({})", refused.empty() ? "" : ", ", colour_name(format), unfit);
+        if (std::string unfit = unfit_ten(facts, format, tentative); !unfit.empty()) {
+            refused.emplace_back(format, std::move(unfit));
             continue;
         }
+        const ColourFormat* c = facts.colour_format(format);
         return {.format = format,
                 .space = vk::ColorSpaceKHR::eSrgbNonlinear,
-                .reason = "offscreen: the device draws the frame in 10 bits"};
+                .reason = c != nullptr && !c->queried
+                              ? "offscreen: VK bench's colour stage asks the device for it first"
+                              : "offscreen: the device draws the frame in 10 bits"};
     }
-    return {.reason = "offscreen: the device cannot draw the frame in 10 bits: " + refused};
+    return {.reason = refusals(refused, "offscreen: the device cannot draw the frame in 10 bits: ",
+                               std::format("offscreen: 10 bits {}", not_asked))};
 }
+
+} // namespace
+
+Colour colour_for_surface(const Facts& facts, std::span<const vk::SurfaceFormatKHR> offered, Depth depth) {
+    return on_surface(facts, offered, depth, false);
+}
+
+Colour colour_offscreen(const Facts& facts, Depth depth) { return offscreen(facts, depth, false); }
 
 void decide_colour(Facts& facts) {
     if (facts.surface.formats.empty()) {
-        facts.colour = colour_offscreen(facts, default_depth);
-        facts.deepest = colour_offscreen(facts, Depth::deepest);
+        facts.colour = offscreen(facts, default_depth, false);
+        facts.deepest = offscreen(facts, Depth::deepest, true);
     } else {
-        facts.colour = colour_for_surface(facts, facts.surface.formats, default_depth);
-        facts.deepest = colour_for_surface(facts, facts.surface.formats, Depth::deepest);
+        facts.colour = on_surface(facts, facts.surface.formats, default_depth, false);
+        facts.deepest = on_surface(facts, facts.surface.formats, Depth::deepest, true);
     }
 }
 
@@ -647,7 +700,8 @@ Facts collect_facts(const Instance& instance, const vk::raii::PhysicalDevice& de
                                         : vk::Format::eUndefined;
     facts.rgba8_input = attachment(vk::Format::eR8G8B8A8Unorm, vk::FormatFeatureFlagBits::eColorAttachment |
                                                                    vk::FormatFeatureFlagBits::eColorAttachmentBlend);
-    read_colour_formats(facts, device);
+    // The 8-bit formats only: the 10-bit ones are asked as VK bench's colour stage begins (Device::check_ten_bit).
+    query_colour_formats(facts, device, false);
 
     read_features(facts, device, version);
     read_profiles(facts, instance, device);
@@ -712,28 +766,29 @@ std::vector<std::string> facts_lines(const Facts& f) {
     line("route: {} ({})", name_of(f.choice.route), f.route_reason);
     line("composite: {} ({})", name_of(f.choice.target), f.target_reason);
     line("form: {}", name_of(f.choice.form));
-    // The frame's colour, and what becomes of 10 bits: drawn by VK bench's colour stage only, off after a crash there,
-    // or not to be had; `colour.stage:` says the same for VK bench to read.
+    // The frame's colour, and what becomes of 10 bits: drawn by VK bench's colour stage only (which asks the device
+    // about them first), off after a crash there, or not to be had; `colour.stage:` says the same for VK bench to read.
     std::string ten;
     if (!f.ten_bit_off.empty()) {
         ten = std::format("off, {}{}", ten_bits_off, f.ten_bit_off);
     } else if (f.deepest.ten_bit()) {
-        ten = std::format("{}, drawn only in VK bench's colour stage", colour_name(f.deepest.format));
+        ten = std::format("{}, drawn only in VK bench's colour stage{}", colour_name(f.deepest.format),
+                          f.ten_bit_queried() ? "" : ", which asks the device for it first");
     } else {
         ten = std::format("none, {}", f.deepest.reason);
     }
     line("colour: {} ({} in {}: {}; 10 bits: {})", colour_name(f.colour.format), vk::to_string(f.colour.format),
          vk::to_string(f.colour.space), f.colour.reason, ten);
     line("colour.stage: {}", colour_stage(f));
+    // Each format as the device answered, or a 10-bit one not asked yet: nothing of 10 bits reaches the driver before
+    // VK bench's colour stage (Device::check_ten_bit).
     std::string drawable;
     for (const ColourFormat& c : f.colour_formats) {
         const std::string unfit = f.unfit_for_frame(c.format);
-        // A 10-bit format's lazily allocated samples are asked of the device only in VK bench's colour stage.
-        const bool unasked = unfit.empty() && f.lazy_memory && !c.lazy_checked && ten_bit(c.format);
         drawable += std::format("{}{} {}", drawable.empty() ? "" : ", ", colour_name(c.format),
-                                !unfit.empty() ? "no (" + unfit + ")"
-                                : unasked ? std::string("yes (its lazily allocated samples asked in the colour stage)")
-                                          : std::string("yes"));
+                                !c.queried      ? std::string("not asked (VK bench's colour stage asks the device)")
+                                : unfit.empty() ? std::string("yes")
+                                                : "no (" + unfit + ")");
     }
     line("colour.formats: {} (the frame drawn in each)", drawable);
     line("configs.available: A {}, B {}, C {}, 1x {}", yes_no(f.supports(FrameConfig::a)),

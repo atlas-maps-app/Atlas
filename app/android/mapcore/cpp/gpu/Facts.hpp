@@ -16,8 +16,11 @@
 // In this alpha the frame is 8 bits a channel on every phone (default_depth): the map, VK facts and VK bench's runs.
 // 10 bits are drawn only by VK bench's colour stage, after its 8-bit runs are recorded, behind the crash guard's own
 // stage (gpu/Guard.hpp's Stage::colour): a driver that crashes there has 10 bits turned off for it and this build of
-// the core (Facts::ten_bit_off), and nothing else. They become the frame's default only when a later alpha's evidence
-// shows them safe.
+// the core (Facts::ten_bit_off), and nothing else. Nothing of 10 bits reaches the driver before that stage, not even a
+// query: the facts ask the device about the 8-bit formats only, and the 10-bit ones (their format features, their
+// sample counts, a tiler's lazily allocated samples) are asked as the stage begins (Device::check_ten_bit). Until then
+// VkFacts says so, and what the stage would draw is the surface's offer (decide_colour). 10 bits become the frame's
+// default only when a later alpha's evidence shows them safe.
 #pragma once
 
 #include "gpu/Instance.hpp"
@@ -76,6 +79,9 @@ inline constexpr Depth default_depth = Depth::eight;
 /// What the device does with one of the frame's colour formats (Facts::colour_formats).
 struct ColourFormat {
     vk::Format format = vk::Format::eUndefined;
+    /// Asked of the device: the 8-bit formats as the device is chosen (collect_facts), the 10-bit ones only as VK
+    /// bench's colour stage begins (Device::check_ten_bit). Until then nothing below is known.
+    bool queried = false;
     /// The 1x output: a colour attachment with blending, a blit source with linear filtering (the frosted backdrops'
     /// copy), copied from and into (the host build's readback and fill).
     bool output = false;
@@ -203,7 +209,8 @@ struct Facts {
     /// (collect_surface), else offscreen (colour_offscreen).
     Colour colour;
     /// The deepest colour the surface (or offscreen, the device) allows: what VK bench's colour stage draws, 10 bits a
-    /// channel where they can be had, else 8 with the reason (none offered, of no use to the frame, or off).
+    /// channel where they can be had, else 8 with the reason (none offered, of no use to the frame, or off). Until the
+    /// stage has asked the device about its 10-bit formats, the surface's offer, saying so (decide_colour).
     Colour deepest;
     /// The crash guard's `vk guard colour …` line when VK bench's colour stage crashed under this driver and this build
     /// of the core: 10 bits are off for them (D5.10), and the frame keeps its 8. Empty otherwise.
@@ -214,9 +221,12 @@ struct Facts {
     [[nodiscard]] bool supports(FrameConfig config) const noexcept;
     /// What the device does with `format`, if it is one of the frame's colour formats (else nullptr).
     [[nodiscard]] const ColourFormat* colour_format(vk::Format format) const noexcept;
-    /// Why the device cannot draw the frame in `format` ("" when it can): the output's and the samples' features, the
-    /// frame's sample counts as an input attachment, lazily allocated memory for configuration A.
+    /// Why the device cannot draw the frame in `format` ("" when it can): not asked of the device yet (a 10-bit format
+    /// before VK bench's colour stage), the output's and the samples' features, the frame's sample counts as an input
+    /// attachment, lazily allocated memory for configuration A.
     [[nodiscard]] std::string unfit_for_frame(vk::Format format) const;
+    /// Whether the 10-bit formats were asked of the device (Device::check_ten_bit, as VK bench's colour stage begins).
+    [[nodiscard]] bool ten_bit_queried() const noexcept;
     /// "vendor 0x13b5 device 0x... driver 2 version 0x..." for the guard and the cache key.
     [[nodiscard]] std::string driver_key() const;
     /// Whether the device takes SPIR-V declaring StorageImageReadWithoutFormat (Slang's subpass loads do): Vulkan 1.3,
@@ -225,9 +235,13 @@ struct Facts {
 };
 
 /// Reads the facts of `device` (one of `instance`'s), and what they decide for a device that presents (`present`) or
-/// one that works offscreen.
+/// one that works offscreen. Of the frame's colour formats it asks about the 8-bit ones only (the file's head).
 [[nodiscard]] Facts collect_facts(const Instance& instance, const vk::raii::PhysicalDevice& device,
                                   std::size_t device_count, bool present);
+
+/// Asks `device` what it does with the frame's 10-bit colour formats (`ten`) or its 8-bit ones: their format features
+/// and their sample counts as the main pass's transient input attachments (Facts::colour_formats).
+void query_colour_formats(Facts& facts, const vk::raii::PhysicalDevice& device, bool ten);
 
 /// Sets `facts.missing` to the requirements of T1 the device lacks, for presenting (`present`: VK_KHR_swapchain too)
 /// or for offscreen work, and `facts.presents` to `present`.
@@ -238,16 +252,17 @@ void collect_surface(Facts& facts, const vk::raii::PhysicalDevice& device, vk::S
                      std::uint32_t queue_family);
 
 /// The frame's colour on a surface that offers `offered`, at `depth`. `Depth::deepest`: rgb10a2, else bgr10a2, in
-/// sRGB-nonlinear, where the surface offers it, the device can draw the frame in it and the crash guard has not turned
-/// 10 bits off (Facts::ten_bit_off); else, as `Depth::eight` always, rgba8, else bgra8 in sRGB-nonlinear, else the
-/// surface's first format (as before).
+/// sRGB-nonlinear, where the surface offers it, the device, asked (Device::check_ten_bit), can draw the frame in it
+/// and the crash guard has not turned 10 bits off (Facts::ten_bit_off); else, as `Depth::eight` always, rgba8, else
+/// bgra8 in sRGB-nonlinear, else the surface's first format (as before).
 [[nodiscard]] Colour colour_for_surface(const Facts& facts, std::span<const vk::SurfaceFormatKHR> offered, Depth depth);
 
 /// The frame's colour offscreen (the host build's images): the same choice, as if a surface offered every format.
 [[nodiscard]] Colour colour_offscreen(const Facts& facts, Depth depth);
 
 /// Sets the facts' colour (at default_depth) and deepest colour: on the surface when its formats are known, else
-/// offscreen.
+/// offscreen. Before the 10-bit formats are asked of the device, the deepest colour is what VK bench's colour stage
+/// would draw by the surface's offer, its reason saying that the stage asks the device first.
 void decide_colour(Facts& facts);
 
 /// What VK bench's colour stage does on this device, as VkFacts' `colour.stage:` line gives it: the 10-bit colour it

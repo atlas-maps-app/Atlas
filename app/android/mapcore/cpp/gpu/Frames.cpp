@@ -146,23 +146,39 @@ void Frames::drain() {
     }
 }
 
-Renderer::Renderer(const Device& device, Output& output, Content& content)
-    : device_(device), output_(&output), content_(content), sync_(device.enabled().synchronization2) {}
+Renderer::Renderer(const Device& device, Output& output, Content& content, PipelineWatch* watch)
+    : device_(device), output_(&output), content_(content), watch_(watch), sync_(device.enabled().synchronization2) {}
 
-Renderer::~Renderer() { drain(); }
+Renderer::~Renderer() {
+    drain();
+    release_frame();
+}
 
 Result<std::unique_ptr<Renderer>> Renderer::create(const Device& device, Output& output, Content& content,
-                                                   const Configuration& configuration) {
+                                                   const Configuration& configuration, PipelineWatch* watch) {
     std::unique_ptr<Renderer> self(
-        new Renderer(device, output, content)); // NOLINT(cppcoreguidelines-owning-memory): private constructor
+        new Renderer(device, output, content, watch)); // NOLINT(cppcoreguidelines-owning-memory): private constructor
     ATLAS_GPU_LET(frames, Frames::create(device));
     self->frames_ = std::make_unique<Frames>(std::move(frames));
     ATLAS_GPU_CHECK(self->remake(configuration));
     return self;
 }
 
-Result<void> Renderer::remake(const Configuration& configuration) {
+void Renderer::release_frame() {
+    if (prepared_) {
+        // Named by the pass's configuration and colour, as its pipelines are: a driver crashing as a 10-bit frame goes
+        // is told from one crashing as an 8-bit frame goes.
+        announce_release(std::format("frame (configuration {} {})", name_of(pass_->spec().config),
+                                     colour_name(pass_->spec().colour_format)),
+                         watch_);
+        content_.release();
+        prepared_ = false;
+    }
     pass_.reset();
+}
+
+Result<void> Renderer::remake(const Configuration& configuration) {
+    release_frame();
     // The scene's and the composite's colour attachments follow the output (gpu/Facts.hpp's colour): a resolve keeps
     // one format, and the output's colour is one the device draws the frame in.
     const MainPassSpec spec{.config = configuration,
@@ -173,6 +189,8 @@ Result<void> Renderer::remake(const Configuration& configuration) {
                             .output_final = output_->final_layout()};
     ATLAS_GPU_LET(pass, MainPass::create(device_, spec, output_->views(), output_->images()));
     pass_ = std::make_unique<MainPass>(std::move(pass));
+    // From here the content holds what this renderer prepared, whole or in part: released with the frame.
+    prepared_ = true;
     return content_.prepare(*pass_, *output_);
 }
 

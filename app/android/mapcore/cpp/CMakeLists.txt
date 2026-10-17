@@ -51,6 +51,16 @@ target_link_libraries(atlas_zstd PRIVATE atlas_options atlas_sanitizers)
 
 # ---- The build's own tools: nocontract checks exact shader modules. Cross-compiling, it is built for the host.
 
+# Its check of specialization constants refuses by the pinned Slang's SPIR-V grammar (tools/nocontract/grammar.hpp,
+# derived from the table Slang's compiler embeds by tools/nocontract/grammar.py): another Slang may know instructions
+# the table lacks, so the table must be derived again first.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/tools/nocontract/grammar.hpp" _grammar_version REGEX "slang_version = \"")
+string(REGEX MATCH "\"([^\"]*)\"" _grammar_match "${_grammar_version}")
+if(NOT CMAKE_MATCH_1 STREQUAL ATLAS_SLANG_VERSION)
+    message(FATAL_ERROR "tools/nocontract/grammar.hpp holds Slang ${CMAKE_MATCH_1}'s SPIR-V grammar, but the core is "
+        "pinned to Slang ${ATLAS_SLANG_VERSION}: derive it from the new release with tools/nocontract/grammar.py.")
+endif()
+
 if(ATLAS_HOST)
     add_subdirectory(tools/nocontract)
     set(ATLAS_NOCONTRACT "$<TARGET_FILE:nocontract>")

@@ -97,9 +97,10 @@ TEST_CASE("the swapchain presents the stand-in on a headless surface and is rema
             CHECK(report->status == gpu::Acquired::ok);
         }
         CHECK_FALSE((*bigger)->colour().ten_bit()); // the frame's 8 bits
-        // As deep as the surface allows, as VK bench's colour stage remakes it (lavapipe's headless surface offers 8
-        // bits only, so 8 again, saying why).
+        // As deep as the surface allows, as VK bench's colour stage remakes it, the device asked about 10 bits first
+        // (lavapipe's headless surface offers 8 bits only, so 8 again, saying why).
         (*renderer)->drain();
+        s.device->check_ten_bit();
         auto deep = gpu::Swapchain::create(*s.device, **surface, {.width = 480, .height = 800}, std::move(*bigger),
                                            gpu::Depth::deepest);
         ATLAS_REQUIRE(deep.has_value(), deep.error().text());
@@ -148,6 +149,7 @@ TEST_CASE("the stand-in draws at Vulkan 1.1 under the validation layer, silent")
     auto device = gpu::Device::open(*s.instance, std::move(*picked), phone);
     ATLAS_REQUIRE(device.has_value(), device.error().text());
     s.device = std::move(*device);
+    s.device->check_ten_bit(); // it draws at 10 bits too
     CHECK(s.device->version() == VK_API_VERSION_1_1);
     CHECK(s.device->enabled().swapchain);
     auto cache = gpu::PipelineCache::open(s.device->handle(), s.device->facts(), {}, 0, false);

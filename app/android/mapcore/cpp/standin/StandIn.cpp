@@ -482,10 +482,6 @@ gpu::Result<void> StandIn::prepare_offscreen(const gpu::MainPass& pass, const gp
     water_extent_ = {.width = std::max(1U, static_cast<std::uint32_t>(e.width * 0.84)),
                      .height = std::max(1U, static_cast<std::uint32_t>(e.height * 0.36))};
     using U = vk::ImageUsageFlagBits;
-    // Drop the old ones first: the frames that used them have finished (Renderer drains before prepare).
-    shadow_framebuffer_.clear();
-    water_framebuffer_.clear();
-    frost_framebuffers_.clear();
     ATLAS_GPU_LET(mask, image_of(device_, vk::Format::eR8Unorm, half_, U::eColorAttachment | U::eSampled));
     ATLAS_GPU_LET(blur_a, image_of(device_, vk::Format::eR8G8B8A8Unorm, half_, U::eStorage | U::eSampled));
     ATLAS_GPU_LET(blur_b, image_of(device_, vk::Format::eR8G8B8A8Unorm, half_, U::eStorage | U::eSampled));
@@ -530,14 +526,11 @@ gpu::Result<void> StandIn::prepare_offscreen(const gpu::MainPass& pass, const gp
     if (water_colour_) {
         ATLAS_GPU_LET(colour_view, view_of(device_, water_colour_, vk::ImageAspectFlagBits::eColor));
         water_colour_view_ = std::move(colour_view);
-    } else {
-        water_colour_view_.clear();
     }
 
     const std::array<vk::ImageView, 1> mask_views{*mask_view_};
     ATLAS_GPU_LET(shadow_framebuffer, make_framebuffer(device_, shadow_pass_, mask_views, half_));
     shadow_framebuffer_ = std::move(shadow_framebuffer);
-    water_pass_.clear();
     ATLAS_GPU_LET(
         water_pass,
         make_pass(device_, {.colour = vk::Format::eR8G8B8A8Unorm, .samples = samples, .depth = depth_format}));
@@ -550,7 +543,6 @@ gpu::Result<void> StandIn::prepare_offscreen(const gpu::MainPass& pass, const gp
 
     // The frosted pills draw over the frame, loading it; one framebuffer per output image.
     output_final_ = output.final_layout();
-    frost_pass_.clear();
     ATLAS_GPU_LET(frost_pass, make_pass(device_, {.colour = output.format(),
                                                   .load = vk::AttachmentLoadOp::eLoad,
                                                   .initial = vk::ImageLayout::eColorAttachmentOptimal,
@@ -665,12 +657,10 @@ gpu::Result<void> StandIn::prepare_pipelines(const gpu::MainPass& pass, const gp
     ATLAS_GPU_CHECK(make(glow, glow_pipeline_));
 
     // The composite: the module for the samples it reads, through Slang's own SPIR-V or its GLSL route.
-    composite_pipeline_.clear();
     if (pass.composite()) {
         const bool loc1 = c.samples() == vk::SampleCountFlagBits::e1 && c.route == gpu::Route::dynamic;
         ATLAS_GPU_LET(modules, composite_modules(c.samples(), loc1));
         composite_glsl_ = !device_.facts().takes_read_without_format();
-        composite_module_.clear();
         ATLAS_GPU_LET(module, module_of(device_, modules.direct, watch_));
         composite_module_ = std::move(module);
         vk::raii::ShaderModule glsl_module{nullptr};
@@ -724,8 +714,46 @@ gpu::Result<void> StandIn::prepare_pipelines(const gpu::MainPass& pass, const gp
 }
 
 gpu::Result<void> StandIn::prepare(const gpu::MainPass& pass, const gpu::Output& output) {
+    release(); // the frames that used them have finished (Renderer drains before it remakes)
     ATLAS_GPU_CHECK(prepare_offscreen(pass, output));
     return prepare_pipelines(pass, output);
+}
+
+void StandIn::release() {
+    // The framebuffers first (they hold the views), then the pipelines and the composite's module, the passes, the
+    // views and the images.
+    frost_framebuffers_.clear();
+    shadow_framebuffer_.clear();
+    water_framebuffer_.clear();
+    for (vk::raii::Pipeline* p : {&box_pipeline_, &tree_pipeline_, &ground_pipeline_, &glow_pipeline_,
+                                  &composite_pipeline_, &mirror_pipeline_, &frost_pipeline_})
+        p->clear();
+    composite_module_.clear();
+    frost_pass_.clear();
+    water_pass_.clear();
+    for (vk::raii::ImageView* v : {&mask_view_, &blur_a_view_, &blur_b_view_, &frost_c_view_, &frost_d_view_,
+                                   &water_view_, &water_colour_view_, &water_depth_view_})
+        v->clear();
+    for (gpu::Image* i : {&mask_, &blur_a_, &blur_b_, &frost_c_, &frost_d_, &water_, &water_colour_, &water_depth_})
+        *i = {};
+    frost_ready_ = false;
+    output_final_ = vk::ImageLayout::eUndefined;
+}
+
+bool StandIn::holds_prepared() const noexcept {
+    const bool pipelines =
+        std::ranges::any_of(std::array{&box_pipeline_, &tree_pipeline_, &ground_pipeline_, &glow_pipeline_,
+                                       &composite_pipeline_, &mirror_pipeline_, &frost_pipeline_},
+                            [](const vk::raii::Pipeline* p) { return static_cast<bool>(**p); });
+    const bool views =
+        std::ranges::any_of(std::array{&mask_view_, &blur_a_view_, &blur_b_view_, &frost_c_view_, &frost_d_view_,
+                                       &water_view_, &water_colour_view_, &water_depth_view_},
+                            [](const vk::raii::ImageView* v) { return static_cast<bool>(**v); });
+    const bool images = std::ranges::any_of(
+        std::array{&mask_, &blur_a_, &blur_b_, &frost_c_, &frost_d_, &water_, &water_colour_, &water_depth_},
+        [](const gpu::Image* i) { return static_cast<bool>(*i); });
+    return pipelines || views || images || *composite_module_ || *frost_pass_ || *water_pass_ ||
+           !frost_framebuffers_.empty() || *shadow_framebuffer_ || *water_framebuffer_;
 }
 
 void StandIn::write_frame(std::uint32_t slot) {

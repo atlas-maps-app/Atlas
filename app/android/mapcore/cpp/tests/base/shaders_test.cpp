@@ -19,8 +19,10 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -217,6 +219,7 @@ TEST_CASE("specialization constants are found, with their names and SpecIds") {
     words.insert(words.end(), {(4U << 16U) | op_decorate, 3, decoration_spec_id, 1});
     words.insert(words.end(), {(4U << 16U) | op_decorate, 5, decoration_spec_id, 0});
     words.insert(words.end(), {(4U << 16U) | 21U, 2, 32, 1}); // OpTypeInt %2 32 1
+    words.insert(words.end(), {(2U << 16U) | 20U, 7});        // OpTypeBool %7
     words.insert(words.end(), {(4U << 16U) | op_spec_constant, 2, 3, 4});
     words.insert(words.end(), {(6U << 16U) | op_spec_constant_op, 2, 4, 128, 3, 6}); // IAdd %3 %6
     words.insert(words.end(), {(3U << 16U) | op_spec_constant_false, 7, 5});
@@ -289,4 +292,63 @@ TEST_CASE("the extensions' specialization constants and a SpecId on anything are
         CHECK(makes_spec_constant(op));
     for (const std::uint16_t op : {std::uint16_t{43}, std::uint16_t{53}, std::uint16_t{4461}, std::uint16_t{6091}})
         CHECK_FALSE(makes_spec_constant(op));
+}
+
+TEST_CASE("every instruction of the pinned Slang's SPIR-V grammar that makes a specialization constant is refused") {
+    using namespace atlas::spirv;
+    // The grammar is the pinned Slang's (tools/nocontract/grammar.hpp, derived from the table its compiler embeds and
+    // checked against NDK r30's SPIRV-Headers): each instruction whose name begins OpSpecConstant, none left out.
+    CHECK(grammar::slang_version == ATLAS_SLANG_VERSION);
+    for (const grammar::Named& n : grammar::spec_constant_instructions) CHECK(n.name.starts_with("OpSpecConstant"));
+    // The five the hand-made list of 59bcec0 left out, which Slang's spirv_asm writes: SPV_AMDX_shader_enqueue's
+    // string, the data constant, and SPV_INTEL_function_variants' three.
+    for (const auto& [opcode, name] : {std::pair<std::uint16_t, std::string_view>{5104, "OpSpecConstantStringAMDX"},
+                                       {5148, "OpSpecConstantDataKHR"},
+                                       {6251, "OpSpecConstantTargetINTEL"},
+                                       {6252, "OpSpecConstantArchitectureINTEL"},
+                                       {6253, "OpSpecConstantCapabilitiesINTEL"}}) {
+        CHECK(makes_spec_constant(opcode));
+        CHECK(spec_constant_opname(opcode) == name);
+    }
+    // Each in a module of its own, as the verifier wrote them by hand: a type, a constant, then the instruction with a
+    // result of that type where it has one (operands past it are literals, which the check does not read).
+    for (const grammar::Named& n : grammar::spec_constant_instructions) {
+        std::vector<std::uint32_t> words{magic, 0x00010300U, 0, 16, 0};
+        words.insert(words.end(), {(2U << 16U) | op_capability, 1}); // Shader
+        words.insert(words.end(), {(4U << 16U) | 21U, 2, 32, 1});    // OpTypeInt %2 32 1
+        words.insert(words.end(), {(4U << 16U) | 43U, 2, 4, 1});     // OpConstant %2 %4 1
+        words.insert(words.end(), {(5U << 16U) | n.opcode, 2, 5, 4, 1});
+        const auto code = instructions(words);
+        REQUIRE(code.has_value());
+        const auto found = specialization_constants(*code);
+        REQUIRE_MESSAGE(found.size() == 1, n.name << " was not found");
+        CHECK(found[0].opcode == n.opcode);
+        CHECK(found[0].id == 5); // its type, %2, declared before it
+    }
+    // Untyped (OpSpecConstantStringAMDX: a result and a literal string): found by the instruction, the id unnamed.
+    std::vector<std::uint32_t> words{magic, 0x00010300U, 0, 16, 0};
+    words.insert(words.end(), {(3U << 16U) | 5104U, 5, 0x00636261U}); // %5 = OpSpecConstantStringAMDX "abc"
+    auto code = instructions(words);
+    REQUIRE(code.has_value());
+    auto found = specialization_constants(*code);
+    REQUIRE(found.size() == 1);
+    CHECK(found[0].opcode == 5104);
+    CHECK(found[0].id == 0);
+    // A SpecId through every instruction that decorates, OpMemberDecorateIdEXT (5127) among them, which the hand-made
+    // list missed too.
+    CHECK(decorating(5127) != nullptr);
+    for (const grammar::Decorating& d : grammar::decorating_instructions) {
+        words = {magic, 0x00010300U, 0, 16, 0};
+        if (d.member) {
+            words.insert(words.end(), {(5U << 16U) | d.opcode, 7, 0, decoration_spec_id, 9});
+        } else {
+            words.insert(words.end(), {(4U << 16U) | d.opcode, 7, decoration_spec_id, 9});
+        }
+        code = instructions(words);
+        REQUIRE(code.has_value());
+        found = specialization_constants(*code);
+        REQUIRE_MESSAGE(found.size() == 1, d.name << "'s SpecId was not found");
+        CHECK(found[0].spec_id == 9U);
+        CHECK(spec_constant_opname(found[0].opcode) == "a SpecId decoration (" + std::string(d.name) + ")");
+    }
 }

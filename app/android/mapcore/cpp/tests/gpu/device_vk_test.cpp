@@ -104,6 +104,51 @@ TEST_CASE("a device that presents opens with the swapchain where the host's Vulk
     CHECK(s.take_messages().empty());
 }
 
+TEST_CASE("the device is asked about its 10-bit formats only as VK bench's colour stage begins") {
+    // Nothing of 10 bits reaches the driver before the crash guard's colour stage (gpu/Facts.hpp): a device as it
+    // opens has asked about the 8-bit formats only; VkFacts says so, the frame offscreen takes no 10 bits, and what the
+    // stage would draw is taken from the offer, saying that the stage asks first. Device::check_ten_bit asks.
+    test::Session s;
+    s.instance = test::open_instance({.validation = true, .require_validation = test::vulkan_required()});
+    if (!s.instance) return;
+    auto device = gpu::Device::open(*s.instance, {});
+    ATLAS_REQUIRE(device.has_value(), device.error().text());
+    s.device = std::move(*device);
+    const gpu::Facts& facts = s.device->facts();
+    CHECK_FALSE(facts.ten_bit_queried());
+    std::vector<std::string> lines = gpu::facts_lines(facts);
+    constexpr std::string_view unasked = "colour.formats: rgb10a2 not asked (VK bench's colour stage asks the device), "
+                                         "bgr10a2 not asked (VK bench's colour stage asks the device), ";
+    CHECK_MESSAGE(has_line(lines, unasked), "no line starts with " << std::string(unasked));
+    const gpu::Colour unasked_offscreen = gpu::colour_offscreen(facts, gpu::Depth::deepest);
+    CHECK_FALSE(unasked_offscreen.ten_bit());
+    CHECK(unasked_offscreen.reason == "offscreen: 10 bits not asked of the device yet (VK bench's colour stage asks it "
+                                      "first)");
+    const bool lavapipe = facts.driver_properties && facts.driver_id == vk::DriverId::eMesaLlvmpipe;
+    if (lavapipe) {
+        CHECK(facts.deepest.format == vk::Format::eA2B10G10R10UnormPack32);
+        CHECK(facts.deepest.reason == "offscreen: VK bench's colour stage asks the device for it first");
+        CHECK(has_line(lines, "colour: rgba8 (R8G8B8A8Unorm in SrgbNonlinear: offscreen: the frame's default in this "
+                              "alpha, 8 bits a channel; 10 bits: rgb10a2, drawn only in VK bench's colour stage, which "
+                              "asks the device for it first)"));
+    }
+    // Asked: the formats as the device answers, the choice made again.
+    s.device->check_ten_bit();
+    CHECK(facts.ten_bit_queried());
+    lines = gpu::facts_lines(facts);
+    CHECK_FALSE(has_line(lines, "colour.formats: rgb10a2 not asked"));
+    for (const std::string& l : lines) {
+        if (l.starts_with("colour")) MESSAGE("vkfacts " << l);
+    }
+    if (lavapipe) {
+        CHECK(facts.deepest.format == vk::Format::eA2B10G10R10UnormPack32);
+        CHECK(facts.deepest.reason == "offscreen: the device draws the frame in 10 bits");
+        CHECK(gpu::colour_offscreen(facts, gpu::Depth::deepest).ten_bit());
+        CHECK(has_line(lines, "colour.formats: rgb10a2 yes, "));
+    }
+    CHECK(s.take_messages().empty());
+}
+
 TEST_CASE("without a window system an offscreen device opens, and one that presents is refused with the reason") {
     // This host's Vulkan made to look like the arm64 runner's, Mesa built without a window system: no VK_KHR_surface on
     // the instance, no VK_KHR_swapchain on the device. Every surface extension builds on VK_KHR_surface, so none is

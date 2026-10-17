@@ -7,9 +7,10 @@ import java.io.File
 /**
  * How the core starts (plan-vector T8, D5.10): where its pipeline cache and its crash guard live, the system build the
  * guard keys a crash to before the driver is known (the core adds its own build ID), a stage to crash at on purpose
- * (debug and bench builds, the planted-crash test: `pipelines`, or `pipelines:<name>` for one pipeline or shader
- * module; `colour` or `colour:<name>` the same in VK bench's 10-bit colour stage), the validation layer, CI's
- * per-frame log, and K6's answer for configuration B.
+ * (debug and bench builds, the planted-crash test: `pipelines`, `pipelines:<name>` for one pipeline or shader module,
+ * or `pipelines:release` as a frame goes; `colour`, `colour:<name>` or `colour:release` the same in VK bench's 10-bit
+ * colour stage; any other stage, `facts` among them, as it begins), the validation layer, CI's per-frame log, and K6's
+ * answer for configuration B.
  */
 data class CoreConfig(
     val cacheDir: String,

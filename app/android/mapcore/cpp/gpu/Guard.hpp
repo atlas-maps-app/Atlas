@@ -1,26 +1,31 @@
 // The crash guard (plan-vector D5.10). Most driver failures on Android are native crashes inside the vendor's driver
 // (in pipeline compilation, cache loading or the first draws), and a crash at start repeats on every launch. So before
 // each risky stage the guard writes a marker (the stage, the driver, the core's build, the attempt), synced to disk,
-// and deletes it after; in the pipelines stage it also writes each shader module and each pipeline into the marker
-// before it is made (a module by its symbol, a pipeline by its name, its module and the frame configuration,
-// gpu/Pipelines.hpp). At the next start a surviving marker means a crash in that stage, and the `vk guard` line names
-// the module or the pipeline: the first time, the core retries once with the pipeline cache deleted; the second time,
-// Vulkan is turned off for that driver and version and this build of the core, and the facts carry the line. A driver
-// update (another version) or another build of the core (its build ID, base/build_info.hpp) tries again; so does a
-// reset (VK facts' "Reset guard" in the debug and bench builds).
+// and deletes it after: the instance; the device's facts, every query the choice of the device makes of the driver;
+// the device; the pipeline cache; the pipelines; the first 120 frames. In the pipelines stage it also writes into the
+// marker each shader module and each pipeline before it is made (a module by its symbol, a pipeline by its name, its
+// module and the frame configuration, gpu/Pipelines.hpp) and each frame before it goes (its main pass and the
+// pipelines, passes and images made for it). At the next start a surviving marker means a crash in that stage, and
+// the `vk guard` line names the module, the pipeline or the frame: the first time, the core retries once with the
+// pipeline cache deleted; the second time, Vulkan is turned off for that driver and version and this build of the
+// core, and the facts carry the line. A crash before the driver is known (the instance, the facts) is keyed by the
+// system build instead. A driver update (another version) or another build of the core (its build ID,
+// base/build_info.hpp) tries again; so does a reset (VK facts' "Reset guard" in the debug and bench builds).
 //
 // VK bench's colour stage, the frame at 10 bits a channel measured after its 8-bit runs (plan-vector D5, "Colour
-// depth"), is guarded as a stage of its own, the rung below Vulkan off. While it is open every marker is the colour
-// stage's, whatever runs inside it (the 10-bit swapchain, the shader modules and pipelines of a 10-bit frame, its
-// frames), and a crash in it turns off 10 bits only, at once, for that driver and version and this build: the next
-// start runs at 8 bits without the pipeline cache, VK facts' `colour:` line and VK bench's report say so, and
-// everything else goes on as before. A reset brings 10 bits back.
+// depth"), is guarded as a stage of its own, the rung below Vulkan off. Nothing of 10 bits reaches the driver outside
+// it: the 10-bit formats are asked of the device, the 10-bit swapchain, its shader modules and pipelines and their
+// frames are made, and all of them destroyed, while it is open (jni/Bridge.cpp). While it is open every marker is the
+// colour stage's, whatever runs inside it, and a crash in it turns off 10 bits only, at once, for that driver and
+// version and this build: the next start runs at 8 bits without the pipeline cache, VK facts' `colour:` line and VK
+// bench's report say so, and everything else goes on as before. A reset brings 10 bits back.
 //
 // Files in the guard's folder (noBackupFilesDir/vk on the phone): `guard` (the marker, replaced whole on each write),
 // `off` (what is turned off, a line each: driver|version|build|stage|what, or system|<fingerprint>|build|stage|what
 // when the driver was not known yet; the stage `colour` turns off 10 bits, any other turns off Vulkan; what is
-// "pipeline <…>" or "module <…>" when the driver was making one), `facts` (the last facts read, shown when Vulkan is
-// off). An off line from before build IDs (driver|version|stage, alpha 6) names no build, so it turns off none.
+// "pipeline <…>", "module <…>" or "release <…>" when the driver was making a pipeline or a module or destroying a
+// frame), `facts` (the last facts read, shown when Vulkan is off). An off line from before build IDs
+// (driver|version|stage, alpha 6) names no build, so it turns off none.
 #pragma once
 
 #include "gpu/Device.hpp"
@@ -39,8 +44,9 @@
 
 namespace atlas::gpu {
 
-/// The guarded stages, in the order a start passes them, then VK bench's colour stage (the file's head).
-enum class Stage : std::uint8_t { instance, device, cache, pipelines, frames, colour };
+/// The guarded stages, in the order a start passes them, then VK bench's colour stage (the file's head). `facts` is
+/// the device's choice: every query it makes of the driver (collect_facts), before the driver is known.
+enum class Stage : std::uint8_t { instance, facts, device, cache, pipelines, frames, colour };
 
 [[nodiscard]] std::string_view name_of(Stage stage) noexcept;
 [[nodiscard]] std::optional<Stage> stage_named(std::string_view name) noexcept;
@@ -53,8 +59,8 @@ struct GuardVerdict {
     /// The last start crashed: delete the pipeline cache before this one (the retry, a new build's first start, or the
     /// start after a crash in the colour stage).
     bool retry_without_cache = false;
-    /// The `vk guard <stage> <driver> <version> attempt <n>[ pipeline <…>| module <…>] build <id>` line, when a crash
-    /// was found or Vulkan is off.
+    /// The `vk guard <stage> <driver> <version> attempt <n>[ pipeline <…>| module <…>| release <…>] build <id>` line,
+    /// when a crash was found or Vulkan is off.
     std::string line;
 };
 
@@ -64,18 +70,20 @@ struct GuardOff {
     std::string version; // the driver's version, or the system build's fingerprint
     std::string build;   // the core's build ID; empty on a line from before build IDs
     std::string stage;   // the stage that crashed (twice, but once for the colour stage, which turns off 10 bits)
-    std::string what;    // what the driver was making: "pipeline <…>", "module <…>", or ""
+    std::string what;    // what the driver was making or destroying: "pipeline <…>", "module <…>", "release <…>", or ""
 };
 
-/// The guard of one process's core: told about each shader module and pipeline before it is made.
+/// The guard of one process's core: told about each shader module and pipeline before it is made, and each frame
+/// before it goes.
 class Guard final : public PipelineWatch {
 public:
     /// `dir` holds the guard's files; `system` names the system build (Android's build fingerprint), the driver's
     /// stand-in before the driver is known; `build` is the core's build ID (base/build_info.hpp), whose verdicts these
     /// are; `plant` names a stage at which to abort on purpose (debug intent extra `atlas.vk.plant`, the planted-crash
     /// tests): `pipelines` aborts as the stage's first pipeline is about to be made, `pipelines:<name>` as that
-    /// pipeline or shader module is, `colour` and `colour:<name>` the same in VK bench's colour stage, any other stage
-    /// as it is entered; empty plants nothing.
+    /// pipeline or shader module is, `pipelines:release` as the stage's first frame is about to go, `colour`,
+    /// `colour:<name>` and `colour:release` the same in VK bench's colour stage, any other stage (`facts`, …) as it is
+    /// entered; empty plants nothing.
     Guard(std::filesystem::path dir, std::string system, std::string build, std::string plant);
 
     /// Before the instance: a marker from the last start, or Vulkan off for this system build.
@@ -92,6 +100,8 @@ public:
     void before(const PipelineLabel& label) override;
     /// The same for a shader module (vkCreateShaderModule).
     void before_module(std::string_view module) override;
+    /// The same for a frame about to go (its pipelines, passes, framebuffers and images destroyed), or a swapchain.
+    void before_release(std::string_view what) override;
     /// The stage entered passed: deletes the marker, or inside the colour stage writes the colour stage's again.
     void leave();
     /// Opens VK bench's colour stage: from here to leave_colour every marker is the colour stage's (synced), and a
@@ -126,8 +136,12 @@ public:
 
 private:
     void write_marker() const;
-    /// Whether the plant aborts at the pipeline (`pipeline`) or the shader module `name` about to be made.
+    /// Whether the plant aborts at the pipeline (`pipeline`) or the shader module `name` about to be made, or (`name`
+    /// "release") at the frame about to go.
     [[nodiscard]] bool planted_at(std::string_view name, bool pipeline) const;
+    /// Writes `what` ("pipeline <…>", "module <…>", "release <…>") into the marker in the pipelines or colour stage,
+    /// then aborts if the plant is `name`'s (planted_at).
+    void note_making(std::string what, std::string_view name, bool pipeline);
     [[noreturn]] void abort_planted(std::string_view where) const;
 
     std::filesystem::path dir_;
@@ -138,7 +152,7 @@ private:
     std::string version_;
     std::optional<Stage> current_;
     bool colour_ = false; // the colour stage is open
-    std::string making_;  // "pipeline <…>" or "module <…>": what the marker names, in the pipelines or colour stage
+    std::string making_;  // "pipeline <…>", "module <…>" or "release <…>": what the marker names, in those two stages
     std::uint32_t attempt_ = 1;
 };
 
@@ -180,9 +194,9 @@ struct StartRefusal {
 /// The driver's name and version as the guard keys them ("ArmProprietary", "0x…").
 [[nodiscard]] std::pair<std::string, std::string> guard_key(const Facts& facts);
 
-/// Opens Vulkan behind the guard: the guard's verdict, the instance, the driver's verdict, the device and the pipeline
-/// cache, each stage marked on disk while it runs (D5.10). The device's facts carry the colour stage's verdict
-/// (Facts::ten_bit_off), and are kept for the honest state.
+/// Opens Vulkan behind the guard: the guard's verdict, the instance, the device's facts (the queries its choice
+/// makes), the driver's verdict, the device and the pipeline cache, each stage marked on disk while it runs (D5.10).
+/// The device's facts carry the colour stage's verdict (Facts::ten_bit_off), and are kept for the honest state.
 [[nodiscard]] std::expected<Started, StartRefusal> start_guarded(const StartOptions& options);
 
 } // namespace atlas::gpu

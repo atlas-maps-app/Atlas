@@ -59,8 +59,17 @@ public:
     /// Draws the frosted backdrops of the camera's frosted keep-out shapes (the SurfaceView host).
     void set_pills(bool on) noexcept { pills_ = on; }
 
+    /// Makes the configuration's pipelines and the images, passes and framebuffers of the output's size, after letting
+    /// go of the last ones (release).
     [[nodiscard]] gpu::Result<void> prepare(const gpu::MainPass& pass, const gpu::Output& output) override;
+    /// Lets go of everything prepare made: the configuration's pipelines (made for the main pass's colour, 10 bits a
+    /// channel in VK bench's colour stage) and its composite's module, the frosted pass (of the output's format) and
+    /// its framebuffers on the output's images, the offscreen images, their views, passes and framebuffers. What create
+    /// made stays: the shared pipelines, modules, layouts, the city's buffers and the atlas.
+    void release() override;
     void record(const gpu::FrameContext& frame) override;
+    /// Whether it holds anything prepare made (none once the renderer that prepared it is gone).
+    [[nodiscard]] bool holds_prepared() const noexcept;
 
     [[nodiscard]] const Counters& counters() const noexcept { return counters_; }
     /// The milliseconds the driver spent creating the pipelines the last prepare needs (the fixed ones made at create,

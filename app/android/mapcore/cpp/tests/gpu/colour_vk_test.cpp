@@ -28,8 +28,9 @@ using F = vk::Format;
 using S = vk::ColorSpaceKHR;
 constexpr vk::SampleCountFlags one_four = vk::SampleCountFlagBits::e1 | vk::SampleCountFlagBits::e4;
 
-/// A phone's facts as far as the colour reads them: 1x and 4x (and 2x when `two`), each of the four formats drawable
-/// unless `unfit` names it.
+/// A phone's facts as far as the colour reads them, the 10-bit formats asked of it (as VK bench's colour stage asks
+/// them, Device::check_ten_bit): 1x and 4x (and 2x when `two`), each of the four formats drawable unless `unfit` names
+/// it.
 gpu::Facts phone(bool two = false, F unfit = F::eUndefined) {
     gpu::Facts f;
     const vk::SampleCountFlags counts = two ? one_four | vk::SampleCountFlagBits::e2 : one_four;
@@ -38,7 +39,7 @@ gpu::Facts phone(bool two = false, F unfit = F::eUndefined) {
     f.limits.framebufferStencilSampleCounts = counts;
     for (const F format :
          {F::eA2B10G10R10UnormPack32, F::eA2R10G10B10UnormPack32, F::eR8G8B8A8Unorm, F::eB8G8R8A8Unorm}) {
-        gpu::ColourFormat c{.format = format, .output = true, .attachment = true, .samples = counts};
+        gpu::ColourFormat c{.format = format, .queried = true, .output = true, .attachment = true, .samples = counts};
         if (format == unfit) {
             c.output = false;
             c.lacks = "blending";
@@ -202,17 +203,53 @@ TEST_CASE("the frame keeps 8 bits, and 10 stay off where the crash guard turned 
     CHECK(f.deepest.format == F::eA2B10G10R10UnormPack32);
     CHECK(gpu::colour_stage(f).starts_with("rgb10a2 ("));
 
-    // A tiler with lazily allocated memory asks for its 10-bit samples only in the colour stage
-    // (Device::check_ten_bit): until then VkFacts says so, and the stage assumes they fit.
+    // A tiler with lazily allocated memory: the probe of the 10-bit samples, asked with the formats in the colour stage
+    // (Device::check_ten_bit), can refuse them for configuration A.
     f.lazy_memory = true;
     lines = gpu::facts_lines(f);
-    CHECK(has("colour.formats: rgb10a2 yes (its lazily allocated samples asked in the colour stage), bgr10a2 yes (its "
-              "lazily allocated samples asked in the colour stage), rgba8 yes, bgra8 yes (the frame drawn in each)"));
+    CHECK(has("colour.formats: rgb10a2 yes, bgr10a2 yes, rgba8 yes, bgra8 yes (the frame drawn in each)"));
     f.colour_formats[0].lazy = false;
     f.colour_formats[0].lazy_checked = true;
     gpu::decide_colour(f);
     CHECK(gpu::colour_stage(f) == "none (the surface's 10-bit sRGB formats are of no use to the frame: rgb10a2 (lazily "
                                   "allocated memory cannot hold its transient samples (configuration A)))");
+}
+
+TEST_CASE("before VK bench's colour stage asks the device about 10 bits, nothing takes them, and VkFacts says so") {
+    // A phone's facts as the device opened (collect_facts asks about the 8-bit formats only): the 10-bit ones not
+    // asked yet, so no swapchain or offscreen image takes them; the colour stage would draw the surface's offer, and
+    // says that it asks the device first.
+    gpu::Facts f = phone();
+    for (gpu::ColourFormat& c : f.colour_formats) {
+        if (gpu::ten_bit(c.format)) c = {.format = c.format};
+    }
+    CHECK_FALSE(f.ten_bit_queried());
+    f.surface.formats =
+        offering({{F::eR8G8B8A8Unorm, S::eSrgbNonlinear}, {F::eA2B10G10R10UnormPack32, S::eSrgbNonlinear}});
+    CHECK(f.unfit_for_frame(F::eA2B10G10R10UnormPack32) ==
+          "not asked of the device yet (VK bench's colour stage asks it first)");
+    const gpu::Colour made = gpu::colour_for_surface(f, f.surface.formats, gpu::Depth::deepest);
+    CHECK(made.format == F::eR8G8B8A8Unorm);
+    CHECK(made.reason == "the surface's 10-bit sRGB formats are not asked of the device yet (VK bench's colour stage "
+                         "asks it first)");
+    CHECK_FALSE(gpu::colour_offscreen(f, gpu::Depth::deepest).ten_bit());
+    gpu::decide_colour(f);
+    CHECK(f.colour.format == F::eR8G8B8A8Unorm);
+    CHECK(f.deepest.format == F::eA2B10G10R10UnormPack32);
+    CHECK(gpu::colour_stage(f) == "rgb10a2 (A2B10G10R10UnormPack32 in SrgbNonlinear: the surface offers it in sRGB; VK "
+                                  "bench's colour stage asks the device for it first)");
+    const std::vector<std::string> lines = gpu::facts_lines(f);
+    const auto has = [&](const std::string& line) { return std::ranges::find(lines, line) != lines.end(); };
+    CHECK(has("colour: rgba8 (R8G8B8A8Unorm in SrgbNonlinear: the frame's default in this alpha, 8 bits a channel; 10 "
+              "bits: rgb10a2, drawn only in VK bench's colour stage, which asks the device for it first)"));
+    CHECK(has("colour.formats: rgb10a2 not asked (VK bench's colour stage asks the device), bgr10a2 not asked (VK "
+              "bench's colour stage asks the device), rgba8 yes, bgra8 yes (the frame drawn in each)"));
+    // One 10-bit format asked and unfit, the other not asked: the reason names the one the device refused.
+    f.colour_formats[0] = {.format = F::eA2B10G10R10UnormPack32, .queried = true, .lacks = "blending"};
+    f.surface.formats.push_back({.format = F::eA2R10G10B10UnormPack32, .colorSpace = S::eSrgbNonlinear});
+    CHECK(gpu::colour_for_surface(f, f.surface.formats, gpu::Depth::deepest).reason ==
+          "the surface's 10-bit sRGB formats are of no use to the frame: rgb10a2 (no blending), bgr10a2 (not asked of "
+          "the device yet (VK bench's colour stage asks it first))");
 }
 
 TEST_CASE("no blend of the core reads the destination's alpha, and a pipeline that would is refused") {

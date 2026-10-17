@@ -45,6 +45,7 @@ namespace {
 class ClearOnly final : public gpu::Content {
 public:
     gpu::Result<void> prepare(const gpu::MainPass& /*pass*/, const gpu::Output& /*output*/) override { return {}; }
+    void release() override {}
     void record(const gpu::FrameContext& f) override {
         f.frames.mark(f.slot, gpu::Mark::offscreen);
         f.pass.begin(f.cmd, f.sync, f.image, {0.25F, 0.5F, 0.75F, 1.0F});
@@ -502,6 +503,65 @@ TEST_CASE("the stand-in's S1 frame is the same across runs and through both fram
                                                             << targets.largest);
 }
 
+TEST_CASE("a renderer's end releases everything it prepared in the stand-in, announced to its watch") {
+    // What VK bench's colour stage relies on (jni/Bridge.cpp): the 10-bit frame's pipelines, passes, framebuffers and
+    // images go with the renderer that prepared them, so the core can let go of them all before the crash guard's
+    // colour stage closes. The watch hears each frame go, named by its configuration and colour.
+    struct Watch final : gpu::PipelineWatch {
+        std::vector<std::string> released;
+        std::uint32_t made = 0;
+        void before(const gpu::PipelineLabel& /*label*/) override { ++made; }
+        void before_module(std::string_view /*module*/) override {}
+        void before_release(std::string_view what) override { released.emplace_back(what); }
+    };
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    auto city = std::make_shared<const standin::City>(standin::City::generate(32, 13.0));
+    Watch watch;
+    auto standin = standin::StandIn::create(*session->device, *cache, city, &watch);
+    ATLAS_REQUIRE(standin.has_value(), standin.error().text());
+    CHECK_FALSE((*standin)->holds_prepared()); // only what every configuration shares
+    const gpu::Configuration config = session->device->facts().choice;
+    for (const gpu::Depth depth : depths(*session->device)) {
+        auto output = platform::Offscreen::create(*session->device, {.width = 64, .height = 64}, 2, depth);
+        ATLAS_REQUIRE(output.has_value(), output.error().text());
+        const std::string frame =
+            std::format("frame (configuration {} {})", describe(config), gpu::colour_name((*output)->format()));
+        watch.released.clear();
+        {
+            auto renderer = gpu::Renderer::create(*session->device, **output, **standin, config, &watch);
+            ATLAS_REQUIRE(renderer.has_value(), renderer.error().text());
+            CHECK((*standin)->holds_prepared());
+            for (int i = 0; i < 2; ++i) {
+                auto report = (*renderer)->draw(0);
+                ATLAS_REQUIRE(report.has_value(), report.error().text());
+            }
+            // A reconfiguration lets go of the frame drawn so far before it makes the next.
+            auto again = (*renderer)->reconfigure(config);
+            ATLAS_REQUIRE(again.has_value(), again.error().text());
+            CHECK(watch.released == std::vector<std::string>{frame});
+            CHECK((*standin)->holds_prepared());
+        }
+        // The renderer gone: nothing of its frame is left in the stand-in, and its watch heard it go.
+        CHECK_FALSE((*standin)->holds_prepared());
+        CHECK(watch.released == std::vector<std::string>{frame, frame});
+        const auto messages = session->take_messages();
+        CHECK_MESSAGE(messages.empty(), frame << ": " << (messages.empty() ? std::string() : messages.front()));
+    }
+    // The stand-in made once draws again after its frames went: the next renderer prepares it afresh.
+    auto output = platform::Offscreen::create(*session->device, {.width = 64, .height = 64}, 2);
+    ATLAS_REQUIRE(output.has_value(), output.error().text());
+    auto renderer = gpu::Renderer::create(*session->device, **output, **standin, config, &watch);
+    ATLAS_REQUIRE(renderer.has_value(), renderer.error().text());
+    auto report = (*renderer)->draw(0);
+    CHECK(report.has_value());
+    renderer->reset();
+    CHECK_FALSE((*standin)->holds_prepared());
+    CHECK(session->take_messages().empty());
+}
+
 TEST_CASE("the frosted pills draw over a 10-bit output and an 8-bit one") {
     // What the SurfaceView host draws after the main pass (D5.1): the frame copied at a quarter of its size (a blit
     // from the output's format into RGBA8), blurred, and drawn back inside the pills, blended over the output.
@@ -547,6 +607,7 @@ TEST_CASE("the stand-in's steady S1 frame takes at most half a second, and its p
     auto device = gpu::Device::open(*session.instance, {});
     ATLAS_REQUIRE(device.has_value(), device.error().text());
     session.device = std::move(*device);
+    session.device->check_ten_bit(); // it draws at 10 bits too, as VK bench's colour stage does after asking
     auto city = std::make_shared<const standin::City>(standin::City::generate());
     const vk::Extent2D s1{.width = 1080, .height = 2400};
     const style::CameraState board = standin::board_view(s1.width, s1.height, 2.625);
@@ -571,6 +632,7 @@ TEST_CASE("the stand-in's steady S1 frame takes at most half a second, and its p
     auto device2 = gpu::Device::open(*session.instance, {});
     ATLAS_REQUIRE(device2.has_value(), device2.error().text());
     session.device = std::move(*device2);
+    session.device->check_ten_bit();
     auto warm = gpu::PipelineCache::open(session.device->handle(), session.device->facts(), file, 7, true);
     ATLAS_REQUIRE(warm.has_value(), warm.error().text());
     CHECK(warm->hit());

@@ -1,5 +1,6 @@
 package app.atlas.mapcorecheck.facade
 
+import app.atlas.mapcore.CoreHandle
 import app.atlas.mapcore.FrameRecords
 import app.atlas.mapcore.FrameSource
 import app.atlas.mapcore.Native
@@ -12,8 +13,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.BeforeClass
 import org.junit.Test
+import java.io.File
 import java.nio.ByteBuffer
 import java.nio.file.Files
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.concurrent.thread
 
 /** The host build's façade test entry points (`CP/jni/TestBridge.cpp`). */
 object FacadeHost {
@@ -34,7 +43,9 @@ object OtherAbiFacade {
  * share are the same field by field (the camera state Kotlin writes, the frame records it reads), a façade of another
  * ABI is refused at load, the host build starts behind the crash guard and reports its facts, and the guard's state
  * shows in them: a crash this build made twice turns Vulkan off, a crash in VK bench's colour stage turns off 10 bits
- * only, and VK facts' reset, refused while a core is alive, lets both try again (D5.10).
+ * only, and VK facts' reset, refused while a core is alive, lets both try again (D5.10). MapCore's calls and its close
+ * exclude each other (CoreHandle, which MapCore calls every native through): a call under way holds close back, none
+ * starts once close has begun, and calls on many threads racing a close never reach a freed core.
  */
 class FacadeTest {
     companion object {
@@ -243,6 +254,118 @@ class FacadeTest {
             val back = Native.facts(0L, dir.path, guard.path, "jvm-test", 0).lines()
             assertTrue(back.joinToString("\n"), "guard.off: none" in back)
             assertTrue(back.any { it.startsWith("colour.stage: ") && !it.startsWith("colour.stage: off") })
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+    /** A host core in [dir] (its cache and guard there), behind a [CoreHandle] as MapCore holds it. */
+    private fun hostCore(dir: File): CoreHandle {
+        val handle = Native.create(dir.path, dir.resolve("vk").path, "jvm-test", "", 0)
+        assertNotEquals("create refused: ${Native.lastError()}", 0L, handle)
+        return CoreHandle(handle)
+    }
+
+    @Test
+    fun aCallUnderWayHoldsCloseBackAndNoCallStartsOnceCloseHasBegun() {
+        val dir = Files.createTempDirectory("atlas-close").toFile()
+        try {
+            val core = hostCore(dir)
+            val inside = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val freed = AtomicBoolean(false)
+            val freedDuringCall = AtomicBoolean(true)
+            val caller = thread(name = "atlas-test-call") {
+                core.call(Unit) {
+                    inside.countDown()
+                    release.await()
+                    freedDuringCall.set(freed.get())
+                    assertEquals("vk no frames", Native.stats(it)) // the core is whole: nothing freed it yet
+                }
+            }
+            assertTrue(inside.await(30, TimeUnit.SECONDS))
+            val closer = thread(name = "atlas-test-close") {
+                assertTrue(core.close {
+                    freed.set(true)
+                    Native.close(it)
+                })
+            }
+            val deadline = System.nanoTime() + 30_000_000_000L
+            while (!core.closed && System.nanoTime() < deadline) Thread.sleep(1)
+            assertTrue(core.closed)
+            // Close has begun: a new call does nothing, and the one under way holds close back.
+            assertEquals("closed", core.call("closed") { "ran" })
+            Thread.sleep(200)
+            assertFalse("close freed the core while a call was under way", freed.get())
+            release.countDown()
+            caller.join()
+            closer.join()
+            assertFalse(freedDuringCall.get())
+            assertTrue(freed.get())
+            // Closed once: a second close frees nothing.
+            assertFalse(core.close { throw AssertionError("freed twice") })
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun callsOnManyThreadsRacingCloseNeverReachAFreedCore() {
+        // Each round a new host core, closed while six threads call it as fast as they can (its facts, stats, records
+        // and the pipeline cache's write-back, as VK facts, the panel, VK bench and onTrimMemory call them). A call
+        // that slipped past close into a freed core would read freed memory (MapCore's check before each call, without
+        // this, did: the JVM crashed); here close frees it only once no call is under way, and every call after it has
+        // begun returns at once.
+        val dir = Files.createTempDirectory("atlas-close-race").toFile()
+        try {
+            val guard = dir.resolve("vk").path
+            var total = 0L
+            repeat(12) { round ->
+                val core = hostCore(dir)
+                val inCall = AtomicInteger(0)
+                val calls = AtomicLong(0)
+                val failures = ConcurrentLinkedQueue<Throwable>()
+                val go = CountDownLatch(1)
+                val threads = (0 until 6).map { kind ->
+                    thread(name = "atlas-test-race-$kind") {
+                        val records = FrameRecords.allocate(16)
+                        try {
+                            go.await()
+                            while (!core.closed) {
+                                core.call(Unit) { handle ->
+                                    inCall.incrementAndGet()
+                                    try {
+                                        when (kind % 4) {
+                                            0 -> check(Native.facts(handle, dir.path, guard, "jvm-test", 0).contains("gpu: "))
+                                            1 -> check(Native.stats(handle) == "vk no frames")
+                                            2 -> check(Native.records(handle, records) == 0)
+                                            else -> Native.trimMemory(handle, 0)
+                                        }
+                                        calls.incrementAndGet()
+                                    } finally {
+                                        inCall.decrementAndGet()
+                                    }
+                                }
+                            }
+                        } catch (t: Throwable) {
+                            failures += t
+                        }
+                    }
+                }
+                go.countDown()
+                Thread.sleep(15L + 10L * (round % 4))
+                val underWayAtFree = AtomicInteger(-1)
+                assertTrue(core.close {
+                    underWayAtFree.set(inCall.get())
+                    Native.close(it)
+                })
+                threads.forEach { it.join() }
+                assertEquals("calls under way as the core was freed (round $round)", 0, underWayAtFree.get())
+                assertTrue("round $round: ${failures.firstOrNull()}", failures.isEmpty())
+                assertEquals(-1, core.call(-1) { throw AssertionError("a call ran after close") })
+                assertTrue("round $round made no calls before its close", calls.get() > 0)
+                total += calls.get()
+            }
+            println("FacadeTest: $total calls raced 12 closes")
         } finally {
             dir.deleteRecursively()
         }

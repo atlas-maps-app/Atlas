@@ -22,6 +22,11 @@ void announce_module(std::string_view module, PipelineWatch* watch) {
     if (watch != nullptr) watch->before_module(module);
 }
 
+void announce_release(std::string_view what, PipelineWatch* watch) {
+    log::info("vk release {}", what);
+    if (watch != nullptr) watch->before_release(what);
+}
+
 bool Blend::reads_destination_alpha() const noexcept {
     if (!enable) return false;
     auto reads = [](vk::BlendFactor f) {

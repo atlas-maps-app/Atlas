@@ -83,9 +83,10 @@ public:
     [[nodiscard]] Memory& memory() const noexcept { return *memory_; }
     /// The queue family's valid timestamp bits (0: no timestamps).
     [[nodiscard]] std::uint32_t timestamp_bits() const noexcept { return timestamp_bits_; }
-    /// Asks the device, as VK bench's colour stage begins, whether lazily allocated memory holds configuration A's 4x
-    /// samples in the 10-bit formats (open asks it of the 8-bit ones only, so no 10-bit image reaches the driver
-    /// before that stage and its crash guard), then decides the frame's colour again (decide_colour).
+    /// Asks the device, as VK bench's colour stage begins, about the 10-bit formats: their format features and sample
+    /// counts (once; pick asks about the 8-bit ones only), and on a tiler whether lazily allocated memory holds
+    /// configuration A's 4x samples in them (open asks it of the 8-bit ones only), so that nothing of 10 bits reaches
+    /// the driver before that stage and its crash guard; then decides the frame's colour again (decide_colour).
     void check_ten_bit();
     /// Whether the queue can present to `surface`.
     [[nodiscard]] bool can_present(vk::SurfaceKHR surface) const;

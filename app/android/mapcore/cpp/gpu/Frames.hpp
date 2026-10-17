@@ -135,8 +135,12 @@ public:
     virtual ~Content() = default;
 
     /// Makes what depends on the main pass and the output (pipelines, images of the output's size, descriptor sets),
-    /// after the GPU has finished every frame that used the old ones.
+    /// after the GPU has finished every frame that used the old ones; what an earlier prepare made goes first.
     [[nodiscard]] virtual Result<void> prepare(const MainPass& pass, const Output& output) = 0;
+    /// Lets go of everything prepare made, after the GPU has finished every frame that used it. The renderer that
+    /// prepared it calls it as it goes, so nothing made for a main pass and an output outlives the renderer of them (a
+    /// 10-bit frame's pipelines, in VK bench's colour stage, go before the crash guard's colour stage closes).
+    virtual void release() = 0;
     /// Records one frame: the offscreen passes, then Mark::offscreen; the main pass, then Mark::main; what follows it.
     virtual void record(const FrameContext& frame) = 0;
 };
@@ -154,12 +158,17 @@ struct FrameReport {
 /// The frame loop's GPU half: the main pass of one configuration on one output, the frames in flight, the content.
 class Renderer {
 public:
+    /// The renderer of `configuration` on `output`, drawing `content` (both outlive it). `watch` (the crash guard) is
+    /// told before the renderer lets go of a frame: its main pass and what it prepared in the content.
     [[nodiscard]] static Result<std::unique_ptr<Renderer>> create(const Device& device, Output& output,
-                                                                  Content& content, const Configuration& configuration);
+                                                                  Content& content, const Configuration& configuration,
+                                                                  PipelineWatch* watch = nullptr);
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
     Renderer(Renderer&&) = delete;
     Renderer& operator=(Renderer&&) = delete;
+    /// Waits for the frames in flight, then lets go of the frame, announced (announce_release): what it prepared in
+    /// the content (Content::release), then its main pass.
     ~Renderer();
 
     /// Draws one frame, presented at `desired_ns` where the output can say when (0: as soon as possible).
@@ -178,15 +187,19 @@ public:
     [[nodiscard]] std::uint64_t frame_count() const noexcept { return number_; }
 
 private:
-    Renderer(const Device& device, Output& output, Content& content);
+    Renderer(const Device& device, Output& output, Content& content, PipelineWatch* watch);
     [[nodiscard]] Result<void> remake(const Configuration& configuration);
+    /// Lets go of the frame drawn so far (announced first, if there is one): the content's prepared objects, the pass.
+    void release_frame();
 
     const Device& device_;
     Output* output_;
     Content& content_;
+    PipelineWatch* watch_ = nullptr;
     Sync sync_;
     std::unique_ptr<Frames> frames_;
     std::unique_ptr<MainPass> pass_;
+    bool prepared_ = false; // the content holds what this renderer prepared for pass_
     std::uint64_t number_ = 0;
 };
 

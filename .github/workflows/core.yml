@@ -561,6 +561,16 @@ jobs:
             cmake --build build/canary-asan --target atlas_core_shaders
           grep -q 'OpSpecConstantOp' build/spec-constant.log || { echo "::error::the refusal does not name the OpSpecConstantOp"; cat build/spec-constant.log; exit 1; }
           rm shaders/probe/planted_spec_constant.slang
+          # Every instruction of the pinned Slang's SPIR-V grammar that makes one is refused (tools/nocontract/grammar.hpp,
+          # derived from the table Slang's compiler embeds), an extension's among them: SPV_INTEL_function_variants'
+          # OpSpecConstantCapabilitiesINTEL passes slangc's own validation, and nocontract stops it.
+          printf '%s\n' '[[vk::binding(0, 0)]] RWStructuredBuffer<int> data;' '[shader("compute")] [numthreads(1, 1, 1)]' \
+            'void main(uint3 id : SV_DispatchThreadID) { data[0] = spirv_asm { OpCapability FunctionVariantsINTEL; OpCapability SpecConditionalINTEL; OpExtension "SPV_INTEL_function_variants"; result:$$bool = OpSpecConstantCapabilitiesINTEL 1; } ? 1 : 0; }' \
+            > shaders/probe/planted_spec_capabilities.slang
+          expect_failure build/spec-capabilities.log 'specialization constant instructions, and no module of the core may hold one' \
+            cmake --build build/canary-asan --target atlas_core_shaders
+          grep -q 'OpSpecConstantCapabilitiesINTEL' build/spec-capabilities.log || { echo "::error::the refusal does not name the OpSpecConstantCapabilitiesINTEL"; cat build/spec-capabilities.log; exit 1; }
+          rm shaders/probe/planted_spec_capabilities.slang
       - name: CMake configures with no network
         if: matrix.task == 'canaries'
         working-directory: ${{ env.CP }}

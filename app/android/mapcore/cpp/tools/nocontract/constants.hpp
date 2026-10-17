@@ -6,14 +6,18 @@
 // is a module of its own instead (a "// atlas: variant" line, or a file that defines a macro and includes another),
 // compiled and checked once, here.
 //
-// Refused: every instruction that makes one, the core's OpSpecConstantTrue, False, Constant, Composite and Op (opcodes
-// 48 to 52) and the extensions' OpSpecConstantCompositeReplicateEXT (4462, SPV_EXT_replicated_composites) and
-// OpSpecConstantCompositeContinuedINTEL (6092, SPV_INTEL_long_composites); and any SpecId decoration (decoration 1),
-// whatever it decorates.
+// Refused, by the SPIR-V grammar of the pinned Slang (grammar.hpp, derived by grammar.py from the table its compiler
+// embeds, so a module can hold nothing Slang's spirv_asm could write that this check does not know): every instruction
+// that makes one, each whose name begins OpSpecConstant (the core's OpSpecConstantTrue, False, Constant, Composite and
+// Op, 48 to 52, and the extensions' 4462, 5104, 5148, 6092 and 6251 to 6253 in Slang 2026.19); and any SpecId
+// decoration, by any instruction that decorates (each whose name begins OpDecorate or OpMemberDecorate), whatever it
+// decorates.
 #pragma once
 
+#include "grammar.hpp"
 #include "spirv.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -25,63 +29,83 @@
 
 namespace atlas::spirv {
 
-inline constexpr std::uint16_t op_spec_constant_true = 48;
-inline constexpr std::uint16_t op_spec_constant_false = 49;
-inline constexpr std::uint16_t op_spec_constant = 50;
-inline constexpr std::uint16_t op_spec_constant_composite = 51;
-inline constexpr std::uint16_t op_spec_constant_op = 52;
-inline constexpr std::uint16_t op_spec_constant_composite_replicate_ext = 4462;
-inline constexpr std::uint16_t op_spec_constant_composite_continued_intel = 6092;
-inline constexpr std::uint32_t decoration_spec_id = 1;
+/// The opcode of the grammar's instruction `name` that makes a specialization constant (0 if there is none).
+[[nodiscard]] consteval std::uint16_t spec_constant_opcode(std::string_view name) {
+    for (const grammar::Named& n : grammar::spec_constant_instructions) {
+        if (n.name == name) return n.opcode;
+    }
+    return 0;
+}
+
+inline constexpr std::uint16_t op_spec_constant_true = spec_constant_opcode("OpSpecConstantTrue");
+inline constexpr std::uint16_t op_spec_constant_false = spec_constant_opcode("OpSpecConstantFalse");
+inline constexpr std::uint16_t op_spec_constant = spec_constant_opcode("OpSpecConstant");
+inline constexpr std::uint16_t op_spec_constant_composite = spec_constant_opcode("OpSpecConstantComposite");
+inline constexpr std::uint16_t op_spec_constant_op = spec_constant_opcode("OpSpecConstantOp");
+inline constexpr std::uint16_t op_spec_constant_composite_replicate_ext =
+    spec_constant_opcode("OpSpecConstantCompositeReplicateEXT");
+inline constexpr std::uint16_t op_spec_constant_composite_continued_intel =
+    spec_constant_opcode("OpSpecConstantCompositeContinuedINTEL");
+inline constexpr std::uint32_t decoration_spec_id = grammar::decoration_spec_id;
+static_assert(op_spec_constant_true == 48 && op_spec_constant_op == 52 &&
+                  op_spec_constant_composite_continued_intel != 0,
+              "grammar.hpp lacks the core instructions that make specialization constants");
 
 /// Whether an instruction of `opcode` makes a specialization constant.
 [[nodiscard]] constexpr bool makes_spec_constant(std::uint16_t opcode) noexcept {
-    return (opcode >= op_spec_constant_true && opcode <= op_spec_constant_op) ||
-           opcode == op_spec_constant_composite_replicate_ext || opcode == op_spec_constant_composite_continued_intel;
+    return std::ranges::any_of(grammar::spec_constant_instructions,
+                               [opcode](const grammar::Named& n) { return n.opcode == opcode; });
+}
+
+/// The decorating instruction of `opcode`, if it is one.
+[[nodiscard]] constexpr const grammar::Decorating* decorating(std::uint16_t opcode) noexcept {
+    for (const grammar::Decorating& d : grammar::decorating_instructions) {
+        if (d.opcode == opcode) return &d;
+    }
+    return nullptr;
+}
+
+/// Whether an instruction of `opcode` declares a type (its first operand is the type's id).
+[[nodiscard]] constexpr bool declares_type(std::uint16_t opcode) noexcept {
+    return std::ranges::find(grammar::type_declarations, opcode) != grammar::type_declarations.end();
 }
 
 /// One specialization constant of a module, or a SpecId decoration of an id that is none.
 struct SpecConstant {
-    std::uint32_t id = 0;                 // its result id (0 for OpSpecConstantCompositeContinuedINTEL, which has none)
-    std::uint16_t opcode = 0;             // the instruction that makes it; for a SpecId alone, the decorating one
-    std::uint32_t operation = 0;          // the operation of an OpSpecConstantOp (OpIAdd is 128), else 0
-    std::string name;                     // its OpName, if the module names it
+    std::uint32_t id = 0;        // its result id where the module shows it (0 when not: below), else the target
+    std::uint16_t opcode = 0;    // the instruction that makes it; for a SpecId alone, the decorating one
+    std::uint32_t operation = 0; // the operation of an OpSpecConstantOp (OpIAdd is 128), else 0
+    std::string name;            // its OpName, if the module names it
     std::optional<std::uint32_t> spec_id; // its SpecId decoration (the shader's constant_id), if it has one
 };
 
-/// The instruction's name in the specification (a decoration's: "a SpecId decoration (OpDecorate)").
-[[nodiscard]] inline std::string_view spec_constant_opname(std::uint16_t opcode) noexcept {
-    switch (opcode) {
-    case op_spec_constant_true: return "OpSpecConstantTrue";
-    case op_spec_constant_false: return "OpSpecConstantFalse";
-    case op_spec_constant: return "OpSpecConstant";
-    case op_spec_constant_composite: return "OpSpecConstantComposite";
-    case op_spec_constant_op: return "OpSpecConstantOp";
-    case op_spec_constant_composite_replicate_ext: return "OpSpecConstantCompositeReplicateEXT";
-    case op_spec_constant_composite_continued_intel: return "OpSpecConstantCompositeContinuedINTEL";
-    case op_decorate: return "a SpecId decoration (OpDecorate)";
-    case op_decorate_id: return "a SpecId decoration (OpDecorateId)";
-    case op_decorate_string: return "a SpecId decoration (OpDecorateString)";
-    case op_member_decorate: return "a SpecId decoration (OpMemberDecorate)";
-    case op_member_decorate_string: return "a SpecId decoration (OpMemberDecorateString)";
-    default: return "not a specialization constant";
+/// The instruction's name in the grammar (a decoration's: "a SpecId decoration (OpDecorate)").
+[[nodiscard]] inline std::string spec_constant_opname(std::uint16_t opcode) {
+    for (const grammar::Named& n : grammar::spec_constant_instructions) {
+        if (n.opcode == opcode) return std::string(n.name);
     }
+    if (const grammar::Decorating* d = decorating(opcode); d != nullptr)
+        return "a SpecId decoration (" + std::string(d->name) + ")";
+    return "not a specialization constant";
 }
 
 /// The module's specialization constants, in order, with their names and SpecIds where the module gives them; then
-/// every SpecId decoration of an id that is no specialization constant.
+/// every SpecId decoration of an id that is no specialization constant. A constant's result id is known where its
+/// first operand is a type the module declared (a typed result: the id follows its type, as SPIR-V lays out every
+/// one); an untyped one (OpSpecConstantStringAMDX) or one with no result (OpSpecConstantCompositeContinuedINTEL) is
+/// found by its instruction alone.
 [[nodiscard]] inline std::vector<SpecConstant> specialization_constants(std::span<const Instruction> code) {
     std::vector<SpecConstant> found;
     std::vector<std::pair<std::uint32_t, std::string>> names;
+    std::vector<std::uint32_t> types; // the ids of the types declared so far
     // Each SpecId decoration: its target, the decorating instruction and the constant_id it gives.
     std::vector<std::tuple<std::uint32_t, std::uint16_t, std::optional<std::uint32_t>>> spec_ids;
     for (const Instruction& in : code) {
         const auto ops = in.operands();
         if (makes_spec_constant(in.opcode)) {
-            // <result type> <result id> ...; OpSpecConstantOp's third operand is its operation; the INTEL
-            // continuation has no result, only more constituents of the composite before it.
-            const bool result = in.opcode != op_spec_constant_composite_continued_intel && ops.size() >= 2;
-            found.push_back({.id = result ? ops[1] : 0U,
+            // <result type> <result id> ...; OpSpecConstantOp's third operand is its operation.
+            const bool typed = ops.size() >= 2 && std::ranges::find(types, ops[0]) != types.end();
+            found.push_back({.id = typed ? ops[1] : 0U,
                              .opcode = in.opcode,
                              .operation = in.opcode == op_spec_constant_op && ops.size() >= 3 ? ops[2] : 0U,
                              .name = {},
@@ -89,16 +113,19 @@ struct SpecConstant {
             continue;
         }
         if (ops.empty()) continue;
+        if (declares_type(in.opcode)) {
+            types.push_back(ops[0]);
+            continue;
+        }
         if (in.opcode == op_name && ops.size() >= 2) {
             names.emplace_back(ops[0], literal_string(ops.subspan(1)));
             continue;
         }
         // OpDecorate <target> <decoration> <literals>; the member forms put the member's index before the decoration.
-        const bool member = in.opcode == op_member_decorate || in.opcode == op_member_decorate_string;
-        const bool decorates =
-            member || in.opcode == op_decorate || in.opcode == op_decorate_id || in.opcode == op_decorate_string;
-        const std::size_t at = member ? 2 : 1;
-        if (!decorates || ops.size() <= at || ops[at] != decoration_spec_id) continue;
+        const grammar::Decorating* d = decorating(in.opcode);
+        if (d == nullptr) continue;
+        const std::size_t at = d->member ? 2 : 1;
+        if (ops.size() <= at || ops[at] != decoration_spec_id) continue;
         spec_ids.emplace_back(ops[0], in.opcode,
                               ops.size() > at + 1 ? std::optional<std::uint32_t>(ops[at + 1]) : std::nullopt);
     }

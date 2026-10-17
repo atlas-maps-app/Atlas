@@ -159,6 +159,7 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
             val text = VkBench.recorded(lines.toList(), step)
             withContext(Dispatchers.IO) { BenchReport.write(context, text) }
         }
+        run.surfaceNow = { surfaceState }
         run.hostSwitch = { h ->
             if (host == h && surfaceState.attached) {
                 surfaceState
@@ -418,6 +419,9 @@ private class BenchRun(
     private val emit: (String) -> Unit,
 ) {
     var hostSwitch: suspend (VkHost) -> VkSurfaceState = { VkSurfaceState(false, 0, 0) }
+
+    /** The window as it is now (the screen's state of it), read at each step of the colour stage. */
+    var surfaceNow: () -> VkSurfaceState = { VkSurfaceState(false, 0, 0) }
     var pills: (Boolean, Boolean) -> Unit = { _, _ -> }
     var status: (String) -> Unit = {}
 
@@ -562,6 +566,9 @@ private class BenchRun(
         val tenByCell = HashMap<String, VkBench.Summary>()
         val eightByCell = HashMap<String, VkBench.Summary>()
         val format = stage.format
+        // Why the core refused the first 10-bit frame: it asks the device about 10 bits only as the stage begins, so
+        // a device that cannot draw the frame in them says so here, not in the facts read before.
+        var tenRefused: String? = null
         if (format == null) {
             emit(VkBench.colourSkipped(stage))
         } else {
@@ -574,6 +581,13 @@ private class BenchRun(
                 val cell = "$viewKey ${step.config.name}"
                 if (cell in unavailable) continue
                 val c = step.config
+                // The window as it is now, not as the stage found it: on Android 10 to 13 the SurfaceView's goes with
+                // an app switch or the screen off, and the core has nothing to draw into until it comes back.
+                if (!surfaceNow().attached) {
+                    emit("vkbench colour: the window went away before $cell; the stage waits for it")
+                    surface = hostSwitch(VkHost.SURFACE)
+                    if (surface.attached) emit("vkbench colour: the window came back")
+                }
                 inColour = step.tenBit
                 val why = if (!surface.attached) {
                     surface.error.ifEmpty { "the SurfaceView did not attach" }
@@ -583,6 +597,7 @@ private class BenchRun(
                 if (why.isNotEmpty()) {
                     emit("vkbench colour $cell: ${if (step.tenBit) format else "rgba8"} unavailable ($why)")
                     unavailable += cell
+                    if (step.tenBit && tenRefused == null) tenRefused = why
                     continue
                 }
                 val s = measure(VkBench.Path.STILL, VkBench.View.BOARD, plan.cellSeconds, VkHost.SURFACE, tenBit = step.tenBit)
@@ -593,7 +608,9 @@ private class BenchRun(
             }
             leaveColour()
         }
-        emit(VkBench.a0Colour(stage, tenByCell[pickCell], eightByCell[pickCell]))
+        val refused = tenRefused
+        val drawn = if (tenByCell.isEmpty() && refused != null) VkBench.ColourStage(null, off = false, why = refused) else stage
+        emit(VkBench.a0Colour(drawn, tenByCell[pickCell], eightByCell[pickCell]))
         core.bench(false, pickCode, pickRoute, 0, pickTarget, pills = false, texture = false)
         source.running = false
         record(VkBench.COMPLETE)

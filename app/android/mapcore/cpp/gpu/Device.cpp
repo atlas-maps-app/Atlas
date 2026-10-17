@@ -74,6 +74,7 @@ Device::~Device() {
 }
 
 void Device::check_ten_bit() {
+    if (!facts_.ten_bit_queried()) query_colour_formats(facts_, physical_, true);
     if (facts_.lazy_memory) probe_lazy(device_, facts_, true);
     decide_colour(facts_);
 }
@@ -240,7 +241,7 @@ Result<std::unique_ptr<Device>> Device::open(Instance& instance, Picked picked, 
     self->queue_ = self->device_.getQueue(*family, 0);
     ATLAS_GPU_LET(memory, Memory::create(instance, physical, self->device_, version, on.memory_budget));
     self->memory_ = std::move(memory);
-    // The 8-bit formats only: no 10-bit image is made before VK bench's colour stage asks (check_ten_bit).
+    // The 8-bit formats only: nothing of 10 bits is asked or made before VK bench's colour stage asks (check_ten_bit).
     if (facts.lazy_memory) probe_lazy(self->device_, facts, false);
     decide_colour(facts);
     self->facts_ = std::move(facts);

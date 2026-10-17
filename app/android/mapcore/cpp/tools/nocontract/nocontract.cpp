@@ -5,8 +5,9 @@
 //   nocontract capabilities <in.spv> <out.spv>   remove capabilities the module declares but does not need
 //                                                (capabilities.hpp); run on every module, exact or not
 //   nocontract constants <module.spv> <source>   exit 0 when the module holds no specialization constant, else name
-//                                                each, say why the core refuses them (constants.hpp) and exit 1; run
-//                                                on every module, before it is embedded
+//                                                each, say why the core refuses them (constants.hpp, by the pinned
+//                                                Slang's SPIR-V grammar: grammar.hpp) and exit 1; run on every module,
+//                                                before it is embedded
 //
 // Slang 2026.19 emits NoContraction on every float operation under -fp-mode precise, so fix adds nothing today; it
 // stays in the build so a compiler that stops emitting it still yields exact modules, and check still proves them.
@@ -21,6 +22,7 @@
 #include <cstdio>
 #include <memory>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -110,9 +112,14 @@ int main(int argc, char** argv) {
         const std::vector<atlas::spirv::SpecConstant> found = atlas::spirv::specialization_constants(*code);
         if (found.empty()) return 0;
         for (const atlas::spirv::SpecConstant& c : found) {
-            const std::string_view op = atlas::spirv::spec_constant_opname(c.opcode);
-            (void)std::fprintf(stderr, "nocontract: %s: %%%u%s%s: %.*s", input, c.id, c.name.empty() ? "" : " ",
-                               c.name.c_str(), static_cast<int>(op.size()), op.data());
+            const std::string op = atlas::spirv::spec_constant_opname(c.opcode);
+            // The id where the module shows it (a typed constant's, or a decoration's target), else the instruction.
+            if (c.id != 0) {
+                (void)std::fprintf(stderr, "nocontract: %s: %%%u%s%s: %s", input, c.id, c.name.empty() ? "" : " ",
+                                   c.name.c_str(), op.c_str());
+            } else {
+                (void)std::fprintf(stderr, "nocontract: %s: %s", input, op.c_str());
+            }
             if (c.spec_id) (void)std::fprintf(stderr, ", SpecId %u", *c.spec_id);
             if (c.opcode == atlas::spirv::op_spec_constant_op)
                 (void)std::fprintf(stderr, ", operation %u", c.operation);

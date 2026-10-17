@@ -17,7 +17,7 @@ namespace atlas::gpu {
 
 namespace {
 
-constexpr std::array stage_names{"instance", "device", "cache", "pipelines", "frames", "colour"};
+constexpr std::array stage_names{"instance", "facts", "device", "cache", "pipelines", "frames", "colour"};
 
 /// The colour stage's name, as markers and off lines spell it.
 constexpr std::string_view colour = "colour";
@@ -128,9 +128,11 @@ GuardVerdict Guard::check_start() {
         std::string version = field(marker, "version");
         const std::string pipeline = field(marker, "pipeline");
         const std::string module = field(marker, "module");
-        const std::string what = !pipeline.empty() ? "pipeline " + pipeline
-                                 : !module.empty() ? "module " + module
-                                                   : std::string();
+        const std::string release = field(marker, "release");
+        const std::string what = !pipeline.empty()  ? "pipeline " + pipeline
+                                 : !module.empty()  ? "module " + module
+                                 : !release.empty() ? "release " + release
+                                                    : std::string();
         const std::string build = field(marker, "build"); // empty: a marker from before build IDs
         if (stage.empty()) stage = "unknown";
         if (driver.empty()) driver = "unknown";
@@ -247,21 +249,19 @@ void Guard::enter(Stage stage) {
     if (stage != Stage::pipelines && !plant_.empty() && plant_ == name_of(stage)) abort_planted(name_of(stage));
 }
 
-void Guard::before(const PipelineLabel& label) {
+void Guard::note_making(std::string what, std::string_view name, bool pipeline) {
     if (current_ != Stage::pipelines && !colour_) return;
-    making_ = "pipeline " + clean(describe(label));
+    making_ = std::move(what);
     write_marker();
-    if (planted_at(label.name, true))
+    if (planted_at(name, pipeline))
         abort_planted(std::format("{}, {}", colour_ ? colour : name_of(Stage::pipelines), making_));
 }
 
-void Guard::before_module(std::string_view module) {
-    if (current_ != Stage::pipelines && !colour_) return;
-    making_ = "module " + clean(module);
-    write_marker();
-    if (planted_at(module, false))
-        abort_planted(std::format("{}, {}", colour_ ? colour : name_of(Stage::pipelines), making_));
-}
+void Guard::before(const PipelineLabel& label) { note_making("pipeline " + clean(describe(label)), label.name, true); }
+
+void Guard::before_module(std::string_view module) { note_making("module " + clean(module), module, false); }
+
+void Guard::before_release(std::string_view what) { note_making("release " + clean(what), "release", false); }
 
 void Guard::leave() {
     if (!current_) return;
@@ -419,8 +419,12 @@ std::expected<Started, StartRefusal> start_guarded(const StartOptions& options) 
     if (!instance) return refuse({}, instance.error().text());
     s.instance = std::move(*instance);
 
+    // The device's facts: every query its choice makes of the driver, before the driver is known (keyed by the system
+    // build, as the instance's crash is). The 10-bit formats are not among them: VK bench's colour stage asks for them.
     s.device_options = {.present = options.present, .msaa2_close = options.msaa2_close};
+    guard.enter(Stage::facts);
     auto picked = Device::pick(*s.instance, s.device_options);
+    guard.leave();
     if (!picked) return refuse({}, picked.error().text());
     const auto [driver, version] = guard_key(picked->facts);
     const GuardVerdict driver_verdict = guard.check_driver(driver, version);

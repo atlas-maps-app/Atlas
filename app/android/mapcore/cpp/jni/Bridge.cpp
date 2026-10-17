@@ -2,12 +2,16 @@
 // the render thread (an ALooper at display priority), Choreographer's vsync, the camera pulled from Kotlin at each
 // paced vsync (FrameSource.camera, allocation-free on both sides), the swapchain on the SurfaceView's or the
 // TextureView's window, the frame through the device layer, the ADPF hint, the frame records VK bench reads, the crash
-// guard (keyed by the core's build ID, naming each shader module and pipeline before it is made) through its first 120
-// frames and around VK bench's colour stage, and device loss rebuilt at most twice a session.
+// guard (keyed by the core's build ID, naming each shader module and pipeline before it is made and each frame before
+// it goes) through its first 120 frames and around VK bench's colour stage, and device loss rebuilt at most twice a
+// session, behind the guard's stages as the start was.
 //
 // The frame is 8 bits a channel (gpu/Facts.hpp's default_depth); only VK bench's colour stage (Native.bench's flag 4)
-// draws it at 10, where the surface offers them, the crash guard has not turned them off for this driver and build,
-// and the guard's colour stage marks every step of it on disk (gpu/Guard.hpp).
+// draws it at 10, where the surface offers them, the device (asked as the stage begins) can draw the frame in them and
+// the crash guard has not turned them off for this driver and build. The guard's colour stage (gpu/Guard.hpp) is open
+// exactly while 10-bit work may reach the driver: from before the device is asked about 10 bits until the 10-bit frame
+// (the renderer's main pass and the stand-in's pipelines, passes and images made for it) and the 10-bit swapchain are
+// destroyed, so a crash anywhere in between, their destruction included, turns off 10 bits only.
 #include "jni/Bridge.hpp"
 
 #include "base/build_info.hpp"
@@ -170,7 +174,12 @@ public:
     ~Core() {
 #if defined(__ANDROID__)
         if (loop_) {
-            loop_->run([this] { release_surface(); });
+            // Everything made on the device goes on the render thread that made it, before the device: the frame and
+            // the swapchain (inside VK bench's colour stage, if it is open), then the stand-in.
+            loop_->run([this] {
+                release_surface();
+                standin_.reset();
+            });
             loop_.reset();
         }
 #endif
@@ -181,7 +190,18 @@ public:
 
     [[nodiscard]] std::string facts() {
         const std::scoped_lock lock(facts_mutex_);
-        return facts_text(started_.device->facts(), started_);
+        if (!started_.device) {
+            // The device was lost and could not be made again (device_lost): why, and the facts this start kept.
+            std::string out = build_text();
+            out += std::format("vulkan: off for this session ({})\n", session_off_);
+            out += std::format("guard: {}\n", started_.guard_line.empty() ? std::string("clear") : started_.guard_line);
+            for (const std::string& l : started_.guard->state()) out += l + "\n";
+            out += "kept: the facts below were read before the device was lost\n";
+            return out + started_.guard->kept_facts();
+        }
+        std::string out = facts_text(started_.device->facts(), started_);
+        if (!session_off_.empty()) out += std::format("vulkan.session: off ({})\n", session_off_);
+        return out;
     }
 
     void save_cache() const {
@@ -191,15 +211,23 @@ public:
         }
     }
 
-    [[nodiscard]] std::string stats() const {
-        const std::scoped_lock lock(records_mutex_);
-        if (count_ == 0) return "vk no frames";
-        const FrameRecord& r = ring_[(write_ + ring_.size() - 1) % ring_.size()];
-        const gpu::MemoryStats m = started_.device->memory().stats();
+    [[nodiscard]] std::string stats() {
+        FrameRecord r{};
+        {
+            const std::scoped_lock lock(records_mutex_);
+            if (count_ == 0) return "vk no frames";
+            r = ring_[(write_ + ring_.size() - 1) % ring_.size()];
+        }
+        double graphics_mb = 0;
+        {
+            // The device, which a device loss replaces on the render thread under this lock.
+            const std::scoped_lock lock(facts_mutex_);
+            if (started_.device) graphics_mb = static_cast<double>(started_.device->memory().stats().allocated) / 1e6;
+        }
         return std::format(
             "vk frame {} cpu {:.2f} ms gpu {:.2f} ms record {:.2f} ms draws {} triangles {}k graphics {:.1f} MB",
             r.frame, static_cast<double>(r.end_ns - r.start_ns) / 1e6, static_cast<double>(r.gpu_ms),
-            static_cast<double>(r.record_ms), r.draws, r.triangles_k, static_cast<double>(m.allocated) / 1e6);
+            static_cast<double>(r.record_ms), r.draws, r.triangles_k, graphics_mb);
     }
 
     /// Copies the frame records not read yet into `out` (at most `capacity`); returns how many.
@@ -305,22 +333,73 @@ private:
         live_cores.fetch_add(1);
     }
 
+    CoreOptions options_;
+    gpu::Started started_;
+    /// Guards the device's facts and, as a device loss replaces them on the render thread, the device and the cache.
+    std::mutex facts_mutex_;
+    /// Why the map is off for this session ("" while it is on): the device lost three times, or not made again after
+    /// a loss (under facts_mutex_).
+    std::string session_off_;
+    mutable std::mutex records_mutex_;
+    std::array<FrameRecord, 1024> ring_{};
+    std::uint64_t write_ = 0;
+    std::uint64_t published_ = 0;
+    std::uint64_t read_ = 0;
+    std::uint64_t count_ = 0;
+
 #if defined(__ANDROID__)
     // ---- On the render thread.
 
-    /// Runs `step` behind the guard's pipelines stage (D5.10), then goes back to the frames stage while the first
-    /// frames are guarded.
+    /// Runs `step` behind the guard's `stage` (D5.10), then goes back to the frames stage while the first frames are
+    /// guarded. Inside VK bench's colour stage every marker stays the colour stage's.
     template <class Step>
-    auto behind_pipelines(Step step) {
-        started_.guard->enter(gpu::Stage::pipelines);
+    auto behind(gpu::Stage stage, Step step) {
+        started_.guard->enter(stage);
         auto result = step();
         started_.guard->leave();
         if (guarding_) started_.guard->enter(gpu::Stage::frames);
         return result;
     }
 
+    /// Runs `step` behind the guard's pipelines stage: pipelines are made and destroyed there.
+    template <class Step>
+    auto behind_pipelines(Step step) {
+        return behind(gpu::Stage::pipelines, std::move(step));
+    }
+
+    /// Lets go of the renderer, behind the guard's pipelines stage (inside VK bench's colour stage while that is open):
+    /// its frame goes with it, announced first (gpu/Frames.hpp), the stand-in's pipelines, passes, framebuffers and
+    /// images made for its pass and output, then its main pass. A 10-bit frame so goes before the colour stage closes.
+    void drop_renderer() {
+        if (!renderer_) return;
+        renderer_->drain();
+        behind_pipelines([this] {
+            renderer_.reset();
+            return true;
+        });
+    }
+
+    /// Lets go of the swapchain, announced: inside VK bench's colour stage while that is open, so that a 10-bit
+    /// swapchain goes before it closes.
+    void drop_swapchain() {
+        if (!swapchain_) return;
+        announce_swapchain_release();
+        swapchain_.reset();
+    }
+
+    /// Tells the guard the swapchain is about to go ("swapchain rgb10a2"): its marker names it in the colour stage.
+    void announce_swapchain_release() const {
+        if (swapchain_)
+            gpu::announce_release(std::format("swapchain {}", gpu::colour_name(swapchain_->format())),
+                                  started_.guard.get());
+    }
+
     bool make_surface(platform::Window window, int width, int height, std::string& why) {
         release_surface();
+        if (!session_off_.empty()) {
+            why = session_off_;
+            return false;
+        }
         window_ = std::move(window);
         wanted_ = {.width = static_cast<std::uint32_t>(width), .height = static_cast<std::uint32_t>(height)};
         auto surface = gpu::make_android_surface(*started_.instance, window_.get());
@@ -339,14 +418,16 @@ private:
                                  started_.device->queue_family());
         }
         // A window come back during VK bench's colour stage: its 10-bit swapchain is made inside the guard's colour
-        // stage again.
+        // stage again (the device was asked about 10 bits as the stage began).
         mark_colour(depth_ == gpu::Depth::deepest);
         auto swapchain = gpu::Swapchain::create(*started_.device, *surface_, wanted_, nullptr, depth_);
         if (!swapchain) {
-            why = swapchain.error().text();
+            swapchain_error_ = swapchain.error().text();
+            why = swapchain_error_;
             return false;
         }
         swapchain_ = std::move(*swapchain);
+        swapchain_error_.clear();
         note_colour();
         frame_rate_ = window_.set_frame_rate(60.0F);
         log::info("vk surface {} x {} transform {} images {} copy-source {} frame-rate {} colour {}",
@@ -373,8 +454,9 @@ private:
     }
 
     /// The crash guard's colour stage (D5.10) is open exactly while 10-bit work may reach the driver: VK bench's colour
-    /// stage with a window attached. Opened before the 10-bit swapchain is made, closed once it and its pipelines are
-    /// gone, so that a crash in between turns off 10 bits only.
+    /// stage (depth_ the deepest) with a window attached. Opened before the device is asked about 10 bits and before
+    /// the 10-bit swapchain is made; closed once the 10-bit frame (drop_renderer) and the 10-bit swapchain are gone, so
+    /// that a crash in between, their destruction included, turns off 10 bits only.
     void mark_colour(bool on) {
         if (on == colour_marked_) return;
         colour_marked_ = on;
@@ -386,9 +468,8 @@ private:
     }
 
     void release_surface() {
-        if (renderer_) renderer_->drain();
-        renderer_.reset();
-        swapchain_.reset();
+        drop_renderer();
+        drop_swapchain();
         surface_.clear();
         window_ = platform::Window();
         requested_ = false;
@@ -396,28 +477,33 @@ private:
     }
 
     void remake_swapchain() {
-        if (!*surface_) return;
+        if (!*surface_ || !started_.device) return;
         if (renderer_) renderer_->drain();
+        // The old swapchain goes inside create, once the new one is made (or the driver refused it): announced first,
+        // so a 10-bit one going on the way out of VK bench's colour stage goes inside it.
+        announce_swapchain_release();
         auto swapchain = gpu::Swapchain::create(*started_.device, *surface_, wanted_, std::move(swapchain_), depth_);
         if (!swapchain) {
-            log::error("vk swapchain: {}", swapchain.error().text());
-            renderer_.reset();
+            swapchain_error_ = swapchain.error().text();
+            log::error("vk swapchain: {}", swapchain_error_);
+            drop_renderer();
             return;
         }
         swapchain_ = std::move(*swapchain);
+        swapchain_error_.clear();
         note_colour();
         if (renderer_) {
             auto retargeted = behind_pipelines([&] { return renderer_->retarget(*swapchain_); });
             if (!retargeted) {
                 log::error("vk retarget: {}", retargeted.error().text());
-                renderer_.reset();
+                drop_renderer();
             }
         }
     }
 
     /// The stand-in and the renderer for the current configuration, behind the guard's pipelines stage.
     std::string make_renderer() {
-        if (!swapchain_) return "no swapchain";
+        if (!swapchain_) return swapchain_error_.empty() ? "no swapchain" : "no swapchain: " + swapchain_error_;
         std::string why = behind_pipelines([&]() -> std::string {
             if (!standin_) {
                 if (!city_) city_ = std::make_shared<const standin::City>(standin::City::generate());
@@ -426,7 +512,8 @@ private:
                 standin_ = std::move(*standin);
             }
             standin_->set_pills(pills_);
-            auto renderer = gpu::Renderer::create(*started_.device, *swapchain_, *standin_, config_);
+            auto renderer =
+                gpu::Renderer::create(*started_.device, *swapchain_, *standin_, config_, started_.guard.get());
             if (!renderer) return renderer.error().text();
             renderer_ = std::move(*renderer);
             return {};
@@ -479,40 +566,56 @@ private:
     }
 
     std::string configure(int mode, const gpu::Configuration& config, std::uint32_t flags) {
+        if (!session_off_.empty()) return session_off_;
         const gpu::Facts& facts = started_.device->facts();
         if (!facts.supports(config.config))
             return std::format("this device has no configuration {}", gpu::name_of(config.config));
         if (config.route == gpu::Route::dynamic && !started_.device->enabled().local_read)
             return "this device has no dynamic rendering with local reads";
-        // VK bench's colour stage: 10 bits where the surface offers them in sRGB and the crash guard has not turned
-        // them off for this driver and build (after its crash in this stage); everything else at the frame's 8.
+        // VK bench's colour stage: 10 bits where the surface offers them in sRGB, the device draws the frame in them
+        // and the crash guard has not turned them off for this driver and build (after its crash in this stage);
+        // everything else at the frame's 8.
         const bool ten = mode == 1 && (flags & bench_flag::ten_bit) != 0;
         if (ten && !facts.ten_bit_off.empty()) return "10 bits are off for this driver and build: " + facts.ten_bit_off;
         if (ten && !facts.deepest.ten_bit()) return "no 10 bits here: " + facts.deepest.reason;
+        // The stand-in draws into the window: with none attached (gone with an app switch or the screen off, Android
+        // 10 to 13's SurfaceView following its visibility) there is nothing to draw in, and nothing changes; a window
+        // that comes back draws the bench as it was (make_surface).
+        if (mode == 1 && !*surface_) return "no surface is attached (the window went away)";
+        const gpu::Depth depth = ten ? gpu::Depth::deepest : gpu::default_depth;
         mode_ = mode;
         config_ = config;
         pills_ = (flags & bench_flag::pills) != 0;
         texture_ = (flags & bench_flag::texture) != 0;
-        const gpu::Depth depth = ten ? gpu::Depth::deepest : gpu::default_depth;
-        if (mode_ == 0 || depth != depth_) {
-            if (renderer_) renderer_->drain();
-            renderer_.reset();
-        }
+        // A renderer of the other depth, or any in mode 0, goes first: an 8-bit frame before the colour stage opens, a
+        // 10-bit one inside it, before it closes.
+        if (mode_ == 0 || depth != depth_) drop_renderer();
         if (depth != depth_) {
-            // Into the colour stage: the guard's colour stage first, the 10 bits' lazily allocated samples asked of
-            // the device, then a swapchain of 10 bits and a renderer for it. Out of it: the 8-bit swapchain, then the
-            // guard's colour stage closed, nothing of 10 bits being left.
-            depth_ = depth;
-            if (depth_ == gpu::Depth::deepest && *surface_) {
+            if (depth == gpu::Depth::deepest) {
+                // Into the colour stage: the guard's colour stage first, then the device asked about 10 bits inside it
+                // (their formats, a tiler's lazily allocated samples). A device that cannot draw the frame in them
+                // after all closes it again, nothing of 10 bits made, and the frame stays at 8.
                 mark_colour(true);
-                const std::scoped_lock lock(facts_mutex_);
-                started_.device->check_ten_bit();
+                {
+                    const std::scoped_lock lock(facts_mutex_);
+                    started_.device->check_ten_bit();
+                }
+                if (!facts.deepest.ten_bit()) {
+                    mark_colour(false);
+                    return "no 10 bits here: " + facts.deepest.reason;
+                }
             }
+            // Into the colour stage, a swapchain of 10 bits and (below) a renderer for it, inside the stage. Out of it:
+            // the 10-bit frame went with its renderer (above) and the 10-bit swapchain goes as the 8-bit one is made,
+            // both inside the stage, which closes after them, nothing of 10 bits being left.
+            depth_ = depth;
             remake_swapchain();
             if (depth_ != gpu::Depth::deepest) mark_colour(false);
-            if (!swapchain_) return "no swapchain of the colour asked for";
+        } else if (!swapchain_ && *surface_) {
+            remake_swapchain(); // one that could not be made before (a remake, a rebuild after a device loss)
         }
         if (mode_ == 0) return {};
+        if (!swapchain_) return swapchain_error_.empty() ? "no swapchain" : "no swapchain: " + swapchain_error_;
         if (ten && !swapchain_->colour().ten_bit()) return "no 10 bits here: " + swapchain_->colour().reason;
         if (!renderer_) return make_renderer();
         standin_->set_pills(pills_);
@@ -523,7 +626,7 @@ private:
         }
         auto done = behind_pipelines([&] { return renderer_->reconfigure(config_); });
         if (!done) {
-            renderer_.reset();
+            drop_renderer();
             return done.error().text();
         }
         log_configuration();
@@ -681,44 +784,71 @@ private:
         if (read_ + ring_.size() < write_) read_ = write_ - ring_.size(); // a reader too slow loses the oldest
     }
 
+    /// The map off for this session, saying why (VkFacts' `vulkan.session:` line, and every bench call after).
+    void turn_off_session(std::string why) {
+        log::error("vk {}", why);
+        lost_ = 3;
+        const std::scoped_lock lock(facts_mutex_); // facts() reads it on other threads
+        session_off_ = std::move(why);
+    }
+
     void device_lost() {
         ++lost_;
         if (lost_ >= 3) {
-            log::error("vk device lost ×3: the map is off for this session");
-            renderer_.reset();
+            drop_renderer();
+            turn_off_session("device lost ×3: the map is off for this session");
             return;
         }
         log::error("device lost ({} this session): rebuilding the device", lost_);
-        renderer_.reset();
+        // Everything made on the lost device goes, the frame announced (inside VK bench's colour stage while it is
+        // open: a 10-bit frame and swapchain go inside it).
+        drop_renderer();
         standin_.reset();
-        swapchain_.reset();
-        started_.cache.reset();
-        started_.device.reset();
-        // As the start opened it (K6's answer for configuration B among the options), to present to this surface.
+        drop_swapchain();
+        {
+            // facts() and stats() read the device and the cache on other threads.
+            const std::scoped_lock lock(facts_mutex_);
+            started_.cache.reset();
+            started_.device.reset();
+        }
+        // As the start opened it (K6's answer for configuration B among the options), to present to this surface,
+        // behind the guard's stages as at the start: the device's facts (its choice's queries), the device, the cache.
         gpu::DeviceOptions reopen = started_.device_options;
         reopen.surface = *surface_;
-        auto device = gpu::Device::open(*started_.instance, reopen);
-        if (!device) {
-            log::error("vk rebuild failed: {}", device.error().text());
-            lost_ = 3;
+        auto picked = behind(gpu::Stage::facts, [&] { return gpu::Device::pick(*started_.instance, reopen); });
+        if (!picked) {
+            turn_off_session("the device could not be made again after its loss: " + picked.error().text());
             return;
         }
-        started_.device = std::move(*device);
+        auto device = behind(gpu::Stage::device,
+                             [&] { return gpu::Device::open(*started_.instance, std::move(*picked), reopen); });
+        if (!device) {
+            turn_off_session("the device could not be made again after its loss: " + device.error().text());
+            return;
+        }
         {
-            // The guard's colour verdict, and in VK bench's colour stage the 10 bits' samples asked again.
+            // The guard's colour verdict, and in VK bench's colour stage (open: a surface is attached) the device
+            // asked about 10 bits again, inside it.
             const std::scoped_lock lock(facts_mutex_);
+            started_.device = std::move(*device);
             started_.device->facts().ten_bit_off = started_.guard->ten_bit_off();
+            gpu::decide_colour(started_.device->facts());
             if (depth_ == gpu::Depth::deepest) started_.device->check_ten_bit();
         }
         const gpu::StartOptions o = start_options(options_);
-        auto cache = gpu::PipelineCache::open(started_.device->handle(), started_.device->facts(), o.cache_file,
-                                              o.spirv, !o.cache_file.empty());
+        auto cache = behind(gpu::Stage::cache, [&] {
+            return gpu::PipelineCache::open(started_.device->handle(), started_.device->facts(), o.cache_file, o.spirv,
+                                            !o.cache_file.empty());
+        });
         if (!cache) {
-            log::error("vk rebuild: {}", cache.error().text());
-            lost_ = 3;
+            turn_off_session("the pipeline cache could not be opened again after the device's loss: " +
+                             cache.error().text());
             return;
         }
-        started_.cache = std::make_unique<gpu::PipelineCache>(std::move(*cache));
+        {
+            const std::scoped_lock lock(facts_mutex_);
+            started_.cache = std::make_unique<gpu::PipelineCache>(std::move(*cache));
+        }
         if (*surface_) {
             {
                 // The new device's facts, with the surface's and the frame's colour on it, as the attach read them.
@@ -728,11 +858,12 @@ private:
             }
             auto swapchain = gpu::Swapchain::create(*started_.device, *surface_, wanted_, nullptr, depth_);
             if (!swapchain) {
-                log::error("vk rebuild: {}", swapchain.error().text());
-                lost_ = 3;
+                swapchain_error_ = swapchain.error().text();
+                turn_off_session("the swapchain could not be made again after the device's loss: " + swapchain_error_);
                 return;
             }
             swapchain_ = std::move(*swapchain);
+            swapchain_error_.clear();
             note_colour();
         }
         if (mode_ == 1) {
@@ -742,6 +873,8 @@ private:
         ask_vsync();
     }
 
+    // Declared after started_, so that whatever is left of them goes before the device and the instance they were made
+    // on; the renderer after the stand-in it prepared and the swapchain it draws into, so that it goes first.
     JavaVM* vm_ = nullptr;
     JNIEnv* render_env_ = nullptr;
     std::unique_ptr<platform::RenderLoop> loop_;
@@ -750,9 +883,10 @@ private:
     platform::Thermal thermal_;
     vk::raii::SurfaceKHR surface_{nullptr};
     std::unique_ptr<gpu::Swapchain> swapchain_;
-    std::unique_ptr<gpu::Renderer> renderer_;
-    std::unique_ptr<standin::StandIn> standin_;
+    std::string swapchain_error_; // why the last swapchain could not be made ("" once one is)
     std::shared_ptr<const standin::City> city_;
+    std::unique_ptr<standin::StandIn> standin_;
+    std::unique_ptr<gpu::Renderer> renderer_;
     std::vector<gpu::PresentedTiming> timings_;
     jobject source_ = nullptr;
     jobject camera_ = nullptr;
@@ -780,16 +914,6 @@ private:
     std::int64_t period_ns_ = 0;
     std::int64_t epoch_ns_ = 0;
 #endif
-
-    CoreOptions options_;
-    gpu::Started started_;
-    std::mutex facts_mutex_;
-    mutable std::mutex records_mutex_;
-    std::array<FrameRecord, 1024> ring_{};
-    std::uint64_t write_ = 0;
-    std::uint64_t published_ = 0;
-    std::uint64_t read_ = 0;
-    std::uint64_t count_ = 0;
 };
 
 [[nodiscard]] Core* core_of(jlong handle) noexcept {
