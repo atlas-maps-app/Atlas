@@ -96,6 +96,8 @@ struct CoreOptions {
     std::uint32_t flags = 0;
 };
 
+/// The façade's start: its device always presents (the SurfaceView's or the TextureView's window), on the phone and in
+/// the host build that tests the façade.
 [[nodiscard]] gpu::StartOptions start_options(const CoreOptions& o) {
     return {.guard_dir = o.guard_dir,
             .cache_file = o.cache_dir.empty() ? std::filesystem::path()
@@ -104,6 +106,7 @@ struct CoreOptions {
             .plant = o.plant,
             .validation = (o.flags & core_flag::validation) != 0,
             .require_validation = false,
+            .present = true,
             .msaa2_close = (o.flags & core_flag::msaa2) != 0,
             .spirv = core_spirv()};
 }
@@ -622,7 +625,7 @@ private:
         swapchain_.reset();
         started_.cache.reset();
         started_.device.reset();
-        auto device = gpu::Device::open(*started_.instance, {.surface = *surface_});
+        auto device = gpu::Device::open(*started_.instance, {.surface = *surface_, .present = true});
         if (!device) {
             log::error("vk rebuild failed: {}", device.error().text());
             lost_ = 3;

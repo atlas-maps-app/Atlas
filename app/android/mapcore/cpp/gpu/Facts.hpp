@@ -115,7 +115,8 @@ struct Facts {
     bool d32s8 = false;
     bool rgba8_input = false; // R8G8B8A8_UNORM as a colour and input attachment (the composite)
     FeatureFacts features;
-    std::vector<std::string> extensions;
+    std::vector<std::string> extensions; // without the ones the host tests hide (Instance::hidden)
+    std::vector<std::string> hidden;     // the extensions the host tests hide, which read as absent
     std::vector<std::pair<std::string, bool>> profiles;
     std::string profiles_status;
     // What the facts decide.
@@ -124,6 +125,7 @@ struct Facts {
     std::string tiler_reason;
     bool lazy_memory = false;
     bool host_visible_device_local = false;
+    bool presents = false; // judged for a device that presents (VK_KHR_swapchain needed), not for offscreen work
     std::vector<std::string> missing; // the requirements of T1 the device lacks (empty: the core can run)
     Configuration choice;
     std::string config_reason;
@@ -141,9 +143,14 @@ struct Facts {
     [[nodiscard]] bool takes_read_without_format() const noexcept;
 };
 
-/// Reads the facts of `device` (one of `instance`'s), and what they decide.
+/// Reads the facts of `device` (one of `instance`'s), and what they decide for a device that presents (`present`) or
+/// one that works offscreen.
 [[nodiscard]] Facts collect_facts(const Instance& instance, const vk::raii::PhysicalDevice& device,
-                                  std::size_t device_count);
+                                  std::size_t device_count, bool present);
+
+/// Sets `facts.missing` to the requirements of T1 the device lacks, for presenting (`present`: VK_KHR_swapchain too)
+/// or for offscreen work, and `facts.presents` to `present`.
+void check_requirements(Facts& facts, bool present);
 
 /// Adds the surface's facts.
 void collect_surface(Facts& facts, const vk::raii::PhysicalDevice& device, vk::SurfaceKHR surface,

@@ -54,6 +54,22 @@ namespace fs = std::filesystem;
     }
     return {};
 }
+
+/// The extension names in ATLAS_VULKAN_HIDE (separated by commas, spaces ignored): what the host tests hide from the
+/// core for a whole run.
+[[nodiscard]] std::vector<std::string> hidden_by_environment() {
+    std::vector<std::string> out;
+    const std::string list = environment("ATLAS_VULKAN_HIDE");
+    std::size_t at = 0;
+    while (at <= list.size()) {
+        const std::size_t end = std::min(list.find(',', at), list.size());
+        std::string name = list.substr(at, end - at);
+        std::erase(name, ' ');
+        if (!name.empty()) out.push_back(std::move(name));
+        at = end + 1;
+    }
+    return out;
+}
 #endif
 
 /// The loaders to try, in order, for an empty path.
@@ -152,6 +168,8 @@ bool Instance::has_extension(std::string_view name) const noexcept {
     return std::ranges::find(extensions_, name) != extensions_.end();
 }
 
+bool Instance::hides(std::string_view name) const noexcept { return std::ranges::find(hidden_, name) != hidden_.end(); }
+
 Instance::~Instance() {
     // The messenger and the instance go before the loader that holds their code.
     messenger_.clear();
@@ -179,9 +197,18 @@ Result<std::unique_ptr<Instance>> Instance::open(const InstanceOptions& options)
     self->api_version_ =
         VK_MAKE_API_VERSION(0, VK_API_VERSION_MAJOR(self->api_version_), VK_API_VERSION_MINOR(self->api_version_), 0);
 
+    std::vector<std::string> hide = options.hide;
+#if !defined(__ANDROID__)
+    for (std::string& name : hidden_by_environment()) hide.push_back(std::move(name));
+#endif
+    for (std::string& name : hide) {
+        if (!self->hides(name)) self->hidden_.push_back(std::move(name));
+    }
     std::vector<std::string> available;
     if (auto list = context.enumerateInstanceExtensionProperties()) {
-        for (const vk::ExtensionProperties& e : *list) available.emplace_back(e.extensionName.data());
+        for (const vk::ExtensionProperties& e : *list) {
+            if (!self->hides(e.extensionName.data())) available.emplace_back(e.extensionName.data());
+        }
     }
     auto offered = [&](std::string_view name) { return std::ranges::find(available, name) != available.end(); };
 
@@ -196,12 +223,20 @@ Result<std::unique_ptr<Instance>> Instance::open(const InstanceOptions& options)
     }
 
     // Surfaces (the phone's, and the headless one the host tests present to), surface queries for the swapchain's
-    // maintenance, and the messenger when validating.
+    // maintenance, and the messenger when validating. Each surface extension builds on VK_KHR_surface, and the surface
+    // maintenance ones on VK_KHR_get_surface_capabilities2 too, so none is enabled without them: Mesa built without a
+    // window system (the arm64 runner's lavapipe) offers VK_EXT_headless_surface alone.
     std::vector<const char*> enable;
-    for (const char* name : {vk::KHRSurfaceExtensionName, vk::KHRAndroidSurfaceExtensionName,
-                             vk::EXTHeadlessSurfaceExtensionName, vk::KHRGetSurfaceCapabilities2ExtensionName,
-                             vk::EXTSurfaceMaintenance1ExtensionName, vk::KHRSurfaceMaintenance1ExtensionName}) {
-        if (offered(name)) enable.push_back(name);
+    if (offered(vk::KHRSurfaceExtensionName)) {
+        enable.push_back(vk::KHRSurfaceExtensionName);
+        for (const char* name : {vk::KHRAndroidSurfaceExtensionName, vk::EXTHeadlessSurfaceExtensionName,
+                                 vk::KHRGetSurfaceCapabilities2ExtensionName}) {
+            if (offered(name)) enable.push_back(name);
+        }
+        if (offered(vk::KHRGetSurfaceCapabilities2ExtensionName)) {
+            for (const char* name : {vk::EXTSurfaceMaintenance1ExtensionName, vk::KHRSurfaceMaintenance1ExtensionName})
+                if (offered(name)) enable.push_back(name);
+        }
     }
     if (layer && offered(vk::EXTDebugUtilsExtensionName)) enable.push_back(vk::EXTDebugUtilsExtensionName);
     const bool debug_utils =
@@ -210,7 +245,21 @@ Result<std::unique_ptr<Instance>> Instance::open(const InstanceOptions& options)
     const std::array<const char*, 1> layer_names{"VK_LAYER_KHRONOS_validation"};
     const std::array<vk::ValidationFeatureEnableEXT, 1> checks{
         vk::ValidationFeatureEnableEXT::eSynchronizationValidation};
-    const vk::ValidationFeaturesEXT features{.enabledValidationFeatureCount = static_cast<std::uint32_t>(checks.size()),
+    const vk::DebugUtilsMessengerCreateInfoEXT messenger_info{
+        .messageSeverity =
+            vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
+        .messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
+                       vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
+                       vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
+        .pfnUserCallback = &on_message,
+        .pUserData = &self->messages_};
+    // The layer's checks of the instance's own creation and destruction (an extension enabled without one it builds
+    // on, say) reach the messages too, through a messenger chained into the creation; it takes validation messages
+    // only, not the loader's notes about its search for drivers and layers.
+    vk::DebugUtilsMessengerCreateInfoEXT creation_info = messenger_info;
+    creation_info.messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation;
+    const vk::ValidationFeaturesEXT features{.pNext = debug_utils ? &creation_info : nullptr,
+                                             .enabledValidationFeatureCount = static_cast<std::uint32_t>(checks.size()),
                                              .pEnabledValidationFeatures = checks.data()};
     const vk::ApplicationInfo app{.pApplicationName = options.app_name.c_str(),
                                   .applicationVersion = 1,
@@ -230,15 +279,7 @@ Result<std::unique_ptr<Instance>> Instance::open(const InstanceOptions& options)
     for (const char* name : enable) self->extensions_.emplace_back(name);
 
     if (layer && debug_utils) {
-        ATLAS_VK_LET(messenger,
-                     self->instance_.createDebugUtilsMessengerEXT(
-                         {.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-                                             vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
-                          .messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-                                         vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
-                                         vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
-                          .pfnUserCallback = &on_message,
-                          .pUserData = &self->messages_}),
+        ATLAS_VK_LET(messenger, self->instance_.createDebugUtilsMessengerEXT(messenger_info),
                      "the validation layer's messenger");
         self->messenger_ = std::move(messenger);
     }

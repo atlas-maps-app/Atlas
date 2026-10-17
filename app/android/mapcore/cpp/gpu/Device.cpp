@@ -31,6 +31,11 @@ namespace {
     return std::nullopt;
 }
 
+/// Whether the device is to present: asked for, or a surface given.
+[[nodiscard]] bool presents(const DeviceOptions& options) noexcept {
+    return options.present || static_cast<bool>(options.surface);
+}
+
 } // namespace
 
 Device::~Device() {
@@ -53,7 +58,7 @@ Result<Picked> Device::pick(Instance& instance, const DeviceOptions& options) {
     std::vector<Facts> candidates;
     candidates.reserve(devices.size());
     for (std::size_t i = 0; i < devices.size(); ++i) {
-        candidates.push_back(collect_facts(instance, devices[i], devices.size()));
+        candidates.push_back(collect_facts(instance, devices[i], devices.size(), presents(options)));
         if (options.surface && !pick_queue(devices[i], candidates.back(), options.surface)) {
             candidates.back().missing.emplace_back("a queue that presents to the surface");
         }
@@ -75,6 +80,8 @@ Result<std::unique_ptr<Device>> Device::open(Instance& instance, Picked picked, 
     std::unique_ptr<Device> self(new Device()); // NOLINT(cppcoreguidelines-owning-memory): private constructor
     self->instance_ = &instance;
     Facts& facts = picked.facts;
+    const bool present = presents(options);
+    if (facts.presents != present) check_requirements(facts, present); // picked for the other use
     if (!facts.missing.empty()) {
         std::string missing;
         for (const std::string& m : facts.missing) missing += (missing.empty() ? "" : ", ") + m;
@@ -98,7 +105,9 @@ Result<std::unique_ptr<Device>> Device::open(Instance& instance, Picked picked, 
         if (std::ranges::find(extensions, std::string_view(name)) == extensions.end()) extensions.push_back(name);
         return true;
     };
-    on.swapchain = enable(vk::KHRSwapchainExtensionName);
+    // The swapchain only where the device presents; with it go its maintenance, display timing and incremental
+    // present (below).
+    on.swapchain = present && enable(vk::KHRSwapchainExtensionName);
     if (version < VK_API_VERSION_1_3) (void)enable(vk::KHRFormatFeatureFlags2ExtensionName);
     if (version < VK_API_VERSION_1_2) {
         on.create_renderpass2 = enable(vk::KHRCreateRenderpass2ExtensionName);

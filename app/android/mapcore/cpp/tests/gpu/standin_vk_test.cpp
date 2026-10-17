@@ -102,20 +102,20 @@ struct Drawn {
     standin::Counters counters;
 };
 
+/// Each step that fails fails the test case and returns its error, so the caller can go on with the next frame.
 gpu::Result<Drawn> draw_standin(test::Session& s, const gpu::Configuration& config, vk::Extent2D extent,
                                 const style::CameraState& camera, int frames, const gpu::PipelineCache& cache,
                                 std::shared_ptr<const standin::City> city) {
     auto output = platform::Offscreen::create(*s.device, extent, 2);
-    REQUIRE_MESSAGE(output.has_value(), output.error().text());
-    REQUIRE((*output)->fill({1.0F, 0.0F, 1.0F, 1.0F}).has_value());
+    ATLAS_REQUIRE_OR_RETURN(std::unexpected(output.error()), output.has_value(), output.error().text());
+    auto filled = (*output)->fill({1.0F, 0.0F, 1.0F, 1.0F});
+    ATLAS_REQUIRE_OR_RETURN(std::unexpected(filled.error()), filled.has_value(), filled.error().text());
     auto content = standin::StandIn::create(*s.device, cache, std::move(city));
-    REQUIRE_MESSAGE(content.has_value(), content.error().text());
+    ATLAS_REQUIRE_OR_RETURN(std::unexpected(content.error()), content.has_value(), content.error().text());
     (*content)->set_camera(camera);
     auto renderer = gpu::Renderer::create(*s.device, **output, **content, config);
-    if (!renderer) {
-        FAIL_CHECK(describe(config) << ": " << renderer.error().text());
-        return std::unexpected(renderer.error());
-    }
+    ATLAS_REQUIRE_OR_RETURN(std::unexpected(renderer.error()), renderer.has_value(),
+                            describe(config) << ": " << renderer.error().text());
     Drawn d;
     d.pipelines_ms = (*content)->pipelines_ms();
     d.pipelines = (*content)->pipeline_count();
@@ -123,14 +123,15 @@ gpu::Result<Drawn> draw_standin(test::Session& s, const gpu::Configuration& conf
         (*content)->set_time(0.5);
         const auto started = std::chrono::steady_clock::now();
         auto report = (*renderer)->draw(0);
-        REQUIRE_MESSAGE(report.has_value(), report.error().text());
+        ATLAS_REQUIRE_OR_RETURN(std::unexpected(report.error()), report.has_value(),
+                                describe(config) << ": " << report.error().text());
         (*renderer)->drain();
         d.frame_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     }
     d.gpu = (*renderer)->frames().last_times();
     d.counters = (*content)->counters();
     auto pixels = (*output)->read((*output)->latest());
-    REQUIRE_MESSAGE(pixels.has_value(), pixels.error().text());
+    ATLAS_REQUIRE_OR_RETURN(std::unexpected(pixels.error()), pixels.has_value(), pixels.error().text());
     d.pixels = std::move(*pixels);
     renderer->reset();
     return d;
@@ -151,25 +152,26 @@ TEST_CASE("the main pass clears in every configuration, form, route and target t
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
-    REQUIRE(cache.has_value());
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
     const vk::Extent2D extent{.width = 96, .height = 64};
     auto output = platform::Offscreen::create(*session->device, extent, 2);
-    REQUIRE(output.has_value());
+    ATLAS_REQUIRE(output.has_value(), output.error().text());
     const auto all = configurations(session->device->facts());
     CHECK(all.size() >= 6);
     for (const gpu::Configuration& config : all) {
         // A sentinel first: a configuration that never writes its output would read back as it.
-        REQUIRE((*output)->fill({1.0F, 0.0F, 1.0F, 1.0F}).has_value());
+        auto filled = (*output)->fill({1.0F, 0.0F, 1.0F, 1.0F});
+        ATLAS_REQUIRE(filled.has_value(), filled.error().text());
         ClearOnly content;
         auto renderer = gpu::Renderer::create(*session->device, **output, content, config);
-        REQUIRE_MESSAGE(renderer.has_value(), describe(config) << ": " << renderer.error().text());
+        ATLAS_REQUIRE(renderer.has_value(), describe(config) << ": " << renderer.error().text());
         for (int i = 0; i < 3; ++i) {
             auto report = (*renderer)->draw(0);
-            REQUIRE_MESSAGE(report.has_value(), describe(config));
+            ATLAS_REQUIRE(report.has_value(), describe(config) << ": " << report.error().text());
         }
         (*renderer)->drain();
         auto pixels = (*output)->read((*output)->latest());
-        REQUIRE(pixels.has_value());
+        ATLAS_REQUIRE(pixels.has_value(), describe(config) << ": " << pixels.error().text());
         // The clear reaches the output through the resolve, or as the output itself; where only the composite writes
         // the output (the direct target, one sample), this content draws no composite and the output is undefined.
         const bool reaches = config.form == gpu::FrameForm::onepass || config.target == gpu::CompositeTarget::resolve;
@@ -202,7 +204,7 @@ TEST_CASE("the stand-in's S1 frame is the same across runs and through both fram
         auto session = test::open_session();
         if (!session) return;
         auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
-        REQUIRE(cache.has_value());
+        ATLAS_REQUIRE(cache.has_value(), cache.error().text());
         const gpu::Facts& facts = session->device->facts();
         for (const gpu::Configuration& config : configurations(facts)) {
             if (config.config == gpu::FrameConfig::a || config.config == gpu::FrameConfig::b)
@@ -234,6 +236,9 @@ TEST_CASE("the stand-in's S1 frame is the same across runs and through both fram
         }
     }
     CHECK(buckets.size() >= 5);
+    ATLAS_REQUIRE(buckets.contains("C composite direct") && buckets.contains("C onepass resolve") &&
+                      buckets.contains("C composite resolve"),
+                  "configuration C was not drawn in every form");
     for (const auto& [key, frames] : buckets) {
         CHECK_MESSAGE(frames.size() >= 2, key << " was drawn once only");
         for (std::size_t i = 1; i < frames.size(); ++i) {
@@ -265,16 +270,11 @@ TEST_CASE("the stand-in's S1 frame is the same across runs and through both fram
 
 TEST_CASE("the stand-in's steady S1 frame takes at most half a second, and its pipeline cache is kept and checked") {
     // No validation layer here: the frame's own cost, as the bench measures it on the phone.
-    auto instance = gpu::Instance::open({.validation = false});
-    if (!instance) {
-        if (test::vulkan_required()) FAIL(instance.error().text());
-        MESSAGE("skipped: " << instance.error().text());
-        return;
-    }
     test::Session session;
-    session.instance = std::move(*instance);
+    session.instance = test::open_instance({.validation = false});
+    if (!session.instance) return;
     auto device = gpu::Device::open(*session.instance, {});
-    REQUIRE(device.has_value());
+    ATLAS_REQUIRE(device.has_value(), device.error().text());
     session.device = std::move(*device);
     auto city = std::make_shared<const standin::City>(standin::City::generate());
     const vk::Extent2D s1{.width = 1080, .height = 2400};
@@ -284,41 +284,41 @@ TEST_CASE("the stand-in's steady S1 frame takes at most half a second, and its p
     const gpu::Configuration config = session.device->facts().choice;
 
     auto cold = gpu::PipelineCache::open(session.device->handle(), session.device->facts(), file, 7, true);
-    REQUIRE(cold.has_value());
+    ATLAS_REQUIRE(cold.has_value(), cold.error().text());
     CHECK_FALSE(cold->hit());
     auto first = draw_standin(session, config, s1, board, 4, *cold, city);
-    REQUIRE(first.has_value());
+    ATLAS_REQUIRE(first.has_value(), first.error().text());
     auto saved = cold->save();
-    REQUIRE_MESSAGE(saved.has_value(), saved.error().text());
+    ATLAS_REQUIRE(saved.has_value(), saved.error().text());
     CHECK(*saved >= sizeof(gpu::CacheHeader));
     cold = gpu::fail("closed"); // the cache goes before its device
 
     // A second device, as the next start opens it.
     session.device.reset();
     auto device2 = gpu::Device::open(*session.instance, {});
-    REQUIRE(device2.has_value());
+    ATLAS_REQUIRE(device2.has_value(), device2.error().text());
     session.device = std::move(*device2);
     auto warm = gpu::PipelineCache::open(session.device->handle(), session.device->facts(), file, 7, true);
-    REQUIRE(warm.has_value());
+    ATLAS_REQUIRE(warm.has_value(), warm.error().text());
     CHECK(warm->hit());
     CHECK(warm->status() == "hit");
     auto second = draw_standin(session, config, s1, board, 4, *warm, city);
-    REQUIRE(second.has_value());
+    ATLAS_REQUIRE(second.has_value(), second.error().text());
     // Another shader hash discards the file.
     auto other = gpu::PipelineCache::open(session.device->handle(), session.device->facts(), file, 8, true);
-    REQUIRE(other.has_value());
+    ATLAS_REQUIRE(other.has_value(), other.error().text());
     CHECK_FALSE(other->hit());
     CHECK(other->status() == "miss: other shaders");
     // A damaged file too.
     {
         std::FILE* f = std::fopen(file.c_str(), "r+b");
-        REQUIRE(f != nullptr);
+        ATLAS_REQUIRE(f != nullptr, "cannot open " << file.string());
         (void)std::fseek(f, static_cast<long>(offsetof(gpu::CacheHeader, checksum)), SEEK_SET);
         (void)std::fputc(0x5A, f);
         (void)std::fclose(f);
     }
     auto damaged = gpu::PipelineCache::open(session.device->handle(), session.device->facts(), file, 7, true);
-    REQUIRE(damaged.has_value());
+    ATLAS_REQUIRE(damaged.has_value(), damaged.error().text());
     CHECK(damaged->status() == "miss: damaged");
 
     MESSAGE("pipelines: " << first->pipelines << " made in " << first->pipelines_ms << " ms without the cache, "

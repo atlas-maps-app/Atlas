@@ -28,6 +28,11 @@ struct InstanceOptions {
     /// The highest version to ask for (VK_API_VERSION_1_4 by default; the tests ask for 1.1 to check what a Vulkan 1.1
     /// phone allows).
     std::uint32_t max_version = VK_API_VERSION_1_4;
+    /// Extensions to treat as absent, the instance's and its devices': the host tests' stand-in for a Vulkan without
+    /// them. {"VK_KHR_surface", "VK_KHR_swapchain"} makes this Mac's lavapipe look like the arm64 runner's, which is
+    /// Mesa built without a window system. On a host, ATLAS_VULKAN_HIDE (names separated by commas) adds to them for a
+    /// whole run; the phone never reads it.
+    std::vector<std::string> hide;
 };
 
 /// The validation layer's warnings and errors, from whichever thread reports them.
@@ -89,6 +94,9 @@ public:
     [[nodiscard]] bool validation() const noexcept { return validation_; }
     [[nodiscard]] bool has_extension(std::string_view name) const noexcept;
     [[nodiscard]] const std::vector<std::string>& extensions() const noexcept { return extensions_; }
+    /// The extensions hidden from the core (InstanceOptions::hide and ATLAS_VULKAN_HIDE), which read as absent.
+    [[nodiscard]] const std::vector<std::string>& hidden() const noexcept { return hidden_; }
+    [[nodiscard]] bool hides(std::string_view name) const noexcept;
     [[nodiscard]] const std::string& loader_path() const noexcept { return loader_.path(); }
     [[nodiscard]] Messages& messages() noexcept { return messages_; }
 
@@ -101,6 +109,7 @@ private:
     vk::raii::DebugUtilsMessengerEXT messenger_{nullptr};
     Messages messages_;
     std::vector<std::string> extensions_;
+    std::vector<std::string> hidden_;
     std::uint32_t loader_version_ = VK_API_VERSION_1_0;
     std::uint32_t api_version_ = VK_API_VERSION_1_0;
     bool validation_ = false;

@@ -217,13 +217,18 @@ void read_features(Facts& facts, const vk::raii::PhysicalDevice& device, std::ui
     out.multisampled_to_single = to_single.multisampledRenderToSingleSampled == vk::True;
 }
 
-/// The requirements of T1 the device lacks.
-void check_requirements(Facts& facts) {
+} // namespace
+
+void check_requirements(Facts& facts, bool present) {
+    facts.presents = present;
+    facts.missing.clear();
     auto need = [&](bool ok, std::string what) {
         if (!ok) facts.missing.push_back(std::move(what));
     };
     need(facts.api_version >= VK_API_VERSION_1_1, "Vulkan 1.1");
-    need(facts.has_extension(vk::KHRSwapchainExtensionName), "VK_KHR_swapchain");
+    // Only presenting needs the swapchain: the core's offscreen work (the host tests, the likeness candidate, the
+    // light probe, VK check) runs on a device without it, as on the arm64 runner's lavapipe.
+    need(!present || facts.has_extension(vk::KHRSwapchainExtensionName), "VK_KHR_swapchain");
     const vk::SampleCountFlags four = vk::SampleCountFlagBits::e4;
     need((facts.limits.framebufferColorSampleCounts & four) && (facts.limits.framebufferDepthSampleCounts & four) &&
              (facts.limits.framebufferStencilSampleCounts & four),
@@ -236,8 +241,6 @@ void check_requirements(Facts& facts) {
         graphics |= static_cast<bool>(q.queueFlags & vk::QueueFlagBits::eGraphics);
     need(graphics, "a graphics queue");
 }
-
-} // namespace
 
 vk::SampleCountFlagBits Configuration::samples() const noexcept {
     switch (config) {
@@ -417,13 +420,15 @@ void choose_configuration(Facts& facts, bool msaa2_close) {
     }
 }
 
-Facts collect_facts(const Instance& instance, const vk::raii::PhysicalDevice& device, std::size_t device_count) {
+Facts collect_facts(const Instance& instance, const vk::raii::PhysicalDevice& device, std::size_t device_count,
+                    bool present) {
     Facts facts;
     facts.loader_path = instance.loader_path();
     facts.loader_version = instance.loader_version();
     facts.instance_version = instance.api_version();
     facts.validation = instance.validation();
     facts.devices = device_count;
+    facts.hidden = instance.hidden();
 
     const vk::PhysicalDeviceProperties properties = device.getProperties();
     facts.name = properties.deviceName.data();
@@ -436,7 +441,9 @@ Facts collect_facts(const Instance& instance, const vk::raii::PhysicalDevice& de
     std::ranges::copy(properties.pipelineCacheUUID, facts.pipeline_cache_uuid.begin());
 
     if (auto list = device.enumerateDeviceExtensionProperties()) {
-        for (const vk::ExtensionProperties& e : *list) facts.extensions.emplace_back(e.extensionName.data());
+        for (const vk::ExtensionProperties& e : *list) {
+            if (!instance.hides(e.extensionName.data())) facts.extensions.emplace_back(e.extensionName.data());
+        }
     }
     std::ranges::sort(facts.extensions);
 
@@ -485,7 +492,7 @@ Facts collect_facts(const Instance& instance, const vk::raii::PhysicalDevice& de
     facts.hardware = facts.type != vk::PhysicalDeviceType::eCpu &&
                      (!facts.driver_properties || (facts.driver_id != vk::DriverId::eMesaLlvmpipe &&
                                                    facts.driver_id != vk::DriverId::eGoogleSwiftshader));
-    check_requirements(facts);
+    check_requirements(facts, present);
     choose_configuration(facts, false);
     return facts;
 }
@@ -525,12 +532,14 @@ std::vector<std::string> facts_lines(const Facts& f) {
     line("tiler: {} ({})", yes_no(f.tiler), f.tiler_reason);
     line("lazily.allocated.memory: {}", yes_no(f.lazy_memory));
     line("host.visible.device.local: {}", yes_no(f.host_visible_device_local));
+    // A device for offscreen work says so (it needs no VK_KHR_swapchain); the phone's device presents.
     line(
-        "requirements: {}", f.missing.empty() ? std::string("all met") : [&] {
+        "requirements: {}{}", f.missing.empty() ? std::string("all met") : [&] {
             std::string m;
             for (const std::string& s : f.missing) m += (m.empty() ? "missing " : ", ") + s;
             return m;
-        }());
+        }(),
+        f.presents ? "" : " (offscreen)");
     line("config: {} ({})", name_of(f.choice.config), f.config_reason);
     line("route: {} ({})", name_of(f.choice.route), f.route_reason);
     line("composite: {} ({})", name_of(f.choice.target), f.target_reason);
@@ -553,6 +562,11 @@ std::vector<std::string> facts_lines(const Facts& f) {
     line("profiles: {}", profiles.empty() ? f.profiles_status : profiles);
     line("validation: {}", f.validation ? "on (synchronization validation)" : "off");
     line("loader: {}", f.loader_path);
+    if (!f.hidden.empty()) {
+        std::string names;
+        for (const std::string& h : f.hidden) names += (names.empty() ? "" : ", ") + h;
+        line("hidden: {} (by the host tests: they read as absent)", names);
+    }
 
     const FeatureFacts& x = f.features;
     line("feature.dynamicRendering: {}", yes_no(x.dynamic_rendering));

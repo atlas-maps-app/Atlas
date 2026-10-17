@@ -88,6 +88,7 @@ struct StartOptions {
     std::string plant;                // a stage to abort at on purpose (debug and bench builds)
     bool validation = false;
     bool require_validation = false;
+    bool present = false;     // the device presents (DeviceOptions::present): the façade's always does
     bool msaa2_close = false; // K6's answer for configuration B
     std::uint32_t max_version = VK_API_VERSION_1_4;
     std::string loader;

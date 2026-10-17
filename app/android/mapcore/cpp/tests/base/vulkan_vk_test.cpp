@@ -26,6 +26,7 @@
 #include "gen/spirv/probe/probe.hpp"
 #include "tests/base/end_of_run.hpp"
 #include "tests/base/fma_inputs.hpp"
+#include "tests/base/require.hpp"
 #include "tools/nocontract/spirv.hpp"
 
 #include <doctest/doctest.h>
@@ -126,7 +127,8 @@ private:
     void* handle_;
 };
 
-/// A buffer from VMA, mapped, destroyed with its allocator.
+/// A buffer from VMA, mapped, destroyed with its allocator. One that could not be made has failed the test case, and
+/// writes nothing and reads zeros.
 class Buffer {
 public:
     Buffer(VmaAllocator allocator, vk::DeviceSize size) : allocator_(allocator), size_(size) {
@@ -138,9 +140,10 @@ public:
                                                           VMA_ALLOCATION_CREATE_MAPPED_BIT,
                                                  .usage = VMA_MEMORY_USAGE_AUTO};
         VmaAllocationInfo result{};
-        REQUIRE(vmaCreateBuffer(allocator, &info, &allocation, &buffer_, &allocation_, &result) == VK_SUCCESS);
+        const VkResult made = vmaCreateBuffer(allocator, &info, &allocation, &buffer_, &allocation_, &result);
+        ATLAS_REQUIRE(made == VK_SUCCESS, "vmaCreateBuffer: " << vk::to_string(static_cast<vk::Result>(made)));
+        ATLAS_REQUIRE(result.pMappedData != nullptr, "VMA mapped no memory");
         mapped_ = result.pMappedData;
-        REQUIRE(mapped_ != nullptr);
     }
     Buffer(const Buffer&) = delete;
     Buffer& operator=(const Buffer&) = delete;
@@ -150,14 +153,18 @@ public:
 
     template <class T>
     void write(std::span<const T> values) {
-        REQUIRE(values.size_bytes() <= size_);
+        ATLAS_REQUIRE(mapped_ != nullptr, "the buffer was not made");
+        ATLAS_REQUIRE(values.size_bytes() <= size_, values.size_bytes() << " bytes into a buffer of " << size_);
         std::memcpy(mapped_, values.data(), values.size_bytes());
-        REQUIRE(vmaFlushAllocation(allocator_, allocation_, 0, VK_WHOLE_SIZE) == VK_SUCCESS);
+        ATLAS_REQUIRE(vmaFlushAllocation(allocator_, allocation_, 0, VK_WHOLE_SIZE) == VK_SUCCESS);
     }
     template <class T>
     std::vector<T> read(std::size_t count) {
-        REQUIRE(count * sizeof(T) <= size_);
-        REQUIRE(vmaInvalidateAllocation(allocator_, allocation_, 0, VK_WHOLE_SIZE) == VK_SUCCESS);
+        ATLAS_REQUIRE_OR_RETURN(std::vector<T>(count), mapped_ != nullptr, "the buffer was not made");
+        ATLAS_REQUIRE_OR_RETURN(std::vector<T>(count), count * sizeof(T) <= size_,
+                                count * sizeof(T) << " bytes from a buffer of " << size_);
+        ATLAS_REQUIRE_OR_RETURN(std::vector<T>(count),
+                                vmaInvalidateAllocation(allocator_, allocation_, 0, VK_WHOLE_SIZE) == VK_SUCCESS);
         std::vector<T> out(count);
         std::memcpy(out.data(), mapped_, count * sizeof(T));
         return out;
@@ -205,13 +212,10 @@ public:
     [[nodiscard]] std::vector<std::string> profiles() const { return profiles_; }
     [[nodiscard]] const std::string& profile_status() const { return profile_status_; }
 
-    /// Runs a compute entry point over storage buffers bound at 0, 1, ...; waits for it.
+    /// Runs a compute entry point over storage buffers bound at 0, 1, ...; waits for it. A step that fails fails the
+    /// test case and ends the run there.
     void run(std::span<const std::uint32_t> spirv, const char* entry, std::span<const std::byte> push,
              std::span<Buffer* const> buffers, std::uint32_t groups) {
-        auto expect = [](auto&& result) {
-            REQUIRE(result.has_value());
-            return std::move(*result);
-        };
         std::vector<vk::DescriptorSetLayoutBinding> bindings;
         bindings.reserve(buffers.size());
         for (std::uint32_t i = 0; i < buffers.size(); ++i) {
@@ -220,36 +224,40 @@ public:
                                 .descriptorCount = 1,
                                 .stageFlags = vk::ShaderStageFlagBits::eCompute});
         }
-        const vk::raii::DescriptorSetLayout set_layout = expect(device_.createDescriptorSetLayout(
-            {.bindingCount = static_cast<std::uint32_t>(bindings.size()), .pBindings = bindings.data()}));
+        auto set_layout = device_.createDescriptorSetLayout(
+            {.bindingCount = static_cast<std::uint32_t>(bindings.size()), .pBindings = bindings.data()});
+        ATLAS_REQUIRE(set_layout.has_value(), vk::to_string(set_layout.error()));
         const vk::PushConstantRange range{.stageFlags = vk::ShaderStageFlagBits::eCompute,
                                           .offset = 0,
                                           .size = static_cast<std::uint32_t>(push.size())};
-        const vk::raii::PipelineLayout layout = expect(device_.createPipelineLayout({.setLayoutCount = 1,
-                                                                                     .pSetLayouts = &*set_layout,
-                                                                                     .pushConstantRangeCount = 1,
-                                                                                     .pPushConstantRanges = &range}));
-        const vk::raii::ShaderModule module =
-            expect(device_.createShaderModule({.codeSize = spirv.size_bytes(), .pCode = spirv.data()}));
-        const vk::raii::Pipeline pipeline = expect(device_.createComputePipeline(
-            nullptr, {.stage = {.stage = vk::ShaderStageFlagBits::eCompute, .module = *module, .pName = entry},
-                      .layout = *layout}));
+        auto layout = device_.createPipelineLayout({.setLayoutCount = 1,
+                                                    .pSetLayouts = &**set_layout,
+                                                    .pushConstantRangeCount = 1,
+                                                    .pPushConstantRanges = &range});
+        ATLAS_REQUIRE(layout.has_value(), vk::to_string(layout.error()));
+        auto module = device_.createShaderModule({.codeSize = spirv.size_bytes(), .pCode = spirv.data()});
+        ATLAS_REQUIRE(module.has_value(), vk::to_string(module.error()));
+        auto pipeline = device_.createComputePipeline(
+            nullptr, {.stage = {.stage = vk::ShaderStageFlagBits::eCompute, .module = **module, .pName = entry},
+                      .layout = **layout});
+        ATLAS_REQUIRE(pipeline.has_value(), vk::to_string(pipeline.error()));
         const vk::DescriptorPoolSize pool_size{.type = vk::DescriptorType::eStorageBuffer,
                                                .descriptorCount = static_cast<std::uint32_t>(buffers.size())};
-        const vk::raii::DescriptorPool pool =
-            expect(device_.createDescriptorPool({.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-                                                 .maxSets = 1,
-                                                 .poolSizeCount = 1,
-                                                 .pPoolSizes = &pool_size}));
-        std::vector<vk::raii::DescriptorSet> sets = expect(device_.allocateDescriptorSets(
-            {.descriptorPool = *pool, .descriptorSetCount = 1, .pSetLayouts = &*set_layout}));
+        auto pool = device_.createDescriptorPool({.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+                                                  .maxSets = 1,
+                                                  .poolSizeCount = 1,
+                                                  .pPoolSizes = &pool_size});
+        ATLAS_REQUIRE(pool.has_value(), vk::to_string(pool.error()));
+        auto sets = device_.allocateDescriptorSets(
+            {.descriptorPool = **pool, .descriptorSetCount = 1, .pSetLayouts = &**set_layout});
+        ATLAS_REQUIRE(sets.has_value(), vk::to_string(sets.error()));
         std::vector<vk::DescriptorBufferInfo> infos;
         infos.reserve(buffers.size());
         for (Buffer* b : buffers) infos.push_back({.buffer = b->handle(), .offset = 0, .range = vk::WholeSize});
         std::vector<vk::WriteDescriptorSet> writes;
         writes.reserve(buffers.size());
         for (std::uint32_t i = 0; i < buffers.size(); ++i) {
-            writes.push_back({.dstSet = *sets[0],
+            writes.push_back({.dstSet = *sets->front(),
                               .dstBinding = i,
                               .descriptorCount = 1,
                               .descriptorType = vk::DescriptorType::eStorageBuffer,
@@ -257,26 +265,32 @@ public:
         }
         device_.updateDescriptorSets(writes, {});
 
-        const vk::raii::CommandPool command_pool =
-            expect(device_.createCommandPool({.queueFamilyIndex = queue_family_}));
-        std::vector<vk::raii::CommandBuffer> commands = expect(device_.allocateCommandBuffers(
-            {.commandPool = *command_pool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1}));
-        const vk::raii::CommandBuffer& cmd = commands[0];
-        REQUIRE(cmd.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}).has_value());
-        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline);
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *layout, 0, *sets[0], {});
-        cmd.pushConstants(*layout, vk::ShaderStageFlagBits::eCompute, 0,
+        auto command_pool = device_.createCommandPool({.queueFamilyIndex = queue_family_});
+        ATLAS_REQUIRE(command_pool.has_value(), vk::to_string(command_pool.error()));
+        auto commands = device_.allocateCommandBuffers(
+            {.commandPool = **command_pool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1});
+        ATLAS_REQUIRE(commands.has_value(), vk::to_string(commands.error()));
+        const vk::raii::CommandBuffer& cmd = commands->front();
+        auto begun = cmd.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+        ATLAS_REQUIRE(begun.has_value(), vk::to_string(begun.error()));
+        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, **pipeline);
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, **layout, 0, *sets->front(), {});
+        cmd.pushConstants(**layout, vk::ShaderStageFlagBits::eCompute, 0,
                           vk::ArrayProxy<const std::byte>(static_cast<std::uint32_t>(push.size()), push.data()));
         cmd.dispatch(groups, 1, 1);
         const vk::MemoryBarrier to_host{.srcAccessMask = vk::AccessFlagBits::eShaderWrite,
                                         .dstAccessMask = vk::AccessFlagBits::eHostRead};
         cmd.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader, vk::PipelineStageFlagBits::eHost, {}, to_host,
                             {}, {});
-        REQUIRE(cmd.end().has_value());
-        const vk::raii::Fence fence = expect(device_.createFence({}));
+        auto ended = cmd.end();
+        ATLAS_REQUIRE(ended.has_value(), vk::to_string(ended.error()));
+        auto fence = device_.createFence({});
+        ATLAS_REQUIRE(fence.has_value(), vk::to_string(fence.error()));
         const vk::CommandBuffer raw = *cmd;
-        REQUIRE(queue_.submit(vk::SubmitInfo{.commandBufferCount = 1, .pCommandBuffers = &raw}, *fence).has_value());
-        REQUIRE(device_.waitForFences(*fence, vk::True, UINT64_MAX) == vk::Result::eSuccess);
+        auto submitted = queue_.submit(vk::SubmitInfo{.commandBufferCount = 1, .pCommandBuffers = &raw}, **fence);
+        ATLAS_REQUIRE(submitted.has_value(), vk::to_string(submitted.error()));
+        const vk::Result waited = device_.waitForFences(**fence, vk::True, UINT64_MAX);
+        ATLAS_REQUIRE(waited == vk::Result::eSuccess, vk::to_string(waited));
     }
 
 private:
@@ -447,8 +461,11 @@ Gpu* gpu() {
     (void)opened_once;
     auto& opened = shared_gpu();
     if (!opened) {
-        if (vulkan_required()) FAIL("Vulkan is required (ATLAS_REQUIRE_VULKAN=1) but: " << opened.error());
-        MESSAGE("skipped, no Vulkan: " << opened.error());
+        if (vulkan_required()) {
+            FAIL("Vulkan is required (ATLAS_REQUIRE_VULKAN=1) but: " << opened.error());
+        } else {
+            MESSAGE("skipped, no Vulkan: " << opened.error());
+        }
         return nullptr;
     }
     return opened->get();
@@ -486,12 +503,14 @@ std::size_t mismatches(const std::vector<std::array<float, 4>>& inputs, const st
     return n;
 }
 
-/// The module without its NoContraction decorations: what an ordinary compile would have given the driver.
+/// The module without its NoContraction decorations: what an ordinary compile would have given the driver (the module
+/// as it is when it cannot be read, which fails the test case).
 std::vector<std::uint32_t> contractible(std::span<const std::uint32_t> module) {
+    const auto code = atlas::spirv::instructions(module);
+    ATLAS_REQUIRE_OR_RETURN(std::vector<std::uint32_t>(module.begin(), module.end()), code.has_value(),
+                            "the module cannot be read: error " << static_cast<int>(code.error()));
     std::vector<std::uint32_t> out(module.begin(),
                                    module.begin() + static_cast<std::ptrdiff_t>(atlas::spirv::header_words));
-    const auto code = atlas::spirv::instructions(module);
-    REQUIRE(code.has_value());
     for (const auto& in : *code) {
         const auto ops = in.operands();
         if (in.opcode == atlas::spirv::op_decorate && ops.size() == 2 &&
@@ -589,7 +608,7 @@ TEST_CASE("Vulkan: every embedded module passes the validation layer's SPIR-V va
     // First the validator itself: a module with a float type of 13 bits must be rejected.
     std::vector<std::uint32_t> broken(atlas::spirv::probe_probe.begin(), atlas::spirv::probe_probe.end());
     const auto code = atlas::spirv::instructions(broken);
-    REQUIRE(code.has_value());
+    ATLAS_REQUIRE(code.has_value(), "the probe module cannot be read: error " << static_cast<int>(code.error()));
     bool planted = false;
     std::size_t at = atlas::spirv::header_words;
     for (const auto& in : *code) {
@@ -599,7 +618,7 @@ TEST_CASE("Vulkan: every embedded module passes the validation layer's SPIR-V va
         }
         at += in.words.size();
     }
-    REQUIRE(planted);
+    ATLAS_REQUIRE(planted, "the probe module declares no float type");
     const Verdict rejected = validate(*g, broken);
     CHECK(!rejected.invalid.empty());
 

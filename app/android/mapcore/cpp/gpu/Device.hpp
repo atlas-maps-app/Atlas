@@ -1,6 +1,9 @@
 // The device (plan-vector D5.11): the physical device chosen from the loader's list, its facts and the frame they
 // decide, the logical device with the extensions and features the frame may use, one queue that draws, computes and
-// presents, and the allocator.
+// (when the device presents) presents, and the allocator. Presenting is the caller's choice: the phone's surface path
+// and the Android façade's device present; the core's offscreen work (the host tests, the likeness candidate, the
+// light probe, VK check, the bench's offscreen passes) opens a device without VK_KHR_swapchain and what only
+// presenting uses.
 #pragma once
 
 #include "gpu/Facts.hpp"
@@ -15,15 +18,19 @@ namespace atlas::gpu {
 
 /// How to choose and open the device.
 struct DeviceOptions {
-    /// A surface the queue must present to (none: offscreen).
+    /// A surface the queue must present to (none: a device that presents to surfaces made later, or offscreen).
     vk::SurfaceKHR surface;
+    /// The device presents: it needs VK_KHR_swapchain, and gets what only presenting uses (swapchain maintenance,
+    /// display timing, incremental present). A surface implies it. Off, the device works offscreen and opens on a
+    /// Vulkan without a window system (the arm64 runner's lavapipe); its facts still say whether it has the swapchain.
+    bool present = false;
     /// K6's answer to configuration B's condition (2x within 0.15 MAD of 4x in both classes).
     bool msaa2_close = false;
 };
 
 /// What the device was created with, which the frame's code may rely on.
 struct Enabled {
-    bool swapchain = false;
+    bool swapchain = false; // only on a device that presents (DeviceOptions::present)
     bool dynamic_rendering = false;
     bool local_read = false;
     bool synchronization2 = false;

@@ -1,7 +1,10 @@
 // The phone's frame path on the host (plan-vector K1): the swapchain code on a headless surface
 // (VK_EXT_headless_surface, lavapipe's), acquiring, drawing and presenting through the frames in flight and remade as a
-// resize remakes it; and the stand-in drawn at Vulkan 1.1, what the oldest phones offer, both under the validation
-// layer, silent.
+// resize remakes it; and the stand-in drawn at Vulkan 1.1, what the oldest phones offer, on a device opened as such a
+// phone opens it, to present; both under the validation layer, silent. Both need a Vulkan that presents: where the
+// host's cannot (no VK_KHR_swapchain on the device, or for the first no VK_EXT_headless_surface), they skip with the
+// reason, and fail instead only where presentation is expected of it (a Vulkan with a window system,
+// tests/gpu/gpu_fixture.hpp). The arm64 runner's lavapipe has none: there both skip.
 #include "gpu/Frames.hpp"
 #include "gpu/Passes.hpp"
 #include "gpu/PipelineCache.hpp"
@@ -12,6 +15,7 @@
 #include <doctest/doctest.h>
 
 #include <memory>
+#include <string>
 
 #if !defined(__ANDROID__)
 #include "platform/host/Offscreen.hpp"
@@ -20,13 +24,14 @@
 using namespace atlas;
 
 TEST_CASE("the swapchain presents the stand-in on a headless surface and is remade at another size") {
-    auto instance = gpu::Instance::open({.validation = true, .require_validation = test::vulkan_required()});
-    if (!instance) {
-        if (test::vulkan_required()) FAIL(instance.error().text());
-        MESSAGE("skipped: " << instance.error().text());
+    test::Session s;
+    s.instance = test::open_instance({.validation = true, .require_validation = test::vulkan_required()});
+    if (!s.instance) return;
+    if (!test::presentation_expected(*s.instance)) {
+        MESSAGE("skipped: this Vulkan has no window system (no VK_KHR_surface), so nothing presents on it");
         return;
     }
-    if (!(*instance)->has_extension(vk::EXTHeadlessSurfaceExtensionName)) {
+    if (!s.instance->has_extension(vk::EXTHeadlessSurfaceExtensionName)) {
         MESSAGE("skipped: the loader offers no VK_EXT_headless_surface");
         return;
     }
@@ -36,32 +41,37 @@ TEST_CASE("the swapchain presents the stand-in on a headless surface and is rema
     MESSAGE(
         "skipped on macOS: Mesa's headless WSI in the emulator package's lavapipe asserts; the Linux runners run it");
 #else
-    test::Session s;
-    s.instance = std::move(*instance);
     auto surface = gpu::make_headless_surface(*s.instance);
-    REQUIRE_MESSAGE(surface.has_value(), surface.error().text());
+    ATLAS_REQUIRE(surface.has_value(), surface.error().text());
     {
-        auto device = gpu::Device::open(*s.instance, {.surface = **surface});
-        REQUIRE_MESSAGE(device.has_value(), device.error().text());
+        const gpu::DeviceOptions presenting{.surface = **surface};
+        auto picked = gpu::Device::pick(*s.instance, presenting);
+        ATLAS_REQUIRE(picked.has_value(), picked.error().text());
+        if (!picked->facts.has_extension(vk::KHRSwapchainExtensionName)) {
+            test::cannot_present(*s.instance, picked->facts.name + " has no VK_KHR_swapchain");
+            return;
+        }
+        auto device = gpu::Device::open(*s.instance, std::move(*picked), presenting);
+        ATLAS_REQUIRE(device.has_value(), device.error().text());
         s.device = std::move(*device);
         gpu::collect_surface(s.device->facts(), s.device->physical(), **surface, s.device->queue_family());
         for (const std::string& l : gpu::facts_lines(s.device->facts())) {
             if (l.starts_with("surface.")) MESSAGE("vkfacts " << l);
         }
         auto swapchain = gpu::Swapchain::create(*s.device, **surface, {.width = 360, .height = 640}, nullptr);
-        REQUIRE_MESSAGE(swapchain.has_value(), swapchain.error().text());
+        ATLAS_REQUIRE(swapchain.has_value(), swapchain.error().text());
         auto cache = gpu::PipelineCache::open(s.device->handle(), s.device->facts(), {}, 0, false);
-        REQUIRE(cache.has_value());
+        ATLAS_REQUIRE(cache.has_value(), cache.error().text());
         auto city = std::make_shared<const standin::City>(standin::City::generate(64, 13.0));
         auto standin = standin::StandIn::create(*s.device, *cache, city);
-        REQUIRE(standin.has_value());
+        ATLAS_REQUIRE(standin.has_value(), standin.error().text());
         (*standin)->set_camera(standin::board_view(360, 640, 1.0));
         auto renderer = gpu::Renderer::create(*s.device, **swapchain, **standin, s.device->facts().choice);
-        REQUIRE_MESSAGE(renderer.has_value(), renderer.error().text());
+        ATLAS_REQUIRE(renderer.has_value(), renderer.error().text());
         int presented = 0;
         for (int i = 0; i < 12; ++i) {
             auto report = (*renderer)->draw(0);
-            REQUIRE_MESSAGE(report.has_value(), report.error().text());
+            ATLAS_REQUIRE(report.has_value(), report.error().text());
             presented += report->status == gpu::Acquired::ok ? 1 : 0;
         }
         CHECK(presented == 12);
@@ -69,11 +79,12 @@ TEST_CASE("the swapchain presents the stand-in on a headless surface and is rema
         (*renderer)->drain();
         auto bigger =
             gpu::Swapchain::create(*s.device, **surface, {.width = 480, .height = 800}, std::move(*swapchain));
-        REQUIRE_MESSAGE(bigger.has_value(), bigger.error().text());
-        REQUIRE((*renderer)->retarget(**bigger).has_value());
+        ATLAS_REQUIRE(bigger.has_value(), bigger.error().text());
+        auto retargeted = (*renderer)->retarget(**bigger);
+        ATLAS_REQUIRE(retargeted.has_value(), retargeted.error().text());
         for (int i = 0; i < 6; ++i) {
             auto report = (*renderer)->draw(0);
-            REQUIRE(report.has_value());
+            ATLAS_REQUIRE(report.has_value(), report.error().text());
             CHECK(report->status == gpu::Acquired::ok);
         }
         (*renderer)->drain();
@@ -94,26 +105,31 @@ TEST_CASE("the swapchain presents the stand-in on a headless surface and is rema
 #if !defined(__ANDROID__)
 TEST_CASE("the stand-in draws at Vulkan 1.1 under the validation layer, silent") {
     // What a Vulkan 1.1 phone allows: no 1.2-1.4 core structures, the composite's SPIR-V without the without-format
-    // capabilities a 1.1 device without shaderStorageImageReadWithoutFormat refuses.
-    auto instance = gpu::Instance::open(
+    // capabilities a 1.1 device without shaderStorageImageReadWithoutFormat refuses. Its device is opened as the
+    // phone's is, to present (with the swapchain and what goes with it), and draws into offscreen images.
+    test::Session s;
+    s.instance = test::open_instance(
         {.validation = true, .require_validation = test::vulkan_required(), .max_version = VK_API_VERSION_1_1});
-    if (!instance) {
-        if (test::vulkan_required()) FAIL(instance.error().text());
-        MESSAGE("skipped: " << instance.error().text());
+    if (!s.instance) return;
+    const gpu::DeviceOptions phone{.present = true};
+    auto picked = gpu::Device::pick(*s.instance, phone);
+    ATLAS_REQUIRE(picked.has_value(), picked.error().text());
+    if (!picked->facts.has_extension(vk::KHRSwapchainExtensionName)) {
+        test::cannot_present(*s.instance,
+                             picked->facts.name + " has no VK_KHR_swapchain, which every phone's device has and opens");
         return;
     }
-    test::Session s;
-    s.instance = std::move(*instance);
-    auto device = gpu::Device::open(*s.instance, {});
-    REQUIRE_MESSAGE(device.has_value(), device.error().text());
+    auto device = gpu::Device::open(*s.instance, std::move(*picked), phone);
+    ATLAS_REQUIRE(device.has_value(), device.error().text());
     s.device = std::move(*device);
     CHECK(s.device->version() == VK_API_VERSION_1_1);
+    CHECK(s.device->enabled().swapchain);
     auto cache = gpu::PipelineCache::open(s.device->handle(), s.device->facts(), {}, 0, false);
-    REQUIRE(cache.has_value());
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
     auto city = std::make_shared<const standin::City>(standin::City::generate(64, 13.0));
     const vk::Extent2D extent{.width = 270, .height = 600};
     auto output = platform::Offscreen::create(*s.device, extent, 2);
-    REQUIRE(output.has_value());
+    ATLAS_REQUIRE(output.has_value(), output.error().text());
     for (const gpu::Configuration config : {gpu::Configuration{.config = gpu::FrameConfig::c,
                                                                .route = gpu::Route::renderpass,
                                                                .form = gpu::FrameForm::composite,
@@ -127,11 +143,14 @@ TEST_CASE("the stand-in draws at Vulkan 1.1 under the validation layer, silent")
                                                                .form = gpu::FrameForm::composite,
                                                                .target = gpu::CompositeTarget::direct}}) {
         auto standin = standin::StandIn::create(*s.device, *cache, city);
-        REQUIRE(standin.has_value());
+        ATLAS_REQUIRE(standin.has_value(), standin.error().text());
         (*standin)->set_camera(standin::board_view(extent.width, extent.height, 0.6559));
         auto renderer = gpu::Renderer::create(*s.device, **output, **standin, config);
-        REQUIRE_MESSAGE(renderer.has_value(), renderer.error().text());
-        for (int i = 0; i < 3; ++i) REQUIRE((*renderer)->draw(0).has_value());
+        ATLAS_REQUIRE(renderer.has_value(), renderer.error().text());
+        for (int i = 0; i < 3; ++i) {
+            auto report = (*renderer)->draw(0);
+            ATLAS_REQUIRE(report.has_value(), report.error().text());
+        }
         (*renderer)->drain();
         const auto messages = s.take_messages();
         CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));

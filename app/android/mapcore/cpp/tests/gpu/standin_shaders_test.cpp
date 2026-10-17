@@ -10,6 +10,7 @@
 #include "gen/spirv/standin/composite_x1_loc1_glsl_composite_fs.hpp"
 #include "gen/spirv/standin/frosted.hpp"
 #include "gen/spirv/standin/standin.hpp"
+#include "tests/base/require.hpp"
 
 #include <doctest/doctest.h>
 
@@ -77,7 +78,7 @@ TEST_CASE("the stand-in's shaders declare nothing a Vulkan 1.1 phone may lack") 
                                                       atlas::spirv::standin_composite_glsl_composite_fs,
                                                       atlas::spirv::standin_composite_x1_loc1_glsl_composite_fs};
     for (const auto words : modules) {
-        REQUIRE(words.size() > 5);
+        ATLAS_REQUIRE(words.size() > 5, "a module of " << words.size() << " words");
         CHECK(words[0] == 0x07230203U);
         CHECK(words[1] <= 0x00010300U); // SPIR-V 1.3 at most (Vulkan 1.1)
         for (const std::uint32_t c : capabilities(words)) {
@@ -93,13 +94,13 @@ TEST_CASE("the dynamic route's 1x composite writes colour attachment 1, the othe
          {std::span<const std::uint32_t>(atlas::spirv::standin_composite_x1_loc1),
           std::span<const std::uint32_t>(atlas::spirv::standin_composite_x1_loc1_glsl_composite_fs)}) {
         const auto locations = output_locations(words);
-        REQUIRE(locations.size() == 1);
+        ATLAS_REQUIRE(locations.size() == 1, locations.size() << " outputs");
         CHECK(locations[0] == 1);
     }
     for (const auto words : {std::span<const std::uint32_t>(atlas::spirv::standin_composite),
                              std::span<const std::uint32_t>(atlas::spirv::standin_composite_x1)}) {
         const auto locations = output_locations(words);
-        REQUIRE(locations.size() == 1);
+        ATLAS_REQUIRE(locations.size() == 1, locations.size() << " outputs");
         CHECK(locations[0] == 0);
     }
 }

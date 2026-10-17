@@ -186,7 +186,8 @@ if(ATLAS_TESTS)
     list(FILTER _test_vulkan_sources INCLUDE REGEX "_vk_test\\.cpp$")
     add_library(atlas_doctest INTERFACE)
     target_include_directories(atlas_doctest SYSTEM INTERFACE third_party/doctest)
-    # REQUIRE stays available without exceptions: a failed REQUIRE reports, then ends the run.
+    # REQUIRE stays available without exceptions, but a failed REQUIRE only reports and fails the test case, which runs
+    # on: what a test cannot go on without it requires with ATLAS_REQUIRE (tests/base/require.hpp), which returns.
     target_compile_definitions(atlas_doctest INTERFACE DOCTEST_CONFIG_NO_EXCEPTIONS_BUT_WITH_ALL_ASSERTS)
     add_executable(atlas_tests ${_test_sources} ${ATLAS_EXTRA_TEST_SOURCES} ${_core_objects})
     target_link_libraries(atlas_tests PRIVATE atlas_core_requirements atlas_doctest)

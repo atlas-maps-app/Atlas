@@ -1,6 +1,7 @@
 // The camera state's reader (style/CameraState.hpp), and its profile numbers against the packs'.
 #include "style/CameraState.hpp"
 
+#include "tests/base/require.hpp"
 #include "tiles/Sections.hpp"
 
 #include <doctest/doctest.h>
@@ -69,10 +70,11 @@ std::array<std::byte, 512> bytes(const CameraState& s) {
     return out;
 }
 
+/// Why the reader refuses `s` (when it accepts it, the test case fails and the answer is CameraError{}).
 CameraError refusal(const CameraState& s) {
     auto raw = bytes(s);
     auto r = atlas::style::read_camera_state(raw);
-    REQUIRE_FALSE(r.has_value());
+    ATLAS_REQUIRE_OR_RETURN(CameraError{}, !r.has_value(), "the reader accepted it");
     return r.error();
 }
 
@@ -104,10 +106,10 @@ TEST_CASE("a camera state reads back field by field, with its keep-out shapes") 
     const CameraState want = home();
     const auto raw = bytes(want);
     const auto got = atlas::style::read_camera_state(raw);
-    REQUIRE(got.has_value());
+    ATLAS_REQUIRE(got.has_value(), atlas::style::name_of(got.error()));
     CHECK(bytes(*got) == raw);
     CHECK(got->has(flag::rest));
-    REQUIRE(got->keep_outs().size() == 2);
+    ATLAS_REQUIRE(got->keep_outs().size() == 2, got->keep_outs().size() << " shapes");
     CHECK(got->keep_outs()[1].frosted());
     CHECK(got->keep_outs()[1].blur_dp() == 24.0F);
 }

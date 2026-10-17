@@ -17,6 +17,7 @@
 #include "base/pymath/PyMath.hpp"
 #include "style/HostProbe.hpp"
 #include "style/Theme.hpp"
+#include "tests/base/require.hpp"
 
 #include <doctest/doctest.h>
 
@@ -180,12 +181,14 @@ struct Case {
     }
 };
 
-/// A block through the core's own reader, as the phone gets it.
+/// A block through the core's own reader, as the phone gets it (as it was, when the reader refuses it, which fails the
+/// test case).
 ThemeBlock read_back(const ThemeBlock& b) {
     std::array<std::byte, 256> raw{};
     std::memcpy(raw.data(), &b, sizeof b);
     auto read = atlas::style::read_theme_block(raw);
-    REQUIRE_MESSAGE(read.has_value(), "the reader refused a test theme: " << atlas::style::name_of(read.error()));
+    ATLAS_REQUIRE_OR_RETURN(b, read.has_value(),
+                            "the reader refused a test theme: " << atlas::style::name_of(read.error()));
     return *read;
 }
 
@@ -398,7 +401,8 @@ TEST_CASE("tohex rounds as Python's round: half to even, the largest double unde
     std::uniform_real_distribution<double> u(-2.0, 260.0);
     for (int i = 0; i < 100000; ++i) {
         const double v = u(rnd);
-        REQUIRE(atlas::shaders::tohex(v) == static_cast<double>(port_byte(v)));
+        ATLAS_REQUIRE(atlas::shaders::tohex(v) == static_cast<double>(port_byte(v)),
+                      "tohex(" << v << ") is " << atlas::shaders::tohex(v) << ", the port's " << port_byte(v));
     }
 }
 
@@ -409,7 +413,9 @@ TEST_CASE("the exact light on the host's Vulkan device is the port's, bit for bi
         not_run(out.error());
         return;
     }
-    REQUIRE(out->bytes.size() == c.inputs.size());
+    ATLAS_REQUIRE(out->bytes.size() == c.inputs.size() && out->values.size() == 3 * c.inputs.size(),
+                  out->bytes.size() << " bytes and " << out->values.size() << " values for " << c.inputs.size()
+                                    << " surfaces");
     std::size_t values_differ = 0;
     std::size_t bytes_differ = 0;
     std::size_t first = c.inputs.size();
@@ -483,6 +489,8 @@ TEST_CASE("the GPU's exact exp and divisions are StrictMath.exp's and IEEE divis
         not_run(out.error());
         return;
     }
+    ATLAS_REQUIRE(out->values.size() == 3 * ops.size(), out->values.size()
+                                                            << " values for " << ops.size() << " inputs");
     std::size_t exp_differ = 0;
     std::size_t div_differ = 0;
     for (std::size_t i = 0; i < ops.size(); ++i) {
@@ -499,7 +507,9 @@ TEST_CASE("the GPU's exact exp and divisions are StrictMath.exp's and IEEE divis
         div_differ += divisions ? 0U : 1U;
     }
     auto quotients = atlas::style::run_light_probe(ops, theme, atlas::style::ProbeMode::quotient);
-    REQUIRE_MESSAGE(quotients.has_value(), (quotients ? std::string() : quotients.error().what));
+    ATLAS_REQUIRE(quotients.has_value(), quotients.error().what);
+    ATLAS_REQUIRE(quotients->values.size() == 3 * ops.size(), quotients->values.size()
+                                                                  << " values for " << ops.size() << " inputs");
     std::size_t quotient_differ = 0;
     for (std::size_t i = 0; i < ops.size(); ++i) {
         quotient_differ += same_bits(quotients->values[3 * i], ops[i].normal[0] / ops[i].normal[1]) ? 0U : 1U;
@@ -546,6 +556,9 @@ TEST_CASE("light_f32 is within its bound of the port's light, as C++ and on the 
         not_run(out.error());
         return;
     }
+    ATLAS_REQUIRE(out->values.size() == in.size() && out->bytes.size() == in.size(),
+                  out->bytes.size() << " bytes and " << out->values.size() << " values for " << in.size()
+                                    << " surfaces");
     for (std::size_t i = 0; i < in.size(); ++i) {
         values[i] = {out->values[i].x, out->values[i].y, out->values[i].z};
         bytes[i] = unpack(out->bytes[i]);

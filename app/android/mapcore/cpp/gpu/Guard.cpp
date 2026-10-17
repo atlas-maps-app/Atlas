@@ -207,7 +207,7 @@ std::expected<Started, StartRefusal> start_guarded(const StartOptions& options) 
     if (!instance) return refuse({}, instance.error().text());
     s.instance = std::move(*instance);
 
-    const DeviceOptions device_options{.msaa2_close = options.msaa2_close};
+    const DeviceOptions device_options{.present = options.present, .msaa2_close = options.msaa2_close};
     auto picked = Device::pick(*s.instance, device_options);
     if (!picked) return refuse({}, picked.error().text());
     const auto [driver, version] = guard_key(picked->facts);

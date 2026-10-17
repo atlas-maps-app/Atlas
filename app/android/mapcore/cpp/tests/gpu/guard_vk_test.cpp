@@ -108,14 +108,15 @@ TEST_CASE("guard child start") {
     if (dir == nullptr) return;
     const char* plant = std::getenv("ATLAS_GUARD_PLANT"); // NOLINT(concurrency-mt-unsafe)
     auto started = gpu::start_guarded(options_in(dir, plant == nullptr ? "" : plant));
-    REQUIRE_MESSAGE(started.has_value(), started.error().reason);
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
     started->guard->enter(gpu::Stage::pipelines);
     auto city = std::make_shared<const standin::City>(standin::City::generate(32, 13.0));
     auto standin = standin::StandIn::create(*started->device, *started->cache, city);
-    REQUIRE(standin.has_value());
+    ATLAS_REQUIRE(standin.has_value(), standin.error().text());
     started->guard->leave();
     // A start that survives writes its cache, as the core does after its pipelines.
-    REQUIRE(started->cache->save().has_value());
+    auto saved = started->cache->save();
+    ATLAS_REQUIRE(saved.has_value(), saved.error().text());
 }
 
 TEST_CASE("the crash guard: a planted abort, one retry without the cache, then Vulkan off for that driver") {
@@ -127,7 +128,7 @@ TEST_CASE("the crash guard: a planted abort, one retry without the cache, then V
 
     // A clean start writes the pipeline cache.
     int status = spawn_child(dir, "");
-    REQUIRE_MESSAGE(WIFEXITED(status), "the clean child did not exit");
+    ATLAS_REQUIRE(WIFEXITED(status), "the clean child did not exit (wait status " << status << ")");
     CHECK(WEXITSTATUS(status) == 0);
     CHECK(fs::exists(dir / "pipelines.bin"));
     CHECK_FALSE(fs::exists(dir / "guard"));
@@ -151,7 +152,7 @@ TEST_CASE("the crash guard: a planted abort, one retry without the cache, then V
 
     // 3. The start after: Vulkan off for this driver and version, the `vk guard` line, the facts kept.
     auto refused = gpu::start_guarded(options_in(dir, ""));
-    REQUIRE_FALSE(refused.has_value());
+    ATLAS_REQUIRE(!refused.has_value(), "the start after a second crash opened Vulkan");
     MESSAGE("refused: " << refused.error().line << " (" << refused.error().reason << ")");
     CHECK(refused.error().line.starts_with("vk guard pipelines "));
     CHECK(refused.error().line.ends_with(" attempt 2"));
@@ -162,14 +163,14 @@ TEST_CASE("the crash guard: a planted abort, one retry without the cache, then V
 
     // 4. It stays off at every later start of the same driver version.
     auto again = gpu::start_guarded(options_in(dir, ""));
-    REQUIRE_FALSE(again.has_value());
+    ATLAS_REQUIRE(!again.has_value(), "a later start of the same driver version opened Vulkan");
     CHECK(again.error().line.starts_with("vk guard pipelines "));
 
     // 5. A driver update (another version) starts again.
     std::string updated = off;
     const std::size_t bar = updated.find('|');
-    REQUIRE(bar != std::string::npos);
-    const std::size_t version = updated.find('|', bar + 1);
+    const std::size_t version = bar == std::string::npos ? bar : updated.find('|', bar + 1);
+    ATLAS_REQUIRE(version != std::string::npos, "the off file names no driver and version: " << off);
     updated.replace(bar + 1, version - bar - 1, "0x00000000");
     std::ofstream(dir / "off", std::ios::trunc) << updated;
     auto after_update = gpu::start_guarded(options_in(dir, ""));
@@ -182,7 +183,7 @@ TEST_CASE("the crash guard: a planted abort, one retry without the cache, then V
     status = spawn_child(dir, "instance");
     CHECK(WIFSIGNALED(status));
     auto system_off = gpu::start_guarded(options_in(dir, ""));
-    REQUIRE_FALSE(system_off.has_value());
+    ATLAS_REQUIRE(!system_off.has_value(), "the start after two crashes at the instance opened Vulkan");
     CHECK(system_off.error().line.starts_with("vk guard instance unknown host-test-system attempt 2"));
     fs::remove_all(dir, ec);
 }

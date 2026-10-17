@@ -76,6 +76,10 @@ void Swapchain::retire_presents() {
 
 Result<std::unique_ptr<Swapchain>> Swapchain::create(const Device& device, vk::SurfaceKHR surface, vk::Extent2D wanted,
                                                      std::unique_ptr<Swapchain> old) {
+    if (!device.enabled().swapchain) {
+        return fail(std::format("{} was opened for offscreen work, without VK_KHR_swapchain: it cannot present",
+                                device.facts().name));
+    }
     std::unique_ptr<Swapchain> self(new Swapchain()); // NOLINT(cppcoreguidelines-owning-memory): private constructor
     self->device_ = &device;
     const vk::raii::PhysicalDevice& physical = device.physical();

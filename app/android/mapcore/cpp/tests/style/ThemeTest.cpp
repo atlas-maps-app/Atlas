@@ -1,6 +1,8 @@
 // The theme block's reader, the shaders' Theme made from it and its dump (style/Theme.hpp).
 #include "style/Theme.hpp"
 
+#include "tests/base/require.hpp"
+
 #include <doctest/doctest.h>
 
 #include <array>
@@ -99,10 +101,11 @@ std::array<std::byte, 256> bytes(const ThemeBlock& b) {
     return out;
 }
 
+/// Why the reader refuses `b` (when it accepts it, the test case fails and the answer is ThemeError{}).
 ThemeError refusal(const ThemeBlock& b) {
     auto raw = bytes(b);
     auto r = atlas::style::read_theme_block(raw);
-    REQUIRE_FALSE(r.has_value());
+    ATLAS_REQUIRE_OR_RETURN(ThemeError{}, !r.has_value(), "the reader accepted it");
     return r.error();
 }
 
@@ -124,12 +127,12 @@ TEST_CASE("a theme block reads back field by field") {
     for (const ThemeBlock& want : {sunny(), night()}) {
         const auto raw = bytes(want);
         const auto got = atlas::style::read_theme_block(raw);
-        REQUIRE(got.has_value());
+        ATLAS_REQUIRE(got.has_value(), atlas::style::name_of(got.error()));
         CHECK(bytes(*got) == raw);
     }
     const auto raw = bytes(sunny());
     const auto got = atlas::style::read_theme_block(raw);
-    REQUIRE(got.has_value());
+    ATLAS_REQUIRE(got.has_value(), atlas::style::name_of(got.error()));
     CHECK(got->has(flag::weather));
     CHECK_FALSE(got->has(flag::night));
 }
