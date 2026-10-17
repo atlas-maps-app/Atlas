@@ -26,19 +26,25 @@ ARG MESON_SHA256_SDIST=c105816d8158c76b72adcb9ff60297719096da7d07f6b1f000fd8c013
 # Besides the compilers and Mesa's generators:
 # - libdrm-dev: Mesa requires libdrm (>= 2.4.109 for llvmpipe and lavapipe) whenever it builds a Vulkan driver on Linux,
 #   for VK_KHR_display, even with no window system (meson.build: with_dri2, then dependency('libdrm'));
+# - llvm-18-dev and libpolly-18-dev: LLVM 18's static libraries, and Polly's. Ubuntu builds LLVM with Polly as a static
+#   extension, so among the libraries of the lto component Mesa asks for when llvmpipe draws with LLVM (meson.build:
+#   llvm_optional_modules += ['lto']) llvm-config-18 --link-static names -lPolly and -lPollyISL. Their libPolly.a and
+#   libPollyISL.a come only in libpolly-18-dev, which llvm-18-dev does not depend on; without it lavapipe's link stops
+#   at "cannot find -lPolly";
 # - libx11-dev, libxcb1-dev, libxrandr-dev, libwayland-dev: the validation layer's Linux build turns on every window
 #   system by default and requires their pkg-config files and headers. The layer links none of them (only its
 #   DEBUG_CAPTURE_KEYBOARD option would), so the image gains no run-time dependency. Khronos's own CI builds the layer
 #   this way (apt-get install libwayland-dev xorg-dev); switching the window systems off is a configuration it never
 #   builds.
-# Checked against Ubuntu noble's indexes (main and universe, with updates and security) for amd64 and arm64 on 17
-# October 2026: every package and dependency resolves, and libdrm-dev is 2.4.125.
+# Checked against Ubuntu noble's indexes (main and universe, with updates, security and backports) for amd64 and arm64
+# on 17 October 2026: every package and dependency resolves, libdrm-dev is 2.4.125, and llvm-18-dev and libpolly-18-dev
+# are both 1:18.1.3-1ubuntu1 (noble-updates/universe), the same build of LLVM 18.1.3.
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       bison build-essential ca-certificates cmake curl flex git glslang-tools libdrm-dev libelf-dev libexpat1-dev \
-      libwayland-dev libx11-dev libxcb1-dev libxrandr-dev libzstd-dev llvm-18-dev ninja-build pkg-config python3 \
-      python3-mako python3-packaging python3-pip python3-venv python3-yaml xz-utils zlib1g-dev \
+      libpolly-18-dev libwayland-dev libx11-dev libxcb1-dev libxrandr-dev libzstd-dev llvm-18-dev ninja-build \
+      pkg-config python3 python3-mako python3-packaging python3-pip python3-venv python3-yaml xz-utils zlib1g-dev \
  && rm -rf /var/lib/apt/lists/*
 # Mesa 26 needs a newer Meson than Ubuntu 24.04's.
 RUN python3 -m venv /opt/meson \
@@ -46,7 +52,11 @@ RUN python3 -m venv /opt/meson \
       > /tmp/meson.txt \
  && /opt/meson/bin/pip install --no-cache-dir --require-hashes --no-deps -r /tmp/meson.txt
 
-# lavapipe alone: no GL, no window systems, LLVM linked in statically so the runner needs no libLLVM.
+# lavapipe alone: no GL, no window systems, LLVM linked in statically so the runner needs no libLLVM. Linked shared
+# (-Dshared-llvm=enabled), lavapipe would need Ubuntu's libLLVM.so.18.1 at run time, and behind it libedit, libffi and
+# libxml2 with ICU: the image would have to ship them, and on LD_LIBRARY_PATH=/opt/vulkan/lib they would stand in for
+# the runner's own copies in every test process and every tool it starts. Statically, lavapipe carries only the LLVM
+# code it uses, and VERSIONS.txt records what it needs from the system.
 RUN curl -fsSLo /tmp/mesa.tar.xz "https://archive.mesa3d.org/mesa-${MESA_VERSION}.tar.xz" \
  && echo "${MESA_SHA256}  /tmp/mesa.tar.xz" | sha256sum -c - \
  && mkdir -p /src && tar -xJf /tmp/mesa.tar.xz -C /src \
@@ -60,7 +70,7 @@ RUN curl -fsSLo /tmp/mesa.tar.xz "https://archive.mesa3d.org/mesa-${MESA_VERSION
 # lavapipe links libdrm (for VK_KHR_display), which a CI runner need not have, so it travels with lavapipe.
 
 # The loader and the validation layer from the same Vulkan SDK release as the headers, in their default configurations
-# (every window system on, from the headers installed above; neither links them).
+# (every window system on; neither links them). The loader builds against the headers installed here.
 RUN git clone --depth 1 --branch "${VULKAN_SDK_TAG}" https://github.com/KhronosGroup/Vulkan-Headers /src/headers \
  && test "$(git -C /src/headers rev-parse HEAD)" = "${HEADERS_COMMIT}" \
  && cmake -S /src/headers -B /src/headers/build -G Ninja -DCMAKE_INSTALL_PREFIX=/opt/vulkan \
@@ -70,16 +80,26 @@ RUN git clone --depth 1 --branch "${VULKAN_SDK_TAG}" https://github.com/KhronosG
  && cmake -S /src/loader -B /src/loader/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/vulkan \
       -DVULKAN_HEADERS_INSTALL_DIR=/opt/vulkan -DBUILD_TESTS=OFF \
  && cmake --build /src/loader/build && cmake --install /src/loader/build
+# The layer's CMake fetches and builds its dependencies itself (UPDATE_DEPS, on by default at this tag), at the commits
+# its scripts/known_good.json names (their Vulkan-Headers v1.4.363 is HEADERS_COMMIT), and with BUILD_TESTS off it
+# leaves out the test-only ones (glslang, googletest, Slang). The layer's own CI builds its Linux release this way
+# (vvl.yml: -D UPDATE_DEPS=ON -D CMAKE_BUILD_TYPE=Release); a separate scripts/update_deps.py run first would only build
+# every dependency twice.
 RUN git clone --depth 1 --branch "${VULKAN_SDK_TAG}" https://github.com/KhronosGroup/Vulkan-ValidationLayers /src/vvl \
  && test "$(git -C /src/vvl rev-parse HEAD)" = "${LAYERS_COMMIT}" \
  && cd /src/vvl \
- && python3 scripts/update_deps.py --dir external --config release --generator Ninja \
- && cmake -S . -B build -G Ninja -C external/helper.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/vulkan \
-      -DBUILD_WERROR=OFF -DBUILD_TESTS=OFF \
+ && cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/vulkan \
+      -DUPDATE_DEPS=ON -DBUILD_WERROR=OFF -DBUILD_TESTS=OFF \
  && cmake --build build && cmake --install build
 
-# What was built and what it needs from the system, for the record (core.yml prints it and checks the libraries).
-RUN { echo "mesa ${MESA_VERSION} (lavapipe)"; echo "vulkan ${VULKAN_SDK_TAG} (loader, validation layer)"; uname -m; \
+# What was built, from which of the archive's packages, and what it needs from the system, for the record (core.yml
+# prints it and checks the libraries). A library or manifest that is missing fails the build here.
+RUN set -e; \
+    { echo "mesa ${MESA_VERSION} (lavapipe)"; echo "vulkan ${VULKAN_SDK_TAG} (loader, validation layer)"; uname -m; \
+      dpkg-query -W -f '${Package} ${Version}\n' llvm-18-dev libpolly-18-dev libdrm-dev spirv-tools glslang-tools \
+        gcc-13 g++-13; \
+      grep -H '"library_path"' /opt/vulkan/share/vulkan/icd.d/lvp_icd.*.json \
+        /opt/vulkan/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json; \
       for f in /opt/vulkan/lib/libvulkan_lvp.so /opt/vulkan/lib/libvulkan.so.1 \
                /opt/vulkan/lib/libVkLayer_khronos_validation.so; do echo "$f:"; LD_LIBRARY_PATH=/opt/vulkan/lib ldd "$f"; done; \
     } > /opt/vulkan/VERSIONS.txt
