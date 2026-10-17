@@ -383,6 +383,7 @@ jobs:
           path: |
             ${{ env.CP }}/build/crashes/
             ${{ env.CP }}/build/fuzz-logs/
+            ${{ env.CP }}/build/*/CMakeFiles/CMakeConfigureLog.yaml
 
       # ---- tidy also holds the rule table (plan-vector K5, VF1) to the renderer: every feature render/*.py draws has its
       # record in app/android/mapcore/rules/rules.tsv, and no source changed since the recording (Python 3's standard
