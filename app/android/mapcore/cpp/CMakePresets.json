@@ -1,0 +1,95 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "host",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": { "ATLAS_TESTS": "ON" }
+    },
+    {
+      "name": "host-debug",
+      "inherits": "host",
+      "displayName": "Host debug: unit tests, Vulkan on lavapipe, ASan and UBSan; the fuzz targets with the standalone driver",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "ATLAS_SANITIZE": "asan", "ATLAS_FUZZ": "ON" }
+    },
+    {
+      "name": "host-tsan",
+      "inherits": "host",
+      "displayName": "Host TSan: the unit tests under ThreadSanitizer",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "ATLAS_SANITIZE": "tsan" }
+    },
+    {
+      "name": "host-release",
+      "inherits": "host",
+      "displayName": "Host release: the shipped flags (-O2, ThinLTO), unit tests and microbenchmarks",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "ATLAS_BENCH": "ON" }
+    },
+    {
+      "name": "host-fuzz",
+      "inherits": "host",
+      "displayName": "Host fuzz (Linux): libFuzzer targets with ASan and UBSan",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "ATLAS_SANITIZE": "fuzzer", "ATLAS_FUZZ": "ON", "ATLAS_TESTS": "OFF" }
+    },
+    {
+      "name": "host-tidy",
+      "inherits": "host",
+      "displayName": "Host tidy: every core, test, fuzz and bench source through clang-tidy as it compiles",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug", "ATLAS_TIDY": "ON", "ATLAS_FUZZ": "ON", "ATLAS_BENCH": "ON",
+        "CMAKE_DISABLE_PRECOMPILE_HEADERS": "ON"
+      }
+    },
+    {
+      "name": "android",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "toolchainFile": "$env{ANDROID_HOME}/ndk/30.0.16248370/build/cmake/android.toolchain.cmake",
+      "cacheVariables": {
+        "ANDROID_PLATFORM": "android-29",
+        "ANDROID_STL": "c++_static",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ATLAS_SANITIZE": "ubsan-minimal",
+        "ATLAS_TESTS": "ON",
+        "ATLAS_FUZZ": "ON",
+        "ATLAS_BENCH": "ON"
+      }
+    },
+    {
+      "name": "android-arm64",
+      "inherits": "android",
+      "displayName": "Android arm64-v8a (NDK r30): the core, its tests and benchmarks, for a phone or adb",
+      "cacheVariables": { "ANDROID_ABI": "arm64-v8a" }
+    },
+    {
+      "name": "android-x86_64",
+      "inherits": "android",
+      "displayName": "Android x86_64 (NDK r30): the core and its tests, for the emulator (Bionic)",
+      "cacheVariables": { "ANDROID_ABI": "x86_64" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "host-debug", "configurePreset": "host-debug" },
+    { "name": "host-tsan", "configurePreset": "host-tsan" },
+    { "name": "host-release", "configurePreset": "host-release" },
+    { "name": "host-fuzz", "configurePreset": "host-fuzz" },
+    { "name": "host-tidy", "configurePreset": "host-tidy" },
+    { "name": "android-arm64", "configurePreset": "android-arm64" },
+    { "name": "android-x86_64", "configurePreset": "android-x86_64" }
+  ],
+  "testPresets": [
+    {
+      "name": "host",
+      "hidden": true,
+      "output": { "outputOnFailure": true },
+      "environment": { "ATLAS_REQUIRE_VULKAN": "1" }
+    },
+    { "name": "host-debug", "inherits": "host", "configurePreset": "host-debug" },
+    { "name": "host-tsan", "inherits": "host", "configurePreset": "host-tsan" },
+    { "name": "host-release", "inherits": "host", "configurePreset": "host-release" }
+  ]
+}

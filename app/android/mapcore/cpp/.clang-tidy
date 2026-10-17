@@ -1,0 +1,125 @@
+# clang-tidy for the core (plan-vector T10). The host-tidy preset runs it on every core, test, fuzz and bench source as
+# it compiles, and CI on every changed file; a finding fails the build. Third-party code, the shaders and generated
+# headers are left out.
+#
+# One rule is the plan's own: <cmath>'s transcendentals are banned outside base/pymath/ (T3), because every libm
+# rounds them its own way and the port computes them with fdlibm (StrictMath). bugprone-unsafe-functions matches them
+# by name, std:: or not, libc++'s inline namespace (std::__1, std::__ndk1) and the builtins included; pymath's own
+# functions live in atlas::pymath, which the pattern leaves alone. sqrt, fma, floor, ceil, trunc, round, fmod, ldexp
+# and nextafter are exact and allowed. fmin, fmax and C23's fminimum and fmaximum (always floating point) are banned
+# too: they order -0.0 and +0.0 unlike Python's min and max, which pymath::min and pymath::max reproduce. std::min and
+# std::max stay allowed for integers; for floats, base/pymath's own tests and the canary in tests/base/fp_test.cpp guard
+# the miscompile clang 21 makes of a signed-zero ternary on aarch64.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-exception-escape,
+  cert-dcl50-cpp,
+  cert-dcl58-cpp,
+  cert-env33-c,
+  cert-err33-c,
+  cert-err34-c,
+  cert-flp30-c,
+  cert-mem57-cpp,
+  cert-msc50-cpp,
+  cert-msc51-cpp,
+  cert-oop57-cpp,
+  cert-oop58-cpp,
+  cert-str34-c,
+  concurrency-*,
+  cppcoreguidelines-avoid-capturing-lambda-coroutines,
+  cppcoreguidelines-avoid-goto,
+  cppcoreguidelines-avoid-non-const-global-variables,
+  cppcoreguidelines-interfaces-global-init,
+  cppcoreguidelines-macro-usage,
+  cppcoreguidelines-misleading-capture-default-by-value,
+  cppcoreguidelines-missing-std-forward,
+  cppcoreguidelines-narrowing-conversions,
+  cppcoreguidelines-no-malloc,
+  cppcoreguidelines-noexcept-destructor,
+  cppcoreguidelines-noexcept-move-operations,
+  cppcoreguidelines-noexcept-swap,
+  cppcoreguidelines-prefer-member-initializer,
+  cppcoreguidelines-pro-type-const-cast,
+  cppcoreguidelines-pro-type-member-init,
+  cppcoreguidelines-pro-type-static-cast-downcast,
+  cppcoreguidelines-rvalue-reference-param-not-moved,
+  cppcoreguidelines-slicing,
+  cppcoreguidelines-special-member-functions,
+  cppcoreguidelines-virtual-class-destructor,
+  misc-confusable-identifiers,
+  misc-definitions-in-headers,
+  misc-header-include-cycle,
+  misc-misleading-bidirectional,
+  misc-misleading-identifier,
+  misc-misplaced-const,
+  misc-new-delete-overloads,
+  misc-non-copyable-objects,
+  misc-redundant-expression,
+  misc-static-assert,
+  misc-throw-by-value-catch-by-reference,
+  misc-unconventional-assign-operator,
+  misc-uniqueptr-reset-release,
+  misc-unused-alias-decls,
+  misc-unused-parameters,
+  misc-unused-using-decls,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  -modernize-use-nodiscard,
+  -modernize-use-std-print,
+  -modernize-avoid-c-arrays,
+  performance-*,
+  readability-avoid-const-params-in-decls,
+  readability-container-contains,
+  readability-container-size-empty,
+  readability-delete-null-pointer,
+  readability-duplicate-include,
+  readability-else-after-return,
+  readability-identifier-naming,
+  readability-inconsistent-declaration-parameter-name,
+  readability-isolate-declaration,
+  readability-make-member-function-const,
+  readability-misleading-indentation,
+  readability-non-const-parameter,
+  readability-qualified-auto,
+  readability-redundant-access-specifiers,
+  readability-redundant-control-flow,
+  readability-redundant-declaration,
+  readability-redundant-member-init,
+  readability-redundant-smartptr-get,
+  readability-redundant-string-cstr,
+  readability-simplify-boolean-expr,
+  readability-static-accessed-through-instance,
+  readability-string-compare,
+  readability-uniqueptr-delete-release,
+  readability-use-std-min-max
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*/mapcore/cpp/.*'
+ExcludeHeaderFilterRegex: '.*/mapcore/cpp/(third_party|shaders|build)/.*'
+SystemHeaders: false
+CheckOptions:
+  bugprone-unsafe-functions.ReportDefaultFunctions: true
+  bugprone-unsafe-functions.CustomFunctions: '^::(std::(__[[:alnum:]_]+::)?)?(__builtin_)?(sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|exp|exp2|expm1|log|log10|log2|log1p|logb|pow|cbrt|hypot|erf|erfc|tgamma|lgamma)[fl]?$,atlas::pymath,is not bit-exact across libms; the port computes it with fdlibm (plan-vector T3);^::(std::(__[[:alnum:]_]+::)?)?(__builtin_)?f(min|max)(imum|imum_num)?[fl]?$,atlas::pymath::min or atlas::pymath::max,orders -0.0 and +0.0 (and NaN) unlike Python min and max'
+  cppcoreguidelines-macro-usage.AllowedRegexp: '^(ATLAS_|DOCTEST_|VK_|VULKAN_HPP_|VMA_|VP_)'
+  cppcoreguidelines-special-member-functions.AllowSoleDefaultDtor: true
+  misc-unused-parameters.StrictMode: false
+  modernize-use-std-numbers.DiffThreshold: 0.0
+  readability-identifier-naming.NamespaceCase: lower_case
+  readability-identifier-naming.ClassCase: CamelCase
+  readability-identifier-naming.StructCase: CamelCase
+  readability-identifier-naming.EnumCase: CamelCase
+  readability-identifier-naming.UnionCase: CamelCase
+  readability-identifier-naming.TemplateParameterCase: CamelCase
+  readability-identifier-naming.ConceptCase: CamelCase
+  readability-identifier-naming.FunctionCase: lower_case
+  readability-identifier-naming.FunctionIgnoredRegexp: '^(LLVMFuzzerTestOneInput|JNI_OnLoad|JNI_OnUnload|Java_.*|DOCTEST_.*|_DOCTEST_.*)$'
+  readability-identifier-naming.MethodCase: lower_case
+  readability-identifier-naming.VariableCase: lower_case
+  readability-identifier-naming.ParameterCase: lower_case
+  readability-identifier-naming.MemberCase: lower_case
+  readability-identifier-naming.PrivateMemberSuffix: '_'
+  readability-identifier-naming.ProtectedMemberSuffix: '_'
+  readability-identifier-naming.ConstexprVariableCase: lower_case
+  readability-identifier-naming.EnumConstantCase: lower_case
+  readability-identifier-naming.MacroDefinitionCase: UPPER_CASE

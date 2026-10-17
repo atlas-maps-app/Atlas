@@ -1,0 +1,60 @@
+# The core's third-party code and tools
+
+Everything the core builds from that Atlas did not write, with its version, where it came from, the SHA-256 of what was downloaded and its licence (plan-vector T4, T5). CMake never downloads anything: libraries are vendored here, and the tools are fetched by Gradle's tasks (`mapcore/build.gradle.kts`) and CI (`.github/workflows/core.yml`) from the pins in `mapcore/tools.properties`, each checked against its SHA-256 before use. Fetched 16 October 2026 by package K0. The app's licences screen (`app/src/main/res/raw/mine_licences.json`) must list the same entries once the library ships in the APK; it does not list them yet.
+
+An upgrade is its own reviewed change: the new archive's SHA-256 here, the library's tests (and for Vulkan-Headers, Slang and lavapipe, L2 and the likeness tiers) before and after.
+
+## Vendored libraries
+
+Each library keeps the upstream files the "Kept" column names, none modified except where noted. Not all of them are compiled today: fdlibm is kept whole for reference (base/pymath ports its own copy); zstd's `huf_decompress_amd64.S` is kept but the build takes only its C files (`ZSTD_DISABLE_ASM`); of Vulkan-Headers' 50 headers the core includes 24 and the MODS probe's `vulkan.cppm` itself and 4 more, and the other 21 (the video headers, other platforms' and the static assertions; about 1.3 MB) nothing (measured with `clang -M` on 17 October).
+
+| Library | Version | Upstream archive (SHA-256) | Kept | Licence |
+|---|---|---|---|---|
+| Vulkan-Headers with Vulkan-Hpp | `vulkan-sdk-1.4.363.0` (header version 363; commit 6802bb4733b6) | github.com/KhronosGroup/Vulkan-Headers, tag archive `4a078be12bef21cfebc09d878b77a63cff9d68f899254a0b00d0e37ef73e7f7e` | `include/` (C headers, Vulkan-Hpp, `vulkan.cppm` for the MODS probe), `LICENSE.md`, `LICENSES/` | Apache-2.0 OR MIT |
+| Vulkan Memory Allocator | 3.4.0 (commit 3aa921224c15) | github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator, tag archive `822aa850c6ce77346ae96a8a1d351d52e77e85929f35363849a0a4e638e0a2a1` | `include/vk_mem_alloc.h`, `LICENSE.txt` | MIT |
+| zstd, decompression only | 1.5.7 | github.com/facebook/zstd release `zstd-1.5.7.tar.gz` `eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3` (equal to the release's own `.sha256`) | `lib/zstd.h`, `lib/zstd_errors.h`, `lib/common/*` without `pool.*` and `threading.*`, `lib/decompress/*`, `LICENSE` | BSD-3-Clause (zstd is dual-licensed BSD or GPLv2; Atlas takes BSD) |
+| earcut.hpp | 3.2.4 (commit 92acda9e2ed9) | github.com/mapbox/earcut.hpp, tag archive `70c00e90811950b2c3d973ecfd46010680b946f7952306ffa2785c0368fe2db0` | `include/mapbox/earcut.hpp`, `LICENSE` | ISC |
+| doctest | 2.5.3 | github.com/doctest/doctest release `doctest-v2.5.3.tar.gz` `eb4a39729d091e43d4d593888bf4d145ee9a0f0e13f7404484b6f2fb60d5d50f` (equal to GitHub's published digest) | `doctest/doctest.h`, `LICENSE.txt` | MIT |
+| nanobench | 4.6.0 (commit b709728dba4d) | github.com/martinus/nanobench, tag archive `80fe0835e85da6acc57285354d86b17d5d1dc7182432a5eaea3b2098a17d4c26` | `include/nanobench.h`, `LICENSE` | MIT |
+| Vulkan Profiles library | `vulkan-sdk-1.4.363.0` (commit fce885d30eba) | github.com/KhronosGroup/Vulkan-Profiles, tag archive `8210b69c993c5f49e62d6e72d50e904fe0eb68a6e778761fd47279fc594b3704` | `include/vulkan/vulkan_profiles.hpp` (generated, below), `profiles/*.json` (Android's six profiles), `LICENSE.md`, `LICENSES/Apache-2.0.txt` | Apache-2.0 |
+| fdlibm | 5.3 | www.netlib.org/fdlibm, 84 files fetched one by one (the `index` left out); the SHA-256 of the list of their SHA-256s is `80a20abc991a4c31b300e90bfa28410db5fa7d95ea65bda4487592d89bc52cb1`, each file's own in `fdlibm/SHA256SUMS` | every source file, `makefile`, `readme` (the JDK's `pow` fix is applied by K3b in `base/pymath/`, not here) | Sun's notice: "Permission to use, copy, modify, and distribute this software is freely granted, provided that this notice is preserved" |
+
+**The Vulkan Profiles header is generated**, as upstream's own build does, by its `scripts/gen_profiles_solution.py` (Python's standard library only) from the registry of the vendored Vulkan-Headers and Android's profiles:
+
+```
+python3 -I Vulkan-Profiles/scripts/gen_profiles_solution.py --registry Vulkan-Headers/registry/vk.xml \
+  --input <profiles> --output-library-inc <include> --output-library-src <source>
+```
+
+One input was corrected first: `VP_ANDROID_vulkan_profile_2025.json` lists `VkPhysicalDeviceVariablePointerFeatures` twice, under that name and under its alias `VkPhysicalDeviceVariablePointerFeaturesKHR`, with identical values; the generator then emits two `case` labels with the same structure type, which no compiler accepts once the Android platform's definitions are visible. The alias entry was removed from the copy fed to the generator (the profile's requirements are unchanged); `profiles/` keeps the file as released. The generator is deterministic (two runs, byte-identical output). The generated header's SHA-256 is `6db19a1a2dce2e0fbb38ee02d2cd34460aa0728ff9812310503ca3aef5e79ef1`; the corrected profile's `6153fe59d7032e587d2dcc0759f63b6e2e109c2d698d19cd75e7be34050e8a1b`.
+
+Vendored tree hashes (SHA-256 of the sorted `shasum -a 256` list of each folder's files), to notice drift: vulkan-headers `da4a2dd31ae6…`, vma `d9fb32955960…`, zstd `26b05654fb24…`, earcut `332c6a93089a…`, doctest `4a75c17381ca…`, nanobench `471fff3474eb…`, vulkan-profiles `dbbc0b1a3b3a…`.
+
+## Tools (fetched, not vendored; pins in `mapcore/tools.properties`)
+
+| Tool | Version | Archives (SHA-256, as GitHub publishes them for the release asset) | Licence |
+|---|---|---|---|
+| Slang (`slangc`) | 2026.19 (29 September 2026) | macOS arm64 `slang-2026.19-macos-aarch64.tar.gz` `fa46822c92d81404a7951de3746093985c1e6f520f4b533e2aa3bea576f0f2f0`; macOS x86_64 `490b6447e3ea…`; Linux x86_64 (glibc 2.28 build, without the LLVM back end) `bd7afcb0956d…`; Linux arm64 `eeefa4e52ca3…` | Apache-2.0 with LLVM exception |
+| Khronos validation layer, Android build | `vulkan-sdk-1.4.363.0` | `android-binaries-1.4.363.0.zip` `9a3b8e32cb3330406dd4f3651594201635baee4528da8e2a5300e4f55e1a9cc7` | Apache-2.0 |
+| Android emulator package (lavapipe on CI's x86_64 runner, and the CI emulator itself: android.yml passes the same build to the emulator action) | 37.2.12 (build 16428233); its lavapipe is "Mesa 25.2.4 (git-ddf177940b) (LLVM 21.0.0)" at Vulkan 1.4.318 (`libvulkan_lvp.so` SHA-256 `307b9efb94cd…`), its validation layer 1.4.350, read from the zip by K0 on 17 October | `emulator-linux_x64-16428233.zip`, SHA-1 `cd7362ea55dfb86a418958138dc396e74165dd01` (Google's SDK repository publishes SHA-1 only) | Apache-2.0 and the SDK licence |
+| Mesa, lavapipe only (CI's arm64 image, `.github/docker/lavapipe/Dockerfile`) | 26.2.5 (14 October 2026; its notes fix an llvmpipe SIGILL on ARMv9 without SVE) | archive.mesa3d.org `mesa-26.2.5.tar.xz` `794b3d1729075dae7ebd47c7283b7ca0cdb5dec668f7f11cc0a5d82f6138a0a5` (from Mesa's release notes) | MIT |
+| Vulkan-Loader and Vulkan-ValidationLayers (the same image) | `vulkan-sdk-1.4.363.0` (loader fa218055ff49, layers 15c64e73db67) | built from their tags in the image | Apache-2.0 |
+| CMake and Ninja (Linux runners) | 4.1.2, 1.13.2 | `cmake-4.1.2-linux-x86_64.tar.gz` `773cc679c3a7…`, `-aarch64` `0634996f918b…`; `ninja-linux.zip` `5749cbc4e668…`, `ninja-linux-aarch64.zip` `fd2cacc8050a…` | BSD-3-Clause, Apache-2.0 |
+| Kitware's CMake for the MODS probe only | 4.2.3 | macOS universal `c2302d3e9c48…`, Linux x86_64 `5bb505d5e0cc…`, Linux arm64 `e529c75f18f2…` | BSD-3-Clause |
+| NDK | r30 LTS, `30.0.16248370`: clang 21.0.0 (Android 16134705, based on r574158c, llvm-project 9f872551d3c6) and libc++ 21.0.0 (`_LIBCPP_VERSION` 210000), measured by K0 (the plan estimated an LLVM 22 snapshot) | the SDK repository's packages (repository2-3.xml): `android-ndk-r30-darwin.zip` SHA-1 `c060be96767eefbb8e0a27796d6f43115fc1a0c4` (installed here by the coordinator), `android-ndk-r30-linux.zip` `5107f898313790e449e87eee2183d9a20602dee9` (CI's runners preinstall it) | Apache-2.0 and LLVM's licences |
+| LLVM on the Linux runners | 21, the NDK's major version (clang, libc++, lld, clang-tidy, clang-format) | apt.llvm.org's `llvm-toolchain-noble-21` | Apache-2.0 with LLVM exception |
+| SDK CMake | 4.1.2 | the SDK manager's package | BSD-3-Clause |
+
+## Software Vulkan on this Mac (for the record; the tests use it when no other driver is given)
+
+Three lavapipes, one per host, so a frame may differ between them: this Mac's (below), the Linux emulator package's on CI's x86_64 runners (Mesa 25.2.4, in the table above) and the arm64 image's (Mesa 26.2.5, built by the Dockerfile).
+
+The Android SDK's emulator package 37.2.12 in `~/Library/Android/sdk/emulator/lib64/vulkan/`: the Vulkan loader (`libvulkan.dylib`, SHA-256 `abfe43268f8e…`), lavapipe "Mesa 26.0.0-devel (git-3fc652a060) (LLVM 21.1.4)" reporting Vulkan 1.4.330 (`libvulkan_lvp.dylib`, `f25302365851…`), and the Khronos validation layer 1.4.350 (`libVkLayer_khronos_validation.dylib`, `e0056a0e7289…`). lavapipe here has `VK_KHR_dynamic_rendering`, `_local_read`, `VK_KHR_synchronization2` and `VK_KHR_driver_properties`, but not `VK_KHR_shader_fma`, and meets none of Android's Vulkan profiles (it has no Android surface).
+
+## Compiler facts the core depends on (measured)
+
+- **NDK r30's clang** is 21.0.0 (Android 16134705, based on r574158c), with libc++ 21.0.0; the plan had estimated an LLVM 22 snapshot. At `-std=c++2c` for `aarch64-linux-android29` it defines everything `base/std_check.hpp` requires, plus `flat_set`, saturation arithmetic, `std::span` from an initializer list, `mdspan` 202406, pack indexing, `= delete("reason")` and the placeholder `_`; not `ranges_zip`, `ranges_enumerate`, `ranges_chunk`, `inplace_vector`, `simd`, `generator`, `stacktrace`, `move_only_function`, `start_lifetime_as`, contracts or reflection. Apple clang 21.0.0 (clang-2100.1.1.101) with libc++ 21.1.6 gives the same set.
+- **A signed-zero miscompile on aarch64** (found by K3b, reproduced by the coordinator and K0, 16 October): Apple clang 21.0.0 (clang-2100.1.1.101) and NDK r30's clang 21.0.0 compile `x < 0.0 ? x : 0.0` to `fminnm` from `-O1` up, without fast math, so the minimum of -0.0 and +0.0 comes out -0.0 where C++ and Python give +0.0. The mirrored `max` ternary becomes `fmaxnm` wherever ASan or TSan does not instrument it: in the release builds, in the Android debug build (`-O1 -g` with UBSan's minimal runtime, NDK r30 arm64) and at plain `-O1` and `-O2`; the host debug (ASan) and TSan builds keep the comparison. x86_64's `minsd` and `maxsd` give the C++ result, and its `minps`/`maxps` return the second operand for two zeros, where arm64's `fminnm`/`fmaxnm` order them. The core writes Python's `min` and `max` with `pymath::min` and `pymath::max`, and `base/simd.hpp`'s and `base/hlsl.hpp`'s `min`, `max`, `clamp` and `saturate` are Python's too, through an opaque comparison (`base/opaque.hpp`), so they give the same bits on arm64 and x86_64 (`tests/base/simd_test.cpp`, `hlsl_test.cpp`); clang-tidy bans `fmin`, `fmax`, `fminimum` and `fmaximum` in the core; `tests/base/fp_test.cpp` keeps a canary that fails when clang stops miscompiling the `min` shape.
+- **Contraction**: with `-ffp-contract=off` neither compiler fuses `a*b + c`, scalar or in clang vector lanes (`tests/base/fp_test.cpp`).
+- **Slang 2026.19's SPIR-V**: `-fp-mode precise` puts `NoContraction` on every float add, subtract, multiply and negate (all 30 of the exact probe's); the GLSL route (`-emit-spirv-via-glsl`) keeps none of them (0 of 30), so the build's `nocontract fix` restores them; a subpass input read declares `StorageImageReadWithoutFormat`, which SPIR-V does not require for subpass data, and the build's `nocontract capabilities` removes it. Without `NoContraction`, lavapipe changes 43,938 of 10^6 results of the emulated fused multiply-add.
+

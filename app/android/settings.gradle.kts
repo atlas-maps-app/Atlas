@@ -29,3 +29,5 @@ include(":brouter")
 include(":packer")
 // Pure Kotlin: render tiles (plan-vector K2), stage P of the vector engine, written by the packer and Gradle.
 include(":rendertiles")
+// Android library: the vector engine's core (plan-vector), C++23 built by CMake into libatlasmap.so with pinned tools.
+include(":mapcore")

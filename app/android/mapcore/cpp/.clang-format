@@ -1,0 +1,32 @@
+# The core's C++ layout (plan-vector T10): LLVM's style at the repository's 120 columns and 4-space indent (the width
+# and indent of the Kotlin code beside it). CI checks changed files with `clang-format --dry-run --Werror`.
+BasedOnStyle: LLVM
+Language: Cpp
+Standard: Latest
+ColumnLimit: 120
+IndentWidth: 4
+AccessModifierOffset: -4
+PointerAlignment: Left
+ReferenceAlignment: Left
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortLambdasOnASingleLine: All
+AllowShortCaseLabelsOnASingleLine: true
+AlwaysBreakTemplateDeclarations: Yes
+BreakBeforeBinaryOperators: None
+FixNamespaceComments: true
+InsertNewlineAtEOF: true
+NamespaceIndentation: None
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  # The file's own header first (by name), then the core's, then third-party, then the standard library.
+  - Regex: '^"(base|gpu|platform|tiles|scene|view|frame|geometry|sun|passes|text|labels|fx|twin|check|jni|standin|style|tools|tests|gen)/'
+    Priority: 2
+  - Regex: '^<(doctest|nanobench|mapbox|vulkan|vk_mem_alloc|zstd|android|jni)'
+    Priority: 3
+  - Regex: '^<'
+    Priority: 4
+  - Regex: '.*'
+    Priority: 2

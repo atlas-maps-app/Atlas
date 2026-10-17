@@ -1,0 +1,556 @@
+# The map core (app/android/mapcore/cpp; plan-vector T4, T10): every push and pull request to `app` (and `main`) builds
+# and tests it on x86_64 and arm64 Linux with LLVM's clang and libc++, on lavapipe under the Khronos validation layer, in
+# three presets (ASan and UBSan, TSan, the shipped release flags); runs its fuzz targets with libFuzzer; checks changed
+# files with clang-tidy (with the host build's compile database and with NDK r30's for Android) and clang-format; proves
+# each guard still catches its planted failure; configures it with no network; and builds it with NDK r30 for both
+# Android ABIs. A push to `app` that changes the lavapipe image's recipe rebuilds the image. The Android library itself
+# is built by android.yml's Gradle build.
+#
+# Only the extras need this file on the default branch, where GitHub keeps schedules and runs by hand: the nightly
+# (every fuzz target for up to 30 minutes, clang-tidy and clang-format on every file; it checks out `app`), the MODS
+# probe, and an image rebuild by hand. Everything else runs on push and pull_request.
+#
+# Pins come from app/android/mapcore/tools.properties. lavapipe comes from versioned artifacts, never from apt: on
+# x86_64 the Android emulator package (the CI emulator's own build: android.yml pins the emulator action to it), on
+# arm64 our image (.github/docker/lavapipe), pinned by digest below once the image job has run.
+name: Core
+
+on:
+  push:
+    branches: [main, app]
+    paths: ['app/android/mapcore/**', '.github/workflows/core.yml', '.github/docker/lavapipe/**']
+  pull_request:
+    branches: [main, app]
+    paths: ['app/android/mapcore/**', '.github/workflows/core.yml', '.github/docker/lavapipe/**']
+  schedule:
+    - cron: '23 2 * * *' # nightly: every fuzz target for up to 30 minutes, clang-tidy on every file
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Build and push the lavapipe images (then pin their digests in env below)
+        type: boolean
+        default: false
+      mods:
+        description: Run the MODS probe (import std and import vulkan, NDK r30 and Kitware's CMake 4.2.x)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# bash -eo pipefail: a failure anywhere in a pipeline fails the step.
+defaults:
+  run:
+    shell: bash
+
+env:
+  CP: app/android/mapcore/cpp
+  LLVM: '21' # the major version of NDK r30's clang: 21.0.0, based on r574158c (measured by K0)
+  # The lavapipe images by digest (ghcr.io/<owner>/atlas-lavapipe@sha256:...), from the image job's summary. Until the
+  # arm64 one is set, the arm64 runner builds and runs every test except the Vulkan ones, and says so.
+  LAVAPIPE_IMAGE_ARM64: ''
+  LAVAPIPE_IMAGE_X86_64: ''
+
+jobs:
+  core:
+    name: ${{ matrix.task }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    # The nightly fuzz runs every target for up to 30 minutes, at most 120 minutes in all (see its step).
+    timeout-minutes: ${{ (matrix.task == 'fuzz' && github.event_name == 'schedule') && 150 || 45 }}
+    # A newer push cancels this ref's older core jobs; the image job (below) is never cancelled by one.
+    concurrency:
+      group: core-${{ github.ref }}-${{ github.event_name }}-${{ matrix.task }}-${{ matrix.arch }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      packages: read # the arm64 lavapipe image on GHCR
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { task: host-debug, arch: x86_64 }
+          - { task: host-debug, arch: arm64 }
+          - { task: host-tsan, arch: x86_64 }
+          - { task: host-tsan, arch: arm64 }
+          - { task: host-release, arch: x86_64 }
+          - { task: host-release, arch: arm64 }
+          - { task: fuzz, arch: x86_64 }
+          - { task: tidy, arch: x86_64 }
+          - { task: canaries, arch: x86_64 }
+          - { task: android, arch: x86_64 }
+    env:
+      TASK: ${{ matrix.task }}
+      TOOLS: ${{ github.workspace }}/cache/atlas-tools
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # tidy compares the changed files with the base
+          # the nightly runs from the default branch's workflow; it checks the work branch
+          ref: ${{ github.event_name == 'schedule' && 'app' || github.ref }}
+
+      - name: Pins
+        run: |
+          pin() { grep "^$1=" app/android/mapcore/tools.properties | cut -d= -f2-; }
+          host=$([ "$(uname -m)" = aarch64 ] && echo linux-aarch64 || echo linux-x86_64)
+          {
+            echo "HOST_PLATFORM=$host"
+            echo "SLANG_VERSION=$(pin slang.version)"
+            echo "SLANG_FILE=$(pin slang.$host.file)"
+            echo "SLANG_SHA256=$(pin slang.$host.sha256)"
+            echo "CMAKE_FILE=$(pin cmake.$host.file)"
+            echo "CMAKE_SHA256=$(pin cmake.$host.sha256)"
+            echo "CMAKE_VERSION=$(pin cmake.version)"
+            echo "NINJA_VERSION=$(pin ninja.version)"
+            echo "NINJA_FILE=$(pin ninja.$host.file)"
+            echo "NINJA_SHA256=$(pin ninja.$host.sha256)"
+            echo "NDK_VERSION=$(pin ndk.version)"
+            echo "EMULATOR_FILE=$(pin emulator.linux-x86_64.file)"
+            echo "EMULATOR_SHA1=$(pin emulator.linux-x86_64.sha1)"
+          } >> "$GITHUB_ENV"
+
+      - name: LLVM ${{ env.LLVM }} (clang, libc++, lld, clang-tidy, clang-format, llvm-symbolizer) from apt.llvm.org
+        run: |
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/keyrings/apt.llvm.org.asc > /dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.asc] http://apt.llvm.org/noble/ llvm-toolchain-noble-$LLVM main" |
+            sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update -q
+          # llvm-N carries llvm-symbolizer-N, which the sanitizers' runtimes call to put names and lines in a report.
+          sudo apt-get install -y -q --no-install-recommends clang-$LLVM lld-$LLVM libc++-$LLVM-dev libc++abi-$LLVM-dev \
+            libclang-rt-$LLVM-dev clang-tidy-$LLVM clang-format-$LLVM llvm-$LLVM
+          symbolizer=/usr/bin/llvm-symbolizer-$LLVM
+          "$symbolizer" --version | sed -n 1,2p
+          {
+            echo "CC=clang-$LLVM"
+            echo "CXX=clang++-$LLVM"
+            echo "CXXFLAGS=-stdlib=libc++"
+            echo "LDFLAGS=-stdlib=libc++"
+            echo "ASAN_OPTIONS=external_symbolizer_path=$symbolizer"
+            echo "TSAN_OPTIONS=external_symbolizer_path=$symbolizer"
+            echo "UBSAN_OPTIONS=external_symbolizer_path=$symbolizer:print_stacktrace=1"
+          } >> "$GITHUB_ENV"
+          clang++-$LLVM --version | sed -n 1p
+
+      - name: CMake ${{ env.CMAKE_VERSION }} and Ninja ${{ env.NINJA_VERSION }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
+          curl -fsSLO "https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/$CMAKE_FILE"
+          echo "$CMAKE_SHA256  $CMAKE_FILE" | sha256sum -c -
+          tar -xzf "$CMAKE_FILE"
+          curl -fsSLO "https://github.com/ninja-build/ninja/releases/download/v$NINJA_VERSION/$NINJA_FILE"
+          echo "$NINJA_SHA256  $NINJA_FILE" | sha256sum -c -
+          unzip -q "$NINJA_FILE" -d "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/${CMAKE_FILE%.tar.gz}/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.TOOLS }}/slang-${{ env.SLANG_VERSION }}-${{ env.HOST_PLATFORM }}
+          key: slang-${{ env.SLANG_SHA256 }}
+      - name: Slang ${{ env.SLANG_VERSION }}
+        run: |
+          dir="$TOOLS/slang-$SLANG_VERSION-$HOST_PLATFORM"
+          if [ ! -x "$dir/bin/slangc" ]; then
+            curl -fsSLo "$RUNNER_TEMP/$SLANG_FILE" "https://github.com/shader-slang/slang/releases/download/v$SLANG_VERSION/$SLANG_FILE"
+            echo "$SLANG_SHA256  $RUNNER_TEMP/$SLANG_FILE" | sha256sum -c -
+            mkdir -p "$dir"
+            tar -xzf "$RUNNER_TEMP/$SLANG_FILE" -C "$dir" --exclude='*slang-llvm*' --exclude='*share/doc*' \
+              --exclude='*standard-module*' --exclude='*libgfx*' --exclude='*gfx.slang*'
+          fi
+          "$dir/bin/slangc" -v
+
+      # Vulkan for the tests: the loader, lavapipe and the validation layer. Their variables go to $RUNNER_TEMP/vulkan.env,
+      # which only the test commands read, so CMake, clang and the other steps never load the emulator's libraries.
+      - uses: actions/cache@v6
+        if: matrix.arch == 'x86_64' && startsWith(matrix.task, 'host-')
+        with:
+          path: ${{ runner.temp }}/emulator-vulkan
+          key: emulator-vulkan-${{ env.EMULATOR_SHA1 }}
+      - name: lavapipe from the Android emulator package (x86_64)
+        if: matrix.arch == 'x86_64' && startsWith(matrix.task, 'host-')
+        run: |
+          dir="$RUNNER_TEMP/emulator-vulkan"
+          if [ ! -e "$dir/lvp_icd.json" ]; then
+            curl -fsSLo "$RUNNER_TEMP/$EMULATOR_FILE" "https://dl.google.com/android/repository/$EMULATOR_FILE"
+            echo "$EMULATOR_SHA1  $RUNNER_TEMP/$EMULATOR_FILE" | sha1sum -c -
+            unzip -q "$RUNNER_TEMP/$EMULATOR_FILE" 'emulator/lib64/vulkan/*' -d "$RUNNER_TEMP/emulator"
+            rm "$RUNNER_TEMP/$EMULATOR_FILE"
+            mv "$RUNNER_TEMP/emulator/emulator/lib64/vulkan" "$dir"
+            rm -f "$dir"/*swiftshader* "$dir"/*MoltenVK* "$dir"/*kosmickrisp* "$dir"/glslangValidator
+          fi
+          ls -la "$dir" "$dir/layers" || true
+          loader=
+          for f in "$dir/libvulkan.so.1" "$dir/libvulkan.so"; do
+            if [ -e "$f" ]; then loader=$f; break; fi
+          done
+          if [ -z "$loader" ]; then sudo apt-get install -y -q libvulkan1 && loader=/usr/lib/x86_64-linux-gnu/libvulkan.so.1; fi
+          {
+            echo "ATLAS_VULKAN_LOADER=$loader"
+            echo "VK_DRIVER_FILES=$dir/lvp_icd.json"
+            echo "LD_LIBRARY_PATH=$dir"
+          } > "$RUNNER_TEMP/vulkan.env"
+          if [ -e "$dir/layers/VkLayer_khronos_validation.json" ]; then
+            echo "VK_ADD_LAYER_PATH=$dir/layers" >> "$RUNNER_TEMP/vulkan.env"
+          elif [ -n "$LAVAPIPE_IMAGE_X86_64" ]; then
+            id=$(docker create "$LAVAPIPE_IMAGE_X86_64" /none) && sudo mkdir -p /opt/vulkan && sudo docker cp "$id:/opt/vulkan/." /opt/vulkan/
+            echo "VK_ADD_LAYER_PATH=/opt/vulkan/share/vulkan/explicit_layer.d" >> "$RUNNER_TEMP/vulkan.env"
+          else
+            echo "::error::the emulator package has no validation layer and LAVAPIPE_IMAGE_X86_64 is not pinned" && exit 1
+          fi
+          echo "ATLAS_REQUIRE_VULKAN=1" >> "$RUNNER_TEMP/vulkan.env"
+          cat "$RUNNER_TEMP/vulkan.env"
+      - name: lavapipe from the pinned image (arm64)
+        if: matrix.arch == 'arm64' && startsWith(matrix.task, 'host-')
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "$LAVAPIPE_IMAGE_ARM64" ]; then
+            echo "::warning::LAVAPIPE_IMAGE_ARM64 is not pinned yet: the Vulkan tests are skipped on arm64 (push a change to .github/docker/lavapipe, or run this workflow with image=true, then pin the digest)"
+            echo "**$TASK arm64: the Vulkan tests did not run** (LAVAPIPE_IMAGE_ARM64 is not pinned)." >> "$GITHUB_STEP_SUMMARY"
+            echo "ATLAS_REQUIRE_VULKAN=0" > "$RUNNER_TEMP/vulkan.env"
+            exit 0
+          fi
+          # A package published with GITHUB_TOKEN takes the repository's visibility, but the first one may start private.
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin ||
+            echo "::warning::docker login to ghcr.io failed; pulling the image anonymously"
+          id=$(docker create "$LAVAPIPE_IMAGE_ARM64" /none)
+          sudo mkdir -p /opt/vulkan && sudo docker cp "$id:/opt/vulkan/." /opt/vulkan/ && cat /opt/vulkan/VERSIONS.txt
+          missing=$(LD_LIBRARY_PATH=/opt/vulkan/lib ldd /opt/vulkan/lib/libvulkan_lvp.so /opt/vulkan/lib/libvulkan.so.1 \
+            /opt/vulkan/lib/libVkLayer_khronos_validation.so | grep 'not found' || true)
+          [ -z "$missing" ] || { echo "::error::the image's libraries need what this runner lacks: $missing"; exit 1; }
+          icd=
+          for f in /opt/vulkan/share/vulkan/icd.d/lvp_icd.*.json; do
+            if [ -e "$f" ]; then icd=$f; break; fi
+          done
+          [ -n "$icd" ] || { echo "::error::the image has no lavapipe ICD manifest"; exit 1; }
+          {
+            echo "ATLAS_VULKAN_LOADER=/opt/vulkan/lib/libvulkan.so.1"
+            echo "VK_DRIVER_FILES=$icd"
+            echo "VK_ADD_LAYER_PATH=/opt/vulkan/share/vulkan/explicit_layer.d"
+            echo "LD_LIBRARY_PATH=/opt/vulkan/lib"
+            echo "ATLAS_REQUIRE_VULKAN=1"
+          } > "$RUNNER_TEMP/vulkan.env"
+          cat "$RUNNER_TEMP/vulkan.env"
+
+      # ---- host-debug, host-tsan, host-release: build, unit tests (Vulkan on lavapipe), the feature probe, benchmarks.
+      - name: Build and test (${{ matrix.task }})
+        if: startsWith(matrix.task, 'host-')
+        working-directory: ${{ env.CP }}
+        run: |
+          # LSan sees lavapipe's and LLVM's own process-lifetime allocations; the core's leaks still fail.
+          printf 'leak:libvulkan_lvp\nleak:libLLVM\nleak:libvulkan.so\nleak:libVkLayer_khronos_validation\n' > "$RUNNER_TEMP/lsan.supp"
+          export LSAN_OPTIONS="suppressions=$RUNNER_TEMP/lsan.supp"
+          cmake --preset "$TASK" -DATLAS_TOOLS_DIR="$TOOLS"
+          cmake --build --preset "$TASK" -j 4
+          (set -a; . "$RUNNER_TEMP/vulkan.env"; set +a; ctest --test-dir "build/$TASK" --output-on-failure)
+          "build/$TASK/atlas_tests" --probe | tee "build/feature-probe-$TASK-${{ matrix.arch }}.txt"
+          if [ "$TASK" = host-release ]; then
+            # Every benchmark executable (bench/*_bench.cpp); a crash fails the step.
+            for bench in "build/$TASK"/bench/*_bench; do
+              echo "== $(basename "$bench")" | tee -a "build/bench-${{ matrix.arch }}.txt"
+              "$bench" | tee -a "build/bench-${{ matrix.arch }}.txt"
+            done
+          fi
+      - name: Keep the feature probe and benchmarks
+        if: startsWith(matrix.task, 'host-') && always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: core-${{ matrix.task }}-${{ matrix.arch }}
+          path: |
+            ${{ env.CP }}/build/feature-probe-*.txt
+            ${{ env.CP }}/build/bench-*.txt
+          if-no-files-found: ignore
+
+      # ---- fuzz: every fuzz/fuzz_*.cpp under libFuzzer, ASan and UBSan, as many at once as the runner has cores; 60 s
+      # each on a push, and nightly up to 30 minutes each within 120 minutes in all.
+      - name: Fuzz
+        if: matrix.task == 'fuzz'
+        working-directory: ${{ env.CP }}
+        run: |
+          cmake --preset host-fuzz -DATLAS_TOOLS_DIR="$TOOLS"
+          cmake --build --preset host-fuzz -j 4
+          targets=(build/host-fuzz/fuzz/fuzz_*)
+          jobs=$(nproc)
+          rounds=$(( (${#targets[@]} + jobs - 1) / jobs ))
+          if [ "${{ github.event_name }}" = schedule ]; then
+            seconds=$(( 7200 / rounds ))
+            if [ "$seconds" -gt 1800 ]; then seconds=1800; fi
+          else
+            seconds=60
+          fi
+          echo "${#targets[@]} targets, $jobs at a time, $seconds s each"
+          mkdir -p build/crashes build/fuzz-logs
+          # One target from a copy of its corpus (seeds and past crashes), which libFuzzer then grows; its log apart.
+          fuzz_one() {
+            local target=$1 name
+            name=$(basename "$target")
+            mkdir -p "build/corpus/$name"
+            if [ -d "fuzz/corpus/$name" ]; then cp -R "fuzz/corpus/$name/." "build/corpus/$name/"; fi
+            if "$target" -max_total_time="$FUZZ_SECONDS" -artifact_prefix="build/crashes/$name-" "build/corpus/$name" \
+              > "build/fuzz-logs/$name.log" 2>&1; then
+              echo "$name: no failure in $FUZZ_SECONDS s"
+            else
+              echo "::error::$name failed (its log and any crashing input are in the artifact core-fuzz-crashes)"
+              return 1
+            fi
+          }
+          export -f fuzz_one
+          export FUZZ_SECONDS=$seconds
+          status=0
+          printf '%s\n' "${targets[@]}" | xargs -P "$jobs" -I '{}' bash -c 'fuzz_one "$1"' _ '{}' || status=1
+          for log in build/fuzz-logs/*.log; do
+            echo "::group::$(basename "$log" .log)"
+            tail -n 40 "$log"
+            echo "::endgroup::"
+          done
+          exit "$status"
+      - name: Keep the fuzz crashes
+        if: matrix.task == 'fuzz' && failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: core-fuzz-crashes
+          path: |
+            ${{ env.CP }}/build/crashes/
+            ${{ env.CP }}/build/fuzz-logs/
+
+      # ---- tidy: clang-format and clang-tidy (the core's .clang-tidy) on the changed files. clang-tidy runs each source
+      # with every build that compiles it: the host build's compile database and NDK r30's for Android, so code that
+      # only Android compiles (platform/android, the __ANDROID__ parts) is checked too, and a source neither compiles
+      # fails. Every file is checked nightly, when a header or the checks' or the build's configuration changes, and
+      # when the base commit is not in the clone.
+      - name: NDK r30 and the SDK's CMake
+        if: matrix.task == 'tidy' || matrix.task == 'android'
+        run: |
+          { yes || true; } | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" "cmake;$CMAKE_VERSION" > /dev/null
+      - name: clang-tidy and clang-format
+        if: matrix.task == 'tidy'
+        working-directory: ${{ env.CP }}
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          everything=no
+          if [ "${{ github.event_name }}" = schedule ] || [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            everything=yes
+          elif [ -z "$base" ] || [ "$base" = 0000000000000000000000000000000000000000 ]; then
+            echo "::notice::no base commit (a new branch): checking every file"; everything=yes
+          elif ! git cat-file -e "$base^{commit}" 2> /dev/null; then
+            echo "::warning::the base commit $base is not in the clone (a force push?): checking every file"; everything=yes
+          fi
+          # The core's own C and C++ files: not third-party code, the planted failures or the MODS probe (import std).
+          all=$(git ls-files -- . | grep -E '\.(c|cpp|h|hpp)$' | grep -v -E '^(third_party|tests/planted|tools/mods)/' || true)
+          if [ "$everything" = no ]; then
+            touched=$(git diff --name-only --relative --diff-filter=d "$base" HEAD)
+            if grep -q -E '^(\.clang-tidy|\.clang-format|CMakeLists\.txt|CMakePresets\.json|cmake/|[^/]+/CMakeLists\.txt)' <<< "$touched"; then
+              echo "the checks' or the build's configuration changed: checking every file"; everything=yes
+            fi
+            headers=$(grep -E '\.(h|hpp)$' <<< "$touched" || true)
+            if [ "$everything" = no ] && [ -n "$headers" ] && grep -q -x -F -f <(printf '%s\n' "$all") <<< "$headers"; then
+              echo "a header changed: checking every file"; everything=yes
+            fi
+          fi
+          if [ "$everything" = yes ]; then
+            changed=$all
+          else
+            changed=$(grep -x -F -f <(printf '%s\n' "$all") <<< "$touched" || true)
+          fi
+          echo "files to check: $(wc -w <<< "$changed")"
+          [ -n "$changed" ] || exit 0
+          clang-format-$LLVM --dry-run --Werror $changed
+
+          # The compile databases, without precompiled headers (clang-tidy parses every unit from its sources), with the
+          # generated headers the units include.
+          cmake --preset host-debug -B build/tidy -DATLAS_TOOLS_DIR="$TOOLS" -DATLAS_FUZZ=ON -DATLAS_BENCH=ON \
+            -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
+          cmake --build build/tidy --target atlas_core_shaders
+          (
+            unset CC CXX CXXFLAGS LDFLAGS
+            cmake --preset android-arm64 -B build/tidy-android -DATLAS_TOOLS_DIR="$TOOLS" -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
+            cmake --build build/tidy-android --target atlas_core_shaders
+          )
+          compiled() { jq -r '.[].file' "$1/compile_commands.json" | sed "s#^$PWD/##" | sort -u; }
+          host=$(compiled build/tidy)
+          android=$(compiled build/tidy-android)
+          host_sources=()
+          android_sources=()
+          status=0
+          for f in $(grep -E '\.(c|cpp)$' <<< "$changed" || true); do
+            in_host=no
+            in_android=no
+            if grep -q -x -F "$f" <<< "$host"; then host_sources+=("$f"); in_host=yes; fi
+            if grep -q -x -F "$f" <<< "$android"; then android_sources+=("$f"); in_android=yes; fi
+            if [ "$in_host" = no ] && [ "$in_android" = no ]; then
+              echo "::error file=$CP/$f::compiled by neither the host build nor the Android build, so clang-tidy cannot check it"
+              status=1
+            fi
+          done
+          echo "clang-tidy: ${#host_sources[@]} sources with the host build, ${#android_sources[@]} with the Android build"
+          tidy() { # <database> <sources...>
+            local database=$1
+            shift
+            [ "$#" -gt 0 ] || return 0
+            printf '%s\n' "$@" | xargs -P "$(nproc)" -n 4 clang-tidy-$LLVM -p "$database" --quiet
+          }
+          tidy build/tidy "${host_sources[@]}" || status=1
+          tidy build/tidy-android "${android_sources[@]}" || status=1
+          exit "$status"
+
+      # ---- canaries: each guard must catch its planted failure (tests/planted/, never in a normal build).
+      - name: Planted failures are caught
+        if: matrix.task == 'canaries'
+        working-directory: ${{ env.CP }}
+        run: |
+          expect_failure() { # <log> <pattern> <command...>
+            local log=$1 pattern=$2; shift 2
+            if "$@" > "$log" 2>&1; then echo "::error::$* succeeded, but it must fail"; cat "$log"; exit 1; fi
+            grep -q -E "$pattern" "$log" || { echo "::error::$* failed without '$pattern'"; cat "$log"; exit 1; }
+            echo "caught: $(grep -m1 -E "$pattern" "$log")"
+          }
+          cmake --preset host-debug -B build/canary-asan -DATLAS_TOOLS_DIR="$TOOLS" -DATLAS_EXTRA_TEST_SOURCES="$PWD/tests/planted/use_after_free.cpp"
+          cmake --build build/canary-asan --target atlas_tests -j 4
+          expect_failure build/asan.log 'AddressSanitizer: heap-use-after-free' build/canary-asan/atlas_tests -tc='planted*'
+          cmake --preset host-tsan -B build/canary-tsan -DATLAS_TOOLS_DIR="$TOOLS" -DATLAS_EXTRA_TEST_SOURCES="$PWD/tests/planted/data_race.cpp"
+          cmake --build build/canary-tsan --target atlas_tests -j 4
+          expect_failure build/tsan.log 'ThreadSanitizer: data race' build/canary-tsan/atlas_tests -tc='planted*'
+          expect_failure build/tidy.log 'is not bit-exact across libms' \
+            clang-tidy-$LLVM tests/planted/transcendental.cpp -- -std=c++23 -stdlib=libc++
+          expect_failure build/tidy-minmax.log 'unlike Python min and max' \
+            clang-tidy-$LLVM tests/planted/min_max.cpp -- -std=c++23 -stdlib=libc++
+          # Invalid SPIR-V stops the build (SPIRV-Tools' validator inside slangc), and so does an exact module that
+          # uses an operation Vulkan does not round exactly (tools/nocontract).
+          printf '%s\n' '[[vk::binding(0, 0)]] RWStructuredBuffer<uint> data;' '[shader("compute")] [numthreads(1, 1, 1)]' \
+            'void main(uint3 id : SV_DispatchThreadID) { uint a = data[0]; data[1] = spirv_asm { result:$$uint = OpFAdd $a $a }; }' \
+            > shaders/probe/planted_invalid.slang
+          expect_failure build/spirv.log 'Validation of generated SPIR-V failed' cmake --build build/canary-asan --target atlas_core_shaders
+          rm shaders/probe/planted_invalid.slang
+          printf '%s\n' '[[vk::binding(0, 0)]] RWStructuredBuffer<float> data;' '[shader("compute")] [numthreads(1, 1, 1)]' \
+            'void main(uint3 id : SV_DispatchThreadID) { data[0] = sqrt(data[1]) / data[2]; }' > shaders/probe/exact_planted.slang
+          expect_failure build/exact.log 'NOT EXACT' cmake --build build/canary-asan --target atlas_core_shaders
+          rm shaders/probe/exact_planted.slang
+      - name: CMake configures with no network
+        if: matrix.task == 'canaries'
+        working-directory: ${{ env.CP }}
+        run: |
+          if sudo unshare --net -- curl -fsS -m 10 -o /dev/null https://github.com; then echo "::error::the namespace has a network"; exit 1; fi
+          sudo -E env "PATH=$PATH" unshare --net -- cmake --preset host-release -B /tmp/offline -DATLAS_TOOLS_DIR="$TOOLS"
+          echo "configured with no network"
+
+      # ---- android: the core, its tests and benchmarks with NDK r30 for both ABIs; the toolchain recorded.
+      - name: Build with NDK r30 (arm64-v8a, x86_64) and record the toolchain
+        if: matrix.task == 'android'
+        working-directory: ${{ env.CP }}
+        run: |
+          unset CC CXX CXXFLAGS LDFLAGS
+          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          {
+            "$bin/clang" --version
+            cat "$ndk/toolchains/llvm/prebuilt/linux-x86_64/clang_source_info.md" 2>/dev/null || true
+            echo; echo "C++ feature macros of r30's clang and libc++ at -std=c++2c, aarch64-linux-android29:"
+            echo '#include <version>' | "$bin/clang++" --target=aarch64-linux-android29 -std=c++2c -dM -E -x c++ - |
+              grep -E '__cpp_|_LIBCPP_VERSION' | sort
+          } | tee build-ndk-toolchain.txt
+          for abi in arm64 x86_64; do
+            cmake --preset "android-$abi" -DATLAS_TOOLS_DIR="$TOOLS"
+            cmake --build --preset "android-$abi" -j 4
+            "$bin/llvm-strings" "build/android-$abi/libatlasmap.so" | grep '^atlasmap ' | tee -a build-ndk-toolchain.txt
+            "$bin/llvm-strip" -o "build/libatlasmap-$abi.stripped.so" "build/android-$abi/libatlasmap.so"
+            ls -l "build/libatlasmap-$abi.stripped.so" | tee -a build-ndk-toolchain.txt
+          done
+      - name: Keep the NDK record
+        if: matrix.task == 'android' && always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: core-ndk-r30
+          path: ${{ env.CP }}/build-ndk-toolchain.txt
+          if-no-files-found: ignore
+
+  # The MODS probe (plan-vector T3): do `import std` and Vulkan-Hpp's `import vulkan` build with NDK r30 for Android and
+  # with LLVM 21 (NDK r30's major version) on the host, through Kitware's CMake 4.2.x? The answer and its errors are
+  # kept as an artifact. By hand only, so it needs this file on the default branch.
+  mods:
+    if: github.event_name == 'workflow_dispatch' && inputs.mods
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Probe import std and import vulkan
+        run: |
+          pin() { grep "^$1=" app/android/mapcore/tools.properties | cut -d= -f2-; }
+          version=$(pin mods.cmake.version); file=$(pin mods.cmake.linux-x86_64.file)
+          curl -fsSLO "https://github.com/Kitware/CMake/releases/download/v$version/$file"
+          echo "$(pin mods.cmake.linux-x86_64.sha256)  $file" | sha256sum -c -
+          tar -xzf "$file" && export PATH="$PWD/${file%.tar.gz}/bin:$PATH"
+          { yes || true; } | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$(pin ndk.version)" > /dev/null
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/keyrings/apt.llvm.org.asc > /dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.asc] http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" |
+            sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends clang-21 libc++-21-dev libc++abi-21-dev ninja-build
+          probe=$RUNNER_TEMP/mods
+          app/android/mapcore/cpp/tools/mods/probe.sh cmake "$probe" "$ANDROID_HOME/ndk/$(pin ndk.version)" \
+            -DCMAKE_CXX_COMPILER=clang++-21 -DCMAKE_CXX_FLAGS=-stdlib=libc++
+          cat "$probe/summary.txt" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: core-mods-probe
+          path: |
+            ${{ runner.temp }}/mods/*.log
+            ${{ runner.temp }}/mods/*.txt
+
+  # Whether a push to `app` changes the lavapipe image's recipe: then the image job rebuilds it, without the run by hand
+  # that GitHub allows only once this file is on the default branch.
+  image-changes:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/app'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          base="${{ github.event.before }}"
+          if [ -z "$base" ] || [ "$base" = 0000000000000000000000000000000000000000 ] || ! git cat-file -e "$base^{commit}" 2> /dev/null; then
+            base=HEAD~1
+          fi
+          if git diff --quiet "$base" HEAD -- .github/docker/lavapipe; then changed=false; else changed=true; fi
+          echo "the lavapipe image's recipe changed since $base: $changed"
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+  # The lavapipe images: built on a runner of each architecture from .github/docker/lavapipe, pushed to GHCR, and their
+  # digests written to the run's summary, to be pinned in env above in a reviewed commit.
+  lavapipe-image:
+    needs: image-changes
+    if: ${{ !cancelled() && ((github.event_name == 'workflow_dispatch' && inputs.image) || needs.image-changes.outputs.changed == 'true') }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    # One build of each image at a time; a newer one waits instead of cancelling a build two hours in.
+    concurrency:
+      group: lavapipe-image-${{ matrix.arch }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build and push
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/atlas-lavapipe"
+          mesa=$(sed -n 's/^ARG MESA_VERSION=//p' .github/docker/lavapipe/Dockerfile)
+          tag="$image:mesa-$mesa-${{ matrix.arch }}"
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker build -t "$tag" .github/docker/lavapipe
+          docker push "$tag"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$tag")
+          echo "LAVAPIPE_IMAGE_${{ matrix.arch == 'arm64' && 'ARM64' || 'X86_64' }}: '$digest'" | tee -a "$GITHUB_STEP_SUMMARY"
+          # What the image holds and needs from the system (its VERSIONS.txt), for the reviewed commit that pins it.
+          id=$(docker create "$tag" /none) && docker cp "$id:/opt/vulkan/VERSIONS.txt" - | tar -xO | tee -a "$GITHUB_STEP_SUMMARY"

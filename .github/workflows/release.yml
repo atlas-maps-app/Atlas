@@ -34,8 +34,17 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v6
-      - name: Android SDK 37
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" > /dev/null
+      - name: Android SDK 37, NDK r30 and the SDK's CMake
+        # NDK r30 and the SDK's CMake build the map core (:mapcore), at the versions app/android/mapcore/tools.properties
+        # pins; a tag from before the core has no such file and needs neither.
+        run: |
+          pins=mapcore/tools.properties # the job runs in app/android
+          native=()
+          if [ -f "$pins" ]; then
+            native=("ndk;$(grep '^ndk.version=' "$pins" | cut -d= -f2-)" "cmake;$(grep '^cmake.version=' "$pins" | cut -d= -f2-)")
+          fi
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" \
+            "${native[@]}" > /dev/null
       - name: Release key
         env:
           KEYSTORE: ${{ secrets.ATLAS_KEYSTORE_BASE64 }}

@@ -50,7 +50,32 @@ jobs:
           java-version: 17
       - uses: gradle/actions/setup-gradle@v6
       - name: Android SDK 37
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" > /dev/null
+        # NDK r30 and the SDK's CMake build the map core (:mapcore), at the versions mapcore/tools.properties pins.
+        run: |
+          pin() { grep "^$1=" mapcore/tools.properties | cut -d= -f2-; }
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" \
+            "ndk;$(pin ndk.version)" "cmake;$(pin cmake.version)" > /dev/null
+      # ccache for the map core's C++ (ATLAS_CCACHE=1 makes mapcore/build.gradle.kts pass it to CMake as the compiler
+      # launcher), keyed by the pins (the NDK among them) and the core's flags. The compiler is identified by the pinned
+      # NDK version rather than its file's mtime, which each runner image's install of the NDK changes; the sloppiness
+      # lets ccache cache the units built with Vulkan-Hpp's precompiled header (CMakeLists.txt adds -fno-pch-timestamp).
+      - name: ccache
+        run: |
+          sudo apt-get update -q > /dev/null
+          sudo apt-get install -y -q ccache > /dev/null
+          {
+            echo "ATLAS_CCACHE=1"
+            echo "CCACHE_DIR=$HOME/.cache/ccache"
+            echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
+            echo "CCACHE_MAXSIZE=600M"
+            echo "CCACHE_COMPILERCHECK=string:ndk-$(grep '^ndk.version=' mapcore/tools.properties | cut -d= -f2-)"
+            echo "CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime"
+          } >> "$GITHUB_ENV"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ccache
+          key: ccache-mapcore-${{ hashFiles('app/android/mapcore/cpp/cmake/**', 'app/android/mapcore/build.gradle.kts', 'app/android/mapcore/tools.properties') }}-${{ github.sha }}
+          restore-keys: ccache-mapcore-${{ hashFiles('app/android/mapcore/cpp/cmake/**', 'app/android/mapcore/build.gradle.kts', 'app/android/mapcore/tools.properties') }}-
       - name: Test and build
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.tests }}" = "false" ]; then
@@ -108,10 +133,19 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      # The emulator build whose package core.yml's x86_64 jobs take lavapipe and the validation layer from
+      # (app/android/mapcore/tools.properties), so the guest's Vulkan and the host tests' are the same lavapipe.
+      - name: The pinned emulator build
+        id: emulator
+        run: |
+          build=$(sed -n 's/^emulator\.linux-x86_64\.file=emulator-linux_x64-\([0-9]*\)\.zip$/\1/p' app/android/mapcore/tools.properties)
+          [ -n "$build" ] || { echo "::error::tools.properties names no emulator build"; exit 1; }
+          echo "build=$build" >> "$GITHUB_OUTPUT"
       - uses: reactivecircus/android-emulator-runner@v2
         env:
           ATLAS_PYMATH_HASH: 77476b808456a6f0 # K3b: the host build's and the port's numerics hash; smoke.sh fails on any other
         with:
+          emulator-build: ${{ steps.emulator.outputs.build }}
           api-level: 35
           arch: x86_64
           target: google_apis
