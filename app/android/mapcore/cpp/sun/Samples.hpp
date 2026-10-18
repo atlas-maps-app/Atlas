@@ -157,6 +157,19 @@ struct Deck {
 /// The decks of a tile's records at a level: its bridge roads and bridge areas.
 void collect_decks(const tiles::Tile& tile, const tiles::RenderHead& head, std::uint8_t level, std::vector<Deck>& out);
 
+/// A tile's solids and trees at one level of the ladder: what the sun's grid holds and what casts the ground's shadows
+/// (Hulls.hpp).
+struct TileCasters {
+    TileSolids solids;
+    TileTrees trees;
+};
+
+/// The solids and trees of `tile` at ladder `level` (0 to 13): every building not hidden with a height and every part
+/// with a height, in the tile's order (buildings, then parts), each from its variant at the level where the tile
+/// carries one, its ring simplified at the level; then every tree. make_tile's own, without the samples: the ground's
+/// shadows (K9) read the solids the sun's march reads.
+[[nodiscard]] TileCasters solids_of(const tiles::Tile& tile, const tiles::RenderHead& head, std::uint8_t level);
+
 /// A tile's part of the sun's scene at one level of the ladder.
 struct SunTile {
     tiles::TileKey key;

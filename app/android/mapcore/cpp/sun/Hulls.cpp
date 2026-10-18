@@ -73,6 +73,10 @@ void hull2(std::span<const double> x, std::span<const double> z, std::vector<dou
 }
 
 TileShadows shadows_of(const SunTile& tile, const Sun& sun, const Region& region) {
+    return shadows_of(tile.solids, tile.trees, sun, region);
+}
+
+TileShadows shadows_of(const TileSolids& solids, const TileTrees& trees, const Sun& sun, const Region& region) {
     TileShadows out;
     if (!(sun.y > 0) || region.no_shadows) return out;
     // o(y): the shadow's offset of a point y metres up, (-L.x / L.y * y, -L.z / L.y * y)
@@ -80,7 +84,7 @@ TileShadows shadows_of(const SunTile& tile, const Sun& sun, const Region& region
     const double kz = -sun.z / sun.y;
     std::vector<double> px;
     std::vector<double> pz;
-    const TileSolids& s = tile.solids;
+    const TileSolids& s = solids;
     for (std::uint32_t k = 0; k < s.size(); ++k) {
         const auto xs = s.xs(k);
         const auto zs = s.zs(k);
@@ -107,7 +111,7 @@ TileShadows shadows_of(const SunTile& tile, const Sun& sun, const Region& region
         out.owner.push_back(k);
         out.y.push_back(0.1);
     }
-    const TileTrees& t = tile.trees;
+    const TileTrees& t = trees;
     for (std::size_t n = 0; n < t.x.size(); ++n) {
         const double off = t.h[n] * 0.7;
         const double ox = kx * off;

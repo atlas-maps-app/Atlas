@@ -460,6 +460,45 @@ void ring_at(const tl::RingView& ring, std::uint8_t level, const tl::Frame& fram
     for (std::size_t k = 0; k < s.count; ++k) out.emplace_back(frame.x(ring.lon[kept[k]]), frame.z(ring.lat[kept[k]]));
 }
 
+/// A tile's variants at `level` (none at level 0), by their base feature's layer and source order.
+using Variants = std::unordered_map<std::uint64_t, std::uint32_t>;
+
+[[nodiscard]] Variants variants_at(const tl::Tile& tile, std::uint8_t level) {
+    Variants variants;
+    const tl::Layer* var = tile.layer(tl::LayerId::variant);
+    if (var != nullptr && level > 0) {
+        for (std::uint32_t i = 0; i < var->count; ++i) {
+            if (var->integer(tl::variant::tolerance, i) != level) continue;
+            const auto layer = static_cast<std::uint64_t>(var->integer(tl::variant::layer, i));
+            const auto index = static_cast<std::uint64_t>(var->integer(tl::variant::index, i));
+            variants[(layer << 56U) | index] = i;
+        }
+    }
+    return variants;
+}
+
+/// Record `i` of the building or part layer `l` (`layer_id`) as the scene at the level holds it: its values, its
+/// variant's where it has one at the level, and its ring at the level in metres in the pack's frame, into `poly`.
+[[nodiscard]] Values record_at(const tl::Tile& tile, const tl::Layer& l, tl::LayerId layer_id, std::uint32_t i,
+                               const Variants& variants, std::uint8_t level, const tl::Frame& frame,
+                               std::vector<std::uint32_t>& kept, std::vector<V2>& poly) {
+    const auto index = static_cast<std::uint64_t>(l.integer(tl::building::index, i));
+    const auto it = variants.find((static_cast<std::uint64_t>(layer_id) << 56U) | index);
+    const tl::Layer* var = tile.layer(tl::LayerId::variant);
+    const Values v = it != variants.end() ? values_of(*var, variant_slots, it->second) : values_of(l, record_slots, i);
+    ring_at(l.ring(tl::building::ring, i), level, frame, kept, poly);
+    return v;
+}
+
+/// Whether a record is a solid: a building not hidden with a height, a part with a height (render's `solids`).
+[[nodiscard]] bool is_solid(Source source, const Values& v, const std::vector<V2>& poly) noexcept {
+    return (source == Source::part || !v.hidden) && v.h != 0.0 && !poly.empty();
+}
+
+/// The building and part layers, in the order the renders list their records (buildings, then parts).
+constexpr std::array<std::pair<tl::LayerId, Source>, 2> record_layers{
+    std::pair{tl::LayerId::building, Source::building}, std::pair{tl::LayerId::part, Source::part}};
+
 // ---------------------------------------------------------------- the samples of one building
 
 constexpr std::array<std::string_view, 5> pitched = {"gabled", "pyramidal", "hipped", "skillion", "mansard"};
@@ -1047,49 +1086,68 @@ void collect_decks(const tiles::Tile& tile, const tiles::RenderHead& head, std::
     }
 }
 
+TileCasters solids_of(const tiles::Tile& tile, const tiles::RenderHead& head, std::uint8_t level) {
+    TileCasters c;
+    const tl::Frame& frame = head.frame;
+    const Variants variants = variants_at(tile, level);
+    std::vector<std::uint32_t> kept;
+    std::vector<V2> poly;
+    for (const auto [layer_id, source] : record_layers) {
+        const tl::Layer* l = tile.layer(layer_id);
+        if (l == nullptr) continue;
+        for (std::uint32_t i = 0; i < l->count; ++i) {
+            const Values v = record_at(tile, *l, layer_id, i, variants, level, frame, kept, poly);
+            if (!is_solid(source, v, poly)) continue;
+            for (const V2& p : poly) {
+                c.solids.x.push_back(p.x);
+                c.solids.z.push_back(p.z);
+            }
+            c.solids.first.push_back(static_cast<std::uint32_t>(c.solids.x.size()));
+            c.solids.h.push_back(v.h);
+            c.solids.min.push_back(v.min);
+            c.solids.source.push_back(source);
+            c.solids.record.push_back(i);
+        }
+    }
+    if (const tl::Layer* trees = tile.layer(tl::LayerId::tree)) {
+        for (std::uint32_t i = 0; i < trees->count; ++i) {
+            const tl::GridPoint p = trees->point(tl::tree::pos, i);
+            c.trees.x.push_back(frame.x(p.lon));
+            c.trees.z.push_back(frame.z(p.lat));
+            c.trees.h.push_back(trees->decimal(tl::tree::h, i).value_or(0.0));
+            c.trees.crown.push_back(trees->decimal(tl::tree::crown, i).value_or(0.0));
+            c.trees.gy.push_back(trees->decimal(tl::tree::gy, i).value_or(0.0));
+        }
+    }
+    return c;
+}
+
 SunTile make_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const Region& region, std::uint8_t level,
                   std::span<const Deck> decks) {
     SunTile st;
     st.key = {tile.header.level, tile.header.x, tile.header.y};
     st.level = level;
     const tl::Frame& frame = head.frame;
-    // the variants at this level, by their base feature's layer and source order
-    std::unordered_map<std::uint64_t, std::uint32_t> variants;
-    const tl::Layer* var = tile.layer(tl::LayerId::variant);
-    if (var != nullptr && level > 0) {
-        for (std::uint32_t i = 0; i < var->count; ++i) {
-            if (var->integer(tl::variant::tolerance, i) != level) continue;
-            const auto layer = static_cast<std::uint64_t>(var->integer(tl::variant::layer, i));
-            const auto index = static_cast<std::uint64_t>(var->integer(tl::variant::index, i));
-            variants[(layer << 56U) | index] = i;
-        }
-    }
+    // the solids and trees (solids_of: what the grid holds and what casts the ground's shadows)
+    TileCasters casters = solids_of(tile, head, level);
+    st.solids = std::move(casters.solids);
+    st.trees = std::move(casters.trees);
+    const Variants variants = variants_at(tile, level);
     std::vector<std::uint32_t> kept;
     std::vector<V2> poly;
     TileSamples windows;
-    for (const auto [layer_id, source] :
-         {std::pair{tl::LayerId::building, Source::building}, std::pair{tl::LayerId::part, Source::part}}) {
+    std::uint32_t next_solid = 0;
+    for (const auto [layer_id, source] : record_layers) {
         const tl::Layer* l = tile.layer(layer_id);
         if (l == nullptr) continue;
         for (std::uint32_t i = 0; i < l->count; ++i) {
-            const auto index = static_cast<std::uint64_t>(l->integer(tl::building::index, i));
-            const auto it = variants.find((static_cast<std::uint64_t>(layer_id) << 56U) | index);
-            const Values v =
-                it != variants.end() ? values_of(*var, variant_slots, it->second) : values_of(*l, record_slots, i);
-            ring_at(l->ring(tl::building::ring, i), level, frame, kept, poly);
-            // a solid: a building not hidden with a height, a part with a height (render's `solids`)
+            const Values v = record_at(tile, *l, layer_id, i, variants, level, frame, kept, poly);
+            // its solid, solids_of's next: the same records in the same order
             std::uint32_t solid = no_solid;
-            if ((source == Source::part || !v.hidden) && v.h != 0.0 && !poly.empty()) {
-                solid = st.solids.size();
-                for (const V2& p : poly) {
-                    st.solids.x.push_back(p.x);
-                    st.solids.z.push_back(p.z);
-                }
-                st.solids.first.push_back(static_cast<std::uint32_t>(st.solids.x.size()));
-                st.solids.h.push_back(v.h);
-                st.solids.min.push_back(v.min);
-                st.solids.source.push_back(source);
-                st.solids.record.push_back(i);
+            if (is_solid(source, v, poly)) {
+                solid = next_solid++;
+                ATLAS_ASSERT(st.solids.source[solid] == source && st.solids.record[solid] == i,
+                             "solids_of lists the solids in make_tile's order");
             }
             BuildingSamples b(st.samples, region, source, i, solid);
             b.all(v, poly);
@@ -1097,26 +1155,13 @@ SunTile make_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const 
         }
     }
     // the trees' crowns: 3/4 up, moved toward the sun by the crown's radius when the bucket is known
-    if (const tl::Layer* trees = tile.layer(tl::LayerId::tree)) {
-        st.samples.crowns_first = st.samples.size();
-        for (std::uint32_t i = 0; i < trees->count; ++i) {
-            const tl::GridPoint p = trees->point(tl::tree::pos, i);
-            const double x = frame.x(p.lon);
-            const double z = frame.z(p.lat);
-            const double h = trees->decimal(tl::tree::h, i).value_or(0.0);
-            const double crown = trees->decimal(tl::tree::crown, i).value_or(0.0);
-            st.trees.x.push_back(x);
-            st.trees.z.push_back(z);
-            st.trees.h.push_back(h);
-            st.trees.crown.push_back(crown);
-            st.trees.gy.push_back(trees->decimal(tl::tree::gy, i).value_or(0.0));
-            st.samples.add(Kind::crown, Source::tree, i, 0, 0, x, h * 0.75, z, no_face, no_solid);
-            st.samples.crown_r.push_back(crown / 2);
-        }
-        st.samples.crowns_end = st.samples.size();
-    } else {
-        st.samples.crowns_first = st.samples.crowns_end = st.samples.size();
+    st.samples.crowns_first = st.samples.size();
+    for (std::uint32_t i = 0; i < st.trees.x.size(); ++i) {
+        st.samples.add(Kind::crown, Source::tree, i, 0, 0, st.trees.x[i], st.trees.h[i] * 0.75, st.trees.z[i], no_face,
+                       no_solid);
+        st.samples.crown_r.push_back(st.trees.crown[i] / 2);
     }
+    st.samples.crowns_end = st.samples.size();
     // the quay walls: every water edge with a wall, in pieces outside the bridges' decks
     if (const tl::Layer* quays = tile.layer(tl::LayerId::quay)) {
         for (std::uint32_t i = 0; i < quays->count; ++i) {

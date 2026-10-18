@@ -46,7 +46,12 @@ struct TileShadows {
     }
 };
 
-/// The ground shadows of `tile`'s solids and trees for `sun`: none while the sun is down or the region draws none.
+/// The ground shadows of `solids` and `trees` (a tile's, solids_of) for `sun`: none while the sun is down or the region
+/// draws none.
+[[nodiscard]] TileShadows shadows_of(const TileSolids& solids, const TileTrees& trees, const Sun& sun,
+                                     const Region& region);
+
+/// The ground shadows of `tile`'s solids and trees for `sun` (shadows_of above).
 [[nodiscard]] TileShadows shadows_of(const SunTile& tile, const Sun& sun, const Region& region);
 
 } // namespace atlas::sun
