@@ -6,6 +6,12 @@
 # network; and builds it with NDK r30 for both Android ABIs. A push to `app` that changes the lavapipe image's recipe
 # rebuilds the image. The Android library itself is built by android.yml's Gradle build.
 #
+# Which job runs for which paths: the rule table's check (the rules job) holds app/android/mapcore/rules to the
+# renderer, render/*.py, so it runs for every trigger, a change to render/** alone included. The core's matrix (the
+# core job) runs when the push or pull request changes app/android/mapcore/**, this file or .github/docker/lavapipe/**
+# (core-changes decides, by a git diff), whatever else it changes, and on every nightly and run by hand; a change to
+# render/** alone runs the rules job and core-changes only.
+#
 # Only the extras need this file on the default branch, where GitHub keeps schedules and runs by hand: the nightly
 # (every fuzz target for up to 30 minutes, clang-tidy and clang-format on every file; it checks out `app`), the MODS
 # probe, and an image rebuild by hand. Everything else runs on push and pull_request.
@@ -18,10 +24,10 @@ name: Core
 on:
   push:
     branches: [main, app]
-    paths: ['app/android/mapcore/**', '.github/workflows/core.yml', '.github/docker/lavapipe/**']
+    paths: ['app/android/mapcore/**', '.github/workflows/core.yml', '.github/docker/lavapipe/**', 'render/**']
   pull_request:
     branches: [main, app]
-    paths: ['app/android/mapcore/**', '.github/workflows/core.yml', '.github/docker/lavapipe/**']
+    paths: ['app/android/mapcore/**', '.github/workflows/core.yml', '.github/docker/lavapipe/**', 'render/**']
   schedule:
     - cron: '23 2 * * *' # nightly: every fuzz target for up to 30 minutes, clang-tidy on every file
   workflow_dispatch:
@@ -57,8 +63,59 @@ env:
   ATLAS_TSAN_SUPPRESSIONS: race:libvulkan_lvp race:libLLVM race:libVkLayer_khronos_validation
 
 jobs:
+  # Whether the core's matrix runs: a push or pull request that changes the core's own paths (the filter above, less
+  # render/**), every nightly and every run by hand. Where the base commit is unknown (a new branch) or not in the
+  # clone (a force push), it runs; and if this job fails, the matrix runs all the same (its condition below).
+  core-changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      core: ${{ steps.diff.outputs.core }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          core=true
+          if [ "${{ github.event_name }}" = push ] || [ "${{ github.event_name }}" = pull_request ]; then
+            if [ -n "$base" ] && [ "$base" != 0000000000000000000000000000000000000000 ] && git cat-file -e "$base^{commit}" 2> /dev/null; then
+              if git diff --quiet "$base" HEAD -- app/android/mapcore .github/workflows/core.yml .github/docker/lavapipe; then
+                core=false
+              fi
+              echo "changed since $base:"
+              git diff --name-only "$base" HEAD | sed 's/^/  /'
+            else
+              echo "the base commit '$base' is not in the clone: the core's matrix runs"
+            fi
+          fi
+          echo "the core's matrix runs: $core"
+          echo "core=$core" >> "$GITHUB_OUTPUT"
+
+  # The rule table (plan-vector K5, VF1) held to the renderer: every feature render/*.py draws has its record in
+  # app/android/mapcore/rules/rules.tsv, and no source changed since the recording (Python 3's standard library only;
+  # seconds). It runs on every trigger, so a change to the renderer alone is checked too.
+  rules:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: core-rules-${{ github.ref }}-${{ github.event_name }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # the nightly runs from the default branch's workflow; it checks the work branch
+          ref: ${{ github.event_name == 'schedule' && 'app' || github.ref }}
+      - name: The rule table covers the renderer
+        run: |
+          python3 --version
+          python3 -I app/android/mapcore/rules/check_rules.py check
+
   core:
     name: ${{ matrix.task }} ${{ matrix.arch }}
+    needs: core-changes
+    if: ${{ !cancelled() && needs.core-changes.outputs.core != 'false' }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     # The nightly fuzz runs every target for up to 30 minutes, at most 120 minutes in all (see its step).
     timeout-minutes: ${{ (matrix.task == 'fuzz' && github.event_name == 'schedule') && 150 || 45 }}
@@ -384,15 +441,6 @@ jobs:
             ${{ env.CP }}/build/crashes/
             ${{ env.CP }}/build/fuzz-logs/
             ${{ env.CP }}/build/*/CMakeFiles/CMakeConfigureLog.yaml
-
-      # ---- tidy also holds the rule table (plan-vector K5, VF1) to the renderer: every feature render/*.py draws has its
-      # record in app/android/mapcore/rules/rules.tsv, and no source changed since the recording (Python 3's standard
-      # library only; seconds).
-      - name: The rule table covers the renderer
-        if: matrix.task == 'tidy'
-        run: |
-          python3 --version
-          python3 -I app/android/mapcore/rules/check_rules.py check
 
       # ---- tidy: NDK r30's clang-format and clang-tidy (the core's .clang-tidy) on the changed files: the tools of the
       # host-tidy preset (cmake/Tidy.cmake) and of a local replay of this step, so a clean run there is a clean run
