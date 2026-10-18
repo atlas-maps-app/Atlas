@@ -373,7 +373,7 @@ vk_phase() {
   vk_background vkbench
   left=$((900 - (SECONDS - bench_start))); [ "$left" -gt 0 ] || left=1
   wait_line vkbench "$left" "vkbench done" || { echo "VK BENCH FAILED: no 'vkbench done' within 900 s"; FAIL=1; done_ok=0; }
-  since_marker vkbench | grep -E 'AtlasMap: (vkbench|vkfacts|vk config|vk path|vk surface|vk frame|vk guard|vk background|a0 |a frame failed|device lost)' |
+  since_marker vkbench | grep -E 'AtlasMap: (vkbench|vkfacts|vk config|vk path|vk surface|vk window|vk frame|vk guard|vk background|a0 |a frame failed|device lost)' |
     sed 's/.*AtlasMap: //' > "$OUT/vkbench.txt"
   adb exec-out screencap -p > "$OUT/vkbench.png"
   if [ "$done_ok" = 1 ]; then

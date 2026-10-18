@@ -2,6 +2,7 @@ package app.atlas.mapview.vk
 
 import android.graphics.SurfaceTexture
 import android.os.Build
+import android.util.Log
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -15,6 +16,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import app.atlas.mapcore.CameraState
 import app.atlas.mapcore.FrameSource
 import app.atlas.mapcore.MapCore
+import app.atlas.mapview.EngineFrames
 
 /**
  * The core's window in Compose (plan-vector D5.1): a SurfaceView by default (its buffers go to the display's composer
@@ -88,12 +90,19 @@ private class Binding(
         textureSurface = null
     }
 
-    // SurfaceView.
-    override fun surfaceCreated(holder: SurfaceHolder) = Unit
+    // SurfaceView. Each window event is logged (`vk window: …`, a few a screen): where a window is late or never comes,
+    // the log says which callback Android did not make.
+    override fun surfaceCreated(holder: SurfaceHolder) {
+        Log.i(EngineFrames.TAG, "vk window: surface created")
+    }
 
-    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = attach(holder.surface, width, height)
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        Log.i(EngineFrames.TAG, "vk window: surface changed $width x $height")
+        attach(holder.surface, width, height)
+    }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
+        Log.i(EngineFrames.TAG, "vk window: surface destroyed")
         release()
         onState(VkSurfaceState(false, 0, 0))
     }
@@ -102,6 +111,7 @@ private class Binding(
 
     // TextureView.
     override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
+        Log.i(EngineFrames.TAG, "vk window: texture available $width x $height")
         val surface = Surface(texture)
         textureSurface = surface
         attach(surface, width, height)
@@ -112,6 +122,7 @@ private class Binding(
     }
 
     override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+        Log.i(EngineFrames.TAG, "vk window: texture destroyed")
         release()
         onState(VkSurfaceState(false, 0, 0))
         return true

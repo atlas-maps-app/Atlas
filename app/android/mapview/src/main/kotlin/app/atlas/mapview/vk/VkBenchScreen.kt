@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.IntOffset
@@ -69,6 +70,7 @@ import app.atlas.mapview.EngineFrames
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
@@ -153,6 +155,7 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
                 "Pills: start the phone's screen recorder first; 20 s of moving pills to film."
         }
     }
+    val view = LocalView.current
     val activity = context.findActivity()
     DisposableEffect(activity) {
         activity?.window?.let { metrics.attach(it) }
@@ -199,9 +202,28 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
                 attachWaiter = waiter
                 host = h
                 // Never a hang: a window that does not come (a refused attach brings no callback again, a phone left on
-                // another app) ends the wait, and the step says why.
-                withTimeoutOrNull(VkBench.WINDOW_WAIT_SECONDS * 1000L) { waiter.await() }
-                    ?: VkSurfaceState(false, 0, 0, VkBench.windowTimedOut(h.label)).also {
+                // another app) ends the wait, and the step says why. Meanwhile a layout pass is asked for each second:
+                // a new SurfaceView makes its surface only in one, and on CI's emulator after a TextureView step none
+                // came for 60 s, until the timeout's own line changed the screen (Android run 39105874581).
+                withTimeoutOrNull(VkBench.WINDOW_WAIT_SECONDS * 1000L) {
+                    val nudges = launch {
+                        var seconds = 0
+                        while (true) {
+                            delay(1000)
+                            seconds++
+                            view.requestLayout()
+                            view.invalidate()
+                            if (seconds == 1 || seconds % 10 == 0) {
+                                Log.i(EngineFrames.TAG, "vk window: no ${h.label} window after $seconds s; a layout pass asked for")
+                            }
+                        }
+                    }
+                    try {
+                        waiter.await()
+                    } finally {
+                        nudges.cancel()
+                    }
+                } ?: VkSurfaceState(false, 0, 0, VkBench.windowTimedOut(h.label)).also {
                         Log.w(EngineFrames.TAG, "vkbench ${h.label}: ${it.error}")
                     }
             }

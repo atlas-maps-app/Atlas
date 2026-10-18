@@ -471,9 +471,12 @@ class FacadeTest {
                 val calls = AtomicLong(0)
                 val failures = ConcurrentLinkedQueue<Throwable>()
                 val go = CountDownLatch(1)
+                // Close waits for every thread's first call: a slow runner may start none within the round's sleep.
+                val started = CountDownLatch(6)
                 val threads = (0 until 6).map { kind ->
                     thread(name = "atlas-test-race-$kind") {
                         val records = FrameRecords.allocate(16)
+                        var first = true
                         try {
                             go.await()
                             while (!core.closed) {
@@ -491,6 +494,10 @@ class FacadeTest {
                                         inCall.decrementAndGet()
                                     }
                                 }
+                                if (first) {
+                                    first = false
+                                    started.countDown()
+                                }
                             }
                         } catch (t: Throwable) {
                             failures += t
@@ -498,6 +505,7 @@ class FacadeTest {
                     }
                 }
                 go.countDown()
+                assertTrue("round $round: the threads made no first call within 60 s", started.await(60, TimeUnit.SECONDS))
                 Thread.sleep(15L + 10L * (round % 4))
                 val underWayAtFree = AtomicInteger(-1)
                 assertTrue(core.close {
