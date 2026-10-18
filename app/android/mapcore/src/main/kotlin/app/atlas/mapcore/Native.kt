@@ -84,6 +84,24 @@ object Native {
     @JvmStatic external fun groundLine(fd: Int, offset: Long, length: Long): String
 
     // ---- end of K9's natives ----
+    // ---- K13's natives: the text's kerning rule and the device's glyph check (VK facts) ----
+
+    /**
+     * The platform's kerning rule for the core's text (plan-vector K13, `CP/text/Shaper.hpp`; the app measures it,
+     * mapview's TextRounding): "floor" or "round" sets it, anything else leaves it. Returns the rule the core takes.
+     */
+    @JvmStatic external fun textRounding(rule: String): String
+
+    /** The runs the device's glyph check shapes (K13): `<style> <weight> <size> <spacing> | <text>`, a run a line. */
+    @JvmStatic external fun textCheckRuns(): String
+
+    /**
+     * The device's glyph check (K13): the bundled Geist's and Gelasio's bytes (direct buffers) and Android's shaping of
+     * [textCheckRuns] as rows, compared bit for bit under the platform's rule: `text.glyphs: …`.
+     */
+    @JvmStatic external fun textCheck(geist: ByteBuffer, gelasio: ByteBuffer, android: String): String
+
+    // ---- end of K13's natives ----
 
     /** The last failure of [create] or [attach] on this thread, in words. */
     @JvmStatic external fun lastError(): String

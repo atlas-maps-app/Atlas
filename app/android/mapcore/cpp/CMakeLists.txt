@@ -49,6 +49,24 @@ target_compile_definitions(atlas_zstd PRIVATE ZSTD_DISABLE_ASM=1 ZSTD_LEGACY_SUP
 target_compile_options(atlas_zstd PRIVATE -w)
 target_link_libraries(atlas_zstd PRIVATE atlas_options atlas_sanitizers)
 
+# HarfBuzz 14.6.0 (K13): the shaper Android's text stack runs, compiled as its amalgamation (src/harfbuzz.cc) in the
+# core's dialect (no exceptions, no RTTI, contraction off, hidden symbols) with its own (silent) warnings. Built: the
+# OpenType shaper (GSUB, GPOS, GDEF, with device tables' hinting, the legacy kern table and the fallback shaper, as
+# Android builds it), variations (fvar, avar, gvar, HVAR, MVAR) and glyph outlines (hb_font_draw_glyph). Left out: the
+# platform backends (none is enabled), colour, bitmap and SVG glyphs, CFF, AAT, the C library's locale, errno and
+# environment, and the APIs the core never calls. VERSIONS.md names Atlas's one change to it (hb_font_set_em_mult_floor).
+set(ATLAS_HARFBUZZ_OPTIONS
+    HB_DISABLE_DEPRECATED HB_NO_AAT HB_NO_ATEXIT HB_NO_BITMAP HB_NO_BUFFER_MESSAGE HB_NO_BUFFER_SERIALIZE
+    HB_NO_BUFFER_VERIFY HB_NO_CFF HB_NO_COLOR HB_NO_ERRNO HB_NO_FACE_COLLECT_UNICODES HB_NO_GETENV
+    HB_NO_LAYOUT_COLLECT_GLYPHS HB_NO_LAYOUT_FEATURE_PARAMS HB_NO_LAYOUT_RARELY_USED HB_NO_LAYOUT_UNUSED HB_NO_MATH
+    HB_NO_META HB_NO_MMAP HB_NO_NAME HB_NO_OPEN HB_NO_OT_FETCH HB_NO_OT_FONT_GLYPH_NAMES HB_NO_PAINT HB_NO_SETLOCALE
+    HB_NO_STYLE HB_NO_SVG HB_NO_VERTICAL)
+add_library(atlas_harfbuzz STATIC third_party/harfbuzz/src/harfbuzz.cc)
+target_include_directories(atlas_harfbuzz SYSTEM PUBLIC third_party/harfbuzz/src)
+target_compile_definitions(atlas_harfbuzz PRIVATE ${ATLAS_HARFBUZZ_OPTIONS})
+target_compile_options(atlas_harfbuzz PRIVATE -w)
+target_link_libraries(atlas_harfbuzz PRIVATE atlas_options atlas_sanitizers)
+
 # ---- The build's own tools: nocontract checks exact shader modules. Cross-compiling, it is built for the host.
 
 # Its check of specialization constants refuses by the pinned Slang's SPIR-V grammar (tools/nocontract/grammar.hpp,
@@ -128,7 +146,7 @@ find_package(Threads REQUIRED)
 add_library(atlas_core_requirements INTERFACE)
 target_include_directories(atlas_core_requirements INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
 target_link_libraries(atlas_core_requirements INTERFACE
-    atlas_options atlas_warnings atlas_sanitizers atlas_third_party atlas_zstd Threads::Threads)
+    atlas_options atlas_warnings atlas_sanitizers atlas_third_party atlas_zstd atlas_harfbuzz Threads::Threads)
 if(ATLAS_ANDROID)
     target_link_libraries(atlas_core_requirements INTERFACE log android)
 else()
@@ -204,8 +222,11 @@ if(ATLAS_TESTS)
     target_include_directories(atlas_doctest SYSTEM INTERFACE third_party/doctest)
     # REQUIRE stays available without exceptions, but a failed REQUIRE only reports and fails the test case, which runs
     # on: what a test cannot go on without it requires with ATLAS_REQUIRE (tests/base/require.hpp), which returns.
+    # The text tests read the bundled fonts (mapview's assets) and the tests' own data (tests/text).
     target_compile_definitions(atlas_doctest INTERFACE DOCTEST_CONFIG_NO_EXCEPTIONS_BUT_WITH_ALL_ASSERTS
-                                                        ATLAS_TEST_SCRATCH="${ATLAS_TEST_SCRATCH}")
+                                                        ATLAS_TEST_SCRATCH="${ATLAS_TEST_SCRATCH}"
+        ATLAS_FONTS_DIR="${ATLAS_MAPCORE_DIR}/../mapview/src/main/assets/svgfonts"
+        ATLAS_TESTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests")
     add_executable(atlas_tests ${_test_sources} ${ATLAS_EXTRA_TEST_SOURCES} ${_core_objects})
     target_link_libraries(atlas_tests PRIVATE atlas_core_requirements atlas_doctest)
     add_dependencies(atlas_tests atlas_core_shaders)

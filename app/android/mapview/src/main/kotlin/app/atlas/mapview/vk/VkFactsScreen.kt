@@ -36,9 +36,11 @@ import app.atlas.mapcore.CameraState
 import app.atlas.mapcore.CoreConfig
 import app.atlas.mapcore.FrameSource
 import app.atlas.mapcore.MapCore
+import app.atlas.mapcore.Native
 import app.atlas.mapview.DeviceFacts
 import app.atlas.mapview.EngineFrames
 import app.atlas.mapview.GlCaps
+import app.atlas.mapview.TextRounding
 import app.atlas.mapview.VkFactsLines
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -54,9 +56,10 @@ const val VK_HONEST = "This phone's graphics driver can't draw the Atlas map."
  * the crash guard (GPU, driver and version, tiler, lazily allocated memory, Vulkan version, Android's Vulkan profiles,
  * memory types, sample counts, extensions, the frame configuration and route the core would pick, the surface's
  * capabilities from a small SurfaceView), the GLES probe the survey still reads, the core's numerics check (K3b's
- * `pymath <hash> ok`) and its sun check over the bundled Westerkerk (K8's `sun <hash> ok`). Every line also goes to
- * logcat as `vkfacts <line>`, the numerics as `pymath …` and the sun as `sun …`, then `vkfacts done`. Copy puts the
- * whole report on the clipboard for the paste back.
+ * `pymath <hash> ok`), its sun check over the bundled Westerkerk (K8's `sun <hash> ok`) and the platform's kerning rule
+ * with the core's shaping held to Android's under it (K13's `text.rounding: …` and `text.glyphs: …`). Every line also
+ * goes to logcat as `vkfacts <line>`, the numerics as `pymath …` and the sun as `sun …`, then `vkfacts done`. Copy puts
+ * the whole report on the clipboard for the paste back.
  *
  * The crash guard's state (D5.10) leads the report: what this start found (`guard:`, the `vk guard` line naming the
  * stage and the pipeline or shader module a driver crashed in), the core's build ID and every driver turned off, or
@@ -120,8 +123,15 @@ fun VkFactsScreen(config: CoreConfig, modifier: Modifier = Modifier, guardReset:
             // The ground's stage T on the bundled Westerkerk (K9): `ground <hash> ok`, held by smoke.sh to the host build's.
             val ground = runCatching { MapCore.groundLine(context.assets) }.getOrElse { "ground unavailable: $it" }
             Log.i(EngineFrames.TAG, ground)
+            // The platform's kerning rule, measured with Android's Paint and told to the core, and the core's shaping
+            // against Android's under it (K13): `text.rounding: …`, `text.glyphs: …`.
+            val text = runCatching {
+                Native.load()?.let { listOf("text.rounding: unavailable: the core did not load ($it)") }
+                    ?: TextRounding.factsLines(context.assets)
+            }.getOrElse { listOf("text.rounding: unavailable: $it") }
+            for (l in text) Log.i(EngineFrames.TAG, "vkfacts $l")
             Log.i(EngineFrames.TAG, "vkfacts done")
-            lines + pymath + sun + fields + ground
+            lines + pymath + sun + fields + ground + text
         }
         status = if (core == null) VK_HONEST else "Done: ${report.size} lines."
     }

@@ -26,6 +26,8 @@
 #include "style/CameraState.hpp"
 #include "style/Theme.hpp"
 #include "sun/Buckets.hpp"
+#include "text/Fonts.hpp"
+#include "text/Shaper.hpp"
 
 #if defined(__ANDROID__)
 #include "platform/android/Android.hpp"
@@ -39,6 +41,7 @@
 #include <format>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <string>
 #include <thread>
 #include <type_traits>
@@ -797,8 +800,50 @@ jstring native_ground_line(JNIEnv* env, jclass /*cls*/, jint fd, jlong offset, j
 }
 // ---- end of K9's natives ----
 
-const std::array<JNINativeMethod, 24>& methods() {
-    static const std::array<JNINativeMethod, 24> table{{
+// ---- K13's natives: the text's kerning rule and the device's glyph check (VK facts) ----
+
+/// K13's platform rule for kerning, which the app measured with Android's Paint (mapview's TextRounding): "floor" or
+/// "round" sets it, anything else leaves it; the rule the core takes now.
+jstring native_text_rounding(JNIEnv* env, jclass /*cls*/, jstring rule) {
+    const std::string word = string_of(env, rule);
+    if (word == "floor") text::set_platform_rounding(text::Rounding::floor);
+    if (word == "round") text::set_platform_rounding(text::Rounding::round);
+    return java(env, std::string(text::name_of(text::platform_rounding())));
+}
+
+/// K13's device glyph check: the runs it shapes, `<head> | <text>` a line.
+jstring native_text_check_runs(JNIEnv* env, jclass /*cls*/) {
+    std::string out;
+    for (const text::CheckRun& run : text::check_runs()) out += std::format("{} | {}\n", run.head, run.text);
+    return java(env, out);
+}
+
+/// The bytes of a direct buffer, or none.
+[[nodiscard]] std::span<const std::byte> direct_bytes(JNIEnv* env, jobject buffer) {
+    if (buffer == nullptr) return {};
+    const auto* address = static_cast<const std::byte*>(env->GetDirectBufferAddress(buffer));
+    const jlong capacity = env->GetDirectBufferCapacity(buffer);
+    if (address == nullptr || capacity <= 0) return {};
+    return {address, static_cast<std::size_t>(capacity)};
+}
+
+/// K13's device glyph check: the bundled Geist and Gelasio (their bytes) and Android's rows for the check runs, held
+/// bit for bit under the platform's rule: `text.glyphs: …`.
+jstring native_text_check(JNIEnv* env, jclass /*cls*/, jobject geist, jobject gelasio, jstring android) {
+    text::Fonts fonts;
+    const auto sans = fonts.load(text::Face::sans, direct_bytes(env, geist));
+    const auto serif = fonts.load(text::Face::serif, direct_bytes(env, gelasio));
+    if (!sans || !serif) {
+        return java(env, std::format("text.glyphs: FAIL the fonts did not load ({})",
+                                     text::describe(!sans ? sans.error() : serif.error())));
+    }
+    return java(env, text::glyph_check(fonts, string_of(env, android), text::platform_rounding()));
+}
+
+// ---- end of K13's natives ----
+
+const std::array<JNINativeMethod, 27>& methods() {
+    static const std::array<JNINativeMethod, 27> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -827,6 +872,12 @@ const std::array<JNINativeMethod, 24>& methods() {
         // ---- K9's natives ----
         method("groundLine", "(IJJ)Ljava/lang/String;", fn(&native_ground_line)),
         // ---- end of K9's natives ----
+        // ---- K13's natives ----
+        method("textRounding", "(Ljava/lang/String;)Ljava/lang/String;", fn(&native_text_rounding)),
+        method("textCheckRuns", "()Ljava/lang/String;", fn(&native_text_check_runs)),
+        method("textCheck", "(Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;Ljava/lang/String;)Ljava/lang/String;",
+               fn(&native_text_check)),
+        // ---- end of K13's natives ----
         method("pipelines", "(J)Ljava/lang/String;", fn(&native_pipelines)),
         method("resetGuard", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", fn(&native_reset_guard)),
         // The app's map (K11).

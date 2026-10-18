@@ -154,6 +154,9 @@ struct hb_font_t
 
   hb_shaper_object_dataset_t<hb_font_t> data; /* Various shaper data. */
 
+  /* Atlas (VERSIONS.md): em_mult floors, as HarfBuzz did before it rounded. */
+  bool em_mult_floor;
+
 
   /* Convert from font-space to user-space */
   int64_t dir_mult (hb_direction_t direction)
@@ -1162,7 +1165,7 @@ struct hb_font_t
   }
 
   hb_position_t em_mult (int32_t v, int64_t mult)
-  { return (hb_position_t) ((v * mult + 32768) >> 16); }
+  { return (hb_position_t) ((v * mult + (em_mult_floor ? 0 : 32768)) >> 16); }
   hb_position_t em_multf (float v, float mult)
   { return (hb_position_t) roundf (em_fmultf (v, mult)); }
   float em_fmultf (float v, float mult)

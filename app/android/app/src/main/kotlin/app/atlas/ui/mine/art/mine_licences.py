@@ -59,7 +59,8 @@ def tables(path, module):
 
 def main():
     found = []
-    paths = sorted(glob.glob(os.path.join(ANDROID, '*', 'LICENSES.md')) + glob.glob(os.path.join(ANDROID, 'app', 'src', 'main', 'kotlin', 'app', 'atlas', 'ui', '*', 'LICENSES.md')))
+    paths = sorted(glob.glob(os.path.join(ANDROID, '*', 'LICENSES.md')) + glob.glob(os.path.join(ANDROID, 'app', 'src', 'main', 'kotlin', 'app', 'atlas', 'ui', '*', 'LICENSES.md'))
+                   + glob.glob(os.path.join(ANDROID, 'mapcore', 'cpp', 'LICENSES.md')))
     for p in paths:
         rel = os.path.relpath(p, ANDROID)
         module = rel.split(os.sep)[0] if '/ui/' not in rel.replace(os.sep, '/') else 'app ' + rel.split(os.sep)[-2]

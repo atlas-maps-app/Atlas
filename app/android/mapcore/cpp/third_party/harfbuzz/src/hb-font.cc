@@ -3034,6 +3034,16 @@ hb_font_get_synthetic_slant (hb_font_t *font)
   return font->slant;
 }
 
+/* Atlas (VERSIONS.md): whether em_mult floors, as HarfBuzz did before it rounded, or rounds (the default). */
+HB_EXTERN void
+hb_font_set_em_mult_floor (hb_font_t *font, hb_bool_t floor)
+{
+  if (hb_object_is_immutable (font))
+    return;
+
+  font->em_mult_floor = floor;
+}
+
 #ifndef HB_NO_VAR
 /*
  * Variations

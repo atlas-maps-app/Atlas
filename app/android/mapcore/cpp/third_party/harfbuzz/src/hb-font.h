@@ -1238,6 +1238,10 @@ hb_font_set_synthetic_slant (hb_font_t *font, float slant);
 HB_EXTERN float
 hb_font_get_synthetic_slant (hb_font_t *font);
 
+/* Atlas (VERSIONS.md): font units scaled with the floor HarfBuzz took before it rounded. */
+HB_EXTERN void
+hb_font_set_em_mult_floor (hb_font_t *font, hb_bool_t floor);
+
 HB_EXTERN void
 hb_font_set_variations (hb_font_t *font,
 			const hb_variation_t *variations,
