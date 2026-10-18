@@ -97,8 +97,9 @@ foreach(entry IN LISTS _entries)
         list(APPEND ATLAS_AREAS "${entry}")
     endif()
 endforeach()
-# The areas that include Vulkan-Hpp (base/vulkan.hpp), compiled with it as a precompiled header.
-set(ATLAS_VULKAN_AREAS gpu standin)
+# The areas that include Vulkan-Hpp (base/vulkan.hpp), compiled with it as a precompiled header: the device layer, the
+# stand-in, and the frame (its builder and passes, and the scene's heaps and residency, which see the device layer).
+set(ATLAS_VULKAN_AREAS gpu standin frame passes scene)
 set(_core_sources "")
 set(_vulkan_sources "")
 foreach(area IN LISTS ATLAS_AREAS)

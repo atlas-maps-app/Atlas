@@ -75,7 +75,11 @@ struct Session {
     Session session;
     session.instance = open_instance({.validation = true, .require_validation = vulkan_required()});
     if (!session.instance) return std::nullopt;
-    auto device = gpu::Device::open(*session.instance, options);
+    // Both frame routes wherever the device can draw them: lavapipe's dynamic route is one its Vulkan 1.4 properties
+    // forbid (no local reads of multisampled or depth-stencil attachments), forced for coverage, as CI's only GPU.
+    gpu::DeviceOptions forced = options;
+    forced.force_local_read = true;
+    auto device = gpu::Device::open(*session.instance, forced);
     ATLAS_REQUIRE_OR_RETURN(std::nullopt, device.has_value(), device.error().text());
     session.device = std::move(*device);
     session.device->check_ten_bit();

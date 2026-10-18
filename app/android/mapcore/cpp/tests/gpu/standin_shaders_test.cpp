@@ -204,7 +204,7 @@ TEST_CASE("no frame shader reads the alpha of the scene's colour samples") {
             ++composites;
         }
     }
-    CHECK(composites == 8);
+    CHECK(composites == 16); // the stand-in's eight and the frame's eight (shaders/frame/composite*.slang, K7)
     // The scan sees an alpha read: K0's input probe sums whole samples.
     const auto probe = atlas::spirv::instructions(atlas::spirv::probe_input_probe);
     ATLAS_REQUIRE(probe.has_value(), "the input probe is not a SPIR-V module");

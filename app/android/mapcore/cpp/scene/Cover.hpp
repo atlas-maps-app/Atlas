@@ -1,0 +1,99 @@
+// The cover (plan-vector D1 "The scene", D3, L14): the tiles a frame draws, each with what draws it, its visible cells,
+// its fade and its place relative to the eye. Each frame, from the view and the active pack:
+//   - every tile of the pack's finest level whose reach (its features' box and top, tiles::Reach) the view's frustum
+//     may see, out to the cover's far distance, is wanted at the finest level within the finest level's reach of the
+//     eye (or everywhere when the camera snapped onto one of the region's views: D3 pins L14 there), else at the next
+//     level up; where the finest level has no tile, the next level's tiles are wanted for their visible cells;
+//   - a wanted tile that is resident draws its visible cells (8 × 8 at L14); one that is not yet draws from its nearest
+//     resident ancestor's cells over it (4 × 4 at L12, one L14 tile each), so nothing is ever a hole or drawn twice
+//     once an ancestor is resident, and it is requested from the residency (visible tiles by their share of the screen,
+//     nearest first; ancestors next, so an ancestor is resident before its children are dropped);
+//   - a tile that comes to be drawn fades in over 180 ms (D3 "Transitions": 150-200 ms), so the frame at rest is exact
+//     once the fades end.
+// Every place is composed in double relative to the eye (view::View::tile_place) through the frame drawn
+// (view/Frames.hpp), so a tile of another pack's frame is placed by its affine.
+#pragma once
+
+#include "scene/Cells.hpp"
+#include "scene/Residency.hpp"
+#include "view/Frames.hpp"
+
+#include <cstdint>
+#include <span>
+#include <string>
+#include <vector>
+
+namespace atlas::scene {
+
+/// One tile the frame draws: the tile wanted, the resident tile that draws it (itself, or its nearest resident
+/// ancestor, whose cells over it are drawn), the drawn tile's cells that are visible (bit r · n + c), its fade (0 to
+/// 1), its place relative to the eye, its distance from the eye and its share of the screen.
+struct CoverTile {
+    tiles::TileKey key;
+    const ResidentTile* drawn = nullptr;
+    std::uint64_t cells = 0;
+    float fade = 1.0F;
+    shaders::TilePlace place{};
+    double distance = 0;
+    double share = 0;
+};
+
+/// What the cover is made of for a frame.
+struct CoverInputs {
+    /// The active pack (the store's) and the frame drawn; null: no tiles.
+    const tiles::StorePack* pack = nullptr;
+    /// The camera snapped onto one of the region's views: the finest level everywhere (D3).
+    bool pinned = false;
+    /// The ladder index tiles are built at (rhead's tolerance_of for the view).
+    std::uint8_t tolerance = 0;
+    /// How far from the eye the finest level serves (D3: L14 within about 4.7 km).
+    double fine_reach = 4700.0;
+    /// How far the cover reaches (the frustum's far plane, metres of depth).
+    double far = 12'000.0;
+    /// The renders' least cull margin, CSS px.
+    double margin_px = 40.0;
+    /// How long a tile fades in, seconds.
+    double fade_seconds = 0.18;
+};
+
+/// The frame's cover.
+class Cover {
+public:
+    /// The cover of `view` (its camera in the frame drawn by `frames`) over `in.pack`, drawn from `residency`'s
+    /// resident tiles, at `seconds` (the frame's clock). Render thread.
+    void update(const view::View& view, const view::Frames& frames, const CoverInputs& in, const Residency& residency,
+                double seconds);
+
+    /// The tiles drawn, nearest first.
+    [[nodiscard]] std::span<const CoverTile> tiles() const noexcept { return tiles_; }
+    /// The requests for the residency (want), by lane and priority.
+    [[nodiscard]] std::span<const Request> requests() const noexcept { return requests_; }
+    /// The tiles wanted at the finest level that are not resident yet (drawn from an ancestor, or not at all).
+    [[nodiscard]] std::size_t missing() const noexcept { return missing_; }
+
+private:
+    void draw(const ResidentTile& tile, std::uint64_t cells, const view::View& view, const view::Frames& frames,
+              const Frustum& frustum, tiles::TileKey wanted, double seconds);
+
+    /// A resident tile drawn, and when it was first drawn (its fade).
+    struct Shown {
+        std::uint32_t handle = 0;
+        double since = 0;
+        bool drawn = false; // this frame
+    };
+    /// An ancestor's cells to draw this frame over its missing descendants.
+    struct Pending {
+        tiles::TileKey key;
+        std::uint64_t cells = 0;
+    };
+    void request(const tiles::TileKey& key, Lane lane, double priority, std::uint8_t tolerance);
+
+    std::vector<CoverTile> tiles_;
+    std::vector<Request> requests_;
+    std::vector<Shown> shown_;
+    std::vector<Pending> pending_;
+    std::string pack_id_;
+    std::size_t missing_ = 0;
+};
+
+} // namespace atlas::scene

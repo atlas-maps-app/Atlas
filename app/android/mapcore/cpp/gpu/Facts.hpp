@@ -141,6 +141,11 @@ struct FeatureFacts {
     bool separate_depth_stencil_layouts = false;
     bool dynamic_rendering = false;
     bool local_read = false;
+    /// Vulkan 1.4's properties of local reads (VkPhysicalDeviceVulkan14Properties): of depth-stencil attachments and of
+    /// multisampled ones. VK_KHR_dynamic_rendering_local_read implies both; Vulkan 1.4's core leaves them optional. The
+    /// composite reads its samples and their stencil locally, so the dynamic route needs both (frame_local_read).
+    bool local_read_depth_stencil = false;
+    bool local_read_multisampled = false;
     bool synchronization2 = false;
     bool pipeline_cache_control = false;
     bool maintenance4 = false;
@@ -148,6 +153,11 @@ struct FeatureFacts {
     bool swapchain_maintenance1 = false;
     bool rasterization_order = false;
     bool multisampled_to_single = false;
+
+    /// Local reads the frame can draw with: of the samples and of the stencil (the composite's, in the dynamic route).
+    [[nodiscard]] bool frame_local_read() const noexcept {
+        return local_read && local_read_depth_stencil && local_read_multisampled;
+    }
 };
 
 /// The surface's facts, once a surface exists (the VK facts screen and VK bench attach one).

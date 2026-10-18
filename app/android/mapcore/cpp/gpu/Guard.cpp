@@ -697,7 +697,8 @@ std::expected<Started, StartRefusal> start_guarded(const StartOptions& options) 
     // The device's facts: every query its choice makes of the driver, before the driver is known (keyed by the system
     // build, as the instance's crash is). The 10-bit formats are not among them (VK bench's colour stage asks for
     // them), nor the Profiles library's checks (the profiles stage runs them when VK facts or VK bench asks).
-    s.device_options = {.present = options.present, .msaa2_close = options.msaa2_close};
+    s.device_options = {
+        .present = options.present, .msaa2_close = options.msaa2_close, .force_local_read = options.force_local_read};
     guard.enter(Stage::facts);
     auto picked = Device::pick(*s.instance, s.device_options);
     guard.leave();

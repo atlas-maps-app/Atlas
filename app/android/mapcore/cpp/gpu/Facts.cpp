@@ -233,6 +233,21 @@ void read_features(Facts& facts, const vk::raii::PhysicalDevice& device, std::ui
     }
     out.local_read = version >= VK_API_VERSION_1_4 ? v14.dynamicRenderingLocalRead == vk::True
                                                    : local_read.dynamicRenderingLocalRead == vk::True;
+    // What local reads may read: VK_KHR_dynamic_rendering_local_read requires depth-stencil and multisampled
+    // attachments; Vulkan 1.4 makes them properties (VkPhysicalDeviceVulkan14Properties), read here.
+    out.local_read_depth_stencil = out.local_read;
+    out.local_read_multisampled = out.local_read;
+    if (version >= VK_API_VERSION_1_4 && dispatcher->vkGetPhysicalDeviceProperties2 != nullptr) {
+        vk::PhysicalDeviceVulkan14Properties v14p{};
+        vk::PhysicalDeviceProperties2 properties2{.pNext = &v14p};
+        dispatcher->vkGetPhysicalDeviceProperties2(
+            *device,
+            reinterpret_cast<VkPhysicalDeviceProperties2*>(&properties2)); // NOLINT
+        out.local_read_depth_stencil =
+            out.local_read && v14p.dynamicRenderingLocalReadDepthStencilAttachments == vk::True;
+        out.local_read_multisampled =
+            out.local_read && v14p.dynamicRenderingLocalReadMultisampledAttachments == vk::True;
+    }
     out.shader_fma32 = fma.shaderFmaFloat32 == vk::True;
     out.swapchain_maintenance1 = swapchain1.swapchainMaintenance1 == vk::True;
     out.rasterization_order = raster_order.rasterizationOrderColorAttachmentAccess == vk::True;
@@ -574,7 +589,7 @@ void choose_configuration(Facts& facts, bool msaa2_close) {
     // The route (T1): dynamic rendering with local reads where the device has them; but a GPU that is not a tiler draws
     // its multisampled frames through the render pass, whose composite writes the 1x image straight from the samples
     // (D5.3's configurations B and C), which one dynamic rendering scope cannot (it keeps one sample count).
-    const bool dynamic_ok = facts.features.dynamic_rendering && facts.features.local_read;
+    const bool dynamic_ok = facts.features.dynamic_rendering && facts.features.frame_local_read();
     const bool direct_wanted = !facts.tiler && c.samples() != vk::SampleCountFlagBits::e1;
     if (quirks.route && (*quirks.route == Route::renderpass || dynamic_ok)) {
         c.route = *quirks.route;
@@ -586,6 +601,9 @@ void choose_configuration(Facts& facts, bool msaa2_close) {
         c.route = Route::renderpass;
         facts.route_reason = direct_wanted
                                  ? "not a tiler: a render pass with two subpasses, the composite writing the 1x image"
+                             : facts.features.dynamic_rendering && facts.features.local_read
+                                 ? "local reads that cannot read multisampled or depth-stencil attachments (Vulkan "
+                                   "1.4's properties): a render pass with two subpasses"
                              : facts.features.dynamic_rendering
                                  ? "dynamic rendering without local reads: a render pass with two subpasses"
                                  : "no dynamic rendering: a render pass with two subpasses";
@@ -827,6 +845,8 @@ std::vector<std::string> facts_lines(const Facts& f) {
     const FeatureFacts& x = f.features;
     line("feature.dynamicRendering: {}", yes_no(x.dynamic_rendering));
     line("feature.dynamicRenderingLocalRead: {}", yes_no(x.local_read));
+    line("feature.dynamicRenderingLocalReadDepthStencilAttachments: {}", yes_no(x.local_read_depth_stencil));
+    line("feature.dynamicRenderingLocalReadMultisampledAttachments: {}", yes_no(x.local_read_multisampled));
     line("feature.synchronization2: {}", yes_no(x.synchronization2));
     line("feature.timelineSemaphore: {}", yes_no(x.timeline_semaphore));
     line("feature.shaderFmaFloat32: {}", yes_no(x.shader_fma32));

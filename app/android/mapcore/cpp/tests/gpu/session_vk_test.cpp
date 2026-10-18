@@ -140,6 +140,7 @@ namespace fs = std::filesystem;
             .validation = true,
             .require_validation = test::vulkan_required(),
             .present = true,
+            .force_local_read = true, // both routes for coverage (tests/gpu/gpu_fixture.hpp's open_session says why)
             .spirv = 42};
 }
 

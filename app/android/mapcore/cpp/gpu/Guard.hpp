@@ -362,6 +362,7 @@ struct StartOptions {
     bool require_validation = false;
     bool present = true;      // the device presents (DeviceOptions::present), as the phone's does; offscreen tests: off
     bool msaa2_close = false; // K6's answer for configuration B
+    bool force_local_read = false; // a test's: DeviceOptions::force_local_read (never the phone's)
     std::uint32_t max_version = VK_API_VERSION_1_4;
     std::string loader;
     std::uint64_t spirv = 0; // the hash of the core's shaders (the cache's key)
