@@ -90,6 +90,20 @@ object VkBench {
     /** FrameConfig's names, by its code (A, B, C, D, 1x). */
     val CONFIG_NAMES = listOf("A", "B", "C", "D", "1x")
 
+    /**
+     * How the core refuses a cell the crash guard turned off for this driver and build (`CP/standin/Session.hpp`'s
+     * bench): the driver crashed in its work, a configuration the facts would not pick, so that cell alone is off.
+     */
+    const val CELL_OFF = "off (the driver crashed in it: "
+
+    /**
+     * The matrix's line for [cell] when the core would not draw it ([why]): `vkbench <cell>: off (the driver crashed in
+     * it: vk guard …)` for a cell the crash guard turned off (the run skips it and goes on; Vulkan, the pick and every
+     * other cell stay on), else `vkbench <cell>: unavailable (…)`.
+     */
+    fun skippedLine(cell: String, why: String): String =
+        if (why.startsWith(CELL_OFF)) "vkbench $cell: $why" else "vkbench $cell: unavailable ($why)"
+
     /** The matrix of configurations a device's facts allow: per configuration, both forms through each route. */
     fun matrix(available: Set<Int>, dynamic: Boolean, tiler: Boolean): List<Config> = buildList {
         for (c in listOf(0, 1, 2, 4)) {

@@ -21,10 +21,11 @@ import java.io.File
  * The façade's half of "kills are not crashes" (plan-vector D5.10, [ProcessExits]): the app's process exits as Android
  * records them (ActivityManager's history, here Robolectric's) reach the core's start as text, each saying whether it
  * counts as a crash, by the plan's rule: the user's, the system's (the routine trim of cached processes, REASON_OTHER,
- * among them) and the package's reasons do not; crashes, ANRs and initialization failures do, as does a reason a later
- * Android adds; a signal or an unknown end counts only in the foreground or visible. API 29 keeps no records, so it
- * passes none and every marker counts there. The core's half (matching a marker's process among them) is the guard's
- * host test's and FacadeTest's.
+ * among them) and the package's reasons do not, nor an uncaught exception of the app's own Kotlin or Java (REASON_CRASH:
+ * not the driver's); native crashes, ANRs and initialization failures do, as does a reason a later Android adds; a
+ * signal or an unknown end counts only in the foreground or visible. API 29 keeps no records, so it passes none and
+ * every marker counts there. The core's half (matching a marker's process among them) is the guard's host test's and
+ * FacadeTest's.
  */
 @RunWith(RobolectricTestRunner::class)
 class ProcessExitsTest {
@@ -54,11 +55,13 @@ class ProcessExitsTest {
             exit(4105, 5_000, ApplicationExitInfo.REASON_OTHER, RunningAppProcessInfo.IMPORTANCE_CACHED),
             exit(4106, 6_000, ApplicationExitInfo.REASON_SIGNALED, RunningAppProcessInfo.IMPORTANCE_CACHED),
             exit(4107, 7_000, ApplicationExitInfo.REASON_SIGNALED, RunningAppProcessInfo.IMPORTANCE_FOREGROUND),
+            exit(4108, 8_000, ApplicationExitInfo.REASON_CRASH),
         )
         assertEquals(
             listOf(
                 "4101 1000 1 crash-native", "4102 2000 0 user-requested", "4103 3000 0 low-memory", "4104 4000 1 anr",
                 "4105 5000 0 other", "4106 6000 0 signaled (cached)", "4107 7000 1 signaled (foreground)",
+                "4108 8000 0 crash (an uncaught exception, not the driver's)",
             ),
             ProcessExits.text(context).lines().sorted(),
         )
@@ -68,13 +71,14 @@ class ProcessExitsTest {
     fun everyReasonCountsOrNotAsThePlanSays() {
         val counted = mapOf(
             ApplicationExitInfo.REASON_CRASH_NATIVE to "crash-native",
-            ApplicationExitInfo.REASON_CRASH to "crash",
             ApplicationExitInfo.REASON_ANR to "anr",
             ApplicationExitInfo.REASON_SIGNALED to "signaled (foreground)",
             ApplicationExitInfo.REASON_INITIALIZATION_FAILURE to "initialization-failure",
             ApplicationExitInfo.REASON_UNKNOWN to "unknown (foreground)",
         )
         val stopped = mapOf(
+            // An uncaught exception of the app's own Kotlin or Java: not the driver's, whose crashes are native.
+            ApplicationExitInfo.REASON_CRASH to "crash (an uncaught exception, not the driver's)",
             ApplicationExitInfo.REASON_USER_REQUESTED to "user-requested",
             ApplicationExitInfo.REASON_USER_STOPPED to "user-stopped",
             ApplicationExitInfo.REASON_LOW_MEMORY to "low-memory",
@@ -119,9 +123,12 @@ class ProcessExitsTest {
         }
         assertEquals("signaled (visible)", ProcessExits.name(ApplicationExitInfo.REASON_SIGNALED, RunningAppProcessInfo.IMPORTANCE_VISIBLE))
         assertEquals("unknown (cached)", ProcessExits.name(ApplicationExitInfo.REASON_UNKNOWN, RunningAppProcessInfo.IMPORTANCE_CACHED))
-        // The crashes count wherever the process was.
-        for (reason in listOf(ApplicationExitInfo.REASON_CRASH_NATIVE, ApplicationExitInfo.REASON_CRASH, ApplicationExitInfo.REASON_ANR)) {
+        // A native crash and a hang count wherever the process was; an uncaught exception nowhere.
+        for (reason in listOf(ApplicationExitInfo.REASON_CRASH_NATIVE, ApplicationExitInfo.REASON_ANR)) {
             assertTrue(ProcessExits.counted(reason, RunningAppProcessInfo.IMPORTANCE_CACHED))
+        }
+        for (importance in listOf(RunningAppProcessInfo.IMPORTANCE_FOREGROUND, RunningAppProcessInfo.IMPORTANCE_VISIBLE, RunningAppProcessInfo.IMPORTANCE_CACHED)) {
+            assertFalse(ProcessExits.counted(ApplicationExitInfo.REASON_CRASH, importance))
         }
     }
 

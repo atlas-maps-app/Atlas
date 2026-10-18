@@ -5,11 +5,14 @@
 // a headless surface, whose queries are the surface stage's). After each step the crash guard (gpu/Guard.hpp) holds
 // what the step left open and nothing else: the colour stage exactly while something of 10 bits is alive, the frames
 // stage over each renderer's first 120 frames only, never while the frame loop rests and always naming the frame drawn
-// now (a switch within the last frame's first 120 included), no marker between steps after them, none after the close;
-// the marker never names a module, a pipeline or a thing going once its call has returned; and the pipeline cache is
-// written back only where a pipeline was made through it since its last write. ATLAS_SESSION_FULL=1 takes the colour
-// stage over every configuration, as VK bench does (the layer run's order, which notes the guard's marker at every
-// driver call: every call is behind one, and named only while it runs).
+// now (a switch within the last frame's first 120 included), no marker between steps after them, none after the close
+// nor while the frame loop rests (a trim from TRIM_MEMORY_UI_HIDDEN among its reasons, inside the colour stage too);
+// the marker never names a module, a pipeline or a thing going once its call has returned, and names VK bench's cell
+// whenever the frame is one the facts would not pick; a cell the guard turned off is refused, the pick never; mode 0
+// lets go of everything whatever it names and makes nothing; and the pipeline cache is written back only where a
+// pipeline was made through it since its last write. ATLAS_SESSION_FULL=1 takes the colour stage over every
+// configuration, as VK bench does (the layer run's order, which notes the guard's marker at every driver call: every
+// call is behind one, and named only while it runs).
 #include "gpu/Guard.hpp"
 #include "standin/City.hpp"
 #include "standin/Session.hpp"
@@ -28,6 +31,8 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <tuple>
 #include <unistd.h>
 #include <vector>
 
@@ -64,14 +69,22 @@ namespace fs = std::filesystem;
                                                                                                         : std::string();
 }
 
-/// The frame the frames stage's marker on disk names as drawn (its `drawing …` line), "" for none.
-[[nodiscard]] std::string drawing(const fs::path& dir) {
+/// The value of the marker's line `key …` on disk ("" for none, or no marker).
+[[nodiscard]] std::string marker_field(const fs::path& dir, std::string_view key) {
     const std::string text = read(dir / "guard");
-    const std::size_t at = text.find("\ndrawing ");
+    const std::string head = std::format("\n{} ", key);
+    const std::size_t at = text.find(head);
     if (at == std::string::npos) return {};
-    const std::size_t from = at + 9;
+    const std::size_t from = at + head.size();
     return text.substr(from, text.find('\n', from) - from);
 }
+
+/// The frame the frames stage's marker on disk names as drawn (its `drawing …` line), "" for none.
+[[nodiscard]] std::string drawing(const fs::path& dir) { return marker_field(dir, "drawing"); }
+
+/// The VK bench cell the marker on disk names (its `cell …` line: a configuration the facts would not pick), "" for
+/// none.
+[[nodiscard]] std::string cell_in(const fs::path& dir) { return marker_field(dir, "cell"); }
 
 [[nodiscard]] bool has(std::string_view text, std::string_view part) { return text.find(part) != std::string::npos; }
 
@@ -221,13 +234,16 @@ TEST_CASE("the core's session runs VK bench's order with every stage closed behi
         // draws). Nothing is named between steps.
         const std::vector<gpu::Configuration> configurations = matrix(*started->device);
         ATLAS_REQUIRE(!configurations.empty(), "the device draws no configuration");
-        MESSAGE(configurations.size() << " configurations, the device picks "
-                                      << gpu::name_of(started->device->facts().choice));
+        const gpu::Configuration pick = started->device->facts().choice;
+        MESSAGE(configurations.size() << " configurations, the device picks " << gpu::name_of(pick));
+        // A configuration the facts would not pick is a VK bench cell: the marker of its frame's work names it.
+        const auto cell_of = [&](const gpu::Configuration& c) { return c == pick ? std::string() : gpu::name_of(c); };
         ATLAS_REQUIRE(session.bench(1, configurations.front(), pills).empty(), "the first configuration");
         CHECK(named(dir).empty());
         CHECK(draw(session, 60) == 60);
         CHECK(marked(dir) == "frames"); // the first 120 frames are guarded
         CHECK(named(dir).empty());
+        CHECK(cell_in(dir) == cell_of(configurations.front()));
         CHECK(draw(session, 61) == 61);
         CHECK(marked(dir).empty()); // and after them, nothing
         for (const gpu::Configuration& c : configurations) {
@@ -238,6 +254,7 @@ TEST_CASE("the core's session runs VK bench's order with every stage closed behi
             // A configuration other than the one drawn: a new frame, whose first draws the frames stage holds.
             CHECK(marked(dir) == (c == configurations.front() ? "" : "frames"));
             CHECK(named(dir).empty());
+            CHECK(cell_in(dir) == (c == configurations.front() ? std::string() : cell_of(c)));
             CHECK_FALSE(session.output()->colour().ten_bit());
         }
         // The frame loop at rest: the frames stage ends, and the next draw opens it again.
@@ -312,7 +329,9 @@ TEST_CASE("the core's session runs VK bench's order with every stage closed behi
             CHECK_FALSE(session.attached());
             CHECK_FALSE(session.colour_open());
             CHECK(marked(dir).empty());
-            ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+            auto last = std::make_unique<test::OffscreenWindow>();
+            const test::OffscreenWindow* w = last.get();
+            ATLAS_REQUIRE(session.attach(std::move(last), size, why), why);
             CHECK_FALSE(session.colour_open());
             CHECK_FALSE(session.output()->colour().ten_bit());
             ATLAS_REQUIRE(session.bench(1, configurations.front(), pills | ten).empty());
@@ -338,10 +357,13 @@ TEST_CASE("the core's session runs VK bench's order with every stage closed behi
             CHECK(named(dir).empty());
             CHECK(draw(session, 3) == 3);
             CHECK(has(session.facts(), "profiles: VP_ANDROID_")); // read of the physical device, kept across the loss
-            // Out of it as VK bench leaves it, in mode 0: nothing of 10 bits is left, and the stage is closed.
+            // Out of it as VK bench leaves it, in mode 0: nothing of 10 bits is left, the stage is closed, and no
+            // output is made in its place (the next step that draws makes the one it needs).
+            const int made = w->made();
             CHECK(session.bench(0, configurations.front(), 0).empty());
             CHECK_FALSE(session.colour_open());
-            CHECK_FALSE(session.output()->colour().ten_bit());
+            CHECK(session.output() == nullptr);
+            CHECK(w->made() == made);
             CHECK(marked(dir).empty());
         }
         CHECK(session.bench(0, configurations.front(), 0).empty());
@@ -489,9 +511,9 @@ TEST_CASE("the pipeline cache is written back only where a pipeline was made thr
         CHECK(draw(session, 121) == 121); // the session's first 120 frames ask for one too
         CHECK_FALSE(fs::exists(file));
         CHECK(marked(dir).empty());
-        // Another configuration's pipelines: the next write has them.
+        // Another configuration's pipelines: written back as soon as they are made (the write that first holds a VK
+        // bench cell's pipelines is the cell's, under its marker), and nothing is new after it.
         ATLAS_REQUIRE(session.bench(1, configurations[1], pills).empty());
-        session.save_cache();
         CHECK(fs::exists(file));
         fs::remove(file);
         session.save_cache();
@@ -637,6 +659,222 @@ TEST_CASE("on a headless surface the session's surface, its queries and its outp
         CHECK_FALSE(session.colour_open());
         session.detach();
         CHECK(marked(dir).empty());
+        session.close();
+        CHECK_FALSE(fs::exists(dir / "guard"));
+    }
+}
+
+TEST_CASE("VK bench's mode 0 lets go of the frame and of 10 bits whatever configuration it names, and makes nothing") {
+    // VkBenchScreen calls mode 0 as the app leaves (its pause, at ON_STOP) and at the run's end. Whatever configuration
+    // it names, one this device lacks included, the renderer goes, and inside the colour stage the 10-bit output too,
+    // the stage closing after them; no output is made in their place, so nothing reaches the driver while the app
+    // leaves but what goes (on Android 14 the SurfaceView keeps its window in the background, and a swapchain made then
+    // would be the surface stage's for nothing). The next step that draws makes the output it needs.
+    if (!test::open_session()) return;
+    const Folder folder("mode0");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    {
+        standin::Session session(*started, session_in(dir));
+        if (!ten_bits_here(*started)) return;
+        const gpu::Configuration c = started->device->facts().choice;
+        const gpu::Configuration lacking{.config = gpu::FrameConfig::d}; // FA's, not built: no device has it
+        auto window = std::make_unique<test::OffscreenWindow>();
+        const test::OffscreenWindow* w = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        CHECK(session.bench(1, lacking, pills) == "this device has no configuration D"); // a step is refused it
+        // At 8 bits: the renderer goes, the output stays, nothing is made.
+        ATLAS_REQUIRE(session.bench(1, c, pills).empty());
+        CHECK(draw(session, 2) == 2);
+        int made = w->made();
+        CHECK(session.bench(0, lacking, 0).empty());
+        CHECK_FALSE(session.drawing());
+        CHECK(session.output() != nullptr);
+        CHECK(w->made() == made);
+        CHECK(marked(dir).empty());
+        // Inside the colour stage: the 10-bit frame and output go, the stage closes, and no 8-bit output is made in
+        // their place, though the configuration named is one the device lacks.
+        ATLAS_REQUIRE(session.bench(1, c, pills | ten).empty());
+        CHECK(session.colour_open());
+        CHECK(draw(session, 2) == 2);
+        CHECK(marked(dir) == "colour");
+        made = w->made();
+        CHECK(session.bench(0, lacking, 0).empty());
+        CHECK_FALSE(session.colour_open());
+        CHECK(session.output() == nullptr);
+        CHECK(w->made() == made);
+        CHECK(marked(dir).empty());
+        CHECK_FALSE(session.drawing());
+        // The next step that draws makes its output, at the depth it asks for.
+        ATLAS_REQUIRE(session.bench(1, c, pills).empty());
+        CHECK(w->made() == made + 1);
+        CHECK_FALSE(session.output()->colour().ten_bit());
+        CHECK(draw(session, 2) == 2);
+        ATLAS_REQUIRE(session.bench(1, c, pills | ten).empty());
+        CHECK(session.output()->colour().ten_bit());
+        CHECK(session.bench(0, c, 0).empty());
+        CHECK_FALSE(session.colour_open());
+        const std::vector<std::string> messages = started->instance->messages().take();
+        CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
+        session.close();
+        CHECK_FALSE(fs::exists(dir / "guard"));
+    }
+}
+
+TEST_CASE("the frame loop at rest leaves no marker on disk, inside VK bench's colour stage too: a trim from "
+          "TRIM_MEMORY_UI_HIDDEN rests it") {
+    // So that a routine kill of a cached process rarely finds a marker (D5.10): the frame loop rests when nothing
+    // changes and when the app's windows are hidden (a trim at TRIM_MEMORY_UI_HIDDEN, 20, or deeper: BACKGROUND 40,
+    // MODERATE 60 and COMPLETE 80 come as the system makes ready to kill cached processes). At rest the frames stage
+    // ends, and inside VK bench's colour stage the stage is left as mode 0 leaves it: its 10-bit frame and output go
+    // and it closes, so the core alone leaves no marker behind, whatever VK bench's own pause does. A trim below
+    // UI_HIDDEN (the app in the foreground) only writes back what is new.
+    if (!test::open_session()) return;
+    const Folder folder("rest");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    {
+        standin::Session session(*started, session_in(dir));
+        if (!ten_bits_here(*started)) return;
+        const gpu::Configuration c = started->device->facts().choice;
+        auto window = std::make_unique<test::OffscreenWindow>();
+        const test::OffscreenWindow* w = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        // At 8 bits: a trim in the foreground goes on drawing; from UI_HIDDEN the frames stage ends, and the frame and
+        // its output stay for the frame loop's return.
+        ATLAS_REQUIRE(session.bench(1, c, pills).empty());
+        CHECK(draw(session, 2) == 2);
+        CHECK(marked(dir) == "frames");
+        CHECK_FALSE(session.trim(15)); // TRIM_MEMORY_RUNNING_CRITICAL
+        CHECK(marked(dir) == "frames");
+        CHECK(session.trim(20));
+        CHECK(marked(dir).empty());
+        CHECK(session.drawing());
+        CHECK(draw(session, 1) == 1);
+        CHECK(marked(dir) == "frames"); // the frame loop back, within the frame's first 120
+        // Inside the colour stage: the frame loop at rest leaves it, as mode 0 does, and nothing is made.
+        ATLAS_REQUIRE(session.bench(1, c, pills | ten).empty());
+        CHECK(draw(session, 2) == 2);
+        CHECK(marked(dir) == "colour");
+        int made = w->made();
+        session.rest();
+        CHECK_FALSE(session.colour_open());
+        CHECK_FALSE(fs::exists(dir / "guard"));
+        CHECK(session.output() == nullptr);
+        CHECK_FALSE(session.drawing());
+        CHECK(w->made() == made);
+        // VK bench's next 10-bit step opens it again.
+        ATLAS_REQUIRE(session.bench(1, c, pills | ten).empty());
+        CHECK(session.colour_open());
+        CHECK(draw(session, 2) == 2);
+        // A trim in the foreground inside it changes nothing; each from UI_HIDDEN leaves nothing on disk, the first
+        // leaving the stage, and none writes the pipeline cache (nothing new: the stage's pipelines went through its
+        // own).
+        CHECK_FALSE(session.trim(15));
+        CHECK(session.colour_open());
+        CHECK(marked(dir) == "colour");
+        const fs::path file = dir / "pipelines.bin";
+        ATLAS_REQUIRE(fs::exists(file), "the 8-bit frame's pipelines were written back");
+        const auto written = fs::last_write_time(file);
+        made = w->made();
+        for (const int level : {20, 40, 60, 80}) {
+            CHECK(session.trim(level));
+            CHECK_FALSE(session.colour_open());
+            CHECK_FALSE(fs::exists(dir / "guard"));
+        }
+        CHECK(fs::last_write_time(file) == written);
+        CHECK(w->made() == made);
+        CHECK(session.bench(0, c, 0).empty());
+        const std::vector<std::string> messages = started->instance->messages().take();
+        CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
+        session.close();
+        CHECK_FALSE(fs::exists(dir / "guard"));
+    }
+}
+
+TEST_CASE("VK bench's cells: the marker of a cell's work names it, the pick's never; a cell turned off is refused, the "
+          "pick never") {
+    // VK bench draws configurations, routes, forms and targets the facts would not pick, to measure them (its cells):
+    // a crash in a cell's pipelines, its first 120 frames, its going or the pipeline cache's write after its pipelines
+    // proves only that cell bad on that driver, so its marker names the cell (gpu/Guard.hpp), and the pick's (the
+    // map's frame) never does. A cell the guard turned off is refused before anything is made for it, VK bench going on
+    // without it; an off line can never refuse the pick, which follows Vulkan's ladder.
+    if (!test::open_session()) return;
+    const Folder folder("cells");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    std::string driver;
+    std::string version;
+    gpu::Configuration pick;
+    std::optional<gpu::Configuration> first_cell;
+    {
+        auto started = gpu::start_guarded(start_in(dir));
+        ATLAS_REQUIRE(started.has_value(), started.error().reason);
+        std::tie(driver, version) = gpu::guard_key(started->device->facts());
+        pick = started->device->facts().choice;
+        standin::Session session(*started, session_in(dir));
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+        // Each configuration's first frames: the marker names the cell, or no cell for the pick.
+        const std::vector<gpu::Configuration> configurations = matrix(*started->device);
+        ATLAS_REQUIRE(configurations.size() >= 2, "the device draws " << configurations.size() << " configurations");
+        for (const gpu::Configuration& c : configurations) {
+            ATLAS_REQUIRE(session.bench(1, c, pills).empty(), gpu::name_of(c));
+            CHECK(draw(session, 2) == 2);
+            CHECK(marked(dir) == "frames");
+            CHECK_MESSAGE(cell_in(dir) == (c == pick ? std::string() : gpu::name_of(c)), read(dir / "guard"));
+            if (c != pick && !first_cell) first_cell = c;
+        }
+        ATLAS_REQUIRE(first_cell.has_value(), "no configuration besides the pick");
+        // At rest: no marker, the cell's with it.
+        session.rest();
+        CHECK_FALSE(fs::exists(dir / "guard"));
+        session.close();
+    }
+    // An earlier run's crash in that cell turned it off for this driver and build; a line naming the pick as a cell
+    // (left by a build whose facts picked another) cannot refuse the pick.
+    const gpu::Configuration cell = *first_cell;
+    std::ofstream(dir / "off", std::ios::trunc)
+        << std::format("{}|{}|session-test|cell|{}|1\n", driver, version, gpu::name_of(cell))
+        << std::format("{}|{}|session-test|cell|{}|1\n", driver, version, gpu::name_of(pick));
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), "a cell turned off turned Vulkan off: " << started.error().line);
+    CHECK(started->guard_line.empty());
+    const std::string off =
+        std::format("vk guard cell {} {} attempt 1 {} build session-test", driver, version, gpu::name_of(cell));
+    CHECK(started->guard->cell_off(cell) == off);
+    CHECK(started->guard->cell_off(pick).empty());
+    {
+        standin::Session session(*started, session_in(dir));
+        const std::string facts = session.facts();
+        CHECK_MESSAGE(
+            has(facts, std::format("guard.off: {} {} at cell, {} build session-test (this driver and build: VK "
+                                   "bench's cell {} is off)\n",
+                                   driver, version, gpu::name_of(cell), gpu::name_of(cell))),
+            facts);
+        auto window = std::make_unique<test::OffscreenWindow>();
+        const test::OffscreenWindow* w = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        ATLAS_REQUIRE(session.bench(1, pick, pills).empty(), "the pick refused");
+        CHECK(draw(session, 2) == 2);
+        const int made = w->made();
+        // The cell is refused with the guard's line, nothing made: the pick's frame goes on.
+        CHECK(session.bench(1, cell, pills) == std::format("off (the driver crashed in it: {})", off));
+        CHECK(w->made() == made);
+        CHECK(draw(session, 1) == 1);
+        CHECK(has(drawing(dir), std::format("(configuration {} ", gpu::name_of(pick))));
+        CHECK(cell_in(dir).empty());
+        // At 10 bits too: an off cell is refused before anything of the colour stage opens.
+        CHECK(session.bench(1, cell, pills | ten).starts_with("off (the driver crashed in it: "));
+        CHECK_FALSE(session.colour_open());
+        CHECK(session.bench(0, pick, 0).empty());
         session.close();
         CHECK_FALSE(fs::exists(dir / "guard"));
     }

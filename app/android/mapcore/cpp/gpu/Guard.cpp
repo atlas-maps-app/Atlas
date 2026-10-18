@@ -23,12 +23,18 @@ constexpr std::array stage_names{"instance", "facts",    "device", "cache", "sur
                                  "frames",   "profiles", "colour", "close", "refused"};
 static_assert(stage_names.size() == static_cast<std::size_t>(Stage::refused) + 1);
 
-/// The colour stage's and the profiles stage's names, as markers and off lines spell them: the rungs below Vulkan off,
-/// whose crash turns off only what they guard, at once.
+/// The colour stage's and the profiles stage's names, as markers and off lines spell them, and a VK bench cell's in an
+/// off line: the rungs below Vulkan off, whose crash turns off only what they guard, at once.
 constexpr std::string_view colour = "colour";
 constexpr std::string_view profiles = "profiles";
+constexpr std::string_view cell_rung = "cell";
 
-[[nodiscard]] bool rung_below(std::string_view stage) noexcept { return stage == colour || stage == profiles; }
+[[nodiscard]] bool rung_below(std::string_view stage) noexcept {
+    return stage == colour || stage == profiles || stage == cell_rung;
+}
+
+/// A plant that fires in a VK bench cell's work alone (`cell:<plant>`, Guard's constructor).
+constexpr std::string_view cell_plant = "cell:";
 
 /// How far a marker's start may lie from this process's own for the marker to be this process's: the façade reads the
 /// start from two clocks (MK/ProcessExits.kt), which can move a few milliseconds apart between two reads. A process
@@ -170,6 +176,10 @@ ProcessExits parse_exits(std::string_view text) {
 Guard::Guard(std::filesystem::path dir, std::string system, std::string build, std::string plant)
     : dir_(std::move(dir)), system_(std::move(system)), build_(std::move(build)), plant_(std::move(plant)),
       pid_(static_cast<std::int64_t>(::getpid())), start_ms_(first_guard_ms()) {
+    if (plant_.starts_with(cell_plant)) {
+        plant_cell_ = true;
+        plant_.erase(0, cell_plant.size());
+    }
     if (system_.empty()) system_ = "unknown";
     // Never empty: an off line from before build IDs has an empty build, which must match no build.
     if (build_.empty()) build_ = "unknown";
@@ -182,6 +192,23 @@ void Guard::set_process_start(std::int64_t ms) noexcept {
 }
 
 void Guard::set_drawing(std::string_view frame) { drawing_ = clean(frame); }
+
+void Guard::set_pick(const Configuration& pick) { pick_ = pick; }
+
+void Guard::frame_of(const Configuration* configuration) {
+    std::string cell;
+    if (configuration != nullptr && pick_ && *configuration != *pick_) cell = clean(name_of(*configuration));
+    if (cell == cell_) return;
+    const bool was = cell_marked();
+    cell_ = std::move(cell);
+    // The marker names what follows: the cell, before the driver calls of its frame (synced, as before a stage).
+    if (was || cell_marked()) write_marker();
+}
+
+bool Guard::cell_marked() const noexcept {
+    return !cell_.empty() && !colour_ &&
+           (current_ == Stage::pipelines || current_ == Stage::frames || current_ == Stage::cache);
+}
 
 GuardVerdict Guard::check_start(const ProcessExits& exits) {
     GuardVerdict v;
@@ -207,11 +234,16 @@ bool Guard::read_marker(const std::string& marker, const ProcessExits& exits, Gu
     const std::string module = field(marker, "module");
     const std::string release = field(marker, "release");
     const std::string drawing = field(marker, "drawing"); // the frames stage's frame, when no call was named
-    const std::string what = !pipeline.empty()  ? "pipeline " + pipeline
-                             : !module.empty()  ? "module " + module
-                             : !release.empty() ? "release " + release
-                             : !drawing.empty() ? "drawing " + drawing
-                                                : std::string();
+    const std::string cell = field(marker, "cell");       // VK bench's cell whose work it was, if any
+    const std::string named = !pipeline.empty()  ? "pipeline " + pipeline
+                              : !module.empty()  ? "module " + module
+                              : !release.empty() ? "release " + release
+                              : !drawing.empty() ? "drawing " + drawing
+                                                 : std::string();
+    // A cell's crash names the cell before what the driver did in it.
+    const std::string what = cell.empty()    ? named
+                             : named.empty() ? "cell " + cell
+                                             : std::format("cell {} {}", cell, named);
     const std::string build = field(marker, "build"); // empty: a marker from before build IDs
     if (stage.empty()) stage = "unknown";
     if (driver.empty()) driver = "unknown";
@@ -265,38 +297,51 @@ bool Guard::read_marker(const std::string& marker, const ProcessExits& exits, Gu
         return true;
     }
     // What the crash turns off, for this driver and version (or this system build, before the driver was known) and
-    // this build of the core, with the attempt it crashed in.
-    const auto turn_off = [&] {
+    // this build of the core, with the attempt it crashed in: the stage, or the VK bench cell (what names it).
+    const auto turn_off = [&](std::string_view rung, std::string_view off_what) {
         const bool known = driver != "unknown";
         const std::string key_driver = known ? clean(driver) : std::string("system");
         const std::string key_version = known ? clean(version) : system_;
-        // Once a driver and build: a verdict already on file stands as it was written.
+        // Once a driver and build (and a cell): a verdict already on file stands as it was written.
         for (const GuardOff& o : turned_off()) {
-            if (o.driver == key_driver && o.version == key_version && o.build == build_ && o.stage == clean(stage))
+            if (o.driver == key_driver && o.version == key_version && o.build == build_ && o.stage == clean(rung) &&
+                (rung != cell_rung || o.what == clean(off_what)))
                 return;
         }
-        write_synced(dir_ / "off", read_text(dir_ / "off") + std::format("{}|{}|{}|{}|{}|{}\n", key_driver, key_version,
-                                                                         build_, clean(stage), clean(what), attempt));
+        write_synced(dir_ / "off",
+                     read_text(dir_ / "off") + std::format("{}|{}|{}|{}|{}|{}\n", key_driver, key_version, build_,
+                                                           clean(rung), clean(off_what), attempt));
     };
+    if (!cell.empty() && !rung_below(stage)) {
+        // Work only VK bench does, a cell the facts would not pick: that cell alone off, at once, for this driver and
+        // build; Vulkan, the pick and every other cell go on. The pipeline cache stays unless the crash was in a write
+        // of it, and a retry stays the retry (the ladder goes on where it was).
+        turn_off(cell_rung, cell);
+        v.retry_without_cache = stage == name_of(Stage::cache) || attempt >= 2;
+        if (attempt >= 2) attempt_ = attempt;
+        log::error("{}{}: VK bench's cell {} is off for this driver and this build; Vulkan stays on{}", v.line, ended,
+                   cell, v.retry_without_cache ? ", without the pipeline cache" : "");
+        return true;
+    }
     if (stage == colour) {
         // VK bench's colour stage crashed: 10 bits off at once (the frame's own 8 bits never needed them, and a retry
         // could cost the bench again). The pipeline cache on disk never holds a 10-bit pipeline (the stage has its
         // own), so this start keeps it and goes on at 8 bits.
-        turn_off();
+        turn_off(stage, what);
         log::error("{}{}: 10 bits are off for this driver and this build; the frame stays at 8", v.line, ended);
         return true;
     }
     if (stage == profiles) {
         // The Profiles library's checks crashed: they decide nothing (VK facts reports them), so they alone are off, at
         // once, and this start goes on as it was, its cache kept.
-        turn_off();
+        turn_off(stage, what);
         log::error("{}{}: the profiles check is off for this driver and this build", v.line, ended);
         return true;
     }
     if (attempt >= 2) {
         // The retry crashed too: Vulkan off, for the driver, or for the system build where the stage is keyed to it
         // (write_marker).
-        turn_off();
+        turn_off(stage, what);
         v.off = true;
         log::error("{}{}: Vulkan is off for {} and this build of the core", v.line, ended,
                    driver != "unknown" ? "this driver" : "this system build");
@@ -337,12 +382,27 @@ std::string Guard::ten_bit_off() const { return rung_off(colour); }
 
 std::string Guard::profiles_off() const { return rung_off(profiles); }
 
+std::string Guard::cell_off(const Configuration& configuration) const {
+    if (pick_ && configuration == *pick_) return {}; // the pick follows Vulkan's ladder
+    const std::string cell = clean(name_of(configuration));
+    for (const GuardOff& o : turned_off()) {
+        if (o.stage != cell_rung || o.what != cell || o.build != build_ || o.driver != driver_ || o.version != version_)
+            continue;
+        return guard_line(cell_rung, o.driver, o.version, attempt_of(o), o.what, build_);
+    }
+    return {};
+}
+
 std::string_view Guard::marked() const noexcept {
     if (colour_) return colour;
     return current_ ? name_of(*current_) : std::string_view();
 }
 
 std::string_view Guard::making() const noexcept { return notes_.empty() ? std::string_view() : notes_.back(); }
+
+std::string Guard::where() const {
+    return cell_marked() ? std::format("{}, cell {}", marked(), cell_) : std::string(marked());
+}
 
 void Guard::write_marker(bool synced) const {
     if (dir_.empty() || (!current_ && !colour_)) return;
@@ -357,6 +417,7 @@ void Guard::write_marker(bool synced) const {
     } else if (current_ == Stage::frames && !drawing_.empty()) {
         text += std::format("drawing {}\n", drawing_); // the frame the frames stage draws, between named calls
     }
+    if (cell_marked()) text += std::format("cell {}\n", cell_); // VK bench's cell whose work this is
     text += std::format("driver {}\nversion {}\nbuild {}\nattempt {}\npid {}\nstart {}\n",
                         system_keyed ? std::string_view("unknown") : std::string_view(driver_),
                         system_keyed || version_.empty() ? system_ : version_, build_, attempt_, pid_, start_ms_);
@@ -401,15 +462,15 @@ void Guard::enter(Stage stage) {
     write_marker();
     // The pipelines stage's plant waits for its first pipeline, so that the marker names it; inside the colour stage
     // no other stage's plant fires (its marker is the colour stage's).
-    if (!colour_ && stage != Stage::pipelines && !plant_.empty() && plant_ == name_of(stage))
-        abort_planted(name_of(stage));
+    if (!colour_ && stage != Stage::pipelines && !plant_.empty() && plant_ == name_of(stage) && plant_here())
+        abort_planted(where());
 }
 
 void Guard::note(std::string what, bool planted) {
     const bool changed = what != making();
     notes_.push_back(std::move(what));
     if (changed) write_marker();
-    if (planted) abort_planted(std::format("{}, {}", marked(), notes_.back()));
+    if (planted) abort_planted(std::format("{}, {}", where(), notes_.back()));
 }
 
 void Guard::before(const PipelineLabel& label) {
@@ -419,7 +480,7 @@ void Guard::before(const PipelineLabel& label) {
         note({}, false);
         return;
     }
-    note("pipeline " + clean(describe(label)), planted_making(label.name, true));
+    note("pipeline " + clean(describe(label)), planted_making(label.name, true) && plant_here());
 }
 
 void Guard::before_module(std::string_view module) {
@@ -427,7 +488,7 @@ void Guard::before_module(std::string_view module) {
         note({}, false);
         return;
     }
-    note("module " + clean(module), planted_making(module, false));
+    note("module " + clean(module), planted_making(module, false) && plant_here());
 }
 
 void Guard::before_release(const Release& release) {
@@ -435,7 +496,7 @@ void Guard::before_release(const Release& release) {
         note({}, false); // no stage: no marker
         return;
     }
-    note("release " + clean(describe(release)), planted_release(release));
+    note("release " + clean(describe(release)), planted_release(release) && plant_here());
 }
 
 void Guard::after() {
@@ -527,9 +588,10 @@ std::vector<std::string> Guard::state() const {
     for (const GuardOff& o : off) {
         const bool system = o.driver == "system";
         const bool here = system ? o.version == system_ : o.driver == driver_ && o.version == version_;
-        const std::string_view gone = o.stage == colour     ? "10 bits are off"
-                                      : o.stage == profiles ? "the profiles check is off"
-                                                            : "Vulkan is off";
+        const std::string gone = o.stage == colour      ? std::string("10 bits are off")
+                                 : o.stage == profiles  ? std::string("the profiles check is off")
+                                 : o.stage == cell_rung ? std::format("VK bench's cell {} is off", o.what)
+                                                        : std::string("Vulkan is off");
         std::string whose = "another driver or version: not off here";
         if (o.build.empty()) {
             whose = "a build from before build IDs: not off for this one";
@@ -555,7 +617,8 @@ std::string Guard::clear(const std::filesystem::path& cache_file) const {
         const std::vector<GuardOff> off = turned_off();
         const auto ten = static_cast<std::size_t>(std::ranges::count(off, colour, &GuardOff::stage));
         const auto checks = static_cast<std::size_t>(std::ranges::count(off, profiles, &GuardOff::stage));
-        if (const std::size_t vulkan = off.size() - ten - checks; vulkan > 0)
+        const auto cells = static_cast<std::size_t>(std::ranges::count(off, cell_rung, &GuardOff::stage));
+        if (const std::size_t vulkan = off.size() - ten - checks - cells; vulkan > 0)
             forgot.push_back(std::format("{} {} turned off", vulkan, vulkan == 1 ? "driver" : "drivers"));
         if (ten > 0)
             forgot.push_back(std::format("10 bits turned off for {} {}", ten, ten == 1 ? "driver" : "drivers"));
@@ -563,6 +626,7 @@ std::string Guard::clear(const std::filesystem::path& cache_file) const {
             forgot.push_back(
                 std::format("the profiles check turned off for {} {}", checks, checks == 1 ? "driver" : "drivers"));
         }
+        if (cells > 0) forgot.push_back(std::format("{} VK bench {} turned off", cells, cells == 1 ? "cell" : "cells"));
         std::filesystem::remove(dir_ / "off", ec);
         std::filesystem::remove(dir_ / "off.tmp", ec);
         std::filesystem::remove(dir_ / "guard.tmp", ec);
@@ -647,6 +711,8 @@ std::expected<Started, StartRefusal> start_guarded(const StartOptions& options) 
     guard.leave();
     if (!device) return refuse({}, device.error().text());
     s.device = std::move(*device);
+    // The facts' own pick: a renderer's frame of any other configuration is a VK bench cell (the guard's file head).
+    guard.set_pick(s.device->facts().choice);
     // After a crash in VK bench's colour stage or in the profiles check under this driver and build (found now or by an
     // earlier start), what they guard is off: the frame's colour never takes 10 bits, the profiles go unread, and the
     // facts say so.

@@ -22,7 +22,10 @@ import java.io.File
  *    frame goes; `colour:release:swapchain` as the 10-bit swapchain goes; `colour:release:cache` as the stage's cache
  *    goes; `pipelines:release:frame` as an 8-bit frame goes; `surface:release:swapchain` as an 8-bit swapchain goes;
  *    `close:release:cache` and `close:release:device` as the pipeline cache and the device go at the core's close;
- *    `refused:release:instance` as a refused start's instance goes (Vulkan off for the driver, say).
+ *    `refused:release:instance` as a refused start's instance goes (Vulkan off for the driver, say);
+ *  - `cell:<plant>`, any of these in a VK bench cell's work alone (a configuration the facts would not pick: its
+ *    pipelines, its first 120 frames, its going, the cache's write after its pipelines), whose crash turns that cell
+ *    alone off: `cell:pipelines:box`, `cell:frames`, `cell:pipelines:release:frame`, `cell:cache`.
  */
 data class CoreConfig(
     val cacheDir: String,

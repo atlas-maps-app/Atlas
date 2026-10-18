@@ -59,10 +59,11 @@ const val VK_HONEST = "This phone's graphics driver can't draw the Atlas map."
  *
  * The crash guard's state (D5.10) leads the report: what this start found (`guard:`, the `vk guard` line naming the
  * stage and the pipeline or shader module a driver crashed in), the core's build ID and every driver turned off, or
- * turned 10 bits off for (VK bench's colour stage crashed: the frame keeps its 8, and `colour:` says so), for which
+ * turned 10 bits off for (VK bench's colour stage crashed: the frame keeps its 8, and `colour:` says so), or turned a
+ * VK bench cell off for (the driver crashed in a configuration the facts would not pick: VK bench skips it), for which
  * build. In the debug and bench builds ([guardReset]) "Reset guard" closes the core (a live one would write its
  * pipeline cache back), forgets those crashes and the pipeline cache, and reads the facts again with a new core, so
- * the owner can retry Vulkan, and 10 bits, by hand.
+ * the owner can retry Vulkan, 10 bits and the cells by hand.
  */
 @Composable
 fun VkFactsScreen(config: CoreConfig, modifier: Modifier = Modifier, guardReset: Boolean = false) {

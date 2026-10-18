@@ -9,11 +9,12 @@ import java.nio.ByteBuffer
  * comes with K7.
  *
  * One core per process: [shared] makes it on first use (the first map screen starts it, T8), behind the crash guard,
- * and keeps it. [create] returns null when the phone cannot run the core (no usable Vulkan, or the guard turned it off
- * for this driver or system build after two crashes); [lastError] and [facts] say why. [shared], [create], [facts],
- * [resetGuard] and [close] hold one lock, so a core's start, the facts without a core and a core's close never
- * overlap, and [create] refuses while the process's core is alive: the crash guard's marker is one file a process's
- * cores would share.
+ * and keeps it as the process's; it returns null when the phone cannot run the core (no usable Vulkan, or the guard
+ * turned it off for this driver or system build after two crashes), and [lastError] and [facts] say why. Nothing else
+ * makes a core: the one maker ([create], internal to this module) records each core it makes as the process's and
+ * refuses while one is alive, so no second core ever runs beside it (the crash guard's marker is one file a process's
+ * cores would share). [shared], [facts], [resetGuard] and [close] hold one lock, so a core's start, the facts without a
+ * core and a core's close never overlap.
  *
  * Every call and [close] exclude each other ([CoreHandle]): a call on another thread (onTrimMemory's [trimMemory], a
  * view's [detach], VK bench) runs whole before close frees the core, or does nothing once close has begun, and close
@@ -31,12 +32,14 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
         private var refusal: String = ""
 
         /**
-         * A new core, or null with the reason in [lastError] (T2's honest state, a library that did not load, or the
-         * process's core alive: one core runs in a process at a time). Under the lock of [shared], [facts],
-         * [resetGuard] and [close].
+         * Makes the process's core and records it as the process's, or returns null with the reason in [lastError]
+         * (T2's honest state, a library that did not load, or the process's core alive: one core runs in a process at a
+         * time). [shared] is its one caller outside this module's tests, which pass their own [make] in the native
+         * create's place (it returns the handle, 0 for a refusal). Under the lock of [shared], [facts], [resetGuard]
+         * and [close].
          */
         @Synchronized
-        fun create(config: CoreConfig): MapCore? {
+        internal fun create(config: CoreConfig, make: (CoreConfig) -> Long = ::nativeCreate): MapCore? {
             Native.load()?.let {
                 refusal = it
                 return null
@@ -45,30 +48,33 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
                 refusal = "the process's core is alive (MapCore.shared): one core runs in a process at a time"
                 return null
             }
-            val handle = Native.create(config.cacheDir, config.guardDir, config.system, config.plant, config.flags, config.exits(), config.processStartMs)
+            val handle = make(config)
             if (handle == 0L) {
                 refusal = Native.lastError()
                 return null
             }
             refusal = ""
-            return MapCore(handle, config)
+            return MapCore(handle, config).also { process = it }
         }
+
+        private fun nativeCreate(config: CoreConfig): Long =
+            Native.create(config.cacheDir, config.guardDir, config.system, config.plant, config.flags, config.exits(), config.processStartMs)
 
         /** The process's core, made once (null while the phone cannot run it: [lastError]). */
         @Synchronized
-        fun shared(config: CoreConfig): MapCore? = process ?: create(config)?.also { process = it }
+        fun shared(config: CoreConfig): MapCore? = process ?: create(config)
 
         /** The process's core if it was made. */
         fun sharedOrNull(): MapCore? = process
 
-        /** Why the last [create] gave no core ("" when it did). */
+        /** Why the last start ([shared]) gave no core ("" when it did). */
         fun lastError(): String = refusal
 
         /**
          * VkFacts without a core (Appendix D): a guarded start of its own, read and closed; when Vulkan is off, the
          * guard's line and the facts kept before. One "name: value" per line. Under the same lock as [shared],
-         * [create], [resetGuard] and [close], so a process never runs two cores at once: the crash guard's marker is
-         * one file, which a second start would read as this process's, and delete, under the first.
+         * [resetGuard] and [close], so a process never runs two cores at once: the crash guard's marker is one file,
+         * which a second start would read as this process's, and delete, under the first.
          */
         @Synchronized
         fun facts(config: CoreConfig): List<String> {
@@ -134,7 +140,10 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
      * draws the frosted pills in the core (the SurfaceView host); [texture] says the host is a TextureView. The frame
      * is 8 bits a channel; [tenBit] is VK bench's colour stage, the frame at 10 where the surface offers them (the
      * facts' `colour.stage:`), behind the crash guard's own stage, so that a driver's crash there turns off 10 bits
-     * only. "" or why the device cannot.
+     * only. Off ([on] false), whatever configuration it names, the frame goes and anything of 10 bits with it, and
+     * nothing is made. A configuration the facts would not pick is a VK bench cell: a driver's crash in its work turns
+     * that cell alone off, and the core refuses it from then on, `off (the driver crashed in it: vk guard cell …)`.
+     * "" or why the device cannot.
      */
     fun bench(on: Boolean, config: Int, route: Int, form: Int, target: Int, pills: Boolean, texture: Boolean, tenBit: Boolean = false): String =
         core.call("the core is closed") {
@@ -151,10 +160,11 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     fun stats(): String = core.call("vk no core") { Native.stats(it) }
 
     /**
-     * The app went to the background or memory is short ([level], ComponentCallbacks2's): the pipeline cache is written
-     * back where pipelines were made since its last write (else nothing is written), and from TRIM_MEMORY_UI_HIDDEN the
-     * frame loop stops until the next [requestFrame], so the crash guard's frames stage ends with it (no marker on disk
-     * for a process the system may then freeze and kill).
+     * The app went to the background or memory is short ([level], ComponentCallbacks2's): from TRIM_MEMORY_UI_HIDDEN
+     * the frame loop stops until the next [requestFrame], so the crash guard's frames stage ends with it and VK bench's
+     * colour stage is left (its 10-bit frame and output gone), and the pipeline cache is written back where pipelines
+     * were made since its last write (else nothing is written): no marker on disk for a process the system may then
+     * freeze and kill.
      */
     fun trimMemory(level: Int) = core.call(Unit) { Native.trimMemory(it, level) }
 
@@ -163,8 +173,8 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
     /**
      * Closes the core: no call starts after this begins, the calls under way finish first, then the core is freed
-     * (its last pipeline cache write among it). Under the lock of [shared], [create], [facts] and [resetGuard], and the
-     * process's core is forgotten only once it is freed: no other core starts in this process while its close runs.
+     * (its last pipeline cache write among it). Under the lock of [shared], [facts] and [resetGuard], and the process's
+     * core is forgotten only once it is freed: no other core starts in this process while its close runs.
      * Never from the core's own upcalls ([FrameSource]) or from inside a call of it: it would wait for itself.
      */
     override fun close() = close { Native.close(it) }

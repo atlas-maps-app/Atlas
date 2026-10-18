@@ -224,6 +224,23 @@ class VkBenchTest {
     }
 
     @Test
+    fun aCellTheGuardTurnedOffIsSkippedSayingWhyAndTheRunGoesOn() {
+        // A driver that crashed in the work of a cell the facts would not pick has that cell alone turned off for it and
+        // this build (CP/gpu/Guard.hpp): the core refuses it with the guard's line, and the matrix says so and goes on.
+        val guard = "vk guard cell ImaginationProprietary 0x00661bd0 attempt 1 B dynamic onepass resolve build 0123456789abcdef"
+        val why = "${VkBench.CELL_OFF}$guard)"
+        assertEquals(
+            "vkbench board B dynamic onepass resolve: off (the driver crashed in it: $guard)",
+            VkBench.skippedLine("board B dynamic onepass resolve", why),
+        )
+        // Anything else the core refuses is a cell the device cannot draw, as before.
+        assertEquals(
+            "vkbench pitch70 1x dynamic onepass resolve: unavailable (this device has no dynamic rendering with local reads)",
+            VkBench.skippedLine("pitch70 1x dynamic onepass resolve", "this device has no dynamic rendering with local reads"),
+        )
+    }
+
+    @Test
     fun theReportIsRecordedAsTheBenchRunsAndAnUnfinishedOneIsKept() {
         val lines = listOf("vkbench start: full bench, Imagination PowerVR", "vkbench board A renderpass composite resolve: p50 16.70")
         val running = VkBench.recorded(lines, "the colour stage")

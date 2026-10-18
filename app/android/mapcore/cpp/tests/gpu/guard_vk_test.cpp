@@ -8,10 +8,12 @@
 // the driver's; the stand-in's shared objects are the pipelines stage's even when a session's first frame is 10-bit.
 // VK bench's colour stage is the rung below: a planted abort in a pipeline of the 10-bit frame, or as the 10-bit frame
 // or swapchain goes, turns off 10 bits only, the next start draws at 8 bits with them off, keeps its pipeline cache and
-// says so, and a reset brings them back; a crash in the profiles stage turns off the profiles check alone. A marker
-// whose process Android recorded as stopped, not crashed, counts for nothing. The crashing starts run in child
-// processes: this test binary, spawned with one test case, which on hosts runs the core's session (standin/Session.hpp)
-// in VK bench's order.
+// says so, and a reset brings them back; a crash in the profiles stage turns off the profiles check alone; a crash in
+// the work of a VK bench cell the facts would not pick (its pipelines, its first frames, its going, the cache's write
+// after its pipelines) turns that cell alone off, while one in the pick's follows Vulkan's ladder. A marker whose
+// process Android recorded as stopped, not crashed, or ended by an uncaught exception of the app's own code, counts for
+// nothing. The crashing starts run in child processes: this test binary, spawned with one test case, which on hosts
+// runs the core's session (standin/Session.hpp) in VK bench's order.
 #include "base/log.hpp"
 #include "gpu/Frames.hpp"
 #include "gpu/Guard.hpp"
@@ -39,13 +41,16 @@
 #include <chrono>
 #include <climits>
 #include <csignal>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 // POSIX's environment (unistd.h declares it only on some systems).
@@ -99,11 +104,15 @@ struct Child {
     pid_t pid = 0;
 };
 
+/// How the child's session begins: VK bench's 8-bit runs first (the pick's frame first), its first frame a 10-bit one,
+/// or a VK bench cell first (a configuration the facts would not pick: the pick's own in the other form), then the
+/// pick, as VK bench's matrix draws its cells before the pick's runs.
+enum class First : std::uint8_t { pick, ten, cell };
+
 /// Runs this binary's child test case with the guard's folder, the plant, the core's build ID and the app's process
-/// exits as the façade would pass them (gpu::parse_exits' text; "" for none known); `ten_first`: its session's first
-/// frame is a 10-bit one, not VK bench's 8-bit first.
+/// exits as the façade would pass them (gpu::parse_exits' text; "" for none known); `first`: how its session begins.
 Child spawn_child(const fs::path& dir, const std::string& plant, const std::string& build,
-                  const std::string& exits = {}, bool ten_first = false) {
+                  const std::string& exits = {}, First first = First::pick) {
     const std::string exe = self_path();
     std::vector<std::string> args{exe, "--test-case=guard child start", "--no-intro=true"};
     std::vector<std::string> env;
@@ -112,7 +121,8 @@ Child spawn_child(const fs::path& dir, const std::string& plant, const std::stri
     env.push_back("ATLAS_GUARD_PLANT=" + plant);
     env.push_back("ATLAS_GUARD_BUILD=" + build);
     env.push_back("ATLAS_GUARD_EXITS=" + exits);
-    env.push_back(std::format("ATLAS_GUARD_TEN_FIRST={}", ten_first ? 1 : 0));
+    env.push_back(std::format("ATLAS_GUARD_TEN_FIRST={}", first == First::ten ? 1 : 0));
+    env.push_back(std::format("ATLAS_GUARD_CELL_FIRST={}", first == First::cell ? 1 : 0));
     std::vector<char*> argv;
     argv.reserve(args.size() + 1);
     for (std::string& a : args) argv.push_back(a.data());
@@ -193,6 +203,8 @@ TEST_CASE("guard child start") {
     ATLAS_REQUIRE(started.has_value(), started.error().reason);
     const gpu::Facts& facts = started->device->facts();
     ATLAS_REQUIRE(!facts.ten_bit_queried(), "the start asked the device about 10 bits");
+    // How the start found the pipeline cache: a retry runs without it ("miss: no file").
+    log::info("guard child: the pipeline cache {}", started->cache->status());
 #if !defined(__ANDROID__)
     standin::Session session(*started,
                              {.cache_file = fs::path(dir) / "pipelines.bin",
@@ -220,6 +232,21 @@ TEST_CASE("guard child start") {
         session.close();
         log::info("guard child: the first frame drawn in {}", drawn);
         return;
+    }
+    if (const char* cell_first = std::getenv("ATLAS_GUARD_CELL_FIRST"); // NOLINT(concurrency-mt-unsafe)
+        cell_first != nullptr && std::string_view(cell_first) == "1") {
+        // A VK bench cell first, the pick's own configuration in the other form, as VK bench's matrix draws its cells
+        // before the pick: refused, and passed over, once the guard has it off.
+        gpu::Configuration cell = config;
+        cell.form = config.form == gpu::FrameForm::composite ? gpu::FrameForm::onepass : gpu::FrameForm::composite;
+        if (cell.form == gpu::FrameForm::onepass) cell.target = gpu::CompositeTarget::resolve;
+        why = session.bench(1, cell, standin::bench_flag::pills);
+        if (why.empty()) {
+            for (int i = 0; i < 2; ++i) (void)session.draw(camera, {});
+            log::info("guard child: the cell {} drawn", gpu::name_of(cell));
+        } else {
+            log::info("guard child: the cell {}: {}", gpu::name_of(cell), why);
+        }
     }
     ATLAS_REQUIRE(session.bench(1, config, standin::bench_flag::pills).empty(), "the frame at 8 bits");
     for (int i = 0; i < 2; ++i) (void)session.draw(camera, {});
@@ -301,13 +328,14 @@ TEST_CASE("the crash guard names the pipeline, retries once without the cache, t
     CHECK(has(lines.back(), std::format("vk guard planted crash at pipelines, pipeline {}", planted)));
 
     // 2. The next start finds it and says which pipeline crashed; it retries once without the pipeline cache (the
-    // file is gone), and crashes again.
+    // file is gone as it starts: the stand-in's shared pipelines are written back afresh before the frame's), and
+    // crashes again.
     child = spawn_child(dir, plant_at, "build-a");
     CHECK(aborted(child));
     CHECK(has(child.log, "vk guard pipelines "));
     CHECK(has(child.log, std::format(" attempt 1 pipeline {}", planted)));
     CHECK(has(child.log, "retrying once without the pipeline cache"));
-    CHECK_FALSE(fs::exists(dir / "pipelines.bin"));
+    CHECK(has(child.log, "guard child: the pipeline cache miss: no file"));
     CHECK(has(read(dir / "guard"), "\nattempt 2\n"));
 
     // 3. The start after: Vulkan off for this driver, its version and this build; the `vk guard` line names the
@@ -845,9 +873,11 @@ TEST_CASE("a marker whose process was stopped, not crashed, counts for nothing; 
         o.process_start_ms = process_start;
         return gpu::start_guarded(o);
     };
-    // 1. Swiped away (the user), killed for memory (the system), updated (the package), three times running: never
-    // counted, nothing turned off, the facts saying so.
-    for (const std::string_view reason : {"user-requested", "low-memory", "package-updated"}) {
+    // 1. Swiped away (the user), killed for memory (the system), updated (the package), ended by an uncaught exception
+    // of the app's own code (a Kotlin bug, not the driver's: MK/ProcessExits.kt passes REASON_CRASH as not counted),
+    // each time running: never counted, nothing turned off, the facts saying so.
+    for (const std::string_view reason :
+         {"user-requested", "low-memory", "package-updated", "crash (an uncaught exception, not the driver's)"}) {
         auto stopped = start_with(exit_of(child.pid, later, false, reason));
         ATLAS_REQUIRE(stopped.has_value(), stopped.error().line);
         CHECK(stopped->guard_line.empty());
@@ -1162,17 +1192,181 @@ TEST_CASE("the stand-in's shared objects are the pipelines stage's even when a s
         }
     }
     // No atlas is made inside the colour stage: its plant there fires nowhere, and the run ends cleanly.
-    Child child = spawn_child(dir, "colour:atlas", "build-x", {}, true);
+    Child child = spawn_child(dir, "colour:atlas", "build-x", {}, First::ten);
     CHECK(WIFEXITED(child.status));
     const bool ten_drawn = has(child.log, "guard child: the first frame drawn in rgb10a2") ||
                            has(child.log, "guard child: the first frame drawn in bgr10a2");
     CHECK_MESSAGE(ten_drawn, child.log);
     CHECK_FALSE(fs::exists(dir / "guard"));
     // The pipelines stage's plant at it fires, its marker that stage's.
-    child = spawn_child(dir, "pipelines:atlas", "build-x", {}, true);
+    child = spawn_child(dir, "pipelines:atlas", "build-x", {}, First::ten);
     CHECK(aborted(child));
     CHECK(read(dir / "guard")
               .starts_with("stage pipelines\npipeline atlas (module standin_standin, configuration any)\n"));
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE(
+    "a crash in the work of a VK bench cell the facts would not pick turns that cell alone off; one in the pick's "
+    "follows Vulkan's ladder") {
+    // VK bench draws configurations, routes, forms and targets the facts would not pick, to measure them. A driver's
+    // crash in such a cell's work proves only that cell bad on that driver, so it must not turn Vulkan off for the map
+    // (D5.10). The child draws a cell first (the pick's own configuration in the other form), then the pick, as VK
+    // bench's matrix draws its cells before the pick's runs: a plant at the cell's first pipeline, its first frame, its
+    // going or the pipeline cache's write after its pipelines leaves a marker naming the cell, and the next start turns
+    // that cell alone off at once, for the driver and build, Vulkan on, its pipeline cache kept but where the crash was
+    // in the cache's write; every later start's session refuses the cell, saying why, and draws the pick. The same
+    // plants in the pick's work (the child's own order, the pick first) follow the ladder. A reset forgets the cells.
+    if (!test::open_session()) return;
+    const fs::path dir = fresh("cells");
+    std::error_code ec;
+    std::string driver;
+    std::string version;
+    std::string pick;
+    std::string cell;
+    gpu::Configuration cell_config;
+    std::string colour; // the 8-bit frames' colour offscreen
+    {
+        auto probe = gpu::start_guarded(options_in(dir, "", "build-probe"));
+        ATLAS_REQUIRE(probe.has_value(), probe.error().reason);
+        const gpu::Facts& facts = probe->device->facts();
+        std::tie(driver, version) = gpu::guard_key(facts);
+        pick = gpu::name_of(facts.choice);
+        cell_config = facts.choice;
+        cell_config.form =
+            cell_config.form == gpu::FrameForm::composite ? gpu::FrameForm::onepass : gpu::FrameForm::composite;
+        if (cell_config.form == gpu::FrameForm::onepass) cell_config.target = gpu::CompositeTarget::resolve;
+        cell = gpu::name_of(cell_config);
+        colour = gpu::colour_name(gpu::colour_offscreen(facts, gpu::default_depth).format);
+    }
+    MESSAGE("the pick: " << pick << "; the cell: " << cell);
+    const auto module_of = [](const std::string& configuration) {
+        return has(configuration, " onepass ") ? "standin_standin_onepass" : "standin_standin";
+    };
+    const std::string cell_box = std::format("box (module {}, configuration {} {})", module_of(cell), cell, colour);
+    const std::string cell_frame = std::format("frame (configuration {} {})", cell, colour);
+    const std::string pick_box = std::format("box (module {}, configuration {} {})", module_of(pick), pick, colour);
+    const std::string pick_frame = std::format("frame (configuration {} {})", pick, colour);
+    const std::string off_of = std::format("{} {} attempt 1 {} build ", driver, version, cell);
+
+    // 1. A clean run draws the cell, then the pick, and leaves no marker.
+    Child child = spawn_child(dir, "", "build-c1", {}, First::cell);
+    ATLAS_REQUIRE(WIFEXITED(child.status), "the clean child did not exit:\n" << child.log);
+    CHECK(WEXITSTATUS(child.status) == 0);
+    CHECK(has(child.log, std::format("guard child: the cell {} drawn", cell)));
+    CHECK_FALSE(fs::exists(dir / "guard"));
+
+    // 2. A plant in each part of the cell's work: the marker names the cell; the next start turns it alone off.
+    struct Plant {
+        std::string plant;
+        std::string build;
+        std::string stage;  // the marker's
+        std::string named;  // what the marker names besides its stage and cell, "" for nothing
+        bool retry = false; // the cache deleted: the crash was in its write
+    };
+    const std::vector<Plant> plants{
+        {.plant = "cell:pipelines:box",
+         .build = "build-c1",
+         .stage = "pipelines",
+         .named = "pipeline " + cell_box,
+         .retry = false},
+        {.plant = "cell:frames",
+         .build = "build-c2",
+         .stage = "frames",
+         .named = "drawing " + cell_frame,
+         .retry = false},
+        {.plant = "cell:pipelines:release:frame",
+         .build = "build-c3",
+         .stage = "pipelines",
+         .named = "release " + cell_frame,
+         .retry = false},
+        {.plant = "cell:cache", .build = "build-c4", .stage = "cache", .named = "", .retry = true},
+        // A plain plant at the cell's first frame is the cell's too: whatever its plant, work in a cell is the cell's.
+        {.plant = "frames", .build = "build-c5", .stage = "frames", .named = "drawing " + cell_frame, .retry = false},
+    };
+    for (const Plant& p : plants) {
+        CAPTURE(p.plant);
+        // Before the cache's write in the cell, none on disk: the stand-in's shared pipelines are written back before
+        // any frame's, outside the cell's marker, so the cell's write that crashes finds that one there.
+        if (p.retry) fs::remove(dir / "pipelines.bin", ec);
+        child = spawn_child(dir, p.plant, p.build, {}, First::cell);
+        CHECK(aborted(child));
+        if (p.retry) CHECK(fs::exists(dir / "pipelines.bin"));
+        const std::string marker = read(dir / "guard");
+        MESSAGE(p.plant << ": the marker\n" << marker);
+        CHECK(marker.starts_with(std::format("stage {}\n{}cell {}\ndriver ", p.stage,
+                                             p.named.empty() ? std::string() : p.named + "\n", cell)));
+        CHECK(has(marker, std::format("\nbuild {}\nattempt 1\n", p.build)));
+        const std::vector<std::string> lines = core_lines(child.log);
+        ATLAS_REQUIRE(!lines.empty(), "the child logged nothing:\n" << child.log);
+        CHECK(has(lines.back(), std::format("vk guard planted crash at {}, cell {}", p.stage, cell)));
+        auto next = gpu::start_guarded(options_in(dir, "", p.build));
+        ATLAS_REQUIRE(next.has_value(), "a crash in a VK bench cell turned Vulkan off: " << next.error().line);
+        MESSAGE(p.plant << ": found " << next->guard_line);
+        CHECK(next->guard_line == std::format("vk guard {} {} {} attempt 1 cell {}{}{} build {}", p.stage, driver,
+                                              version, cell, p.named.empty() ? "" : " ", p.named, p.build));
+        CHECK(next->retried == p.retry);
+        CHECK(next->cache->status() == (p.retry ? "miss: no file" : "hit"));
+        CHECK(next->guard->cell_off(cell_config) == std::format("vk guard cell {}{}", off_of, p.build));
+        CHECK(next->guard->cell_off(next->device->facts().choice).empty()); // the pick is never a cell
+        CHECK(std::ranges::contains(next->guard->state(),
+                                    std::format("guard.off: {} {} at cell, {} build {} (this driver and build: VK "
+                                                "bench's cell {} is off)",
+                                                driver, version, cell, p.build, cell)));
+        CHECK(has(read(dir / "off"), std::format("|{}|cell|{}|1\n", p.build, cell)));
+        CHECK_FALSE(fs::exists(dir / "guard"));
+    }
+    // Every later start of a build refuses the cell, saying why, and draws the pick: the plant is never reached.
+    child = spawn_child(dir, "cell:pipelines:box", "build-c1", {}, First::cell);
+    ATLAS_REQUIRE(WIFEXITED(child.status), "the start after the cell's crash did not exit:\n" << child.log);
+    CHECK(WEXITSTATUS(child.status) == 0);
+    CHECK(
+        has(child.log, std::format("guard child: the cell {}: off (the driver crashed in it: vk guard cell {}build-c1)",
+                                   cell, off_of)));
+    CHECK(std::ranges::none_of(core_lines(child.log), [](const std::string& l) {
+        return l.size() > 11 && std::string_view(l).substr(11).starts_with("vk guard ");
+    }));
+    CHECK_FALSE(fs::exists(dir / "guard"));
+
+    // 3. The same plants in the pick's work follow Vulkan's ladder: no cell named, the retry, then Vulkan off.
+    child = spawn_child(dir, "pipelines:box", "build-p1");
+    CHECK(aborted(child));
+    std::string marker = read(dir / "guard");
+    MESSAGE("the pick's box: the marker\n" << marker);
+    CHECK(marker.starts_with(std::format("stage pipelines\npipeline {}\ndriver ", pick_box)));
+    CHECK_FALSE(has(marker, "\ncell "));
+    child = spawn_child(dir, "pipelines:box", "build-p1");
+    CHECK(aborted(child));
+    CHECK(has(child.log, "retrying once without the pipeline cache"));
+    {
+        auto off = gpu::start_guarded(options_in(dir, "", "build-p1"));
+        ATLAS_REQUIRE(!off.has_value(), "two crashes in the pick's pipeline left Vulkan on");
+        CHECK(off.error().line ==
+              std::format("vk guard pipelines {} {} attempt 2 pipeline {} build build-p1", driver, version, pick_box));
+    }
+    for (const auto& [plant, head] :
+         {std::pair{std::string("frames"), std::format("stage frames\ndrawing {}\ndriver ", pick_frame)},
+          std::pair{std::string("pipelines:release:frame"),
+                    std::format("stage pipelines\nrelease {}\ndriver ", pick_frame)}}) {
+        CAPTURE(plant);
+        child = spawn_child(dir, plant, "build-p2");
+        CHECK(aborted(child));
+        marker = read(dir / "guard");
+        CHECK_MESSAGE(marker.starts_with(head), marker);
+        auto next = gpu::start_guarded(options_in(dir, "", "build-p2"));
+        ATLAS_REQUIRE(next.has_value(), next.error().line);
+        CHECK_FALSE(has(next->guard_line, " cell "));
+        CHECK(next->retried); // the ladder's retry
+        fs::remove(dir / "guard", ec);
+    }
+
+    // 4. A reset forgets the cells with the rest, and the cell is drawn again.
+    const std::string said = gpu::Guard(dir, "host-test-system", "build-c1", "").clear();
+    MESSAGE(said);
+    CHECK(said == "vk guard reset: forgot 1 driver turned off and 5 VK bench cells turned off");
+    child = spawn_child(dir, "", "build-c1", {}, First::cell);
+    CHECK(WIFEXITED(child.status));
+    CHECK(has(child.log, std::format("guard child: the cell {} drawn", cell)));
     fs::remove_all(dir, ec);
 }
 

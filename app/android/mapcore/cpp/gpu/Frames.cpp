@@ -152,6 +152,7 @@ Renderer::Renderer(const Device& device, Output& output, Content& content, Pipel
 Renderer::~Renderer() {
     drain();
     release_frame();
+    if (watch_ != nullptr) watch_->frame_of(nullptr); // no frame's work follows
 }
 
 Result<std::unique_ptr<Renderer>> Renderer::create(const Device& device, Output& output, Content& content,
@@ -171,6 +172,7 @@ void Renderer::release_frame() {
     // frame's pass and content (remake) are made under their own names.
     const std::string detail =
         std::format("(configuration {} {})", name_of(pass_->spec().config), colour_name(pass_->spec().colour_format));
+    if (watch_ != nullptr) watch_->frame_of(&pass_->spec().config); // its going is its configuration's work
     const Announced named =
         announce_release({.kind = "frame", .detail = detail, .ten_bit = ten_bit(pass_->spec().colour_format)}, watch_);
     if (prepared_) content_.release();
@@ -180,6 +182,8 @@ void Renderer::release_frame() {
 
 Result<void> Renderer::remake(const Configuration& configuration) {
     release_frame();
+    // From here the work is the new frame's: its main pass, its content's pipelines, passes and images.
+    if (watch_ != nullptr) watch_->frame_of(&configuration);
     // The scene's and the composite's colour attachments follow the output (gpu/Facts.hpp's colour): a resolve keeps
     // one format, and the output's colour is one the device draws the frame in.
     const MainPassSpec spec{.config = configuration,

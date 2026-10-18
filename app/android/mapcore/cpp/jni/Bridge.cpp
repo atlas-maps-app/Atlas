@@ -63,10 +63,6 @@ constexpr std::uint32_t msaa2 = 4U;      // K6's answer: 2x within 0.15 MAD of 4
 /// The cores alive in this process: the guard's reset waits for none (a live core writes its pipeline cache back).
 std::atomic<int> live_cores{0}; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
-/// ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN: the process's windows are no longer shown (the levels above it are deeper
-/// trims of a process in the background).
-constexpr int trim_ui_hidden = 20;
-
 /// The hash of the core's shaders, every embedded module's: the pipeline cache's key.
 [[nodiscard]] std::uint64_t core_spirv() noexcept { return gpu::spirv_hash(spirv::hashes); }
 
@@ -190,19 +186,21 @@ public:
         return on_session([this] { return session_->facts(); });
     }
 
-    /// The app was asked to trim its memory at `level` (ComponentCallbacks2): the pipeline cache goes back to disk
-    /// where a pipeline was made since its last write (else nothing is written and no marker made: the deeper levels
-    /// come as the system makes ready to kill cached processes), and from TRIM_MEMORY_UI_HIDDEN (the app's windows went
-    /// to the background) nothing is drawn until a frame is asked for again, so the frames stage ends with the frame
-    /// loop: no marker stays on disk for a process the system may then freeze and kill as it trims the cached ones.
+    /// The app was asked to trim its memory at `level` (ComponentCallbacks2, standin/Session.hpp's trim): from
+    /// TRIM_MEMORY_UI_HIDDEN (the app's windows went to the background) nothing is drawn until a frame is asked for
+    /// again, so the frame loop rests, its frames stage ending and VK bench's colour stage left (its 10-bit frame and
+    /// output gone); and the pipeline cache goes back to disk where a pipeline was made since its last write (else
+    /// nothing is written and no marker made: the deeper levels come as the system makes ready to kill cached
+    /// processes). No marker stays on disk for a process the system may then freeze and kill as it trims the cached
+    /// ones.
     void trim(int level) {
         on_session([this, level] {
-            session_->save_cache();
-            if (level < trim_ui_hidden) return;
+            const bool hidden = session_->trim(level);
 #if defined(__ANDROID__)
-            requested_ = false;
+            if (hidden) requested_ = false;
+#else
+            (void)hidden;
 #endif
-            session_->rest();
         });
     }
 
@@ -344,7 +342,7 @@ private:
     }
 
     /// The frame loop stops until the next requestFrame: no more vsyncs, and the session rests (its frames stage ends,
-    /// so no marker is on disk while nothing is drawn).
+    /// and VK bench's colour stage is left, so no marker is on disk while nothing is drawn).
     void rest() {
         requested_ = false;
         session_->rest();

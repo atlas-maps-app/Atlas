@@ -32,31 +32,47 @@
 // frames stage's marker names the frame it draws (`drawing frame (configuration <…> <colour>)`), so that a crash in a
 // renderer's first draws says which configuration it was.
 //
+// VK bench draws configurations, routes, forms and targets the facts would not pick, to measure them: its cells. A
+// renderer tells the guard whose frame its work is (gpu/Pipelines.hpp's PipelineWatch::frame_of), and while that frame
+// is a cell other than the facts' own pick (set_pick), the marker of the pipelines, frames and cache stages names the
+// cell too (`cell <configuration>`): its pipelines, passes and images made and let go of, its first 120 frames, and a
+// write of the pipeline cache while it is drawn (the write that first holds its pipelines comes right after they are
+// made, standin/Session.hpp). A crash there proves only that cell bad on that driver. The stand-in's shared objects,
+// the window's surface and swapchain, the device and every other step are work the map would do, and never a cell's;
+// so is the pick's frame, whatever VK bench draws it for.
+//
 // At the next start a surviving marker means a crash in that stage, unless the process that left it was stopped, not
 // crashed. A marker survives a swipe-away, a low-memory kill or a force-stop just as it survives a crash, so on API 30
 // and newer the façade passes the app's process exits as Android records them (ApplicationExitInfo), and the marker's
 // own process (its id, and an exit after its start) is looked up among them: killed by the user, the system (low
-// memory, a routine trim of cached processes, the freezer) or the package's update, the marker is discarded and counts
-// for nothing (`vk guard: <stage> marker after <reason>, not counted`, in VK facts); crashed, hung (an ANR: a driver
-// hang repeats), signalled or ended for an unknown reason while in the foreground or visible, or with no record at all,
-// it counts (the façade decides which reasons count: MK/ProcessExits.kt). A marker of this very process (its id and its
-// start: an earlier core in it, which did not crash) counts for nothing either, whatever Android records. A discarded
-// marker does not reset the ladder: the start goes on at its attempt. On API 29 every other marker counts.
+// memory, a routine trim of cached processes, the freezer) or the package's update, or ended by an uncaught exception
+// of the app's own code (a Kotlin or Java bug, not the driver's: the core's build ID would not change with its fix),
+// the marker is discarded and counts for nothing (`vk guard: <stage> marker after <reason>, not counted`, in VK facts);
+// a native crash, a hang (an ANR: a driver hang repeats), a signal or an unknown end while in the foreground or
+// visible, or no record at all, counts (the façade decides which reasons count: MK/ProcessExits.kt). A marker of this
+// very process (its id and its start: an earlier core in it, which did not crash) counts for nothing either, whatever
+// Android records. A discarded marker does not reset the ladder: the start goes on at its attempt. On API 29 every
+// other marker counts.
 //
 // What a counted crash does depends on its stage:
 //   instance, facts, refused: the first time, the core retries once with the pipeline cache deleted (a corrupt cache
 //     can crash a driver); the second time Vulkan is turned off for the system build and this build of the core: every
-//     start runs these before it knows the driver (a rebuild's facts after a device loss run the same queries, though
-//     the driver is known by then), and a refused start's teardown at every launch once a driver is off, so only a
-//     verdict read before the instance stops the crash coming back;
+//     start runs these before it knows the driver (a rebuild's facts after a device loss make the same queries, without
+//     the window's surface, whose presentation the surface stage asks as at an attach, though the driver is known by
+//     then), and a refused start's teardown at every launch once a driver is off, so only a verdict read before the
+//     instance stops the crash coming back;
 //   device, cache, surface, pipelines, frames, close: the same, for that driver and version and this build;
+//   a VK bench cell's work (its marker names the cell): that cell alone off at once, for that driver and version and
+//     this build (the rung below Vulkan off for work only VK bench does): VK bench skips it from then on, and Vulkan,
+//     the pick and every other cell go on; the pipeline cache is kept unless the crash was in the cache stage, and a
+//     retry stays the retry;
 //   colour: 10 bits off at once, for that driver and version and this build (the rung below Vulkan off);
 //   profiles: the profiles check off at once, for them; nothing else changes.
-// The `vk guard` line names the stage, the module, pipeline or thing that went, the attempt and the build, and VK facts
-// carries it. A verdict keyed to the driver ends with a driver update (another version), one keyed to the system build
-// (instance, facts, refused) with a system update (another fingerprint; a GPU driver updated apart from the system
-// keeps it); either with another build of the core (its build ID, base/build_info.hpp), or a reset (VK facts' "Reset
-// guard" in the debug and bench builds).
+// The `vk guard` line names the stage, the cell, the module, pipeline or thing that went, the attempt and the build,
+// and VK facts carries it. A verdict keyed to the driver ends with a driver update (another version), one keyed to the
+// system build (instance, facts, refused) with a system update (another fingerprint; a GPU driver updated apart from
+// the system keeps it); either with another build of the core (its build ID, base/build_info.hpp), or a reset (VK
+// facts' "Reset guard" in the debug and bench builds).
 //
 // VK bench's colour stage, the frame at 10 bits a channel measured after its 8-bit runs (plan-vector D5, "Colour
 // depth"), is open exactly while something of 10 bits may reach the driver: the device asked about the 10-bit formats
@@ -79,8 +95,9 @@
 // Files in the guard's folder (noBackupFilesDir/vk on the phone): `guard` (the marker, replaced whole on each write),
 // `off` (what is turned off, a line each: driver|version|build|stage|what|attempt, or system|<fingerprint>|build|stage|
 // what|attempt when the driver was not known yet or the start was refused; the stage `colour` turns off 10 bits,
-// `profiles` the profiles check, any other Vulkan; what is "pipeline <…>", "module <…>" or "release <…>" when the
-// driver was making a pipeline or a module or destroying something, "drawing <…>" in a frame's first draws), `facts`
+// `profiles` the profiles check, `cell` the VK bench cell its what names (driver|version|build|cell|<configuration>|
+// attempt), any other Vulkan; what is "pipeline <…>", "module <…>" or "release <…>" when the driver was making a
+// pipeline or a module or destroying something, "drawing <…>" in a frame's first draws), `facts`
 // (the last facts read, shown when Vulkan is off). An off line from before build IDs (driver|version|stage, alpha 6)
 // names no build, so it turns off none; one from before attempts (driver|version|build|stage|what, alpha 7's first)
 // reads as attempt 2, or 1 for the colour stage.
@@ -124,10 +141,13 @@ enum class Stage : std::uint8_t {
 struct ProcessExit {
     std::int64_t pid = 0;
     std::int64_t at_ms = 0; // when it ended, in ms since the epoch (System.currentTimeMillis)
-    /// A crash, a hang, or a signal or an unknown end in the foreground or visible; false for a kill by the user, the
-    /// system (a routine trim among them) or an update, and for a signal or an unknown end in the background.
+    /// A native crash, a hang, or a signal or an unknown end in the foreground or visible; false for a kill by the
+    /// user, the system (a routine trim among them) or an update, an uncaught exception of the app's own code, and a
+    /// signal or an unknown end in the background.
     bool counted = true;
-    std::string reason; // its name: "crash-native", "anr", "user-requested", "low-memory", "signaled (cached)", …
+    /// Its name: "crash-native", "anr", "user-requested", "low-memory", "signaled (cached)", "crash (an uncaught
+    /// exception, not the driver's)", ….
+    std::string reason;
 };
 
 /// The exits the façade passes into a start. Not `known` where Android keeps no records (API 29) or the caller has
@@ -150,9 +170,8 @@ struct GuardVerdict {
     bool off = false;
     /// Delete the pipeline cache before this one (the retry, a new build's first start).
     bool retry_without_cache = false;
-    /// The `vk guard <stage> <driver> <version> attempt <n>[ pipeline <…>| module <…>| release <…>| drawing <…>] build
-    /// <id>` line,
-    /// when a crash was found or Vulkan is off.
+    /// The `vk guard <stage> <driver> <version> attempt <n>[ cell <…>][ pipeline <…>| module <…>| release <…>| drawing
+    /// <…>] build <id>` line, when a crash was found or Vulkan is off.
     std::string line;
     /// `vk guard: <stage> marker after <reason>, not counted` (or `… marker of this running process, not counted`) when
     /// the marker was left by a process that was stopped, not crashed: discarded, it counts for nothing.
@@ -161,13 +180,18 @@ struct GuardVerdict {
     std::string exit;
 };
 
-/// One driver the guard turned off, or turned 10 bits or the profiles check off for, as its off file records it.
+/// One driver the guard turned off, or turned 10 bits, the profiles check or a VK bench cell off for, as its off file
+/// records it.
 struct GuardOff {
-    std::string driver;        // "system" when the crash came before the driver was known
-    std::string version;       // the driver's version, or the system build's fingerprint
-    std::string build;         // the core's build ID; empty on a line from before build IDs
-    std::string stage;         // the stage that crashed (twice, but once for the colour and profiles stages)
-    std::string what;          // what the driver did: "pipeline <…>", "module <…>", "release <…>", "drawing <…>", or ""
+    std::string driver;  // "system" when the crash came before the driver was known
+    std::string version; // the driver's version, or the system build's fingerprint
+    std::string build;   // the core's build ID; empty on a line from before build IDs
+    /// The stage that crashed (twice, but once for the colour and profiles stages), or "cell" for a VK bench cell
+    /// (once).
+    std::string stage;
+    /// What the driver did: "pipeline <…>", "module <…>", "release <…>", "drawing <…>", or ""; for a cell, the cell
+    /// ("B dynamic onepass resolve").
+    std::string what;
     std::uint32_t attempt = 0; // the attempt of the start that crashed; 0 on a line from before attempts
 };
 
@@ -195,7 +219,10 @@ public:
     ///                             goes, `pipelines:release:frame` as an 8-bit frame goes, `surface:release:swapchain`
     ///                             as an 8-bit swapchain goes, `close:release:cache` as the pipeline cache on disk goes
     ///                             at the close, `close:release:device` as the device goes at the close,
-    ///                             `refused:release:instance` as a refused start's instance goes.
+    ///                             `refused:release:instance` as a refused start's instance goes;
+    ///   `cell:<plant>`            any of the above in a VK bench cell's work alone, its marker naming the cell
+    ///                             (`cell:pipelines:box`, `cell:frames`, `cell:pipelines:release:frame`, `cell:cache`):
+    ///                             the first such moment of a configuration other than the facts' pick.
     /// A plant fires only in the stage the marker names: none of another stage fires inside the colour stage.
     Guard(std::filesystem::path dir, std::string system, std::string build, std::string plant);
 
@@ -207,6 +234,12 @@ public:
     /// names it), which its marker carries (`drawing <frame>`), so that a crash in a renderer's first draws names the
     /// configuration and colour it drew; "" for none.
     void set_drawing(std::string_view frame);
+    /// The facts' own pick (gpu/Facts.hpp's choice), the frame the map would draw: a renderer's frame of any other
+    /// configuration is a VK bench cell (the file's head). Set once the device is known, and again after its rebuild.
+    void set_pick(const Configuration& pick);
+    /// The renderer's work that follows is the frame of `configuration`, or no frame's (nullptr): while that frame is a
+    /// cell, the markers of the pipelines, frames and cache stages name it, rewritten as it changes.
+    void frame_of(const Configuration* configuration) override;
 
     /// Before the instance: a marker from the last start (`exits` says how its process ended, where known), or Vulkan
     /// off for this system build.
@@ -246,18 +279,23 @@ public:
     /// The `vk guard profiles …` line when the profiles check is off for this driver and version and this build: it
     /// crashed under them. "" when it is not off.
     [[nodiscard]] std::string profiles_off() const;
+    /// The `vk guard cell … <configuration> …` line when VK bench's cell `configuration` is off for this driver and
+    /// version and this build: the driver crashed in its work. "" when it is not off, and always for the facts' pick,
+    /// which follows Vulkan's ladder.
+    [[nodiscard]] std::string cell_off(const Configuration& configuration) const;
     /// Keeps the facts' text, shown when Vulkan is off later.
     void keep_facts(std::string_view text) const;
     /// The facts kept by an earlier start ("" when none).
     [[nodiscard]] std::string kept_facts() const;
-    /// Every driver turned off, or turned 10 bits or the profiles check off for, for any build.
+    /// Every driver turned off, or turned 10 bits, the profiles check or a VK bench cell off for, for any build.
     [[nodiscard]] std::vector<GuardOff> turned_off() const;
     /// The guard's state as VK facts prints it: `guard.build`, `guard.driver` and a `guard.off` line per driver turned
-    /// off or turned something off for (or `guard.off: none`).
+    /// off or turned something off for (or `guard.off: none`): `(this driver and build: Vulkan is off)`, `… 10 bits are
+    /// off`, `… the profiles check is off`, `… VK bench's cell <configuration> is off`.
     [[nodiscard]] std::vector<std::string> state() const;
-    /// Forgets every crash, every driver turned off and everything turned off for one, and deletes the pipeline cache
-    /// at `cache_file` (if named), as a fresh install does; says what it forgot. Only with no core alive, or the core
-    /// writes its cache back (jni/Bridge.cpp refuses it then).
+    /// Forgets every crash, every driver turned off and everything turned off for one (VK bench's cells among them),
+    /// and deletes the pipeline cache at `cache_file` (if named), as a fresh install does; says what it forgot. Only
+    /// with no core alive, or the core writes its cache back (jni/Bridge.cpp refuses it then).
     [[nodiscard]] std::string clear(const std::filesystem::path& cache_file = {}) const;
 
     [[nodiscard]] const std::filesystem::path& dir() const noexcept { return dir_; }
@@ -276,6 +314,11 @@ private:
     [[nodiscard]] bool planted_making(std::string_view name, bool pipeline) const;
     /// Whether the plant aborts as `release` goes.
     [[nodiscard]] bool planted_release(const Release& release) const;
+    /// Whether the marker names the cell now: a cell's frame in the pipelines, frames or cache stage, outside the
+    /// colour stage (whose marker is its own).
+    [[nodiscard]] bool cell_marked() const noexcept;
+    /// Whether a plant may fire here: anywhere, or only in a cell's work (`cell:`).
+    [[nodiscard]] bool plant_here() const noexcept { return !plant_cell_ || cell_marked(); }
     /// Writes `what` into the marker ("" for a call this stage does not name), then aborts if `planted`.
     void note(std::string what, bool planted);
     [[noreturn]] void abort_planted(std::string_view where) const;
@@ -283,6 +326,8 @@ private:
     [[nodiscard]] std::string_view marked() const noexcept;
     /// What the marker names besides its stage: the innermost call named and not returned yet ("" for none).
     [[nodiscard]] std::string_view making() const noexcept;
+    /// The stage the marker names, and the cell where it names one, as the planted crash's line says them.
+    [[nodiscard]] std::string where() const;
 
     std::filesystem::path dir_;
     std::string system_;
@@ -295,7 +340,10 @@ private:
     /// The calls announced and not returned yet, innermost last: "pipeline <…>", "module <…>", "release <…>", or ""
     /// for one this stage does not name. A stage's change clears them.
     std::vector<std::string> notes_;
-    std::string drawing_; // the frame the frames stage draws (set_drawing)
+    std::string drawing_;               // the frame the frames stage draws (set_drawing)
+    std::optional<Configuration> pick_; // the facts' own pick (set_pick)
+    std::string cell_;                  // the VK bench cell whose frame the renderer works on ("" for none, the pick)
+    bool plant_cell_ = false;           // the plant fires in a cell's work alone (`cell:`)
     std::uint32_t attempt_ = 1;
     std::int64_t pid_ = 0;
     std::int64_t start_ms_ = 0;
@@ -348,8 +396,8 @@ struct StartRefusal {
 /// Opens Vulkan behind the guard: the guard's verdict, the instance, the device's facts (the queries its choice
 /// makes), the driver's verdict, the device and the pipeline cache, each stage marked on disk while it runs (D5.10).
 /// The device's facts carry the colour and profiles stages' verdicts (Facts::ten_bit_off, Facts::profiles_off), and are
-/// kept for the honest state. A start refused once the instance exists lets go of what it made (the device, the
-/// instance) behind the refused stage before it returns.
+/// kept for the honest state; the guard knows the facts' pick (set_pick). A start refused once the instance exists lets
+/// go of what it made (the device, the instance) behind the refused stage before it returns.
 [[nodiscard]] std::expected<Started, StartRefusal> start_guarded(const StartOptions& options);
 
 } // namespace atlas::gpu

@@ -43,14 +43,19 @@ public:
                                                                    vk::SurfaceKHR /*surface*/, vk::Extent2D wanted,
                                                                    const gpu::Output* /*old*/,
                                                                    gpu::Depth depth) override {
-        return offscreen_output(device, wanted, depth, refuse_, ten_only_);
+        auto made = offscreen_output(device, wanted, depth, refuse_, ten_only_);
+        if (made) ++made_;
+        return made;
     }
     /// Refuses the next `n` outputs from now on (10-bit ones only where the window was made so).
     void refuse(int n) noexcept { refuse_ = n; }
+    /// How many outputs it made (the swapchains a phone's window would have had made).
+    [[nodiscard]] int made() const noexcept { return made_; }
 
 private:
     int refuse_ = 0;
     bool ten_only_ = false;
+    int made_ = 0;
 };
 
 /// A window on a headless surface: the surface and its queries are real; its output a swapchain where `swapchains`,

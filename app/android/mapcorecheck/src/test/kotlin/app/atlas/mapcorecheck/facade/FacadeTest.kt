@@ -43,7 +43,8 @@ object OtherAbiFacade {
  * share are the same field by field (the camera state Kotlin writes, the frame records it reads), a façade of another
  * ABI is refused at load, the host build starts behind the crash guard and reports its facts, and the guard's state
  * shows in them: a crash this build made twice turns Vulkan off, a crash in VK bench's colour stage turns off 10 bits
- * only, and VK facts' reset, refused while a core is alive, lets both try again (D5.10). MapCore's calls and its close
+ * only, one in a VK bench cell the facts would not pick turns off that cell alone, and VK facts' reset, refused while a
+ * core is alive, lets them all try again (D5.10). MapCore's calls and its close
  * exclude each other (CoreHandle, which MapCore calls every native through): a call under way holds close back, none
  * starts once close has begun, and calls on many threads racing a close never reach a freed core.
  */
@@ -285,6 +286,47 @@ class FacadeTest {
         }
     }
     @Test
+    fun aCrashInAVkBenchCellTurnsThatCellAloneOffAndTheResetForgetsIt() {
+        // VK bench draws configurations the facts would not pick, to measure them: a driver's crash in such a cell's work
+        // (its marker names the cell) proves only that cell bad on that driver, so the next start turns that cell alone
+        // off for the driver and build, Vulkan on; every later start keeps it off, quietly; the reset forgets it.
+        val dir = Files.createTempDirectory("atlas-cell").toFile()
+        try {
+            val guard = dir.resolve("vk")
+            val facts = Native.facts(0L, dir.path, guard.path, "jvm-test", 0, "", 0L).lines()
+            val build = facts.first { it.startsWith("guard.build: ") }.removePrefix("guard.build: ")
+            val (driver, version) = facts.first { it.startsWith("guard.driver: ") }.removePrefix("guard.driver: ").split(' ')
+            // VK bench's 1x reference: never the facts' pick, always a cell.
+            val cell = "1x renderpass onepass resolve"
+            val frame = "frame (configuration $cell rgba8)"
+            guard.mkdirs()
+            guard.resolve("guard").writeText(
+                "stage frames\ndrawing $frame\ncell $cell\ndriver $driver\nversion $version\nbuild $build\nattempt 1\n",
+            )
+            val line = "vk guard frames $driver $version attempt 1 cell $cell drawing $frame build $build"
+            val off = "guard.off: $driver $version at cell, $cell build $build (this driver and build: VK bench's cell $cell is off)"
+            val handle = Native.create(dir.path, guard.path, "jvm-test", "", 0, "", 0L)
+            assertNotEquals("the start after a crash in a VK bench cell refused Vulkan: ${Native.lastError()}", 0L, handle)
+            try {
+                val after = Native.facts(handle, dir.path, guard.path, "jvm-test", 0, "", 0L).lines()
+                val text = after.joinToString("\n")
+                assertTrue(text, "guard: $line" in after)
+                assertTrue(text, off in after)
+                assertFalse(text, after.any { it.startsWith("vulkan: off") })
+            } finally {
+                Native.close(handle)
+            }
+            val later = Native.facts(0L, dir.path, guard.path, "jvm-test", 0, "", 0L).lines()
+            assertTrue(later.joinToString("\n"), "guard: clear" in later)
+            assertTrue(off in later)
+            assertEquals("vk guard reset: forgot 1 VK bench cell turned off", Native.resetGuard(dir.path, guard.path))
+            assertTrue("guard.off: none" in Native.facts(0L, dir.path, guard.path, "jvm-test", 0, "", 0L).lines())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun aMarkerOfAProcessThatWasStoppedNotCrashedCountsForNothing() {
         // Kills are not crashes (D5.10): a marker survives a swipe-away, a low-memory kill or a force-stop as it survives
         // a crash, so the façade passes the app's process exits as Android records them (MK/ProcessExits.kt's text) and
@@ -358,9 +400,10 @@ class FacadeTest {
                     Native.close(handle)
                 }
             }
-            // The system's routine trim of a cached process (REASON_OTHER) and a signal while cached: not counted, nothing
-            // turned off (MK/ProcessExits.kt passes both as not counted).
-            for (reason in listOf("other", "signaled (cached)")) {
+            // The system's routine trim of a cached process (REASON_OTHER), a signal while cached and an uncaught exception
+            // of the app's own Kotlin (REASON_CRASH: not the driver's): not counted, nothing turned off (MK/ProcessExits.kt
+            // passes them as not counted).
+            for (reason in listOf("other", "signaled (cached)", "crash (an uncaught exception, not the driver's)")) {
                 leave(1)
                 started("9001 5000 0 $reason").let { handle ->
                     try {

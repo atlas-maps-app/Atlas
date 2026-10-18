@@ -82,7 +82,9 @@ object Native {
     /**
      * VK bench: the stand-in on (mode 1) or off (0) in a configuration; [flags] 1 the core's frosted pills, 2 a
      * TextureView host, 4 VK bench's colour stage: 10 bits a channel where the surface offers them, behind the crash
-     * guard's colour stage (else the frame's 8 bits, its colour in this alpha). "" or why not.
+     * guard's colour stage (else the frame's 8 bits, its colour in this alpha). Mode 0 lets go of the frame and of
+     * anything of 10 bits whatever configuration it names, and makes nothing; a VK bench cell the crash guard turned
+     * off is refused, `off (the driver crashed in it: vk guard cell …)`. "" or why not.
      */
     @JvmStatic external fun bench(handle: Long, mode: Int, config: Int, route: Int, form: Int, target: Int, flags: Int): String
 

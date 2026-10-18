@@ -316,10 +316,11 @@ object VkFactsLines {
 
     /**
      * The crash guard's lines of a VK facts report (plan-vector D5.10): `guard:` (what this start found: `clear`, or the
-     * `vk guard` line naming the stage and the pipeline a driver crashed in), a marker it discarded because its process
-     * was stopped, not crashed (`vk guard: <stage> marker after <reason>, not counted`), how a counted marker's process
-     * ended (`guard.exit`), then `guard.build`, `guard.driver` and a `guard.off` line per driver turned off (or turned
-     * 10 bits or the profiles check off for), in the report's order.
+     * `vk guard` line naming the stage, the VK bench cell and the pipeline a driver crashed in), a marker it discarded
+     * because its process was stopped, not crashed, or ended by an uncaught exception of the app's own code (`vk guard:
+     * <stage> marker after <reason>, not counted`), how a counted marker's process ended (`guard.exit`), then
+     * `guard.build`, `guard.driver` and a `guard.off` line per driver turned off (or turned 10 bits, the profiles check
+     * or a VK bench cell off for), in the report's order.
      */
     fun guard(report: List<String>): List<String> =
         report.filter { it.startsWith("guard:") || it.startsWith("guard.") || it.startsWith("vk guard:") }

@@ -12,7 +12,8 @@
 // vkCreateShaderModule by its module, not by the pipeline made before it. An announcement lasts as long as the scope
 // that holds what it returns (Announced), which is the call it names and no more: when the call returns the marker
 // names its stage alone again, so the driver calls that follow, the next object's making among them, are never
-// charged to it.
+// charged to it. A renderer also tells the watch whose frame its work is (PipelineWatch::frame_of), so that the crash
+// guard tells VK bench's cells from the facts' own pick (D5.10).
 #pragma once
 
 #include "gpu/Error.hpp"
@@ -26,6 +27,8 @@
 #include <vector>
 
 namespace atlas::gpu {
+
+struct Configuration; // gpu/Facts.hpp
 
 /// What a pipeline is, as the log and the crash guard name it: its name, its module or modules (the embedded SPIR-V's
 /// symbols) and the frame configuration and colour it is made for ("A renderpass composite resolve rgb10a2"; "any"
@@ -74,6 +77,10 @@ public:
     /// The call announced last returned, made, refused or gone: what runs after it is not that call. Announcements
     /// nest (an inner one's end gives the outer one back), so each before has exactly one after.
     virtual void after() = 0;
+    /// The work that follows (made, drawn, let go of) is the frame of `configuration` (a renderer's, gpu/Frames.hpp),
+    /// or no frame's (nullptr: its renderer gone). The crash guard tells VK bench's cells, the configurations the facts
+    /// would not pick, from the pick by it; other watches need not hear it.
+    virtual void frame_of(const Configuration* configuration) { (void)configuration; }
 };
 
 /// The span of one announcement: from the announce call that returned it to the end of the scope that holds it, which

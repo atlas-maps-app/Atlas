@@ -13,9 +13,18 @@
 // frame loop's own per-frame calls after a renderer's first 120 frames, which D5.10 leaves unguarded: the commands each
 // frame records and submits, its acquire and present, its fences, queries and memory flushes, and the display's
 // timings it reads back. No marker stays on disk while nothing is drawn: the frames stage ends when the frame loop
-// rests (rest), the renderer goes or the frame it draws changes (another configuration, an output made again), and
-// opens again with the next draw within that renderer's first 120, naming the frame it draws. The stand-in's shared
-// objects are 8-bit work, made before anything of 10 bits and never inside the colour stage.
+// rests (rest; a trim from TRIM_MEMORY_UI_HIDDEN rests it too), the renderer goes or the frame it draws changes
+// (another configuration, an output made again), and opens again with the next draw within that renderer's first 120,
+// naming the frame it draws; a frame loop at rest inside VK bench's colour stage leaves that stage as well, as mode 0
+// does. The stand-in's shared objects are 8-bit work, made before anything of 10 bits and never inside the colour
+// stage, and written back to the pipeline cache before any frame's pipelines are.
+//
+// VK bench's cells (gpu/Guard.hpp): a frame of a configuration other than the facts' own pick is work only VK bench
+// does, and the renderer tells the guard so (gpu/Pipelines.hpp's frame_of): a crash in its pipelines, its first 120
+// frames, its going or a write of the pipeline cache while it is drawn turns that cell alone off. So the cache is
+// written back right after each new frame's pipelines are made (a new renderer, another configuration), the write
+// that first holds a cell's pipelines being the cell's; and a cell the guard turned off is refused (bench), nothing
+// made for it.
 //
 // The colour depth (plan-vector D5, "Colour depth"): the frame is 8 bits a channel (gpu/Facts.hpp's default_depth);
 // VK bench's colour stage (bench's flag 4) draws it at 10 where the surface offers them, the device (asked as the
@@ -80,6 +89,10 @@ public:
     }
 };
 
+/// ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN: the process's windows are no longer shown (the levels above it are deeper
+/// trims of a process in the background).
+inline constexpr int trim_ui_hidden = 20;
+
 /// Flags of Session::bench (Native.bench's).
 namespace bench_flag {
 inline constexpr std::uint32_t pills = 1U;   // the core draws the frosted pills (the SurfaceView host)
@@ -142,7 +155,9 @@ public:
     [[nodiscard]] bool attached() const noexcept { return window_ != nullptr; }
 
     /// Switches VK bench's stand-in on (mode 1) or off (0) and its configuration (bench_flag's `flags`); "" or why it
-    /// could not.
+    /// could not. Mode 0, whatever configuration it names, lets go of the renderer and of anything of 10 bits (the
+    /// colour stage closing) and makes nothing: the next step that draws makes its output. A cell the crash guard
+    /// turned off is refused, "off (the driver crashed in it: vk guard cell …)", nothing made for it.
     [[nodiscard]] std::string bench(int mode, const gpu::Configuration& config, std::uint32_t flags);
     /// VK bench's pipeline creation line ("vkbench pipelines: …").
     [[nodiscard]] std::string pipelines();
@@ -152,9 +167,15 @@ public:
     /// Draws one frame at `camera`.
     [[nodiscard]] Drawn draw(const style::CameraState& camera, const FrameTimes& times);
     /// The frame loop came to rest (nothing changed, or the app's window went to the background): the frames stage
-    /// ends, so no marker is on disk while nothing is drawn, and the next draw within the renderer's first 120 frames
-    /// opens it again.
+    /// ends, and the next draw within the renderer's first 120 frames opens it again; inside VK bench's colour stage
+    /// the stage is left too, as mode 0 leaves it (the 10-bit frame and output go, then it closes). So no marker is on
+    /// disk while nothing is drawn.
     void rest();
+    /// The app was asked to trim its memory at `level` (ComponentCallbacks2's): from TRIM_MEMORY_UI_HIDDEN (the app's
+    /// windows hidden; the deeper levels come as the system makes ready to kill cached processes) the frame loop
+    /// rests (rest), and the pipeline cache is written back where a pipeline was made through it since its last write
+    /// (else nothing is written, and no marker made). True when the frame loop is to stop until a frame is asked for.
+    bool trim(int level);
 
     /// VkFacts' lines as text, the guard's state and this session's among them, after reading Android's profiles behind
     /// the guard's profiles stage (once a device; never inside the colour stage).
@@ -222,6 +243,10 @@ private:
     void open_colour();
     /// Closes the colour stage, its cache gone (announced) inside it, once nothing of 10 bits is left.
     void close_colour();
+    /// Out of VK bench's colour stage, as mode 0 and the frame loop at rest leave it: the 10-bit frame and output go,
+    /// each in the stage open now (the colour stage's), the stage closes, and the frame is back at its 8 bits, its
+    /// output made by the next step that draws. Nothing where the frame is at 8 bits already.
+    void leave_ten_bits();
     /// Everything of the window goes, each in its stage: the renderer, the output, the colour stage, the surface.
     void release_window();
     /// Reads Android's profiles behind the profiles stage, once a device, never inside the colour stage.

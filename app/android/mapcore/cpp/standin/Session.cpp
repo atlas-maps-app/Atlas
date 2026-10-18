@@ -290,6 +290,14 @@ void Session::open_colour() {
     started_.device->check_ten_bit();
 }
 
+void Session::leave_ten_bits() {
+    if (depth_ == gpu::default_depth && !colour_open()) return;
+    drop_renderer();
+    drop_output();
+    close_colour();
+    depth_ = gpu::default_depth;
+}
+
 void Session::close_colour() {
     if (!colour_cache_) return;
     if (standin_) standin_->use_prepare_cache(nullptr);
@@ -316,13 +324,17 @@ std::string Session::make_standin() {
     // colour stage; only one a device's rebuild failed to make again can be missing inside it, and it waits for the
     // stage's end.
     if (colour_open()) return "the stand-in is made at 8 bits, outside VK bench's colour stage";
-    return behind(gpu::Stage::pipelines, [&]() -> std::string {
+    std::string why = behind(gpu::Stage::pipelines, [&]() -> std::string {
         if (!city_) city_ = std::make_shared<const City>(City::generate());
         auto standin = StandIn::create(*started_.device, *started_.cache, city_, started_.guard.get());
         if (!standin) return standin.error().text();
         standin_ = std::move(*standin);
         return {};
     });
+    // Its pipelines written back before any frame's, so that the write a VK bench cell's frame makes (under the cell's
+    // marker) holds that frame's pipelines alone as new.
+    if (why.empty()) save_cache();
+    return why;
 }
 
 std::string Session::make_renderer() {
@@ -353,11 +365,26 @@ std::string Session::make_renderer() {
 std::string Session::bench(int mode, const gpu::Configuration& config, std::uint32_t flags) {
     if (closed_) return "the core is closed";
     if (!session_off_.empty()) return session_off_;
+    if (mode == 0) {
+        // VK bench off (its end, or the app leaving: VkBenchScreen's pause), whatever configuration it names: the
+        // renderer goes, and out of VK bench's colour stage its 10-bit output too, the stage closing after them. No
+        // output is made in their place (the next step that draws makes the one it needs), so nothing reaches the
+        // driver but what goes.
+        mode_ = 0;
+        drop_renderer();
+        leave_ten_bits();
+        return {};
+    }
     const gpu::Facts& facts = started_.device->facts();
     if (!facts.supports(config.config))
         return std::format("this device has no configuration {}", gpu::name_of(config.config));
     if (config.route == gpu::Route::dynamic && !started_.device->enabled().local_read)
         return "this device has no dynamic rendering with local reads";
+    // A VK bench cell whose work the driver crashed in (the crash guard turned it off for this driver and build): not
+    // drawn, nothing made for it, and VK bench goes on without it. The facts' pick is never refused so: it follows
+    // Vulkan's ladder.
+    if (const std::string off = started_.guard->cell_off(config); !off.empty())
+        return std::format("off (the driver crashed in it: {})", off);
     // VK bench's colour stage: 10 bits where the surface offers them in sRGB, the device draws the frame in them and
     // the crash guard has not turned them off for this driver and build (after its crash in this stage); everything
     // else at the frame's 8.
@@ -367,14 +394,14 @@ std::string Session::bench(int mode, const gpu::Configuration& config, std::uint
     // The stand-in draws into the window: with none attached (gone with an app switch or the screen off, Android 10 to
     // 13's SurfaceView following its visibility) there is nothing to draw in, and nothing changes; a window that comes
     // back draws the bench as it was (attach).
-    if (mode == 1 && !window_) return "no surface is attached (the window went away)";
+    if (!window_) return "no surface is attached (the window went away)";
     const gpu::Depth depth = ten ? gpu::Depth::deepest : gpu::default_depth;
     mode_ = mode;
     config_ = config;
     pills_ = (flags & bench_flag::pills) != 0;
     texture_ = (flags & bench_flag::texture) != 0;
-    // A renderer of the other depth, or any in mode 0, goes first, in its stage.
-    if (mode_ == 0 || depth != depth_) drop_renderer();
+    // A renderer of the other depth goes first, in its stage.
+    if (depth != depth_) drop_renderer();
     if (depth != depth_) {
         // The other depth's output goes in its own stage (the surface stage's at 8 bits, the colour stage's at 10), and
         // the colour stage closes once nothing of 10 bits is left (out of it: the 10-bit frame and output went above,
@@ -387,14 +414,12 @@ std::string Session::bench(int mode, const gpu::Configuration& config, std::uint
         depth_ = depth;
     }
     // The stand-in before any output of 10 bits: its shared objects are 8-bit work, outside the colour stage.
-    if (mode_ == 1) {
-        if (std::string why = make_standin(); !why.empty()) return why;
-    }
+    if (std::string why = make_standin(); !why.empty()) return why;
     std::string unmade; // why no output could be made, if none could
-    // The output at the depth asked for, or one that could not be made before (a remake, a rebuild after a loss).
-    if (!output_ && window_) unmade = make_output();
+    // The output at the depth asked for, or one that could not be made before (a remake, a rebuild after a loss, mode
+    // 0 out of the colour stage).
+    if (!output_) unmade = make_output();
     if (!unmade.empty()) log::error("vk swapchain: {}", unmade);
-    if (mode_ == 0) return {};
     if (ten && !facts.deepest.ten_bit()) return "no 10 bits here: " + facts.deepest.reason;
     if (!output_) return output_error_.empty() ? "no swapchain" : "no swapchain: " + output_error_;
     if (ten && !output_->colour().ten_bit()) return "no 10 bits here: " + output_->colour().reason;
@@ -415,6 +440,9 @@ std::string Session::bench(int mode, const gpu::Configuration& config, std::uint
         return done.error().text();
     }
     log_configuration();
+    // Its pipelines written back now, as a new renderer's are (make_renderer): the write that first holds a VK bench
+    // cell's pipelines is the cell's, under its marker.
+    save_cache();
     return {};
 }
 
@@ -579,9 +607,21 @@ Drawn Session::draw(const style::CameraState& camera, const FrameTimes& times) {
 }
 
 void Session::rest() {
-    if (!guarding_ || closed_) return;
-    started_.guard->leave();
-    guarding_ = false;
+    if (closed_) return;
+    if (guarding_) {
+        started_.guard->leave();
+        guarding_ = false;
+    }
+    // Inside VK bench's colour stage nothing is drawn now either: the stage is left as mode 0 leaves it (the 10-bit
+    // frame and output go, then it closes), so no marker stays on disk while the frame loop rests.
+    leave_ten_bits();
+}
+
+bool Session::trim(int level) {
+    const bool hidden = level >= trim_ui_hidden;
+    if (hidden) rest();
+    save_cache();
+    return hidden;
 }
 
 void Session::push_record(const FrameRecord& r) {
@@ -676,11 +716,11 @@ void Session::device_lost() {
         started_.device.reset();
         return true;
     });
-    // Made again as the start opened it (K6's answer for configuration B among the options), to present to this
-    // surface, behind the stages a start passes: the device's facts (its choice's queries, keyed to the system build as
-    // a start's are, though the driver is known by now: gpu/Guard.hpp), the device, the cache.
-    gpu::DeviceOptions reopen = started_.device_options;
-    reopen.surface = *surface_;
+    // Made again as the start opened it (K6's answer for configuration B among the options), behind the stages a start
+    // passes: the device's facts (its choice's queries, without the window's surface, keyed to the system build as a
+    // start's are, though the driver is known by now: gpu/Guard.hpp), the device, the cache; whether its queue presents
+    // to the window's surface is asked in the surface stage, as at an attach.
+    const gpu::DeviceOptions& reopen = started_.device_options;
     auto picked = behind(gpu::Stage::facts, [&] { return gpu::Device::pick(*started_.instance, reopen); });
     if (!picked) {
         turn_off_session("the device could not be made again after its loss: " + picked.error().text());
@@ -696,9 +736,11 @@ void Session::device_lost() {
     gpu::Facts& facts = started_.device->facts();
     facts.profiles = profiles;
     facts.profiles_status = profiles_status;
-    // The guard's verdicts for this driver and build, as the start put them on the first device's facts.
+    // The guard's verdicts for this driver and build, as the start put them on the first device's facts, and the pick
+    // that tells VK bench's cells.
     facts.ten_bit_off = started_.guard->ten_bit_off();
     facts.profiles_off = started_.guard->profiles_off();
+    started_.guard->set_pick(facts.choice);
     gpu::decide_colour(facts);
     auto cache = behind(gpu::Stage::cache, [&] {
         return gpu::PipelineCache::open(started_.device->handle(), facts, options_.cache_file, options_.spirv,
@@ -711,11 +753,17 @@ void Session::device_lost() {
     }
     started_.cache = std::make_unique<gpu::PipelineCache>(std::move(*cache));
     if (*surface_) {
-        // The new device's facts, with the surface's and the frame's colour on it, as the attach read them.
-        behind(gpu::Stage::surface, [&] {
+        // As an attach: whether the new device's queue presents to the window's surface, then its facts with the
+        // surface's and the frame's colour on it.
+        const bool presents = behind(gpu::Stage::surface, [&] {
+            if (!started_.device->can_present(*surface_)) return false;
             gpu::collect_surface(facts, started_.device->physical(), *surface_, started_.device->queue_family());
             return true;
         });
+        if (!presents) {
+            turn_off_session("the device made again after its loss: its queue cannot present to this surface");
+            return;
+        }
     }
     // The stand-in first, at 8 bits in the pipelines stage; then the output (in the colour stage, opened again, at
     // VK bench's 10 bits) and the renderer.

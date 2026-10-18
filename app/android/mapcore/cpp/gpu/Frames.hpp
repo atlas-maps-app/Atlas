@@ -175,7 +175,9 @@ struct FrameReport {
 class Renderer {
 public:
     /// The renderer of `configuration` on `output`, drawing `content` (both outlive it). `watch` (the crash guard) is
-    /// told before the renderer lets go of a frame: its main pass and what it prepared in the content.
+    /// told before the renderer lets go of a frame (its main pass and what it prepared in the content), and whose frame
+    /// its work is (PipelineWatch::frame_of): a frame's making, drawing and going are its configuration's, until the
+    /// renderer goes.
     [[nodiscard]] static Result<std::unique_ptr<Renderer>> create(const Device& device, Output& output,
                                                                   Content& content, const Configuration& configuration,
                                                                   PipelineWatch* watch = nullptr);
