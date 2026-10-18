@@ -1,5 +1,6 @@
 // Simplification by keep codes (tiles/Simplify.hpp): simplify's rule and its two exceptions. Parity with the port's
 // own simplify, ring by ring over the bundled scenes at every tolerance, is :mapcorecheck's L0 test.
+#include "tests/base/require.hpp"
 #include "tiles/Simplify.hpp"
 
 #include <doctest/doctest.h>
@@ -49,7 +50,7 @@ TEST_CASE("tiles: simplify keeps the vertices whose code reaches the level, in o
     std::vector<std::uint32_t> out(8);
     const Simplified s = simplify(r.view(), 2, frame, out);
     CHECK(!s.whole);
-    REQUIRE(s.count == 6);
+    ATLAS_REQUIRE(s.count == 6);
     CHECK(std::vector<std::uint32_t>(out.begin(), out.begin() + 6) == std::vector<std::uint32_t>{0, 2, 3, 5, 6, 7});
     CHECK(simplify(r.view(), 13, frame, out).count == 3);
     CHECK(simplify(r.view(), 0, frame, out).whole);      // tolerance 0: the port does not simplify

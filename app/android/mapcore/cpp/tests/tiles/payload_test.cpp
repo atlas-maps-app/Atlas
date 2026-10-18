@@ -2,6 +2,7 @@
 // (support.hpp): every codec's values through the layer's accessors and the canonical dump, the shared vertices of the
 // geometry codec, keep codes, skipped layers and columns (by Format's one rule), the header's bounds, a tile against
 // its chunk and its reach, and every refusal with the field it names.
+#include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Columns.hpp"
 #include "tiles/Dump.hpp"
@@ -122,14 +123,14 @@ TEST_CASE("tiles: every codec decodes to the writer's values") {
     TileDecoder decoder;
     std::vector<std::byte> raw;
     auto tile = f.decode(arena, decoder, raw);
-    REQUIRE_MESSAGE(tile, describe(tile.error()));
+    ATLAS_REQUIRE(tile, describe(tile.error()));
     CHECK(tile->header.level == 14);
     CHECK(tile->header.cells_per_side == 8);
     CHECK(tile->feature_count() == 7);
     CHECK(tile->skipped.empty());
 
     const Layer* b = tile->layer(LayerId::building);
-    REQUIRE(b != nullptr);
+    ATLAS_REQUIRE(b != nullptr);
     CHECK(b->count == 3);
     CHECK(b->cell(0) == std::pair<std::uint32_t, std::uint32_t>{0, 2});
     CHECK(b->cell(9) == std::pair<std::uint32_t, std::uint32_t>{2, 3});
@@ -138,7 +139,7 @@ TEST_CASE("tiles: every codec decodes to the writer's values") {
     CHECK(b->integer(building::id, 1) == 200);
     for (std::size_t i = 0; i < 3; ++i) {
         const RingView r = b->ring(building::ring, i);
-        REQUIRE(r.size() == f.rings[i].lat.size());
+        ATLAS_REQUIRE(r.size() == f.rings[i].lat.size());
         CHECK(r.has_keep);
         for (std::size_t k = 0; k < r.size(); ++k) {
             CHECK(r.lat[k] == f.rings[i].lat[k]);
@@ -162,7 +163,9 @@ TEST_CASE("tiles: every codec decodes to the writer's values") {
     CHECK(b->ids(building::places, 0).empty());
     CHECK(!b->string_list(b->schema->slot("guessed"), 0));
     CHECK(held(b->string_list(b->schema->slot("guessed"), 1)).empty());
-    CHECK(b->strings[held(b->string_list(b->schema->slot("guessed"), 2))[1]] == "roof:shape");
+    const auto guessed = b->string_list(b->schema->slot("guessed"), 2);
+    ATLAS_REQUIRE(guessed && guessed->size() >= 2);
+    CHECK(b->strings[(*guessed)[1]] == "roof:shape");
     CHECK(b->integer(building::flags, 2) == 208);
     CHECK((static_cast<std::uint64_t>(b->integer(building::flags, 2)) & building::flag_wall_drawn) != 0);
     CHECK(b->integer(building::wall_rgb, 0) == 0xA0522D);
@@ -172,7 +175,7 @@ TEST_CASE("tiles: every codec decodes to the writer's values") {
     CHECK(!b->string(building::mat_draw, 0)); // a column the tile leaves out holds its default
 
     const Layer* trees = tile->layer(LayerId::tree);
-    REQUIRE(trees != nullptr);
+    ATLAS_REQUIRE(trees != nullptr);
     CHECK(trees->point(tree::pos, 1) == GridPoint{523'740'002, 48'789'998});
     const std::uint8_t number = trees->schema->slot("tag:addr:housenumber");
     CHECK(trees->string_or_number(number, 0).kind == StringOrNumber::Kind::number);
@@ -181,7 +184,7 @@ TEST_CASE("tiles: every codec decodes to the writer's values") {
     CHECK(trees->string_or_number(number, 2).kind == StringOrNumber::Kind::null);
 
     const Layer* items = tile->layer(LayerId::item);
-    REQUIRE(items != nullptr);
+    ATLAS_REQUIRE(items != nullptr);
     CHECK(items->tag(item::tags, 0, "height") == "43");
     CHECK(items->tag_count(item::tags, 0) == 2);
     CHECK(items->integer(item::source, 0) == 2);
@@ -216,12 +219,13 @@ TEST_CASE("tiles: VALUE columns decode typed values, though no layer of this pay
         return decode_column(in, bytes, nullptr, arena, scratch);
     };
     const auto c = decode(v.bytes, 3);
-    REQUIRE_MESSAGE(c, describe(c.error()));
-    REQUIRE(c->refs.size() == 3);
+    ATLAS_REQUIRE(c, describe(c.error()));
+    ATLAS_REQUIRE(c->refs.size() == 3);
     CHECK(Value(c->nodes, table, c->refs[0]).is_null());
     const Value m(c->nodes, table, c->refs[1]);
-    REQUIRE(m.type() == ValueType::map);
+    ATLAS_REQUIRE(m.type() == ValueType::map);
     CHECK(held(m.find("a")).integer() == 1);
+    ATLAS_REQUIRE(held(m.find("b")).size() == 3);
     CHECK(held(m.find("b")).child(1).real() == 2.5);
     CHECK(held(m.find("b")).child(2).string() == "x");
     CHECK(Value(c->nodes, table, c->refs[2]).integer() == -7);
@@ -235,7 +239,7 @@ TEST_CASE("tiles: VALUE columns decode typed values, though no layer of this pay
         }
         deep.u8(0);
         const auto e = decode(deep.bytes, 1);
-        REQUIRE(!e);
+        ATLAS_REQUIRE(!e);
         CHECK(e.error().fault == Fault::too_big);
         CHECK(e.error().column_name() == "values");
     }
@@ -248,7 +252,7 @@ TEST_CASE("tiles: VALUE columns decode typed values, though no layer of this pay
         twice.varu(0);
         twice.u8(1);
         const auto e = decode(twice.bytes, 1);
-        REQUIRE(!e);
+        ATLAS_REQUIRE(!e);
         CHECK(e.error().fault == Fault::duplicate);
     }
 }
@@ -259,7 +263,7 @@ TEST_CASE("tiles: the canonical dump writes what Kotlin's CanonicalDump writes")
     TileDecoder decoder;
     std::vector<std::byte> raw;
     auto tile = f.decode(arena, decoder, raw);
-    REQUIRE(tile);
+    ATLAS_REQUIRE(tile);
     const std::string dump = canonical_dump(*tile);
     const auto box = f.t.grid_box();
     CHECK(dump.starts_with("tile 14/8414/5384 n=8\n"));
@@ -296,8 +300,8 @@ TEST_CASE("tiles: a layer this reader does not define is counted and skipped") {
     TileDecoder decoder;
     std::vector<std::byte> raw;
     auto tile = f.decode(arena, decoder, raw);
-    REQUIRE_MESSAGE(tile, describe(tile.error()));
-    REQUIRE(tile->skipped.size() == 1);
+    ATLAS_REQUIRE(tile, describe(tile.error()));
+    ATLAS_REQUIRE(tile->skipped.size() == 1);
     CHECK(tile->skipped[0].id == static_cast<std::uint8_t>(LayerId::built));
     CHECK(tile->skipped[0].count == 2);
     CHECK(tile->feature_count() == 9);
@@ -319,7 +323,7 @@ TEST_CASE(
     TileDecoder decoder;
     const auto raw = t.encode();
     auto tile = decoder.decode(raw, arena);
-    REQUIRE_MESSAGE(tile, describe(tile.error()));
+    ATLAS_REQUIRE(tile, describe(tile.error()));
     const std::string dump = canonical_dump(*tile);
     CHECK(dump.contains("\nground @0 kind=\"park\" ring=[]\n"));
     CHECK(dump.contains("\nground @1 kind=\"square\" ring=[]\n"));
@@ -334,7 +338,7 @@ void refused(const std::function<void(Fixture&)>& change, Fault fault, Site site
     TileDecoder decoder;
     std::vector<std::byte> raw;
     auto tile = f.decode(arena, decoder, raw);
-    REQUIRE_MESSAGE(!tile, "decoded what should be refused");
+    ATLAS_REQUIRE(!tile, "decoded what should be refused");
     INFO(describe(tile.error()));
     CHECK(tile.error().fault == fault);
     CHECK(tile.error().site == site);
@@ -537,7 +541,7 @@ TEST_CASE("tiles: a tile's box must be the grid's, to the unit at each edge") {
     TileDecoder decoder;
     std::vector<std::byte> raw;
     auto tile = f.decode(arena, decoder, raw);
-    REQUIRE(tile);
+    ATLAS_REQUIRE(tile);
     const TileHeader& h = tile->header;
     CHECK(std::array{h.south, h.west, h.north, h.east} == f.t.grid_box());
 }
@@ -547,7 +551,7 @@ TEST_CASE("tiles: a tile of more than 4 MiB is refused before anything is read")
     atlas::Arena arena(1U << 16U, atlas::Growth::grows, "test");
     TileDecoder decoder;
     const auto tile = decoder.decode(big, arena);
-    REQUIRE(!tile);
+    ATLAS_REQUIRE(!tile);
     CHECK(tile.error().fault == Fault::too_big);
     CHECK(tile.error().site == Site::tile);
 }
@@ -563,9 +567,9 @@ TEST_CASE("tiles: a tile reaches where its cells' boxes and tops say, and is che
     TileDecoder decoder;
     std::vector<std::byte> raw;
     auto tile = f.decode(arena, decoder, raw);
-    REQUIRE_MESSAGE(tile, describe(tile.error()));
+    ATLAS_REQUIRE(tile, describe(tile.error()));
     const auto reach = reach_of(*tile);
-    REQUIRE(reach);
+    ATLAS_REQUIRE(reach);
     const Reach want = f.t.reach();
     CHECK(*reach == want);
     CHECK(reach->box == GridBox{.south = tb[0] - 30, .west = tb[1] - 4000, .north = tb[2], .east = tb[3] + 60});
@@ -589,7 +593,7 @@ TEST_CASE("tiles: a tile reaches where its cells' boxes and tops say, and is che
     TileBytes empty;
     std::vector<std::byte> none = empty.encode();
     auto nothing = decoder.decode(none, arena);
-    REQUIRE(nothing);
+    ATLAS_REQUIRE(nothing);
     CHECK(reach_of(*nothing).error().fault == Fault::missing);
 }
 
@@ -638,7 +642,7 @@ TEST_CASE("tiles: counts that disagree are refused") {
     auto b = raw;
     b[56] = std::byte{4};
     auto tile = decoder.decode(b, arena);
-    REQUIRE(!tile);
+    ATLAS_REQUIRE(!tile);
     CHECK(tile.error().fault == Fault::bad_count);
     CHECK(tile.error().site == Site::layers);
 }

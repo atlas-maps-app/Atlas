@@ -1,6 +1,7 @@
 // The pack container (tiles/Directory.hpp, Chunks.hpp, Sections.hpp, Container.hpp) on packs written to D1's layout by
 // the tests' writer: a pack opens, finds and unpacks its chunks, knows their reach, and verifies; each part refuses
 // what it must, and skips what it does not know.
+#include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Container.hpp"
 
@@ -48,28 +49,29 @@ Result<Pack> open(std::vector<std::byte> bytes) { return Pack::open(std::make_un
 TEST_CASE("tiles: a render pack opens, finds and unpacks its chunks, and verifies") {
     const auto cs = chunks();
     auto pack = open(atlas::test::pack_bytes(cs, levels));
-    REQUIRE_MESSAGE(pack, describe(pack.error()));
+    ATLAS_REQUIRE(pack, describe(pack.error()));
     CHECK(pack->format() == format_render);
     CHECK(pack->is_render());
     CHECK(pack->sections().size() == 5);
-    REQUIRE(pack->chunks().chunks().size() == 3);
+    ATLAS_REQUIRE(pack->chunks().chunks().size() == 3);
     CHECK(pack->chunks().zooms().size() == 2);
     CHECK(pack->chunks().level(14).size() == 2);
     CHECK(pack->chunks().level(12).size() == 1);
     CHECK(pack->chunks().level(12)[0].tile == TileKey{12, 2103, 1346});
     CHECK(pack->chunks().level(13).empty());
     for (std::size_t i = 0; i < cs.size(); ++i) CHECK(pack->chunks().chunks()[i].reach == cs[i].reach);
+    ATLAS_REQUIRE(pack->head() != nullptr);
+    ATLAS_REQUIRE(!pack->head()->views().empty());
     CHECK(pack->head()->views()[0].tolerance == 0);
-    REQUIRE(pack->head()->bands().size() == 1);
+    ATLAS_REQUIRE(pack->head()->bands().size() == 1);
     CHECK(pack->head()->never_simplified());
-    REQUIRE(pack->head() != nullptr);
     CHECK(pack->head()->profile == Profile::living);
     CHECK(pack->head()->levels == std::vector<std::uint8_t>{14, 12});
     CHECK(pack->head()->region == "amsterdam");
     CHECK(pack->head()->frame.kz == 110540.0);
     CHECK(atlas::test::held(atlas::test::held(pack->head()->view("home")).camera.find("dist")).real() == 430.0);
     CHECK(!pack->head()->view("away"));
-    REQUIRE(pack->style() != nullptr);
+    ATLAS_REQUIRE(pack->style() != nullptr);
     CHECK(atlas::test::held(atlas::test::held(pack->style()->table("LAND")).find("park")).string() == "#a8c890");
     CHECK(!pack->style()->table("SURF"));
     Zstd zstd;
@@ -77,9 +79,9 @@ TEST_CASE("tiles: a render pack opens, finds and unpacks its chunks, and verifie
     std::vector<std::byte> scratch;
     for (const auto& c : cs) {
         const ChunkRef* ref = pack->chunks().find(c.tile);
-        REQUIRE(ref != nullptr);
+        ATLAS_REQUIRE(ref != nullptr);
         CHECK(ref->count == c.count);
-        REQUIRE(pack->unpack(*ref, zstd, raw, scratch));
+        ATLAS_REQUIRE(pack->unpack(*ref, zstd, raw, scratch));
         CHECK(raw == c.raw);
     }
     CHECK(pack->chunks().find({14, 1, 1}) == nullptr);
@@ -90,7 +92,7 @@ TEST_CASE("tiles: a damaged chunk, section or table is caught") {
     const auto cs = chunks();
     const auto bytes = atlas::test::pack_bytes(cs, levels);
     auto pack = open(bytes);
-    REQUIRE(pack);
+    ATLAS_REQUIRE(pack);
     const ChunkRef first = pack->chunks().chunks()[0];
     const Section chunk_section = *find_section(pack->sections(), section_chunks);
 
@@ -98,17 +100,17 @@ TEST_CASE("tiles: a damaged chunk, section or table is caught") {
         auto b = bytes;
         b[static_cast<std::size_t>(first.offset) + 20] ^= std::byte{1}; // inside the first raw block's data
         auto damaged = open(b);
-        REQUIRE(damaged); // the chunks section's CRC-32 is not read at open
+        ATLAS_REQUIRE(damaged); // the chunks section's CRC-32 is not read at open
         Zstd zstd;
         std::vector<std::byte> raw;
         std::vector<std::byte> scratch;
         auto u = damaged->unpack(first, zstd, raw, scratch);
-        REQUIRE(!u);
+        ATLAS_REQUIRE(!u);
         CHECK(u.error().fault == Fault::damaged);
         CHECK(u.error().site == Site::chunk);
         CHECK(u.error().detail == first.tile.packed());
         auto v = damaged->verify();
-        REQUIRE(!v);
+        ATLAS_REQUIRE(!v);
         CHECK(v.error().fault == Fault::damaged);
         CHECK(damaged->unpack(first, zstd, raw, scratch, false)); // unchecked, it decompresses
     }
@@ -117,7 +119,7 @@ TEST_CASE("tiles: a damaged chunk, section or table is caught") {
         const Section t = *find_section(pack->sections(), section_tiles);
         b[static_cast<std::size_t>(t.offset) + 3] ^= std::byte{0x10};
         auto damaged = open(b);
-        REQUIRE(!damaged);
+        ATLAS_REQUIRE(!damaged);
         CHECK(damaged.error().fault == Fault::damaged);
         CHECK(damaged.error().site == Site::chunk_table);
     }
@@ -126,7 +128,7 @@ TEST_CASE("tiles: a damaged chunk, section or table is caught") {
         const Section h = *find_section(pack->sections(), section_head);
         b[static_cast<std::size_t>(h.offset) + 10] ^= std::byte{0x10};
         auto damaged = open(b);
-        REQUIRE(!damaged);
+        ATLAS_REQUIRE(!damaged);
         CHECK(damaged.error().site == Site::head);
         CHECK(damaged.error().fault == Fault::damaged);
     }
@@ -134,7 +136,7 @@ TEST_CASE("tiles: a damaged chunk, section or table is caught") {
         auto b = bytes;
         b.resize(static_cast<std::size_t>(chunk_section.offset) + 10);
         auto damaged = open(b);
-        REQUIRE(!damaged);
+        ATLAS_REQUIRE(!damaged);
         CHECK(damaged.error().fault == Fault::truncated);
     }
 }
@@ -163,18 +165,21 @@ TEST_CASE("tiles: the container's header refuses what is not a render or element
     }
 }
 
-/// A pack of `cs` whose chunk table is `table` instead of its own (the section's CRC-32 made to match).
+/// A pack of `cs` whose chunk table is `table` instead of its own (the section's CRC-32 made to match). Where the pack
+/// cannot be edited so, the test case has failed and gets the pack unedited.
 std::vector<std::byte> with_table(const std::vector<ChunkBytes>& cs, const Sink& table,
                                   std::uint8_t format = format_render) {
     auto bytes = atlas::test::pack_bytes(cs, levels, format);
     auto pack = open(bytes);
-    REQUIRE(pack);
-    const Section t = *find_section(pack->sections(), section_tiles);
-    REQUIRE(table.bytes.size() == t.stored); // the same length, so every offset stays
+    ATLAS_REQUIRE_OR_RETURN(bytes, pack, describe(pack.error()));
+    const Section* tiles = find_section(pack->sections(), section_tiles);
+    ATLAS_REQUIRE_OR_RETURN(bytes, tiles != nullptr);
+    const Section t = *tiles;
+    ATLAS_REQUIRE_OR_RETURN(bytes, table.bytes.size() == t.stored); // the same length, so every offset stays
     std::ranges::copy(table.bytes, bytes.begin() + static_cast<std::ptrdiff_t>(t.offset));
     // the directory's CRC-32 of the table: the first entry is `tiles`, its CRC four bytes before its method byte
     const auto header = read_container_header(bytes, bytes.size());
-    REQUIRE(header);
+    ATLAS_REQUIRE_OR_RETURN(bytes, header, describe(header.error()));
     const std::size_t crc_at = static_cast<std::size_t>(header->directory_offset()) + 1 + section_tiles.size() + 24;
     const std::uint32_t crc = crc32(table.bytes);
     for (std::size_t k = 0; k < 4; ++k) bytes[crc_at + k] = static_cast<std::byte>(crc >> (24U - (8U * k)));
@@ -208,7 +213,7 @@ TEST_CASE("tiles: the chunk table refuses tiles off the grid, levels out of orde
     const auto cs = chunks();
     auto refused = [&](const Sink& t, Fault fault) {
         auto p = open(with_table(cs, t));
-        REQUIRE(!p);
+        ATLAS_REQUIRE(!p);
         CHECK(p.error().site == Site::chunk_table);
         CHECK(p.error().fault == fault);
     };
@@ -239,7 +244,7 @@ TEST_CASE("tiles: levels must come in rhead's order, each in one run") {
     auto cs = chunks();
     std::swap(cs[0], cs[2]); // L12 first, then L14: against rhead's [14, 12]
     auto p = open(atlas::test::pack_bytes(cs, levels));
-    REQUIRE(!p);
+    ATLAS_REQUIRE(!p);
     CHECK(p.error().site == Site::chunk_table);
     CHECK(p.error().fault == Fault::bad_value);
 }
@@ -247,7 +252,7 @@ TEST_CASE("tiles: levels must come in rhead's order, each in one run") {
 TEST_CASE("tiles: an element pack (format 2) opens as a container, and the core does not unpack its chunks") {
     const auto cs = chunks();
     auto pack = open(atlas::test::pack_bytes(cs, levels, format_elements));
-    REQUIRE_MESSAGE(pack, describe(pack.error()));
+    ATLAS_REQUIRE(pack, describe(pack.error()));
     CHECK(pack->format() == format_elements);
     CHECK(!pack->is_render());
     CHECK(pack->head() == nullptr);
@@ -256,7 +261,7 @@ TEST_CASE("tiles: an element pack (format 2) opens as a container, and the core 
     std::vector<std::byte> raw;
     std::vector<std::byte> scratch;
     auto u = pack->unpack(pack->chunks().chunks()[0], zstd, raw, scratch);
-    REQUIRE(!u);
+    ATLAS_REQUIRE(!u);
     CHECK(u.error().fault == Fault::unsupported);
 }
 
@@ -274,12 +279,12 @@ TEST_CASE("tiles: reach gives every chunk its box and top, in the table's order,
 
     SUBCASE("entries longer than this payload's are read for their first twenty bytes") {
         auto p = open(atlas::test::pack_bytes(cs, levels, format_render, {.reach = atlas::test::reach_bytes(cs, 28)}));
-        REQUIRE_MESSAGE(p, describe(p.error()));
+        ATLAS_REQUIRE(p, describe(p.error()));
         for (std::size_t i = 0; i < cs.size(); ++i) CHECK(p->chunks().chunks()[i].reach == cs[i].reach);
     }
     auto refused = [&](const std::optional<std::vector<std::byte>>& reach, Fault fault, bool omit = false) {
         auto p = open(atlas::test::pack_bytes(cs, levels, format_render, {.reach = reach, .omit_reach = omit}));
-        REQUIRE(!p);
+        ATLAS_REQUIRE(!p);
         CHECK(p.error().site == Site::reach);
         CHECK(p.error().fault == fault);
     };
@@ -323,11 +328,11 @@ TEST_CASE("tiles: reach gives every chunk its box and top, in the table's order,
     SUBCASE("a damaged byte: its CRC-32 differs") {
         auto bytes = atlas::test::pack_bytes(cs, levels);
         auto p = open(bytes);
-        REQUIRE(p);
+        ATLAS_REQUIRE(p);
         const Section r = *find_section(p->sections(), section_reach);
         bytes[static_cast<std::size_t>(r.offset) + 13] ^= std::byte{0x01};
         auto damaged = open(bytes);
-        REQUIRE(!damaged);
+        ATLAS_REQUIRE(!damaged);
         CHECK(damaged.error().site == Site::reach);
         CHECK(damaged.error().fault == Fault::damaged);
     }
@@ -337,11 +342,11 @@ TEST_CASE("tiles: a render pack's chunk is a tile of at most 4 MiB; an element p
     auto big = chunks();
     big[2].raw.assign(std::size_t{max_tile_bytes} + 1, std::byte{9});
     auto p = open(atlas::test::pack_bytes(big, levels));
-    REQUIRE(!p);
+    ATLAS_REQUIRE(!p);
     CHECK(p.error().site == Site::chunk_table);
     CHECK(p.error().fault == Fault::too_big);
     auto e = open(atlas::test::pack_bytes(big, levels, format_elements));
-    REQUIRE_MESSAGE(e, describe(e.error()));
+    ATLAS_REQUIRE(e, describe(e.error()));
     CHECK(e->chunks().chunks()[2].raw == max_tile_bytes + 1);
 }
 
@@ -352,7 +357,7 @@ TEST_CASE(
         .name = "aux", .stored = std::vector<std::byte>(9, std::byte{7}), .raw = 9, .method = Method::zstd};
     aux.method = static_cast<Method>(7); // a method of a later format
     auto p = open(atlas::test::pack_bytes(cs, levels, format_render, {.extra = {aux}}));
-    REQUIRE_MESSAGE(p, describe(p.error()));
+    ATLAS_REQUIRE(p, describe(p.error()));
     CHECK(p->sections().size() == 6);
     CHECK(p->verify()); // its CRC-32 holds all the same
 }
@@ -370,7 +375,7 @@ TEST_CASE("tiles: the directory refuses unknown methods, sections past the pack 
     entry("tiles", 100, 10, 0);
     entry("chunks", 110, 50, 2);
     auto ok = read_directory(d.bytes, 1000);
-    REQUIRE(ok);
+    ATLAS_REQUIRE(ok);
     CHECK(ok->size() == 2);
     CHECK(find_section(*ok, "chunks")->method == Method::zstd);
     CHECK(read_directory(d.bytes, 159).error().fault == Fault::truncated); // the chunks run past a 159-byte pack
@@ -403,10 +408,10 @@ TEST_CASE("tiles: rhead gives each view its tolerance and the live map its bands
     const std::vector<HeadBand> bands = {
         {.tolerance = 3, .up_to = 300.0}, {.tolerance = 7, .up_to = 900.0}, {.tolerance = 12, .up_to = std::nullopt}};
     auto h = read_head(atlas::test::head_bytes(levels, Profile::region, 5, bands));
-    REQUIRE_MESSAGE(h, describe(h.error()));
-    REQUIRE(h->views().size() == 1);
+    ATLAS_REQUIRE(h, describe(h.error()));
+    ATLAS_REQUIRE(h->views().size() == 1);
     CHECK(h->views()[0].tolerance == 5);
-    REQUIRE(h->bands().size() == 3);
+    ATLAS_REQUIRE(h->bands().size() == 3);
     CHECK(h->bands()[0].tolerance == 3);
     CHECK(h->bands()[1].up_to == 900.0);
     CHECK(!h->bands()[2].up_to);
@@ -422,7 +427,7 @@ TEST_CASE("tiles: rhead gives each view its tolerance and the live map its bands
     CHECK(h->tolerance_of(std::nullopt, std::nan("")) == 12);
     // the living map: one band at index 0, never simplified
     auto living = read_head(atlas::test::head_bytes(levels));
-    REQUIRE(living);
+    ATLAS_REQUIRE(living);
     CHECK(living->never_simplified());
     CHECK(living->tolerance_of(std::nullopt, 50.0) == 0);
 
@@ -475,7 +480,7 @@ TEST_CASE("tiles: rhead and style refuse what they must") {
         CHECK(read_head(head).error().fault == Fault::left_over);
     }
     SUBCASE("a view's camera that is not a map") {
-        REQUIRE(head[head.size() - tail] == std::byte{8});
+        ATLAS_REQUIRE(head[head.size() - tail] == std::byte{8});
         head[head.size() - tail] = std::byte{7}; // the camera's type byte: a list, not a map
         CHECK(!read_head(head));
     }

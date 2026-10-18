@@ -23,6 +23,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <source_location>
 #include <span>
 #include <string>
 #include <string_view>
@@ -31,11 +32,15 @@
 
 namespace atlas::test {
 
-/// The value of an optional the test requires to hold one (clang-tidy cannot see through REQUIRE).
+/// The value of an optional the test requires to hold one. Without one the test case fails at the caller's line and
+/// the caller reads a value-initialised T in its place (a helper cannot end the test case), so nothing reads an empty
+/// optional; a test that goes on into the value's parts (a list's children) requires them first.
 template <class T>
-[[nodiscard]] const T& held(const std::optional<T>& o) {
-    REQUIRE(o.has_value());
-    return *o; // NOLINT(bugprone-unchecked-optional-access): required just above
+[[nodiscard]] const T& held(const std::optional<T>& o, std::source_location where = std::source_location::current()) {
+    if (o.has_value()) return *o;
+    DOCTEST_ADD_FAIL_AT(where.file_name(), static_cast<int>(where.line()), "the optional holds no value");
+    static const T none{};
+    return none;
 }
 
 /// An environment variable, or "".

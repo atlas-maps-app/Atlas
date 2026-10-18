@@ -3,6 +3,7 @@
 // by their reach, and tiles decoded and checked against their chunks; the cache's entries, budget, recency, damage and
 // leftovers; both used from several threads at once, with entries damaged meanwhile, after which the cache's index and
 // its folder still agree.
+#include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/ExpandedCache.hpp"
 #include "tiles/Store.hpp"
@@ -92,28 +93,29 @@ TEST_CASE("tiles: the store opens packs from a file and from a range of a file, 
     write_file(dir.file("app.apk"), apk);
 
     Store store;
-    REQUIRE(store.add({.id = "grachten", .kind = PackKind::render, .path = dir.file("render.atlas")}));
+    ATLAS_REQUIRE(store.add({.id = "grachten", .kind = PackKind::render, .path = dir.file("render.atlas")}));
     const int fd = ::open(dir.file("app.apk").c_str(), O_RDONLY | O_CLOEXEC);
-    REQUIRE(fd >= 0);
-    REQUIRE(store.add({.id = "bundled", .kind = PackKind::bundled, .fd = fd, .offset = 1234, .length = b.size()}));
+    ATLAS_REQUIRE(fd >= 0);
+    ATLAS_REQUIRE(
+        store.add({.id = "bundled", .kind = PackKind::bundled, .fd = fd, .offset = 1234, .length = b.size()}));
     (void)::close(fd); // the mapping outlives the descriptor
 
     const auto packs = store.packs();
-    REQUIRE(packs.size() == 2);
+    ATLAS_REQUIRE(packs.size() == 2);
     CHECK(packs[0]->id == "bundled"); // added second, looked up first
     CHECK(packs[1]->id == "grachten");
     const auto hits = store.find({14, 8415, 5384});
-    REQUIRE(hits.size() == 2);
+    ATLAS_REQUIRE(hits.size() == 2);
     Zstd zstd;
     std::vector<std::byte> raw;
-    REQUIRE(store.load(hits[0], zstd, raw));
+    ATLAS_REQUIRE(store.load(hits[0], zstd, raw));
     CHECK(raw[1] == std::byte{'b'});
-    REQUIRE(store.load(hits[1], zstd, raw));
+    ATLAS_REQUIRE(store.load(hits[1], zstd, raw));
     CHECK(raw[1] == std::byte{'a'});
     CHECK(store.find({14, 1, 1}).empty());
 
     // the same id again replaces it; removing it leaves the other
-    REQUIRE(store.add({.id = "grachten", .kind = PackKind::window, .path = dir.file("render.atlas")}));
+    ATLAS_REQUIRE(store.add({.id = "grachten", .kind = PackKind::window, .path = dir.file("render.atlas")}));
     CHECK(store.packs().size() == 2);
     CHECK(store.packs()[1]->kind == PackKind::window);
     CHECK(store.remove("grachten"));
@@ -126,8 +128,8 @@ TEST_CASE("tiles: the store picks a level's chunks by their reach, pack by pack 
     write_file(dir.file("a.atlas"), pack_of('a'));
     write_file(dir.file("b.atlas"), pack_of('b'));
     Store store;
-    REQUIRE(store.add({.id = "a", .kind = PackKind::render, .path = dir.file("a.atlas")}));
-    REQUIRE(store.add({.id = "b", .kind = PackKind::bundled, .path = dir.file("b.atlas")}));
+    ATLAS_REQUIRE(store.add({.id = "a", .kind = PackKind::render, .path = dir.file("a.atlas")}));
+    ATLAS_REQUIRE(store.add({.id = "b", .kind = PackKind::bundled, .path = dir.file("b.atlas")}));
     auto tiles = [](const std::vector<StoreHit>& hits) {
         std::vector<std::string> out;
         out.reserve(hits.size());
@@ -167,20 +169,20 @@ TEST_CASE("tiles: the store decodes a hit's tile and checks it against its chunk
     write_file(dir.file("good.atlas"), atlas::test::pack_bytes(good, levels));
     write_file(dir.file("bad.atlas"), atlas::test::pack_bytes(bad, levels));
     Store store;
-    REQUIRE(store.add({.id = "good", .kind = PackKind::render, .path = dir.file("good.atlas")}));
-    REQUIRE(store.add({.id = "bad", .kind = PackKind::window, .path = dir.file("bad.atlas")}));
+    ATLAS_REQUIRE(store.add({.id = "good", .kind = PackKind::render, .path = dir.file("good.atlas")}));
+    ATLAS_REQUIRE(store.add({.id = "bad", .kind = PackKind::window, .path = dir.file("bad.atlas")}));
     const auto hits = store.find({14, 8414, 5384});
-    REQUIRE(hits.size() == 2);
+    ATLAS_REQUIRE(hits.size() == 2);
     Zstd zstd;
     TileDecoder decoder;
     atlas::Arena arena(1U << 16U, atlas::Growth::grows, "test");
     std::vector<std::byte> bytes;
     auto tile = store.decode(hits[0], zstd, decoder, arena, bytes);
-    REQUIRE_MESSAGE(tile, describe(tile.error()));
+    ATLAS_REQUIRE(tile, describe(tile.error()));
     CHECK(tile->feature_count() == 2);
     CHECK(tile->cells[40].west == tb[1] - 77);
     auto refused = store.decode(hits[1], zstd, decoder, arena, bytes);
-    REQUIRE(!refused);
+    ATLAS_REQUIRE(!refused);
     CHECK(refused.error().site == Site::reach);
     // and through the pack itself
     std::vector<std::byte> scratch;
@@ -192,7 +194,7 @@ TEST_CASE("tiles: the store refuses what it cannot draw from") {
     TempDir dir;
     Store store;
     auto missing = store.add({.id = "x", .path = dir.file("none.atlas")});
-    REQUIRE(!missing);
+    ATLAS_REQUIRE(!missing);
     CHECK(missing.error().fault == Fault::io);
     std::vector<ChunkBytes> cs(1);
     cs[0].tile = {14, 1, 1};
@@ -200,7 +202,7 @@ TEST_CASE("tiles: the store refuses what it cannot draw from") {
     constexpr std::array<std::uint8_t, 1> levels = {14};
     write_file(dir.file("elements.atlas"), atlas::test::pack_bytes(cs, levels, format_elements));
     auto elements = store.add({.id = "e", .path = dir.file("elements.atlas")});
-    REQUIRE(!elements);
+    ATLAS_REQUIRE(!elements);
     CHECK(elements.error().fault == Fault::unsupported);
     CHECK(!store.add({.id = "nothing"}));
     CHECK(store.packs().empty());
@@ -231,38 +233,38 @@ struct Remote {
 TEST_CASE("tiles: a remote pack is read by ranges, its head and chunks cached, and opens offline from them") {
     TempDir dir;
     auto cache = ExpandedCache::open(dir.file("rtiles"), 1U << 20U);
-    REQUIRE(cache);
+    ATLAS_REQUIRE(cache);
     Remote remote;
     remote.bytes = pack_of('w');
     Zstd zstd;
     std::vector<std::byte> raw;
     {
         Store store(cache->get());
-        REQUIRE(store.add(remote.ref("base")));
+        ATLAS_REQUIRE(store.add(remote.ref("base")));
         const int opening = remote.fetches;
         CHECK(opening >= 4); // header, directory, rhead, style, chunk table
         const auto hit = store.find({14, 8414, 5384});
-        REQUIRE(hit.size() == 1);
-        REQUIRE(store.load(hit[0], zstd, raw));
+        ATLAS_REQUIRE(hit.size() == 1);
+        ATLAS_REQUIRE(store.load(hit[0], zstd, raw));
         CHECK(raw[1] == std::byte{'w'});
         CHECK(remote.fetches == opening + 1);
-        REQUIRE(store.load(hit[0], zstd, raw)); // from the cache now
+        ATLAS_REQUIRE(store.load(hit[0], zstd, raw)); // from the cache now
         CHECK(remote.fetches == opening + 1);
         CHECK((*cache)->entries() == 2); // the head and one chunk
     }
     remote.online = false;
     {
         Store store(cache->get());
-        REQUIRE_MESSAGE(store.add(remote.ref("base")), "the cached head opens the pack offline");
+        ATLAS_REQUIRE(store.add(remote.ref("base")), "the cached head opens the pack offline");
         CHECK(remote.fetches > 0);
         const auto seen = store.find({14, 8414, 5384});
-        REQUIRE(seen.size() == 1);
-        REQUIRE(store.load(seen[0], zstd, raw));
+        ATLAS_REQUIRE(seen.size() == 1);
+        ATLAS_REQUIRE(store.load(seen[0], zstd, raw));
         CHECK(raw[0] == std::byte{8414 & 0xFF});
         const auto unseen = store.find({12, 2103, 1346});
-        REQUIRE(unseen.size() == 1);
+        ATLAS_REQUIRE(unseen.size() == 1);
         auto offline = store.load(unseen[0], zstd, raw);
-        REQUIRE(!offline);
+        ATLAS_REQUIRE(!offline);
         CHECK(offline.error().fault == Fault::io);
     }
     remote.online = true;
@@ -273,17 +275,17 @@ TEST_CASE("tiles: a remote pack is read by ranges, its head and chunks cached, a
             if (e.file_size() < 2000) continue; // the head's entry is the smaller one; the chunk's holds 3 KB
             chunk_file = e.path().string();
         }
-        REQUIRE(!chunk_file.empty());
+        ATLAS_REQUIRE(!chunk_file.empty());
         {
             std::fstream f(chunk_file, std::ios::in | std::ios::out | std::ios::binary);
             f.seekp(cache_header_bytes + 20);
             f.put('\x01');
         }
         Store store(cache->get());
-        REQUIRE(store.add(remote.ref("base")));
+        ATLAS_REQUIRE(store.add(remote.ref("base")));
         const int before = remote.fetches;
         const auto hit = store.find({14, 8414, 5384});
-        REQUIRE(store.load(hit[0], zstd, raw));
+        ATLAS_REQUIRE(store.load(hit[0], zstd, raw));
         CHECK(raw[1] == std::byte{'w'});
         CHECK(remote.fetches == before + 1);
     }
@@ -292,7 +294,7 @@ TEST_CASE("tiles: a remote pack is read by ranges, its head and chunks cached, a
 TEST_CASE("tiles: the cache keeps entries apart by every part of their key") {
     TempDir dir;
     auto cache = ExpandedCache::open(dir.path(), 1U << 20U);
-    REQUIRE(cache);
+    ATLAS_REQUIRE(cache);
     ExpandedCache& c = **cache;
     const Sha256Digest chunk = Sha256::of(as_bytes("chunk"));
     const std::array<CacheKey, 4> keys = {{{.kind = CacheKind::built, .source = chunk, .style = "s1.1-a", .format = 1},
@@ -301,7 +303,7 @@ TEST_CASE("tiles: the cache keeps entries apart by every part of their key") {
                                            {.kind = CacheKind::chunk, .source = chunk}}};
     for (std::size_t i = 0; i < keys.size(); ++i) {
         const std::string payload(100 + i, static_cast<char>('a' + i));
-        REQUIRE(c.put(keys[i], as_bytes(payload)));
+        ATLAS_REQUIRE(c.put(keys[i], as_bytes(payload)));
     }
     CHECK(c.entries() == 4);
     for (std::size_t i = 0; i < keys.size(); ++i) {
@@ -312,7 +314,7 @@ TEST_CASE("tiles: the cache keeps entries apart by every part of their key") {
     }
     CHECK(!c.get({.kind = CacheKind::pack_head, .source = chunk}));
     const std::uint64_t before = c.bytes();
-    REQUIRE(c.put(keys[0], as_bytes(std::string(10, 'z')))); // replaced: the bytes follow
+    ATLAS_REQUIRE(c.put(keys[0], as_bytes(std::string(10, 'z')))); // replaced: the bytes follow
     CHECK(c.bytes() == before - 100 + 10);
     CHECK(atlas::test::held(c.get(keys[0])).payload.size() == 10);
     c.remove(keys[0]);
@@ -332,25 +334,25 @@ TEST_CASE("tiles: the cache evicts the least recently used first, and remembers 
     const std::string payload(1000, 'p');
     {
         auto cache = ExpandedCache::open(dir.path(), 3 * entry);
-        REQUIRE(cache);
+        ATLAS_REQUIRE(cache);
         for (int i = 0; i < 3; ++i) {
-            REQUIRE((*cache)->put(key(i), as_bytes(payload)));
+            ATLAS_REQUIRE((*cache)->put(key(i), as_bytes(payload)));
             std::this_thread::sleep_for(std::chrono::milliseconds(5)); // distinct modification times
         }
         CHECK((*cache)->get(key(0))); // 0 is now the most recent, 1 the least
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        REQUIRE((*cache)->put(key(3), as_bytes(payload)));
+        ATLAS_REQUIRE((*cache)->put(key(3), as_bytes(payload)));
         CHECK((*cache)->entries() == 3);
         CHECK(!(*cache)->get(key(1)));
         CHECK((*cache)->get(key(0)));
         CHECK((*cache)->bytes() == 3 * entry);
         auto too_big = (*cache)->put(key(9), as_bytes(std::string(3 * entry, 'x')));
-        REQUIRE(!too_big);
+        ATLAS_REQUIRE(!too_big);
         CHECK(too_big.error().fault == Fault::too_big);
     }
     // a restart: the index from the files, the oldest (2, written before 0 was read and 3 written) evicted first
     auto cache = ExpandedCache::open(dir.path(), 2 * entry);
-    REQUIRE(cache);
+    ATLAS_REQUIRE(cache);
     CHECK((*cache)->entries() == 2);
     CHECK(!(*cache)->get(key(2)));
     CHECK((*cache)->get(key(0)));
@@ -363,10 +365,10 @@ TEST_CASE("tiles: a damaged, cut or foreign entry is a miss, and leftovers of in
     std::string path;
     {
         auto cache = ExpandedCache::open(dir.path(), 1U << 20U);
-        REQUIRE(cache);
-        REQUIRE((*cache)->put(key, as_bytes("a payload of some length")));
+        ATLAS_REQUIRE(cache);
+        ATLAS_REQUIRE((*cache)->put(key, as_bytes("a payload of some length")));
         path = std::format("{}/{}.x", dir.path(), hex(key.digest()));
-        REQUIRE(fs::exists(path));
+        ATLAS_REQUIRE(fs::exists(path));
         {
             std::fstream f(path, std::ios::in | std::ios::out | std::ios::binary);
             f.seekp(cache_header_bytes + 3);
@@ -381,7 +383,7 @@ TEST_CASE("tiles: a damaged, cut or foreign entry is a miss, and leftovers of in
     const std::string cut = std::format("{}/{}.x", dir.path(), hex(Sha256::of(as_bytes("cut"))));
     write_file(cut, as_bytes("ATXC"));
     auto cache = ExpandedCache::open(dir.path(), 1U << 20U);
-    REQUIRE(cache);
+    ATLAS_REQUIRE(cache);
     CHECK(!fs::exists(dir.file("deadbeef.x.tmp-1-1")));
     CHECK(!fs::exists(cut));
     CHECK(fs::exists(dir.file("notes.txt")));
@@ -393,7 +395,7 @@ TEST_CASE("tiles: an entry's bytes are checked: header, key, length and payload"
     const auto bytes = ExpandedCache::encode(key, as_bytes("payload"));
     const Sha256Digest digest = key.digest();
     const auto ok = ExpandedCache::check(bytes, &digest);
-    REQUIRE(ok);
+    ATLAS_REQUIRE(ok);
     CHECK(as_text(*ok) == "payload");
     const Sha256Digest other =
         CacheKey{.kind = CacheKind::built, .source = Sha256::of(as_bytes("tile")), .style = "s1", .format = 4}.digest();
@@ -412,13 +414,13 @@ TEST_CASE("tiles: an entry's bytes are checked: header, key, length and payload"
 TEST_CASE("tiles: the store and the cache work from several threads at once") {
     TempDir dir;
     auto cache = ExpandedCache::open(dir.file("rtiles"), 12U * (cache_header_bytes + 1000));
-    REQUIRE(cache);
+    ATLAS_REQUIRE(cache);
     Remote remote;
     remote.bytes = pack_of('t');
     write_file(dir.file("render.atlas"), pack_of('r'));
     Store store(cache->get());
-    REQUIRE(store.add(remote.ref("base")));
-    REQUIRE(store.add({.id = "render", .kind = PackKind::render, .path = dir.file("render.atlas")}));
+    ATLAS_REQUIRE(store.add(remote.ref("base")));
+    ATLAS_REQUIRE(store.add({.id = "render", .kind = PackKind::render, .path = dir.file("render.atlas")}));
     std::atomic<int> failures{0};
     std::vector<std::thread> threads;
     threads.reserve(4);

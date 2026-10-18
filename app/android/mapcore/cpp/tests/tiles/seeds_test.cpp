@@ -6,6 +6,7 @@
 // fuzz_varint) stay. The repository keeps them in fuzz/corpus/<target>/ (about 40 KB), which CI's fuzz job starts from:
 //   ATLAS_TILES_DIR=<bundled packs> ATLAS_TILES_SEEDS=<cpp>/fuzz/corpus atlas_tests -tc='tiles: the fuzz*'
 // With ATLAS_TILES_WHOLE also set, the Westerkerk's whole pack joins fuzz_container's seeds (for local runs).
+#include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Container.hpp"
 #include "tiles/ExpandedCache.hpp"
@@ -116,11 +117,11 @@ TEST_CASE("tiles: the fuzz targets' seed corpora (written when ATLAS_TILES_SEEDS
     std::vector<std::pair<std::vector<std::byte>, ChunkRef>> tiles; // every real tile, raw, and its chunk
     for (const char* name : {"amsterdam", "grachten"}) {
         auto pack = atlas::test::open_pack((fs::path(packs) / std::format("{}.atlas", name)).string());
-        REQUIRE(pack);
+        ATLAS_REQUIRE(pack);
         std::vector<std::byte> raw;
         std::vector<std::byte> scratch;
         for (const ChunkRef& c : pack->chunks().chunks()) {
-            REQUIRE(pack->unpack(c, zstd, raw, scratch));
+            ATLAS_REQUIRE(pack->unpack(c, zstd, raw, scratch));
             tiles.emplace_back(raw, c);
         }
     }

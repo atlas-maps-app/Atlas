@@ -1,4 +1,5 @@
 // Typed values (tiles/Values.hpp) and the canonical text of strings and doubles (tiles/Dump.hpp).
+#include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Dump.hpp"
 #include "tiles/Values.hpp"
@@ -47,10 +48,10 @@ TEST_CASE("tiles: values of every type, with written-out strings") {
     ValueReader reader({}, true);
     Reader r(s.bytes);
     const auto root = reader.read(r);
-    REQUIRE(root);
+    ATLAS_REQUIRE(root);
     CHECK(r.done());
     const Value v(reader.nodes(), reader.strings(), *root);
-    REQUIRE(v.type() == ValueType::map);
+    ATLAS_REQUIRE(v.type() == ValueType::map);
     CHECK(v.size() == 8);
     using atlas::test::held;
     CHECK(held(v.find("n")).is_null());
@@ -61,7 +62,7 @@ TEST_CASE("tiles: values of every type, with written-out strings") {
     CHECK(held(v.find("l")).integer() == 9'007'199'254'740'993LL);
     CHECK(std::bit_cast<std::uint64_t>(held(held(v.find("d")).real())) == 0x8000'0000'0000'0000ULL);
     CHECK(held(v.find("s")).string() == "\xC3\xA9");
-    CHECK(held(v.find("l2")).size() == 2);
+    ATLAS_REQUIRE(held(v.find("l2")).size() == 2);
     CHECK(held(v.find("l2")).child(1).size() == 0);
     CHECK(held(v.find("l2")).child(1).type() == ValueType::list);
     CHECK(v.key(7) == "l2");
@@ -78,7 +79,7 @@ TEST_CASE("tiles: values refuse an Int past 32 bits, a list longer than its byte
                            inline_strings);
         Reader r(s.bytes);
         const auto v = reader.read(r);
-        REQUIRE(!v);
+        ATLAS_REQUIRE(!v);
         CHECK(v.error().fault == fault);
     };
     Sink big;
@@ -141,7 +142,7 @@ TEST_CASE("tiles: the canonical dump quotes strings and writes doubles as Kotlin
     atlas::Arena arena(1U << 16U, atlas::Growth::grows, "test");
     TileDecoder decoder;
     auto tile = decoder.decode(raw, arena);
-    REQUIRE_MESSAGE(tile, describe(tile.error()));
+    ATLAS_REQUIRE(tile, describe(tile.error()));
     const std::string dump = canonical_dump(*tile);
     CHECK(dump.contains("\nlabel @0 id=-9223372036854775807 name=\"say \\\"hi\\\"\\\\ok\" pos=(0,0) prev=(0,0)\n"));
     CHECK(dump.contains("\nlabel @0 id=0 index=-1 name=\"tab\\u0009here\\u0001\\u001f\x7F\" pos=(-1,1) prev=(0,0)\n"));

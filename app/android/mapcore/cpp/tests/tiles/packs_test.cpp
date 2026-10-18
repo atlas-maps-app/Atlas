@@ -4,6 +4,7 @@
 // its reach); a pack never simplified (the living map) carries no keep codes. Each tile's canonical hash is printed as
 // `tiles l0 <pack> <z>/<x>/<y> <sha256>`, the line the JVM's L0 test and the emulator's run compare with the Kotlin
 // writer's. With ATLAS_TILES_EXPECT naming a file of such lines, every line must be there and equal.
+#include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Container.hpp"
 #include "tiles/Dump.hpp"
@@ -31,13 +32,13 @@ TEST_CASE("tiles: the bundled packs open, verify and decode, and their canonical
     std::map<std::string, std::string> expected;
     if (const std::string expect = atlas::test::environment("ATLAS_TILES_EXPECT"); !expect.empty()) {
         std::ifstream in(expect);
-        REQUIRE_MESSAGE(in.good(), "ATLAS_TILES_EXPECT names no readable file: " << expect);
+        ATLAS_REQUIRE(in.good(), "ATLAS_TILES_EXPECT names no readable file: " << expect);
         for (std::string line; std::getline(in, line);) {
             if (!line.starts_with("tiles l0 ")) continue;
             const std::size_t last = line.rfind(' ');
             expected[line.substr(0, last)] = line.substr(last + 1);
         }
-        REQUIRE(!expected.empty());
+        ATLAS_REQUIRE(!expected.empty());
     }
     std::size_t packs = 0;
     std::size_t matched = 0;
@@ -45,11 +46,11 @@ TEST_CASE("tiles: the bundled packs open, verify and decode, and their canonical
         if (file.path().extension() != ".atlas") continue;
         const std::string name = file.path().stem().string();
         auto pack = atlas::test::open_pack(file.path().string());
-        REQUIRE_MESSAGE(pack, name << ": " << describe(pack.error()));
+        ATLAS_REQUIRE(pack, name << ": " << describe(pack.error()));
         if (!pack->is_render()) continue;
         ++packs;
         auto verified = pack->verify();
-        REQUIRE_MESSAGE(verified, name << ": " << describe(verified.error()));
+        ATLAS_REQUIRE(verified, name << ": " << describe(verified.error()));
         Zstd zstd;
         TileDecoder decoder;
         std::vector<std::byte> raw;
@@ -58,8 +59,8 @@ TEST_CASE("tiles: the bundled packs open, verify and decode, and their canonical
         for (const ChunkRef& c : pack->chunks().chunks()) {
             atlas::Arena arena(1U << 20U, atlas::Growth::grows, "tile");
             auto tile = pack->decode(c, zstd, decoder, arena, raw, scratch);
-            REQUIRE_MESSAGE(tile, name << " " << int{c.tile.z} << "/" << c.tile.x << "/" << c.tile.y << ": "
-                                       << describe(tile.error()));
+            ATLAS_REQUIRE(tile, name << " " << int{c.tile.z} << "/" << c.tile.x << "/" << c.tile.y << ": "
+                                     << describe(tile.error()));
             CHECK(tile->feature_count() == c.count);
             for (const Layer& l : tile->layers) {
                 for (std::size_t slot = 0; slot < l.columns.size(); ++slot) {

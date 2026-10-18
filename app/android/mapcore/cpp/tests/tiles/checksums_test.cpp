@@ -1,5 +1,6 @@
 // The pack's checksums (tiles/Checksums.hpp): CRC-32 and SHA-256 against their published test vectors, in pieces and
 // whole, and the CPU's instruction paths against the portable ones.
+#include "tests/base/require.hpp"
 #include "tiles/Bytes.hpp"
 #include "tiles/Checksums.hpp"
 
@@ -38,7 +39,7 @@ TEST_CASE("tiles: CRC-32 continues across pieces, and every path gives the same 
     for (std::size_t n = 0; n < 300; ++n) {
         for (std::size_t offset = 0; offset < 9; ++offset) {
             const std::span<const std::byte> s = std::span<const std::byte>(data).subspan(offset, n);
-            REQUIRE(crc32(s) == crc32_portable(s));
+            ATLAS_REQUIRE(crc32(s) == crc32_portable(s), n << " bytes from byte " << offset);
         }
     }
     MESSAGE("CRC-32 instructions: " << std::string(checksum_paths().crc32_instructions ? "used" : "absent"));
@@ -91,7 +92,7 @@ TEST_CASE(
             for (std::size_t k = 0; k < 4; ++k)
                 want[(4 * i) + k] = static_cast<std::byte>(state[i] >> (24U - (8U * k)));
         }
-        REQUIRE(a.finish() == want);
+        ATLAS_REQUIRE(a.finish() == want, "the first " << n << " bytes");
     }
     MESSAGE("SHA-256 instructions: " << std::string(checksum_paths().sha2_instructions ? "used" : "absent"));
 }
