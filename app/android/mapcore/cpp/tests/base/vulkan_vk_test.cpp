@@ -216,6 +216,8 @@ public:
     /// test case and ends the run there.
     void run(std::span<const std::uint32_t> spirv, const char* entry, std::span<const std::byte> push,
              std::span<Buffer* const> buffers, std::uint32_t groups) {
+        // A buffer that could not be made has failed the test case already; it is never bound.
+        for (const Buffer* b : buffers) ATLAS_REQUIRE(b->handle(), "a buffer to bind was not made");
         std::vector<vk::DescriptorSetLayoutBinding> bindings;
         bindings.reserve(buffers.size());
         for (std::uint32_t i = 0; i < buffers.size(); ++i) {

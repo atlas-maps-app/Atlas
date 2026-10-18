@@ -360,7 +360,7 @@ struct StartOptions {
     std::int64_t process_start_ms = 0; // when this process started (ms since the epoch); 0: its first guard's time
     bool validation = false;
     bool require_validation = false;
-    bool present = false;     // the device presents (DeviceOptions::present): the façade's always does
+    bool present = true;      // the device presents (DeviceOptions::present), as the phone's does; offscreen tests: off
     bool msaa2_close = false; // K6's answer for configuration B
     std::uint32_t max_version = VK_API_VERSION_1_4;
     std::string loader;

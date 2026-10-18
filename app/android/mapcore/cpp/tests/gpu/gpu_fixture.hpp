@@ -8,11 +8,13 @@
 // VK_KHR_surface, as the Android emulator package's lavapipe does on this Mac and on the x86_64 runner. There a test
 // that presents and cannot fails when Vulkan is required (ATLAS_REQUIRE_VULKAN=1). The arm64 runner's lavapipe is Mesa
 // built without a window system (.github/docker/lavapipe: -Dplatforms=), with no VK_KHR_surface and no
-// VK_KHR_swapchain: it only works offscreen, and the tests that present skip there, saying why.
+// VK_KHR_swapchain: it only works offscreen, and the tests that present skip there, saying why, or (the Vulkan 1.1
+// case) work offscreen instead.
 // ATLAS_VULKAN_HIDE=VK_KHR_surface,VK_KHR_swapchain makes this Mac's lavapipe look like it.
 #pragma once
 
 #include "gpu/Device.hpp"
+#include "gpu/Facts.hpp"
 #include "gpu/Instance.hpp"
 #include "tests/base/require.hpp"
 
@@ -85,10 +87,25 @@ struct Session {
     return instance.has_extension(vk::KHRSurfaceExtensionName);
 }
 
-/// Reports that a test which presents cannot, for `why`: a failure where presentation is expected and Vulkan is
-/// required, else a skip with the reason. The test returns after it.
+/// Whether a test that presents must: presentation is expected of the host's Vulkan, and Vulkan is required.
+[[nodiscard]] inline bool presentation_demanded(const gpu::Instance& instance) {
+    return vulkan_required() && presentation_expected(instance);
+}
+
+/// Why a device with `facts` cannot present on `instance`'s Vulkan ("" when it can): no window system (no
+/// VK_KHR_surface on the instance), or no VK_KHR_swapchain on the device.
+[[nodiscard]] inline std::string why_no_presenting(const gpu::Instance& instance, const gpu::Facts& facts) {
+    if (!instance.has_extension(vk::KHRSurfaceExtensionName)) {
+        return "this Vulkan has no window system (no VK_KHR_surface on the instance)";
+    }
+    if (!facts.has_extension(vk::KHRSwapchainExtensionName)) return facts.name + " has no VK_KHR_swapchain";
+    return {};
+}
+
+/// Reports that a test which presents cannot, for `why`: a failure where presentation is demanded (above), else a
+/// skip with the reason. The test returns after it.
 inline void cannot_present(const gpu::Instance& instance, const std::string& why) {
-    if (vulkan_required() && presentation_expected(instance)) {
+    if (presentation_demanded(instance)) {
         FAIL("this Vulkan has a window system (VK_KHR_surface) and Vulkan is required (ATLAS_REQUIRE_VULKAN=1), so it "
              "must present, but "
              << why);

@@ -249,7 +249,10 @@ void check_requirements(Facts& facts, bool present) {
     };
     need(facts.api_version >= VK_API_VERSION_1_1, "Vulkan 1.1");
     // Only presenting needs the swapchain: the core's offscreen work (the host tests, the likeness candidate, the
-    // light probe, VK check) runs on a device without it, as on the arm64 runner's lavapipe.
+    // light probe, VK check) runs on a device without it, as on the arm64 runner's lavapipe. VK_KHR_swapchain builds
+    // on the instance's VK_KHR_surface, which a Vulkan without a window system lacks even where its device offers the
+    // swapchain: a device that presents needs both.
+    need(!present || facts.instance_surface, "VK_KHR_surface (the instance's)");
     need(!present || facts.has_extension(vk::KHRSwapchainExtensionName), "VK_KHR_swapchain");
     const vk::SampleCountFlags four = vk::SampleCountFlagBits::e4;
     need((facts.limits.framebufferColorSampleCounts & four) && (facts.limits.framebufferDepthSampleCounts & four) &&
@@ -647,6 +650,7 @@ Facts collect_facts(const Instance& instance, const vk::raii::PhysicalDevice& de
     facts.validation = instance.validation();
     facts.devices = device_count;
     facts.hidden = instance.hidden();
+    facts.instance_surface = instance.has_extension(vk::KHRSurfaceExtensionName);
 
     const vk::PhysicalDeviceProperties properties = device.getProperties();
     facts.name = properties.deviceName.data();

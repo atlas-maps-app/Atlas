@@ -627,7 +627,7 @@ TEST_CASE("on a headless surface the session's surface, its queries and its outp
     probe.instance = test::open_instance({.validation = true, .require_validation = test::vulkan_required()});
     if (!probe.instance) return;
     if (!probe.instance->has_extension(vk::EXTHeadlessSurfaceExtensionName)) {
-        MESSAGE("skipped: the loader offers no VK_EXT_headless_surface");
+        test::cannot_present(*probe.instance, "the loader offers no VK_EXT_headless_surface");
         return;
     }
     probe.instance.reset();

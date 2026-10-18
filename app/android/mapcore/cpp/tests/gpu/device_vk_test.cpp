@@ -89,8 +89,8 @@ TEST_CASE("a device that presents opens with the swapchain where the host's Vulk
     const gpu::DeviceOptions presenting{.present = true};
     auto picked = gpu::Device::pick(*s.instance, presenting);
     ATLAS_REQUIRE(picked.has_value(), picked.error().text());
-    if (!picked->facts.has_extension(vk::KHRSwapchainExtensionName)) {
-        test::cannot_present(*s.instance, picked->facts.name + " has no VK_KHR_swapchain");
+    if (const std::string why = test::why_no_presenting(*s.instance, picked->facts); !why.empty()) {
+        test::cannot_present(*s.instance, why);
         return;
     }
     CHECK(picked->facts.presents);
@@ -149,6 +149,30 @@ TEST_CASE("the device is asked about its 10-bit formats only as VK bench's colou
     CHECK(s.take_messages().empty());
 }
 
+TEST_CASE("a device that presents needs the instance's VK_KHR_surface, even where the device offers the swapchain") {
+    // VK_KHR_swapchain builds on the instance's VK_KHR_surface: enabled without it, the device's creation is invalid
+    // (the layer's VUID-vkCreateDevice-ppEnabledExtensionNames-01387). With the instance's surface extension hidden
+    // alone, this host's device still offers the swapchain; a device that presents is refused, saying why, and one for
+    // offscreen work opens, the validation layer silent.
+    test::Session s;
+    s.instance = test::open_instance(
+        {.validation = true, .require_validation = test::vulkan_required(), .hide = {vk::KHRSurfaceExtensionName}});
+    if (!s.instance) return;
+    CHECK_FALSE(s.instance->has_extension(vk::KHRSurfaceExtensionName));
+    auto presenting = gpu::Device::open(*s.instance, {.present = true});
+    ATLAS_REQUIRE(!presenting.has_value(), "a device opened to present without the instance's VK_KHR_surface");
+    MESSAGE("a device that presents: " << presenting.error().text());
+    CHECK(presenting.error().text().contains("VK_KHR_surface (the instance's)"));
+    auto device = gpu::Device::open(*s.instance, {});
+    ATLAS_REQUIRE(device.has_value(), device.error().text());
+    s.device = std::move(*device);
+    CHECK(s.device->facts().missing.empty());
+    CHECK_FALSE(s.device->facts().instance_surface);
+    CHECK_FALSE(s.device->enabled().swapchain);
+    const auto messages = s.take_messages();
+    CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
+}
+
 TEST_CASE("without a window system an offscreen device opens, and one that presents is refused with the reason") {
     // This host's Vulkan made to look like the arm64 runner's, Mesa built without a window system: no VK_KHR_surface on
     // the instance, no VK_KHR_swapchain on the device. Every surface extension builds on VK_KHR_surface, so none is
@@ -167,7 +191,8 @@ TEST_CASE("without a window system an offscreen device opens, and one that prese
     auto presenting = gpu::Device::open(*s.instance, {.present = true});
     ATLAS_REQUIRE(!presenting.has_value(), "a device without VK_KHR_swapchain opened to present");
     MESSAGE("a device that presents: " << presenting.error().text());
-    CHECK(presenting.error().text().ends_with("lacks what the core needs: VK_KHR_swapchain"));
+    CHECK(presenting.error().text().ends_with("lacks what the core needs: VK_KHR_surface (the instance's), "
+                                              "VK_KHR_swapchain"));
     // One picked for offscreen work and then opened to present is judged again.
     auto picked = gpu::Device::pick(*s.instance, {});
     ATLAS_REQUIRE(picked.has_value(), picked.error().text());

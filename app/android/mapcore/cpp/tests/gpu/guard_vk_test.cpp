@@ -171,6 +171,7 @@ Child spawn_child(const fs::path& dir, const std::string& plant, const std::stri
             .build = build,
             .plant = plant,
             .validation = false,
+            .present = false, // offscreen: the guard's checks run on a Vulkan without a window system too
             .spirv = 42};
 }
 

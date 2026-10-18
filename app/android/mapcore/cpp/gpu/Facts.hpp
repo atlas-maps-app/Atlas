@@ -193,6 +193,7 @@ struct Facts {
     FeatureFacts features;
     std::vector<std::string> extensions; // without the ones the host tests hide (Instance::hidden)
     std::vector<std::string> hidden;     // the extensions the host tests hide, which read as absent
+    bool instance_surface = false;       // the instance enabled VK_KHR_surface, which VK_KHR_swapchain builds on
     /// Android's Vulkan profiles and whether the device meets each, once read (read_profiles), and how the reading
     /// went.
     std::vector<std::pair<std::string, bool>> profiles;
@@ -258,8 +259,8 @@ void read_profiles(Facts& facts, const Instance& instance, const vk::raii::Physi
 /// and their sample counts as the main pass's transient input attachments (Facts::colour_formats).
 void query_colour_formats(Facts& facts, const vk::raii::PhysicalDevice& device, bool ten);
 
-/// Sets `facts.missing` to the requirements of T1 the device lacks, for presenting (`present`: VK_KHR_swapchain too)
-/// or for offscreen work, and `facts.presents` to `present`.
+/// Sets `facts.missing` to the requirements of T1 the device lacks, for presenting (`present`: VK_KHR_swapchain too,
+/// and the instance's VK_KHR_surface) or for offscreen work, and `facts.presents` to `present`.
 void check_requirements(Facts& facts, bool present);
 
 /// Adds the surface's facts, and the frame's colour on it (decide_colour).

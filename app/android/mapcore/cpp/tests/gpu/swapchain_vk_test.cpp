@@ -4,9 +4,10 @@
 // (the surface's formats and the frame's colour on it are printed first); and the stand-in drawn at Vulkan 1.1, what
 // the oldest phones offer, on a device opened as such a phone opens it, to present, at 8 bits and at 10; both under
 // the validation layer, silent.
-// Both need a Vulkan that presents: where the host's cannot (no VK_KHR_swapchain on the device, or for the first no
-// VK_EXT_headless_surface), they skip with the reason, and fail instead only where presentation is expected of it (a
-// Vulkan with a window system, tests/gpu/gpu_fixture.hpp). The arm64 runner's lavapipe has none: there both skip.
+// Where the host's Vulkan cannot present (no window system, no VK_KHR_swapchain on the device, or for the first no
+// VK_EXT_headless_surface), the first skips with the reason and the second opens its device for offscreen work and
+// draws all the same; where presentation is demanded of it (a Vulkan with a window system, Vulkan required:
+// tests/gpu/gpu_fixture.hpp), both fail instead. The arm64 runner's lavapipe has no window system.
 #include "gpu/Frames.hpp"
 #include "gpu/Passes.hpp"
 #include "gpu/PipelineCache.hpp"
@@ -34,7 +35,7 @@ TEST_CASE("the swapchain presents the stand-in on a headless surface and is rema
         return;
     }
     if (!s.instance->has_extension(vk::EXTHeadlessSurfaceExtensionName)) {
-        MESSAGE("skipped: the loader offers no VK_EXT_headless_surface");
+        test::cannot_present(*s.instance, "the loader offers no VK_EXT_headless_surface");
         return;
     }
     auto surface = gpu::make_headless_surface(*s.instance);
@@ -43,8 +44,8 @@ TEST_CASE("the swapchain presents the stand-in on a headless surface and is rema
         const gpu::DeviceOptions presenting{.surface = **surface};
         auto picked = gpu::Device::pick(*s.instance, presenting);
         ATLAS_REQUIRE(picked.has_value(), picked.error().text());
-        if (!picked->facts.has_extension(vk::KHRSwapchainExtensionName)) {
-            test::cannot_present(*s.instance, picked->facts.name + " has no VK_KHR_swapchain");
+        if (const std::string why = test::why_no_presenting(*s.instance, picked->facts); !why.empty()) {
+            test::cannot_present(*s.instance, why);
             return;
         }
         auto device = gpu::Device::open(*s.instance, std::move(*picked), presenting);
@@ -135,25 +136,30 @@ TEST_CASE("the swapchain presents the stand-in on a headless surface and is rema
 TEST_CASE("the stand-in draws at Vulkan 1.1 under the validation layer, silent") {
     // What a Vulkan 1.1 phone allows: no 1.2-1.4 core structures, the composite's SPIR-V without the without-format
     // capabilities a 1.1 device without shaderStorageImageReadWithoutFormat refuses. Its device is opened as the
-    // phone's is, to present (with the swapchain and what goes with it), and draws into offscreen images.
+    // phone's is, to present (with the swapchain and what goes with it), and draws into offscreen images. Where the
+    // host's Vulkan cannot present (the arm64 runner's), it is opened for offscreen work and draws all the same; where
+    // presentation is demanded, that fails instead.
     test::Session s;
     s.instance = test::open_instance(
         {.validation = true, .require_validation = test::vulkan_required(), .max_version = VK_API_VERSION_1_1});
     if (!s.instance) return;
-    const gpu::DeviceOptions phone{.present = true};
+    gpu::DeviceOptions phone{.present = true};
     auto picked = gpu::Device::pick(*s.instance, phone);
     ATLAS_REQUIRE(picked.has_value(), picked.error().text());
-    if (!picked->facts.has_extension(vk::KHRSwapchainExtensionName)) {
-        test::cannot_present(*s.instance,
-                             picked->facts.name + " has no VK_KHR_swapchain, which every phone's device has and opens");
-        return;
+    if (const std::string why = test::why_no_presenting(*s.instance, picked->facts); !why.empty()) {
+        if (test::presentation_demanded(*s.instance)) {
+            test::cannot_present(*s.instance, why + ", which every phone's device has and opens");
+            return;
+        }
+        MESSAGE("opened for offscreen work, unlike a phone's: " << why);
+        phone.present = false;
     }
     auto device = gpu::Device::open(*s.instance, std::move(*picked), phone);
     ATLAS_REQUIRE(device.has_value(), device.error().text());
     s.device = std::move(*device);
     s.device->check_ten_bit(); // it draws at 10 bits too
     CHECK(s.device->version() == VK_API_VERSION_1_1);
-    CHECK(s.device->enabled().swapchain);
+    CHECK(s.device->enabled().swapchain == phone.present);
     auto cache = gpu::PipelineCache::open(s.device->handle(), s.device->facts(), {}, 0, false);
     ATLAS_REQUIRE(cache.has_value(), cache.error().text());
     auto city = std::make_shared<const standin::City>(standin::City::generate(64, 13.0));
