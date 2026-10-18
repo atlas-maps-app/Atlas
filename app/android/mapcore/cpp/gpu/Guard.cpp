@@ -294,10 +294,12 @@ bool Guard::read_marker(const std::string& marker, const ProcessExits& exits, Gu
         return true;
     }
     if (attempt >= 2) {
-        // The retry crashed too: Vulkan off.
+        // The retry crashed too: Vulkan off, for the driver, or for the system build where the stage is keyed to it
+        // (write_marker).
         turn_off();
         v.off = true;
-        log::error("{}{}: Vulkan is off for this driver and this build", v.line, ended);
+        log::error("{}{}: Vulkan is off for {} and this build of the core", v.line, ended,
+                   driver != "unknown" ? "this driver" : "this system build");
     } else {
         v.retry_without_cache = true;
         attempt_ = 2;
@@ -344,9 +346,11 @@ std::string_view Guard::making() const noexcept { return notes_.empty() ? std::s
 
 void Guard::write_marker(bool synced) const {
     if (dir_.empty() || (!current_ && !colour_)) return;
-    // A refused start's teardown is keyed to the system build, as the stages before the driver is known are: a crash
-    // there refuses the next start before its instance, not again in the same teardown.
-    const bool system_keyed = current_ == Stage::refused;
+    // Keyed to the system build: the instance and the device's facts, whose queries every start makes before it knows
+    // the driver (a rebuild's after a device loss included, though the driver is known by then: its verdict must refuse
+    // the next start before those queries, which a driver's verdict could not), and a refused start's teardown, which
+    // runs at every launch once a driver is off. A crash in them refuses the next start before its instance.
+    const bool system_keyed = current_ == Stage::instance || current_ == Stage::facts || current_ == Stage::refused;
     std::string text = std::format("stage {}\n", marked());
     if (const std::string_view what = making(); !what.empty()) {
         text += std::format("{}\n", what);

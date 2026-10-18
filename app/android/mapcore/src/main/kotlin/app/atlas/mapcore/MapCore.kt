@@ -10,7 +10,10 @@ import java.nio.ByteBuffer
  *
  * One core per process: [shared] makes it on first use (the first map screen starts it, T8), behind the crash guard,
  * and keeps it. [create] returns null when the phone cannot run the core (no usable Vulkan, or the guard turned it off
- * for this driver after two crashes); [lastError] and [facts] say why.
+ * for this driver or system build after two crashes); [lastError] and [facts] say why. [shared], [create], [facts],
+ * [resetGuard] and [close] hold one lock, so a core's start, the facts without a core and a core's close never
+ * overlap, and [create] refuses while the process's core is alive: the crash guard's marker is one file a process's
+ * cores would share.
  *
  * Every call and [close] exclude each other ([CoreHandle]): a call on another thread (onTrimMemory's [trimMemory], a
  * view's [detach], VK bench) runs whole before close frees the core, or does nothing once close has begun, and close
@@ -27,10 +30,19 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
         @Volatile
         private var refusal: String = ""
 
-        /** A new core, or null with the reason in [lastError] (T2's honest state, or a library that did not load). */
+        /**
+         * A new core, or null with the reason in [lastError] (T2's honest state, a library that did not load, or the
+         * process's core alive: one core runs in a process at a time). Under the lock of [shared], [facts],
+         * [resetGuard] and [close].
+         */
+        @Synchronized
         fun create(config: CoreConfig): MapCore? {
             Native.load()?.let {
                 refusal = it
+                return null
+            }
+            if (process != null) {
+                refusal = "the process's core is alive (MapCore.shared): one core runs in a process at a time"
                 return null
             }
             val handle = Native.create(config.cacheDir, config.guardDir, config.system, config.plant, config.flags, config.exits(), config.processStartMs)
@@ -54,9 +66,9 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
         /**
          * VkFacts without a core (Appendix D): a guarded start of its own, read and closed; when Vulkan is off, the
-         * guard's line and the facts kept before. One "name: value" per line. Under the same lock as [shared] and
-         * [resetGuard], so a process never runs two cores at once: the crash guard's marker is one file, which a second
-         * would overwrite and delete under the first.
+         * guard's line and the facts kept before. One "name: value" per line. Under the same lock as [shared],
+         * [create], [resetGuard] and [close], so a process never runs two cores at once: the crash guard's marker is
+         * one file, which a second start would read as this process's, and delete, under the first.
          */
         @Synchronized
         fun facts(config: CoreConfig): List<String> {
@@ -140,8 +152,9 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
     /**
      * The app went to the background or memory is short ([level], ComponentCallbacks2's): the pipeline cache is written
-     * back, and from TRIM_MEMORY_UI_HIDDEN the frame loop stops until the next [requestFrame], so the crash guard's
-     * frames stage ends with it (no marker on disk for a process the system may then freeze and kill).
+     * back where pipelines were made since its last write (else nothing is written), and from TRIM_MEMORY_UI_HIDDEN the
+     * frame loop stops until the next [requestFrame], so the crash guard's frames stage ends with it (no marker on disk
+     * for a process the system may then freeze and kill).
      */
     fun trimMemory(level: Int) = core.call(Unit) { Native.trimMemory(it, level) }
 
@@ -150,12 +163,20 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
     /**
      * Closes the core: no call starts after this begins, the calls under way finish first, then the core is freed
-     * (its last pipeline cache write among it). Never from the core's own upcalls ([FrameSource]).
+     * (its last pipeline cache write among it). Under the lock of [shared], [create], [facts] and [resetGuard], and the
+     * process's core is forgotten only once it is freed: no other core starts in this process while its close runs.
+     * Never from the core's own upcalls ([FrameSource]) or from inside a call of it: it would wait for itself.
      */
-    override fun close() {
-        core.close {
-            if (process === this) process = null
-            Native.close(it)
+    override fun close() = close { Native.close(it) }
+
+    /** [close], freeing the handle with [free] (the façade's tests: the native free's place). */
+    internal fun close(free: (Long) -> Unit) {
+        synchronized(Companion) {
+            try {
+                core.close(free)
+            } finally {
+                if (process === this) process = null
+            }
         }
     }
 }

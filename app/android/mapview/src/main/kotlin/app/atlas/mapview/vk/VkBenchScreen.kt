@@ -100,9 +100,12 @@ import kotlin.math.sin
  *     (VK facts' `colour:` says so) and nothing else: the next start skips the stage, saying so, and shows the crashed
  *     run's report as recorded before it (Copy keeps it). A window that goes during the stage is waited for, at most
  *     [VkBench.WINDOW_WAIT_SECONDS] seconds; then the stage ends, saying so.
- * The app sent to the background pauses the run wherever it is: the core leaves the colour stage and draws nothing (no
- * crash-guard marker stays on disk for a process the system may freeze and kill), and in the colour stage the run waits
- * for the app as for a window, a step it cut short measured again.
+ * The app sent to the background pauses the run wherever it is: the core leaves the colour stage and draws nothing, and
+ * nothing of the run reaches the core while the app is away (no configuration, host's window, facts or pipelines'
+ * timing), so no crash-guard marker stays on disk for a process the system may freeze and kill. Each step waits for the
+ * app, however long it is away, and then for its window; a measurement it cut short is made again, so nothing measured
+ * in the background is a result. In the colour stage the run waits for the app at most
+ * [VkBench.WINDOW_WAIT_SECONDS] seconds, as for a window, then the stage ends.
  * Every result is a `vkbench …` line (logcat, the screen, Copy); the report is recorded on disk as each step begins, so
  * a native crash cannot cost what was measured before it. The Pills run is step 3 alone, 20 s long, for the phone's own
  * screen recorder to film the pills frame by frame.
@@ -155,10 +158,10 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
         activity?.window?.let { metrics.attach(it) }
         onDispose { metrics.detach() }
     }
-    // The app in the background (the screen stopped): the run pauses, out of its colour stage and drawing nothing, so
-    // that no crash-guard marker stays on disk for a process the system may freeze and kill as it trims cached ones
-    // (with the SurfaceView keeping its surface from Android 14, nothing else would end them); it goes on when the app
-    // comes back.
+    // The app in the background (the screen stopped): the run pauses, out of its colour stage, drawing nothing and
+    // calling the core for nothing, so that no crash-guard marker stays on disk for a process the system may freeze and
+    // kill as it trims cached ones (with the SurfaceView keeping its surface from Android 14, nothing else would end
+    // them); it goes on when the app comes back.
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var activeRun by remember { mutableStateOf<BenchRun?>(null) }
     DisposableEffect(lifecycle) {
@@ -476,23 +479,29 @@ private class BenchRun(
     /** Whether the last bench call asked for 10 bits (the colour stage), so that [leaveColour] has something to undo. */
     private var inColour = false
 
-    /** The app is in the background (its screen stopped): nothing is drawn, and the colour stage waits for it. */
+    /** The app is in the background (its screen stopped): nothing of the run reaches the core until it is back. */
     private var paused = false
 
-    /** How many times the app went to the background in this run: a colour step it cut short is measured again. */
+    /** How many times the app went to the background in this run: a measurement it cut short is made again. */
     private var stops = 0
     private var resumed: CompletableDeferred<Unit>? = null
 
+    /** When the app last went to the background (System.nanoTime), and how long it was away in all (the soak's line). */
+    private var pausedAtNs = 0L
+    private var awayNs = 0L
+
     /**
      * The app went to the background (ON_STOP; main thread, as every step): the core leaves the colour stage if the run
-     * is in it (mode 0: its 10-bit frame, output and cache go, and the stage closes), and draws nothing until the app
-     * comes back (the frame source refuses every frame, so the core's frame loop rests and its frames stage ends). No
-     * crash-guard marker then stays on disk for a process the system may freeze and kill as it trims cached ones.
+     * is in it (mode 0: its 10-bit frame, output and cache go, and the stage closes) and draws nothing until the app
+     * comes back (the frame source refuses every frame, so the core's frame loop rests and its frames stage ends), and
+     * the run's next call of the core waits for the app ([awaitApp]). No crash-guard marker then stays on disk for a
+     * process the system may freeze and kill as it trims cached ones, and nothing measured while it is away counts.
      */
     fun pause() {
         if (paused) return
         paused = true
         ++stops
+        pausedAtNs = System.nanoTime()
         source.paused = true
         leaveColour()
     }
@@ -501,13 +510,14 @@ private class BenchRun(
     fun resume() {
         if (!paused) return
         paused = false
+        awayNs += System.nanoTime() - pausedAtNs
         source.paused = false
         resumed?.complete(Unit)
         resumed = null
         core.requestFrame()
     }
 
-    /** Waits for the app to come back, at most [VkBench.WINDOW_WAIT_SECONDS]: whether it did. */
+    /** Waits for the app to come back, at most [VkBench.WINDOW_WAIT_SECONDS] (the colour stage's wait): whether it did. */
     private suspend fun awaitResumed(): Boolean {
         if (!paused) return true
         val waiter = CompletableDeferred<Unit>()
@@ -515,7 +525,49 @@ private class BenchRun(
         return withTimeoutOrNull(VkBench.WINDOW_WAIT_SECONDS * 1000L) { waiter.await() } != null
     }
 
+    /**
+     * Before [step] reaches the core (the facts, a configuration, a host's window, the pipelines' timing, a
+     * measurement): while the app is in the background the run waits for it, however long it is away, saying so, so
+     * that nothing of the run is made, drawn or measured there; once it is back, for [host]'s window, which a stopped
+     * app's SurfaceView or TextureView may have let go of (at most [VkBench.WINDOW_WAIT_SECONDS]). The colour stage
+     * waits at most [VkBench.WINDOW_WAIT_SECONDS] for the app instead, then ends there ([awaitResumed]).
+     */
+    private suspend fun awaitApp(step: String, host: VkHost? = null) {
+        while (paused) {
+            emit(VkBench.appAway(step))
+            while (paused) {
+                val waiter = CompletableDeferred<Unit>()
+                resumed = waiter
+                waiter.await()
+            }
+            emit(VkBench.appBack())
+            if (host != null) hostSwitch(host)
+        }
+    }
+
+    /** [MapCore.bench] for [step], once the app is in the foreground with [host]'s window, if any ([awaitApp]). */
+    private suspend fun bench(
+        step: String, host: VkHost?, on: Boolean, config: Int, route: Int, form: Int, target: Int, pills: Boolean, texture: Boolean,
+    ): String {
+        awaitApp(step, host)
+        return core.bench(on, config, route, form, target, pills = pills, texture = texture)
+    }
+
+    /**
+     * [h]'s window for [step], once the app is in the foreground ([awaitApp]); waited for once more when the app went to
+     * the background meanwhile and none came (a stopped app's window cannot).
+     */
+    private suspend fun switchHost(h: VkHost, step: String): VkSurfaceState {
+        awaitApp(step)
+        val stopsBefore = stops
+        val s = hostSwitch(h)
+        if (s.attached || stops == stopsBefore) return s
+        awaitApp(step)
+        return hostSwitch(h)
+    }
+
     suspend fun execute(initial: VkSurfaceState) {
+        awaitApp("the start")
         val facts = withContext(Dispatchers.Default) { core.facts() }
         fun fact(name: String) = facts.firstOrNull { it.startsWith("$name: ") }?.substringAfter(": ") ?: "?"
         emit("vkbench start: ${plan.name.lowercase()} bench, ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
@@ -538,7 +590,7 @@ private class BenchRun(
         pickTarget = if (fact("composite").startsWith("direct")) 1 else 0
 
         // 1. The matrix, on the SurfaceView with the pills on, at the frame's 8 bits.
-        var surface = if (initial.attached) initial else hostSwitch(VkHost.SURFACE)
+        var surface = if (initial.attached && !paused) initial else switchHost(VkHost.SURFACE, "the matrix")
         pills(true, false)
         if (!surface.attached) {
             emit("vkbench surface: the SurfaceView did not attach (${surface.error})")
@@ -546,6 +598,7 @@ private class BenchRun(
         }
         // The frame's colour on this surface, and what the colour stage will draw (10 bits a channel where the surface
         // offers them in sRGB and the crash guard has not turned them off), now that it is attached.
+        awaitApp("the matrix", VkHost.SURFACE)
         val surfaced = withContext(Dispatchers.Default) { core.facts() }
         fun surfaceFact(name: String) = surfaced.firstOrNull { it.startsWith("$name: ") }?.substringAfter(": ") ?: "?"
         for (k in listOf("colour", "colour.stage", "colour.formats", "surface.formats")) emit("vkfacts $k: ${surfaceFact(k)}")
@@ -555,8 +608,8 @@ private class BenchRun(
             // the same frame.
             status("the pills moving for ${plan.pillSeconds.roundToInt()} s: film them with the screen recorder")
             pillPhase(pickCode, pickRoute, pickTarget, filmed = true)
-            core.bench(false, pickCode, pickRoute, 0, pickTarget, pills = false, texture = false)
             source.running = false
+            bench("the end", null, false, pickCode, pickRoute, 0, pickTarget, pills = false, texture = false)
             return
         }
         val matrix = VkBench.matrix(available, dynamic, tiler)
@@ -564,12 +617,12 @@ private class BenchRun(
         for (view in VkBench.View.entries) {
             for (cfg in matrix) {
                 val cell = "${view.label} ${cfg.name}"
-                val why = core.bench(true, cfg.config, cfg.route, cfg.form, cfg.target, pills = true, texture = false)
+                val why = bench(cell, VkHost.SURFACE, true, cfg.config, cfg.route, cfg.form, cfg.target, pills = true, texture = false)
                 if (why.isNotEmpty()) {
                     emit("vkbench $cell: unavailable ($why)")
                     continue
                 }
-                val s = measure(VkBench.Path.STILL, view, plan.cellSeconds, VkHost.SURFACE, tenBit = false)
+                val s = measure(cell, VkBench.Path.STILL, view, plan.cellSeconds, VkHost.SURFACE, tenBit = false)
                 gpuByCell[cell] = s.gpuP50
                 emit(VkBench.line(cell, s, graphicsMb(), nativeMb()))
             }
@@ -580,19 +633,19 @@ private class BenchRun(
         status("2/5: both hosts × 4 paths")
         val hostP95 = HashMap<VkHost, Double>()
         for (h in VkHost.entries) {
-            surface = hostSwitch(h)
+            surface = switchHost(h, "the ${h.label} host")
             if (!surface.attached) {
                 emit("vkbench ${h.label}: did not attach (${surface.error})")
                 continue
             }
-            val why = core.bench(true, pickCode, pickRoute, 0, pickTarget, pills = h == VkHost.SURFACE, texture = h == VkHost.TEXTURE)
+            val why = bench("the ${h.label} host", h, true, pickCode, pickRoute, 0, pickTarget, pills = h == VkHost.SURFACE, texture = h == VkHost.TEXTURE)
             if (why.isNotEmpty()) {
                 emit("vkbench ${h.label}: unavailable ($why)")
                 continue
             }
             var worst = 0.0
             for (path in listOf(VkBench.Path.PAN, VkBench.Path.PINCH, VkBench.Path.ORBIT, VkBench.Path.TILT)) {
-                val s = measure(path, VkBench.View.BOARD, plan.pathSeconds, h)
+                val s = measure("${h.label} ${path.label}", path, VkBench.View.BOARD, plan.pathSeconds, h)
                 worst = maxOf(worst, s.presentedP95.takeUnless { it.isNaN() } ?: 0.0)
                 emit(VkBench.line("${h.label} ${path.label}", s, graphicsMb(), nativeMb()))
             }
@@ -615,9 +668,9 @@ private class BenchRun(
         // pipelines, then the same made again from an empty cache and from the cache file.
         record("the pipelines' timing")
         status("pipelines: from an empty cache and from the cache file")
-        surface = hostSwitch(VkHost.SURFACE)
-        if (surface.attached && core.bench(true, pickCode, pickRoute, 0, pickTarget, pills = true, texture = false).isEmpty()) {
-            emit(withContext(Dispatchers.Default) { core.pipelines() })
+        surface = switchHost(VkHost.SURFACE, "the pipelines' timing")
+        if (surface.attached && bench("the pipelines' timing", VkHost.SURFACE, true, pickCode, pickRoute, 0, pickTarget, pills = true, texture = false).isEmpty()) {
+            emit(timePipelines())
         } else {
             emit("vkbench pipelines: the SurfaceView did not attach (${surface.error})")
         }
@@ -654,8 +707,9 @@ private class BenchRun(
                 if (format != null) "5/5: the colour stage, ${cells.size} configurations at 10 bits and at 8 beside them"
                 else "5/5: the colour stage, ${cells.size} configurations at 8 bits (no 10 bits here)",
             )
+            awaitApp("the colour stage") // the stage begins with the app in the foreground
             emit(VkBench.colourStageLine(stage))
-            surface = hostSwitch(VkHost.SURFACE)
+            hostSwitch(VkHost.SURFACE)
             val unavailable = HashSet<String>()
             val steps = VkBench.colourSteps(cells, ten = format != null)
             var next = 0
@@ -689,13 +743,11 @@ private class BenchRun(
                         break
                     }
                     emit("vkbench colour: the window came back")
+                    // The app gone to the background again while its window was awaited: the step waits for it first.
+                    if (paused) continue
                 }
                 inColour = step.tenBit
-                val why = if (!surface.attached) {
-                    surface.error.ifEmpty { "the SurfaceView did not attach" }
-                } else {
-                    core.bench(true, c.config, c.route, c.form, c.target, pills = true, texture = false, tenBit = step.tenBit)
-                }
+                val why = core.bench(true, c.config, c.route, c.form, c.target, pills = true, texture = false, tenBit = step.tenBit)
                 if (why.isNotEmpty()) {
                     emit("vkbench colour $cell: ${if (step.tenBit) format else "rgba8"} unavailable ($why)")
                     unavailable += cell
@@ -704,7 +756,7 @@ private class BenchRun(
                     continue
                 }
                 val stopsBefore = stops
-                val s = measure(VkBench.Path.STILL, VkBench.View.BOARD, plan.cellSeconds, VkHost.SURFACE, tenBit = step.tenBit)
+                val s = measureOnce(VkBench.Path.STILL, VkBench.View.BOARD, plan.cellSeconds, VkHost.SURFACE, tenBit = step.tenBit)
                 if (stops != stopsBefore && again != next) {
                     // Cut short by the app's going away (the core left the stage then): measured again once it is back.
                     emit(VkBench.colourCutShort(cell, if (step.tenBit) format ?: "rgba8" else "rgba8"))
@@ -726,9 +778,10 @@ private class BenchRun(
         val refused = tenRefused
         val drawn = if (tenByCell.isEmpty() && refused != null) VkBench.ColourStage(null, off = false, why = refused) else stage
         emit(VkBench.a0Colour(drawn, tenByCell[pickCell], eightByCell[pickCell]))
-        core.bench(false, pickCode, pickRoute, 0, pickTarget, pills = false, texture = false)
         source.running = false
         record(VkBench.COMPLETE)
+        // Every result is recorded: the bench's frame goes, once the app is in the foreground, as every call of the run.
+        bench("the end", null, false, pickCode, pickRoute, 0, pickTarget, pills = false, texture = false)
     }
 
     /** Back to the frame's 8 bits after the colour stage (or a run cut short in it): the core closes its guard stage. */
@@ -744,31 +797,67 @@ private class BenchRun(
      * glass drift apart when either is. [filmed]: the run is the pills-only one, filmed by the phone's screen recorder.
      */
     private suspend fun pillPhase(config: Int, route: Int, target: Int, filmed: Boolean) {
-        val surface = hostSwitch(VkHost.SURFACE)
-        val why = if (surface.attached) core.bench(true, config, route, 0, target, pills = true, texture = false) else surface.error
+        val surface = switchHost(VkHost.SURFACE, "the pills")
+        val why = if (surface.attached) bench("the pills", VkHost.SURFACE, true, config, route, 0, target, pills = true, texture = false) else surface.error
         if (why.isNotEmpty()) {
             emit("vkbench pills: unavailable ($why)")
             return
         }
         pills(true, true)
-        val from = System.nanoTime()
-        val s = measure(VkBench.Path.STILL, VkBench.View.BOARD, plan.pillSeconds, VkHost.SURFACE, keep = true)
+        val s = measure("pills", VkBench.Path.STILL, VkBench.View.BOARD, plan.pillSeconds, VkHost.SURFACE, keep = true)
         val onTime = kept.count { it.presented && VkBench.onTime(it.presentedNs, it.desiredNs, 16_666_667L) }
         val presented = kept.count { it.presented }
-        val (uiIntervals, _, lateUi) = metrics.since(from)
+        val (uiIntervals, _, lateUi) = metrics.since(measureStartNs)
         emit("vkbench pills: core frames on their vsync ${if (presented == 0) "— (no display timing)" else "$onTime of $presented"}, " +
             "window frames late $lateUi of ${uiIntervals.size + 1}; p95 ${VkBench.ms(s.presentedP95)}; " +
             if (filmed) "filmed: by the screen recorder (step through the video frame by frame)" else "filmed: in the Pills run")
         pills(true, false)
     }
 
+    /**
+     * The pipelines' timing ([MapCore.pipelines]: the configuration's pipelines made again by stand-ins of their own,
+     * from an empty cache and from the cache file), once the app is in the foreground; taken again once when the app
+     * went to the background while it ran (the call does not stop there, and a process in the background runs slower).
+     */
+    private suspend fun timePipelines(): String {
+        awaitApp("the pipelines' timing", VkHost.SURFACE)
+        val stopsBefore = stops
+        val line = withContext(Dispatchers.Default) { core.pipelines() }
+        if (stops == stopsBefore) return line
+        emit(VkBench.cutShort("pipelines"))
+        awaitApp("the pipelines' timing", VkHost.SURFACE)
+        return withContext(Dispatchers.Default) { core.pipelines() }
+    }
+
     private var kept: List<FrameRecords.Record> = emptyList()
+
+    /** When the last measurement began, its warm-up included (System.nanoTime): the window's frames since then. */
+    private var measureStartNs = 0L
+
+    /**
+     * [measureOnce], once the app is in the foreground with [host]'s window ([awaitApp]): [label] names it. Cut short by
+     * the app's going to the background (nothing is drawn while it is away), it is measured again once, when the app
+     * and the window are back, so that nothing measured in the background is a result.
+     */
+    private suspend fun measure(
+        label: String, path: VkBench.Path, view: VkBench.View, seconds: Double, host: VkHost, keep: Boolean = false, tenBit: Boolean? = null,
+    ): VkBench.Summary {
+        awaitApp(label, host)
+        val stopsBefore = stops
+        val s = measureOnce(path, view, seconds, host, keep, tenBit)
+        if (stops == stopsBefore) return s
+        emit(VkBench.cutShort(label))
+        awaitApp(label, host)
+        hostSwitch(host) // its window back, should the app have let go of it
+        return measureOnce(path, view, seconds, host, keep, tenBit)
+    }
 
     /**
      * Runs [path] at [view] for [seconds] (after half a second of warm-up) and summarises its frames; with [tenBit], only
      * the frames drawn at that colour depth.
      */
-    private suspend fun measure(path: VkBench.Path, view: VkBench.View, seconds: Double, host: VkHost, keep: Boolean = false, tenBit: Boolean? = null): VkBench.Summary {
+    private suspend fun measureOnce(path: VkBench.Path, view: VkBench.View, seconds: Double, host: VkHost, keep: Boolean = false, tenBit: Boolean? = null): VkBench.Summary {
+        measureStartNs = System.nanoTime()
         source.path = path
         source.view = view
         source.periodSeconds = seconds
@@ -828,8 +917,8 @@ private class BenchRun(
     }
 
     private suspend fun soak(config: Int, route: Int, target: Int) {
-        val surface = hostSwitch(VkHost.SURFACE)
-        if (!surface.attached || core.bench(true, config, route, 0, target, pills = true, texture = false).isNotEmpty()) {
+        val surface = switchHost(VkHost.SURFACE, "the soak")
+        if (!surface.attached || bench("the soak", VkHost.SURFACE, true, config, route, 0, target, pills = true, texture = false).isNotEmpty()) {
             emit("vkbench soak: the SurfaceView did not attach")
             return
         }
@@ -843,12 +932,13 @@ private class BenchRun(
         var currents = 0.0
         var currentCount = 0
         val start = System.nanoTime()
+        val away0 = awayNs
         var n = 0
         var lastP50 = Double.NaN
         val paths = listOf(VkBench.Path.PAN, VkBench.Path.PINCH, VkBench.Path.ORBIT, VkBench.Path.TILT)
         while (n < samples) {
             val path = paths[n % paths.size]
-            val s = measure(path, VkBench.View.BOARD, 9.5, VkHost.SURFACE)
+            val s = measure("soak sample ${n + 1}", path, VkBench.View.BOARD, 9.5, VkHost.SURFACE)
             lastP50 = s.presentedP50
             minutes[n] = (System.nanoTime() - start) / 60e9
             headroom[n] = if (Build.VERSION.SDK_INT >= 30) power?.getThermalHeadroom(10)?.toDouble() ?: Double.NaN else Double.NaN
@@ -862,7 +952,8 @@ private class BenchRun(
         }
         val charge1 = battery?.getLongProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER) ?: Long.MIN_VALUE
         val usedMah = if (charge0 == Long.MIN_VALUE || charge1 == Long.MIN_VALUE || charge0 <= 0) Double.NaN else (charge0 - charge1) / 1000.0
-        emit(VkBench.soakLine(minutes, headroom, n, usedMah, if (currentCount == 0) Double.NaN else currents / currentCount, plugged, lastP50))
+        emit(VkBench.soakLine(minutes, headroom, n, usedMah, if (currentCount == 0) Double.NaN else currents / currentCount, plugged, lastP50) +
+            VkBench.soakAway((awayNs - away0) / 1e9))
     }
 
     /**

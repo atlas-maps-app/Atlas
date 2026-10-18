@@ -93,7 +93,9 @@ bool Session::attach(std::unique_ptr<SessionWindow> window, vk::Extent2D size, s
                              started_.device->queue_family());
         return {};
     });
-    // A window come back during VK bench's colour stage: its output is made inside the colour stage again.
+    // The bench's stand-in first, should a device's rebuild have left none (8-bit work, outside the colour stage); then
+    // the output: for a window come back during VK bench's colour stage, inside the colour stage again.
+    if (why.empty() && mode_ == 1) why = make_standin();
     if (why.empty()) why = make_output();
     if (why.empty()) {
         frame_rate_ = window_->set_frame_rate(60.0F);
@@ -221,6 +223,9 @@ void Session::remake_output() {
         return;
     }
     std::string why;
+    // A new frame (a new size, or the old output out of date): the frames stage ends with the old one, and the new
+    // one's first draws open it again under its name.
+    new_frame();
     // The old output is retired by the call that makes the new one, and goes once that returns, made or refused:
     // announced as it goes (a 10-bit one inside the colour stage, an 8-bit one inside the surface stage), after the new
     // one's making, which is the stage's alone.
@@ -259,10 +264,13 @@ void Session::remake_output() {
         if (!retargeted) {
             log::error("vk retarget: {}", retargeted.error().text());
             drop_renderer();
-        } else {
-            presented_ = 0; // a new frame: its first draws are guarded again
         }
     }
+}
+
+void Session::new_frame() noexcept {
+    guarding_ = false;
+    presented_ = 0;
 }
 
 void Session::open_colour() {
@@ -303,6 +311,11 @@ void Session::note_colour() {
 
 std::string Session::make_standin() {
     if (standin_) return {};
+    // Its fixed pipelines and modules, the city's buffers and the atlas are 8-bit work: a crash in them is the
+    // pipelines stage's (Vulkan's ladder), never 10 bits'. Every step makes it before an output of 10 bits opens the
+    // colour stage; only one a device's rebuild failed to make again can be missing inside it, and it waits for the
+    // stage's end.
+    if (colour_open()) return "the stand-in is made at 8 bits, outside VK bench's colour stage";
     return behind(gpu::Stage::pipelines, [&]() -> std::string {
         if (!city_) city_ = std::make_shared<const City>(City::generate());
         auto standin = StandIn::create(*started_.device, *started_.cache, city_, started_.guard.get());
@@ -316,6 +329,7 @@ std::string Session::make_renderer() {
     if (!output_) return output_error_.empty() ? "no swapchain" : "no swapchain: " + output_error_;
     if (std::string why = make_standin(); !why.empty()) return why;
     const bool colour = colour_open();
+    new_frame(); // a new frame: its first draws are guarded (the frames stage), under its name
     std::string why = behind(gpu::Stage::pipelines, [&]() -> std::string {
         // In the colour stage the 10-bit frame's pipelines go through the stage's own cache.
         standin_->use_prepare_cache(colour ? colour_cache_.get() : nullptr);
@@ -326,7 +340,6 @@ std::string Session::make_renderer() {
         return {};
     });
     if (!why.empty()) return why;
-    presented_ = 0; // a new frame: its first draws are guarded (the frames stage)
     if (first_pipelines_ms_ < 0) {
         // This launch's first pipelines, from the cache file as the start found it (a first launch has none).
         first_pipelines_ms_ = standin_->pipelines_ms();
@@ -362,22 +375,24 @@ std::string Session::bench(int mode, const gpu::Configuration& config, std::uint
     texture_ = (flags & bench_flag::texture) != 0;
     // A renderer of the other depth, or any in mode 0, goes first, in its stage.
     if (mode_ == 0 || depth != depth_) drop_renderer();
-    std::string unmade; // why no output could be made, if none could
     if (depth != depth_) {
         // The other depth's output goes in its own stage (the surface stage's at 8 bits, the colour stage's at 10), and
         // the colour stage closes once nothing of 10 bits is left (out of it: the 10-bit frame and output went above,
-        // inside it, and its cache goes). The output is made again at the depth asked for: into the colour stage, it
-        // opens and the device is asked about 10 bits inside it; one that cannot draw the frame in them after all, or a
-        // driver that refuses the 10-bit swapchain, closes it again, nothing of 10 bits made, and the frame stays at 8
-        // (make_output). So the stage holds 10-bit work alone.
+        // inside it, and its cache goes). The output is made again below at the depth asked for: into the colour
+        // stage, it opens and the device is asked about 10 bits inside it; one that cannot draw the frame in them after
+        // all, or a driver that refuses the 10-bit swapchain, closes it again, nothing of 10 bits made, and the frame
+        // stays at 8 (make_output). So the stage holds 10-bit work alone.
         drop_output();
         close_colour();
         depth_ = depth;
-        if (window_) unmade = make_output();
-    } else if (!output_ && window_) {
-        // One that could not be made before (a remake, a rebuild after a device loss).
-        unmade = make_output();
     }
+    // The stand-in before any output of 10 bits: its shared objects are 8-bit work, outside the colour stage.
+    if (mode_ == 1) {
+        if (std::string why = make_standin(); !why.empty()) return why;
+    }
+    std::string unmade; // why no output could be made, if none could
+    // The output at the depth asked for, or one that could not be made before (a remake, a rebuild after a loss).
+    if (!output_ && window_) unmade = make_output();
     if (!unmade.empty()) log::error("vk swapchain: {}", unmade);
     if (mode_ == 0) return {};
     if (ten && !facts.deepest.ten_bit()) return "no 10 bits here: " + facts.deepest.reason;
@@ -390,12 +405,15 @@ std::string Session::bench(int mode, const gpu::Configuration& config, std::uint
         log_configuration();
         return {};
     }
+    // A new frame: the frames stage ends with the old one (whose first 120 may not have passed: VK bench's short cells,
+    // a slow phone), so that its marker never names the configuration drawn before; the new one's first draws open it
+    // again under its own name.
+    new_frame();
     auto done = behind(gpu::Stage::pipelines, [&] { return renderer_->reconfigure(config_); });
     if (!done) {
         drop_renderer();
         return done.error().text();
     }
-    presented_ = 0; // a new frame: its first draws are guarded again
     log_configuration();
     return {};
 }
@@ -659,7 +677,8 @@ void Session::device_lost() {
         return true;
     });
     // Made again as the start opened it (K6's answer for configuration B among the options), to present to this
-    // surface, behind the stages a start passes: the device's facts (its choice's queries), the device, the cache.
+    // surface, behind the stages a start passes: the device's facts (its choice's queries, keyed to the system build as
+    // a start's are, though the driver is known by now: gpu/Guard.hpp), the device, the cache.
     gpu::DeviceOptions reopen = started_.device_options;
     reopen.surface = *surface_;
     auto picked = behind(gpu::Stage::facts, [&] { return gpu::Device::pick(*started_.instance, reopen); });
@@ -758,9 +777,12 @@ std::string Session::facts() {
 }
 
 void Session::save_cache() {
-    // Never while VK bench's colour stage is open: nothing of it goes into this cache (its pipelines go through the
-    // stage's own), and a crash in the write is the cache stage's to own.
-    if (!started_.cache || colour_open() || closed_) return;
+    // Only when pipelines were made through it since its last write: a trim (each level from TRIM_MEMORY_UI_HIDDEN on
+    // arrives as the system makes ready to kill cached processes), the close and the session's first 120 frames
+    // mostly find nothing new, and then write nothing and leave no marker. Never while VK bench's colour stage is open:
+    // nothing of it goes into this cache (its pipelines go through the stage's own), and a crash in the write is the
+    // cache stage's to own.
+    if (!started_.cache || !started_.cache->changed() || colour_open() || closed_) return;
     behind(gpu::Stage::cache, [&] {
         auto saved = started_.cache->save();
         if (!saved) log::warn("vk pipeline cache not saved: {}", saved.error().text());

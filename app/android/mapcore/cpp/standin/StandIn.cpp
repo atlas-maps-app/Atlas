@@ -281,7 +281,9 @@ gpu::Result<std::unique_ptr<StandIn>> StandIn::create(const gpu::Device& device,
 
 gpu::Result<void> StandIn::make_pipeline(const gpu::GraphicsDesc& desc, vk::raii::Pipeline& out, double& ms,
                                          const gpu::PipelineCache& cache) {
-    // Named for the pipeline's making alone; its time is the driver's, not the guard's writes.
+    // Named for the pipeline's making alone; its time is the driver's, not the guard's writes. The cache it goes
+    // through is written back after (the session's save).
+    cache.note_made();
     auto made = [&] {
         const gpu::Announced named = gpu::announce(desc.label, watch_);
         const auto started = clock::now();
@@ -467,6 +469,7 @@ gpu::Result<void> StandIn::create_fixed() {
     shadow_desc.target = {.render_pass = *shadow_pass_, .subpass = 0, .colour_count = 1};
     ATLAS_GPU_CHECK(make_pipeline(shadow_desc, shadow_pipeline_, fixed_pipelines_ms_, cache_));
     const gpu::PipelineLabel blur_label{.name = "blur", .module = "standin_blur"};
+    cache_.note_made();
     auto blur_made = [&] {
         const gpu::Announced named = gpu::announce(blur_label, watch_);
         const auto started = clock::now();

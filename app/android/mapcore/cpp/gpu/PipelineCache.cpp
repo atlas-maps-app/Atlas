@@ -138,7 +138,7 @@ Result<PipelineCache> PipelineCache::open(const vk::raii::Device& device, const 
 }
 
 Result<std::size_t> PipelineCache::save() const {
-    if (path_.empty()) return std::size_t{0};
+    if (path_.empty() || !changed_) return std::size_t{0};
     ATLAS_VK_LET(data, cache_.getData(), "the pipeline cache's data");
     CacheHeader h = header_;
     const auto body = std::as_bytes(std::span(data));
@@ -146,6 +146,7 @@ Result<std::size_t> PipelineCache::save() const {
     h.checksum = fnv1a(body);
     if (!write_file(path_, std::as_bytes(std::span(&h, 1)), body))
         return fail(std::format("cannot write {}", path_.string()));
+    changed_ = false;
     return sizeof h + body.size();
 }
 

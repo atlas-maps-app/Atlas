@@ -13,7 +13,8 @@ import java.io.File
  * purpose (debug and bench builds, the planted-crash tests; `CP/gpu/Guard.hpp` names them all):
  *  - `<stage>` aborts as the stage begins (`instance`, `facts`, `device`, `cache`, `surface`, `frames`, `profiles`,
  *    `close`, `refused`), but `pipelines` and `colour` at their first pipeline;
- *  - `pipelines:<name>` and `colour:<name>` as that pipeline or shader module is made (`pipelines:composite`);
+ *  - `pipelines:<name>` and `colour:<name>` as that pipeline or shader module is made (`pipelines:composite`; in the
+ *    colour stage only the 10-bit frame's are made, `colour:composite`, the stand-in's shared ones before it opens);
  *  - `<stage>:release` as the stage's first thing goes, and `<stage>:release:<kind>` as its first of that kind does
  *    (frame, swapchain, cache, standin, device, instance); in VK bench's 10-bit colour stage only a thing of 10 bits:
  *    `colour:release` as the 10-bit frame or the 10-bit swapchain goes, whichever goes first, never the 8-bit swapchain

@@ -207,6 +207,23 @@ class VkBenchTest {
     }
 
     @Test
+    fun theWholeRunWaitsForTheAppAndMeasuresAgainWhatItCutShort() {
+        // Outside the colour stage the run waits for the app, however long it is away, and its lines are not the colour
+        // stage's: smoke.sh tells the stage's own pause by "vkbench colour: …".
+        assertEquals("vkbench: the app went to the background before the hosts; the run waits for it", VkBench.appAway("the hosts"))
+        assertEquals("vkbench: the app came back", VkBench.appBack())
+        assertFalse(VkBench.appAway("board C").startsWith("vkbench colour"))
+        assertFalse(VkBench.appBack().startsWith("vkbench colour"))
+        assertEquals(
+            "vkbench board C renderpass composite resolve: cut short (the app went to the background); measured again",
+            VkBench.cutShort("board C renderpass composite resolve"),
+        )
+        // The soak's line says how long the app was away of it, and nothing when it never went.
+        assertEquals("", VkBench.soakAway(0.0))
+        assertEquals("; the app was away 37 s of it (the slope takes the pause in)", VkBench.soakAway(37.2))
+    }
+
+    @Test
     fun theReportIsRecordedAsTheBenchRunsAndAnUnfinishedOneIsKept() {
         val lines = listOf("vkbench start: full bench, Imagination PowerVR", "vkbench board A renderpass composite resolve: p50 16.70")
         val running = VkBench.recorded(lines, "the colour stage")

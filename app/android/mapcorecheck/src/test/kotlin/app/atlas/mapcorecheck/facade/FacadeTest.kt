@@ -203,9 +203,11 @@ class FacadeTest {
                 assertTrue(after.joinToString("\n"), "guard: clear" in after)
                 assertTrue("guard.off: none" in after)
             } finally {
-                Native.close(handle) // which writes the pipeline cache back
+                Native.close(handle)
             }
-            assertEquals("vk guard reset: forgot the pipeline cache", Native.resetGuard(dir.path, guard.path))
+            // A core writes its pipeline cache back only where it made a pipeline since its last write: this one made
+            // none (hosts draw nothing through the façade), so its close wrote nothing, and the reset finds nothing.
+            assertFalse(guard.resolve("pipelines.bin").exists())
             assertEquals("vk guard reset: nothing to forget", Native.resetGuard(dir.path, guard.path))
         } finally {
             dir.deleteRecursively()
@@ -245,15 +247,18 @@ class FacadeTest {
                 assertEquals("vk guard reset: refused, 1 core is alive (it would write its pipeline cache back): close it first", refused)
                 assertTrue(guard.resolve("off").isFile)
             } finally {
-                Native.close(handle) // which writes the pipeline cache back
+                Native.close(handle)
             }
-            assertTrue(guard.resolve("pipelines.bin").isFile)
+            // It made no pipeline (hosts draw nothing through the façade), so its close wrote no cache back.
+            assertFalse(guard.resolve("pipelines.bin").exists())
             // A later start of this build and driver: still 8 bits, still on.
             val later = Native.facts(0L, dir.path, guard.path, "jvm-test", 0, "", 0L).lines()
             assertTrue(later.joinToString("\n"), "guard: clear" in later)
             assertTrue("colour.stage: off (10 bits are off for this driver and build: $line)" in later)
-            // Another crash in the colour stage keeps the pipeline cache written back: the stage's pipelines go through a
-            // cache of its own, so the one on disk holds no 10-bit pipeline.
+            // Another crash in the colour stage keeps the pipeline cache on disk, which a retry would delete: the stage's
+            // pipelines go through a cache of its own, so the one on disk holds no 10-bit pipeline. A file that is no
+            // cache of this core stands for it here: the start reads it ("miss: damaged") and leaves it.
+            guard.resolve("pipelines.bin").writeText("a cache")
             guard.resolve("guard").writeText(
                 "stage colour\npipeline $pipeline\ndriver $driver\nversion $version\nbuild $build\nattempt 1\n",
             )
@@ -261,14 +266,15 @@ class FacadeTest {
             assertNotEquals("the start after a second crash in the colour stage refused Vulkan: ${Native.lastError()}", 0L, kept)
             try {
                 val again = Native.facts(kept, dir.path, guard.path, "jvm-test", 0, "", 0L).lines()
-                assertTrue(again.joinToString("\n"), "pipeline.cache: hit" in again)
+                assertTrue(again.joinToString("\n"), "pipeline.cache: miss: damaged" in again)
+                assertTrue(guard.resolve("pipelines.bin").isFile)
                 assertTrue("guard: $line" in again)
             } finally {
                 Native.close(kept)
             }
 
-            // With no core alive, the reset forgets the verdict (once: the second crash found it on file) and the cache
-            // written back, and 10 bits are back.
+            // With no core alive, the reset forgets the verdict (once: the second crash found it on file) and the cache,
+            // and 10 bits are back.
             assertEquals("vk guard reset: forgot 10 bits turned off for 1 driver and the pipeline cache", Native.resetGuard(dir.path, guard.path))
             assertFalse(guard.resolve("pipelines.bin").exists())
             val back = Native.facts(0L, dir.path, guard.path, "jvm-test", 0, "", 0L).lines()
@@ -382,8 +388,8 @@ class FacadeTest {
             leave(2)
             assertEquals(0L, Native.create(dir.path, guard.path, "jvm-test", "", 0, "none", 0L))
             assertTrue(Native.lastError(), Native.lastError().startsWith("vk guard frames $driver $version attempt 2 build $build: "))
-            // (the earlier cores wrote their pipeline cache back at their close).
-            assertEquals("vk guard reset: forgot 1 driver turned off and the pipeline cache", Native.resetGuard(dir.path, guard.path))
+            // (the earlier cores made no pipeline, so none wrote a cache back at its close).
+            assertEquals("vk guard reset: forgot 1 driver turned off", Native.resetGuard(dir.path, guard.path))
             // Exits not known (API 29): every marker counts, as before.
             leave(1)
             started("").let { handle ->

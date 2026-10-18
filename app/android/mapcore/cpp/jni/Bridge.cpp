@@ -190,10 +190,11 @@ public:
         return on_session([this] { return session_->facts(); });
     }
 
-    /// The app was asked to trim its memory at `level` (ComponentCallbacks2): the pipeline cache goes back to disk, and
-    /// from TRIM_MEMORY_UI_HIDDEN (the app's windows went to the background) nothing is drawn until a frame is asked
-    /// for again, so the frames stage ends with the frame loop: no marker stays on disk for a process the system may
-    /// then freeze and kill as it trims the cached ones.
+    /// The app was asked to trim its memory at `level` (ComponentCallbacks2): the pipeline cache goes back to disk
+    /// where a pipeline was made since its last write (else nothing is written and no marker made: the deeper levels
+    /// come as the system makes ready to kill cached processes), and from TRIM_MEMORY_UI_HIDDEN (the app's windows went
+    /// to the background) nothing is drawn until a frame is asked for again, so the frames stage ends with the frame
+    /// loop: no marker stays on disk for a process the system may then freeze and kill as it trims the cached ones.
     void trim(int level) {
         on_session([this, level] {
             session_->save_cache();

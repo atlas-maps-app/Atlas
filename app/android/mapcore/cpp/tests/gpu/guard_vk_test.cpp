@@ -3,13 +3,15 @@
 // with that pipeline and retries once without the pipeline cache; when that crashes too, the start after turns Vulkan
 // off for the driver, its version and this build of the core. A new driver version starts again, and so does another
 // build of the core (its build ID), or a reset; off lines and markers from before build IDs turn nothing off. A crash
-// making a shader module names the module; one in the device's facts (the queries its choice makes) follows the ladder
-// keyed by the system build, one in the surface stage or the close the driver's. VK bench's colour stage is the rung
-// below: a planted abort in a pipeline of the 10-bit frame, or as the 10-bit frame or swapchain goes, turns off 10 bits
-// only, the next start draws at 8 bits with them off, keeps its pipeline cache and says so, and a reset brings them
-// back; a crash in the profiles stage turns off the profiles check alone. A marker whose process Android recorded as
-// stopped, not crashed, counts for nothing. The crashing starts run in child processes: this test binary, spawned with
-// one test case, which on hosts runs the core's session (standin/Session.hpp) in VK bench's order.
+// making a shader module names the module; one in the device's facts (the queries its choice makes, a start's or a
+// rebuild's after a device loss) follows the ladder keyed by the system build, one in the surface stage or the close
+// the driver's; the stand-in's shared objects are the pipelines stage's even when a session's first frame is 10-bit.
+// VK bench's colour stage is the rung below: a planted abort in a pipeline of the 10-bit frame, or as the 10-bit frame
+// or swapchain goes, turns off 10 bits only, the next start draws at 8 bits with them off, keeps its pipeline cache and
+// says so, and a reset brings them back; a crash in the profiles stage turns off the profiles check alone. A marker
+// whose process Android recorded as stopped, not crashed, counts for nothing. The crashing starts run in child
+// processes: this test binary, spawned with one test case, which on hosts runs the core's session (standin/Session.hpp)
+// in VK bench's order.
 #include "base/log.hpp"
 #include "gpu/Frames.hpp"
 #include "gpu/Guard.hpp"
@@ -98,9 +100,10 @@ struct Child {
 };
 
 /// Runs this binary's child test case with the guard's folder, the plant, the core's build ID and the app's process
-/// exits as the façade would pass them (gpu::parse_exits' text; "" for none known).
+/// exits as the façade would pass them (gpu::parse_exits' text; "" for none known); `ten_first`: its session's first
+/// frame is a 10-bit one, not VK bench's 8-bit first.
 Child spawn_child(const fs::path& dir, const std::string& plant, const std::string& build,
-                  const std::string& exits = {}) {
+                  const std::string& exits = {}, bool ten_first = false) {
     const std::string exe = self_path();
     std::vector<std::string> args{exe, "--test-case=guard child start", "--no-intro=true"};
     std::vector<std::string> env;
@@ -109,6 +112,7 @@ Child spawn_child(const fs::path& dir, const std::string& plant, const std::stri
     env.push_back("ATLAS_GUARD_PLANT=" + plant);
     env.push_back("ATLAS_GUARD_BUILD=" + build);
     env.push_back("ATLAS_GUARD_EXITS=" + exits);
+    env.push_back(std::format("ATLAS_GUARD_TEN_FIRST={}", ten_first ? 1 : 0));
     std::vector<char*> argv;
     argv.reserve(args.size() + 1);
     for (std::string& a : args) argv.push_back(a.data());
@@ -198,8 +202,26 @@ TEST_CASE("guard child start") {
     std::string why;
     ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), {.width = 64, .height = 64}, why), why);
     const gpu::Configuration config = facts.choice;
-    ATLAS_REQUIRE(session.bench(1, config, standin::bench_flag::pills).empty(), "the frame at 8 bits");
     const style::CameraState camera = standin::board_view(64, 64, 1.0);
+    if (const char* ten_first = std::getenv("ATLAS_GUARD_TEN_FIRST"); // NOLINT(concurrency-mt-unsafe)
+        ten_first != nullptr && std::string_view(ten_first) == "1") {
+        // The session's first frame a 10-bit one (VK bench draws its 8-bit runs first): its stand-in is made before the
+        // colour stage opens all the same.
+        if (!facts.deepest.ten_bit()) {
+            log::info("guard child: no 10 bits here ({})", gpu::colour_stage(facts));
+            session.close();
+            return;
+        }
+        why = session.bench(1, config, standin::bench_flag::pills | standin::bench_flag::ten_bit);
+        ATLAS_REQUIRE(why.empty(), why);
+        for (int i = 0; i < 2; ++i) (void)session.draw(camera, {});
+        const std::string drawn = gpu::colour_name(session.output()->format());
+        ATLAS_REQUIRE(session.bench(0, config, 0).empty(), "out of the colour stage");
+        session.close();
+        log::info("guard child: the first frame drawn in {}", drawn);
+        return;
+    }
+    ATLAS_REQUIRE(session.bench(1, config, standin::bench_flag::pills).empty(), "the frame at 8 bits");
     for (int i = 0; i < 2; ++i) (void)session.draw(camera, {});
     // The colour stage, after the 8-bit work: skipped where 10 bits cannot be had or the guard has them off.
     if (!facts.deepest.ten_bit()) {
@@ -1086,6 +1108,71 @@ TEST_CASE("a refused start lets go of what it made behind a stage of its own, ke
     // Another build of the core starts afresh: neither verdict is its.
     CHECK(gpu::start_guarded(options_in(dir, "", "build-s")).has_value());
     std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("the device's facts are keyed to the system build, a rebuild's after a device loss too") {
+    // Every start makes the facts' queries (the instance's physical devices, their properties, features and queues)
+    // before it knows the driver, so only a verdict read before the instance stops a crash in them coming back: a
+    // rebuild's facts after a device loss, though the driver is known by then, are keyed to the system build too, and
+    // their second crash refuses the next start before the instance, as the start's own do.
+    const fs::path dir = fresh("rebuild-facts");
+    {
+        gpu::Guard guard(dir, "host-test-system", "build-f", "");
+        (void)guard.check_driver("MesaLlvmpipe", "0x06463063"); // the driver known, as in a rebuild
+        guard.enter(gpu::Stage::facts);
+        CHECK(
+            read(dir / "guard").starts_with("stage facts\ndriver unknown\nversion host-test-system\nbuild build-f\n"));
+        guard.leave();
+        guard.enter(gpu::Stage::device); // the stages after the facts are the driver's
+        CHECK(read(dir / "guard").starts_with("stage device\ndriver MesaLlvmpipe\nversion 0x06463063\n"));
+        guard.leave();
+        CHECK_FALSE(fs::exists(dir / "guard"));
+    }
+    // Such a marker of another process's retry (attempt 2): Vulkan off for the system build, refused before the
+    // instance at this start and every later one of this build.
+    std::ofstream(dir / "guard", std::ios::trunc)
+        << "stage facts\ndriver unknown\nversion host-test-system\nbuild build-f\nattempt 2\npid 1\nstart 1\n";
+    for (int i = 0; i < 2; ++i) {
+        auto refused = gpu::start_guarded(options_in(dir, "", "build-f"));
+        ATLAS_REQUIRE(!refused.has_value(), "the start after two crashes in the facts opened Vulkan");
+        CHECK(refused.error().line == "vk guard facts unknown host-test-system attempt 2 build build-f");
+        CHECK_FALSE(fs::exists(dir / "guard"));
+    }
+    CHECK(has(read(dir / "off"), "system|host-test-system|build-f|facts||2\n"));
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("the stand-in's shared objects are the pipelines stage's even when a session's first frame is a 10-bit one") {
+    // VK bench draws its 8-bit runs first, so its stand-in is made before the colour stage opens. A session whose first
+    // frame is a 10-bit one makes it before that stage opens too: a driver's crash in its fixed pipelines (the atlas,
+    // the shadow, the blur), its modules or the city's buffers is the pipelines stage's, on Vulkan's ladder, not 10
+    // bits'.
+    if (!test::open_session()) return;
+    const fs::path dir = fresh("first-ten");
+    std::error_code ec;
+    {
+        auto probe = gpu::start_guarded(options_in(dir, "", "build-x"));
+        ATLAS_REQUIRE(probe.has_value(), probe.error().reason);
+        if (!probe->device->facts().deepest.ten_bit()) {
+            MESSAGE("skipped: no 10 bits here");
+            fs::remove_all(dir, ec);
+            return;
+        }
+    }
+    // No atlas is made inside the colour stage: its plant there fires nowhere, and the run ends cleanly.
+    Child child = spawn_child(dir, "colour:atlas", "build-x", {}, true);
+    CHECK(WIFEXITED(child.status));
+    const bool ten_drawn = has(child.log, "guard child: the first frame drawn in rgb10a2") ||
+                           has(child.log, "guard child: the first frame drawn in bgr10a2");
+    CHECK_MESSAGE(ten_drawn, child.log);
+    CHECK_FALSE(fs::exists(dir / "guard"));
+    // The pipelines stage's plant at it fires, its marker that stage's.
+    child = spawn_child(dir, "pipelines:atlas", "build-x", {}, true);
+    CHECK(aborted(child));
+    CHECK(read(dir / "guard")
+              .starts_with("stage pipelines\npipeline atlas (module standin_standin, configuration any)\n"));
     fs::remove_all(dir, ec);
 }
 

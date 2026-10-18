@@ -313,6 +313,25 @@ object VkBench {
         "vkbench colour $cell: $colour cut short (the app went to the background); measured again"
 
     /**
+     * The run's line when the app went to the background before [step] (outside the colour stage, whose lines are its
+     * own): nothing of the run reaches the core while the app is away, and the run waits for it, however long.
+     */
+    fun appAway(step: String): String = "vkbench: the app went to the background before $step; the run waits for it"
+
+    /** The run's line when the app came back (outside the colour stage). */
+    fun appBack(): String = "vkbench: the app came back"
+
+    /**
+     * The line for [what] (a cell, a host's path, the pills, a soak sample, the pipelines' timing) that the app's going
+     * to the background cut short: measured again once the app is back.
+     */
+    fun cutShort(what: String): String = "vkbench $what: cut short (the app went to the background); measured again"
+
+    /** What the soak's line adds when the app was away [seconds] of it ("" for none): the slope takes the pause in. */
+    fun soakAway(seconds: Double): String =
+        if (seconds <= 0.0) "" else "; the app was away ${"%.0f".format(java.util.Locale.ROOT, seconds)} s of it (the slope takes the pause in)"
+
+    /**
      * The A0 line for the colour depth: the colour stage's 10-bit frame in the picked configuration against the 8-bit
      * one measured beside it ([ten] and [eight], null where not measured), or why there is none.
      */

@@ -4,7 +4,8 @@
 // (the stage, the driver, the core's build, the attempt, the process's id and start), synced to disk, and deletes it
 // after. The stages, in the order a start and then the core's session (standin/Session.hpp) pass them:
 //   instance   the loader and the instance;
-//   facts      the device's facts: every query the choice of the device makes of the driver (collect_facts);
+//   facts      the device's facts: every query the choice of the device makes of the driver (collect_facts), a start's
+//              and a rebuild's after a device loss;
 //   device     the device and its allocator, and after a device loss the lost device's teardown (its stand-in, the
 //              pipeline cache, the device);
 //   cache      a pipeline cache made or loaded (the one on disk, and VK bench's timing's), every write back
@@ -14,7 +15,8 @@
 //   frames     the first 120 frames of each renderer: of each configuration VK bench draws, of a frame made again for a
 //              new size, of the device rebuilt after a loss (the frame loop's per-frame calls after them run unmarked:
 //              D5.10 guards the first draws); it ends whenever the frame loop rests (nothing to draw, or the app's
-//              windows hidden) or the renderer goes, and opens again at the next draw within them;
+//              windows hidden), the renderer goes or the frame it draws changes (another configuration, an output
+//              made again), and opens again at the next draw within them, naming the frame drawn then;
 //   profiles   Android's Vulkan profiles (the Profiles library's checks), read only when VK facts or VK bench asks,
 //              never on the start's path: they decide nothing, VK facts reports them;
 //   colour     VK bench's colour stage (below);
@@ -43,14 +45,18 @@
 //
 // What a counted crash does depends on its stage:
 //   instance, facts, refused: the first time, the core retries once with the pipeline cache deleted (a corrupt cache
-//     can crash a driver); the second time Vulkan is turned off for the system build (the driver is not known yet, or,
-//     for a refused start, a crash there must refuse the next start before the instance) and this build of the core;
+//     can crash a driver); the second time Vulkan is turned off for the system build and this build of the core: every
+//     start runs these before it knows the driver (a rebuild's facts after a device loss run the same queries, though
+//     the driver is known by then), and a refused start's teardown at every launch once a driver is off, so only a
+//     verdict read before the instance stops the crash coming back;
 //   device, cache, surface, pipelines, frames, close: the same, for that driver and version and this build;
 //   colour: 10 bits off at once, for that driver and version and this build (the rung below Vulkan off);
 //   profiles: the profiles check off at once, for them; nothing else changes.
 // The `vk guard` line names the stage, the module, pipeline or thing that went, the attempt and the build, and VK facts
-// carries it. A driver update (another version) or another build of the core (its build ID, base/build_info.hpp) tries
-// again; so does a reset (VK facts' "Reset guard" in the debug and bench builds).
+// carries it. A verdict keyed to the driver ends with a driver update (another version), one keyed to the system build
+// (instance, facts, refused) with a system update (another fingerprint; a GPU driver updated apart from the system
+// keeps it); either with another build of the core (its build ID, base/build_info.hpp), or a reset (VK facts' "Reset
+// guard" in the debug and bench builds).
 //
 // VK bench's colour stage, the frame at 10 bits a channel measured after its 8-bit runs (plan-vector D5, "Colour
 // depth"), is open exactly while something of 10 bits may reach the driver: the device asked about the 10-bit formats
@@ -138,7 +144,7 @@ struct ProcessExits {
 
 /// What the last start left, as the guard reads it before this one.
 struct GuardVerdict {
-    /// Vulkan is off for this driver and this build (or, before the driver is known, for this system build). A crash in
+    /// Vulkan is off for this driver and this build (or, for a stage keyed to the system build, for it). A crash in
     /// VK bench's colour stage turns off 10 bits only (Guard::ten_bit_off), one in the profiles stage the profiles
     /// check (Guard::profiles_off), and the start goes on.
     bool off = false;
@@ -178,7 +184,8 @@ public:
     ///                             `refused`, …), but `pipelines` and `colour` at the stage's first pipeline, so the
     ///                             marker names it;
     ///   `<stage>:<name>`          in the pipelines or the colour stage, as the pipeline or shader module <name> is
-    ///                             made (`pipelines:composite`, `colour:standin_blur`);
+    ///                             made (`pipelines:composite`, `colour:standin_composite`: in the colour stage only
+    ///                             the 10-bit frame's are made, the stand-in's shared ones before it opens);
     ///   `<stage>:release`         as the stage's first thing goes; in the colour stage its first 10-bit frame or
     ///                             10-bit swapchain, whichever goes first, never anything of 8 bits nor its cache;
     ///   `<stage>:release:<kind>`  as the stage's first thing of that kind goes (gpu/Pipelines.hpp's Release: frame,

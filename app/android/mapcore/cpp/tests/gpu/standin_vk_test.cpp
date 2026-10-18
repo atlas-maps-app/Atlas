@@ -688,6 +688,11 @@ TEST_CASE("the stand-in's steady S1 frame takes at most half a second, and its p
     auto saved = cold->save();
     ATLAS_REQUIRE(saved.has_value(), saved.error().text());
     CHECK(*saved >= sizeof(gpu::CacheHeader));
+    CHECK_FALSE(cold->changed());
+    // Nothing made through it since: the next write writes nothing.
+    auto again = cold->save();
+    ATLAS_REQUIRE(again.has_value(), again.error().text());
+    CHECK(*again == 0);
     cold = gpu::fail("closed"); // the cache goes before its device
 
     // A second device, as the next start opens it.

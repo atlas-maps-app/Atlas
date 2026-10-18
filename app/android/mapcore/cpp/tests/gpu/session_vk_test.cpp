@@ -4,10 +4,12 @@
 // a resize and a device loss inside it, mode 0, and the close; through offscreen windows (and, where the host has one,
 // a headless surface, whose queries are the surface stage's). After each step the crash guard (gpu/Guard.hpp) holds
 // what the step left open and nothing else: the colour stage exactly while something of 10 bits is alive, the frames
-// stage over each renderer's first 120 frames only and never while the frame loop rests, no marker between steps
-// after them, none after the close; and the marker never names a module, a pipeline or a thing going once its call has
-// returned. ATLAS_SESSION_FULL=1 takes the colour stage over every configuration, as VK bench does (the layer run's
-// order, which notes the guard's marker at every driver call: every call is behind one, and named only while it runs).
+// stage over each renderer's first 120 frames only, never while the frame loop rests and always naming the frame drawn
+// now (a switch within the last frame's first 120 included), no marker between steps after them, none after the close;
+// the marker never names a module, a pipeline or a thing going once its call has returned; and the pipeline cache is
+// written back only where a pipeline was made through it since its last write. ATLAS_SESSION_FULL=1 takes the colour
+// stage over every configuration, as VK bench does (the layer run's order, which notes the guard's marker at every
+// driver call: every call is behind one, and named only while it runs).
 #include "gpu/Guard.hpp"
 #include "standin/City.hpp"
 #include "standin/Session.hpp"
@@ -60,6 +62,15 @@ namespace fs = std::filesystem;
     const std::string line = text.substr(first + 1, text.find('\n', first + 1) - first - 1);
     return line.starts_with("pipeline ") || line.starts_with("module ") || line.starts_with("release ") ? line
                                                                                                         : std::string();
+}
+
+/// The frame the frames stage's marker on disk names as drawn (its `drawing …` line), "" for none.
+[[nodiscard]] std::string drawing(const fs::path& dir) {
+    const std::string text = read(dir / "guard");
+    const std::size_t at = text.find("\ndrawing ");
+    if (at == std::string::npos) return {};
+    const std::size_t from = at + 9;
+    return text.substr(from, text.find('\n', from) - from);
 }
 
 [[nodiscard]] bool has(std::string_view text, std::string_view part) { return text.find(part) != std::string::npos; }
@@ -402,14 +413,105 @@ TEST_CASE("each renderer's first frames are the frames stage's: a new configurat
     }
 }
 
+TEST_CASE("the frames stage's marker names the frame drawn now, after a switch within the last frame's first 120 too") {
+    // VK bench's CI cells draw far fewer than 120 frames (0.8 s), and so does a phone's cell below 30 frames a second,
+    // so the next configuration comes while the last one's frames stage is still open. That stage ends with the frame
+    // it guarded: nothing of it is on disk until the new frame draws (inside the colour stage, the colour stage's
+    // marker alone, naming no frame), and then its marker names the configuration and colour drawn now, at 8 bits and
+    // at 10. A frame made again for a new size, within its first 120, the same.
+    if (!test::open_session()) return;
+    const Folder folder("named");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    {
+        standin::Session session(*started, session_in(dir));
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+        const std::vector<gpu::Configuration> configurations = matrix(*started->device);
+        ATLAS_REQUIRE(configurations.size() >= 2, "the device draws " << configurations.size() << " configurations");
+        const bool ten_here = started->device->facts().deepest.ten_bit();
+        if (!ten_here) MESSAGE("at 8 bits alone: " << gpu::colour_stage(started->device->facts()));
+        for (const bool at_ten : ten_here ? std::vector{false, true} : std::vector{false}) {
+            const std::uint32_t flags = pills | (at_ten ? ten : 0U);
+            const std::string between = at_ten ? "colour" : ""; // what is on disk before the new frame draws
+            const std::string stage = at_ten ? "colour" : "frames";
+            for (const gpu::Configuration& c : {configurations[0], configurations[1], configurations[0]}) {
+                ATLAS_REQUIRE(session.bench(1, c, flags).empty(), gpu::name_of(c) << (at_ten ? " at 10 bits" : ""));
+                CHECK(marked(dir) == between);
+                CHECK(drawing(dir).empty());
+                CHECK(draw(session, 3) == 3);
+                const std::string frame = std::format("frame (configuration {} {})", gpu::name_of(c),
+                                                      gpu::colour_name(session.output()->format()));
+                CHECK(marked(dir) == stage);
+                CHECK_MESSAGE(drawing(dir) == frame, "the marker: " << read(dir / "guard"));
+                CHECK(session.output()->colour().ten_bit() == at_ten);
+            }
+            // A new size within the frame's first 120: made again, the stage ends, and the next draw names it.
+            session.resize({.width = 120, .height = 200});
+            CHECK(marked(dir) == between);
+            CHECK(drawing(dir).empty());
+            CHECK(draw(session, 2) == 2);
+            CHECK(marked(dir) == stage);
+            CHECK(has(drawing(dir), std::format("(configuration {} ", gpu::name_of(configurations[0]))));
+            session.resize(size);
+        }
+        CHECK(session.bench(0, configurations[0], 0).empty());
+        CHECK(marked(dir).empty());
+        session.close();
+        CHECK_FALSE(fs::exists(dir / "guard"));
+    }
+}
+
+TEST_CASE("the pipeline cache is written back only where a pipeline was made through it since its last write") {
+    // A trim at each level from TRIM_MEMORY_UI_HIDDEN on (BACKGROUND, MODERATE and COMPLETE come as the system makes
+    // ready to kill cached processes), the close and the session's first 120 frames ask for a write: each writes only
+    // what is new, else nothing, behind no marker.
+    if (!test::open_session()) return;
+    const Folder folder("cache");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    {
+        standin::Session session(*started, session_in(dir));
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+        const std::vector<gpu::Configuration> configurations = matrix(*started->device);
+        ATLAS_REQUIRE(configurations.size() >= 2, "the device draws " << configurations.size() << " configurations");
+        ATLAS_REQUIRE(session.bench(1, configurations[0], pills).empty());
+        CHECK(fs::exists(dir / "pipelines.bin")); // written after the renderer's pipelines were made
+        const fs::path file = dir / "pipelines.bin";
+        fs::remove(file);
+        session.save_cache(); // nothing new: nothing written
+        CHECK_FALSE(fs::exists(file));
+        CHECK(draw(session, 121) == 121); // the session's first 120 frames ask for one too
+        CHECK_FALSE(fs::exists(file));
+        CHECK(marked(dir).empty());
+        // Another configuration's pipelines: the next write has them.
+        ATLAS_REQUIRE(session.bench(1, configurations[1], pills).empty());
+        session.save_cache();
+        CHECK(fs::exists(file));
+        fs::remove(file);
+        session.save_cache();
+        CHECK_FALSE(fs::exists(file));
+        // The close writes nothing new either.
+        session.close();
+        CHECK_FALSE(fs::exists(file));
+        CHECK_FALSE(fs::exists(dir / "guard"));
+    }
+}
+
 TEST_CASE("the colour stage closes as soon as nothing of 10 bits is left: refused outputs, a refused remake, a refused "
           "rebuild") {
     // A 10-bit swapchain the driver refuses: the stage closes, and the frame's 8-bit one is made in its place outside
     // it (so the stage never holds 8-bit work); VK bench is told there are no 10 bits here, and is not refused again on
-    // this window. A remake refused inside the stage leaves nothing of 10 bits (the old output and the frame went), so
-    // the stage closes; the next step opens it again. A device lost inside the stage and made again with its 10-bit
-    // output refused goes on at 8 bits outside it, or, with the 8-bit one refused too, turns the session off with
-    // nothing open and no marker on disk.
+    // this window until it is attached again or the device made again (each reads the surface afresh). A remake refused
+    // inside the stage leaves nothing of 10 bits (the old output and the frame went), so the stage closes; the next
+    // step opens it again. A device lost inside the stage and made again with its 10-bit output refused goes on at 8
+    // bits outside it, or, with the 8-bit one refused too, turns the session off with nothing open and no marker on
+    // disk.
     if (!test::open_session()) return;
     const Folder folder("colour");
     const fs::path& dir = folder.path();
@@ -436,7 +538,7 @@ TEST_CASE("the colour stage closes as soon as nothing of 10 bits is left: refuse
         CHECK_FALSE(session.output()->colour().ten_bit());
         CHECK(marked(dir).empty());
         CHECK(has(session.facts(), "colour.stage: none (the driver refused a swapchain of "));
-        // Not tried again on this window: the next 10-bit step is told at once, nothing made.
+        // Not tried again on this window while it stays: the next 10-bit step is told at once, nothing made.
         CHECK(session.bench(1, c, pills | ten).starts_with("no 10 bits here: the driver refused"));
         CHECK_FALSE(session.colour_open());
         // The 8-bit steps draw as before, outside the stage.

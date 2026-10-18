@@ -13,7 +13,9 @@
 // frame loop's own per-frame calls after a renderer's first 120 frames, which D5.10 leaves unguarded: the commands each
 // frame records and submits, its acquire and present, its fences, queries and memory flushes, and the display's
 // timings it reads back. No marker stays on disk while nothing is drawn: the frames stage ends when the frame loop
-// rests (rest) or the renderer goes, and opens again with the next draw within the renderer's first 120.
+// rests (rest), the renderer goes or the frame it draws changes (another configuration, an output made again), and
+// opens again with the next draw within that renderer's first 120, naming the frame it draws. The stand-in's shared
+// objects are 8-bit work, made before anything of 10 bits and never inside the colour stage.
 //
 // The colour depth (plan-vector D5, "Colour depth"): the frame is 8 bits a channel (gpu/Facts.hpp's default_depth);
 // VK bench's colour stage (bench's flag 4) draws it at 10 where the surface offers them, the device (asked as the
@@ -157,7 +159,8 @@ public:
     /// VkFacts' lines as text, the guard's state and this session's among them, after reading Android's profiles behind
     /// the guard's profiles stage (once a device; never inside the colour stage).
     [[nodiscard]] std::string facts();
-    /// Writes the pipeline cache back, behind the guard's cache stage.
+    /// Writes the pipeline cache back, behind the guard's cache stage, where a pipeline was made through it since its
+    /// last write (else nothing, and no marker).
     void save_cache();
     /// The panel's line.
     [[nodiscard]] std::string stats() const;
@@ -206,7 +209,12 @@ private:
     /// The output made again at its size, retiring the old one (gone once the new one is made or refused), and the
     /// renderer retargeted; refused, the renderer goes, and the colour stage closes.
     void remake_output();
-    /// The stand-in, if there is none yet, behind the pipelines stage; "" or why not.
+    /// The frame drawn is about to change (another configuration, its output made again, a new renderer): the frames
+    /// stage ends with the old frame (its marker taken by the stage entered next, which behind does not leave for the
+    /// frames stage again), and the next draw opens it under the new frame's name, its first 120 frames guarded.
+    void new_frame() noexcept;
+    /// The stand-in, if there is none yet, behind the pipelines stage; "" or why not. Its shared objects are 8-bit
+    /// work, so never inside the colour stage: each step makes it before an output of 10 bits opens that stage.
     std::string make_standin();
     /// The renderer of the configuration on the output, behind the pipelines stage; "" or why not.
     std::string make_renderer();
@@ -246,7 +254,9 @@ private:
     int mode_ = 0;
     bool pills_ = false;
     bool texture_ = false;
-    bool guarding_ = false; // the frames stage is open
+    /// The frames stage is open, for the frame drawn now: whatever changes that frame ends it first (new_frame,
+    /// drop_renderer), so its marker never names a frame no longer drawn.
+    bool guarding_ = false;
     bool profiles_read_ = false;
     bool frame_rate_ = false;
     bool first_frames_saved_ = false; // the cache written back after the session's first 120 frames
