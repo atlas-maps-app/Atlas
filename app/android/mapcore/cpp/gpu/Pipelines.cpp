@@ -12,23 +12,26 @@ std::string describe(const PipelineLabel& label) {
     return std::format("{} (module {}, configuration {})", label.name, label.module, label.configuration);
 }
 
-void announce(const PipelineLabel& label, PipelineWatch* watch) {
+Announced announce(const PipelineLabel& label, PipelineWatch* watch) {
     log::info("vk pipeline {}", describe(label));
     if (watch != nullptr) watch->before(label);
+    return Announced(watch);
 }
 
-void announce_module(std::string_view module, PipelineWatch* watch) {
+Announced announce_module(std::string_view module, PipelineWatch* watch) {
     log::info("vk module {}", module);
     if (watch != nullptr) watch->before_module(module);
+    return Announced(watch);
 }
 
 std::string describe(const Release& release) {
     return release.detail.empty() ? std::string(release.kind) : std::format("{} {}", release.kind, release.detail);
 }
 
-void announce_release(const Release& release, PipelineWatch* watch) {
+Announced announce_release(const Release& release, PipelineWatch* watch) {
     log::info("vk release {}", describe(release));
     if (watch != nullptr) watch->before_release(release);
+    return Announced(watch);
 }
 
 bool Blend::reads_destination_alpha() const noexcept {

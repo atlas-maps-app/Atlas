@@ -51,9 +51,9 @@ std::string guard_lines(const gpu::Started& started) {
 }
 
 gpu::Result<std::unique_ptr<gpu::Output>> SessionWindow::output(const gpu::Device& device, vk::SurfaceKHR surface,
-                                                                vk::Extent2D wanted, std::unique_ptr<gpu::Output> old,
+                                                                vk::Extent2D wanted, const gpu::Output* old,
                                                                 gpu::Depth depth) {
-    ATLAS_GPU_LET(swapchain, gpu::Swapchain::create(device, surface, wanted, std::move(old), depth));
+    ATLAS_GPU_LET(swapchain, gpu::Swapchain::create(device, surface, wanted, old, depth));
     return std::unique_ptr<gpu::Output>(std::move(swapchain));
 }
 
@@ -82,7 +82,12 @@ bool Session::attach(std::unique_ptr<SessionWindow> window, vk::Extent2D size, s
         auto surface = window_->surface(*started_.instance);
         if (!surface) return surface.error().text();
         surface_ = std::move(*surface);
-        if (!*surface_) return {}; // a window without a surface: a host test's offscreen images
+        if (!*surface_) {
+            // A window without a surface (a host test's offscreen images): the frame's colour decided afresh for it, as
+            // a surface's queries decide it for a phone's window (no driver call: the device's facts as read).
+            gpu::decide_colour(started_.device->facts());
+            return {};
+        }
         if (!started_.device->can_present(*surface_)) return "the device's queue cannot present to this surface";
         gpu::collect_surface(started_.device->facts(), started_.device->physical(), *surface_,
                              started_.device->queue_family());
@@ -132,8 +137,8 @@ void Session::release_window() {
 void Session::drop_renderer() {
     if (!renderer_) return;
     // No frames without a renderer: the frames stage ends with it (its marker taken by the pipelines stage's, then
-    // gone), and the next draw within the first 120 frames opens it again. So no marker stays on disk while nothing
-    // is drawn: the window gone, mode 0.
+    // gone), and the next renderer's first draw opens it again. So no marker stays on disk while nothing is drawn: the
+    // window gone, mode 0.
     guarding_ = false;
     behind(gpu::Stage::pipelines, [&] {
         renderer_->drain();
@@ -145,19 +150,55 @@ void Session::drop_renderer() {
 void Session::drop_output() {
     if (!output_) return;
     behind(gpu::Stage::surface, [&] {
-        const std::string colour = gpu::colour_name(output_->format());
-        gpu::announce_release({.kind = "swapchain", .detail = colour, .ten_bit = gpu::ten_bit(output_->format())},
-                              started_.guard.get());
-        output_.reset();
+        release_output();
         return true;
     });
 }
 
+void Session::release_output() {
+    if (!output_) return;
+    const std::string colour = gpu::colour_name(output_->format());
+    const gpu::Announced named = gpu::announce_release(
+        {.kind = "swapchain", .detail = colour, .ten_bit = gpu::ten_bit(output_->format())}, started_.guard.get());
+    output_.reset();
+}
+
 std::string Session::make_output() {
     if (!window_) return "no surface is attached";
+    gpu::Facts& facts = started_.device->facts();
     if (depth_ == gpu::Depth::deepest) {
+        // VK bench's colour stage: it opens, and the device is asked about 10 bits inside it; then the output at 10
+        // bits is made inside it, where the device can draw the frame in them on this surface.
         open_colour();
-        if (!colour_open()) return "the colour stage could not open (its pipeline cache could not be made)";
+        if (!colour_open()) {
+            // No stage, no 10 bits: the frame takes its 8, saying why.
+            facts.deepest = facts.colour;
+            facts.deepest.reason = "VK bench's colour stage could not open (its pipeline cache could not be made)";
+        } else if (facts.deepest.ten_bit()) {
+            const vk::Format asked = facts.deepest.format;
+            auto made = behind(gpu::Stage::surface, [&] {
+                return window_->output(*started_.device, *surface_, wanted_, nullptr, gpu::Depth::deepest);
+            });
+            if (made) {
+                output_ = std::move(*made);
+                output_error_.clear();
+                facts.deepest = output_->colour();
+                if (output_->colour().ten_bit()) return {};
+                // An 8-bit one after all (the window's formats are not the ones the facts read): nothing of 10 bits is
+                // alive, so the stage closes, and the output stays, the frame's 8 bits outside it.
+                close_colour();
+                depth_ = gpu::default_depth;
+                return {};
+            }
+            // Refused by the driver: nothing of 10 bits came of it, and the frame takes its 8 bits instead.
+            facts.deepest = facts.colour;
+            facts.deepest.reason = std::format("the driver refused a swapchain of {} ({}): 8 bits",
+                                               gpu::colour_name(asked), made.error().text());
+            log::warn("vk swapchain: {}", facts.deepest.reason);
+        }
+        // Nothing of 10 bits is made: the stage closes, and the frame's 8-bit output is made in its place, outside.
+        close_colour();
+        depth_ = gpu::default_depth;
     }
     auto made = behind(gpu::Stage::surface,
                        [&] { return window_->output(*started_.device, *surface_, wanted_, nullptr, depth_); });
@@ -173,17 +214,20 @@ std::string Session::make_output() {
 
 void Session::remake_output() {
     if (!window_ || !started_.device || closed_) return;
+    if (!output_) {
+        // None to make again (refused before): one afresh, the colour stage opening for it at 10 bits (the renderer
+        // went with the last one).
+        if (std::string why = make_output(); !why.empty()) log::error("vk swapchain: {}", why);
+        return;
+    }
     std::string why;
-    // The old output goes inside the call that makes the new one (it retires it), once that is made or refused:
-    // announced first, so that a 10-bit one going goes inside the colour stage, an 8-bit one inside the surface stage.
+    // The old output is retired by the call that makes the new one, and goes once that returns, made or refused:
+    // announced as it goes (a 10-bit one inside the colour stage, an 8-bit one inside the surface stage), after the new
+    // one's making, which is the stage's alone.
     behind(gpu::Stage::surface, [&] {
         if (renderer_) renderer_->drain();
-        if (output_) {
-            const std::string colour = gpu::colour_name(output_->format());
-            gpu::announce_release({.kind = "swapchain", .detail = colour, .ten_bit = gpu::ten_bit(output_->format())},
-                                  started_.guard.get());
-        }
-        auto made = window_->output(*started_.device, *surface_, wanted_, std::move(output_), depth_);
+        auto made = window_->output(*started_.device, *surface_, wanted_, output_.get(), depth_);
+        release_output();
         if (made) {
             output_ = std::move(*made);
         } else {
@@ -194,16 +238,29 @@ void Session::remake_output() {
     if (!why.empty()) {
         output_error_ = why;
         log::error("vk swapchain: {}", why);
+        // Nothing to draw into: the frame goes, and with it the last of 10 bits (the old output went above), so the
+        // colour stage closes; the next step that needs an output makes one (make_output), the stage opening for it.
         drop_renderer();
+        close_colour();
         return;
     }
     output_error_.clear();
     note_colour();
+    if (depth_ == gpu::Depth::deepest && !output_->colour().ten_bit()) {
+        // Made again at 8 bits after all (the window's formats changed): the 10-bit frame goes inside the colour stage,
+        // which then closes, and the next step draws the frame at 8 outside it.
+        drop_renderer();
+        close_colour();
+        depth_ = gpu::default_depth;
+        return;
+    }
     if (renderer_) {
         auto retargeted = behind(gpu::Stage::pipelines, [&] { return renderer_->retarget(*output_); });
         if (!retargeted) {
             log::error("vk retarget: {}", retargeted.error().text());
             drop_renderer();
+        } else {
+            presented_ = 0; // a new frame: its first draws are guarded again
         }
     }
 }
@@ -228,8 +285,11 @@ void Session::open_colour() {
 void Session::close_colour() {
     if (!colour_cache_) return;
     if (standin_) standin_->use_prepare_cache(nullptr);
-    gpu::announce_release({.kind = "cache", .detail = "(the colour stage's)", .ten_bit = true}, started_.guard.get());
-    colour_cache_.reset();
+    {
+        const gpu::Announced named = gpu::announce_release(
+            {.kind = "cache", .detail = "(the colour stage's)", .ten_bit = true}, started_.guard.get());
+        colour_cache_.reset();
+    }
     started_.guard->leave_colour();
 }
 
@@ -266,6 +326,7 @@ std::string Session::make_renderer() {
         return {};
     });
     if (!why.empty()) return why;
+    presented_ = 0; // a new frame: its first draws are guarded (the frames stage)
     if (first_pipelines_ms_ < 0) {
         // This launch's first pipelines, from the cache file as the start found it (a first launch has none).
         first_pipelines_ms_ = standin_->pipelines_ms();
@@ -301,33 +362,25 @@ std::string Session::bench(int mode, const gpu::Configuration& config, std::uint
     texture_ = (flags & bench_flag::texture) != 0;
     // A renderer of the other depth, or any in mode 0, goes first, in its stage.
     if (mode_ == 0 || depth != depth_) drop_renderer();
+    std::string unmade; // why no output could be made, if none could
     if (depth != depth_) {
-        // The other depth's output goes in its own stage (the surface stage's at 8 bits, the colour stage's at 10),
-        // before the colour stage opens or after it closes: the stage holds 10-bit work alone.
+        // The other depth's output goes in its own stage (the surface stage's at 8 bits, the colour stage's at 10), and
+        // the colour stage closes once nothing of 10 bits is left (out of it: the 10-bit frame and output went above,
+        // inside it, and its cache goes). The output is made again at the depth asked for: into the colour stage, it
+        // opens and the device is asked about 10 bits inside it; one that cannot draw the frame in them after all, or a
+        // driver that refuses the 10-bit swapchain, closes it again, nothing of 10 bits made, and the frame stays at 8
+        // (make_output). So the stage holds 10-bit work alone.
         drop_output();
-        if (depth == gpu::Depth::deepest) {
-            // Into the colour stage: it opens, and the device is asked about 10 bits inside it. A device that cannot
-            // draw the frame in them after all closes it again, nothing of 10 bits made, and the frame stays at 8.
-            open_colour();
-            if (!colour_open() || !facts.deepest.ten_bit()) {
-                const std::string why = colour_open() ? facts.deepest.reason : std::string("its pipeline cache failed");
-                close_colour();
-                if (window_) (void)make_output();
-                return "no 10 bits here: " + why;
-            }
-        } else {
-            // Out of it: the 10-bit frame and output went above, inside it; its cache goes, and it closes.
-            close_colour();
-        }
+        close_colour();
         depth_ = depth;
-        if (window_) {
-            if (std::string why = make_output(); !why.empty()) log::error("vk swapchain: {}", why);
-        }
+        if (window_) unmade = make_output();
     } else if (!output_ && window_) {
         // One that could not be made before (a remake, a rebuild after a device loss).
-        if (std::string why = make_output(); !why.empty()) log::error("vk swapchain: {}", why);
+        unmade = make_output();
     }
+    if (!unmade.empty()) log::error("vk swapchain: {}", unmade);
     if (mode_ == 0) return {};
+    if (ten && !facts.deepest.ten_bit()) return "no 10 bits here: " + facts.deepest.reason;
     if (!output_) return output_error_.empty() ? "no swapchain" : "no swapchain: " + output_error_;
     if (ten && !output_->colour().ten_bit()) return "no 10 bits here: " + output_->colour().reason;
     if (!renderer_) return make_renderer();
@@ -342,6 +395,7 @@ std::string Session::bench(int mode, const gpu::Configuration& config, std::uint
         drop_renderer();
         return done.error().text();
     }
+    presented_ = 0; // a new frame: its first draws are guarded again
     log_configuration();
     return {};
 }
@@ -357,19 +411,51 @@ std::string Session::time_pipelines() {
         std::uint32_t count = 0;
         std::size_t bytes = 0;
     };
-    // The stand-in's pipelines for the configuration drawn now, made again by a stand-in of their own, from an empty
-    // cache (as a first launch makes them, though the driver may keep shaders this process compiled) and from the cache
-    // file as it is saved now (as the next launch makes them); the cache and the stand-in go inside the stage too.
+    // The stand-in's pipelines for the configuration drawn now, made again by a stand-in of their own, from a cache of
+    // their own: empty (as a first launch makes them, though the driver may keep shaders this process compiled), or
+    // loaded from the cache file as it is saved now (as the next launch makes them). The cache is made and goes in the
+    // cache stage, the stand-in in the pipelines stage, each named as it goes.
+    gpu::PipelineWatch* watch = started_.guard.get();
     auto make = [&](bool from_file) -> gpu::Result<Made> {
-        return behind(gpu::Stage::pipelines, [&]() -> gpu::Result<Made> {
-            ATLAS_GPU_LET(cache, gpu::PipelineCache::open(started_.device->handle(), started_.device->facts(),
-                                                          from_file ? options_.cache_file : std::filesystem::path(),
-                                                          options_.spirv, from_file));
-            ATLAS_GPU_LET(standin, StandIn::create(*started_.device, cache, city_, started_.guard.get()));
-            ATLAS_GPU_CHECK(standin->prepare(renderer_->pass(), *output_));
-            return Made{
-                .ms = standin->pipelines_ms(), .count = standin->pipeline_count(), .bytes = cache.loaded_bytes()};
+        std::optional<gpu::PipelineCache> cache;
+        std::string refused;
+        behind(gpu::Stage::cache, [&] {
+            auto opened = gpu::PipelineCache::open(started_.device->handle(), started_.device->facts(),
+                                                   from_file ? options_.cache_file : std::filesystem::path(),
+                                                   options_.spirv, from_file);
+            if (opened) {
+                cache.emplace(std::move(*opened));
+            } else {
+                refused = opened.error().text();
+            }
+            return true;
         });
+        if (!cache) return gpu::fail(refused);
+        const gpu::PipelineCache& timing = *cache;
+        auto made = behind(gpu::Stage::pipelines, [&]() -> gpu::Result<Made> {
+            auto standin = StandIn::create(*started_.device, timing, city_, watch);
+            if (!standin) return std::unexpected(std::move(standin.error()));
+            const gpu::Result<void> prepared = (*standin)->prepare(renderer_->pass(), *output_);
+            const Made m{.ms = (*standin)->pipelines_ms(),
+                         .count = (*standin)->pipeline_count(),
+                         .bytes = timing.loaded_bytes()};
+            {
+                const gpu::Announced named =
+                    gpu::announce_release({.kind = "standin", .detail = "(the pipelines' timing's)"}, watch);
+                standin->reset();
+            }
+            if (!prepared) return std::unexpected(prepared.error());
+            return m;
+        });
+        behind(gpu::Stage::cache, [&] {
+            const gpu::Announced named = gpu::announce_release(
+                {.kind = "cache",
+                 .detail = from_file ? "(the pipelines' timing's, from the file)" : "(the pipelines' timing's, empty)"},
+                watch);
+            cache.reset();
+            return true;
+        });
+        return made;
     };
     const auto cold = make(false);
     const auto warm = make(true);
@@ -412,6 +498,10 @@ Drawn Session::draw(const style::CameraState& camera, const FrameTimes& times) {
     const std::int64_t start = now_ns();
     if (epoch_ns_ == 0) epoch_ns_ = start;
     if (presented_ < guarded_frames && !guarding_) {
+        // The frame drawn, named in the frames stage's marker as a release names it: a crash in its first draws says
+        // which configuration and colour it was.
+        started_.guard->set_drawing(std::format("frame (configuration {} {})", gpu::name_of(renderer_->configuration()),
+                                                gpu::colour_name(output_->format())));
         started_.guard->enter(gpu::Stage::frames);
         guarding_ = true;
     }
@@ -452,11 +542,15 @@ Drawn Session::draw(const style::CameraState& camera, const FrameTimes& times) {
         r.flags |= frame_flag::skipped;
     push_record(r);
     if (guarding_ && ++presented_ >= guarded_frames) {
-        // The first 120 frames passed: the frames stage's marker goes, and the frame loop's per-frame calls run
-        // unmarked from here (D5.10); everything else stays behind its stage.
+        // The renderer's first 120 frames passed: the frames stage's marker goes, and the frame loop's per-frame calls
+        // run unmarked from here (D5.10) until a frame is made again (a configuration, a size, a device); everything
+        // else stays behind its stage. The session's first 120 write the pipeline cache back.
         started_.guard->leave();
         guarding_ = false;
-        save_cache();
+        if (!first_frames_saved_) {
+            first_frames_saved_ = true;
+            save_cache();
+        }
     }
     if (options_.ci_log) {
         log::info("vk frame {} {:.2f} gpu {:.2f}", r.frame, static_cast<double>(end - start) / 1e6,
@@ -464,6 +558,12 @@ Drawn Session::draw(const style::CameraState& camera, const FrameTimes& times) {
     }
     d.drawn = true;
     return d;
+}
+
+void Session::rest() {
+    if (!guarding_ || closed_) return;
+    started_.guard->leave();
+    guarding_ = false;
 }
 
 void Session::push_record(const FrameRecord& r) {
@@ -545,11 +645,16 @@ void Session::device_lost() {
         gpu::PipelineWatch* watch = started_.guard.get();
         started_.device->wait_idle(); // a lost device has nothing left to wait for
         if (standin_) {
-            gpu::announce_release({.kind = "standin", .detail = "(the lost device's)"}, watch);
+            const gpu::Announced named =
+                gpu::announce_release({.kind = "standin", .detail = "(the lost device's)"}, watch);
             standin_.reset();
         }
-        started_.cache.reset();
-        gpu::announce_release({.kind = "device", .detail = "(lost)"}, watch);
+        if (started_.cache) {
+            const gpu::Announced named =
+                gpu::announce_release({.kind = "cache", .detail = "(the one on disk, the lost device's)"}, watch);
+            started_.cache.reset();
+        }
+        const gpu::Announced named = gpu::announce_release({.kind = "device", .detail = "(lost)"}, watch);
         started_.device.reset();
         return true;
     });
@@ -674,17 +779,20 @@ void Session::close() {
     guard.enter(gpu::Stage::close);
     if (started_.device) started_.device->wait_idle();
     if (standin_) {
-        gpu::announce_release({.kind = "standin"}, &guard);
+        const gpu::Announced named = gpu::announce_release({.kind = "standin"}, &guard);
         standin_.reset();
     }
     city_.reset();
-    started_.cache.reset();
+    if (started_.cache) {
+        const gpu::Announced named = gpu::announce_release({.kind = "cache", .detail = "(the one on disk)"}, &guard);
+        started_.cache.reset();
+    }
     if (started_.device) {
-        gpu::announce_release({.kind = "device", .detail = "(and its allocator)"}, &guard);
+        const gpu::Announced named = gpu::announce_release({.kind = "device", .detail = "(and its allocator)"}, &guard);
         started_.device.reset();
     }
     if (started_.instance) {
-        gpu::announce_release({.kind = "instance"}, &guard);
+        const gpu::Announced named = gpu::announce_release({.kind = "instance"}, &guard);
         started_.instance.reset();
     }
     guard.leave();

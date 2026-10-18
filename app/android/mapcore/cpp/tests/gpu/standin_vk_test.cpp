@@ -503,23 +503,80 @@ TEST_CASE("the stand-in's S1 frame is the same across runs and through both fram
                                                             << targets.largest);
 }
 
+namespace {
+
+/// A watch double (gpu/Pipelines.hpp): it hears each announcement and its end, with what the allocator holds at each,
+/// and notes every break of the rule that a name lasts its call alone: none announced while another is open (none
+/// nest in the stand-in's and the renderer's work), nothing allocated or freed while a module or a pipeline is made (an
+/// image made under a pipeline's name), nothing allocated while something goes, and each announcement ended.
+class Watch final : public gpu::PipelineWatch {
+public:
+    explicit Watch(const gpu::Device& device) : device_(device) {}
+
+    std::vector<std::string> released;
+    std::uint32_t made = 0;
+    std::uint32_t announced = 0;
+    std::uint32_t ended = 0;
+    std::vector<std::string> faults;
+
+    void before(const gpu::PipelineLabel& label) override {
+        ++made;
+        begin("pipeline " + gpu::describe(label), true);
+    }
+    void before_module(std::string_view module) override { begin("module " + std::string(module), true); }
+    void before_release(const gpu::Release& release) override {
+        released.push_back(gpu::describe(release));
+        begin("release " + gpu::describe(release), false);
+    }
+    void after() override {
+        ++ended;
+        if (open_.empty()) {
+            faults.emplace_back("an end with nothing announced");
+            return;
+        }
+        const std::uint32_t now = allocations();
+        if (making_ && now != at_open_) {
+            faults.push_back(std::format("{}: {} allocations made or freed under its name", open_,
+                                         static_cast<std::int64_t>(now) - static_cast<std::int64_t>(at_open_)));
+        }
+        if (!making_ && now > at_open_)
+            faults.push_back(std::format("{}: {} allocations made under its name", open_, now - at_open_));
+        open_.clear();
+    }
+
+private:
+    void begin(std::string what, bool making) {
+        ++announced;
+        if (!open_.empty()) faults.push_back(std::format("{} announced while {} was open", what, open_));
+        open_ = std::move(what);
+        making_ = making;
+        at_open_ = allocations();
+    }
+    [[nodiscard]] std::uint32_t allocations() const {
+        VmaTotalStatistics total{};
+        vmaCalculateStatistics(device_.memory().handle(), &total);
+        return total.total.statistics.allocationCount;
+    }
+
+    const gpu::Device& device_;
+    std::string open_;
+    bool making_ = false;
+    std::uint32_t at_open_ = 0;
+};
+
+} // namespace
+
 TEST_CASE("a renderer's end releases everything it prepared in the stand-in, announced to its watch") {
     // What VK bench's colour stage relies on (jni/Bridge.cpp): the 10-bit frame's pipelines, passes, framebuffers and
     // images go with the renderer that prepared them, so the core can let go of them all before the crash guard's
-    // colour stage closes. The watch hears each frame go, named by its configuration and colour.
-    struct Watch final : gpu::PipelineWatch {
-        std::vector<std::string> released;
-        std::uint32_t made = 0;
-        void before(const gpu::PipelineLabel& /*label*/) override { ++made; }
-        void before_module(std::string_view /*module*/) override {}
-        void before_release(const gpu::Release& release) override { released.push_back(gpu::describe(release)); }
-    };
+    // colour stage closes. The watch hears each frame go, named by its configuration and colour, and each name lasts
+    // its call alone (Watch's rule): the next frame's pass and images are made under none.
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
     ATLAS_REQUIRE(cache.has_value(), cache.error().text());
     auto city = std::make_shared<const standin::City>(standin::City::generate(32, 13.0));
-    Watch watch;
+    Watch watch(*session->device);
     auto standin = standin::StandIn::create(*session->device, *cache, city, &watch);
     ATLAS_REQUIRE(standin.has_value(), standin.error().text());
     CHECK_FALSE((*standin)->holds_prepared()); // only what every configuration shares
@@ -560,6 +617,12 @@ TEST_CASE("a renderer's end releases everything it prepared in the stand-in, ann
     renderer->reset();
     CHECK_FALSE((*standin)->holds_prepared());
     CHECK(session->take_messages().empty());
+    // Every name lasted its call alone: each announcement ended, none while another was open, and no image or buffer
+    // was made under a module's or a pipeline's name, nor under that of something going.
+    MESSAGE(watch.announced << " announcements (" << watch.made << " pipelines), " << watch.ended << " ends");
+    CHECK(watch.made > 0);
+    CHECK(watch.announced == watch.ended);
+    CHECK_MESSAGE(watch.faults.empty(), (watch.faults.empty() ? std::string() : watch.faults.front()));
 }
 
 TEST_CASE("the frosted pills draw over a 10-bit output and an 8-bit one") {

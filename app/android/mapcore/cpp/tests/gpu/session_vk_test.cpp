@@ -4,9 +4,10 @@
 // a resize and a device loss inside it, mode 0, and the close; through offscreen windows (and, where the host has one,
 // a headless surface, whose queries are the surface stage's). After each step the crash guard (gpu/Guard.hpp) holds
 // what the step left open and nothing else: the colour stage exactly while something of 10 bits is alive, the frames
-// stage over the first 120 frames only, no marker between steps after them, none after the close. ATLAS_SESSION_FULL=1
-// takes the colour stage over every configuration, as VK bench does (the layer run's order, which notes the guard's
-// marker at every driver call: every call is behind one).
+// stage over each renderer's first 120 frames only and never while the frame loop rests, no marker between steps
+// after them, none after the close; and the marker never names a module, a pipeline or a thing going once its call has
+// returned. ATLAS_SESSION_FULL=1 takes the colour stage over every configuration, as VK bench does (the layer run's
+// order, which notes the guard's marker at every driver call: every call is behind one, and named only while it runs).
 #include "gpu/Guard.hpp"
 #include "standin/City.hpp"
 #include "standin/Session.hpp"
@@ -22,6 +23,7 @@
 #include <format>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <unistd.h>
@@ -47,6 +49,17 @@ namespace fs = std::filesystem;
     const std::string text = read(dir / "guard");
     if (!text.starts_with("stage ")) return {};
     return text.substr(6, text.find('\n') - 6);
+}
+
+/// What the marker on disk names besides its stage: a module, a pipeline or a thing going ("" for none). Between the
+/// session's calls nothing is being made or destroyed, so it is always "".
+[[nodiscard]] std::string named(const fs::path& dir) {
+    const std::string text = read(dir / "guard");
+    const std::size_t first = text.find('\n');
+    if (first == std::string::npos) return {};
+    const std::string line = text.substr(first + 1, text.find('\n', first + 1) - first - 1);
+    return line.starts_with("pipeline ") || line.starts_with("module ") || line.starts_with("release ") ? line
+                                                                                                        : std::string();
 }
 
 [[nodiscard]] bool has(std::string_view text, std::string_view part) { return text.find(part) != std::string::npos; }
@@ -139,19 +152,45 @@ constexpr std::uint32_t ten = standin::bench_flag::ten_bit;
     return false;
 }
 
+/// A fresh guard folder for a test case, removed when it ends.
+class Folder {
+public:
+    explicit Folder(std::string_view name)
+        : path_(fs::temp_directory_path() / std::format("atlas-session-{}-{}", name, ::getpid())) {
+        std::error_code ec;
+        fs::remove_all(path_, ec);
+        fs::create_directories(path_);
+    }
+    Folder(const Folder&) = delete;
+    Folder& operator=(const Folder&) = delete;
+    Folder(Folder&&) = delete;
+    Folder& operator=(Folder&&) = delete;
+    ~Folder() {
+        std::error_code ec;
+        fs::remove_all(path_, ec);
+    }
+    [[nodiscard]] const fs::path& path() const noexcept { return path_; }
+
+private:
+    fs::path path_;
+};
+
+/// Whether this device draws the frame in 10 bits offscreen (lavapipe does): the colour stage's tests need it.
+[[nodiscard]] bool ten_bits_here(const gpu::Started& started) {
+    const gpu::Facts& f = started.device->facts();
+    if (f.deepest.ten_bit()) return true;
+    MESSAGE("skipped: no 10 bits here (" << gpu::colour_stage(f) << ")");
+    return false;
+}
+
 } // namespace
 
 TEST_CASE("the core's session runs VK bench's order with every stage closed behind it, the colour stage holding "
           "10-bit work alone") {
     if (!test::open_session()) return; // no Vulkan here
-    const fs::path dir = fs::temp_directory_path() / std::format("atlas-session-{}", ::getpid());
-    std::error_code ec;
-    fs::remove_all(dir, ec);
-    fs::create_directories(dir);
-    if (!can_start(dir)) {
-        fs::remove_all(dir, ec);
-        return;
-    }
+    const Folder folder("order");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
     auto started = gpu::start_guarded(start_in(dir));
     ATLAS_REQUIRE(started.has_value(), started.error().reason);
     {
@@ -166,24 +205,35 @@ TEST_CASE("the core's session runs VK bench's order with every stage closed behi
         CHECK(has(facts, "guard: clear\n"));
         CHECK(marked(dir).empty());
 
-        // 1. The matrix at the frame's 8 bits: the first configuration draws past the first 120 frames, behind the
-        // frames stage until then, the others a few frames each. Between steps nothing stays open.
+        // 1. The matrix at the frame's 8 bits: the first configuration draws past its first 120 frames, behind the
+        // frames stage until then; each other configuration's first frames are behind it again (a new frame's first
+        // draws). Nothing is named between steps.
         const std::vector<gpu::Configuration> configurations = matrix(*started->device);
         ATLAS_REQUIRE(!configurations.empty(), "the device draws no configuration");
         MESSAGE(configurations.size() << " configurations, the device picks "
                                       << gpu::name_of(started->device->facts().choice));
         ATLAS_REQUIRE(session.bench(1, configurations.front(), pills).empty(), "the first configuration");
+        CHECK(named(dir).empty());
         CHECK(draw(session, 60) == 60);
         CHECK(marked(dir) == "frames"); // the first 120 frames are guarded
+        CHECK(named(dir).empty());
         CHECK(draw(session, 61) == 61);
         CHECK(marked(dir).empty()); // and after them, nothing
         for (const gpu::Configuration& c : configurations) {
             const std::string refused = session.bench(1, c, pills);
             CHECK_MESSAGE(refused.empty(), gpu::name_of(c) << ": " << refused);
+            CHECK(named(dir).empty());
             CHECK(draw(session, 3) == 3);
-            CHECK(marked(dir).empty());
+            // A configuration other than the one drawn: a new frame, whose first draws the frames stage holds.
+            CHECK(marked(dir) == (c == configurations.front() ? "" : "frames"));
+            CHECK(named(dir).empty());
             CHECK_FALSE(session.output()->colour().ten_bit());
         }
+        // The frame loop at rest: the frames stage ends, and the next draw opens it again.
+        session.rest();
+        CHECK(marked(dir).empty());
+        CHECK(draw(session, 1) == 1);
+        CHECK(marked(dir) == "frames");
 
         // 2. A host switch: the window goes and another comes, the bench drawing the same configuration on it.
         session.detach();
@@ -191,13 +241,18 @@ TEST_CASE("the core's session runs VK bench's order with every stage closed behi
         CHECK(marked(dir).empty());
         ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
         CHECK(session.drawing()); // the bench's renderer made again on the new window
+        CHECK(named(dir).empty());
         CHECK(draw(session, 3) == 3);
+        CHECK(marked(dir) == "frames"); // a new renderer: its first frames guarded
         CHECK(session.bench(1, configurations.front(), pills | standin::bench_flag::texture).empty());
 
-        // 3. The pipelines' timing, as VK bench asks for it after the soak.
+        // 3. The pipelines' timing, as VK bench asks for it after the soak: its caches in the cache stage, its stand-in
+        // in the pipelines stage, each named only as it goes.
         const std::string timed = session.pipelines();
         CHECK_MESSAGE(timed.starts_with("vkbench pipelines: this launch "), timed);
         CHECK_FALSE(has(timed, "failed"));
+        CHECK(named(dir).empty());
+        CHECK(draw(session, 130) == 130);
         CHECK(marked(dir).empty());
 
         // 4. The colour stage, where the device draws the frame in 10 bits (lavapipe does, offscreen).
@@ -216,8 +271,9 @@ TEST_CASE("the core's session runs VK bench's order with every stage closed behi
                     CHECK(session.output()->colour().ten_bit() == at_ten);
                     // Open exactly while something of 10 bits is alive.
                     CHECK(session.colour_open() == at_ten);
-                    CHECK(marked(dir) == (at_ten ? "colour" : ""));
+                    CHECK(named(dir).empty());
                     CHECK(draw(session, 3) == 3);
+                    CHECK(marked(dir) == (at_ten ? "colour" : "frames"));
                 }
             }
             // Inside the stage again: the window goes (the stage closes with the 10-bit frame and output) and comes
@@ -230,21 +286,35 @@ TEST_CASE("the core's session runs VK bench's order with every stage closed behi
             CHECK(session.bench(1, configurations.front(), pills | ten) ==
                   "no surface is attached (the window went away)");
             CHECK(marked(dir).empty());
-            // A window that comes back refused (its swapchain): nothing held, the stage closed, nothing on disk.
-            CHECK_FALSE(session.attach(std::make_unique<test::OffscreenWindow>(1), size, why));
+            // The window back: the stage opens again for its 10-bit output and frame.
+            ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+            CHECK(session.colour_open());
+            CHECK(session.output()->colour().ten_bit());
+            CHECK(named(dir).empty());
+            CHECK(draw(session, 3) == 3);
+            session.detach();
+            // A window that comes back refused (its swapchain, at 10 bits and at the 8 made in their place): nothing
+            // held, the stage closed, nothing on disk. The next window draws at 8, and the next 10-bit step opens the
+            // stage again on it.
+            CHECK_FALSE(session.attach(std::make_unique<test::OffscreenWindow>(2), size, why));
             CHECK(has(why, "planted: the driver refused the swapchain"));
             CHECK_FALSE(session.attached());
             CHECK_FALSE(session.colour_open());
             CHECK(marked(dir).empty());
             ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+            CHECK_FALSE(session.colour_open());
+            CHECK_FALSE(session.output()->colour().ten_bit());
+            ATLAS_REQUIRE(session.bench(1, configurations.front(), pills | ten).empty());
             CHECK(session.colour_open());
             CHECK(session.output()->colour().ten_bit());
+            CHECK(named(dir).empty());
             CHECK(draw(session, 3) == 3);
             // A resize inside it: the 10-bit output made again, still inside.
             session.resize({.width = 120, .height = 200});
             CHECK(session.output()->extent().width == 120);
             CHECK(session.output()->colour().ten_bit());
             CHECK(marked(dir) == "colour");
+            CHECK(named(dir).empty());
             CHECK(draw(session, 3) == 3);
             session.resize(size);
             // A device loss inside it: the 10-bit frame and output go inside it, it closes, the device is made again
@@ -254,6 +324,7 @@ TEST_CASE("the core's session runs VK bench's order with every stage closed behi
             CHECK(session.colour_open());
             CHECK(session.output()->colour().ten_bit());
             CHECK(marked(dir) == "colour");
+            CHECK(named(dir).empty());
             CHECK(draw(session, 3) == 3);
             CHECK(has(session.facts(), "profiles: VP_ANDROID_")); // read of the physical device, kept across the loss
             // Out of it as VK bench leaves it, in mode 0: nothing of 10 bits is left, and the stage is closed.
@@ -263,6 +334,7 @@ TEST_CASE("the core's session runs VK bench's order with every stage closed behi
             CHECK(marked(dir).empty());
         }
         CHECK(session.bench(0, configurations.front(), 0).empty());
+        CHECK(marked(dir).empty());
         const std::vector<std::string> messages = started->instance->messages().take();
         CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
 
@@ -273,7 +345,157 @@ TEST_CASE("the core's session runs VK bench's order with every stage closed behi
         CHECK(started->instance == nullptr);
         CHECK(fs::exists(dir / "pipelines.bin")); // its last write
     }
-    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("each renderer's first frames are the frames stage's: a new configuration, a new size, a rebuilt device") {
+    // D5.10 guards the first draws, where drivers crash: of every frame the core makes, not of the session's first
+    // alone, so a crash in VK bench's second configuration's first frame, or in the first frame after a device loss,
+    // leaves a marker. The stage ends after a renderer's 120 frames, when the frame loop rests and with the renderer.
+    if (!test::open_session()) return;
+    const Folder folder("frames");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    {
+        standin::Session session(*started, session_in(dir));
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+        const std::vector<gpu::Configuration> configurations = matrix(*started->device);
+        ATLAS_REQUIRE(configurations.size() >= 2, "the device draws " << configurations.size() << " configurations");
+        ATLAS_REQUIRE(session.bench(1, configurations[0], pills).empty());
+        CHECK(draw(session, 120) == 120);
+        CHECK(marked(dir).empty());
+        // A second configuration: its first frame is guarded, until its own 120th, the marker naming the frame drawn.
+        ATLAS_REQUIRE(session.bench(1, configurations[1], pills).empty());
+        CHECK(marked(dir).empty()); // nothing drawn yet
+        CHECK(draw(session, 1) == 1);
+        CHECK(marked(dir) == "frames");
+        CHECK(has(read(dir / "guard"),
+                  std::format("\ndrawing frame (configuration {} rgba8)\n", gpu::name_of(configurations[1]))));
+        CHECK(draw(session, 118) == 118);
+        CHECK(marked(dir) == "frames");
+        CHECK(draw(session, 1) == 1);
+        CHECK(marked(dir).empty());
+        // A new size: the frame made again, its first frames guarded.
+        session.resize({.width = 100, .height = 150});
+        CHECK(draw(session, 1) == 1);
+        CHECK(marked(dir) == "frames");
+        // At rest: the stage ends, and opens again at the next draw (still within the 120).
+        session.rest();
+        CHECK(marked(dir).empty());
+        CHECK(draw(session, 1) == 1);
+        CHECK(marked(dir) == "frames");
+        CHECK(draw(session, 118) == 118);
+        CHECK(marked(dir).empty());
+        // A device lost and made again: the rebuilt renderer's first frames are guarded.
+        session.lose_device();
+        CHECK(session.drawing());
+        CHECK(marked(dir).empty());
+        CHECK(draw(session, 1) == 1);
+        CHECK(marked(dir) == "frames");
+        // The renderer gone (mode 0): the stage ends with it.
+        CHECK(session.bench(0, configurations[0], 0).empty());
+        CHECK(marked(dir).empty());
+        session.close();
+        CHECK_FALSE(fs::exists(dir / "guard"));
+    }
+}
+
+TEST_CASE("the colour stage closes as soon as nothing of 10 bits is left: refused outputs, a refused remake, a refused "
+          "rebuild") {
+    // A 10-bit swapchain the driver refuses: the stage closes, and the frame's 8-bit one is made in its place outside
+    // it (so the stage never holds 8-bit work); VK bench is told there are no 10 bits here, and is not refused again on
+    // this window. A remake refused inside the stage leaves nothing of 10 bits (the old output and the frame went), so
+    // the stage closes; the next step opens it again. A device lost inside the stage and made again with its 10-bit
+    // output refused goes on at 8 bits outside it, or, with the 8-bit one refused too, turns the session off with
+    // nothing open and no marker on disk.
+    if (!test::open_session()) return;
+    const Folder folder("colour");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    {
+        standin::Session session(*started, session_in(dir));
+        if (!ten_bits_here(*started)) return;
+        const gpu::Configuration c = started->device->facts().choice;
+        std::string why;
+
+        // 1. The 10-bit output refused as the stage opens: closed, the 8-bit output made outside it.
+        auto refusing = std::make_unique<test::OffscreenWindow>(1, true);
+        ATLAS_REQUIRE(session.attach(std::move(refusing), size, why), why); // at 8 bits: not refused
+        ATLAS_REQUIRE(session.bench(1, c, pills).empty());
+        CHECK(draw(session, 2) == 2);
+        why = session.bench(1, c, pills | ten);
+        MESSAGE("the 10-bit output refused: " << why);
+        CHECK(why.starts_with("no 10 bits here: the driver refused a swapchain of "));
+        CHECK(has(why, "planted: the driver refused the 10-bit swapchain"));
+        CHECK_FALSE(session.colour_open());
+        ATLAS_REQUIRE(session.output() != nullptr);
+        CHECK_FALSE(session.output()->colour().ten_bit());
+        CHECK(marked(dir).empty());
+        CHECK(has(session.facts(), "colour.stage: none (the driver refused a swapchain of "));
+        // Not tried again on this window: the next 10-bit step is told at once, nothing made.
+        CHECK(session.bench(1, c, pills | ten).starts_with("no 10 bits here: the driver refused"));
+        CHECK_FALSE(session.colour_open());
+        // The 8-bit steps draw as before, outside the stage.
+        CHECK(session.bench(1, c, pills).empty());
+        CHECK(draw(session, 2) == 2);
+        CHECK(marked(dir) == "frames");
+        CHECK_FALSE(session.colour_open());
+        session.detach();
+        CHECK(marked(dir).empty());
+
+        // 2. A remake refused inside the stage (a resize): the 10-bit frame and output gone, the stage closed, nothing
+        // on disk; the next step opens it again with a 10-bit output.
+        auto window = std::make_unique<test::OffscreenWindow>();
+        test::OffscreenWindow* w = window.get();
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why); // a new window: 10 bits tried again
+        ATLAS_REQUIRE(session.bench(1, c, pills | ten).empty(), "10 bits on a new window");
+        CHECK(session.colour_open());
+        CHECK(draw(session, 2) == 2);
+        w->refuse(1);
+        session.resize({.width = 120, .height = 200});
+        CHECK(session.output() == nullptr);
+        CHECK_FALSE(session.drawing());
+        CHECK_FALSE(session.colour_open());
+        CHECK(marked(dir).empty());
+        ATLAS_REQUIRE(session.bench(1, c, pills | ten).empty(), "10 bits again after a refused remake");
+        CHECK(session.colour_open());
+        CHECK(session.output()->colour().ten_bit());
+        CHECK(draw(session, 2) == 2);
+        CHECK(marked(dir) == "colour");
+
+        // 3. A device lost inside the stage, made again with its 10-bit output refused: on at 8 bits, outside it.
+        w->refuse(1);
+        session.lose_device();
+        CHECK(session.drawing());
+        CHECK_FALSE(session.colour_open());
+        CHECK_FALSE(session.output()->colour().ten_bit());
+        CHECK(draw(session, 2) == 2);
+        CHECK(marked(dir) == "frames");
+
+        // 4. Into the stage again, then a device lost with every output refused: the session is off, nothing open,
+        // nothing on disk, and VK bench's mode 0 has nothing left to close.
+        session.detach();
+        auto last = std::make_unique<test::OffscreenWindow>();
+        test::OffscreenWindow* l = last.get();
+        ATLAS_REQUIRE(session.attach(std::move(last), size, why), why);
+        ATLAS_REQUIRE(session.bench(1, c, pills | ten).empty(), "10 bits on the last window");
+        CHECK(session.colour_open());
+        l->refuse(2);
+        session.lose_device();
+        CHECK_FALSE(session.drawing());
+        CHECK_FALSE(session.colour_open());
+        CHECK(marked(dir).empty());
+        CHECK(
+            has(session.facts(), "vulkan.session: off (the swapchain could not be made again after the device's loss"));
+        CHECK_FALSE(session.bench(0, c, 0).empty()); // the session is off
+        CHECK(marked(dir).empty());
+        session.close();
+        CHECK_FALSE(fs::exists(dir / "guard"));
+    }
 }
 
 TEST_CASE("on a headless surface the session's surface, its queries and its outputs are the surface stage's") {
@@ -285,14 +507,9 @@ TEST_CASE("on a headless surface the session's surface, its queries and its outp
         return;
     }
     probe.instance.reset();
-    const fs::path dir = fs::temp_directory_path() / std::format("atlas-session-headless-{}", ::getpid());
-    std::error_code ec;
-    fs::remove_all(dir, ec);
-    fs::create_directories(dir);
-    if (!can_start(dir)) {
-        fs::remove_all(dir, ec);
-        return;
-    }
+    const Folder folder("headless");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
     auto started = gpu::start_guarded(start_in(dir));
     ATLAS_REQUIRE(started.has_value(), started.error().reason);
     {
@@ -307,6 +524,7 @@ TEST_CASE("on a headless surface the session's surface, its queries and its outp
         const gpu::Configuration c = started->device->facts().choice;
         ATLAS_REQUIRE(session.bench(1, c, pills).empty());
         CHECK(draw(session, 5) == 5);
+        CHECK(named(dir).empty());
         // The headless surface offers no 10 bits in sRGB: the colour stage refuses, opening nothing.
         const std::string refused = session.bench(1, c, pills | ten);
         if (!refused.empty()) {
@@ -320,7 +538,6 @@ TEST_CASE("on a headless surface the session's surface, its queries and its outp
         session.close();
         CHECK_FALSE(fs::exists(dir / "guard"));
     }
-    fs::remove_all(dir, ec);
 }
 
 #else

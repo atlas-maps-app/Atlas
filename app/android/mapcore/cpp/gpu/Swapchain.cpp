@@ -65,7 +65,7 @@ void Swapchain::retire_presents() {
 }
 
 Result<std::unique_ptr<Swapchain>> Swapchain::create(const Device& device, vk::SurfaceKHR surface, vk::Extent2D wanted,
-                                                     std::unique_ptr<Output> old, Depth depth) {
+                                                     const Output* old, Depth depth) {
     if (!device.enabled().swapchain) {
         return fail(std::format("{} was opened for offscreen work, without VK_KHR_swapchain: it cannot present",
                                 device.facts().name));
@@ -96,37 +96,29 @@ Result<std::unique_ptr<Swapchain>> Swapchain::create(const Device& device, vk::S
         usage |= vk::ImageUsageFlagBits::eTransferSrc;
         self->transfer_source_ = true;
     }
-    vk::SwapchainCreateInfoKHR info{.surface = surface,
-                                    .minImageCount = count,
-                                    .imageFormat = self->colour_.format,
-                                    .imageColorSpace = self->colour_.space,
-                                    .imageExtent = extent,
-                                    .imageArrayLayers = 1,
-                                    .imageUsage = usage,
-                                    .imageSharingMode = vk::SharingMode::eExclusive,
-                                    .preTransform = self->transform_,
-                                    .compositeAlpha = pick_alpha(caps.supportedCompositeAlpha),
-                                    .presentMode = vk::PresentModeKHR::eFifo,
-                                    .clipped = vk::True,
-                                    .oldSwapchain = old ? old->swapchain() : vk::SwapchainKHR{}};
+    const vk::SwapchainCreateInfoKHR info{.surface = surface,
+                                          .minImageCount = count,
+                                          .imageFormat = self->colour_.format,
+                                          .imageColorSpace = self->colour_.space,
+                                          .imageExtent = extent,
+                                          .imageArrayLayers = 1,
+                                          .imageUsage = usage,
+                                          .imageSharingMode = vk::SharingMode::eExclusive,
+                                          .preTransform = self->transform_,
+                                          .compositeAlpha = pick_alpha(caps.supportedCompositeAlpha),
+                                          .presentMode = vk::PresentModeKHR::eFifo,
+                                          .clipped = vk::True,
+                                          .oldSwapchain = old != nullptr ? old->swapchain() : vk::SwapchainKHR{}};
+    // Refused, a 10-bit one included (a driver that lists a format it cannot make a swapchain of), the call fails: the
+    // caller makes the frame at 8 bits, outside VK bench's colour stage (standin/Session.cpp). The old swapchain is
+    // retired by the call either way.
     auto made = device.handle().createSwapchainKHR(info);
-    if (!made && self->colour_.ten_bit()) {
-        // A driver that lists a 10-bit format it cannot make a swapchain of: the frame at 8 bits, saying so. The old
-        // swapchain was retired by the refused call, so the second names none.
-        const std::string refused = std::format("the driver refused a swapchain of {} ({}): 8 bits",
-                                                colour_name(self->colour_.format), vk::to_string(made.error()));
-        log::warn("vk swapchain: {}", refused);
-        self->colour_ = colour_for_surface(device.facts(), formats, Depth::eight);
-        self->colour_.reason = refused;
-        info.imageFormat = self->colour_.format;
-        info.imageColorSpace = self->colour_.space;
-        info.oldSwapchain = vk::SwapchainKHR{};
-        made = device.handle().createSwapchainKHR(info);
+    if (!made) {
+        return fail(made.error(), std::format("a swapchain of {} x {} in {}", extent.width, extent.height,
+                                              colour_name(self->colour_.format)));
     }
-    if (!made) return fail(made.error(), std::format("a swapchain of {} x {}", extent.width, extent.height));
     self->swapchain_ = std::move(*made);
     self->format_ = self->colour_.format;
-    old.reset(); // retired once its presents are done (its destructor)
 
     ATLAS_VK_LET(images, self->swapchain_.getImages(), "the swapchain's images");
     self->images_ = std::move(images);

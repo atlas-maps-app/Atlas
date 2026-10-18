@@ -19,9 +19,9 @@ namespace atlas::gpu {
 
 namespace {
 
-constexpr std::array stage_names{"instance",  "facts",  "device",   "cache",  "surface",
-                                 "pipelines", "frames", "profiles", "colour", "close"};
-static_assert(stage_names.size() == static_cast<std::size_t>(Stage::close) + 1);
+constexpr std::array stage_names{"instance", "facts",    "device", "cache", "surface", "pipelines",
+                                 "frames",   "profiles", "colour", "close", "refused"};
+static_assert(stage_names.size() == static_cast<std::size_t>(Stage::refused) + 1);
 
 /// The colour stage's and the profiles stage's names, as markers and off lines spell them: the rungs below Vulkan off,
 /// whose crash turns off only what they guard, at once.
@@ -30,9 +30,15 @@ constexpr std::string_view profiles = "profiles";
 
 [[nodiscard]] bool rung_below(std::string_view stage) noexcept { return stage == colour || stage == profiles; }
 
-/// Writes `text` to `path` whole: into `path.tmp`, synced, then renamed over `path`, so that a crash at any moment
-/// leaves the old text or the new one on disk, never a part of either.
-void write_synced(const std::filesystem::path& path, std::string_view text) {
+/// How far a marker's start may lie from this process's own for the marker to be this process's: the façade reads the
+/// start from two clocks (MK/ProcessExits.kt), which can move a few milliseconds apart between two reads. A process
+/// that reuses a crashed one's id starts after that one died, so far later than this.
+constexpr std::int64_t same_start_ms = 1000;
+
+/// Writes `text` to `path` whole: into `path.tmp`, synced when `sync`, then renamed over `path`, so that a crash at any
+/// moment leaves the old text or the new one on disk, never a part of either. Unsynced, the page cache holds the new
+/// text through a crash of the process (not through a loss of power, which is no driver's crash).
+void write_synced(const std::filesystem::path& path, std::string_view text, bool sync = true) {
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
     const std::filesystem::path tmp = path.string() + ".tmp";
@@ -48,9 +54,9 @@ void write_synced(const std::filesystem::path& path, std::string_view text) {
         if (n <= 0) break;
         done += static_cast<std::size_t>(n);
     }
-    const bool synced = done == text.size() && ::fsync(fd) == 0;
+    const bool written = done == text.size() && (!sync || ::fsync(fd) == 0);
     ::close(fd);
-    if (!synced || ::rename(tmp.c_str(), path.c_str()) != 0) {
+    if (!written || ::rename(tmp.c_str(), path.c_str()) != 0) {
         log::error("vk guard cannot write {}", path.string());
         (void)::unlink(tmp.c_str());
     }
@@ -126,6 +132,13 @@ void write_synced(const std::filesystem::path& path, std::string_view text) {
         .count();
 }
 
+/// This process's start where the façade gives none (hosts, tests): the time its first guard was made, the same for
+/// every guard of the process, so that a start knows a marker of an earlier core in this process for its own.
+[[nodiscard]] std::int64_t first_guard_ms() noexcept {
+    static const std::int64_t first = now_ms();
+    return first;
+}
+
 } // namespace
 
 std::string_view name_of(Stage stage) noexcept { return stage_names.at(static_cast<std::size_t>(stage)); }
@@ -156,7 +169,7 @@ ProcessExits parse_exits(std::string_view text) {
 
 Guard::Guard(std::filesystem::path dir, std::string system, std::string build, std::string plant)
     : dir_(std::move(dir)), system_(std::move(system)), build_(std::move(build)), plant_(std::move(plant)),
-      pid_(static_cast<std::int64_t>(::getpid())), start_ms_(now_ms()) {
+      pid_(static_cast<std::int64_t>(::getpid())), start_ms_(first_guard_ms()) {
     if (system_.empty()) system_ = "unknown";
     // Never empty: an off line from before build IDs has an empty build, which must match no build.
     if (build_.empty()) build_ = "unknown";
@@ -167,6 +180,8 @@ Guard::Guard(std::filesystem::path dir, std::string system, std::string build, s
 void Guard::set_process_start(std::int64_t ms) noexcept {
     if (ms > 0) start_ms_ = ms;
 }
+
+void Guard::set_drawing(std::string_view frame) { drawing_ = clean(frame); }
 
 GuardVerdict Guard::check_start(const ProcessExits& exits) {
     GuardVerdict v;
@@ -191,9 +206,11 @@ bool Guard::read_marker(const std::string& marker, const ProcessExits& exits, Gu
     const std::string pipeline = field(marker, "pipeline");
     const std::string module = field(marker, "module");
     const std::string release = field(marker, "release");
+    const std::string drawing = field(marker, "drawing"); // the frames stage's frame, when no call was named
     const std::string what = !pipeline.empty()  ? "pipeline " + pipeline
                              : !module.empty()  ? "module " + module
                              : !release.empty() ? "release " + release
+                             : !drawing.empty() ? "drawing " + drawing
                                                 : std::string();
     const std::string build = field(marker, "build"); // empty: a marker from before build IDs
     if (stage.empty()) stage = "unknown";
@@ -204,16 +221,18 @@ bool Guard::read_marker(const std::string& marker, const ProcessExits& exits, Gu
     std::error_code ec;
     std::filesystem::remove(dir_ / "guard", ec);
 
-    // Kills are not crashes: the marker's process, among the exits Android recorded, was stopped by the user, the
-    // system or the package's update, or it is this very process (an earlier core in it left the marker, and it runs).
-    // A marker without a process (from before alpha 7's second round), or exits not known (API 29), counts.
+    // Kills are not crashes: the marker's process is this very one (its id and its start: an earlier core in it left
+    // the marker, and it runs), whatever Android records; or, among the exits Android recorded, it was stopped by the
+    // user, the system or the package's update. A marker without a process (from before alpha 7's second round) counts,
+    // and so does any other where the exits are not known (API 29).
     const std::optional<std::int64_t> pid = number(field(marker, "pid"));
     const std::optional<std::int64_t> start = number(field(marker, "start"));
-    if (pid && start && exits.known) {
-        if (*pid == pid_) {
+    if (pid && start) {
+        if (*pid == pid_ && *start >= start_ms_ - same_start_ms && *start <= start_ms_ + same_start_ms) {
             v.discarded = std::format("vk guard: {} marker of this running process, not counted", stage);
-        } else {
-            // The process's exit: the first after its start among those of its id (ids are reused).
+        } else if (exits.known) {
+            // The process's exit: the first after its start among those of its id (ids are reused, this process's own
+            // among them).
             const ProcessExit* exit = nullptr;
             for (const ProcessExit& e : exits.exits) {
                 if (e.pid == *pid && e.at_ms >= *start && (exit == nullptr || e.at_ms < exit->at_ms)) exit = &e;
@@ -321,13 +340,23 @@ std::string_view Guard::marked() const noexcept {
     return current_ ? name_of(*current_) : std::string_view();
 }
 
-void Guard::write_marker() const {
+std::string_view Guard::making() const noexcept { return notes_.empty() ? std::string_view() : notes_.back(); }
+
+void Guard::write_marker(bool synced) const {
     if (dir_.empty() || (!current_ && !colour_)) return;
+    // A refused start's teardown is keyed to the system build, as the stages before the driver is known are: a crash
+    // there refuses the next start before its instance, not again in the same teardown.
+    const bool system_keyed = current_ == Stage::refused;
     std::string text = std::format("stage {}\n", marked());
-    if (!making_.empty()) text += making_ + "\n";
-    text += std::format("driver {}\nversion {}\nbuild {}\nattempt {}\npid {}\nstart {}\n", driver_,
-                        version_.empty() ? system_ : version_, build_, attempt_, pid_, start_ms_);
-    write_synced(dir_ / "guard", text);
+    if (const std::string_view what = making(); !what.empty()) {
+        text += std::format("{}\n", what);
+    } else if (current_ == Stage::frames && !drawing_.empty()) {
+        text += std::format("drawing {}\n", drawing_); // the frame the frames stage draws, between named calls
+    }
+    text += std::format("driver {}\nversion {}\nbuild {}\nattempt {}\npid {}\nstart {}\n",
+                        system_keyed ? std::string_view("unknown") : std::string_view(driver_),
+                        system_keyed || version_.empty() ? system_ : version_, build_, attempt_, pid_, start_ms_);
+    write_synced(dir_ / "guard", text, synced);
 }
 
 bool Guard::planted_making(std::string_view name, bool pipeline) const {
@@ -364,7 +393,7 @@ void Guard::enter(Stage stage) {
         return;
     }
     current_ = stage;
-    making_.clear();
+    notes_.clear();
     write_marker();
     // The pipelines stage's plant waits for its first pipeline, so that the marker names it; inside the colour stage
     // no other stage's plant fires (its marker is the colour stage's).
@@ -373,30 +402,51 @@ void Guard::enter(Stage stage) {
 }
 
 void Guard::note(std::string what, bool planted) {
-    making_ = std::move(what);
-    write_marker();
-    if (planted) abort_planted(std::format("{}, {}", marked(), making_));
+    const bool changed = what != making();
+    notes_.push_back(std::move(what));
+    if (changed) write_marker();
+    if (planted) abort_planted(std::format("{}, {}", marked(), notes_.back()));
 }
 
 void Guard::before(const PipelineLabel& label) {
-    if (current_ != Stage::pipelines && !colour_) return;
+    // Outside the pipelines and colour stages no stage names a pipeline: the call is the stage's alone, and its after
+    // still comes.
+    if (current_ != Stage::pipelines && !colour_) {
+        note({}, false);
+        return;
+    }
     note("pipeline " + clean(describe(label)), planted_making(label.name, true));
 }
 
 void Guard::before_module(std::string_view module) {
-    if (current_ != Stage::pipelines && !colour_) return;
+    if (current_ != Stage::pipelines && !colour_) {
+        note({}, false);
+        return;
+    }
     note("module " + clean(module), planted_making(module, false));
 }
 
 void Guard::before_release(const Release& release) {
-    if (!current_ && !colour_) return;
+    if (!current_ && !colour_) {
+        note({}, false); // no stage: no marker
+        return;
+    }
     note("release " + clean(describe(release)), planted_release(release));
+}
+
+void Guard::after() {
+    if (notes_.empty()) return; // the stage changed inside the call, which cleared its name
+    std::string named = std::move(notes_.back());
+    notes_.pop_back();
+    // The call returned: the marker names the stage again (or the call this one ran inside), not synced (the file's
+    // head, gpu/Guard.hpp: the page cache keeps the rewrite through a crash of the process).
+    if (making() != named) write_marker(false);
 }
 
 void Guard::leave() {
     if (!current_) return;
     current_.reset();
-    making_.clear();
+    notes_.clear();
     if (dir_.empty()) return;
     if (colour_) {
         write_marker(); // the colour stage goes on
@@ -409,14 +459,14 @@ void Guard::leave() {
 void Guard::enter_colour() {
     if (colour_) return;
     colour_ = true;
-    making_.clear();
+    notes_.clear();
     write_marker();
 }
 
 void Guard::leave_colour() {
     if (!colour_) return;
     colour_ = false;
-    making_.clear();
+    notes_.clear();
     if (dir_.empty()) return;
     if (current_) {
         write_marker(); // the stage it ran inside goes on
@@ -536,6 +586,22 @@ std::expected<Started, StartRefusal> start_guarded(const StartOptions& options) 
     Guard& guard = *s.guard;
     guard.set_process_start(options.process_start_ms);
     auto refuse = [&](std::string line, std::string reason) {
+        // What the start made goes before it returns, behind a stage of its own: a driver that crashes letting go of a
+        // refused start's device or instance would do so at every launch, so that stage is keyed to the system build
+        // (write_marker), and its second crash refuses the next start before the instance, as Vulkan off does.
+        if (s.instance) {
+            guard.enter(Stage::refused);
+            if (s.device) {
+                const Announced named =
+                    announce_release({.kind = "device", .detail = "(a refused start's, and its allocator)"}, &guard);
+                s.device.reset();
+            }
+            {
+                const Announced named = announce_release({.kind = "instance", .detail = "(a refused start's)"}, &guard);
+                s.instance.reset();
+            }
+            guard.leave();
+        }
         return std::unexpected(StartRefusal{.line = std::move(line),
                                             .reason = std::move(reason),
                                             .kept_facts = guard.kept_facts(),

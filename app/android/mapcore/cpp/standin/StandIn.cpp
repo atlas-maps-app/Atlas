@@ -46,11 +46,11 @@ struct Spirv {
     std::span<const std::uint32_t> words;
 };
 
-/// The shader module of `spirv`, announced first (the log, the crash guard), so that a driver crashing in
-/// vkCreateShaderModule is known by the module.
+/// The shader module of `spirv`, announced for its making alone (the log, the crash guard), so that a driver crashing
+/// in vkCreateShaderModule is known by the module, and nothing made after it by its name.
 [[nodiscard]] gpu::Result<vk::raii::ShaderModule> module_of(const gpu::Device& device, const Spirv& spirv,
                                                             gpu::PipelineWatch* watch) {
-    gpu::announce_module(spirv.name, watch);
+    const gpu::Announced named = gpu::announce_module(spirv.name, watch);
     return gpu::make_module(device.handle(), spirv.words);
 }
 
@@ -281,10 +281,15 @@ gpu::Result<std::unique_ptr<StandIn>> StandIn::create(const gpu::Device& device,
 
 gpu::Result<void> StandIn::make_pipeline(const gpu::GraphicsDesc& desc, vk::raii::Pipeline& out, double& ms,
                                          const gpu::PipelineCache& cache) {
-    gpu::announce(desc.label, watch_);
-    const auto started = clock::now();
-    ATLAS_GPU_LET(pipeline, gpu::make_graphics(device_.handle(), cache.handle(), desc));
-    ms += ms_since(started);
+    // Named for the pipeline's making alone; its time is the driver's, not the guard's writes.
+    auto made = [&] {
+        const gpu::Announced named = gpu::announce(desc.label, watch_);
+        const auto started = clock::now();
+        auto pipeline = gpu::make_graphics(device_.handle(), cache.handle(), desc);
+        ms += ms_since(started);
+        return pipeline;
+    }();
+    ATLAS_GPU_LET(pipeline, std::move(made));
     out = std::move(pipeline);
     return {};
 }
@@ -462,11 +467,15 @@ gpu::Result<void> StandIn::create_fixed() {
     shadow_desc.target = {.render_pass = *shadow_pass_, .subpass = 0, .colour_count = 1};
     ATLAS_GPU_CHECK(make_pipeline(shadow_desc, shadow_pipeline_, fixed_pipelines_ms_, cache_));
     const gpu::PipelineLabel blur_label{.name = "blur", .module = "standin_blur"};
-    gpu::announce(blur_label, watch_);
-    const auto started = clock::now();
-    ATLAS_GPU_LET(blur_pipeline,
-                  gpu::make_compute(d, cache_.handle(), blur_label, *blur_module_, "blur_cs", *blur_pipeline_layout_));
-    fixed_pipelines_ms_ += ms_since(started);
+    auto blur_made = [&] {
+        const gpu::Announced named = gpu::announce(blur_label, watch_);
+        const auto started = clock::now();
+        auto pipeline =
+            gpu::make_compute(d, cache_.handle(), blur_label, *blur_module_, "blur_cs", *blur_pipeline_layout_);
+        fixed_pipelines_ms_ += ms_since(started);
+        return pipeline;
+    }();
+    ATLAS_GPU_LET(blur_pipeline, std::move(blur_made));
     blur_pipeline_ = std::move(blur_pipeline);
     pipelines_ms_ = fixed_pipelines_ms_;
     pipeline_count_ = 3;

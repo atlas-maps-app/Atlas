@@ -1,6 +1,7 @@
 // The surface and the swapchain (plan-vector D5.1, D5.2): R8G8B8A8_UNORM (else B8G8R8A8), the frame's colour in this
 // alpha; or, where VK bench's colour stage asks, 10 bits a channel where the surface offers them and the device can
-// draw the frame in them (rgb10a2, else bgr10a2; 8 bits again where the driver then refuses the swapchain); always in
+// draw the frame in them (rgb10a2, else bgr10a2; where the driver then refuses the swapchain the call fails, and the
+// caller makes the 8-bit one outside the colour stage: standin/Session.cpp); always in
 // sRGB-nonlinear (blending on encoded values, as the renders composite; gpu/Facts.hpp's colour), FIFO, three images or
 // the surface's minimum, opaque, the surface's current transform applied by the frame itself (pre-rotation), and a
 // copy source where the surface allows it (the frosted backdrops).
@@ -32,11 +33,12 @@ namespace atlas::gpu {
 class Swapchain final : public Output {
 public:
     /// Makes a swapchain of `wanted` pixels (used where the surface leaves the size to the swapchain), retiring `old`
-    /// (the swapchain it is, if any: Output::swapchain), which goes once the new one is made or refused, in the
-    /// frame's colour at `depth` (8 bits by default; as deep as the surface and the device allow in VK bench's colour
-    /// stage).
+    /// (the swapchain it is, if any: Output::swapchain; its caller lets go of it once this returns, made or refused, so
+    /// that the crash guard names it as it goes: standin/Session.cpp), in the frame's colour at `depth` (8 bits by
+    /// default; as deep as the surface and the device allow in VK bench's colour stage). A swapchain the driver
+    /// refuses, 10-bit or not, is an error.
     [[nodiscard]] static Result<std::unique_ptr<Swapchain>> create(const Device& device, vk::SurfaceKHR surface,
-                                                                   vk::Extent2D wanted, std::unique_ptr<Output> old,
+                                                                   vk::Extent2D wanted, const Output* old,
                                                                    Depth depth = default_depth);
     Swapchain(const Swapchain&) = delete;
     Swapchain& operator=(const Swapchain&) = delete;

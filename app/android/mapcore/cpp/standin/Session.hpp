@@ -5,12 +5,15 @@
 //
 // Every call it makes of the driver runs behind one of the crash guard's stages (gpu/Guard.hpp), the narrowest that
 // holds it: the window's surface, its queries and the swapchain at 8 bits in the surface stage; the stand-in and a
-// frame's pipelines, passes and images, made and destroyed, in the pipelines stage; the pipeline cache's writes in the
-// cache stage; the first 120 frames in the frames stage; Android's profiles in the profiles stage; everything of 10
-// bits in the colour stage; a lost device's teardown and its rebuild in the device stage (and the facts, cache and
-// surface stages, as a start passes them); the close in the close stage. The one exception is the frame loop's own
-// per-frame calls after the first 120 frames, which D5.10 leaves unguarded: the commands each frame records and
-// submits, its acquire and present, its fences, queries and memory flushes, and the display's timings it reads back.
+// frame's pipelines, passes and images, made and destroyed, in the pipelines stage; a pipeline cache's making, loading
+// and writes in the cache stage; the first 120 frames of each renderer in the frames stage; Android's profiles in the
+// profiles stage; everything of 10 bits in the colour stage; a lost device's teardown and its rebuild in the device
+// stage (and the facts, cache and surface stages, as a start passes them); the close in the close stage. Each module,
+// pipeline and thing that goes is named for its call alone (gpu/Pipelines.hpp's Announced). The one exception is the
+// frame loop's own per-frame calls after a renderer's first 120 frames, which D5.10 leaves unguarded: the commands each
+// frame records and submits, its acquire and present, its fences, queries and memory flushes, and the display's
+// timings it reads back. No marker stays on disk while nothing is drawn: the frames stage ends when the frame loop
+// rests (rest) or the renderer goes, and opens again with the next draw within the renderer's first 120.
 //
 // The colour depth (plan-vector D5, "Colour depth"): the frame is 8 bits a channel (gpu/Facts.hpp's default_depth);
 // VK bench's colour stage (bench's flag 4) draws it at 10 where the surface offers them, the device (asked as the
@@ -18,8 +21,10 @@
 // frame and the 8-bit swapchain go first, in their own stages; then the guard's colour stage opens, the device is asked
 // about 10 bits, and the 10-bit swapchain and frame are made, the frame's pipelines through a pipeline cache of the
 // stage's own. Out of it, the 10-bit frame, swapchain and cache go before the stage closes, and the 8-bit swapchain is
-// made again after it. So the colour stage holds 10-bit work alone, its every creation and destruction, a window
-// that goes or comes back within it included.
+// made again after it. The stage closes as soon as nothing of 10 bits is left: where the device cannot draw the frame
+// in 10 bits after all or the driver refuses the 10-bit swapchain, it closes before the 8-bit swapchain is made in its
+// place, outside it; a refused remake, a window gone and a lost device close it too. So the colour stage holds 10-bit
+// work alone, its every creation and destruction, a window that goes or comes back within it included.
 //
 // Platform-free: the phone's Bridge (jni/Bridge.cpp) runs it on its render thread with an Android window, and the host
 // tests drive it in VK bench's own order with windows of their own (offscreen images in place of the swapchain where
@@ -60,12 +65,12 @@ public:
     /// The window's Vulkan surface on `instance` (VK_KHR_android_surface on the phone; a headless one on hosts), or an
     /// empty one for a window without a surface (a host test's offscreen images).
     [[nodiscard]] virtual gpu::Result<vk::raii::SurfaceKHR> surface(const gpu::Instance& instance) = 0;
-    /// The output of `wanted` pixels on `surface` in the frame's colour at `depth`, retiring `old` (gone once the new
-    /// one is made or refused): by default a swapchain (gpu/Swapchain.hpp).
+    /// The output of `wanted` pixels on `surface` in the frame's colour at `depth`, retiring `old` (if any), which the
+    /// session lets go of once this returns, made or refused, each in its stage: by default a swapchain
+    /// (gpu/Swapchain.hpp). A refused one is an error, never an output of another depth.
     [[nodiscard]] virtual gpu::Result<std::unique_ptr<gpu::Output>> output(const gpu::Device& device,
                                                                            vk::SurfaceKHR surface, vk::Extent2D wanted,
-                                                                           std::unique_ptr<gpu::Output> old,
-                                                                           gpu::Depth depth);
+                                                                           const gpu::Output* old, gpu::Depth depth);
     /// Asks the display for `fps` frames a second (ANativeWindow_setFrameRate); false where it cannot.
     virtual bool set_frame_rate(float fps) {
         (void)fps;
@@ -144,6 +149,10 @@ public:
     [[nodiscard]] bool drawing() const noexcept;
     /// Draws one frame at `camera`.
     [[nodiscard]] Drawn draw(const style::CameraState& camera, const FrameTimes& times);
+    /// The frame loop came to rest (nothing changed, or the app's window went to the background): the frames stage
+    /// ends, so no marker is on disk while nothing is drawn, and the next draw within the renderer's first 120 frames
+    /// opens it again.
+    void rest();
 
     /// VkFacts' lines as text, the guard's state and this session's among them, after reading Android's profiles behind
     /// the guard's profiles stage (once a device; never inside the colour stage).
@@ -188,9 +197,14 @@ private:
     void drop_renderer();
     /// The output goes, announced, behind the surface stage (the colour stage's while it is open).
     void drop_output();
-    /// The output at `depth_`, behind the surface stage (the colour stage's, opened first, at 10 bits); "" or why not.
+    /// The output goes, announced, in the stage open now.
+    void release_output();
+    /// The output at `depth_`, behind the surface stage; at 10 bits inside the colour stage, opened first, where the
+    /// device (asked inside it) can draw the frame in them, else (or refused by the driver) the stage closed again and
+    /// the 8-bit output made in its place, `depth_` back at 8; "" or why not.
     std::string make_output();
-    /// The output made again at its size, retiring the old one, and the renderer retargeted.
+    /// The output made again at its size, retiring the old one (gone once the new one is made or refused), and the
+    /// renderer retargeted; refused, the renderer goes, and the colour stage closes.
     void remake_output();
     /// The stand-in, if there is none yet, behind the pipelines stage; "" or why not.
     std::string make_standin();
@@ -232,12 +246,15 @@ private:
     int mode_ = 0;
     bool pills_ = false;
     bool texture_ = false;
-    bool guarding_ = false;
+    bool guarding_ = false; // the frames stage is open
     bool profiles_read_ = false;
     bool frame_rate_ = false;
-    double first_pipelines_ms_ = -1; // this launch's first pipelines (-1 until the stand-in draws)
+    bool first_frames_saved_ = false; // the cache written back after the session's first 120 frames
+    double first_pipelines_ms_ = -1;  // this launch's first pipelines (-1 until the stand-in draws)
     std::uint32_t first_pipelines_ = 0;
     int lost_ = 0;
+    /// The frames the renderer drew since it was made or remade (a configuration, a size): the frames stage guards its
+    /// first 120.
     std::uint32_t presented_ = 0;
     std::int64_t epoch_ns_ = 0;
     std::string session_off_; // why the map is off for this session ("" while it is on)

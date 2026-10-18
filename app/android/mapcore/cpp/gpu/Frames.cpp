@@ -165,15 +165,16 @@ Result<std::unique_ptr<Renderer>> Renderer::create(const Device& device, Output&
 }
 
 void Renderer::release_frame() {
-    if (prepared_) {
-        // Named by the pass's configuration and colour, as its pipelines are: a driver crashing as a 10-bit frame goes
-        // is told from one crashing as an 8-bit frame goes.
-        const std::string detail = std::format("(configuration {} {})", name_of(pass_->spec().config),
-                                               colour_name(pass_->spec().colour_format));
+    if (!pass_) return; // nothing made yet (prepared_ is set only once a pass is)
+    // Named by the pass's configuration and colour, as its pipelines are: a driver crashing as a 10-bit frame goes is
+    // told from one crashing as an 8-bit frame goes. The name lasts while the frame goes, and no longer: the next
+    // frame's pass and content (remake) are made under their own names.
+    const std::string detail =
+        std::format("(configuration {} {})", name_of(pass_->spec().config), colour_name(pass_->spec().colour_format));
+    const Announced named =
         announce_release({.kind = "frame", .detail = detail, .ten_bit = ten_bit(pass_->spec().colour_format)}, watch_);
-        content_.release();
-        prepared_ = false;
-    }
+    if (prepared_) content_.release();
+    prepared_ = false;
     pass_.reset();
 }
 

@@ -9,7 +9,10 @@
 // destroys as a whole before it goes (announce_release: a frame's pipelines, passes and images, a swapchain, a pipeline
 // cache, the stand-in, the device, the instance): the log names it, and the crash guard writes it into its marker, so a
 // driver that crashes making or destroying it is known by it at the next start (D5.10), a crash in
-// vkCreateShaderModule by its module, not by the pipeline made before it.
+// vkCreateShaderModule by its module, not by the pipeline made before it. An announcement lasts as long as the scope
+// that holds what it returns (Announced), which is the call it names and no more: when the call returns the marker
+// names its stage alone again, so the driver calls that follow, the next object's making among them, are never
+// charged to it.
 #pragma once
 
 #include "gpu/Error.hpp"
@@ -41,8 +44,9 @@ struct Release {
     /// What kind of thing goes, each a name of its own, which the crash guard's plants take (gpu/Guard.hpp):
     /// "frame" (a renderer's main pass and everything it prepared in its content: the configuration's pipelines,
     /// passes, framebuffers and images), "swapchain" (the window's output: a swapchain on the phone, the images that
-    /// stand in for one on hosts), "cache" (a pipeline cache: VK bench's colour stage's own), "standin" (the stand-in's
-    /// shared pipelines, modules, buffers and atlas), "device" (the device and its allocator), "instance".
+    /// stand in for one on hosts), "cache" (a pipeline cache: the one on disk, VK bench's colour stage's own, its
+    /// pipelines' timing's), "standin" (the stand-in's shared pipelines, modules, buffers and atlas), "device" (the
+    /// device and its allocator), "instance".
     std::string_view kind;
     /// Which: "(configuration A renderpass composite resolve rgb10a2)", "rgb10a2", "(the colour stage's)", ….
     std::string_view detail;
@@ -53,26 +57,52 @@ struct Release {
 /// "<kind> <detail>" ("frame (configuration C renderpass composite direct rgb10a2)", "swapchain rgba8").
 [[nodiscard]] std::string describe(const Release& release);
 
-/// Told about each pipeline and each shader module just before it is made, and about what goes just before it is
-/// destroyed (the crash guard, D5.10).
+/// Told about each pipeline and each shader module just before it is made, about what goes just before it is
+/// destroyed, and when that call has returned (the crash guard, D5.10).
 class PipelineWatch {
 public:
+    PipelineWatch() = default;
+    PipelineWatch(const PipelineWatch&) = delete;
+    PipelineWatch& operator=(const PipelineWatch&) = delete;
+    PipelineWatch(PipelineWatch&&) = delete;
+    PipelineWatch& operator=(PipelineWatch&&) = delete;
     virtual ~PipelineWatch() = default;
     virtual void before(const PipelineLabel& label) = 0;
     /// `module` is an embedded module's symbol (standin_composite).
     virtual void before_module(std::string_view module) = 0;
     virtual void before_release(const Release& release) = 0;
+    /// The call announced last returned, made, refused or gone: what runs after it is not that call. Announcements
+    /// nest (an inner one's end gives the outer one back), so each before has exactly one after.
+    virtual void after() = 0;
+};
+
+/// The span of one announcement: from the announce call that returned it to the end of the scope that holds it, which
+/// is the announced call and no more. Its end tells the watch that the call returned (PipelineWatch::after).
+class [[nodiscard]] Announced {
+public:
+    explicit Announced(PipelineWatch* watch) noexcept : watch_(watch) {}
+    Announced(const Announced&) = delete;
+    Announced& operator=(const Announced&) = delete;
+    Announced(Announced&&) = delete;
+    Announced& operator=(Announced&&) = delete;
+    ~Announced() {
+        if (watch_ != nullptr) watch_->after();
+    }
+
+private:
+    PipelineWatch* watch_;
 };
 
 /// Logs the pipeline about to be made ("vk pipeline <describe>", under the tag AtlasMap, so that a crash's last line in
-/// logcat names it) and tells `watch`, if any.
-void announce(const PipelineLabel& label, PipelineWatch* watch);
+/// logcat names it) and tells `watch`, if any, until the returned span ends: hold it around the call that makes it.
+[[nodiscard]] Announced announce(const PipelineLabel& label, PipelineWatch* watch);
 
-/// Logs the shader module about to be made ("vk module <module>") and tells `watch`, if any.
-void announce_module(std::string_view module, PipelineWatch* watch);
+/// Logs the shader module about to be made ("vk module <module>") and tells `watch`, if any, until the span ends.
+[[nodiscard]] Announced announce_module(std::string_view module, PipelineWatch* watch);
 
-/// Logs what is about to be destroyed ("vk release <kind> <detail>") and tells `watch`, if any.
-void announce_release(const Release& release, PipelineWatch* watch);
+/// Logs what is about to be destroyed ("vk release <kind> <detail>") and tells `watch`, if any, until the span ends:
+/// hold it around its destruction alone.
+[[nodiscard]] Announced announce_release(const Release& release, PipelineWatch* watch);
 
 /// Where a graphics pipeline draws.
 struct PipelineTarget {

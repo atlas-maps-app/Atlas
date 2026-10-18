@@ -56,6 +56,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.atlas.mapcore.CameraState
 import app.atlas.mapcore.CoreConfig
 import app.atlas.mapcore.FrameRecords
@@ -97,6 +100,9 @@ import kotlin.math.sin
  *     (VK facts' `colour:` says so) and nothing else: the next start skips the stage, saying so, and shows the crashed
  *     run's report as recorded before it (Copy keeps it). A window that goes during the stage is waited for, at most
  *     [VkBench.WINDOW_WAIT_SECONDS] seconds; then the stage ends, saying so.
+ * The app sent to the background pauses the run wherever it is: the core leaves the colour stage and draws nothing (no
+ * crash-guard marker stays on disk for a process the system may freeze and kill), and in the colour stage the run waits
+ * for the app as for a window, a step it cut short measured again.
  * Every result is a `vkbench …` line (logcat, the screen, Copy); the report is recorded on disk as each step begins, so
  * a native crash cannot cost what was measured before it. The Pills run is step 3 alone, 20 s long, for the phone's own
  * screen recorder to film the pills frame by frame.
@@ -149,6 +155,23 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
         activity?.window?.let { metrics.attach(it) }
         onDispose { metrics.detach() }
     }
+    // The app in the background (the screen stopped): the run pauses, out of its colour stage and drawing nothing, so
+    // that no crash-guard marker stays on disk for a process the system may freeze and kill as it trims cached ones
+    // (with the SurfaceView keeping its surface from Android 14, nothing else would end them); it goes on when the app
+    // comes back.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var activeRun by remember { mutableStateOf<BenchRun?>(null) }
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> activeRun?.pause()
+                Lifecycle.Event.ON_START -> activeRun?.resume()
+                else -> Unit
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
 
     // The run: a coroutine through the plan; the screen shows its host and its pills.
     LaunchedEffect(chosen, core) {
@@ -158,6 +181,8 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
             lines += line
             Log.i(EngineFrames.TAG, line)
         }
+        activeRun = run
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) run.pause()
         run.record = { step ->
             val text = VkBench.recorded(lines.toList(), step)
             withContext(Dispatchers.IO) { BenchReport.write(context, text) }
@@ -193,6 +218,7 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
         } finally {
             // Left in the colour stage (the screen went away): back to the frame's 8 bits, its guard stage closed.
             run.leaveColour()
+            activeRun = null
         }
         status = "Done. Copy the report and paste it back."
         Log.i(EngineFrames.TAG, "vkbench done")
@@ -322,6 +348,9 @@ private fun Modifier.frostedFromBackdrop(leftPx: Float, topPx: Float): Modifier 
  */
 internal class BenchSource(private val state: CameraState) : FrameSource {
     @Volatile var running = false
+
+    /** The app is in the background: no frame (the core's frame loop rests, and its crash guard's frames stage ends). */
+    @Volatile var paused = false
     @Volatile var path = VkBench.Path.STILL
     @Volatile var view = VkBench.View.BOARD
     @Volatile var periodSeconds = 30.0
@@ -339,7 +368,7 @@ internal class BenchSource(private val state: CameraState) : FrameSource {
     override fun camera(vsyncNanos: Long, out: ByteBuffer): Boolean {
         val w = widthPx
         val h = heightPx
-        if (!running || w <= 0 || h <= 0) return false
+        if (!running || paused || w <= 0 || h <= 0) return false
         val d = density
         VkBench.cameraAt(path, view, (vsyncNanos - startNs) / 1e9, periodSeconds, cam)
         state.write(out, 0, cam.latitude, cam.longitude, cam.bearing, cam.pitch, cam.distance, w / d / 2, h / d * 0.48, w, h, d)
@@ -446,6 +475,45 @@ private class BenchRun(
 
     /** Whether the last bench call asked for 10 bits (the colour stage), so that [leaveColour] has something to undo. */
     private var inColour = false
+
+    /** The app is in the background (its screen stopped): nothing is drawn, and the colour stage waits for it. */
+    private var paused = false
+
+    /** How many times the app went to the background in this run: a colour step it cut short is measured again. */
+    private var stops = 0
+    private var resumed: CompletableDeferred<Unit>? = null
+
+    /**
+     * The app went to the background (ON_STOP; main thread, as every step): the core leaves the colour stage if the run
+     * is in it (mode 0: its 10-bit frame, output and cache go, and the stage closes), and draws nothing until the app
+     * comes back (the frame source refuses every frame, so the core's frame loop rests and its frames stage ends). No
+     * crash-guard marker then stays on disk for a process the system may freeze and kill as it trims cached ones.
+     */
+    fun pause() {
+        if (paused) return
+        paused = true
+        ++stops
+        source.paused = true
+        leaveColour()
+    }
+
+    /** The app came back (ON_START): the run goes on where it was. */
+    fun resume() {
+        if (!paused) return
+        paused = false
+        source.paused = false
+        resumed?.complete(Unit)
+        resumed = null
+        core.requestFrame()
+    }
+
+    /** Waits for the app to come back, at most [VkBench.WINDOW_WAIT_SECONDS]: whether it did. */
+    private suspend fun awaitResumed(): Boolean {
+        if (!paused) return true
+        val waiter = CompletableDeferred<Unit>()
+        resumed = waiter
+        return withTimeoutOrNull(VkBench.WINDOW_WAIT_SECONDS * 1000L) { waiter.await() } != null
+    }
 
     suspend fun execute(initial: VkSurfaceState) {
         val facts = withContext(Dispatchers.Default) { core.facts() }
@@ -589,10 +657,27 @@ private class BenchRun(
             emit(VkBench.colourStageLine(stage))
             surface = hostSwitch(VkHost.SURFACE)
             val unavailable = HashSet<String>()
-            for (step in VkBench.colourSteps(cells, ten = format != null)) {
+            val steps = VkBench.colourSteps(cells, ten = format != null)
+            var next = 0
+            var again = -1 // the step measured again after the app's going away cut it short (once a step)
+            while (next < steps.size) {
+                val step = steps[next]
                 val cell = "$viewKey ${step.config.name}"
-                if (cell in unavailable) continue
+                if (cell in unavailable) {
+                    next++
+                    continue
+                }
                 val c = step.config
+                // The app in the background: the core left the colour stage as it went (pause), and the stage waits
+                // for the app to come back, at most a minute, as for a window; one that does not ends the stage.
+                if (paused) {
+                    emit(VkBench.colourAppAway(cell))
+                    if (!awaitResumed()) {
+                        emit(VkBench.colourAppGone())
+                        break
+                    }
+                    emit(VkBench.colourAppBack())
+                }
                 // The window as it is now, not as the stage found it: on Android 10 to 13 the SurfaceView's goes with
                 // an app switch or the screen off, and the core has nothing to draw into until it comes back. The wait
                 // ends: a window that does not come back ends the stage.
@@ -615,9 +700,17 @@ private class BenchRun(
                     emit("vkbench colour $cell: ${if (step.tenBit) format else "rgba8"} unavailable ($why)")
                     unavailable += cell
                     if (step.tenBit && tenRefused == null) tenRefused = why
+                    next++
                     continue
                 }
+                val stopsBefore = stops
                 val s = measure(VkBench.Path.STILL, VkBench.View.BOARD, plan.cellSeconds, VkHost.SURFACE, tenBit = step.tenBit)
+                if (stops != stopsBefore && again != next) {
+                    // Cut short by the app's going away (the core left the stage then): measured again once it is back.
+                    emit(VkBench.colourCutShort(cell, if (step.tenBit) format ?: "rgba8" else "rgba8"))
+                    again = next
+                    continue
+                }
                 (if (step.tenBit) tenByCell else eightByCell)[cell] = s
                 val ten = tenByCell[cell]
                 val eight = eightByCell[cell]
@@ -626,6 +719,7 @@ private class BenchRun(
                 } else if (format != null && ten != null && eight != null) {
                     emit(VkBench.colourLine(cell, format, ten, eight))
                 }
+                next++
             }
             leaveColour()
         }
@@ -680,7 +774,7 @@ private class BenchRun(
         source.periodSeconds = seconds
         source.startNs = System.nanoTime()
         source.running = true
-        core.requestFrame()
+        if (!paused) core.requestFrame()
         delay(500)
         drain()
         val from = System.nanoTime()
@@ -689,7 +783,7 @@ private class BenchRun(
         while (System.nanoTime() < endAt) {
             delay(100)
             got += drain().filter { it.startNs >= from }
-            core.requestFrame()
+            if (!paused) core.requestFrame() // in the background nothing is drawn (pause)
         }
         delay(250) // the last records' presentation times
         got += drain().filter { it.startNs >= from }

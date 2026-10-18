@@ -1,6 +1,7 @@
 package app.atlas.mapcore
 
 import android.app.ActivityManager
+import android.app.ActivityManager.RunningAppProcessInfo
 import android.app.ApplicationExitInfo
 import android.content.Context
 import android.os.Build
@@ -9,37 +10,57 @@ import android.os.SystemClock
 
 /**
  * How the app's last processes ended, as Android records them (`ApplicationExitInfo`, API 30), for the crash guard
- * (plan-vector D5.10, `CP/gpu/Guard.hpp`). The guard's marker survives a swipe-away, a low-memory kill or a force-stop
- * just as it survives a crash, so the core looks the marker's process up among these exits (by its id, and an exit after
- * its start): one the user, the system or an update stopped counts for nothing; one that crashed, hung (an ANR: a
- * driver's hang repeats), was signalled, ended for a reason Android does not give, or left no record at all counts.
- * API 29 keeps no records, and there every marker counts, as before.
+ * (plan-vector D5.10, `CP/gpu/Guard.hpp`). The guard's marker survives a swipe-away, a low-memory kill, a force-stop or
+ * the system's routine trim of cached processes just as it survives a crash, so the core looks the marker's process up
+ * among these exits (by its id, and an exit after its start): one the user, the system or an update stopped counts for
+ * nothing; one that crashed, hung (an ANR: a driver's hang repeats) or left no record at all counts, and so does one
+ * signalled or ended for a reason Android does not know while it was in the foreground or visible. API 29 keeps no
+ * records, and there every marker counts, as before (but one of the running process itself, which the core knows by its
+ * id and start).
  *
  * The core stays platform-free: the façade passes this text into its start, one line per exit,
  * "<pid> <ms> <counted 0|1> <reason>" (`gpu::parse_exits`), "none" when Android recorded none, "" on API 29.
  */
 object ProcessExits {
-    /** One exit: the process's id, when it ended (ms since the epoch) and Android's reason (`REASON_*`). */
-    data class Exit(val pid: Int, val timestampMs: Long, val reason: Int)
+    /**
+     * One exit: the process's id, when it ended (ms since the epoch), Android's reason (`REASON_*`) and the process's
+     * importance as it ended (`RunningAppProcessInfo.IMPORTANCE_*`).
+     */
+    data class Exit(
+        val pid: Int,
+        val timestampMs: Long,
+        val reason: Int,
+        val importance: Int = RunningAppProcessInfo.IMPORTANCE_FOREGROUND,
+    )
 
     /** The app's recorded exits as the core's start takes them ("" on API 29, or when they cannot be read). */
     fun text(context: Context): String {
         if (Build.VERSION.SDK_INT < 30) return ""
         val manager = context.getSystemService(ActivityManager::class.java) ?: return ""
         val infos = runCatching { manager.getHistoricalProcessExitReasons(context.packageName, 0, 0) }.getOrNull() ?: return ""
-        return format(infos.map { Exit(it.pid, it.timestamp, it.reason) })
+        return format(infos.map { Exit(it.pid, it.timestamp, it.reason, it.importance) })
     }
 
     /** [exits] as the core's start takes them. */
     fun format(exits: List<Exit>): String =
-        if (exits.isEmpty()) "none" else exits.joinToString("\n") { "${it.pid} ${it.timestampMs} ${if (counted(it.reason)) 1 else 0} ${name(it.reason)}" }
+        if (exits.isEmpty()) {
+            "none"
+        } else {
+            exits.joinToString("\n") {
+                "${it.pid} ${it.timestampMs} ${if (counted(it.reason, it.importance)) 1 else 0} ${name(it.reason, it.importance)}"
+            }
+        }
 
     /**
      * Whether an exit counts as a crash: not where the user (a swipe-away, a force-stop), the system (low memory, the
-     * freezer, too much of a resource, a permission's change, a process the app depends on) or the package (updated,
-     * its state changed, its own exit) ended it; every other reason does, a reason a later Android adds included.
+     * routine trim of cached and empty processes, REASON_OTHER, which Android documents as "not by problems in apps",
+     * the freezer, too much of a resource, a permission's change, a process the app depends on) or the package (updated,
+     * its state changed, its own exit) ended it. A signal or an unknown end counts only while the process was in the
+     * foreground or visible ([importance] at most IMPORTANCE_VISIBLE): in the background it is the system's kill as
+     * likely as not (a low-memory kill whose report did not arrive, the kernel's), and a driver's crash there repeats in
+     * the foreground, where it counts. Every other reason counts, a reason a later Android adds included.
      */
-    fun counted(reason: Int): Boolean = when (reason) {
+    fun counted(reason: Int, importance: Int = RunningAppProcessInfo.IMPORTANCE_FOREGROUND): Boolean = when (reason) {
         ApplicationExitInfo.REASON_USER_REQUESTED,
         ApplicationExitInfo.REASON_USER_STOPPED,
         ApplicationExitInfo.REASON_LOW_MEMORY,
@@ -47,18 +68,25 @@ object ProcessExits {
         ApplicationExitInfo.REASON_DEPENDENCY_DIED,
         ApplicationExitInfo.REASON_PERMISSION_CHANGE,
         ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE,
+        ApplicationExitInfo.REASON_OTHER,
         ApplicationExitInfo.REASON_FREEZER,
         ApplicationExitInfo.REASON_PACKAGE_STATE_CHANGE,
         ApplicationExitInfo.REASON_PACKAGE_UPDATED,
         -> false
-        else -> true // CRASH_NATIVE, CRASH, ANR, SIGNALED, INITIALIZATION_FAILURE, UNKNOWN, OTHER, and any newer reason
+        ApplicationExitInfo.REASON_SIGNALED,
+        ApplicationExitInfo.REASON_UNKNOWN,
+        -> shown(importance)
+        else -> true // CRASH_NATIVE, CRASH, ANR, INITIALIZATION_FAILURE, and any newer reason
     }
 
-    /** A reason's name in the guard's lines ("crash-native", "user-requested", …). */
-    fun name(reason: Int): String = when (reason) {
-        ApplicationExitInfo.REASON_UNKNOWN -> "unknown"
+    /**
+     * A reason's name in the guard's lines ("crash-native", "user-requested", …); a signal's and an unknown end's with
+     * where the process was ("signaled (cached)", "unknown (visible)"), which decides whether they count.
+     */
+    fun name(reason: Int, importance: Int = RunningAppProcessInfo.IMPORTANCE_FOREGROUND): String = when (reason) {
+        ApplicationExitInfo.REASON_UNKNOWN -> "unknown (${where(importance)})"
         ApplicationExitInfo.REASON_EXIT_SELF -> "exit-self"
-        ApplicationExitInfo.REASON_SIGNALED -> "signaled"
+        ApplicationExitInfo.REASON_SIGNALED -> "signaled (${where(importance)})"
         ApplicationExitInfo.REASON_LOW_MEMORY -> "low-memory"
         ApplicationExitInfo.REASON_CRASH -> "crash"
         ApplicationExitInfo.REASON_CRASH_NATIVE -> "crash-native"
@@ -76,6 +104,28 @@ object ProcessExits {
         else -> "reason-$reason"
     }
 
-    /** When this process started, in ms since the epoch: the marker records it, so that its process's exit is the first after it. */
-    fun processStartMs(): Long = System.currentTimeMillis() - (SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime())
+    /** Whether a process of [importance] was in the foreground or visible (Android's numbers grow as it recedes). */
+    private fun shown(importance: Int): Boolean = importance <= RunningAppProcessInfo.IMPORTANCE_VISIBLE
+
+    /** Where a process of [importance] was, in a word or two. */
+    private fun where(importance: Int): String = when {
+        importance <= RunningAppProcessInfo.IMPORTANCE_FOREGROUND -> "foreground"
+        importance <= RunningAppProcessInfo.IMPORTANCE_FOREGROUND_SERVICE -> "foreground service"
+        importance <= RunningAppProcessInfo.IMPORTANCE_VISIBLE -> "visible"
+        importance <= RunningAppProcessInfo.IMPORTANCE_PERCEPTIBLE -> "perceptible"
+        importance < RunningAppProcessInfo.IMPORTANCE_CACHED -> "background"
+        importance < RunningAppProcessInfo.IMPORTANCE_GONE -> "cached"
+        else -> "gone"
+    }
+
+    /**
+     * When this process started, in ms since the epoch: the marker records it, so that its process's exit is the first
+     * after it, and a later core of this process knows the marker for its own. Read once a process (two clocks, which
+     * would otherwise give a few milliseconds' difference from one read to the next).
+     */
+    fun processStartMs(): Long = start
+
+    private val start: Long by lazy {
+        System.currentTimeMillis() - (SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime())
+    }
 }

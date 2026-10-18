@@ -43,6 +43,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 // POSIX's environment (unistd.h declares it only on some systems).
@@ -762,6 +763,13 @@ TEST_CASE("the surface stage and the close follow Vulkan's ladder, each thing th
         CHECK(next->guard_line.starts_with("vk guard close "));
         CHECK(next->retried);
     }
+    // 3b. The pipeline cache on disk going at the close is named so, not by the stand-in that went before it.
+    child = spawn_child(dir, "close:release:cache", "build-s2");
+    CHECK(aborted(child));
+    marker = read(dir / "guard");
+    MESSAGE("marker as the pipeline cache went at the close:\n" << marker);
+    CHECK(marker.starts_with("stage close\nrelease cache (the one on disk)\n"));
+    fs::remove(dir / "guard", ec);
     // 4. The 10-bit swapchain going is the colour stage's, by name: 10 bits off, nothing else.
     {
         auto probe = gpu::start_guarded(options_in(dir, "", "build-s"));
@@ -804,12 +812,15 @@ TEST_CASE("a marker whose process was stopped, not crashed, counts for nothing; 
     const std::string marker = read(dir / "guard");
     MESSAGE("the frames stage's marker:\n" << marker);
     CHECK(marker.starts_with("stage frames\n"));
+    // The frames stage names the frame it draws: a crash in its first draws says which configuration it was.
+    CHECK(has(marker, "\ndrawing frame (configuration "));
     CHECK(has(marker, std::format("\npid {}\nstart ", child.pid)));
     const std::int64_t later = now_ms();
-    const auto start_with = [&](const std::string& exits, std::string_view at = {}) {
+    const auto start_with = [&](const std::string& exits, std::string_view at = {}, std::int64_t process_start = 0) {
         std::ofstream(dir / "guard", std::ios::trunc) << (at.empty() ? marker : std::string(at));
         gpu::StartOptions o = options_in(dir, "", "build-k");
         o.exits = gpu::parse_exits(exits);
+        o.process_start_ms = process_start;
         return gpu::start_guarded(o);
     };
     // 1. Swiped away (the user), killed for memory (the system), updated (the package), three times running: never
@@ -849,13 +860,34 @@ TEST_CASE("a marker whose process was stopped, not crashed, counts for nothing; 
     ATLAS_REQUIRE(unknown.has_value(), unknown.error().line);
     CHECK(unknown->guard_line.starts_with("vk guard frames "));
     CHECK(unknown->exit.empty());
-    // 5. A marker of this very process (an earlier core in it, which runs): not counted.
+    // 5. A marker of this very process (an earlier core in it, which runs: its id, and its start as this process's,
+    // within the second the façade's two clocks allow): not counted, whatever Android records, API 29's nothing too.
     std::string own = marker;
     own.replace(own.find(std::format("\npid {}\n", child.pid)), std::format("\npid {}\n", child.pid).size(),
                 std::format("\npid {}\n", ::getpid()));
-    auto mine = start_with("none", own);
-    ATLAS_REQUIRE(mine.has_value(), mine.error().line);
-    CHECK(mine->discarded_line == "vk guard: frames marker of this running process, not counted");
+    for (const std::string_view exits : {"none", ""}) {
+        auto mine = start_with(std::string(exits), own, began + 400);
+        ATLAS_REQUIRE(mine.has_value(), mine.error().line);
+        CHECK(mine->discarded_line == "vk guard: frames marker of this running process, not counted");
+        CHECK(mine->guard_line.empty());
+        CHECK_FALSE(mine->retried);
+    }
+    // 5b. This process's id with another start is another process, one whose id this one reused: looked up among the
+    // exits as any other (no record of it: it counts), never taken for this one's.
+    auto reused = start_with("none", own, began + 60'000);
+    ATLAS_REQUIRE(reused.has_value(), reused.error().line);
+    CHECK(reused->discarded_line.empty());
+    CHECK(reused->exit == "no record");
+    CHECK(reused->guard_line.starts_with("vk guard frames "));
+    CHECK(reused->retried);
+    // 5c. A routine trim of a cached process (REASON_OTHER: "too many cached", MK/ProcessExits.kt) and a signal while
+    // cached are kills too: the façade passes them as not counted.
+    for (const std::string_view reason : {"other", "signaled (cached)"}) {
+        auto trimmed = start_with(exit_of(child.pid, later, false, reason));
+        ATLAS_REQUIRE(trimmed.has_value(), trimmed.error().line);
+        CHECK(trimmed->discarded_line == std::format("vk guard: frames marker after {}, not counted", reason));
+        CHECK_FALSE(trimmed->retried);
+    }
     // 6. A retry that was stopped goes on as the retry: discarded, its start runs without the cache at attempt 2, so
     // the next crash turns Vulkan off.
     std::string retry = marker;
@@ -871,7 +903,8 @@ TEST_CASE("a marker whose process was stopped, not crashed, counts for nothing; 
         auto off = gpu::start_guarded(o);
         ATLAS_REQUIRE(!off.has_value(), "a crash after a stopped retry did not turn Vulkan off");
         CHECK(off.error().line.starts_with("vk guard frames "));
-        CHECK(has(off.error().line, " attempt 2 build build-k"));
+        CHECK(has(off.error().line, " attempt 2 drawing frame (configuration "));
+        CHECK(off.error().line.ends_with(" build build-k"));
     }
     std::error_code ec;
     fs::remove_all(dir, ec);
@@ -909,6 +942,149 @@ TEST_CASE("10 bits turned off in a retry start say the attempt it crashed in") {
         CHECK(later->guard_line.empty());
         CHECK(has(later->device->facts().ten_bit_off, std::format(" attempt 2 pipeline {}", planted)));
     }
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+namespace {
+
+/// What the marker on disk names besides its stage ("" for nothing, or no marker).
+[[nodiscard]] std::string named_in(const fs::path& dir) {
+    const std::string text = read(dir / "guard");
+    const std::size_t first = text.find('\n');
+    if (first == std::string::npos) return {};
+    const std::string line = text.substr(first + 1, text.find('\n', first + 1) - first - 1);
+    return line.starts_with("pipeline ") || line.starts_with("module ") || line.starts_with("release ") ? line
+                                                                                                        : std::string();
+}
+
+/// The stage the marker on disk names ("" for none).
+[[nodiscard]] std::string stage_in(const fs::path& dir) {
+    const std::string text = read(dir / "guard");
+    if (!text.starts_with("stage ")) return {};
+    return text.substr(6, text.find('\n') - 6);
+}
+
+} // namespace
+
+TEST_CASE("the crash guard's marker names an announced call for that call alone") {
+    // A name lasts as long as what announce returned (gpu/Pipelines.hpp's Announced), the announced call: once it
+    // returns, the marker names the stage alone, or the call it ran inside, so that whatever the driver does next,
+    // unannounced, is never charged to the module, pipeline or thing named before.
+    const fs::path dir = fresh("notes");
+    gpu::Guard guard(dir, "host-test-system", "build-n", "");
+    const gpu::PipelineLabel box{.name = "box", .module = "standin_standin"};
+    guard.enter(gpu::Stage::pipelines);
+    CHECK(stage_in(dir) == "pipelines");
+    CHECK(named_in(dir).empty());
+    {
+        const gpu::Announced named = gpu::announce(box, &guard);
+        CHECK(named_in(dir) == "pipeline box (module standin_standin, configuration any)");
+    }
+    CHECK(stage_in(dir) == "pipelines");
+    CHECK(named_in(dir).empty());
+    {
+        const gpu::Announced frame = gpu::announce_release(
+            {.kind = "frame", .detail = "(configuration C renderpass composite resolve rgba8)"}, &guard);
+        CHECK(named_in(dir) == "release frame (configuration C renderpass composite resolve rgba8)");
+        {
+            const gpu::Announced inner = gpu::announce_module("standin_composite", &guard);
+            CHECK(named_in(dir) == "module standin_composite");
+        }
+        CHECK(named_in(dir) == "release frame (configuration C renderpass composite resolve rgba8)");
+    }
+    CHECK(named_in(dir).empty());
+    guard.leave();
+    CHECK_FALSE(fs::exists(dir / "guard"));
+    // A pipeline outside the pipelines and colour stages is named by none, yet its end pairs with it: the thing going
+    // around it keeps its name until it has gone.
+    guard.enter(gpu::Stage::surface);
+    {
+        const gpu::Announced swapchain = gpu::announce_release({.kind = "swapchain", .detail = "rgba8"}, &guard);
+        {
+            const gpu::Announced unnamed = gpu::announce(box, &guard);
+            CHECK(named_in(dir).empty());
+        }
+        CHECK(named_in(dir) == "release swapchain rgba8");
+    }
+    CHECK(named_in(dir).empty());
+    CHECK(stage_in(dir) == "surface");
+    guard.leave();
+    // A stage's change inside a named call ends the name, and the call's end then changes nothing.
+    guard.enter(gpu::Stage::pipelines);
+    {
+        const gpu::Announced named = gpu::announce(box, &guard);
+        guard.leave();
+        guard.enter(gpu::Stage::cache);
+        CHECK(named_in(dir).empty());
+    }
+    CHECK(stage_in(dir) == "cache");
+    guard.leave();
+    // Inside the colour stage, the same: each name for its call, the colour stage's marker throughout.
+    guard.enter_colour();
+    guard.enter(gpu::Stage::pipelines);
+    {
+        const gpu::Announced named = gpu::announce({.name = "composite", .module = "standin_composite"}, &guard);
+        CHECK(stage_in(dir) == "colour");
+        CHECK(named_in(dir) == "pipeline composite (module standin_composite, configuration any)");
+    }
+    CHECK(named_in(dir).empty());
+    guard.leave();
+    CHECK(stage_in(dir) == "colour");
+    guard.leave_colour();
+    CHECK_FALSE(fs::exists(dir / "guard"));
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("a refused start lets go of what it made behind a stage of its own, keyed to the system build") {
+    // Once the instance exists, a start the guard refuses (Vulkan off for the driver) or a step that fails destroys
+    // what it made: the device, if any, and the instance. That runs at every launch once a driver is off, so a driver
+    // that crashed there would crash every launch: behind the refused stage, keyed to the system build as the instance
+    // stage is, its first crash retries and its second refuses the next start before the instance, crashing no more.
+    if (!test::open_session()) return;
+    const fs::path dir = fresh("refused");
+    std::string driver;
+    std::string version;
+    {
+        auto probe = gpu::start_guarded(options_in(dir, "", "build-r"));
+        ATLAS_REQUIRE(probe.has_value(), probe.error().reason);
+        std::tie(driver, version) = gpu::guard_key(probe->device->facts());
+    }
+    // Vulkan off for this driver and build: the start is refused once it knows the driver, after the instance.
+    std::ofstream(dir / "off", std::ios::trunc) << std::format("{}|{}|build-r|pipelines||2\n", driver, version);
+    {
+        auto refused = gpu::start_guarded(options_in(dir, "", "build-r"));
+        ATLAS_REQUIRE(!refused.has_value(), "a start with Vulkan off for its driver opened");
+        CHECK(refused.error().line.starts_with("vk guard pipelines "));
+        CHECK_FALSE(fs::exists(dir / "guard")); // its teardown's stage closed behind it
+    }
+    // A crash as the refused start's instance goes: the marker is the refused stage's, keyed to the system build.
+    Child child = spawn_child(dir, "refused:release:instance", "build-r");
+    CHECK(aborted(child));
+    std::string marker = read(dir / "guard");
+    MESSAGE("marker as a refused start's instance went:\n" << marker);
+    CHECK(marker.starts_with("stage refused\nrelease instance (a refused start's)\ndriver unknown\nversion "
+                             "host-test-system\nbuild build-r\nattempt 1\n"));
+    // The next start retries (without the cache), is refused again, and crashes again there.
+    child = spawn_child(dir, "refused:release:instance", "build-r");
+    CHECK(aborted(child));
+    CHECK(has(child.log, "vk guard refused unknown host-test-system attempt 1 release instance (a refused start's) "
+                         "build build-r: retrying once without the pipeline cache"));
+    marker = read(dir / "guard");
+    CHECK(has(marker, "\nattempt 2\n"));
+    // The start after: Vulkan off for the system build, refused before the instance, so nothing is made and nothing
+    // crashes, at this and every later start of this build.
+    for (int i = 0; i < 2; ++i) {
+        auto off = gpu::start_guarded(options_in(dir, "", "build-r"));
+        ATLAS_REQUIRE(!off.has_value(), "the start after two crashes in a refused start's teardown opened");
+        CHECK(off.error().line ==
+              "vk guard refused unknown host-test-system attempt 2 release instance (a refused start's) build build-r");
+        CHECK_FALSE(fs::exists(dir / "guard"));
+    }
+    CHECK(has(read(dir / "off"), "system|host-test-system|build-r|refused|release instance (a refused start's)|2\n"));
+    // Another build of the core starts afresh: neither verdict is its.
+    CHECK(gpu::start_guarded(options_in(dir, "", "build-s")).has_value());
     std::error_code ec;
     fs::remove_all(dir, ec);
 }

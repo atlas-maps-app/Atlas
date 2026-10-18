@@ -295,6 +295,24 @@ object VkBench {
     fun windowTimedOut(host: String, seconds: Int = WINDOW_WAIT_SECONDS): String = "no $host window came within $seconds s"
 
     /**
+     * The colour stage's line when the app went to the background before [cell]: the core left the stage as it went
+     * (nothing of 10 bits alive, no crash-guard marker on disk), and the stage waits for the app as for a window.
+     */
+    fun colourAppAway(cell: String, seconds: Int = WINDOW_WAIT_SECONDS): String =
+        "vkbench colour: the app went to the background before $cell; the colour stage was left, and waits for the app (at most $seconds s)"
+
+    /** The colour stage's line when the app came back from the background. */
+    fun colourAppBack(): String = "vkbench colour: the app came back"
+
+    /** The colour stage's line when the app did not come back within the wait: the stage ends. */
+    fun colourAppGone(seconds: Int = WINDOW_WAIT_SECONDS): String =
+        "vkbench colour: the app did not come back within $seconds s; the colour stage ends here"
+
+    /** The colour stage's line for a [cell] at [colour] that the app's going to the background cut short. */
+    fun colourCutShort(cell: String, colour: String): String =
+        "vkbench colour $cell: $colour cut short (the app went to the background); measured again"
+
+    /**
      * The A0 line for the colour depth: the colour stage's 10-bit frame in the picked configuration against the 8-bit
      * one measured beside it ([ten] and [eight], null where not measured), or why there is none.
      */

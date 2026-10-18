@@ -190,6 +190,23 @@ class VkBenchTest {
     }
 
     @Test
+    fun theColourStageSaysWhenTheAppGoesToTheBackgroundAndComesBack() {
+        // The app sent to the background pauses the run (the core leaves the stage, nothing is drawn); in the colour
+        // stage the run waits for it as for a window, and a step it cut short is measured again. smoke.sh reads these:
+        // a stage that ends here fails, as one whose window never came back does.
+        assertEquals(
+            "vkbench colour: the app went to the background before board C renderpass composite resolve; the colour stage was left, and waits for the app (at most 60 s)",
+            VkBench.colourAppAway("board C renderpass composite resolve"),
+        )
+        assertEquals("vkbench colour: the app came back", VkBench.colourAppBack())
+        assertTrue(VkBench.colourAppGone().endsWith("; the colour stage ends here"))
+        assertEquals(
+            "vkbench colour board C renderpass composite resolve: rgb10a2 cut short (the app went to the background); measured again",
+            VkBench.colourCutShort("board C renderpass composite resolve", "rgb10a2"),
+        )
+    }
+
+    @Test
     fun theReportIsRecordedAsTheBenchRunsAndAnUnfinishedOneIsKept() {
         val lines = listOf("vkbench start: full bench, Imagination PowerVR", "vkbench board A renderpass composite resolve: p50 16.70")
         val running = VkBench.recorded(lines, "the colour stage")

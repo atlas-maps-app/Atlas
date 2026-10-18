@@ -289,12 +289,13 @@ vk_anr() {
   fi
 }
 
-# During VK bench's colour stage (marker $1): the app to the background and back, as an app switch does, so that the
-# stage's window goes and comes back (or, where the SurfaceView keeps its surface, the stage runs on in the background)
-# and the bench must go on to its end with nothing left on the crash guard's disk. Where the colour stage never begins,
-# says so.
+# During VK bench's colour stage (marker $1): the app to the background and back, as an app switch does. VK bench
+# pauses as the app goes (the core leaves the colour stage and draws nothing, so no crash-guard marker stays on disk for
+# a process the system may freeze and kill), its colour stage waits for the app (or, on Android 13 and older, for the
+# SurfaceView's window, which goes with it), and the bench must go on to its end with nothing left on the guard's disk.
+# Where the colour stage never begins, says so.
 vk_background() {
-  local label=$1 line i
+  local label=$1 line i out resumed
   for i in $(seq 1 840); do
     since_marker "$label" | grep -q -e 'vkbench colour stage: ' -e 'vkbench done' && break
     sleep 1
@@ -307,11 +308,20 @@ vk_background() {
   echo "vk background: $line"
   sleep 1
   adb shell input keyevent KEYCODE_HOME
+  adb shell log -t AtlasMap "vk background: the app was sent to the background in the colour stage"
   sleep 4
-  # The task's own intent again (no extras, the same filter as its root): Android brings the task back as it was.
-  adb shell am start -n $PKG/.MainActivity > /dev/null 2>&1
-  adb shell log -t AtlasMap "vk background: the app was sent to the background in the colour stage and brought back"
-  echo "vk background: the app went to the background in the colour stage and came back"
+  # The task's own intent again (no extras, the same filter as its root): Android brings the task back as it was. -W
+  # waits for its launch, and the activity resumed then must be the app's.
+  out=$(adb shell am start -W -n $PKG/.MainActivity 2>&1 | tr -d '\r')
+  resumed=$(adb shell dumpsys activity activities 2>/dev/null | tr -d '\r' |
+    grep -E 'topResumedActivity|ResumedActivity:|Resumed: ' | head -3)
+  if echo "$resumed" | grep -q "$PKG/"; then
+    adb shell log -t AtlasMap "vk background: the app came back"
+    echo "vk background: the app came back ($(echo "$out" | grep -m1 -E '^(Status|LaunchState):' || echo 'am start -W said nothing'))"
+  else
+    echo "VK BENCH FAILED: the app did not come back to the foreground after the colour stage's background step"
+    echo "  resumed: ${resumed:-none}"; echo "$out" | head -5 | sed 's/^/  am start: /'; FAIL=1
+  fi
 }
 
 vk_phase() {
@@ -349,7 +359,7 @@ vk_phase() {
   vk_background vkbench
   left=$((900 - (SECONDS - bench_start))); [ "$left" -gt 0 ] || left=1
   wait_line vkbench "$left" "vkbench done" || { echo "VK BENCH FAILED: no 'vkbench done' within 900 s"; FAIL=1; done_ok=0; }
-  since_marker vkbench | grep -E 'AtlasMap: (vkbench|vkfacts|vk config|vk path|vk surface|vk frame|vk guard|a0 |a frame failed|device lost)' |
+  since_marker vkbench | grep -E 'AtlasMap: (vkbench|vkfacts|vk config|vk path|vk surface|vk frame|vk guard|vk background|a0 |a frame failed|device lost)' |
     sed 's/.*AtlasMap: //' > "$OUT/vkbench.txt"
   adb exec-out screencap -p > "$OUT/vkbench.png"
   if [ "$done_ok" = 1 ]; then
@@ -363,11 +373,32 @@ vk_phase() {
     # Configuration C's graphics memory ceiling at S1 (plan-vector §3: 225 MB; the emulator's pixel_7 is 1080 × 2400).
     awk '/^vkbench (board|pitch70|surface|texture) / { for (i = 1; i < NF; i++) if ($i == "graphics" && $(i + 1) + 0 > 225) { print; bad = 1 } }
          END { exit bad }' "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: graphics memory above configuration C's 225 MB"; FAIL=1; }
-    # The window gone in the colour stage came back, and no wait ran out.
-    grep -q -e 'the colour stage ends here' -e 'window came within' "$OUT/vkbench.txt" &&
-      { echo "VK BENCH FAILED: a window did not come back"; grep -e 'the colour stage ends here' -e 'window came within' "$OUT/vkbench.txt" | head -3; FAIL=1; }
+    # No wait ran out: the colour stage's (for its window, gone on Android 13 and older, or for the app sent to the
+    # background), which ends the stage, and a host switch's, whose window never came.
+    if grep -q 'the colour stage ends here' "$OUT/vkbench.txt"; then
+      echo "VK BENCH FAILED: the colour stage ended early (its window or the app did not come back)"
+      grep 'the colour stage ends here' "$OUT/vkbench.txt" | head -3; FAIL=1
+    fi
+    if grep -q 'window came within' "$OUT/vkbench.txt"; then
+      echo "VK BENCH FAILED: a host's window did not come within its wait"; grep 'window came within' "$OUT/vkbench.txt" | head -3; FAIL=1
+    fi
     if grep -q 'vkbench colour: the window went away' "$OUT/vkbench.txt" && ! grep -q 'vkbench colour: the window came back' "$OUT/vkbench.txt"; then
       echo "VK BENCH FAILED: the window went away in the colour stage and never came back"; FAIL=1
+    fi
+    if grep -q 'vkbench colour: the app went to the background' "$OUT/vkbench.txt" && ! grep -q 'vkbench colour: the app came back' "$OUT/vkbench.txt"; then
+      echo "VK BENCH FAILED: the app went to the background in the colour stage and the stage never went on"; FAIL=1
+    fi
+    # The colour stage drew frames, and drew again once the app came back: else the background step proves little (no
+    # marker is left, and the guard is clear, trivially when nothing is drawn). CI's per-frame 'vk frame' lines count.
+    local colour_frames back_frames
+    colour_frames=$(awk '/^vkbench colour stage: /{c=1} c && /^vk frame /{n++} END{print n+0}' "$OUT/vkbench.txt")
+    back_frames=$(awk '/^vk background: the app came back/{c=1} c && /^vk frame /{n++} END{print n+0}' "$OUT/vkbench.txt")
+    echo "VK BENCH: the colour stage drew $colour_frames frames, $back_frames of them after the app came back"
+    if grep -q '^vkbench colour stage: ' "$OUT/vkbench.txt" && [ "$colour_frames" -eq 0 ]; then
+      echo "VK BENCH FAILED: the colour stage drew no frames"; FAIL=1
+    fi
+    if grep -q '^vk background: the app came back' "$OUT/vkbench.txt" && [ "$back_frames" -eq 0 ]; then
+      echo "VK BENCH FAILED: nothing was drawn after the app came back to the colour stage"; FAIL=1
     fi
     # Nothing of the bench left a marker: the crash guard's file is gone once it is done (the debug APK: run-as).
     if adb shell run-as $PKG ls no_backup/vk/guard > /dev/null 2>&1; then

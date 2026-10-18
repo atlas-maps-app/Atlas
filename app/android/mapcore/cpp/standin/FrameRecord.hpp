@@ -36,7 +36,7 @@ namespace frame_flag {
 inline constexpr std::uint32_t presented = 1U << 0; // presented_ns is the display's own time
 inline constexpr std::uint32_t skipped = 1U << 1;   // not drawn: the swapchain was out of date
 inline constexpr std::uint32_t gpu = 1U << 2;       // the GPU times are valid
-inline constexpr std::uint32_t guarded = 1U << 3;   // within the crash guard's first 120 frames
+inline constexpr std::uint32_t guarded = 1U << 3;   // within its renderer's first 120 frames (the frames stage)
 /// The configuration: bits 8-10 FrameConfig, 11 route (1 dynamic), 12 form (1 onepass), 13 target (1 direct), 14 host
 /// (1 TextureView), 15 pills.
 inline constexpr std::uint32_t config_shift = 8;

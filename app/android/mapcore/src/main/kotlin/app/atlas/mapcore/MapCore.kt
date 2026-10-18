@@ -54,8 +54,11 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
         /**
          * VkFacts without a core (Appendix D): a guarded start of its own, read and closed; when Vulkan is off, the
-         * guard's line and the facts kept before. One "name: value" per line.
+         * guard's line and the facts kept before. One "name: value" per line. Under the same lock as [shared] and
+         * [resetGuard], so a process never runs two cores at once: the crash guard's marker is one file, which a second
+         * would overwrite and delete under the first.
          */
+        @Synchronized
         fun facts(config: CoreConfig): List<String> {
             Native.load()?.let { return listOf("vulkan: the core did not load ($it)") }
             process?.let { return it.facts() }
@@ -135,7 +138,11 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     /** The panel's line. */
     fun stats(): String = core.call("vk no core") { Native.stats(it) }
 
-    /** The app went to the background or memory is short: the pipeline cache is written back. */
+    /**
+     * The app went to the background or memory is short ([level], ComponentCallbacks2's): the pipeline cache is written
+     * back, and from TRIM_MEMORY_UI_HIDDEN the frame loop stops until the next [requestFrame], so the crash guard's
+     * frames stage ends with it (no marker on disk for a process the system may then freeze and kill).
+     */
     fun trimMemory(level: Int) = core.call(Unit) { Native.trimMemory(it, level) }
 
     /** VK bench's first-launch and warm pipeline creation ([Native.pipelines]); off the main thread. */

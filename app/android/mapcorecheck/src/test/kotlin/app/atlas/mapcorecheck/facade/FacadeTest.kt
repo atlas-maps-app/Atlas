@@ -293,8 +293,8 @@ class FacadeTest {
             fun leave(attempt: Int, pid: Long = 9001) = guard.resolve("guard").writeText(
                 "stage frames\ndriver $driver\nversion $version\nbuild $build\nattempt $attempt\npid $pid\nstart 1000\n",
             )
-            fun started(exits: String): Long {
-                val handle = Native.create(dir.path, guard.path, "jvm-test", "", 0, exits, 0L)
+            fun started(exits: String, processStart: Long = 0L): Long {
+                val handle = Native.create(dir.path, guard.path, "jvm-test", "", 0, exits, processStart)
                 assertNotEquals("refused: ${Native.lastError()}", 0L, handle)
                 return handle
             }
@@ -327,13 +327,43 @@ class FacadeTest {
                     Native.close(handle)
                 }
             }
-            // A marker of this very process: an earlier core in it left it, and it runs.
+            // A marker of this very process (its id, and its start as the façade gives it): an earlier core in it left
+            // it, and it runs. Not counted whatever Android records, API 29's nothing too.
+            for (exits in listOf("none", "")) {
+                leave(1, ProcessHandle.current().pid())
+                started(exits, processStart = 1000L).let { handle ->
+                    try {
+                        assertTrue("vk guard: frames marker of this running process, not counted" in factsOf(handle))
+                        assertTrue("guard: clear" in factsOf(handle))
+                    } finally {
+                        Native.close(handle)
+                    }
+                }
+            }
+            // This process's id with another start is a process whose id this one reused: it counts as any other with
+            // no record (the retry), never as this one's.
             leave(1, ProcessHandle.current().pid())
-            started("none").let { handle ->
+            started("none", processStart = 3_600_000L).let { handle ->
                 try {
-                    assertTrue("vk guard: frames marker of this running process, not counted" in factsOf(handle))
+                    val after = factsOf(handle)
+                    assertTrue(after.joinToString("\n"), "guard: vk guard frames $driver $version attempt 1 build $build" in after)
+                    assertTrue(after.any { it.startsWith("guard.exit: no record") })
                 } finally {
                     Native.close(handle)
+                }
+            }
+            // The system's routine trim of a cached process (REASON_OTHER) and a signal while cached: not counted, nothing
+            // turned off (MK/ProcessExits.kt passes both as not counted).
+            for (reason in listOf("other", "signaled (cached)")) {
+                leave(1)
+                started("9001 5000 0 $reason").let { handle ->
+                    try {
+                        val after = factsOf(handle)
+                        assertTrue(after.joinToString("\n"), "vk guard: frames marker after $reason, not counted" in after)
+                        assertTrue("guard: clear" in after)
+                    } finally {
+                        Native.close(handle)
+                    }
                 }
             }
             // A native crash counts: the retry, and VK facts says how the process ended.

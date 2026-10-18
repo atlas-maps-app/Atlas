@@ -84,10 +84,11 @@ TEST_CASE("the swapchain presents the stand-in on a headless surface and is rema
             presented += report->status == gpu::Acquired::ok ? 1 : 0;
         }
         CHECK(presented == 12);
-        // A resize: the frames drained, the swapchain remade from the old one, the content remade for it.
+        // A resize: the frames drained, the swapchain remade from the old one (retired by the call, then let go of),
+        // the content remade for it.
         (*renderer)->drain();
-        auto bigger =
-            gpu::Swapchain::create(*s.device, **surface, {.width = 480, .height = 800}, std::move(*swapchain));
+        auto bigger = gpu::Swapchain::create(*s.device, **surface, {.width = 480, .height = 800}, swapchain->get());
+        swapchain->reset();
         ATLAS_REQUIRE(bigger.has_value(), bigger.error().text());
         auto retargeted = (*renderer)->retarget(**bigger);
         ATLAS_REQUIRE(retargeted.has_value(), retargeted.error().text());
@@ -101,8 +102,9 @@ TEST_CASE("the swapchain presents the stand-in on a headless surface and is rema
         // (lavapipe's headless surface offers 8 bits only, so 8 again, saying why).
         (*renderer)->drain();
         s.device->check_ten_bit();
-        auto deep = gpu::Swapchain::create(*s.device, **surface, {.width = 480, .height = 800}, std::move(*bigger),
+        auto deep = gpu::Swapchain::create(*s.device, **surface, {.width = 480, .height = 800}, bigger->get(),
                                            gpu::Depth::deepest);
+        bigger->reset();
         ATLAS_REQUIRE(deep.has_value(), deep.error().text());
         CHECK((*deep)->format() == s.device->facts().deepest.format);
         MESSAGE("the colour stage's swapchain: " << gpu::colour_name((*deep)->format()) << " ("

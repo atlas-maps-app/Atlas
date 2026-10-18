@@ -63,6 +63,10 @@ constexpr std::uint32_t msaa2 = 4U;      // K6's answer: 2x within 0.15 MAD of 4
 /// The cores alive in this process: the guard's reset waits for none (a live core writes its pipeline cache back).
 std::atomic<int> live_cores{0}; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
+/// ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN: the process's windows are no longer shown (the levels above it are deeper
+/// trims of a process in the background).
+constexpr int trim_ui_hidden = 20;
+
 /// The hash of the core's shaders, every embedded module's: the pipeline cache's key.
 [[nodiscard]] std::uint64_t core_spirv() noexcept { return gpu::spirv_hash(spirv::hashes); }
 
@@ -186,8 +190,19 @@ public:
         return on_session([this] { return session_->facts(); });
     }
 
-    void trim() {
-        on_session([this] { session_->save_cache(); });
+    /// The app was asked to trim its memory at `level` (ComponentCallbacks2): the pipeline cache goes back to disk, and
+    /// from TRIM_MEMORY_UI_HIDDEN (the app's windows went to the background) nothing is drawn until a frame is asked
+    /// for again, so the frames stage ends with the frame loop: no marker stays on disk for a process the system may
+    /// then freeze and kill as it trims the cached ones.
+    void trim(int level) {
+        on_session([this, level] {
+            session_->save_cache();
+            if (level < trim_ui_hidden) return;
+#if defined(__ANDROID__)
+            requested_ = false;
+#endif
+            session_->rest();
+        });
     }
 
     [[nodiscard]] std::string stats() {
@@ -327,6 +342,13 @@ private:
         loop_->request_vsync([this](const platform::Vsync& v) { on_vsync(v); });
     }
 
+    /// The frame loop stops until the next requestFrame: no more vsyncs, and the session rests (its frames stage ends,
+    /// so no marker is on disk while nothing is drawn).
+    void rest() {
+        requested_ = false;
+        session_->rest();
+    }
+
     void on_vsync(const platform::Vsync& v) {
         if (!requested_ || !session_->drawing() || source_ == nullptr) return;
         // The display's period, from the vsyncs themselves; at most 60 frames a second (D5.8): every vsync at 60 Hz,
@@ -349,18 +371,18 @@ private:
         if (render_env_->ExceptionCheck() == JNI_TRUE) {
             render_env_->ExceptionDescribe();
             render_env_->ExceptionClear();
-            requested_ = false;
+            rest();
             return;
         }
         if (more != JNI_TRUE) {
-            requested_ = false; // nothing changed: no frame, and no more vsyncs until requestFrame
+            rest(); // nothing changed: no frame, and no more vsyncs until requestFrame
             return;
         }
         const auto camera = style::read_camera_state(std::span(camera_bytes_, style::camera_state_size));
         if (!camera) {
             if (!camera_warned_) log::error("vk camera refused: {}", style::name_of(camera.error()));
             camera_warned_ = true;
-            requested_ = false;
+            rest();
             return;
         }
         drawn_vsync_ns_ = v.frame_ns;
@@ -442,9 +464,9 @@ jstring native_facts(JNIEnv* env, jclass /*cls*/, jlong handle, jstring cache_di
 /// VK facts' "Reset guard" (debug and bench builds): forgets every crash, every driver the guard turned off and
 /// everything it turned off for one (10 bits, the profiles check), and the pipeline cache, as a fresh install would;
 /// the next start tries Vulkan, 10 bits and the profiles again. Only with no core alive: a live core keeps its pipeline
-/// cache in memory and writes it back (on trim, on close, after its first 120 frames), which would undo the reset, so
-/// the reset is refused until it is closed (MapCore.resetGuard closes the process's core first). What it forgot, or why
-/// not, in words.
+/// cache in memory and writes it back (on trim, on close, after its session's first 120 frames), which would undo the
+/// reset, so the reset is refused until it is closed (MapCore.resetGuard closes the process's core first). What it
+/// forgot, or why not, in words.
 jstring native_reset_guard(JNIEnv* env, jclass /*cls*/, jstring cache_dir, jstring guard_dir) {
     if (const int alive = live_cores.load(); alive > 0) {
         const std::string refused = std::format("vk guard reset: refused, {} core{} alive (it would write its pipeline "
@@ -497,8 +519,8 @@ jint native_records(JNIEnv* env, jclass /*cls*/, jlong handle, jobject out) {
         core->records(static_cast<FrameRecord*>(address), static_cast<std::size_t>(capacity) / sizeof(FrameRecord)));
 }
 
-void native_trim(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jint /*level*/) {
-    if (Core* core = core_of(handle); core != nullptr) core->trim();
+void native_trim(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jint level) {
+    if (Core* core = core_of(handle); core != nullptr) core->trim(level);
 }
 
 #if defined(__ANDROID__)
