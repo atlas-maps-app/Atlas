@@ -277,10 +277,27 @@ object Amsterdam {
                     { DoubleArray(solids.size) { pyNum(solids[it]["h"]) } }) { Grid(solids) }
                 return Shade(g, L)
             }
+
+            /**
+             * Test-only: when set, hears every answer of [lit] (the vector engine's sun parity, `MT/sun/SunParityTest`,
+             * plan-vector K8). The app never sets it; unset, [lit] pays one null check and nothing else. Set it only around
+             * a render, on the thread that renders.
+             */
+            @JvmField
+            var tap: Tap? = null
+        }
+
+        /** What [tap] hears: one answer of [lit], its point, the building the march leaves out, and the answer. */
+        fun interface Tap {
+            fun answer(p: V3, skip: Dict?, lit: Boolean)
         }
 
         /** `sh.lit(p, skip=b)`. */
-        fun lit(p: V3, skip: Dict? = null): Boolean = shadows.lit(p, skip?.let { prisms[it] })
+        fun lit(p: V3, skip: Dict? = null): Boolean {
+            val lit = shadows.lit(p, skip?.let { prisms[it] })
+            tap?.answer(p, skip, lit)
+            return lit
+        }
 
         /** `sh.shadow_height(x, z, skip=b)`. */
         fun shadowHeight(x: Double, z: Double, skip: Dict? = null): Double = shadows.shadowHeight(x, z, skip?.let { prisms[it] })
