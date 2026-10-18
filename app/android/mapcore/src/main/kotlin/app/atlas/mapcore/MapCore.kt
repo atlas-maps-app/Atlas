@@ -1,5 +1,6 @@
 package app.atlas.mapcore
 
+import android.content.res.AssetManager
 import android.view.Surface
 import java.nio.ByteBuffer
 
@@ -90,6 +91,11 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
         /** The core's numerics line ([Native.numericsLine]); off the main thread, its first call takes about 6 ms. */
         fun numericsLine(): String =
             Native.load()?.let { "pymath unavailable: the core did not load ($it)" } ?: Native.numericsLine()
+
+        /** The core's sun line ([Native.sunLine]) over the APK's bundled Westerkerk; off the main thread, about 0.1 s. */
+        fun sunLine(assets: AssetManager): String =
+            Native.load()?.let { "sun unavailable: the core did not load ($it)" }
+                ?: assets.openFd("tiles/amsterdam.atlas").use { Native.sunLine(it.parcelFileDescriptor.fd, it.startOffset, it.length) }
 
         /**
          * VK facts' "Reset guard" (debug and bench builds, D5.10): forgets every crash, every driver the crash guard

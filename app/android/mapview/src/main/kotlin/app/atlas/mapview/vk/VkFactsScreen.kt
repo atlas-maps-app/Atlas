@@ -53,9 +53,10 @@ const val VK_HONEST = "This phone's graphics driver can't draw the Atlas map."
  * (model, SoC, Android, memory, thermal state), Android's Vulkan flags, the core's VkFacts read from the driver behind
  * the crash guard (GPU, driver and version, tiler, lazily allocated memory, Vulkan version, Android's Vulkan profiles,
  * memory types, sample counts, extensions, the frame configuration and route the core would pick, the surface's
- * capabilities from a small SurfaceView), the GLES probe the survey still reads, and the core's numerics check (K3b's
- * `pymath <hash> ok`). Every line also goes to logcat as `vkfacts <line>`, the numerics as `pymath …`, then
- * `vkfacts done`. Copy puts the whole report on the clipboard for the paste back.
+ * capabilities from a small SurfaceView), the GLES probe the survey still reads, the core's numerics check (K3b's
+ * `pymath <hash> ok`) and its sun check over the bundled Westerkerk (K8's `sun <hash> ok`). Every line also goes to
+ * logcat as `vkfacts <line>`, the numerics as `pymath …` and the sun as `sun …`, then `vkfacts done`. Copy puts the
+ * whole report on the clipboard for the paste back.
  *
  * The crash guard's state (D5.10) leads the report: what this start found (`guard:`, the `vk guard` line naming the
  * stage and the pipeline or shader module a driver crashed in), the core's build ID and every driver turned off, or
@@ -109,8 +110,11 @@ fun VkFactsScreen(config: CoreConfig, modifier: Modifier = Modifier, guardReset:
             // "vkfacts done", which smoke.sh waits for; it needs no Vulkan, so the honest state has it too.
             val pymath = runCatching { MapCore.numericsLine() }.getOrElse { "pymath unavailable: $it" }
             Log.i(EngineFrames.TAG, pymath)
+            // The core's sun bits on the bundled Westerkerk (K8): `sun <hash> ok`, held by smoke.sh to the host build's.
+            val sun = runCatching { MapCore.sunLine(context.assets) }.getOrElse { "sun unavailable: $it" }
+            Log.i(EngineFrames.TAG, sun)
             Log.i(EngineFrames.TAG, "vkfacts done")
-            lines + pymath
+            lines + pymath + sun
         }
         status = if (core == null) VK_HONEST else "Done: ${report.size} lines."
     }

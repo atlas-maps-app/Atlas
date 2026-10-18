@@ -19,7 +19,8 @@
 #                                            background and brought back in it; then the crash guard's marker gone and
 #                                            VK facts' guard clear), and the crash guard's planted crash ending in the
 #                                            honest state on the next launch; pymath.txt, the core's numerics on Bionic
-#                                            (K3b), which must read `pymath $ATLAS_PYMATH_HASH ok`
+#                                            (K3b), which must read `pymath $ATLAS_PYMATH_HASH ok`; sun.txt, the core's
+#                                            sun bits on Bionic (K8), which must read `sun $ATLAS_SUN_HASH ok`
 # Each measured run starts from the installed state (`pm clear`, the install's permissions granted again), so earlier
 # screens' downloads and kept scenes do not change what the home draws. `run-as` needs a debuggable APK, so the bench
 # phase never uses it: the screen list comes from the debug run and the timings from logcat (tag AtlasMap).
@@ -31,11 +32,13 @@
 # loses its window in the colour stage for good, leaves the guard's marker behind, has a colour stage that ended early
 # (its window or the app not back), a host's window that never came, a colour stage that drew no frames, or one that
 # drew none once it went on after the app came back, an app that did not come back to the foreground after the colour
-# stage's background step, a pymath line other than `pymath $ATLAS_PYMATH_HASH ok`. A frame that never comes is "NO
-# FRAME", a warning; a background step the bench ended before is skipped, saying so.
+# stage's background step, a pymath line other than `pymath $ATLAS_PYMATH_HASH ok`, a sun line other than
+# `sun $ATLAS_SUN_HASH ok`. A frame that never comes is "NO FRAME", a warning; a background step the bench ended before
+# is skipped, saying so.
 # Environment: ATLAS_SCREENS (the debug loop's screens, default: all), ATLAS_MAP_WAIT (seconds to wait for the home's map),
 # ATLAS_IDLE (seconds the home is watched at rest, default 20), ATLAS_BENCH=0 (skip the bench phase), ATLAS_PROFILE=0
-# (skip simpleperf), ATLAS_PYMATH_HASH (the numerics hash the host build and the port compute; android.yml sets it).
+# (skip simpleperf), ATLAS_PYMATH_HASH (the numerics hash the host build and the port compute; android.yml sets it),
+# ATLAS_SUN_HASH (the sun bits' hash the host build computes; android.yml sets it).
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 APK=$(ls "$1"/*.apk | head -1); OUT=$2; mkdir -p "$OUT"
@@ -362,6 +365,15 @@ vk_phase() {
     echo "PYMATH FAILED: ATLAS_PYMATH_HASH is not set (android.yml's emulator job sets the expected hash)"; FAIL=1
   elif ! grep -qx "pymath $ATLAS_PYMATH_HASH ok" "$OUT/pymath.txt"; then
     echo "PYMATH FAILED: the emulator's numerics read '$(cat "$OUT/pymath.txt")', not 'pymath $ATLAS_PYMATH_HASH ok'"; FAIL=1
+  fi
+  # The core's sun bits on Bionic (K8's acceptance): VK facts logs `sun <hash> ok` over the bundled Westerkerk's every
+  # sample and ground shadow at its sunny moment, and the hash must be the host build's (ATLAS_SUN_HASH, from android.yml).
+  since_marker vkfacts | grep -o 'AtlasMap: sun .*' | sed 's/AtlasMap: //' | tr -d '\r' | head -1 > "$OUT/sun.txt"
+  echo "sun: $(cat "$OUT/sun.txt")"
+  if [ -z "${ATLAS_SUN_HASH:-}" ]; then
+    echo "SUN FAILED: ATLAS_SUN_HASH is not set (android.yml's emulator job sets the expected hash)"; FAIL=1
+  elif ! grep -qx "sun $ATLAS_SUN_HASH ok" "$OUT/sun.txt"; then
+    echo "SUN FAILED: the emulator's sun bits read '$(cat "$OUT/sun.txt")', not 'sun $ATLAS_SUN_HASH ok'"; FAIL=1
   fi
   vk_crashes vkfacts
 

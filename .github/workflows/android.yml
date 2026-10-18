@@ -271,6 +271,7 @@ jobs:
       - uses: reactivecircus/android-emulator-runner@v2
         env:
           ATLAS_PYMATH_HASH: 77476b808456a6f0 # K3b: the host build's and the port's numerics hash; smoke.sh fails on any other
+          ATLAS_SUN_HASH: 6a47c776c64ed9ae # K8: the host build's sun bits of the bundled Westerkerk; smoke.sh fails on any other
         with:
           emulator-build: ${{ steps.emulator.outputs.build }}
           api-level: 35

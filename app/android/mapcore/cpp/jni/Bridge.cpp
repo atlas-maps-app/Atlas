@@ -19,6 +19,7 @@
 #include "gpu/Swapchain.hpp"
 #include "standin/Session.hpp"
 #include "style/CameraState.hpp"
+#include "sun/Buckets.hpp"
 
 #if defined(__ANDROID__)
 #include "platform/android/Android.hpp"
@@ -596,8 +597,14 @@ jstring native_build_info(JNIEnv* env, jclass /*cls*/) { return java(env, std::s
 /// K3b's numerics check, run once (about 6 ms): `pymath <hash> ok` or `pymath <hash> FAIL expected <hash>`.
 jstring native_numerics_line(JNIEnv* env, jclass /*cls*/) { return java(env, std::string(check::numerics_line())); }
 
-const std::array<JNINativeMethod, 18>& methods() {
-    static const std::array<JNINativeMethod, 18> table{{
+/// K8's sun check over the bundled Westerkerk, an asset's descriptor, offset and length (about 0.1 s of four cores):
+/// `sun <hash> ok` or `sun <hash> FAIL expected <hash>`.
+jstring native_sun_line(JNIEnv* env, jclass /*cls*/, jint fd, jlong offset, jlong length) {
+    return java(env, sun::sun_line(fd, static_cast<std::uint64_t>(offset), static_cast<std::uint64_t>(length)));
+}
+
+const std::array<JNINativeMethod, 19>& methods() {
+    static const std::array<JNINativeMethod, 19> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -619,6 +626,7 @@ const std::array<JNINativeMethod, 18>& methods() {
         method("trimMemory", "(JI)V", fn(&native_trim)),
         method("buildInfo", "()Ljava/lang/String;", fn(&native_build_info)),
         method("numericsLine", "()Ljava/lang/String;", fn(&native_numerics_line)),
+        method("sunLine", "(IJJ)Ljava/lang/String;", fn(&native_sun_line)),
         method("pipelines", "(J)Ljava/lang/String;", fn(&native_pipelines)),
         method("resetGuard", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", fn(&native_reset_guard)),
     }};

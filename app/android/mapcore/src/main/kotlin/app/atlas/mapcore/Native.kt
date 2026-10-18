@@ -49,6 +49,13 @@ object Native {
      */
     @JvmStatic external fun numericsLine(): String
 
+    /**
+     * The core's sun check (plan-vector K8, `CP/sun/Buckets.hpp`) over the bundled Westerkerk, given as an asset's [fd],
+     * [offset] and [length]: `sun <hash> ok`, or `sun <hash> FAIL expected <hash>`. About 0.1 s of four cores: never on
+     * the main thread.
+     */
+    @JvmStatic external fun sunLine(fd: Int, offset: Long, length: Long): String
+
     /** The last failure of [create] or [attach] on this thread, in words. */
     @JvmStatic external fun lastError(): String
 
