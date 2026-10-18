@@ -7,8 +7,16 @@
 
 namespace atlas::frame {
 
+namespace {
+
+/// A threshold as the selector table holds it (infinity stays infinity).
+[[nodiscard]] float f32(double v) noexcept { return static_cast<float>(v); }
+
+} // namespace
+
 Selectors::Selectors() {
-    for (hlsl::float4& t : table_) t = {never, never, never, 0.0F};
+    for (std::array<double, 3>& t : thresholds_) t = {never, never, never};
+    for (hlsl::float4& t : table_) t = {f32(never), f32(never), f32(never), 0.0F};
 }
 
 std::uint16_t Selectors::kind(std::string_view name) {
@@ -23,9 +31,10 @@ std::string_view Selectors::name(std::uint16_t kind) const noexcept {
     return kind < names_.size() ? std::string_view(names_[kind]) : std::string_view();
 }
 
-void Selectors::set(std::uint16_t kind, float near, float middle, float far) noexcept {
+void Selectors::set(std::uint16_t kind, double near, double middle, double far) noexcept {
     if (kind >= max_kinds) return;
-    table_[kind] = {near, middle, far, 0.0F};
+    thresholds_[kind] = {near, middle, far};
+    table_[kind] = {f32(near), f32(middle), f32(far), 0.0F};
 }
 
 } // namespace atlas::frame

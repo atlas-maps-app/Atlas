@@ -54,6 +54,12 @@ public:
     /// Each row's first painter slot (none for a row not drawn), and its depth (the sort key).
     [[nodiscard]] std::span<const std::uint32_t> first_slot() const noexcept { return first_; }
     [[nodiscard]] std::span<const double> depth() const noexcept { return depth_; }
+    /// Each row's detail band (0 to 3; 0 for a row not drawn): Selectors::band of its kind at its depth, in double as
+    /// the port compares, the one choice every pass and shader takes (never recomputed from a float depth).
+    [[nodiscard]] std::span<const std::uint8_t> band() const noexcept { return band_; }
+    /// The rank table set 0 holds (painter.slang's rank entries): per row its first slot and its band, RANK_NONE for
+    /// a row not drawn.
+    [[nodiscard]] std::span<const std::uint32_t> table() const noexcept { return table_; }
     /// The frame's slots: the ground's and every drawn item's.
     [[nodiscard]] std::uint32_t slots() const noexcept { return slots_; }
     /// What the last update cost: the insertion pass's moves, and whether it fell back on a full sort.
@@ -67,6 +73,8 @@ private:
     std::vector<std::uint32_t> next_;
     std::vector<std::uint32_t> first_;
     std::vector<double> depth_;
+    std::vector<std::uint8_t> band_;
+    std::vector<std::uint32_t> table_;
     std::vector<std::uint8_t> drawn_;  // per row: drawn this frame
     std::vector<std::uint8_t> listed_; // per row: in order_
     std::uint32_t slots_ = 0;

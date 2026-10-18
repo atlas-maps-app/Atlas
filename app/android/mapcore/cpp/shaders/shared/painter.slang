@@ -33,3 +33,26 @@ static const uint GROUND_STENCIL_BITS = 0x7Fu;
 inline float painter_depth(uint slot) {
     return 1.0f - float(slot + 1u) * 9.5367431640625e-7f; // 2^-20
 }
+
+/// A rank table entry (set 0, binding 1; CP/frame/Ranks.cpp): an item's first painter slot (bits 0-23) and the detail
+/// band the render thread chose for it (bits 30-31), from the ranks' depth in double against its kind's thresholds in
+/// double, as the port compares them. A shader takes an item's band from here and never recomputes it from a float
+/// depth, which can fall on the other side of a threshold. RANK_NONE: the item is not drawn this frame.
+static const uint RANK_NONE = 0xFFFFFFFFu;
+static const uint RANK_SLOT_BITS = 0x00FFFFFFu;
+static const uint RANK_BAND_SHIFT = 30u;
+
+/// The entry of an item drawn from painter slot `slot` (below PAINTER_SLOTS) in detail band `band` (0 to 3).
+inline uint rank_entry(uint slot, uint band) {
+    return slot | (band << RANK_BAND_SHIFT);
+}
+
+/// An entry's first painter slot.
+inline uint rank_slot(uint entry) {
+    return entry & RANK_SLOT_BITS;
+}
+
+/// An entry's detail band.
+inline uint rank_band(uint entry) {
+    return entry >> RANK_BAND_SHIFT;
+}

@@ -217,7 +217,7 @@ TEST_CASE("ranks are the renders' stable sort by depth, kept by an insertion pas
     }
     frame::Selectors selectors;
     const std::uint16_t kind = selectors.kind("building");
-    selectors.set(kind, 300.0F, 600.0F, 1200.0F);
+    selectors.set(kind, 300.0, 600.0, 1200.0);
     frame::Ranks ranks;
     std::uint64_t moves = 0;
     std::size_t full_sorts = 0;
@@ -238,13 +238,21 @@ TEST_CASE("ranks are the renders' stable sort by depth, kept by an insertion pas
         std::ranges::stable_sort(
             want, [&](std::uint32_t a, std::uint32_t b) { return -ranks.depth()[a] < -ranks.depth()[b]; });
         CHECK(std::ranges::equal(want, ranks.order()));
-        // Slots: the ground's first, then each item's, by its detail band.
+        // Slots: the ground's first, then each item's, by its detail band; the rank table holds both.
         std::uint32_t at = 100;
         for (const std::uint32_t row : ranks.order()) {
+            const std::size_t band = selectors.band(kind, ranks.depth()[row]);
             CHECK(ranks.first_slot()[row] == at);
-            at += items.slots(row, selectors.band(kind, ranks.depth()[row]));
+            CHECK(ranks.band()[row] == band);
+            CHECK(ranks.table()[row] == shaders::rank_entry(at, static_cast<std::uint32_t>(band)));
+            CHECK(shaders::rank_slot(ranks.table()[row]) == at);
+            CHECK(shaders::rank_band(ranks.table()[row]) == band);
+            at += items.slots(row, band);
         }
         CHECK(ranks.slots() == at);
+        for (std::uint32_t row = 0; row < items.rows(); ++row) {
+            if (ranks.first_slot()[row] == frame::Ranks::none) CHECK(ranks.table()[row] == shaders::RANK_NONE);
+        }
         moves += ranks.moves();
         full_sorts += ranks.sorted_fully() ? 1 : 0;
     }
@@ -282,6 +290,61 @@ TEST_CASE("ranks are the renders' stable sort by depth, kept by an insertion pas
     std::size_t common = 0;
     for (const std::uint32_t r : ranks.order()) common += std::ranges::find(before, r) != before.end() ? 1U : 0U;
     MESSAGE("a 1.4 m pan: " << ranks.moves() << " moves over " << common << " items drawn in both frames");
+}
+
+TEST_CASE("an item's detail band is the ranks' choice in double, which a float depth or threshold can miss") {
+    // The camera looks north from 1,000 m south of the origin at street level: an item on the axis at z has depth
+    // 1,000 − z. Two items lie just short of their kind's first threshold, where a float would put them past it: one
+    // within a float step of 460 m (its depth rounds to 460.0f), one between win_d-like 412.3456789 m and that
+    // threshold rounded to float.
+    frame::Selectors selectors;
+    const std::uint16_t walls = selectors.kind("walls");
+    const std::uint16_t windows = selectors.kind("windows");
+    selectors.set(walls, 460.0);
+    selectors.set(windows, 412.3456789);
+    scene::ItemTable items;
+    auto add = [&items](double z, std::uint16_t kind) {
+        return items.add({.x = 0,
+                          .y = 4,
+                          .z = z,
+                          .offset = 0,
+                          .cut_x = 0,
+                          .cut_z = z,
+                          .order = scene::order_of(0, static_cast<std::uint64_t>(items.rows())),
+                          .kind = kind,
+                          .flags = 0,
+                          .slots = {7, 3, 1, 1},
+                          .min_depth = 2.0F,
+                          .radius = 5.0F,
+                          .tile = 1});
+    };
+    const std::uint32_t wall = add(540.00001, walls);
+    const std::uint32_t window = add(1000.0 - 412.345675, windows);
+    const view::Camera camera({.target = {0, 0, 0},
+                               .yaw = 0,
+                               .pitch = 0,
+                               .dist = 1000,
+                               .fov = 36,
+                               .width = 412,
+                               .height = 916,
+                               .cx = std::nullopt,
+                               .cy = std::nullopt});
+    frame::Ranks ranks;
+    ranks.update(items, camera, selectors);
+    for (const std::uint32_t row : {wall, window}) {
+        REQUIRE(ranks.first_slot()[row] != frame::Ranks::none);
+        const double depth = ranks.depth()[row];
+        const std::uint16_t kind = items.kind()[row];
+        CHECK(depth < selectors.thresholds(kind)[0]);
+        // A float depth, or the threshold as the selector table holds it, would say band 1.
+        const hlsl::float4 t = selectors.table()[kind];
+        CHECK((static_cast<float>(depth) >= t.x || depth >= static_cast<double>(t.x)));
+        CHECK(ranks.band()[row] == 0);
+        CHECK(shaders::rank_band(ranks.table()[row]) == 0);
+    }
+    // The wall, at 460 m less a hair, is the farther: first in painter's order, its band-0 slots before the window's.
+    CHECK(ranks.order().front() == wall);
+    CHECK(shaders::rank_slot(ranks.table()[window]) == 7);
 }
 
 TEST_CASE("the screen layers of a camera and a theme: the 17 stops, the eye-level band, the sun, fin and the rain") {

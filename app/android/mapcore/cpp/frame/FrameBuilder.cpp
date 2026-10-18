@@ -122,6 +122,8 @@ gpu::Result<std::unique_ptr<FrameBuilder>> FrameBuilder::create(const gpu::Devic
     ATLAS_GPU_LET(layout, FrameLayout::create(device));
     self->layout_ = std::move(layout);
     self->passes_ = std::move(passes);
+    // The item kinds, before the world can build a tile: their rows are fixed from here on.
+    for (const std::unique_ptr<Pass>& p : self->passes_) p->kinds(self->selectors_);
     // Every phase in the frame's order: by slot, then order, then the registry's (a stable sort).
     for (std::uint32_t p = 0; p < self->passes_.size(); ++p) {
         self->counters_.emplace_back(self->passes_[p]->name());
@@ -259,8 +261,8 @@ void FrameBuilder::write_ring(std::uint32_t slot) {
     const RingSlice& s = layout_->slice();
     std::memcpy(bytes.data() + s.block, &state_.block, sizeof(state_.block));
     if (state_.items != nullptr) {
-        const auto first = ranks_.first_slot();
-        std::memcpy(bytes.data() + s.ranks, first.data(), first.size_bytes());
+        const auto entries = ranks_.table();
+        std::memcpy(bytes.data() + s.ranks, entries.data(), entries.size_bytes());
     }
     const auto table = selectors_.table();
     std::memcpy(bytes.data() + s.selectors, table.data(), table.size_bytes());

@@ -31,6 +31,8 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
     const std::size_t rows = items.rows();
     depth_.resize(rows);
     first_.assign(rows, none);
+    band_.assign(rows, 0);
+    table_.assign(rows, shaders::RANK_NONE);
     drawn_.assign(rows, 0);
     listed_.resize(rows, 0);
     near_ = 0;
@@ -128,7 +130,10 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
     const auto kind = items.kind();
     for (const std::uint32_t row : order_) {
         const std::size_t band = selectors.band(kind[row], depth_[row]);
-        first_[row] = static_cast<std::uint32_t>(std::min<std::uint64_t>(at, shaders::PAINTER_SLOTS - 1));
+        const auto first = static_cast<std::uint32_t>(std::min<std::uint64_t>(at, shaders::PAINTER_SLOTS - 1));
+        first_[row] = first;
+        band_[row] = static_cast<std::uint8_t>(band);
+        table_[row] = shaders::rank_entry(first, static_cast<std::uint32_t>(band));
         at += items.slots(row, band);
     }
     slots_ = static_cast<std::uint32_t>(std::min<std::uint64_t>(at, shaders::PAINTER_SLOTS));

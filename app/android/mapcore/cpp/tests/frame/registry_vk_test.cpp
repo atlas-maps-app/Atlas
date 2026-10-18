@@ -1,6 +1,7 @@
 // The pass registry (frame/PassRegistry.hpp) and the frame's order of phases (frame/FrameBuilder.hpp): every registered
-// pass is made by make_passes in the registry's order, the frame lays the passes' ground slots out in that order before
-// the items' (D6), and it records phases by slot, then order, then the registry's order (D5.12).
+// pass is made by make_passes in the registry's order, registers its item kinds as the builder is made (their rows
+// fixed from then on), the frame lays the passes' ground slots out in the registry's order before the items' (D6), and
+// it records phases by slot, then order, then the registry's order (D5.12).
 #include "frame/FrameBuilder.hpp"
 #include "frame/PassRegistry.hpp"
 #include "gpu/PipelineCache.hpp"
@@ -58,6 +59,9 @@ public:
         return {};
     }
     void release() noexcept override {}
+    void kinds(frame::Selectors& selectors) override {
+        log_.push_back(std::format("{} kind {}", name_, selectors.kind(name_ + " kind")));
+    }
     void select(const frame::FrameState& s, frame::Selectors& selectors) override {
         (void)s;
         (void)selectors;
@@ -117,10 +121,13 @@ TEST_CASE("the frame records its passes' phases by slot, then order, then the re
     auto report = (*renderer)->draw(0);
     ATLAS_REQUIRE(report.has_value(), report.error().text());
     (*renderer)->drain();
-    // The selections, the ground slots (a's 3 from slot 0, then b's 5 from 3), then the updates, each in the
-    // registry's order; then the phases in D5.12's order, the translucent ones by order (b's 1 before a's 5 and b's 5,
-    // which tie and keep the registry's order).
-    const std::vector<std::string> want{"a select",
+    // The kinds as the builder is made, their rows in the registry's order; each frame the selections, the ground
+    // slots (a's 3 from slot 0, then b's 5 from 3), then the updates, each in the registry's order; then the phases in
+    // D5.12's order, the translucent ones by order (b's 1 before a's 5 and b's 5, which tie and keep the registry's
+    // order).
+    const std::vector<std::string> want{"a kind 0",
+                                        "b kind 1",
+                                        "a select",
                                         "b select",
                                         "a ground",
                                         "b ground",

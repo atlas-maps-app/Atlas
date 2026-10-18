@@ -127,6 +127,10 @@ public:
     /// Lets go of everything prepare made (the GPU has finished every frame that used it).
     virtual void release() noexcept = 0;
 
+    /// Registers the item kinds the pass's items take (Selectors::kind), once, as the frame builder is made: before
+    /// any tile is built, so stage T can write each item's row (ItemSpec::kind) from what the pass keeps of them. The
+    /// rows never change.
+    virtual void kinds(Selectors& selectors) { (void)selectors; }
     /// The detail thresholds of the item kinds the pass draws, for the frame (Selectors.hpp: from the frame's settings,
     /// win_d and the like), on the render thread before the ranks.
     virtual void select(const FrameState& state, Selectors& selectors) {
