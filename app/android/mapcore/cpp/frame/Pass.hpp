@@ -38,9 +38,10 @@ class Stream; // twin/Twin.hpp
 
 namespace atlas::frame {
 
-class FrameLayout; // frame/FrameLayout.hpp
-class Selectors;   // frame/Selectors.hpp
-struct FrameState; // frame/FrameBuilder.hpp
+class FrameBuilder; // frame/FrameBuilder.hpp
+class FrameLayout;  // frame/FrameLayout.hpp
+class Selectors;    // frame/Selectors.hpp
+struct FrameState;  // frame/FrameBuilder.hpp
 
 /// Where in the frame a phase records (D5.12's order).
 enum class Slot : std::uint8_t {
@@ -132,6 +133,14 @@ public:
         (void)state;
         (void)selectors;
     }
+    /// The painter slots the pass's ground takes this frame (D6: the ground is drawn before every item, so its slots
+    /// come first), asked on the render thread after the selections and before the ranks. The frame lays the passes'
+    /// ground slots out from slot 0 in the registry's order, a pass's own from first_ground_slot(), and the items'
+    /// after all of them (RankOptions::ground_slots; FrameState::ground_slots; the frame block's info.y counts both).
+    [[nodiscard]] virtual std::uint32_t ground_slots(const FrameState& state) const {
+        (void)state;
+        return 0;
+    }
     /// Stage F of the pass, on the render thread, before the frame records: its draw lists for the frame's cover and
     /// ranks, written into its own per-frame buffers.
     virtual void update(const FrameState& state) { (void)state; }
@@ -151,6 +160,13 @@ public:
         (void)out;
         (void)phase;
     }
+
+    /// The pass's first ground slot this frame (where ground_slots' count starts), from its update on; 0 until then.
+    [[nodiscard]] std::uint32_t first_ground_slot() const noexcept { return first_ground_slot_; }
+
+private:
+    friend class FrameBuilder; // lays the ground slots out
+    std::uint32_t first_ground_slot_ = 0;
 };
 
 /// A pass's shader module of embedded SPIR-V `words`, its making announced as `name` (the module's symbol) alone.

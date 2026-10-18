@@ -24,6 +24,7 @@
 #include <array>
 #include <atomic>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -32,6 +33,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace atlas::scene {
@@ -45,6 +47,20 @@ struct PassTile {
     std::vector<std::uint32_t> cell_first;
     /// Its own numbers (ground slots, counts), the pass's to define.
     std::array<std::uint32_t, 8> values{};
+    /// The pass's own CPU-side data for the tile (the ground's rings in double, which it decides per frame as the port
+    /// does), of the pass's own type (cpu_as). Made in stage T on a worker (TileBuild::keep); const once the tile is
+    /// published, from then on read on the render thread (or any other) and never written; freed with the tile, when
+    /// the residency lets it go (a pass that keeps it past that frame holds its own reference).
+    std::shared_ptr<const void> cpu;
+    /// The bytes `cpu` holds, as its builder counts them: part of the tile's native bytes, which the residency's budget
+    /// sees (ResidentTile::native_bytes).
+    std::size_t cpu_bytes = 0;
+
+    /// `cpu` as the pass's type T (null when the pass kept none).
+    template <class T>
+    [[nodiscard]] const T* cpu_as() const noexcept {
+        return static_cast<const T*>(cpu.get());
+    }
 };
 
 /// A tile resident in the heaps, as the render thread sees it once published.
@@ -71,6 +87,9 @@ struct ResidentTile {
     std::vector<std::uint32_t> rows;
     /// When it was published (seconds, the frame's clock): its fade in.
     double published = 0;
+    /// What it holds in native memory: itself, its cells, its items and their rows, each pass's offsets and CPU-side
+    /// data (PassTile::cpu_bytes); the residency's budget counts it (ResidencyStats::native_bytes).
+    std::size_t native_bytes = 0;
 };
 
 /// What a pass's builder sees of a tile and writes for it (frame::Pass::build), on a worker.
@@ -101,6 +120,13 @@ public:
     [[nodiscard]] PassTile& out() noexcept { return out_; }
     /// Adds an item the pass draws (the residency sets its tile).
     void add_item(const ItemSpec& item) { items_.push_back(item); }
+    /// Keeps `data` as the pass's CPU-side data for the tile (PassTile::cpu), `bytes` of the tile's native bytes: const
+    /// from here on, read once the tile is published, freed with the tile.
+    template <class T>
+    void keep(std::shared_ptr<const T> data, std::size_t bytes) {
+        out_.cpu = std::move(data);
+        out_.cpu_bytes = bytes;
+    }
 
 private:
     const tiles::Tile& tile_;
@@ -135,6 +161,7 @@ struct ResidencyStats {
     std::uint64_t released = 0;
     double build_ms = 0; ///< the workers' time over every tile built
     std::size_t resident = 0;
+    std::size_t native_bytes = 0; ///< the resident tiles' native bytes (ResidentTile::native_bytes)
     std::size_t pending = 0;
 };
 
@@ -202,6 +229,7 @@ private:
     unsigned busy_ = 0;
     ResidencyStats stats_;
     std::atomic<std::uint32_t> next_handle_{1};
+    std::atomic<std::size_t> native_{0}; // the resident tiles' native bytes (the render thread changes it)
 
     // The render thread's.
     std::vector<std::shared_ptr<const ResidentTile>> resident_;

@@ -6,9 +6,10 @@
 // (scene/ItemTable.hpp). The frame builder asks it once a frame, on the render thread (frame::FrameScene); nothing in
 // it waits on I/O, decoding or the sun.
 //
-// Tiles leave as the budget asks (D3: 40 MB of heaps): a resident tile the cover has not drawn for `idle_seconds` is
-// let go of once the heaps hold more than `keep_fraction` of their budget, and after `forget_seconds` whatever they
-// hold; its ranges are freed two frames later, after the fences.
+// Tiles leave as the budgets ask (D3: 40 MB of heaps; §3: 64 MB of decoded tiles in native memory): a resident tile the
+// cover has not drawn for `idle_seconds` is let go of once the heaps or the resident tiles' native bytes are over
+// `keep_fraction` of their budget, and after `forget_seconds` whatever they hold; its ranges are freed two frames
+// later, after the fences, its native memory at once.
 #pragma once
 
 #include "frame/FrameBuilder.hpp"
@@ -20,6 +21,7 @@
 #include "view/Frames.hpp"
 #include "view/Ladder.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -37,8 +39,11 @@ struct WorldOptions {
     double far = 12'000.0;        ///< how far the cover reaches
     double idle_seconds = 2.0;    ///< a tile not drawn this long may go when the heaps fill
     double forget_seconds = 30.0; ///< and goes after this long whatever they hold
-    double keep_fraction = 0.75;  ///< of the heaps' budget
+    double keep_fraction = 0.75;  ///< of the heaps' budget, and of the native one
     HeapBudget heaps;
+    /// The resident tiles' native bytes (ResidencyStats::native_bytes: their records, items and the passes' CPU-side
+    /// data), §3's decoded tiles.
+    std::size_t native_budget = std::size_t{64} << 20U;
     /// The frame's clock (seconds), from the workers' threads too; the frame state's time when absent.
     std::function<double()> clock;
 };

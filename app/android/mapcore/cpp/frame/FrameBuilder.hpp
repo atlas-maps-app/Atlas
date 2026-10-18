@@ -79,6 +79,8 @@ struct FrameState {
     const scene::ItemTable* items = nullptr;
     const Ranks* ranks = nullptr;
     const Selectors* selectors = nullptr;
+    /// The ground's painter slots this frame, every pass's (Pass::ground_slots): slots 0 to this, before every item's.
+    std::uint32_t ground_slots = 0;
     /// The frame slot (0 or 1): set 0's slice and the passes' own per-frame buffers.
     std::uint32_t slot = 0;
 };
@@ -112,8 +114,6 @@ public:
     virtual void update(const FrameState& state) = 0;
     [[nodiscard]] virtual const scene::Cover* cover() const noexcept = 0;
     [[nodiscard]] virtual const scene::ItemTable* items() const noexcept = 0;
-    /// The ground's painter slots this frame (before every item's).
-    [[nodiscard]] virtual std::uint32_t ground_slots() const noexcept { return 0; }
     /// The geometry heaps the frame binds in set 1 (null: none).
     [[nodiscard]] virtual scene::Heaps* heaps() noexcept = 0;
 };

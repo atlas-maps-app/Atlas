@@ -299,8 +299,15 @@ void FrameBuilder::record(const gpu::FrameContext& frame) {
     state_.items = scene != nullptr ? scene->items() : nullptr;
     for (const std::unique_ptr<Pass>& p : passes_) p->select(state_, selectors_);
     state_.selectors = &selectors_;
+    // The ground's painter slots, every pass's in the registry's order from slot 0; the items' come after them.
+    std::uint32_t ground = 0;
+    for (const std::unique_ptr<Pass>& p : passes_) {
+        p->first_ground_slot_ = ground;
+        ground += p->ground_slots(state_);
+    }
+    state_.ground_slots = ground;
     if (state_.items != nullptr) {
-        RankOptions options{.ground_slots = scene->ground_slots()};
+        RankOptions options{.ground_slots = ground};
         if (state_.camera.has(style::camera_flag::engine_mode) && state_.placed) {
             if (const auto radius = state_.placed->number("radius")) {
                 const view::Vec3 target = state_.placed->camera().target;
@@ -316,7 +323,8 @@ void FrameBuilder::record(const gpu::FrameContext& frame) {
         state_.block.info.z = static_cast<std::uint32_t>(state_.items->rows());
     } else {
         state_.ranks = nullptr;
-        state_.block.info.y = scene != nullptr ? scene->ground_slots() : 0;
+        state_.block.info.y = ground;
+        state_.block.info.z = 0;
     }
     for (const std::unique_ptr<Pass>& p : passes_) p->update(state_);
 

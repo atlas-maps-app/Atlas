@@ -60,8 +60,10 @@ const view::Ladder* World::ladder(const style::CameraState& camera) {
 
 void World::release_idle(double seconds, std::uint64_t frame) {
     const HeapStats stats = heaps_->stats();
+    const std::size_t native = residency_->stats().native_bytes;
     const bool full =
-        static_cast<double>(stats.total_used()) > options_.keep_fraction * static_cast<double>(options_.heaps.total);
+        static_cast<double>(stats.total_used()) > options_.keep_fraction * static_cast<double>(options_.heaps.total) ||
+        static_cast<double>(native) > options_.keep_fraction * static_cast<double>(options_.native_budget);
     std::vector<std::pair<tiles::TileKey, std::string>> going;
     for (const std::shared_ptr<const ResidentTile>& t : residency_->resident()) {
         const auto it = std::ranges::find_if(last_drawn_, [&](const auto& p) { return p.first == t->handle; });

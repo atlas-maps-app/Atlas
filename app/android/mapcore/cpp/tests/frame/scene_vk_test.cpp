@@ -3,8 +3,8 @@
 // the world over the bundled render packs (ATLAS_TILES_DIR, as the tile reader's and the sun's tests take them): the
 // active pack for the camera, its ladder snapping the Westerkerk home onto the living map's view, the cover's requests
 // built on the workers by every pass's stage T into the heaps, published, taken with their items, drawn with their
-// visible cells, fading in, and let go of when the camera leaves; the sun's scene the resident tiles and their 220 m
-// halo.
+// visible cells, fading in, and let go of when the camera leaves, the passes' CPU-side data with them (counted in the
+// tiles' native bytes); the sun's scene the resident tiles and their 220 m halo.
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/PassRegistry.hpp"
@@ -34,7 +34,13 @@ namespace {
     return v == nullptr ? std::string() : std::string(v);
 }
 
-/// A pass whose stage T writes each tile's key and cell counts into the points heap and adds an item per building.
+/// What the probe keeps of a tile on the CPU: each building's first vertex in the frame's metres, in double.
+struct FirstVertices {
+    std::vector<double> xz;
+};
+
+/// A pass whose stage T writes each tile's key and cell counts into the points heap, adds an item per building and
+/// keeps the buildings' first vertices on the CPU (PassTile::cpu).
 class BuildProbe final : public frame::Pass {
 public:
     [[nodiscard]] std::string_view name() const noexcept override { return "build probe"; }
@@ -63,6 +69,7 @@ public:
         b.out().ranges[0] = range;
         b.out().cell_first.assign(cells + 1, 0);
         for (std::uint32_t c = 0; c < cells; ++c) b.out().cell_first[c + 1] = b.out().cell_first[c] + t.cells[c].total;
+        auto kept = std::make_shared<FirstVertices>();
         if (const tiles::Layer* layer = t.layer(tiles::LayerId::building)) {
             for (std::uint32_t i = 0; i < layer->count; ++i) {
                 const tiles::RingView ring = layer->ring(tiles::building::ring, i);
@@ -70,6 +77,8 @@ public:
                 const tiles::Frame& f = b.head().frame;
                 const double x = f.x(ring.lon[0]);
                 const double z = f.z(ring.lat[0]);
+                kept->xz.push_back(x);
+                kept->xz.push_back(z);
                 b.add_item(
                     {.x = x,
                      .y = 5.0,
@@ -86,6 +95,8 @@ public:
                      .tile = 0});
             }
         }
+        const std::size_t bytes = sizeof(FirstVertices) + (kept->xz.capacity() * sizeof(double));
+        b.keep(std::shared_ptr<const FirstVertices>(std::move(kept)), bytes);
         built.fetch_add(1);
         return {};
     }
@@ -215,6 +226,22 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
         CHECK(t.drawn->passes[0].ranges[0].size > 0);
         CHECK(t.fade >= 0.0F);
     }
+    // The pass's CPU-side data, as its stage T kept it: a first vertex per item, counted in the tile's native bytes.
+    std::size_t native = 0;
+    std::weak_ptr<const void> one_kept;
+    for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+        const scene::PassTile& p = t->passes[0];
+        const auto* kept = p.cpu_as<FirstVertices>();
+        ATLAS_REQUIRE(kept != nullptr, "the probe kept its tile's first vertices");
+        CHECK(kept->xz.size() == 2 * t->items.size());
+        for (std::size_t i = 0; i < t->items.size(); ++i) CHECK(kept->xz[2 * i] == t->items[i].x);
+        CHECK(p.cpu_bytes >= kept->xz.size() * sizeof(double));
+        CHECK(t->native_bytes >= p.cpu_bytes + (t->items.size() * sizeof(scene::ItemSpec)));
+        native += t->native_bytes;
+        one_kept = p.cpu;
+    }
+    CHECK(w.residency().stats().native_bytes == native);
+    MESSAGE(w.residency().resident().size() << " resident tiles hold " << native << " native bytes");
     // Later frames: the fade completes, nothing more is asked for the same view.
     for (std::uint64_t n = 41; n <= 60; ++n) {
         now = static_cast<double>(n) * 0.016;
@@ -241,5 +268,9 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     }
     CHECK(w.active() == nullptr);
     CHECK(w.cover()->tiles().empty());
+    // Every tile went, and its CPU-side data with it.
+    CHECK(w.residency().resident().empty());
+    CHECK(w.residency().stats().native_bytes == 0);
+    CHECK(one_kept.expired());
     (void)session->take_messages();
 }

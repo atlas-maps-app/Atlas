@@ -41,6 +41,16 @@ void each_range(const ResidentTile& t, const F& f) {
     }
 }
 
+/// What a built tile holds in native memory: itself, its pack's id, its cells, its items and the rows they will take,
+/// each pass's record, cell offsets and CPU-side data (as its builder counted it).
+[[nodiscard]] std::size_t native_bytes_of(const ResidentTile& t) noexcept {
+    std::size_t n = sizeof(ResidentTile) + t.pack.capacity() + (t.cells.capacity() * sizeof(tiles::CellInfo)) +
+                    (t.items.capacity() * sizeof(ItemSpec)) + (t.items.size() * sizeof(std::uint32_t)) +
+                    (t.passes.capacity() * sizeof(PassTile));
+    for (const PassTile& p : t.passes) n += (p.cell_first.capacity() * sizeof(std::uint32_t)) + p.cpu_bytes;
+    return n;
+}
+
 } // namespace
 
 std::uint64_t Residency::key_of(tiles::TileKey key, std::string_view pack) noexcept {
@@ -193,6 +203,7 @@ std::shared_ptr<ResidentTile> Residency::build(const Job& job, tiles::Zstd& zstd
     for (std::size_t k = 0; k < heap_kinds; ++k) heaps_.flush(static_cast<HeapKind>(k));
     out->published = clock_ ? clock_() : 0.0;
     for (ItemSpec& item : out->items) item.tile = out->handle;
+    out->native_bytes = native_bytes_of(*out);
     return out;
 }
 
@@ -212,6 +223,7 @@ void Residency::take_published(ItemTable& items, std::vector<std::shared_ptr<con
         t->rows.reserve(t->items.size());
         for (const ItemSpec& item : t->items) t->rows.push_back(items.add(item));
         index_[k] = resident_.size();
+        native_.fetch_add(t->native_bytes, std::memory_order_relaxed);
         resident_.push_back(t);
         if (taken != nullptr) taken->push_back(t);
     }
@@ -225,6 +237,7 @@ void Residency::release(tiles::TileKey key, std::string_view pack, ItemTable& it
     const std::shared_ptr<const ResidentTile> tile = resident_[at];
     for (const std::uint32_t row : tile->rows) items.remove(row);
     each_range(*tile, [&](const HeapRange& r) { heaps_.retire(r, frame); });
+    native_.fetch_sub(tile->native_bytes, std::memory_order_relaxed);
     // Swap with the last, so the index stays dense.
     index_.erase(it);
     if (at + 1 != resident_.size()) {
@@ -260,6 +273,7 @@ ResidencyStats Residency::stats() const {
     const std::scoped_lock lock(mutex_);
     ResidencyStats s = stats_;
     s.resident = resident_.size();
+    s.native_bytes = native_.load(std::memory_order_relaxed);
     s.pending = queue_.size() + busy_ + published_.size();
     return s;
 }
