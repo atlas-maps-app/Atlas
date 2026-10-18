@@ -1,0 +1,25 @@
+{
+  "about": "The renders' regions (plan-vector K20a; D16's named views): each region's named views, drawn by the core from the region's render pack, in the full tier as each region's tiles land. A region's views are cases once packs-renders publishes its render pack (packer render-tiles --renders, packs.yml's job renders) and CI fetches its element pack for the oracle; until then they wait in `waiting`, which the harness does not read, and packs.json's render_gap says why the region has none. packer's RenderTilesTest holds this file to packs-renders' list: every view of every region is a case here or in smoke.json, or waits here, and only a region with a render pack has cases. The canal ring's grachten_home is the Main board, and the Westerkerk (amsterdam) the bundled living map, both in smoke.json. The terrain regions (dunes, sangimignano) take TERRAIN in place of BOARD when they join (D16, K28). L1 and A2's gates on these views come with the frame core (K7) and the map's packs (K11): until then the gates are reported, not enforced.",
+  "cases": [
+    {"name": "view grachten sunny S1", "scene": {"pack": "grachten", "sha256": "3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec"}, "camera": {"view": "grachten"},
+     "moment": {"named": "sunny"}, "size": "S1", "mode": "structural", "engine": true, "gates": ["BOARD", "WITHIN2", "FLAT", "OWNERS", "LABELS", "CEILING", "L1", "L2"], "tier": "full"},
+    {"name": "view grachten night S1", "scene": {"pack": "grachten", "sha256": "3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec"}, "camera": {"view": "grachten"},
+     "moment": {"named": "night"}, "size": "S1", "mode": "structural", "engine": true, "gates": ["BOARD", "WITHIN2", "FLAT", "OWNERS", "LABELS", "CEILING", "L1", "L2"], "tier": "full"},
+    {"name": "view grachten_eat sunny S1", "scene": {"pack": "grachten", "sha256": "3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec"}, "camera": {"view": "grachten_eat"},
+     "moment": {"named": "sunny"}, "size": "S1", "mode": "structural", "engine": true, "gates": ["BOARD", "WITHIN2", "FLAT", "OWNERS", "LABELS", "CEILING", "L1", "L2"], "tier": "full"},
+    {"name": "view grachten_eat night S1", "scene": {"pack": "grachten", "sha256": "3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec"}, "camera": {"view": "grachten_eat"},
+     "moment": {"named": "night"}, "size": "S1", "mode": "structural", "engine": true, "gates": ["BOARD", "WITHIN2", "FLAT", "OWNERS", "LABELS", "CEILING", "L1", "L2"], "tier": "full"}
+  ],
+  "waiting": [
+    {"region": "artis", "sha256": "176af220f5dab41b9a6dc53faa77191992a16034555d7f288e38e7f6f8f05f93", "views": ["artis", "artis_gorilla"]},
+    {"region": "bergen", "sha256": "2bdd8627297ac3cc6771be092d405ee72502bb5a9286e84f9540435f60ebecbf", "views": ["bergen_close"]},
+    {"region": "dunes", "sha256": "5b09dfd589c8bd1880396657a83c68ce66d7fe6ec14d60a05cef5b1ae81f6741", "views": ["dunes"]},
+    {"region": "efteling", "sha256": "0807b22f5cd65a07583f19cd6601e856c44d168ef22b70b8108be67851f606d1", "views": ["efteling", "efteling_joris"]},
+    {"region": "newyork", "sha256": "d1212b52bbbf46c133553f9111d8192edeabb207fd1efce053b745cb8ed85b7c", "views": ["newyork"]},
+    {"region": "nottinghill", "sha256": "ad7032661aaca02d6095b659fa31d21c97c9de509f4673a61cf4d496e4d99acf", "views": ["nottinghill_close"]},
+    {"region": "paris", "sha256": "50b224deb9b4c0e33f371f57c6ed0bfa50959d6cdb0c7b598c71329b2a198b64", "views": ["paris", "paris_close"]},
+    {"region": "port", "sha256": "38f11f4751a4c9fc035ce3c94ded49ebc8296f8e7acaf2d08647d6d714d5dd6b", "views": ["port", "port_close"]},
+    {"region": "sangimignano", "sha256": "b993a22ee91f3fe3d6092db8c72cf3b24c1a5d9467669d00644ee21a36e477ad", "views": ["sangimignano_close"]},
+    {"region": "schiphol", "sha256": "512a0ca1cac9394d295634130bec8c9eb17f544a415b34d12669d458407970e7", "views": ["schiphol", "schiphol_close"]}
+  ]
+}

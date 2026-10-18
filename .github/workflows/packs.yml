@@ -6,7 +6,8 @@
 # The region pack covers the region's `atlas` box when regions.json gives one (a city, a district: "atlas": [w, s, e, n]),
 # else its whole bbox when that is under 0.6 square degrees; a country-sized region without an `atlas` box gets none.
 # The renders' own packs (the Python engine's extracts) are made by `packer renders` on the owner's Mac and published
-# as the release packs-renders.
+# as the release packs-renders; the job renders adds their render packs there (the format-3 tiles the vector engine's
+# core draws, `packer render-tiles`), with packs.json naming each beside its element pack.
 # A run uploads to a dated release packs-YYYYMMDD, then writes packs.json there and to the fixed release packs-latest,
 # which the app reads (PackCatalog in :tiles). A region whose build fails keeps its previous entry in packs.json.
 name: Packs
@@ -18,6 +19,12 @@ on:
         description: Region ids from app/android/packs/regions.json, comma-separated (empty for all)
         required: false
         default: ''
+      renders:
+        description: "packs-renders' render packs: also (beside the regions), only (no region is built), or skip"
+        required: false
+        type: choice
+        options: [also, only, skip]
+        default: also
   schedule:
     # Monthly, on the 2nd at 02:17 UTC: Geofabrik's extracts of the 1st are out by then.
     - cron: '17 2 2 * *'
@@ -50,6 +57,7 @@ env:
 
 jobs:
   plan:
+    if: ${{ github.event.inputs.renders != 'only' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -90,6 +98,7 @@ jobs:
   sources:
     # Planetiler's other sources (OSM water polygons, Natural Earth, lake centre lines: about 1 GB), fetched once a
     # month for every job rather than once per region.
+    if: ${{ github.event.inputs.renders != 'only' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     outputs:
@@ -288,3 +297,69 @@ jobs:
           gh release delete-asset packs-latest packs.json --yes 2> /dev/null || true
           gh release upload packs-latest "$RUNNER_TEMP/packs.json"
           gh release edit packs-latest --notes-file "$RUNNER_TEMP/notes.md"
+
+  renders:
+    # packs-renders' render packs (plan-vector K20a): the format-3 render tiles the vector engine's core draws, made by
+    # `packer render-tiles --renders` from the release's own element packs (each fetched by the packer and used only when
+    # its size and SHA-256 are the release's packs.json's), uploaded beside them as <id>.render.atlas, and packs.json
+    # there rewritten with each one's size, SHA-256 and the element pack it was made from. A region whose scene the
+    # render tiles cannot carry yet (SceneToTiles refuses it, naming what it holds and the package that adds it) gets no
+    # render pack and its reason as "render_gap", in packs.json and in the summary; once a package teaches the format
+    # what the region holds, this job builds it with no change here. Builds are deterministic: only render packs whose
+    # bytes changed go up, then packs.json if it changed. A region that loses its render pack drops out of packs.json
+    # (the app reads only what the list names); its old file stays in the release, unused.
+    if: ${{ github.event.inputs.renders != 'skip' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RENDERS: packs-renders
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Android SDK 37
+        # Gradle configures every module of the build, the Android ones too
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" > /dev/null
+      - name: Build the packer
+        working-directory: app/android
+        run: ./gradlew :packer:installDist --stacktrace
+      - name: Render packs
+        env:
+          # the canal ring's scene is loaded whole, and again at each of its views' tolerances, one load at a time
+          JAVA_OPTS: -Xmx8g
+        run: |
+          set -euo pipefail
+          R="$RUNNER_TEMP/renders"
+          mkdir -p "$R/previous" "$R/elements" "$R/out" "$R/work"
+          echo "R=$R" >> "$GITHUB_ENV"
+          gh release download "$RENDERS" --pattern packs.json --dir "$R/previous"
+          app/android/packer/build/install/packer/bin/packer render-tiles --renders "$R/previous/packs.json" "$R/out" \
+            --packs "$R/elements" --work "$R/work"
+          ls -l "$R/out"
+          {
+            echo "### $RENDERS: render packs"
+            jq -r '.packs[] | (.files | map(select(.kind == "atlas")) | first) as $e | (.files | map(select(.kind == "render")) | first) as $r
+              | if $r then "- \(.id): \($r.name), \($r.bytes / 1024 | floor) KiB, \($r.bytes * 1000 / $e.bytes | round / 10) % of its element pack"
+                else "- \(.id): no render pack: \(.render_gap // "the list gives no reason")" end' "$R/out/packs.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish
+        run: |
+          set -euo pipefail
+          # the render packs first, then the list that names them; one whose SHA-256 the release's list gives is there
+          jq -r '.packs[].files[] | select(.kind == "render") | "\(.name) \(.sha256)"' "$R/out/packs.json" | while read -r name sha; do
+            had=$(jq -r --arg n "$name" '[.packs[].files[] | select(.kind == "render" and .name == $n) | .sha256] | first // ""' "$R/previous/packs.json")
+            if [ "$had" = "$sha" ]; then
+              echo "$name: unchanged"
+            else
+              gh release upload "$RENDERS" "$R/out/$name" --clobber
+            fi
+          done
+          if [ "$(jq -S 'del(.generated)' "$R/out/packs.json")" = "$(jq -S 'del(.generated)' "$R/previous/packs.json")" ]; then
+            echo "packs.json: unchanged"
+          else
+            gh release upload "$RENDERS" "$R/out/packs.json" --clobber
+          fi
