@@ -58,10 +58,12 @@ class MapData(private val services: Services) {
 
     /**
      * The packs on the phone and the published ones (`files/maps`). The bundled pack is installed on first use (a copy
-     * of 627 KB, once), on whichever background thread asks first, before anything is chosen.
+     * of 627 KB, once), on whichever background thread asks first, before anything is chosen. The render packs the APK
+     * carries ([BundledRenders]) are never downloaded again: the canal ring's first visit fetches its element pack only.
      */
     val packs: PackLibrary by lazy {
-        PackLibrary(File(services.dirs.files, "maps"), listOf(PackLibrary.RENDERS), get).also { lib ->
+        val bundledRenders = BundledRenders.read { open(BundledRenders.ASSET) }
+        PackLibrary(File(services.dirs.files, "maps"), listOf(PackLibrary.RENDERS), get, bundledRenders = bundledRenders).also { lib ->
             try {
                 lib.install(BUNDLED) { open(BUNDLED_ASSET) }
             } catch (_: IOException) {
