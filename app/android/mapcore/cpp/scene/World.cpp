@@ -91,6 +91,7 @@ void World::update(const frame::FrameState& state) {
         cover_.update(state.view ? *state.view : view::View({}, {}), frames_, {}, *residency_, seconds);
         residency_->want({});
         release_idle(seconds, state.number);
+        animating_ = frames_.weight(seconds) < 1.0;
         return;
     }
     const tiles::RenderHead& head = *active_->pack.head();
@@ -116,6 +117,7 @@ void World::update(const frame::FrameState& state) {
         }
     }
     release_idle(seconds, state.number);
+    animating_ = cover_.fading() || frames_.weight(seconds) < 1.0;
 }
 
 std::string World::tiles_line() const {

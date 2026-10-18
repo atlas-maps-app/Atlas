@@ -146,19 +146,26 @@ void Residency::work(const std::stop_token& stop) {
         arena.reset();
         std::shared_ptr<ResidentTile> tile = build(job, zstd, decoder, arena, raw);
         const double ms = ms_since(started);
+        std::function<void()> published;
         {
             const std::scoped_lock lock(mutex_);
-            --busy_;
             const std::uint64_t k = key_of(job.request.key, job.pack);
             if (tile) {
                 underway_[k] = 3;
                 published_.push_back(std::move(tile));
                 ++stats_.built;
                 stats_.build_ms += ms;
+                published = published_callback_;
             } else {
                 underway_.erase(k);
                 ++stats_.failed;
             }
+        }
+        // The wake, outside the lock; the worker counts as busy until it has run, so wait_idle sees it done.
+        if (published) published();
+        {
+            const std::scoped_lock lock(mutex_);
+            --busy_;
         }
         idle_.notify_all();
     }
@@ -262,6 +269,11 @@ std::vector<tiles::TileKey> Residency::sun_tiles(std::string_view pack) const {
         if (t->pack == pack) resident.push_back(t->key);
     }
     return sun::halo_of(p->pack, resident);
+}
+
+void Residency::set_published(std::function<void()> callback) {
+    const std::scoped_lock lock(mutex_);
+    published_callback_ = std::move(callback);
 }
 
 void Residency::wait_idle() {

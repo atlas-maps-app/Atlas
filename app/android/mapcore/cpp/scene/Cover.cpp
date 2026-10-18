@@ -29,7 +29,9 @@ void Cover::draw(const ResidentTile& tile, std::uint64_t cells, const view::View
     }
     if (shown == nullptr) shown = &shown_.emplace_back(Shown{.handle = tile.handle, .since = seconds, .drawn = false});
     shown->drawn = true;
-    const double fade = pymath::max(0.0, pymath::min(1.0, (seconds - shown->since) / 0.18));
+    const double fade =
+        fade_seconds_ > 0 ? pymath::max(0.0, pymath::min(1.0, (seconds - shown->since) / fade_seconds_)) : 1.0;
+    if (fade < 1.0) fading_ = true;
     const view::Vec3 target = view.camera().spec().target;
     const view::Placement p = frames.place(tile.frame, tile.origin, target, seconds);
     const Box box = box_of(tile.reach.box, tile.reach.top_cm, tile.frame);
@@ -48,6 +50,8 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
     requests_.clear();
     pending_.clear();
     missing_ = 0;
+    fading_ = false;
+    fade_seconds_ = in.fade_seconds;
     for (Shown& s : shown_) s.drawn = false;
     if (in.pack == nullptr || !in.pack->pack.is_render() || in.pack->pack.head() == nullptr) {
         shown_.clear();

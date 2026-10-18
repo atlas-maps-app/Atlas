@@ -198,6 +198,10 @@ public:
     /// pack's order; none for a pack the store lacks.
     [[nodiscard]] std::vector<tiles::TileKey> sun_tiles(std::string_view pack) const;
 
+    /// Called on a worker thread as each tile is published, outside the residency's lock (null: nothing): cheap and
+    /// never blocking, such as the frame loop's wake (World::set_wake).
+    void set_published(std::function<void()> callback);
+
     /// Waits until no request is queued or under way (tests).
     void wait_idle();
     [[nodiscard]] ResidencyStats stats() const;
@@ -227,6 +231,7 @@ private:
     std::vector<std::shared_ptr<ResidentTile>> published_;
     std::uint64_t generation_ = 0;
     unsigned busy_ = 0;
+    std::function<void()> published_callback_;
     ResidencyStats stats_;
     std::atomic<std::uint32_t> next_handle_{1};
     std::atomic<std::size_t> native_{0}; // the resident tiles' native bytes (the render thread changes it)

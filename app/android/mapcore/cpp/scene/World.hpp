@@ -4,7 +4,8 @@
 // frame blended over 300 ms), the tiles resident in the geometry heaps (scene/Residency.hpp, built by every pass's
 // stage T on the workers), the cover over them (scene/Cover.hpp) and the item table their items join
 // (scene/ItemTable.hpp). The frame builder asks it once a frame, on the render thread (frame::FrameScene); nothing in
-// it waits on I/O, decoding or the sun.
+// it waits on I/O, decoding or the sun. At rest the frame loop sleeps: a tile published wakes it (set_wake), and it
+// draws while a transition runs (animating).
 //
 // Tiles leave as the budgets ask (D3: 40 MB of heaps; §3: 64 MB of decoded tiles in native memory): a resident tile the
 // cover has not drawn for `idle_seconds` is let go of once the heaps or the resident tiles' native bytes are over
@@ -72,6 +73,14 @@ public:
     [[nodiscard]] const ItemTable* items() const noexcept override { return &items_; }
     [[nodiscard]] Heaps* heaps() noexcept override { return heaps_.get(); }
 
+    /// Wakes the frame loop at rest: called on a worker thread as each tile is published (cheap and never blocking:
+    /// post a frame request), so the next frame takes the tile and fades it in.
+    void set_wake(std::function<void()> wake) { residency_->set_published(std::move(wake)); }
+    /// Whether the last update left the frame mid-transition: a tile drawn still fading in, or a change of the frame
+    /// drawn still blending. The frame loop draws another frame while it is true; once a frame leaves it false, the
+    /// loop may rest until the camera moves or the wake.
+    [[nodiscard]] bool animating() const noexcept { return animating_; }
+
     /// The pack drawn now (null: none holds the camera's target).
     [[nodiscard]] const tiles::StorePack* active() const noexcept { return active_.get(); }
     [[nodiscard]] Residency& residency() noexcept { return *residency_; }
@@ -98,6 +107,7 @@ private:
     std::optional<view::Ladder> ladder_;
     /// Per resident tile (its handle): when the cover last drew it.
     std::vector<std::pair<std::uint32_t, double>> last_drawn_;
+    bool animating_ = false;
 };
 
 } // namespace atlas::scene

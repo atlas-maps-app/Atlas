@@ -70,6 +70,8 @@ public:
     [[nodiscard]] std::span<const Request> requests() const noexcept { return requests_; }
     /// The tiles wanted at the finest level that are not resident yet (drawn from an ancestor, or not at all).
     [[nodiscard]] std::size_t missing() const noexcept { return missing_; }
+    /// Whether a tile drawn is still fading in (its fade below 1).
+    [[nodiscard]] bool fading() const noexcept { return fading_; }
 
 private:
     void draw(const ResidentTile& tile, std::uint64_t cells, const view::View& view, const view::Frames& frames,
@@ -94,6 +96,8 @@ private:
     std::vector<Pending> pending_;
     std::string pack_id_;
     std::size_t missing_ = 0;
+    double fade_seconds_ = 0.18;
+    bool fading_ = false;
 };
 
 } // namespace atlas::scene

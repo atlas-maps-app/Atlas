@@ -193,6 +193,8 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
         scene::World::create(*session->device, (*builder)->passes(), {.workers = 3, .clock = [&now] { return now; }});
     ATLAS_REQUIRE(world.has_value(), world.error().text());
     scene::World& w = **world;
+    std::atomic<int> wakes{0};
+    w.set_wake([&wakes] { wakes.fetch_add(1); });
     for (const char* name : {"amsterdam", "grachten"}) {
         const std::filesystem::path path = std::filesystem::path(dir) / (std::string(name) + ".atlas");
         if (!std::filesystem::exists(path)) continue;
@@ -218,6 +220,9 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     if (state.placed->view()) MESSAGE("snapped onto " << std::string(*state.placed->view()));
     CHECK(drawn > 0);
     CHECK(probe->built.load() > 0);
+    // Each tile published woke the frame loop, and the frame that first draws them fades them in.
+    CHECK(wakes.load() == probe->built.load());
+    CHECK(w.animating());
     CHECK(w.items()->live() > 0);
     for (const scene::CoverTile& t : w.cover()->tiles()) {
         CHECK(t.drawn != nullptr);
@@ -251,6 +256,7 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     }
     for (const scene::CoverTile& t : w.cover()->tiles()) CHECK(t.fade == 1.0F);
     CHECK(w.cover()->missing() == 0);
+    CHECK_FALSE(w.animating()); // the fades are over: the frame loop may rest
     const auto sun = w.residency().sun_tiles("amsterdam");
     CHECK(sun.size() >= w.residency().resident().size() / 2);
     MESSAGE(w.tiles_line() << "; " << w.cover()->tiles().size() << " drawn, " << w.items()->live()
