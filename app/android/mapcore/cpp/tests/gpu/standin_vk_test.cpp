@@ -291,10 +291,12 @@ std::pair<std::size_t, std::size_t> nearer_where_apart(const Drawn& eight, const
     return {nearer, apart};
 }
 
+/// A file of the stand-in's tests: in ATLAS_TEST_OUT where it is set, else in the build folder's scratch (its frames
+/// as PPMs stay there to look at, overwritten by the next run).
 std::filesystem::path scratch(const char* name) {
     const char* dir = std::getenv("ATLAS_TEST_OUT"); // NOLINT(concurrency-mt-unsafe)
     std::filesystem::path base =
-        dir != nullptr ? std::filesystem::path(dir) : std::filesystem::temp_directory_path() / "atlas-k1";
+        dir != nullptr ? std::filesystem::path(dir) : std::filesystem::path(ATLAS_TEST_SCRATCH) / "standin";
     std::error_code ec;
     std::filesystem::create_directories(base, ec);
     return base / name;

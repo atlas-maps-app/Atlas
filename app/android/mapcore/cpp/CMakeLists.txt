@@ -187,6 +187,10 @@ atlas_tidy(atlasmap)
 
 # ---- Tests (doctest), benchmarks, fuzzers.
 
+# Where the tests and the fuzz targets keep the files they write (ATLAS_TEST_SCRATCH): the build folder, never the
+# system's temp folder, where a file a run leaves (a crash's, or one kept to look at) would pile up.
+set(ATLAS_TEST_SCRATCH "${CMAKE_BINARY_DIR}/scratch")
+
 if(ATLAS_TESTS)
     file(GLOB_RECURSE _test_sources CONFIGURE_DEPENDS tests/*.cpp)
     # tests/planted/ holds the planted failures CI proves the sanitizers and clang-tidy catch; never in a normal build.
@@ -198,7 +202,8 @@ if(ATLAS_TESTS)
     target_include_directories(atlas_doctest SYSTEM INTERFACE third_party/doctest)
     # REQUIRE stays available without exceptions, but a failed REQUIRE only reports and fails the test case, which runs
     # on: what a test cannot go on without it requires with ATLAS_REQUIRE (tests/base/require.hpp), which returns.
-    target_compile_definitions(atlas_doctest INTERFACE DOCTEST_CONFIG_NO_EXCEPTIONS_BUT_WITH_ALL_ASSERTS)
+    target_compile_definitions(atlas_doctest INTERFACE DOCTEST_CONFIG_NO_EXCEPTIONS_BUT_WITH_ALL_ASSERTS
+                                                        ATLAS_TEST_SCRATCH="${ATLAS_TEST_SCRATCH}")
     add_executable(atlas_tests ${_test_sources} ${ATLAS_EXTRA_TEST_SOURCES} ${_core_objects})
     target_link_libraries(atlas_tests PRIVATE atlas_core_requirements atlas_doctest)
     add_dependencies(atlas_tests atlas_core_shaders)

@@ -28,10 +28,33 @@ namespace {
 using namespace atlas::tiles;
 namespace fs = std::filesystem;
 
+#if !defined(ATLAS_TEST_SCRATCH)
+#error "ATLAS_TEST_SCRATCH names the build folder's scratch folder (CMakeLists.txt)"
+#endif
+
+/// This process's folder under the build folder's scratch, removed when the process exits (a crash leaves it there,
+/// beside the build, never in the system's temp folder).
+class Folder {
+public:
+    Folder() : path_(fs::path(ATLAS_TEST_SCRATCH) / std::format("fuzz-cache-{}", ::getpid())) {}
+    Folder(const Folder&) = delete;
+    Folder& operator=(const Folder&) = delete;
+    Folder(Folder&&) = delete;
+    Folder& operator=(Folder&&) = delete;
+    ~Folder() {
+        std::error_code ec;
+        fs::remove_all(path_, ec);
+    }
+    [[nodiscard]] const fs::path& path() const noexcept { return path_; }
+
+private:
+    fs::path path_;
+};
+
 /// A folder for this process's caches, emptied before each input.
 const fs::path& folder() {
-    static const fs::path path = fs::temp_directory_path() / std::format("atlas-fuzz-cache-{}", ::getpid());
-    return path;
+    static const Folder owned;
+    return owned.path();
 }
 
 void empty_folder() {
