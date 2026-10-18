@@ -62,6 +62,15 @@ Result<vk::raii::PipelineLayout> make_layout(const vk::raii::Device& device,
     return std::move(layout);
 }
 
+vk::PipelineDepthStencilStateCreateInfo depth_stencil_of(const GraphicsDesc& d) noexcept {
+    return {.depthTestEnable = d.depth_test ? vk::True : vk::False,
+            .depthWriteEnable = d.depth_write ? vk::True : vk::False,
+            .depthCompareOp = d.depth_op,
+            .stencilTestEnable = d.stencil_test ? vk::True : vk::False,
+            .front = d.stencil,
+            .back = d.stencil_back.value_or(d.stencil)};
+}
+
 Result<vk::raii::Pipeline> make_graphics(const vk::raii::Device& device, const vk::raii::PipelineCache& cache,
                                          const GraphicsDesc& d) {
     ATLAS_ASSERT(d.target.colour_count <= d.blends.size(), "at most four colour attachments");
@@ -86,12 +95,7 @@ Result<vk::raii::Pipeline> make_graphics(const vk::raii::Device& device, const v
         .polygonMode = vk::PolygonMode::eFill, .cullMode = d.cull, .frontFace = d.front, .lineWidth = 1.0F};
     const vk::PipelineMultisampleStateCreateInfo multisample{
         .rasterizationSamples = d.target.samples, .alphaToCoverageEnable = d.alpha_to_coverage ? vk::True : vk::False};
-    const vk::PipelineDepthStencilStateCreateInfo depth{.depthTestEnable = d.depth_test ? vk::True : vk::False,
-                                                        .depthWriteEnable = d.depth_write ? vk::True : vk::False,
-                                                        .depthCompareOp = d.depth_op,
-                                                        .stencilTestEnable = d.stencil_test ? vk::True : vk::False,
-                                                        .front = d.stencil,
-                                                        .back = d.stencil};
+    const vk::PipelineDepthStencilStateCreateInfo depth = depth_stencil_of(d);
     std::array<vk::PipelineColorBlendAttachmentState, 4> attachments{};
     for (std::uint32_t i = 0; i < d.target.colour_count; ++i) {
         const Blend& b = d.blends[i];

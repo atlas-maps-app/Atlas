@@ -188,8 +188,16 @@ struct GraphicsDesc {
     vk::CompareOp depth_op = vk::CompareOp::eLess;
     bool stencil_test = false;
     vk::StencilOpState stencil{};
+    /// The stencil state of back-facing primitives where it differs from the front's (`stencil`): a two-sided stencil,
+    /// as a winding count increments on front faces and decrements on back faces (the water's nonzero clips, K9).
+    /// Empty: the front's state on both faces.
+    std::optional<vk::StencilOpState> stencil_back;
     std::array<Blend, 4> blends{};
 };
+
+/// The depth and stencil state make_graphics gives the driver for `desc`: its depth test, write and compare op, its
+/// stencil test, the front faces' stencil state and the back faces' (stencil_back, else the front's).
+[[nodiscard]] vk::PipelineDepthStencilStateCreateInfo depth_stencil_of(const GraphicsDesc& desc) noexcept;
 
 /// Makes a shader module of `spirv` (its caller announced it).
 [[nodiscard]] Result<vk::raii::ShaderModule> make_module(const vk::raii::Device& device,
