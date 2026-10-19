@@ -27,8 +27,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
+import androidx.navigation3.ui.LocalNavAnimatedContentScope
 import androidx.navigation3.ui.NavDisplay
 import app.atlas.Services
+import app.atlas.mapview.vk.ChromeFade
+import app.atlas.mapview.vk.LocalChromeShapes
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.AtlasTheme
 import app.atlas.ui.kit.BoardScale
@@ -70,7 +73,9 @@ fun ProvideServices(services: Services, dark: Boolean = false, content: @Composa
 fun AtlasRoot(services: Services, navigator: BackStackNavigator, dark: Boolean = false) = BoardScale {
     // the frosted glass of the bars and pills blurs what a screen puts behind it (the Map home's map)
     val backdrop = rememberBackdrop()
-    CompositionLocalProvider(LocalBackdrop provides backdrop) { Root(services, navigator, dark) }
+    CompositionLocalProvider(LocalBackdrop provides backdrop, LocalChromeShapes provides backdrop.shapes) {
+        Root(services, navigator, dark)
+    }
 }
 
 @Composable
@@ -101,7 +106,12 @@ private fun Root(services: Services, navigator: BackStackNavigator, dark: Boolea
                     predictivePopTransitionSpec = {
                         fadeIn(tween(200)) togetherWith (slideOutHorizontally(tween(240)) { it / 3 } + fadeOut(tween(200)))
                     },
-                    entryProvider = { dest -> NavEntry(dest, contentKey = dest.route) { d -> d.Content(navigator) } },
+                    // ChromeFade: an entry's frosted chrome tells the map's core the alpha its fade draws it at
+                    entryProvider = { dest ->
+                        NavEntry(dest, contentKey = dest.route) { d ->
+                            ChromeFade(LocalNavAnimatedContentScope.current) { d.Content(navigator) }
+                        }
+                    },
                 )
             }
             if (showBar) {

@@ -22,7 +22,9 @@
 // engine's near plane) to 10^9 m (the whole planet with room to spare); 1-16384 px a side, a density over 0.25 and
 // under 16 px per dp, and each dp size the px size over the density, rounded either way (within one density of it);
 // the principal point and every keep-out shape within one frame's size of the frame; a corner radius at most half the
-// shape's shorter side (and half a dp more for rounding), a blur up to 256 dp.
+// shape's shorter side (and half a dp more for rounding), a blur up to 256 dp. A shape's flags hold whether it is
+// frosted (bit 0) and how far the chrome over it has faded (bits 1-7, 0 to 127: a screen's fade, a row fading out), so
+// that the core's glass fades with its tint whether or not the surface follows the views' alpha (K11b).
 #pragma once
 
 #include <array>
@@ -69,10 +71,14 @@ struct KeepOut {
     float radius;            // corner radius, dp
     std::uint16_t blur16;    // the frosted glass's blur radius, sixteenths of a dp
     std::uint8_t saturation; // the glass's saturation, hundredths (180: 1.8)
-    std::uint8_t flags;      // bit 0: frosted
+    std::uint8_t flags;      // bit 0: frosted; bits 1-7: the chrome's fade, 0 (opaque) to 127 (gone)
 
     [[nodiscard]] constexpr bool frosted() const noexcept { return (flags & 1U) != 0U; }
     [[nodiscard]] constexpr float blur_dp() const noexcept { return static_cast<float>(blur16) / 16.0F; }
+    /// The alpha the chrome over the shape is drawn at (1 opaque, 0 gone): what its glass is drawn at.
+    [[nodiscard]] constexpr float alpha() const noexcept {
+        return 1.0F - (static_cast<float>(static_cast<unsigned>(flags) >> 1U) / 127.0F);
+    }
 };
 
 static_assert(sizeof(KeepOut) == 24);

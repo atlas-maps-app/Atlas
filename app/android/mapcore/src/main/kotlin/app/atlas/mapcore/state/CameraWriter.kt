@@ -69,7 +69,10 @@ object CameraWriter {
     const val RESERVED_AT = 124
     const val KEEP_OUT_AT = 128
 
-    /** One keep-out shape's bytes: its box and radius (floats, dp), blur (sixteenths of a dp), saturation (hundredths), flags. */
+    /**
+     * One keep-out shape's bytes: its box and radius (floats, dp), blur (sixteenths of a dp), saturation (hundredths),
+     * flags (bit 0 frosted, bits 1-7 the chrome's fade: 0 opaque to 127 gone).
+     */
     const val KEEP_OUT_SIZE = 24
 
     /** The layout as (name, offset, size), named as the core's table names its fields (`CP/style/Layouts.cpp`). */
@@ -157,9 +160,10 @@ object CameraWriter {
 
     /**
      * Keep-out shape [index]: a box in dp ([left], [top], [right], [bottom]) with its corner [radiusDp], frosted under it
-     * ([frosted]) with a blur of [blurDp] and a [saturation] (1.8 for the home's pills), or only kept clear.
+     * ([frosted]) with a blur of [blurDp] and a [saturation] (1.8 for the home's pills), or only kept clear; the chrome
+     * over it drawn at [alpha] (a fading screen's: the core draws its glass at it).
      */
-    fun keepOut(out: ByteBuffer, index: Int, left: Float, top: Float, right: Float, bottom: Float, radiusDp: Float, blurDp: Float, saturation: Float, frosted: Boolean) {
+    fun keepOut(out: ByteBuffer, index: Int, left: Float, top: Float, right: Float, bottom: Float, radiusDp: Float, blurDp: Float, saturation: Float, frosted: Boolean, alpha: Float = 1f) {
         check(out)
         require(index in 0 until MAX_KEEP_OUTS) { "keep-out shape $index" }
         val o = KEEP_OUT_AT + index * KEEP_OUT_SIZE
@@ -170,7 +174,8 @@ object CameraWriter {
         out.putFloat(o + 16, radiusDp)
         out.putShort(o + 20, (blurDp * 16f).roundToInt().coerceIn(0, 65535).toShort())
         out.put(o + 22, (saturation * 100f).roundToInt().coerceIn(0, 255).toByte())
-        out.put(o + 23, (if (frosted) 1 else 0).toByte())
+        val fade = if (alpha.isNaN()) 0 else ((1f - alpha.coerceIn(0f, 1f)) * 127f).roundToInt()
+        out.put(o + 23, ((if (frosted) 1 else 0) or (fade shl 1)).toByte())
     }
 
     private fun check(out: ByteBuffer) {

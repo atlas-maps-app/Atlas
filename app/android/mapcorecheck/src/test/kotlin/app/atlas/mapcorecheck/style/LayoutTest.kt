@@ -125,6 +125,22 @@ class LayoutTest {
     }
 
     @Test
+    fun aKeepOutShapesFadeReadsBackAsTheCoreReadsIt() {
+        // bit 0 frosted, bits 1-7 the chrome's fade (0 opaque to 127 gone): the core draws the glass at the chrome's alpha
+        val b = CameraWriter.allocate()
+        CameraWriter.header(b, 1L, 0)
+        CameraWriter.view(b, 52.374_6, 4.884, 0.0, 0.0, 2300.0, 206.0, 440.0)
+        CameraWriter.frame(b, 1080, 2400, 412, 916, 2.621_359_2)
+        CameraWriter.keepOuts(b, 3)
+        CameraWriter.keepOut(b, 0, 16f, 52f, 396f, 104f, 26f, 24f, 1.8f, true, alpha = 0.5f)
+        CameraWriter.keepOut(b, 1, 16f, 120f, 396f, 170f, 25f, 24f, 1.8f, true, alpha = 0f)
+        CameraWriter.keepOut(b, 2, 16f, 840f, 396f, 896f, 28f, 0f, 1f, false, alpha = 0.25f)
+        val got = parse(StyleHost.cameraDump(b))
+        assertTrue("error" !in got)
+        assertEquals(listOf(1 or (64 shl 1), 1 or (127 shl 1), 95 shl 1), (0 until 3).map { got.getValue("keep_out.$it").split(' ').last().toInt() })
+    }
+
+    @Test
     fun writingTheCameraAllocatesNothing() {
         val b = CameraWriter.allocate()
         val mx = ManagementFactory.getThreadMXBean() as com.sun.management.ThreadMXBean

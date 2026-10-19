@@ -36,7 +36,7 @@ namespace {
 }
 
 /// A shape in use: finite, with area, within one frame's size of the frame, a radius at most half its shorter side
-/// (and half a dp for rounding), a blur up to 256 dp, and no flag but frosted's.
+/// (and half a dp for rounding), a blur up to 256 dp (its flags, frosted and the fade, take every value).
 [[nodiscard]] std::expected<void, CameraError> check_shape(const KeepOut& k, double width, double height) noexcept {
     const std::array box = {k.left, k.top, k.right, k.bottom, k.radius};
     for (const float v : box) {
@@ -54,8 +54,7 @@ namespace {
         return std::unexpected(CameraError::keep_outs);
     }
     const double shorter = pymath::min(right - left, bottom - top);
-    if (!within(static_cast<double>(k.radius), 0.0, (shorter / 2.0) + 0.5) || k.blur16 > 4096U ||
-        (k.flags & ~1U) != 0U) {
+    if (!within(static_cast<double>(k.radius), 0.0, (shorter / 2.0) + 0.5) || k.blur16 > 4096U) {
         return std::unexpected(CameraError::keep_outs);
     }
     return {};

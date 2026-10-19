@@ -112,6 +112,20 @@ TEST_CASE("a camera state reads back field by field, with its keep-out shapes") 
     ATLAS_REQUIRE(got->keep_outs().size() == 2, got->keep_outs().size() << " shapes");
     CHECK(got->keep_outs()[1].frosted());
     CHECK(got->keep_outs()[1].blur_dp() == 24.0F);
+    CHECK(got->keep_outs()[1].alpha() == 1.0F);
+}
+
+TEST_CASE("a keep-out shape carries the chrome's fade beside its frosting") {
+    CameraState s = home();
+    s.keep_out[0].flags = static_cast<std::uint8_t>(1U | (127U << 1U)); // frosted, the chrome gone
+    s.keep_out[1].flags = static_cast<std::uint8_t>(0U | (64U << 1U));  // clear, half faded
+    const auto raw = bytes(s);
+    const auto got = atlas::style::read_camera_state(raw);
+    ATLAS_REQUIRE(got.has_value(), atlas::style::name_of(got.error()));
+    CHECK(got->keep_outs()[0].frosted());
+    CHECK(got->keep_outs()[0].alpha() == 0.0F);
+    CHECK_FALSE(got->keep_outs()[1].frosted());
+    CHECK(got->keep_outs()[1].alpha() == doctest::Approx(63.0 / 127.0));
 }
 
 TEST_CASE("a camera state out of its ranges is refused, with the reason") {
@@ -145,7 +159,6 @@ TEST_CASE("a camera state out of its ranges is refused, with the reason") {
         {"17 shapes", [](CameraState& s) { s.keep_out_count = 17; }, CameraError::keep_outs},
         {"a shape with no area", [](CameraState& s) { s.keep_out[0].right = s.keep_out[0].left; },
          CameraError::keep_outs},
-        {"an unknown shape flag", [](CameraState& s) { s.keep_out[0].flags = 2; }, CameraError::keep_outs},
         {"an infinite shape", [inf](CameraState& s) { s.keep_out[0].top = inf; }, CameraError::not_finite},
         {"a shape far off the frame", [](CameraState& s) { s.keep_out[1].bottom = 5000.0F; }, CameraError::keep_outs},
         {"a radius past half the shape", [](CameraState& s) { s.keep_out[0].radius = 40.0F; }, CameraError::keep_outs},
