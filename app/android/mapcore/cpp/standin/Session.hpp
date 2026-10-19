@@ -48,6 +48,7 @@
 #include "gpu/PipelineCache.hpp"
 #include "standin/City.hpp"
 #include "standin/FrameRecord.hpp"
+#include "standin/SessionMap.hpp"
 #include "standin/StandIn.hpp"
 #include "style/CameraState.hpp"
 
@@ -162,6 +163,13 @@ public:
     /// VK bench's pipeline creation line ("vkbench pipelines: …").
     [[nodiscard]] std::string pipelines();
 
+    /// The app's map drawn from now on in VK bench's stand-in's place (standin/SessionMap.hpp), in the facts' own pick
+    /// at 8 bits: what it draws with made now (behind the pipelines stage), its renderer with the window (now, if one
+    /// is attached); `texture` says the host is a TextureView (the log and the records). Null: the map off, its
+    /// renderer and what it drew with gone. VK bench's mode 1 takes the window from the map (its renderer goes), and
+    /// the map comes back with the next call here. "" or why not.
+    [[nodiscard]] std::string map(SessionMap* map, bool texture = false);
+
     /// Whether there is a frame to draw (a renderer, and the map on for the session).
     [[nodiscard]] bool drawing() const noexcept;
     /// Draws one frame at `camera`.
@@ -239,6 +247,8 @@ private:
     std::string make_standin();
     /// The renderer of the configuration on the output, behind the pipelines stage; "" or why not.
     std::string make_renderer();
+    /// What the map made goes, behind the pipelines stage (a loss and the close let go of it in their own stages).
+    void release_map();
     /// Opens the guard's colour stage, with its own pipeline cache, and asks the device about 10 bits inside it.
     void open_colour();
     /// Closes the colour stage, its cache gone (announced) inside it, once nothing of 10 bits is left.
@@ -269,6 +279,7 @@ private:
     std::string output_error_; // why the last output could not be made ("" once one is)
     std::shared_ptr<const City> city_;
     std::unique_ptr<StandIn> standin_;
+    SessionMap* map_ = nullptr; // the app's map (mode 2), the façade's
     std::unique_ptr<gpu::Renderer> renderer_;
     std::unique_ptr<gpu::PipelineCache> colour_cache_; // the colour stage's, while it is open
     std::vector<gpu::PresentedTiming> timings_;
@@ -276,7 +287,7 @@ private:
     gpu::Configuration config_{};
     /// The output's colour: the frame's 8 bits, or in VK bench's colour stage as deep as the surface allows.
     gpu::Depth depth_ = gpu::default_depth;
-    int mode_ = 0;
+    int mode_ = 0; // 0 nothing, 1 VK bench's stand-in, 2 the app's map (map_)
     bool pills_ = false;
     bool texture_ = false;
     /// The frames stage is open, for the frame drawn now: whatever changes that frame ends it first (new_frame,

@@ -1,0 +1,109 @@
+// The app's map in the core (plan-vector K11; D1, D3, D4): what the session draws in VK bench's stand-in's place while
+// a map screen is on (standin/SessionMap.hpp). It holds the frame builder over the world (frame/FrameBuilder.hpp,
+// scene/World.hpp), made on the session's device and made again after the device's loss; the packs the app lists
+// (MapCore.packs: the render packs the APK carries, mapped where they lie in it, and those downloaded), kept across a
+// loss and given to every world made; and the moment's theme (MapCore.moment, about once a minute).
+//
+// Per frame it takes the camera Kotlin wrote for the vsync: the pack the camera state names (pack_id: PackList's
+// choice, the finest pack holding the target as the live map has always chosen it) is the pack the frame draws, and its
+// profile's rules light it (the theme's TONE on for the regions' rules, off for the living map's, as the port's
+// Regions.load and the living map's load set Amsterdam.TONE). A number it does not know leaves the choice to the world.
+//
+// After a frame it tells whether the picture was complete (the pack drawn, every tile the cover wants resident and
+// drawn, every fade-in and the frame's blend done: the app's transitional rule and its first-frame line wait for one)
+// and whether more frames are due at the same camera (World::animating: a fade or the frame's blend under way); a tile
+// published wakes the frame loop at rest (World::set_wake, the wake given here), so the loop draws until the picture is
+// final and then rests (D1: at rest the map draws nothing). Render thread only, but the world's clock and the wake,
+// which its workers call.
+#pragma once
+
+#include "frame/FrameBuilder.hpp"
+#include "scene/World.hpp"
+#include "standin/SessionMap.hpp"
+#include "style/Theme.hpp"
+#include "tiles/Store.hpp"
+
+#include <chrono>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace atlas::frame {
+
+/// One pack the app lists: its number (the camera state's pack_id), and where its bytes are: a file, or a range of an
+/// open descriptor (an APK asset) that the map owns from then on and closes when the pack goes.
+struct MapPack {
+    std::uint64_t number = 0;
+    tiles::PackRef ref;
+};
+
+/// The app's map.
+class MapFrame final : public standin::SessionMap {
+public:
+    /// A map whose world builds tiles on `workers` threads (T8: 2-3 by core count); `wake` is called on a worker as
+    /// each tile is published (cheap and never blocking: the frame loop's frame request), for every world made.
+    MapFrame(unsigned workers, std::function<void()> wake);
+    /// The session that draws it must have let go of it first (Session::map(nullptr), or the session's close).
+    ~MapFrame() override;
+    MapFrame(const MapFrame&) = delete;
+    MapFrame& operator=(const MapFrame&) = delete;
+    MapFrame(MapFrame&&) = delete;
+    MapFrame& operator=(MapFrame&&) = delete;
+
+    /// The packs the app lists from now on, replacing the last list: those gone leave the world (their descriptors
+    /// closed), new and changed ones open in it (now if the world is made, else when it is), the same ones stay as
+    /// they are, and one that does not open is not kept (the next listing tries it again). A line per pack listed:
+    /// "<id> opened", "<id> listed" (no world yet), "<id> kept" or "<id>: <why not>".
+    [[nodiscard]] std::string set_packs(std::vector<MapPack> packs);
+    /// The moment's theme from now on (checked by style::read_theme_block).
+    void set_theme(const style::ThemeBlock& theme) noexcept { theme_ = theme; }
+
+    /// Whether the last frame's picture was complete.
+    [[nodiscard]] bool complete() const noexcept;
+    /// Whether the last frame left the picture mid-transition (a fade or the frame's blend): another is due at the
+    /// same camera.
+    [[nodiscard]] bool animating() const noexcept { return made() && world_->animating(); }
+    /// The pack the last frame drew ("" for none).
+    [[nodiscard]] std::string_view drawn_pack() const noexcept;
+    /// Its world's `vk tiles <n> resident <MB> build <ms>` line (Appendix C).
+    [[nodiscard]] std::string tiles_line() const;
+    /// The world, while made (tests).
+    [[nodiscard]] scene::World* world() noexcept { return world_.get(); }
+    /// The frame builder, while made (tests: the last frame's state).
+    [[nodiscard]] const FrameBuilder* builder() const noexcept { return builder_.get(); }
+
+    // standin::SessionMap
+    [[nodiscard]] std::string make(const gpu::Device& device, const gpu::PipelineCache& cache,
+                                   gpu::PipelineWatch* watch) override;
+    [[nodiscard]] bool made() const noexcept override { return builder_ != nullptr; }
+    void release(gpu::PipelineWatch* watch) noexcept override;
+    [[nodiscard]] gpu::Content& content() noexcept override { return *builder_; }
+    [[nodiscard]] bool ready() const noexcept override { return made() && theme_.has_value(); }
+    void next(const style::CameraState& camera, double seconds) override;
+    [[nodiscard]] standin::MapCounts counts() const noexcept override;
+
+private:
+    /// Seconds on the world's clock (its workers read it too).
+    [[nodiscard]] double now() const noexcept;
+    /// Opens `pack` in the world; "" or why not.
+    [[nodiscard]] std::string open(const MapPack& pack);
+
+    unsigned workers_;
+    std::function<void()> wake_;
+    std::chrono::steady_clock::time_point epoch_;
+    std::vector<MapPack> packs_;
+    std::optional<style::ThemeBlock> theme_;
+    std::uint64_t active_number_ = 0;
+    std::string active_id_;
+    std::unique_ptr<FrameBuilder> builder_;
+    std::unique_ptr<scene::World> world_; // after the builder: it goes first (its workers run the builder's passes)
+};
+
+/// The theme `theme` with `profile`'s rules: TONE on for every profile but the living map's.
+[[nodiscard]] style::ThemeBlock with_profile(style::ThemeBlock theme, tiles::Profile profile) noexcept;
+
+} // namespace atlas::frame

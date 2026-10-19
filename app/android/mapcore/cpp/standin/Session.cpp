@@ -103,7 +103,7 @@ bool Session::attach(std::unique_ptr<SessionWindow> window, vk::Extent2D size, s
                   output_->extent().width, output_->extent().height, vk::to_string(output_->transform()),
                   output_->images().size(), output_->transfer_source() ? "yes" : "no",
                   frame_rate_ ? "60 asked" : "not available", gpu::colour_name(output_->format()));
-        if (mode_ == 1) why = make_renderer();
+        if (mode_ != 0) why = make_renderer(); // VK bench's stand-in, or the app's map
     }
     if (!why.empty()) {
         // Nothing of the window is held: a refused attach has no detach after it, and the colour stage must not stay
@@ -339,20 +339,28 @@ std::string Session::make_standin() {
 
 std::string Session::make_renderer() {
     if (!output_) return output_error_.empty() ? "no swapchain" : "no swapchain: " + output_error_;
-    if (std::string why = make_standin(); !why.empty()) return why;
+    // The app's map draws what it made (Session::map); VK bench, its stand-in.
+    const bool map = mode_ == 2;
+    if (map && (map_ == nullptr || !map_->made())) return "the map has nothing to draw with";
+    if (!map) {
+        if (std::string why = make_standin(); !why.empty()) return why;
+    }
+    gpu::Content& content = map ? map_->content() : *standin_;
     const bool colour = colour_open();
     new_frame(); // a new frame: its first draws are guarded (the frames stage), under its name
     std::string why = behind(gpu::Stage::pipelines, [&]() -> std::string {
-        // In the colour stage the 10-bit frame's pipelines go through the stage's own cache.
-        standin_->use_prepare_cache(colour ? colour_cache_.get() : nullptr);
-        standin_->set_pills(pills_);
-        auto renderer = gpu::Renderer::create(*started_.device, *output_, *standin_, config_, started_.guard.get());
+        if (!map) {
+            // In the colour stage the 10-bit frame's pipelines go through the stage's own cache.
+            standin_->use_prepare_cache(colour ? colour_cache_.get() : nullptr);
+            standin_->set_pills(pills_);
+        }
+        auto renderer = gpu::Renderer::create(*started_.device, *output_, content, config_, started_.guard.get());
         if (!renderer) return renderer.error().text();
         renderer_ = std::move(*renderer);
         return {};
     });
     if (!why.empty()) return why;
-    if (first_pipelines_ms_ < 0) {
+    if (!map && first_pipelines_ms_ < 0) {
         // This launch's first pipelines, from the cache file as the start found it (a first launch has none).
         first_pipelines_ms_ = standin_->pipelines_ms();
         first_pipelines_ = standin_->pipeline_count();
@@ -366,6 +374,8 @@ std::string Session::bench(int mode, const gpu::Configuration& config, std::uint
     if (closed_) return "the core is closed";
     if (!session_off_.empty()) return session_off_;
     if (mode == 0) {
+        // The app's map is not VK bench's to switch off.
+        if (mode_ == 2) return {};
         // VK bench off (its end, or the app leaving: VkBenchScreen's pause), whatever configuration it names: the
         // renderer goes, and out of VK bench's colour stage its 10-bit output too, the stage closing after them. No
         // output is made in their place (the next step that draws makes the one it needs), so nothing reaches the
@@ -396,6 +406,7 @@ std::string Session::bench(int mode, const gpu::Configuration& config, std::uint
     // back draws the bench as it was (attach).
     if (!window_) return "no surface is attached (the window went away)";
     const gpu::Depth depth = ten ? gpu::Depth::deepest : gpu::default_depth;
+    if (mode_ == 2) drop_renderer(); // the app's map leaves the window to VK bench (Session::map brings it back)
     mode_ = mode;
     config_ = config;
     pills_ = (flags & bench_flag::pills) != 0;
@@ -447,6 +458,51 @@ std::string Session::bench(int mode, const gpu::Configuration& config, std::uint
 }
 
 std::string Session::pipelines() { return time_pipelines(); }
+
+// ---- The app's map (K11).
+
+std::string Session::map(SessionMap* map, bool texture) {
+    if (closed_) return "the core is closed";
+    if (!session_off_.empty()) return session_off_;
+    if (map != map_ && map_ != nullptr) {
+        // Another map, or none: the one drawn goes first, its renderer and what it drew with.
+        if (mode_ == 2) {
+            drop_renderer();
+            mode_ = 0;
+        }
+        release_map();
+    }
+    map_ = map;
+    if (map_ == nullptr) return {};
+    if (mode_ == 1) {
+        // VK bench gives the window back: its frame goes, and out of its colour stage everything of 10 bits.
+        drop_renderer();
+        leave_ten_bits();
+    }
+    if (mode_ == 2 && texture_ != texture) drop_renderer(); // another host: a new frame, logged as such
+    mode_ = 2;
+    config_ = started_.device->facts().choice;
+    pills_ = false;
+    texture_ = texture;
+    if (!map_->made()) {
+        std::string why = behind(gpu::Stage::pipelines,
+                                 [&] { return map_->make(*started_.device, *started_.cache, started_.guard.get()); });
+        if (!why.empty()) return why;
+    }
+    if (!window_) return {}; // drawn once a window is attached
+    if (!output_) {
+        if (std::string why = make_output(); !why.empty()) return why;
+    }
+    return renderer_ ? std::string() : make_renderer();
+}
+
+void Session::release_map() {
+    if (map_ == nullptr || !map_->made()) return;
+    behind(gpu::Stage::pipelines, [&] {
+        map_->release(started_.guard.get());
+        return true;
+    });
+}
 
 std::string Session::time_pipelines() {
     if (!renderer_ || !output_ || !city_) return "vkbench pipelines: no frame is drawn (the bench is off)";
@@ -535,7 +591,8 @@ void Session::log_configuration() const {
 // ---- Frames.
 
 bool Session::drawing() const noexcept {
-    return !closed_ && renderer_ != nullptr && standin_ != nullptr && output_ != nullptr && lost_ < 3;
+    const bool content = mode_ == 2 ? map_ != nullptr && map_->ready() : standin_ != nullptr;
+    return !closed_ && renderer_ != nullptr && content && output_ != nullptr && lost_ < 3;
 }
 
 Drawn Session::draw(const style::CameraState& camera, const FrameTimes& times) {
@@ -551,8 +608,13 @@ Drawn Session::draw(const style::CameraState& camera, const FrameTimes& times) {
         started_.guard->enter(gpu::Stage::frames);
         guarding_ = true;
     }
-    standin_->set_camera(camera);
-    standin_->set_time(static_cast<double>(start - epoch_ns_) / 1e9);
+    const double seconds = static_cast<double>(start - epoch_ns_) / 1e9;
+    if (mode_ == 2) {
+        map_->next(camera, seconds);
+    } else {
+        standin_->set_camera(camera);
+        standin_->set_time(seconds);
+    }
     auto report = renderer_->draw(static_cast<std::uint64_t>(times.present_ns > 0 ? times.present_ns : 0));
     if (!report || report->status == gpu::Acquired::lost) {
         if (!report && report.error().code != vk::Result::eErrorDeviceLost) {
@@ -575,11 +637,19 @@ Drawn Session::draw(const style::CameraState& camera, const FrameTimes& times) {
     r.gpu_main_ms = static_cast<float>(report->gpu.main_ns / 1e6);
     r.gpu_offscreen_ms = static_cast<float>(report->gpu.offscreen_ns / 1e6);
     r.gpu_after_ms = static_cast<float>(report->gpu.after_ns / 1e6);
-    const Counters& c = standin_->counters();
-    r.record_ms = static_cast<float>(c.record_ms - c.ranks_ms);
-    r.prepare_ms = static_cast<float>(c.ranks_ms);
-    r.draws = c.draws;
-    r.triangles_k = static_cast<std::uint32_t>(c.triangles / 1000);
+    if (mode_ == 2) {
+        const MapCounts m = map_->counts();
+        r.record_ms = static_cast<float>(m.record_ms);
+        r.prepare_ms = static_cast<float>(m.stage_f_ms);
+        r.draws = m.draws;
+        r.triangles_k = static_cast<std::uint32_t>(m.triangles / 1000);
+    } else {
+        const Counters& c = standin_->counters();
+        r.record_ms = static_cast<float>(c.record_ms - c.ranks_ms);
+        r.prepare_ms = static_cast<float>(c.ranks_ms);
+        r.draws = c.draws;
+        r.triangles_k = static_cast<std::uint32_t>(c.triangles / 1000);
+    }
     r.fragments_k = static_cast<std::uint32_t>(report->gpu.fragments / 1000);
     r.flags = (report->gpu.valid ? frame_flag::gpu : 0U) | (guarding_ ? frame_flag::guarded : 0U) |
               config_bits(config_, texture_, pills_, output_->colour().ten_bit());
@@ -707,6 +777,7 @@ void Session::device_lost() {
                 gpu::announce_release({.kind = "standin", .detail = "(the lost device's)"}, watch);
             standin_.reset();
         }
+        if (map_ != nullptr) map_->release(watch); // what the app's map drew with, the lost device's
         if (started_.cache) {
             const gpu::Announced named =
                 gpu::announce_release({.kind = "cache", .detail = "(the one on disk, the lost device's)"}, watch);
@@ -770,13 +841,18 @@ void Session::device_lost() {
     if (mode_ == 1) {
         if (const std::string why = make_standin(); !why.empty()) log::error("vk rebuild: {}", why);
     }
+    if (mode_ == 2 && map_ != nullptr) {
+        const std::string why = behind(
+            gpu::Stage::pipelines, [&] { return map_->make(*started_.device, *started_.cache, started_.guard.get()); });
+        if (!why.empty()) log::error("vk rebuild: {}", why);
+    }
     if (window_) {
         if (const std::string why = make_output(); !why.empty()) {
             turn_off_session("the swapchain could not be made again after the device's loss: " + why);
             return;
         }
     }
-    if (mode_ == 1) {
+    if (mode_ != 0) {
         if (const std::string why = make_renderer(); !why.empty()) log::error("vk rebuild: {}", why);
     }
 }
@@ -852,6 +928,8 @@ void Session::close() {
         const gpu::Announced named = gpu::announce_release({.kind = "standin"}, &guard);
         standin_.reset();
     }
+    if (map_ != nullptr) map_->release(&guard); // what the app's map drew with
+    map_ = nullptr;
     city_.reset();
     if (started_.cache) {
         const gpu::Announced named = gpu::announce_release({.kind = "cache", .detail = "(the one on disk)"}, &guard);
