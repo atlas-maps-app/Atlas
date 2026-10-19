@@ -1,40 +1,46 @@
 // The glyph shader (plan-vector D13, K13): the Slug algorithm (Eric Lengyel, "GPU-Centered Font Rendering Directly
 // from Glyph Outlines", JCGT 6(2), 2017; its patent dedicated to the public domain), the coverage of a glyph at each
 // pixel computed from its outline's quadratic curves, exact under any scale, rotation and shear, with no atlas of
-// rasterised glyphs. text/SlugBands.cpp builds the two textures and holds the same arithmetic on the CPU (coverage),
-// which tests/text/slug_vk_test.cpp holds this module to on lavapipe.
+// rasterised glyphs. text/SlugBands.cpp builds the curve and band data and holds the same arithmetic on the CPU
+// (coverage), which tests/text/slug_vk_test.cpp holds this module to on lavapipe (the probe entry), and
+// tests/text/ground_text_vk_test.cpp the glyphs the frame draws.
 //
-// A glyph is drawn as one quad over its em box, dilated in the vertex stage by half a pixel each way (through the
-// inverse of the glyph's em-to-pixel map, so it holds under any affine map); the fragment stage casts a ray to +x
-// through the sample's horizontal band and one to +y through its vertical band, each crossing counted by how far it
-// lies from the sample within half a pixel (pixels per em from the derivatives of the em coordinate), the two combined
-// by how near their nearest crossings are; nonzero fill. The coverage goes through the face's 256-entry table
+// The ground's text (passes/GroundText.cpp, the scene subpass's translucent slot): a glyph is one quad over its em box,
+// dilated in the vertex stage by half a device pixel each way (through the inverse of the glyph's em-to-pixel map, so
+// it holds under any affine map), placed by its run's matrix in CSS px (the ground's affine at the run's anchor, D13)
+// and drawn at its painter slot's depth (painter.slang) with the depth test on and writes off; the fragment stage casts
+// a ray to +x through the sample's horizontal band and one to +y through its vertical band, each crossing counted by how
+// far it lies from the sample within half a pixel (pixels per em from the derivatives of the em coordinate), the two
+// combined by how near their nearest crossings are; nonzero fill. The coverage goes through the face's 256-entry table
 // (calibrated against Skia's text on the emulator, identity until then) and scales the glyph's premultiplied colour.
+//
+// The glyphs' data are set 1's (frame/FrameLayout.hpp's glyph_curves and glyph_bands, which passes/GroundText.hpp's
+// TextGlobals fills): the curves (two points a texel, em units, rows of 4096 texels) and the bands (a texel's two 16-bit
+// values packed low first, the same rows). The frame slot's glyphs and the coverage tables are the pass's own set (2).
 
-/// One glyph to draw: its em-to-pixel map, its box and bands, its colour.
-struct SlugGlyph {
-    float4 row0;     // device px = (row0.x, row0.y) · em + row0.z
-    float4 row1;     // device py = (row1.x, row1.y) · em + row1.z
-    float4 box;      // the em box: x0, y0, x1, y1
-    float4 bands;    // a sample's band indices: em · (x, y) + (z, w), truncated and clamped
-    uint4 location;  // the glyph's first texel in the band texture (x, y); its vertical and horizontal bands minus one
-    float4 colour;   // premultiplied: the fill at its opacity
-    uint4 table;     // x: the face's coverage table
+#include "shared/frame.slang"
+#include "shared/painter.slang"
+
+/// One glyph to draw: its em-to-CSS map, its box and bands, its colour, its table and slot.
+struct GlyphDraw {
+    float4 row0;    // CSS x = (row0.x, row0.y) · em + row0.z
+    float4 row1;    // CSS y = (row1.x, row1.y) · em + row1.z
+    float4 box;     // the em box: x0, y0, x1, y1
+    float4 bands;   // a sample's band indices: em · (x, y) + (z, w), truncated and clamped
+    uint4 location; // the glyph's first band texel (x, y); its vertical and horizontal bands minus one
+    float4 colour;  // premultiplied: the fill at its opacity and its fade
+    uint4 info;     // x: the face's coverage table; y: its painter slot
 };
 
-struct SlugFrame {
-    float4 screen;   // the target's pixels (x, y) and their reciprocals (z, w)
-};
-
-[[vk::binding(0, 0)]] StructuredBuffer<SlugGlyph> glyphs;
-[[vk::binding(1, 0)]] [[vk::image_format("rgba32f")]] Texture2D<float4> curves; // rows of 4096 texels
-[[vk::binding(2, 0)]] [[vk::image_format("unknown")]] Texture2D<uint4> bands;   // RG16UI, rows of 4096 texels
-[[vk::binding(3, 0)]] StructuredBuffer<float> tables; // 256 entries a face
-[[vk::push_constant]] ConstantBuffer<SlugFrame> frame;
+[[vk::binding(0, 0)]] ConstantBuffer<FrameBlock> frame;
+[[vk::binding(11, 1)]] StructuredBuffer<float4> glyph_curves;
+[[vk::binding(12, 1)]] StructuredBuffer<uint> glyph_bands;
+[[vk::binding(0, 2)]] StructuredBuffer<GlyphDraw> glyph_draws;
+[[vk::binding(1, 2)]] StructuredBuffer<float> coverage_tables; // 256 entries a face
 
 static const uint log_band_width = 12;
 
-struct SlugOut {
+struct GlyphOut {
     float4 position : SV_Position;
     float2 em : TEXCOORD0;
     nointerpolation uint glyph : TEXCOORD1;
@@ -43,16 +49,18 @@ struct SlugOut {
 static const float2 slug_corners[6] = { float2(0, 0), float2(1, 0), float2(0, 1), float2(0, 1), float2(1, 0), float2(1, 1) };
 
 [shader("vertex")]
-SlugOut slug_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInstanceID) {
-    SlugGlyph g = glyphs[instance];
-    // Half a pixel each way, in em units: the inverse map's rows bound how far half a pixel reaches along em x and y.
+GlyphOut ground_text_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInstanceID) {
+    GlyphDraw g = glyph_draws[instance];
+    // Half a device pixel each way, in em units: the inverse map's rows bound how far half a pixel reaches along em x
+    // and y; the map to device px is the density times the CSS one.
+    float density = frame.camera.frame.z;
     float det = g.row0.x * g.row1.y - g.row0.y * g.row1.x;
-    float2 margin = 0.5f * float2(abs(g.row1.y) + abs(g.row0.y), abs(g.row1.x) + abs(g.row0.x)) / abs(det);
+    float2 margin = 0.5f * float2(abs(g.row1.y) + abs(g.row0.y), abs(g.row1.x) + abs(g.row0.x)) / (abs(det) * density);
     float2 c = slug_corners[vertex];
     float2 em = lerp(g.box.xy - margin, g.box.zw + margin, c);
-    float2 px = float2(dot(g.row0.xy, em) + g.row0.z, dot(g.row1.xy, em) + g.row1.z);
-    SlugOut o;
-    o.position = float4(px * frame.screen.zw * 2.0f - 1.0f, 0.0f, 1.0f);
+    float2 css = float2(dot(g.row0.xy, em) + g.row0.z, dot(g.row1.xy, em) + g.row1.z);
+    GlyphOut o;
+    o.position = clip_of(frame.camera, css, 1.0f, painter_depth(g.info.y));
     o.em = em;
     o.glyph = instance;
     return o;
@@ -91,10 +99,30 @@ float2 slug_solve(float2 p1, float2 p2, float2 p3) {
     return float2((a.x * t1 - b.x * 2.0f) * t1 + p1.x, (a.x * t2 - b.x * 2.0f) * t2 + p1.x);
 }
 
+/// A band texel's two values; nothing past the buffer (set 1's placeholder until TextGlobals gives the bands: a glyph
+/// then has no curves, and draws nothing).
+uint2 slug_band_texel(uint2 at) {
+    uint n;
+    uint stride;
+    glyph_bands.GetDimensions(n, stride);
+    uint i = (at.y << log_band_width) + at.x;
+    uint t = i < n ? glyph_bands[i] : 0u;
+    return uint2(t & 0xFFFFu, t >> 16u);
+}
+
+/// A curve texel: two points; nothing past the buffer.
+float4 slug_curve_texel(uint2 at) {
+    uint n;
+    uint stride;
+    glyph_curves.GetDimensions(n, stride);
+    uint i = (at.y << log_band_width) + at.x;
+    return i < n ? glyph_curves[i] : float4(0.0f, 0.0f, 0.0f, 0.0f);
+}
+
 /// A band list's texel, wrapping into the next rows.
-int2 slug_band_location(uint2 glyph, uint offset) {
+uint2 slug_band_location(uint2 glyph, uint offset) {
     uint x = glyph.x + offset;
-    return int2(int(x & ((1u << log_band_width) - 1u)), int(glyph.y + (x >> log_band_width)));
+    return uint2(x & ((1u << log_band_width) - 1u), glyph.y + (x >> log_band_width));
 }
 
 /// A sample's band along one axis: the transformed coordinate truncated, clamped to the bands (NaN at 0).
@@ -109,9 +137,9 @@ float2 slug_ray(uint2 glyph, uint2 header, float2 sample, float pixels_per_em, b
     float coverage = 0.0f;
     float weight = 0.0f;
     for (uint k = 0; k < header.x; ++k) {
-        uint2 at = bands.Load(int3(slug_band_location(glyph, header.y + k), 0)).xy;
-        float4 p12 = curves.Load(int3(int2(at), 0)) - float4(sample, sample);
-        float2 p3 = curves.Load(int3(int2(at) + int2(1, 0), 0)).xy - sample;
+        uint2 at = slug_band_texel(slug_band_location(glyph, header.y + k));
+        float4 p12 = slug_curve_texel(at) - float4(sample, sample);
+        float2 p3 = slug_curve_texel(at + uint2(1, 0)).xy - sample;
         // Along the ray: x for the horizontal one, y for the vertical; across it the other.
         float2 q1 = horizontal ? p12.xy : p12.yx;
         float2 q2 = horizontal ? p12.zw : p12.wz;
@@ -136,12 +164,12 @@ float2 slug_ray(uint2 glyph, uint2 header, float2 sample, float pixels_per_em, b
 }
 
 /// Slug's coverage of glyph `g` at the em sample `em`, a pixel being `pixels_per_em` along em x and y.
-float slug_coverage(SlugGlyph g, float2 em, float2 pixels_per_em) {
+float slug_coverage(GlyphDraw g, float2 em, float2 pixels_per_em) {
     uint2 glyph = g.location.xy;
     uint vband = slug_band(em.x * g.bands.x + g.bands.z, g.location.z);
     uint hband = slug_band(em.y * g.bands.y + g.bands.w, g.location.w);
-    uint2 hheader = bands.Load(int3(int(glyph.x + hband), int(glyph.y), 0)).xy;
-    uint2 vheader = bands.Load(int3(int(glyph.x + g.location.w + 1u + vband), int(glyph.y), 0)).xy;
+    uint2 hheader = slug_band_texel(uint2(glyph.x + hband, glyph.y));
+    uint2 vheader = slug_band_texel(uint2(glyph.x + g.location.w + 1u + vband, glyph.y));
     float2 x = slug_ray(glyph, hheader, em, pixels_per_em.x, true);
     float2 y = slug_ray(glyph, vheader, em, pixels_per_em.y, false);
     // The rays weighted by how near their crossings are; where neither is near, the smaller; nonzero fill.
@@ -153,28 +181,28 @@ float slug_coverage(SlugGlyph g, float2 em, float2 pixels_per_em) {
 float slug_table(uint table, float coverage) {
     float f = coverage * 255.0f;
     uint i = min(uint(f), 254u);
-    float a = tables[table * 256u + i];
-    float b = tables[table * 256u + i + 1u];
+    float a = coverage_tables[table * 256u + i];
+    float b = coverage_tables[table * 256u + i + 1u];
     return lerp(a, b, f - float(i));
 }
 
 [shader("fragment")]
-float4 slug_fs(SlugOut v) : SV_Target0 {
-    SlugGlyph g = glyphs[v.glyph];
+float4 ground_text_fs(GlyphOut v) : SV_Target0 {
+    GlyphDraw g = glyph_draws[v.glyph];
     float2 pixels_per_em = 1.0f / fwidth(v.em);
-    float coverage = slug_table(g.table.x, slug_coverage(g, v.em, pixels_per_em));
+    float coverage = slug_table(g.info.x, slug_coverage(g, v.em, pixels_per_em));
     return g.colour * coverage;
 }
 
 /// The coverage alone at the samples of a probe (tests/text/slug_vk_test.cpp): per probe its glyph, its em sample and
 /// its pixels per em, the GPU's arithmetic without the rasteriser's derivatives.
 struct SlugProbe {
-    float4 sample;  // em x, em y, pixels per em along x and y
-    uint4 glyph;    // x: the glyph
+    float4 sample; // em x, em y, pixels per em along x and y
+    uint4 glyph;   // x: the glyph
 };
 
-[[vk::binding(4, 0)]] StructuredBuffer<SlugProbe> probes;
-[[vk::binding(5, 0)]] RWStructuredBuffer<float> probed;
+[[vk::binding(2, 2)]] StructuredBuffer<SlugProbe> probes;
+[[vk::binding(3, 2)]] RWStructuredBuffer<float> probed;
 
 [shader("compute")]
 [numthreads(64, 1, 1)]
@@ -184,5 +212,5 @@ void slug_probe(uint3 id : SV_DispatchThreadID) {
     probes.GetDimensions(n, stride);
     if (id.x >= n) return;
     SlugProbe p = probes[id.x];
-    probed[id.x] = slug_coverage(glyphs[p.glyph.x], p.sample.xy, p.sample.zw);
+    probed[id.x] = slug_coverage(glyph_draws[p.glyph.x], p.sample.xy, p.sample.zw);
 }

@@ -146,4 +146,8 @@ private:
     mutable std::vector<std::unique_ptr<Instance>> instances_;
 };
 
+/// The fonts the frame's text draws with (passes/GroundText.cpp): loaded once, by the app from the APK's svgfonts
+/// (Native.textFonts) or by a host's tests (load_folder); a face not loaded yet draws nothing.
+[[nodiscard]] Fonts& shared_fonts() noexcept;
+
 } // namespace atlas::text

@@ -1,0 +1,252 @@
+// The ground's text drawn by the frame (plan-vector D13, K13): over the bundled Westerkerk at its home view, at rest,
+// the world's tiles bring their canal candidates (stage T), the pass places the renders' names, shapes them, adds their
+// glyphs to the shared data (set 1's, through TextGlobals) and draws them in the translucent slot; on every
+// configuration and route the host's Vulkan has, every pixel the glyphs reach is the CPU's coverage (text/SlugBands'
+// coverage at the pixel's centre, through the identity table) blended over the clear colour in the glyphs' order.
+#include "base/pymath/PyMath.hpp"
+#include "frame/FrameBuilder.hpp"
+#include "frame/PassRegistry.hpp"
+#include "gpu/PipelineCache.hpp"
+#include "passes/GroundText.hpp"
+#include "scene/World.hpp"
+#include "tests/base/require.hpp"
+#include "tests/gpu/gpu_fixture.hpp"
+#include "tests/text/text_support.hpp"
+#include "tests/tiles/support.hpp"
+#include "text/Fonts.hpp"
+#include "text/SlugBands.hpp"
+
+#include <doctest/doctest.h>
+
+#include <algorithm>
+#include <cmath>
+#include <filesystem>
+#include <format>
+#include <memory>
+#include <string>
+#include <vector>
+
+#if !defined(__ANDROID__)
+#include "platform/host/Offscreen.hpp"
+
+using namespace atlas;
+
+namespace {
+
+/// The configurations the host's device draws the map's frame in, each route (composite_vk_test's list).
+std::vector<gpu::Configuration> configurations(const gpu::Device& device) {
+    std::vector<gpu::Configuration> out;
+    const bool dynamic = device.enabled().dynamic_rendering && device.enabled().local_read;
+    for (const gpu::FrameConfig c :
+         {gpu::FrameConfig::a, gpu::FrameConfig::b, gpu::FrameConfig::c, gpu::FrameConfig::x1}) {
+        if (!device.facts().supports(c)) continue;
+        const bool one = gpu::Configuration{.config = c}.samples() == vk::SampleCountFlagBits::e1;
+        for (const gpu::Route route : {gpu::Route::renderpass, gpu::Route::dynamic}) {
+            if (route == gpu::Route::dynamic && !dynamic) continue;
+            out.push_back({.config = c,
+                           .route = route,
+                           .form = gpu::FrameForm::composite,
+                           .target = one ? gpu::CompositeTarget::direct : gpu::CompositeTarget::resolve});
+        }
+    }
+    return out;
+}
+
+/// The Westerkerk home at rest (the scene test's camera) on a 412 x 916 frame at density 1.
+style::CameraState home() {
+    style::CameraState c{};
+    c.version = style::camera_state_version;
+    const double kx = 111320 * pymath::cos(pymath::radians(52.3746));
+    c.latitude = 52.3746 - (-30.0) / 110540.0;
+    c.longitude = 4.8840 + (-10.0) / kx;
+    c.bearing = 52.0;
+    c.pitch = 52.0;
+    c.distance = 430.0;
+    c.principal_x = 206.0;
+    c.principal_y = 440.0;
+    c.density = 1.0;
+    c.width_px = 412;
+    c.height_px = 916;
+    c.width_dp = 412;
+    c.height_dp = 916;
+    c.flags = style::camera_flag::rest;
+    return c;
+}
+
+constexpr std::array<float, 4> clear{0.92F, 0.90F, 0.86F, 1.0F};
+
+/// The frame the glyphs make, in float levels (0-255): the clear colour as the attachment holds it, then each glyph in
+/// its order blended over at each pixel centre its dilated quad covers, as the GPU blends, rounded to levels each time.
+std::vector<float> expected(std::span<const layouts::text_slug::GlyphDraw> draws, std::uint32_t width,
+                            std::uint32_t height, std::size_t& reached) {
+    std::vector<float> rgb(static_cast<std::size_t>(width) * height * 3);
+    for (std::size_t i = 0; i < rgb.size(); ++i) {
+        rgb[i] =
+            static_cast<float>(std::round(static_cast<double>(clear.at(i % 3)) * 255.0)); // the float clear, exactly
+    }
+    std::vector<std::uint8_t> touched(static_cast<std::size_t>(width) * height, 0);
+    text::slug::shared_glyphs().read([&](const text::slug::Atlas& atlas) {
+        for (const auto& d : draws) {
+            const auto a = static_cast<double>(d.row0[0]);
+            const auto b = static_cast<double>(d.row0[1]);
+            const auto c = static_cast<double>(d.row1[0]);
+            const auto e = static_cast<double>(d.row1[1]);
+            const auto tx = static_cast<double>(d.row0[2]);
+            const auto ty = static_cast<double>(d.row1[2]);
+            const double det = (a * e) - (b * c);
+            // em = M^-1 (px - t); its derivatives per px are M^-1's columns
+            const double i00 = e / det;
+            const double i01 = -b / det;
+            const double i10 = -c / det;
+            const double i11 = a / det;
+            const auto fwx = static_cast<float>(std::fabs(i00) + std::fabs(i01));
+            const auto fwy = static_cast<float>(std::fabs(i10) + std::fabs(i11));
+            text::slug::Glyph g{};
+            g.box = {.x0 = d.box[0], .y0 = d.box[1], .x1 = d.box[2], .y1 = d.box[3]};
+            g.band_x = d.location[0];
+            g.band_y = d.location[1];
+            g.vbands = d.location[2] + 1;
+            g.hbands = d.location[3] + 1;
+            g.scale_x = d.bands[0];
+            g.scale_y = d.bands[1];
+            g.offset_x = d.bands[2];
+            g.offset_y = d.bands[3];
+            // the quad's pixels: the em box's corners mapped, a pixel around them
+            double x0 = 1e9;
+            double y0 = 1e9;
+            double x1 = -1e9;
+            double y1 = -1e9;
+            for (const auto& [u, v] : {std::pair{d.box[0], d.box[1]}, std::pair{d.box[2], d.box[1]},
+                                       std::pair{d.box[0], d.box[3]}, std::pair{d.box[2], d.box[3]}}) {
+                const double px = (a * static_cast<double>(u)) + (b * static_cast<double>(v)) + tx;
+                const double py = (c * static_cast<double>(u)) + (e * static_cast<double>(v)) + ty;
+                x0 = std::min(x0, px);
+                y0 = std::min(y0, py);
+                x1 = std::max(x1, px);
+                y1 = std::max(y1, py);
+            }
+            const int ix0 = std::max(0, static_cast<int>(std::floor(x0)) - 1);
+            const int iy0 = std::max(0, static_cast<int>(std::floor(y0)) - 1);
+            const int ix1 = std::min(static_cast<int>(width) - 1, static_cast<int>(std::ceil(x1)) + 1);
+            const int iy1 = std::min(static_cast<int>(height) - 1, static_cast<int>(std::ceil(y1)) + 1);
+            for (int y = iy0; y <= iy1; ++y) {
+                for (int x = ix0; x <= ix1; ++x) {
+                    const double sx = (x + 0.5) - tx;
+                    const double sy = (y + 0.5) - ty;
+                    const auto ex = static_cast<float>((i00 * sx) + (i01 * sy));
+                    const auto ey = static_cast<float>((i10 * sx) + (i11 * sy));
+                    const float cover = text::slug::coverage(atlas, g, ex, ey, 1.0F / fwx, 1.0F / fwy);
+                    if (cover <= 0.0F) continue;
+                    const std::size_t p = (static_cast<std::size_t>(y) * width) + static_cast<std::size_t>(x);
+                    touched[p] = 1;
+                    for (std::size_t k = 0; k < 3; ++k) {
+                        const float src = d.colour.at(k) * cover;
+                        const float alpha = d.colour[3] * cover;
+                        const float dst = rgb[(3 * p) + k] / 255.0F;
+                        rgb[(3 * p) + k] = std::round((src + (dst * (1.0F - alpha))) * 255.0F);
+                    }
+                }
+            }
+        }
+    });
+    reached = static_cast<std::size_t>(std::ranges::count(touched, 1));
+    return rgb;
+}
+
+} // namespace
+
+TEST_CASE("the canal names drawn: the glyphs' pixels are the CPU's coverage, on every configuration") {
+    const std::string dir = test::environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the canal names are not drawn here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    const gpu::Device& device = *session->device;
+    ATLAS_REQUIRE(text::shared_fonts().load_folder(ATLAS_FONTS_DIR).has_value());
+    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const std::array<std::string_view, 1> composite{"composite"};
+    std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes(composite);
+    auto owned = std::make_unique<passes::GroundText>();
+    const passes::GroundText* text = owned.get();
+    passes.push_back(std::move(owned));
+    auto builder = frame::FrameBuilder::create(device, *cache, std::move(passes), {.clear = clear, .steps = 0});
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    double now = 0;
+    auto world = scene::World::create(device, (*builder)->passes(),
+                                      {.workers = 3, .sun = {.enabled = false}, .clock = [&now] { return now; }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    auto globals = std::make_shared<passes::TextGlobals>(device);
+    ATLAS_REQUIRE(w.add_globals(globals).has_value());
+    auto added = w.store().add({.id = "amsterdam",
+                                .kind = tiles::PackKind::bundled,
+                                .path = (std::filesystem::path(dir) / "amsterdam.atlas").string()});
+    ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+    (*builder)->set_inputs({.camera = home(), .seconds = now, .scene = &w});
+    // The world's tiles for the view: the first frames ask, the workers build.
+    for (std::uint64_t n = 1; n <= 40; ++n) {
+        now = static_cast<double>(n) * 0.016;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+        w.residency().wait_idle();
+        if (w.cover() != nullptr && !w.cover()->tiles().empty() && w.cover()->missing() == 0) break;
+    }
+    ATLAS_REQUIRE(w.cover() != nullptr && !w.cover()->tiles().empty());
+
+    const auto configs = configurations(device);
+    ATLAS_REQUIRE(!configs.empty());
+    std::size_t compared = 0;
+    for (const gpu::Configuration& config : configs) {
+        auto output = platform::Offscreen::create(device, {.width = 412, .height = 916}, 2, gpu::Depth::eight);
+        ATLAS_REQUIRE(output.has_value(), output.error().text());
+        auto renderer = gpu::Renderer::create(device, **output, **builder, config);
+        ATLAS_REQUIRE(renderer.has_value(), gpu::name_of(config) << ": " << renderer.error().text());
+        for (int f = 0; f < 3; ++f) {
+            now += 0.016;
+            (*builder)->set_inputs({.camera = home(), .seconds = now, .scene = &w});
+            auto report = (*renderer)->draw(0);
+            ATLAS_REQUIRE(report.has_value(), gpu::name_of(config) << ": " << report.error().text());
+        }
+        (*renderer)->drain();
+        auto pixels = (*output)->read((*output)->latest());
+        ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+        std::size_t reached = 0;
+        const std::vector<float> want = expected(text->draws(), 412, 916, reached);
+        // Within 2 levels; 3 with several samples, where a dilated quad's edge splits a pixel's samples.
+        const float allowed = config.samples() == vk::SampleCountFlagBits::e1 ? 2.0F : 3.0F;
+        std::size_t differ = 0;
+        float worst = 0.0F;
+        double sum = 0.0;
+        std::size_t inked = 0;
+        for (std::size_t p = 0; p < std::size_t{412} * 916; ++p) {
+            for (std::size_t k = 0; k < 3; ++k) {
+                const float got = pixels->rgba[(4 * p) + k];
+                const float d = std::fabs(got - want[(3 * p) + k]);
+                worst = std::max(worst, d);
+                sum += static_cast<double>(d);
+                differ += d > allowed ? 1U : 0U;
+            }
+            // the names' #EAF2FA over the clear shows in the blue channel
+            inked += std::fabs(static_cast<float>(pixels->rgba[(4 * p) + 2]) - want[2]) > 8.0F ? 1U : 0U;
+        }
+        MESSAGE(
+            std::format("{}: {} names, {} glyphs; {} pixels the glyphs reach, {} inked; the largest difference from "
+                        "the CPU {} levels, the mean {:.4f}",
+                        gpu::name_of(config), text->names().size(), text->draws().size(), reached, inked, worst,
+                        sum / (3.0 * 412 * 916)));
+        CHECK(text->names().size() == 8);
+        CHECK(text->draws().size() > 50);
+        CHECK(inked > 300);
+        CHECK(differ == 0);
+        ++compared;
+        renderer->reset();
+    }
+    CHECK(compared == configs.size());
+    const auto messages = session->take_messages();
+    for (const auto& m : messages) MESSAGE("validation: " << m);
+    CHECK(messages.empty());
+}
+#endif

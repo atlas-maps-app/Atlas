@@ -153,4 +153,9 @@ std::expected<const Instance*, FontError> Fonts::instance(FontSpec spec) const {
     return instances_.emplace_back(std::make_unique<Instance>(*file, spec)).get();
 }
 
+Fonts& shared_fonts() noexcept {
+    static Fonts fonts;
+    return fonts;
+}
+
 } // namespace atlas::text

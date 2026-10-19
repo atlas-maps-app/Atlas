@@ -1,5 +1,7 @@
 #include "text/SlugBands.hpp"
 
+#include "base/log.hpp"
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -359,6 +361,41 @@ float coverage_unbanded(std::span<const Curve> curves, float sample_x, float sam
         }
     }
     return combine(rays[0], rays[1]);
+}
+
+const Glyph* GlyphAtlas::glyph(const Instance& instance, std::uint32_t id) {
+    const FontSpec spec = instance.spec();
+    const std::uint64_t key =
+        (std::uint64_t{static_cast<std::uint8_t>(spec.face)} << 48U) | (std::uint64_t{spec.weight} << 32U) | id;
+    const std::lock_guard lock(mutex_);
+    if (const auto it = glyphs_.find(key); it != glyphs_.end()) return &it->second;
+    if (full_) return nullptr;
+    constexpr std::size_t capacity = std::size_t{max_rows} << log_texture_width;
+    const auto added = atlas_.add(text::outline(instance, id), instance.units_per_em());
+    if (!added && added.error() != AtlasError::full) return nullptr; // this glyph's outline alone is refused
+    if (!added || atlas_.curve_texels() > capacity || atlas_.band_texels() > capacity) {
+        // Past the rows the provider copies: this glyph's texels (if any) are never read, and no glyph is added again.
+        full_ = true;
+        log::warn("text: the glyph data are full ({} glyphs); glyph {} and the glyphs after it are not drawn",
+                  glyphs_.size(), id);
+        return nullptr;
+    }
+    return &glyphs_.emplace(key, *added).first->second;
+}
+
+std::size_t GlyphAtlas::size() const {
+    const std::lock_guard lock(mutex_);
+    return glyphs_.size();
+}
+
+bool GlyphAtlas::full() const {
+    const std::lock_guard lock(mutex_);
+    return full_;
+}
+
+GlyphAtlas& shared_glyphs() noexcept {
+    static GlyphAtlas glyphs;
+    return glyphs;
 }
 
 } // namespace atlas::text::slug

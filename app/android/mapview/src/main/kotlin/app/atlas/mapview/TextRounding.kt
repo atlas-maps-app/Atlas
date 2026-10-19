@@ -125,12 +125,23 @@ object TextRounding {
      */
     fun factsLines(assets: AssetManager): List<String> {
         val fonts = SvgFonts.fromAssets(assets)
+        val (verdict, loaded) = install(assets, fonts)
+        val rows = platformRows(fonts, Native.textCheckRuns())
+            ?: return listOf(verdict.line, "text.glyphs: skipped (Android ${Build.VERSION.SDK_INT} has no TextRunShaper)", loaded)
+        val check = Native.textCheck(asset(assets, "Geist-wght.ttf"), asset(assets, "Gelasio-wght.ttf"), rows)
+        return listOf(verdict.line, check, loaded)
+    }
+
+    /**
+     * Readies the core's text, once at the core's start and off the main thread (plan-vector D13): the platform's
+     * kerning rule measured with Android's own Paint and told to the core, and the bundled fonts loaded into it, which
+     * the frame's ground text draws with. The verdict, and the fonts' line (`text.fonts: ok`).
+     */
+    fun install(assets: AssetManager, fonts: SvgFonts = SvgFonts.fromAssets(assets)): Pair<Verdict, String> {
         val verdict = probe(fonts)
         apply(verdict)
-        val rows = platformRows(fonts, Native.textCheckRuns())
-            ?: return listOf(verdict.line, "text.glyphs: skipped (Android ${Build.VERSION.SDK_INT} has no TextRunShaper)")
-        val check = Native.textCheck(asset(assets, "Geist-wght.ttf"), asset(assets, "Gelasio-wght.ttf"), rows)
-        return listOf(verdict.line, check)
+        val loaded = Native.textFonts(asset(assets, "Geist-wght.ttf"), asset(assets, "Gelasio-wght.ttf"), asset(assets, "Gelasio-Italic-wght.ttf"))
+        return verdict to loaded
     }
 
     const val GEIST = "Geist, Helvetica, sans-serif"

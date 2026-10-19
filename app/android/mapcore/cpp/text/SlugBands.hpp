@@ -20,10 +20,13 @@
 // (tests/text/slug_vk_test.cpp) and the fuzz target's oracle (fuzz/fuzz_outline_bands.cpp).
 #pragma once
 
+#include "text/Fonts.hpp"
 #include "text/Outlines.hpp"
 
 #include <cstdint>
 #include <expected>
+#include <map>
+#include <mutex>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -92,6 +95,14 @@ public:
     /// Rows in use (the last one partly).
     [[nodiscard]] std::uint32_t curve_rows() const noexcept;
     [[nodiscard]] std::uint32_t band_rows() const noexcept;
+    /// The texels written so far: every texel before these indices may have been, none after them (a copy to the GPU
+    /// takes the texels from its last end to these).
+    [[nodiscard]] std::size_t curve_texels() const noexcept {
+        return (static_cast<std::size_t>(curve_y_) << log_texture_width) + curve_x_;
+    }
+    [[nodiscard]] std::size_t band_texels() const noexcept {
+        return (static_cast<std::size_t>(band_y_) << log_texture_width) + band_x_;
+    }
     /// Bytes the two textures take at their rows (RGBA32F and RG16UI).
     [[nodiscard]] std::size_t bytes() const noexcept;
 
@@ -115,6 +126,38 @@ private:
     std::uint32_t band_x_ = 0;
     std::uint32_t band_y_ = 0;
 };
+
+/// The glyphs the frame's text draws, shared by its passes (the ground's text, then the house numbers and shop signs)
+/// and set 1's provider of their data (passes/GroundText.hpp's TextGlobals, which copies what was added since its last
+/// copy to the GPU before the frame draws): each glyph's outline added on first use, by face, weight and glyph id, up
+/// to max_rows rows of each texture (the provider's buffers). Locked, so frames on two render threads may share it.
+class GlyphAtlas {
+public:
+    /// The rows of each texture at most: 32,768 texels each, some 400 glyphs (640 KB of buffers in all).
+    static constexpr std::uint32_t max_rows = 8;
+
+    /// Glyph `id` of `instance`'s place, added on first use; null when it cannot be (the data are full, or the
+    /// outline is refused). The place stays put once made.
+    [[nodiscard]] const Glyph* glyph(const Instance& instance, std::uint32_t id);
+    /// Calls `read` with the atlas under the lock (the provider's copy).
+    template <class F>
+    void read(F&& read) const {
+        const std::lock_guard lock(mutex_);
+        std::forward<F>(read)(atlas_);
+    }
+    /// How many glyphs it holds, and whether it refused one for want of room.
+    [[nodiscard]] std::size_t size() const;
+    [[nodiscard]] bool full() const;
+
+private:
+    mutable std::mutex mutex_;
+    Atlas atlas_;
+    std::map<std::uint64_t, Glyph> glyphs_;
+    bool full_ = false;
+};
+
+/// The process's glyphs (every frame's).
+[[nodiscard]] GlyphAtlas& shared_glyphs() noexcept;
 
 /// How many bands a glyph of `curves` curves is cut into each way: about one per two curves, 1 to max_bands.
 [[nodiscard]] std::uint32_t band_count(std::size_t curves) noexcept;

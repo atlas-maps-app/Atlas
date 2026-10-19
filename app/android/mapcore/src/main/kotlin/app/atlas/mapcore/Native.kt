@@ -84,7 +84,7 @@ object Native {
     @JvmStatic external fun groundLine(fd: Int, offset: Long, length: Long): String
 
     // ---- end of K9's natives ----
-    // ---- K13's natives: the text's kerning rule and the device's glyph check (VK facts) ----
+    // ---- K13's natives: the text's kerning rule, the device's glyph check (VK facts) and the bundled fonts ----
 
     /**
      * The platform's kerning rule for the core's text (plan-vector K13, `CP/text/Shaper.hpp`; the app measures it,
@@ -100,6 +100,12 @@ object Native {
      * [textCheckRuns] as rows, compared bit for bit under the platform's rule: `text.glyphs: …`.
      */
     @JvmStatic external fun textCheck(geist: ByteBuffer, gelasio: ByteBuffer, android: String): String
+
+    /**
+     * Loads the bundled fonts (direct buffers of svgfonts/' Geist, Gelasio and Gelasio Italic) into the frame's text,
+     * each face once: `text.fonts: ok`, or which file did not load.
+     */
+    @JvmStatic external fun textFonts(geist: ByteBuffer, gelasio: ByteBuffer, gelasioItalic: ByteBuffer): String
 
     // ---- end of K13's natives ----
 

@@ -800,7 +800,7 @@ jstring native_ground_line(JNIEnv* env, jclass /*cls*/, jint fd, jlong offset, j
 }
 // ---- end of K9's natives ----
 
-// ---- K13's natives: the text's kerning rule and the device's glyph check (VK facts) ----
+// ---- K13's natives: the text's kerning rule, the device's glyph check (VK facts) and the bundled fonts ----
 
 /// K13's platform rule for kerning, which the app measured with Android's Paint (mapview's TextRounding): "floor" or
 /// "round" sets it, anything else leaves it; the rule the core takes now.
@@ -840,10 +840,25 @@ jstring native_text_check(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
     return java(env, text::glyph_check(fonts, string_of(env, android), text::platform_rounding()));
 }
 
+/// Loads the bundled fonts into the frame's text (text::shared_fonts: each face once, the bytes copied): `text.fonts:
+/// ok`, or which file did not load.
+jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject gelasio, jobject gelasio_italic) {
+    text::Fonts& fonts = text::shared_fonts();
+    for (const auto& [face, buffer] : {std::pair{text::Face::sans, geist}, std::pair{text::Face::serif, gelasio},
+                                       std::pair{text::Face::serif_italic, gelasio_italic}}) {
+        if (fonts.loaded(face)) continue;
+        if (const auto loaded = fonts.load(face, direct_bytes(env, buffer)); !loaded) {
+            return java(env,
+                        std::format("text.fonts: FAIL {} ({})", text::file_of(face), text::describe(loaded.error())));
+        }
+    }
+    return java(env, "text.fonts: ok");
+}
+
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 27>& methods() {
-    static const std::array<JNINativeMethod, 27> table{{
+const std::array<JNINativeMethod, 28>& methods() {
+    static const std::array<JNINativeMethod, 28> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -877,6 +892,8 @@ const std::array<JNINativeMethod, 27>& methods() {
         method("textCheckRuns", "()Ljava/lang/String;", fn(&native_text_check_runs)),
         method("textCheck", "(Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;Ljava/lang/String;)Ljava/lang/String;",
                fn(&native_text_check)),
+        method("textFonts", "(Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;)Ljava/lang/String;",
+               fn(&native_text_fonts)),
         // ---- end of K13's natives ----
         method("pipelines", "(J)Ljava/lang/String;", fn(&native_pipelines)),
         method("resetGuard", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", fn(&native_reset_guard)),
