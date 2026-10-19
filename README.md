@@ -47,7 +47,7 @@ The screens were designed first as boards, each a phone screen, fed by real open
 
 | Folder | What it holds |
 |---|---|
-| `app/` | The Android app. `app/README.md` holds the decisions and the order of work, `app/ideas.md` the ideas, and `app/android/` the Kotlin and Compose project (its README has the modules and how to build) |
+| `app/` | The Android app. `app/ideas.md` holds the ideas, and `app/android/` the Kotlin and Compose project (its README has the modules and how to build) |
 | `render/`, `fetch/`, `data/` | The Python map engine the app's engine is ported from, the data fetchers, and what they fetched. `render/README.md` covers the engine, the pipelines and the data |
 | `reviews/` | Mangrove reviews, a small Python package |
 | `.github/workflows/` | Build and test on every push, an emulator run of every screen, releases, and the offline packs |

@@ -34,10 +34,11 @@ qa/pagetest/runner
 Instructions.rtf
 
 # The owner's working space stays on this Mac, out of the public repo (14 Oct 2026): the design canvases' boards
-# (canvas/, engine/), the Studio, the page tests, the session tools and notes, Claude's own settings.
-/canvas/
-/engine/
-/studio/
+# (canvas, engine) and the Studio, which are links into the private atlas-design repository (19 Oct 2026), the page tests,
+# the session tools and notes, Claude's own settings.
+/canvas
+/engine
+/studio
 /qa/
 /.claude/
 /inbox.py
@@ -46,6 +47,7 @@ Instructions.rtf
 /dbplan.py
 /github.sh
 /WORKING.md
+/app/README.md
 
 # Boards drawn by boardgen.py (cache/claude-session/boards), for building screens from: the boards stay out of the public repo
 /app/android/app/src/test/kotlin/app/atlas/boards/
