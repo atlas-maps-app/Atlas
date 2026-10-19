@@ -15,6 +15,7 @@
 #include "tests/tiles/support.hpp"
 #include "text/Fonts.hpp"
 #include "text/SlugBands.hpp"
+#include "twin/Twin.hpp"
 
 #include <doctest/doctest.h>
 
@@ -241,6 +242,30 @@ TEST_CASE("the canal names drawn: the glyphs' pixels are the CPU's coverage, on 
         CHECK(text->draws().size() > 50);
         CHECK(inked > 300);
         CHECK(differ == 0);
+        if (compared == 0) {
+            // The twin: the names as the port writes its <text>, at the matrices the vertex stage draws (printed).
+            twin::Stream stream;
+            text->emit((*builder)->state(), stream, 0);
+            const twin::Decoded d = twin::decode(stream.bytes());
+            ATLAS_REQUIRE(d.error.empty(), d.error);
+            ATLAS_REQUIRE(d.document.elements.size() == text->names().size());
+            for (std::size_t i = 0; i < d.document.elements.size(); ++i) {
+                const twin::Element& e = d.document.elements[i];
+                const text::TextRun& run = text->names()[i].drawn;
+                CHECK(e.kind == twin::Op::text);
+                CHECK(e.layer == twin::Layer::ground);
+                CHECK(e.text == run.text);
+                CHECK(e.node.transformed);
+                CHECK(e.node.transform == run.snapped_matrix());
+                CHECK(e.node.opacity == 0.85F);
+                CHECK(e.family == "Geist, Helvetica, sans-serif");
+                CHECK(e.font.size == 3.2F);
+                CHECK(e.font.weight == 700);
+                CHECK(e.font.letter_spacing == 0.3F);
+                CHECK(e.font.anchor == twin::TextAnchor::middle);
+                CHECK(e.style.fill.argb == 0xFFEAF2FAU);
+            }
+        }
         ++compared;
         renderer->reset();
     }

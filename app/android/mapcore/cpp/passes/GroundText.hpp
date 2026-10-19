@@ -69,6 +69,9 @@ public:
     void update(const frame::FrameState& state) override;
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& build) const override;
+    /// The twin (L1): the names the last update placed, each a `<text>` as the port writes it (its matrix as the
+    /// vertex stage draws it: printed at rest; its opacity times its fade), in the ground layer at the pass's slot.
+    void emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const override;
 
     // ---- For tests and logs.
 

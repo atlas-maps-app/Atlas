@@ -15,6 +15,7 @@
 #include "text/Outlines.hpp"
 #include "tiles/Sections.hpp"
 #include "tiles/layers/Labels.hpp"
+#include "twin/Twin.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -37,6 +38,10 @@ constexpr std::size_t glyph_capacity = std::size_t{text::slug::GlyphAtlas::max_r
 constexpr std::size_t table_entries = 256 * text::face_count;
 
 [[nodiscard]] std::uint32_t bits(float v) noexcept { return std::bit_cast<std::uint32_t>(v); }
+
+static_assert(static_cast<int>(text::Anchor::start) == static_cast<int>(twin::TextAnchor::start) &&
+              static_cast<int>(text::Anchor::middle) == static_cast<int>(twin::TextAnchor::middle) &&
+              static_cast<int>(text::Anchor::end) == static_cast<int>(twin::TextAnchor::end));
 
 } // namespace
 
@@ -270,6 +275,31 @@ void GroundText::record(const frame::Recording& recording, std::uint32_t phase) 
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout_, 2, *sets_.at(slot), {});
     cmd.draw(6, count, 0, 0);
     recording.counters.draw("canal names", 2ULL * count, count);
+}
+
+void GroundText::emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const {
+    (void)phase;
+    if (placed_.empty()) return;
+    out.layer(twin::Layer::ground);
+    out.at(first_ground_slot());
+    for (const text::PlacedName& p : placed_) {
+        const text::TextRun& run = p.drawn;
+        twin::Node node{.opacity = run.printed_opacity() * p.alpha, .transformed = true};
+        if (state.rest) {
+            node.transform = run.snapped_matrix();
+        } else {
+            for (std::size_t i = 0; i < node.transform.size(); ++i) {
+                node.transform.at(i) = static_cast<float>(run.matrix.at(i));
+            }
+        }
+        const twin::Font font{.family = run.family,
+                              .size = run.printed_size(),
+                              .weight = run.weight,
+                              .italic = false,
+                              .letter_spacing = run.printed_spacing(),
+                              .anchor = static_cast<twin::TextAnchor>(run.anchor)};
+        out.text({.fill = twin::Paint::colour(0xFF00'0000U | run.fill)}, run.text, 0.0F, 0.0F, font, node);
+    }
 }
 
 // ---- Set 1's text globals.
