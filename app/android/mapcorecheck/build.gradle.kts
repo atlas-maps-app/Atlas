@@ -191,6 +191,11 @@ sourceSets {
         val androidOnly = mapcoreAndroidOnly.map(mapcoreKotlin::resolve).toSet()
         kotlin.srcDir(mapcoreKotlin)
         kotlin.exclude { it.file in androidOnly }
+        // K17a's field parity (MT/fx) runs the port's Turbulence beside the core's: one file of :mapview, an Android
+        // library this module cannot depend on, that needs only :core's ExactMath, compiled here without its neighbours.
+        val turbulence = rootProject.layout.projectDirectory.file("mapview/src/main/kotlin/app/atlas/mapview/svg/Turbulence.kt").asFile
+        kotlin.srcDir(turbulence.parentFile)
+        kotlin.exclude { it.file.parentFile == turbulence.parentFile && it.file != turbulence }
     }
 }
 
