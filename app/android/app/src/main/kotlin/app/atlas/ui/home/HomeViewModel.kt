@@ -7,9 +7,12 @@ import app.atlas.Services
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.mapview.CameraPosition
+import app.atlas.mapview.CoreState
 import app.atlas.mapview.HomeView
 import app.atlas.mapview.LabelKind
+import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapLabel
+import app.atlas.mapview.MapStatus
 import app.atlas.model.Place
 import app.atlas.mapview.Follow
 import app.atlas.mapview.MapLayer
@@ -90,9 +93,22 @@ class HomeViewModel(
             // network, whatever view was saved: the same frame on the emulator and on a phone
             services.ciDemo -> HomeView.westerkerk
             saved != null -> CameraPosition(saved.target, saved.zoom, saved.bearing, saved.pitch)
-            else -> FirstLook.around(services.location.last.value?.location)
+            else -> FirstLook.around(services.location.last.value?.location, ::coveredByMap)
         },
     ).apply { time = clock() }
+
+    /**
+     * Whether the map has data at [p] on the phone (Q5, plan-vector §8): where the core draws the maps, a pack of its
+     * holds the place (else the first look is the Main board's view of the canal ring the APK carries); today's map
+     * alone counts every place, as it always has (it fetches what it needs). The list is read as the core starts
+     * (MapEngine.warmPacks); only if that has not finished is it read here.
+     */
+    private fun coveredByMap(p: LatLon): Boolean {
+        if (MapEngine.core is CoreState.Canvas) return true
+        val list = runCatching { MapEngine.packs(services.context.assets) }.getOrNull() ?: return true
+        if (!list.loaded) runCatching { list.load() }
+        return list.packs.any { p in it.box }
+    }
 
     /** The focus of a geo: link, drawn as a pin. */
     val focus: LatLon? = focus
@@ -203,12 +219,47 @@ class HomeViewModel(
             val fix = services.location.last.filterNotNull().first()
             if (cameraUnset && !services.ciDemo) {
                 cameraUnset = false
-                val look = FirstLook.around(fix.location)
+                val covered = withContext(Dispatchers.IO) { coveredByMap(fix.location) }
+                val look = FirstLook.around(fix.location) { covered }
                 if (look != map.camera) map.animateTo(look)
             }
         }
         // The light and shadows follow the app's clock (a test's fixed one too), a minute at a time.
         viewModelScope.launch { minutes.collect { map.time = it } }
+        // CI's scripted run of the core's transitional rule (MainActivity's atlas.vk.script; debug and bench builds).
+        if (MapEngine.script == TRANSITION_SCRIPT) {
+            MapEngine.script = null
+            viewModelScope.launch { transitionScript() }
+        }
+    }
+
+    /**
+     * CI's scripted switch of the transitional rule (plan-vector K11): once the core's first picture is final, the camera
+     * jumps to a place the core has no tiles for ([AWAY]: today's map there, or its own honest state offline), and
+     * once today's map has its picture there and the cross-fade is done, back to the start; `vk script …` lines mark
+     * each step for smoke.sh, which reads the rule's own `vk transition` lines between them.
+     */
+    private suspend fun transitionScript() {
+        val log = { line: String -> android.util.Log.i("AtlasMap", line) }
+        val start = map.camera
+        awaitStatus(SCRIPT_WAIT_MS) { it is MapStatus.Ready }
+        delay(SCRIPT_SETTLE_MS)
+        log("vk script: away to ${AWAY.lat},${AWAY.lon}")
+        map.camera = start.copy(target = AWAY)
+        delay(SCRIPT_SETTLE_MS)
+        awaitStatus(SCRIPT_WAIT_MS) { it !is MapStatus.Loading }
+        delay(SCRIPT_SETTLE_MS)
+        log("vk script: back")
+        map.camera = start
+        delay(SCRIPT_SETTLE_MS)
+        awaitStatus(SCRIPT_WAIT_MS) { it is MapStatus.Ready }
+        delay(SCRIPT_SETTLE_MS)
+        log("vk script done")
+    }
+
+    /** Waits until the map's status passes [test], at most [timeoutMs]. */
+    private suspend fun awaitStatus(timeoutMs: Long, test: (MapStatus) -> Boolean) {
+        kotlinx.coroutines.withTimeoutOrNull(timeoutMs) { androidx.compose.runtime.snapshotFlow { map.status }.first(test) }
     }
 
     fun onCameraMove(camera: CameraPosition, byUser: Boolean) {
@@ -319,6 +370,14 @@ class HomeViewModel(
 
         /** How far around the view to look for a category: about the visible area at that zoom. */
         fun radiusFor(zoom: Double): Double = (800.0 * Math.pow(2.0, 16.0 - zoom)).coerceIn(300.0, 5_000.0)
+
+        /** CI's script of the core's transitional rule (MainActivity's `atlas.vk.script transition`). */
+        const val TRANSITION_SCRIPT = "transition"
+
+        /** Where the script goes: Utrecht's centre, which no pack of the core holds. */
+        val AWAY = LatLon(52.0907, 5.1214)
+        private const val SCRIPT_WAIT_MS = 180_000L
+        private const val SCRIPT_SETTLE_MS = 2_000L
     }
 }
 

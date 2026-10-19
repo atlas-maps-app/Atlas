@@ -10,7 +10,8 @@ import app.atlas.mapview.Viewport
  * The home's first look when nothing says where to look: the Main board's view ([HomeView]: 3D, facing 52°, the
  * canal ring ahead). When you stand inside that view, low enough to show under the top pills, it is the board's view
  * exactly; anywhere else the same view moves so that you stand where the board stands you, at the Westermarkt's dot
- * 230 × 628 dp on its 412 × 915 dp screen.
+ * 230 × 628 dp on its 412 × 915 dp screen, if the map has data where you are (Q5, plan-vector §8: else the board's
+ * view, the canal ring the app carries, rather than a place with nothing to draw).
  */
 object FirstLook {
     /** The board's screen in dp, its principal point 440 dp down (the home's content padding). */
@@ -26,11 +27,13 @@ object FirstLook {
     private const val TOP = 300f
     private const val BOTTOM = 700f
 
-    fun around(you: LatLon?): CameraPosition {
+    /** The first look for someone at [you] (null: unknown); [covered] says whether the map has data at a place. */
+    fun around(you: LatLon?, covered: (LatLon) -> Boolean = { true }): CameraPosition {
         val board = HomeView.camera
         if (you == null) return board
         val p = CameraOps.camera(board, BOARD).project(you)
         if (p != null && p.x in LEFT..RIGHT && p.y in TOP..BOTTOM) return board
+        if (!covered(you)) return board
         return CameraOps.place(board, BOARD, you, YOU_X, YOU_Y)
     }
 }

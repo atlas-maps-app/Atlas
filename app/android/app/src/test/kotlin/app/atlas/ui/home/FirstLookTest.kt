@@ -37,4 +37,14 @@ class FirstLookTest {
         val q = CameraOps.camera(FirstLook.around(centraal), board).project(centraal)!!
         assertEquals(FirstLook.YOU_Y, q.y, 0.5f)
     }
+
+    @Test
+    fun withNoDataWhereYouAreTheBoardsViewOfTheCanalRing() {
+        // Q5 (plan-vector §8): where the map has nothing to draw, the Main board's view the app carries.
+        val utrecht = LatLon(52.0907, 5.1214)
+        assertEquals(HomeView.camera, FirstLook.around(utrecht) { false })
+        // Covered, as before; in the board's view, the board's view whatever is covered.
+        assertEquals(FirstLook.around(utrecht), FirstLook.around(utrecht) { true })
+        assertEquals(HomeView.camera, FirstLook.around(Services.WESTERKERK) { false })
+    }
 }

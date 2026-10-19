@@ -31,6 +31,8 @@ class MainActivity : ComponentActivity() {
     private var navigator: BackStackNavigator? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // The core's first-frame line counts from here (`vk first frame`, plan-vector §3).
+        if (app.atlas.mapview.MapEngine.startedAt == 0L) app.atlas.mapview.MapEngine.startedAt = android.os.SystemClock.uptimeMillis()
         val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
         val services = services
@@ -62,8 +64,10 @@ class MainActivity : ComponentActivity() {
         if (showVulkanScreen(intent)) return
         offerBenchShortcuts()
         // The map's core starts with the first map screen, on its own thread beside Compose's first frame (T8), behind
-        // the crash guard; a phone that cannot run it keeps today's map (the transitional rule until A5).
+        // the crash guard; it draws the maps where it has tiles, today's map elsewhere (the transitional rule until A5),
+        // and a phone that cannot run it shows T2's honest state in the map's place.
         startCore(this, intent)
+        app.atlas.mapview.MapEngine.online = { services.connectivity.online.value && !services.config.offline }
 
         val camera = services.startCamera
         splash.setKeepOnScreenCondition { !camera.isCompleted }
@@ -216,11 +220,33 @@ class MainActivity : ComponentActivity() {
             ciLog = BuildConfig.TIMINGS && intent.getBooleanExtra(EXTRA_VK_CI, false),
         )
 
-        /** Starts the process's core on a thread of its own (once); the map screens find it made. */
+        /**
+         * Debug and bench builds: the map as a phone without usable Vulkan shows it, T2's honest state (plan-vector K11);
+         * `--ez atlas.vk.off true`.
+         */
+        const val EXTRA_VK_OFF = "atlas.vk.off"
+
+        /** Debug and bench builds: `texture` draws the map's core into a TextureView (HWUI frosts the pills, K11b). */
+        const val EXTRA_VK_HOST = "atlas.vk.host"
+
+        /** Debug and bench builds: a scripted run of the home's map for CI (`transition`: K11's switch and back). */
+        const val EXTRA_VK_SCRIPT = "atlas.vk.script"
+
+        /**
+         * Starts the process's core on a thread of its own (once), through the maps' engine, which draws the maps with
+         * it from then on ([app.atlas.mapview.MapEngine.startCore]); the debug switches above apply in debug and bench
+         * builds.
+         */
         fun startCore(context: android.content.Context, intent: Intent) {
-            if (MapCore.sharedOrNull() != null) return
             val config = coreConfig(context.applicationContext, intent)
-            Thread({ MapCore.shared(config) }, "atlas-core-start").apply { isDaemon = true }.start()
+            val engine = app.atlas.mapview.MapEngine
+            if (BuildConfig.TIMINGS) {
+                if (intent.getStringExtra(EXTRA_VK_HOST) == "texture") engine.host = app.atlas.mapview.vk.VkHost.TEXTURE
+                intent.getStringExtra(EXTRA_VK_SCRIPT)?.let { engine.script = it }
+            }
+            val off = if (BuildConfig.TIMINGS && intent.getBooleanExtra(EXTRA_VK_OFF, false)) "the debug switch atlas.vk.off is on" else null
+            engine.startCore(config, off)
+            if (off == null) engine.warmPacks(context.applicationContext.assets)
         }
 
         /** The bench shortcut: true opens the home on CI's demo camera (the Westerkerk) but keeps the phone's location. */
