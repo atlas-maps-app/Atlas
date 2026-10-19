@@ -62,6 +62,18 @@ object Native {
      */
     @JvmStatic external fun sunLine(fd: Int, offset: Long, length: Long): String
 
+    // ---- K17a's natives: the noise fields' check (VK facts) ----
+
+    /**
+     * The core's noise fields check (plan-vector K17a, `CP/fx/FieldCache.hpp`): the renders' five screen-wide fields at
+     * S1 (1080 × 2400 px at 1080/412 px a CSS px) made on four threads, each held to the port's hashes (fields.inc):
+     * `fields 1080x2400 cpu <ms> gpu off hash <h> ok`, or `… FAIL <field> <h> expected <h>`. About 0.3 s of four cores on
+     * a phone, seconds on the x86_64 emulator: only when VK facts asks, never on the main thread.
+     */
+    @JvmStatic external fun fieldsLine(): String
+
+    // ---- end of K17a's natives ----
+
     /** The last failure of [create] or [attach] on this thread, in words. */
     @JvmStatic external fun lastError(): String
 

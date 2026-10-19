@@ -25,7 +25,9 @@
 #                                            VK facts' guard clear), and the crash guard's planted crash ending in the
 #                                            honest state on the next launch; pymath.txt, the core's numerics on Bionic
 #                                            (K3b), which must read `pymath $ATLAS_PYMATH_HASH ok`; sun.txt, the core's
-#                                            sun bits on Bionic (K8), which must read `sun $ATLAS_SUN_HASH ok`
+#                                            sun bits on Bionic (K8), which must read `sun $ATLAS_SUN_HASH ok`;
+#                                            fields.txt, the core's noise fields at S1 on Bionic (K17a), which must end
+#                                            `hash <h> ok` (each field equal to the port's)
 # Each measured run starts from the installed state (`pm clear`, the install's permissions granted again), so earlier
 # screens' downloads and kept scenes do not change what the home draws. `run-as` needs a debuggable APK, so the bench
 # phase never uses it: the screen list comes from the debug run and the timings from logcat (tag AtlasMap).
@@ -38,10 +40,10 @@
 # (its window or the app not back), a host's window that never came, a colour stage that drew no frames, or one that
 # drew none once it went on after the app came back, an app that did not come back to the foreground after the colour
 # stage's background step, a pymath line other than `pymath $ATLAS_PYMATH_HASH ok`, a sun line other than
-# `sun $ATLAS_SUN_HASH ok`, VK bench's still pills failing ci/pillcheck.py with the core's glass or passing it with their
-# tint alone, and (once the map's core draws the home) the home's frosted pills failing it or further than MAD 2 from
-# HWUI's on the TextureView. A frame that never comes is "NO FRAME", a warning; a background step the bench ended before
-# is skipped, saying so.
+# `sun $ATLAS_SUN_HASH ok`, a fields line other than `fields 1080x2400 cpu <ms> gpu off hash <h> ok`, VK bench's still pills
+# failing ci/pillcheck.py with the core's glass or passing it with their tint alone, and (once the map's core draws the
+# home) the home's frosted pills failing it or further than MAD 2 from HWUI's on the TextureView. A frame that never
+# comes is "NO FRAME", a warning; a background step the bench ended before is skipped, saying so.
 # Environment: ATLAS_SCREENS (the debug loop's screens, default: all), ATLAS_MAP_WAIT (seconds to wait for the home's map),
 # ATLAS_IDLE (seconds the home is watched at rest, default 20), ATLAS_BENCH=0 (skip the bench phase), ATLAS_PROFILE=0
 # (skip simpleperf), ATLAS_PYMATH_HASH (the numerics hash the host build and the port compute; android.yml sets it),
@@ -381,6 +383,13 @@ vk_phase() {
     echo "SUN FAILED: ATLAS_SUN_HASH is not set (android.yml's emulator job sets the expected hash)"; FAIL=1
   elif ! grep -qx "sun $ATLAS_SUN_HASH ok" "$OUT/sun.txt"; then
     echo "SUN FAILED: the emulator's sun bits read '$(cat "$OUT/sun.txt")', not 'sun $ATLAS_SUN_HASH ok'"; FAIL=1
+  fi
+  # The core's noise fields on Bionic (K17a's acceptance): VK facts logs `fields 1080x2400 cpu <ms> gpu off hash <h> ok`,
+  # the five screen-wide fields at S1 each equal to the port's (fields.inc's hashes, which the host build's tests hold).
+  since_marker vkfacts | grep -o 'AtlasMap: fields .*' | sed 's/AtlasMap: //' | tr -d '\r' | head -1 > "$OUT/fields.txt"
+  echo "fields: $(cat "$OUT/fields.txt")"
+  if ! grep -qE '^fields 1080x2400 cpu [0-9]+ gpu off hash [0-9a-f]{16} ok$' "$OUT/fields.txt"; then
+    echo "FIELDS FAILED: the emulator's noise fields read '$(cat "$OUT/fields.txt")', not 'fields 1080x2400 cpu <ms> gpu off hash <h> ok'"; FAIL=1
   fi
   vk_crashes vkfacts
 

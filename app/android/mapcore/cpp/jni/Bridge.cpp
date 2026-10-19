@@ -15,6 +15,7 @@
 #include "base/log.hpp"
 #include "check/NumericsCheck.hpp"
 #include "frame/MapFrame.hpp"
+#include "fx/Fields.hpp"
 #include "gen/spirv/modules.hpp"
 #include "gpu/Facts.hpp"
 #include "gpu/Guard.hpp"
@@ -772,8 +773,19 @@ jstring native_sun_line(JNIEnv* env, jclass /*cls*/, jint fd, jlong offset, jlon
     return java(env, sun::sun_line(fd, static_cast<std::uint64_t>(offset), static_cast<std::uint64_t>(length)));
 }
 
-const std::array<JNINativeMethod, 22>& methods() {
-    static const std::array<JNINativeMethod, 22> table{{
+// ---- K17a's natives: the noise fields' check (VK facts) ----
+
+/// K17a's fields check: the renders' five screen-wide fields at S1 (1080 × 2400 at 1080/412, the CI emulator's size)
+/// made on four threads, timed, each held to fields.inc's hashes (the port's): `fields 1080x2400 cpu <ms> gpu off hash
+/// <h> ok`, or `… FAIL <field> <h> expected <h>`. Only when VK facts asks, never on the start's or the map's path.
+jstring native_fields_line(JNIEnv* env, jclass /*cls*/) {
+    return java(env, fx::fields_line(fx::size_of(1080, 2400, 1080.0 / 412.0), 4));
+}
+
+// ---- end of K17a's natives ----
+
+const std::array<JNINativeMethod, 23>& methods() {
+    static const std::array<JNINativeMethod, 23> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -796,6 +808,9 @@ const std::array<JNINativeMethod, 22>& methods() {
         method("buildInfo", "()Ljava/lang/String;", fn(&native_build_info)),
         method("numericsLine", "()Ljava/lang/String;", fn(&native_numerics_line)),
         method("sunLine", "(IJJ)Ljava/lang/String;", fn(&native_sun_line)),
+        // ---- K17a's natives ----
+        method("fieldsLine", "()Ljava/lang/String;", fn(&native_fields_line)),
+        // ---- end of K17a's natives ----
         method("pipelines", "(J)Ljava/lang/String;", fn(&native_pipelines)),
         method("resetGuard", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", fn(&native_reset_guard)),
         // The app's map (K11).
