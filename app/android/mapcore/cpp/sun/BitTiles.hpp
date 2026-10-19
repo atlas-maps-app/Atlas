@@ -14,6 +14,7 @@
 #include "tiles/Chunks.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -69,6 +70,10 @@ public:
     /// Forgets a tile (it left the scene).
     void forget(tiles::TileKey key);
 
+    /// Called on the publishing thread after each publish, outside the lock (null: nothing): cheap and never blocking,
+    /// such as the frame loop's wake (K7's scene/SunGlobals.hpp).
+    void on_publish(std::function<void()> callback);
+
     /// How many tiles have bits.
     [[nodiscard]] std::size_t size() const;
 
@@ -85,6 +90,7 @@ private:
 
     mutable std::mutex mutex_;
     std::unordered_map<std::uint64_t, Entry> tiles_;
+    std::function<void()> on_publish_;
 };
 
 /// A fade's weight at time `t` for a swap at `swapped`: 0 at the swap, 1 from 300 ms on.

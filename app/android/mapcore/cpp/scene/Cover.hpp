@@ -16,18 +16,24 @@
 
 #include "scene/Cells.hpp"
 #include "scene/Residency.hpp"
+#include "sun/BitTiles.hpp"
 #include "view/Frames.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace atlas::scene {
 
+/// No sun bits (CoverTile::sun_base): a tile drawn before its first bits, or a stand-in the sun's scene does not hold.
+inline constexpr std::uint32_t no_sun = 0xFFFF'FFFFU;
+
 /// One tile the frame draws: the tile wanted, the resident tile that draws it (itself, or its nearest resident
 /// ancestor, whose cells over it are drawn), the drawn tile's cells that are visible (bit r · n + c), its fade (0 to
-/// 1), its place relative to the eye, its distance from the eye and its share of the screen.
+/// 1), its place relative to the eye, its distance from the eye and its share of the screen; and its sun (the world's
+/// SunGlobals fills them each frame).
 struct CoverTile {
     tiles::TileKey key;
     const ResidentTile* drawn = nullptr;
@@ -36,6 +42,13 @@ struct CoverTile {
     shaders::TilePlace place{};
     double distance = 0;
     double share = 0;
+    /// The drawn tile's sun bits this frame, on the CPU (the twin's and the passes' own choices): its latest bucket's
+    /// and the one before, and the swap's fade weight.
+    std::optional<sun::TileView> sun;
+    /// Where its texels begin in set 1's sun_bits, in texels (R32G32_UINT: per 32 samples the new bits, then the old;
+    /// sample i's in texel sun_base + i / 32, bit i % 32), or no_sun; and how far the swap has faded (old 0, new 1).
+    std::uint32_t sun_base = no_sun;
+    float sun_weight = 1.0F;
 };
 
 /// What the cover is made of for a frame.
@@ -66,6 +79,8 @@ public:
 
     /// The tiles drawn, nearest first.
     [[nodiscard]] std::span<const CoverTile> tiles() const noexcept { return tiles_; }
+    /// The same, for the world to fill their sun (SunGlobals::prepare).
+    [[nodiscard]] std::span<CoverTile> tiles() noexcept { return tiles_; }
     /// The requests for the residency (want), by lane and priority.
     [[nodiscard]] std::span<const Request> requests() const noexcept { return requests_; }
     /// The tiles wanted at the finest level that are not resident yet (drawn from an ancestor, or not at all).

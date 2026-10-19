@@ -4,9 +4,39 @@
 #include "tiles/TileBox.hpp"
 
 #include <algorithm>
+#include <array>
 #include <format>
 
 namespace atlas::scene {
+
+namespace {
+
+/// The geometry heaps' provider of set 1: their buffers bound where they grew, retired ranges freed after the frames.
+class HeapGlobals final : public frame::GlobalProvider {
+public:
+    explicit HeapGlobals(Heaps& heaps) noexcept : heaps_(heaps) {}
+    [[nodiscard]] std::string_view name() const noexcept override { return "heaps"; }
+    [[nodiscard]] std::span<const frame::Global> bindings() const noexcept override { return heap_bindings; }
+    void update(const frame::FrameState& state, frame::Globals& globals) override {
+        if (heaps_.version() != version_) {
+            for (std::size_t k = 0; k < heap_kinds; ++k) {
+                globals.buffer(static_cast<frame::Global>(k), heaps_.buffer(static_cast<HeapKind>(k)));
+            }
+            version_ = heaps_.version();
+        }
+        heaps_.bound(state.number);
+        heaps_.collect(state.number >= gpu::Frames::in_flight ? state.number - gpu::Frames::in_flight : 0);
+    }
+
+private:
+    static constexpr std::array<frame::Global, heap_kinds> heap_bindings{
+        frame::Global::points, frame::Global::walls,     frame::Global::ground,
+        frame::Global::lines,  frame::Global::instances, frame::Global::labels};
+    Heaps& heaps_;
+    std::uint64_t version_ = ~std::uint64_t{0};
+};
+
+} // namespace
 
 gpu::Result<std::unique_ptr<World>>
 World::create(const gpu::Device& device, std::span<const std::unique_ptr<frame::Pass>> passes, WorldOptions options) {
@@ -15,11 +45,39 @@ World::create(const gpu::Device& device, std::span<const std::unique_ptr<frame::
     w->heaps_ = std::move(heaps);
     std::function<double()> clock = w->options_.clock ? w->options_.clock : std::function<double()>([] { return 0.0; });
     w->residency_ = std::make_unique<Residency>(w->store_, *w->heaps_, passes, w->options_.workers, std::move(clock));
+    w->heap_globals_ = std::make_unique<HeapGlobals>(*w->heaps_);
+    w->globals_.push_back(w->heap_globals_.get());
+    if (w->options_.sun.enabled) {
+        ATLAS_GPU_LET(sun, SunGlobals::create(device, w->store_, *w->residency_, w->options_.sun, w->options_.clock));
+        w->sun_ = std::move(sun);
+        w->globals_.push_back(w->sun_.get());
+    }
     return w;
 }
 
 World::~World() {
-    residency_.reset(); // its workers stop before the heaps and the store go
+    sun_.reset();       // its threads stop first
+    residency_.reset(); // then the residency's workers, before the heaps and the store go
+}
+
+gpu::Result<void> World::add_globals(std::shared_ptr<frame::GlobalProvider> provider) {
+    if (!provider) return gpu::fail("no provider");
+    for (const frame::GlobalProvider* g : globals_) {
+        for (const frame::Global b : provider->bindings()) {
+            if (std::ranges::find(g->bindings(), b) != g->bindings().end()) {
+                return gpu::fail(std::format("the {} provider would fill set 1's {}, which the {} provider fills",
+                                             provider->name(), frame::name_of(b), g->name()));
+            }
+        }
+    }
+    globals_.push_back(provider.get());
+    added_.push_back(std::move(provider));
+    return {};
+}
+
+void World::set_wake(std::function<void()> wake) {
+    if (sun_) sun_->set_wake(wake);
+    residency_->set_published(std::move(wake));
 }
 
 void World::choose(const style::CameraState& camera) {
@@ -89,6 +147,7 @@ void World::update(const frame::FrameState& state) {
     residency_->take_published(items_);
     if (!active_ || !state.view) {
         cover_.update(state.view ? *state.view : view::View({}, {}), frames_, {}, *residency_, seconds);
+        if (sun_) sun_->prepare(state, nullptr, 0, cover_);
         residency_->want({});
         release_idle(seconds, state.number);
         animating_ = frames_.weight(seconds) < 1.0;
@@ -106,6 +165,7 @@ void World::update(const frame::FrameState& state) {
                          .margin_px = 40.0,
                          .fade_seconds = 0.18};
     cover_.update(*state.view, frames_, in, *residency_, seconds);
+    if (sun_) sun_->prepare(state, active_, in.tolerance, cover_);
     residency_->want(cover_.requests());
     for (const CoverTile& t : cover_.tiles()) {
         const std::uint32_t handle = t.drawn->handle;
@@ -117,7 +177,7 @@ void World::update(const frame::FrameState& state) {
         }
     }
     release_idle(seconds, state.number);
-    animating_ = cover_.fading() || frames_.weight(seconds) < 1.0;
+    animating_ = cover_.fading() || frames_.weight(seconds) < 1.0 || (sun_ && sun_->fading());
 }
 
 std::string World::tiles_line() const {

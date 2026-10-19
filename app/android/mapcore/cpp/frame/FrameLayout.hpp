@@ -40,7 +40,7 @@ enum class Global : std::uint8_t {
     byte_tables = 10,  ///< SvgFilterRaster's byte tables (storage buffer, K17a)
     glyph_curves = 11, ///< the glyphs' curves and bands (storage buffers, K13)
     glyph_bands = 12,  ///<
-    sprites = 13,      ///< the sprite atlas: the board's labels (combined image sampler, K13)
+    sprites = 13,      ///< the sprite atlas: the board's labels (a storage buffer: K13 copies its texels whole)
 };
 
 /// The number of set 1's bindings.
@@ -48,7 +48,7 @@ inline constexpr std::uint32_t global_count = 14;
 
 /// Whether a global binding is a storage buffer (else a combined image sampler).
 [[nodiscard]] constexpr bool is_buffer(Global g) noexcept {
-    return g != Global::noise_rgba && g != Global::noise_rg && g != Global::noise_r && g != Global::sprites;
+    return g != Global::noise_rgba && g != Global::noise_rg && g != Global::noise_r;
 }
 
 /// The global binding's name.
@@ -119,6 +119,11 @@ public:
     [[nodiscard]] std::uint32_t kind_capacity() const noexcept { return kinds_; }
     /// Bytes of the ring and the placeholders.
     [[nodiscard]] vk::DeviceSize bytes() const noexcept;
+    /// The buffer set 1's binding `g` reads from the next frame on (the placeholder's when nothing was given; null for
+    /// an image binding).
+    [[nodiscard]] vk::Buffer bound_buffer(Global g) const noexcept {
+        return globals_[static_cast<std::size_t>(g)].buffer;
+    }
     /// How many versions of each set were made (the tests' check that nothing is written per frame).
     [[nodiscard]] std::uint64_t frame_versions() const noexcept { return frame_versions_; }
     [[nodiscard]] std::uint64_t global_versions() const noexcept { return global_versions_; }

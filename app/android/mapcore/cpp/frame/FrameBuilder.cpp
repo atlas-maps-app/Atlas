@@ -208,6 +208,7 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     state_.mode = inputs_.mode;
     state_.rest = cam.has(style::camera_flag::rest);
     state_.slot = slot;
+    state_.labels = inputs_.labels;
     const view::Device device{.density = cam.density,
                               .width_px = cam.width_px,
                               .height_px = cam.height_px,
@@ -299,6 +300,20 @@ void FrameBuilder::record(const gpu::FrameContext& frame) {
     if (scene != nullptr) scene->update(state_);
     state_.cover = scene != nullptr ? scene->cover() : nullptr;
     state_.items = scene != nullptr ? scene->items() : nullptr;
+    state_.ground_frame = scene != nullptr ? scene->ground_frame() : std::nullopt;
+    // Set 1's globals that no pass owns: each provider brings its bindings up to date (frame/Globals.hpp), and says
+    // which effects its resources allow (FRAME_FIELDS: in full mode alone).
+    if (scene != nullptr) {
+        std::uint32_t allowed = 0;
+        for (GlobalProvider* g : scene->globals()) {
+            Globals globals(*layout_, *g);
+            g->update(state_, globals);
+            allowed |= g->frame_flags(state_);
+        }
+        allowed &= shaders::FRAME_FIELDS;
+        if ((state_.block.info.x & shaders::FRAME_FULL) == 0U) allowed &= ~shaders::FRAME_FIELDS;
+        state_.block.info.x |= allowed;
+    }
     for (const std::unique_ptr<Pass>& p : passes_) p->select(state_, selectors_);
     state_.selectors = &selectors_;
     // The ground's painter slots, every pass's in the registry's order from slot 0; the items' come after them.
@@ -330,18 +345,7 @@ void FrameBuilder::record(const gpu::FrameContext& frame) {
     }
     for (const std::unique_ptr<Pass>& p : passes_) p->update(state_);
 
-    // Set 1's heaps where they grew; the frame's slice of set 0's ring.
-    if (scene != nullptr && scene->heaps() != nullptr) {
-        scene::Heaps& heaps = *scene->heaps();
-        if (heaps.version() != heaps_version_) {
-            for (std::size_t k = 0; k < scene::heap_kinds; ++k) {
-                layout_->set_buffer(static_cast<Global>(k), heaps.buffer(static_cast<scene::HeapKind>(k)));
-            }
-            heaps_version_ = heaps.version();
-        }
-        heaps.bound(frame.number);
-        heaps.collect(frame.number >= gpu::Frames::in_flight ? frame.number - gpu::Frames::in_flight : 0);
-    }
+    // The frame's slice of set 0's ring.
     const std::uint64_t finished = frame.number >= gpu::Frames::in_flight ? frame.number - gpu::Frames::in_flight : 0;
     const auto rows = state_.items != nullptr ? static_cast<std::uint32_t>(state_.items->rows()) : 0U;
     if (auto begun = layout_->begin_frame(frame.number, finished, rows, Selectors::max_kinds); !begun) {
@@ -353,6 +357,9 @@ void FrameBuilder::record(const gpu::FrameContext& frame) {
     const auto recording = clock::now();
     const vk::raii::CommandBuffer& cmd = frame.cmd;
     layout_->record_setup(cmd, frame.sync);
+    if (scene != nullptr) {
+        for (GlobalProvider* g : scene->globals()) g->record(frame);
+    }
     record_slot(frame, Slot::offscreen);
     frame.frames.mark(frame.slot, gpu::Mark::offscreen);
 

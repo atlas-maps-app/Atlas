@@ -14,17 +14,27 @@ double fade_weight(double swapped, double t) noexcept {
 
 void BitTiles::publish(tiles::TileKey key, TileBits bits, double t) {
     auto fresh = std::make_shared<const TileBits>(std::move(bits));
-    const std::lock_guard lock(mutex_);
-    Entry& e = tiles_[key.packed()];
-    if (!e.now) {
-        e.before = fresh;
-        e.now = std::move(fresh);
-        e.swapped = -std::numeric_limits<double>::infinity(); // a tile's first bits show at once
-        return;
+    std::function<void()> published;
+    {
+        const std::lock_guard lock(mutex_);
+        published = on_publish_;
+        Entry& e = tiles_[key.packed()];
+        if (!e.now) {
+            e.before = fresh;
+            e.now = std::move(fresh);
+            e.swapped = -std::numeric_limits<double>::infinity(); // a tile's first bits show at once
+        } else {
+            e.before = std::move(e.now);
+            e.now = std::move(fresh);
+            e.swapped = t;
+        }
     }
-    e.before = std::move(e.now);
-    e.now = std::move(fresh);
-    e.swapped = t;
+    if (published) published();
+}
+
+void BitTiles::on_publish(std::function<void()> callback) {
+    const std::lock_guard lock(mutex_);
+    on_publish_ = std::move(callback);
 }
 
 std::optional<TileView> BitTiles::view(tiles::TileKey key, double t) const {

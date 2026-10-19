@@ -4,8 +4,9 @@
 // frame blended over 300 ms), the tiles resident in the geometry heaps (scene/Residency.hpp, built by every pass's
 // stage T on the workers), the cover over them (scene/Cover.hpp) and the item table their items join
 // (scene/ItemTable.hpp). The frame builder asks it once a frame, on the render thread (frame::FrameScene); nothing in
-// it waits on I/O, decoding or the sun. At rest the frame loop sleeps: a tile published wakes it (set_wake), and it
-// draws while a transition runs (animating).
+// it waits on I/O, decoding or the sun. At rest the frame loop sleeps: a tile or a tile's sun bits published wakes it
+// (set_wake), and it draws while a transition runs (animating). Set 1's globals that no pass owns come from the
+// world's providers (frame::FrameScene::globals): its heaps', its sun's (scene/SunGlobals.hpp) and those added to it.
 //
 // Tiles leave as the budgets ask (D3: 40 MB of heaps; §3: 64 MB of decoded tiles in native memory): a resident tile the
 // cover has not drawn for `idle_seconds` is let go of once the heaps or the resident tiles' native bytes are over
@@ -14,10 +15,12 @@
 #pragma once
 
 #include "frame/FrameBuilder.hpp"
+#include "frame/Globals.hpp"
 #include "scene/Cover.hpp"
 #include "scene/Heaps.hpp"
 #include "scene/ItemTable.hpp"
 #include "scene/Residency.hpp"
+#include "scene/SunGlobals.hpp"
 #include "tiles/Store.hpp"
 #include "view/Frames.hpp"
 #include "view/Ladder.hpp"
@@ -45,6 +48,8 @@ struct WorldOptions {
     /// The resident tiles' native bytes (ResidencyStats::native_bytes: their records, items and the passes' CPU-side
     /// data), §3's decoded tiles.
     std::size_t native_budget = std::size_t{64} << 20U;
+    /// The sun (scene/SunGlobals.hpp): its threads and disk cache, or none.
+    SunOptions sun;
     /// The frame's clock (seconds), from the workers' threads too; the frame state's time when absent.
     std::function<double()> clock;
 };
@@ -72,13 +77,22 @@ public:
     [[nodiscard]] const Cover* cover() const noexcept override { return &cover_; }
     [[nodiscard]] const ItemTable* items() const noexcept override { return &items_; }
     [[nodiscard]] Heaps* heaps() noexcept override { return heaps_.get(); }
+    [[nodiscard]] std::span<frame::GlobalProvider* const> globals() noexcept override { return globals_; }
+    [[nodiscard]] std::optional<view::GroundFrame> ground_frame() const noexcept override { return frames_.current(); }
+
+    /// Adds a provider of set 1's globals that no pass owns (K17a's fields and byte tables, K13's glyphs and sprites),
+    /// asked each frame after the world's own (the heaps', the sun's); refused when it fills a binding another fills.
+    [[nodiscard]] gpu::Result<void> add_globals(std::shared_ptr<frame::GlobalProvider> provider);
+    /// The sun (null when the options turned it off).
+    [[nodiscard]] SunGlobals* sun() noexcept { return sun_.get(); }
 
     /// Wakes the frame loop at rest: called on a worker thread as each tile is published (cheap and never blocking:
     /// post a frame request), so the next frame takes the tile and fades it in.
-    void set_wake(std::function<void()> wake) { residency_->set_published(std::move(wake)); }
-    /// Whether the last update left the frame mid-transition: a tile drawn still fading in, or a change of the frame
-    /// drawn still blending. The frame loop draws another frame while it is true; once a frame leaves it false, the
-    /// loop may rest until the camera moves or the wake.
+    /// The sun's workers call it too, as each tile's bits are published. It must stay valid until the world is gone.
+    void set_wake(std::function<void()> wake);
+    /// Whether the last update left the frame mid-transition: a tile drawn still fading in, a change of the frame
+    /// drawn still blending, or a tile's sun bits still cross-fading. The frame loop draws another frame while it is
+    /// true; once a frame leaves it false, the loop may rest until the camera moves or the wake.
     [[nodiscard]] bool animating() const noexcept { return animating_; }
 
     /// The pack drawn now (null: none holds the camera's target).
@@ -99,6 +113,10 @@ private:
     tiles::Store store_;
     std::unique_ptr<Heaps> heaps_;
     std::unique_ptr<Residency> residency_;
+    std::unique_ptr<frame::GlobalProvider> heap_globals_;
+    std::unique_ptr<SunGlobals> sun_;
+    std::vector<std::shared_ptr<frame::GlobalProvider>> added_;
+    std::vector<frame::GlobalProvider*> globals_; ///< every provider, in the order the frame asks them
     Cover cover_;
     ItemTable items_;
     view::Frames frames_;

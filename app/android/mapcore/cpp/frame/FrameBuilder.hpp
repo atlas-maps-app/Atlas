@@ -21,6 +21,7 @@
 #include "frame/Counters.hpp"
 #include "frame/FrameBlock.hpp"
 #include "frame/FrameLayout.hpp"
+#include "frame/Globals.hpp"
 #include "frame/Pass.hpp"
 #include "frame/PassRegistry.hpp"
 #include "frame/Ranks.hpp"
@@ -45,6 +46,10 @@ class Cover;     // scene/Cover.hpp
 class Heaps;     // scene/Heaps.hpp
 class ItemTable; // scene/ItemTable.hpp
 } // namespace atlas::scene
+
+namespace atlas::labels {
+struct LabelSet; // labels/ (K13): the app's label sprites for a frame (MapCore.labels, Appendix D)
+} // namespace atlas::labels
 
 namespace atlas::frame {
 
@@ -81,6 +86,10 @@ struct FrameState {
     const Selectors* selectors = nullptr;
     /// The ground's painter slots this frame, every pass's (Pass::ground_slots): slots 0 to this, before every item's.
     std::uint32_t ground_slots = 0;
+    /// The frame drawn (the world's: view::Frames::current), the one its metres are in; none without a pack.
+    std::optional<view::GroundFrame> ground_frame;
+    /// The app's label sprites for this frame (FrameInputs::labels; null: none).
+    const labels::LabelSet* labels = nullptr;
     /// The frame slot (0 or 1): set 0's slice and the passes' own per-frame buffers.
     std::uint32_t slot = 0;
 };
@@ -114,8 +123,13 @@ public:
     virtual void update(const FrameState& state) = 0;
     [[nodiscard]] virtual const scene::Cover* cover() const noexcept = 0;
     [[nodiscard]] virtual const scene::ItemTable* items() const noexcept = 0;
-    /// The geometry heaps the frame binds in set 1 (null: none).
+    /// The geometry heaps (null: none); set 1 binds them through their provider (globals).
     [[nodiscard]] virtual scene::Heaps* heaps() noexcept = 0;
+    /// The frame drawn after update (view::Frames::current), or none.
+    [[nodiscard]] virtual std::optional<view::GroundFrame> ground_frame() const noexcept { return std::nullopt; }
+    /// The providers of set 1's globals that no pass owns (frame/Globals.hpp), asked in this order each frame after
+    /// update: the geometry heaps', the sun's, those added to the world.
+    [[nodiscard]] virtual std::span<GlobalProvider* const> globals() noexcept { return {}; }
 };
 
 /// The frame's inputs for the next frame (the render thread's, from Kotlin and the scene).
@@ -126,6 +140,8 @@ struct FrameInputs {
     Mode mode = Mode::structural;
     /// The world (null: nothing but the clear and the composite).
     FrameScene* scene = nullptr;
+    /// The app's label sprites (MapCore.labels; null: none), read by K13's labels pass.
+    const labels::LabelSet* labels = nullptr;
 };
 
 /// The map's frame.
@@ -197,7 +213,6 @@ private:
     std::vector<PassCounters> counters_;
     Selectors selectors_;
     Ranks ranks_;
-    std::uint64_t heaps_version_ = ~std::uint64_t{0};
     std::string configuration_;
     vk::raii::ShaderModule overdraw_module_{nullptr};
     FrameInputs inputs_;

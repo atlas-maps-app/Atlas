@@ -15,6 +15,10 @@
 #include "tiles/layers/Buildings.hpp"
 #include "view/Ladder.hpp"
 
+#if !defined(__ANDROID__)
+#include "platform/host/Offscreen.hpp"
+#endif
+
 #include <doctest/doctest.h>
 
 #include <atomic>
@@ -189,11 +193,11 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
     ATLAS_REQUIRE(builder.has_value(), builder.error().text());
     double now = 0;
+    std::atomic<int> wakes{0}; // before the world: its threads call the wake until it is gone
     auto world =
         scene::World::create(*session->device, (*builder)->passes(), {.workers = 3, .clock = [&now] { return now; }});
     ATLAS_REQUIRE(world.has_value(), world.error().text());
     scene::World& w = **world;
-    std::atomic<int> wakes{0};
     w.set_wake([&wakes] { wakes.fetch_add(1); });
     for (const char* name : {"amsterdam", "grachten"}) {
         const std::filesystem::path path = std::filesystem::path(dir) / (std::string(name) + ".atlas");
@@ -220,8 +224,9 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     if (state.placed->view()) MESSAGE("snapped onto " << std::string(*state.placed->view()));
     CHECK(drawn > 0);
     CHECK(probe->built.load() > 0);
-    // Each tile published woke the frame loop, and the frame that first draws them fades them in.
-    CHECK(wakes.load() == probe->built.load());
+    // Each tile published woke the frame loop (and each tile's sun bits), and the frame that first draws them fades
+    // them in.
+    CHECK(wakes.load() >= probe->built.load());
     CHECK(w.animating());
     CHECK(w.items()->live() > 0);
     for (const scene::CoverTile& t : w.cover()->tiles()) {
@@ -247,6 +252,41 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     }
     CHECK(w.residency().stats().native_bytes == native);
     MESSAGE(w.residency().resident().size() << " resident tiles hold " << native << " native bytes");
+
+    // The sun: its scene the resident tiles and their halo, its bits published, every drawn tile's texels in the frame
+    // slot's half of its buffer, as BitTiles gives them.
+    REQUIRE(w.sun() != nullptr);
+    w.sun()->wait_idle();
+    now += 1.0; // past every fade
+    ATLAS_REQUIRE((*builder)->derive(61, 1, nullptr));
+    w.update((*builder)->state());
+    const scene::SunStats sun_stats = w.sun()->stats();
+    CHECK(sun_stats.scenes >= 1);
+    CHECK(sun_stats.runs >= 1);
+    CHECK(sun_stats.tiles >= w.residency().resident().size());
+    std::size_t lit_tiles = 0;
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        if (t.drawn->key.z != t.key.z) continue; // a stand-in ancestor has no bits
+        if (!t.sun) {
+            FAIL("a drawn tile without its sun bits after the sun went idle");
+            continue;
+        }
+        REQUIRE(t.sun_base != scene::no_sun);
+        CHECK(t.sun_weight == 1.0F);
+        std::vector<std::uint32_t> want;
+        REQUIRE(w.sun()->bits().texels(t.drawn->key, now, want).has_value());
+        const std::span<const std::byte> bytes = w.sun()->buffer().bytes();
+        REQUIRE(bytes.size() >= (std::size_t{t.sun_base} * 8) + (want.size() * 4));
+        // Frame slot 1: the second half.
+        CHECK(t.sun_base >= w.sun()->capacity());
+        CHECK(std::memcmp(bytes.data() + (std::size_t{t.sun_base} * 8), want.data(), want.size() * 4) == 0);
+        CHECK(want.size() == 2 * ((std::size_t{t.sun->now->count} + 31) / 32)); // a texel per 32 samples
+        ++lit_tiles;
+    }
+    CHECK(lit_tiles > 0);
+    MESSAGE("the sun: " << sun_stats.scenes << " scene(s) of " << sun_stats.tiles << " tiles (" << sun_stats.resident
+                        << " resident) in " << sun_stats.scene_ms << " ms, " << sun_stats.runs << " run(s), "
+                        << w.sun()->stats().texels << " texels this frame for " << lit_tiles << " drawn tiles");
     // Later frames: the fade completes, nothing more is asked for the same view.
     for (std::uint64_t n = 41; n <= 60; ++n) {
         now = static_cast<double>(n) * 0.016;
@@ -267,7 +307,7 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     away.latitude = 40.0;
     away.longitude = -30.0;
     (*builder)->set_inputs({.camera = away, .scene = &w});
-    for (std::uint64_t n = 61; n <= 64; ++n) {
+    for (std::uint64_t n = 62; n <= 65; ++n) {
         now = 100.0 + static_cast<double>(n);
         ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
         w.update((*builder)->state());
@@ -280,3 +320,128 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     CHECK(one_kept.expired());
     (void)session->take_messages();
 }
+
+namespace {
+
+/// A provider of set 1's noise fields (K17a's bindings) that only counts what the frame asks of it.
+class CountingGlobals final : public frame::GlobalProvider {
+public:
+    explicit CountingGlobals(std::array<frame::Global, 1> bindings) noexcept : bindings_(bindings) {}
+    [[nodiscard]] std::string_view name() const noexcept override { return "counting"; }
+    [[nodiscard]] std::span<const frame::Global> bindings() const noexcept override { return bindings_; }
+    void update(const frame::FrameState& state, frame::Globals& globals) override {
+        (void)globals;
+        last = state.number;
+        ++updates;
+    }
+    void record(const gpu::FrameContext& frame) override {
+        (void)frame;
+        ++records;
+    }
+    /// It says its images are bound once `bound` is set.
+    [[nodiscard]] std::uint32_t frame_flags(const frame::FrameState& state) const noexcept override {
+        (void)state;
+        return bound ? shaders::FRAME_FIELDS : 0U;
+    }
+    bool bound = false;
+    std::uint64_t last = 0;
+    int updates = 0;
+    int records = 0;
+
+private:
+    std::array<frame::Global, 1> bindings_;
+};
+
+} // namespace
+
+#if !defined(__ANDROID__)
+TEST_CASE("the world's providers fill set 1's globals: the heaps and the sun bound once, a provider per binding") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the world's globals are not checked over the bundled packs here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes();
+    passes.push_back(std::make_unique<BuildProbe>());
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    double now = 0;
+    auto world =
+        scene::World::create(*session->device, (*builder)->passes(), {.workers = 2, .clock = [&now] { return now; }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    const std::filesystem::path path = std::filesystem::path(dir) / "amsterdam.atlas";
+    auto added = w.store().add({.id = "amsterdam", .kind = tiles::PackKind::bundled, .path = path.string()});
+    ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+
+    // A binding has one provider: the sun's is refused to another, a free one taken.
+    auto stealing = w.add_globals(std::make_shared<CountingGlobals>(std::array{frame::Global::sun_bits}));
+    REQUIRE_FALSE(stealing.has_value());
+    MESSAGE(stealing.error().text());
+    CHECK(stealing.error().text().find("sun_bits") != std::string::npos);
+    auto fields = std::make_shared<CountingGlobals>(std::array{frame::Global::noise_rgba});
+    REQUIRE(w.add_globals(fields).has_value());
+    CHECK(w.globals().size() == 3); // the heaps', the sun's, the fields'
+
+    (*builder)->set_inputs({.camera = home(), .scene = &w});
+    auto output = platform::Offscreen::create(*session->device, {.width = 412, .height = 916}, 2);
+    ATLAS_REQUIRE(output.has_value(), output.error().text());
+    auto renderer = gpu::Renderer::create(*session->device, **output, **builder, session->device->facts().choice);
+    ATLAS_REQUIRE(renderer.has_value(), renderer.error().text());
+    auto frame_at = [&](double t) {
+        now = t;
+        auto report = (*renderer)->draw(0);
+        ATLAS_REQUIRE(report.has_value(), report.error().text());
+    };
+    // Frames until the tiles are drawn and the sun's bits are in, then frames at rest.
+    for (int n = 0; n < 40 && w.cover()->tiles().empty(); ++n) {
+        frame_at(0.016 * n);
+        w.residency().wait_idle();
+    }
+    REQUIRE_FALSE(w.cover()->tiles().empty());
+    w.sun()->wait_idle();
+    frame_at(2.0);
+    frame_at(2.1);
+    const frame::FrameLayout& layout = (*builder)->layout();
+    CHECK(layout.bound_buffer(frame::Global::points) == w.heaps()->buffer(scene::HeapKind::points));
+    CHECK(layout.bound_buffer(frame::Global::labels) == w.heaps()->buffer(scene::HeapKind::labels));
+    REQUIRE(w.sun()->buffer());
+    CHECK(layout.bound_buffer(frame::Global::sun_bits) == w.sun()->buffer().handle());
+    // The frame drawn, as the passes read it: the Westerkerk's.
+    REQUIRE((*builder)->state().ground_frame.has_value());
+    CHECK((*builder)->state().ground_frame == w.frames().current());
+    // Set 1's sprites are a storage buffer (K13 copies its texels whole): its placeholder's until K13 binds its own.
+    CHECK(frame::is_buffer(frame::Global::sprites));
+    CHECK(layout.bound_buffer(frame::Global::sprites));
+    // At rest nothing in set 1 changes: no new version of it, frame after frame.
+    const std::uint64_t versions = layout.global_versions();
+    for (int n = 0; n < 6; ++n) frame_at(2.2 + 0.016 * n);
+    CHECK(layout.global_versions() == versions);
+    // The added provider was asked every frame, before its record, after the scene's update.
+    CHECK(fields->updates == fields->records);
+    CHECK(fields->updates >= 8);
+    CHECK(fields->last == (*builder)->state().number);
+    // FRAME_FIELDS: once its images are bound, and in full mode alone.
+    CHECK(((*builder)->state().block.info.x & shaders::FRAME_FIELDS) == 0U);
+    fields->bound = true;
+    frame_at(2.5);
+    CHECK(((*builder)->state().block.info.x & shaders::FRAME_FIELDS) == 0U); // structural mode
+    (*builder)->set_inputs({.camera = home(), .mode = frame::Mode::full, .scene = &w});
+    frame_at(2.6);
+    CHECK(((*builder)->state().block.info.x & shaders::FRAME_FIELDS) != 0U);
+    CHECK(((*builder)->state().block.info.x & shaders::FRAME_FULL) != 0U);
+    fields->bound = false;
+    frame_at(2.7);
+    CHECK(((*builder)->state().block.info.x & shaders::FRAME_FIELDS) == 0U);
+    (*renderer)->drain();
+    const auto messages = session->take_messages();
+    CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
+    MESSAGE(fields->updates << " frames; set 1 made " << versions << " times; the sun's buffer "
+                            << w.sun()->buffer().size() << " bytes");
+    renderer->reset();
+}
+#endif

@@ -17,6 +17,9 @@
 static const uint FRAME_FULL = 1u;   // full mode: every effect on (D16); else structural: the core's filters off
 static const uint FRAME_ENGINE = 2u; // engine mode: the renders' radius cut (D9)
 static const uint FRAME_NIGHT = 4u;  // the moment is night (th['night'])
+// The screen-wide noise fields and the byte tables are bound (K17a's provider of set 1, frame/Globals.hpp) and the frame
+// is in full mode: the effects that read them (mat, grain) run; off, they are stubbed.
+static const uint FRAME_FIELDS = 256u;
 
 struct FrameBlock {
     FrameCamera camera;
