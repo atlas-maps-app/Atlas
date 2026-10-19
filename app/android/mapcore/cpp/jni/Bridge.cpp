@@ -6,12 +6,15 @@
 // behind one of the crash guard's stages (gpu/Guard.hpp). The session runs on one thread at a time: on the phone every
 // call into it, the façade's from other threads included (facts, the cache's write-back, the stats), runs on the
 // render thread, so that no two stages ever overlap in the guard's one marker; on hosts, which draw nothing through the
-// façade, under a lock.
+// façade, under a lock. The app's map (frame/MapFrame.hpp, K11) is the session's other content: its packs and moment
+// from Kotlin, its frames drawn while its picture changes at the same camera, and its frame loop woken at rest when a
+// tile lands.
 #include "jni/Bridge.hpp"
 
 #include "base/build_info.hpp"
 #include "base/log.hpp"
 #include "check/NumericsCheck.hpp"
+#include "frame/MapFrame.hpp"
 #include "gen/spirv/modules.hpp"
 #include "gpu/Facts.hpp"
 #include "gpu/Guard.hpp"
@@ -19,6 +22,7 @@
 #include "gpu/Swapchain.hpp"
 #include "standin/Session.hpp"
 #include "style/CameraState.hpp"
+#include "style/Theme.hpp"
 #include "sun/Buckets.hpp"
 
 #if defined(__ANDROID__)
@@ -28,11 +32,13 @@
 #include <array>
 #include <atomic>
 #include <cstring>
+#include <fcntl.h>
 #include <filesystem>
 #include <format>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -49,6 +55,15 @@ thread_local std::string last_error; // NOLINT(cppcoreguidelines-avoid-non-const
     const char* chars = env->GetStringUTFChars(s, nullptr);
     std::string out = chars == nullptr ? std::string() : std::string(chars);
     if (chars != nullptr) env->ReleaseStringUTFChars(s, chars);
+    return out;
+}
+
+/// Element `i` of a Java String[] as a string ("" for null), its local reference let go. The array's element is a
+/// jobject; JNI's C++ types only name a reference's kind, so it is reinterpreted as the jstring it is.
+[[nodiscard]] std::string string_at(JNIEnv* env, jobjectArray a, jsize i) {
+    auto* s = reinterpret_cast<jstring>(env->GetObjectArrayElement(a, i));
+    std::string out = string_of(env, s);
+    env->DeleteLocalRef(s);
     return out;
 }
 
@@ -100,6 +115,9 @@ struct CoreOptions {
     const gpu::StartOptions start = start_options(o);
     return {.cache_file = start.cache_file, .spirv = start.spirv, .ci_log = (o.flags & core_flag::ci) != 0};
 }
+
+/// The map's tile workers (T8): three on a phone of eight cores or more, else two.
+[[nodiscard]] unsigned map_workers() noexcept { return std::thread::hardware_concurrency() >= 8 ? 3U : 2U; }
 
 /// A refused start, as the facts show it: the guard's line and state, why, and the facts an earlier start kept.
 [[nodiscard]] std::string refusal_text(const gpu::StartRefusal& r) {
@@ -155,8 +173,11 @@ public:
                 self->render_env_ = e;
             },
             [self] { self->vm_->DetachCurrentThread(); });
+        // The app's map, its tiles built on 2 or 3 workers by core count (T8); a tile published wakes the frame loop.
+        core->map_ = std::make_unique<frame::MapFrame>(map_workers(), [self] { self->wake(); });
 #else
         (void)env;
+        core->map_ = std::make_unique<frame::MapFrame>(map_workers(), nullptr);
 #endif
         return core;
     }
@@ -167,6 +188,9 @@ public:
     Core& operator=(Core&&) = delete;
 
     ~Core() {
+#if defined(__ANDROID__)
+        closing_.store(true);
+#endif
         // Everything the session made goes on the thread it runs on, each behind its stage, then the stand-in, the
         // device and the instance behind the close stage (its last write of the pipeline cache before them).
         on_session([this] {
@@ -206,7 +230,41 @@ public:
     }
 
     [[nodiscard]] std::string stats() {
-        return on_session([this] { return session_->stats(); });
+        return on_session([this] {
+            std::string line = session_->stats();
+            if (map_on_) line += "; " + map_->tiles_line();
+            return line;
+        });
+    }
+
+    // ---- The app's map (K11).
+
+    /// The app's map on (mode 1: on a SurfaceView, 2: on a TextureView) or off (0); "" or why it cannot draw.
+    [[nodiscard]] std::string map(int mode) {
+        return on_session([this, mode] {
+            map_on_ = mode != 0;
+            std::string why = session_->map(map_on_ ? map_.get() : nullptr, mode == 2);
+            if (!why.empty()) log::error("vk map: {}", why);
+            ask_frame();
+            return why;
+        });
+    }
+
+    /// The packs the app lists for the map, replacing the last list; a line per pack (frame/MapFrame.hpp).
+    [[nodiscard]] std::string packs(std::vector<frame::MapPack> packs) {
+        return on_session([this, &packs] {
+            std::string said = map_->set_packs(std::move(packs));
+            ask_frame();
+            return said;
+        });
+    }
+
+    /// The moment's theme for the map from now on.
+    void moment(const style::ThemeBlock& theme) {
+        on_session([this, &theme] {
+            map_->set_theme(theme);
+            ask_frame();
+        });
     }
 
     /// Copies the frame records not read yet into `out` (at most `capacity`); returns how many. Any thread.
@@ -324,9 +382,28 @@ private:
     gpu::Started started_;
     /// Declared after started_, which it holds: it goes first.
     std::unique_ptr<standin::Session> session_;
+    /// The app's map (K11): the session draws it while map_on_ (the session's thread alone reads the flag).
+    std::unique_ptr<frame::MapFrame> map_;
+    bool map_on_ = false;
 
 #if defined(__ANDROID__)
     // ---- On the render thread.
+
+    /// A frame is asked for (render thread): the next paced vsync asks Kotlin for the camera.
+    void ask_frame() {
+        requested_ = true;
+        ask_vsync();
+    }
+
+    /// A tile of the map's world was published (on a worker, World::set_wake): the next vsync draws it, at rest too.
+    void wake() {
+        if (closing_.load()) return;
+        loop_->post([this] {
+            if (closing_.load()) return;
+            woken_ = true;
+            ask_frame();
+        });
+    }
 
     /// Lets go of the frame source and the camera buffer (on the render thread).
     void release_refs() {
@@ -347,6 +424,9 @@ private:
     void rest() {
         requested_ = false;
         session_->rest();
+        // The map at rest: its tiles, once a rest (Appendix C's `vk tiles` line).
+        if (map_on_ && drew_since_rest_) log::info("{}", map_->tiles_line());
+        drew_since_rest_ = false;
     }
 
     void on_vsync(const platform::Vsync& v) {
@@ -374,8 +454,12 @@ private:
             rest();
             return;
         }
-        if (more != JNI_TRUE) {
-            rest(); // nothing changed: no frame, and no more vsyncs until requestFrame
+        // The map's picture may change at the same camera: a tile landed (the world's wake) or a fade or the frame's
+        // blend is under way, and the frame is drawn again at the camera Kotlin last wrote.
+        const bool due = map_on_ && (woken_ || map_->animating());
+        woken_ = false;
+        if (more != JNI_TRUE && !due) {
+            rest(); // nothing changed: no frame, and no more vsyncs until requestFrame (or the map's wake)
             return;
         }
         const auto camera = style::read_camera_state(std::span(camera_bytes_, style::camera_state_size));
@@ -398,10 +482,13 @@ private:
             return;
         }
         if (!d.drawn) return;
+        drew_since_rest_ = true;
         const FrameRecord& r = d.record;
         hint_.report(r.start_ns, r.end_ns - r.start_ns, static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
+        // Complete: the map's picture final for this camera (every tile resident and drawn, every fade done).
+        const bool complete = !map_on_ || map_->complete();
         render_env_->CallVoidMethod(source_, presented_mid_, static_cast<jlong>(r.frame), static_cast<jlong>(r.end_ns),
-                                    JNI_TRUE);
+                                    complete ? JNI_TRUE : JNI_FALSE);
         if (render_env_->ExceptionCheck() == JNI_TRUE) render_env_->ExceptionClear();
         if (d.stale) session_->remake();
     }
@@ -418,11 +505,17 @@ private:
     jmethodID presented_mid_ = nullptr;
     bool requested_ = false;
     bool camera_warned_ = false;
+    bool woken_ = false;               // the map's world published a tile since the last vsync
+    bool drew_since_rest_ = false;     // a frame went out since the frame loop last rested
+    std::atomic<bool> closing_{false}; // the core is closing: the map's wake posts nothing more
     std::int64_t last_vsync_ns_ = 0;
     std::int64_t drawn_vsync_ns_ = 0;
     std::int64_t period_ns_ = 0;
     std::unique_ptr<platform::RenderLoop> loop_;
 #else
+    /// Hosts have no frame loop: nothing to ask.
+    void ask_frame() noexcept {}
+
     std::mutex session_mutex_;
 #endif
 };
@@ -581,6 +674,82 @@ jstring native_pipelines(JNIEnv* env, jclass /*cls*/, jlong /*handle*/) {
 }
 #endif
 
+// ---- The app's map (K11): Native.map, packs and moment.
+
+/// The map on (mode 1: on a SurfaceView, 2: on a TextureView) or off (0); "" or why it cannot draw.
+jstring native_map(JNIEnv* env, jclass /*cls*/, jlong handle, jint mode) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    if (mode < 0 || mode > 2) return java(env, std::format("no map mode {}", mode));
+    return java(env, core->map(mode));
+}
+
+/// The packs the app lists for the map, one per index of the arrays: its id, its number (the camera state's pack_id),
+/// its kind (tiles::PackKind), and a file's path, or an open descriptor's range (an APK asset; the core keeps a
+/// duplicate of the descriptor, the caller closes its own). A line per pack: opened, listed, kept, or why not.
+jstring native_packs(JNIEnv* env, jclass /*cls*/, jlong handle, jobjectArray ids, jlongArray numbers, jintArray kinds,
+                     jobjectArray paths, jintArray fds, jlongArray offsets, jlongArray lengths) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    if (ids == nullptr || numbers == nullptr || kinds == nullptr || paths == nullptr || fds == nullptr ||
+        offsets == nullptr || lengths == nullptr) {
+        return java(env, "packs: an array is missing");
+    }
+    const jsize n = env->GetArrayLength(ids);
+    if (env->GetArrayLength(numbers) != n || env->GetArrayLength(kinds) != n || env->GetArrayLength(paths) != n ||
+        env->GetArrayLength(fds) != n || env->GetArrayLength(offsets) != n || env->GetArrayLength(lengths) != n) {
+        return java(env, "packs: the arrays differ in length");
+    }
+    std::vector<jlong> number(static_cast<std::size_t>(n));
+    std::vector<jint> kind(static_cast<std::size_t>(n));
+    std::vector<jint> fd(static_cast<std::size_t>(n));
+    std::vector<jlong> offset(static_cast<std::size_t>(n));
+    std::vector<jlong> length(static_cast<std::size_t>(n));
+    env->GetLongArrayRegion(numbers, 0, n, number.data());
+    env->GetIntArrayRegion(kinds, 0, n, kind.data());
+    env->GetIntArrayRegion(fds, 0, n, fd.data());
+    env->GetLongArrayRegion(offsets, 0, n, offset.data());
+    env->GetLongArrayRegion(lengths, 0, n, length.data());
+    std::vector<frame::MapPack> packs;
+    packs.reserve(static_cast<std::size_t>(n));
+    std::string refused;
+    for (jsize i = 0; i < n; ++i) {
+        const auto at = static_cast<std::size_t>(i);
+        frame::MapPack p;
+        p.number = static_cast<std::uint64_t>(number[at]);
+        p.ref.id = string_at(env, ids, i);
+        p.ref.path = string_at(env, paths, i);
+        if (kind[at] < 0 || kind[at] > static_cast<jint>(tiles::PackKind::world_base) || p.ref.id.empty() ||
+            number[at] <= 0 || offset[at] < 0 || length[at] < 0) {
+            refused += std::format("{}: not a pack the map can list\n", p.ref.id);
+            continue;
+        }
+        p.ref.kind = static_cast<tiles::PackKind>(kind[at]);
+        p.ref.offset = static_cast<std::uint64_t>(offset[at]);
+        p.ref.length = static_cast<std::uint64_t>(length[at]);
+        // The map's own descriptor, closed when the pack goes (frame/MapFrame.hpp).
+        if (fd[at] >= 0) p.ref.fd = ::fcntl(fd[at], F_DUPFD_CLOEXEC, 0);
+        packs.push_back(std::move(p));
+    }
+    return java(env, refused + core->packs(std::move(packs)));
+}
+
+/// The moment's theme for the map (MK/state/ThemeBlock.kt's 256 bytes in a direct buffer); "" or why it was refused.
+jstring native_moment(JNIEnv* env, jclass /*cls*/, jlong handle, jobject theme) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    void* address = theme == nullptr ? nullptr : env->GetDirectBufferAddress(theme);
+    const jlong capacity = theme == nullptr ? 0 : env->GetDirectBufferCapacity(theme);
+    if (address == nullptr || std::cmp_less(capacity, style::theme_block_size)) {
+        return java(env, "the theme must be a direct buffer of 256 bytes");
+    }
+    const auto block =
+        style::read_theme_block(std::span(static_cast<const std::byte*>(address), style::theme_block_size));
+    if (!block) return java(env, std::format("the theme was refused: {}", style::name_of(block.error())));
+    core->moment(*block);
+    return java(env, "");
+}
+
 template <class F>
 void* fn(F f) {
     return reinterpret_cast<void*>(f);
@@ -603,8 +772,8 @@ jstring native_sun_line(JNIEnv* env, jclass /*cls*/, jint fd, jlong offset, jlon
     return java(env, sun::sun_line(fd, static_cast<std::uint64_t>(offset), static_cast<std::uint64_t>(length)));
 }
 
-const std::array<JNINativeMethod, 19>& methods() {
-    static const std::array<JNINativeMethod, 19> table{{
+const std::array<JNINativeMethod, 22>& methods() {
+    static const std::array<JNINativeMethod, 22> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -629,6 +798,10 @@ const std::array<JNINativeMethod, 19>& methods() {
         method("sunLine", "(IJJ)Ljava/lang/String;", fn(&native_sun_line)),
         method("pipelines", "(J)Ljava/lang/String;", fn(&native_pipelines)),
         method("resetGuard", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", fn(&native_reset_guard)),
+        // The app's map (K11).
+        method("map", "(JI)Ljava/lang/String;", fn(&native_map)),
+        method("packs", "(J[Ljava/lang/String;[J[I[Ljava/lang/String;[I[J[J)Ljava/lang/String;", fn(&native_packs)),
+        method("moment", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_moment)),
     }};
     return table;
 }

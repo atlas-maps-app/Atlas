@@ -6,8 +6,8 @@ import java.nio.ByteBuffer
 
 /**
  * The only way into the core (plan-vector T9, Appendix D): Atlas's C++23 map engine, drawing with Vulkan. Thread-safe
- * unless noted; nothing allocates per frame. In this alpha the core draws VK bench's stand-in; the map's own frame
- * comes with K7.
+ * unless noted; nothing allocates per frame. The core draws the app's map ([map], [packs], [moment]) or VK bench's
+ * stand-in ([bench]).
  *
  * One core per process: [shared] makes it on first use (the first map screen starts it, T8), behind the crash guard,
  * and keeps it as the process's; it returns null when the phone cannot run the core (no usable Vulkan, or the guard
@@ -70,6 +70,15 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
         /** Why the last start ([shared]) gave no core ("" when it did). */
         fun lastError(): String = refusal
+
+        /**
+         * Whether the core's library is in this process at all: the app's is (its APK carries it); the JVM's tests and
+         * Compose's previews have none, and draw today's map alone.
+         */
+        fun present(): Boolean {
+            Native.load()
+            return Native.linked
+        }
 
         /**
          * VkFacts without a core (Appendix D): a guarded start of its own, read and closed; when Vulkan is off, the
@@ -176,6 +185,50 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
     /** VK bench's first-launch and warm pipeline creation ([Native.pipelines]); off the main thread. */
     fun pipelines(): String = core.call("vkbench pipelines: the core is closed") { Native.pipelines(it) }
+
+    // ---- The app's map (K11): what it draws from, its moment, on and off.
+
+    /**
+     * One pack the map draws from (Appendix D's PackRef): its [id] (a region's), its [number] (positive; the camera
+     * state names the pack drawn by it), its [kind] (BUNDLED, RENDER, …: the order the core looks tiles up in), and a
+     * file's [path], or an open descriptor's range ([fd], [offset], [length]: an APK asset stored uncompressed, which
+     * the core maps where it lies; it keeps its own duplicate of the descriptor, so the caller closes its own after
+     * [packs] returns).
+     */
+    class PackRef(val id: String, val number: Long, val kind: Int, val path: String = "", val fd: Int = -1, val offset: Long = 0, val length: Long = 0) {
+        companion object {
+            /** The APK's tiles (the Westerkerk, the canal ring). */
+            const val BUNDLED = 0
+
+            /** A downloaded render pack (K20a). */
+            const val RENDER = 1
+        }
+    }
+
+    /**
+     * The map on ([on]) or off: the core draws the app's map into the attached window from now on (the frame its facts
+     * pick, at 8 bits), in VK bench's stand-in's place; [texture] says the host is a TextureView. Made before or after
+     * [attach]: without a window it draws once one comes. "" or why it cannot draw. Off the main thread.
+     */
+    fun map(on: Boolean, texture: Boolean = false): String =
+        core.call("the core is closed") { Native.map(it, if (!on) 0 else if (texture) 2 else 1) }
+
+    /**
+     * The packs the map draws from, replacing the last list (packs gone leave, new ones open, the same stay). A line
+     * per pack: "<id> opened", "<id> listed" (opened when the map is made), "<id> kept" or "<id>: <why not>". Off the
+     * main thread: a new pack is opened (mapped, its directory read) before this returns.
+     */
+    fun packs(packs: List<PackRef>): String = core.call("the core is closed") { h ->
+        Native.packs(
+            h,
+            Array(packs.size) { packs[it].id }, LongArray(packs.size) { packs[it].number }, IntArray(packs.size) { packs[it].kind },
+            Array(packs.size) { packs[it].path }, IntArray(packs.size) { packs[it].fd },
+            LongArray(packs.size) { packs[it].offset }, LongArray(packs.size) { packs[it].length },
+        )
+    }
+
+    /** The moment's theme for the map from now on (`state.ThemeBlock`'s block, about once a minute); "" or why refused. */
+    fun moment(theme: ByteBuffer): String = core.call("the core is closed") { Native.moment(it, theme) }
 
     /**
      * Closes the core: no call starts after this begins, the calls under way finish first, then the core is freed

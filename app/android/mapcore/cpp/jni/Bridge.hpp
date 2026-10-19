@@ -14,8 +14,9 @@ namespace atlas::jni {
 
 /// The façade's ABI (MapCore.ABI and Native.ABI in Kotlin): an APK built against another core refuses to load it. 2:
 /// Native.resetGuard (VK facts' "Reset guard"). 3: Native.create and Native.facts take the app's process exits and
-/// this process's start, which the crash guard reads a marker by (gpu/Guard.hpp).
-inline constexpr jint abi = 3;
+/// this process's start, which the crash guard reads a marker by (gpu/Guard.hpp). 4: Native.map, packs and moment
+/// (the app's map, K11).
+inline constexpr jint abi = 4;
 
 /// The Kotlin class whose static natives the library registers.
 inline constexpr const char* native_class = "app/atlas/mapcore/Native";

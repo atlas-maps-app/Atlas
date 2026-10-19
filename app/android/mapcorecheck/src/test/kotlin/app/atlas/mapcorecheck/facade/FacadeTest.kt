@@ -32,10 +32,10 @@ object FacadeHost {
     @JvmStatic external fun coreAbi(): Int
 }
 
-/** A façade class built against another core: the core must refuse it. */
+/** A façade class built against another core: the core must refuse it (an ABI no build will have soon). */
 object OtherAbiFacade {
     @Suppress("unused")
-    const val ABI = 4
+    const val ABI = 99
 }
 
 /**
@@ -101,9 +101,9 @@ class FacadeTest {
     fun theFacadesAbiIsTheCoresAndAnotherIsRefusedAtLoad() {
         assertEquals(Native.ABI, Native.abi())
         assertEquals(Native.ABI, FacadeHost.coreAbi())
-        // The same check JNI_OnLoad runs before RegisterNatives: a class of ABI 4 is refused, with the reason.
+        // The same check JNI_OnLoad runs before RegisterNatives: a class of another ABI is refused, with the reason.
         val refused = FacadeHost.registerInto(OtherAbiFacade::class.java)
-        assertTrue(refused, refused.contains("ABI 4") && refused.contains("ABI ${Native.ABI}"))
+        assertTrue(refused, refused.contains("ABI 99") && refused.contains("ABI ${Native.ABI}"))
         // And the real façade registers again cleanly.
         assertEquals("", FacadeHost.registerInto(Native::class.java))
     }

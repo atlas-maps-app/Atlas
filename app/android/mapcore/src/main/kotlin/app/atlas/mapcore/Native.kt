@@ -10,11 +10,16 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 3
+    const val ABI = 4
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
     private var state: String? = null
+
+    /** Whether the library is in the process once [load] has run (loaded, whatever it said of the façade's ABI). */
+    @Volatile
+    var linked: Boolean = false
+        private set
 
     /**
      * Loads the core once: libatlasmap.so from the APK, or the host build at [path] (the JVM tests). Returns null when
@@ -25,6 +30,7 @@ object Native {
         state?.let { return it.ifEmpty { null } }
         val outcome = try {
             if (path != null) System.load(path) else System.loadLibrary("atlasmap")
+            linked = true
             val core = abi()
             if (core != ABI) "the core is ABI $core, the app's façade ABI $ABI" else ""
         } catch (e: UnsatisfiedLinkError) {
@@ -116,4 +122,29 @@ object Native {
      * first. What it forgot, in words.
      */
     @JvmStatic external fun resetGuard(cacheDir: String, guardDir: String): String
+
+    // ---- The app's map (K11, `CP/frame/MapFrame.hpp`).
+
+    /** The map on ([mode] 1: on a SurfaceView, 2: on a TextureView) or off (0); "" or why it cannot draw. */
+    @JvmStatic external fun map(handle: Long, mode: Int): String
+
+    /**
+     * The packs the map draws from, replacing the last list, one per index: its id, its number (the camera state's
+     * pack id), its kind (`CP/tiles/Store.hpp`'s PackKind), and a file's path or an open descriptor's range (an APK
+     * asset: the core keeps a duplicate of the descriptor, the caller closes its own). A line per pack: opened, listed,
+     * kept, or why not.
+     */
+    @JvmStatic external fun packs(
+        handle: Long,
+        ids: Array<String>,
+        numbers: LongArray,
+        kinds: IntArray,
+        paths: Array<String>,
+        fds: IntArray,
+        offsets: LongArray,
+        lengths: LongArray,
+    ): String
+
+    /** The moment's theme for the map (`state.ThemeBlock`'s 256 bytes in a direct buffer); "" or why it was refused. */
+    @JvmStatic external fun moment(handle: Long, theme: ByteBuffer): String
 }
