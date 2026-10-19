@@ -138,6 +138,7 @@ void Stream::clear() {
     bytes_.insert(bytes_.end(), magic.begin(), magic.end());
     u32(stream_version);
     gradients_ = filters_ = patterns_ = groups_ = items_ = clips_ = 0;
+    root_ = none;
     in_clip_ = false;
     elements_ = 0;
 }

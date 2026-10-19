@@ -28,6 +28,9 @@ public:
     [[nodiscard]] gpu::Result<void> prepare(const frame::PassContext& context) override;
     void release() noexcept override;
     void record(const frame::Recording& recording, std::uint32_t phase) override;
+    /// The twin: the screen steps it draws as the renders' SVG writes them (the haze's gradient and rect,
+    /// ScreenLayers.hazeDef and hazeRect; fin's vignette, its `vig` gradient and rect), after every object.
+    void emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const override;
 
     /// Whether the composite runs through Slang's GLSL route.
     [[nodiscard]] bool glsl_route() const noexcept { return glsl_; }

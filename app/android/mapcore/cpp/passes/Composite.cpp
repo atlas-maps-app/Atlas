@@ -1,6 +1,7 @@
 // The composite (passes/Composite.hpp).
 #include "passes/Composite.hpp"
 
+#include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
 #include "gen/spirv/frame/composite.hpp"
 #include "gen/spirv/frame/composite_glsl_composite_fs.hpp"
@@ -11,7 +12,9 @@
 #include "gen/spirv/frame/composite_x2.hpp"
 #include "gen/spirv/frame/composite_x2_glsl_composite_fs.hpp"
 #include "gpu/Descriptors.hpp"
+#include "twin/Twin.hpp"
 
+#include <bit>
 #include <format>
 #include <string>
 
@@ -54,6 +57,26 @@ struct Modules {
                                 .words = spirv::frame_composite_x1_glsl_composite_fs}};
     default: return gpu::fail(std::format("the composite has no module for {} samples", vk::to_string(samples)));
     }
+}
+
+/// Java's Math.round of a float (the SVG parser folds a stop's opacity into its colour's alpha so: round(255 · a)).
+[[nodiscard]] std::int32_t java_round(float a) noexcept {
+    const auto bits = std::bit_cast<std::int32_t>(a);
+    const std::int32_t biased = (bits & 0x7F80'0000) >> 23;
+    const std::int32_t shift = (23 - 1 + 127) - biased;
+    if ((shift & -32) == 0) {
+        std::int32_t r = (bits & 0x007F'FFFF) | 0x0080'0000;
+        if (bits < 0) r = -r;
+        return ((r >> shift) + 1) >> 1;
+    }
+    return static_cast<std::int32_t>(a);
+}
+
+/// A colour's ARGB with alpha round(255 · opacity), as the parser folds a stop's opacity.
+[[nodiscard]] std::uint32_t folded(hlsl::float4 rgb, float opacity) noexcept {
+    const auto level = [](float c) { return static_cast<std::uint32_t>(java_round(c * 255.0F)); };
+    const auto alpha = static_cast<std::uint32_t>(java_round(255.0F * opacity));
+    return (alpha << 24U) | (level(rgb.x) << 16U) | (level(rgb.y) << 8U) | level(rgb.z);
 }
 
 } // namespace
@@ -130,6 +153,52 @@ void Composite::record(const frame::Recording& recording, std::uint32_t phase) {
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout_, 2, *inputs_, {});
     cmd.draw(3, 1, 0, 0);
     recording.counters.draw("composite", 1);
+}
+
+void Composite::emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const {
+    (void)phase;
+    const shaders::FrameLayers& l = state.block.layers;
+    const std::uint32_t on = l.steps.x & shaders::COMPOSITE_DRAWN;
+    const float width = state.block.camera.frame.x;
+    const float height = state.block.camera.frame.y;
+    out.layer(twin::Layer::objects);
+    out.at(twin::Stream::after, out.root());
+    // render/amsterdam.py:899: the haze by ground depth (ScreenLayers.hazeDef, hazeRect), as the composite applies it
+    const auto stops = static_cast<std::size_t>(l.haze.w);
+    if ((on & shaders::COMPOSITE_HAZE) != 0U && stops > 0) {
+        std::array<float, 28> offsets{};
+        std::array<std::uint32_t, 28> colours{};
+        for (std::size_t i = 0; i < stops && i < offsets.size(); ++i) {
+            offsets[i] = l.haze_offsets[i / 4][static_cast<int>(i % 4)];
+            colours[i] = folded(l.haze_colour, l.haze_alphas[i / 4][static_cast<int>(i % 4)]);
+        }
+        const std::int32_t haze = out.gradient({.id = "haze",
+                                                .radial = false,
+                                                .coords = {0.0F, l.haze.x, 0.0F, l.haze.y, 0.0F},
+                                                .units = twin::Units::user_space,
+                                                .transformed = false,
+                                                .transform = {1, 0, 0, 1, 0, 0},
+                                                .spread = twin::Spread::pad,
+                                                .offsets = std::span(offsets).first(stops),
+                                                .colours = std::span(colours).first(stops)});
+        out.rect({.fill = twin::Paint::gradient(haze)}, 0.0F, l.haze.x, width, l.haze.y - l.haze.x);
+    }
+    // render/amsterdam.py:964: fin's vignette over everything (its `vig` gradient: transparent to .55, then black)
+    if ((on & shaders::COMPOSITE_VIGNETTE) != 0U && l.vignette.x > 0.0F) {
+        const std::array<float, 2> offsets{0.55F, 1.0F};
+        const hlsl::float4 black{0.0F, 0.0F, 0.0F, 0.0F};
+        const std::array<std::uint32_t, 2> colours{folded(black, 0.0F), folded(black, l.vignette.x)};
+        const std::int32_t vig = out.gradient({.id = "vig",
+                                               .radial = true,
+                                               .coords = {0.5F, 0.46F, 0.75F, 0.5F, 0.46F},
+                                               .units = twin::Units::bounding_box,
+                                               .transformed = false,
+                                               .transform = {1, 0, 0, 1, 0, 0},
+                                               .spread = twin::Spread::pad,
+                                               .offsets = offsets,
+                                               .colours = colours});
+        out.rect({.fill = twin::Paint::gradient(vig)}, 0.0F, 0.0F, width, height);
+    }
 }
 
 hlsl::float3 composite_pixel(const shaders::FrameLayers& layers, std::span<const hlsl::float3> samples, hlsl::float2 p,

@@ -104,6 +104,10 @@ struct FrameOptions {
     /// The composite's steps the frame lets run (composite.slang's COMPOSITE_ bits, of those its mode runs): every one
     /// by default; 0 stubs them all, and the composite passes the colours through.
     std::uint32_t steps = ~0U;
+    /// The owner mode (the likeness harness's owner map): every scene pipeline replaced by its owner twin, which
+    /// writes the painter slot it draws at (shaders/frame/owner.slang), the composite passing it through, nothing after
+    /// it; drawn at one sample, the frame read back gives each pixel's latest slot in painter's order (owner_map).
+    bool owners = false;
 };
 
 /// What the frame draws of the world (scene/World.hpp): asked once a frame, once the frame's view is known and before
@@ -188,10 +192,25 @@ public:
     /// nothing): the view, the placed camera, the layers, the block. False when the camera state names no frame size.
     bool derive(std::uint64_t number, std::uint32_t slot, const gpu::Output* output);
 
+    /// The twin of frame `number` (D16's L1): stage F as record runs it (the world's update, set 1's globals, the
+    /// selections, ground slots, ranks and the passes' updates), then every pass's phases emitted in the frame's order
+    /// into `out` (cleared first), under the frame's root group (twin::Stream::root: the SVG's clip to the frame). It
+    /// records nothing; `out` is left empty when the camera state names no frame size.
+    void emit(twin::Stream& out, std::uint64_t number);
+
+    /// The owner of painter slot `slot` in the last frame (its item's ItemSpec::owner): 0 for a ground slot, a slot no
+    /// item holds, or no items.
+    [[nodiscard]] std::uint64_t owner_of(std::uint32_t slot) const noexcept;
+    /// The owner map of an owner-mode frame read back as 8-bit RGBA rows (`rgba`, 4 bytes a pixel) into `out`, a key
+    /// per pixel (owner_of its slot; 0 where nothing drew).
+    void owner_map(std::span<const std::uint8_t> rgba, std::span<std::uint64_t> out) const noexcept;
+
 private:
     FrameBuilder(const gpu::Device& device, const gpu::PipelineCache& cache, FrameOptions options,
                  gpu::PipelineWatch* watch) noexcept;
     void record_slot(const gpu::FrameContext& frame, Slot slot);
+    /// Stage F after derive: the world's update, set 1's globals, the selections, ground slots, ranks, the updates.
+    void stage_f();
     void write_ring(std::uint32_t slot);
 
     /// One phase of one pass, in the frame's order.
@@ -215,6 +234,7 @@ private:
     Ranks ranks_;
     std::string configuration_;
     vk::raii::ShaderModule overdraw_module_{nullptr};
+    vk::raii::ShaderModule owner_module_{nullptr};
     FrameInputs inputs_;
     FrameState state_;
     std::uint32_t quarter_turns_ = 0;

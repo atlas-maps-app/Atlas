@@ -22,6 +22,7 @@ std::uint32_t ItemTable::add(const ItemSpec& item) {
         min_depth_.push_back(0);
         radius_.push_back(0);
         tile_.push_back(0);
+        owner_.push_back(0);
         slots_.resize(slots_.size() + bands, 0);
         alive_.push_back(0);
     }
@@ -37,6 +38,7 @@ std::uint32_t ItemTable::add(const ItemSpec& item) {
     min_depth_[row] = item.min_depth;
     radius_[row] = item.radius;
     tile_[row] = item.tile;
+    owner_[row] = item.owner;
     for (std::size_t b = 0; b < bands; ++b) slots_[row * bands + b] = item.slots[b];
     alive_[row] = 1;
     ++live_;
@@ -76,6 +78,7 @@ void ItemTable::clear() noexcept {
     min_depth_.clear();
     radius_.clear();
     tile_.clear();
+    owner_.clear();
     slots_.clear();
     alive_.clear();
     free_.clear();

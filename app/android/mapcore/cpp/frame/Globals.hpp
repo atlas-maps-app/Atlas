@@ -1,8 +1,8 @@
 // Set 1's globals that no pass owns (plan-vector D5.6): the geometry heaps, the sun's bits (K8), the noise fields and
 // the byte tables (K17a), the glyphs' curves and bands and the sprite atlas (K13). Each is filled by its own provider,
 // which makes and fills its GPU resources on its own schedule (stage T's workers, its own threads, the render thread)
-// and, once a frame, brings its bindings up to date through Globals: the frame layout makes a new version of set 1
-// only when a binding's resource changes (a new buffer, a grown one, a new image), never per frame. The world holds the
+// and, once a frame, gives its bindings' resources to Globals: the frame layout makes a new version of set 1 only when
+// a binding's resource changes (a new buffer, a grown one, a new image), never per frame. The world holds the
 // providers (frame::FrameScene::globals: its heaps' and its sun's, and those added to it, World::add_globals); the
 // frame builder asks each one per frame, after the scene's update and before the passes' selections, in the world's
 // order. K7 owns the hook; each provider owns its resources.
@@ -56,8 +56,9 @@ public:
     [[nodiscard]] virtual std::span<const Global> bindings() const noexcept = 0;
 
     /// Once a frame, on the render thread, after the scene's update and before the passes' selections: uploads what
-    /// the frame reads into memory no frame still in flight reads (its slot's part of a ring, say) and, where a
-    /// binding's resource changed, gives it to `globals` (only then).
+    /// the frame reads into memory no frame still in flight reads (its slot's part of a ring, say) and gives its
+    /// bindings' resources to `globals`, every frame (a binding that has not changed costs a comparison, and makes no
+    /// new set; every frame builder drawing the world, each with its own layout, gets them so).
     virtual void update(const FrameState& state, Globals& globals) = 0;
 
     /// The frame block's flags its resources allow this frame (frame.slang's FRAME_FIELDS: the fields and byte tables

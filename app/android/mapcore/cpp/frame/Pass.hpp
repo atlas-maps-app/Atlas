@@ -96,6 +96,10 @@ struct PassContext {
     PipelineStats* stats = nullptr;
     /// The frame's overdraw fragment module (the frame builder's; null outside the overdraw mode).
     vk::ShaderModule overdraw_module;
+    /// The owner mode (FrameOptions::owners): make_pipeline makes each scene pipeline's owner twin in its place, which
+    /// writes the painter slot it draws at; and the frame's owner fragment module (null outside it).
+    bool owners = false;
+    vk::ShaderModule owner_module;
 };
 
 /// What a pass records a phase into.
@@ -177,9 +181,11 @@ private:
 [[nodiscard]] gpu::Result<vk::raii::ShaderModule> make_module(const PassContext& context, std::string_view name,
                                                               std::span<const std::uint32_t> words);
 
-/// A pass's pipeline, made through the context's cache with its making announced alone; in the overdraw mode (and for
-/// `overdraw` other than none) the pipeline's overdraw twin instead: its vertex stage, layout, target, rasterisation
-/// and depth and stencil state, with the frame's overdraw fragment stage adding 1/255 of red for each opaque fragment
+/// A pass's pipeline, made through the context's cache with its making announced alone; for `overdraw` other than none
+/// (a scene pipeline), in the owner mode its owner twin (the frame's owner fragment stage, writing the painter slot it
+/// draws at, blending off), and in the overdraw mode its overdraw twin instead: its vertex stage, layout, target,
+/// rasterisation and depth and stencil state, with the frame's overdraw fragment stage adding 1/255 of red for each
+/// opaque fragment
 /// shaded, of green for each translucent one.
 [[nodiscard]] gpu::Result<vk::raii::Pipeline> make_pipeline(const PassContext& context, gpu::GraphicsDesc desc,
                                                             Overdraw overdraw);

@@ -94,7 +94,8 @@ Layers layers_of(const Camera& cam, const style::ThemeBlock& th, const LayerSett
     l.front = front;
     l.weather = th.has(style::theme_flag::weather);
     l.night = th.has(style::theme_flag::night);
-    l.overcast = th.has(style::theme_flag::overcast);
+    // truthy(th['sky_k']): set, and not 0 (a theme without it reads 1 with the flag clear)
+    l.overcast = th.has(style::theme_flag::overcast) && th.sky_k != 0.0;
     const double pitch = s.pitch;
     l.eye = l.weather && pitch < 10;
     const double hy = cam.horizon_y();

@@ -225,6 +225,11 @@ public:
                                           std::int32_t parent = none);
     void end_clip();
 
+    /// The frame's root group (the SVG's `<g clip-path="url(#vb)">`, which FrameBuilder::emit defines before the passes
+    /// emit), for the passes' groups to hang from; none until set. clear forgets it.
+    void set_root(std::int32_t group) noexcept { root_ = group; }
+    [[nodiscard]] std::int32_t root() const noexcept { return root_; }
+
     // ---- Where the elements that follow go.
 
     /// The layer (the render's image) of the elements that follow; the objects by default.
@@ -268,6 +273,7 @@ private:
     std::int32_t groups_ = 0;
     std::int32_t items_ = 0;
     std::int32_t clips_ = 0;
+    std::int32_t root_ = none;
     bool in_clip_ = false;
     std::size_t elements_ = 0;
 };

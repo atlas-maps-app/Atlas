@@ -167,7 +167,6 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
         if (buffer_) retired_.emplace_back(std::move(buffer_), state.number);
         buffer_ = std::move(*made);
         capacity_ = capacity;
-        rebind_ = true;
     }
     const std::size_t half = (state.slot % 2) * capacity_;
     for (std::size_t i = 0; i < drawn.size(); ++i) {
@@ -180,9 +179,8 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
 
 void SunGlobals::update(const frame::FrameState& state, frame::Globals& globals) {
     (void)state;
-    if (!rebind_) return;
-    globals.buffer(frame::Global::sun_bits, buffer_.handle());
-    rebind_ = false;
+    // Every frame (an unchanged binding costs a comparison): each frame builder drawing the world gets the buffer.
+    if (buffer_) globals.buffer(frame::Global::sun_bits, buffer_.handle());
 }
 
 void SunGlobals::work(const std::stop_token& stop) {

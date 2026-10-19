@@ -51,7 +51,15 @@ struct ItemSpec {
     float radius = 0.0F;
     /// The tile it belongs to (Residency's handle).
     std::uint32_t tile = 0;
+    /// Its owner, as the likeness harness keys owners (owner_key): the OSM element it draws.
+    std::uint64_t owner = 0;
 };
+
+/// An owner's key: its kind (AnchorItems' OwnerType: 1 node, 2 way, 3 relation, 4 an area of either, 5 none in OSM) in
+/// the top byte and its OSM id below; 0 for none.
+[[nodiscard]] constexpr std::uint64_t owner_key(std::uint8_t kind, std::uint64_t id) noexcept {
+    return (std::uint64_t{kind} << 56U) | (id & ((std::uint64_t{1} << 56U) - 1));
+}
 
 /// An item's place in the gather order: its list and its source order.
 [[nodiscard]] constexpr std::uint64_t order_of(std::uint32_t list, std::uint64_t source) noexcept {
@@ -93,6 +101,7 @@ public:
     [[nodiscard]] std::span<const float> min_depth() const noexcept { return min_depth_; }
     [[nodiscard]] std::span<const float> radius() const noexcept { return radius_; }
     [[nodiscard]] std::span<const std::uint32_t> tile() const noexcept { return tile_; }
+    [[nodiscard]] std::span<const std::uint64_t> owner() const noexcept { return owner_; }
     [[nodiscard]] std::span<const std::uint8_t> alive_rows() const noexcept { return alive_; }
     /// Row `row`'s slots in band `band`.
     [[nodiscard]] std::uint32_t slots(std::uint32_t row, std::size_t band) const noexcept {
@@ -105,6 +114,7 @@ private:
     std::vector<std::uint16_t> kind_, flags_;
     std::vector<float> min_depth_, radius_;
     std::vector<std::uint32_t> tile_;
+    std::vector<std::uint64_t> owner_;
     std::vector<std::uint32_t> slots_; // bands per row
     std::vector<std::uint8_t> alive_;
     std::vector<std::uint32_t> free_;

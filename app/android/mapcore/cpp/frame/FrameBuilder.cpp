@@ -4,8 +4,10 @@
 #include "base/assert.hpp"
 #include "frame/FrameLayout.hpp"
 #include "gen/spirv/frame/overdraw.hpp"
+#include "gen/spirv/frame/owner.hpp"
 #include "scene/Heaps.hpp"
 #include "scene/ItemTable.hpp"
+#include "twin/Twin.hpp"
 #include "view/Snap.hpp"
 
 #include <algorithm>
@@ -80,7 +82,20 @@ gpu::Result<vk::raii::ShaderModule> make_module(const PassContext& context, std:
 }
 
 gpu::Result<vk::raii::Pipeline> make_pipeline(const PassContext& context, gpu::GraphicsDesc desc, Overdraw overdraw) {
-    if (context.overdraw && overdraw != Overdraw::none && context.overdraw_module) {
+    if (context.owners && overdraw != Overdraw::none && context.owner_module) {
+        // The owner twin: the same vertex stage, layout, target and tests; a fragment stage writing its painter slot,
+        // blending off, so the latest primitive in painter's order covering a pixel leaves its slot there.
+        desc.fragment_module = context.owner_module;
+        desc.fragment = "owner_fs";
+        desc.alpha_to_coverage = false;
+        desc.blends[0] = {.enable = false,
+                          .src_colour = vk::BlendFactor::eOne,
+                          .dst_colour = vk::BlendFactor::eZero,
+                          .src_alpha = vk::BlendFactor::eOne,
+                          .dst_alpha = vk::BlendFactor::eZero,
+                          .mask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+                                  vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+    } else if (context.overdraw && overdraw != Overdraw::none && context.overdraw_module) {
         // The overdraw twin: the same vertex stage, layout, target and tests; a fragment stage adding 1/255 of red (an
         // opaque fragment) or green (a translucent one), onto red, green and blue only.
         desc.fragment_module = context.overdraw_module;
@@ -150,6 +165,14 @@ gpu::Result<std::unique_ptr<FrameBuilder>> FrameBuilder::create(const gpu::Devic
         ATLAS_GPU_LET(module, std::move(made));
         self->overdraw_module_ = std::move(module);
     }
+    if (options.owners) {
+        auto made = [&] {
+            const gpu::Announced named = gpu::announce_module("frame_owner", watch);
+            return gpu::make_module(device.handle(), spirv::frame_owner);
+        }();
+        ATLAS_GPU_LET(module, std::move(made));
+        self->owner_module_ = std::move(module);
+    }
     return self;
 }
 
@@ -172,7 +195,9 @@ gpu::Result<void> FrameBuilder::prepare(const gpu::MainPass& pass, const gpu::Ou
                               .configuration = configuration_,
                               .overdraw = options_.overdraw,
                               .stats = &stats,
-                              .overdraw_module = *overdraw_module_};
+                              .overdraw_module = *overdraw_module_,
+                              .owners = options_.owners,
+                              .owner_module = *owner_module_};
     for (const std::unique_ptr<Pass>& p : passes_) {
         if (auto made = p->prepare(context); !made) {
             const gpu::Error error{.code = made.error().code,
@@ -247,7 +272,7 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     shaders::FrameBlock& b = state_.block;
     b.camera = state_.view->block(state_.rest, engine, number);
     b.theme = style::shader_theme(state_.theme);
-    const std::uint32_t steps = options_.overdraw ? 0U : steps_of(state_.mode) & options_.steps;
+    const std::uint32_t steps = options_.overdraw || options_.owners ? 0U : steps_of(state_.mode) & options_.steps;
     b.layers = view::block_of(*state_.layers, state_.theme, steps, levels_);
     std::uint32_t mode = 0;
     if (state_.mode == Mode::full) mode |= shaders::FRAME_FULL;
@@ -279,21 +304,8 @@ void FrameBuilder::record_slot(const gpu::FrameContext& frame, Slot slot) {
     }
 }
 
-void FrameBuilder::record(const gpu::FrameContext& frame) {
-    const auto started = clock::now();
-    for (PassCounters& c : counters_) c.clear();
-    const std::uint32_t slot = frame.slot.slot;
-    if (!derive(frame.number, slot, &frame.output)) {
-        // No frame size yet: the clear alone, so the frame still goes out (the marks in their order).
-        frame.frames.mark(frame.slot, gpu::Mark::offscreen);
-        frame.pass.begin(frame.cmd, frame.sync, frame.image, options_.clear);
-        if (frame.pass.composite()) frame.pass.next(frame.cmd, frame.sync);
-        frame.pass.end(frame.cmd, frame.sync, frame.image);
-        frame.frames.mark(frame.slot, gpu::Mark::main);
-        frame.frames.mark(frame.slot, gpu::Mark::after);
-        return;
-    }
-    // The world for this view, the detail bands, the ranks, then every pass's own stage F.
+void FrameBuilder::stage_f() {
+    // The world for this view, set 1's globals, the detail bands, the ranks, then every pass's own stage F.
     ATLAS_ASSERT(state_.view.has_value(), "derive made the frame's view");
     const view::View& view = state_.view.value();
     FrameScene* scene = inputs_.scene;
@@ -344,6 +356,24 @@ void FrameBuilder::record(const gpu::FrameContext& frame) {
         state_.block.info.z = 0;
     }
     for (const std::unique_ptr<Pass>& p : passes_) p->update(state_);
+}
+
+void FrameBuilder::record(const gpu::FrameContext& frame) {
+    const auto started = clock::now();
+    for (PassCounters& c : counters_) c.clear();
+    const std::uint32_t slot = frame.slot.slot;
+    if (!derive(frame.number, slot, &frame.output)) {
+        // No frame size yet: the clear alone, so the frame still goes out (the marks in their order).
+        frame.frames.mark(frame.slot, gpu::Mark::offscreen);
+        frame.pass.begin(frame.cmd, frame.sync, frame.image, options_.clear);
+        if (frame.pass.composite()) frame.pass.next(frame.cmd, frame.sync);
+        frame.pass.end(frame.cmd, frame.sync, frame.image);
+        frame.frames.mark(frame.slot, gpu::Mark::main);
+        frame.frames.mark(frame.slot, gpu::Mark::after);
+        return;
+    }
+    stage_f();
+    FrameScene* scene = inputs_.scene;
 
     // The frame's slice of set 0's ring.
     const std::uint64_t finished = frame.number >= gpu::Frames::in_flight ? frame.number - gpu::Frames::in_flight : 0;
@@ -380,12 +410,50 @@ void FrameBuilder::record(const gpu::FrameContext& frame) {
     record_slot(frame, Slot::translucent);
     frame.pass.next(cmd, frame.sync);
     record_slot(frame, Slot::composite);
-    if (!options_.overdraw) record_slot(frame, Slot::labels);
+    if (!options_.overdraw && !options_.owners) record_slot(frame, Slot::labels);
     frame.pass.end(cmd, frame.sync, frame.image);
     frame.frames.mark(frame.slot, gpu::Mark::main);
-    if (!options_.overdraw) record_slot(frame, Slot::after);
+    if (!options_.overdraw && !options_.owners) record_slot(frame, Slot::after);
     frame.frames.mark(frame.slot, gpu::Mark::after);
     record_ms_ = ms_since(recording);
+}
+
+std::uint64_t FrameBuilder::owner_of(std::uint32_t slot) const noexcept {
+    if (state_.ranks == nullptr || state_.items == nullptr || slot < state_.ground_slots) return 0;
+    const std::span<const std::uint32_t> order = ranks_.order();
+    const std::span<const std::uint32_t> first = ranks_.first_slot();
+    // The last item in painter's order whose first slot is at or before `slot` (first slots ascend along the order).
+    const auto it = std::ranges::upper_bound(order, slot, {}, [&](std::uint32_t row) { return first[row]; });
+    if (it == order.begin()) return 0;
+    const std::uint32_t row = *std::prev(it);
+    const std::uint32_t count = state_.items->slots(row, ranks_.band()[row]);
+    if (slot >= first[row] + count) return 0;
+    return state_.items->owner()[row];
+}
+
+void FrameBuilder::owner_map(std::span<const std::uint8_t> rgba, std::span<std::uint64_t> out) const noexcept {
+    const std::size_t n = std::min(rgba.size() / 4, out.size());
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::uint32_t id = std::uint32_t{rgba[4 * i]} | (std::uint32_t{rgba[(4 * i) + 1]} << 8U) |
+                                 (std::uint32_t{rgba[(4 * i) + 2]} << 16U);
+        out[i] = id == 0 ? 0 : owner_of(id - 1);
+    }
+}
+
+void FrameBuilder::emit(twin::Stream& out, std::uint64_t number) {
+    out.clear();
+    for (PassCounters& c : counters_) c.clear();
+    if (!derive(number, 0, nullptr)) return;
+    stage_f();
+    // The frame's root group: the SVG's clip to the frame (`<g clip-path="url(#vb)">`), which every layer's elements
+    // hang from; then every pass's phases in the frame's order.
+    const float width = state_.block.camera.frame.x;
+    const float height = state_.block.camera.frame.y;
+    const std::int32_t vb = out.begin_clip("vb");
+    out.rect({}, 0.0F, 0.0F, width, height);
+    out.end_clip();
+    out.set_root(out.group({.node = {.clip = vb}, .parent = twin::none}));
+    for (const Step& step : steps_) passes_[step.pass]->emit(state_, out, step.phase);
 }
 
 } // namespace atlas::frame

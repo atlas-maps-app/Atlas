@@ -143,8 +143,7 @@ private:
     bool have_bucket_ = false;
     std::vector<std::uint32_t> texels_;
     gpu::Buffer buffer_;
-    std::size_t capacity_ = 0; ///< texels per half
-    bool rebind_ = false;
+    std::size_t capacity_ = 0;                                   ///< texels per half
     std::vector<std::pair<gpu::Buffer, std::uint64_t>> retired_; ///< old buffers and the last frame that read them
     bool fading_ = false;
     std::size_t last_texels_ = 0;

@@ -18,11 +18,10 @@ public:
     [[nodiscard]] std::string_view name() const noexcept override { return "heaps"; }
     [[nodiscard]] std::span<const frame::Global> bindings() const noexcept override { return heap_bindings; }
     void update(const frame::FrameState& state, frame::Globals& globals) override {
-        if (heaps_.version() != version_) {
-            for (std::size_t k = 0; k < heap_kinds; ++k) {
-                globals.buffer(static_cast<frame::Global>(k), heaps_.buffer(static_cast<HeapKind>(k)));
-            }
-            version_ = heaps_.version();
+        // Every frame: a binding that has not changed costs a comparison, and each frame builder drawing the world
+        // (its own layout) gets the heaps' buffers.
+        for (std::size_t k = 0; k < heap_kinds; ++k) {
+            globals.buffer(static_cast<frame::Global>(k), heaps_.buffer(static_cast<HeapKind>(k)));
         }
         heaps_.bound(state.number);
         heaps_.collect(state.number >= gpu::Frames::in_flight ? state.number - gpu::Frames::in_flight : 0);
@@ -33,7 +32,6 @@ private:
         frame::Global::points, frame::Global::walls,     frame::Global::ground,
         frame::Global::lines,  frame::Global::instances, frame::Global::labels};
     Heaps& heaps_;
-    std::uint64_t version_ = ~std::uint64_t{0};
 };
 
 } // namespace
