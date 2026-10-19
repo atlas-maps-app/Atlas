@@ -25,6 +25,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.time.Instant
 import kotlin.system.exitProcess
@@ -323,13 +324,16 @@ object RenderTiles {
     /**
      * [source]'s element pack in [dir]: the file there when its size and SHA-256 are the published ones, else downloaded
      * over https from the release (through a temporary file) and checked. A file whose hash differs is never used.
+     * Two runs may fetch into the same [dir] at once (Gradle runs `:app`'s and `:mapcorecheck`'s bundled tiles in
+     * parallel, Android run 39325199622): each downloads into a temporary file of its own and moves it into place
+     * atomically, so neither sees the other's half-written file.
      */
     fun fetch(source: Source, dir: File, log: (String) -> Unit = {}): File {
         val file = File(dir, source.file)
         if (file.isFile && file.length() == source.bytes && sha256(file) == source.sha256) return file
         if (!source.url.startsWith("https://")) throw IOException("${source.url}: an element pack comes over https only")
         dir.mkdirs()
-        val tmp = File(dir, ".${source.file}.part")
+        val tmp = File.createTempFile(".${source.file}.", ".part", dir)
         log("downloading ${source.url}")
         var url = URI(source.url).toURL()
         var conn: HttpURLConnection
@@ -353,6 +357,9 @@ object RenderTiles {
         }
         try {
             conn.inputStream.use { input -> tmp.outputStream().use { input.copyTo(it, 1 shl 16) } }
+        } catch (e: IOException) {
+            tmp.delete()
+            throw e
         } finally {
             conn.disconnect()
         }
@@ -361,8 +368,7 @@ object RenderTiles {
             tmp.delete()
             throw IOException("${source.url}: ${tmp.length()} bytes of SHA-256 $got, not the published ${source.bytes} bytes of ${source.sha256}")
         }
-        if (file.exists()) file.delete()
-        if (!tmp.renameTo(file)) throw IOException("cannot move $tmp to $file")
+        Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         return file
     }
 
