@@ -31,6 +31,10 @@
 #                                            stage T on Bionic (K9), which must read `ground $ATLAS_GROUND_HASH ok`;
 #                                            and in vkfacts.txt the core's shaping held to the guest's own (K13),
 #                                            `text.glyphs: <n> runs, <m> glyphs equal Android's (rule <rule>)`
+#   map.txt, map-transition.txt, map-*.png   the map drawn by the core (K11): its first frame from a cleared state and
+#                                            warm, a swipe and the rest after it, the Java heap at the canal ring, the
+#                                            transitional rule's switch away from the core's tiles and back, and the
+#                                            honest state under atlas.vk.off
 # Each measured run starts from the installed state (`pm clear`, the install's permissions granted again), so earlier
 # screens' downloads and kept scenes do not change what the home draws. `run-as` needs a debuggable APK, so the bench
 # phase never uses it: the screen list comes from the debug run and the timings from logcat (tag AtlasMap).
@@ -46,9 +50,11 @@
 # `sun $ATLAS_SUN_HASH ok`, a fields line other than `fields 1080x2400 cpu <ms> gpu off hash <h> ok`, a ground line
 # other than `ground $ATLAS_GROUND_HASH ok`, VK facts without `text.rounding: floor|round (probe …)` or with a
 # `text.glyphs:` line that is not every glyph equal, VK bench's still pills failing ci/pillcheck.py with the core's
-# glass or passing it with their tint alone, and (once the map's core draws the home) the home's frosted pills failing
-# it or further than MAD 2 from HWUI's on the TextureView. A frame that never comes is "NO FRAME", a warning; a
-# background step the bench ended before is skipped, saying so.
+# glass or passing it with their tint alone, (once the map's core draws the home) the home's frosted pills failing
+# it or further than MAD 2 from HWUI's on the TextureView, the core's first map frame above §3's emulator limits (3 s
+# first, 1.5 s warm), a map frame from 2 s after a swipe, a Java heap above 96 MB at the canal ring, a transitional
+# switch without its lines, or no honest state under atlas.vk.off. A frame that never comes is "NO FRAME", a
+# warning; a background step the bench ended before is skipped, saying so.
 # Environment: ATLAS_SCREENS (the debug loop's screens, default: all), ATLAS_MAP_WAIT (seconds to wait for the home's map),
 # ATLAS_IDLE (seconds the home is watched at rest, default 20), ATLAS_BENCH=0 (skip the bench phase), ATLAS_PROFILE=0
 # (skip simpleperf), ATLAS_PYMATH_HASH (the numerics hash the host build and the port compute; android.yml sets it),
@@ -84,13 +90,13 @@ since_marker() { adb logcat -d -v threadtime -s AtlasMap:I | tr -d '\r' | sed -n
 # every tag since the marker (the system's ANR lines are not under AtlasMap)
 since_marker_all() { adb logcat -d -v threadtime | tr -d '\r' | sed -n "/run-marker $1\$/,\$p"; }
 
-# How many finished frames (or the last filter probe) are logged since marker $1.
-frames_since() { since_marker "$1" | grep -c -e "drawn in" -e "filter probe sblur"; }
+# How many finished frames (or the last filter probe) are logged since marker $1: today's map's, or the core's first.
+frames_since() { since_marker "$1" | grep -c -e "drawn in" -e "filter probe sblur" -e "vk first frame"; }
 
 # Seconds from marker $1 (logged just before the app is started) to the first frame on screen (the filters: the last probe).
 drawn_after() {
   since_marker "$1" | awk 'function t(s,  a) { split(s, a, ":"); return a[1] * 3600 + a[2] * 60 + a[3] }
-    NR == 1 { t0 = t($2) } / drawn in |filter probe sblur/ { d = t($2) - t0; if (d < 0) d += 86400; printf "%.1f", d; exit }'
+    NR == 1 { t0 = t($2) } / drawn in |filter probe sblur|vk first frame/ { d = t($2) - t0; if (d < 0) d += 86400; printf "%.1f", d; exit }'
 }
 
 # The larger of two numbers; a non-number counts as 0.
@@ -633,6 +639,70 @@ pills_phase() {
   [ $rc_mad -eq 0 ] || { echo "PILLS FAILED: the home's frosted pills are further than MAD 2 from HWUI's"; FAIL=1; }
 }
 pills_phase
+
+# --- the map's core (plan-vector K11, Appendix C): the home drawn by the core -----------------------------------------
+
+# The core's first-frame line since marker $1, as "<ms> <first|warm>" ("" when there is none).
+first_frame() { since_marker "$1" | grep -m1 -o 'vk first frame -*[0-9]* [a-z]*' | awk '{print $4, $5}'; }
+
+# K11's lines: the home drawn by the core with its first frame within §3's emulator limits (`vk first frame <ms>
+# first|warm`: 3 s from a cleared state, 1.5 s warm), no frame from 2 s after a swipe (CI's `vk frame` lines), the Java
+# heap at the canal ring at most 96 MB, the transitional rule's switch from the core's tiles to a place without them and
+# back with no blank frame (its `vk transition core>canvas` and `canvas>core` lines, each written as the picture it
+# fades to is ready, the outgoing one held until then, and `vk transitional`), and T2's honest state under atlas.vk.off.
+map_phase() {
+  local run line ms kind limit before after heap
+  for run in mapfirst mapwarm; do
+    vk_launch "$run" --es atlas.screen home --ez atlas.ci true --ez atlas.vk.ci true
+    wait_line "$run" 60 "vk first frame" || echo "MAP FAILED: no 'vk first frame' within 60 s ($run)"
+    line=$(first_frame "$run"); ms=${line% *}; kind=${line#* }
+    limit=$([ "$kind" = warm ] && echo 1500 || echo 3000)
+    echo "map: $run first frame ${line:-none} (limit ${limit} ms)"
+    if ! [[ $ms =~ ^[0-9]+$ ]] || [ "$ms" -gt "$limit" ]; then echo "MAP FAILED: the core's first frame ($run): ${line:-none}"; FAIL=1; fi
+    [ "$run" = mapwarm ] && [ "$kind" != warm ] && { echo "MAP FAILED: the second launch was not warm (${line:-none})"; FAIL=1; }
+    vk_crashes "$run"; vk_anr "$run"
+    # To the background, as a phone leaves the app: the trim writes the pipeline cache back (D5.6), and the next launch
+    # is a warm one.
+    [ "$run" = mapfirst ] && { adb shell input keyevent KEYCODE_HOME; sleep 3; }
+  done
+  # A swipe on the warm home, then rest: frames while it moves, none from 2 s after.
+  sleep 3
+  adb shell log -t AtlasMap "vk swipe: start"
+  adb shell input swipe 540 1500 540 900 300
+  adb shell log -t AtlasMap "vk swipe: done"
+  sleep 2
+  adb shell log -t AtlasMap "vk swipe: 2 s after"
+  sleep 6
+  before=$(since_marker mapwarm | sed -n '/AtlasMap: vk swipe: start$/,/AtlasMap: vk swipe: 2 s after$/p' | grep -c 'AtlasMap: vk frame ')
+  after=$(since_marker mapwarm | sed -n '/AtlasMap: vk swipe: 2 s after$/,$p' | grep -c 'AtlasMap: vk frame ')
+  echo "map: the swipe drew $before frames, $after from 2 s after it"
+  [ "$before" -gt 0 ] || { echo "MAP FAILED: the swipe drew no frame (the map did not move)"; FAIL=1; }
+  [ "$after" -eq 0 ] || { echo "MAP FAILED: $after frames from 2 s after the swipe (the map does not rest)"; FAIL=1; }
+  # The Java heap at the canal ring, after the swipe (dumpsys' Dalvik heap in use); the native heap and graphics reported.
+  PEAK_ALLOC=0; PEAK_NATIVE=0; PEAK_GFX=0; mem_poll; heap=$((PEAK_ALLOC / 1024))
+  echo "map: Java heap at the canal ring ${heap} MB (native heap $((PEAK_NATIVE / 1024)) MB, graphics $((PEAK_GFX / 1024)) MB)"
+  [ "$heap" -le 96 ] || { echo "MAP FAILED: the Java heap at the canal ring is ${heap} MB (at most 96)"; FAIL=1; }
+  adb exec-out screencap -p > "$OUT/map-swipe.png"
+  since_marker mapwarm | grep -E 'AtlasMap: (vk (first frame|map|tiles|config|path|surface|window|honest|swipe)|vk frame )' | sed 's/.*AtlasMap: //' > "$OUT/map.txt"
+  # The transitional rule: away from the core's tiles (today's map, or its own honest state offline) and back.
+  vk_launch maptrans --es atlas.screen home --ez atlas.ci true --es atlas.vk.script transition
+  wait_line maptrans 420 "vk script done" || { echo "MAP FAILED: the transitional script did not finish within 420 s"; FAIL=1; }
+  since_marker maptrans | grep -E 'AtlasMap: vk (script|transition|transitional|first frame|map)' | sed 's/.*AtlasMap: //' > "$OUT/map-transition.txt"
+  cat "$OUT/map-transition.txt"
+  for line in '^vk transitional ' '^vk transition core>canvas ' '^vk transition canvas>core '; do
+    grep -q "$line" "$OUT/map-transition.txt" || { echo "MAP FAILED: no '${line#^}' line"; FAIL=1; }
+  done
+  adb exec-out screencap -p > "$OUT/map-transition.png"
+  vk_crashes maptrans; vk_anr maptrans
+  # T2's honest state: the map's place says the phone's driver cannot draw it.
+  vk_launch mapoff --es atlas.screen home --ez atlas.ci true --ez atlas.vk.off true
+  wait_line mapoff 60 "vk honest:" && echo "map: $(since_marker mapoff | grep -m1 -o 'vk honest: .*')" ||
+    { echo "MAP FAILED: no 'vk honest:' line with atlas.vk.off"; FAIL=1; }
+  adb exec-out screencap -p > "$OUT/map-off.png"
+  vk_crashes mapoff; vk_anr mapoff
+}
+map_phase
+adb logcat -d > "$OUT/logcat.map.txt"
 
 # --- the truth phase: the same frames as a phone runs them -------------------------------------------------------------
 
