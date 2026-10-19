@@ -4,18 +4,20 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.PointerInputScope
@@ -29,6 +31,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import app.atlas.geo.LatLon
 import app.atlas.geo.UnitSystem
+import app.atlas.mapview.vk.HonestMap
+import app.atlas.mapview.vk.LocalChromeShapes
+import app.atlas.mapview.vk.Transition
+import app.atlas.mapview.vk.VkHost
+import app.atlas.mapview.vk.VkSurface
+import app.atlas.mapview.vk.chromeSurface
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -42,6 +50,11 @@ import java.util.Locale
  * warped to the camera at once, then the new one fades in. The overlays are projected with the engine's camera in the
  * region's own frame. The light is the live moment (the clock and the forecast) unless [style] fixes one.
  * [debug] shows the frame's timings over the map; [units] are the measuring tape's.
+ *
+ * Once the app has started the core ([MapEngine.core], plan-vector K11), the core draws the map with Vulkan into its
+ * own window under all of this (a SurfaceView, or the TextureView the debug switch asks for), today's map covering it
+ * only where the transitional rule wants today's map; where the phone cannot run the core, T2's honest state stands in
+ * the map's place.
  */
 @Composable
 fun AtlasMap(
@@ -93,6 +106,31 @@ fun AtlasMap(
         controller.attach()
         onDispose { controller.detach() }
     }
+    // The core (K11): what MapEngine.core says draws, the chrome's shapes over the map (K11b) told whether the core
+    // frosts under them (it does on its SurfaceView, where its picture is the one seen).
+    val coreState = MapEngine.core
+    val chrome = LocalChromeShapes.current
+    val host = MapEngine.host
+    val ready = coreState as? CoreState.Ready
+    LaunchedEffect(controller, ready, host) {
+        controller.useCore(ready?.core, ready?.let { MapEngine.packs(assets) }, host == VkHost.TEXTURE)
+    }
+    val off = (coreState as? CoreState.Off)?.reason
+    SideEffect {
+        controller.honest = off
+        controller.coreExpected = coreState is CoreState.Starting || coreState is CoreState.Ready
+    }
+    // T2's honest state: the phone cannot run the core, or the core could not make this map's frame.
+    val honest = off ?: controller.coreRefused
+    val coreMap = controller.core
+    DisposableEffect(chrome, controller) {
+        controller.chrome = chrome
+        chrome?.onChange = { controller.chromeMoved() }
+        onDispose {
+            chrome?.onChange = null
+            if (controller.chrome === chrome) controller.chrome = null
+        }
+    }
     LaunchedEffect(controller) {
         // Anything that changes the picture asks for a frame; the frame loop conflates the requests.
         launch { snapshotFlow { controller.overlays.markers }.collect { controller.warm(it) } }
@@ -128,12 +166,27 @@ fun AtlasMap(
             }
             .onSizeChanged { controller.size = it.width to it.height }
             .pointerInput(controller) { pointers(controller) }
-            .drawBehind {
+            .drawWithContent {
+                // The core's window first (its view lets the core's picture show through), then today's map and the
+                // overlays over it; in the honest state, no map at all.
+                drawContent()
+                if (honest != null) return@drawWithContent
                 // Reading the tick subscribes this draw (and only the draw) to new frames.
                 controller.frameTick.intValue
                 drawIntoCanvas { controller.draw(it.nativeCanvas) }
             },
-    )
+    ) {
+        if (coreMap != null) {
+            // Its own window binding per core map: the camera source and buffer the core reads are this map's.
+            key(coreMap) {
+                VkSurface(
+                    coreMap.core, if (coreMap.texture) VkHost.TEXTURE else VkHost.SURFACE, coreMap.source, coreMap.camera,
+                    Modifier.fillMaxSize().chromeSurface(chrome),
+                )
+            }
+        }
+        if (honest != null) HonestMap(honest)
+    }
 }
 
 /** What a frame depends on, for change detection. */

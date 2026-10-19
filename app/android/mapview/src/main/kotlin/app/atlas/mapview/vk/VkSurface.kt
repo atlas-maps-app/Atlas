@@ -87,15 +87,27 @@ private class Binding(
             return
         }
         attached = core.attach(surface, width, height, source, camera)
+        if (attached) owner = this
         onState(VkSurfaceState(attached, width, height, if (attached) "" else core.lastAttachError()))
         if (attached) core.requestFrame()
     }
 
     fun release() {
-        if (attached) core.detach()
+        // The core has one window: only the binding that attached it last lets it go (a map screen that comes after
+        // another attaches its own window before the one it covers is disposed).
+        if (attached && owner === this) {
+            core.detach()
+            owner = null
+        }
         attached = false
         textureSurface?.release()
         textureSurface = null
+    }
+
+    private companion object {
+        /** The binding whose window the core draws into now. */
+        @Volatile
+        var owner: Binding? = null
     }
 
     // SurfaceView. Each window event is logged (`vk window: …`, a few a screen): where a window is late or never comes,

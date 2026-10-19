@@ -159,6 +159,19 @@ internal class EngineFrames(
     }
 
     /**
+     * The transitional rule's entry (plan-vector K11): the core draws every place the map shows now, so this lets go of
+     * its last frame and the engine's scenes (on a thread of their own: the engine's lock may be busy), which the next
+     * request makes again. Nothing while a request waits or a frame is being made.
+     */
+    fun idle() {
+        synchronized(lock) {
+            if (closed || want != null || working) return
+            latest = null
+        }
+        Thread({ LiveEngine.forget() }, "atlas-engine-idle").apply { isDaemon = true }.start()
+    }
+
+    /**
      * Stops making frames, without waiting: the request waiting is dropped, and the frame being made stops at its next
      * check and is never shown. Once this returns nothing here changes and [onChange] is not called again (a call under
      * way, a post to the main thread, is waited for). The thread lets go of what it made as it leaves; [awaitStopped]

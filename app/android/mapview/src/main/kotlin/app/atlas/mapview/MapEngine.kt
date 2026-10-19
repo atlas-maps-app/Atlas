@@ -3,8 +3,15 @@ package app.atlas.mapview
 import android.content.res.AssetManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import app.atlas.geo.LatLon
+import app.atlas.mapcore.CoreConfig
+import app.atlas.mapcore.MapCore
 import app.atlas.mapview.svg.SvgFonts
+import app.atlas.mapview.vk.PackList
+import app.atlas.mapview.vk.VkHost
 import app.atlas.mapview.svg.TurbulenceCache
 import app.atlas.render.JpegEncoder
 import app.atlas.render.Relief
@@ -18,6 +25,21 @@ import java.util.concurrent.CopyOnWriteArrayList
 /** The forecast the live moment is lit by, for a place: what is to hand now, without waiting for the network. */
 fun interface MapWeather {
     fun hours(at: LatLon): List<WxHour>?
+}
+
+/** What draws the maps (plan-vector K11, T2): the app's Vulkan core where it has tiles, today's map alone, or neither. */
+sealed interface CoreState {
+    /** Today's map alone: no core in this process (the JVM's tests, previews). */
+    data object Canvas : CoreState
+
+    /** The core is starting (its device and pipeline cache, behind the crash guard). */
+    data object Starting : CoreState
+
+    /** The core draws the maps where it has tiles, today's map elsewhere (the transitional rule, until A5). */
+    class Ready(val core: MapCore) : CoreState
+
+    /** T2's honest state instead of a map: the phone's graphics driver cannot draw it ([reason]); the rest works. */
+    data class Off(val reason: String) : CoreState
 }
 
 /**
@@ -48,6 +70,113 @@ object MapEngine {
      */
     @Volatile
     var maxRasterScale: Float = 4f
+
+    /**
+     * What draws the maps (K11): today's map alone ([CoreState.Canvas]) until the app starts the core ([startCore]);
+     * then the core under today's map where it has tiles, or T2's honest state where the phone cannot run it. Compose
+     * state: the maps on screen follow it.
+     */
+    var core: CoreState by mutableStateOf<CoreState>(CoreState.Canvas)
+        private set
+
+    /** The core's window: a SurfaceView (D5.1), or the TextureView where the debug switch `atlas.vk.host` asks. */
+    @Volatile
+    var host: VkHost = VkHost.SURFACE
+
+    /** When the app's first screen began (SystemClock.uptimeMillis): the core's first-frame line counts from it. */
+    @Volatile
+    var startedAt: Long = 0
+
+    /** Whether this launch found no pipeline cache on disk (a first launch: the first-frame line's `first`). */
+    @Volatile
+    var firstLaunch: Boolean = true
+        private set
+
+    /** How the core was started (the honest state's VK facts read through it), null until [startCore]. */
+    @Volatile
+    var coreConfig: CoreConfig? = null
+        private set
+
+    /** Whether the maps may use the network now (a first visit's render pack, K20a). */
+    @Volatile
+    var online: () -> Boolean = { false }
+
+    /** The core's first-frame line is written once a process (`vk first frame`, Appendix C). */
+    internal val firstFrameLogged = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Debug and bench builds: a scripted run CI asked for (`atlas.vk.script`), read by the screen that runs it. */
+    @Volatile
+    var script: String? = null
+
+    @Volatile
+    private var packList: PackList? = null
+
+    private var coreStarted = false
+
+    /**
+     * Starts the process's core with [config] on a thread of its own (T8: with the first map screen, behind the crash
+     * guard), once. [off] (the debug switch `atlas.vk.off`, or null) shows T2's honest state instead, as a phone that
+     * cannot run the core does.
+     */
+    fun startCore(config: CoreConfig, off: String? = null) {
+        synchronized(this) {
+            if (coreStarted) return
+            coreStarted = true
+        }
+        coreConfig = config
+        firstLaunch = !File(config.cacheDir, "vk/pipelines.bin").isFile
+        if (off != null) {
+            core = CoreState.Off(off)
+            return
+        }
+        core = CoreState.Starting
+        Thread({
+            val made = MapCore.shared(config)
+            core = when {
+                made != null -> CoreState.Ready(made)
+                // No core's library in this process at all (the JVM's tests): today's map alone, as without a start.
+                !MapCore.present() -> CoreState.Canvas
+                else -> CoreState.Off(MapCore.lastError())
+            }
+        }, "atlas-core-start").apply { isDaemon = true }.start()
+    }
+
+    /** Sets what draws the maps without starting a core (the JVM's tests of the core's states). */
+    internal fun coreStateForTests(s: CoreState) {
+        core = s
+    }
+
+    /** The packs the core draws from: the APK's bundled render packs and the regions' library's (made once). */
+    fun packs(assets: AssetManager): PackList = packList ?: synchronized(this) {
+        packList ?: PackList(AssetPacks(assets), regions?.library, online = { online() }, worker = packWorker).also { packList = it }
+    }
+
+    /**
+     * Reads the packs' list ahead of the first map, off the main thread, so that the home's first look knows where the
+     * core has tiles without reading them itself (the app calls it as it starts the core).
+     */
+    fun warmPacks(assets: AssetManager) {
+        val list = packs(assets)
+        if (!list.loaded) packWorker.execute { runCatching { list.load() } }
+    }
+
+    private val packWorker = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "atlas-core-packs").apply { isDaemon = true } }
+
+    /** The APK's `tiles/` assets, stored uncompressed: read, and mapped by the core where they lie. */
+    private class AssetPacks(private val assets: AssetManager) : PackList.BundledSource {
+        override fun open(name: String): java.io.InputStream? = try {
+            assets.open("tiles/$name")
+        } catch (_: java.io.IOException) {
+            null
+        }
+
+        override fun range(name: String): PackList.Range? = try {
+            val fd = assets.openFd("tiles/$name")
+            PackList.Range(fd.parcelFileDescriptor.fd, fd.startOffset, fd.length, fd)
+        } catch (_: java.io.IOException) {
+            null
+        }
+    }
 
     @Volatile
     private var fonts: SvgFonts? = null
