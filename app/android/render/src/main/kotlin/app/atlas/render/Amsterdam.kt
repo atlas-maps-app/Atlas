@@ -313,8 +313,22 @@ object Amsterdam {
     // render/amsterdam.py:607 lift
     fun lift(cam: Camera, o: Any?): Camera = if (o is Map<*, *> && truthy(o["gy"])) LiftCam(cam, pyNum(o["gy"])) else cam
 
+    /**
+     * Test-only: when set, hears every [face] call's world points, fill and extra attributes before the camera takes them
+     * (the vector engine's stage-T parity, `MT/buildings/StageTParityTest`, plan-vector K10). The app never sets it; unset,
+     * [face] pays one null check and nothing else. Set it only around a render, on the thread that renders.
+     */
+    @JvmField
+    var faceTap: FaceTap? = null
+
+    /** What [faceTap] hears: one [face] call's points, its fill and its extra attributes, as given. */
+    fun interface FaceTap {
+        fun face(q: List<V3>, fill: String, extra: String)
+    }
+
     // render/amsterdam.py:610 face
     fun face(cam: Camera, q: List<V3>, fill: String, extra: String = ""): String {
+        faceTap?.face(q, fill, extra)
         val sp = cam.poly(q, margin = 300.0)
         if (sp == null || area(sp) < 0.12) return ""
         return pf("<path d=\"%s\" fill=\"%s\"%s/>", P(sp), fill, extra)
