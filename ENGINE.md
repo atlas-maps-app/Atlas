@@ -72,7 +72,8 @@ Atlas draws its map with its own engine. This is the one document about it: what
 - **Buildings never melt.** True depth for what stands up, instead of the renderer's painter's order, which the old plan copied on purpose.
 - **The whole world is covered from GitHub.** One pipeline builds street level for every place on Earth, so the phone never builds tiles.
 - **All data is Atlas's own.** OpenMapTiles is gone; Planetiler stays only as a build tool, running Atlas's own profile.
-- **Only the checks below remain.** The old plan's other gates are dropped, along with exactness nobody can see, such as the haze in whole numbers.
+- **Only the checks below remain.** The old plan's other gates are dropped.
+- **No cut changes the result.** A simplification may change how the engine gets there, never what Amsterdam or any rendered place looks like. The engine's references prove it.
 - **Two pieces get simpler.** VK check (never built) becomes VK facts' hash lines. Taps on buildings use a hit test against the tile's own buildings instead of an ID pass.
 - **One agent works through one ordered list,** instead of waves of packages. The engine comes before the rest of the app.
 
@@ -86,7 +87,7 @@ Atlas draws its map with its own engine. This is the one document about it: what
 
 **Where the renderer is wrong, the engine does it right.** The difference is named in the case files (melting buildings is the first), so the yardstick never pulls the engine back to the renderer's issues.
 
-**The engine's own references, from step 1.** These are its frames at fixed views and moments: the boards' views first, then places around the world from step 4. They are stored per engine version, and every finished part is held to them.
+**The engine's own references, from step 1.** These are its frames at fixed views and moments: the boards' views first, then places around the world from step 4. They are stored per engine version, and every finished part is held to them. Every simplification is proven against them: Amsterdam and every other rendered place must turn out the same.
 
 **Always:**
 5. **CI:**
@@ -123,8 +124,9 @@ Nothing is finished. Each part below is a first version on `app` (at `10c4529`, 
 - `wip/buildings-registration`: the buildings' registration line. The rows of `registry_vk_test` still need shifting ("a kind 0" becomes "a kind 1").
 - `wip/app-map`: three commits: `AtlasMap`, the app starting the core, and the map phase of `smoke.sh`.
 - `wip/text-registration`: the text passes' registration. It needs `build_pack` and the providers.
+- `wip/exact-haze`: haze and vignette in whole numbers, equal to the twin. Run host-debug, host-tsan and the oracle comparison before merging.
 
-The other local branches (`wip/exact-haze` among them, no longer needed) and the worktrees under `/Volumes/Download/atlas` are history.
+The other local branches and the worktrees under `/Volumes/Download/atlas` are history.
 
 ## What is left, in order
 
@@ -163,7 +165,9 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - the `CLOSEST` roof mapping;
   - gable triangles in the wall's material, with their 0.25 px edges;
   - the roofs' edge strokes through `ObjectStrokes`.
+- **The exact haze:** merge `wip/exact-haze`.
 - **Labels** are drawn by the core's frame instead of the Compose canvas, with the fonts loaded at the map's start.
+- **All of Amsterdam from the core:** `PackList.kt`, then the first publish of the `amsterdam` and `grachten` render packs after the owner's yes (a `packs.yml` run with `renders=only`).
 - **The style file:** the tiles' style section becomes the engine's own, edited as data. Every pass reads its colours and widths from it, before step 3 adds more.
 - **VK facts and VK bench on the device:**
   - VK facts prints the hashes of the twin, pymath and the noise fields, to compare with CI's;
@@ -191,6 +195,7 @@ In this order, each held by L1 at the boards' views and by the engine's own refe
   - trees with their clumps;
   - lamps, benches, racks, baskets, bollards, railings and sett marks;
   - towers, turbines turned to the wind, cranes, masts, gantries, conveyors, coasters and power lines;
+  - woods: the renderer's lattice at Efteling and ARTIS, anchored to the world;
   - the overlays: rails, big roads, runways with their designators, taxiways, marine lines and park edges.
 - **Water:** quays, reflections, sun glitter, drizzle rings, night streaks and houseboat cabins.
 - **Effects:**
@@ -203,11 +208,13 @@ In this order, each held by L1 at the boards' views and by the engine's own refe
   - `mat` and ripple on their surfaces, rescaled with the zoom so their density on screen stays the same;
   - cloud shadows moving with the ground.
 - **Night:** lamp pools, lit streets, wet cores, the glows of open places, lit shops and windows, and the city glow.
+- **The renderer's other ten regions** get their render packs as their features land, each with its own profile.
 - Tag an alpha after the water and another after the night. By then the Westerkerk home is within about 2.5 levels of its render, apart from the renderer's named issues.
 
 ### 4. The world (about 55 h)
 - **Street level for the whole world:**
   - render packs from every Geofabrik extract, built on GitHub in windows, so a building on a window's edge is drawn once;
+  - inside the renderer's regions, each region's own profile, so Amsterdam and the others draw exactly as from their own packs (a check compares the frames);
   - sharded to fit free runners, and rebuilt monthly;
   - the phone reads what it shows by ranges and keeps it, and whole regions download for offline use.
 - **Levels:**
