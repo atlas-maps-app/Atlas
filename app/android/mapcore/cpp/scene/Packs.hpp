@@ -98,6 +98,8 @@ public:
     void set_published(std::function<void()> callback);
     /// Waits until no pack is asked for or under way (tests).
     void wait_idle();
+    /// Stops the stage's thread for good (the world's end: every thread stops before what they share goes).
+    void stop();
 
 private:
     void work(const std::stop_token& stop);

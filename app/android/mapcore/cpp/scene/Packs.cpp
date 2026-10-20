@@ -37,6 +37,8 @@ PackStage::PackStage(const tiles::Store& store, std::span<const std::unique_ptr<
 
 PackStage::~PackStage() = default; // the thread stops first (the last member)
 
+void PackStage::stop() { thread_ = {}; }
+
 void PackStage::want(const std::shared_ptr<const tiles::StorePack>& pack) {
     if (!pack || !pack->pack.is_render() || pack->pack.head() == nullptr) return;
     {

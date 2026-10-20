@@ -71,9 +71,7 @@ Residency::Residency(const tiles::Store& store, Heaps& heaps, std::span<const st
 }
 
 Residency::~Residency() {
-    for (std::jthread& w : workers_) w.request_stop();
-    wake_.notify_all();
-    workers_.clear(); // joins: no worker touches the members below after this
+    stop(); // no worker touches the members below after this
     // What was published and never taken goes back to the heaps (the GPU never saw it).
     for (const std::shared_ptr<ResidentTile>& t : published_) {
         each_range(*t, [this](const HeapRange& r) { heaps_.retire(r, 0); });
@@ -81,6 +79,12 @@ Residency::~Residency() {
     for (const std::shared_ptr<const ResidentTile>& t : resident_) {
         each_range(*t, [this](const HeapRange& r) { heaps_.retire(r, 0); });
     }
+}
+
+void Residency::stop() {
+    for (std::jthread& w : workers_) w.request_stop();
+    wake_.notify_all();
+    workers_.clear(); // joins
 }
 
 void Residency::want(std::span<const Request> requests) {

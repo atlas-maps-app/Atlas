@@ -206,6 +206,8 @@ public:
     /// Waits until no request is queued or under way (tests).
     void wait_idle();
     [[nodiscard]] ResidencyStats stats() const;
+    /// Stops the workers for good (the world's end: every thread stops before what they share goes).
+    void stop();
 
 private:
     struct Job {

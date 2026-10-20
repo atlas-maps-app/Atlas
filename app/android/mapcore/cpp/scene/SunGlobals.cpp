@@ -49,7 +49,9 @@ SunGlobals::SunGlobals(const gpu::Device& device, const tiles::Store& store, con
     thread_ = std::jthread([this](const std::stop_token& stop) { work(stop); });
 }
 
-SunGlobals::~SunGlobals() {
+SunGlobals::~SunGlobals() { stop(); }
+
+void SunGlobals::stop() {
     thread_ = {};                            // the builder stops first: it asks the workers
     for (Lane& l : lanes_) l.worker.reset(); // then the workers, which publish into the bits
 }

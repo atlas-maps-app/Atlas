@@ -106,6 +106,8 @@ public:
     [[nodiscard]] std::size_t capacity() const noexcept { return capacity_; }
     /// Waits until the scenes asked for are built and their buckets run (tests).
     void wait_idle();
+    /// Stops the builder and the workers for good (the world's end: every thread stops before what they share goes).
+    void stop();
     /// The active pack's lane's (scenes and runs: both lanes').
     [[nodiscard]] SunStats stats() const;
 

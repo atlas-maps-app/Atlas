@@ -62,9 +62,14 @@ World::create(const gpu::Device& device, std::span<const std::unique_ptr<frame::
 }
 
 World::~World() {
-    pack_stage_.reset(); // the packs' thread stops first
-    sun_.reset();        // then the sun's
-    residency_.reset();  // then the residency's workers, before the heaps and the store go
+    // Every thread stops before anything they share goes (the packs' shared pointers among them): the packs' thread,
+    // the sun's, then the residency's workers; then their data, the residency's before the heaps and the store.
+    if (pack_stage_) pack_stage_->stop();
+    if (sun_) sun_->stop();
+    if (residency_) residency_->stop();
+    pack_stage_.reset();
+    sun_.reset();
+    residency_.reset();
 }
 
 const ResidentPack* World::built(const std::shared_ptr<const tiles::StorePack>& pack) const noexcept {
