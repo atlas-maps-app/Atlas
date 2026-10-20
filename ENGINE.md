@@ -131,24 +131,19 @@ Nothing is finished. Each part below is a first version on `app`. It gets rework
 | Vulkan device layer | VK facts, the crash guard, frame configurations, both frame routes, the pipeline cache and the SurfaceView host; the VK facts and VK bench screens, measured on the user's phone |
 | Data | render tiles, the packer's `render-tiles` and the core's reader (fuzzed); the Westerkerk and the canal ring bundled; render packs that build for `amsterdam` and `grachten` |
 | Numerics and style | pymath; the light, the theme and `ScreenLayers`; the rule table, which lists every line of the renderer that draws |
-| Frame core | camera, ladder, cover, residency, heaps, ranks and pass registry; the composite (haze, vignette, `mat`'s rule, grain); the twin and L1; the coarser pack around the active one |
+| Frame core | camera, ladder, cover, residency, heaps, ranks and pass registry; the composite (haze, vignette, `mat`'s rule, grain); the twin and L1; the coarser pack around the active one, chosen as the smallest pack that holds it; the packs' own stage T (`Pass::build_pack`) |
 | Sun | the sun test on the workers, equal to the port on every sample of 21 board renders |
 | Ground and water | drawn and registered; L1 matched in all 11 cases |
-| Buildings, first half | walls, parts, flat and gabled roofs and houseboats, with sun bits and edges, at their true depth (a pair the renderer melts is drawn right; the switch draws the renderer's order); held to the port's polygons and on lavapipe to a depth raster of the twin; not registered yet |
-| Text | shaping, glyphs, canal names, and the board's labels placed; not registered yet |
+| Buildings, first half | walls, parts, flat and gabled roofs and houseboats, with sun bits and edges, at their true depth (a pair the renderer melts is drawn right; the switch draws the renderer's order); held to the port's polygons and on lavapipe to a depth raster of the twin; registered |
+| Text | shaping, glyphs, canal names (read from the whole pack), and the board's labels placed; registered, the fonts from the map's resources |
 | Noise fields, thin strokes | WebKit's turbulence byte for byte (scalar and NEON); `ObjectStrokes` |
 | Frosted glass | drawn by the core under the chrome |
 | Likeness harness | references from the port, candidates from the host build |
-| The app | the façade drives the core's map, but the home still shows today's map (the port on Canvas) until step 1 |
+| The app | the core draws the maps where it has tiles, under today's map and the overlays, cross-fading to today's map (the port on Canvas) elsewhere; the honest state where the phone cannot draw (three device losses included); the painter switch on VK facts in debug builds |
 
-**Pending work, not on `app`**, one local branch each:
-- `wip/build-pack`: the pack-level stage T (`Pass::build_pack`). It builds, but has no test.
-- `wip/buildings-registration`: the buildings' registration line. The rows of `registry_vk_test` still need shifting ("a kind 0" becomes "a kind 1").
-- `wip/app-map`: three commits: `AtlasMap`, the app starting the core, and the map phase of `smoke.sh`.
-- `wip/text-registration`: the text passes' registration. It needs `build_pack` and the providers.
-- `wip/exact-haze`: haze and vignette in whole numbers, equal to the twin. Run host-debug, host-tsan and the oracle comparison before merging.
+**Pending work, not on `app`:** `wip/exact-haze`, the haze and vignette in whole numbers, equal to the twin (step 2). Run host-debug, host-tsan and the oracle comparison before merging.
 
-The other local branches are history. The old builders' worktrees went to the Trash on 20 October 2026; their work is on `app` or these branches.
+The other local branches are history; `wip/build-pack`, `wip/buildings-registration`, `wip/app-map` and `wip/text-registration` landed on 20 October 2026. The old builders' worktrees went to the Trash on 20 October 2026; their work is on `app` or these branches.
 
 ## What the deep dive found (20 October)
 
@@ -171,18 +166,10 @@ The engine builds on them: step 3's "the core asks, the app fetches" has its fet
 The engine is done first: it is the app's centerpiece, and the rest of the app builds on it.
 
 ### 1. The new map on the phone
-- **True depth** is built (the design's point 6); its switch reaches the app with the app's map below.
-- **Land the pending branches.** Write `build_pack`'s test, then register the buildings and the text passes:
-  - `build_pack` feeds `text::pack_canals` and `GroundText::use_pack`;
-  - the providers feed `GlyphGlobals` and `SpriteGlobals`;
-  - the font source becomes an option.
-
-  Then merge `wip/app-map` into the app's one persistent map at its root, so the core draws into each screen's map area.
-- Wire `World::set_coarser` from `PackList` and `MapFrame`, so the canal ring is drawn around the Westerkerk.
+- Done: true depth, the pending branches (the packs' stage T, the buildings and the text registered, the app's map), the canal ring around the Westerkerk, and the honest state after three device losses.
 - Give the canal pack its sun bits: the world runs no sun bucket for it yet.
 - Give `core.yml`'s host jobs the bundled render packs (`ATLAS_TILES_DIR`), so the pack tests run on CI instead of skipping.
 - Turn on the ground's `mat` (`ATLAS_GROUND_MAT`).
-- Show the honest "can't draw the map" state after three device losses in a row.
 - **The desktop render tool:** the host build draws any view and moment to a PNG.
 - **The engine's own references begin:** the boards' views and moments, stored per engine version.
 - The core draws where it has tiles. Today's map (the renderer's Kotlin port drawing on Canvas) stays everywhere else until the end of step 3.

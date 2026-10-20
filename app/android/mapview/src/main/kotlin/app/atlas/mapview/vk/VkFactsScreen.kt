@@ -40,6 +40,7 @@ import app.atlas.mapcore.Native
 import app.atlas.mapview.DeviceFacts
 import app.atlas.mapview.EngineFrames
 import app.atlas.mapview.GlCaps
+import app.atlas.mapview.MapEngine
 import app.atlas.mapview.TextRounding
 import app.atlas.mapview.VkFactsLines
 import kotlinx.coroutines.Dispatchers
@@ -144,6 +145,13 @@ fun VkFactsScreen(config: CoreConfig, modifier: Modifier = Modifier, guardReset:
                 Button("Copy") { copy(context, "Atlas VK facts", report.joinToString("\n")) }
                 Button("Share") { share(context, "Atlas: VK facts", report.joinToString("\n")) }
                 if (guardReset) {
+                    // The painter switch: the buildings in the renderer's painter's order, to compare with true depth.
+                    var painter by remember { mutableStateOf(MapEngine.painter) }
+                    Button(if (painter) "Buildings: renderer's order" else "Buildings: true depth") {
+                        painter = !painter
+                        val on = painter
+                        scope.launch(Dispatchers.Default) { MapEngine.painterOrder(on) }
+                    }
                     Button("Reset guard") {
                         scope.launch {
                             // The reset closes the process's core first: this screen lets go of it (and of its small

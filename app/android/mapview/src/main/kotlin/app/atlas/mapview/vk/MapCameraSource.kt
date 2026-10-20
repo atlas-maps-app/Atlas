@@ -25,6 +25,8 @@ import kotlin.math.ln
 internal class MapCameraSource(
     /** Told on the render thread when a frame was presented, complete or not; it must allocate nothing. */
     private val onPresented: Presented = Presented { _, _, _ -> },
+    /** Told on the render thread, once, when the core turned the map off for the session, with why. */
+    private val onOff: (String) -> Unit = {},
 ) : FrameSource {
     /** A frame presented: its number, whether its picture was complete, and the publication it drew (no boxing). */
     fun interface Presented {
@@ -136,6 +138,8 @@ internal class MapCameraSource(
         lastPresentedRevision = drawnRevision
         onPresented.presented(frame, complete, lastPresentedRevision)
     }
+
+    override fun off(reason: String) = onOff(reason)
 
     companion object {
         /** How far past an animation's second sample the camera may still be carried, beyond one frame of it. */

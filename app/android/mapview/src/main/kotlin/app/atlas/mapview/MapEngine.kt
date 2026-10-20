@@ -83,6 +83,22 @@ object MapEngine {
     @Volatile
     var host: VkHost = VkHost.SURFACE
 
+    /**
+     * The painter switch (debug and bench builds: VK facts' "Buildings" button): what stands up is drawn in the
+     * renderer's painter's order (whole buildings by one point each, which makes some melt into each other) instead of
+     * the core's true depth, to compare the two. Each map binding hands it to the core; [painterOrder] hands it to the
+     * core at once.
+     */
+    @Volatile
+    var painter: Boolean = false
+        private set
+
+    /** Sets the painter switch, and hands it to the running core (off the main thread). */
+    fun painterOrder(on: Boolean) {
+        painter = on
+        (core as? CoreState.Ready)?.core?.painterOrder(on)
+    }
+
     /** When the app's first screen began (SystemClock.uptimeMillis): the core's first-frame line counts from it. */
     @Volatile
     var startedAt: Long = 0

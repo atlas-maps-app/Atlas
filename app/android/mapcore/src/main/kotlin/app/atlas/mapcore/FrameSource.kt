@@ -16,4 +16,10 @@ interface FrameSource {
 
     /** Frame [frame] was presented at [nanos] (CLOCK_MONOTONIC); post elsewhere to act on it. */
     fun presented(frame: Long, nanos: Long, complete: Boolean)
+
+    /**
+     * The core turned the map off for this session ([reason]: the device lost three times in a row, or not made again
+     * after a loss), once; no frame follows. Post elsewhere to act on it.
+     */
+    fun off(reason: String) {}
 }

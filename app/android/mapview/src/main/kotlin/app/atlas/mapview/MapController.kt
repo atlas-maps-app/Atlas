@@ -221,6 +221,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     /** The core said something new of its frames (a picture complete, or no longer): the map looks again. */
     private val coreChanged = Runnable {
         if (closed) return@Runnable
+        // The core turned the map off for the session (the device lost three times): T2's honest state from now on.
+        core?.offReason?.let { if (coreRefused == null) coreRefused = "the core turned the map off: $it" }
         frameTick.intValue++
         logFirstFrame()
         stepTransition()

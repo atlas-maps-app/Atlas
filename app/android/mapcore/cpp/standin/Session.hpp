@@ -208,6 +208,9 @@ public:
     [[nodiscard]] const gpu::Output* output() const noexcept { return output_.get(); }
     /// Whether the guard's colour stage is open (VK bench's 10-bit work may reach the driver).
     [[nodiscard]] bool colour_open() const noexcept { return colour_cache_ != nullptr; }
+    /// Why the map is off for this session (three devices lost, or one not made again after its loss); "" while it
+    /// is on.
+    [[nodiscard]] const std::string& off_reason() const noexcept { return session_off_; }
     /// The tests' device loss: what a frame does when the device is lost.
     void lose_device() { device_lost(); }
 

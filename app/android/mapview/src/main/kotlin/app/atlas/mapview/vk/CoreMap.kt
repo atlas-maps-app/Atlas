@@ -10,6 +10,7 @@ import app.atlas.mapcore.FrameRecords
 import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.mapview.EngineFrames
+import app.atlas.mapview.MapEngine
 import app.atlas.render.live.Moment
 import java.time.ZoneId
 import java.util.Locale
@@ -57,16 +58,27 @@ internal class CoreMap(
 
     private val main = Handler(Looper.getMainLooper())
 
+    /** Why the core turned the map off for the session (the device lost three times in a row), or null while it is on. */
+    @Volatile
+    var offReason: String? = null
+        private set
+
     /** The render thread's upcalls: the camera at each vsync, and each frame presented (allocation-free). */
-    val source = MapCameraSource { _, done, revision ->
-        val was = complete
-        complete = done
-        if (done) {
-            completeRevision = revision
-            if (firstCompleteAt < 0) firstCompleteAt = SystemClock.uptimeMillis()
-        }
-        if (done != was) main.post(onChange)
-    }
+    val source = MapCameraSource(
+        { _, done, revision ->
+            val was = complete
+            complete = done
+            if (done) {
+                completeRevision = revision
+                if (firstCompleteAt < 0) firstCompleteAt = SystemClock.uptimeMillis()
+            }
+            if (done != was) main.post(onChange)
+        },
+        onOff = { reason ->
+            offReason = reason
+            main.post(onChange)
+        },
+    )
 
     private val theme = ThemeBlock.allocate()
     private var lastMoment: Moment? = null
@@ -93,6 +105,7 @@ internal class CoreMap(
         val on = synchronized(switch) {
             if (gone) return ""
             owner = this
+            core.painterOrder(MapEngine.painter)
             core.map(true, texture)
         }
         val packs = said.lines().filter { it.isNotBlank() }.joinToString(", ")

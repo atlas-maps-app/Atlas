@@ -302,6 +302,9 @@ public:
         jclass cls = env->GetObjectClass(source);
         jmethodID camera_mid = env->GetMethodID(cls, "camera", "(JLjava/nio/ByteBuffer;)Z");
         jmethodID presented_mid = env->GetMethodID(cls, "presented", "(JJZ)V");
+        // Optional: told once when the core turns the map off for the session (FrameSource.off's default does nothing).
+        jmethodID off_mid = env->GetMethodID(cls, "off", "(Ljava/lang/String;)V");
+        if (off_mid == nullptr) env->ExceptionClear();
         env->DeleteLocalRef(cls);
         if (camera_mid == nullptr || presented_mid == nullptr) {
             env->ExceptionClear();
@@ -329,6 +332,8 @@ public:
             camera_bytes_ = camera_bytes;
             camera_mid_ = camera_mid;
             presented_mid_ = presented_mid;
+            off_mid_ = off_mid;
+            off_told_ = false;
             if (!hint_.active()) {
                 (void)hint_.open(loop_->tid(), 16'666'667);
                 session_->set_hint(hint_.describe());
@@ -494,6 +499,14 @@ private:
     void draw(const style::CameraState& camera, const platform::Vsync& v) {
         const platform::TraceSection trace("atlas frame");
         const standin::Drawn d = session_->draw(camera, {.vsync_ns = v.frame_ns, .present_ns = v.present_ns});
+        if (!off_told_ && off_mid_ != nullptr && !session_->off_reason().empty()) {
+            // The map is off for this session (the device lost three times): the app shows its honest state.
+            off_told_ = true;
+            jstring why = render_env_->NewStringUTF(session_->off_reason().c_str());
+            render_env_->CallVoidMethod(source_, off_mid_, why);
+            if (render_env_->ExceptionCheck() == JNI_TRUE) render_env_->ExceptionClear();
+            render_env_->DeleteLocalRef(why);
+        }
         if (d.rebuilt) {
             requested_ = true; // the device was lost and rebuilt: draw again
             return;
@@ -520,6 +533,8 @@ private:
     const std::byte* camera_bytes_ = nullptr;
     jmethodID camera_mid_ = nullptr;
     jmethodID presented_mid_ = nullptr;
+    jmethodID off_mid_ = nullptr; // FrameSource.off, or null
+    bool off_told_ = false;
     bool requested_ = false;
     bool camera_warned_ = false;
     bool woken_ = false;               // the map's world published a tile since the last vsync
