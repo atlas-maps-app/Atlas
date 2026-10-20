@@ -276,3 +276,119 @@ TEST_CASE("the canal names drawn: the glyphs' pixels are the CPU's coverage, on 
     CHECK(messages.empty());
 }
 #endif
+
+#if !defined(__ANDROID__)
+TEST_CASE("the names from the pack whole: at the Main board the pass's names are the renders' rule over the pack's") {
+    const std::string dir = test::environment("ATLAS_TILES_DIR");
+    const std::filesystem::path grachten = std::filesystem::path(dir) / "grachten.atlas";
+    if (dir.empty() || !std::filesystem::exists(grachten)) {
+        MESSAGE("ATLAS_TILES_DIR names no canal ring's pack: the Main board's names are not checked here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    const gpu::Device& device = *session->device;
+    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const std::array<std::string_view, 1> composite{"composite"};
+    std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes(composite);
+    auto owned = std::make_unique<passes::GroundText>();
+    passes::GroundText* text = owned.get();
+    passes.push_back(std::move(owned));
+    auto builder = frame::FrameBuilder::create(device, *cache, std::move(passes), {.clear = clear, .steps = 0});
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    double now = 0;
+    auto world = scene::World::create(device, (*builder)->passes(),
+                                      {.workers = 3, .sun = {.enabled = false}, .clock = [&now] { return now; }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    auto added = w.store().add({.id = "grachten", .kind = tiles::PackKind::bundled, .path = grachten.string()});
+    ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+    // The Main board's knot as the map's camera writes it (EngineVersion.knotView), 412 x 916 at density 1, at rest.
+    auto pack = test::open_pack(grachten.string());
+    ATLAS_REQUIRE(pack.has_value());
+    const auto knot = pack->head()->view("grachten_home");
+    ATLAS_REQUIRE(knot.has_value());
+    const tiles::Frame& f = pack->head()->frame;
+    const auto number = [&](std::string_view key, double fallback) {
+        const auto v = knot->camera.find(key);
+        return v ? v->number().value_or(fallback) : fallback;
+    };
+    const auto target = knot->camera.find("target");
+    ATLAS_REQUIRE(target.has_value() && target->size() == 3);
+    const double tx = target->child(0).number().value_or(0);
+    const double tz = target->child(2).number().value_or(0);
+    style::CameraState c{};
+    c.version = style::camera_state_version;
+    c.latitude = f.lat0 - (tz / f.kz);
+    c.longitude = f.lon0 + (tx / f.kx);
+    c.bearing = view::bearing_of(number("yaw", 0));
+    c.pitch = 90.0 - number("pitch", 90);
+    c.distance = number("dist", 400);
+    c.principal_x = 206.0;
+    c.principal_y = number("cy", 458.0);
+    c.density = 1.0;
+    c.width_px = 412;
+    c.height_px = 916;
+    c.width_dp = 412;
+    c.height_dp = 916;
+    c.flags = style::camera_flag::rest | style::camera_flag::engine_mode;
+    (*builder)->set_inputs({.camera = c, .seconds = now, .scene = &w});
+    for (std::uint64_t n = 1; n <= 60; ++n) {
+        now = static_cast<double>(n) * 0.016;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+        w.residency().wait_idle();
+        if (w.cover() != nullptr && !w.cover()->tiles().empty() && w.cover()->missing() == 0) break;
+    }
+    twin::Stream stream;
+    now += 1.0;
+    (*builder)->set_inputs({.camera = c, .seconds = now, .scene = &w});
+    (*builder)->emit(stream, 100);
+    const frame::FrameState& state = (*builder)->state();
+    ATLAS_REQUIRE(state.view.has_value() && state.placed.has_value());
+    const double radius = state.placed.has_value() ? state.placed->number("radius").value_or(1e9) : 1e9;
+    std::vector<std::string> from_cover;
+    for (const auto& p : text->names()) {
+        if (!p.leaving) from_cover.push_back(p.rule.svg());
+    }
+    // The renders' rule over the pack's names whole, at the frame's own camera and radius.
+    auto canals = text::pack_canals(*pack);
+    ATLAS_REQUIRE(canals.has_value());
+    const view::Camera& cam = state.view->camera();
+    const text::CanalView view{.camera = &cam,
+                               .target_x = cam.spec().target.x,
+                               .target_z = cam.spec().target.z,
+                               .radius = radius,
+                               .pitch = cam.spec().pitch,
+                               .night = false,
+                               .weather = false,
+                               .water_level = canals->water_level,
+                               .rest = true,
+                               .seconds = now};
+    std::vector<std::string> rule;
+    for (const text::RuleName& r : text::canal_rule(canals->candidates, view)) rule.push_back(r.run.svg());
+    // The pass reading the pack whole draws the rule's names.
+    text->use_pack(std::make_shared<const text::PackCanals>(std::move(*canals)));
+    now += 1.0;
+    (*builder)->set_inputs({.camera = c, .seconds = now, .scene = &w});
+    (*builder)->emit(stream, 101);
+    std::vector<std::string> from_pack;
+    std::size_t leaving = 0;
+    for (const auto& p : text->names()) {
+        if (p.leaving) {
+            ++leaving; // the way a name left as the pack's names came, fading out
+        } else {
+            from_pack.push_back(p.rule.svg());
+        }
+    }
+    std::size_t differ = 0;
+    for (const std::string& s : from_cover) differ += std::ranges::find(rule, s) == rule.end() ? 1U : 0U;
+    MESSAGE(
+        std::format("the Main board: the rule draws {} names over the pack; from the cover's {} tiles the pass drew "
+                    "{}, {} of them not the rule's; from the pack whole {}, and {} way(s) the names left fade out",
+                    rule.size(), w.cover()->tiles().size(), from_cover.size(), differ, from_pack.size(), leaving));
+    CHECK(from_pack == rule);
+    CHECK(rule.size() > 50);
+}
+#endif

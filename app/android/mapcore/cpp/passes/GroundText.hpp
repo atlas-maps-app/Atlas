@@ -26,6 +26,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -69,6 +70,11 @@ public:
     /// vertex stage draws it: printed at rest; its opacity times its fade), in the ground layer at the pass's slot.
     void emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const override;
 
+    /// The active pack's canal names whole (the pack-level stage T's: text::pack_canals), which the renders' rule reads
+    /// in place of the cover's tiles' (a name's first way may lie in a tile the cover does not draw); null: the
+    /// cover's tiles again.
+    void use_pack(std::shared_ptr<const text::PackCanals> canals) noexcept { pack_ = std::move(canals); }
+
     // ---- For tests and logs.
 
     /// The names of the last frame, as text/CanalNames placed them.
@@ -96,6 +102,8 @@ private:
     text::CanalNames names_;
     std::vector<text::PlacedName> placed_;
     std::vector<std::uint32_t> tiles_; // the cover's tiles the candidates came from (keys and handles), sorted
+    std::shared_ptr<const text::PackCanals> pack_;      // the active pack's names whole (use_pack)
+    std::shared_ptr<const text::PackCanals> pack_read_; // the pack data the names last read (held)
     double water_level_ = -1.5;
     std::unordered_map<std::string, Shaped> shaped_;
     std::vector<layouts::text_slug::GlyphDraw> draws_;

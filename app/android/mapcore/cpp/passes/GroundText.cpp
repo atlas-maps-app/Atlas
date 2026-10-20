@@ -69,6 +69,17 @@ std::uint32_t GroundText::ground_slots(const frame::FrameState& state) const {
 }
 
 void GroundText::gather(const frame::FrameState& state) {
+    if (pack_) {
+        // The pack's names whole: read again only when the pack's data change.
+        if (pack_ != pack_read_) {
+            pack_read_ = pack_;
+            tiles_.clear();
+            water_level_ = pack_->water_level;
+            names_.set_candidates(pack_->candidates);
+        }
+        return;
+    }
+    pack_read_.reset();
     const std::uint32_t me = index_.load(std::memory_order_relaxed);
     std::vector<std::pair<std::uint64_t, std::uint32_t>> tiles; // the tiles holding candidates: key, handle
     if (state.cover != nullptr && me != none) {
