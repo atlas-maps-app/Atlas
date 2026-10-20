@@ -44,7 +44,7 @@ import app.atlas.BuildConfig
 import app.atlas.R
 import app.atlas.geo.LatLon
 import app.atlas.geo.Sun
-import app.atlas.mapview.AtlasMap
+import app.atlas.mapview.StageMap
 import app.atlas.mapview.HomeView
 import app.atlas.mapview.MapHit
 import app.atlas.mapview.MapLayer
@@ -172,8 +172,7 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
       val screenHeight = maxHeight
       // The map and its wash are what the frosted pills, the control column and the tab bar blur behind them.
-      Box(Modifier.fillMaxSize().backdropSource(LocalBackdrop.current)) {
-        AtlasMap(
+        StageMap(
             state = vm.map,
             tiles = tiles,
             modifier = Modifier.fillMaxSize(),
@@ -193,16 +192,17 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
             // Debug and bench builds show each exact frame's timings, so a phone can be read without logcat.
             debug = BuildConfig.TIMINGS,
             labelTypeface = labelFace,
+            hostModifier = Modifier.backdropSource(LocalBackdrop.current),
+            above = {
+                // The board's wash over the top 170 dp, so the pills read over the far, busy part of the view.
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(170.dp)
+                        .background(scrim(if (mapNight) NIGHT_PAPER else look.scrim)),
+                )
+            },
         )
-
-        // The board's wash over the top 170 dp, so the pills read over the far, busy part of the view.
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(170.dp)
-                .background(scrim(if (mapNight) NIGHT_PAPER else look.scrim)),
-        )
-      }
 
         // Top left: the weather and offline state, what is coming up, the quick needs.
         Column(Modifier.padding(start = 16.dp, top = top).keepsLabelsOff("top")) {

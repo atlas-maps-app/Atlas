@@ -105,10 +105,10 @@ fun SailView(show: NavShow, actions: NavActions) {
             val low = show.vehicle.airDraftM?.let { it > c } == true
             Marker("bridge$i", b.location, "maki-bridge", if (low) 0xFFD2232A else 0xFF3B4A5C, MarkerStyle.CHIP, value = GoFormat.size(c, show.units), priority = 50)
         }
-        Box(Modifier.fillMaxSize().background(Color(0xFFE4F2F9))) {
+        Box(Modifier.fillMaxSize()) {
             GuidanceMap(
                 v, Modifier.fillMaxSize(), theme = Theme.CHART, routeColour = 0xFFC2185B, dashed = true, zoom = 16.4, pitch = 40.0,
-                padding = PaddingValues(top = 260.dp, bottom = 200.dp), markers = markers,
+                padding = PaddingValues(top = 260.dp, bottom = 200.dp), markers = markers, background = Color(0xFFE4F2F9),
             )
             BoardPlane(dy = statusShift(44f)) {
                 val course = s?.routeBearing ?: v.route.line.bearingAt(0.0)

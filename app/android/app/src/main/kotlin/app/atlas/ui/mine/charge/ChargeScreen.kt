@@ -55,7 +55,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
-import app.atlas.mapview.AtlasMap
+import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapHit
 import app.atlas.mapview.MapOverlays
@@ -155,9 +155,9 @@ fun ChargeScreen(args: Dest.Charge, nav: Navigator) {
             )
         }
     }
-    Box(Modifier.fillMaxSize().background(Color(0xFFF4F1EA))) {
-        AtlasMap(
-            state = map, tiles = tiles, modifier = Modifier.fillMaxSize(),
+    Box(Modifier.fillMaxSize()) {
+        StageMap(
+            state = map, tiles = tiles, modifier = Modifier.fillMaxSize(), background = Color(0xFFF4F1EA),
             overlays = MapOverlays(markers = markers, location = fix?.let { UserLocation(it.location, it.accuracy, it.bearing, it.speed) }),
             contentPadding = PaddingValues(top = 200.dp, bottom = 380.dp),
             onTap = { hit -> if (hit is MapHit.OnMarker) selected = hit.marker.id else if (hit is MapHit.Empty) selected = null },

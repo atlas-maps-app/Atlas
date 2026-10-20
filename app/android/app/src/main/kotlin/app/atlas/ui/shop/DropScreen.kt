@@ -47,7 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
-import app.atlas.mapview.AtlasMap
+import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapOverlays
 import app.atlas.mapview.MapState
@@ -92,7 +92,7 @@ fun DropScreen(stream: String?, nav: Navigator) {
     val map = remember { MapState(CameraPosition(here, 16.4, 0.0, 45.0)) }
     val colour = Color(sel.colour)
 
-    Box(Modifier.fillMaxSize().background(Color(0xFFEFE9DE))) {
+    Box(Modifier.fillMaxSize()) {
         val markers = buildList {
             streetOnes.take(12).forEachIndexed { i, t ->
                 add(Marker("d${t.key}", t.place.location, StreamArts.getValue(sel).symbol, sel.colour or 0xFF000000, if (i == 0) MarkerStyle.PIN else MarkerStyle.DOT, priority = 100 - i, selected = i == 0))
@@ -101,8 +101,8 @@ fun DropScreen(stream: String?, nav: Navigator) {
                 add(Marker("t${t.key}", t.place.location, "bin.trash", Stream.RUBBISH.colour or 0xFF000000, MarkerStyle.DOT, priority = 10))
             }
         }
-        AtlasMap(
-            state = map, tiles = tiles, modifier = Modifier.fillMaxSize(),
+        StageMap(
+            state = map, tiles = tiles, modifier = Modifier.fillMaxSize(), background = Color(0xFFEFE9DE),
             overlays = MapOverlays(markers = markers, location = (fix?.let { UserLocation(it.location, it.accuracy, it.bearing, it.speed) } ?: UserLocation(here, 10.0))),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 120.dp, bottom = 360.dp),
         )

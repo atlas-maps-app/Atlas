@@ -30,7 +30,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
-import app.atlas.mapview.AtlasMap
+import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapHit
 import app.atlas.mapview.MapOverlays
@@ -72,11 +72,12 @@ internal fun OnTheMap(
         snapshotFlow { map.visibleBounds }.first { it != null }
         BBox.of(fit + here)?.let { b -> runCatching { map.fit(b.buffer(60.0), 36) } }
     }
-    BoxWithConstraints(Modifier.fillMaxSize().background(c.paper)) {
-        AtlasMap(
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        StageMap(
             state = map,
             tiles = tiles,
             modifier = Modifier.fillMaxSize(),
+            background = c.paper,
             overlays = MapOverlays(markers = markers, location = UserLocation(here, 15.0), measure = false),
             contentPadding = PaddingValues(top = 84.dp, bottom = maxHeight * HALF),
             onTap = { hit ->

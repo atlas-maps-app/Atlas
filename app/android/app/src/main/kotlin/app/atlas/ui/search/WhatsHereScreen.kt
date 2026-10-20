@@ -55,7 +55,7 @@ import app.atlas.Services
 import app.atlas.geo.CoordinateFormat
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
-import app.atlas.mapview.AtlasMap
+import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapOverlays
 import app.atlas.mapview.MapState
@@ -164,11 +164,12 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
     val title = facts?.address?.line ?: facts?.spot?.let { Localise.name(it.tags, lang) } ?: CoordinateFormat.decimal(p)
     val shareLabel = stringResource(R.string.place_share)
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(c.paper)) {
-        AtlasMap(
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        StageMap(
             state = map,
             tiles = tiles,
             modifier = Modifier.fillMaxSize(),
+            background = c.paper,
             overlays = MapOverlays(
                 markers = listOf(Marker("here", p, "ui-map-pin", 0xFFD23C3C, MarkerStyle.PIN, selected = true, priority = 1_000)),
                 location = UserLocation(here, 15.0),

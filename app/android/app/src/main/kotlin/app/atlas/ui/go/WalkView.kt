@@ -66,9 +66,9 @@ fun WalkView(show: NavShow, actions: NavActions) {
     AtlasTheme(dark = false) {
         val v = show.view
         var turns by rememberSaveable { mutableStateOf(false) }
-        Box(Modifier.fillMaxSize().background(Color(0xFFEFE5DA))) {
+        Box(Modifier.fillMaxSize()) {
             GuidanceMap(
-                v, Modifier.fillMaxSize(), theme = if (show.night) Theme.NIGHT else Theme.DAY, zoom = 17.8, pitch = 48.0,
+                v, Modifier.fillMaxSize(), background = Color(0xFFEFE5DA), theme = if (show.night) Theme.NIGHT else Theme.DAY, zoom = 17.8, pitch = 48.0,
                 padding = PaddingValues(top = 170.dp, bottom = 190.dp), door = true,
             )
             BoardPlane(dy = statusShift(44f)) {

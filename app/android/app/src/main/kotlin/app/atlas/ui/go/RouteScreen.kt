@@ -42,7 +42,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.atlas.R
 import app.atlas.geo.BBox
-import app.atlas.mapview.AtlasMap
+import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapHit
 import app.atlas.mapview.MapOverlays
@@ -136,7 +136,7 @@ fun RouteScreen(args: Dest.Route, nav: Navigator) {
     }
     val dy = statusShift(44f)
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(argb(0xFFEFE5DA))) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
         val height = maxHeight.value
         PlannerMap(ui, vm, here)
         Column(Modifier.padding(top = 44.dp + dy, start = 12.dp, end = 12.dp).fillMaxWidth()) {
@@ -201,10 +201,11 @@ private fun PlannerMap(ui: RouteUi, vm: RouteViewModel, here: app.atlas.geo.LatL
         val fact = found?.fact
         if (fact is KeyFact.Parking && fact.count > 0 && ui.to != null) add(Marker("p", ui.to.at, "ui-parking", 0xFF1F5F99, MarkerStyle.CHIP, value = "${fact.count}", priority = 80))
     }
-    AtlasMap(
+    StageMap(
         state = map,
         tiles = tiles,
         modifier = Modifier.fillMaxSize(),
+        background = argb(0xFFEFE5DA),
         style = MapStyle(theme = Theme.DAY, calm = true),
         overlays = MapOverlays(markers = markers, routes = routes, location = UserLocation(here, 10.0), measure = false),
         contentPadding = PaddingValues(top = 190.dp, bottom = 410.dp, start = 24.dp, end = 24.dp),

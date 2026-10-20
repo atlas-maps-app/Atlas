@@ -60,7 +60,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
-import app.atlas.mapview.AtlasMap
+import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapHit
 import app.atlas.mapview.MapOverlays
@@ -159,10 +159,11 @@ fun EatMapScreen(nav: Navigator) {
     }
 
     Box(Modifier.fillMaxSize()) {
-        AtlasMap(
+        StageMap(
             state = map,
             tiles = tiles,
-            modifier = Modifier.fillMaxSize().backdropSource(LocalBackdrop.current),
+            modifier = Modifier.fillMaxSize(),
+            hostModifier = Modifier.backdropSource(LocalBackdrop.current),
             overlays = MapOverlays(markers = markers, location = fix?.let { UserLocation(it.location, it.accuracy, it.bearing, it.speed) }),
             contentPadding = PaddingValues(top = 150.dp, bottom = 408.dp),
             onTap = { hit ->

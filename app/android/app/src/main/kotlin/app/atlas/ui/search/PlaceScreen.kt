@@ -46,7 +46,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.atlas.R
 import app.atlas.geo.CoordinateFormat
-import app.atlas.mapview.AtlasMap
+import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapOverlays
 import app.atlas.mapview.MapState
@@ -109,12 +109,14 @@ private fun PlaceView(place: Place, state: PlaceState, vm: PlaceViewModel, nav: 
     val shareText = shareTextOf(place, lang)
     val shareLabel = stringResource(R.string.place_share)
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(Color(SHEET_PAPER))) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
         val halfDp = maxHeight * SHEET_HALF
-        AtlasMap(
+        StageMap(
             state = map,
             tiles = tiles,
-            modifier = Modifier.fillMaxSize().backdropSource(LocalBackdrop.current),
+            modifier = Modifier.fillMaxSize(),
+            background = Color(SHEET_PAPER),
+            hostModifier = Modifier.backdropSource(LocalBackdrop.current),
             overlays = MapOverlays(
                 markers = listOf(Marker(place.key, place.location, symbol, colour.toLong() and 0xFFFFFFFFL, MarkerStyle.PIN, selected = true, priority = 1_000, place = place)),
                 measure = false,

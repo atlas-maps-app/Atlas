@@ -7,7 +7,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import app.atlas.mapview.AtlasMap
+import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.Follow
 import app.atlas.mapview.MapLayer
@@ -39,6 +39,8 @@ fun GuidanceMap(
     dashed: Boolean = false,
     markers: List<Marker> = emptyList(),
     door: Boolean = false,
+    /** What shows under the map until its first frame: the guidance screen's paper. */
+    background: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified,
 ) {
     val services = LocalServices.current
     val tiles by services.tiles.collectAsStateWithLifecycle()
@@ -56,10 +58,11 @@ fun GuidanceMap(
         location = s?.let { UserLocation(it.snapped, 5.0, it.routeBearing, it.speed) },
         measure = false,
     )
-    AtlasMap(
+    StageMap(
         state = map,
         tiles = tiles,
         modifier = modifier,
+        background = background,
         style = MapStyle(theme = theme, layers = setOf(MapLayer.LABELS, MapLayer.BUILDINGS_3D, MapLayer.TREES) + if (theme == Theme.CHART) setOf(MapLayer.SEAMARKS) else emptySet()),
         overlays = overlays,
         contentPadding = padding,

@@ -30,6 +30,9 @@ import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.LocalNavAnimatedContentScope
 import androidx.navigation3.ui.NavDisplay
 import app.atlas.Services
+import app.atlas.mapview.LocalMapStage
+import app.atlas.mapview.MapStage
+import app.atlas.mapview.MapStageHost
 import app.atlas.mapview.vk.ChromeFade
 import app.atlas.mapview.vk.LocalChromeShapes
 import app.atlas.ui.kit.Atlas
@@ -67,7 +70,8 @@ fun ProvideServices(services: Services, dark: Boolean = false, content: @Composa
 
 /**
  * The whole app: the screens of the back stack ([navigator]) with Navigation 3, and the bottom bar over the tab homes.
- * Every entry keeps its own saved state and view models while it is on the stack.
+ * Every entry keeps its own saved state and view models while it is on the stack. Under every screen lies the app's one
+ * map ([MapStage]): screens ask for it with `StageMap`, and it stays as they come and go.
  */
 @Composable
 fun AtlasRoot(services: Services, navigator: BackStackNavigator, dark: Boolean = false) = BoardScale {
@@ -82,13 +86,16 @@ fun AtlasRoot(services: Services, navigator: BackStackNavigator, dark: Boolean =
 private fun Root(services: Services, navigator: BackStackNavigator, dark: Boolean) {
     ProvideServices(services, dark) {
         val chrome = remember { Chrome() }
+        val stage = remember { MapStage() }
         // the bar's 64 px and the margin under it: what a tab home ends above
         val barTop = 64.dp + bottomBarMargin()
         Box(Modifier.fillMaxSize().background(Atlas.colors.paper)) {
+            MapStageHost(stage, cover = Atlas.colors.paper)
             val showBar = navigator.current.isTabRoot && !chrome.barHidden
             CompositionLocalProvider(
                 LocalBottomBarInset provides if (navigator.current.isTabRoot) barTop else 0.dp,
                 LocalChrome provides chrome,
+                LocalMapStage provides stage,
             ) {
                 NavDisplay(
                     backStack = navigator.stack,

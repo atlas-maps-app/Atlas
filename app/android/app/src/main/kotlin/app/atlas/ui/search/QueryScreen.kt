@@ -68,7 +68,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import app.atlas.R
 import app.atlas.geo.BBox
 import app.atlas.mapview.AreaOverlay
-import app.atlas.mapview.AtlasMap
+import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapHit
 import app.atlas.mapview.MapOverlays
@@ -172,11 +172,13 @@ fun QueryScreen(args: Dest.Query, nav: Navigator) {
         BBox.of(pts)?.let { b -> runCatching { map.fit(b.buffer(80.0), 40) } }
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xFFEFE5DA))) {
-        AtlasMap(
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        StageMap(
             state = map,
             tiles = tiles,
-            modifier = Modifier.fillMaxSize().backdropSource(LocalBackdrop.current),
+            modifier = Modifier.fillMaxSize(),
+            background = Color(0xFFEFE5DA),
+            hostModifier = Modifier.backdropSource(LocalBackdrop.current),
             overlays = MapOverlays(markers = markers, areas = areas, location = UserLocation(here, 15.0)),
             contentPadding = PaddingValues(top = 262.dp, bottom = maxHeight * SHEET_HALF),
             onTap = { hit ->

@@ -54,7 +54,7 @@ import app.atlas.ui.kit.cssLinear
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.geo.Sun
-import app.atlas.mapview.AtlasMap
+import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapLayer
 import app.atlas.mapview.MapOverlays
@@ -113,11 +113,12 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
         coverage = withContext(Dispatchers.IO) { runCatching { streetsAround(services, here) }.getOrNull() }
         coverageDone = true
     }
-    Box(Modifier.fillMaxSize().background(Color(0xFFF4F1EA))) {
-        AtlasMap(
+    Box(Modifier.fillMaxSize()) {
+        StageMap(
             state = map,
             tiles = tiles,
             modifier = Modifier.fillMaxSize(),
+            background = Color(0xFFF4F1EA),
             style = style,
             overlays = MapOverlays(location = fix?.let { UserLocation(it.location, it.accuracy, it.bearing, it.speed) }),
             contentPadding = PaddingValues(top = 150.dp, bottom = 440.dp),

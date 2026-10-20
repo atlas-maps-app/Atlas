@@ -75,10 +75,10 @@ fun DriveView(show: NavShow, actions: NavActions, truck: Boolean = false) {
     AtlasTheme(dark = true, night = true) {
         val v = show.view
         var overview by rememberSaveable { mutableStateOf(false) }
-        Box(Modifier.fillMaxSize().background(NavColours.night)) {
+        Box(Modifier.fillMaxSize()) {
             GuidanceMap(
                 v, Modifier.fillMaxSize(), theme = if (show.night) Theme.NIGHT else Theme.AUTO, follow = !overview,
-                padding = PaddingValues(top = 200.dp, bottom = 240.dp),
+                padding = PaddingValues(top = 200.dp, bottom = 240.dp), background = NavColours.night,
             )
             BoardPlane(dy = statusShift(40f)) {
                 Box(Modifier.offset(12.dp, 40.dp).requiredWidth(388.dp)) { ManeuverCard(show) }
