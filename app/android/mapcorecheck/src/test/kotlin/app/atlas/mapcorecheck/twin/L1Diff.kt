@@ -41,7 +41,9 @@ import app.atlas.render.py.PyFmt
  *
  * A pair out of its place is reordered when no element of another key it passes, among the anchors, overlaps it in the
  * view (painting it earlier or later changes no pixel; elements of one key are interchangeable), and out of order when
- * one does. What is left over is missing (the port's) or extra (the twin's), by key.
+ * one does. What is left over is missing (the port's) or extra (the twin's), by key; where asked (what stands up), a
+ * sliver the twin draws alone (a face under [SLIVER] or thinner than [THIN]) is counted apart. The port's are missing,
+ * as anything of the port's the twin does not draw yet.
  */
 object L1Diff {
     /** How far two outlines may lie apart and still be one, in CSS px: two print steps. */
@@ -49,6 +51,17 @@ object L1Diff {
 
     /** The rows' spacing of the coverage tests, in CSS px. */
     private const val ROW = 0.125
+
+    /**
+     * A face smaller than this, in CSS px² of the view, or thinner than [THIN] on average, is a sliver. The renders draw
+     * a face from 0.12 px² of the view on (amsterdam.py's `face`) and only where it turns to the eye, and the frame
+     * decides both in the vertex stage's floats, the port in doubles; so a face near the floor, or seen edge-on, may be
+     * drawn by one side alone (ENGINE.md, step 2: snapping slivers).
+     */
+    const val SLIVER = 0.5
+
+    /** The mean width (twice the area over the perimeter), in CSS px, under which a face is a sliver seen edge-on. */
+    const val THIN = 0.25
 
     /** One element of either side, in terms both share. */
     class L1Element(
@@ -100,10 +113,16 @@ object L1Diff {
         val piecesByKey = LinkedHashMap<String, Int>()
         val firstDiffering = ArrayList<String>()
         val firstOutOfOrder = ArrayList<String>()
+        /** The first extra elements, and the missing ones but circles: where they are, and their vertices. */
+        val firstExtra = ArrayList<String>()
+        val firstMissing = ArrayList<String>()
+        /** The twin's slivers left over (fills under [SLIVER] or thinner than [THIN]), where asked, and the first of them. */
+        var slivers = 0
+        val firstSlivers = ArrayList<String>()
 
         fun summary(): String = "L1 $layer: port $port in the view ($outside outside), twin $twin ($twinOutside outside), matched $matched " +
             "(exact $exact, one step $oneStep, differing $differs; $inPieces in $pieces pieces), reordered $reordered, out of order $outOfOrder, " +
-            "missing ${missing.values.sum()}, extra ${extra.values.sum()}"
+            "missing ${missing.values.sum()}, extra ${extra.values.sum()}, slivers $slivers"
     }
 
     // ---------------------------------------------------------------- the two sides' elements
@@ -768,7 +787,7 @@ object L1Diff {
     }
 
     /** Aligns [twin] onto [port] in the view [viewBox] (min x, min y, width, height) and compares each match. */
-    fun diff(layer: String, port: List<L1Element>, twin: List<L1Element>, viewBox: FloatArray): Report {
+    fun diff(layer: String, port: List<L1Element>, twin: List<L1Element>, viewBox: FloatArray, slivers: Boolean = false): Report {
         val v = View(viewBox)
         val r = Report(layer)
         val ps = ArrayList<Seen>()
@@ -895,16 +914,43 @@ object L1Diff {
             if (takenP[i]) continue
             if (!shows(ps[i])) { hiddenP++; r.outside++; r.outsideByKey.merge(shortKey(ps[i].e.key), 1, Int::plus); continue }
             r.missing.merge(shortKey(ps[i].e.key), 1, Int::plus)
+            if (r.firstMissing.size < 12 && ps[i].e.kind != "circle") {
+                r.firstMissing += "${ps[i].e.where} ${shortKey(ps[i].e.key)}: ${ps[i].vertices.joinToString(" ") { p1(it) }} [${ps[i].shape}]"
+            }
         }
         for (j in ts.indices) {
             if (takenT[j]) continue
             if (!shows(ts[j])) { hiddenT++; r.twinOutside++; continue }
+            if (slivers && sliver(ts[j])) { r.slivers++; note(r, ts[j]); continue }
             r.extra.merge(shortKey(ts[j].e.key), 1, Int::plus)
+            if (r.firstExtra.size < 5) r.firstExtra += "${ts[j].e.where} ${shortKey(ts[j].e.key)}: ${ts[j].vertices.joinToString(" ") { p1(it) }} [${ts[j].shape}]"
         }
         r.port = ps.size - hiddenP
         r.twin = ts.size - hiddenT
         r.matched = r.exact + r.oneStep + r.differs + r.inPieces
         return r
+    }
+
+    /** Whether [s] is a fill of closed rings, each of three points or more, smaller than [SLIVER] or thinner than [THIN]. */
+    private fun sliver(s: Seen): Boolean {
+        if (s.e.kind != "path" || !s.e.fills || s.closed.any { !it } || s.rings.any { it.size < 6 }) return false
+        var area = 0.0
+        var perimeter = 0.0
+        for (ring in s.rings) {
+            var twice = 0.0
+            val n = ring.size / 2
+            for (i in 0 until n) {
+                val k = (i + 1) % n
+                twice += ring[2 * i] * ring[2 * k + 1] - ring[2 * k] * ring[2 * i + 1]
+                perimeter += Math.hypot(ring[2 * k] - ring[2 * i], ring[2 * k + 1] - ring[2 * i + 1])
+            }
+            area += Math.abs(twice) / 2
+        }
+        return area < SLIVER || 2 * area < THIN * perimeter
+    }
+
+    private fun note(r: Report, s: Seen) {
+        if (r.firstSlivers.size < 5) r.firstSlivers += "${s.e.where} ${shortKey(s.e.key)}: ${s.vertices.joinToString(" ") { p1(it) }}"
     }
 
     /** How many of [a] (ascending) are below [x]. */

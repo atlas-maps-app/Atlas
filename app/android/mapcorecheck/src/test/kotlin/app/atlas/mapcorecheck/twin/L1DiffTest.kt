@@ -8,8 +8,9 @@ import org.junit.Test
 /**
  * L1Diff's rules on elements made by hand (the view 0 0 412 916, as the renders' S1 frame): what lies outside the view
  * is neither compared nor missing, an element one side lacks shifts nothing, a fill drawn in pieces counts as one
- * element only when the pieces cover it, a path's subpaths compare as a set, and a match out of its place is out of
- * order only when it passes an element of another key that it overlaps.
+ * element only when the pieces cover it, a path's subpaths compare as a set, a match out of its place is out of order
+ * only when it passes an element of another key that it overlaps, and a sliver one side alone draws is counted apart
+ * where asked.
  */
 class L1DiffTest {
     private val view = floatArrayOf(0f, 0f, 412f, 916f)
@@ -29,6 +30,12 @@ class L1DiffTest {
     }
 
     private fun square(x: Double, y: Double, s: Double) = doubleArrayOf(x, y, x + s, y, x + s, y + s, x, y + s)
+
+    /** A building's face: [ring] filled and stroked in [colour], 0.3 px wide (amsterdam.py's `face`). */
+    private fun face(colour: String, ring: DoubleArray): L1Element {
+        val key = "path; fill $colour 1.000; stroke $colour 1.000 w 0.300 cap 0 join 1 miter 4.000; o 1.000 b 0 f - c - t -; o 1.000 b 0 f - c vb t -"
+        return L1Element(key, FloatArray(ring.size) { ring[it].toFloat() }, "${ring.size / 2}:c", "path", reach = 0.15f, fills = true, strokes = true)
+    }
 
     @Test
     fun anElementTheTwinLacksShiftsNothing() {
@@ -124,5 +131,24 @@ class L1DiffTest {
         val shuffled = L1Diff.diff("one key", listOf(water, same), listOf(same, water), view)
         assertEquals(0, shuffled.outOfOrder)
         assertEquals(1, shuffled.reordered)
+    }
+
+    @Test
+    fun aSliverOneSideAloneDrawsIsCountedApartWhereAsked() {
+        val wall = face("#ff8b5c4b", square(100.0, 100.0, 10.0))
+        // 0.3 × 1.2 px: near the renders' floor of 0.12 px², drawn by one side alone
+        val sliver = face("#ff64463d", doubleArrayOf(200.0, 200.0, 200.3, 200.0, 200.3, 201.2, 200.0, 201.2))
+        val big = face("#ff64463d", square(300.0, 300.0, 2.0))
+        val line = L1Element("path; fill #ff000000 1.000; stroke #ff6e553d 1.000 w 1.000", floatArrayOf(250f, 250f, 250f, 252f), "2:o", "path",
+            reach = 0.5f, fills = true, strokes = true)
+        val strict = L1Diff.diff("strict", listOf(wall), listOf(wall, sliver, big), view)
+        assertEquals(2, strict.extra.values.sum())
+        assertEquals(0, strict.slivers)
+        // a wall seen edge-on: 0.1 px wide, 12 px tall
+        val edgeOn = face("#ff59423d", doubleArrayOf(168.2, 495.9, 168.1, 495.6, 168.0, 484.3, 168.0, 484.5))
+        val standing = L1Diff.diff("standing", listOf(wall, sliver, line), listOf(wall, big, edgeOn), view, slivers = true)
+        assertEquals(1, standing.slivers) // the twin's wall seen edge-on
+        assertEquals(1, standing.extra.values.sum()) // a face of 4 px² is no sliver
+        assertEquals(2, standing.missing.values.sum()) // the port's sliver and its line, as what the twin does not draw
     }
 }
