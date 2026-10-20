@@ -13,6 +13,11 @@
 #   home.simpleperf.txt                      a simpleperf profile of the bench build's first home frame, split into Skia,
 #                                            filter primitives and Turbulence (ci/perfsplit.py)
 #   glcaps.txt                               the device's facts and OpenGL ES capabilities (the glcaps screen)
+#   pills-*.png, pills*.txt                  the core's frosted pills (K11b): VK bench's still pills with the core's glass
+#                                            and with their tint alone, judged by ci/pillcheck.py; the home on both hosts
+#                                            (still pills only: the moving check is the phone's)
+#   fade.txt                                 whether this API level's SurfaceView follows the alpha of a layer over it (a
+#                                            screen's fade, NavDisplay's): VK bench's fade probe, ci/pillcheck.py fade
 #   vkfacts.txt, vkbench.txt, vkguard.txt    the Vulkan core (plan-vector K1, Appendix C): VK facts through the guest's
 #                                            Vulkan, VK bench in CI's length (the stand-in in every configuration the
 #                                            guest has, both hosts, the pills, the colour stage with the app sent to the
@@ -33,7 +38,9 @@
 # (its window or the app not back), a host's window that never came, a colour stage that drew no frames, or one that
 # drew none once it went on after the app came back, an app that did not come back to the foreground after the colour
 # stage's background step, a pymath line other than `pymath $ATLAS_PYMATH_HASH ok`, a sun line other than
-# `sun $ATLAS_SUN_HASH ok`. A frame that never comes is "NO FRAME", a warning; a background step the bench ended before
+# `sun $ATLAS_SUN_HASH ok`, VK bench's still pills failing ci/pillcheck.py with the core's glass or passing it with their
+# tint alone, and (once the map's core draws the home) the home's frosted pills failing it or further than MAD 2 from
+# HWUI's on the TextureView. A frame that never comes is "NO FRAME", a warning; a background step the bench ended before
 # is skipped, saying so.
 # Environment: ATLAS_SCREENS (the debug loop's screens, default: all), ATLAS_MAP_WAIT (seconds to wait for the home's map),
 # ATLAS_IDLE (seconds the home is watched at rest, default 20), ATLAS_BENCH=0 (skip the bench phase), ATLAS_PROFILE=0
@@ -488,6 +495,109 @@ vk_phase() {
 }
 vk_phase
 adb logcat -d > "$OUT/logcat.vk.txt"
+
+# --- the frosted pills (plan-vector D5.1, K11b) -----------------------------------------------------------------------
+
+# The glass the map's core draws under the chrome's frosted pills (CP/passes/Frosted.cpp), judged on screen captures by
+# ci/pillcheck.py. The split: this emulator's software Vulkan draws far slower than its display, so it judges still
+# pills alone; the moving check (each frosted region and its pill in the same frame in >= 95 % of frames) is the
+# phone's: VK bench's `vkbench pills:` line ("same frame while moving N of M") and `pillcheck.py film` over the phone's
+# screen recording of VK bench's Pills run.
+#  1. VK bench's Pills run, its pills still: with the core's glass, the pill check must pass; with their tint alone, it
+#     must fail (and call them plain), so the check is seen to tell the two apart.
+#  2. The home on the SurfaceView (the core's glass) and on the TextureView (HWUI's, APP/ui/kit/Backdrop.kt): the
+#     core's pills must pass the pill check, and the two within MAD 2 inside the frosted pills. It runs once the map's
+#     core draws the home (its `vk frosted` line) and the home takes `atlas.vk.host texture` (a `vk window: texture`
+#     line); until then it says so and skips.
+pills_phase() {
+  local label=vkpills rc_frosted rc_plain rc_home rc_mad
+  echo "PILLS: still pills judged here; the moving check (>= 95 % of frames) is the phone's (VK bench's pills line, pillcheck.py film)"
+  if ! python3 -I "$HERE/pillcheck.py" selftest > "$OUT/pillcheck-selftest.txt" 2>&1; then
+    echo "PILLS FAILED: pillcheck.py's selftest"; cat "$OUT/pillcheck-selftest.txt"; FAIL=1; return
+  fi
+  fresh_state
+  vk_launch $label --es atlas.screen vkbench --es atlas.vk.bench pills
+  if ! wait_line $label 300 "vkbench pills still: frosted"; then
+    echo "PILLS FAILED: VK bench's pills never stood still (no 'vkbench pills still: frosted' within 300 s)"
+    since_marker $label | grep -E 'AtlasMap: (vkbench|vk chrome|vk frosted)' | tail -5 | sed 's/.*AtlasMap: /  /'
+    FAIL=1; vk_crashes $label; return
+  fi
+  sleep 2 # a frame of the stand-in takes this emulator a third of a second
+  # Raw captures for the check (a pure-Python PNG decoder takes half a minute a screen), PNGs to look at.
+  adb exec-out screencap > "$OUT/pills-frosted.raw"
+  adb exec-out screencap -p > "$OUT/pills-frosted.png"
+  wait_line $label 30 "vkbench pills still: plain tint" || { echo "PILLS FAILED: no 'vkbench pills still: plain tint'"; FAIL=1; return; }
+  sleep 2
+  adb exec-out screencap > "$OUT/pills-plain.raw"
+  adb exec-out screencap -p > "$OUT/pills-plain.png"
+  wait_line $label 30 "vkbench pills still: done"
+  # The fade probe: the same still map and pills under a layer of alpha 0.5. A record of this API level, not a check.
+  if wait_line $label 30 "vkbench fade: the map under a layer"; then
+    sleep 2
+    adb exec-out screencap > "$OUT/pills-fade.raw"
+    adb exec-out screencap -p > "$OUT/pills-fade.png"
+    wait_line $label 30 "vkbench fade: done"
+  fi
+  since_marker $label | grep -E 'AtlasMap: (vkbench pills|vkbench fade|vk chrome|vk frosted|vk window: surface changed)' |
+    sed 's/.*AtlasMap: //' > "$OUT/pills.txt"
+  grep -m1 '^vkbench pills: ' "$OUT/pills.txt"
+  if [ -f "$OUT/pills-fade.raw" ]; then
+    python3 -I "$HERE/pillcheck.py" fade "$OUT/pills-frosted.raw" "$OUT/pills-fade.raw" --shapes "$OUT/pills.txt" > "$OUT/fade.txt" 2>&1
+    echo "FADE: $(tail -1 "$OUT/fade.txt")"
+    rm -f "$OUT/pills-fade.raw"
+  else
+    echo "FADE: VK bench's fade probe never came (no 'vkbench fade:' line): nothing recorded for this API level" | tee "$OUT/fade.txt"
+  fi
+  python3 -I "$HERE/pillcheck.py" check "$OUT/pills-frosted.raw" --shapes "$OUT/pills.txt" > "$OUT/pills-frosted.txt" 2>&1; rc_frosted=$?
+  python3 -I "$HERE/pillcheck.py" check "$OUT/pills-plain.raw" --shapes "$OUT/pills.txt" --expect plain > "$OUT/pills-plain.txt" 2>&1; rc_plain=$?
+  rm -f "$OUT/pills-frosted.raw" "$OUT/pills-plain.raw"
+  sed 's/^/  frosted: /' "$OUT/pills-frosted.txt"; sed 's/^/  plain tint: /' "$OUT/pills-plain.txt"
+  if [ $rc_frosted -eq 0 ] && [ $rc_plain -eq 0 ]; then
+    echo "PILLS: VK bench's still pills pass the pill check with the core's glass and fail it with their tint alone (emulator: still pills only)"
+  else
+    [ $rc_frosted -ne 0 ] && echo "PILLS FAILED: VK bench's frosted pills did not pass the pill check"
+    [ $rc_plain -ne 0 ] && echo "PILLS FAILED: VK bench's plain-tint pills were not caught as plain"
+    FAIL=1
+  fi
+  vk_crashes $label
+  vk_anr $label
+
+  # The home on both hosts, from the installed state each, captured once it has drawn and settled.
+  home_capture() { # $1 label, $2 picture, then the activity's extras
+    local l=$1 picture=$2 i; shift 2
+    fresh_state
+    vk_launch "$l" --es atlas.screen home --ez atlas.ci true "$@"
+    for i in $(seq 1 90); do
+      since_marker "$l" | grep -q -e 'vk first frame' -e 'drawn in' && break
+      sleep 2
+    done
+    sleep 8
+    adb exec-out screencap > "$OUT/${picture%.png}.raw"
+    adb exec-out screencap -p > "$OUT/$picture"
+    since_marker "$l" > "$OUT/${picture%.png}.atlasmap.txt"
+    vk_crashes "$l"
+  }
+  home_capture homesurface pills-home.png
+  if ! grep -q 'AtlasMap: vk frosted [1-9]' "$OUT/pills-home.atlasmap.txt"; then
+    echo "PILLS: the home is not drawn by the map's core yet (no 'vk frosted' line): its pills against HWUI's wait for it"
+    rm -f "$OUT"/pills-home*.raw
+    return
+  fi
+  python3 -I "$HERE/pillcheck.py" check "$OUT/pills-home.raw" --shapes "$OUT/pills-home.atlasmap.txt" > "$OUT/pills-home.txt" 2>&1; rc_home=$?
+  sed 's/^/  home: /' "$OUT/pills-home.txt"
+  [ $rc_home -eq 0 ] || { echo "PILLS FAILED: the home's frosted pills did not pass the pill check"; FAIL=1; }
+  home_capture hometexture pills-home-texture.png --es atlas.vk.host texture
+  if ! grep -q 'AtlasMap: vk window: texture' "$OUT/pills-home-texture.atlasmap.txt"; then
+    echo "PILLS: the home took no TextureView (no 'vk window: texture' line): its pills against HWUI's wait for atlas.vk.host"
+    rm -f "$OUT"/pills-home*.raw
+    return
+  fi
+  python3 -I "$HERE/pillcheck.py" compare "$OUT/pills-home.raw" "$OUT/pills-home-texture.raw" --shapes "$OUT/pills-home.atlasmap.txt" --limit 2 > "$OUT/pills-home-mad.txt" 2>&1; rc_mad=$?
+  rm -f "$OUT"/pills-home*.raw
+  sed 's/^/  core against HWUI: /' "$OUT/pills-home-mad.txt"
+  [ $rc_mad -eq 0 ] || { echo "PILLS FAILED: the home's frosted pills are further than MAD 2 from HWUI's"; FAIL=1; }
+}
+pills_phase
 
 # --- the truth phase: the same frames as a phone runs them -------------------------------------------------------------
 

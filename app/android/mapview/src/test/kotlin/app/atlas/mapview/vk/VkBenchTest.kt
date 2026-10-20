@@ -299,9 +299,25 @@ class VkBenchTest {
     }
 
     @Test
-    fun thePillsMoveWithinTheirStrip() {
-        assertEquals(0f, pillShift(0.0), 1e-6f)
-        assertEquals(40f, pillShift(0.5), 1e-4f)
+    fun thePillsMoveWithinTheirStripAndRestEachCycle() {
+        // A second's move of 80 dp at an even pace, then a second at rest; back the other way in the next cycle.
+        assertEquals(-40f, pillShift(0.0), 1e-6f)
+        assertEquals(0f, pillShift(0.5), 1e-4f)
+        assertEquals(40f, pillShift(1.0), 1e-4f)
+        assertEquals(40f, pillShift(1.7), 1e-4f)
+        assertEquals(0f, pillShift(2.5), 1e-4f)
+        assertEquals(-40f, pillShift(3.5), 1e-4f)
+        assertEquals(-20f, pillShift(4.25), 1e-4f)
+        assertTrue(pillMoving(0.5))
+        assertFalse(pillMoving(1.5))
+        assertTrue(pillMoving(2.2))
+        assertFalse(pillMoving(3.9))
+        // A core frame and the window's share their frame when the window drew that vsync, on time.
+        val vsyncs = longArrayOf(0L, 16_666_667L, 33_333_333L)
+        val late = booleanArrayOf(false, true, false)
+        assertTrue(VkBench.drawnOnTime(vsyncs, late, 1_000_000L))
+        assertFalse(VkBench.drawnOnTime(vsyncs, late, 16_666_667L))
+        assertFalse(VkBench.drawnOnTime(vsyncs, late, 50_000_000L))
         val boxes = pillBoxes(412f, 915f, 10f)
         assertEquals(2, boxes.size)
         assertEquals(26f, boxes[0][0], 0f)

@@ -393,6 +393,23 @@ object VkBench {
     /** Whether two frame times differ by less than half a refresh (on time). */
     fun onTime(actualNs: Long, desiredNs: Long, refreshNs: Long): Boolean = desiredNs > 0 && abs(actualNs - desiredNs) < refreshNs / 2
 
+    /**
+     * Whether the window drew a frame for the vsync of [vsyncNs] (one of [vsyncs], within 2 ms) and it was not late
+     * ([late], the same frames'): the window's half of a core frame and its pill sharing their frame.
+     */
+    fun drawnOnTime(vsyncs: LongArray, late: BooleanArray, vsyncNs: Long): Boolean {
+        for (i in vsyncs.indices) {
+            if (abs(vsyncs[i] - vsyncNs) < 2_000_000L) return !late[i]
+        }
+        return false
+    }
+
+    /**
+     * How long the Pills run holds the pills still, frosted, then with their tint alone, then under the fade probe's
+     * layer (ms each).
+     */
+    const val PILL_STILL_MS = 3000L
+
     /** The root-mean-square of the first [n] values. */
     fun rms(v: DoubleArray, n: Int): Double {
         if (n == 0) return Double.NaN

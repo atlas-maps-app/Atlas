@@ -32,9 +32,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +50,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.platform.LocalContext
@@ -74,9 +78,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
-import kotlin.math.PI
+import kotlin.math.floor
+import kotlin.math.min
 import kotlin.math.roundToInt
-import kotlin.math.sin
 
 /**
  * VK bench (plan-vector K1, A0; `atlas.screen=vkbench`, or the debug and bench builds' "VK bench" shortcut): the
@@ -88,8 +92,11 @@ import kotlin.math.sin
  *  2. both hosts (the SurfaceView, the TextureView) with the pills on, under the scripted pan, pinch, orbit and tilt:
  *     presented intervals, the core's GPU time and HWUI's (`FrameMetrics.GPU_DURATION`), the render thread's time,
  *     graphics and native memory;
- *  3. the pills moving over the SurfaceView: how many of the core's frames reach the display on their vsync, and how
- *     many of the window's frames are late (a pill and its frosted glass drift apart when either is);
+ *  3. the pills moving over the SurfaceView, placed through [ChromeShapes] as the app's chrome is (Compose lays them out,
+ *     the core draws their glass from the camera state), a second's move and a second's rest in each 2 s cycle: how
+ *     many of the core's frames reach the display on their vsync, how many of the window's frames are late (a pill and
+ *     its frosted glass drift apart when either is), how many of the core's frames while the pills move share their
+ *     frame with the window's, and the frosted pass's GPU time;
  *  4. a soak: the thermal headroom every 10 s and its slope over minutes 5-10, the battery's charge used (unplugged);
  * then pipeline creation (this launch's first, and again from an empty cache and from the cache file) and the A0
  * decisions the numbers point to; then, once all of that is recorded,
@@ -114,7 +121,11 @@ import kotlin.math.sin
  * the app at most [VkBench.WINDOW_WAIT_SECONDS] seconds, as for a window, then the stage ends.
  * Every result is a `vkbench …` line (logcat, the screen, Copy); the report is recorded on disk as each step begins, so
  * a native crash cannot cost what was measured before it. The Pills run is step 3 alone, 20 s long, for the phone's own
- * screen recorder to film the pills frame by frame.
+ * screen recorder to film the pills frame by frame (ci/pillcheck.py reads the film's frames), then the pills still for
+ * 3 s frosted and 3 s with their tint alone (`vkbench pills still: frosted|plain tint`), which CI's screen captures
+ * judge: the emulator's software Vulkan draws the stand-in far slower than its display, so it checks still pills
+ * alone; the moving check is the phone's. Last, 3 s of the map and its pills under a layer of alpha 0.5 (`vkbench fade:`):
+ * whether the SurfaceView follows a fading screen on this API level, which CI records.
  */
 @Composable
 fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifier = Modifier) {
@@ -129,7 +140,13 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
     var surfaceState by remember { mutableStateOf(VkSurfaceState(false, 0, 0)) }
     var attachWaiter by remember { mutableStateOf<CompletableDeferred<VkSurfaceState>?>(null) }
     val camera = remember { CameraState() }
-    val source = remember { BenchSource(camera) }
+    // The pills are chrome as the app's are: placed by Compose, written into each frame's camera state by the source.
+    val shapes = remember { ChromeShapes() }
+    val source = remember { BenchSource(camera, shapes) }
+    var pillsPlain by remember { mutableStateOf(false) }
+    // The alpha of a layer over the map and its pills (the fade probe: whether the SurfaceView follows it).
+    var fadeLayer by remember { mutableFloatStateOf(1f) }
+    val chromeAlpha = remember { { fadeLayer } }
     val metrics = remember { WindowMetrics() }
     var refused by remember { mutableStateOf("") }
     var pillPhaseNs by remember { mutableLongStateOf(0L) }
@@ -220,6 +237,8 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
             source.pillsStartNs = pillPhaseNs
             source.pillsMoving = moving
         }
+        run.plainPills = { plain -> pillsPlain = plain }
+        run.fade = { alpha -> fadeLayer = alpha }
         run.status = { status = it }
         lines.clear()
         lines += kept
@@ -252,22 +271,26 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
         }
         val c = core
         if (c != null) {
-            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f).graphicsLayer { alpha = fadeLayer }) {
                 val density = LocalDensity.current
                 source.pillsOn = pillsOn
-                source.pillsFrosted = host == VkHost.SURFACE
-                androidx.compose.runtime.key(host) {
-                    TextureBackdrop(host == VkHost.TEXTURE) { layerModifier ->
-                        VkSurface(c, host, source, camera, layerModifier.fillMaxSize()) { s ->
-                            surfaceState = s
-                            source.widthPx = s.widthPx
-                            source.heightPx = s.heightPx
-                            source.density = density.density.toDouble()
-                            if (s.attached || s.error.isNotEmpty()) attachWaiter?.complete(s)
+                // The core draws the pills' glass on the SurfaceView (unless the run asks for their tint alone), at the
+                // alpha of the layer over them, as the app's chrome under a fading screen.
+                SideEffect { shapes.coreDraws = host == VkHost.SURFACE && !pillsPlain }
+                CompositionLocalProvider(LocalChromeAlpha provides chromeAlpha) {
+                    androidx.compose.runtime.key(host) {
+                        TextureBackdrop(host == VkHost.TEXTURE) { layerModifier ->
+                            VkSurface(c, host, source, camera, layerModifier.fillMaxSize().chromeSurface(shapes)) { s ->
+                                surfaceState = s
+                                source.widthPx = s.widthPx
+                                source.heightPx = s.heightPx
+                                source.density = density.density.toDouble()
+                                if (s.attached || s.error.isNotEmpty()) attachWaiter?.complete(s)
+                            }
                         }
                     }
+                    if (pillsOn) Pills(host, pillsMoving, pillPhaseNs, shapes)
                 }
-                if (pillsOn) Pills(host, pillsMoving, pillPhaseNs)
             }
         }
         Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
@@ -282,15 +305,27 @@ internal fun pillBoxes(widthDp: Float, heightDp: Float, dx: Float): List<FloatAr
     floatArrayOf(16f + dx, heightDp - 100f, widthDp - 16f + dx, heightDp - 48f),
 )
 
-/** The pills' sideways offset (dp) at [t] seconds of their animation: 40 dp each way, a cycle of 2 s. */
-internal fun pillShift(t: Double): Float = (40.0 * sin(2 * PI * t / 2.0)).toFloat()
+/**
+ * The pills' sideways offset (dp) at [t] seconds of their animation: in each 2 s cycle a second's move of 80 dp at an even
+ * pace, one way in one cycle and back in the next, then a second at rest, so the film shows pills that stop mid-way.
+ */
+internal fun pillShift(t: Double): Float {
+    if (t <= 0.0) return -40f
+    val cycle = floor(t / 2.0)
+    val way = if (cycle.toLong() % 2L == 0L) 1f else -1f
+    return -40f * way + 80f * way * min(t - cycle * 2.0, 1.0).toFloat()
+}
+
+/** Whether the pills move at [t] seconds of their animation (the first second of each 2 s cycle). */
+internal fun pillMoving(t: Double): Boolean = t > 0.0 && t - floor(t / 2.0) * 2.0 < 1.0
 
 /**
- * The pills Compose draws: on the SurfaceView their tint only (the core draws the frosted glass under them, D5.1); on
- * the TextureView, HWUI's frosted glass from the recorded window ([TextureBackdrop]) and the tint.
+ * The pills Compose draws: on the SurfaceView their tint only (the core draws the frosted glass under them, D5.1, from
+ * [shapes], where each pill is placed as it is laid out); on the TextureView, HWUI's frosted glass from the recorded
+ * window ([TextureBackdrop]) and the tint.
  */
 @Composable
-private fun Pills(host: VkHost, moving: Boolean, startNs: Long) {
+private fun Pills(host: VkHost, moving: Boolean, startNs: Long, shapes: ChromeShapes) {
     var shift by remember { mutableStateOf(0f) }
     LaunchedEffect(moving, startNs) {
         if (!moving) {
@@ -307,6 +342,7 @@ private fun Pills(host: VkHost, moving: Boolean, startNs: Long) {
             Box(
                 Modifier.offset { IntOffset(left.roundToInt(), top.roundToInt()) }
                     .width((b[2] - b[0]).dp).height((b[3] - b[1]).dp)
+                    .chromeShape(shapes, RoundedCornerShape(26.dp), 20.dp, 1.8f, frosted = host == VkHost.SURFACE)
                     .clip(RoundedCornerShape(26.dp))
                     .then(if (host == VkHost.TEXTURE) Modifier.frostedFromBackdrop(left, top) else Modifier)
                     .background(Color(0x99FFFFFF)),
@@ -354,9 +390,10 @@ private fun Modifier.frostedFromBackdrop(leftPx: Float, topPx: Float): Modifier 
 
 /**
  * The core's camera source while the bench runs (on the render thread, allocating nothing): the scripted path's camera
- * at each vsync, and the pills as the chrome's keep-out shapes (frosted by the core on the SurfaceView).
+ * at each vsync, and the pills as the chrome's keep-out shapes ([shapes], as Compose placed them; frosted by the core on
+ * the SurfaceView).
  */
-internal class BenchSource(private val state: CameraState) : FrameSource {
+internal class BenchSource(private val state: CameraState, private val shapes: ChromeShapes) : FrameSource {
     @Volatile var running = false
 
     /**
@@ -372,7 +409,6 @@ internal class BenchSource(private val state: CameraState) : FrameSource {
     @Volatile var heightPx = 0
     @Volatile var density = 1.0
     @Volatile var pillsOn = true
-    @Volatile var pillsFrosted = true
     @Volatile var pillsMoving = false
     @Volatile var pillsStartNs = 0L
     @Volatile var presentedFrames = 0L
@@ -385,17 +421,8 @@ internal class BenchSource(private val state: CameraState) : FrameSource {
         val d = density
         VkBench.cameraAt(path, view, (vsyncNanos - startNs) / 1e9, periodSeconds, cam)
         state.write(out, 0, cam.latitude, cam.longitude, cam.bearing, cam.pitch, cam.distance, w / d / 2, h / d * 0.48, w, h, d)
-        if (pillsOn) {
-            val shift = if (pillsMoving) pillShift((vsyncNanos - pillsStartNs) / 1e9) else 0f
-            val wd = (w / d).toFloat()
-            val hd = (h / d).toFloat()
-            CameraWriter.keepOuts(out, 2)
-            // The same boxes Compose draws (pillBoxes), written without a list (nothing allocates here).
-            CameraWriter.keepOut(out, 0, 16f + shift, 40f, wd - 16f + shift, 92f, 26f, 20f, 1.8f, pillsFrosted)
-            CameraWriter.keepOut(out, 1, 16f + shift, hd - 100f, wd - 16f + shift, hd - 48f, 26f, 20f, 1.8f, pillsFrosted)
-        } else {
-            CameraWriter.keepOuts(out, 0)
-        }
+        // The pills as Compose last placed them (none while they are off), carried on to this vsync while they move.
+        if (pillsOn) shapes.write(out, vsyncNanos) else CameraWriter.keepOuts(out, 0)
         return true
     }
 
@@ -440,6 +467,21 @@ internal class WindowMetrics {
         window = null
     }
 
+    /** The frames since [fromNs]: each one's vsync time (ns) and whether it was late, oldest first. */
+    fun frames(fromNs: Long): Pair<LongArray, BooleanArray> = synchronized(lock) {
+        val n = minOf(count, vsync.size.toLong()).toInt()
+        val first = count - n
+        val times = ArrayList<Long>()
+        val lates = ArrayList<Boolean>()
+        for (k in 0 until n) {
+            val i = ((first + k) % vsync.size).toInt()
+            if (vsync[i] < fromNs) continue
+            times += vsync[i]
+            lates += late[i]
+        }
+        Pair(times.toLongArray(), lates.toBooleanArray())
+    }
+
     /** The frames since [fromNs]: their vsync intervals (ms), HWUI's GPU milliseconds, and how many were late. */
     fun since(fromNs: Long): Triple<DoubleArray, DoubleArray, Int> = synchronized(lock) {
         val n = minOf(count, vsync.size.toLong()).toInt()
@@ -473,6 +515,12 @@ private class BenchRun(
     /** The window as it is now (the screen's state of it), read at each step of the colour stage. */
     var surfaceNow: () -> VkSurfaceState = { VkSurfaceState(false, 0, 0) }
     var pills: (Boolean, Boolean) -> Unit = { _, _ -> }
+
+    /** Draws the pills with their tint alone (the core draws no glass under them: the pill check's plain case). */
+    var plainPills: (Boolean) -> Unit = {}
+
+    /** Puts the map and its pills under a layer of this alpha (the fade probe; 1: none). */
+    var fade: (Float) -> Unit = {}
     var status: (String) -> Unit = {}
 
     /** Records the report on disk as the bench reaches a step ([VkBench.recorded]), before anything of it is drawn. */
@@ -618,9 +666,11 @@ private class BenchRun(
         val stage = VkBench.colourStage(surfaceFact("colour.stage"))
         if (plan == VkBench.Length.PILLS) {
             // The pills alone, for the screen recorder: the film shows whether each pill and its frosted glass move in
-            // the same frame.
+            // the same frame. Then still, frosted and with their tint alone, for CI's screen captures.
             status("the pills moving for ${plan.pillSeconds.roundToInt()} s: film them with the screen recorder")
             pillPhase(filmed = true)
+            stills()
+            fadeProbe()
             source.running = false
             bench("the end", null, false, pickCode, pickRoute, pickForm, pickTarget, pills = false, texture = false)
             return
@@ -822,14 +872,71 @@ private class BenchRun(
             return
         }
         pills(true, true)
+        val startNs = source.pillsStartNs
         val s = measure("pills", VkBench.Path.STILL, VkBench.View.BOARD, plan.pillSeconds, VkHost.SURFACE, keep = true)
         val onTime = kept.count { it.presented && VkBench.onTime(it.presentedNs, it.desiredNs, 16_666_667L) }
         val presented = kept.count { it.presented }
         val (uiIntervals, _, lateUi) = metrics.since(measureStartNs)
+        // While the pills move, a core frame shares its frame with its pill when it reached the display on its vsync and
+        // the window's frame of that vsync was drawn on time too (the pill's tint moved in it).
+        val (uiVsyncs, uiLate) = metrics.frames(measureStartNs)
+        var moving = 0
+        var same = 0
+        for (r in kept) {
+            if (!r.presented || !pillMoving((r.vsyncNs - startNs) / 1e9)) continue
+            moving++
+            if (VkBench.onTime(r.presentedNs, r.desiredNs, 16_666_667L) && VkBench.drawnOnTime(uiVsyncs, uiLate, r.vsyncNs)) same++
+        }
+        val frosted = kept.filter { it.gpuValid }.map { it.gpuAfterMs.toDouble() }.toDoubleArray()
         emit("vkbench pills: core frames on their vsync ${if (presented == 0) "— (no display timing)" else "$onTime of $presented"}, " +
-            "window frames late $lateUi of ${uiIntervals.size + 1}; p95 ${VkBench.ms(s.presentedP95)}; " +
-            if (filmed) "filmed: by the screen recorder (step through the video frame by frame)" else "filmed: in the Pills run")
+            "window frames late $lateUi of ${uiIntervals.size + 1}; " +
+            "same frame while moving ${if (moving == 0) "— (no display timing)" else "$same of $moving"} " +
+            "(the moving check is the phone's: an emulator's software Vulkan draws far slower than its display, and CI " +
+            "judges the still pills alone); frosted pass gpu ${VkBench.ms(VkBench.percentile(frosted, frosted.size, 50.0))} " +
+            "(p95 ${VkBench.ms(VkBench.percentile(frosted, frosted.size, 95.0))}); p95 ${VkBench.ms(s.presentedP95)}; " +
+            if (filmed) "filmed: by the screen recorder (step through the video frame by frame, or ci/pillcheck.py film)" else "filmed: in the Pills run")
         pills(true, false)
+    }
+
+    /**
+     * The pills still for [VkBench.PILL_STILL_MS] frosted, then as long with their tint alone (no glass from the core), each announced
+     * by a `vkbench pills still: …` line: CI captures the screen in each, and ci/pillcheck.py must pass the first and
+     * fail the second.
+     */
+    private suspend fun stills() {
+        if (!surfaceNow().attached) return
+        pills(true, false)
+        for (plain in listOf(false, true)) {
+            plainPills(plain)
+            emit("vkbench pills still: ${if (plain) "plain tint" else "frosted"}")
+            hold(VkBench.PILL_STILL_MS)
+        }
+        plainPills(false)
+        emit("vkbench pills still: done")
+    }
+
+    /**
+     * The still map and its frosted pills under a layer of alpha 0.5 for [VkBench.PILL_STILL_MS], announced by
+     * `vkbench fade: …` lines: whether this Android draws the SurfaceView at the alpha of a layer over it, as a screen's
+     * fade (NavDisplay's) asks of it. CI captures it and ci/pillcheck.py's fade judges it against the still frosted
+     * capture (fade.txt, for the emulator's API level). The pills' glass takes the layer's alpha either way.
+     */
+    private suspend fun fadeProbe() {
+        if (!surfaceNow().attached) return
+        fade(0.5f)
+        emit("vkbench fade: the map under a layer of alpha 0.5 (API ${Build.VERSION.SDK_INT})")
+        hold(VkBench.PILL_STILL_MS)
+        fade(1f)
+        emit("vkbench fade: done")
+    }
+
+    /** Holds the screen still for [ms], a frame asked for every tenth of a second while the app is in front. */
+    private suspend fun hold(ms: Long) {
+        val until = System.nanoTime() + ms * 1_000_000L
+        while (System.nanoTime() < until) {
+            if (!paused) core.requestFrame()
+            delay(100)
+        }
     }
 
     /**
