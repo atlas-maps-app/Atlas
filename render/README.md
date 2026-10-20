@@ -1,5 +1,7 @@
 # The renderer and the data
 
+**Frozen since 20 October 2026.** The look is refined in the map engine (`ENGINE.md`), not here. The renderer and its Kotlin port stay as they are, as the engine's yardstick, until the engine replaces them.
+
 The Amsterdam render is Thursday 1 October 2026 at 16:00 (sunrise 07:42, sunset 19:18), the moment every living-map board shares; the one-real-day screens that were built on it went on 13 October.
 
 Atlas's Python renderer (`render/`), where the map engine's look starts (`ENGINE.md`; it is retired once the engine is finished), the data fetchers (`fetch/`) and what they fetched (`data/`). This is the part the app is built from (the whole repo is on GitHub; `github.sh` still makes a stand-alone copy of just this part): the engine's look is the spec for the app's renderer, the fetchers and extracts are its data.

@@ -7,7 +7,7 @@ Atlas draws its map with its own engine. This is the one document about it: what
 - **The centerpiece of the app, purpose built for Atlas.** It is done first, and the rest of the app builds on it.
 - **Built from the ground up.** A C++23 core on Vulkan (`app/android/mapcore/cpp`), behind a small Kotlin façade (`app.atlas.mapcore.MapCore`). It draws vector tiles every frame the camera moves, at the screen's own density, and nothing at rest. Labels are placed again for each view, and detail comes and goes with the zoom.
 - **Resembles the renderer.** The Python renderer (`render/*.py`, ported byte for byte to Kotlin in `app/android/render`) is the starting point for the look: its features, rules, colours and light.
-  - The renderer is unfinished and has its issues, so it is a yardstick, not a specification.
+  - The renderer is unfinished and has its issues, so it is a yardstick, not a specification. It is frozen: the look is refined in the engine.
   - The engine fixes what is wrong, and goes on in the renderer's spirit where it stops.
   - When the engine is finished, the renderer and its port are retired, and the engine is the map.
 - **Custom where it counts.** The data model, tile format, rules, look, passes and shaders are Atlas's own. No general map engine and no third-party tile schema: OpenMapTiles is abolished.
@@ -241,9 +241,9 @@ In this order, each held by L1 at the boards' views:
 - Canal names read upright, with hysteresis.
 - The close-range look (quays, reflections, doors, shopfronts) applies across Amsterdam.
 - The canal ring is bundled for the first look.
+- The look is refined in the engine, not in the renderer. The renderer and its port are frozen as the yardstick from 20 October 2026.
 
 **Open**, each with a default so work never waits:
-- **The renderer from now on:** frozen as the yardstick, with the look refined in the engine (the default), or still refined in Python as the engine is built.
 - **The renderer's known issues:** melting buildings is fixed by design (true depth). Others are fixed in the engine as they are found and named in the case files (the default), or the owner lists them to be fixed first.
 - **Textures while the map moves:** fixed to the screen as in the renders (the default), or travelling with the surfaces.
 - **The crooked windows:** as the renders draw them (the default), kept in `shaders/shared/window_style.slang` so one edit changes them.
