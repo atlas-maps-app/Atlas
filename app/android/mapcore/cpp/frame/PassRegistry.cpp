@@ -4,6 +4,7 @@
 
 #include "passes/Composite.hpp"
 #include "passes/Frosted.hpp"
+#include "passes/Ground.hpp"
 
 #include <algorithm>
 #include <array>
@@ -21,6 +22,7 @@ template <class P>
 constexpr std::array registry{
     Registration{.name = "composite", .make = &make<passes::Composite>}, // K7: the composite subpass (D5.4)
     Registration{.name = "frosted", .make = &make<passes::Frosted>},     // K11b: the frosted backdrops (D5.1)
+    Registration{.name = "ground", .make = &make<passes::Ground>},       // K9: the ground (D10, D8's shadows)
 };
 
 } // namespace
