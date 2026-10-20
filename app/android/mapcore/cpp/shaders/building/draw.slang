@@ -11,6 +11,11 @@
 #include "shared/frame.slang"
 #include "shared/painter.slang"
 
+// K17a's mat: the walls and roofs are in the renders' mat group (the objects' `<g filter="url(#mat)">` where the moment
+// has weather), where mat_on says.
+#define ATLAS_FX_FUNCTIONS
+#include "fx/mat.slang"
+
 /// building.slangh's trigonometry: the GPU's own (the outline's arcs are not exact code).
 inline float building_cos(float a) {
     return cos(a);
@@ -126,10 +131,8 @@ struct BuildingTarget {
 [shader("fragment")]
 BuildingTarget building_fs(BuildingOut v) {
     BuildingTarget o;
-    // K17a's drawn texture of the walls (`mat`) joins here when shaders/fx/mat.slang lands, on where the frame's fields
-    // are bound and the moment has weather (the renders' mat group): c = mat_colour(frame.camera, c, v.position.xy,
-    // mat_on(frame))
-    float3 c = v.colour;
+    // mat's grain on the walls and roofs, where the frame's fields are bound and the moment has weather
+    float3 c = mat_colour(frame.camera, v.colour, v.position.xy, mat_on(frame));
     o.colour = float4(c, 1.0f);
     return o;
 }

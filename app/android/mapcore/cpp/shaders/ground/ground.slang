@@ -25,9 +25,10 @@
 #include "shared/frame.slang"
 #include "shared/painter.slang"
 
-// K17a's mat (render's `mat` filter over draw_under's land, the areas, the roads and draw_over's fills, D10): the call
-// site is ready; ATLAS_GROUND_MAT switches it on once fx/mat.slang lands (mat_on: the frame's fields bound, in full
-// mode, and the moment's weather, with which alone render defines #mat).
+// K17a's mat (render's `mat` filter over draw_under's land, the areas, the roads and draw_over's fills, D10), where
+// mat_on says: the frame's fields bound, in full mode, and the moment's weather, with which alone render defines #mat.
+// ATLAS_GROUND_MAT keeps the switch in one place.
+#define ATLAS_GROUND_MAT
 #if defined(ATLAS_GROUND_MAT)
 #define ATLAS_FX_FUNCTIONS
 #include "fx/mat.slang"
