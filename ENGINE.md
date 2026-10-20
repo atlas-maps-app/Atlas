@@ -6,7 +6,7 @@ Atlas draws its map with its own engine. This is the one document about it: what
 
 - **The centerpiece of the app, purpose built for Atlas.** It is done first, and the rest of the app builds on it.
 - **Built from the ground up.** A C++23 core on Vulkan (`app/android/mapcore/cpp`), behind a small Kotlin façade (`app.atlas.mapcore.MapCore`). It draws vector tiles every frame the camera moves, at the screen's own density, and nothing at rest. Labels are placed again for each view, and detail comes and goes with the zoom.
-- **Global.** The map covers the entire world, from the globe down to a single street, online and offline.
+- **Global, and it builds itself.** The map covers the entire world, from the globe down to a single street. The phone gathers up-to-date map data for any place, at any time, and builds the map itself. Pre-built packs are additions, not a requirement.
 - **Resembles the renderer.** The Python renderer (`render/*.py`, ported byte for byte to Kotlin in `app/android/render`) is the starting point for the look: its features, rules, colours and light.
   - The renderer is unfinished and has its issues, so it is a yardstick, not a specification.
   - It is frozen: the look is refined in the engine.
@@ -20,18 +20,24 @@ Atlas draws its map with its own engine. This is the one document about it: what
 
 ## The design
 
-1. **One data pipeline for the whole world, ours.** Atlas's packer (`:packer`, `:rendertiles`) builds everything on GitHub from OpenStreetMap and open data:
-   - render packs for street level everywhere, sharded so each job fits a free runner, and rebuilt monthly so only changed chunks change;
-   - a mid-zoom base, with Planetiler running Atlas's own profile into Atlas's own format;
-   - a small globe base, bundled in the APK;
-   - terrain and relief from the best elevation model for each region (national lidar where it exists, such as AHN in the Netherlands), and a global model everywhere else.
+1. **The phone builds the map itself, anywhere, anytime.** It gathers up-to-date data for any place in the world, and the core builds the tiles on its workers:
+   - OpenStreetMap from Overpass, the renderer's own source, tile by tile with margins, so a building on a tile's edge is built once;
+   - the regional sources the renderer uses, such as AHN and the tides in the Netherlands;
+   - elevation from the best model for each region (national lidar where it exists), and a global model elsewhere.
 
-   OpenStreetMap comes from Geofabrik's extracts, which are made for bulk processing and updated daily. Overpass is made for small live queries, and its public servers limit bulk use (about 10,000 queries and 1 GB a day), so it cannot build the world.
+   **Packs are additions, not a requirement.**
+   - Atlas's packer builds them on GitHub with the same code, for offline use and an instant first look. A packed tile and a tile the phone builds from the same data are the same, byte for byte.
+   - They come from Geofabrik's extracts, which are made for bulk processing. Overpass suits a phone's live queries, but its public servers limit bulk use (about 10,000 queries and 1 GB a day).
 
-   The phone never builds tiles. It reads the chunks it shows by ranges and keeps them, and it can download whole regions for offline use.
-2. **Render tiles** (pack format 3) hold every value the look derives from the data, already derived: looks, heights, roof shapes, water levels, label candidates.
+   **The far zooms come from two small world bases,** built the same way:
+   - a mid-zoom base, with Planetiler running Atlas's own profile into Atlas's format;
+   - a globe base, bundled in the APK.
+
+   No live source can hand a phone whole regions and countries at once, so these are the only prebuilt data the map needs.
+2. **Render tiles** (pack format 3) hold every value the look derives from the data, already derived: looks, traditions, heights, roof shapes, water levels, label candidates.
+   - The core's stage P derives them on the phone; the packer runs the same code.
    - The values are stored in columns compressed with zstd, with a keep code per vertex for every simplification level.
-   - A tile is memory-mapped, decoded straight into the GPU's heaps, and kept on disk once built.
+   - A tile is memory-mapped, decoded straight into the GPU's heaps, and kept on disk once built. It is refreshed by asking Overpass only for what changed since.
 3. **The style is the renderer's:** building traditions by country, and place-specific profiles wherever a place needs one.
    - Close up across Amsterdam: the living map's profile.
    - Williamsburg: `real.py`'s profile, if the owner says yes.
@@ -70,7 +76,7 @@ Atlas draws its map with its own engine. This is the one document about it: what
 **What the rethink of 20 October changed** from the old plan:
 - **The renderer is a yardstick, not the eternal reference.** It is frozen, the look is refined in the engine, and the engine fixes the renderer's issues and replaces it.
 - **Buildings never melt.** True depth for what stands up, instead of the renderer's painter's order, which the old plan copied on purpose.
-- **The whole world is covered from GitHub.** One pipeline builds street level for every place on Earth, so the phone never builds tiles.
+- **The phone builds the map itself, anywhere, from live data.** The look's derivations move into the core as C++, so the phone builds natively, and the packer uses the same code. Packs become optional additions, for offline use and a fast first look.
 - **All data is Atlas's own.** OpenMapTiles is gone; Planetiler stays only as a build tool, running Atlas's own profile.
 - **Only the checks below remain.** The old plan's other gates are dropped.
 - **No cut changes the result.** A simplification may change how the engine gets there, never what Amsterdam or any rendered place looks like. The engine's references prove it.
@@ -80,7 +86,10 @@ Atlas draws its map with its own engine. This is the one document about it: what
 ## Checks
 
 **While the renderer exists, it is the yardstick:**
-1. **Parity with the port:** the sun's answers, stage T's points, tile decoding, and pymath bit for bit.
+1. **Parity with the port:**
+   - the core's stage P against the port's loader, record by record and field by field, from the same data;
+   - the sun's answers, stage T's points, tile decoding, and pymath bit for bit;
+   - the phone's tiles against the packer's, byte for byte.
 2. **Element by element:** the twin (the core's per-frame code and the shaders' maths compiled as C++) emits what the GPU will draw. `L1Test` matches it against the port's SVG at the boards' views and the sweeps: in order for the ground, item by item for what stands up. Every new pass brings its twin and its cases.
 3. **The GPU against the twin** on lavapipe, per pass.
 4. **Likeness:** the smoke cases (the Westerkerk home and the Main board, by day and at night) against the port's renders on CI.
@@ -130,7 +139,7 @@ The other local branches and the worktrees under `/Volumes/Download/atlas` are h
 
 ## What is left, in order
 
-The engine is done first: it is the app's centerpiece, and the rest of the app builds on it. Sizes are rough hours of one agent's work, about 175 in all. If the estimates hold, steps 1 and 2 take this week, steps 3 to 5 the next, and step 6 the week after.
+The engine is done first: it is the app's centerpiece, and the rest of the app builds on it. Sizes are rough hours of one agent's work, about 205 in all. If the estimates hold, steps 1 and 2 take this week, steps 3 and 4 the next, and steps 5 to 7 the week after.
 
 ### 1. The new map on the phone (about 18 h)
 - **True depth first,** before more passes are built on the old order:
@@ -151,7 +160,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
 - Show the honest "can't draw the map" state after three device losses in a row.
 - **The desktop render tool:** the host build draws any view and moment to a PNG.
 - **The engine's own references begin:** the boards' views and moments, stored per engine version.
-- The core draws where it has tiles. Today's map stays everywhere else until step 4.
+- The core draws where it has tiles. Today's map stays everywhere else until step 5.
 - **Prove it:** run every preset, tidy, `L1Test` and `StageTParityTest`, push, and get CI green. Then tag an alpha.
 - **On the owner's phone:**
   - the first picture within 0.5 s warm;
@@ -168,7 +177,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
 - **The exact haze:** merge `wip/exact-haze`.
 - **Labels** are drawn by the core's frame instead of the Compose canvas, with the fonts loaded at the map's start.
 - **All of Amsterdam from the core:** `PackList.kt`, then the first publish of the `amsterdam` and `grachten` render packs after the owner's yes (a `packs.yml` run with `renders=only`).
-- **The style file:** the tiles' style section becomes the engine's own, edited as data. Every pass reads its colours and widths from it, before step 3 adds more.
+- **The style file:** the tiles' style section becomes the engine's own, edited as data. Every pass reads its colours and widths from it, before step 4 adds more.
 - **VK facts and VK bench on the device:**
   - VK facts prints the hashes of the twin, pymath and the noise fields, to compare with CI's;
   - it checks the composite's resolve form against the direct form, so a driver that clips the full-screen triangle uses the direct form;
@@ -181,8 +190,23 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - an island's water level from the ring around it.
 - Tag an alpha.
 
-### 3. The renderer's detail (about 42 h)
-In this order, each held by L1 at the boards' views and by the engine's own references:
+### 3. The phone builds the map anywhere (about 55 h)
+- **Stage P in the core.** The look's derivations move from the port's loaders into C++:
+  - looks and traditions;
+  - heights and roof shapes;
+  - water levels and the sea from the coast;
+  - party walls and multipolygons;
+  - label candidates and keep codes.
+
+  They are held record for record to the port's, from the same data.
+- **Live data on the phone:** Overpass, tile by tile with margins, plus the renderer's regional sources (AHN and the tides in the Netherlands) and the best elevation model for the place.
+- **Built in the background:** on the core's workers at background priority, nearest tiles first, prefetched along the camera's motion, never slowing a frame. Tiles are kept in the cache and refreshed by asking Overpass only for what changed since.
+- **Packs become additions:** the packer runs the same C++ through the host build, so a pack's tiles equal the phone's byte for byte. Regions can be downloaded for offline use and an instant first look.
+- **Exactly the renderer:** the phone's tiles at the boards' views equal the packer's from the same data, and the frames equal the references.
+- The core draws every place at street level. Tag an alpha.
+
+### 4. The renderer's detail (about 42 h)
+In this order. Each feature's derivation goes into the core's stage P, and each is held by L1 at the boards' views and by the engine's own references:
 - **Facades.** Flat detail is drawn by the wall's own shading from its record:
   - windows, dark or lit by their own sun bits, with deep windows, sashes, shutters and the glass gradients;
   - plinths, cornices, shop glazing and material faces;
@@ -211,12 +235,7 @@ In this order, each held by L1 at the boards' views and by the engine's own refe
 - **The renderer's other ten regions** get their render packs as their features land, each with its own profile.
 - Tag an alpha after the water and another after the night. By then the Westerkerk home is within about 2.5 levels of its render, apart from the renderer's named issues.
 
-### 4. The world (about 55 h)
-- **Street level for the whole world:**
-  - render packs from every Geofabrik extract, built on GitHub in windows, so a building on a window's edge is drawn once;
-  - inside the renderer's regions, each region's own profile, so Amsterdam and the others draw exactly as from their own packs (a check compares the frames);
-  - sharded to fit free runners, and rebuilt monthly;
-  - the phone reads what it shows by ranges and keeps it, and whole regions download for offline use.
+### 5. The world (about 40 h)
 - **Levels:**
   - the simplified level from the keep codes;
   - blocks of merged footprints from about 5 km out;
@@ -228,11 +247,15 @@ In this order, each held by L1 at the boards' views and by the engine's own refe
 - **The globe:** a small bundled base from Natural Earth and OSM's coastline, in the Globe board's style, with the true terminator and city lights.
 - **Names:** places and water everywhere, in every script, with collisions and fades.
 - **The style ladder:** the renderer's far rules continued, blending into the Globe board's look.
-- **The app off OpenMapTiles:** its addresses, way names and POIs come from Atlas's packs, and `packs.yml` stops building OpenMapTiles tiles.
+- **Packs for offline use:**
+  - regions are built monthly on GitHub from Geofabrik's extracts with the core's stage P, and downloaded from the app;
+  - inside the renderer's regions, each keeps its own profile;
+  - a check compares their frames with the phone's own builds.
+- **The app off OpenMapTiles:** its addresses, way names and POIs come from the phone's own tiles and the packs, and `packs.yml` stops building OpenMapTiles tiles.
 - **References around the world:** a big city, a mountain town, a desert, a coast, the open sea and the poles.
 - Today's map leaves the phone. Tag an alpha.
 
-### 5. Finish the map (about 25 h)
+### 6. Finish the map (about 25 h)
 - Markers, the route and the location dot, drawn by the core in the map's own frame.
 - Taps on buildings: a hit test against the tile's own buildings, giving the OSM id.
 - **Power:** ADPF, and a short thermal ladder measured on the owner's phone:
@@ -246,10 +269,9 @@ In this order, each held by L1 at the boards' views and by the engine's own refe
   - the old plan's citations (`plan-vector D…`, `K…`) leave the code's comments.
 - Tag an alpha.
 
-### 6. The engine becomes the main piece (about 15 h)
-- **Data:** the look's derivations (looks, traditions, heights, roof shapes, water levels, label candidates) move from the port's loaders into the packer's own code, so the packer no longer needs the port.
+### 7. The engine becomes the main piece (about 8 h)
 - **The app:** what it still takes from the port (the packs library and readers, the Overpass client, the moment and the weather themes, the shade walk's scoring) moves into modules of its own.
-- **Retire the renderer:** `render/`, the Kotlin port `:render` and the CPU raster leave the build. They are kept in git history, or in an archive if the owner prefers.
+- **Retire the renderer:** `render/`, the Kotlin port `:render` and the CPU raster leave the build. They stay in git history, or in an archive if the owner prefers.
 - Tag the final alpha.
 
 ## The owner's answers and open questions
@@ -260,6 +282,7 @@ In this order, each held by L1 at the boards' views and by the engine's own refe
 - Full density, with a lower internal resolution only as a measured fallback.
 - Never Google.
 - Global: the map covers the entire world.
+- The phone builds the map itself, anywhere and anytime, from up-to-date data; packs are additions, not a requirement.
 - The close-range look (quays, reflections, doors, shopfronts) applies across Amsterdam.
 - The city continues past the renders' radius.
 - Canal names read upright, with hysteresis.
@@ -270,6 +293,7 @@ In this order, each held by L1 at the boards' views and by the engine's own refe
 - **The renderer's known issues:** melting buildings is fixed by design (true depth). Others are fixed in the engine as they are found and named in the case files (the default), or the owner lists them to be fixed first.
 - **Textures while the map moves:** decided on the phone with step 3's switch. The default is the lean given there.
 - **The crooked windows:** as the renders draw them (the default), kept in one place so one edit changes them.
+- **Overpass for many users:** its public servers suit one phone. Before a public release, Atlas may need more mirrors or its own instance (the default: public instances, with caching and changed-since refreshes).
 - **Williamsburg in its own look:** yes (the default), done last.
 - **The close-range look beyond Amsterdam:** no (the default).
 
