@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "1",
+  "version": "2",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -36,6 +36,21 @@
           "board grey": "f5803393ee8acdfe9061e2ddcd69e986fb4b1d87bf10ef917c79e5d1e215f7c2",
           "board wet": "7ba8139334748baf793642072e64707aec13c1ce01ed3ca8c812fb50526dede3",
           "board night": "9882f87a99cd5f9274dc44f43783f25ddb0b37b551f0900a98b655c0622ab4e1"
+        }
+      }
+    },
+    "2": {
+      "note": "Step 2: the composite's haze and vignette in whole numbers, bit for bit the twin's",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "c42189abdb466c92a05630970fe08c7b45e69d15ed57d66d1709bc341d8d2815",
+          "home grey": "38a29892a2baacfc38bdcc354b8965d6ac3f1b76ab5030418250ba6a965ec5bb",
+          "home wet": "3f6b1de2d5340045d9dd4c4a9444a0df2859a53899f8263ca48297069d00bba0",
+          "home night": "e70640c8dc18b60d36f9b8d0ff3b9786abff2786d2a95be7feab231ae0386126",
+          "board sunny": "d8046ec453557efeadc0ca0c5c9b4f29b1bc92b5cbe9c9a3c63064761def096f",
+          "board grey": "6cf56db18e50ec66d13f5722f2db45b8c4e80b06d518dc0c9f86cd3f586dbb85",
+          "board wet": "7db80d08516e4c6057aadaf61b727b2ef38a9e0476eacd649ee7182a67559db1",
+          "board night": "81520f8c9814b1a472c3421fd0a1dd48aa35794ebd760fb1e46b7103084edce8"
         }
       }
     }
