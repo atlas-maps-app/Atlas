@@ -74,11 +74,14 @@ class MapData(private val services: Services) {
 
     private val worker = Executors.newFixedThreadPool(2) { r -> Thread(r, "atlas-map-data").apply { isDaemon = true } }
 
+    private val OVERPASS_HOSTS = app.atlas.providers.Overpass.ENDPOINTS.map { it.removeSuffix("/api/interpreter") }
+
     private fun online(): Boolean = !services.config.offline && services.connectivity.online.value
 
     /** Which region a view draws, and getting it ready. */
     val regions: LiveRegions by lazy {
-        LiveRegions(packs, worker, online = ::online, overpass = OverpassClient(post), onChange = { MapEngine.invalidate() })
+        // the same Overpass servers, in the same order, as the app's own client, so no build depends on one server
+        LiveRegions(packs, worker, online = ::online, overpass = OverpassClient(post, hosts = OVERPASS_HOSTS), onChange = { MapEngine.invalidate() })
     }
 
     /** The forecast for the live moment: the last one fetched near the place, refreshed in the background. */
