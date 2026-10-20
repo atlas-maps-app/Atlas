@@ -208,19 +208,19 @@ class ShopScreenshotTest {
         capture("shop_stroll")
     }
 
-    /** No downloaded area: only the map tiles' names and kinds, and the pantry says so. */
+    /** No downloaded area: the bundled Westerkerk pack's places, with every tag, their hours too. */
     @Test
-    fun pantryFromTheTilesOnly() {
+    fun pantryFromTheBundledPack() {
         show(Dest.Groceries(), ShopFixtures.services(places = false))
         settleWork()
-        capture("shop_pantry_tiles")
+        capture("shop_pantry_pack")
     }
 
     @Test
-    fun aisleFromTheTilesOnly() {
+    fun aisleFromTheBundledPack() {
         show(Dest.Groceries("super"), ShopFixtures.services(places = false))
         settleWork()
-        capture("shop_aisle_tiles")
+        capture("shop_aisle_pack")
     }
 
     /** "Best": the specialists for each item, so the run has several stops, as the board's receipt does. */

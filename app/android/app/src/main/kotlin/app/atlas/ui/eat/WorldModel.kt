@@ -74,7 +74,7 @@ object WorldModel {
                 cashOnly = p.cashOnly,
             )
         }.sortedWith(compareBy<MachineButton> { rank(it.openness) }.thenBy { it.place.distanceM })
-        val countsOpen = !area.sketchOnly && (ofPlank.any { it.hasHours } || (ofPlank.isEmpty() && area.places.any { it.hasHours }))
+        val countsOpen = ofPlank.any { it.hasHours } || (ofPlank.isEmpty() && area.places.any { it.hasHours })
         return Machine(
             world = world,
             plank = plank,

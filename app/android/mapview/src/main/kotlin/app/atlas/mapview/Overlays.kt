@@ -119,7 +119,7 @@ data class MapOverlays(
 sealed interface MapHit {
     val at: LatLon
     data class OnMarker(val marker: Marker, override val at: LatLon) : MapHit
-    /** A place drawn by the engine itself (a POI from the tiles, a building). */
+    /** A place drawn by the engine itself (a point of interest, a building). */
     data class OnFeature(val place: Place, override val at: LatLon) : MapHit
     data class Empty(override val at: LatLon) : MapHit
 }

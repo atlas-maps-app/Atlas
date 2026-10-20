@@ -1,7 +1,6 @@
 package app.atlas.tiles
 
 import app.atlas.geo.LatLon
-import app.atlas.geo.TileId
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -24,6 +23,9 @@ import java.security.MessageDigest
 import java.util.Collections
 import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPOutputStream
+
+/** A pack's region pack, the file kind "atlas". */
+private val Pack.atlasFile: PackFile? get() = files.firstOrNull { it.kind == PackFile.ATLAS }
 
 /**
  * GitHub releases on MockWebServer: `github` answers a release download with a 302 to `storage`, as GitHub does to
@@ -97,15 +99,15 @@ class PackCatalogTest {
 
     private fun gzip(b: ByteArray): ByteArray = ByteArrayOutputStream().also { o -> GZIPOutputStream(o).use { it.write(b) } }.toByteArray()
 
-    /** A packs.json for the fake: Luxembourg whole, and a pack whose tiles were cut into three parts. */
-    private fun publish(tiles: ByteArray, store: ByteArray, split: Int = 0): String {
-        gh.assets["luxembourg.pmtiles"] = tiles
+    /** A packs.json for the fake: Luxembourg whole, and a pack whose region pack was cut into three parts. */
+    private fun publish(atlas: ByteArray, store: ByteArray, split: Int = 0): String {
+        gh.assets["luxembourg.atlas"] = atlas
         val gz = gzip(store)
         gh.assets["luxembourg.places.db.gz"] = gz
-        val parts = if (split > 0) tiles.toList().chunked(split).map { it.toByteArray() } else emptyList()
-        parts.forEachIndexed { i, p -> gh.assets["big.pmtiles.%03d".format(i)] = p }
+        val parts = if (split > 0) atlas.toList().chunked(split).map { it.toByteArray() } else emptyList()
+        parts.forEachIndexed { i, p -> gh.assets["big.atlas.%03d".format(i)] = p }
         val partsJson = parts.mapIndexed { i, p ->
-            val name = "big.pmtiles.%03d".format(i)
+            val name = "big.atlas.%03d".format(i)
             """{"name": "$name", "url": "${gh.url(name)}", "bytes": ${p.size}, "sha256": "${sha(p)}"}"""
         }
         val json = """{
@@ -113,27 +115,19 @@ class PackCatalogTest {
           "attribution": "Map data © OpenStreetMap contributors (ODbL)",
           "packs": [
             {"id": "luxembourg", "name": "Luxembourg", "country": "LU", "bbox": [5.733, 49.4455, 6.5322, 50.185],
-             "osm_timestamp": "2026-10-31T20:21:31Z", "minzoom": 0, "maxzoom": 14, "release": "packs-20261101",
+             "osm_timestamp": "2026-10-31T20:21:31Z", "release": "packs-20261101",
              "files": [
-               {"kind": "tiles", "name": "luxembourg.pmtiles", "url": "${gh.url("luxembourg.pmtiles")}", "bytes": ${tiles.size}, "sha256": "${sha(tiles)}", "format": "pmtiles", "schema": "openmaptiles 3.16.0"},
+               {"kind": "atlas", "name": "luxembourg.atlas", "url": "${gh.url("luxembourg.atlas")}", "bytes": ${atlas.size}, "sha256": "${sha(atlas)}", "format": 2},
                {"kind": "places", "name": "luxembourg.places.db.gz", "url": "${gh.url("luxembourg.places.db.gz")}", "bytes": ${gz.size}, "sha256": "${sha(gz)}", "compression": "gzip", "raw_bytes": ${store.size}, "schema": 1}
              ]},
             {"id": "benelux", "name": "Benelux", "bbox": [2.5, 49.4, 7.3, 53.6], "files": [
-               {"kind": "tiles", "name": "big.pmtiles", "bytes": ${tiles.size}, "sha256": "${sha(tiles)}", "parts": [${partsJson.joinToString(",")}]}
+               {"kind": "atlas", "name": "big.atlas", "bytes": ${atlas.size}, "sha256": "${sha(atlas)}", "parts": [${partsJson.joinToString(",")}]}
              ]},
             {"id": "broken", "name": "No files", "bbox": [0, 0, 1, 1], "files": []},
             {"name": "No id", "bbox": [0, 0, 1, 1], "files": []}
           ]}"""
         gh.assets["packs.json"] = json.toByteArray()
         return json
-    }
-
-    private fun archive(): ByteArray {
-        val f = File(dir, "lux.pmtiles")
-        val tiles = LinkedHashMap<TileId, ByteArray>()
-        for (id in Fixtures.all) tiles[id] = Fixtures.bytes(id)
-        PmTilesWriter.write(f, tiles, leafSize = 3)
-        return f.readBytes()
     }
 
     @Test
@@ -143,17 +137,15 @@ class PackCatalogTest {
         assertEquals(listOf("luxembourg", "benelux"), list.packs.map { it.id })
         val lux = list.packs[0]
         assertEquals("LU", lux.country)
-        assertEquals(14, lux.maxZoom)
         assertEquals("packs-20261101", lux.release)
         assertEquals(java.time.Instant.parse("2026-10-31T20:21:31Z"), lux.osmTime)
-        assertEquals(gh.url("luxembourg.pmtiles"), lux.tiles!!.url)
-        assertEquals("openmaptiles 3.16.0", lux.tiles!!.schema)
+        assertEquals(gh.url("luxembourg.atlas"), lux.atlasFile!!.url)
         assertEquals("gzip", lux.places!!.compression)
         assertEquals(500L, lux.places!!.rawBytes)
         assertEquals("1", lux.places!!.schema)
         assertEquals(1000L + lux.places!!.bytes, lux.downloadBytes)
         assertEquals(1500L, lux.diskBytes)
-        val big = list.packs[1].tiles!!
+        val big = list.packs[1].atlasFile!!
         assertTrue(big.isSplit)
         assertEquals(listOf(400L, 400L, 200L), big.parts.map { it.bytes })
         assertNull(list.packs[1].places)
@@ -186,48 +178,10 @@ class PackCatalogTest {
     }
 
     @Test
-    fun aPacksTilesAreReadInPlaceByRangeAcrossTheRedirect() = runBlocking {
-        val bytes = archive()
-        publish(bytes, ByteArray(10))
-        val catalog = PackCatalog(gh.url("packs.json"))
-        val pack = catalog.pack("luxembourg")!!
-        catalog.openTiles(pack).use { pm ->
-            assertEquals(14, pm.maxZoom)
-            for (id in Fixtures.all) assertArrayEquals("$id", Fixtures.bytes(id), pm.tile(id))
-        }
-        // every read went to GitHub first and was redirected with its Range header kept
-        val ranged = gh.storageRequests.filter { it.url.encodedPath.endsWith("luxembourg.pmtiles") }
-        assertTrue(ranged.isNotEmpty())
-        assertTrue(ranged.all { it.headers["Range"]?.startsWith("bytes=") == true })
-        assertTrue(ranged.all { it.url.queryParameter("sig") == "abc" })
-        assertEquals(ranged.size, gh.githubRequests.count { it.url.encodedPath.endsWith("luxembourg.pmtiles") })
-    }
-
-    @Test
-    fun aSplitArchiveIsReadAsOne() = runBlocking {
-        val bytes = archive()
-        val part = bytes.size / 3 + 1
-        publish(bytes, ByteArray(10), split = part)
-        val catalog = PackCatalog(gh.url("packs.json"))
-        val big = catalog.pack("benelux")!!
-        assertEquals(3, big.tiles!!.parts.size)
-        val src = catalog.remoteTiles(big) as PartedRangeSource
-        assertEquals(bytes.size.toLong(), src.size)
-        // reads across one and two part boundaries, and past the end
-        assertArrayEquals(bytes.copyOfRange(part - 500, part + 500), src.read(part - 500L, 1000))
-        assertArrayEquals(bytes.copyOfRange(part - 10, 2 * part + 10), src.read(part - 10L, part + 20))
-        assertArrayEquals(bytes.copyOfRange(bytes.size - 5, bytes.size), src.read(bytes.size - 5L, 100))
-        assertEquals(0, src.read(bytes.size.toLong(), 10).size)
-        catalog.openTiles(big).use { pm ->
-            for (id in Fixtures.all) assertArrayEquals("$id", Fixtures.bytes(id), pm.tile(id))
-        }
-    }
-
-    @Test
     fun filesDownloadVerifiedResumedAndUnpacked() = runBlocking {
-        val tiles = ByteArray(300_000) { (it * 7 + it / 1000).toByte() }
+        val atlas = ByteArray(300_000) { (it * 7 + it / 1000).toByte() }
         val store = ByteArray(200_000) { (it % 251).toByte() }
-        publish(tiles, store, split = 120_000)
+        publish(atlas, store, split = 120_000)
         val catalog = PackCatalog(gh.url("packs.json"))
         val dl = PackDownloader()
         val lux = catalog.pack("luxembourg")!!
@@ -238,44 +192,44 @@ class PackCatalogTest {
         assertTrue(!File(dir, "lux.db.download").exists())
 
         // a split file, interrupted half way through its second part, resumes with a range
-        val big = catalog.pack("benelux")!!.tiles!!
-        val target = File(dir, "big.pmtiles")
-        File(target.path + ".download").writeBytes(tiles.copyOf(180_000))
+        val big = catalog.pack("benelux")!!.atlasFile!!
+        val target = File(dir, "big.atlas")
+        File(target.path + ".download").writeBytes(atlas.copyOf(180_000))
         gh.storageRequests.clear()
         dl.download(big, target)
-        assertArrayEquals(tiles, target.readBytes())
+        assertArrayEquals(atlas, target.readBytes())
         val asked = gh.storageRequests.map { it.url.encodedPath.substringAfterLast('/') to it.headers["Range"] }
-        assertEquals(listOf("big.pmtiles.001" to "bytes=60000-", "big.pmtiles.002" to null), asked)
+        assertEquals(listOf("big.atlas.001" to "bytes=60000-", "big.atlas.002" to null), asked)
 
         // a server that ignores ranges: the part starts over, the result is still right
         gh.ignoreRanges = true
-        File(target.path + ".download").writeBytes(tiles.copyOf(250_000))
+        File(target.path + ".download").writeBytes(atlas.copyOf(250_000))
         target.delete()
         dl.download(big, target)
-        assertArrayEquals(tiles, target.readBytes())
+        assertArrayEquals(atlas, target.readBytes())
     }
 
     @Test
     fun aCorruptDownloadIsRefused() = runBlocking {
         publish(ByteArray(5000) { it.toByte() }, ByteArray(10))
         val lux = PackCatalog(gh.url("packs.json")).pack("luxembourg")!!
-        gh.assets["luxembourg.pmtiles"] = ByteArray(5000) { (it + 1).toByte() }
-        val target = File(dir, "bad.pmtiles")
-        assertThrows(PackDownloader.ChecksumException::class.java) { runBlocking { PackDownloader().download(lux.tiles!!, target) } }
+        gh.assets["luxembourg.atlas"] = ByteArray(5000) { (it + 1).toByte() }
+        val target = File(dir, "bad.atlas")
+        assertThrows(PackDownloader.ChecksumException::class.java) { runBlocking { PackDownloader().download(lux.atlasFile!!, target) } }
         assertTrue(!File(target.path + ".download").exists())
         assertTrue(!target.exists())
     }
 
     @Test
     fun aRangeAnsweredFromTheStartRestartsThePart() = runBlocking {
-        val tiles = ByteArray(300_000) { (it * 11).toByte() }
-        publish(tiles, ByteArray(10), split = 120_000)
-        val big = PackCatalog(gh.url("packs.json")).pack("benelux")!!.tiles!!
-        val target = File(dir, "confused.pmtiles")
-        File(target.path + ".download").writeBytes(tiles.copyOf(180_000))
+        val atlas = ByteArray(300_000) { (it * 11).toByte() }
+        publish(atlas, ByteArray(10), split = 120_000)
+        val big = PackCatalog(gh.url("packs.json")).pack("benelux")!!.atlasFile!!
+        val target = File(dir, "confused.atlas")
+        File(target.path + ".download").writeBytes(atlas.copyOf(180_000))
         gh.rangeFromStart = true
         PackDownloader().download(big, target)
-        assertArrayEquals(tiles, target.readBytes())
+        assertArrayEquals(atlas, target.readBytes())
     }
 
     @Test
@@ -283,11 +237,11 @@ class PackCatalogTest {
         val old = ByteArray(1000) { it.toByte() }
         val new = ByteArray(1000) { (it * 3).toByte() }
         // the old file's download breaks off at 600 bytes, and the new one replaces it before it is resumed
-        gh.assets["v1.pmtiles"] = old.copyOf(600)
-        gh.assets["v2.pmtiles"] = new
-        val v1 = PackFile(PackFile.TILES, "x.pmtiles", 1000, sha(old), listOf(PackPart(gh.url("v1.pmtiles"), 1000, null)))
-        val v2 = PackFile(PackFile.TILES, "x.pmtiles", 1000, sha(new), listOf(PackPart(gh.url("v2.pmtiles"), 1000, null)))
-        val target = File(dir, "x.pmtiles")
+        gh.assets["v1.atlas"] = old.copyOf(600)
+        gh.assets["v2.atlas"] = new
+        val v1 = PackFile(PackFile.ATLAS, "x.atlas", 1000, sha(old), listOf(PackPart(gh.url("v1.atlas"), 1000, null)))
+        val v2 = PackFile(PackFile.ATLAS, "x.atlas", 1000, sha(new), listOf(PackPart(gh.url("v2.atlas"), 1000, null)))
+        val target = File(dir, "x.atlas")
         assertThrows(IOException::class.java) { runBlocking { PackDownloader().download(v1, target) } }
         assertEquals(600L, File(target.path + ".download").length())
         gh.storageRequests.clear()
@@ -315,10 +269,10 @@ class PackCatalogTest {
         MockWebServer().use { slow ->
             slow.enqueue(MockResponse.Builder().code(200).body(Buffer().write(ByteArray(200))).throttleBody(1, 2, TimeUnit.SECONDS).build())
             slow.start()
-            val f = PackFile(PackFile.TILES, "slow.pmtiles", 200, null, listOf(PackPart(slow.url("/slow.pmtiles").toString(), 200, null)))
+            val f = PackFile(PackFile.ATLAS, "slow.atlas", 200, null, listOf(PackPart(slow.url("/slow.atlas").toString(), 200, null)))
             val started = System.nanoTime()
             assertThrows(TimeoutCancellationException::class.java) {
-                runBlocking { withTimeout(500) { PackDownloader().download(f, File(dir, "slow.pmtiles")) } }
+                runBlocking { withTimeout(500) { PackDownloader().download(f, File(dir, "slow.atlas")) } }
             }
             val seconds = (System.nanoTime() - started) / 1e9
             assertTrue("stopped after $seconds s", seconds < 5)
@@ -328,17 +282,6 @@ class PackCatalogTest {
     @Test
     fun theDefaultListIsTheLatestRelease() {
         assertEquals("https://github.com/atlas-maps-app/Atlas/releases/download/packs-latest/packs.json", PackCatalog.DEFAULT_URL)
-    }
-
-    @Test
-    fun aRealReleaseAssetIsReadByRangeThroughGitHubsRedirect() = runBlocking {
-        org.junit.Assume.assumeTrue(System.getProperty("atlas.online") == "true")
-        // Planetiler's own release asset (93,278,824 bytes): a zip, so "PK\u0003\u0004" first and its end record last
-        val src = HttpRangeSource("https://github.com/onthegomap/planetiler/releases/download/v0.10.2/planetiler.jar")
-        assertArrayEquals(byteArrayOf(0x50, 0x4b, 3, 4), src.read(0, 4))
-        val tail = src.read(93_278_824L - 22, 22)
-        assertArrayEquals(byteArrayOf(0x50, 0x4b, 5, 6), tail.copyOf(4))
-        assertEquals(0, src.read(93_278_824L, 10).size)
     }
 
     @Test
@@ -352,7 +295,6 @@ class PackCatalogTest {
             throw e
         }
         assertTrue(list.packs.isNotEmpty())
-        val pack = list.packs.first()
-        PackCatalog().openTiles(pack).use { assertTrue(it.maxZoom >= 13) }
+        assertTrue(list.packs.all { p -> p.files.all { it.kind == PackFile.ATLAS || it.kind == PackFile.PLACES } })
     }
 }

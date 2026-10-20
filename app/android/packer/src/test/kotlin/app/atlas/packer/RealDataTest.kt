@@ -212,51 +212,6 @@ class RealDataTest {
     }
 
     /**
-     * Planetiler's tiles for Luxembourg, when built into cache/packs/out (as the workflow runs it): the archive opens
-     * with `:tiles`, its z14 tile in the city has the OpenMapTiles layers, its POI ids join the place store, and the
-     * manifest reads its zooms, schema and OSM time.
-     */
-    @Test
-    fun planetilerTilesWhenBuilt() = runBlocking {
-        val out = File(System.getProperty("atlas.repo"), "cache/packs/out")
-        val pmtiles = File(out, "luxembourg.pmtiles")
-        assumeTrue("run Planetiler on Luxembourg into $pmtiles to run this", pmtiles.isFile)
-        app.atlas.tiles.PmTiles.open(pmtiles).use { pm ->
-            assertEquals(0, pm.minZoom)
-            assertEquals(14, pm.maxZoom)
-            assertEquals("3.16.0", pm.metadata["version"])
-            assertTrue(pm.attribution.contains("OpenStreetMap"))
-            val centre = app.atlas.geo.Mercator.tileAt(LatLon(49.6116, 6.1319), 14)
-            val tile = app.atlas.tiles.Mvt.decode(pm.tile(centre)!!)
-            for (layer in listOf("transportation", "transportation_name", "building", "poi", "housenumber", "landuse")) {
-                assertTrue("$layer in ${tile.layers.keys}", layer in tile.layers.keys)
-            }
-            val db = File(out, "luxembourg.places.db")
-            if (db.isFile) PlaceStore.open(db).use { lux ->
-                // a POI's id is the OSM id times ten plus 1, 2 or 3 for node, way or relation
-                val pois = tile.layers.getValue("poi").features.filter { it.hasId && it.props.string("name") != null }
-                val joined = pois.count { f ->
-                    val type = when (f.id % 10) { 1L -> OsmType.NODE; 2L -> OsmType.WAY; else -> OsmType.RELATION }
-                    lux.get(OsmId(type, f.id / 10))?.tags?.get("name") == f.props.string("name")
-                }
-                println("Luxembourg z14 ${centre}: ${tile.layers.size} layers, ${pois.size} named POIs, $joined found by id in the store")
-                assertTrue("$joined of ${pois.size}", joined >= pois.size * 9 / 10)
-            }
-        }
-        val dir = Files.createTempDirectory("pm").toFile()
-        try {
-            pmtiles.copyTo(File(dir, "luxembourg.pmtiles"))
-            val e = Manifest.entry(dir, "luxembourg", "https://example.org/releases/download/packs-1", null)
-            assertEquals(14, (e["maxzoom"] as kotlinx.serialization.json.JsonPrimitive).content.toInt())
-            assertEquals("2026-10-13T20:21:31Z", (e["osm_timestamp"] as kotlinx.serialization.json.JsonPrimitive).content)
-            val tiles = (e["files"] as kotlinx.serialization.json.JsonArray).single() as kotlinx.serialization.json.JsonObject
-            assertEquals("openmaptiles 3.16.0", (tiles["schema"] as kotlinx.serialization.json.JsonPrimitive).content)
-        } finally {
-            dir.deleteRecursively()
-        }
-    }
-
-    /**
      * The store's size on a real extract, against the budget of the slim store (schema 2): a regression in what a
      * place costs fails here. Monaco's store is mostly fixed overhead (the schema's pages, the seeded dictionaries).
      */

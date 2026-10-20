@@ -18,7 +18,6 @@ dependencies {
 tasks.test {
     // An anchor of grachten_home is compiled from a render of its whole scene, as render's own tests make it.
     maxHeapSize = "3g"
-    // Shared fixtures live in app/android/testdata; the repo's cache/ (the engine's renders) and data/ are one level up.
-    systemProperty("atlas.testdata", rootProject.file("testdata").absolutePath)
+    // The repo's root, with its cache/ (the engine's renders) and data/.
     systemProperty("atlas.repo", rootProject.file("../..").absolutePath)
 }

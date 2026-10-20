@@ -272,7 +272,6 @@ tasks.test {
     })
     environment(vulkanEnv)
     systemProperty("atlas.repo", repoDir.path)
-    systemProperty("atlas.testdata", rootProject.layout.projectDirectory.dir("testdata").asFile.path)
     // K3's differential check: how many single-byte damages of the bundled tiles the core and Kotlin decode side by side
     providers.systemProperty("atlas.l0.damages").orNull?.let { systemProperty("atlas.l0.damages", it) }
     // K3b's parity sweep: arguments a function (CI's build job runs 10^5; the nightly the plan's 10^7)

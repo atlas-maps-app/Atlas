@@ -74,6 +74,11 @@ class PackLibrary(
      * to a bundled one is never fetched.
      */
     private val bundledRenders: Map<String, String> = emptyMap(),
+    /**
+     * Packs kept elsewhere on the phone and read where they are (the offline regions' own packs): never placed, replaced
+     * or removed here, and read again on [rescan].
+     */
+    private val elsewhere: () -> List<File> = { emptyList() },
 ) {
     /** A published pack: where it is and what it covers; [render] is its region's render pack, or [renderGap] says why it has none. */
     data class Entry(
@@ -151,6 +156,9 @@ class PackLibrary(
 
     /** The pack on the phone with [id], or null. */
     fun local(id: String): Local? = local().firstOrNull { it.id == id }
+
+    /** Forgets what it read of the packs on the phone, so the next look sees files others placed or removed (a region). */
+    fun rescan() = synchronized(lock) { locals = null }
 
     /** The published pack with [id], or null. */
     fun entry(id: String): Entry? = published.firstOrNull { it.id == id }
@@ -266,12 +274,11 @@ class PackLibrary(
 
     /**
      * Builds a pack for [box] on the phone from Overpass (the query of the renders' extracts) with a configuration
-     * made from the box alone, and keeps it. The id is `here-<lat>-<lon>` of the box's centre, so one place is built once.
+     * made from the box alone, and keeps it. The id is `here-<lat>-<lon>` of the box's centre, so one place is built once;
+     * [refresh] builds it again from today's data, the old file replaced only once the new one is whole.
      */
-    fun build(client: OverpassClient, box: BBox, name: String = "Here"): Local {
-        val c = box.center
-        val id = buildId(c)
-        local(id)?.let { return it }
+    fun build(client: OverpassClient, box: BBox, name: String = "Here", refresh: Boolean = false, id: String = buildId(box.center)): Local {
+        if (!refresh) local(id)?.let { return it }
         val tmp = File(dir, ".$id.part")
         RegionBuilder.buildFromOverpass(client, id, name, box, tmp)
         return place(id, tmp, built = true)
@@ -338,11 +345,15 @@ class PackLibrary(
         local(id)!!.also { require(it.bbox == bbox) }
     }
 
-    private fun scan(): List<Local> = dir.listFiles { f -> f.isFile && f.name.endsWith(EXT) }.orEmpty().sortedBy { it.name }.mapNotNull { f ->
-        runCatching {
-            val m = PackReader.open(f).use { it.manifest }
-            Local(m.id, f, m.bbox, "${f.length()}-${f.lastModified()}", File(dir, "${m.id}$BUILT").isFile)
-        }.getOrNull()
+    private fun scan(): List<Local> {
+        val mine = dir.listFiles { f -> f.isFile && f.name.endsWith(EXT) }.orEmpty().sortedBy { it.name }
+        val others = runCatching { elsewhere() }.getOrDefault(emptyList()).filter { it.isFile && it.name.endsWith(EXT) }.sortedBy { it.name }
+        return (mine + others).mapNotNull { f ->
+            runCatching {
+                val m = PackReader.open(f).use { it.manifest }
+                Local(m.id, f, m.bbox, "${f.length()}-${f.lastModified()}", f.parentFile == dir && File(dir, "${m.id}$BUILT").isFile)
+            }.getOrNull()
+        }
     }
 
     private fun scanRenders(): List<LocalRender> = renderDir.listFiles { f -> f.isFile && f.name.endsWith(EXT) }.orEmpty().sortedBy { it.name }.mapNotNull { f ->

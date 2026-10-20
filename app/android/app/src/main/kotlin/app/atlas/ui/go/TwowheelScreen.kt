@@ -47,8 +47,6 @@ import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.walkMinutes
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /** The Twowheel board's colours (canvas/project/Twowheel.dc.html). */
 private object TwoColours {
@@ -85,13 +83,10 @@ fun TwowheelScreen(args: Dest.Twowheel, nav: Navigator) {
     val places by produceState<List<app.atlas.model.Place>?>(null, here) { value = services.go.placesAround(here, RADIUS_M) }
     val ui = places?.let { Twowheel.around(it, here, mode) }
     val units by services.go.unitsFlow.collectAsStateWithLifecycle()
-    // The street each of the nearest spots is on, from the map (most stands have no name of their own).
+    // The street each of the nearest spots is on, from the map's data (most stands have no name of their own).
     val shown = ui?.spots?.take(4).orEmpty() + listOfNotNull(ui?.repair)
     val streets by produceState(emptyMap<String, String>(), shown) {
-        value = withContext(Dispatchers.IO) {
-            val namer = TileWayNamer({ services.tiles.value })
-            shown.mapNotNull { s -> namer.nearest(s.place.location, 40.0)?.let { s.place.key to it } }.toMap()
-        }
+        value = shown.mapNotNull { s -> runCatching { services.localData.streetNear(s.place.location, 40.0) }.getOrNull()?.let { s.place.key to it } }.toMap()
     }
 
     BoardPage(TwoColours.BG, stringResource(R.string.go_twowheel_source), TwoColours.NOTE) {

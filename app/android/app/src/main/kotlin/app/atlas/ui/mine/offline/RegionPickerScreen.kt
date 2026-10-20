@@ -165,7 +165,6 @@ fun RegionPickerScreen(args: Dest.RegionPicker, nav: Navigator) {
                 q == null -> ""
                 q.kind == MapKind.ATLAS && q.packed -> stringResource(R.string.mine_picker_from_pack)
                 q.kind == MapKind.ATLAS -> stringResource(R.string.mine_picker_built)
-                q.kind == MapKind.TILES -> stringResource(R.string.mine_picker_tiles)
                 else -> stringResource(R.string.mine_est_unknown)
             } + if (boxes.size > 1) " · " + stringResource(R.string.mine_picker_parts, boxes.size) else ""
             EstimateCard(if (failed) emptyMap<RegionLayer, Long?>() else q?.bytes, caption)

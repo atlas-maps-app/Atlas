@@ -127,6 +127,18 @@ class TrackConverter(private val namer: WayNamer? = null) {
         ordered += marks.values.sortedBy { it.index }
         ordered += Mark(n - 1, Maneuver(ManeuverType.ARRIVE), RANK_FERRY)
 
+        // where each step's street is read, and the way of travel there: a little past the maneuver (before the arrival)
+        val asks = ordered.mapIndexed { k, mk ->
+            val i = mk.index
+            val next = if (k + 1 < ordered.size) ordered[k + 1].index else i
+            if (i < n - 1) {
+                val along = min(cum[n - 1], cum[i] + min(15.0, (cum[next] - cum[i]) / 2))
+                pointAt(points, cum, along) to bearingBetween(points, cum, indexBefore(cum, along), +1)
+            } else {
+                pointAt(points, cum, max(0.0, cum[i] - 5.0)) to bearingBetween(points, cum, i, -1)
+            }
+        }
+        val routeNamer = namer?.forPoints(asks.map { it.first })
         val steps = ArrayList<Step>(ordered.size)
         for ((k, mk) in ordered.withIndex()) {
             val i = mk.index
@@ -134,16 +146,7 @@ class TrackConverter(private val namer: WayNamer? = null) {
             val before = if (i > 0) bearingBetween(points, cum, i, -1) else null
             val after = if (i < n - 1) bearingBetween(points, cum, i, +1) else null
             val m = mk.maneuver.copy(bearingBefore = before, bearingAfter = after)
-            val street = namer?.let { namer ->
-                if (i < n - 1) {
-                    val along = min(cum[n - 1], cum[i] + min(15.0, (cum[next] - cum[i]) / 2))
-                    val at = pointAt(points, cum, along)
-                    namer.name(at, bearingBetween(points, cum, indexBefore(cum, along), +1))
-                } else {
-                    val along = max(0.0, cum[i] - 5.0)
-                    namer.name(pointAt(points, cum, along), bearingBetween(points, cum, i, -1))
-                }
-            }
+            val street = routeNamer?.name(asks[k].first, asks[k].second)
             steps += Step(
                 maneuver = m,
                 pointIndex = i,

@@ -8,8 +8,6 @@ import app.atlas.model.RoutePrefs
 import app.atlas.model.Vehicle
 import app.atlas.route.HazardKind
 import app.atlas.services.Units
-import app.atlas.testing.FixtureTiles
-import app.atlas.tiles.TileStack
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -150,20 +148,20 @@ class GoLogicTest {
     }
 
     @Test
-    fun bridgesFromTheTilesCrossTheCanals() {
+    fun bridgesFromThePackCrossTheCanals() {
         val boat = GoFixtures.fixture(Mode.BOAT)!!
-        val crossings = runBlocking { TileBridges.crossings(boat, TileStack(listOf(FixtureTiles()))) }
-        assertTrue("a canal trip through the Grachtengordel passes many bridges: ${crossings.size}", crossings.size >= 10)
-        assertTrue(crossings.toList().zipWithNext().all { (a, b) -> b - a >= RouteBridges.SAME_M })
-        val bridges = RouteBridges.find(boat, null, crossings)
-        assertEquals(crossings.size, bridges.size)
-        assertTrue(bridges.all { it.clearance == null })
+        val mapped = runBlocking { app.atlas.testing.BundledPack.local.bridges(boat) }
+        assertTrue("a canal trip from the Westerkerk passes bridges in the pack: ${mapped.size}", mapped.size >= 5)
+        assertTrue(mapped.zipWithNext().all { (a, b) -> b.along >= a.along })
+        val bridges = RouteBridges.find(boat, null, mapped)
+        // one bridge mapped as several ways (a road and its pavements) is one
+        assertTrue(bridges.zipWithNext().all { (a, b) -> b.along - a.along >= RouteBridges.SAME_M })
+        assertTrue(bridges.size in 5..mapped.size)
+        // OpenStreetMap names the bridges (Amsterdam numbers them), which the tiles never could
+        assertTrue("names: ${bridges.map { it.name }}", bridges.count { it.name != null } * 2 >= bridges.size)
         val (next, d) = RouteBridges.next(bridges, 0.0)!!
-        assertEquals(crossings[0], next.along, 1e-9)
-        assertEquals(crossings[0], d, 1e-9)
-        // A road route is not "under" a bridge it drives over: its own bridges run along it, not across.
-        assertEquals(-1.0, TileBridges.intersect(0.0, 0.0, 10.0, 0.0, 0.0, 1.0, 10.0, 1.0), 0.0)
-        assertEquals(0.5, TileBridges.intersect(0.0, 0.0, 10.0, 0.0, 5.0, -1.0, 5.0, 1.0), 1e-9)
+        assertEquals(mapped[0].along, next.along, 1e-9)
+        assertEquals(mapped[0].along, d, 1e-9)
         assertEquals(2.5, RouteBridges.clearanceOf(mapOf("seamark:bridge:clearance_height" to "2.5"))!!, 0.0)
         assertEquals(4.1148, RouteBridges.clearanceOf(mapOf("maxheight:physical" to "13'6\""))!!, 1e-4)
     }

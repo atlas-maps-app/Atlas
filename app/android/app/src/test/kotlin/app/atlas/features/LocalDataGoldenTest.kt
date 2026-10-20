@@ -13,7 +13,7 @@ import app.atlas.render.data.PackBoxes
 import app.atlas.render.data.PackFeatures
 import app.atlas.render.data.PackReader
 import app.atlas.services.LocalData
-import app.atlas.services.LocalOrigin
+import app.atlas.services.PlaceOrigin
 import app.atlas.ui.search.QuestFinder
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
@@ -130,7 +130,7 @@ class LocalDataGoldenTest {
             val g = p.address ?: continue
             val a = local.address(p.at)
             if (a == null) { wrong += "${p.name}: no address"; continue }
-            assertEquals(LocalOrigin.PACK, a.origin)
+            assertEquals(PlaceOrigin.PACK, a.origin)
             val sameHouse = a.street == g.street && a.housenumber == g.housenumber
             when {
                 g.houseAt != null -> {
@@ -178,7 +178,7 @@ class LocalDataGoldenTest {
         // The tiles name a point of interest by its name, else its operator or brand (with its ref): "Equans AMS-4376".
         val named = TagFilter.Or(listOf(TagFilter.Has("name"), TagFilter.Has("brand"), TagFilter.Has("operator")))
         val found = local.places(g.centre, g.radius + NAME_M, named, 100_000)
-        assertEquals(LocalOrigin.PACK, found.origin)
+        assertEquals(PlaceOrigin.PACK, found.origin)
         val missing = missing(g.places, found.value)
         assertTrue("${missing.size} of ${g.places.size} missing:\n" + missing.joinToString("\n"), missing.isEmpty())
         println("points of interest within ${g.radius} m: the tiles ${g.places.size}, all found; the pack lists ${found.value.count { Geo.distance(g.centre, it.location) <= g.radius }} named places")
@@ -199,7 +199,7 @@ class LocalDataGoldenTest {
     fun theAlbertHeijnBranchesAndTheChains() = runBlocking {
         val g = goldens.brand
         val branches = local.branches(g.id, g.centre, g.radius)
-        assertEquals(LocalOrigin.PACK, branches.origin)
+        assertEquals(PlaceOrigin.PACK, branches.origin)
         val missing = missing(g.branches.filter { covered(it.at) }, branches.value)
         assertTrue(missing.joinToString("\n"), missing.isEmpty())
         val c = goldens.chains
@@ -217,7 +217,7 @@ class LocalDataGoldenTest {
     fun theQuestsFromThePackAreTheStoresQuests() = runBlocking {
         val g = goldens.quests
         val places = local.quests(BBox.around(g.centre, g.radius))
-        assertEquals(LocalOrigin.PACK, places.origin)
+        assertEquals(PlaceOrigin.PACK, places.origin)
         val quests = QuestFinder.questsOf(places.value, g.centre, "en", java.time.LocalDateTime.parse(g.now), emptySet())
         assertEquals(g.quests.map { it.place + "|" + it.key }, quests.map { it.place.key + "|" + it.quest.key })
         for ((a, b) in g.quests.zip(quests)) assertEquals(a.distance, b.distanceM, 0.01)

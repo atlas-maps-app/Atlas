@@ -4,8 +4,10 @@ import app.atlas.Services
 import app.atlas.geo.BBox
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
+import app.atlas.model.Mode
 import app.atlas.model.OsmId
 import app.atlas.model.OsmType
+import app.atlas.model.Route
 import app.atlas.places.TagFilter
 import app.atlas.providers.Http
 import app.atlas.providers.Overpass
@@ -15,7 +17,7 @@ import app.atlas.render.data.PackReader
 import app.atlas.search.EvalContext
 import app.atlas.search.Query
 import app.atlas.services.LocalData
-import app.atlas.services.LocalOrigin
+import app.atlas.services.PlaceOrigin
 import app.atlas.services.PackShelf
 import app.atlas.testing.Fixtures
 import app.atlas.testing.testServices
@@ -85,12 +87,12 @@ class LocalDataTest {
     fun placesComeFromTheStoreWhereItCoversAndThePackAgrees() = runBlocking {
         val cafe = TagFilter.Equals("amenity", "cafe")
         val store = both().places(here, 300.0, cafe)
-        assertEquals(LocalOrigin.STORE, store.origin)
+        assertEquals(PlaceOrigin.STORE, store.origin)
         assertTrue("${store.value.size}", store.value.size >= 10)
         assertTrue(store.value.all { it.tags["amenity"] == "cafe" && Geo.distance(here, it.location) <= 300.0 })
         assertTrue(store.value.zipWithNext().all { (a, b) -> Geo.distance(here, a.location) <= Geo.distance(here, b.location) })
         val fromPack = packOnly().places(here, 300.0, cafe)
-        assertEquals(LocalOrigin.PACK, fromPack.origin)
+        assertEquals(PlaceOrigin.PACK, fromPack.origin)
         // The same extract, two containers: the same places in the same order.
         assertEquals(store.value.map { it.key }, fromPack.value.map { it.key })
         // The pack keeps every tag; the store drops the bookkeeping.
@@ -110,17 +112,17 @@ class LocalDataTest {
         val op = start()
         val online = LocalData(stores = { Fixtures.amsStore }, packs = { pack }, overpass = { op }, isOnline = { true })
         val far = online.places(utrecht, 300.0, TagFilter.Equals("amenity", "cafe"))
-        assertEquals(LocalOrigin.ONLINE, far.origin)
+        assertEquals(PlaceOrigin.ONLINE, far.origin)
         assertEquals(listOf("Café Oudegracht"), far.value.map { it.tags["name"] })
         // Where the pack covers, the network is never asked.
         val before = asked.get()
-        assertEquals(LocalOrigin.PACK, LocalData(stores = { null }, packs = { pack }, overpass = { op }, isOnline = { true }).places(here, 200.0, TagFilter.Has("shop")).origin)
+        assertEquals(PlaceOrigin.PACK, LocalData(stores = { null }, packs = { pack }, overpass = { op }, isOnline = { true }).places(here, 200.0, TagFilter.Has("shop")).origin)
         assertEquals(before, asked.get())
         // A failing server is reported, not thrown.
         code = 500
         answer = "busy"
         val failed = online.places(utrecht, 300.0, TagFilter.Equals("amenity", "cafe"))
-        assertEquals(LocalOrigin.ONLINE, failed.origin)
+        assertEquals(PlaceOrigin.ONLINE, failed.origin)
         assertTrue(failed.value.isEmpty())
         assertNotNull(failed.error)
         // Offline, nothing and no origin.
@@ -129,16 +131,90 @@ class LocalDataTest {
     }
 
     @Test
+    fun placesFromAPackHoldingPartOfTheCircleAreCompletedOnline() = runBlocking {
+        val op = start()
+        answer = OVERPASS_BEYOND_THE_PACK
+        val cafe = TagFilter.Equals("amenity", "cafe")
+        // 600 m around the church reaches past the pack (390 m south): Overpass answers for the whole circle
+        val online = LocalData(stores = { null }, packs = { pack }, overpass = { op }, isOnline = { true }).places(here, 600.0, cafe)
+        assertEquals(PlaceOrigin.ONLINE, online.origin)
+        assertEquals(listOf("Café Buiten"), online.value.map { it.tags["name"] })
+        // offline, the pack's part, said to be a part
+        val offline = packOnly().places(here, 600.0, cafe)
+        assertEquals(PlaceOrigin.PACK, offline.origin)
+        assertTrue(offline.partial)
+        assertTrue(offline.value.isNotEmpty() && offline.value.none { it.tags["name"] == "Café Buiten" })
+        // Overpass failing: the pack's part again, with why
+        code = 500
+        val failed = LocalData(stores = { null }, packs = { pack }, overpass = { op }, isOnline = { true }).places(here, 600.0, cafe)
+        assertEquals(PlaceOrigin.PACK, failed.origin)
+        assertEquals(offline.value.map { it.key }, failed.value.map { it.key })
+        assertNotNull(failed.error)
+    }
+
+    @Test
+    fun theStepsBeyondThePacksAreNamedFromOneOverpassRequest() {
+        val op = start()
+        answer = OVERPASS_UTRECHT
+        val local = LocalData(stores = { null }, packs = { pack }, overpass = { op }, isOnline = { true })
+        val prinsengracht = LatLon(52.37530, 4.88405)
+        val oudegracht = LatLon(52.0907, 5.1210)
+        // a route's steps: one the pack covers, two in Utrecht (11 m apart: one circle asks for both)
+        val namer = local.wayNamer().forPoints(listOf(prinsengracht, oudegracht, LatLon(52.0908, 5.1210)))
+        assertEquals(1, asked.get())
+        val sent = server.takeRequest().body!!.utf8()
+        assertTrue(sent, sent.contains("around") && sent.contains("52.0907") && !sent.contains("52.0908") && !sent.contains("52.3753"))
+        // the pack names its own streets, Overpass's answer the others, by the same rules
+        assertEquals("Prinsengracht", namer.name(prinsengracht, 15.0))
+        assertEquals("Oudegracht", namer.name(oudegracht, 350.0))
+        // the route planned again: the answer is kept, nothing is asked
+        assertEquals("Oudegracht", local.wayNamer().forPoints(listOf(oudegracht)).name(oudegracht, 350.0))
+        assertEquals(1, asked.get())
+        // offline, a step beyond the packs has no name, and nothing is asked
+        assertNull(LocalData(stores = { null }, packs = { pack }, overpass = { op }, isOnline = { false }).wayNamer().forPoints(listOf(oudegracht)).name(oudegracht, 350.0))
+        assertEquals(1, asked.get())
+    }
+
+    @Test
+    fun aPinsStreetBeyondThePacksComesFromOverpass() = runBlocking {
+        val op = start()
+        answer = OVERPASS_UTRECHT
+        val local = LocalData(stores = { null }, packs = { pack }, overpass = { op }, isOnline = { true })
+        assertEquals("Prinsengracht", local.streetNear(LatLon(52.37530, 4.88405), 15.0))
+        assertEquals(0, asked.get())
+        assertEquals("Oudegracht", local.streetNear(LatLon(52.0907, 5.1212), 60.0))
+        assertEquals(1, asked.get())
+        assertNull(packOnly().streetNear(LatLon(52.0907, 5.1212), 60.0))
+    }
+
+    @Test
+    fun theBridgesBeyondThePacksComeFromOverpassAlongTheRoute() = runBlocking {
+        val op = start()
+        answer = OVERPASS_UTRECHT
+        val line = listOf(LatLon(52.0890, 5.1214), LatLon(52.0925, 5.1209))
+        val boat = Route(Mode.BOAT, line, distance = Geo.distance(line[0], line[1]), duration = 600.0, steps = emptyList())
+        val found = LocalData(stores = { null }, packs = { pack }, overpass = { op }, isOnline = { true }).bridges(boat)
+        assertEquals(listOf("Bakkerbrug"), found.map { it.name })
+        assertEquals(2.1, found[0].clearance!!, 1e-9)
+        assertEquals(1, asked.get())
+        val sent = server.takeRequest().body!!.utf8()
+        assertTrue(sent, sent.contains("bridge") && sent.contains("around"))
+        // offline, only what the packs hold: nothing here
+        assertTrue(packOnly().bridges(boat).isEmpty())
+    }
+
+    @Test
     fun chainsAndBranchesFromTheStoreAndThePackAgree() = runBlocking {
         val box = BBox.around(here, 400.0)
         val a = both().brands(box)
         val b = packOnly().brands(box)
-        assertEquals(LocalOrigin.STORE, a.origin)
-        assertEquals(LocalOrigin.PACK, b.origin)
+        assertEquals(PlaceOrigin.STORE, a.origin)
+        assertEquals(PlaceOrigin.PACK, b.origin)
         assertEquals(a.value.map { it.brand.id to it.branches.map { p -> p.key } }, b.value.map { it.brand.id to it.branches.map { p -> p.key } })
-        val ah = a.value.first { it.brand.wikidata == TodaysAnswers.ALBERT_HEIJN }.brand.id
+        // Albert Heijn, by its Wikidata id
+        val ah = a.value.first { it.brand.wikidata == "Q1653985" }.brand.id
         val branches = both().branches(ah, here, 500.0)
-        assertEquals(LocalOrigin.STORE, branches.origin)
+        assertEquals(PlaceOrigin.STORE, branches.origin)
         assertEquals(OsmId(OsmType.NODE, 34044750), branches.value.first().id)
         assertEquals(branches.value.map { it.key }, packOnly().branches(ah, here, 500.0).value.map { it.key })
         assertTrue(a.value.zipWithNext().all { (x, y) -> x.branches.size >= y.branches.size })
@@ -147,7 +223,7 @@ class LocalDataTest {
     @Test
     fun theWesterkerksAddress() {
         val a = both().address(here)!!
-        assertEquals(LocalOrigin.PACK, a.origin)
+        assertEquals(PlaceOrigin.PACK, a.origin)
         // Inside the church: the nearest address point inside its outline, not the house next door whose point is nearer.
         assertEquals("Westermarkt 60A", a.line)
         assertEquals(0.0, a.distanceM!!, 0.0)
@@ -156,7 +232,7 @@ class LocalDataTest {
         assertTrue(a.distanceM!! <= LocalData.HOUSE_M)
         // From the store alone: its address table.
         val s = storeOnly().address(here)!!
-        assertEquals(LocalOrigin.STORE, s.origin)
+        assertEquals(PlaceOrigin.STORE, s.origin)
         // The store holds address points without outlines: the nearest one, next door.
         assertEquals("Westermarkt 72", s.line)
         assertNull(packOnly().address(utrecht))
@@ -166,12 +242,12 @@ class LocalDataTest {
     fun whatsHereAtTheWesterkerk() = runBlocking {
         val h = both().whatsHere(here)
         assertEquals(OsmId(OsmType.WAY, 99205257), h.spot?.id)
-        assertEquals(LocalOrigin.STORE, h.origin)
+        assertEquals(PlaceOrigin.STORE, h.origin)
         assertTrue(h.nearby.isNotEmpty())
         assertTrue(h.nearby.none { it.key == h.spot?.key })
         val p = packOnly().whatsHere(here)
         assertEquals(OsmId(OsmType.WAY, 99205257), p.spot?.id)
-        assertEquals(LocalOrigin.PACK, p.origin)
+        assertEquals(PlaceOrigin.PACK, p.origin)
         assertTrue(p.nearby.isNotEmpty())
         assertTrue(p.nearby.all { it.tags["name"] != null })
         assertEquals("Westermarkt 60A", p.address?.line)
@@ -183,8 +259,8 @@ class LocalDataTest {
         val ctx = EvalContext(location = here, now = ZonedDateTime.of(2026, 10, 13, 19, 30, 0, 0, ZoneId.of("Europe/Amsterdam")), limit = 100)
         val a = both().query(q, ctx)
         val b = packOnly().query(q, ctx)
-        assertEquals(LocalOrigin.STORE, a.origin)
-        assertEquals(LocalOrigin.PACK, b.origin)
+        assertEquals(PlaceOrigin.STORE, a.origin)
+        assertEquals(PlaceOrigin.PACK, b.origin)
         assertTrue(a.value.hits.isNotEmpty())
         assertEquals(a.value.hits.map { it.record.place.key }.toSet(), b.value.hits.map { it.record.place.key }.toSet())
         // Where nothing on the phone covers the searcher, no answer: online search is the search engine's.
@@ -196,8 +272,8 @@ class LocalDataTest {
         val box = BBox.around(here, 400.0)
         val a = both().quests(box)
         val b = packOnly().quests(box)
-        assertEquals(LocalOrigin.STORE, a.origin)
-        assertEquals(LocalOrigin.PACK, b.origin)
+        assertEquals(PlaceOrigin.STORE, a.origin)
+        assertEquals(PlaceOrigin.PACK, b.origin)
         assertEquals(a.value.map { it.key }.toSet(), b.value.map { it.key }.toSet())
         assertTrue(b.value.all { it.id != null && it.tags["name"] != null })
     }
@@ -225,7 +301,7 @@ class LocalDataTest {
         try {
             val local = services.localData
             assertEquals("Prinsengracht", local.wayName(LatLon(52.37530, 4.88405), 15.0))
-            assertEquals(LocalOrigin.PACK, local.address(here)?.origin)
+            assertEquals(PlaceOrigin.PACK, local.address(here)?.origin)
         } finally {
             services.close()
         }
@@ -292,6 +368,24 @@ class LocalDataTest {
     }
 
     private companion object {
+        /** A café 560 m north-west of the Westerkerk, beyond the bundled pack. */
+        val OVERPASS_BEYOND_THE_PACK = """
+            {"version":0.6,"generator":"Overpass API","osm3s":{"timestamp_osm_base":"2026-10-16T00:00:00Z"},"elements":[
+              {"type":"node","id":401,"lat":52.3790,"lon":4.8800,"tags":{"amenity":"cafe","name":"Café Buiten"}}
+            ]}
+        """.trimIndent()
+
+        /** Utrecht, beyond every pack: the Oudegracht as a street, and a footbridge over it with its clearance. */
+        val OVERPASS_UTRECHT = """
+            {"version":0.6,"generator":"Overpass API","osm3s":{"timestamp_osm_base":"2026-10-16T00:00:00Z"},"elements":[
+              {"type":"way","id":201,"bounds":{"minlat":52.0890,"minlon":5.1205,"maxlat":52.0925,"maxlon":5.1215},
+               "geometry":[{"lat":52.0890,"lon":5.1215},{"lat":52.0925,"lon":5.1205}],"tags":{"highway":"residential","name":"Oudegracht"}},
+              {"type":"way","id":301,"bounds":{"minlat":52.0905,"minlon":5.1200,"maxlat":52.0905,"maxlon":5.1225},
+               "geometry":[{"lat":52.0905,"lon":5.1200},{"lat":52.0905,"lon":5.1225}],
+               "tags":{"highway":"footway","bridge":"yes","name":"Bakkerbrug","maxheight:physical":"2.1"}}
+            ]}
+        """.trimIndent()
+
         val OVERPASS_CAFES = """
             {"version":0.6,"generator":"Overpass API","osm3s":{"timestamp_osm_base":"2026-10-16T00:00:00Z"},"elements":[
               {"type":"node","id":101,"lat":52.0910,"lon":5.1210,"tags":{"amenity":"cafe","name":"Café Oudegracht"}},

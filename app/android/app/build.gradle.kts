@@ -86,7 +86,6 @@ android {
                 it.maxHeapSize = "2g"
                 it.systemProperty("robolectric.graphicsMode", "NATIVE")
                 it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
-                it.systemProperty("atlas.testdata", rootProject.file("testdata").absolutePath)
                 it.systemProperty("atlas.repo", rootProject.file("../..").absolutePath)
                 // Screenshot tests always record, so a plain test run leaves the PNGs to look at (CI keeps them).
                 it.systemProperty("roborazzi.test.record", "true")

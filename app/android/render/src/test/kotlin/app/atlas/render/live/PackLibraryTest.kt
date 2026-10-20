@@ -130,6 +130,82 @@ class PackLibraryTest {
     }
 
     @Test
+    fun `packs kept elsewhere are read where they are, and read again on a rescan`() {
+        val regions = File(dir, "regions").also { it.mkdirs() }
+        val lib = PackLibrary(File(dir, "packs"), emptyList(), elsewhere = { regions.listFiles().orEmpty().toList() })
+        assertTrue(lib.local().isEmpty())
+        val kept = File(regions, "amsterdam.atlas")
+        pack.copyTo(kept)
+        // read once: a file placed later is seen after a rescan
+        assertTrue(lib.local().isEmpty())
+        lib.rescan()
+        val here = lib.local("amsterdam")!!
+        assertEquals(kept, here.file)
+        assertTrue(!here.built)
+        assertEquals("amsterdam", lib.at(LatLon(52.3745, 4.8838)).first.single().id)
+        // never removed by the library: the region owns it
+        lib.remove("amsterdam")
+        assertTrue(kept.isFile)
+        kept.delete()
+        lib.rescan()
+        assertTrue(lib.local().isEmpty())
+        assertTrue(requests.isEmpty())
+    }
+
+    @Test
+    fun `a place built here is built once, and again when asked to refresh`() {
+        val answer = File(repo, "data/ams/raw.json")
+        assumeTrue("the canal ring's Overpass answer", answer.isFile)
+        var asked = 0
+        val client = app.atlas.render.data.OverpassClient(app.atlas.render.data.HttpPost { _, _, _ -> asked++; answer.inputStream() }, pause = {})
+        val lib = PackLibrary(File(dir, "packs"), emptyList())
+        val box = BBox.around(LatLon(52.3745, 4.8838), 150.0)
+        val first = lib.build(client, box)
+        assertTrue(first.built)
+        assertEquals(1, asked)
+        assertEquals(first.stamp, lib.build(client, box).stamp)
+        assertEquals(1, asked)
+        first.file.setLastModified(first.file.lastModified() - 86_400_000L)
+        val again = lib.build(client, box, refresh = true, id = first.id)
+        assertEquals(2, asked)
+        assertEquals(first.id, again.id)
+        assertTrue(again.built)
+        assertTrue(again.stamp != first.stamp)
+        assertEquals(1, lib.local().size)
+    }
+
+    @Test
+    fun `an old pack built here is built again in the background while it draws`() {
+        val answer = File(repo, "data/ams/raw.json")
+        assumeTrue("the canal ring's Overpass answer", answer.isFile)
+        LiveEngine.workDir = File(dir, "engine")
+        var asked = 0
+        val client = app.atlas.render.data.OverpassClient(app.atlas.render.data.HttpPost { _, _, _ -> asked++; answer.inputStream() }, pause = {})
+        val lib = PackLibrary(File(dir, "packs"), emptyList())
+        val c = LatLon(52.3745, 4.8838)
+        val built = lib.build(client, BBox.around(c, 600.0))
+        assertEquals(1, asked)
+        val regions = LiveRegions(lib, Executor { it.run() }, online = { true }, overpass = client, onChange = {})
+        val view = LiveView(c.lat, c.lon, LiveCamera.zoom(c.lat, 430.0, 915.0), 52.0, 52.0, 412, 915, 440.0)
+        var state = regions.stateFor(view)
+        var rounds = 0
+        while (state !is LiveRegions.State.Ready && rounds++ < 5) state = regions.stateFor(view)
+        assertTrue("$state", state is LiveRegions.State.Ready)
+        // fresh: nothing more is asked
+        regions.stateFor(view)
+        assertEquals(1, asked)
+        // more than a week old: built again from Overpass, and the new pack replaces the old one (made old here by its
+        // time, which also gives it a new stamp: it is opened again first, as a pack replaced on disk is)
+        built.file.setLastModified(System.currentTimeMillis() - LiveRegions.REBUILD_MS - 60_000)
+        lib.rescan()
+        rounds = 0
+        do state = regions.stateFor(view) while (state !is LiveRegions.State.Ready && rounds++ < 5)
+        assertTrue("$state", state is LiveRegions.State.Ready)
+        assertEquals(2, asked)
+        assertTrue(System.currentTimeMillis() - lib.local(built.id)!!.file.lastModified() < LiveRegions.REBUILD_MS)
+    }
+
+    @Test
     fun `the live map downloads the pack for a view in its box, then draws it`() {
         LiveEngine.workDir = File(dir, "engine")
         val lib = PackLibrary(File(dir, "packs"), listOf(server.url("/packs-renders/packs.json").toString()))

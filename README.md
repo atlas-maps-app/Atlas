@@ -33,7 +33,7 @@ The rest of the screens are arriving alpha by alpha.
   - labels placed without collisions
 
   `ENGINE.md` says how it works and what is left. Until it is finished, the alphas draw the map with the renderer's Kotlin port on Android's Canvas. Once it is finished, the renderer is retired.
-- **Map data** is OpenStreetMap: OpenMapTiles vector tiles from OpenFreeMap online, and packs built here (Planetiler tiles and a full-tag place database per region) for offline use.
+- **Map data** is OpenStreetMap, kept as Atlas's own region packs: every element with its tags and geometry. A pack comes with the app, from a region published here (with a full-tag place database), or is built on the phone from Overpass wherever none reaches, and rebuilt when it grows old. The map and every feature read the same packs: places, addresses, street names and bridges. Where no pack reaches, they ask Overpass online (four servers).
 - **Routing** is BRouter, running inside the app on its worldwide offline data. Atlas adds:
   - its own checks for truck and boat limits
   - a water router
@@ -70,7 +70,6 @@ The code and the notes are under the MIT licence (`LICENSE`): use them, change t
 
 Data keeps the terms of its sources:
 - Map data © OpenStreetMap contributors, under the ODbL.
-- Tiles come from OpenFreeMap in the OpenMapTiles schema.
 - Routing data is BRouter's, from OpenStreetMap.
 - The other open datasets carry their own open licences: PDOK, Open-Meteo, Wikidata, NDW, OVapi and Open Food Facts.
 - Bundled libraries and data keep their own licences, listed in each module's `LICENSES.md`.

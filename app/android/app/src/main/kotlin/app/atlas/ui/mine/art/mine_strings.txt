@@ -12,7 +12,7 @@ mine_privacy|On this phone|Op deze telefoon|Auf diesem Telefon|Sur ce téléphon
 mine_privacy_head|No account. No ads. No trackers.|Geen account. Geen reclame. Geen trackers.|Kein Konto. Keine Werbung. Keine Tracker.|Pas de compte. Pas de pub. Pas de traqueurs.
 mine_privacy_text|Nothing about you leaves the phone unless you share it.|Niets over jou verlaat de telefoon, tenzij je het deelt.|Nichts über dich verlässt das Telefon, außer du teilst es.|Rien à votre sujet ne quitte le téléphone, sauf si vous le partagez.
 mine_about|About & licences|Over & licenties|Info & Lizenzen|À propos et licences
-mine_about_text|Map data © OpenStreetMap contributors (ODbL). Tiles by OpenFreeMap. Routing by BRouter. Weather by Open-Meteo.com (CC BY 4.0). Reviews by Mangrove (CC BY 4.0). Fonts: Inter and Instrument Serif (OFL). Symbols: Maki, Temaki (CC0) and Lucide (ISC).|Kaartgegevens © OpenStreetMap-bijdragers (ODbL). Tegels van OpenFreeMap. Routes door BRouter. Weer van Open-Meteo.com (CC BY 4.0). Reviews van Mangrove (CC BY 4.0). Lettertypen: Inter en Instrument Serif (OFL). Symbolen: Maki, Temaki (CC0) en Lucide (ISC).|Kartendaten © OpenStreetMap-Mitwirkende (ODbL). Kacheln von OpenFreeMap. Routen mit BRouter. Wetter von Open-Meteo.com (CC BY 4.0). Bewertungen von Mangrove (CC BY 4.0). Schriften: Inter und Instrument Serif (OFL). Symbole: Maki, Temaki (CC0) und Lucide (ISC).|Données cartographiques © contributeurs OpenStreetMap (ODbL). Tuiles d'OpenFreeMap. Itinéraires par BRouter. Météo d'Open-Meteo.com (CC BY 4.0). Avis de Mangrove (CC BY 4.0). Polices : Inter et Instrument Serif (OFL). Symboles : Maki, Temaki (CC0) et Lucide (ISC).
+mine_about_text|Map data © OpenStreetMap contributors (ODbL). Routing by BRouter. Weather by Open-Meteo.com and MET Norway (CC BY 4.0). Reviews by Mangrove (CC BY 4.0). Fonts: Inter and Instrument Serif (OFL). Symbols: Maki, Temaki (CC0) and Lucide (ISC).|Kaartgegevens © OpenStreetMap-bijdragers (ODbL). Routes door BRouter. Weer van Open-Meteo.com en MET Norway (CC BY 4.0). Reviews van Mangrove (CC BY 4.0). Lettertypen: Inter en Instrument Serif (OFL). Symbolen: Maki, Temaki (CC0) en Lucide (ISC).|Kartendaten © OpenStreetMap-Mitwirkende (ODbL). Routen mit BRouter. Wetter von Open-Meteo.com und MET Norway (CC BY 4.0). Bewertungen von Mangrove (CC BY 4.0). Schriften: Inter und Instrument Serif (OFL). Symbole: Maki, Temaki (CC0) und Lucide (ISC).|Données cartographiques © contributeurs OpenStreetMap (ODbL). Itinéraires par BRouter. Météo d'Open-Meteo.com et de MET Norway (CC BY 4.0). Avis de Mangrove (CC BY 4.0). Polices : Inter et Instrument Serif (OFL). Symboles : Maki, Temaki (CC0) et Lucide (ISC).
 mine_welcome|Welcome|Welkom|Willkommen|Bienvenue
 mine_welcome_text|Everything works with no signal: maps, routes, places, voice.|Alles werkt zonder bereik: kaarten, routes, plekken, stem.|Alles funktioniert ohne Empfang: Karten, Routen, Orte, Stimme.|Tout marche sans réseau : cartes, itinéraires, lieux, voix.
 mine_layers|Map look|Kaartstijl|Kartenstil|Style de carte
@@ -38,7 +38,7 @@ offline_title|Offline|Offline|Offline|Hors ligne
 offline_works|Everything works without a connection|Alles werkt zonder verbinding|Alles funktioniert ohne Verbindung|Tout fonctionne sans connexion
 offline_storage_cd|Storage used: %1$s of %2$s|Opslag gebruikt: %1$s van %2$s|Speicher belegt: %1$s von %2$s|Stockage utilisé : %1$s sur %2$s
 offline_age_cd|Refreshed %1$s ago|%1$s geleden ververst|Vor %1$s aktualisiert|Actualisé il y a %1$s
-offline_layer_map|Map tiles|Kaartgegevens|Karte|Carte
+offline_layer_map|Map|Kaartgegevens|Karte|Carte
 offline_layer_routes|Routing graphs|Routegegevens|Routen|Itinéraires
 offline_layer_search|Places and search index|Plaatsen en zoekindex|Orte und Suche|Lieux et recherche
 offline_layer_terrain|Terrain and 3D|Terrein en 3D|Gelände und 3D|Relief et 3D
@@ -107,7 +107,7 @@ voice_sub_none|no speech engine on this phone|geen spraakmotor op deze telefoon|
 voice_sample|Play sample|Voorbeeld|Beispiel|Écouter
 voice_sample_text|In two hundred metres, turn right onto the canal.|Over tweehonderd meter rechtsaf, de gracht op.|In zweihundert Metern rechts abbiegen.|Dans deux cents mètres, tournez à droite.
 voice_haptics|Vibrations|Trillingen|Vibration|Vibrations
-voice_engine|Voice settings|Steminstellingen|Spracheinstellungen|Réglages de la voix
+voice_engine|Voices|Stemmen|Stimmen|Voix
 settings_units|Units|Eenheden|Einheiten|Unités
 settings_km|km|km|km|km
 settings_mi|mi|mi|mi|mi
@@ -188,7 +188,7 @@ sent_fuel|the area you look at, with your key|het gebied waar je naar kijkt, met
 # Data sources
 data_crumb|Settings · Data|Instellingen · Gegevens|Einstellungen · Daten|Réglages · Données
 data_title|Where every number comes from|Waar elk getal vandaan komt|Woher jede Zahl kommt|D'où vient chaque chiffre
-data_text|Open data, a partner's yes, or a link out. Atlas never pretends to be a browser or a person to copy another app, and names the source of every number. %1$d sources are on now.|Open data, een ja van een partner, of een link naar buiten. Atlas doet zich nooit voor als browser of persoon om een andere app te kopiëren, en noemt de bron van elk getal. %1$d bronnen staan nu aan.|Offene Daten, das Ja eines Partners oder ein Link nach außen. Atlas gibt sich nie als Browser oder Person aus, um eine andere App zu kopieren, und nennt die Quelle jeder Zahl. %1$d Quellen sind jetzt an.|Données ouvertes, l'accord d'un partenaire ou un lien. Atlas ne se fait jamais passer pour un navigateur ou une personne, et nomme la source de chaque chiffre. %1$d sources sont actives.
+data_text|Open data, a partner’s yes, or a link out. Atlas never pretends to be a browser or a person to copy another app, and names the source of every number. %1$d sources are on now.|Open data, een ja van een partner, of een link naar buiten. Atlas doet zich nooit voor als browser of persoon om een andere app te kopiëren, en noemt de bron van elk getal. %1$d bronnen staan nu aan.|Offene Daten, das Ja eines Partners oder ein Link nach außen. Atlas gibt sich nie als Browser oder Person aus, um eine andere App zu kopieren, und nennt die Quelle jeder Zahl. %1$d Quellen sind jetzt an.|Données ouvertes, l'accord d'un partenaire ou un lien. Atlas ne se fait jamais passer pour un navigateur ou une personne, et nomme la source de chaque chiffre. %1$d sources sont actives.
 data_open|On by default: open data|Standaard aan: open data|Standardmäßig an: offene Daten|Actives par défaut : données ouvertes
 data_keyed|Needs a key or a yes|Heeft een sleutel of een ja nodig|Braucht einen Schlüssel oder ein Ja|Demande une clé ou un accord
 data_outside|Outside Atlas|Buiten Atlas|Außerhalb von Atlas|En dehors d'Atlas
@@ -523,7 +523,7 @@ welcome_loc_on|Location is on|Locatie staat aan|Standort ist an|La position est 
 welcome_later|Later|Later|Später|Plus tard
 welcome_next|Continue|Verder|Weiter|Continuer
 welcome_take_title|Take the map with you|Neem de kaart mee|Nimm die Karte mit|Emportez la carte
-welcome_take_text|Everything works with no signal: maps, routes, places, voice. Here is what the area around you takes.|Alles werkt zonder bereik: kaarten, routes, plekken, stem. Dit kost het gebied om je heen.|Alles funktioniert ohne Empfang: Karten, Routen, Orte, Stimme. Das braucht das Gebiet um dich herum.|Tout marche sans réseau : cartes, itinéraires, lieux, voix. Voici ce que prend la zone autour de vous.
+welcome_take_text|Everything works with no signal: maps, routes, places, voice. Take the area around you.|Alles werkt zonder bereik: kaarten, routes, plekken, stem. Dit kost het gebied om je heen.|Alles funktioniert ohne Empfang: Karten, Routen, Orte, Stimme. Das braucht das Gebiet um dich herum.|Tout marche sans réseau : cartes, itinéraires, lieux, voix. Voici ce que prend la zone autour de vous.
 welcome_radius|%1$d km|%1$d km|%1$d km|%1$d km
 welcome_have|%1$s is already on this phone (%2$s)|%1$s staat al op deze telefoon (%2$s)|%1$s ist schon auf diesem Telefon (%2$s)|%1$s est déjà sur ce téléphone (%2$s)
 welcome_wifi|Only on Wi‑Fi|Alleen via wifi|Nur über WLAN|Seulement en Wi‑Fi
@@ -562,7 +562,6 @@ picker_country_none|No country packs listed|Geen landpakketten gevonden|Keine L�
 picker_country_none_text|The list of published packs could not be read. Check your connection, or draw an area instead.|De lijst met gepubliceerde pakketten kon niet worden gelezen. Controleer je verbinding, of teken een gebied.|Die Liste der veröffentlichten Pakete konnte nicht gelesen werden. Prüfe deine Verbindung oder zeichne ein Gebiet.|La liste des paquets publiés n'a pas pu être lue. Vérifiez votre connexion, ou dessinez une zone.
 picker_from_pack|from Atlas's published pack|uit Atlas' gepubliceerde pakket|aus Atlas' veröffentlichtem Paket|depuis le paquet publié d'Atlas
 picker_built|built on this phone from OpenStreetMap|op deze telefoon gebouwd uit OpenStreetMap|auf diesem Telefon aus OpenStreetMap gebaut|construit sur ce téléphone depuis OpenStreetMap
-picker_tiles|vector tiles from the tile server|vectortegels van de tegelserver|Vektorkacheln vom Kachelserver|tuiles vectorielles du serveur de tuiles
 picker_too_big|Too big to build here: pick a country pack instead, or draw a smaller area.|Te groot om hier te bouwen: kies een landpakket, of teken een kleiner gebied.|Zu groß, um es hier zu bauen: wähle ein Länderpaket oder zeichne ein kleineres Gebiet.|Trop grand pour être construit ici : choisissez un paquet de pays, ou dessinez une zone plus petite.
 picker_failed|The size could not be worked out. Try again in a moment.|De grootte kon niet worden berekend. Probeer het zo opnieuw.|Die Größe konnte nicht berechnet werden. Versuche es gleich noch einmal.|La taille n'a pas pu être calculée. Réessayez dans un instant.
 picker_wifi|Only on Wi‑Fi|Alleen via wifi|Nur über WLAN|Seulement en Wi‑Fi
@@ -587,7 +586,6 @@ h_n|%1$d h|%1$d u|%1$d Std.|%1$d h
 privacy_downloads|Downloads you start|Downloads die je start|Downloads, die du startest|Téléchargements que vous lancez
 sent_pack|which map and place packs you ask for|welke kaart- en plekkenpakketten je vraagt|welche Karten- und Ortspakete du anforderst|les paquets de carte et de lieux que vous demandez
 sent_routing|the routing tiles of the area you take offline|de routetegels van het gebied dat je offline neemt|die Routenkacheln des Gebiets, das du offline nimmst|les tuiles d'itinéraire de la zone que vous emportez
-sent_tiles|the map tiles you look at, when no region is on the phone|de kaarttegels die je bekijkt, als er geen gebied op de telefoon staat|die Kartenkacheln, die du ansiehst, wenn kein Gebiet auf dem Telefon ist|les tuiles de carte que vous regardez, sans région sur le téléphone
 charge_live|LIVE|LIVE|LIVE|LIVE
 data_key_show|Show the key|Toon de sleutel|Schlüssel anzeigen|Afficher la clé
 data_key_hide|Hide the key|Verberg de sleutel|Schlüssel verbergen|Masquer la clé

@@ -108,7 +108,7 @@ fun CategoryScreen(args: Dest.Category, nav: Navigator) {
         } catch (e: Exception) {
             failed = e.message ?: e.toString()
         }
-        if (found == null && failed == null) found = CategoryPlaces(emptyList(), PlaceOrigin.TILES, null)
+        if (found == null && failed == null) found = CategoryPlaces(emptyList(), PlaceOrigin.PACK, null)
     }
     val shown = remember(found, openOnly) { found?.lines.orEmpty().filter { !openOnly || it.tone == Tone.OPEN || it.tone == Tone.SOON } }
     val colour = category.colour.toLong() and 0xFFFFFFFFL
@@ -183,13 +183,13 @@ private fun CategorySheet(
     }
 }
 
-/** Where a list came from, said in one grey line: the region on the phone, the map's labels, or online. */
+/** Where a list came from, said in one grey line: the region on the phone, the map's data on the phone, or online. */
 @Composable
 internal fun OriginLine(origin: PlaceOrigin, error: String?) {
     val c = Atlas.colors
     val (symbol, text) = when (origin) {
         PlaceOrigin.STORE -> "ui-smartphone" to stringResource(R.string.origin_store)
-        PlaceOrigin.TILES -> "ui-layers" to stringResource(R.string.origin_tiles)
+        PlaceOrigin.PACK -> "ui-layers" to stringResource(R.string.origin_pack)
         PlaceOrigin.ONLINE -> "ui-cloud" to stringResource(R.string.origin_online)
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {

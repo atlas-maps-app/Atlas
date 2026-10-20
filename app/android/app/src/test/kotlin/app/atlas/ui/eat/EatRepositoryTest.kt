@@ -12,7 +12,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-/** The places around the Westerkerk, as the eat screens load them: from the place store, else the tiles. */
+/** The places around the Westerkerk, as the eat screens load them: from the place store, else the map's packs. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class EatRepositoryTest {
@@ -48,11 +48,12 @@ class EatRepositoryTest {
     }
 
     @Test
-    fun withoutAStoreTheTilesSketchTheArea() {
+    fun withoutAStoreTheBundledPackAnswersWithHours() {
         val area = load(EatFixtures.services(places = false))
-        println("tiles: ${area.places.size} ${area.origin} ${area.error}")
-        assertEquals(PlaceOrigin.TILES, area.origin)
-        assertTrue(area.sketchOnly)
+        println("pack: ${area.places.size} ${area.origin} ${area.error}")
+        assertEquals(PlaceOrigin.PACK, area.origin)
         assertTrue("${area.places.size} places", area.places.size > 50)
+        // the pack keeps every tag: the opening hours too
+        assertTrue(area.places.count { it.hasHours } > 20)
     }
 }

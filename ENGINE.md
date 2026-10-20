@@ -154,16 +154,16 @@ The other local branches are history. The old builders' worktrees went to the Tr
 Before anything is built on them, the app's skeleton, the core and the modules were read for what should be done differently:
 - **The core's painter's order is one contained piece.** It lives in `shaders/shared/painter.slang` and `frame/Ranks`. True depth changes what the objects' vertex stage writes, the ground's hand-over and the depth format, not the frame core.
 - **The tile store already opens packs from memory, files and remote ranges.** So tiles built on the phone become local packs, with no second tile path (step 3).
-- **The app's map still pulls in the CPU stack.** `:mapview` exports `:render`, `:anchor` and `:tiles` to the app; they leave with the CPU map at the end of step 3 (the port itself in step 7).
+- **The app's map still pulls in the CPU stack.** `:mapview` exports `:render` and `:anchor` to the app; they leave with the CPU map at the end of step 3 (the port itself in step 7).
 - **The rest holds:** the device layer, frame core, scene, tile reader, sun, text, noise fields, the façade and the toolchain are current and fit the design.
 
-The app's own findings are app work, done outside this plan:
-- one persistent map at the app's root instead of a map per screen;
-- one OpenStreetMap client instead of two;
-- a second weather source;
-- the app's features off OpenMapTiles.
+The app's own findings were app work, done outside this plan on 20 October:
+- one persistent map at the app's root instead of a map per screen (`MapStage`);
+- one set of Overpass servers: the map's builds ask the app's own, in its order;
+- a second weather source (MET Norway);
+- the app's features off OpenMapTiles. Places, addresses, street names and bridges read the map's own packs through `LocalData`, and Overpass where no pack reaches: one request per route for its steps' names, one per route for its bridges. OpenFreeMap, the tile cache, the tile readers and the Planetiler step are gone. Packs built on the phone are built again after a week. An offline region's pack is read by the map and the features, and a region beyond the published packs has its pack built on the phone (up to about 1,000 km²).
 
-The engine builds on them.
+The engine builds on them: step 3's "the core asks, the app fetches" has its fetching side in `LocalData` and the pack library.
 
 ## What is left, in order
 

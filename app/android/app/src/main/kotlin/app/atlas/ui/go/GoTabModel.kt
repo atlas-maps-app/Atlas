@@ -126,7 +126,7 @@ class GoTabViewModel(private val services: Services) : ViewModel() {
     /** The street, the weather, the offline readiness and the services around [at]. */
     private suspend fun surroundings(at: LatLon) {
         lastLook = at
-        val street = runCatching { TileWayNamer({ services.tiles.value }).nearest(at) }.getOrNull()
+        val street = runCatching { services.localData.streetNear(at) }.getOrNull()
         state.update { it.copy(street = street) }
         val forecast = try {
             services.weather.kept(at)

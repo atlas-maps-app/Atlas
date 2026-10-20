@@ -11,7 +11,7 @@
     <string name="mine_privacy_head">No account. No ads. No trackers.</string>
     <string name="mine_privacy_text">Nothing about you leaves the phone unless you share it.</string>
     <string name="mine_about">About &amp; licences</string>
-    <string name="mine_about_text">Map data © OpenStreetMap contributors (ODbL). Tiles by OpenFreeMap. Routing by BRouter. Weather by Open-Meteo.com (CC BY 4.0). Reviews by Mangrove (CC BY 4.0). Fonts: Inter and Instrument Serif (OFL). Symbols: Maki, Temaki (CC0) and Lucide (ISC).</string>
+    <string name="mine_about_text">Map data © OpenStreetMap contributors (ODbL). Routing by BRouter. Weather by Open-Meteo.com and MET Norway (CC BY 4.0). Reviews by Mangrove (CC BY 4.0). Fonts: Inter and Instrument Serif (OFL). Symbols: Maki, Temaki (CC0) and Lucide (ISC).</string>
     <string name="mine_welcome">Welcome</string>
     <string name="mine_welcome_text">Everything works with no signal: maps, routes, places, voice.</string>
     <string name="mine_layers">Map look</string>
@@ -35,7 +35,7 @@
     <string name="mine_offline_works">Everything works without a connection</string>
     <string name="mine_offline_storage_cd">Storage used: %1$s of %2$s</string>
     <string name="mine_offline_age_cd">Refreshed %1$s ago</string>
-    <string name="mine_offline_layer_map">Map tiles</string>
+    <string name="mine_offline_layer_map">Map</string>
     <string name="mine_offline_layer_routes">Routing graphs</string>
     <string name="mine_offline_layer_search">Places and search index</string>
     <string name="mine_offline_layer_terrain">Terrain and 3D</string>
@@ -535,7 +535,6 @@
     <string name="mine_picker_country_none_text">The list of published packs could not be read. Check your connection, or draw an area instead.</string>
     <string name="mine_picker_from_pack">from Atlas\'s published pack</string>
     <string name="mine_picker_built">built on this phone from OpenStreetMap</string>
-    <string name="mine_picker_tiles">vector tiles from the tile server</string>
     <string name="mine_picker_too_big">Too big to build here: pick a country pack instead, or draw a smaller area.</string>
     <string name="mine_picker_failed">The size could not be worked out. Try again in a moment.</string>
     <string name="mine_picker_wifi">Only on Wi‑Fi</string>
@@ -556,7 +555,6 @@
     <string name="mine_privacy_downloads">Downloads you start</string>
     <string name="mine_sent_pack">which map and place packs you ask for</string>
     <string name="mine_sent_routing">the routing tiles of the area you take offline</string>
-    <string name="mine_sent_tiles">the map tiles you look at, when no region is on the phone</string>
     <string name="mine_charge_live">LIVE</string>
     <string name="mine_data_key_show">Show the key</string>
     <string name="mine_data_key_hide">Hide the key</string>

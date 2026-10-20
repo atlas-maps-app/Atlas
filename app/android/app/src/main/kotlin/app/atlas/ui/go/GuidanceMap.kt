@@ -3,10 +3,8 @@ package app.atlas.ui.go
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.Follow
@@ -43,7 +41,6 @@ fun GuidanceMap(
     background: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified,
 ) {
     val services = LocalServices.current
-    val tiles by services.tiles.collectAsStateWithLifecycle()
     val s = view.state
     val start = s?.snapped ?: view.route.points.first()
     val bearing = s?.routeBearing ?: view.route.line.bearingAt(0.0)
@@ -60,7 +57,6 @@ fun GuidanceMap(
     )
     StageMap(
         state = map,
-        tiles = tiles,
         modifier = modifier,
         background = background,
         style = MapStyle(theme = theme, layers = setOf(MapLayer.LABELS, MapLayer.BUILDINGS_3D, MapLayer.TREES) + if (theme == Theme.CHART) setOf(MapLayer.SEAMARKS) else emptySet()),

@@ -5,7 +5,6 @@ import org.robolectric.RuntimeEnvironment
 import app.atlas.Services
 import app.atlas.ServicesConfig
 import app.atlas.search.PlaceStore
-import app.atlas.tiles.TileStack
 import java.io.File
 import java.nio.file.Files
 import java.time.Clock
@@ -13,8 +12,8 @@ import java.time.Instant
 import java.time.ZoneId
 
 /**
- * A [Services] for tests and screenshots: its own temporary folder, no network, the fixture tiles of the Westerkerk,
- * and the demo location there. Feature tests build theirs with this and add what they need.
+ * A [Services] for tests and screenshots: its own temporary folder, no network, the bundled pack of the Westerkerk (the
+ * map's and the features' data, installed on first use), and the demo location there. Feature tests build theirs with this and add what they need.
  */
 fun testServices(
     context: Context = RuntimeEnvironment.getApplication(),
@@ -30,7 +29,7 @@ fun testServices(
         root = root,
         demoLocation = if (demo) Services.WESTERKERK else null,
         offline = true,
-        tiles = TileStack(listOf(FixtureTiles())),
+        mapEngine = false,
         placeStores = if (places) listOf(Fixtures.amsStore) else emptyList(),
         clock = clock,
     ),

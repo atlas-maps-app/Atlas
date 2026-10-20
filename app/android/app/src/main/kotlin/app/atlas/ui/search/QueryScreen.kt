@@ -151,7 +151,6 @@ fun QueryScreen(args: Dest.Query, nav: Navigator) {
     var dial by remember { mutableStateOf<QueryEdit.NearRow?>(null) }
     var ql by remember { mutableStateOf(false) }
     var add by remember { mutableStateOf(false) }
-    val tiles by services.tiles.collectAsStateWithLifecycle()
     val layers by services.saved.layers.collectAsStateWithLifecycle()
     val alerts by remember { services.settings.flow(ALERTS, emptySet()) }.collectAsStateWithLifecycle(emptySet())
     val map = remember { MapState(CameraPosition(here, 16.0)) }
@@ -175,7 +174,6 @@ fun QueryScreen(args: Dest.Query, nav: Navigator) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         StageMap(
             state = map,
-            tiles = tiles,
             modifier = Modifier.fillMaxSize(),
             background = Color(0xFFEFE5DA),
             hostModifier = Modifier.backdropSource(LocalBackdrop.current),

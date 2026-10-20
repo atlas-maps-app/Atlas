@@ -115,7 +115,6 @@ private val OPEN_TIME = cssText("Geist", 13f, 600, lineHeight = 17f, tnum = true
 fun EatMapScreen(nav: Navigator) {
     val ctx = rememberEatContext()
     val services = ctx.services
-    val tiles by services.tiles.collectAsStateWithLifecycle()
     val fix by services.location.last.collectAsStateWithLifecycle()
     val jotted by ctx.repo.shortlist.items.collectAsStateWithLifecycle()
     val aggregates by ctx.repo.ratings.aggregates.collectAsStateWithLifecycle()
@@ -161,7 +160,6 @@ fun EatMapScreen(nav: Navigator) {
     Box(Modifier.fillMaxSize()) {
         StageMap(
             state = map,
-            tiles = tiles,
             modifier = Modifier.fillMaxSize(),
             hostModifier = Modifier.backdropSource(LocalBackdrop.current),
             overlays = MapOverlays(markers = markers, location = fix?.let { UserLocation(it.location, it.accuracy, it.bearing, it.speed) }),

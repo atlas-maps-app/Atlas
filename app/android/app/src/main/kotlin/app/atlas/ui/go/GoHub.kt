@@ -15,7 +15,7 @@ import app.atlas.places.TagFilter
 import app.atlas.route.RouteResult
 import app.atlas.search.within
 import app.atlas.services.LocationQuality
-import app.atlas.services.TilePlaces
+import app.atlas.services.LocalData
 import app.atlas.services.Units
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -160,14 +160,13 @@ class GoHub(private val services: Services) {
     }
 
     /**
-     * The places within [radiusM] of [at] with every tag, from the offline place store; without one, the map tiles'
-     * points of interest (names and kinds only).
+     * The places within [radiusM] of [at] with every tag: from the offline place store where it covers [at], else the
+     * map's packs on the phone, else Overpass online ([LocalData.places]).
      */
     suspend fun placesAround(at: LatLon, radiusM: Double): List<Place> = withContext(Dispatchers.IO) {
         val store = services.placeStores
-        if (store.size > 0) return@withContext runCatching { store.within(at, radiusM).map { it.place } }.getOrDefault(emptyList())
-        val tiles = services.tiles.value ?: return@withContext emptyList()
-        runCatching { TilePlaces.near(tiles, at, radiusM, ANY_PLACE, 300) }.getOrDefault(emptyList())
+        if (store.size > 0 && store.bounds?.let { at in it } == true) return@withContext runCatching { store.within(at, radiusM).map { it.place } }.getOrDefault(emptyList())
+        runCatching { services.localData.places(at, radiusM, ANY_PLACE, 300).value }.getOrDefault(emptyList())
     }
 
     private companion object {

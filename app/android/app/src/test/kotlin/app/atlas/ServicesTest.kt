@@ -27,7 +27,7 @@ class ServicesTest {
         assertNotNull(s.keys)
         assertFalse(s.connectivity.online.value)
         assertNotNull(s.http)
-        assertNotNull(s.tiles.value)
+        assertNotNull(s.localData)
         assertNotNull(s.overpass)
         assertNotNull(s.weather)
         assertNotNull(s.ratings)
@@ -52,10 +52,9 @@ class ServicesTest {
         val s = Services(RuntimeEnvironment.getApplication(), ServicesConfig(root = root))
         assertTrue(s.location.source is AndroidLocationSource)
         assertFalse(s.location.permitted.value)
-        // The tile stack is built off the main thread: offline packs (none) and OpenFreeMap through the cache.
-        withTimeout(10_000) { while (s.tiles.value == null) kotlinx.coroutines.delay(20) }
-        assertNotNull(s.tiles.value)
-        assertTrue(root.resolve("cache/tiles/cache.mbtiles").isFile)
+        // The map's and the features' data: the bundled Westerkerk pack, installed on first use, answers offline.
+        assertEquals(app.atlas.services.PlaceOrigin.PACK, s.localData.address(Services.WESTERKERK)?.origin)
+        assertTrue(root.resolve("maps/amsterdam.atlas").isFile)
         // The saved camera is read once at start; with none saved it is null.
         assertEquals(null, withTimeout(5_000) { s.startCamera.await() })
         s.useDemoLocation(Services.WESTERKERK)

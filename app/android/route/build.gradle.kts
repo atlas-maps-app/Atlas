@@ -17,8 +17,7 @@ dependencies {
 
 tasks.test {
     maxHeapSize = "1536m"
-    // Shared fixtures (real OpenFreeMap tiles, OSM extracts) live in app/android/testdata; the repo's data/ is one level up.
-    systemProperty("atlas.testdata", rootProject.file("testdata").absolutePath)
+    // The repo's root, whose data/ holds the shared fixtures (OSM extracts).
     systemProperty("atlas.repo", rootProject.file("../..").absolutePath)
     // BRouter segment files for the real-data tests (they skip when E0_N50.rd5 is missing): the repo's git-ignored cache.
     systemProperty("atlas.segments", System.getProperty("atlas.segments") ?: rootProject.file("../../cache/brouter/segments4").absolutePath)

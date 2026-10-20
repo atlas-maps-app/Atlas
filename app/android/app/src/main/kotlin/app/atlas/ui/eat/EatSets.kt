@@ -67,7 +67,7 @@ object EatSets {
     fun counts(area: EatArea, at: LocalDateTime): Counts {
         val p = area.places
         val late = lateNight(area, at)
-        val sketch = area.sketchOnly || p.none { it.hasHours }
+        val sketch = p.none { it.hasHours }
         return Counts(
             carte = area.count(carte(p), at),
             cafe = area.count(cafes(p), at),

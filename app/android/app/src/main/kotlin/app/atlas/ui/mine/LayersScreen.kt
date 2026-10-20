@@ -89,7 +89,6 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val services = LocalServices.current
     val scope = rememberCoroutineScope()
     val here = rememberHere()
-    val tiles by services.tiles.collectAsStateWithLifecycle()
     val fix by services.location.last.collectAsStateWithLifecycle()
     val settings = services.settings
     val themeName by settings.flow(SettingsKeys.MAP_THEME, Theme.AUTO.name).collectAsStateWithLifecycle(Theme.AUTO.name)
@@ -116,7 +115,6 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     Box(Modifier.fillMaxSize()) {
         StageMap(
             state = map,
-            tiles = tiles,
             modifier = Modifier.fillMaxSize(),
             background = Color(0xFFF4F1EA),
             style = style,

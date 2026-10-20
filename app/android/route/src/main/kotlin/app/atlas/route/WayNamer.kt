@@ -9,4 +9,10 @@ import app.atlas.geo.LatLon
  */
 fun interface WayNamer {
     fun name(at: LatLon, bearing: Double): String?
+
+    /**
+     * The namer for one route, told first every point it will be asked about, so it can fetch what it lacks in one go
+     * (the app's: one request for the points no map data on the phone covers). By default, this namer itself.
+     */
+    fun forPoints(points: List<LatLon>): WayNamer = this
 }

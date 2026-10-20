@@ -298,10 +298,10 @@ class RouteViewModel(private val services: Services, from: Endpoint, to: Endpoin
         viewModelScope.launch { if (home) hub.store.setHome(p) else hub.store.setWork(p) }
     }
 
-    /** Adds a stop at [at] (a long press on the map), named after its street when the map knows it. */
+    /** Adds a stop at [at] (a long press on the map), named after its street when the map's data knows it. */
     fun addStopAt(at: LatLon) {
         viewModelScope.launch {
-            val name = withContext(Dispatchers.IO) { runCatching { TileWayNamer({ services.tiles.value }).nearest(at, 60.0) }.getOrNull() }
+            val name = runCatching { services.localData.streetNear(at, 60.0) }.getOrNull()
             addStop(Endpoint(name, at))
         }
     }
@@ -309,7 +309,7 @@ class RouteViewModel(private val services: Services, from: Endpoint, to: Endpoin
     /** Sets the destination to [at] (a long press on the map with none chosen yet). */
     fun setToAt(at: LatLon) {
         viewModelScope.launch {
-            val name = withContext(Dispatchers.IO) { runCatching { TileWayNamer({ services.tiles.value }).nearest(at, 60.0) }.getOrNull() }
+            val name = runCatching { services.localData.streetNear(at, 60.0) }.getOrNull()
             setTo(Endpoint(name, at))
         }
     }

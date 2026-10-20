@@ -14,7 +14,7 @@ import kotlin.coroutines.resumeWithException
 
 /** HTTP for tiles: one shared client and a coroutine-friendly call. */
 object Http {
-    /** Every request says who is asking: OpenFreeMap refuses anonymous clients. */
+    /** Every request says who is asking, as the servers it asks (GitHub's among them) want. */
     const val USER_AGENT = "Atlas/0.1 (+https://github.com/atlas-maps-app/Atlas)"
 
     /** A client with polite timeouts, shared so connections are reused. */

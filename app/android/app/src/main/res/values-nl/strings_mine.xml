@@ -11,7 +11,7 @@
     <string name="mine_privacy_head">Geen account. Geen reclame. Geen trackers.</string>
     <string name="mine_privacy_text">Niets over jou verlaat de telefoon, tenzij je het deelt.</string>
     <string name="mine_about">Over &amp; licenties</string>
-    <string name="mine_about_text">Kaartgegevens © OpenStreetMap-bijdragers (ODbL). Tegels van OpenFreeMap. Routes door BRouter. Weer van Open-Meteo.com (CC BY 4.0). Reviews van Mangrove (CC BY 4.0). Lettertypen: Inter en Instrument Serif (OFL). Symbolen: Maki, Temaki (CC0) en Lucide (ISC).</string>
+    <string name="mine_about_text">Kaartgegevens © OpenStreetMap-bijdragers (ODbL). Routes door BRouter. Weer van Open-Meteo.com en MET Norway (CC BY 4.0). Reviews van Mangrove (CC BY 4.0). Lettertypen: Inter en Instrument Serif (OFL). Symbolen: Maki, Temaki (CC0) en Lucide (ISC).</string>
     <string name="mine_welcome">Welkom</string>
     <string name="mine_welcome_text">Alles werkt zonder bereik: kaarten, routes, plekken, stem.</string>
     <string name="mine_layers">Kaartstijl</string>
@@ -535,7 +535,6 @@
     <string name="mine_picker_country_none_text">De lijst met gepubliceerde pakketten kon niet worden gelezen. Controleer je verbinding, of teken een gebied.</string>
     <string name="mine_picker_from_pack">uit Atlas\' gepubliceerde pakket</string>
     <string name="mine_picker_built">op deze telefoon gebouwd uit OpenStreetMap</string>
-    <string name="mine_picker_tiles">vectortegels van de tegelserver</string>
     <string name="mine_picker_too_big">Te groot om hier te bouwen: kies een landpakket, of teken een kleiner gebied.</string>
     <string name="mine_picker_failed">De grootte kon niet worden berekend. Probeer het zo opnieuw.</string>
     <string name="mine_picker_wifi">Alleen via wifi</string>
@@ -556,7 +555,6 @@
     <string name="mine_privacy_downloads">Downloads die je start</string>
     <string name="mine_sent_pack">welke kaart- en plekkenpakketten je vraagt</string>
     <string name="mine_sent_routing">de routetegels van het gebied dat je offline neemt</string>
-    <string name="mine_sent_tiles">de kaarttegels die je bekijkt, als er geen gebied op de telefoon staat</string>
     <string name="mine_charge_live">LIVE</string>
     <string name="mine_data_key_show">Toon de sleutel</string>
     <string name="mine_data_key_hide">Verberg de sleutel</string>

@@ -242,7 +242,7 @@
     <string name="brands_bell">Tell me about this brand (kept on the phone)</string>
     <string name="brands_bell_on">Watching this brand · tap to stop</string>
     <string name="brands_from_store">From the region on this phone · OpenStreetMap and the name-suggestion index</string>
-    <string name="brands_from_tiles">From the map\'s labels only · download the region for every branch and its hours</string>
+    <string name="brands_from_pack">From the map\'s data on this phone · OpenStreetMap and the name-suggestion index</string>
     <string name="brands_hidden">hidden</string>
     <string name="brands_hidden_n">%1$d hidden</string>
     <string name="brands_hidden_show">Show the %1$d hidden brands</string>
@@ -262,7 +262,7 @@
     <string name="category_none">None mapped around here</string>
     <string name="category_none_open">None open now</string>
     <string name="origin_store">From the region on this phone · OpenStreetMap</string>
-    <string name="origin_tiles">From the map\'s labels only · download the region for hours and details</string>
+    <string name="origin_pack">From the map\'s data on this phone · OpenStreetMap</string>
     <string name="origin_online">From OpenStreetMap online, through Overpass</string>
     <string name="origin_failed">%1$s · the online answer did not come</string>
 

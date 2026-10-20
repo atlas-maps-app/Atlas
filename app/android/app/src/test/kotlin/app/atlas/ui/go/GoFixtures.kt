@@ -28,15 +28,12 @@ object GoFixtures {
     val amsterdam: File get() = File(segments, "E0_N50.rd5")
     val hasSegment: Boolean get() = amsterdam.isFile
 
-    /** The real map tiles around the Westerkerk, which name the streets. */
-    private val tiles = app.atlas.testing.FixtureTiles()
-
-    /** BRouter on the real segment, with street names from the fixture tiles, or null without the segment. */
+    /** BRouter on the real segment, with street names from the bundled Westerkerk pack, or null without the segment. */
     val router: BRouterRouter? by lazy {
         if (!hasSegment) null
         else BRouterRouter(
             segments, Files.createTempDirectory("atlas-go-profiles").toFile().apply { deleteOnExit() }, memoryClassMb = 128,
-            namer = TileWayNamer({ tiles }),
+            namer = app.atlas.testing.BundledPack.local.wayNamer(),
         )
     }
 
@@ -49,7 +46,7 @@ object GoFixtures {
         else BRouterRouter(
             segments, Files.createTempDirectory("atlas-go-profiles").toFile().apply { deleteOnExit() }, memoryClassMb = 128,
             restrictions = OverpassRestrictionSource({ _ -> amsAnswer }, OverpassRestrictionSource.Scope.BOTH),
-            namer = TileWayNamer({ tiles }),
+            namer = app.atlas.testing.BundledPack.local.wayNamer(),
         )
     }
 

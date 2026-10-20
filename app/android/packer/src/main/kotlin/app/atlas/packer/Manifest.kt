@@ -3,10 +3,6 @@ package app.atlas.packer
 import app.atlas.geo.BBox
 import app.atlas.render.data.PackManifest
 import app.atlas.render.data.PackReader
-import app.atlas.tiles.FileRangeSource
-import app.atlas.tiles.PmHeader
-import app.atlas.tiles.PmTiles
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -31,15 +27,15 @@ import java.time.Instant
 
 /**
  * `packs.json`, the list of packs the app offers: per region its id, name, country, box, the OSM time its data is
- * current to, the zoom range of its tiles, and its files (kind, URL, bytes, SHA-256). A build job writes one
- * `<id>.pack.json` per region it built; the publishing job merges those with the previous list.
+ * current to, and its files (kind, URL, bytes, SHA-256): the region pack and the place store. A build job writes one
+ * `<id>.pack.json` per region it built; the publishing job merges those with the previous list. The vector tiles
+ * (OpenMapTiles' schema) the list once carried are retired: an earlier entry's tiles are left out.
  */
 object Manifest {
     /** Bumped when a reader would misread the file. */
     const val FORMAT = 1
 
-    const val ATTRIBUTION = "Map data © OpenStreetMap contributors, under the Open Database Licence (ODbL 1.0). " +
-        "Extracts by Geofabrik. Tiles in the OpenMapTiles schema (© OpenMapTiles, CC-BY 4.0), built with Planetiler."
+    const val ATTRIBUTION = "Map data © OpenStreetMap contributors, under the Open Database Licence (ODbL 1.0). Extracts by Geofabrik."
 
     /** A region the workflow builds, from `packs/regions.json`. */
     data class Region(val id: String, val name: String, val country: String?, val url: String?, val bbox: BBox?, val clip: Boolean)
@@ -68,7 +64,7 @@ object Manifest {
     }
 
     /**
-     * Writes `<id>.pack.json` for every region with files in [dir] (region pack `<id>.atlas`, tiles `<id>.pmtiles`, places `<id>.places.db.gz`
+     * Writes `<id>.pack.json` for every region with files in [dir] (region pack `<id>.atlas`, places `<id>.places.db.gz`
      * with its `<id>.places.json` sidecar), their URLs under [urlBase], and returns the merged list: the [previous]
      * list, then any `<id>.pack.json` already in [dir], then the fresh entries, each replacing the one before. With
      * [regions], only listed regions stay, in their order.
@@ -85,15 +81,14 @@ object Manifest {
         val base = urlBase.trimEnd('/')
         val byId = regions?.associateBy { it.id }
         val entries = LinkedHashMap<String, JsonObject>()
-        previous?.get("packs")?.jsonArray?.forEach { e -> e.jsonObject.str("id")?.let { entries[it] = e.jsonObject } }
+        previous?.get("packs")?.jsonArray?.forEach { e -> e.jsonObject.str("id")?.let { id -> withoutTiles(e.jsonObject)?.let { entries[id] = it } } }
         val names = dir.listFiles()?.map { it.name }.orEmpty().sorted()
         for (n in names) if (n.endsWith(PACK_SUFFIX)) {
-            val o = Json.parseToJsonElement(File(dir, n).readText()).jsonObject
+            val o = withoutTiles(Json.parseToJsonElement(File(dir, n).readText()).jsonObject) ?: continue
             entries[o.str("id") ?: n.removeSuffix(PACK_SUFFIX)] = o
         }
         val fresh = names.mapNotNull { n ->
             when {
-                n.endsWith(TILES_SUFFIX) -> n.removeSuffix(TILES_SUFFIX)
                 n.endsWith(ATLAS_SUFFIX) -> n.removeSuffix(ATLAS_SUFFIX)
                 n.endsWith(PLACES_GZ_SUFFIX) -> n.removeSuffix(PLACES_GZ_SUFFIX)
                 n.endsWith(PLACES_SUFFIX) -> n.removeSuffix(PLACES_SUFFIX)
@@ -119,27 +114,15 @@ object Manifest {
      * not say, and a kind of file no longer here whole (already cut into parts) keeps its earlier description.
      */
     fun entry(dir: File, id: String, base: String, region: Region?, before: JsonObject? = null, splitBytes: Long = SPLIT_BYTES): JsonObject {
-        val tiles = File(dir, id + TILES_SUFFIX).takeIf { it.isFile }
         val places = File(dir, id + PLACES_GZ_SUFFIX).takeIf { it.isFile } ?: File(dir, id + PLACES_SUFFIX).takeIf { it.isFile }
         val atlas = File(dir, id + ATLAS_SUFFIX).takeIf { it.isFile }
         val atlasHead = atlas?.let { runCatching { PackReader.open(it).use { r -> r.manifest } }.getOrNull() }
         val earlier = before?.get("files")?.let { it as? JsonArray }?.mapNotNull { it as? JsonObject }.orEmpty()
         fun earlier(kind: String) = earlier.firstOrNull { it.str("kind") == kind }
-        require(tiles != null || places != null || atlas != null || earlier.isNotEmpty()) { "no files for region $id in $dir" }
+        require(places != null || atlas != null || earlier.isNotEmpty()) { "no files for region $id in $dir" }
         val sidecar = File(dir, "$id.places.json").takeIf { it.isFile }?.let { Json.parseToJsonElement(it.readText()).jsonObject }
-        val header = tiles?.let { readHeader(it) }
-        val metadata = tiles?.let { runCatching { readMetadata(it) }.getOrDefault(emptyMap()) }.orEmpty()
-        val bbox = region?.bbox ?: sidecar?.box("bbox") ?: header?.bounds ?: atlasHead?.bbox ?: before?.box("bbox")
-        val osmTime = sidecar?.str("osm_timestamp")
-            ?: metadata.entries.firstOrNull { it.key.endsWith("osmosisreplicationtime") }?.value?.toString()
-            ?: atlasHead?.dataTime
-            ?: before?.str("osm_timestamp")
-        val tilesEntry = if (tiles != null) buildJsonObject {
-            put("kind", "tiles")
-            file(tiles, base, splitBytes)
-            put("format", "pmtiles")
-            metadata["version"]?.let { put("schema", "openmaptiles $it") }
-        } else earlier("tiles")
+        val bbox = region?.bbox ?: sidecar?.box("bbox") ?: atlasHead?.bbox ?: before?.box("bbox")
+        val osmTime = sidecar?.str("osm_timestamp") ?: atlasHead?.dataTime ?: before?.str("osm_timestamp")
         val atlasEntry = if (atlas != null) buildJsonObject {
             put("kind", "atlas")
             file(atlas, base, splitBytes)
@@ -164,14 +147,8 @@ object Manifest {
             (region?.country ?: before?.str("country"))?.let { put("country", it) }
             bbox?.let { b -> putJsonArray("bbox") { for (v in corners(b)) add(v) } }
             osmTime?.let { put("osm_timestamp", it) }
-            val minZoom = header?.minZoom ?: before?.get("minzoom")?.jsonPrimitive?.intOrNull
-            val maxZoom = header?.maxZoom ?: before?.get("maxzoom")?.jsonPrimitive?.intOrNull
-            if (minZoom != null && maxZoom != null) {
-                put("minzoom", minZoom)
-                put("maxzoom", maxZoom)
-            }
             (releaseOf(base) ?: before?.str("release"))?.let { put("release", it) }
-            put("files", JsonArray(listOfNotNull(tilesEntry, placesEntry, atlasEntry)))
+            put("files", JsonArray(listOfNotNull(placesEntry, atlasEntry)))
         }
     }
 
@@ -201,22 +178,12 @@ object Manifest {
     /** The release tag in a `…/releases/download/<tag>` URL. */
     fun releaseOf(base: String): String? = Regex("/releases/download/([^/]+)$").find(base)?.groupValues?.get(1)
 
-    private fun readHeader(file: File): PmHeader {
-        val head = ByteArray(127)
-        file.inputStream().use { input ->
-            var n = 0
-            while (n < head.size) {
-                val k = input.read(head, n, head.size - n)
-                if (k < 0) break
-                n += k
-            }
-            require(n == head.size) { "${file.name} is too short for a PMTiles header" }
-        }
-        return PmHeader.parse(head)
-    }
-
-    private fun readMetadata(file: File): Map<String, Any?> = runBlocking {
-        PmTiles.open(FileRangeSource(file)).use { it.metadata }
+    /** [o] without the retired vector tiles (their file and their zoom range); null when they were all it had. */
+    private fun withoutTiles(o: JsonObject): JsonObject? {
+        val had = o["files"] as? JsonArray
+        val files = had?.filter { (it as? JsonObject)?.str("kind") != RETIRED_TILES }
+        if (had != null && had.isNotEmpty() && files!!.isEmpty()) return null
+        return JsonObject(o.filterKeys { it != "minzoom" && it != "maxzoom" } + (if (files != null) mapOf("files" to JsonArray(files)) else emptyMap()))
     }
 
     private fun JsonObject.str(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
@@ -230,7 +197,8 @@ object Manifest {
     /** GitHub release assets must stay under 2 GiB: bigger files go up in parts of this size. */
     const val SPLIT_BYTES = 2_000_000_000L
 
-    const val TILES_SUFFIX = ".pmtiles"
+    /** The kind the retired vector tiles were listed as. */
+    private const val RETIRED_TILES = "tiles"
     const val ATLAS_SUFFIX = ".atlas"
     const val PLACES_GZ_SUFFIX = ".places.db.gz"
     const val PLACES_SUFFIX = ".places.db"

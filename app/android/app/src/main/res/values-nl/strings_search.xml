@@ -242,7 +242,7 @@
     <string name="brands_bell">Houd me op de hoogte van dit merk (op de telefoon)</string>
     <string name="brands_bell_on">Dit merk volgen · tik om te stoppen</string>
     <string name="brands_from_store">Uit de regio op deze telefoon · OpenStreetMap en de name-suggestion-index</string>
-    <string name="brands_from_tiles">Alleen uit de labels van de kaart · download de regio voor elke vestiging en haar tijden</string>
+    <string name="brands_from_pack">Uit de kaartgegevens op deze telefoon · OpenStreetMap en de name-suggestion-index</string>
     <string name="brands_hidden">verborgen</string>
     <string name="brands_hidden_n">%1$d verborgen</string>
     <string name="brands_hidden_show">Toon de %1$d verborgen merken</string>
@@ -262,7 +262,7 @@
     <string name="category_none">Hier in de buurt niets in de kaart</string>
     <string name="category_none_open">Nu niets open</string>
     <string name="origin_store">Uit de regio op deze telefoon · OpenStreetMap</string>
-    <string name="origin_tiles">Alleen uit de labels van de kaart · download de regio voor tijden en details</string>
+    <string name="origin_pack">Uit de kaartgegevens op deze telefoon · OpenStreetMap</string>
     <string name="origin_online">Online uit OpenStreetMap, via Overpass</string>
     <string name="origin_failed">%1$s · het online antwoord kwam niet</string>
 

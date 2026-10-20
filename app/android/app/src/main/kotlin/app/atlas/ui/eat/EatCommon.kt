@@ -183,7 +183,7 @@ internal fun EatEmpty(modifier: Modifier = Modifier) {
 @Composable
 internal fun sourceLine(area: EatArea): String? = when (area.origin) {
     PlaceOrigin.STORE -> stringResource(R.string.eat_source_store)
-    PlaceOrigin.TILES -> stringResource(R.string.eat_source_tiles)
+    PlaceOrigin.PACK -> stringResource(R.string.eat_source_pack)
     PlaceOrigin.ONLINE -> stringResource(R.string.eat_source_online)
     null -> null
 }

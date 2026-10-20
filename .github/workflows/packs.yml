@@ -1,8 +1,7 @@
 # Builds Atlas's offline packs and publishes them as GitHub release assets (free hosting that serves HTTP ranges).
 # For each region of app/android/packs/regions.json, from Geofabrik's extract: the place store `:search` reads
-# (`packer places`, gzipped SQLite), the region pack the engine draws from (`packer pbf`, an `.atlas` file with the
-# elements Overpass would give for the region: full tags, way geometry, multipolygons) and, until the engine replaces
-# them, the map tiles (Planetiler, OpenMapTiles schema, PMTiles).
+# (`packer places`, gzipped SQLite) and the region pack the map and the features read (`packer pbf`, an `.atlas` file
+# with the elements Overpass would give for the region: full tags, way geometry, multipolygons).
 # The region pack covers the region's `atlas` box when regions.json gives one (a city, a district: "atlas": [w, s, e, n]),
 # else its whole bbox when that is under 0.6 square degrees; a country-sized region without an `atlas` box gets none.
 # The renders' own packs (the Python engine's extracts) are made by `packer renders` on the owner's Mac and published
@@ -37,8 +36,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PLANETILER_VERSION: 0.10.2
-  PLANETILER_SHA256: f310bd0413e2e4512b27f4046d418664e8e1d3bf31603c2a70e23de06c167e4d
   GH_REPO: ${{ github.repository }}
   USER_AGENT: Atlas-packs/1 (+https://github.com/atlas-maps-app/Atlas)
   RELEASE_NOTES: |
@@ -50,10 +47,7 @@ env:
     Map data © OpenStreetMap contributors, under the Open Database Licence (ODbL 1.0):
     https://www.openstreetmap.org/copyright. The place stores (*.places.db.gz) are derived databases and are
     themselves available under the ODbL; the region packs (*.atlas) hold OpenStreetMap elements with their tags and
-    geometry and are available under the ODbL as well; the map tiles (*.pmtiles) are produced works. Extracts by Geofabrik
-    (https://download.geofabrik.de). Tiles in the OpenMapTiles schema (© OpenMapTiles, CC-BY 4.0,
-    https://openmaptiles.org), built with Planetiler (Apache-2.0) from OpenStreetMap, OSM water polygons
-    (osmdata.openstreetmap.de, ODbL) and Natural Earth (public domain).
+    geometry and are available under the ODbL as well. Extracts by Geofabrik (https://download.geofabrik.de).
 
 jobs:
   plan:
@@ -95,42 +89,8 @@ jobs:
             gh release create "$TAG" --title "Offline packs ${TAG#packs-}" --notes-file "$RUNNER_TEMP/notes.md" --latest=false --target "$GITHUB_SHA"
           fi
 
-  sources:
-    # Planetiler's other sources (OSM water polygons, Natural Earth, lake centre lines: about 1 GB), fetched once a
-    # month for every job rather than once per region.
-    if: ${{ github.event.inputs.renders != 'only' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    outputs:
-      key: ${{ steps.key.outputs.key }}
-    steps:
-      - id: key
-        run: echo "key=planetiler-sources-${PLANETILER_VERSION}-$(date -u +%Y%m)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v6
-        id: cache
-        with:
-          path: planetiler/data/sources
-          key: ${{ steps.key.outputs.key }}
-      - uses: actions/setup-java@v6
-        if: steps.cache.outputs.cache-hit != 'true'
-        with:
-          distribution: temurin
-          java-version: 21
-      - name: Download
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          set -euo pipefail
-          mkdir -p planetiler && cd planetiler
-          curl -fsSL --retry 5 -o planetiler.jar "https://github.com/onthegomap/planetiler/releases/download/v${PLANETILER_VERSION}/planetiler.jar"
-          echo "${PLANETILER_SHA256}  planetiler.jar" | sha256sum -c -
-          java -Xmx2g -jar planetiler.jar --only-download --download --area=monaco
-          rm -f data/sources/*.osm.pbf planetiler.jar
-          du -sh data/sources/*
-
   build:
-    needs: [plan, sources]
-    # without the month's sources each job fetches its own
-    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    needs: plan
     name: ${{ matrix.region.id }}
     runs-on: ubuntu-latest
     # The runner's limits: 6 hours, 16 GB of memory, 14 GB of disk (more once the preinstalled tools are gone).
@@ -155,10 +115,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          # 21 for Planetiler; the last is the default, 17, for Gradle and the packer
-          java-version: |
-            21
-            17
+          java-version: 17
       - uses: gradle/actions/setup-gradle@v6
       - name: Android SDK 37
         # Gradle configures every module of the build, the Android ones too
@@ -177,18 +134,12 @@ jobs:
           if [ -d /mnt ] && [ "$(df --output=avail -B1 /mnt | tail -1)" -gt "$(df --output=avail -B1 "$RUNNER_TEMP" | tail -1)" ]; then
             sudo mkdir -p /mnt/packs && sudo chown "$(id -u):$(id -g)" /mnt/packs && WORK=/mnt/packs
           fi
-          mkdir -p "$WORK/out" "$WORK/planetiler"
+          mkdir -p "$WORK/out"
           echo "WORK=$WORK" >> "$GITHUB_ENV"
           df -h / /mnt || true
-      - uses: actions/cache/restore@v6
-        id: sources
-        with:
-          path: planetiler/data/sources
-          key: ${{ needs.sources.outputs.key }}
       - name: Download the extract
         run: |
           set -euo pipefail
-          mv planetiler/data "$WORK/planetiler/" 2> /dev/null || true
           PBF="$WORK/$ID.osm.pbf"
           for attempt in 1 2; do
             curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$PBF" "$PBF_URL"
@@ -222,24 +173,7 @@ jobs:
           if [ -n "$COUNTRY" ]; then ARGS+=(--country "$COUNTRY"); fi
           app/android/packer/build/install/packer/bin/packer pbf "$WORK/$ID.osm.pbf" "$ATLAS_BOX" "${ARGS[@]}"
           app/android/packer/build/install/packer/bin/packer packinfo "$WORK/out/$ID.atlas" | tail -2
-          df -h "$WORK"
-      - name: Tiles
-        working-directory: ${{ env.WORK }}/planetiler
-        env:
-          # Planetiler fetches again any source whose size changed upstream (the water polygons do daily): only
-          # without the month's copy
-          DOWNLOAD: ${{ steps.sources.outputs.cache-hit != 'true' }}
-        run: |
-          set -euo pipefail
-          curl -fsSL --retry 5 -o planetiler.jar "https://github.com/onthegomap/planetiler/releases/download/v${PLANETILER_VERSION}/planetiler.jar"
-          echo "${PLANETILER_SHA256}  planetiler.jar" | sha256sum -c -
-          ARGS=()
-          if [ "$CLIP" = "true" ]; then ARGS+=("--bounds=$BBOX"); fi
-          if [ "$DOWNLOAD" = "true" ]; then ARGS+=(--download); fi
-          "$JAVA_HOME_21_X64/bin/java" -Xmx8g -jar planetiler.jar \
-            --osm-path="$WORK/$ID.osm.pbf" --output="$WORK/out/$ID.pmtiles" \
-            --force --tmpdir="$WORK/planetiler/tmp" "${ARGS[@]}"
-          rm -rf "$WORK/planetiler/tmp" "$WORK/$ID.osm.pbf"
+          rm -f "$WORK/$ID.osm.pbf"
           df -h "$WORK"
       - name: Upload
         run: |

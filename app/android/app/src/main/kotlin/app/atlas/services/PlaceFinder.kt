@@ -3,23 +3,14 @@ package app.atlas.services
 import app.atlas.geo.BBox
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
-import app.atlas.geo.Mercator
-import app.atlas.geo.TileId
-import app.atlas.model.OsmId
-import app.atlas.model.OsmType
 import app.atlas.model.Place
 import app.atlas.places.Categories
 import app.atlas.places.Category
-import app.atlas.places.Presets
 import app.atlas.places.TagFilter
 import app.atlas.providers.Overpass
 import app.atlas.providers.OverpassArea
 import app.atlas.providers.OverpassQl
 import app.atlas.search.PlaceSource
-import app.atlas.tiles.GeomType
-import app.atlas.tiles.TileProjection
-import app.atlas.tiles.TileSource
-import app.atlas.tiles.TileStack
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -27,8 +18,8 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import java.io.IOException
 
-/** Where a list of places came from: the offline place store, the map tiles' points of interest, or Overpass online. */
-enum class PlaceOrigin { STORE, TILES, ONLINE }
+/** Where a list of places came from: a downloaded region's place store, Atlas's own map packs, or Overpass online. */
+enum class PlaceOrigin { STORE, PACK, ONLINE }
 
 /** Places found near a point, nearest first, with where they came from and, when a source failed, why. */
 data class NearbyPlaces(val places: List<Place>, val source: PlaceOrigin, val error: String? = null)
@@ -43,11 +34,11 @@ fun interface PlaceFinder {
 
 /**
  * Places by category in layers: the downloaded regions' place stores first (offline, every tag); where they have
- * nothing, the map tiles' points of interest (offline, names and kinds only), then Overpass when [online] (every tag,
- * so opening hours and facts).
+ * nothing, the map's packs on the phone ([LocalData.inPacks]: offline, every tag), and Overpass when [online] where no
+ * pack holds the whole circle (every tag, so opening hours and facts).
  */
 class LayeredPlaceFinder(
-    private val tiles: () -> TileSource?,
+    private val local: () -> LocalData?,
     private val overpass: () -> Overpass?,
     private val online: () -> Boolean,
     private val store: () -> PlaceSource? = { null },
@@ -60,21 +51,23 @@ class LayeredPlaceFinder(
             val found = s.byCategory(ids, BBox.around(centre, radiusM))
                 .map { it.place }
                 .filter { Geo.distance(centre, it.location) <= radiusM }
-            // A region on the phone answers fully: no need for the tiles' sketch or the network.
+            // A region on the phone answers fully: no need for the packs or the network.
             if (found.isNotEmpty()) {
                 emit(NearbyPlaces(nearest(found, centre, limit), PlaceOrigin.STORE))
                 return@flow
             }
         }
-        tiles()?.let { src ->
-            val fromTiles = try {
-                TilePlaces.near(src, centre, radiusM, filter, limit)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                null
-            }
-            if (fromTiles != null) emit(NearbyPlaces(fromTiles, PlaceOrigin.TILES))
+        val packed = try {
+            local()?.inPacks(centre, radiusM, filter, limit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        if (packed != null) {
+            emit(NearbyPlaces(packed.value, PlaceOrigin.PACK))
+            // Packs around the whole circle answer fully, with every tag: nothing more to ask.
+            if (!packed.partial) return@flow
         }
         val op = overpass()
         if (op != null && online()) {
@@ -104,88 +97,6 @@ class LayeredPlaceFinder(
 
         fun nearest(places: List<Place>, centre: LatLon, limit: Int): List<Place> =
             places.distinctBy { it.key }.sortedBy { Geo.distance(centre, it.location) }.take(limit)
-    }
-}
-
-/**
- * Points of interest from the vector tiles' `poi` layer (OpenMapTiles), as places: offline, with their OSM id (the
- * feature id is the OSM id times ten plus 1 for a node, 2 for a way, 3 for a relation), name and kind. The OSM key is
- * recovered from the kind through the id-tagging-schema presets ("cafe" is `amenity=cafe`, "bakery" `shop=bakery`).
- */
-object TilePlaces {
-    private const val ZOOM = 14
-    private val KEYS = listOf(
-        "amenity", "shop", "tourism", "leisure", "office", "craft", "healthcare", "historic", "sport", "railway",
-        "public_transport", "highway", "aerialway", "waterway", "man_made", "natural", "emergency", "landuse", "building", "place",
-    )
-    private val keyCache = java.util.concurrent.ConcurrentHashMap<String, String>()
-
-    /** Places within [radiusM] of [centre] that pass [filter], nearest first. */
-    suspend fun near(src: TileSource, centre: LatLon, radiusM: Double, filter: TagFilter, limit: Int): List<Place> {
-        val box = BBox.around(centre, radiusM)
-        val out = HashMap<String, Place>()
-        // Where z14 is missing the stack falls back to a parent tile, which several ids share: read each tile once.
-        val read = HashSet<TileId>()
-        for (id in Mercator.tilesIn(box, ZOOM)) {
-            val hit = (src as? TileStack)?.bestTile(id)
-            val tileId = hit?.source ?: id
-            if (!read.add(tileId)) continue
-            val data = hit?.data ?: src.tile(id) ?: continue
-            val layer = app.atlas.tiles.Mvt.decode(data, setOf("poi"))["poi"] ?: continue
-            val proj = TileProjection(tileId, layer.extent)
-            for (f in layer.features) {
-                if (f.type != GeomType.POINT) continue
-                val g = f.geometry
-                if (g.isEmpty) continue
-                val at = proj.latLon(g.x(0).toDouble(), g.y(0).toDouble())
-                if (Geo.distance(centre, at) > radiusM) continue
-                val tags = tagsOf(f.string("class"), f.string("subclass"), f) ?: continue
-                if (!filter.matches(tags)) continue
-                val osm = if (f.hasId) osmIdOf(f.id) else null
-                val place = Place(osm, at, tags, source = "tiles")
-                out.putIfAbsent(place.key, place)
-            }
-        }
-        return LayeredPlaceFinder.nearest(out.values.toList(), centre, limit)
-    }
-
-    /** The OSM id of a tile feature id, or null when it does not encode one. */
-    fun osmIdOf(featureId: Long): OsmId? {
-        val type = when ((featureId % 10).toInt()) {
-            1 -> OsmType.NODE
-            2 -> OsmType.WAY
-            3 -> OsmType.RELATION
-            else -> return null
-        }
-        val id = featureId / 10
-        return if (id > 0) OsmId(type, id) else null
-    }
-
-    /** OSM-like tags for a POI of OpenMapTiles [cls] and [subclass], with its names; null without a kind. */
-    fun tagsOf(cls: String?, subclass: String?, f: app.atlas.tiles.TileFeature? = null): Map<String, String>? {
-        val sub = subclass ?: return null
-        val key = keyFor(cls, sub)
-        val tags = LinkedHashMap<String, String>()
-        tags[key] = sub
-        f?.let { feature ->
-            feature.string("name")?.let { tags["name"] = it }
-            for (k in listOf("name:en", "name:nl", "name:de", "name:fr")) feature.string(k)?.let { tags[k] = it }
-            feature.int("level")?.let { tags["level"] = it.toString() }
-        }
-        return tags
-    }
-
-    private fun keyFor(cls: String?, sub: String): String = keyCache.getOrPut("$cls/$sub") {
-        KEYS.firstOrNull { Presets.byId("$it/$sub") != null }
-            ?: when (cls) {
-                "shop", "grocery", "clothing_store", "alcohol_shop", "bakery", "furniture", "jewelry", "hardware", "laundry",
-                "music", "pharmacy", "car" -> "shop"
-                "lodging", "museum", "attraction", "campsite" -> "tourism"
-                "park", "garden", "pitch", "playground", "stadium", "swimming", "golf" -> "leisure"
-                "railway" -> "railway"
-                "bus" -> "highway"
-                else -> "amenity"
-            }
     }
 }
 

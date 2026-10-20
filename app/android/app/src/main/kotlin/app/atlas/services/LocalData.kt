@@ -33,21 +33,21 @@ import app.atlas.search.byFilter
 import app.atlas.search.walk
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.Closeable
 import java.io.File
 import java.io.IOException
 import java.util.Locale
 import kotlin.math.abs
 
-/** Where an answer of [LocalData] came from: a downloaded region's place store, Atlas's own map packs, or Overpass online. */
-enum class LocalOrigin { STORE, PACK, ONLINE }
-
 /**
  * An answer of [LocalData] and where it came from: null when nothing on the phone covers the place and it is offline.
- * [error] says why the online layer failed, when it did.
+ * [error] says why the online layer failed, when it did. [partial] when it holds only part of the area asked about (a
+ * pack reaching over part of it, with the phone offline or Overpass failing): online, Overpass completes it.
  */
-data class LocalAnswer<T>(val value: T, val origin: LocalOrigin?, val error: String? = null)
+data class LocalAnswer<T>(val value: T, val origin: PlaceOrigin?, val error: String? = null, val partial: Boolean = false)
 
 /** The address at a point: the street and house number, the postcode, the quarter and town, where it stands, and how it was found. */
 data class LocalAddress(
@@ -62,7 +62,7 @@ data class LocalAddress(
     val id: OsmId?,
     /** Metres from the point asked about to the addressed house: 0 inside it; null when only the street is known. */
     val distanceM: Double?,
-    val origin: LocalOrigin,
+    val origin: PlaceOrigin,
 ) {
     /** "Westermarkt 13", or the street alone, or null. */
     val line: String? get() = street?.let { s -> housenumber?.let { "$s $it" } ?: s }
@@ -90,7 +90,7 @@ data class LocalBridge(
 data class LocalBrand(val brand: Brand, val branches: List<Place>)
 
 /** What is at a point: its address, the place it is in (a building, a church, a park), and the named places around. */
-data class LocalHere(val address: LocalAddress?, val spot: Place?, val nearby: List<Place>, val origin: LocalOrigin?)
+data class LocalHere(val address: LocalAddress?, val spot: Place?, val nearby: List<Place>, val origin: PlaceOrigin?)
 
 /**
  * A name to set over the map: a quarter ([water] false) or a large water, with where it may stand, likeliest first.
@@ -102,8 +102,10 @@ data class MapName(val name: String, val water: Boolean, val rank: Int, val poin
  * The features' data on Atlas's own sources, offline first, in layers: the downloaded regions' place stores (FTS5 and
  * R*Tree, every tag), the map's packs ([PackFeatures]: the bundled Westerkerk, the renders' packs, city and country
  * packs, packs built from Overpass; full geometry, so outlines, streets and bridges), and Overpass online where nothing
- * on the phone covers the place. Places, brands and quests ask the stores first (whole regions, indexed by category,
- * brand and text); addresses, street names, streets and bridges ask the packs first (they hold the lines and outlines).
+ * on the phone covers the place, or covers only part of it. Places, brands and quests ask the stores first (whole
+ * regions, indexed by category, brand and text); addresses, street names, streets and bridges ask the packs first
+ * (they hold the lines and outlines). Online, the names along a route, near a pin and the bridges along a line come
+ * from Overpass as whole elements ([OnlineElements]), read by the packs' own code, so both answer alike.
  *
  * The calls that return plain values read files and must run off the main thread; the suspend ones switch themselves.
  */
@@ -114,6 +116,8 @@ class LocalData(
     private val isOnline: () -> Boolean = { false },
     private val onClose: () -> Unit = {},
 ) : Closeable {
+    /** Elements asked of Overpass where no pack reaches: street names at a route's steps and near a pin, bridges along a line. */
+    private val online = OnlineElements(overpass, isOnline)
 
     // ---- Places ---------------------------------------------------------------------------------------------------
 
@@ -137,26 +141,62 @@ class LocalData(
         keep: (Place) -> Boolean,
         order: (List<Place>) -> List<Place>,
     ): LocalAnswer<List<Place>> {
+        val phone = onPhone(at, box, { s -> s.byFilter(filter, box).map { it.place } }, { filter.matches(it) }, keep, order)
+        val got = completed(phone) { askOverpass(filter, box) }
+        return if (got === phone) got else got.copy(value = order(got.value.filter(keep)))
+    }
+
+    /**
+     * The places in [box] the phone holds: a region's store covering [at] ([fromStore] reads it), when it has some or no
+     * pack covers [at] (a region answers fully; a pack holding the place too is asked only when the store has none),
+     * else the packs covering [at], their elements whose tags [accept] keeps. [keep] filters and [order] sorts them.
+     * Partial when what answered does not hold the whole box. Null when nothing on the phone covers [at].
+     */
+    private fun onPhone(
+        at: LatLon,
+        box: BBox,
+        fromStore: (PlaceSource) -> List<Place>,
+        accept: (Map<String, String>) -> Boolean,
+        keep: (Place) -> Boolean,
+        order: (List<Place>) -> List<Place>,
+    ): LocalAnswer<List<Place>>? {
         val pack = packsCovering(at)
         storeCovering(at)?.let { s ->
-            val found = s.byFilter(filter, box).map { it.place }.filter(keep)
-            // A region on the phone answers fully; a pack holding the place too is asked only when the store has none.
-            if (found.isNotEmpty() || pack == null) return LocalAnswer(order(found), LocalOrigin.STORE)
+            val found = fromStore(s).filter(keep)
+            if (found.isNotEmpty() || pack == null) return LocalAnswer(order(found), PlaceOrigin.STORE, partial = s.bounds?.holds(box) != true)
         }
-        if (pack != null) return LocalAnswer(order(packPlaces(pack, box) { filter.matches(it) }.filter(keep)), LocalOrigin.PACK)
-        val got = askOverpass(filter, box)
-        return got.copy(value = order(got.value.filter(keep)))
+        if (pack != null) return LocalAnswer(order(packPlaces(pack, box, accept).filter(keep)), PlaceOrigin.PACK, partial = !pack.covers(box))
+        return null
+    }
+
+    /**
+     * [phone]'s answer when it is whole, or when nothing can be asked online; else [ask]'s (Overpass's) for the whole
+     * area, and [phone]'s again, with the error, when that fails.
+     */
+    private suspend fun completed(phone: LocalAnswer<List<Place>>?, ask: suspend () -> LocalAnswer<List<Place>>): LocalAnswer<List<Place>> {
+        if (phone != null && (!phone.partial || !online.available())) return phone
+        val got = ask()
+        return if (got.error != null && phone != null) phone.copy(error = got.error) else got
+    }
+
+    /**
+     * The places the packs on the phone hold within [radiusM] of [centre] whose tags pass [filter], nearest first, at
+     * most [limit], with every tag; [LocalAnswer.partial] when the packs hold only part of the circle (online, Overpass
+     * completes it). Null when no pack covers [centre]. For the screens that ask a region's store and Overpass
+     * themselves; reads files, so call it off the main thread.
+     */
+    fun inPacks(centre: LatLon, radiusM: Double, filter: TagFilter, limit: Int = DEFAULT_LIMIT): LocalAnswer<List<Place>>? {
+        val pack = packsCovering(centre) ?: return null
+        val box = BBox.around(centre, radiusM)
+        val found = packPlaces(pack, box) { filter.matches(it) }.filter { Geo.distance(centre, it.location) <= radiusM }
+        return LocalAnswer(nearest(found, centre, limit), PlaceOrigin.PACK, partial = !pack.covers(box))
     }
 
     /** The chains trading in [box] (shops, eateries, banks, fuel, hotels), most branches first, at most [limit]. */
     suspend fun brands(box: BBox, limit: Int = DEFAULT_LIMIT): LocalAnswer<List<LocalBrand>> = withContext(Dispatchers.IO) {
         val centre = box.center
-        val pack = packsCovering(centre)
-        val answer = storeCovering(centre)?.let { s ->
-            s.inBox(box).filter { it.brand != null && isTrade(it.tags) }.map { it.place }
-                .takeIf { it.isNotEmpty() || pack == null }?.let { LocalAnswer(it, LocalOrigin.STORE) }
-        } ?: pack?.let { f -> LocalAnswer(packPlaces(f, box, ::isTrade), LocalOrigin.PACK) }
-            ?: askOverpass(TagFilter.Or(listOf(TagFilter.Has("brand"), TagFilter.Has("brand:wikidata"))), box)
+        val phone = onPhone(centre, box, { s -> s.inBox(box).filter { it.brand != null && isTrade(it.tags) }.map { it.place } }, ::isTrade, { true }, { it })
+        val answer = completed(phone) { askOverpass(TagFilter.Or(listOf(TagFilter.Has("brand"), TagFilter.Has("brand:wikidata"))), box) }
         val byBrand = LinkedHashMap<String, MutableList<Place>>()
         val brands = HashMap<String, Brand>()
         for (p in answer.value) {
@@ -167,7 +207,7 @@ class LocalData(
         }
         val chains = byBrand.map { (id, list) -> LocalBrand(brands.getValue(id), nearest(list, centre, Int.MAX_VALUE)) }
             .sortedWith(compareByDescending<LocalBrand> { it.branches.size }.thenBy { Geo.distance(centre, it.branches.first().location) })
-        LocalAnswer(chains.take(limit), answer.origin, answer.error)
+        LocalAnswer(chains.take(limit), answer.origin, answer.error, answer.partial)
     }
 
     /** The branches of brand [id] (a name-suggestion-index id) within [radiusM] of [centre], nearest first. */
@@ -175,17 +215,13 @@ class LocalData(
         val box = BBox.around(centre, radiusM)
         val within = { p: Place -> Geo.distance(centre, p.location) <= radiusM }
         val ofBrand = { t: Map<String, String> -> isTrade(t) && Brands.forTags(t)?.id == id }
-        val pack = packsCovering(centre)
-        storeCovering(centre)?.let { s ->
-            val found = s.byBrand(listOf(id), box).map { it.place }.filter(within)
-            if (found.isNotEmpty() || pack == null) return@withContext LocalAnswer(nearest(found, centre, Int.MAX_VALUE), LocalOrigin.STORE)
-        }
-        if (pack != null) return@withContext LocalAnswer(nearest(packPlaces(pack, box, ofBrand).filter(within), centre, Int.MAX_VALUE), LocalOrigin.PACK)
+        val order = { list: List<Place> -> nearest(list, centre, Int.MAX_VALUE) }
+        val phone = onPhone(centre, box, { s -> s.byBrand(listOf(id), box).map { it.place } }, ofBrand, within, order)
         val brand = Brands.byId(id)
         val filter = brand?.wikidata?.let { TagFilter.Equals("brand:wikidata", it) } ?: brand?.let { TagFilter.Equals("brand", it.brand) }
-            ?: return@withContext LocalAnswer(emptyList(), null)
-        val got = askOverpass(filter, box)
-        LocalAnswer(nearest(got.value.filter { ofBrand(it.tags) && within(it) }, centre, Int.MAX_VALUE), got.origin, got.error)
+            ?: return@withContext phone ?: LocalAnswer(emptyList(), null)
+        val got = completed(phone) { askOverpass(filter, box) }
+        if (got === phone) got else got.copy(value = order(got.value.filter { ofBrand(it.tags) && within(it) }))
     }
 
     /**
@@ -195,16 +231,13 @@ class LocalData(
     suspend fun quests(box: BBox): LocalAnswer<List<Place>> = withContext(Dispatchers.IO) {
         val centre = box.center
         val askable = { p: Place -> p.id != null && p.tags["name"] != null && Categories.of(p.tags) != null && p.location in box }
-        val pack = packsCovering(centre)
-        storeCovering(centre)?.let { s ->
-            val found = s.inBox(box).map { it.place }.filter(askable)
-            if (found.isNotEmpty() || pack == null) return@withContext LocalAnswer(found, LocalOrigin.STORE)
-        }
-        pack?.let { f -> return@withContext LocalAnswer(packPlaces(f, box) { "name" in it }.filter(askable), LocalOrigin.PACK) }
-        val op = overpass()?.takeIf { isOnline() } ?: return@withContext LocalAnswer(emptyList(), null)
-        askOnline {
-            val bbox = String.format(Locale.ROOT, "%.6f,%.6f,%.6f,%.6f", box.south, box.west, box.north, box.east)
-            op.places("[out:json][timeout:25];nwr[name][~\"^(amenity|shop|tourism|leisure|craft)$\"~\".\"]($bbox);out tags center 300;").filter(askable)
+        val phone = onPhone(centre, box, { s -> s.inBox(box).map { it.place } }, { "name" in it }, askable, { it })
+        completed(phone) {
+            val op = overpass()?.takeIf { isOnline() } ?: return@completed LocalAnswer(emptyList(), null)
+            askOnline {
+                val bbox = String.format(Locale.ROOT, "%.6f,%.6f,%.6f,%.6f", box.south, box.west, box.north, box.east)
+                op.places("[out:json][timeout:25];nwr[name][~\"^(amenity|shop|tourism|leisure|craft)$\"~\".\"]($bbox);out tags center 300;").filter(askable)
+            }
         }
     }
 
@@ -231,7 +264,7 @@ class LocalData(
         if (street == null && where.first == null) return null
         return LocalAddress(
             street, house?.housenumber, t["addr:postcode"], where.first, where.second,
-            house?.at, house?.let { PackFeatures.osmId(it.element) }, house?.distance, LocalOrigin.PACK,
+            house?.at, house?.let { PackFeatures.osmId(it.element) }, house?.distance, PlaceOrigin.PACK,
         )
     }
 
@@ -241,7 +274,7 @@ class LocalData(
         val (quarter, town) = placeNames(s, at)
         return LocalAddress(
             t["addr:street"] ?: t["addr:place"], t["addr:housenumber"], t["addr:postcode"], quarter, town ?: t["addr:city"],
-            found.location, found.id, found.distanceTo(at), LocalOrigin.STORE,
+            found.location, found.id, found.distanceTo(at), PlaceOrigin.STORE,
         )
     }
 
@@ -294,8 +327,34 @@ class LocalData(
     fun wayName(at: LatLon, bearing: Double?, withinM: Double = PackFeatures.NEAR_M, language: String? = null): String? =
         packsCovering(at)?.streetName(at, bearing, withinM, language)
 
-    /** [wayName] as the router's street namer (BRouter's data has no names), for the steps of a route. */
-    fun wayNamer(language: String? = null): WayNamer = WayNamer { at, bearing -> wayName(at, bearing, PackFeatures.NEAR_M, language) }
+    /**
+     * [wayName] as the router's street namer (BRouter's data has no names), for the steps of a route. Online, the steps
+     * no pack covers are named from one Overpass request for all of them ([OnlineElements.streetsAt]), made when the
+     * route hands over its points ([WayNamer.forPoints]) and waited for at most [NAMES_WAIT_MS]; the router's thread
+     * waits, as it did for the map tiles.
+     */
+    fun wayNamer(language: String? = null): WayNamer = object : WayNamer {
+        override fun name(at: LatLon, bearing: Double): String? = wayName(at, bearing, PackFeatures.NEAR_M, language)
+
+        override fun forPoints(points: List<LatLon>): WayNamer {
+            val missing = points.filter { packsCovering(it) == null }
+            if (missing.isEmpty() || !online.available()) return this
+            val fetched = runBlocking { withTimeoutOrNull(NAMES_WAIT_MS) { online.streetsAt(missing, PackFeatures.NEAR_M) } } ?: return this
+            return WayNamer { at, bearing ->
+                if (packsCovering(at) != null) wayName(at, bearing, PackFeatures.NEAR_M, language)
+                else fetched.streetName(at, bearing, PackFeatures.NEAR_M, language)
+            }
+        }
+    }
+
+    /**
+     * The nearest named street (or canal) within [withinM] of [at], whichever way it runs ("from Prinsengracht"): from
+     * the packs where they cover the point, else online from Overpass around it; null when neither can say.
+     */
+    suspend fun streetNear(at: LatLon, withinM: Double = NEAREST_M, language: String? = null): String? = withContext(Dispatchers.IO) {
+        packsCovering(at)?.let { return@withContext it.streetName(at, null, withinM, language) }
+        online.streetsAt(listOf(at), withinM)?.streetName(at, null, withinM, language)
+    }
 
     /** The named streets and waterways meeting [box], from the packs. */
     fun streets(box: BBox): List<LocalStreet> = packsMeeting(box)?.streets(box).orEmpty().map { s ->
@@ -305,16 +364,31 @@ class LocalData(
         )
     }
 
-    /** The bridges over [route], in order along it. */
-    fun bridges(route: Route): List<LocalBridge> = bridges(route.points)
-
     /**
-     * The bridges [line] passes, in order along it, from the packs: every bridge way crossing it and every bridge
-     * outline it passes through, the ways of one bridge (a road and its pavements, within [SAME_M] along) as one.
+     * The bridges over [route], in order along it: from the packs where they hold the whole of it, else (online) from
+     * the packs and Overpass along it together, one request for the line ([OnlineElements.bridgesAlong]).
      */
+    suspend fun bridges(route: Route): List<LocalBridge> = withContext(Dispatchers.IO) {
+        val line = route.points
+        val box = BBox.of(line) ?: return@withContext emptyList()
+        val packs = packsMeeting(box)
+        if (line.size < 2 || packs?.covers(box) == true || !online.available()) return@withContext packs?.let { bridgesIn(it, line) }.orEmpty()
+        val fetched = online.bridgesAlong(line, BRIDGE_M)
+        val sources = packs?.sources.orEmpty() + fetched?.sources.orEmpty()
+        if (sources.isEmpty()) emptyList() else bridgesIn(PackFeatures(sources), line)
+    }
+
+    /** The bridges [line] passes, in order along it, from the packs alone. */
     fun bridges(line: List<LatLon>): List<LocalBridge> {
         if (line.size < 2) return emptyList()
-        val f = packsMeeting(BBox.of(line) ?: return emptyList()) ?: return emptyList()
+        return bridgesIn(packsMeeting(BBox.of(line) ?: return emptyList()) ?: return emptyList(), line)
+    }
+
+    /**
+     * The bridges [line] passes in [f], in order along it: every bridge way crossing it and every bridge outline it
+     * passes through, the ways of one bridge (a road and its pavements, within [SAME_M] along) as one.
+     */
+    private fun bridgesIn(f: PackFeatures, line: List<LatLon>): List<LocalBridge> {
         val crossings = f.bridges(line)
         val out = ArrayList<LocalBridge>()
         var i = 0
@@ -354,9 +428,9 @@ class LocalData(
         // The places around with their distance to the point (to their outline when they have one).
         val (around, origin) = when {
             store != null -> store.inBox(box).filter { it.category != null && it.tags["name"] != null }
-                .map { it.place to it.distanceTo(at) } to LocalOrigin.STORE
+                .map { it.place to it.distanceTo(at) } to PlaceOrigin.STORE
             pack != null -> pack.elements(box) { e -> e.tags?.let { listed(it) && keeps(e, it) } == true }
-                .mapNotNull { e -> PackFeatures.place(e)?.let { it to PackFeatures.distance(e, at) } } to LocalOrigin.PACK
+                .mapNotNull { e -> PackFeatures.place(e)?.let { it to PackFeatures.distance(e, at) } } to PlaceOrigin.PACK
             else -> {
                 val got = askOverpass(TagFilter.Has("name"), box)
                 got.value.filter { listed(it.tags) }.map { it to Geo.distance(at, it.location) } to got.origin
@@ -386,10 +460,10 @@ class LocalData(
     fun query(query: Query, ctx: EvalContext): LocalAnswer<QueryResult> {
         val area = areaOf(query) ?: ctx.viewport ?: ctx.location?.let { BBox.around(it, QUERY_M) }
         val at = ctx.location ?: area?.center ?: return LocalAnswer(QueryResult(emptyList(), 0, 0, 0), null)
-        storeCovering(at)?.let { return LocalAnswer(OfflineEvaluator(it).run(query, ctx), LocalOrigin.STORE) }
+        storeCovering(at)?.let { return LocalAnswer(OfflineEvaluator(it).run(query, ctx), PlaceOrigin.STORE) }
         val f = packsCovering(at) ?: return LocalAnswer(QueryResult(emptyList(), 0, 0, 0), null)
         val places = MemoryPlaces(packPlaces(f, area ?: BBox.around(at, QUERY_M)) { true })
-        return LocalAnswer(OfflineEvaluator(places).run(query, ctx), LocalOrigin.PACK)
+        return LocalAnswer(OfflineEvaluator(places).run(query, ctx), PlaceOrigin.PACK)
     }
 
     private fun areaOf(q: Query): BBox? {
@@ -415,6 +489,9 @@ class LocalData(
 
     private fun packsMeeting(box: BBox): PackFeatures? = packs()?.takeIf { f -> f.sources.any { it.coverage.intersects(box) } }
 
+    /** True when the whole of [box] lies within this one. */
+    private fun BBox.holds(box: BBox): Boolean = box.west >= west && box.east <= east && box.south >= south && box.north <= north
+
     private fun storesOf(s: PlaceSource): List<PlaceStore> = when (s) {
         is PlaceStore -> listOf(s)
         is Regions -> s.stores.flatMap { storesOf(it) }
@@ -435,14 +512,14 @@ class LocalData(
     }
 
     private suspend fun askOnline(ask: suspend () -> List<Place>): LocalAnswer<List<Place>> = try {
-        LocalAnswer(ask(), LocalOrigin.ONLINE)
+        LocalAnswer(ask(), PlaceOrigin.ONLINE)
     } catch (e: CancellationException) {
         throw e
     } catch (e: IOException) {
-        LocalAnswer(emptyList(), LocalOrigin.ONLINE, e.message ?: "offline")
+        LocalAnswer(emptyList(), PlaceOrigin.ONLINE, e.message ?: "offline")
     } catch (e: Exception) {
         // An answer that does not parse (a captive portal's page, a broken proxy) is a failure to report too.
-        LocalAnswer(emptyList(), LocalOrigin.ONLINE, e.message ?: e.toString())
+        LocalAnswer(emptyList(), PlaceOrigin.ONLINE, e.message ?: e.toString())
     }
 
     // ---- Names for the map ----------------------------------------------------------------------------------------
@@ -542,6 +619,15 @@ class LocalData(
 
         /** Two bridge crossings closer than this along a route are one bridge (metres). */
         const val SAME_M = 15.0
+
+        /** How far from a route Overpass is asked for bridges (metres): a bridge crossing it is on it. */
+        const val BRIDGE_M = 30.0
+
+        /** How far the nearest street is looked for around a pin (metres). */
+        const val NEAREST_M = 120.0
+
+        /** How long a route waits for the names of its steps from Overpass (ms). */
+        const val NAMES_WAIT_MS = 25_000L
 
         /** The area a query over the packs looks in around the searcher (metres). */
         const val QUERY_M = 1_000.0

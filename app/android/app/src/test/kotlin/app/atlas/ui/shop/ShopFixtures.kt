@@ -4,9 +4,7 @@ import android.content.Context
 import app.atlas.Services
 import app.atlas.ServicesConfig
 import app.atlas.search.PlaceStore
-import app.atlas.testing.FixtureTiles
 import app.atlas.testing.Fixtures
-import app.atlas.tiles.TileStack
 import org.robolectric.RuntimeEnvironment
 import java.io.File
 import java.nio.file.Files
@@ -37,7 +35,7 @@ object ShopFixtures {
             root = Files.createTempDirectory("atlas-shop").toFile(),
             demoLocation = Services.WESTERKERK,
             offline = true,
-            tiles = TileStack(listOf(FixtureTiles())),
+            mapEngine = false,
             placeStores = if (places) listOf(store) else emptyList(),
             clock = clock,
         ),

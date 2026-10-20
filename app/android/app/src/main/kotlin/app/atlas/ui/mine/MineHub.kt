@@ -18,18 +18,12 @@ import app.atlas.services.RegionLayer
 import app.atlas.tiles.Pack
 import app.atlas.tiles.PackCatalog
 import app.atlas.tiles.PackDownloader
-import app.atlas.tiles.RegionDownloader
-import app.atlas.tiles.RegionManifest
-import app.atlas.tiles.RegionPlanner
 import app.atlas.ui.mine.offline.AtlasRegionManager
 import app.atlas.ui.mine.offline.AutoRegions
 import app.atlas.ui.mine.offline.PickerModel
-import app.atlas.ui.mine.offline.LayerRecord
-import app.atlas.ui.mine.offline.MapKind
 import app.atlas.ui.mine.offline.RegionDeps
 import app.atlas.ui.mine.offline.RegionEngine
 import app.atlas.ui.mine.offline.RegionFiles
-import app.atlas.ui.mine.offline.RegionMeta
 import app.atlas.ui.mine.offline.RegionScheduler
 import app.atlas.ui.mine.offline.WorkRegionScheduler
 import kotlinx.coroutines.Dispatchers
@@ -108,7 +102,7 @@ class MineHub(private val services: Services) {
     private fun start() {
         if (started) return
         started = true
-        services.scope.launch(Dispatchers.IO) { adoptLegacyRegions(); engine.refresh() }
+        services.scope.launch(Dispatchers.IO) { retireTiles(); engine.refresh() }
         services.scope.launch { services.settings.flow(MineKeys.WIFI_ONLY, true).collect { wifiOnlyNow = it } }
         // Voice settings: only a change from the defaults wakes the voice (the speech engine starts on first use).
         services.scope.launch {
@@ -176,28 +170,31 @@ class MineHub(private val services: Services) {
         },
         segments = services.segments,
         segmentSizes = { segmentSizes.get() },
-        legacyTiles = if (services.config.offline) null else { id, name, bbox, maxZoom, report ->
-            val plan = RegionPlanner.plan(bbox, 0, maxZoom)
-            services.regionLibrary.download(RegionDownloader(services.openFreeMap), plan, name).collect { report(it.fraction) }
-            services.regionLibrary.get(id)?.bytes ?: 0L
+        mapBuilder = mapBuilder ?: if (services.config.offline) null else { id, name, bbox, target, report ->
+            withContext(Dispatchers.IO) { services.mapData.buildRegion(id, name, bbox, target).also { report(1f) } }
         },
-        legacyDelete = { id -> services.regionLibrary.delete(id) },
-        mapBuilder = mapBuilder,
         voices = { runCatching { kotlinx.coroutines.runBlocking { services.settings.flow(MineKeys.VOICE_LANGS, emptySet()).first() } }.getOrDefault(emptySet()).sorted() },
         clock = { services.clock.millis() },
     )
 
-    /** Builds a region pack for a small area on the phone from Overpass; set by the map integration when it can. */
+    /**
+     * Builds a region's map pack on the phone, in place of the app's own builder ([MapData.buildRegion]: Overpass, as the
+     * map builds the places it shows); tests set it before the first region is used.
+     */
     @Volatile
     var mapBuilder: (suspend (id: String, name: String, bbox: app.atlas.geo.BBox, target: File, report: (Float) -> Unit) -> Long)? = null
 
-    /** Regions the older tile library made (before packs) join the list as map-only regions, once. */
-    private fun adoptLegacyRegions() {
-        val now = services.clock.millis()
-        for (m in services.regionLibrary.list()) {
-            if (files.get(m.id) != null) continue
-            val record = LayerRecord(MapKind.TILES.id, m.bytes, m.updatedAt)
-            files.save(RegionMeta(m.id, m.name, m.bbox, m.createdAt.takeIf { it > 0 } ?: now, m.updatedAt, layers = if (m.complete) mapOf(RegionLayer.MAP to record) else emptyMap(), wanted = setOf(RegionLayer.MAP), maxZoom = m.maxZoom))
+    /**
+     * Removes what the retired vector tiles left on the phone, once nothing reads it: the tile cache, and the map tiles
+     * of regions taken before packs (`regions/<id>.mbtiles` with their manifests). Those regions take their map again,
+     * as a pack, when they are next updated.
+     */
+    private fun retireTiles() {
+        File(services.dirs.cache, "tiles").takeIf { it.isDirectory }?.deleteRecursively()
+        for (f in services.dirs.regions.listFiles { f -> f.isFile && f.name.endsWith(".mbtiles") }.orEmpty()) {
+            val id = f.name.removeSuffix(".mbtiles")
+            for (side in listOf("", "-journal", "-wal", "-shm")) File(f.path + side).delete()
+            File(services.dirs.regions, "$id.json").delete()
         }
     }
 }

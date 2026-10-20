@@ -16,9 +16,8 @@ dependencies {
 
 tasks.test {
     maxHeapSize = "1536m"
-    // Shared fixtures (real OpenFreeMap tiles, OSM extracts) live in app/android/testdata; the repo's data/ is one level up.
-    systemProperty("atlas.testdata", rootProject.file("testdata").absolutePath)
+    // The repo's root, whose data/ holds the shared fixtures (OSM extracts).
     systemProperty("atlas.repo", rootProject.file("../..").absolutePath)
-    // Tests against the real OpenFreeMap run only with -Datlas.online=true.
+    // Tests against the real published packs run only with -Datlas.online=true.
     providers.systemProperty("atlas.online").orNull?.let { systemProperty("atlas.online", it) }
 }

@@ -69,7 +69,7 @@ object LateModel {
     fun wall(area: EatArea, at: LocalDateTime, bite: Bite?, chips: Set<LateChip>, sort: LateSort): LateWall {
         val night = night(at)
         val late = EatSets.lateNight(area, at)
-        val hoursKnown = !area.sketchOnly && area.places.any { it.hasHours }
+        val hoursKnown = area.places.any { it.hasHours }
         val tiles = Bite.entries.map { b -> b to late.count { b.has(it) } }
         val ofBite = if (bite == null) late else late.filter { bite.has(it) }
         val chosen = ofBite.filter { p -> chips.all { it.has(p, night, area) } }

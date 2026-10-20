@@ -51,7 +51,7 @@ data class SweetCase(val open: Int, val countsOpen: Boolean, val tubs: Map<Tub, 
 object SweetsModel {
     fun case(area: EatArea, at: LocalDateTime, tub: Tub?, pills: Set<SweetPill>): SweetCase {
         val all = EatSets.sweets(area.places)
-        val countsOpen = !area.sketchOnly && all.any { it.hasHours }
+        val countsOpen = all.any { it.hasHours }
         val ofTub = if (tub == null) all else all.filter { tub.has(it) }
         val chosen = ofTub.filter { p -> pills.all { it.has(p, at, area) } }
         val rank = { o: Openness -> if (o.isOpen) 0 else if (o == Openness.UNKNOWN) 1 else 2 }

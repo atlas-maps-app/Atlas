@@ -28,7 +28,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import app.atlas.geo.LatLon
 import app.atlas.geo.UnitSystem
-import app.atlas.tiles.TileSource
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -59,7 +58,6 @@ internal class StageRequest {
 
 internal data class StageArgs(
     val state: MapState,
-    val tiles: TileSource?,
     val style: MapStyle,
     val overlays: MapOverlays,
     val contentPadding: PaddingValues,
@@ -88,7 +86,6 @@ val LocalMapStage = staticCompositionLocalOf<MapStage?> { null }
 @Composable
 fun StageMap(
     state: MapState,
-    tiles: TileSource?,
     modifier: Modifier = Modifier,
     style: MapStyle = MapStyle(),
     overlays: MapOverlays = MapOverlays(),
@@ -108,7 +105,7 @@ fun StageMap(
     if (stage == null) {
         Box(modifier.under(background).then(hostModifier)) {
             AtlasMap(
-                state = state, tiles = tiles, modifier = Modifier.matchParentSize(), style = style, overlays = overlays,
+                state = state, modifier = Modifier.matchParentSize(), style = style, overlays = overlays,
                 contentPadding = contentPadding, onTap = onTap, onLongPress = onLongPress, onCameraMove = onCameraMove,
                 debug = debug, units = units, labelTypeface = labelTypeface,
             )
@@ -119,7 +116,7 @@ fun StageMap(
     val request = remember { StageRequest() }
     SideEffect {
         request.args = StageArgs(
-            state, tiles, style, overlays, contentPadding, onTap, onLongPress, onCameraMove, debug, units, labelTypeface,
+            state, style, overlays, contentPadding, onTap, onLongPress, onCameraMove, debug, units, labelTypeface,
             background, hostModifier, above,
         )
     }
@@ -155,7 +152,7 @@ fun MapStageHost(stage: MapStage, cover: Color, modifier: Modifier = Modifier) {
         }
         Box(place.under(args.background).then(args.hostModifier)) {
             AtlasMap(
-                state = args.state, tiles = args.tiles, modifier = Modifier.matchParentSize(), style = args.style,
+                state = args.state, modifier = Modifier.matchParentSize(), style = args.style,
                 overlays = args.overlays, contentPadding = args.contentPadding, onTap = args.onTap,
                 onLongPress = args.onLongPress, onCameraMove = args.onCameraMove, debug = args.debug, units = args.units,
                 labelTypeface = args.labelTypeface,

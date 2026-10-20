@@ -59,7 +59,7 @@ data class MarketBoard(
 object MarketModel {
     fun board(area: EatArea, at: LocalDateTime, stall: Stall?, checks: Set<MarketCheck>): MarketBoard {
         val all = EatSets.market(area.places)
-        val countsOpen = !area.sketchOnly && all.any { it.hasHours }
+        val countsOpen = all.any { it.hasHours }
         val shops = all.filter { it.kind != EatKind.MARKETPLACE }
         val ofStall = if (stall == null) all else all.filter { stall.has(it) }
         val sunday = at.toLocalDate().with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY)).atTime(12, 0)

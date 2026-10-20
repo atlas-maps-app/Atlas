@@ -14,10 +14,10 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 
 /**
- * Today's answers of the features, recorded from the tile stack (OpenMapTiles through `TileStack` on the fixture tiles
- * around the Westerkerk) before any caller moves to [app.atlas.services.LocalData]: the bar LocalData must reach or
- * pass. Kept in `app/src/test/resources/features/goldens.json`; [GoldenRecorderTest] writes it when it is missing and
- * otherwise proves today's code still gives it.
+ * The features' answers as the retired map tiles gave them (OpenMapTiles on the fixture tiles around the Westerkerk),
+ * recorded before the features moved to [app.atlas.services.LocalData]: the bar LocalData must reach or pass
+ * ([LocalDataGoldenTest]). Kept, frozen, in `app/src/test/resources/features/goldens.json`; the tile readers that
+ * recorded it are gone.
  */
 data class Goldens(
     val source: String,
@@ -80,11 +80,11 @@ data class GoldenPoint(
     val bearing: Double,
     /** The street the point was put on. */
     val street: String,
-    /** `TileWayNamer.name(at, bearing)`. */
+    /** The street the tiles named at the point, along its bearing. */
     val way: String?,
-    /** `TileWayNamer.nearest(at)`: the nearest named street or canal within 120 m, whichever way it runs. */
+    /** The nearest named street or canal the tiles had within 120 m, whichever way it runs. */
     val nearest: String?,
-    /** `TileAddress.at(at)`. */
+    /** The address the tiles gave the point. */
     val address: GoldenAddress?,
 ) {
     fun json() = obj(

@@ -78,7 +78,7 @@ class MapScreenshotTest {
     ) {
         compose.setContent {
             Box(Modifier.fillMaxSize()) {
-                AtlasMap(state, null, Modifier.fillMaxSize(), style, overlays, padding, debug = debug, units = UnitSystem.METRIC)
+                AtlasMap(state, Modifier.fillMaxSize(), style, overlays, padding, debug = debug, units = UnitSystem.METRIC)
                 if (controls) {
                     MapCompass(state, Modifier.align(Alignment.TopEnd).padding(16.dp))
                     ScaleBar(state, Modifier.align(Alignment.BottomStart).padding(16.dp), units = UnitSystem.METRIC)

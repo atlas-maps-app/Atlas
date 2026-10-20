@@ -100,7 +100,6 @@ private fun PlaceView(place: Place, state: PlaceState, vm: PlaceViewModel, nav: 
     val context = LocalContext.current
     val here = rememberHere()
     val sheet = rememberSheetState(SheetStop.HALF, setOf(SheetStop.HALF, SheetStop.FULL))
-    val tiles by services.tiles.collectAsStateWithLifecycle()
     val lists by services.saved.lists.collectAsStateWithLifecycle()
     val saved = remember(lists, place.key) { lists.any { l -> l.places.any { it.place.key == place.key } } }
     var saveTo by remember { mutableStateOf(false) }
@@ -113,7 +112,6 @@ private fun PlaceView(place: Place, state: PlaceState, vm: PlaceViewModel, nav: 
         val halfDp = maxHeight * SHEET_HALF
         StageMap(
             state = map,
-            tiles = tiles,
             modifier = Modifier.fillMaxSize(),
             background = Color(SHEET_PAPER),
             hostModifier = Modifier.backdropSource(LocalBackdrop.current),

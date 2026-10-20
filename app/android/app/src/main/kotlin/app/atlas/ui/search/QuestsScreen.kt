@@ -225,7 +225,6 @@ fun QuestsScreen(args: Dest.Quests, nav: Navigator) {
 @Composable
 private fun QuestMap(here: LatLon, state: QuestsState, onPlace: (app.atlas.model.Place) -> Unit, modifier: Modifier) {
     val services = LocalServices.current
-    val tiles by services.tiles.collectAsStateWithLifecycle()
     val map = remember { MapState(CameraPosition(here, 16.2)) }
     val current = state.current
     val markers = remember(state.quests, current) {
@@ -244,7 +243,7 @@ private fun QuestMap(here: LatLon, state: QuestsState, onPlace: (app.atlas.model
     }
     Box(modifier.fillMaxWidth().height(230.dp).boardBox(0xFFE8EDE0, round(24f))) {
         AtlasMap(
-            map, tiles, Modifier.fillMaxWidth().height(230.dp),
+            map, Modifier.fillMaxWidth().height(230.dp),
             overlays = MapOverlays(markers = markers, location = UserLocation(here, 15.0), measure = false),
             onTap = { hit -> (hit as? MapHit.OnMarker)?.marker?.place?.let(onPlace) },
         )

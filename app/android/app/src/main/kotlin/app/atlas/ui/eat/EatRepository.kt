@@ -8,16 +8,12 @@ import app.atlas.places.Categories
 import app.atlas.providers.OverpassArea
 import app.atlas.providers.OverpassQl
 import app.atlas.services.PlaceOrigin
-import app.atlas.services.TilePlaces
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.IOException
 import java.util.Locale
@@ -81,9 +77,10 @@ class EatRepository internal constructor(private val services: Services) {
         val online = !services.config.offline && services.connectivity.online.value
         try {
             fromStore(centre, r)?.let { out.value = it; return }
-            val sketch = fromTiles(centre, r, online)
+            val (sketch, whole) = fromPacks(centre, r, online)
             if (sketch != null) out.value = sketch
-            if (!online) {
+            // packs around the whole circle answer fully, with every tag
+            if (!online || whole) {
                 if (sketch == null) out.value = EatArea(centre, r, emptyList(), null, loading = false)
                 return
             }
@@ -118,17 +115,22 @@ class EatRepository internal constructor(private val services: Services) {
         return build(centre, r, found, PlaceOrigin.STORE, loading = false)
     }
 
-    private suspend fun fromTiles(centre: LatLon, r: Double, more: Boolean): EatArea? {
-        val src = withTimeoutOrNull(3_000) { services.tiles.filterNotNull().first() } ?: return null
-        val found = try {
-            TilePlaces.near(src, centre, r, EatKind.FILTER, limit = 5_000)
+    /**
+     * The places the map's packs on the phone hold around [centre] (every tag), [more] when Overpass will be asked after
+     * them; and whether the packs hold the whole circle. Null places when no pack has any.
+     */
+    private fun fromPacks(centre: LatLon, r: Double, more: Boolean): Pair<EatArea?, Boolean> {
+        val got = try {
+            services.localData.inPacks(centre, r, EatKind.FILTER, limit = 5_000)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            return null
-        }
-        if (found.isEmpty()) return null
-        return build(centre, r, found.mapNotNull { EatPlace.of(it, centre, lang) }.sortedBy { it.distanceM }, PlaceOrigin.TILES, loading = more)
+            null
+        } ?: return null to false
+        val whole = !got.partial
+        val found = got.value.filter { Categories.isPlace(it.tags) }.mapNotNull { EatPlace.of(it, centre, lang) }.sortedBy { it.distanceM }
+        if (found.isEmpty() && !whole) return null to false
+        return build(centre, r, found, PlaceOrigin.PACK, loading = more && !whole) to whole
     }
 
     private suspend fun fromOverpass(centre: LatLon, r: Double): EatArea {

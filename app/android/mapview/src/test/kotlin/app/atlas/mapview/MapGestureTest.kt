@@ -58,7 +58,7 @@ class MapGestureTest {
         compose.setContent {
             scope = rememberCoroutineScope()
             AtlasMap(
-                state, FixtureTiles(), Modifier.fillMaxSize(), MapStyle(theme = Theme.DAY), this.overlays,
+                state, Modifier.fillMaxSize(), MapStyle(theme = Theme.DAY), this.overlays,
                 onTap = { hits += it }, onLongPress = { longPresses += it }, onCameraMove = { c, u -> moves += c to u },
             )
         }
@@ -331,7 +331,7 @@ class MapGestureTest {
         val state = stateAt(CameraPosition(Fixtures.westermarkt, 16.0, 140.0, 30.0))
         compose.setContent {
             androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
-                AtlasMap(state, FixtureTiles(), Modifier.fillMaxSize(), MapStyle(theme = Theme.DAY))
+                AtlasMap(state, Modifier.fillMaxSize(), MapStyle(theme = Theme.DAY))
                 MapCompass(state, Modifier.align(androidx.compose.ui.Alignment.TopEnd))
             }
         }

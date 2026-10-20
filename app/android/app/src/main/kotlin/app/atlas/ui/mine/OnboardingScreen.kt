@@ -270,7 +270,6 @@ private fun ColumnScope.RegionStep(args: Dest.Onboarding, onNext: () -> Unit) {
                     bytes == null -> ""
                     kind == MapKind.ATLAS && packed -> stringResource(R.string.mine_picker_from_pack)
                     kind == MapKind.ATLAS -> stringResource(R.string.mine_picker_built)
-                    kind == MapKind.TILES -> stringResource(R.string.mine_picker_tiles)
                     else -> stringResource(R.string.mine_est_unknown)
                 }
                 EstimateCard(bytes, caption)

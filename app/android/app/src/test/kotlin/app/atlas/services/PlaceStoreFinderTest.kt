@@ -2,9 +2,10 @@ package app.atlas.services
 
 import app.atlas.Services
 import app.atlas.geo.Geo
-import app.atlas.testing.FixtureTiles
+import app.atlas.render.data.PackBoxes
+import app.atlas.render.data.PackFeatures
+import app.atlas.render.data.PackReader
 import app.atlas.testing.Fixtures
-import app.atlas.tiles.TileStack
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -20,8 +21,11 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class PlaceStoreFinderTest {
+    private val repo = java.io.File(System.getProperty("atlas.repo") ?: "../..")
+    private val pack by lazy { PackFeatures(listOf(PackBoxes(PackReader.open(java.io.File(repo, "app/android/app/src/main/assets/packs/amsterdam.atlas"))))) }
+    private val packs = LocalData(stores = { null }, packs = { pack })
     private val finder = LayeredPlaceFinder(
-        tiles = { TileStack(listOf(FixtureTiles())) },
+        local = { packs },
         overpass = { null },
         online = { true },
         store = { Fixtures.amsStore },
@@ -46,10 +50,18 @@ class PlaceStoreFinderTest {
     }
 
     @Test
-    fun whereTheStoreHasNothingTheTilesAnswer() = runBlocking {
-        // Far outside the extract: the store has nothing there, the fixture tiles neither, and offline there is no more.
-        val far = LayeredPlaceFinder(tiles = { TileStack(listOf(FixtureTiles())) }, overpass = { null }, online = { false }, store = { Fixtures.amsStore })
-        val answers = far.nearby("eat", app.atlas.geo.LatLon(52.0907, 5.1214), 300.0, 10).toList()
-        assertEquals(PlaceOrigin.TILES, answers.first().source)
+    fun withoutAStoreThePacksAnswerWithTheSameTags() = runBlocking {
+        val fromPack = LayeredPlaceFinder(local = { packs }, overpass = { null }, online = { false }).nearby("eat", Services.WESTERKERK, 300.0, 40).toList().single()
+        assertEquals(PlaceOrigin.PACK, fromPack.source)
+        val fromStore = finder.nearby("eat", Services.WESTERKERK, 300.0, 40).toList().single()
+        // the same extract, two containers: the same places, nearest first
+        assertEquals(fromStore.places.map { it.key }, fromPack.places.map { it.key })
+    }
+
+    @Test
+    fun whereNothingOnThePhoneCoversAndOfflineThereIsNoAnswer() = runBlocking {
+        // Utrecht, far outside the extract and the pack: nothing to answer with, and offline there is no more
+        val far = LayeredPlaceFinder(local = { packs }, overpass = { null }, online = { false }, store = { Fixtures.amsStore })
+        assertTrue(far.nearby("eat", app.atlas.geo.LatLon(52.0907, 5.1214), 300.0, 10).toList().isEmpty())
     }
 }

@@ -68,7 +68,7 @@ object CafeModel {
     fun board(area: EatArea, at: LocalDateTime, kind: CafeKind?, toggles: Set<CafeToggle>, today: LocalDate = at.toLocalDate(), limit: Int = 40): CafeBoard {
         val all = EatSets.cafes(area.places)
         val morning = morningOf(at)
-        val countsOpen = !area.sketchOnly && all.any { it.hasHours }
+        val countsOpen = all.any { it.hasHours }
         val ofKind = if (kind == null) all else all.filter { kind.has(it) }
         val chosen = ofKind.filter { p -> toggles.all { it.has(p, morning, area) } }
         val rank = { o: Openness -> if (o.isOpen) 0 else if (o == Openness.UNKNOWN) 1 else 2 }

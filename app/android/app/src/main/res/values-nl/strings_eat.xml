@@ -42,7 +42,7 @@
     <string name="eat_none_here">Hier is nog niets om te eten of te drinken</string>
     <string name="eat_none_here_why">Download deze regio voor alle plekken offline, of ga online.</string>
     <string name="eat_source_store">Uit de regio op deze telefoon · OpenStreetMap</string>
-    <string name="eat_source_tiles">Uit de kaarttegels: alleen namen en soorten, geen openingstijden</string>
+    <string name="eat_source_pack">Uit de kaartgegevens op deze telefoon · OpenStreetMap</string>
     <string name="eat_source_online">Uit OpenStreetMap, online</string>
     <string name="eat_la_carte">La Carte</string>
     <string name="eat_carte_open">%1$d open · %2$s</string>

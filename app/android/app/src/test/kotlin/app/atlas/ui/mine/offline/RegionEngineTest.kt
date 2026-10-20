@@ -46,6 +46,7 @@ class RegionEngineTest {
 
     private val pack = BBox(4.0, 52.0, 5.0, 53.0)
     private val inside = BBox(4.3, 52.3, 4.8, 52.8) // a quarter of the pack
+    private val town = BBox(4.85, 52.33, 4.95, 52.40) // some 50 km²: small enough for the phone to build
 
     @Before
     fun start() {
@@ -135,7 +136,7 @@ class RegionEngineTest {
         })
         val e = engine(d)
         val id = RegionEngine.idFor("Offline test")
-        e.begin(id, "Offline test", inside, setOf(RegionLayer.MAP, RegionLayer.PLACES), 14)
+        e.begin(id, "Offline test", town, setOf(RegionLayer.MAP, RegionLayer.PLACES), 14)
         val first = runCatching { runBlocking { e.resume(id) } }
         assertTrue(first.exceptionOrNull() is IOException)
         assertEquals(setOf(RegionLayer.MAP), files.get(id)!!.layers.keys)
@@ -191,10 +192,16 @@ class RegionEngineTest {
         assertEquals(380_000L, withPack.total)
         assertNotNull(withPack.pack)
 
-        val built = runBlocking { engine(deps({ emptyList() }, builder = { _, _, _, _, _ -> 0L })).estimate(inside, setOf(RegionLayer.MAP)) }
+        val built = runBlocking { engine(deps({ emptyList() }, builder = { _, _, _, _, _ -> 0L })).estimate(town, setOf(RegionLayer.MAP)) }
         assertEquals(MapKind.ATLAS, built.mapKind)
-        assertEquals((RegionEngine.area(inside) * 20_000).toLong(), built.bytes[RegionLayer.MAP]!!)
+        assertEquals((RegionEngine.area(town) * 20_000).toLong(), built.bytes[RegionLayer.MAP]!!)
         assertNull(built.pack)
+
+        // an area beyond what the phone builds (some 1,900 km²) has no map without a pack
+        val tooBig = runBlocking { engine(deps({ emptyList() }, builder = { _, _, _, _, _ -> error("not built") })).estimate(inside, setOf(RegionLayer.MAP)) }
+        assertTrue(RegionEngine.area(inside) > RegionEngine.BUILD_MAX_KM2)
+        assertEquals(MapKind.NONE, tooBig.mapKind)
+        assertNull(tooBig.bytes[RegionLayer.MAP])
 
         val nothing = runBlocking { engine(deps({ emptyList() })).estimate(inside, setOf(RegionLayer.MAP)) }
         assertEquals(MapKind.NONE, nothing.mapKind)
@@ -208,7 +215,7 @@ class RegionEngineTest {
         val imports = AtomicInteger()
         val e = engine(deps({ emptyList() }, builder = { _, _, _, target, _ -> builds.incrementAndGet(); target.writeBytes(data(10_000, 3)); 10_000L }, import = { _, _, t, _ -> imports.incrementAndGet(); t.writeBytes(data(2_000, 4)) }))
         val id = RegionEngine.idFor("Aging")
-        e.begin(id, "Aging", inside, setOf(RegionLayer.MAP, RegionLayer.PLACES), 14)
+        e.begin(id, "Aging", town, setOf(RegionLayer.MAP, RegionLayer.PLACES), 14)
         runBlocking { e.resume(id) }
         assertTrue("fresh", runBlocking { e.checkUpdates() }.isEmpty())
         clock += 31L * 24 * 3600 * 1000
@@ -265,7 +272,7 @@ class RegionEngineTest {
         val d = deps({ emptyList() }, builder = { _, _, _, target, _ -> builds.incrementAndGet(); target.writeBytes(data(40_000, 5)); 40_000L },
             import = { _, _, target, _ -> if (imports.incrementAndGet() == 1) throw IOException("no signal") else target.writeBytes(data(9_000, 6)) })
         val id = RegionEngine.idFor("Retried")
-        engine(d).begin(id, "Retried", inside, setOf(RegionLayer.MAP, RegionLayer.PLACES), 14)
+        engine(d).begin(id, "Retried", town, setOf(RegionLayer.MAP, RegionLayer.PLACES), 14)
         assertTrue(runCatching { runBlocking { engine(d).resume(id) } }.isFailure)
         // The Retry button asks for an update; a new process (a fresh engine) knows nothing of what was stale.
         runBlocking { engine(d).resume(id, update = true) }
@@ -285,7 +292,7 @@ class RegionEngineTest {
         val d = deps({ emptyList() }, builder = { id, _, _, target, _ -> target.writeBytes(data(5_000, 1)); e.delete(id); 5_000L })
         e = engine(d)
         val id = RegionEngine.idFor("Gone")
-        e.begin(id, "Gone", inside, setOf(RegionLayer.MAP, RegionLayer.PLACES), 14)
+        e.begin(id, "Gone", town, setOf(RegionLayer.MAP, RegionLayer.PLACES), 14)
         val err = runCatching { runBlocking { e.resume(id) } }.exceptionOrNull()
         assertTrue("stopped as cancelled, not as a failure: $err", err is RegionGone)
         assertNull(files.get(id))
@@ -331,6 +338,9 @@ class RegionEngineTest {
         assertEquals(m, files.get("x"))
         assertEquals(listOf("x"), files.list().map { it.id })
         assertNull(RegionMeta.fromJson("{not json"))
+        // a map kept as the retired vector tiles is no map now: the layer is taken again, as a pack
+        val retired = files.meta("x").readText().replace("\"atlas\"", "\"tiles\"")
+        assertEquals(setOf(RegionLayer.ROUTING), RegionMeta.fromJson(retired)!!.layers.keys)
     }
 }
 

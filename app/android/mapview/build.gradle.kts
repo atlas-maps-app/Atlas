@@ -22,7 +22,6 @@ android {
                 it.maxHeapSize = "2g"
                 it.systemProperty("robolectric.graphicsMode", "NATIVE")
                 it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
-                it.systemProperty("atlas.testdata", rootProject.file("testdata").absolutePath)
                 it.systemProperty("atlas.repo", rootProject.file("../..").absolutePath)
                 // Screenshot tests always record, so a plain test run leaves the PNGs to look at (CI keeps them).
                 it.systemProperty("roborazzi.test.record", "true")
@@ -42,7 +41,6 @@ dependencies {
     // The engine: the 1:1 port of render/ (and its region packs); the screens still hand the map a tile source.
     api(project(":render"))
     api(project(":anchor"))
-    api(project(":tiles"))
     api(project(":places"))
     // The map's core (plan-vector D19): the C++23 Vulkan engine and its Kotlin façade.
     api(project(":mapcore"))

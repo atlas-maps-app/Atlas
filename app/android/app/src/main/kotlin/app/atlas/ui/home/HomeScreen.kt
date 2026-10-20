@@ -82,7 +82,6 @@ import kotlinx.coroutines.launch
 fun HomeScreen(args: Dest.Home, nav: Navigator) {
     val services = LocalServices.current
     val vm = viewModel(key = "home") { HomeViewModel(services, args.focus, args.zoom) }
-    val tiles by services.tiles.collectAsStateWithLifecycle()
     val style by vm.style.collectAsStateWithLifecycle()
     val fix by vm.location.collectAsStateWithLifecycle()
     val permitted by vm.permitted.collectAsStateWithLifecycle()
@@ -174,7 +173,6 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
       // The map and its wash are what the frosted pills, the control column and the tab bar blur behind them.
         StageMap(
             state = vm.map,
-            tiles = tiles,
             modifier = Modifier.fillMaxSize(),
             style = style,
             overlays = overlays,

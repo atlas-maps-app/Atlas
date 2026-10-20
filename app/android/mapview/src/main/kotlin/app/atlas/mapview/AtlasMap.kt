@@ -29,7 +29,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import app.atlas.geo.LatLon
 import app.atlas.geo.UnitSystem
-import app.atlas.tiles.TileSource
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -42,13 +41,11 @@ import java.util.Locale
  * Exact frames are rendered, parsed and rasterised off the main thread; while the next one is made, the last is drawn
  * warped to the camera at once, then the new one fades in. The overlays are projected with the engine's camera in the
  * region's own frame. The light is the live moment (the clock and the forecast) unless [style] fixes one.
- * [tiles] is no longer drawn (the engine reads region packs); it stays for the screens that still pass it.
  * [debug] shows the frame's timings over the map; [units] are the measuring tape's.
  */
 @Composable
 fun AtlasMap(
     state: MapState,
-    tiles: TileSource?,
     modifier: Modifier = Modifier,
     style: MapStyle = MapStyle(),
     overlays: MapOverlays = MapOverlays(),

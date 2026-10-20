@@ -1,6 +1,7 @@
 package app.atlas.packer
 
 import app.atlas.tiles.PackCatalog
+import app.atlas.tiles.PackFile
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -17,44 +18,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.time.Instant
 
-/** A tiny but valid PMTiles v3 archive: header, an empty root directory, metadata, no tiles. */
-object FakePmTiles {
-    fun write(file: File, minZoom: Int = 0, maxZoom: Int = 14, bounds: DoubleArray = doubleArrayOf(5.73, 49.44, 6.53, 50.18), metadata: String = "{}", padding: Int = 0): File {
-        val meta = metadata.toByteArray()
-        val root = byteArrayOf(0)
-        val h = ByteArray(127)
-        "PMTiles".toByteArray().copyInto(h)
-        h[7] = 3
-        fun u64(p: Int, v: Long) { for (i in 0 until 8) h[p + i] = (v ushr (8 * i)).toByte() }
-        fun i32(p: Int, v: Int) { for (i in 0 until 4) h[p + i] = (v ushr (8 * i)).toByte() }
-        u64(8, 127)
-        u64(16, root.size.toLong())
-        u64(24, 128)
-        u64(32, meta.size.toLong())
-        u64(40, 128L + meta.size)
-        u64(48, 0)
-        u64(56, 128L + meta.size)
-        u64(64, padding.toLong())
-        h[96] = 1
-        h[97] = 1
-        h[98] = 2
-        h[99] = 1
-        h[100] = minZoom.toByte()
-        h[101] = maxZoom.toByte()
-        i32(102, Math.round(bounds[0] * 1e7).toInt())
-        i32(106, Math.round(bounds[1] * 1e7).toInt())
-        i32(110, Math.round(bounds[2] * 1e7).toInt())
-        i32(114, Math.round(bounds[3] * 1e7).toInt())
-        val out = ByteArrayOutputStream()
-        out.write(h)
-        out.write(root)
-        out.write(meta)
-        out.write(ByteArray(padding) { (it * 31).toByte() })
-        file.writeBytes(out.toByteArray())
+/** A small but real region pack: a pharmacy and a street around Luxembourg's centre, made by the packer's own `pbf` command. */
+object FakeAtlas {
+    fun write(file: File, id: String = file.name.removeSuffix(".atlas"), box: String = "6.0,49.5,6.3,49.7"): File {
+        val pbf = TestPbf(
+            listOf(TNode(1, 49.61, 6.13, mapOf("amenity" to "pharmacy", "name" to "Pharmacie du Globe")), TNode(2, 49.62, 6.14), TNode(3, 49.62, 6.15)),
+            listOf(TWay(10, listOf(2, 3), mapOf("highway" to "residential", "name" to "Rue du Fort"))),
+        ).write(File(file.parentFile, "$id.osm.pbf"))
+        check(run(listOf("pbf", pbf.path, box, "--name", id, "--id", id, "--out", file.path)) {} == 0)
+        pbf.delete()
         return file
     }
 }
@@ -97,7 +72,7 @@ class ManifestTest {
 
     @Test
     fun theRepositoryRegionsAreValid() {
-        val file = File(System.getProperty("atlas.testdata"), "../packs/regions.json")
+        val file = File(System.getProperty("atlas.repo"), "app/android/packs/regions.json")
         val r = Manifest.readRegions(file)
         assertEquals(
             listOf("netherlands", "belgium", "luxembourg", "new-york", "paris", "tuscany", "norway", "greater-london"),
@@ -115,7 +90,7 @@ class ManifestTest {
     @Test
     fun aRegionsFilesBecomeAnEntryWithUrlsSizesAndChecksums() {
         val dir = tmp.newFolder("out")
-        FakePmTiles.write(File(dir, "luxembourg.pmtiles"), maxZoom = 14, metadata = """{"version":"3.16.0","planetiler:osm:osmosisreplicationtime":"2026-10-12T20:21:35Z"}""")
+        val atlasFile = FakeAtlas.write(File(dir, "luxembourg.atlas"))
         placesFiles(dir, "luxembourg")
         val list = Manifest.build(dir, base, Manifest.readRegions(regions(tmp.root)), now = Instant.parse("2026-11-01T04:00:00Z"))
         assertEquals(1, list["format"]!!.jsonPrimitive.int)
@@ -126,17 +101,20 @@ class ManifestTest {
         assertEquals("Luxembourg", e["name"]!!.jsonPrimitive.content)
         assertEquals("LU", e["country"]!!.jsonPrimitive.content)
         assertEquals(listOf(5.733, 49.4455, 6.5322, 50.185), e["bbox"]!!.jsonArray.map { it.jsonPrimitive.double })
-        // the places sidecar's time wins over the tiles' metadata
+        // the places sidecar's time wins over the region pack's
         assertEquals("2026-10-13T20:21:31Z", e["osm_timestamp"]!!.jsonPrimitive.content)
-        assertEquals(0, e["minzoom"]!!.jsonPrimitive.int)
-        assertEquals(14, e["maxzoom"]!!.jsonPrimitive.int)
+        // no zoom range: the vector tiles that had one are retired
+        assertNull(e["minzoom"])
+        assertNull(e["maxzoom"])
         assertEquals("packs-20261101", e["release"]!!.jsonPrimitive.content)
         val files = e["files"]!!.jsonArray.map { it.jsonObject }
-        val tiles = files.first { it["kind"]!!.jsonPrimitive.content == "tiles" }
-        assertEquals("$base/luxembourg.pmtiles", tiles["url"]!!.jsonPrimitive.content)
-        assertEquals(File(dir, "luxembourg.pmtiles").length(), tiles["bytes"]!!.jsonPrimitive.long)
-        assertEquals(PackFiles.sha256(File(dir, "luxembourg.pmtiles")), tiles["sha256"]!!.jsonPrimitive.content)
-        assertEquals("openmaptiles 3.16.0", tiles["schema"]!!.jsonPrimitive.content)
+        assertEquals(listOf("places", "atlas"), files.map { it["kind"]!!.jsonPrimitive.content })
+        val atlas = files.first { it["kind"]!!.jsonPrimitive.content == "atlas" }
+        assertEquals("$base/luxembourg.atlas", atlas["url"]!!.jsonPrimitive.content)
+        assertEquals(atlasFile.length(), atlas["bytes"]!!.jsonPrimitive.long)
+        assertEquals(PackFiles.sha256(atlasFile), atlas["sha256"]!!.jsonPrimitive.content)
+        // the pharmacy and the street
+        assertEquals(2L, atlas["elements"]!!.jsonPrimitive.long)
         val places = files.first { it["kind"]!!.jsonPrimitive.content == "places" }
         assertEquals("$base/luxembourg.places.db.gz", places["url"]!!.jsonPrimitive.content)
         assertEquals(1000L, places["bytes"]!!.jsonPrimitive.long)
@@ -149,22 +127,42 @@ class ManifestTest {
         // the app reads what the packer writes
         val pack = PackCatalog.parse(Manifest.pretty(list)).packs.single()
         assertEquals("luxembourg", pack.id)
-        assertEquals(14, pack.maxZoom)
-        assertEquals("$base/luxembourg.pmtiles", pack.tiles!!.url)
+        assertEquals("$base/luxembourg.atlas", pack.files.single { it.kind == PackFile.ATLAS }.url)
         assertEquals(5000L, pack.places!!.rawBytes)
-        assertEquals(File(dir, "luxembourg.pmtiles").length() + 1000, pack.downloadBytes)
+        assertEquals(atlasFile.length() + 1000, pack.downloadBytes)
         assertEquals(Instant.parse("2026-10-13T20:21:31Z"), pack.osmTime)
     }
 
     @Test
-    fun theTilesTimeIsUsedWithoutPlaces() {
-        val dir = tmp.newFolder("tiles-only")
-        FakePmTiles.write(File(dir, "monaco.pmtiles"), metadata = """{"planetiler:osm:osmosisreplicationtime":"2026-10-12T20:21:35Z"}""")
+    fun theRegionPacksTimeAndBoxAreUsedWithoutPlaces() {
+        val dir = tmp.newFolder("atlas-only")
+        FakeAtlas.write(File(dir, "monaco.atlas"))
         val e = packs(Manifest.build(dir, base, Manifest.readRegions(regions(tmp.root)))).single()
-        assertEquals("2026-10-12T20:21:35Z", e["osm_timestamp"]!!.jsonPrimitive.content)
-        // no bbox in regions.json: the tiles' bounds
-        assertEquals(5.73, e["bbox"]!!.jsonArray[0].jsonPrimitive.double, 1e-7)
+        // the extract's replication time, as the region pack keeps it
+        assertEquals(Instant.ofEpochSecond(1_760_000_000L).toString(), e["osm_timestamp"]!!.jsonPrimitive.content)
+        // no bbox in regions.json: the region pack's
+        assertEquals(6.0, e["bbox"]!!.jsonArray[0].jsonPrimitive.double, 1e-7)
         assertEquals(1, e["files"]!!.jsonArray.size)
+    }
+
+    @Test
+    fun theRetiredTilesLeaveTheList() {
+        val dir = tmp.newFolder("retired")
+        val previous = Json.parseToJsonElement(
+            """{"format": 1, "packs": [
+                {"id": "luxembourg", "name": "Luxembourg", "minzoom": 0, "maxzoom": 14, "release": "packs-20261001", "files": [
+                  {"kind": "tiles", "name": "luxembourg.pmtiles", "url": "https://example.org/luxembourg.pmtiles", "bytes": 10},
+                  {"kind": "places", "name": "luxembourg.places.db.gz", "url": "https://example.org/luxembourg.places.db.gz", "bytes": 10}]},
+                {"id": "tuscany", "name": "Tuscany", "release": "packs-20261001", "files": [
+                  {"kind": "tiles", "name": "tuscany.pmtiles", "url": "https://example.org/tuscany.pmtiles", "bytes": 10}]}
+            ]}""",
+        ).jsonObject
+        val ps = packs(Manifest.build(dir, base, null, previous))
+        // a region with only tiles is gone; the other keeps its places, without the tiles or their zooms
+        assertEquals(listOf("luxembourg"), ps.map { it["id"]!!.jsonPrimitive.content })
+        assertEquals(listOf("places"), ps[0]["files"]!!.jsonArray.map { it.jsonObject["kind"]!!.jsonPrimitive.content })
+        assertNull(ps[0]["maxzoom"])
+        assertTrue(Manifest.ATTRIBUTION.contains("OpenStreetMap") && !Manifest.ATTRIBUTION.contains("OpenMapTiles"))
     }
 
     @Test
@@ -193,20 +191,22 @@ class ManifestTest {
     @Test
     fun bigFilesGoUpInParts() {
         val dir = tmp.newFolder("big")
-        FakePmTiles.write(File(dir, "luxembourg.pmtiles"), padding = 10_000)
-        placesFiles(dir, "luxembourg", bytes = 2500)
-        val whole = PackFiles.sha256(File(dir, "luxembourg.pmtiles"))
-        val size = File(dir, "luxembourg.pmtiles").length()
-        val e = packs(Manifest.build(dir, base, null, splitBytes = 4096)).single()
-        val tiles = e["files"]!!.jsonArray.map { it.jsonObject }.first { it["kind"]!!.jsonPrimitive.content == "tiles" }
-        assertNull(tiles["url"])
-        assertEquals(whole, tiles["sha256"]!!.jsonPrimitive.content)
-        assertEquals(size, tiles["bytes"]!!.jsonPrimitive.long)
-        val parts = (tiles["parts"] as JsonArray).map { it.jsonObject }
-        assertEquals(listOf("luxembourg.pmtiles.000", "luxembourg.pmtiles.001", "luxembourg.pmtiles.002"), parts.map { it["name"]!!.jsonPrimitive.content })
-        assertEquals(listOf(4096L, 4096L, size - 8192), parts.map { it["bytes"]!!.jsonPrimitive.long })
-        assertEquals("$base/luxembourg.pmtiles.001", parts[1]["url"]!!.jsonPrimitive.content)
-        assertFalse(File(dir, "luxembourg.pmtiles").exists())
+        val file = FakeAtlas.write(File(dir, "luxembourg.atlas"))
+        val whole = PackFiles.sha256(file)
+        val size = file.length()
+        // a part of a third and a bit: three parts; the places (smaller) stay whole
+        val split = size / 3 + 1
+        placesFiles(dir, "luxembourg", bytes = (split - 1).toInt())
+        val e = packs(Manifest.build(dir, base, null, splitBytes = split)).single()
+        val atlas = e["files"]!!.jsonArray.map { it.jsonObject }.first { it["kind"]!!.jsonPrimitive.content == "atlas" }
+        assertNull(atlas["url"])
+        assertEquals(whole, atlas["sha256"]!!.jsonPrimitive.content)
+        assertEquals(size, atlas["bytes"]!!.jsonPrimitive.long)
+        val parts = (atlas["parts"] as JsonArray).map { it.jsonObject }
+        assertEquals(listOf("luxembourg.atlas.000", "luxembourg.atlas.001", "luxembourg.atlas.002"), parts.map { it["name"]!!.jsonPrimitive.content })
+        assertEquals(listOf(split, split, size - 2 * split), parts.map { it["bytes"]!!.jsonPrimitive.long })
+        assertEquals("$base/luxembourg.atlas.001", parts[1]["url"]!!.jsonPrimitive.content)
+        assertFalse(file.exists())
         // the parts put back together are the file
         val joined = parts.map { File(dir, it["name"]!!.jsonPrimitive.content).readBytes() }.reduce { a, b -> a + b }
         assertEquals(whole, java.security.MessageDigest.getInstance("SHA-256").digest(joined).joinToString("") { "%02x".format(it) })
@@ -217,10 +217,10 @@ class ManifestTest {
         // run again on the parts: the entry already written stands
         assertEquals(e, packs(Manifest.build(dir, base, null)).single())
         // and the app sees the parts
-        val tilesFile = PackCatalog.parse(Manifest.pretty(Manifest.build(dir, base, null))).packs.single().tiles!!
-        assertTrue(tilesFile.isSplit)
-        assertEquals(parts.map { it["url"]!!.jsonPrimitive.content }, tilesFile.parts.map { it.url })
-        assertEquals(size, tilesFile.bytes)
+        val atlasFile = PackCatalog.parse(Manifest.pretty(Manifest.build(dir, base, null))).packs.single().files.single { it.kind == PackFile.ATLAS }
+        assertTrue(atlasFile.isSplit)
+        assertEquals(parts.map { it["url"]!!.jsonPrimitive.content }, atlasFile.parts.map { it.url })
+        assertEquals(size, atlasFile.bytes)
     }
 
     @Test
@@ -229,8 +229,8 @@ class ManifestTest {
         try {
             // Arabic digits by default: String.format("%03d") would write ٠٠٠
             java.util.Locale.setDefault(java.util.Locale.forLanguageTag("ar-EG-u-nu-arab"))
-            val f = File(tmp.newFolder("ar"), "x.pmtiles").apply { writeBytes(ByteArray(10)) }
-            assertEquals(listOf("x.pmtiles.000", "x.pmtiles.001", "x.pmtiles.002"), PackFiles.split(f, 4).map { it.name })
+            val f = File(tmp.newFolder("ar"), "x.atlas").apply { writeBytes(ByteArray(10)) }
+            assertEquals(listOf("x.atlas.000", "x.atlas.001", "x.atlas.002"), PackFiles.split(f, 4).map { it.name })
         } finally {
             java.util.Locale.setDefault(saved)
         }
@@ -263,7 +263,7 @@ class MainTest {
         val lines = ArrayList<String>()
         assertEquals(0, run(listOf("places", pbf.path, File(out, "luxembourg.places.db").path, "--name", "Luxembourg", "--threads", "2", "--langs", "fr,de"), lines::add))
         assertTrue(lines.last { it.startsWith("luxembourg") }.contains("2 places"))
-        FakePmTiles.write(File(out, "luxembourg.pmtiles"))
+        FakeAtlas.write(File(out, "luxembourg.atlas"))
         lines.clear()
         assertEquals(0, run(listOf("manifest", out.path, "https://example.org/releases/download/packs-1"), lines::add))
         val list = Json.parseToJsonElement(File(out, "packs.json").readText()).jsonObject

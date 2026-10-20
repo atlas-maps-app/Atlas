@@ -168,20 +168,17 @@ internal class ShopArea(
     /** Holidays of [country] and the real sun here, for every opening-hours question about this area. */
     val hours: OpeningHoursContext = OpeningHoursContext.forPlace(country, zone, centre.lat, centre.lon)
 
-    /** True when the tiles answered: kinds and names only, so counts are of places, not of open ones. */
-    val sketchOnly: Boolean get() = origin == PlaceOrigin.TILES
-
     val waiting: Boolean get() = places.isEmpty() && loading
 
     /** How many of [among] have hours Atlas can read. */
     fun withHours(among: List<ShopPlace> = places): Int = among.count { it.hasHours }
 
     /**
-     * What a shelf counts: the places open at [at]; when the source has no hours at all (the tiles, or an area nobody
-     * mapped hours in) every place, and [Count.open] says which.
+     * What a shelf counts: the places open at [at]; when the source has no hours at all (an area nobody mapped hours
+     * in) every place, and [Count.open] says which.
      */
     fun count(among: List<ShopPlace>, at: LocalDateTime): Count =
-        if (sketchOnly || (among.isNotEmpty() && among.none { it.hasHours })) Count(among.size, open = false)
+        if (among.isNotEmpty() && among.none { it.hasHours }) Count(among.size, open = false)
         else Count(among.count { it.openness(at, hours).isOpen }, open = true)
 
     data class Count(val value: Int, val open: Boolean)

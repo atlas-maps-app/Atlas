@@ -34,9 +34,6 @@ class EatArea(
     /** The place with [key], if it is in this area. */
     operator fun get(key: String): EatPlace? = byKey[key]
 
-    /** True when the tiles answered: kinds and names only, so counts are of places, not of open ones. */
-    val sketchOnly: Boolean get() = origin == PlaceOrigin.TILES
-
     /** True when nothing is known yet and something may still come. */
     val waiting: Boolean get() = places.isEmpty() && loading
 
@@ -48,11 +45,11 @@ class EatArea(
     fun openCount(among: List<EatPlace>, at: LocalDateTime): Int = among.count { it.openness(at, hours).isOpen }
 
     /**
-     * What an object on the table counts: the places open at [at], or, when the source has no hours at all (the
-     * tiles), every place; [Count.open] says which.
+     * What an object on the table counts: the places open at [at], or, when none of them has hours (an area nobody
+     * mapped hours in), every place; [Count.open] says which.
      */
     fun count(among: List<EatPlace>, at: LocalDateTime): Count =
-        if (sketchOnly || (among.isNotEmpty() && among.none { it.hasHours })) Count(among.size, open = false)
+        if (among.isNotEmpty() && among.none { it.hasHours }) Count(among.size, open = false)
         else Count(openCount(among, at), open = true)
 
     /** A number on the table: of open places, or of places whose hours nobody mapped. */

@@ -107,6 +107,26 @@ class TrackConverterTest {
     }
 
     @Test
+    fun theNamerHearsEveryStepsPointFirstAndNamesWithWhatItReturns() {
+        val told = ArrayList<List<app.atlas.geo.LatLon>>()
+        val asked = ArrayList<app.atlas.geo.LatLon>()
+        val namer = object : WayNamer {
+            override fun name(at: app.atlas.geo.LatLon, bearing: Double): String? = error("the route's own namer names")
+
+            override fun forPoints(points: List<app.atlas.geo.LatLon>): WayNamer {
+                told += points
+                return WayNamer { at, _ -> asked += at; "Fetched" }
+            }
+        }
+        val route = TrackConverter(namer).convert(cityTrack(), Mode.BIKE)
+        // once per route, with each step's point, in order; then every step is named at exactly those points
+        assertEquals(1, told.size)
+        assertEquals(route.steps.size, told[0].size)
+        assertEquals(told[0], asked)
+        assertTrue(route.steps.all { it.street == "Fetched" })
+    }
+
+    @Test
     fun spansFollowTheWayTags() {
         val route = TrackConverter().convert(cityTrack(), Mode.BIKE)
         val highway = route.spans.filter { it.key == "highway" }

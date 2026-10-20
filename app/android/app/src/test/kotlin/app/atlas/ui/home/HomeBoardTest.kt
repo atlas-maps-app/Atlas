@@ -8,7 +8,6 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import app.atlas.Services
-import app.atlas.geo.TileId
 import app.atlas.nav.AtlasRoot
 import app.atlas.nav.BackStackNavigator
 import app.atlas.nav.Dest
@@ -16,8 +15,6 @@ import app.atlas.places.Categories
 import app.atlas.testing.keepFixtureForecast
 import app.atlas.testing.shotsDir
 import app.atlas.testing.testServices
-import app.atlas.tiles.MbTiles
-import app.atlas.tiles.RegionManifest
 import com.github.takahirom.roborazzi.captureRoboImage
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -111,23 +108,17 @@ class HomeBoardTest {
 
     private fun SemanticsNodeInteraction.assertExistsCompat() { fetchSemanticsNode() }
 
-    /**
-     * Puts the fixture tiles on the phone as a complete offline region, as a download of the canal ring would: an
-     * MBTiles pack with its manifest.
-     */
+    /** Puts the canal ring on the phone as a complete offline region, as a download would: its region pack and its record. */
     private fun Services.keepFixtureRegion() {
-        val dir = File(System.getProperty("atlas.testdata") ?: "testdata", "omt")
-        val tiles = dir.walkTopDown().filter { it.isFile && it.extension == "pbf" }.map { f ->
-            val y = f.nameWithoutExtension.toInt()
-            val x = f.parentFile.name.toInt()
-            val z = f.parentFile.parentFile.name.toInt()
-            TileId(z, x, y) to f.readBytes()
-        }.toList()
         val id = "amsterdam"
-        MbTiles(regionLibrary.packFile(id), writable = true).use { it.putTiles(tiles) }
-        val box = tiles.filter { it.first.z == 14 }.map { it.first.bbox }.reduce { a, b -> a.union(b) }
+        val target = mine.files.atlas(id).also { it.parentFile?.mkdirs() }
+        app.atlas.testing.BundledPack.file.copyTo(target, overwrite = true)
+        val box = app.atlas.testing.BundledPack.features.sources.first().coverage
         val now = clock.millis()
-        regionLibrary.save(RegionManifest(id, "Amsterdam", box, 0, 14, tiles.size.toLong(), tiles.sumOf { it.second.size.toLong() }, now, now, complete = true))
+        val map = app.atlas.ui.mine.offline.LayerRecord(app.atlas.ui.mine.offline.MapKind.ATLAS.id, target.length(), now)
+        mine.files.save(
+            app.atlas.ui.mine.offline.RegionMeta(id, "Amsterdam", box, now, now, layers = mapOf(app.atlas.services.RegionLayer.MAP to map), wanted = setOf(app.atlas.services.RegionLayer.MAP)),
+        )
     }
 
     companion object {

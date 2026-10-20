@@ -40,7 +40,6 @@
     <string name="shop_shelf_desc_n">%1$s, %2$d plaatsen</string>
     <string name="shop_loading">De schappen bekijken…</string>
     <string name="shop_problem">Kon niet om me heen kijken</string>
-    <string name="shop_sketch_note">Alleen namen en soorten van de kaart: openingstijden vragen een gedownload gebied of verbinding.</string>
     <string name="shop_closes_at">sluit %1$s</string>
     <string name="shop_opens_at">open %1$s</string>
     <string name="shop_walk">lopen</string>

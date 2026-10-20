@@ -122,7 +122,6 @@ fun ChargeScreen(args: Dest.Charge, nav: Navigator) {
     val context = LocalContext.current
     val here = rememberHere()
     val centre = if (args.lat != null && args.lon != null) LatLon(args.lat, args.lon) else here
-    val tiles by services.tiles.collectAsStateWithLifecycle()
     val fix by services.location.last.collectAsStateWithLifecycle()
     val store = remember { CarStore(services.settings, services.go.store) }
     val car by store.car.collectAsStateWithLifecycle(Car(null, Car.DEFAULT_SOC, emptySet()))
@@ -157,7 +156,7 @@ fun ChargeScreen(args: Dest.Charge, nav: Navigator) {
     }
     Box(Modifier.fillMaxSize()) {
         StageMap(
-            state = map, tiles = tiles, modifier = Modifier.fillMaxSize(), background = Color(0xFFF4F1EA),
+            state = map, modifier = Modifier.fillMaxSize(), background = Color(0xFFF4F1EA),
             overlays = MapOverlays(markers = markers, location = fix?.let { UserLocation(it.location, it.accuracy, it.bearing, it.speed) }),
             contentPadding = PaddingValues(top = 200.dp, bottom = 380.dp),
             onTap = { hit -> if (hit is MapHit.OnMarker) selected = hit.marker.id else if (hit is MapHit.Empty) selected = null },

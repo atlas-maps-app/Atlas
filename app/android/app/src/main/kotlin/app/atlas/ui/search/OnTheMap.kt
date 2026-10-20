@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.first
@@ -26,7 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
@@ -64,7 +62,6 @@ internal fun OnTheMap(
 ) {
     val services = LocalServices.current
     val c = Atlas.colors
-    val tiles by services.tiles.collectAsStateWithLifecycle()
     val map = remember { MapState(CameraPosition(here, 15.5)) }
     val sheetState = rememberSheetState(SheetStop.HALF, setOf(SheetStop.PEEK, SheetStop.HALF, SheetStop.FULL))
     LaunchedEffect(fit) {
@@ -75,7 +72,6 @@ internal fun OnTheMap(
     BoxWithConstraints(Modifier.fillMaxSize()) {
         StageMap(
             state = map,
-            tiles = tiles,
             modifier = Modifier.fillMaxSize(),
             background = c.paper,
             overlays = MapOverlays(markers = markers, location = UserLocation(here, 15.0), measure = false),

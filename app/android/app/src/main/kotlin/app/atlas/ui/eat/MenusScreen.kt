@@ -120,9 +120,6 @@ fun MenusScreen(nav: Navigator) {
             }
             TableTop(counts, loading = ctx.area.loading, onOpen = { kind -> nav.go(Dest.Eat(kind)) })
             Column(Modifier.padding(horizontal = 16.dp)) {
-                if (ctx.area.sketchOnly) {
-                    sourceLine(ctx.area)?.let { Text(it, Modifier.fillMaxWidth().padding(top = 6.dp), style = Atlas.type.caption, color = MUTED) }
-                }
                 if (ctx.area.error != null && ctx.area.places.isEmpty()) {
                     EatProblem(ctx.area, Modifier.padding(top = 12.dp))
                 } else if (!ctx.area.loading && ctx.area.places.isEmpty()) {

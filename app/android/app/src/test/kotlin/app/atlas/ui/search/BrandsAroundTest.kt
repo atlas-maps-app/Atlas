@@ -12,7 +12,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-/** Chains and independents around the Westerkerk, from the real Amsterdam extract and from the fixture tiles. */
+/** Chains and independents around the Westerkerk, from the real Amsterdam extract and from the bundled pack. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class BrandsAroundTest {
@@ -34,9 +34,9 @@ class BrandsAroundTest {
     }
 
     @Test
-    fun withoutARegionTheTilesStillTell() = runBlocking {
+    fun withoutARegionTheBundledPackTells() = runBlocking {
         val n = BrandsAround.near(testServices(), Services.WESTERKERK, BRANDS_RADIUS_M)
-        assertEquals(PlaceOrigin.TILES, n.origin)
+        assertEquals(PlaceOrigin.PACK, n.origin)
         assertTrue("chains: ${n.chains.map { it.brand.name }}", n.chains.isNotEmpty())
         assertTrue(n.independents.isNotEmpty())
     }

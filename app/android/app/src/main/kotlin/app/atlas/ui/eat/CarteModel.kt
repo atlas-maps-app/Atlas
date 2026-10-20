@@ -84,7 +84,7 @@ object CarteModel {
     ): Carte {
         val all = EatSets.carte(area.places)
         val places = all.filter { p -> diets.all { p.diet(it.key) } }
-        val countsOpen = !area.sketchOnly && all.any { it.hasHours }
+        val countsOpen = all.any { it.hasHours }
         val open = HashSet<String>()
         if (countsOpen) for (p in places) if (p.openness(at, area.hours).isOpen) open += p.key
         val country = area.country

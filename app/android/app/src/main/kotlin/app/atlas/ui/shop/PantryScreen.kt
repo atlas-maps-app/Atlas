@@ -223,7 +223,7 @@ private fun ShelfRow(plank: Float, places: List<ShelfPlace>, counts: PantryCount
     }
 }
 
-/** What the shelves are made of, said plainly under them: names only (tiles), a failed network with a way to try again, or nothing at all. */
+/** What the shelves are made of, said plainly under them: a failed network with a way to try again, or nothing at all. */
 @Composable
 private fun PantryNote(area: ShopArea, retry: () -> Unit) {
     if (area.error != null && area.places.isEmpty()) {
@@ -233,10 +233,5 @@ private fun PantryNote(area: ShopArea, retry: () -> Unit) {
                 action = { PillButton(onClick = retry) { Text(stringResource(R.string.shop_try_again), style = Atlas.type.label) } },
             )
         }
-    } else if (area.sketchOnly && area.places.isNotEmpty()) {
-        Line(
-            stringResource(R.string.shop_sketch_note), bt(13f, 400, 17f, align = TextAlign.Center), INK_SOFT,
-            Modifier.offset(24.dp, 736.dp).width(364.dp), lines = 3,
-        )
     }
 }

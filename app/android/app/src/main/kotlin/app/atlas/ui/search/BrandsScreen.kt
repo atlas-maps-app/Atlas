@@ -294,12 +294,12 @@ private fun HiddenTile(count: Int, showing: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** Where the brands came from: the region on the phone, or only the map's labels. */
+/** Where the brands came from: the region on the phone, or the map's data on the phone. */
 @Composable
 private fun OriginNote(n: BrandsNearby) {
     val text = when (n.origin) {
         app.atlas.services.PlaceOrigin.STORE -> stringResource(R.string.brands_from_store)
-        app.atlas.services.PlaceOrigin.TILES -> stringResource(R.string.brands_from_tiles)
+        app.atlas.services.PlaceOrigin.PACK -> stringResource(R.string.brands_from_pack)
         else -> null
     } ?: return
     TxLine(text, txStyle(12f, 400, 15.5f, align = TextAlign.Center), BrandsLook.CLOSED, Modifier.fillMaxWidth().padding(12.dp), lines = 3)

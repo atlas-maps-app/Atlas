@@ -233,9 +233,9 @@ class GoScreenshotTest {
         assertTrue("bridges with a clearance: ${route.hazards.map { it.kind }}", cleared.isNotEmpty())
         val settings = runBlocking { s.go.guideSettings(Mode.BOAT, req.vehicle) }
         compose.runOnUiThread { s.go.startNav(androidx.test.core.app.ApplicationProvider.getApplicationContext(), req, route, "Het IJ", settings, demo = true) }
-        val crossings = runBlocking { TileBridges.crossings(route, s.tiles.value!!) }
-        val bridges = RouteBridges.find(route, s.placeStores, crossings)
-        assertTrue("the tiles draw bridges over the canals: ${crossings.size}", crossings.size > 5)
+        val mapped = runBlocking { s.localData.bridges(route) }
+        val bridges = RouteBridges.find(route, s.placeStores, mapped)
+        assertTrue("OpenStreetMap maps bridges over the canals: ${mapped.size}", mapped.size >= 3)
         guide("sail", Mode.BOAT, GoFixtures.IJ, "Het IJ", noon, s, units = Units.IMPERIAL) { v ->
             // Shortly before a bridge whose clearance is known, with no other bridge before it.
             val next = RouteBridges.next(bridges, v.travelled)

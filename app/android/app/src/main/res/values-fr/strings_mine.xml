@@ -11,7 +11,7 @@
     <string name="mine_privacy_head">Pas de compte. Pas de pub. Pas de traqueurs.</string>
     <string name="mine_privacy_text">Rien à votre sujet ne quitte le téléphone, sauf si vous le partagez.</string>
     <string name="mine_about">À propos et licences</string>
-    <string name="mine_about_text">Données cartographiques © contributeurs OpenStreetMap (ODbL). Tuiles d\'OpenFreeMap. Itinéraires par BRouter. Météo d\'Open-Meteo.com (CC BY 4.0). Avis de Mangrove (CC BY 4.0). Polices : Inter et Instrument Serif (OFL). Symboles : Maki, Temaki (CC0) et Lucide (ISC).</string>
+    <string name="mine_about_text">Données cartographiques © contributeurs OpenStreetMap (ODbL). Itinéraires par BRouter. Météo d\'Open-Meteo.com et de MET Norway (CC BY 4.0). Avis de Mangrove (CC BY 4.0). Polices : Inter et Instrument Serif (OFL). Symboles : Maki, Temaki (CC0) et Lucide (ISC).</string>
     <string name="mine_welcome">Bienvenue</string>
     <string name="mine_welcome_text">Tout marche sans réseau : cartes, itinéraires, lieux, voix.</string>
     <string name="mine_layers">Style de carte</string>
@@ -535,7 +535,6 @@
     <string name="mine_picker_country_none_text">La liste des paquets publiés n\'a pas pu être lue. Vérifiez votre connexion, ou dessinez une zone.</string>
     <string name="mine_picker_from_pack">depuis le paquet publié d\'Atlas</string>
     <string name="mine_picker_built">construit sur ce téléphone depuis OpenStreetMap</string>
-    <string name="mine_picker_tiles">tuiles vectorielles du serveur de tuiles</string>
     <string name="mine_picker_too_big">Trop grand pour être construit ici : choisissez un paquet de pays, ou dessinez une zone plus petite.</string>
     <string name="mine_picker_failed">La taille n\'a pas pu être calculée. Réessayez dans un instant.</string>
     <string name="mine_picker_wifi">Seulement en Wi‑Fi</string>
@@ -556,7 +555,6 @@
     <string name="mine_privacy_downloads">Téléchargements que vous lancez</string>
     <string name="mine_sent_pack">les paquets de carte et de lieux que vous demandez</string>
     <string name="mine_sent_routing">les tuiles d\'itinéraire de la zone que vous emportez</string>
-    <string name="mine_sent_tiles">les tuiles de carte que vous regardez, sans région sur le téléphone</string>
     <string name="mine_charge_live">LIVE</string>
     <string name="mine_data_key_show">Afficher la clé</string>
     <string name="mine_data_key_hide">Masquer la clé</string>

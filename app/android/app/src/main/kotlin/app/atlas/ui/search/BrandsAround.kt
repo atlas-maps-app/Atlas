@@ -9,7 +9,6 @@ import app.atlas.places.Brand
 import app.atlas.places.Brands
 import app.atlas.places.TagFilter
 import app.atlas.services.PlaceOrigin
-import app.atlas.services.TilePlaces
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -20,8 +19,8 @@ data class BrandBranches(val brand: Brand, val branches: List<Place>)
 data class BrandsNearby(val chains: List<BrandBranches>, val independents: List<Place>, val origin: PlaceOrigin?)
 
 /**
- * Chains and independents around a point, offline: from the place store of a downloaded region, else from the map
- * tiles' points of interest (names and kinds, matched to brands by the name-suggestion index).
+ * Chains and independents around a point: from the place store of a downloaded region where it covers the point, else
+ * from the map's packs on the phone (every tag, matched to brands by the name-suggestion index), else Overpass online.
  */
 object BrandsAround {
     /** The kinds of place a chain can run: shops and the amenities brands trade as. */
@@ -37,32 +36,22 @@ object BrandsAround {
     suspend fun near(services: Services, at: LatLon, radiusM: Double): BrandsNearby = withContext(Dispatchers.Default) {
         val store = services.placeStores
         val (places, origin) = when {
-            store.size > 0 -> store.inBox(BBox.around(at, radiusM)).map { it.place } to PlaceOrigin.STORE
+            store.size > 0 && store.bounds?.let { at in it } == true -> store.inBox(BBox.around(at, radiusM)).map { it.place } to PlaceOrigin.STORE
             else -> {
-                val tiles = services.tiles.value
-                val found = tiles?.let { runCatching { TilePlaces.near(it, at, radiusM, TagFilter.Has("name"), 5_000) }.getOrNull() }
-                (found ?: emptyList()) to (if (found != null) PlaceOrigin.TILES else null)
+                val got = runCatching { services.localData.places(at, radiusM, TagFilter.Has("name"), 5_000) }.getOrNull()
+                got?.value.orEmpty() to got?.origin
             }
         }
         split(places, at, radiusM, origin)
     }
 
     /**
-     * The branches of brand [id] within [radiusM] of [at], nearest first: from the regions' brand index, else from the
-     * map tiles' labels. The origin says which.
+     * The branches of brand [id] within [radiusM] of [at], nearest first: from the regions' brand index, else the map's
+     * packs, else Overpass online ([app.atlas.services.LocalData.branches]). The origin says which.
      */
     suspend fun branches(services: Services, id: String, at: LatLon, radiusM: Double): Pair<List<Place>, PlaceOrigin?> = withContext(Dispatchers.Default) {
-        val store = services.placeStores
-        val near = compareBy<Place> { Geo.distance(at, it.location) }
-        if (store.size > 0) {
-            val found = runCatching { store.byBrand(listOf(id), BBox.around(at, radiusM)) }.getOrNull().orEmpty()
-                .map { it.place }.filter { Geo.distance(at, it.location) <= radiusM }
-            if (found.isNotEmpty()) return@withContext found.distinctBy { it.key }.sortedWith(near) to PlaceOrigin.STORE
-        }
-        val tiles = services.tiles.value ?: return@withContext emptyList<Place>() to null
-        val found = runCatching { TilePlaces.near(tiles, at, radiusM, TagFilter.Has("name"), 5_000) }.getOrNull()
-            ?: return@withContext emptyList<Place>() to null
-        found.filter { isTrade(it.tags) && Brands.forTags(it.tags)?.id == id }.sortedWith(near) to PlaceOrigin.TILES
+        val got = runCatching { services.localData.branches(id, at, radiusM) }.getOrNull() ?: return@withContext emptyList<Place>() to null
+        got.value to got.origin
     }
 
     /** Splits [places] within [radiusM] of [at] into chains (most branches first) and named independents (nearest first). */

@@ -20,8 +20,8 @@ import kotlinx.serialization.json.putJsonArray
 import java.io.File
 import java.io.IOException
 
-/** How a region's map layer is kept: as Atlas's own region pack (`.atlas`), as the older vector tiles, or not at all. */
-enum class MapKind(val id: String) { ATLAS("atlas"), TILES("tiles"), NONE("none");
+/** How a region's map layer is kept: as Atlas's own region pack (`.atlas`), or not at all. */
+enum class MapKind(val id: String) { ATLAS("atlas"), NONE("none");
 
     companion object {
         fun of(id: String?): MapKind = entries.firstOrNull { it.id == id } ?: NONE
@@ -83,6 +83,9 @@ data class RegionMeta(
     }.toString()
 
     companion object {
+        /** The kind the older vector tiles were recorded as. */
+        private const val RETIRED_TILES = "tiles"
+
         fun fromJson(text: String): RegionMeta? = runCatching {
             val o = Json.parseToJsonElement(text).jsonObject
             val b = o["bbox"]!!.jsonArray.map { it.jsonPrimitive.doubleOrNull!! }
@@ -90,6 +93,8 @@ data class RegionMeta(
             for ((k, v) in o["layers"]?.jsonObject.orEmpty()) {
                 val layer = RegionLayer.entries.firstOrNull { it.name.equals(k, true) } ?: continue
                 val r = v.jsonObject
+                // the older vector tiles are retired: a map kept as them is taken again, as a pack
+                if (layer == RegionLayer.MAP && r["kind"]?.jsonPrimitive?.contentOrNull == RETIRED_TILES) continue
                 layers[layer] = LayerRecord(
                     r["kind"]?.jsonPrimitive?.contentOrNull ?: "", r["bytes"]?.jsonPrimitive?.longOrNull ?: 0L, r["at"]?.jsonPrimitive?.longOrNull ?: 0L,
                     r["sha"]?.jsonPrimitive?.contentOrNull, r["data"]?.jsonPrimitive?.contentOrNull,

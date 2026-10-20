@@ -31,7 +31,6 @@ dependencies {
 
 tasks.test {
     maxHeapSize = "1536m"
-    // Shared fixtures live in app/android/testdata; the repo's cache/ (big downloads such as Luxembourg) is one level up.
-    systemProperty("atlas.testdata", rootProject.file("testdata").absolutePath)
+    // The repo's root, with its cache/ (big downloads such as Luxembourg) and data/.
     systemProperty("atlas.repo", rootProject.file("../..").absolutePath)
 }

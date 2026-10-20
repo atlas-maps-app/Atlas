@@ -1,6 +1,7 @@
 package app.atlas.services
 
 import app.atlas.Services
+import app.atlas.geo.BBox
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.mapview.MapEngine
@@ -8,6 +9,7 @@ import app.atlas.mapview.MapWeather
 import app.atlas.providers.Forecast
 import app.atlas.render.data.HttpPost
 import app.atlas.render.data.OverpassClient
+import app.atlas.render.data.RegionBuilder
 import app.atlas.render.live.HttpGet
 import app.atlas.render.live.LiveEngine
 import app.atlas.render.live.LiveRegions
@@ -57,13 +59,19 @@ class MapData(private val services: Services) {
     }
 
     /**
-     * The packs on the phone and the published ones (`files/maps`). The bundled pack is installed on first use (a copy
-     * of 627 KB, once), on whichever background thread asks first, before anything is chosen. The render packs the APK
-     * carries ([BundledRenders]) are never downloaded again: the canal ring's first visit fetches its element pack only.
+     * The packs on the phone and the published ones (`files/maps`), and the offline regions' own packs where the regions
+     * keep them (`files/regions/atlas`, read again when the regions change: [Services.reloadRegions]). The bundled pack
+     * is installed on first use (a copy of 627 KB, once), on whichever background thread asks first, before anything is
+     * chosen. The render packs the APK carries ([BundledRenders]) are never downloaded again: the canal ring's first
+     * visit fetches its element pack only.
      */
     val packs: PackLibrary by lazy {
         val bundledRenders = BundledRenders.read { open(BundledRenders.ASSET) }
-        PackLibrary(File(services.dirs.files, "maps"), listOf(PackLibrary.RENDERS), get, bundledRenders = bundledRenders).also { lib ->
+        val regionPacks = File(services.dirs.regions, "atlas")
+        PackLibrary(
+            File(services.dirs.files, "maps"), listOf(PackLibrary.RENDERS), get, bundledRenders = bundledRenders,
+            elsewhere = { regionPacks.listFiles { f -> f.isFile && f.name.endsWith(PackLibrary.EXT) }.orEmpty().toList() },
+        ).also { lib ->
             try {
                 lib.install(BUNDLED) { open(BUNDLED_ASSET) }
             } catch (_: IOException) {
@@ -78,10 +86,22 @@ class MapData(private val services: Services) {
 
     private fun online(): Boolean = !services.config.offline && services.connectivity.online.value
 
+    /** Overpass for the map's builds: the same servers, in the same order, as the app's own client, so no build depends on one server. */
+    private val overpass: OverpassClient by lazy { OverpassClient(post, hosts = OVERPASS_HOSTS) }
+
     /** Which region a view draws, and getting it ready. */
     val regions: LiveRegions by lazy {
-        // the same Overpass servers, in the same order, as the app's own client, so no build depends on one server
-        LiveRegions(packs, worker, online = ::online, overpass = OverpassClient(post, hosts = OVERPASS_HOSTS), onChange = { MapEngine.invalidate() })
+        LiveRegions(packs, worker, online = ::online, overpass = overpass, onChange = { MapEngine.invalidate() })
+    }
+
+    /**
+     * Builds the map pack of an offline region on the phone into [target], as the map builds the places it shows: the
+     * renders' query, from every server in turn, a box too big for one answer asked in parts. Returns its size. Blocks:
+     * call it off the main thread.
+     */
+    fun buildRegion(id: String, name: String, bbox: BBox, target: File): Long {
+        RegionBuilder.buildFromOverpass(overpass, id, name, bbox, target)
+        return target.length()
     }
 
     /** The forecast for the live moment: the last one fetched near the place, refreshed in the background. */

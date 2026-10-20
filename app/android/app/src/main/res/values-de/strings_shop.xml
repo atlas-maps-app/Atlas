@@ -39,7 +39,6 @@
     <string name="shop_shelf_desc_n">%1$s, %2$d Orte</string>
     <string name="shop_loading">Regale ansehen…</string>
     <string name="shop_problem">Umgebung konnte nicht geladen werden</string>
-    <string name="shop_sketch_note">Nur Namen und Arten von der Karte: Öffnungszeiten brauchen ein geladenes Gebiet oder Verbindung.</string>
     <string name="shop_closes_at">schließt %1$s</string>
     <string name="shop_opens_at">öffnet %1$s</string>
     <string name="shop_walk">zu Fuß</string>

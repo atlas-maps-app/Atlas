@@ -208,7 +208,7 @@ object MineFixtures {
             root = java.nio.file.Files.createTempDirectory("atlas-mine").toFile(),
             demoLocation = Services.WESTERKERK,
             offline = true,
-            tiles = app.atlas.tiles.TileStack(listOf(app.atlas.testing.FixtureTiles())),
+            mapEngine = false,
             placeStores = listOf(app.atlas.testing.Fixtures.amsStore, roadside()),
             clock = app.atlas.testing.Fixtures.evening,
         ),

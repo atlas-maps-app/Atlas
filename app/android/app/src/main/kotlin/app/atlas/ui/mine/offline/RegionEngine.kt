@@ -8,7 +8,6 @@ import app.atlas.services.RegionLayer
 import app.atlas.tiles.Pack
 import app.atlas.tiles.PackDownloader
 import app.atlas.tiles.PackFile
-import app.atlas.tiles.RegionManifest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -33,10 +32,7 @@ class RegionDeps(
     val segments: SegmentStore?,
     /** The remote sizes of BRouter tiles by name, for estimates (empty offline). */
     val segmentSizes: suspend () -> Map<String, Long> = { emptyMap() },
-    /** Older vector tiles from the tile server, into the region library: returns bytes written. Null when not available. */
-    val legacyTiles: (suspend (id: String, name: String, bbox: BBox, maxZoom: Int, report: (Float) -> Unit) -> Long)? = null,
-    val legacyDelete: ((String) -> Unit)? = null,
-    /** Builds a region pack for a small area on the phone from Overpass; null until the engine on the phone offers it. */
+    /** Builds a region pack for an area of at most [RegionEngine.BUILD_MAX_KM2] on the phone from Overpass; null offline. */
     val mapBuilder: (suspend (id: String, name: String, bbox: BBox, target: File, report: (Float) -> Unit) -> Long)? = null,
     /** The voice languages to keep with a region. */
     val voices: () -> List<String> = { emptyList() },
@@ -60,7 +56,8 @@ data class AreaEstimate(val bytes: Map<RegionLayer, Long?>, val packed: Boolean,
 }
 
 /**
- * Takes regions offline, layer by layer: the map (an Atlas region pack from the published packs, or older vector tiles),
+ * Takes regions offline, layer by layer: the map (an Atlas region pack: a published one, or one built on the phone from
+ * Overpass),
  * the places (the pack's place store, or an Overpass import), the routing tiles, and the voice languages. Each layer is
  * recorded in the region's metadata when it is complete, so a download that stops (no signal, a full disk, the process
  * killed) picks up at the layer it was on; the pack files themselves resume by byte range. [onChanged] runs after each
@@ -158,8 +155,7 @@ class RegionEngine(
             val atlas = pack?.atlas
             when {
                 atlas != null -> { kind = MapKind.ATLAS; out[RegionLayer.MAP] = atlas.bytes }
-                deps.mapBuilder != null -> { kind = MapKind.ATLAS; out[RegionLayer.MAP] = estimateBuilt(bbox) }
-                deps.legacyTiles != null -> { kind = MapKind.TILES; out[RegionLayer.MAP] = app.atlas.tiles.RegionPlanner.plan(bbox, 0, maxZoom).estimatedBytes }
+                deps.mapBuilder != null && buildable(bbox) -> { kind = MapKind.ATLAS; out[RegionLayer.MAP] = estimateBuilt(bbox) }
                 else -> out[RegionLayer.MAP] = null
             }
         }
@@ -257,19 +253,14 @@ class RegionEngine(
                     atlas != null -> {
                         val target = files.atlas(meta.id)
                         deps.packDownloader.download(atlas, target) { report(it.fraction.toFloat()) }
-                        deps.legacyDelete?.invoke(meta.id)
                         LayerRecord(MapKind.ATLAS.id, target.length(), now, atlas.sha256, pack.osmTimestamp)
                     }
-                    deps.mapBuilder != null -> {
+                    deps.mapBuilder != null && buildable(meta.bbox) -> {
                         val target = files.atlas(meta.id)
                         val part = File(target.path + ".part")
                         deps.mapBuilder.invoke(meta.id, meta.name, meta.bbox, part, report)
                         if (!part.renameTo(target)) { target.delete(); part.renameTo(target) }
                         LayerRecord(MapKind.ATLAS.id, target.length(), now)
-                    }
-                    deps.legacyTiles != null -> {
-                        val bytes = deps.legacyTiles.invoke(meta.id, meta.name, meta.bbox, meta.maxZoom, report)
-                        LayerRecord(MapKind.TILES.id, bytes, now)
                     }
                     else -> throw RegionException("There is no map pack for this area yet. Pick a country or city from the list.")
                 }
@@ -355,7 +346,6 @@ class RegionEngine(
     fun delete(id: String): Long {
         val m = files.get(id)
         var freed = files.deleteOwn(id)
-        deps.legacyDelete?.invoke(id)
         deps.segments?.let { store ->
             val others = files.list().filter { it.id != id }.flatMap { it.segments }.toSet()
             for (t in m?.segments.orEmpty()) if (t !in others) { freed += store.file(t).length(); store.delete(t) }
@@ -383,11 +373,17 @@ class RegionEngine(
 
     private fun estimateBuilt(bbox: BBox): Long = (area(bbox) * BUILT_BYTES_PER_KM2).toLong().coerceAtLeast(200_000L)
 
+    /** True when the phone can build [bbox]'s map pack from Overpass in reasonable time (a city, a few towns). */
+    private fun buildable(bbox: BBox): Boolean = area(bbox) <= BUILD_MAX_KM2
+
     companion object {
         val LAYER_ORDER = listOf(RegionLayer.MAP, RegionLayer.PLACES, RegionLayer.ROUTING, RegionLayer.VOICE)
 
         /** A pack is used when the area asked for is at least this share of the pack (else only the area is fetched). */
         const val PACK_SHARE = 0.15
+
+        /** The largest area whose map pack the phone builds from Overpass (km²): a city; beyond, a published pack. */
+        const val BUILD_MAX_KM2 = 1_000.0
 
         /** Days after which a layer not taken from a pack is offered for a refresh. */
         val STALE_DAYS = mapOf(RegionLayer.MAP to 30, RegionLayer.PLACES to 30, RegionLayer.ROUTING to 45)
@@ -397,8 +393,23 @@ class RegionEngine(
         private const val SEGMENT_GUESS = 75_000_000L
         private const val BUILT_BYTES_PER_KM2 = 20_000.0
 
-        /** The id a region gets from its name: lower-case letters, digits and dashes. */
-        fun idFor(name: String): String = RegionManifest.idFor(name)
+        /**
+         * The id a region gets from its name, file-safe: lower-case ASCII letters, digits and hyphens, accents dropped
+         * ("Zürich" is "zurich"). When that loses part of the name (another script, or a name cut to length), a short
+         * hash of the name is added, so "東京" and "大阪" do not share one id.
+         */
+        fun idFor(name: String): String {
+            val ascii = java.text.Normalizer.normalize(name, java.text.Normalizer.Form.NFKD).replace(MARKS, "")
+            val slug = ascii.lowercase().replace(NON_ID, "-").trim('-')
+            val lossy = slug.length > MAX_ID || ascii.any { it.isLetterOrDigit() && !(it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9') }
+            if (!lossy && slug.isNotEmpty()) return slug
+            val hash = String.format(java.util.Locale.ROOT, "%08x", name.hashCode())
+            return (slug.take(MAX_ID - 9).trim('-').ifEmpty { "region" }) + "-" + hash
+        }
+
+        private const val MAX_ID = 48
+        private val MARKS = Regex("\\p{M}+")
+        private val NON_ID = Regex("[^a-z0-9]+")
 
         /** The area of [b] in square kilometres. */
         fun area(b: BBox): Double {
@@ -420,4 +431,4 @@ class RegionEngine(
 }
 
 /** The pack's Atlas region file (kind "atlas"), if it has one. */
-val Pack.atlas: PackFile? get() = files.firstOrNull { it.kind == "atlas" }
+val Pack.atlas: PackFile? get() = files.firstOrNull { it.kind == PackFile.ATLAS }

@@ -153,7 +153,6 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
     val here = rememberHere()
     val vm = viewModel(key = "whatshere:" + args.route) { WhatsHereViewModel(services, p, lang) }
     val state by vm.state.collectAsStateWithLifecycle()
-    val tiles by services.tiles.collectAsStateWithLifecycle()
     val c = Atlas.colors
     val map = remember { MapState(CameraPosition(p, 17.4, 0.0, 40.0)) }
     val sheet = rememberSheetState(SheetStop.HALF, setOf(SheetStop.PEEK, SheetStop.HALF, SheetStop.FULL))
@@ -167,7 +166,6 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         StageMap(
             state = map,
-            tiles = tiles,
             modifier = Modifier.fillMaxSize(),
             background = c.paper,
             overlays = MapOverlays(

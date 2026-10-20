@@ -182,7 +182,6 @@ fun RouteScreen(args: Dest.Route, nav: Navigator) {
 @Composable
 private fun PlannerMap(ui: RouteUi, vm: RouteViewModel, here: app.atlas.geo.LatLon) {
     val services = LocalServices.current
-    val tiles by services.tiles.collectAsStateWithLifecycle()
     val map = remember { MapState(CameraPosition(ui.to?.at ?: here, 15.0, 0.0, 45.0)) }
     val found = ui.plan as? Plan.Found
     val chosen = ui.chosen.coerceIn(0, ((found?.routes?.size ?: 1) - 1).coerceAtLeast(0))
@@ -203,7 +202,6 @@ private fun PlannerMap(ui: RouteUi, vm: RouteViewModel, here: app.atlas.geo.LatL
     }
     StageMap(
         state = map,
-        tiles = tiles,
         modifier = Modifier.fillMaxSize(),
         background = argb(0xFFEFE5DA),
         style = MapStyle(theme = Theme.DAY, calm = true),

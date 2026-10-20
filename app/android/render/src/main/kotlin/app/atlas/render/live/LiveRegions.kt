@@ -94,7 +94,30 @@ class LiveRegions(
             failed[bestLocal.id]?.let { (at, why) -> if (System.currentTimeMillis() - at < RETRY_MS) return pending ?: State.Empty(why) }
             return open(bestLocal)
         }
+        if (bestLocal.built) refreshIfOld(bestLocal)
         return State.Ready(region, pending)
+    }
+
+    /**
+     * Builds [l] (a pack built here) again from Overpass in the background once it is older than [REBUILD_MS], online
+     * only: the map's data stays up to date where it is used, and the old pack draws until the new one is whole.
+     */
+    private fun refreshIfOld(l: PackLibrary.Local) {
+        val ov = overpass ?: return
+        if (!online() || System.currentTimeMillis() - l.file.lastModified() < REBUILD_MS) return
+        val key = "rebuild:${l.id}"
+        failed[key]?.let { (at, _) -> if (System.currentTimeMillis() - at < RETRY_MS) return }
+        if (jobs.putIfAbsent(key, State.Pending(l.id, LiveProgress.Stage.DOWNLOADING, building = true)) != null) return
+        worker.execute {
+            try {
+                library.build(ov, l.bbox, refresh = true, id = l.id)
+            } catch (x: Exception) {
+                failed[key] = System.currentTimeMillis() to "Overpass could not refresh this place: ${x.message}"
+            } finally {
+                jobs.remove(key)
+                onChange()
+            }
+        }
     }
 
     /** The regions opened so far. */
@@ -207,6 +230,8 @@ class LiveRegions(
     companion object {
         const val RETRY_MS = 60_000L
         const val MANIFEST_MS = 6 * 3600_000L
+        /** How old a pack built here may grow before it is built again from today's data (ms): a week. */
+        const val REBUILD_MS = 7 * 24 * 3600_000L
         const val BUILD_MIN_M = 600.0
         const val BUILD_MAX_M = 1500.0
 

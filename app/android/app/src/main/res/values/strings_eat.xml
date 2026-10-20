@@ -42,7 +42,7 @@
     <string name="eat_none_here">Nothing to eat or drink here yet</string>
     <string name="eat_none_here_why">Download this region for every place offline, or go online.</string>
     <string name="eat_source_store">From this phone’s region · OpenStreetMap</string>
-    <string name="eat_source_tiles">From the map tiles: names and kinds only, no hours</string>
+    <string name="eat_source_pack">From the map’s data on this phone · OpenStreetMap</string>
     <string name="eat_source_online">From OpenStreetMap, online</string>
     <string name="eat_la_carte">La Carte</string>
     <string name="eat_carte_open">%1$d open · %2$s</string>

@@ -130,7 +130,7 @@ object BarModel {
      */
     fun card(area: EatArea, at: LocalDateTime, tab: BarTab?, moods: Set<BarMood>, limit: Int = 24): BarCard {
         val all = bars(area)
-        val countsOpen = !area.sketchOnly && all.any { it.hasHours }
+        val countsOpen = all.any { it.hasHours }
         val open = all.filter { it.openness(at, area.hours).isOpen }
         val inTab = if (tab == null) all else all.filter { tab.has(it) }
         val chosen = inTab.filter { p -> moods.all { it.has(p, at, area) } }

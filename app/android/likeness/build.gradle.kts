@@ -27,7 +27,6 @@ android {
                 it.outputs.cacheIf { false }
                 it.systemProperty("robolectric.graphicsMode", "NATIVE")
                 it.systemProperty("java.awt.headless", "true")
-                it.systemProperty("atlas.testdata", rootProject.file("testdata").absolutePath)
                 it.systemProperty("atlas.repo", rootProject.file("../..").absolutePath)
                 // Where the reference sets go (CI caches them), which tier, shard and cases, a phone's size, the packs, the
                 // style version, where a VK check asset goes, the cold build's time budget in seconds, whether every pack

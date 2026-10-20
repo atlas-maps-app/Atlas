@@ -194,9 +194,9 @@ class EatScreenshotTest {
     }
 
     @Test
-    fun tilesOnlyTheTableStillCounts() {
+    fun withoutARegionThePackSetsTheTable() {
         show(Dest.Eat(), EatFixtures.services(places = false))
-        capture("eat_menus_tiles")
+        capture("eat_menus_pack")
     }
 
     @Test

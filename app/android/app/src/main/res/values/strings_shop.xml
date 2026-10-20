@@ -40,7 +40,6 @@
     <string name="shop_shelf_desc_n">%1$s, %2$d places</string>
     <string name="shop_loading">Looking at the shelves…</string>
     <string name="shop_problem">Could not look around</string>
-    <string name="shop_sketch_note">Names and kinds only from the map: opening hours need a downloaded area or a connection.</string>
     <string name="shop_closes_at">closes %1$s</string>
     <string name="shop_opens_at">opens %1$s</string>
     <string name="shop_walk">walk</string>

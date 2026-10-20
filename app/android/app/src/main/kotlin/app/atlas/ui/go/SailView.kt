@@ -93,8 +93,7 @@ fun SailView(show: NavShow, actions: NavActions) {
         val bridges by produceState(emptyList<RouteBridge>(), v.route) {
             value = withContext(Dispatchers.IO) {
                 runCatching {
-                    val crossings = services.tiles.value?.let { TileBridges.crossings(v.route, it) } ?: DoubleArray(0)
-                    RouteBridges.find(v.route, services.placeStores, crossings)
+                    RouteBridges.find(v.route, services.placeStores, services.localData.bridges(v.route))
                 }.getOrDefault(emptyList())
             }
         }

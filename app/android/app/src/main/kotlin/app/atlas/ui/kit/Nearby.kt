@@ -59,7 +59,7 @@ fun NearbyList(
                 state = if (r.error != null && prev != null && prev.places.isNotEmpty()) prev.copy(error = r.error) else r
             }
         }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it else failed = it.message ?: it.toString() }
-        if (state == null && failed == null) state = NearbyPlaces(emptyList(), PlaceOrigin.TILES)
+        if (state == null && failed == null) state = NearbyPlaces(emptyList(), PlaceOrigin.PACK)
     }
     val lang = remember { Locale.getDefault().language }
     val now = rememberNow(state)

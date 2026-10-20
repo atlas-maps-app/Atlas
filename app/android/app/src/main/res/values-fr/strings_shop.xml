@@ -39,7 +39,6 @@
     <string name="shop_shelf_desc_n">%1$s, %2$d lieux</string>
     <string name="shop_loading">On regarde les rayons…</string>
     <string name="shop_problem">Impossible de regarder autour</string>
-    <string name="shop_sketch_note">Noms et types seulement : les horaires demandent une zone téléchargée ou une connexion.</string>
     <string name="shop_closes_at">ferme %1$s</string>
     <string name="shop_opens_at">ouvre %1$s</string>
     <string name="shop_walk">à pied</string>

@@ -26,7 +26,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -87,7 +86,6 @@ fun DropScreen(stream: String?, nav: Navigator) {
     val mine = remember(all, sel) { all.filter { sel in it.streams } }
     val streetOnes = mine.filterNot { it.centre }
     val centres = remember(all) { all.filter { it.centre } }
-    val tiles by services.tiles.collectAsState()
     val fix by services.location.last.collectAsStateWithLifecycle()
     val map = remember { MapState(CameraPosition(here, 16.4, 0.0, 45.0)) }
     val colour = Color(sel.colour)
@@ -102,7 +100,7 @@ fun DropScreen(stream: String?, nav: Navigator) {
             }
         }
         StageMap(
-            state = map, tiles = tiles, modifier = Modifier.fillMaxSize(), background = Color(0xFFEFE9DE),
+            state = map, modifier = Modifier.fillMaxSize(), background = Color(0xFFEFE9DE),
             overlays = MapOverlays(markers = markers, location = (fix?.let { UserLocation(it.location, it.accuracy, it.bearing, it.speed) } ?: UserLocation(here, 10.0))),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 120.dp, bottom = 360.dp),
         )

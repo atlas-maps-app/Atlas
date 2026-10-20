@@ -11,7 +11,7 @@
     <string name="mine_privacy_head">Kein Konto. Keine Werbung. Keine Tracker.</string>
     <string name="mine_privacy_text">Nichts über dich verlässt das Telefon, außer du teilst es.</string>
     <string name="mine_about">Info &amp; Lizenzen</string>
-    <string name="mine_about_text">Kartendaten © OpenStreetMap-Mitwirkende (ODbL). Kacheln von OpenFreeMap. Routen mit BRouter. Wetter von Open-Meteo.com (CC BY 4.0). Bewertungen von Mangrove (CC BY 4.0). Schriften: Inter und Instrument Serif (OFL). Symbole: Maki, Temaki (CC0) und Lucide (ISC).</string>
+    <string name="mine_about_text">Kartendaten © OpenStreetMap-Mitwirkende (ODbL). Routen mit BRouter. Wetter von Open-Meteo.com und MET Norway (CC BY 4.0). Bewertungen von Mangrove (CC BY 4.0). Schriften: Inter und Instrument Serif (OFL). Symbole: Maki, Temaki (CC0) und Lucide (ISC).</string>
     <string name="mine_welcome">Willkommen</string>
     <string name="mine_welcome_text">Alles funktioniert ohne Empfang: Karten, Routen, Orte, Stimme.</string>
     <string name="mine_layers">Kartenstil</string>
@@ -535,7 +535,6 @@
     <string name="mine_picker_country_none_text">Die Liste der veröffentlichten Pakete konnte nicht gelesen werden. Prüfe deine Verbindung oder zeichne ein Gebiet.</string>
     <string name="mine_picker_from_pack">aus Atlas\' veröffentlichtem Paket</string>
     <string name="mine_picker_built">auf diesem Telefon aus OpenStreetMap gebaut</string>
-    <string name="mine_picker_tiles">Vektorkacheln vom Kachelserver</string>
     <string name="mine_picker_too_big">Zu groß, um es hier zu bauen: wähle ein Länderpaket oder zeichne ein kleineres Gebiet.</string>
     <string name="mine_picker_failed">Die Größe konnte nicht berechnet werden. Versuche es gleich noch einmal.</string>
     <string name="mine_picker_wifi">Nur über WLAN</string>
@@ -556,7 +555,6 @@
     <string name="mine_privacy_downloads">Downloads, die du startest</string>
     <string name="mine_sent_pack">welche Karten- und Ortspakete du anforderst</string>
     <string name="mine_sent_routing">die Routenkacheln des Gebiets, das du offline nimmst</string>
-    <string name="mine_sent_tiles">die Kartenkacheln, die du ansiehst, wenn kein Gebiet auf dem Telefon ist</string>
     <string name="mine_charge_live">LIVE</string>
     <string name="mine_data_key_show">Schlüssel anzeigen</string>
     <string name="mine_data_key_hide">Schlüssel verbergen</string>

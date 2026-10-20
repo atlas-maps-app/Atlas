@@ -12,9 +12,9 @@ import java.time.Instant
 /** One piece of a file published in parts (GitHub release assets must stay under 2 GiB). */
 data class PackPart(val url: String, val bytes: Long, val sha256: String?)
 
-/** One file of a pack: the region's tiles (PMTiles, OpenMapTiles schema) or its places (a gzipped place store). */
+/** One file of a pack: the region pack (`.atlas`: the map's and the features' OpenStreetMap elements) or its places (a gzipped place store). */
 data class PackFile(
-    /** [TILES] or [PLACES]. */
+    /** [ATLAS] or [PLACES]. */
     val kind: String,
     val name: String,
     /** Bytes to download: the whole file, all parts together. */
@@ -27,7 +27,7 @@ data class PackFile(
     val compression: String? = null,
     /** Bytes on the phone once unpacked (the store), when known. */
     val rawBytes: Long? = null,
-    /** The tiles' schema ("openmaptiles 3.16.0") or the store's schema version. */
+    /** The store's schema version. */
     val schema: String? = null,
 ) {
     /** The URL of a file published whole. */
@@ -38,12 +38,12 @@ data class PackFile(
     val diskBytes: Long get() = rawBytes ?: bytes
 
     companion object {
-        const val TILES = "tiles"
+        const val ATLAS = "atlas"
         const val PLACES = "places"
     }
 }
 
-/** A region Atlas offers as a ready-made offline pack: tiles and places built on GitHub from a Geofabrik extract. */
+/** A region Atlas offers as a ready-made offline pack: its region pack and places, built on GitHub from a Geofabrik extract. */
 data class Pack(
     val id: String,
     val name: String,
@@ -58,7 +58,6 @@ data class Pack(
     val release: String?,
     val files: List<PackFile>,
 ) {
-    val tiles: PackFile? get() = files.firstOrNull { it.kind == PackFile.TILES }
     val places: PackFile? get() = files.firstOrNull { it.kind == PackFile.PLACES }
 
     /** Bytes to download for the whole pack. */
@@ -119,23 +118,6 @@ class PackCatalog(
 
     /** The packs whose box holds [p], the smallest region first. */
     suspend fun covering(p: LatLon): List<Pack> = packs().filter { it.covers(p) }.sortedBy { it.bbox.width * it.bbox.height }
-
-    /** A pack's tiles to read remotely by range (its parts joined when it was split). */
-    fun remoteTiles(pack: Pack): ByteRangeSource {
-        val f = pack.tiles ?: throw IllegalArgumentException("pack ${pack.id} has no tiles")
-        return remote(f)
-    }
-
-    /** Opens a pack's tiles in place, without downloading them: the map can show a region before it is saved. */
-    suspend fun openTiles(pack: Pack): PmTiles {
-        val src = remoteTiles(pack)
-        return try { PmTiles.open(src) } catch (e: Throwable) { src.close(); throw e }
-    }
-
-    /** Any pack file read by range. */
-    fun remote(file: PackFile): ByteRangeSource =
-        if (!file.isSplit) HttpRangeSource(file.url, client)
-        else PartedRangeSource(file.parts.map { HttpRangeSource(it.url, client) to it.bytes })
 
     companion object {
         const val DEFAULT_URL = "https://github.com/atlas-maps-app/Atlas/releases/download/packs-latest/packs.json"
@@ -208,48 +190,5 @@ class PackCatalog(
                 tmp.renameTo(f)
             }
         }
-    }
-}
-
-/** A file published in parts, read as one: a range is read from each part it spans and joined. */
-class PartedRangeSource(private val parts: List<Pair<ByteRangeSource, Long>>) : ByteRangeSource {
-    private val starts = LongArray(parts.size + 1).also { s -> for (i in parts.indices) s[i + 1] = s[i] + parts[i].second }
-
-    /** The whole file's size. */
-    val size: Long get() = starts[parts.size]
-
-    override val name: String get() = parts.firstOrNull()?.first?.name?.substringBeforeLast('.') ?: "parts"
-
-    override suspend fun read(offset: Long, length: Int): ByteArray {
-        require(offset >= 0 && length >= 0) { "bad range $offset+$length" }
-        val end = minOf(offset + length, size)
-        if (offset >= end) return ByteArray(0)
-        val out = ByteArray((end - offset).toInt())
-        var p = offset
-        var i = partAt(p)
-        while (p < end) {
-            val from = p - starts[i]
-            val n = minOf(end, starts[i + 1]) - p
-            val got = parts[i].first.read(from, n.toInt())
-            if (got.size.toLong() != n) throw IOException("$name part $i gave ${got.size} of $n bytes at $from")
-            got.copyInto(out, (p - offset).toInt())
-            p += n
-            i++
-        }
-        return out
-    }
-
-    private fun partAt(offset: Long): Int {
-        var lo = 0
-        var hi = parts.size - 1
-        while (lo < hi) {
-            val mid = (lo + hi + 1) ushr 1
-            if (starts[mid] <= offset) lo = mid else hi = mid - 1
-        }
-        return lo
-    }
-
-    override fun close() {
-        for ((s, _) in parts) s.close()
     }
 }

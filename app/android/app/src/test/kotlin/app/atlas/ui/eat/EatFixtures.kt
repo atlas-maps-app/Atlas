@@ -4,9 +4,7 @@ import android.content.Context
 import app.atlas.Services
 import app.atlas.ServicesConfig
 import app.atlas.search.PlaceStore
-import app.atlas.testing.FixtureTiles
 import app.atlas.testing.Fixtures
-import app.atlas.tiles.TileStack
 import org.robolectric.RuntimeEnvironment
 import java.io.File
 import java.nio.file.Files
@@ -34,20 +32,23 @@ object EatFixtures {
             root = Files.createTempDirectory("atlas-eat").toFile(),
             demoLocation = Services.WESTERKERK,
             offline = true,
-            tiles = TileStack(listOf(FixtureTiles())),
+            mapEngine = false,
             placeStores = if (places) listOf(store) else emptyList(),
             clock = clock,
         ),
     )
 
-    /** Services offline in a world with no tiles and no places at all: a phone that has downloaded nothing. */
+    /**
+     * Services offline where the phone holds nothing at all: no region downloaded, and Utrecht, beyond the bundled
+     * Westerkerk pack.
+     */
     fun emptyWorld(clock: Clock = Fixtures.evening, context: Context = RuntimeEnvironment.getApplication()): Services = Services(
         context,
         ServicesConfig(
             root = Files.createTempDirectory("atlas-eat-empty").toFile(),
-            demoLocation = Services.WESTERKERK,
+            demoLocation = app.atlas.geo.LatLon(52.0907, 5.1214),
             offline = true,
-            tiles = TileStack(emptyList()),
+            mapEngine = false,
             placeStores = emptyList(),
             clock = clock,
         ),

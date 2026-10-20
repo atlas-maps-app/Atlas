@@ -18,7 +18,7 @@ Checked against the official release pages and Maven metadata on 13 October 2026
 | Module | What it is |
 |---|---|
 | `core` | Geometry and the shared model: LatLon, Mercator and tiles, polylines and snapping, Earcut, packed R-tree, shapes and route corridors, Plus Codes, UTM/MGRS, the coordinate parser, sun and moon, quantities in four unit systems; Place, Route, Step, Fix |
-| `tiles` | Vector tiles: our own MVT decoder, PMTiles, MBTiles, OpenFreeMap online with a cache, overzoom, offline regions, the packs catalog |
+| `tiles` | The published packs' catalogue and downloads (region packs and place stores on GitHub, verified by SHA-256, resumed by range), and the protobuf and JSON readers the packer shares. Map tiles are retired: the map and the features read Atlas's own region packs |
 | `render` | Atlas's map engine: `render/*.py` ported 1:1 to Kotlin (byte-identical SVG), the `.atlas` region packs, and the live glue (`render.live`: the map camera in the engine's terms, tolerance bands, the live moment from the forecast, the packs library) |
 | `rendertiles` | Plain Kotlin: render tiles, stage P of the vector engine. The port's own loaded scene written as format-3 render packs (columnar layers in zstd chunks, keep codes, the renders' derived values), the packer's `render-tiles` command, and a reference reader in its test fixtures |
 | `anchor` | Plain Kotlin: the SVG model and parser the engine's renders are read into (`app.atlas.mapview.svg`), and the GPU's anchors, renders lifted into world space; shared by the phone and the packer |
@@ -43,7 +43,7 @@ Checked against the official release pages and Maven metadata on 13 October 2026
 adb install -r app/build/outputs/apk/debug/app-debug.apk && adb shell am start -n app.atlas/.MainActivity
 ```
 
-- **Tests run on real data.** Most modules test against `testdata/omt` (real OpenFreeMap tiles around the Westerkerk) and the repo's `data/ams/raw.json`; the map against the app's bundled region pack (`app/src/main/assets/packs/amsterdam.atlas`).
+- **Tests run on real data.** Most modules test against the repo's `data/ams/raw.json` (Overpass's answer for the canal ring) and the app's bundled region pack made from it (`app/src/main/assets/packs/amsterdam.atlas`).
 - **Screenshots.** Robolectric's native graphics draws real Canvas and Compose pixels on the JVM. The map and screen tests leave PNGs under each module's `build/outputs/roborazzi`.
 - **Robolectric runs SDK 34.** SDK 35 and later need JDK 21, which this Mac lacks.
 - **Online tests are opt-in.** Tests that need the internet run only with `-Datlas.online=true`.
@@ -55,6 +55,6 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk && adb shell am start -
 - `.github/workflows/android.yml` builds and tests every push. It keeps the APK, the reports and the screenshots as artifacts, then opens the APK on an Android 15 emulator.
 - The emulator run follows `ci/smoke.sh`: one screenshot per screen (MainActivity's `atlas.screen` extra), plus frame timings and any crash.
 - `release.yml` publishes a signed APK for a `v*` tag.
-- `packs.yml` builds the offline packs (Planetiler tiles and a place store per region in `packs/regions.json`) and publishes them as release assets.
+- `packs.yml` builds the offline packs (a region pack and a place store per region in `packs/regions.json`) and publishes them as release assets.
 
 The emulator cannot run from a Claude session on this Mac, because the Hypervisor framework reports unsupported. Use GitHub's, run `emulator -avd atlas` from a terminal of your own, or connect a phone over USB.

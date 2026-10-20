@@ -48,12 +48,6 @@ import app.atlas.services.SettingsStore
 import app.atlas.services.SwitchableLocation
 import app.atlas.services.SystemConnectivity
 import app.atlas.services.Voice
-import app.atlas.tiles.MbTiles
-import app.atlas.tiles.OpenFreeMapSource
-import app.atlas.tiles.RegionLibrary
-import app.atlas.tiles.TileCache
-import app.atlas.tiles.TileSource
-import app.atlas.tiles.TileStack
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -64,7 +58,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -81,16 +74,14 @@ data class ServicesConfig(
     val root: File? = null,
     /** Start at this demo location instead of the phone's (CI: the Westerkerk). */
     val demoLocation: LatLon? = null,
-    /** Never touch the network: no online tiles, no providers; screens show their offline states. */
+    /** Never touch the network: no Overpass, no providers; screens show their offline states. */
     val offline: Boolean = false,
-    /** Tiles to draw instead of the offline packs and OpenFreeMap (tests: the fixture tiles). */
-    val tiles: TileSource? = null,
     /** Place stores to search instead of the downloaded regions' (tests: the Amsterdam extract). */
     val placeStores: List<PlaceSource>? = null,
     /** The time and time zone screens show and reason with (tests: a fixed evening in Amsterdam). */
     val clock: Clock = Clock.systemDefaultZone(),
-    /** Wire the map engine to this app's region packs ([MapData]); null: yes, unless test [tiles] are given. */
-    val mapEngine: Boolean? = null,
+    /** Wire the map engine to this app's region packs ([MapData]); tests that draw no map leave it off. */
+    val mapEngine: Boolean = true,
 )
 
 /** The folders Atlas keeps its data in. */
@@ -98,7 +89,6 @@ class Dirs(val files: File, val cache: File) {
     val settings = File(files, "settings/settings.preferences_pb")
     val keys = File(files, "settings/keys.preferences_pb")
     val regions = File(files, "regions")
-    val tiles = File(cache, "tiles")
     val places = File(files, "places")
     val segments = File(files, "routing/segments")
     val profiles = File(files, "routing/profiles")
@@ -107,8 +97,8 @@ class Dirs(val files: File, val cache: File) {
 
 /**
  * Every long-lived object of the app, built lazily on first use, by hand (no DI framework): settings and keys, HTTP,
- * the tile stack (offline packs, the cache, OpenFreeMap), places, routing, weather, ratings, chargers, location, the
- * voice and the offline regions. Screens reach it through `LocalServices`; features add their own lazily built
+ * the map's data and the features' (OpenStreetMap: packs on the phone, region stores, Overpass), places, routing,
+ * weather, ratings, chargers, location, the voice and the offline regions. Screens reach it through `LocalServices`; features add their own lazily built
  * services here (append-only).
  */
 class Services(context: Context, val config: ServicesConfig = ServicesConfig()) : AutoCloseable {
@@ -136,26 +126,6 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
     /** The one HTTP client of the providers: shared pool, disk cache, polite per-host limits. */
     val http: Http by lazy { Http(cacheDir = dirs.http) }
 
-    // ---- Tiles --------------------------------------------------------------------------------------------------
-
-    private val tileCacheLazy = lazy { dirs.tiles.mkdirs(); TileCache(File(dirs.tiles, "cache.mbtiles")) }
-    val tileCache: TileCache by tileCacheLazy
-
-    /** OpenFreeMap online, reading through [tileCache]; it shares the HTTP pool but not its disk cache (tiles have their own). */
-    val openFreeMap: OpenFreeMapSource by lazy { OpenFreeMapSource(cache = tileCache, client = http.client.newBuilder().cache(null).build()) }
-
-    val regionLibrary: RegionLibrary by lazy { RegionLibrary(dirs.regions) }
-
-    private val tileState = MutableStateFlow(config.tiles)
-    /** The packs in the published stack; guarded by [tileState]. */
-    private var openPacks: List<MbTiles> = emptyList()
-
-    /** What the map draws: offline packs first, then OpenFreeMap through the cache. Null until built (a few ms). */
-    val tiles: StateFlow<TileSource?> by lazy {
-        if (config.tiles == null) scope.launch(Dispatchers.IO) { rebuildTiles() }
-        tileState.asStateFlow()
-    }
-
     private val regionVersion = MutableStateFlow(0)
 
     /** Bumped whenever offline files change, so anything built from them can rebuild. */
@@ -163,29 +133,13 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
 
     /** Tells every service that offline files changed (a region downloaded, updated or deleted). */
     fun reloadRegions() {
-        if (config.tiles == null) scope.launch(Dispatchers.IO) { rebuildTiles() }
         if (config.placeStores == null) scope.launch(Dispatchers.IO) { syncPlaceStores(placeStores) }
+        // the map and the features read the regions' own packs too
+        if (mapDataLazy.isInitialized()) {
+            mapData.packs.rescan()
+            app.atlas.mapview.MapEngine.invalidate()
+        }
         regionVersion.value++
-    }
-
-    /**
-     * Opens the packs on the phone and publishes a new stack. Serialised: two rebuilds at once (two regions finishing
-     * together) must not publish one stack while closing its packs as the other's "old" ones.
-     */
-    private fun rebuildTiles() = synchronized(tileState) {
-        val packs = regionLibrary.openPacks()
-        val sources = buildList<TileSource> {
-            addAll(packs)
-            if (!config.offline) add(openFreeMap) else add(tileCache)
-        }
-        val old = openPacks
-        openPacks = packs
-        tileState.value = TileStack(sources)
-        // Readers of the old stack may still be mid-tile: close its packs a little later.
-        scope.launch {
-            delay(10_000)
-            old.forEach { runCatching { it.close() } }
-        }
     }
 
     /** The saved camera, read once at start so the first frame of the map is already in place. */
@@ -225,10 +179,10 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         SearchEngine(placeStores, geocoder = if (config.offline) null else geocoder, overpass = if (config.offline) null else overpass)
     }
 
-    /** Nearby places by category (the Map home's row and needs): the place stores, else the tiles, then online. */
+    /** Nearby places by category (the Map home's row and needs): the place stores, else the map's packs, then online. */
     val places: PlaceFinder by lazy {
         LayeredPlaceFinder(
-            tiles = { tiles.value },
+            local = { localData },
             overpass = { if (config.offline) null else overpass },
             online = { connectivity.online.value },
             store = { placeStores },
@@ -281,8 +235,8 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         val memoryClass = this.context.getSystemService(ActivityManager::class.java)?.memoryClass ?: 64
         // Road limits for trucks and campers, and bridge clearances and depths for boats (the water router uses this router).
         val restrictions = if (config.offline) null else OverpassRestrictionSource({ ql -> overpass.raw(ql) }, OverpassRestrictionSource.Scope.BOTH)
-        // Street names for the instructions come from the map tiles (BRouter's data has none).
-        BRouterRouter(dirs.segments, dirs.profiles, memoryClassMb = memoryClass, restrictions = restrictions, namer = app.atlas.ui.go.TileWayNamer({ tiles.value }))
+        // Street names for the instructions come from the map's packs, else Overpass (BRouter's data has none).
+        BRouterRouter(dirs.segments, dirs.profiles, memoryClassMb = memoryClass, restrictions = restrictions, namer = localData.wayNamer())
     }
 
     /** Charging stops for the EV planner, from every charger source that is ready, merged. */
@@ -338,8 +292,10 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
 
     // ---- The map's engine ----------------------------------------------------------------------------------------
 
+    private val mapDataLazy = lazy { app.atlas.services.MapData(this) }
+
     /** The map's region packs and the live moment's forecast, wired to every map (the 1:1 engine draws from them). */
-    val mapData: app.atlas.services.MapData by lazy { app.atlas.services.MapData(this) }
+    val mapData: app.atlas.services.MapData by mapDataLazy
 
     // ---- Features on Atlas's own data ----------------------------------------------------------------------------
 
@@ -365,14 +321,12 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
     var ciDemo: Boolean = false
 
     init {
-        if (config.mapEngine ?: (config.tiles == null)) mapData.wire()
+        if (config.mapEngine) mapData.wire()
     }
 
     override fun close() {
         scope.cancel()
-        synchronized(tileState) { openPacks.forEach { runCatching { it.close() } } }
         synchronized(openStores) { openStores.values.forEach { runCatching { it.close() } } }
-        if (tileCacheLazy.isInitialized()) runCatching { tileCache.close() }
         if (savedLazy.isInitialized()) runCatching { saved.close() }
         if (localDataLazy.isInitialized()) runCatching { localData.close() }
     }

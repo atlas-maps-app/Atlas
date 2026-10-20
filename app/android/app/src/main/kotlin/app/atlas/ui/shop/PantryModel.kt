@@ -30,7 +30,7 @@ internal class PantryCounts(
             for (shelf in Shelf.entries) {
                 counts[shelf] = if (shelf == Shelf.LATE) {
                     // Without readable hours nobody can say who is open late: unknown (-1), not none.
-                    if (area.sketchOnly || area.places.none { it.hasHours }) ShopArea.Count(UNKNOWN, open = true)
+                    if (area.places.none { it.hasHours }) ShopArea.Count(UNKNOWN, open = true)
                     else ShopArea.Count(placesOf(shelf, area, at).size, open = true)
                 } else {
                     area.count(area.places.filter { shelf.filter.matches(it.tags) }, at)

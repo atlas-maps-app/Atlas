@@ -12,8 +12,7 @@ import app.atlas.search.PlaceSource
 import app.atlas.search.byFilter
 import app.atlas.services.OverpassSelectors
 import app.atlas.services.PlaceOrigin
-import app.atlas.services.TilePlaces
-import app.atlas.tiles.TileSource
+import app.atlas.services.LocalData
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -32,24 +31,21 @@ internal data class AreaPlaces(
     val error: String? = null,
     val loading: Boolean = false,
 ) {
-    /** True when the places carry every tag (opening hours, brands): from a region on the phone or Overpass. */
-    val full: Boolean get() = origin != PlaceOrigin.TILES
-
     companion object {
-        val Loading = AreaPlaces(emptyList(), PlaceOrigin.TILES, loading = true)
+        val Loading = AreaPlaces(emptyList(), PlaceOrigin.PACK, loading = true)
     }
 }
 
 /**
  * Finds the places a shop screen shows, in layers like the rest of Atlas: the downloaded region's place store first
- * (offline, every tag); where the phone has no region for the area, the map tiles' points of interest (offline, names
- * and kinds only) and then Overpass when online (every tag). One query per screen, with the union of everything it
- * shows; the screen sorts the answer into its shelves itself. Answers are kept for a few minutes per area, so going
- * from the pantry into a shelf and back does not ask again.
+ * (offline, every tag); where the phone has no region for the area, the map's packs on the phone (offline, every tag)
+ * and then Overpass when online, where no pack holds the whole circle. One query per screen, with the union of
+ * everything it shows; the screen sorts the answer into its shelves itself. Answers are kept for a few minutes per
+ * area, so going from the pantry into a shelf and back does not ask again.
  */
 internal class ShopFinder(
     private val store: () -> PlaceSource,
-    private val tiles: () -> TileSource?,
+    private val local: () -> LocalData?,
     private val overpass: () -> app.atlas.providers.Overpass?,
     private val online: () -> Boolean,
     private val nowMillis: () -> Long = System::currentTimeMillis,
@@ -79,20 +75,23 @@ internal class ShopFinder(
             emit(answer)
             return@flow
         }
-        val sketch = tiles()?.let { src ->
-            try {
-                TilePlaces.near(src, centre, radiusM, filter, limit)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                null
-            }
-        }.orEmpty()
+        val packed = try {
+            local()?.inPacks(centre, radiusM, filter, limit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        val sketch = packed?.value.orEmpty()
         val op = overpass()
-        val canAsk = op != null && online()
-        emit(AreaPlaces(sketch, PlaceOrigin.TILES, loading = canAsk))
-        if (!canAsk) return@flow
-        val selectors = OverpassSelectors.of(filter) ?: return@flow emit(AreaPlaces(sketch, PlaceOrigin.TILES))
+        // packs around the whole circle answer fully, with every tag
+        val canAsk = op != null && online() && packed?.partial != false
+        emit(AreaPlaces(sketch, PlaceOrigin.PACK, loading = canAsk))
+        if (!canAsk) {
+            if (packed?.partial == false) remember(cacheKey, AreaPlaces(sketch, PlaceOrigin.PACK))
+            return@flow
+        }
+        val selectors = OverpassSelectors.of(filter) ?: return@flow emit(AreaPlaces(sketch, PlaceOrigin.PACK))
         val answer = try {
             val ql = OverpassQl.places(selectors, OverpassArea.Around(centre, radiusM), timeoutSeconds = 25)
             val found = op!!.places(ql).filter { filter.matches(it.tags) }
@@ -100,9 +99,9 @@ internal class ShopFinder(
         } catch (e: CancellationException) {
             throw e
         } catch (e: IOException) {
-            AreaPlaces(sketch, PlaceOrigin.TILES, error = e.message ?: "offline")
+            AreaPlaces(sketch, PlaceOrigin.PACK, error = e.message ?: "offline")
         } catch (e: Exception) {
-            AreaPlaces(sketch, PlaceOrigin.TILES, error = e.message ?: e.toString())
+            AreaPlaces(sketch, PlaceOrigin.PACK, error = e.message ?: e.toString())
         }
         if (answer.error == null) remember(cacheKey, answer)
         emit(answer)
@@ -116,10 +115,10 @@ internal class ShopFinder(
     companion object {
         private const val KEEP_MS = 5 * 60_000L
 
-        /** For [services]: its place stores, tiles, Overpass and connectivity. */
+        /** For [services]: its place stores, the map's packs, Overpass and connectivity. */
         fun of(services: Services) = ShopFinder(
             store = { services.placeStores },
-            tiles = { services.tiles.value },
+            local = { services.localData },
             overpass = { if (services.config.offline) null else services.overpass },
             online = { !services.config.offline && services.connectivity.online.value },
         )

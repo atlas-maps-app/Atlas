@@ -157,7 +157,6 @@ fun PrivacyScreen(args: Dest.Privacy, nav: Navigator) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OnlineRow(stringResource(R.string.mine_offline_title), "github.com", stringResource(R.string.mine_sent_pack))
                 OnlineRow(stringResource(R.string.mine_offline_layer_routes), "brouter.de", stringResource(R.string.mine_sent_routing))
-                OnlineRow(stringResource(R.string.mine_offline_layer_map), "tiles.openfreemap.org", stringResource(R.string.mine_sent_tiles))
             }
         }
         exported?.let { BText(stringResource(R.string.mine_privacy_exported, it), bt(12f, 500, 15.5f), 0xFF178A4E, Modifier.padding(horizontal = 8.dp), lines = 2) }
@@ -193,7 +192,7 @@ internal fun sentLine(id: String): String = stringResource(
         "nominatim", "photon" -> R.string.mine_sent_words
         "mangrove" -> R.string.mine_sent_mangrove
         "foursquare", "yelp", "tripadvisor" -> R.string.mine_sent_ratings
-        "open-meteo" -> R.string.mine_sent_weather
+        "open-meteo", "met-norway" -> R.string.mine_sent_weather
         "wikidata" -> R.string.mine_sent_wikidata
         "osm-notes" -> R.string.mine_sent_notes
         "transitous" -> R.string.mine_sent_transit
