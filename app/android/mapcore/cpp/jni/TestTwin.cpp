@@ -389,14 +389,22 @@ Result draw(const Request& r) {
         field_cache.worker().request(fx::size_of(camera->width_px, camera->height_px, camera->density));
         field_cache.worker().wait_idle();
     }
-    // Frames until the world settles: the cover's tiles built and drawn, the sun's bits in.
+    // Frames until the world settles: the cover's tiles built and drawn, the sun's bits in; or nothing is under way,
+    // what is missing waits for room in the heaps (a tile that failed to build), and every resident tile is drawn (no
+    // idle tile the world may yet let go of to make room), a few frames running.
     int frames = 0;
+    int waiting = 0;
     for (; frames < max_settle_frames; ++frames) {
         if (!frame_at(0.02 * frames)) return out;
         w.residency().wait_idle();
         if (w.sun() != nullptr) w.sun()->wait_idle();
         w.pack_stage().wait_idle(); // the packs' own stage T (scene/Packs.hpp)
-        if (frames >= 2 && w.residency().stats().pending == 0 && w.cover()->missing() == 0) break;
+        const scene::ResidencyStats residency = w.residency().stats();
+        if (frames >= 2 && residency.pending == 0 && w.cover()->missing() == 0) break;
+        const bool stuck =
+            residency.pending == 0 && residency.waiting > 0 && residency.resident <= w.cover()->tiles().size();
+        waiting = stuck ? waiting + 1 : 0;
+        if (waiting >= 3) break;
     }
     // Then a second on, past every fade, twice (the frame slots).
     const double settled = (0.02 * frames) + 1.0;
@@ -409,8 +417,20 @@ Result draw(const Request& r) {
         }
     }
     out.counters.push_back(std::format("total {}", frame::text_of(builder.total())));
-    out.notes = std::format("{} frames to settle; {} tiles drawn, {} resident, {} items", frames + 1,
-                            w.cover()->tiles().size(), w.residency().stats().resident, w.items()->live());
+    out.notes = std::format("{} frames to settle; {} tiles drawn, {} resident, {} failed and waiting, {} items",
+                            frames + 1, w.cover()->tiles().size(), w.residency().stats().resident,
+                            w.residency().stats().waiting, w.items()->live());
+    {
+        // What the heaps hold: their use of their capacity, and the use by kind, in MiB.
+        const scene::HeapStats heaps = w.heaps()->stats();
+        const auto mib = [](vk::DeviceSize n) { return static_cast<double>(n) / (1024.0 * 1024.0); };
+        out.notes += std::format("; heaps {:.1f} of {:.1f} MiB", mib(heaps.total_used()), mib(heaps.capacity));
+        for (std::size_t k = 0; k < scene::heap_kinds; ++k) {
+            out.notes += std::format("{} {} {:.1f}", k == 0 ? " (" : ", ",
+                                     scene::name_of(static_cast<scene::HeapKind>(k)), mib(heaps.used[k]));
+        }
+        out.notes += ")";
+    }
     if (r.pixels) {
         auto pixels = target.read(target.latest());
         if (!pixels) {

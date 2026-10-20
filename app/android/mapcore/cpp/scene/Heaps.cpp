@@ -47,12 +47,6 @@ std::string_view name_of(HeapKind kind) noexcept {
     return "?";
 }
 
-vk::DeviceSize HeapStats::total_capacity() const noexcept {
-    vk::DeviceSize n = 0;
-    for (const vk::DeviceSize c : capacity) n += c;
-    return n;
-}
-
 vk::DeviceSize HeapStats::total_used() const noexcept {
     vk::DeviceSize n = 0;
     for (const vk::DeviceSize c : used) n += c;
@@ -61,97 +55,90 @@ vk::DeviceSize HeapStats::total_used() const noexcept {
 
 gpu::Result<std::unique_ptr<Heaps>> Heaps::create(const gpu::Device& device, const HeapBudget& budget) {
     std::unique_ptr<Heaps> self(new Heaps(device, budget)); // NOLINT(cppcoreguidelines-owning-memory)
-    for (std::size_t k = 0; k < heap_kinds; ++k) {
-        Heap& heap = self->heaps_[k];
-        ATLAS_GPU_LET(buffer, device.memory().buffer(budget.initial[k], heap_usage, gpu::MemoryUse::upload));
-        heap.buffer = std::move(buffer);
-        ATLAS_GPU_LET(block, make_block(budget.initial[k]));
-        heap.blocks.push_back(block);
-        heap.starts.push_back(0);
-    }
+    ATLAS_GPU_LET(buffer,
+                  device.memory().buffer(std::min(budget.initial, budget.total), heap_usage, gpu::MemoryUse::upload));
+    self->buffer_ = std::move(buffer);
+    ATLAS_GPU_LET(block, make_block(budget.total));
+    self->block_ = block;
     return self;
 }
 
 Heaps::~Heaps() {
-    for (Heap& heap : heaps_) {
-        // Every range goes with its blocks (VMA asserts on a block with live allocations: clear them first).
-        for (VmaVirtualBlock block : heap.blocks) {
-            vmaClearVirtualBlock(block);
-            vmaDestroyVirtualBlock(block);
-        }
+    // Every range goes with the block (VMA asserts on a block with live allocations: clear it first).
+    if (block_ != nullptr) {
+        vmaClearVirtualBlock(block_);
+        vmaDestroyVirtualBlock(block_);
     }
 }
 
-vk::DeviceSize Heaps::total_capacity() const {
-    vk::DeviceSize n = 0;
-    for (const Heap& heap : heaps_) n += heap.buffer.size();
-    return n;
-}
-
-gpu::Result<void> Heaps::grow(Heap& heap, HeapKind kind, vk::DeviceSize at_least) {
-    const vk::DeviceSize old_size = heap.buffer.size();
-    const vk::DeviceSize others = total_capacity() - old_size;
-    vk::DeviceSize size = std::max(old_size * 2, old_size + at_least);
-    if (others + size > budget_.total) size = budget_.total - others;
-    if (size < old_size + at_least) {
-        return gpu::fail(std::format("the {} heap cannot grow by {} bytes: the heaps hold {} of their {} bytes",
-                                     name_of(kind), at_least, total_capacity(), budget_.total));
-    }
+gpu::Result<void> Heaps::grow(vk::DeviceSize end) {
+    const vk::DeviceSize old_size = buffer_.size();
+    const vk::DeviceSize size = std::min(std::max(old_size * 2, end), budget_.total);
     ATLAS_GPU_LET(buffer, device_.memory().buffer(size, heap_usage, gpu::MemoryUse::upload));
-    // The old bytes at the same offsets, so every range keeps its place; the new space a block of its own.
-    std::memcpy(buffer.bytes().data(), heap.buffer.bytes().data(), static_cast<std::size_t>(old_size));
+    // The old bytes at the same offsets, so every range keeps its place.
+    std::memcpy(buffer.bytes().data(), buffer_.bytes().data(), static_cast<std::size_t>(old_size));
     buffer.flush();
-    ATLAS_GPU_LET(block, make_block(size - old_size));
-    heap.blocks.push_back(block);
-    heap.starts.push_back(old_size);
     {
         const std::scoped_lock lock(render_lock_);
-        old_.push_back(OldBuffer{.buffer = std::move(heap.buffer), .frame = ~std::uint64_t{0}});
+        old_.push_back(OldBuffer{.buffer = std::move(buffer_), .frame = ~std::uint64_t{0}});
     }
-    heap.buffer = std::move(buffer);
+    buffer_ = std::move(buffer);
     version_.fetch_add(1, std::memory_order_release);
     growths_.fetch_add(1, std::memory_order_relaxed);
     return {};
 }
 
+std::optional<HeapRange> Heaps::place(HeapKind kind, std::uint32_t bytes, std::uint32_t alignment) {
+    const VmaVirtualAllocationCreateInfo info{.size = bytes, .alignment = alignment, .flags = 0, .pUserData = nullptr};
+    VmaVirtualAllocation allocation = nullptr;
+    VkDeviceSize offset = 0;
+    if (vmaVirtualAllocate(block_, &info, &allocation, &offset) != VK_SUCCESS) return std::nullopt;
+    used_[static_cast<std::size_t>(kind)] += bytes;
+    ++ranges_[static_cast<std::size_t>(kind)];
+    return HeapRange{.kind = kind,
+                     .block = 0,
+                     .offset = static_cast<std::uint32_t>(offset),
+                     .size = bytes,
+                     .allocation = std::bit_cast<std::uint64_t>(allocation)};
+}
+
+void Heaps::unplace(const HeapRange& range) {
+    vmaVirtualFree(block_, allocation_of(range.allocation));
+    used_[static_cast<std::size_t>(range.kind)] -= range.size;
+    --ranges_[static_cast<std::size_t>(range.kind)];
+}
+
 gpu::Result<HeapRange> Heaps::allocate(HeapKind kind, std::uint32_t bytes, std::uint32_t alignment) {
     ATLAS_ASSERT(std::has_single_bit(alignment), "a heap range's alignment is a power of two");
     if (bytes == 0) return HeapRange{.kind = kind, .block = 0, .offset = 0, .size = 0, .allocation = 0};
-    Heap& heap = heaps_[static_cast<std::size_t>(kind)];
-    const VmaVirtualAllocationCreateInfo info{.size = bytes, .alignment = alignment, .flags = 0, .pUserData = nullptr};
-    auto attempt = [&]() -> std::optional<HeapRange> {
-        for (std::size_t b = 0; b < heap.blocks.size(); ++b) {
-            VmaVirtualAllocation allocation = nullptr;
-            VkDeviceSize offset = 0;
-            if (vmaVirtualAllocate(heap.blocks[b], &info, &allocation, &offset) == VK_SUCCESS) {
-                heap.used += bytes;
-                ++heap.ranges;
-                return HeapRange{.kind = kind,
-                                 .block = static_cast<std::uint32_t>(b),
-                                 .offset = static_cast<std::uint32_t>(heap.starts[b] + offset),
-                                 .size = bytes,
-                                 .allocation = std::bit_cast<std::uint64_t>(allocation)};
-            }
-        }
-        return std::nullopt;
-    };
+    HeapRange range;
     {
-        const std::scoped_lock lock(heap.blocks_lock);
-        if (auto r = attempt()) return *r;
+        const std::scoped_lock lock(blocks_lock_);
+        const std::optional<HeapRange> placed = place(kind, bytes, alignment);
+        if (!placed) {
+            vk::DeviceSize used = 0;
+            for (const vk::DeviceSize u : used_) used += u;
+            return gpu::fail(std::format("the heaps cannot grow by {} bytes for {}: {} of their {} bytes are used",
+                                         bytes, name_of(kind), used, budget_.total));
+        }
+        if (vk::DeviceSize{placed->offset} + placed->size <= buffer_.size()) return *placed;
+        range = *placed;
     }
-    // Full: grow, with no writer active (the exclusive lock), unless another thread grew it meanwhile.
-    const std::unique_lock exclusive(heap.lock);
-    const std::scoped_lock lock(heap.blocks_lock);
-    if (auto r = attempt()) return *r;
-    ATLAS_GPU_CHECK(grow(heap, kind, vk::DeviceSize{bytes} + alignment));
-    if (auto r = attempt()) return *r;
-    return gpu::fail(std::format("a range of {} bytes in the {} heap", bytes, name_of(kind)));
+    // Beyond the buffer: it grows to hold the range, with no writer active (the exclusive lock), unless another
+    // thread grew it meanwhile.
+    const std::unique_lock exclusive(lock_);
+    const std::scoped_lock lock(blocks_lock_);
+    const vk::DeviceSize end = vk::DeviceSize{range.offset} + range.size;
+    if (end > buffer_.size()) {
+        if (auto grown = grow(end); !grown) {
+            unplace(range);
+            return std::unexpected(std::move(grown.error()));
+        }
+    }
+    return range;
 }
 
-Heaps::Writer Heaps::writer(const HeapRange& range) {
-    Heap& heap = heaps_[static_cast<std::size_t>(range.kind)];
-    return {heap.lock, heap.buffer, range.offset, range.size};
-}
+Heaps::Writer Heaps::writer(const HeapRange& range) { return {lock_, buffer_, range.offset, range.size}; }
 
 void Heaps::write(const HeapRange& range, std::span<const std::byte> data, std::uint32_t at) {
     ATLAS_ASSERT(at <= range.size && data.size() <= range.size - at, "a write beyond its heap range");
@@ -159,10 +146,9 @@ void Heaps::write(const HeapRange& range, std::span<const std::byte> data, std::
     std::memcpy(w.bytes().data() + at, data.data(), data.size());
 }
 
-void Heaps::flush(HeapKind kind) {
-    Heap& heap = heaps_[static_cast<std::size_t>(kind)];
-    const std::shared_lock lock(heap.lock);
-    heap.buffer.flush();
+void Heaps::flush() {
+    const std::shared_lock lock(lock_);
+    buffer_.flush();
 }
 
 void Heaps::retire(const HeapRange& range, std::uint64_t frame) {
@@ -189,38 +175,36 @@ void Heaps::collect(std::uint64_t finished) {
         });
         std::erase_if(old_, [&](const OldBuffer& o) { return o.frame <= finished; });
     }
-    for (const HeapRange& r : free_now) {
-        Heap& heap = heaps_[static_cast<std::size_t>(r.kind)];
-        const std::scoped_lock lock(heap.blocks_lock);
-        vmaVirtualFree(heap.blocks[r.block], allocation_of(r.allocation));
-        heap.used -= r.size;
-        --heap.ranges;
+    if (free_now.empty()) return;
+    {
+        const std::scoped_lock lock(blocks_lock_);
+        for (const HeapRange& r : free_now) unplace(r);
     }
+    frees_.fetch_add(1, std::memory_order_release);
 }
 
-vk::Buffer Heaps::buffer(HeapKind kind) const {
-    const Heap& heap = heaps_[static_cast<std::size_t>(kind)];
-    const std::shared_lock lock(heap.lock);
-    return heap.buffer.handle();
+vk::Buffer Heaps::buffer() const {
+    const std::shared_lock lock(lock_);
+    return buffer_.handle();
 }
 
-vk::DeviceSize Heaps::capacity(HeapKind kind) const {
-    const Heap& heap = heaps_[static_cast<std::size_t>(kind)];
-    const std::shared_lock lock(heap.lock);
-    return heap.buffer.size();
+vk::DeviceSize Heaps::capacity() const {
+    const std::shared_lock lock(lock_);
+    return buffer_.size();
 }
 
 std::uint64_t Heaps::version() const noexcept { return version_.load(std::memory_order_acquire); }
 
+std::uint64_t Heaps::frees() const noexcept { return frees_.load(std::memory_order_acquire); }
+
 HeapStats Heaps::stats() const {
     HeapStats s;
-    for (std::size_t k = 0; k < heap_kinds; ++k) {
-        const Heap& heap = heaps_[k];
-        const std::shared_lock lock(heap.lock);
-        const std::scoped_lock blocks(heap.blocks_lock);
-        s.capacity[k] = heap.buffer.size();
-        s.used[k] = heap.used;
-        s.ranges[k] = heap.ranges;
+    {
+        const std::shared_lock lock(lock_);
+        const std::scoped_lock blocks(blocks_lock_);
+        s.capacity = buffer_.size();
+        s.used = used_;
+        s.ranges = ranges_;
     }
     s.growths = growths_.load(std::memory_order_relaxed);
     {

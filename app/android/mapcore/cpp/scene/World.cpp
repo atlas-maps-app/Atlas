@@ -19,10 +19,9 @@ public:
     [[nodiscard]] std::span<const frame::Global> bindings() const noexcept override { return heap_bindings; }
     void update(const frame::FrameState& state, frame::Globals& globals) override {
         // Every frame: a binding that has not changed costs a comparison, and each frame builder drawing the world
-        // (its own layout) gets the heaps' buffers.
-        for (std::size_t k = 0; k < heap_kinds; ++k) {
-            globals.buffer(static_cast<frame::Global>(k), heaps_.buffer(static_cast<HeapKind>(k)));
-        }
+        // (its own layout) gets the heaps' buffer, at every kind's binding.
+        const vk::Buffer buffer = heaps_.buffer();
+        for (const frame::Global g : heap_bindings) globals.buffer(g, buffer);
         heaps_.bound(state.number);
         heaps_.collect(state.number >= gpu::Frames::in_flight ? state.number - gpu::Frames::in_flight : 0);
     }

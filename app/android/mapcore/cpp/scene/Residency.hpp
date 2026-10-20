@@ -159,7 +159,8 @@ struct ResidencyStats {
     std::uint64_t cancelled = 0;
     std::uint64_t failed = 0;
     std::uint64_t released = 0;
-    double build_ms = 0; ///< the workers' time over every tile built
+    std::size_t waiting = 0; ///< tiles whose build failed, not asked again until the heaps have freed a range
+    double build_ms = 0;     ///< the workers' time over every tile built
     std::size_t resident = 0;
     std::size_t native_bytes = 0; ///< the resident tiles' native bytes (ResidentTile::native_bytes)
     std::size_t pending = 0;
@@ -228,6 +229,9 @@ private:
     std::condition_variable idle_;
     std::vector<Job> queue_;                          // sorted: lane, then priority
     std::unordered_map<std::uint64_t, int> underway_; // keys requested, building or published but not taken
+    // Keys whose build failed, with the heaps' frees before it: a tile that found no room is not built again, frame
+    // after frame, until a range has gone back to the heaps.
+    std::unordered_map<std::uint64_t, std::uint64_t> failed_;
     std::vector<std::shared_ptr<ResidentTile>> published_;
     std::uint64_t generation_ = 0;
     unsigned busy_ = 0;

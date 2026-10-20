@@ -13,6 +13,7 @@
 #include "gpu/PipelineCache.hpp"
 #include "scene/Heaps.hpp"
 #include "scene/World.hpp"
+#include "tests/building/fixture.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tiles/layers/Buildings.hpp"
 #include "view/Frames.hpp"
@@ -25,6 +26,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
@@ -32,6 +34,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using namespace atlas;
@@ -140,7 +143,7 @@ TEST_CASE("the geometry heaps allocate, write in place, grow keeping every range
     auto session = test::open_session();
     if (!session) return;
     scene::HeapBudget budget;
-    budget.initial.fill(vk::DeviceSize{64} << 10U);
+    budget.initial = vk::DeviceSize{64} << 10U;
     budget.total = vk::DeviceSize{2} << 20U;
     auto heaps = scene::Heaps::create(*session->device, budget);
     ATLAS_REQUIRE(heaps.has_value(), heaps.error().text());
@@ -155,7 +158,7 @@ TEST_CASE("the geometry heaps allocate, write in place, grow keeping every range
         h.write(*r, pattern);
         ranges.push_back(*r);
     }
-    CHECK(h.capacity(scene::HeapKind::walls) >= 200'000);
+    CHECK(h.capacity() >= 200'000);
     CHECK(h.stats().growths >= 2);
     CHECK(h.version() >= 2);
     // Every range kept its bytes at its offset through the growths.
@@ -179,6 +182,57 @@ TEST_CASE("the geometry heaps allocate, write in place, grow keeping every range
     CHECK_FALSE(huge.has_value());
     if (!huge) CHECK(huge.error().what.find("cannot grow") != std::string::npos);
     (void)session->take_messages();
+}
+
+TEST_CASE("a tile that finds no room in the heaps is not built again until a range has gone back to them") {
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    constexpr std::array<std::string_view, 1> buildings{"buildings"};
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, frame::make_passes(buildings));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    frame::FrameBuilder& fb = **builder;
+    // Heaps of 1 KiB: the synthetic tile's walls do not fit.
+    auto world =
+        scene::World::create(*session->device, fb.passes(),
+                             {.workers = 1, .heaps = {.initial = 1024, .total = 1024}, .sun = {.enabled = false}});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    const std::string path =
+        test::building::write_pack(test::building::tile(), test::building::tile_features, "no-room-test");
+    auto added = w.store().add({.id = "synthetic", .kind = tiles::PackKind::bundled, .path = path});
+    ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+    style::CameraState camera = home();
+    camera.latitude = 52.37422;
+    camera.longitude = 4.88486;
+    camera.distance = 260.0;
+    fb.set_inputs({.camera = camera, .scene = &w});
+    const auto frames = [&](std::uint64_t first, std::uint64_t last) {
+        for (std::uint64_t n = first; n <= last; ++n) {
+            ATLAS_REQUIRE(fb.derive(n, 0, nullptr));
+            w.update(fb.state());
+            w.residency().wait_idle();
+        }
+    };
+    frames(1, 3);
+    const scene::ResidencyStats tried = w.residency().stats();
+    CHECK(tried.failed >= 1);
+    CHECK(tried.waiting >= 1);
+    CHECK(tried.resident == 0);
+    frames(4, 20);
+    CHECK(w.residency().stats().failed == tried.failed); // not built again, frame after frame
+    // A range back to the heaps: each waiting tile is tried once more.
+    auto range = w.heaps()->allocate(scene::HeapKind::points, 16);
+    ATLAS_REQUIRE(range.has_value(), range.error().text());
+    w.heaps()->retire(*range, 0);
+    w.heaps()->collect(0);
+    frames(21, 24);
+    CHECK(w.residency().stats().failed == tried.failed + tried.waiting);
+    CHECK(w.residency().stats().waiting == tried.waiting);
+    for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
 }
 
 TEST_CASE("the world builds the cover's tiles on its workers, draws their visible cells and lets them go") {
@@ -559,8 +613,8 @@ TEST_CASE("the world's providers fill set 1's globals: the heaps and the sun bou
     frame_at(2.0);
     frame_at(2.1);
     const frame::FrameLayout& layout = (*builder)->layout();
-    CHECK(layout.bound_buffer(frame::Global::points) == w.heaps()->buffer(scene::HeapKind::points));
-    CHECK(layout.bound_buffer(frame::Global::labels) == w.heaps()->buffer(scene::HeapKind::labels));
+    CHECK(layout.bound_buffer(frame::Global::points) == w.heaps()->buffer());
+    CHECK(layout.bound_buffer(frame::Global::labels) == w.heaps()->buffer());
     REQUIRE(w.sun()->buffer());
     CHECK(layout.bound_buffer(frame::Global::sun_bits) == w.sun()->buffer().handle());
     // The frame drawn, as the passes read it: the Westerkerk's.

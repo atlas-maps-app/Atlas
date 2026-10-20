@@ -87,12 +87,20 @@ void Residency::want(std::span<const Request> requests) {
     {
         const std::scoped_lock lock(mutex_);
         ++generation_;
+        // A failed tile no longer wanted is forgotten: asked for again later (its pack added again), it is built again.
+        std::erase_if(failed_, [&](const auto& f) {
+            return std::ranges::none_of(requests, [&](const Request& r) { return key_of(r.key, r.pack) == f.first; });
+        });
         // What is queued and wanted no more is cancelled; what is wanted and neither resident nor under way is queued.
         std::vector<Job> queue;
         queue.reserve(requests.size());
         for (const Request& r : requests) {
             const std::uint64_t k = key_of(r.key, r.pack);
             if (index_.contains(k)) continue; // resident (the render thread's own map: want runs on it)
+            if (const auto f = failed_.find(k); f != failed_.end()) {
+                if (f->second == heaps_.frees()) continue; // failed, and nothing has gone back to the heaps since
+                failed_.erase(f);
+            }
             const auto under = underway_.find(k);
             if (under != underway_.end() && under->second != 1) continue; // building, or published and not taken
             if (std::ranges::any_of(queue, [&](const Job& j) { return key_of(j.request.key, j.pack) == k; })) continue;
@@ -143,6 +151,7 @@ void Residency::work(const std::stop_token& stop) {
             ++busy_;
         }
         const auto started = std::chrono::steady_clock::now();
+        const std::uint64_t frees = heaps_.frees();
         arena.reset();
         std::shared_ptr<ResidentTile> tile = build(job, zstd, decoder, arena, raw);
         const double ms = ms_since(started);
@@ -158,6 +167,7 @@ void Residency::work(const std::stop_token& stop) {
                 published = published_callback_;
             } else {
                 underway_.erase(k);
+                failed_[k] = frees;
                 ++stats_.failed;
             }
         }
@@ -207,7 +217,7 @@ std::shared_ptr<ResidentTile> Residency::build(const Job& job, tiles::Zstd& zstd
         }
     }
     // The tile's writes, visible to the GPU before the render thread can see the tile.
-    for (std::size_t k = 0; k < heap_kinds; ++k) heaps_.flush(static_cast<HeapKind>(k));
+    heaps_.flush();
     out->published = clock_ ? clock_() : 0.0;
     for (ItemSpec& item : out->items) item.tile = out->handle;
     out->native_bytes = native_bytes_of(*out);
@@ -290,6 +300,7 @@ ResidencyStats Residency::stats() const {
     s.resident = resident_.size();
     s.native_bytes = native_.load(std::memory_order_relaxed);
     s.pending = queue_.size() + busy_ + published_.size();
+    s.waiting = failed_.size();
     return s;
 }
 

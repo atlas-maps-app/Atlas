@@ -19,6 +19,7 @@
 #include <bit>
 #include <chrono>
 #include <cstring>
+#include <span>
 
 namespace atlas::passes {
 
@@ -91,7 +92,7 @@ void Buildings::write_rows(const scene::ResidentTile& tile, const scene::PassTil
     std::vector<std::uint32_t> rows(std::size_t{(b.items + 3) / 4} * 4, 0);
     for (std::uint32_t k = 0; k < b.items && first + k < tile.rows.size(); ++k) rows[k] = tile.rows[first + k];
     heaps->write(mine.ranges[0], std::as_bytes(std::span(rows)), b.rows_at * 16);
-    heaps->flush(scene::HeapKind::walls);
+    heaps->flush();
     rows_written_.insert(tile.handle);
 }
 
@@ -106,7 +107,7 @@ void Buildings::light(const shaders::Theme& theme, std::uint32_t slot, const sce
     building_colours(theme, b.lights, colours_);
     heaps->write(mine.ranges[0], std::as_bytes(std::span(colours_)),
                  (b.colours_at * 16) + (slot * b.faces * 2 * static_cast<std::uint32_t>(sizeof(std::uint32_t))));
-    heaps->flush(scene::HeapKind::walls);
+    heaps->flush();
     lit[slot] = moment_;
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     ++lighting_.tiles;
@@ -123,8 +124,9 @@ void Buildings::update(const frame::FrameState& state) {
     const std::uint32_t index = pass_index_.load(std::memory_order_relaxed);
     if (index == no_index) return;
     // a new moment (the frame block's theme): every tile's colours again, slot by slot, as each is drawn
-    if (std::memcmp(theme_.data(), &state.block.theme, sizeof theme_) != 0 || moment_ == 0) {
-        std::memcpy(theme_.data(), &state.block.theme, sizeof theme_);
+    const std::span<const std::byte> theme = std::as_bytes(std::span(&state.block.theme, 1));
+    if (!std::ranges::equal(theme, theme_) || moment_ == 0) {
+        std::ranges::copy(theme, theme_.begin());
         ++moment_;
     }
     const std::uint32_t slot = state.slot % 2;
@@ -132,7 +134,7 @@ void Buildings::update(const frame::FrameState& state) {
         if (t.drawn == nullptr || index >= t.drawn->passes.size()) continue;
         const scene::ResidentTile& tile = *t.drawn;
         const scene::PassTile& mine = tile.passes[index];
-        const BuildingTile* b = mine.cpu_as<BuildingTile>();
+        const auto* b = mine.cpu_as<BuildingTile>();
         if (b == nullptr || !mine.ranges[0]) continue;
         const std::uint32_t base = mine.ranges[0].offset / 16;
         const std::uint32_t colours = ((base + b->colours_at) * 4) + (slot * 2 * b->faces);
@@ -290,7 +292,7 @@ void Buildings::emit(const frame::FrameState& state, twin::Stream& out, std::uin
     for (const scene::CoverTile& t : state.cover->tiles()) {
         if (t.drawn == nullptr || index >= t.drawn->passes.size()) continue;
         const scene::PassTile& mine = t.drawn->passes[index];
-        const BuildingTile* b = mine.cpu_as<BuildingTile>();
+        const auto* b = mine.cpu_as<BuildingTile>();
         if (b == nullptr || !mine.ranges[0]) continue;
         const scene::Heaps::Writer w = heaps->writer(mine.ranges[0]);
         const std::uint32_t first = first_item(*t.drawn, kind_);
