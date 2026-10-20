@@ -270,7 +270,7 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
         MESSAGE(std::string(name), ": the densest tile's MB by level:", per_level);
         // the heaps' share of the buildings (D2 put a dense tile at about 1.5-2.5 MB): a tile 2 MB at most on average,
         // and the canal ring's centre (14/8414/5384, some 6,800 buildings) within 13 MB at its finest level, 9 MB at
-        // the Main board's (level 7), which the frame's test holds within the heaps' 40 MB
+        // the Main board's (level 7), which the frame's test holds within the heaps' budget (scene/Heaps.hpp)
         CHECK(all_bytes <= tiles * (std::size_t{2} << 20U));
         CHECK(most_bytes <= std::size_t{13} << 20U);
         CHECK(wrong == 0);

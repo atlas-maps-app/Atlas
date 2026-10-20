@@ -9,10 +9,10 @@
 // world's providers (frame::FrameScene::globals): its heaps', its sun's (scene/SunGlobals.hpp), those the passes
 // contribute (frame::Pass::providers, made with WorldOptions::resources) and those added to it.
 //
-// Tiles leave as the budgets ask (D3: 40 MB of heaps; §3: 64 MB of decoded tiles in native memory): a resident tile the
-// cover has not drawn for `idle_seconds` is let go of once the heaps or the resident tiles' native bytes are over
-// `keep_fraction` of their budget, and after `forget_seconds` whatever they hold; its ranges are freed two frames
-// later, after the fences, its native memory at once.
+// Tiles leave as the budgets ask (64 MB of heaps, scene/Heaps.hpp; §3: 64 MB of decoded tiles in native memory): a
+// resident tile the cover has not drawn for `idle_seconds` is let go of once the heaps or the resident tiles' native
+// bytes are over `keep_fraction` of their budget, and after `forget_seconds` whatever they hold; its ranges are freed
+// two frames later, after the fences, its native memory at once.
 #pragma once
 
 #include "frame/FrameBuilder.hpp"

@@ -1,6 +1,6 @@
 // The geometry heaps (plan-vector D5.7, D3 "Streaming", D5.2): one VkBuffer for every layer kind (points, walls,
 // ground, lines, instances, labels), host-visible and device-local on unified-memory phones (gpu::MemoryUse::upload),
-// sub-allocated per tile and kind in one VMA virtual block of the whole budget, 40 MB. The kinds share the one buffer
+// sub-allocated per tile and kind in one VMA virtual block of the whole budget, 64 MB. The kinds share the one buffer
 // and the one block, so a range finds room wherever the budget has it: with a buffer per kind, each doubling within
 // the budget, the Main board at S1 found the budget spent on capacity while a tile's ground did not fit, and with a
 // block per growth the densest tiles' walls (12.7 MB) found no block with room. Workers decode and build a
@@ -53,10 +53,12 @@ struct HeapRange {
     [[nodiscard]] explicit operator bool() const noexcept { return size > 0; }
 };
 
-/// What the heap's buffer starts with and what it may grow to (D3: 40 MB), its virtual block's size.
+/// What the heap's buffer starts with and what it may grow to, its virtual block's size: 64 MB, D3's 40 MB until the
+/// walls' records are 32 bytes (ENGINE.md, step 2), since the canal ring's densest tile (14/8414/5384) holds 13 MB of
+/// walls and its second sweep camera's tiles 50 MB in all.
 struct HeapBudget {
     vk::DeviceSize initial = std::uint64_t{8} << 20U;
-    vk::DeviceSize total = std::uint64_t{40} << 20U;
+    vk::DeviceSize total = std::uint64_t{64} << 20U;
 };
 
 /// What the heap holds: its capacity, and its ranges' bytes and count by kind.
