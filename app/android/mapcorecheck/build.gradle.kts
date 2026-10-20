@@ -289,4 +289,10 @@ tasks.test {
     for (p in listOf("refs", "tier", "only", "phone", "style", "platform", "stage", "commit", "thresholds", "previous", "require")) {
         providers.systemProperty("atlas.likeness.$p").orNull?.let { systemProperty("atlas.likeness.$p", it) }
     }
+    // The desktop render tool (likeness/RenderTool.kt): what to draw, and the PNG it writes, which is drawn again on
+    // every run that asks for one.
+    for (p in listOf("out", "pack", "view", "moment", "size", "mode")) {
+        providers.systemProperty("atlas.render.$p").orNull?.let { systemProperty("atlas.render.$p", it) }
+    }
+    if (providers.systemProperty("atlas.render.out").isPresent) outputs.upToDateWhen { false }
 }

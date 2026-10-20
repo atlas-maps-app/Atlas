@@ -9,6 +9,8 @@ import app.atlas.render.live.LiveCamera
 import app.atlas.render.live.LiveEngine
 import app.atlas.render.live.LiveMoment
 import app.atlas.render.live.LiveRegion
+import app.atlas.render.live.LiveView
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -88,20 +90,33 @@ internal object TestCases {
      * (64 bytes), 224 reserved.
      */
     fun caseBuffer(entry: RefEntry, clear: Int = 0xFFFFFFFF.toInt()): ByteBuffer {
-        val b = ByteBuffer.allocateDirect(CASE_BYTES).order(ByteOrder.LITTLE_ENDIAN)
-        b.putInt(0, MAGIC); b.putInt(4, ABI); b.putInt(8, entry.w); b.putInt(12, entry.h); b.putDouble(16, entry.density)
-        b.putInt(24, clear)
-        b.putInt(28, when (entry.mode) { "structural" -> 0; "full" -> 1; else -> 2 })
-        b.putInt(32, if (entry.o["engine"]?.jsonPrimitive?.content == "false") 0 else 1)
         val v = entry.view
         val m = entry.moment
-        b.putInt(36, if (m?.get("live") != null) 1 else 0)
-        if (v != null) {
-            b.putDouble(40, v.dbl("lat")); b.putDouble(48, v.dbl("lon")); b.putDouble(56, v.dbl("zoom")); b.putDouble(64, v.dbl("bearing"))
-            b.putDouble(72, v.dbl("pitch")); b.putDouble(80, v.dbl("cyDp")); b.putInt(88, v.int("widthDp")); b.putInt(92, v.int("heightDp"))
+        return caseBuffer(
+            entry.w, entry.h, entry.density, entry.mode, entry.o["engine"]?.jsonPrimitive?.content != "false",
+            v?.let { LiveView(it.dbl("lat"), it.dbl("lon"), it.dbl("zoom"), it.dbl("bearing"), it.dbl("pitch"), it.int("widthDp"), it.int("heightDp"), it.dbl("cyDp")) },
+            (m?.get("named") ?: m?.get("live"))?.let { (it as JsonPrimitive).content } ?: "", m?.get("live") != null,
+            entry.o.strOrNull("pack") ?: "", clear,
+        )
+    }
+
+    /** The case buffer of a frame of [w] × [h] px at [density], in [mode], of [view] at [moment] in [pack]. */
+    fun caseBuffer(
+        w: Int, h: Int, density: Double, mode: String, engine: Boolean, view: LiveView?, moment: String, live: Boolean,
+        pack: String, clear: Int = 0xFFFFFFFF.toInt(),
+    ): ByteBuffer {
+        val b = ByteBuffer.allocateDirect(CASE_BYTES).order(ByteOrder.LITTLE_ENDIAN)
+        b.putInt(0, MAGIC); b.putInt(4, ABI); b.putInt(8, w); b.putInt(12, h); b.putDouble(16, density)
+        b.putInt(24, clear)
+        b.putInt(28, when (mode) { "structural" -> 0; "full" -> 1; else -> 2 })
+        b.putInt(32, if (engine) 1 else 0)
+        b.putInt(36, if (live) 1 else 0)
+        if (view != null) {
+            b.putDouble(40, view.lat); b.putDouble(48, view.lon); b.putDouble(56, view.zoom); b.putDouble(64, view.bearing)
+            b.putDouble(72, view.pitch); b.putDouble(80, view.cyDp); b.putInt(88, view.widthDp); b.putInt(92, view.heightDp)
         }
-        put(b, 96, (m?.get("named") ?: m?.get("live"))?.let { (it as JsonPrimitive).content } ?: "")
-        put(b, 160, entry.o.strOrNull("pack") ?: "")
+        put(b, 96, moment)
+        put(b, 160, pack)
         return b
     }
 
@@ -248,17 +263,20 @@ internal object CaseState {
     }
 
     /** The region of a case's pack. */
-    private fun region(entry: RefEntry): LiveRegion = when (val pack = entry.o.strOrNull("pack") ?: "bundled") {
+    fun region(pack: String): LiveRegion = when (pack) {
         "bundled" -> AnchorCases.westerkerk()
         "grachten" -> AnchorCases.grachten() ?: throw CaseUnavailable("the canal ring's pack is not on this machine (${AnchorCases.grachtenPack})")
         else -> throw CaseUnavailable("no region for the pack '$pack'")
     }
 
     /** The case's theme block. */
+    fun theme(entry: RefEntry): ByteBuffer =
+        theme(entry.o.strOrNull("pack") ?: "bundled", entry.moment ?: throw CaseUnavailable("'${entry.name}' has no moment"))
+
+    /** The theme block of moment [m] (`{"named": …}` or `{"live": …}`) in [pack]'s region. */
     @Suppress("UNCHECKED_CAST")
-    fun theme(entry: RefEntry): ByteBuffer {
-        val region = region(entry)
-        val m = entry.moment ?: throw CaseUnavailable("'${entry.name}' has no moment")
+    fun theme(pack: String, m: JsonObject): ByteBuffer {
+        val region = region(pack)
         val (th, key) = LiveEngine.lock.withLock {
             // the region's own module state (its themes), as its render restores it
             LiveEngine.loadScene(region, if (region.kind == LiveRegion.Kind.LIVING) null else region.ladder.knots.first().name).state.restore()

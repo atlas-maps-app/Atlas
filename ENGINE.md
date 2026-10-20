@@ -168,7 +168,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
 ### 1. The new map on the phone
 - Done: true depth, the pending branches (the packs' stage T, the buildings and the text registered, the app's map), the canal ring around the Westerkerk with its sun bits, the honest state after three device losses, and the bundled render packs on `core.yml`'s host jobs.
 - Turn on the ground's `mat` (`ATLAS_GROUND_MAT`).
-- **The desktop render tool:** the host build draws any view and moment to a PNG.
+- **The desktop render tool** is built: `./gradlew :mapcorecheck:test --tests '*RenderTool*' -Datlas.render.out=<png>`, with `-Datlas.render.pack`, `view` (`home`, a ladder knot, or `lat,lon,distance,bearing,pitch`), `moment`, `size` and `mode` (`mapcorecheck`'s `likeness/RenderTool.kt`).
 - **The engine's own references begin:** the boards' views and moments, stored per engine version.
 - The core draws where it has tiles. Today's map (the renderer's Kotlin port drawing on Canvas) stays everywhere else until the end of step 3.
 - **Prove it:** run every preset, tidy, `L1Test` and `StageTParityTest`, push, and get CI green. Then tag an alpha.
