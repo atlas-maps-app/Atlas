@@ -45,7 +45,7 @@ Atlas draws its map with its own engine. This is the one document about it: what
    - A tile is memory-mapped, decoded straight into the GPU's heaps, and kept on disk once built. It is refreshed by asking Overpass only for what changed since.
 3. **The style is the renderer's:** building traditions by country, and place-specific profiles wherever a place needs one.
    - Close up across Amsterdam: the living map's profile.
-   - Williamsburg: `real.py`'s profile, if the owner says yes.
+   - Williamsburg: `real.py`'s profile, if the user says yes.
    - Everywhere else: the regions' rules, with each country's building tradition.
    - At the planet: the Globe board's look.
    - The colours, widths, rules, traditions and profiles live in the engine's own style file, which the tiles carry. Refining the look, or adding a tradition or a profile, is an edit to data.
@@ -114,7 +114,7 @@ Atlas draws its map with its own engine. This is the one document about it: what
 6. **CI:**
    - `core.yml`: host builds and tests on x86_64 and arm64 under the validation layer, sanitizers, fuzzing, clang-tidy and the rule table.
    - `android.yml`: the APK, every module's tests, and the emulator run of every screen through `ci/smoke.sh`.
-7. **The owner's phone at each alpha:**
+7. **The user's phone at each alpha:**
    - VK facts;
    - VK bench, with presented frames at p50 ≤ 16.7 ms and p95 ≤ 20 ms on the paths;
    - the ten-minute soak, with no climb in thermal headroom;
@@ -127,7 +127,7 @@ Nothing is finished. Each part below is a first version on `app` (at `10c4529`, 
 | Part | State |
 |---|---|
 | Toolchain and CI | NDK r30, CMake presets for the hosts and Android, Slang shaders checked at build time, lavapipe under the validation layer |
-| Vulkan device layer | VK facts, the crash guard, frame configurations, both frame routes, the pipeline cache and the SurfaceView host; the VK facts and VK bench screens, measured on the owner's phone |
+| Vulkan device layer | VK facts, the crash guard, frame configurations, both frame routes, the pipeline cache and the SurfaceView host; the VK facts and VK bench screens, measured on the user's phone |
 | Data | render tiles, the packer's `render-tiles` and the core's reader (fuzzed); the Westerkerk and the canal ring bundled; render packs that build for `amsterdam` and `grachten` |
 | Numerics and style | pymath; the light, the theme and `ScreenLayers`; the rule table, which lists every line of the renderer that draws |
 | Frame core | camera, ladder, cover, residency, heaps, ranks and pass registry; the composite (haze, vignette, `mat`'s rule, grain); the twin and L1; the coarser pack around the active one |
@@ -191,7 +191,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
 - **The engine's own references begin:** the boards' views and moments, stored per engine version.
 - The core draws where it has tiles. Today's map (the renderer's Kotlin port drawing on Canvas) stays everywhere else until the end of step 3.
 - **Prove it:** run every preset, tidy, `L1Test` and `StageTParityTest`, push, and get CI green. Then tag an alpha.
-- **On the owner's phone:**
+- **On the user's phone:**
   - the first picture within 0.5 s warm;
   - VK bench on the Main board and Westerkerk paths;
   - the soak;
@@ -205,7 +205,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - the roofs' edge strokes through `ObjectStrokes`.
 - **The exact haze:** merge `wip/exact-haze`.
 - **Labels** are drawn by the core's frame instead of the Compose canvas, with the fonts loaded at the map's start.
-- **All of Amsterdam from the core:** `PackList.kt`, then the first publish of the `amsterdam` and `grachten` render packs after the owner's yes (a `packs.yml` run with `renders=only`).
+- **All of Amsterdam from the core:** `PackList.kt`, then the first publish of the `amsterdam` and `grachten` render packs after the user's yes (a `packs.yml` run with `renders=only`).
 - **The style file:** the tiles' style section becomes the engine's own, edited as data. Every pass reads its colours and widths from it, before step 4 adds more.
 - **VK facts and VK bench on the device:**
   - VK facts prints the hashes of the twin, pymath and the noise fields, to compare with CI's;
@@ -267,7 +267,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
   - the soft shadow blur, ripple and glints;
   - cloud shadows, rain and the golden wash;
   - clouds and the sun's glow when the sky shows.
-- **Textures while moving:** a switch between "fixed to the screen" and "fixed to the surfaces", for the owner to judge on the phone. The lean:
+- **Textures while moving:** a switch between "fixed to the screen" and "fixed to the surfaces", for the user to judge on the phone. The lean:
   - paper grain on the screen;
   - `mat` and ripple on their surfaces, rescaled with the zoom so their density on screen stays the same;
   - cloud shadows moving with the ground.
@@ -297,21 +297,21 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
 ### 6. Finish the map
 - Markers, the route and the location dot, drawn by the core in the map's own frame.
 - Taps on buildings: a hit test against the tile's own buildings, giving the OSM id.
-- **Power:** ADPF, and a short thermal ladder measured on the owner's phone:
+- **Power:** ADPF, and a short thermal ladder measured on the user's phone:
   - 2x MSAA while moving, where the GPU has it;
   - the offscreen passes at half resolution while moving;
   - follow mode at 30 fps.
 - **Terrain and relief everywhere,** from the best elevation model for each region and a global one elsewhere, with the dunes and San Gimignano among them.
-- Williamsburg in `real.py`'s own look, if the owner says yes.
+- Williamsburg in `real.py`'s own look, if the user says yes.
 - **Cleanup:** the old plan's citations (`plan-vector D…`, `K…`) leave the code's comments.
 - Tag an alpha.
 
 ### 7. The engine becomes the main piece
 - **The app:** what it still takes from the port (the packs library and readers, the Overpass client, the moment and the weather themes, the shade walk's scoring) moves into modules of its own.
-- **Retire the renderer:** `render/`, the Kotlin port `:render`, `:rendertiles`' Kotlin derivation and the CPU raster leave the build. `:mapview` then depends on `:mapcore` alone for drawing. They stay in git history, or in an archive if the owner prefers.
+- **Retire the renderer:** `render/`, the Kotlin port `:render`, `:rendertiles`' Kotlin derivation and the CPU raster leave the build. `:mapview` then depends on `:mapcore` alone for drawing. They stay in git history, or in an archive if the user prefers.
 - Tag the final alpha.
 
-## The owner's answers and open questions
+## The user's answers and open questions
 
 **Answered:**
 - Vulkan, with no GLES path unless a phone needs one.
@@ -328,7 +328,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
 - The look is refined in the engine, not in the renderer. The renderer and its port are frozen as the yardstick from 20 October 2026.
 
 **Open**, each with a default so work never waits:
-- **The renderer's known issues:** melting buildings is fixed by design (true depth). Others are fixed in the engine as they are found and named in the case files (the default), or the owner lists them to be fixed first.
+- **The renderer's known issues:** melting buildings is fixed by design (true depth). Others are fixed in the engine as they are found and named in the case files (the default), or the user lists them to be fixed first.
 - **Textures while the map moves:** decided on the phone with step 3's switch. The default is the lean given there.
 - **The crooked windows:** as the renders draw them (the default), kept in one place so one edit changes them.
 - **Building anywhere sooner:** the renderer's Kotlin port could build tiles on the phone first, exact but slower and heavier, until the C++ lands. The default: straight to C++.
@@ -344,9 +344,9 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
   1. fast-forward `app` in the main checkout;
   2. push it: `git push https://github.com/atlas-maps-app/Atlas.git app`;
   3. let CI decide;
-  4. at the end of a step, tag an alpha and tell the owner.
+  4. at the end of a step, tag an alpha and tell the user.
 - **Ask first** before publishing anything else: render packs, other release assets, or a new workflow's first run.
-- **Stop at the owner's budget cap:** commit tested work, report, and wait.
+- **Stop at the user's budget cap:** commit tested work, report, and wait.
 - **Build.** In `app/android/mapcore/cpp`, with `PATH=$HOME/Library/Android/sdk/cmake/4.1.2/bin:$PATH` and `ATLAS_REQUIRE_VULKAN=1`:
   - `cmake --preset host-debug`;
   - `cmake --build --preset host-debug -j3`;
@@ -368,5 +368,5 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
 - **Announce each driver call that can crash** to the crash guard (`gpu::announce`), for that call alone.
 - **No blend reads the destination's alpha,** because colour attachments may be 10-bit.
 - **Timing gates hold only with `ATLAS_TIMED=1`** on a quiet machine.
-- **The renderer's reference is a fresh run of `render/*.py`.** `cache/render` is the owner's and may be outdated: never write there.
+- **The renderer's reference is a fresh run of `render/*.py`.** `cache/render` is the user's and may be outdated: never write there.
 - **Never read the renders' big SVGs into context.** Script them instead.
