@@ -167,9 +167,9 @@ The engine builds on them: step 3's "the core asks, the app fetches" has its fet
 
 ## What is left, in order
 
-The engine is done first: it is the app's centerpiece, and the rest of the app builds on it. Sizes are rough hours of one agent's work, about 210 in all. If the estimates hold, steps 1 and 2 take this week, steps 3 and 4 the next, and steps 5 to 7 the week after.
+The engine is done first: it is the app's centerpiece, and the rest of the app builds on it.
 
-### 1. The new map on the phone (about 19 h)
+### 1. The new map on the phone
 - **True depth first,** before more passes are built on the old order:
   - the walls' pass writes real depth, roughly front to back;
   - the ground keeps its order and writes the plane's depth;
@@ -197,7 +197,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - the soak;
   - the frosted pills in the same frame as the map.
 
-### 2. Every roof, the labels, the style file (about 18 h)
+### 2. Every roof, the labels, the style file
 - **Roofs:**
   - hipped, pyramidal and mansard roofs;
   - the `CLOSEST` roof mapping;
@@ -219,7 +219,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - an island's water level from the ring around it.
 - Tag an alpha.
 
-### 3. The phone builds the map anywhere (about 60 h)
+### 3. The phone builds the map anywhere
 - **Stage P in the core.** The look's derivations move from the port's loaders into C++:
   - looks and traditions;
   - heights and roof shapes;
@@ -245,7 +245,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
 - **The old render approach leaves the phone.** The core now draws every place at street level, so today's map goes, with its CPU frame path, the anchors and `SvgWarp`. The CPU raster stays only in tests, as the likeness oracle.
 - Tag an alpha.
 
-### 4. The renderer's detail (about 45 h)
+### 4. The renderer's detail
 In this order. Each feature's derivation goes into the core's stage P, and each is held by L1 at the boards' views and by the engine's own references:
 - **Facades.** Flat detail keeps the renderer's exact shapes, drawn clipped to its wall:
   - windows, dark or lit by their own sun bits, with deep windows, sashes, shutters and the glass gradients;
@@ -275,7 +275,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
 - **The renderer's other ten regions** get their render packs as their features land, each with its own profile.
 - Tag an alpha after the water and another after the night. By then the Westerkerk home is within about 2.5 levels of its render, apart from the renderer's named issues.
 
-### 5. The world (about 37 h)
+### 5. The world
 - **Levels:**
   - the simplified level from the keep codes;
   - blocks of merged footprints from about 5 km out;
@@ -294,7 +294,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
 - **References around the world:** a big city, a mountain town, a desert, a coast, the open sea and the poles.
 - Tag an alpha.
 
-### 6. Finish the map (about 23 h)
+### 6. Finish the map
 - Markers, the route and the location dot, drawn by the core in the map's own frame.
 - Taps on buildings: a hit test against the tile's own buildings, giving the OSM id.
 - **Power:** ADPF, and a short thermal ladder measured on the owner's phone:
@@ -306,7 +306,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
 - **Cleanup:** the old plan's citations (`plan-vector D…`, `K…`) leave the code's comments.
 - Tag an alpha.
 
-### 7. The engine becomes the main piece (about 8 h)
+### 7. The engine becomes the main piece
 - **The app:** what it still takes from the port (the packs library and readers, the Overpass client, the moment and the weather themes, the shade walk's scoring) moves into modules of its own.
 - **Retire the renderer:** `render/`, the Kotlin port `:render`, `:rendertiles`' Kotlin derivation and the CPU raster leave the build. `:mapview` then depends on `:mapcore` alone for drawing. They stay in git history, or in an archive if the owner prefers.
 - Tag the final alpha.
