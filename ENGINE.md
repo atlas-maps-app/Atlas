@@ -342,7 +342,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
 ## How to work
 
 - **Where.** One agent, in its own worktree under `/Volumes/Download/atlas/<name>/`, on its own branch. The main disk has only a few GB free.
-- **Keep the Mac awake and on power** while the agent runs.
+- **Keep the host awake and on power** while the agent runs. This Mac is a virtual machine: when its host sleeps or pauses it, everything inside freezes. On 20 October it froze for 29 minutes.
 - **Commits.** Commit in small steps, by explicit paths, in the repo's style, each message ending with the co-author line. When a step's tests pass:
   1. fast-forward `app` in the main checkout;
   2. push it: `git push https://github.com/atlas-maps-app/Atlas.git app`;
@@ -361,7 +361,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
   - flags: `--no-daemon --max-workers=2 -Patlas.tools=<the main checkout>/cache/atlas-tools`;
   - `GRADLE_USER_HOME` on the Download volume;
   - `GRADLE_RO_DEP_CACHE=$HOME/.gradle/caches`.
-- **Load.** Run lavapipe with `LP_NUM_THREADS=2`, and one heavy step at a time: the Mac has 14 GB and 8 cores.
+- **Load.** Run lavapipe with `LP_NUM_THREADS=2`, and one heavy step at a time: the virtual machine has 14 GB and 8 cores.
 - **zsh.** The shell is zsh, and a variable does not split into words. Use while-read loops or `--pathspec-from-file`.
 
 **Learned the hard way:**
