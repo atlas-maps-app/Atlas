@@ -54,6 +54,7 @@ import app.atlas.mapview.Marker
 import app.atlas.mapview.MarkerStyle
 import app.atlas.mapview.Theme
 import app.atlas.mapview.UserLocation
+import app.atlas.mapview.vk.ChromeFade
 import app.atlas.model.Place
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalBottomBarInset
@@ -269,7 +270,7 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
                 )
             }
             AnimatedVisibility(rowAlpha > 0f, enter = fadeIn(), exit = fadeOut()) {
-                CategoryRow(results?.categoryId, onSelect = vm::selectCategory, lang = lang)
+                ChromeFade(this) { CategoryRow(results?.categoryId, onSelect = vm::selectCategory, lang = lang) }
             }
             if (!showingResults) {
                 SearchBar(
