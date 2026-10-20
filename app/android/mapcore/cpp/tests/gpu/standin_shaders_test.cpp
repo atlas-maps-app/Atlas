@@ -4,6 +4,9 @@
 // attachment 1 (Slang 2026.19 numbers a lone output 0 unless the location is explicit), no specialization constant in
 // any module the core embeds (PowerVR's compiler crashed on one; each variant is a module of its own), and no frame
 // shader reading the alpha of the scene's colour samples (the frame's colour may be rgb10a2, which keeps 2 bits of it).
+#include "gen/spirv/frosted/boxes.hpp"
+#include "gen/spirv/frosted/boxes_r8.hpp"
+#include "gen/spirv/frosted/glass.hpp"
 #include "gen/spirv/modules.hpp"
 #include "gen/spirv/probe/input_probe.hpp"
 #include "gen/spirv/standin/blur.hpp"
@@ -15,7 +18,6 @@
 #include "gen/spirv/standin/composite_x1_loc1_glsl_composite_fs.hpp"
 #include "gen/spirv/standin/composite_x2.hpp"
 #include "gen/spirv/standin/composite_x2_glsl_composite_fs.hpp"
-#include "gen/spirv/standin/frosted.hpp"
 #include "gen/spirv/standin/standin.hpp"
 #include "gen/spirv/standin/standin_onepass.hpp"
 #include "tests/base/require.hpp"
@@ -87,7 +89,9 @@ TEST_CASE("the stand-in's shaders declare nothing a Vulkan 1.1 phone may lack") 
                                                       atlas::spirv::standin_composite_x1,
                                                       atlas::spirv::standin_composite_x1_loc1,
                                                       atlas::spirv::standin_blur,
-                                                      atlas::spirv::standin_frosted,
+                                                      atlas::spirv::frosted_boxes,
+                                                      atlas::spirv::frosted_boxes_r8,
+                                                      atlas::spirv::frosted_glass,
                                                       atlas::spirv::standin_composite_glsl_composite_fs,
                                                       atlas::spirv::standin_composite_x2_glsl_composite_fs,
                                                       atlas::spirv::standin_composite_x1_glsl_composite_fs,

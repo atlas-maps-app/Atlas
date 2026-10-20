@@ -8,7 +8,8 @@
 //     alpha-to-coverage, the ground with its roads, shadows and rippled water, 64 screen-blended glows; then the
 //     composite (the coverage rule at silhouettes, the haze, the vignette), or in one subpass the same effects per
 //     fragment;
-//   after it, on the SurfaceView host: the frosted pills, from a quarter-size blurred copy of the frame.
+//   after it, on the SurfaceView host: the frosted pills, drawn by the map's own frosted pass (passes/Frosted.hpp), so
+//     VK bench's GPU time after the main pass is that pass's.
 #pragma once
 
 #include "gpu/Descriptors.hpp"
@@ -17,6 +18,7 @@
 #include "gpu/Memory.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "gpu/Pipelines.hpp"
+#include "passes/Frosted.hpp"
 #include "standin/City.hpp"
 #include "standin/View.hpp"
 #include "style/CameraState.hpp"
@@ -122,13 +124,12 @@ private:
 
     // Fixed: layouts, the sampler, the city's buffers, the per-frame ring, the atlas.
     vk::raii::DescriptorSetLayout frame_layout_{nullptr}, scene_layout_{nullptr}, haze_layout_{nullptr},
-        inputs_layout_{nullptr}, blur_layout_{nullptr}, frost_layout_{nullptr};
+        inputs_layout_{nullptr}, blur_layout_{nullptr};
     vk::raii::PipelineLayout scene_pipeline_layout_{nullptr}, composite_pipeline_layout_{nullptr},
-        blur_pipeline_layout_{nullptr}, frost_pipeline_layout_{nullptr};
+        blur_pipeline_layout_{nullptr};
     vk::raii::DescriptorPool pool_{nullptr};
     vk::raii::DescriptorSet frame_set_{nullptr}, scene_set_{nullptr}, haze_set_{nullptr}, inputs_set_{nullptr};
-    std::vector<vk::raii::DescriptorSet> blur_sets_; // mask→A, A→B, B→A, then C→D, D→C
-    vk::raii::DescriptorSet frost_set_{nullptr};
+    std::vector<vk::raii::DescriptorSet> blur_sets_; // mask→A, A→B, B→A
     vk::raii::Sampler sampler_{nullptr};
     gpu::Buffer boxes_, trees_, ring_;
     vk::DeviceSize slot_bytes_ = 0;
@@ -138,7 +139,7 @@ private:
     // The scene's modules, one per frame form (the one-subpass form's fragments apply the screen effects), and the
     // composite's for the configuration's samples.
     vk::raii::ShaderModule standin_module_{nullptr}, standin_onepass_module_{nullptr}, composite_module_{nullptr},
-        blur_module_{nullptr}, frost_module_{nullptr};
+        blur_module_{nullptr};
     gpu::Image atlas_;
     vk::raii::ImageView atlas_view_{nullptr};
     vk::raii::RenderPass atlas_clear_pass_{nullptr}, atlas_load_pass_{nullptr}, shadow_pass_{nullptr};
@@ -149,18 +150,16 @@ private:
     // Of the output's size and the configuration.
     vk::Extent2D extent_{};
     vk::Extent2D half_{};
-    vk::Extent2D quarter_{};
     vk::Extent2D water_extent_{};
-    gpu::Image mask_, blur_a_, blur_b_, frost_c_, frost_d_, water_, water_colour_, water_depth_;
-    vk::raii::ImageView mask_view_{nullptr}, blur_a_view_{nullptr}, blur_b_view_{nullptr}, frost_c_view_{nullptr},
-        frost_d_view_{nullptr}, water_view_{nullptr}, water_colour_view_{nullptr}, water_depth_view_{nullptr};
+    gpu::Image mask_, blur_a_, blur_b_, water_, water_colour_, water_depth_;
+    vk::raii::ImageView mask_view_{nullptr}, blur_a_view_{nullptr}, blur_b_view_{nullptr}, water_view_{nullptr},
+        water_colour_view_{nullptr}, water_depth_view_{nullptr};
     vk::raii::Framebuffer shadow_framebuffer_{nullptr}, water_framebuffer_{nullptr};
-    vk::raii::RenderPass water_pass_{nullptr}, frost_pass_{nullptr};
-    std::vector<vk::raii::Framebuffer> frost_framebuffers_;
+    vk::raii::RenderPass water_pass_{nullptr};
     vk::raii::Pipeline mirror_pipeline_{nullptr}, box_pipeline_{nullptr}, tree_pipeline_{nullptr},
-        ground_pipeline_{nullptr}, glow_pipeline_{nullptr}, composite_pipeline_{nullptr}, frost_pipeline_{nullptr};
-    bool frost_ready_ = false;
-    vk::ImageLayout output_final_ = vk::ImageLayout::eUndefined;
+        ground_pipeline_{nullptr}, glow_pipeline_{nullptr}, composite_pipeline_{nullptr};
+    // The pills: the map's frosted backdrops of the camera's frosted keep-out shapes, over the output.
+    passes::FrostedBackdrops frost_;
     std::uint32_t quarter_turns_ = 0;
 };
 

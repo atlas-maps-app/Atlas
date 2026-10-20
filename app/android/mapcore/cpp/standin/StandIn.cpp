@@ -12,7 +12,6 @@
 #include "gen/spirv/standin/composite_x1_loc1_glsl_composite_fs.hpp"
 #include "gen/spirv/standin/composite_x2.hpp"
 #include "gen/spirv/standin/composite_x2_glsl_composite_fs.hpp"
-#include "gen/spirv/standin/frosted.hpp"
 #include "gen/spirv/standin/standin.hpp"
 #include "gen/spirv/standin/standin_onepass.hpp"
 #include "gpu/Sync.hpp"
@@ -32,7 +31,6 @@ namespace lay = layouts::standin_standin;
 using Push = lay::Push;
 using Haze = layouts::standin_composite::Haze;
 using BlurPush = layouts::standin_blur::BlurPush;
-using FrostPush = layouts::standin_frosted::FrostPush;
 
 // A variant differs from its module by a macro only, so it reads the same uniforms, buffers and push constants.
 static_assert(sizeof(layouts::standin_standin_onepass::Frame) == sizeof(lay::Frame));
@@ -94,7 +92,6 @@ constexpr std::uint32_t atlas_per_frame = 64; // crowns redrawn each frame
 constexpr std::uint32_t glows = 64;
 constexpr double shadow_radius = 1200.0; // the renders' radius cut for the shadows (D9)
 constexpr int shadow_blur = 2;           // box radius at half size
-constexpr int frost_blur = 6;            // box radius at quarter size (σ ≈ 20 px at full size, as the pills')
 
 using clock = std::chrono::steady_clock;
 [[nodiscard]] double ms_since(clock::time_point t) {
@@ -298,10 +295,8 @@ gpu::Result<void> StandIn::make_pipeline(const gpu::GraphicsDesc& desc, vk::raii
 
 vk::DeviceSize StandIn::bytes() const noexcept {
     vk::DeviceSize n = boxes_.size() + trees_.size() + ring_.size() + atlas_.bytes();
-    for (const gpu::Image* i :
-         {&mask_, &blur_a_, &blur_b_, &frost_c_, &frost_d_, &water_, &water_colour_, &water_depth_})
-        n += i->bytes();
-    return n;
+    for (const gpu::Image* i : {&mask_, &blur_a_, &blur_b_, &water_, &water_colour_, &water_depth_}) n += i->bytes();
+    return n + frost_.bytes();
 }
 
 gpu::Result<void> StandIn::create_fixed() {
@@ -323,19 +318,16 @@ gpu::Result<void> StandIn::create_fixed() {
                                     gpu::Binding{.slot = 1, .type = T::eInputAttachment, .stages = S::eFragment}};
     const std::array blur_bindings{gpu::Binding{.slot = 0, .type = T::eSampledImage, .stages = S::eCompute},
                                    gpu::Binding{.slot = 1, .type = T::eStorageImage, .stages = S::eCompute}};
-    const std::array frost_bindings{gpu::Binding{.slot = 0, .type = T::eCombinedImageSampler, .stages = S::eFragment}};
     ATLAS_GPU_LET(frame_layout, gpu::make_set_layout(d, frame_bindings));
     ATLAS_GPU_LET(scene_layout, gpu::make_set_layout(d, scene_bindings));
     ATLAS_GPU_LET(haze_layout, gpu::make_set_layout(d, haze_bindings));
     ATLAS_GPU_LET(inputs_layout, gpu::make_set_layout(d, input_bindings));
     ATLAS_GPU_LET(blur_layout, gpu::make_set_layout(d, blur_bindings));
-    ATLAS_GPU_LET(frost_layout, gpu::make_set_layout(d, frost_bindings));
     frame_layout_ = std::move(frame_layout);
     scene_layout_ = std::move(scene_layout);
     haze_layout_ = std::move(haze_layout);
     inputs_layout_ = std::move(inputs_layout);
     blur_layout_ = std::move(blur_layout);
-    frost_layout_ = std::move(frost_layout);
 
     const std::array<vk::DescriptorSetLayout, 2> scene_sets{*frame_layout_, *scene_layout_};
     ATLAS_GPU_LET(scene_pipeline_layout, gpu::make_layout(d, scene_sets, sizeof(Push), graphics));
@@ -343,29 +335,24 @@ gpu::Result<void> StandIn::create_fixed() {
     ATLAS_GPU_LET(composite_pipeline_layout, gpu::make_layout(d, composite_sets, 0, {}));
     const std::array<vk::DescriptorSetLayout, 1> blur_sets{*blur_layout_};
     ATLAS_GPU_LET(blur_pipeline_layout, gpu::make_layout(d, blur_sets, sizeof(BlurPush), S::eCompute));
-    const std::array<vk::DescriptorSetLayout, 1> frost_sets{*frost_layout_};
-    ATLAS_GPU_LET(frost_pipeline_layout, gpu::make_layout(d, frost_sets, sizeof(FrostPush), graphics));
     scene_pipeline_layout_ = std::move(scene_pipeline_layout);
     composite_pipeline_layout_ = std::move(composite_pipeline_layout);
     blur_pipeline_layout_ = std::move(blur_pipeline_layout);
-    frost_pipeline_layout_ = std::move(frost_pipeline_layout);
 
-    // One of each set, five blur sets (the shadow chain's three, the frosted chain's two).
-    const std::array<std::span<const gpu::Binding>, 6> all{frame_bindings, scene_bindings, haze_bindings,
-                                                           input_bindings, blur_bindings,  frost_bindings};
-    ATLAS_GPU_LET(pool, gpu::make_pool(d, all, 5));
+    // One of each set, three blur sets (the shadow chain's).
+    const std::array<std::span<const gpu::Binding>, 5> all{frame_bindings, scene_bindings, haze_bindings,
+                                                           input_bindings, blur_bindings};
+    ATLAS_GPU_LET(pool, gpu::make_pool(d, all, 3));
     pool_ = std::move(pool);
     ATLAS_GPU_LET(frame_set, gpu::allocate_set(d, pool_, frame_layout_));
     ATLAS_GPU_LET(scene_set, gpu::allocate_set(d, pool_, scene_layout_));
     ATLAS_GPU_LET(haze_set, gpu::allocate_set(d, pool_, haze_layout_));
     ATLAS_GPU_LET(inputs_set, gpu::allocate_set(d, pool_, inputs_layout_));
-    ATLAS_GPU_LET(frost_set, gpu::allocate_set(d, pool_, frost_layout_));
     frame_set_ = std::move(frame_set);
     scene_set_ = std::move(scene_set);
     haze_set_ = std::move(haze_set);
     inputs_set_ = std::move(inputs_set);
-    frost_set_ = std::move(frost_set);
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 3; ++i) {
         ATLAS_GPU_LET(set, gpu::allocate_set(d, pool_, blur_layout_));
         blur_sets_.push_back(std::move(set));
     }
@@ -426,12 +413,9 @@ gpu::Result<void> StandIn::create_fixed() {
         standin_onepass,
         module_of(device_, {.name = "standin_standin_onepass", .words = spirv::standin_standin_onepass}, watch_));
     ATLAS_GPU_LET(blur_module, module_of(device_, {.name = "standin_blur", .words = spirv::standin_blur}, watch_));
-    ATLAS_GPU_LET(frost_module,
-                  module_of(device_, {.name = "standin_frosted", .words = spirv::standin_frosted}, watch_));
     standin_module_ = std::move(standin);
     standin_onepass_module_ = std::move(standin_onepass);
     blur_module_ = std::move(blur_module);
-    frost_module_ = std::move(frost_module);
 
     // The atlas: 2048² of crowns, drawn into a few at a time and kept between frames.
     ATLAS_GPU_LET(atlas, image_of(device_, vk::Format::eR8G8B8A8Unorm, {atlas_size, atlas_size},
@@ -491,23 +475,17 @@ gpu::Result<void> StandIn::prepare_offscreen(const gpu::MainPass& pass, const gp
     const vk::SampleCountFlagBits samples = pass.spec().config.samples();
     extent_ = e;
     half_ = {.width = std::max(1U, e.width / 2), .height = std::max(1U, e.height / 2)};
-    quarter_ = {.width = std::max(1U, e.width / 4), .height = std::max(1U, e.height / 4)};
     water_extent_ = {.width = std::max(1U, static_cast<std::uint32_t>(e.width * 0.84)),
                      .height = std::max(1U, static_cast<std::uint32_t>(e.height * 0.36))};
     using U = vk::ImageUsageFlagBits;
     ATLAS_GPU_LET(mask, image_of(device_, vk::Format::eR8Unorm, half_, U::eColorAttachment | U::eSampled));
     ATLAS_GPU_LET(blur_a, image_of(device_, vk::Format::eR8G8B8A8Unorm, half_, U::eStorage | U::eSampled));
     ATLAS_GPU_LET(blur_b, image_of(device_, vk::Format::eR8G8B8A8Unorm, half_, U::eStorage | U::eSampled));
-    ATLAS_GPU_LET(frost_c,
-                  image_of(device_, vk::Format::eR8G8B8A8Unorm, quarter_, U::eTransferDst | U::eStorage | U::eSampled));
-    ATLAS_GPU_LET(frost_d, image_of(device_, vk::Format::eR8G8B8A8Unorm, quarter_, U::eStorage | U::eSampled));
     ATLAS_GPU_LET(water,
                   image_of(device_, vk::Format::eR8G8B8A8Unorm, water_extent_, U::eColorAttachment | U::eSampled));
     mask_ = std::move(mask);
     blur_a_ = std::move(blur_a);
     blur_b_ = std::move(blur_b);
-    frost_c_ = std::move(frost_c);
-    frost_d_ = std::move(frost_d);
     water_ = std::move(water);
     const gpu::MemoryUse transient = pass.spec().config.lazy() ? gpu::MemoryUse::lazy : gpu::MemoryUse::gpu;
     const vk::Format depth_format = device_.facts().depth_stencil;
@@ -524,16 +502,12 @@ gpu::Result<void> StandIn::prepare_offscreen(const gpu::MainPass& pass, const gp
     ATLAS_GPU_LET(mask_view, view_of(device_, mask_, vk::ImageAspectFlagBits::eColor));
     ATLAS_GPU_LET(a_view, view_of(device_, blur_a_, vk::ImageAspectFlagBits::eColor));
     ATLAS_GPU_LET(b_view, view_of(device_, blur_b_, vk::ImageAspectFlagBits::eColor));
-    ATLAS_GPU_LET(c_view, view_of(device_, frost_c_, vk::ImageAspectFlagBits::eColor));
-    ATLAS_GPU_LET(d_view, view_of(device_, frost_d_, vk::ImageAspectFlagBits::eColor));
     ATLAS_GPU_LET(water_view, view_of(device_, water_, vk::ImageAspectFlagBits::eColor));
     ATLAS_GPU_LET(water_depth_view,
                   view_of(device_, water_depth_, vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil));
     mask_view_ = std::move(mask_view);
     blur_a_view_ = std::move(a_view);
     blur_b_view_ = std::move(b_view);
-    frost_c_view_ = std::move(c_view);
-    frost_d_view_ = std::move(d_view);
     water_view_ = std::move(water_view);
     water_depth_view_ = std::move(water_depth_view);
     if (water_colour_) {
@@ -554,19 +528,6 @@ gpu::Result<void> StandIn::prepare_offscreen(const gpu::MainPass& pass, const gp
     ATLAS_GPU_LET(water_framebuffer, make_framebuffer(device_, water_pass_, water_views, water_extent_));
     water_framebuffer_ = std::move(water_framebuffer);
 
-    // The frosted pills draw over the frame, loading it; one framebuffer per output image.
-    output_final_ = output.final_layout();
-    ATLAS_GPU_LET(frost_pass, make_pass(device_, {.colour = output.format(),
-                                                  .load = vk::AttachmentLoadOp::eLoad,
-                                                  .initial = vk::ImageLayout::eColorAttachmentOptimal,
-                                                  .final_layout = output_final_}));
-    frost_pass_ = std::move(frost_pass);
-    for (const vk::ImageView v : output.views()) {
-        const std::array<vk::ImageView, 1> views{v};
-        ATLAS_GPU_LET(framebuffer, make_framebuffer(device_, frost_pass_, views, e));
-        frost_framebuffers_.push_back(std::move(framebuffer));
-    }
-    frost_ready_ = output.transfer_source();
     quarter_turns_ = quarter_turns_of(output.transform());
 
     // The sets that point at the new images.
@@ -587,11 +548,6 @@ gpu::Result<void> StandIn::prepare_offscreen(const gpu::MainPass& pass, const gp
     chain(0, *mask_view_, vk::ImageLayout::eShaderReadOnlyOptimal, *blur_a_view_);
     chain(1, *blur_a_view_, vk::ImageLayout::eGeneral, *blur_b_view_);
     chain(2, *blur_b_view_, vk::ImageLayout::eGeneral, *blur_a_view_);
-    chain(3, *frost_c_view_, vk::ImageLayout::eGeneral, *frost_d_view_);
-    chain(4, *frost_d_view_, vk::ImageLayout::eGeneral, *frost_c_view_);
-    gpu::SetWriter(*frost_set_)
-        .image(0, T::eCombinedImageSampler, *frost_c_view_, vk::ImageLayout::eShaderReadOnlyOptimal, *sampler_)
-        .apply(d);
     if (pass.composite()) {
         gpu::SetWriter(*inputs_set_)
             .image(0, T::eInputAttachment, pass.colour_input(), pass.colour_input_layout())
@@ -714,17 +670,16 @@ gpu::Result<void> StandIn::prepare_pipelines(const gpu::MainPass& pass, const gp
                              .depth_op = vk::CompareOp::eLess};
     mirror.target = {.render_pass = *water_pass_, .subpass = 0, .samples = c.samples(), .colour_count = 1};
     ATLAS_GPU_CHECK(make(mirror, mirror_pipeline_));
-    gpu::GraphicsDesc frost{.label = {.name = "frosted", .module = "standin_frosted", .configuration = configuration},
-                            .module = *frost_module_,
-                            .vertex = "frosted_vs",
-                            .fragment = "frosted_fs",
-                            .layout = *frost_pipeline_layout_};
-    frost.target = {.render_pass = *frost_pass_, .subpass = 0, .colour_count = 1};
-    frost.blends[0] = gpu::Blend::over();
-    ATLAS_GPU_CHECK(make(frost, frost_pipeline_));
-    (void)output;
-    pipelines_ms_ = fixed_pipelines_ms_ + ms;
-    pipeline_count_ = 3 + made;
+    // The pills: the map's frosted backdrops, of the output's format, through the same cache.
+    frame::PipelineStats frost_stats;
+    ATLAS_GPU_CHECK(frost_.prepare({.device = device_,
+                                    .cache = cache,
+                                    .watch = watch_,
+                                    .output = output,
+                                    .configuration = configuration,
+                                    .stats = &frost_stats}));
+    pipelines_ms_ = fixed_pipelines_ms_ + ms + frost_stats.ms;
+    pipeline_count_ = 3 + made + frost_stats.count;
     return {};
 }
 
@@ -737,38 +692,32 @@ gpu::Result<void> StandIn::prepare(const gpu::MainPass& pass, const gpu::Output&
 void StandIn::release() {
     // The framebuffers first (they hold the views), then the pipelines and the composite's module, the passes, the
     // views and the images.
-    frost_framebuffers_.clear();
+    frost_.release();
     shadow_framebuffer_.clear();
     water_framebuffer_.clear();
-    for (vk::raii::Pipeline* p : {&box_pipeline_, &tree_pipeline_, &ground_pipeline_, &glow_pipeline_,
-                                  &composite_pipeline_, &mirror_pipeline_, &frost_pipeline_})
+    for (vk::raii::Pipeline* p :
+         {&box_pipeline_, &tree_pipeline_, &ground_pipeline_, &glow_pipeline_, &composite_pipeline_, &mirror_pipeline_})
         p->clear();
     composite_module_.clear();
-    frost_pass_.clear();
     water_pass_.clear();
-    for (vk::raii::ImageView* v : {&mask_view_, &blur_a_view_, &blur_b_view_, &frost_c_view_, &frost_d_view_,
-                                   &water_view_, &water_colour_view_, &water_depth_view_})
+    for (vk::raii::ImageView* v :
+         {&mask_view_, &blur_a_view_, &blur_b_view_, &water_view_, &water_colour_view_, &water_depth_view_})
         v->clear();
-    for (gpu::Image* i : {&mask_, &blur_a_, &blur_b_, &frost_c_, &frost_d_, &water_, &water_colour_, &water_depth_})
-        *i = {};
-    frost_ready_ = false;
-    output_final_ = vk::ImageLayout::eUndefined;
+    for (gpu::Image* i : {&mask_, &blur_a_, &blur_b_, &water_, &water_colour_, &water_depth_}) *i = {};
 }
 
 bool StandIn::holds_prepared() const noexcept {
-    const bool pipelines =
-        std::ranges::any_of(std::array{&box_pipeline_, &tree_pipeline_, &ground_pipeline_, &glow_pipeline_,
-                                       &composite_pipeline_, &mirror_pipeline_, &frost_pipeline_},
-                            [](const vk::raii::Pipeline* p) { return static_cast<bool>(**p); });
-    const bool views =
-        std::ranges::any_of(std::array{&mask_view_, &blur_a_view_, &blur_b_view_, &frost_c_view_, &frost_d_view_,
-                                       &water_view_, &water_colour_view_, &water_depth_view_},
-                            [](const vk::raii::ImageView* v) { return static_cast<bool>(**v); });
-    const bool images = std::ranges::any_of(
-        std::array{&mask_, &blur_a_, &blur_b_, &frost_c_, &frost_d_, &water_, &water_colour_, &water_depth_},
-        [](const gpu::Image* i) { return static_cast<bool>(*i); });
-    return pipelines || views || images || *composite_module_ || *frost_pass_ || *water_pass_ ||
-           !frost_framebuffers_.empty() || *shadow_framebuffer_ || *water_framebuffer_;
+    const bool pipelines = std::ranges::any_of(std::array{&box_pipeline_, &tree_pipeline_, &ground_pipeline_,
+                                                          &glow_pipeline_, &composite_pipeline_, &mirror_pipeline_},
+                                               [](const vk::raii::Pipeline* p) { return static_cast<bool>(**p); });
+    const bool views = std::ranges::any_of(
+        std::array{&mask_view_, &blur_a_view_, &blur_b_view_, &water_view_, &water_colour_view_, &water_depth_view_},
+        [](const vk::raii::ImageView* v) { return static_cast<bool>(**v); });
+    const bool images =
+        std::ranges::any_of(std::array{&mask_, &blur_a_, &blur_b_, &water_, &water_colour_, &water_depth_},
+                            [](const gpu::Image* i) { return static_cast<bool>(*i); });
+    return pipelines || views || images || *composite_module_ || *water_pass_ || *shadow_framebuffer_ ||
+           *water_framebuffer_ || frost_.holds_prepared();
 }
 
 void StandIn::write_frame(std::uint32_t slot) {
@@ -990,150 +939,13 @@ void StandIn::record_main(const gpu::FrameContext& frame, std::uint32_t slot) {
 }
 
 void StandIn::record_pills(const gpu::FrameContext& frame) {
-    const auto shapes = camera_.keep_outs();
-    std::size_t frosted = 0;
-    for (const style::KeepOut& k : shapes) frosted += k.frosted() ? 1 : 0;
-    if (!pills_ || !frost_ready_ || frosted == 0) return;
-    const vk::raii::CommandBuffer& cmd = frame.cmd;
-    const gpu::Sync& sync = frame.sync;
-    const vk::Image output = frame.output.images()[frame.image];
-    // The frame to a quarter-size copy (the blit filters it down), blurred and saturated under each pill.
-    const std::array<gpu::ImageDependency, 2> to_copy{{
-        {.image = output,
-         .src_stage = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-         .src_access = vk::AccessFlagBits2::eColorAttachmentWrite,
-         .dst_stage = vk::PipelineStageFlagBits2::eTransfer,
-         .dst_access = vk::AccessFlagBits2::eTransferRead,
-         .old_layout = output_final_,
-         .new_layout = vk::ImageLayout::eTransferSrcOptimal},
-        {.image = frost_c_.handle(),
-         .src_stage = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eComputeShader,
-         .src_access = {},
-         .dst_stage = vk::PipelineStageFlagBits2::eTransfer,
-         .dst_access = vk::AccessFlagBits2::eTransferWrite,
-         .old_layout = vk::ImageLayout::eUndefined,
-         .new_layout = vk::ImageLayout::eTransferDstOptimal},
-    }};
-    sync.barrier(cmd, {}, to_copy);
-    const vk::ImageBlit blit{
-        .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .layerCount = 1},
-        .srcOffsets = std::array<vk::Offset3D, 2>{vk::Offset3D{.x = 0, .y = 0, .z = 0},
-                                                  vk::Offset3D{.x = static_cast<std::int32_t>(extent_.width),
-                                                               .y = static_cast<std::int32_t>(extent_.height),
-                                                               .z = 1}},
-        .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .layerCount = 1},
-        .dstOffsets = std::array<vk::Offset3D, 2>{vk::Offset3D{.x = 0, .y = 0, .z = 0},
-                                                  vk::Offset3D{.x = static_cast<std::int32_t>(quarter_.width),
-                                                               .y = static_cast<std::int32_t>(quarter_.height),
-                                                               .z = 1}}};
-    cmd.blitImage(output, vk::ImageLayout::eTransferSrcOptimal, frost_c_.handle(), vk::ImageLayout::eTransferDstOptimal,
-                  blit, vk::Filter::eLinear);
-    const std::array<gpu::ImageDependency, 2> to_blur{{
-        {.image = frost_c_.handle(),
-         .src_stage = vk::PipelineStageFlagBits2::eTransfer,
-         .src_access = vk::AccessFlagBits2::eTransferWrite,
-         .dst_stage = vk::PipelineStageFlagBits2::eComputeShader,
-         .dst_access = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
-         .old_layout = vk::ImageLayout::eTransferDstOptimal,
-         .new_layout = vk::ImageLayout::eGeneral},
-        {.image = frost_d_.handle(),
-         .src_stage = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eComputeShader,
-         .src_access = {},
-         .dst_stage = vk::PipelineStageFlagBits2::eComputeShader,
-         .dst_access = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
-         .old_layout = vk::ImageLayout::eUndefined,
-         .new_layout = vk::ImageLayout::eGeneral},
-    }};
-    sync.barrier(cmd, {}, to_blur);
-    // C → D, D → C, ...: six passes end in C.
-    const std::array<vk::DescriptorSet, 2> frost_chain{*blur_sets_[3], *blur_sets_[4]};
-    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *blur_pipeline_);
-    for (int pass = 0; pass < 6; ++pass) {
-        const vk::Image target = pass % 2 == 0 ? frost_d_.handle() : frost_c_.handle();
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *blur_pipeline_layout_, 0,
-                               frost_chain[static_cast<std::size_t>(pass % 2)], {});
-        const BlurPush p{
-            .size = {static_cast<std::int32_t>(quarter_.width), static_cast<std::int32_t>(quarter_.height)},
-            .step = pass < 3 ? std::array<std::int32_t, 2>{1, 0} : std::array<std::int32_t, 2>{0, 1},
-            .radius = frost_blur,
-            .pad0 = 0,
-            .pad1 = 0,
-            .pad2 = 0};
-        cmd.pushConstants(*blur_pipeline_layout_, vk::ShaderStageFlagBits::eCompute, 0,
-                          vk::ArrayProxy<const std::byte>(sizeof p, reinterpret_cast<const std::byte*>(&p))); // NOLINT
-        cmd.dispatch((quarter_.width + 7) / 8, (quarter_.height + 7) / 8, 1);
-        ++counters_.dispatches;
-        sync.barrier(cmd, gpu::ImageDependency{.image = target,
-                                               .src_stage = vk::PipelineStageFlagBits2::eComputeShader,
-                                               .src_access = vk::AccessFlagBits2::eShaderWrite,
-                                               .dst_stage = vk::PipelineStageFlagBits2::eComputeShader,
-                                               .dst_access =
-                                                   vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
-                                               .old_layout = vk::ImageLayout::eGeneral,
-                                               .new_layout = vk::ImageLayout::eGeneral});
-    }
-    const std::array<gpu::ImageDependency, 2> to_draw{{
-        {.image = frost_c_.handle(),
-         .src_stage = vk::PipelineStageFlagBits2::eComputeShader,
-         .src_access = vk::AccessFlagBits2::eShaderWrite,
-         .dst_stage = vk::PipelineStageFlagBits2::eFragmentShader,
-         .dst_access = vk::AccessFlagBits2::eShaderRead,
-         .old_layout = vk::ImageLayout::eGeneral,
-         .new_layout = vk::ImageLayout::eShaderReadOnlyOptimal},
-        {.image = output,
-         .src_stage = vk::PipelineStageFlagBits2::eTransfer,
-         .src_access = {},
-         .dst_stage = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-         .dst_access = vk::AccessFlagBits2::eColorAttachmentRead | vk::AccessFlagBits2::eColorAttachmentWrite,
-         .old_layout = vk::ImageLayout::eTransferSrcOptimal,
-         .new_layout = vk::ImageLayout::eColorAttachmentOptimal},
-    }};
-    sync.barrier(cmd, {}, to_draw);
-    cmd.beginRenderPass({.renderPass = *frost_pass_,
-                         .framebuffer = *frost_framebuffers_[frame.image],
-                         .renderArea = {.offset = {.x = 0, .y = 0}, .extent = extent_}},
-                        vk::SubpassContents::eInline);
-    set_viewport(cmd, extent_);
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *frost_pipeline_);
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *frost_pipeline_layout_, 0, *frost_set_, {});
-    const double density = camera_.density > 0 ? camera_.density : 1.0;
-    const double w = extent_.width;
-    const double h = extent_.height;
-    // The view's pixels to the output's: through clip space and the surface's pre-rotation, as the shaders turn it.
-    const bool turned = (quarter_turns_ & 1U) != 0;
-    const double vw = turned ? h : w;
-    const double vh = turned ? w : h;
-    const std::array<std::array<double, 4>, 4> turns{{{1, 0, 0, 1}, {0, -1, 1, 0}, {-1, 0, 0, -1}, {0, 1, -1, 0}}};
-    const auto& rot = turns[quarter_turns_ & 3U];
-    auto to_output = [&](double x, double y) {
-        const double nx = 2.0 * x / vw - 1.0;
-        const double ny = 2.0 * y / vh - 1.0;
-        const double rx = rot[0] * nx + rot[1] * ny;
-        const double ry = rot[2] * nx + rot[3] * ny;
-        return std::array<double, 2>{(rx + 1.0) / 2.0 * w, (ry + 1.0) / 2.0 * h};
-    };
-    for (const style::KeepOut& k : shapes) {
-        if (!k.frosted()) continue;
-        const auto a = to_output(static_cast<double>(k.left) * density, static_cast<double>(k.top) * density);
-        const auto z = to_output(static_cast<double>(k.right) * density, static_cast<double>(k.bottom) * density);
-        const double l = std::min(a[0], z[0]);
-        const double t = std::min(a[1], z[1]);
-        const double r = std::max(a[0], z[0]);
-        const double b = std::max(a[1], z[1]);
-        auto f = [](double v) { return static_cast<float>(v); };
-        const FrostPush p{.box = {f(l), f(t), f(r), f(b)},
-                          .source = {f(l / w), f(t / h), f(r / w), f(b / h)},
-                          .screen = {f(w), f(h), f(1.0 / w), f(1.0 / h)},
-                          .shape = {f(static_cast<double>(k.radius) * density),
-                                    static_cast<float>(k.saturation) / 100.0F, 0.0F, 0.0F}};
-        cmd.pushConstants(*frost_pipeline_layout_,
-                          vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0,
-                          vk::ArrayProxy<const std::byte>(sizeof p, reinterpret_cast<const std::byte*>(&p))); // NOLINT
-        cmd.draw(6, 1, 0, 0);
-        ++counters_.draws;
-        counters_.triangles += 2;
-    }
-    cmd.endRenderPass();
+    if (!pills_) return;
+    // The map's own pass (passes/Frosted.hpp): what it costs here is what the map's frame pays for its chrome.
+    frame::PassCounters counted("frosted");
+    frost_.record(frame.cmd, frame.sync, frame.image, frame.slot.slot, camera_, counted);
+    counters_.draws += counted.total().draws;
+    counters_.dispatches += counted.total().dispatches;
+    counters_.triangles += counted.total().triangles;
 }
 
 void StandIn::record(const gpu::FrameContext& frame) {

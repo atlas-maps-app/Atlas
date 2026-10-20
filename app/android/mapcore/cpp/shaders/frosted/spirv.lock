@@ -1,0 +1,5 @@
+# SHA-256 of each compiled module (cmake/Shaders.cmake); update with the target atlas_spirv_lock.
+frosted_boxes aab37871a5103cd493e4c806632375253990c74839a321443aa515dd95548ba2
+frosted_boxes_r8 d5d73a4ae8be2567e934c972acc7d3f86dc6c0428c19f4609869895a2d4e9b02
+frosted_glass 3a1d73d649e555b212b613dc421fd4608b4be4b879d75adf689f61c291c9711e
+frosted_test_pattern f9d409c122ae6eb6db309168e17be5d86fe20def1b6f5395ce4afb7a28f0a07a
