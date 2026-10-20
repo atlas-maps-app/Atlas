@@ -1,0 +1,19 @@
+{
+  "about": "The ground's own cases (plan-vector K9; D10's ground, water and shadows, D8's ground shadows): where the boards' and the sweeps' cases (smoke.json) do not look. The horizon in view, 8 degrees down from 200 m (the sky's band above its row, the plate's far edge, wgrad from the horizon's row and the long shadows of the evening's sun); the Prinsengracht by the Westerkerk from 120 m (the water's double clip at both banks, its tint, the bridges' lines without weather); the rails and tram tracks at Centraal from 600 m (draw_over's ballast and rails, the trams' tracks, the IJ's water); each by day and at night. Structural, in engine mode, at S1, in the full tier; their L1 and L2 gate the ground's elements once the frame core's L1 diff runs them (K7).",
+  "cases": [
+    {"name": "ground horizon sunny S1", "scene": {"pack": "bundled"}, "camera": {"lat": 52.3746, "lon": 4.884, "distance": 200, "bearing": 52, "pitch": 82},
+     "moment": {"named": "sunny"}, "size": "S1", "mode": "structural", "engine": true, "gates": ["CEILING", "L1", "L2"], "tier": "full"},
+    {"name": "ground horizon night S1", "scene": {"pack": "bundled"}, "camera": {"lat": 52.3746, "lon": 4.884, "distance": 200, "bearing": 52, "pitch": 82},
+     "moment": {"named": "night"}, "size": "S1", "mode": "structural", "engine": true, "gates": ["CEILING", "L1", "L2"], "tier": "full"},
+    {"name": "ground canal sunny S1", "scene": {"pack": "bundled"}, "camera": {"lat": 52.3747, "lon": 4.8852, "distance": 120, "bearing": 52, "pitch": 60},
+     "moment": {"named": "sunny"}, "size": "S1", "mode": "structural", "engine": true, "gates": ["CEILING", "L1", "L2"], "tier": "full"},
+    {"name": "ground canal night S1", "scene": {"pack": "bundled"}, "camera": {"lat": 52.3747, "lon": 4.8852, "distance": 120, "bearing": 52, "pitch": 60},
+     "moment": {"named": "night"}, "size": "S1", "mode": "structural", "engine": true, "gates": ["CEILING", "L1", "L2"], "tier": "full"},
+    {"name": "ground rails sunny S1", "scene": {"pack": "grachten", "sha256": "3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec"},
+     "camera": {"lat": 52.3789, "lon": 4.9003, "distance": 600, "bearing": 0, "pitch": 45},
+     "moment": {"named": "sunny"}, "size": "S1", "mode": "structural", "engine": true, "gates": ["CEILING", "L1", "L2"], "tier": "full"},
+    {"name": "ground rails night S1", "scene": {"pack": "grachten", "sha256": "3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec"},
+     "camera": {"lat": 52.3789, "lon": 4.9003, "distance": 600, "bearing": 0, "pitch": 45},
+     "moment": {"named": "night"}, "size": "S1", "mode": "structural", "engine": true, "gates": ["CEILING", "L1", "L2"], "tier": "full"}
+  ]
+}
