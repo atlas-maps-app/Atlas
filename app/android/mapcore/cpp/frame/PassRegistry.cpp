@@ -3,6 +3,7 @@
 #include "frame/PassRegistry.hpp"
 
 #include "passes/Composite.hpp"
+#include "passes/Frosted.hpp"
 
 #include <algorithm>
 #include <array>
@@ -19,6 +20,7 @@ template <class P>
 // ---- The passes, one line each, in the order the frame records phases that tie (the coordinator's lines).
 constexpr std::array registry{
     Registration{.name = "composite", .make = &make<passes::Composite>}, // K7: the composite subpass (D5.4)
+    Registration{.name = "frosted", .make = &make<passes::Frosted>},     // K11b: the frosted backdrops (D5.1)
 };
 
 } // namespace
