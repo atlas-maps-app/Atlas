@@ -256,7 +256,7 @@ gpu::Result<void> GroundText::prepare(const frame::PassContext& context) {
         .target = context.pass.scene_target(),
         .depth_test = true,
         .depth_write = false,
-        .depth_op = vk::CompareOp::eLess};
+        .depth_op = vk::CompareOp::eGreater};
     desc.blends[0] = gpu::Blend::over();
     ATLAS_GPU_LET(pipeline, frame::make_pipeline(context, desc, frame::Overdraw::translucent));
     pipeline_ = std::move(pipeline);

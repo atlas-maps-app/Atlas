@@ -405,10 +405,10 @@ void MainPass::make_dynamic_targets(const Device& device) {
 }
 
 void MainPass::begin(const vk::raii::CommandBuffer& cmd, const Sync& sync, std::uint32_t index,
-                     const std::array<float, 4>& clear) const {
+                     const std::array<float, 4>& clear, float clear_depth) const {
     const Configuration& c = spec_.config;
     const vk::ClearValue colour_clear{.color = vk::ClearColorValue{clear}};
-    const vk::ClearValue depth_clear{.depthStencil = {.depth = 1.0F, .stencil = 0}};
+    const vk::ClearValue depth_clear{.depthStencil = {.depth = clear_depth, .stencil = 0}};
     const vk::Rect2D area{.offset = {.x = 0, .y = 0}, .extent = spec_.extent};
     if (*render_pass_) {
         // Attachment 0 is colour (the samples, or the output itself at 1x in one subpass), 1 the depth-stencil, 2 the

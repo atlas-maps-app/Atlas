@@ -54,12 +54,13 @@ Atlas draws its map with its own engine. This is the one document about it: what
    - The composite applies the screen effects once per pixel: haze, vignette, grain, `mat`, the wash and cloud shadows.
    - Offscreen passes run before it only where an effect needs one: blurs, crowns, reflections, glows.
    - Newer Vulkan features are used where the phone has them, picked at run time from VK facts: dynamic rendering with local reads, synchronization2, present timing, and fragment shading rate for the thermal ladder.
-6. **True depth for everything that stands up.** Buildings, parts, roofs, trees and things are drawn with a real depth buffer, kept in tile memory beside the samples, and roughly front to back for early rejection. They occlude correctly at every angle.
+6. **True depth for everything that stands up.** Buildings, parts, roofs, trees and things are drawn with a real depth buffer, kept in tile memory beside the samples, and tile by tile from the nearest for early rejection. They occlude correctly at every angle.
    - The renderer orders whole items by one point each, so at some angles its buildings melt into each other. The engine does not copy that.
-   - The ground keeps the renderer's layering on its one plane: land cover, areas, roads, water and shadows, in its order.
+   - The depth is reversed: near / k.z, in float with stencil where the phone has it (D32S8), else 24-bit, with the depth tests GREATER (`shaders/shared/painter.slang`).
+   - The ground keeps the renderer's layering on its one plane: land cover, areas, roads, water and shadows, in its order. Its painter slots take the far end of the depth range, behind every true depth, so what stands up is drawn over the ground as the renderer draws it. Terrain (step 6) gives the ground a surface's true depth.
+   - Where faces of one building touch, two small leads keep the renderer's order: a later cell's edge covers an earlier one's, and a roof covers the edge of its walls. Faces of two buildings that touch meet where their geometry puts them.
    - Flat detail on a wall (cells, windows, sashes, shutters, plinths, cornices, shop glazing, doors, numbers) keeps the renderer's exact shapes. It is expanded on the GPU from the wall's record and drawn clipped to its own wall, so nothing fights for depth.
-   - A switch draws the renderer's painter's order instead, to compare the two side by side.
-   - The depth is reversed float depth with stencil where the phone has it, else 24-bit.
+   - A switch (`FrameOptions::painter`) draws the renderer's painter's order instead, to compare the two side by side; the owner maps are drawn under it.
    - The painter ranks stay, for what is translucent and for the detail bands. So the twin still emits in the renderer's order, and only its test raster gains depth.
    - What stands out from a wall (chimneys, dormers, hoist beams, shopfronts, signs, terraces) is geometry with depth.
 7. **Light and sun.** The renderer's light model and themes for the moment, and the sun test at every sample point, recomputed on the workers when the sun moves 0.5°. The moment's weather comes from more than one source, and the sun alone sets the moment when none answers.
@@ -122,7 +123,7 @@ Atlas draws its map with its own engine. This is the one document about it: what
 
 ## What exists so far
 
-Nothing is finished. Each part below is a first version on `app` (at `10c4529`, with CI green). It gets reworked wherever the design above asks for more, starting with true depth.
+Nothing is finished. Each part below is a first version on `app`. It gets reworked wherever the design above asks for more.
 
 | Part | State |
 |---|---|
@@ -133,7 +134,7 @@ Nothing is finished. Each part below is a first version on `app` (at `10c4529`, 
 | Frame core | camera, ladder, cover, residency, heaps, ranks and pass registry; the composite (haze, vignette, `mat`'s rule, grain); the twin and L1; the coarser pack around the active one |
 | Sun | the sun test on the workers, equal to the port on every sample of 21 board renders |
 | Ground and water | drawn and registered; L1 matched in all 11 cases |
-| Buildings, first half | walls, parts, flat and gabled roofs and houseboats, with sun bits and edges; held to the port's polygons; not registered yet |
+| Buildings, first half | walls, parts, flat and gabled roofs and houseboats, with sun bits and edges, at their true depth (a pair the renderer melts is drawn right; the switch draws the renderer's order); held to the port's polygons and on lavapipe to a depth raster of the twin; not registered yet |
 | Text | shaping, glyphs, canal names, and the board's labels placed; not registered yet |
 | Noise fields, thin strokes | WebKit's turbulence byte for byte (scalar and NEON); `ObjectStrokes` |
 | Frosted glass | drawn by the core under the chrome |
@@ -170,12 +171,7 @@ The engine builds on them: step 3's "the core asks, the app fetches" has its fet
 The engine is done first: it is the app's centerpiece, and the rest of the app builds on it.
 
 ### 1. The new map on the phone
-- **True depth first,** before more passes are built on the old order:
-  - the walls' pass writes real depth, roughly front to back;
-  - the ground keeps its order and writes the plane's depth;
-  - the twin keeps the renderer's order, so `L1Test` is unchanged, and the twin's test raster gains depth;
-  - a switch shows the renderer's painter's order, for comparison;
-  - the renderer's melting is named in the case files.
+- **True depth** is built (the design's point 6); its switch reaches the app with the app's map below.
 - **Land the pending branches.** Write `build_pack`'s test, then register the buildings and the text passes:
   - `build_pack` feeds `text::pack_canals` and `GroundText::use_pack`;
   - the providers feed `GlyphGlobals` and `SpriteGlobals`;

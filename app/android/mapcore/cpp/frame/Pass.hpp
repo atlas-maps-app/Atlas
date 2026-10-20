@@ -4,9 +4,9 @@
 // draws, on the CPU, for L1 and VK check), so feature packages never edit each other's files or the core's base.
 //
 // A frame (CP/frame/FrameBuilder.cpp) records every pass's phases in D5.12's order: the offscreen passes; the main
-// pass's scene subpass, opaque objects front to back with rank depth and the objects bit, then the opaque ground (top
-// layer first), then translucent primitives in painter's order (depth test on, writes off); the composite subpass, the
-// composite, then the board's labels and the overlays without depth; then what follows the main pass (the frosted
+// pass's scene subpass, opaque objects front to back at their true depth with the objects bit, then the opaque ground
+// (top layer first), then translucent primitives in painter's order (depth test on, writes off); the composite subpass,
+// the composite, then the board's labels and the overlays without depth; then what follows the main pass (the frosted
 // backdrops). Within a slot the phases go by their `order` (the renders' layer order across passes), ties in the
 // registry's order. Sets 0 (the frame: its block, rank and selector tables) and 1 (the globals: the geometry heaps, the
 // sun bits, the noise fields, the byte tables, the glyphs, the sprites) are bound once for the scene and the composite
@@ -57,7 +57,7 @@ struct FrameState;    // frame/FrameBuilder.hpp
 /// Where in the frame a phase records (D5.12's order).
 enum class Slot : std::uint8_t {
     offscreen = 0,   ///< its own render passes or dispatches before the main pass (D5.5)
-    objects = 1,     ///< scene subpass: opaque objects, front to back, rank depth, the objects bit (D6)
+    objects = 1,     ///< scene subpass: opaque objects, front to back, true depth, the objects bit (painter.slang)
     ground = 2,      ///< scene subpass: the opaque ground, top layer first
     translucent = 3, ///< scene subpass: translucent primitives in painter's order, depth test on, writes off
     composite = 4,   ///< composite subpass: the composite (passes/Composite.cpp alone)

@@ -1,5 +1,5 @@
 // The buildings (plan-vector D10 "Buildings", D6, D7, D8; K10): one pass draws every building and part as the port's
-// _draw_building does, in the objects slot (opaque, front to back by tile, at their painter slots, writing the objects
+// _draw_building does, in the objects slot (opaque, front to back by tile, at their true depth, writing the objects
 // bit).
 //   - Stage T (build, on a worker): geometry/Walls.hpp's primitives, faces and items of the tile at its level, written
 //     into one range of the walls heap (twin/building/BuildingTile.hpp): the primitives (4 × uint4: a wall as one cell,
@@ -12,9 +12,10 @@
 //     colours whenever that slot's are of another moment; and its draws over its visible cells, with its sun bits'
 //     first texel in set 1's sun_bits and their fade (scene::CoverTile's, K8's bits: no bits yet, every face unlit).
 //   - The objects phase draws the walls and the near cells (shaders/building/draw.slang's walls_vs, 16 points of each
-//     one's dilated outline through a static index buffer's fans) and the roofs (roofs_vs, 5 points each); the vertex
-//     stage decides every primitive at the frame (shaders/building/building.slangh) from its building's rank entry (its
-//     first painter slot and detail band, through the tile's rows).
+//     one's dilated outline through a static index buffer's fans) and the roofs (roofs_vs, 5 points each), tile by
+//     tile from the nearest, at their true depth, so early depth testing shades each visible sample about once; the
+//     vertex stage decides every primitive at the frame (shaders/building/building.slangh) from its building's rank
+//     entry (its first painter slot and detail band, through the tile's rows).
 //   - The twin (emit): every primitive the vertex stage draws, as the port's SVG element
 //   (twin/building/BuildingTwin.hpp).
 // The roofs' half of the pass (its pipeline and draws) is passes/Roofs.cpp. The roofs' thin edge strokes are the
@@ -27,6 +28,7 @@
 #include "gpu/Memory.hpp"
 #include "scene/Heaps.hpp"
 #include "twin/building/BuildingTile.hpp"
+#include "twin/building/BuildingTwin.hpp"
 
 #include <array>
 #include <atomic>
@@ -75,6 +77,9 @@ public:
         std::size_t sunlit = 0;
     };
     [[nodiscard]] Emitted emitted() const noexcept { return emitted_; }
+    /// Each element the last emit wrote, its depth as the vertex stage gives it, in the stream's order (the tests'
+    /// depth raster).
+    [[nodiscard]] std::span<const twin::ElementDepth> depths() const noexcept { return depths_; }
     /// The CPU's light so far: the tiles whose colours it wrote for a moment (a frame slot each), their faces, the
     /// time it took, and the longest a tile took.
     struct Lighting {
@@ -108,6 +113,7 @@ private:
         std::uint32_t cell_runs = 0;
         std::uint32_t plain_runs = 0;
         std::uint32_t runs_first = 0; ///< its runs in runs_: edged, then near cells, then plain
+        double distance = 0;          ///< the tile's distance from the eye (the draws go nearest first)
     };
 
     [[nodiscard]] gpu::Result<void> prepare_roofs(const frame::PassContext& context);
@@ -121,6 +127,7 @@ private:
 
     std::uint16_t kind_ = 0;
     mutable Emitted emitted_;
+    mutable std::vector<twin::ElementDepth> depths_;
     Lighting lighting_;
     // stage T's: the pass's place in the registry and the world's heaps, as the first build sees them
     mutable std::atomic<std::uint32_t> pass_index_{0xFFFF'FFFFU};

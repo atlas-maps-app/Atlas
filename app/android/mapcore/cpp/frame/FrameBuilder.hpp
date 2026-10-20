@@ -106,8 +106,12 @@ struct FrameOptions {
     std::uint32_t steps = ~0U;
     /// The owner mode (the likeness harness's owner map): every scene pipeline replaced by its owner twin, which
     /// writes the painter slot it draws at (shaders/frame/owner.slang), the composite passing it through, nothing after
-    /// it; drawn at one sample, the frame read back gives each pixel's latest slot in painter's order (owner_map).
+    /// it; drawn at one sample under the painter switch, the frame read back gives each pixel's latest slot in
+    /// painter's order (owner_map).
     bool owners = false;
+    /// The painter switch: what stands up draws in the renderer's painter's order (whole items by one point each, as
+    /// the renders sort them) instead of at its true depth, to compare the two (painter.slang).
+    bool painter = false;
 };
 
 /// What the frame draws of the world (scene/World.hpp): asked once a frame, once the frame's view is known and before
@@ -165,6 +169,8 @@ public:
     /// The next frame's inputs. The camera state must be read and checked (style::read_camera_state) and the theme
     /// block too (style::read_theme_block).
     void set_inputs(const FrameInputs& inputs) noexcept { inputs_ = inputs; }
+    /// The painter switch (FrameOptions::painter), from the next frame on.
+    void set_painter(bool painter) noexcept { options_.painter = painter; }
 
     [[nodiscard]] gpu::Result<void> prepare(const gpu::MainPass& pass, const gpu::Output& output) override;
     void release() override;
@@ -240,6 +246,7 @@ private:
     FrameState state_;
     std::uint32_t quarter_turns_ = 0;
     std::uint32_t levels_ = 255;
+    bool depth24_ = false; ///< the main pass's depth is 24-bit fixed point (painter.slang's scale)
     bool prepared_ = false;
     double stage_f_ms_ = 0;
     double record_ms_ = 0;

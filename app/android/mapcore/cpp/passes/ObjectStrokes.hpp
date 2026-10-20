@@ -9,7 +9,7 @@
 //   - over a sample with it (the stroke on the group's own paint), alpha a in mat's colour;
 // where mat does not run (mat.slang's mat_on: structural mode, the fields not yet bound, a moment without weather),
 // alpha a in the stroke's colour through both. Each draws at its primitive's painter slot with the depth test
-// LESS_OR_EQUAL (over its own fill, under every nearer primitive) and no depth or stencil writes, premultiplied
+// GREATER_OR_EQUAL (over its own fill, under every nearer primitive) and no depth or stencil writes, premultiplied
 // source-over. The pass records them in a phase of its own in Slot::translucent, its strokes in its own back-to-front
 // order.
 //

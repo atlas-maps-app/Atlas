@@ -380,7 +380,7 @@ public:
                                    .target = c.pass.scene_target()};
             desc.depth_test = true;
             desc.depth_write = true;
-            desc.depth_op = vk::CompareOp::eLess;
+            desc.depth_op = vk::CompareOp::eGreater;
             if (objects) {
                 desc.stencil_test = true;
                 desc.stencil = {.failOp = vk::StencilOp::eKeep,

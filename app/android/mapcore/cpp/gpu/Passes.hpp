@@ -1,7 +1,7 @@
 // The main pass (plan-vector D5.3, D5.4) in both frame routes: a render pass with two subpasses (Vulkan 1.0's
 // render pass objects through VK_KHR_create_renderpass2), or one dynamic rendering scope whose composite reads the
 // samples locally (VK_KHR_dynamic_rendering_local_read). The scene subpass draws into the colour samples and the
-// depth-stencil (painter ranks, the objects bit); the composite reads every sample of a pixel and its stencil and
+// depth-stencil (reversed depth, the objects bit); the composite reads every sample of a pixel and its stencil and
 // writes the finished colour, either into the samples, resolved into the output on chip, or straight into the 1x
 // output. The one-subpass form (ONEPASS) draws the scene with its effects per fragment and resolves.
 //
@@ -30,7 +30,7 @@ struct MainPassSpec {
     /// resolve needs; 10 bits a channel where the frame's colour has them.
     vk::Format colour_format = vk::Format::eR8G8B8A8Unorm;
     vk::Format output_format = vk::Format::eR8G8B8A8Unorm;
-    vk::Format depth_stencil = vk::Format::eD24UnormS8Uint;
+    vk::Format depth_stencil = vk::Format::eD32SfloatS8Uint;
     /// The output's layout after the pass: PRESENT_SRC_KHR on a swapchain, TRANSFER_SRC_OPTIMAL for a readback.
     vk::ImageLayout output_final = vk::ImageLayout::ePresentSrcKHR;
 };
@@ -63,9 +63,10 @@ public:
     /// The bytes the attachments reserved (0 in lazily allocated memory).
     [[nodiscard]] vk::DeviceSize attachment_bytes() const noexcept { return colour_.bytes() + depth_.bytes(); }
 
-    /// Begins the pass on output image `index`, clearing colour to `clear` and depth-stencil to 1 and 0.
+    /// Begins the pass on output image `index`, clearing colour to `clear`, depth to `clear_depth` (0, infinitely far,
+    /// for the map's reversed depth, shaders/shared/painter.slang; 1 for VK bench's stand-in) and stencil to 0.
     void begin(const vk::raii::CommandBuffer& cmd, const Sync& sync, std::uint32_t index,
-               const std::array<float, 4>& clear) const;
+               const std::array<float, 4>& clear, float clear_depth = 0.0F) const;
     /// Moves to the composite: the next subpass, or the local-read barrier inside the rendering scope.
     void next(const vk::raii::CommandBuffer& cmd, const Sync& sync) const;
     /// Ends the pass; the output is in the spec's final layout.

@@ -108,7 +108,7 @@ static const float4 FOLDED = float4(0.0f, 0.0f, 2.0f, 1.0f);
 float4 place(uint t, float3 local, uint slot) {
     float3 k = camera_of(frame.camera, eye_relative(place_of(t), local));
     float2 css = project_css(frame.camera, k);
-    return clip_of(frame.camera, css, k.z, painter_depth(slot));
+    return clip_of(frame.camera, css, k.z, painter_depth(frame.camera, slot));
 }
 
 // ---------------------------------------------------------------- fills
@@ -324,7 +324,7 @@ struct ScreenOut {
 ScreenOut screen_vs(uint vertex : SV_VulkanVertexID) {
     float2 uv = float2(float((vertex << 1u) & 2u), float(vertex & 2u));
     ScreenOut o;
-    float d = painter_depth(push.mode.y);
+    float d = painter_depth(frame.camera, push.mode.y);
     o.position = float4(uv * 2.0f - 1.0f, d, 1.0f);
     return o;
 }
@@ -471,7 +471,7 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     // around a join the wedge stands out across too (a miter reaches four half widths): the quad as wide as it is long
     float2 at = (c.x < 0.0f ? a - u * reach : b + u * reach) + v * (c.y * reach);
     float2 css = at / density;
-    o.position = clip_of(frame.camera, css, 1.0f, painter_depth(slot));
+    o.position = clip_of(frame.camera, css, 1.0f, painter_depth(frame.camera, slot));
     float4 paint = unpack(colour);
     o.colour = float4(paint.rgb * paint.a, paint.a);
     o.ab = float4(a, b);

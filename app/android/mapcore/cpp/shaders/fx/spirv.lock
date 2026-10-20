@@ -1,3 +1,3 @@
 # SHA-256 of each compiled module (cmake/Shaders.cmake); update with the target atlas_spirv_lock.
 fx_mat 97e30a9a0a63acc37c2af49a66f5407d6747ec6040f8a46e446f3a277ddb67b8
-fx_strokes dce05c1701f7b8012881cc2d24383c5c0d2b464b8ddf63c3757ce9535d342112
+fx_strokes 57931dae5d618a24fb45106572e076998e5e6ebbac76363c56733525e48e160b

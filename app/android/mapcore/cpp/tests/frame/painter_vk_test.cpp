@@ -137,7 +137,7 @@ public:
                                    .target = c.pass.scene_target()};
             desc.depth_test = !strict_;
             desc.depth_write = !strict_ && opaque;
-            desc.depth_op = vk::CompareOp::eLess;
+            desc.depth_op = vk::CompareOp::eGreater;
             if (!opaque) {
                 desc.blends[0] = {.enable = true,
                                   .src_colour = vk::BlendFactor::eSrcAlpha,
@@ -271,7 +271,7 @@ public:
                                .target = c.pass.scene_target()};
         desc.depth_test = true;
         desc.depth_write = true;
-        desc.depth_op = vk::CompareOp::eLess;
+        desc.depth_op = vk::CompareOp::eGreater;
         if (desc.target.colour_count == 2) desc.blends[1] = gpu::Blend::untouched();
         ATLAS_GPU_LET(pipeline, frame::make_pipeline(c, desc, frame::Overdraw::opaque));
         pipeline_ = std::move(pipeline);

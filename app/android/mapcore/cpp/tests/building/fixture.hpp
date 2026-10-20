@@ -91,4 +91,43 @@ inline constexpr std::int32_t w0 = 48'840'000;  // 4.884° E
 /// The tile's features: its buildings, its part and its trees.
 inline constexpr std::uint32_t tile_features = 10;
 
+/// A pair of buildings the renders melt (the same tile): a long low wing, an L whose front bar (40 × 10 m, 20 m high)
+/// runs across in front of a tower (10 × 10 m, 60 m high, 10 m behind the bar) and whose arm runs 100 m north, so its
+/// sort point (the footprint's centroid at half its height) lies farther north than the tower's. Seen from the south,
+/// the bar hides the tower's foot; the renders, ordering whole items by one point each, paint the tower after the wing,
+/// over the bar.
+[[nodiscard]] inline TileBytes melt_tile() {
+    namespace tl = atlas::tiles;
+    namespace col = atlas::test::columns;
+    TileBytes t;
+    // a grid unit is 10^-7 degree: about 90 units a metre north, 147 east, here
+    const Ring wing{.lat = {s0, s0, s0 + 900, s0 + 900, s0 + 9000, s0 + 9000},
+                    .lon = {w0, w0 + 5880, w0 + 5880, w0 + 1470, w0 + 1470, w0},
+                    .keep = {}};
+    const std::vector<Ring> rings{wing, rect(3675, 1800, 1470, 900)};
+    LayerBytes b;
+    b.id = static_cast<std::uint8_t>(tl::LayerId::building);
+    b.cells = {0, 0};
+    b.columns = {
+        {"index", tl::Codec::delta, col::delta({0, 1})},
+        {"id", tl::Codec::delta, col::delta({300, 301})},
+        {"ring", tl::Codec::geom, col::geom(rings)},
+        {"h", tl::Codec::centi, col::centi({20.0, 60.0})},
+        {"min", tl::Codec::centi, col::centi({0.0, 0.0})},
+        {"roof_h", tl::Codec::centi, col::centi({std::nullopt, std::nullopt})},
+        {"levels", tl::Codec::nvarz, col::nvarz({6, 18})},
+        {"roof", tl::Codec::str, col::str(t, {std::nullopt, std::nullopt})},
+        {"wall_rgb", tl::Codec::varu, col::varu({0x8E5A46, 0xE6DFD1})},
+        {"roof_rgb", tl::Codec::varu, col::varu({0x56585C, 0x737E88})},
+        {"flags", tl::Codec::varu, col::varu({0, 0})},
+        {"tag:building", tl::Codec::str, col::str(t, {"house", "tower"})},
+        {"tag:roof:direction", tl::Codec::str, col::str(t, {std::nullopt, std::nullopt})},
+    };
+    t.layers = {b};
+    return t;
+}
+
+/// The melting pair's features.
+inline constexpr std::uint32_t melt_features = 2;
+
 } // namespace atlas::test::building

@@ -14,7 +14,15 @@
 //     projected as Camera.pc projects them, kept only if their box reaches within 300 px of the frame
 //     (`cam.poly(q, margin=300)`) and their area is 0.12 px² or more (face(); an n-gon's triangles share their
 //     polygon's estimated area), and snapped to the SVG's 0.1 px at rest;
-//   - it draws at its painter slot: its item's first slot (the rank table's) plus its own place in the item.
+//   - it draws at its true depth (painter.slang): each corner's reciprocal depth near / k.z, interpolated over a plain
+//     polygon's fan (exact over each triangle), and over an edged one's outline the reciprocal depth of its face's
+//     plane at each point, so a building occludes by where it is at every angle. Two small leads keep the renders'
+//     order where faces of one building touch: a near cell is nearer by 2^-16 of its depth per row and column it lies
+//     up and along its wall, counted modulo 16 (a later cell's edge covers an earlier one's, as the renders paint
+//     them), and a roof's face by 2^-12 (a roof covers the edge of the walls below it, as the renders paint the roof
+//     after its walls). With the
+//     painter switch (CAMERA_PAINTER) it draws at its painter slot instead: its item's first slot (the rank table's)
+//     plus its own place in the item.
 // A wall's cell (and a skillion's or a houseboat's wall) is filled and stroked in one colour, 0.3 px wide, with the
 // objects group's round joins: the same as its polygon dilated by 0.15 px, the joins' arcs included, which the vertex
 // stage draws as one opaque outline of 16 points (building_outline) under MSAA, its depth and objects bit written as
@@ -53,6 +61,17 @@ static const float BUILDING_EDGE_HALF = 0.15f;
 static const float BUILDING_MIN_AREA = 0.12f;
 static const float BUILDING_MARGIN = 300.0f;
 
+// True depth's leads (relative to the reciprocal depth): a near cell's per row and column up and along its wall (2^-16,
+// some eighty units of the last place, above the rasteriser's rounding between two triangles of one plane: 2^-18 was
+// not, on lavapipe at the Westerkerk home), counted modulo 16 so that no cell leads a roof; a roof face's over the
+// walls below it (2^-12: the most a wall's outline reaches past its corners at a steep angle). An edged
+// primitive's outline takes its face plane's depth within the span of its corners' widened by 2^-9 either way (its
+// points lie up to 0.16 px beyond the corners; a face seen almost edge-on keeps a depth between its corners').
+static const float BUILDING_CELL_LEAD = 1.52587890625e-5f;
+static const uint BUILDING_CELL_LEADS = 16u; // a cell's lead is (row + column) modulo this, times BUILDING_CELL_LEAD
+static const float BUILDING_ROOF_LEAD = 2.44140625e-4f;
+static const float BUILDING_PLANE_SPAN = 1.953125e-3f;
+
 // The words of a primitive (4 uint4), a face's geometry (2 uint4) and its light inputs (8 words), in the walls heap.
 static const uint BUILDING_PRIM_VECTORS = 4u;
 static const uint BUILDING_FACE_VECTORS = 2u;
@@ -79,6 +98,8 @@ struct BuildingPrim {
     uint flags;
     uint near_slot; // its painter slot within the item in band 0, and beyond
     uint far_slot;
+    uint lead;      // a near cell's row plus its column on its wall, modulo BUILDING_CELL_LEADS (its depth's lead,
+                    // BUILDING_CELL_LEAD each); else 0
 };
 
 inline BuildingPrim building_prim(uint4 a, uint4 b, uint4 c, uint4 d) {
@@ -97,6 +118,7 @@ inline BuildingPrim building_prim(uint4 a, uint4 b, uint4 c, uint4 d) {
     p.flags = c.w >> 16u;
     p.near_slot = d.w & 0xFFFFu;
     p.far_slot = d.w >> 16u;
+    p.lead = 0u;
     return p;
 }
 
@@ -105,7 +127,9 @@ inline BuildingPrim building_prim(uint4 a, uint4 b, uint4 c, uint4 d) {
 /// (b, y0), (b, top), (a, top)): the cell cut from it as the port cuts it (ya = y0 + (top - y0) · r / nrow, u0 = c /
 /// ncol, quadAt's corners, in float), drawn near with the wall's edge, its sample the k-th after the wall's (K8's
 /// order), its painter slot the k-th after the first cell's (which the wall's record keeps as its near slot: a wall
-/// with cells is drawn only far).
+/// with cells is drawn only far), its depth's lead its row plus its column, modulo 16 (each later cell the renders
+/// paint over an edge it shares with an earlier one lies a row up or a column along: it leads by one, but every 16th,
+/// which trails by 15).
 inline BuildingPrim building_cell_prim(BuildingPrim wall, uint code) {
     uint k = code & 0xFFFFu;
     uint ncol = (code >> 16u) & 0xFFu;
@@ -137,6 +161,7 @@ inline BuildingPrim building_cell_prim(BuildingPrim wall, uint code) {
     p.sample = wall.sample + 1u + k;
     p.near_slot = wall.near_slot + k;
     p.far_slot = 0u;
+    p.lead = (r + c) % BUILDING_CELL_LEADS;
     return p;
 }
 
@@ -167,6 +192,15 @@ struct BuildingShape {
     float2 p2;
     float2 p3;
     float2 p4;
+    float r0;      // each corner's reciprocal depth, near / k.z (1 where the near plane cut the polygon)
+    float r1;
+    float r2;
+    float r3;
+    float r4;
+    float4 plane;  // its face's plane in camera coordinates, the points k with dot(plane.xyz, k) = plane.w
+    float lo;      // the span its outline's reciprocal depths keep within (its corners', widened)
+    float hi;
+    float lead;    // its reciprocal depth's lead, a fraction of it (the cells' and the roofs')
     float depth;   // its painter depth (painter.slang)
     uint slot;     // its painter slot
 };
@@ -188,19 +222,41 @@ inline float2 building_corner(BuildingShape s, uint i) {
     return s.p4;
 }
 
-/// The shape with corner i set.
-inline BuildingShape building_with_corner(BuildingShape s, uint i, float2 v) {
+/// The reciprocal depth of corner i of a shape.
+inline float building_corner_recip(BuildingShape s, uint i) {
+    if (i == 0u) {
+        return s.r0;
+    }
+    if (i == 1u) {
+        return s.r1;
+    }
+    if (i == 2u) {
+        return s.r2;
+    }
+    if (i == 3u) {
+        return s.r3;
+    }
+    return s.r4;
+}
+
+/// The shape with corner i set: its point and its reciprocal depth.
+inline BuildingShape building_with_corner(BuildingShape s, uint i, float2 v, float recip) {
     BuildingShape r = s;
     if (i == 0u) {
         r.p0 = v;
+        r.r0 = recip;
     } else if (i == 1u) {
         r.p1 = v;
+        r.r1 = recip;
     } else if (i == 2u) {
         r.p2 = v;
+        r.r2 = recip;
     } else if (i == 3u) {
         r.p3 = v;
+        r.r3 = recip;
     } else {
         r.p4 = v;
+        r.r4 = recip;
     }
     return r;
 }
@@ -229,7 +285,17 @@ inline BuildingShape building_nothing() {
     s.p2 = zero;
     s.p3 = zero;
     s.p4 = zero;
-    s.depth = 1.0f;
+    s.r0 = 0.0f;
+    s.r1 = 0.0f;
+    s.r2 = 0.0f;
+    s.r3 = 0.0f;
+    s.r4 = 0.0f;
+    float4 none = {0.0f, 0.0f, 1.0f, 1.0f};
+    s.plane = none;
+    s.lo = 0.0f;
+    s.hi = 0.0f;
+    s.lead = 0.0f;
+    s.depth = 0.0f;
     s.slot = 0u;
     return s;
 }
@@ -331,29 +397,77 @@ inline BuildingShape building_shape(FrameCamera cam, uint theme_flags, TilePlace
         return s;
     }
     bool rest = camera_rests(cam);
+    float lo = 0.0f;
+    float hi = 0.0f;
     for (uint i = 0u; i < m; ++i) {
         float2 v = q[i];
         if (rest) {
             float2 snapped = {snap_tenth(v.x), snap_tenth(v.y)};
             v = snapped;
         }
-        s = building_with_corner(s, i, v);
+        float recip = near_z / c[i].z;
+        s = building_with_corner(s, i, v, recip);
+        lo = i == 0u || recip < lo ? recip : lo;
+        hi = i == 0u || recip > hi ? recip : hi;
     }
     s.count = m;
+    // the face's plane in camera coordinates: its normal turned with the tile's place (x scaled, so the normal's x is
+    // divided) and the camera, through its test point
+    float3 nrm = {f.normal.x / place.scale.x, f.normal.y, f.normal.z};
+    float3 on_face = eye_relative(place, f.test);
+    float3 nk = camera_of(cam, nrm);
+    float4 plane = {nk.x, nk.y, nk.z, ((nrm.x * on_face.x) + (nrm.y * on_face.y)) + (nrm.z * on_face.z)};
+    s.plane = plane;
+    s.lo = lo - lo * BUILDING_PLANE_SPAN;
+    s.hi = hi + hi * BUILDING_PLANE_SPAN;
+    s.lead = (p.flags & BUILDING_EDGE) != 0u ? float(p.lead) * BUILDING_CELL_LEAD : BUILDING_ROOF_LEAD;
     s.slot = rank_slot(rank) + (near ? p.near_slot : p.far_slot);
-    s.depth = painter_depth(s.slot);
+    s.depth = painter_depth(cam, s.slot);
     return s;
 }
 
-/// Point v (0 to 4) of a plain polygon's fan of 3 triangles, (0, 1, 2), (0, 2, 3), (0, 3, 4), laid out so the fan
-/// fills what SVG's nonzero rule fills of the shape's corners in order: a convex polygon from its first corner (a
-/// triangle's and a pentagon's points past its last repeat it); a quad that is not convex (a roof's slope whose eave
-/// and ridge are not parallel need not be planar, so its projection can be) from its reflex corner; a crossed quad
-/// (its edges p[i-1] p[i] and p[i+1] p[i+2] crossing at x) as its two lobes, [x, p[i], p[i+1], p[i+2], p[i-1]], whose
-/// middle triangle has no area (x lies on p[i+1] p[i+2]).
-inline float2 building_plain_point(BuildingShape s, uint v) {
+/// The depth a reciprocal depth `recip` of shape `s` draws at: its true depth with the shape's lead, or its painter
+/// depth under the painter switch.
+inline float building_depth(FrameCamera cam, BuildingShape s, float recip) {
+    if ((cam.flags.x & CAMERA_PAINTER) != 0u) {
+        return s.depth;
+    }
+    return true_depth(cam, recip + recip * s.lead);
+}
+
+/// The reciprocal depth of an edged shape's face plane at CSS point `css` (r = near · dot(n, ray) / d along the ray
+/// through it), kept within the shape's span (a face seen almost edge-on, whose plane the ray meets far off or not at
+/// all, keeps a reciprocal depth between its corners').
+inline float building_plane_recip(FrameCamera cam, BuildingShape s, float2 css) {
+    float3 ray = {(css.x - cam.right.w) / cam.forward.w, (cam.up.w - css.y) / cam.forward.w, 1.0f};
+    float along = ((s.plane.x * ray.x) + (s.plane.y * ray.y)) + (s.plane.z * ray.z);
+    float r = cam.frame.w * along / s.plane.w;
+    if (!(r >= s.lo)) {
+        r = s.lo;
+    }
+    if (!(r <= s.hi)) {
+        r = s.hi;
+    }
+    return r;
+}
+
+/// Corner i of a shape with its reciprocal depth: x, y (CSS px) and r.
+inline float3 building_corner_vertex(BuildingShape s, uint i) {
+    float2 p = building_corner(s, i);
+    float3 v = {p.x, p.y, building_corner_recip(s, i)};
+    return v;
+}
+
+/// Point v (0 to 4) of a plain polygon's fan of 3 triangles, (0, 1, 2), (0, 2, 3), (0, 3, 4), with its reciprocal
+/// depth (x, y in CSS px, r), laid out so the fan fills what SVG's nonzero rule fills of the shape's corners in order:
+/// a convex polygon from its first corner (a triangle's and a pentagon's points past its last repeat it); a quad that
+/// is not convex (a roof's slope whose eave and ridge are not parallel need not be planar, so its projection can be)
+/// from its reflex corner; a crossed quad (its edges p[i-1] p[i] and p[i+1] p[i+2] crossing at x) as its two lobes,
+/// [x, p[i], p[i+1], p[i+2], p[i-1]], whose middle triangle has no area (x lies on p[i+1] p[i+2]). The crossing's
+/// reciprocal depth is a b's there: r is affine along a segment's projection.
+inline float3 building_plain_vertex(BuildingShape s, uint v) {
     if (s.count != 4u) {
-        return building_corner(s, v < s.count ? v : s.count - 1u);
+        return building_corner_vertex(s, v < s.count ? v : s.count - 1u);
     }
     // each corner's turn: the cross product of its incoming and outgoing edges
     float turn[4] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -373,7 +487,7 @@ inline float2 building_plain_point(BuildingShape s, uint v) {
     }
     uint w = v < 4u ? v : 3u; // the fan's point v of a convex quad
     if (positive == 0u || negative == 0u) {
-        return building_corner(s, w);
+        return building_corner_vertex(s, w);
     }
     if (positive == 1u || negative == 1u) {
         // concave: from the corner whose turn has the minority's sign
@@ -384,7 +498,7 @@ inline float2 building_plain_point(BuildingShape s, uint v) {
                 r = i;
             }
         }
-        return building_corner(s, (r + w) % 4u);
+        return building_corner_vertex(s, (r + w) % 4u);
     }
     // crossed: corners i and i + 1 turn alike, i + 2 and i + 3 the other way
     uint i0 = 0u;
@@ -393,10 +507,10 @@ inline float2 building_plain_point(BuildingShape s, uint v) {
             i0 = i;
         }
     }
-    float2 a = building_corner(s, (i0 + 3u) % 4u); // p[i-1]
-    float2 b = building_corner(s, i0);             // p[i]
-    float2 c = building_corner(s, (i0 + 1u) % 4u); // p[i+1]
-    float2 d = building_corner(s, (i0 + 2u) % 4u); // p[i+2]
+    float3 a = building_corner_vertex(s, (i0 + 3u) % 4u); // p[i-1]
+    float3 b = building_corner_vertex(s, i0);             // p[i]
+    float3 c = building_corner_vertex(s, (i0 + 1u) % 4u); // p[i+1]
+    float3 d = building_corner_vertex(s, (i0 + 2u) % 4u); // p[i+2]
     if (v == 1u) {
         return b;
     }
@@ -410,15 +524,22 @@ inline float2 building_plain_point(BuildingShape s, uint v) {
         return a;
     }
     // where a b crosses c d
-    float2 ab = b - a;
-    float2 cd = d - c;
+    float2 ab = {b.x - a.x, b.y - a.y};
+    float2 cd = {d.x - c.x, d.y - c.y};
     float den = ab.x * cd.y - ab.y * cd.x;
     if (den == 0.0f) {
         return a;
     }
     float t = ((c.x - a.x) * cd.y - (c.y - a.y) * cd.x) / den;
-    float2 x = {a.x + ab.x * t, a.y + ab.y * t};
+    float3 x = {a.x + ab.x * t, a.y + ab.y * t, a.z + (b.z - a.z) * t};
     return x;
+}
+
+/// Point v (0 to 4) of a plain polygon's fan (building_plain_vertex's, CSS px).
+inline float2 building_plain_point(BuildingShape s, uint v) {
+    float3 p = building_plain_vertex(s, v);
+    float2 q = {p.x, p.y};
+    return q;
 }
 
 /// The direction of angle a from x toward y (radians).

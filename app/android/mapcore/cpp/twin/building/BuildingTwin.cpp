@@ -154,10 +154,14 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
                     if (ring >= b.rings.size() || ring_done_[ring] != 0) continue;
                     ring_done_[ring] = 1;
                     const passes::BuildingRing& r = b.rings[ring];
-                    for (std::uint32_t k = r.prim; s.count == 0 && k < r.prim + r.prims; ++k) {
+                    triangles_.clear();
+                    for (std::uint32_t k = r.prim; k < r.prim + r.prims; ++k) {
                         const shaders::BuildingPrim t =
                             prim_at(list_at + (std::size_t{k} * shaders::BUILDING_PRIM_VECTORS));
-                        s = shaders::building_shape(cam, theme_flags, place, t, f, rank);
+                        const shaders::BuildingShape ts = shaders::building_shape(cam, theme_flags, place, t, f, rank);
+                        if (ts.count == 0) continue;
+                        if (s.count == 0) s = ts;
+                        triangles_.push_back(ts);
                     }
                 }
                 if (s.count == 0) continue;
@@ -191,6 +195,10 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
                     }
                 }
                 out_.path(style_of(p.flags, argb), points_, true);
+                if (depths_ != nullptr) {
+                    depths_->push_back({.shape = s, .edged = edged, .triangles = {}});
+                    if (ring < b.rings.size()) depths_->back().triangles = triangles_;
+                }
                 ++elements_;
             }
         }

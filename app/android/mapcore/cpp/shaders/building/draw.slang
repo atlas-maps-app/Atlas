@@ -4,7 +4,8 @@
 // n-gon's triangle as its polygon, 5 points through a fan of 3 triangles (the corners a near plane's cut may leave,
 // repeated where there are fewer). Both read their primitive, face and colours from the walls heap (set 1, binding 1;
 // the colours the CPU's light, per tile and moment) and their building's rank entry through the tile's rows (set 0,
-// binding 1), decide it as shaders/building/building.slangh does, and write its painter depth; building_fs fills it
+// binding 1), decide it as shaders/building/building.slangh does, and write its true depth (an outline's points its
+// face plane's, a fan's points their corners'), or its painter depth under the painter switch; building_fs fills it
 // with its face's light. Opaque: never discards, its pipelines write the depth and the objects bit.
 
 #include "shared/frame.slang"
@@ -95,7 +96,8 @@ BuildingOut walls_vs(uint vertex : SV_VulkanVertexID) {
         return o;
     }
     float2 css = building_outline(d.shape, vertex - index * BUILDING_EDGED_VERTICES, BUILDING_EDGE_HALF);
-    o.position = clip_of(frame.camera, css, 1.0f, d.shape.depth);
+    float depth = building_depth(frame.camera, d.shape, building_plane_recip(frame.camera, d.shape, css));
+    o.position = clip_of(frame.camera, css, 1.0f, depth);
     o.colour = colour_of(d);
     return o;
 }
@@ -110,8 +112,9 @@ BuildingOut roofs_vs(uint vertex : SV_VulkanVertexID) {
         o.colour = float3(0.0f);
         return o;
     }
-    float2 css = building_plain_point(d.shape, vertex - index * BUILDING_PLAIN_VERTICES);
-    o.position = clip_of(frame.camera, css, 1.0f, d.shape.depth);
+    float3 point = building_plain_vertex(d.shape, vertex - index * BUILDING_PLAIN_VERTICES);
+    float2 css = {point.x, point.y};
+    o.position = clip_of(frame.camera, css, 1.0f, building_depth(frame.camera, d.shape, point.z));
     o.colour = colour_of(d);
     return o;
 }

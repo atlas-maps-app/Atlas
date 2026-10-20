@@ -11,7 +11,7 @@
 // in its shaders: it includes this file after `#define ATLAS_FX_FUNCTIONS` and returns stroke_corner (or stroke_none)
 // for each of six vertices a segment (two triangles), and ObjectStrokes makes the two pipelines with this module's
 // fragment stages. A stroke draws at its primitive's painter slot, over that primitive's own fill (the depth test is
-// LESS_OR_EQUAL) and under every nearer one.
+// GREATER_OR_EQUAL, the depth being reversed) and under every nearer one.
 //
 // The first version's residual (named, and counted at the corners by CP/tests/fx/strokes_vk_test.cpp): the objects
 // group's strokes have round joins (stroke-linejoin="round"); butt segments, untrimmed, cover a join's inside twice and
@@ -96,7 +96,7 @@ inline StrokeVertex stroke_corner(FrameCamera camera, float4 clip_a, float4 clip
     float across = (k & 2u) != 0u ? hw + STROKE_MARGIN : -(hw + STROKE_MARGIN);
     float2 px = {a.x + u.x * along + n.x * across, a.y + u.y * along + n.y * across};
     StrokeVertex o;
-    float4 position = {px.x * scale.x - 1.0f, px.y * scale.y - 1.0f, painter_depth(slot), 1.0f};
+    float4 position = {px.x * scale.x - 1.0f, px.y * scale.y - 1.0f, painter_depth(camera, slot), 1.0f};
     float4 ends = {a.x, a.y, b.x, b.y};
     float4 style = {hw, 0.0f, 0.0f, 0.0f};
     o.position = position;

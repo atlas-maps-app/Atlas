@@ -717,8 +717,10 @@ Facts collect_facts(const Instance& instance, const vk::raii::PhysicalDevice& de
     };
     facts.d24s8 = attachment(vk::Format::eD24UnormS8Uint, vk::FormatFeatureFlagBits::eDepthStencilAttachment);
     facts.d32s8 = attachment(vk::Format::eD32SfloatS8Uint, vk::FormatFeatureFlagBits::eDepthStencilAttachment);
-    facts.depth_stencil = facts.d24s8   ? vk::Format::eD24UnormS8Uint
-                          : facts.d32s8 ? vk::Format::eD32SfloatS8Uint
+    // reversed float depth where the device has it (shaders/shared/painter.slang: true depth keeps its relative
+    // precision at every distance), else 24 bits
+    facts.depth_stencil = facts.d32s8   ? vk::Format::eD32SfloatS8Uint
+                          : facts.d24s8 ? vk::Format::eD24UnormS8Uint
                                         : vk::Format::eUndefined;
     facts.rgba8_input = attachment(vk::Format::eR8G8B8A8Unorm, vk::FormatFeatureFlagBits::eColorAttachment |
                                                                    vk::FormatFeatureFlagBits::eColorAttachmentBlend);

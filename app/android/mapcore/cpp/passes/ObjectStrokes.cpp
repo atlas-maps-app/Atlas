@@ -27,7 +27,7 @@ gpu::Result<void> ObjectStrokes::prepare(const frame::PassContext& context, vk::
         // At the primitive's slot: over its own fill, under every nearer primitive; nothing written but colour.
         desc.depth_test = true;
         desc.depth_write = false;
-        desc.depth_op = vk::CompareOp::eLessOrEqual;
+        desc.depth_op = vk::CompareOp::eGreaterOrEqual;
         // The objects bit chooses the variant, sample by sample.
         desc.stencil_test = true;
         desc.stencil = {.failOp = vk::StencilOp::eKeep,

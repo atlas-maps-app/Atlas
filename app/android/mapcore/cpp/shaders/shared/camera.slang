@@ -8,8 +8,9 @@
 // Projection: camera coordinates k = (r · p, u · p, f · p) of the eye-relative point p, each dot product summed left to
 // right as the port's vdot; the screen point (CSS px) cx + focal·k.x / k.z, cy − focal·k.y / k.z as the port's pc;
 // device px the CSS point times the density about the frame's top-left corner (plan-gpu D3's rule); clip space from
-// those with the output's quarter turns, and z = d·w for the primitive's painter depth d (painter.slang, D6). At rest
-// the vertex stage snaps the CSS point to 0.1 px as the SVG prints it (snap_tenth), before it goes to the device.
+// those with the output's quarter turns, and z = d·w for the primitive's depth d (painter.slang: reversed, a painter
+// slot's or a true depth). At rest the vertex stage snaps the CSS point to 0.1 px as the SVG prints it (snap_tenth),
+// before it goes to the device.
 //
 // Shared with the C++ twin: only the subset base/hlsl.hpp describes. Every member of the structs is a four-lane vector
 // of 32-bit values, so std140, std430 and C++ lay them out the same way.
@@ -32,6 +33,11 @@ struct FrameCamera {
 static const uint CAMERA_REST = 1u;
 /// Engine mode: the renders' radius cut is applied (the likeness cases), D9.
 static const uint CAMERA_ENGINE_MODE = 2u;
+/// The depth attachment is 24-bit fixed point (D24_UNORM_S8_UINT), not float: painter.slang's depths take its scale.
+static const uint CAMERA_DEPTH24 = 4u;
+/// The renderer's painter's order for what stands up (the comparison switch, and the owner mode): the objects draw at
+/// their painter slots' depths, as the renders order them, instead of their true depth.
+static const uint CAMERA_PAINTER = 8u;
 
 /// A tile's place relative to the eye (D2): eye-relative frame metres = local metres times the scale, plus the offset.
 /// The scale is the frame's metres per tile metre along x (the ratio of the two frames' kx; 1 in the tile's own frame)
@@ -92,10 +98,10 @@ inline float snap_tenth(float v) {
     return asfloat(asuint(r) | sign);
 }
 
-/// The clip position of the CSS point `css` of a primitive whose eye-relative depth (k.z) is `kz`, with painter depth
-/// `depth` (painter.slang): device px are CSS px times the density from the frame's top-left corner; normalised
-/// coordinates are px · 2 / size − 1; then the output's pre-rotation; z = depth · w, so Vulkan clips at the eye plane and
-/// the primitive keeps its depth after the division (D6, "The near plane").
+/// The clip position of the CSS point `css` of a primitive whose eye-relative depth (k.z) is `kz`, with depth `depth`
+/// (painter.slang): device px are CSS px times the density from the frame's top-left corner; normalised coordinates are
+/// px · 2 / size − 1; then the output's pre-rotation; z = depth · w, so Vulkan clips at the eye plane and the primitive
+/// keeps its depth after the division (D6, "The near plane").
 inline float4 clip_of(FrameCamera c, float2 css, float kz, float depth) {
     float2 n = {(css.x * c.frame.z) * c.device.x - 1.0f, (css.y * c.frame.z) * c.device.y - 1.0f};
     float2 t = {c.turn.x * n.x + c.turn.y * n.y, c.turn.z * n.x + c.turn.w * n.y};

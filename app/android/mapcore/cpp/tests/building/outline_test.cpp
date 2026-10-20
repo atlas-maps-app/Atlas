@@ -64,7 +64,7 @@ std::vector<P> outline_of(const std::vector<P>& corners, float r) {
     s.count = static_cast<std::uint32_t>(corners.size());
     for (std::uint32_t i = 0; i < s.count; ++i) {
         const float2 v = {static_cast<float>(corners[i].x), static_cast<float>(corners[i].y)};
-        s = sh::building_with_corner(s, i, v);
+        s = sh::building_with_corner(s, i, v, 1.0F);
     }
     std::vector<P> out;
     for (std::uint32_t v = 0; v < sh::BUILDING_EDGED_VERTICES; ++v) {

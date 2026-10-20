@@ -194,6 +194,7 @@ gpu::Result<void> FrameBuilder::prepare(const gpu::MainPass& pass, const gpu::Ou
     }
     quarter_turns_ = quarter_turns_of(output.transform());
     levels_ = levels_of(pass.spec().colour_format);
+    depth24_ = pass.spec().depth_stencil == vk::Format::eD24UnormS8Uint;
     configuration_ =
         std::format("{} {}", gpu::name_of(pass.spec().config), gpu::colour_name(pass.spec().colour_format));
     PipelineStats stats;
@@ -282,6 +283,9 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     const bool engine = cam.has(style::camera_flag::engine_mode);
     shaders::FrameBlock& b = state_.block;
     b.camera = state_.view->block(state_.rest, engine, number);
+    // the depth attachment's scale, and the painter switch (the owner mode reads painter slots back from the depth)
+    if (depth24_) b.camera.flags.x |= shaders::CAMERA_DEPTH24;
+    if (options_.painter || options_.owners) b.camera.flags.x |= shaders::CAMERA_PAINTER;
     b.theme = style::shader_theme(state_.theme);
     const std::uint32_t steps = options_.overdraw || options_.owners ? 0U : steps_of(state_.mode) & options_.steps;
     b.layers = view::block_of(*state_.layers, state_.theme, steps, levels_);

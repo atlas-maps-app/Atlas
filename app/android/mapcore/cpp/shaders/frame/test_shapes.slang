@@ -30,7 +30,7 @@ struct ShapeVertex {
 ShapeVertex shapes_vs(uint vertex : SV_VulkanVertexID) {
     float2 css = vertex == 0u ? shape.a_b.xy : (vertex == 1u ? shape.a_b.zw : shape.c_slot.xy);
     ShapeVertex o;
-    o.position = clip_of(frame.camera, css, 1.0f, painter_depth(shape.slot.x));
+    o.position = clip_of(frame.camera, css, 1.0f, painter_depth(frame.camera, shape.slot.x));
     return o;
 }
 
@@ -58,7 +58,7 @@ struct ColourVertex {
 ColourVertex varying_vs(uint vertex : SV_VulkanVertexID) {
     float2 css = vertex == 0u ? shape.a_b.xy : (vertex == 1u ? shape.a_b.zw : shape.c_slot.xy);
     ColourVertex o;
-    o.position = clip_of(frame.camera, css, 1.0f, painter_depth(shape.slot.x));
+    o.position = clip_of(frame.camera, css, 1.0f, painter_depth(frame.camera, shape.slot.x));
     o.colour = shape.colour;
     o.slot = shape.slot.x;
     return o;

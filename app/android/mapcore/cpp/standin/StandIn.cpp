@@ -886,7 +886,7 @@ void StandIn::record_main(const gpu::FrameContext& frame, std::uint32_t slot) {
     const auto offset = static_cast<std::uint32_t>(slot * slot_bytes_);
     const std::array<std::uint32_t, 4> dynamic{offset, offset, offset, offset};
     const std::array<vk::DescriptorSet, 2> sets{*frame_set_, *scene_set_};
-    frame.pass.begin(cmd, frame.sync, frame.image, {0.78F, 0.76F, 0.70F, 1.0F});
+    frame.pass.begin(cmd, frame.sync, frame.image, {0.78F, 0.76F, 0.70F, 1.0F}, 1.0F);
     set_viewport(cmd, extent_);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *scene_pipeline_layout_, 0, sets, dynamic);
 

@@ -769,13 +769,13 @@ void translucent(gpu::GraphicsDesc& d) {
     scene_blend(d, gpu::Blend::over());
     d.depth_test = true;
     d.depth_write = false;
-    d.depth_op = vk::CompareOp::eLess;
+    d.depth_op = vk::CompareOp::eGreater;
 }
 
 void opaque_depth(gpu::GraphicsDesc& d) {
     d.depth_test = true;
     d.depth_write = true;
-    d.depth_op = vk::CompareOp::eLess;
+    d.depth_op = vk::CompareOp::eGreater;
 }
 
 gpu::Result<void> Ground::make_fill_pipelines(const frame::PassContext& context, Pipelines& p) const {

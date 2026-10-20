@@ -162,8 +162,11 @@ void Buildings::update(const frame::FrameState& state) {
         d.cell_runs = static_cast<std::uint32_t>(runs_.size()) - d.runs_first - d.edged_runs;
         building_runs(t.cells, b->plain_first, runs_);
         d.plain_runs = static_cast<std::uint32_t>(runs_.size()) - d.runs_first - d.edged_runs - d.cell_runs;
+        d.distance = t.distance;
         if (d.edged_runs + d.cell_runs + d.plain_runs > 0) draws_.push_back(d);
     }
+    // the nearest tiles first, so early depth testing rejects what they hide in the tiles behind
+    std::ranges::stable_sort(draws_, {}, &TileDraw::distance);
     // the tiles no longer drawn are forgotten once many are kept (their rows written again if they come back: the
     // same; their colours lit again)
     if (rows_written_.size() > 4096) {
@@ -190,7 +193,7 @@ gpu::Result<void> Buildings::prepare(const frame::PassContext& context) {
         .target = context.pass.scene_target(),
         .depth_test = true,
         .depth_write = true,
-        .depth_op = vk::CompareOp::eLess,
+        .depth_op = vk::CompareOp::eGreater,
         .stencil_test = true,
         .stencil = {.failOp = vk::StencilOp::eKeep,
                     .passOp = vk::StencilOp::eReplace,
@@ -276,6 +279,7 @@ void Buildings::emit(const frame::FrameState& state, twin::Stream& out, std::uin
     const std::uint32_t index = pass_index_.load(std::memory_order_relaxed);
     scene::Heaps* heaps = heaps_.load(std::memory_order_relaxed);
     emitted_ = {};
+    depths_.clear();
     if (index == no_index || heaps == nullptr) return;
     // the objects group: the port's `<g stroke-linejoin="round">`, with its `mat` filter where the moment has weather
     // (the renders' wx), under the frame's root (its clip to the frame). The frame will emit it for every objects pass
@@ -296,6 +300,7 @@ void Buildings::emit(const frame::FrameState& state, twin::Stream& out, std::uin
             sun = {.now = t.sun->now->words, .before = t.sun->before->words, .weight = t.sun_weight, .has = true};
         }
         twin::BuildingTwin twin(state.block, state.ranks->table(), out, objects);
+        twin.record_depths(&depths_);
         twin.tile(*b, rows.subspan(std::min<std::size_t>(first, rows.size())), w.bytes(), t.place, t.cells, sun);
         emitted_.elements += twin.elements();
         emitted_.sunlit += twin.sunlit();

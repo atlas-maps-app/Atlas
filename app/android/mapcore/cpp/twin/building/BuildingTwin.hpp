@@ -13,6 +13,7 @@
 
 #include "frame/FrameBlock.hpp"
 #include "twin/Twin.hpp"
+#include "twin/building/BuildingShader.hpp"
 #include "twin/building/BuildingTile.hpp"
 
 #include <cstdint>
@@ -28,6 +29,17 @@ struct SunTexels {
     std::span<const std::uint64_t> before;
     float weight = 1.0F;
     bool has = false;
+};
+
+/// How the vertex stage gives an element its depth (the tests' depth raster; L1 reads none of it): the shape it draws
+/// (its corners and their reciprocal depths, its face's plane, its span and lead), and whether its depth is its face
+/// plane's (an edged outline: building_plane_recip) or its corners' over its fan (a plain polygon:
+/// building_plain_vertex); an n-gon's, each of its triangles the frame draws, over its own corners (`shape` is the
+/// first of them).
+struct ElementDepth {
+    shaders::BuildingShape shape{};
+    bool edged = false;
+    std::vector<shaders::BuildingShape> triangles;
 };
 
 /// Emits the buildings of the tiles a frame draws.
@@ -47,6 +59,8 @@ public:
     /// Elements emitted so far, and how many of them their sun bit lit (wholly or fading in).
     [[nodiscard]] std::size_t elements() const noexcept { return elements_; }
     [[nodiscard]] std::size_t sunlit() const noexcept { return sunlit_; }
+    /// Appends each element's depth to `out` as it is emitted, in the stream's order (null: none).
+    void record_depths(std::vector<ElementDepth>* out) noexcept { depths_ = out; }
 
 private:
     const shaders::FrameBlock& block_;
@@ -60,6 +74,8 @@ private:
     std::vector<std::uint8_t> ring_done_; // each of a tile's n-gons, once emitted
     std::vector<std::uint32_t> colours_;  // the tile's faces' colours at the frame's moment, lit and unlit
     std::vector<Point> points_;
+    std::vector<shaders::BuildingShape> triangles_; // an n-gon's drawn triangles
+    std::vector<ElementDepth>* depths_ = nullptr;
 };
 
 } // namespace atlas::twin

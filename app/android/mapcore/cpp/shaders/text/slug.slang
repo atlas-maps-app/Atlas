@@ -60,7 +60,7 @@ GlyphOut ground_text_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_Vulk
     float2 em = lerp(g.box.xy - margin, g.box.zw + margin, c);
     float2 css = float2(dot(g.row0.xy, em) + g.row0.z, dot(g.row1.xy, em) + g.row1.z);
     GlyphOut o;
-    o.position = clip_of(frame.camera, css, 1.0f, painter_depth(g.info.y));
+    o.position = clip_of(frame.camera, css, 1.0f, painter_depth(frame.camera, g.info.y));
     o.em = em;
     o.glyph = instance;
     return o;

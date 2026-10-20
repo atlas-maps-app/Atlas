@@ -20,7 +20,7 @@ gpu::Result<void> Buildings::prepare_roofs(const frame::PassContext& context) {
         .target = context.pass.scene_target(),
         .depth_test = true,
         .depth_write = true,
-        .depth_op = vk::CompareOp::eLess,
+        .depth_op = vk::CompareOp::eGreater,
         .stencil_test = true,
         .stencil = {.failOp = vk::StencilOp::eKeep,
                     .passOp = vk::StencilOp::eReplace,

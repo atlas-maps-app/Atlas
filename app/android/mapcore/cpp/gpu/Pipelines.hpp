@@ -185,7 +185,8 @@ struct GraphicsDesc {
     bool alpha_to_coverage = false;
     bool depth_test = false;
     bool depth_write = false;
-    vk::CompareOp depth_op = vk::CompareOp::eLess;
+    /// GREATER: the map's depth is reversed (shaders/shared/painter.slang), a nearer sample has the greater depth.
+    vk::CompareOp depth_op = vk::CompareOp::eGreater;
     bool stencil_test = false;
     vk::StencilOpState stencil{};
     /// The stencil state of back-facing primitives where it differs from the front's (`stencil`): a two-sided stencil,
