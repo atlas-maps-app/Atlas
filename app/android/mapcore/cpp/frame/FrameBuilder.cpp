@@ -297,12 +297,14 @@ void FrameBuilder::write_ring(std::uint32_t slot) {
     std::span<std::byte> bytes = layout_->ring(slot);
     const RingSlice& s = layout_->slice();
     std::memcpy(bytes.data() + s.block, &state_.block, sizeof(state_.block));
+    // An empty table's data() may be null, and memcpy from null is undefined even for zero bytes (UBSan, Core run
+    // 39359743198): copy only what there is.
     if (state_.items != nullptr) {
         const auto entries = ranks_.table();
-        std::memcpy(bytes.data() + s.ranks, entries.data(), entries.size_bytes());
+        if (!entries.empty()) std::memcpy(bytes.data() + s.ranks, entries.data(), entries.size_bytes());
     }
     const auto table = selectors_.table();
-    std::memcpy(bytes.data() + s.selectors, table.data(), table.size_bytes());
+    if (!table.empty()) std::memcpy(bytes.data() + s.selectors, table.data(), table.size_bytes());
     layout_->flush(slot);
 }
 
