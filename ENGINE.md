@@ -157,7 +157,7 @@ Before anything is built on them, the app's skeleton, the core and the modules w
 - **The tile store already opens packs from memory, files and remote ranges.** So tiles built on the phone become local packs, with no second tile path (step 3).
 - **There are two OpenStreetMap clients,** in `:providers` and in the port. They become one, shared by the engine and the app (step 3).
 - **Weather has a single source.** The moment's look depends on it, so a second source and a sun-only fallback come in step 3.
-- **The app's map still pulls in the CPU stack.** `:mapview` exports `:render`, `:anchor` and `:tiles` to the app; they leave with the CPU map (steps 6 and 7).
+- **The app's map still pulls in the CPU stack.** `:mapview` exports `:render`, `:anchor` and `:tiles` to the app; they leave with the CPU map at the end of step 3 (the port itself in step 7).
 - **The rest holds:** the device layer, frame core, scene, tile reader, sun, text, noise fields, the façade and the toolchain are current and fit the design.
 
 ## What is left, in order
@@ -189,7 +189,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
 - Show the honest "can't draw the map" state after three device losses in a row.
 - **The desktop render tool:** the host build draws any view and moment to a PNG.
 - **The engine's own references begin:** the boards' views and moments, stored per engine version.
-- The core draws where it has tiles. Today's map stays everywhere else until step 5.
+- The core draws where it has tiles. Today's map (the renderer's Kotlin port drawing on Canvas) stays everywhere else until the end of step 3.
 - **Prove it:** run every preset, tidy, `L1Test` and `StageTParityTest`, push, and get CI green. Then tag an alpha.
 - **On the owner's phone:**
   - the first picture within 0.5 s warm;
@@ -219,7 +219,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - an island's water level from the ring around it.
 - Tag an alpha.
 
-### 3. The phone builds the map anywhere (about 60 h)
+### 3. The phone builds the map anywhere (about 63 h)
 - **Stage P in the core.** The look's derivations move from the port's loaders into C++:
   - looks and traditions;
   - heights and roof shapes;
@@ -244,7 +244,8 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
 - **Built in the background:** on the core's workers at background priority, nearest tiles first, prefetched along the camera's motion, never slowing a frame. Tiles are kept in the cache and refreshed by asking Overpass only for what changed since.
 - **Packs become additions:** the packer runs the same C++ through the host build, so a pack's tiles equal the phone's byte for byte. Regions can be downloaded for offline use and an instant first look.
 - **Exactly the renderer:** the phone's tiles at the boards' views equal the packer's from the same data, and the frames equal the references.
-- The core draws every place at street level. Tag an alpha.
+- **The old render approach leaves the phone.** The core now draws every place at street level, so today's map goes, with its CPU frame path, the anchors and `SvgWarp`. The CPU raster stays only in tests, as the likeness oracle.
+- Tag an alpha.
 
 ### 4. The renderer's detail (about 45 h)
 In this order. Each feature's derivation goes into the core's stage P, and each is held by L1 at the boards' views and by the engine's own references:
@@ -294,9 +295,9 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
   - a check compares their frames with the phone's own builds.
 - **The app off OpenMapTiles:** its addresses, way names and POIs come from the phone's own tiles and the packs, and `packs.yml` stops building OpenMapTiles tiles.
 - **References around the world:** a big city, a mountain town, a desert, a coast, the open sea and the poles.
-- Today's map leaves the phone. Tag an alpha.
+- Tag an alpha.
 
-### 6. Finish the map (about 25 h)
+### 6. Finish the map (about 23 h)
 - Markers, the route and the location dot, drawn by the core in the map's own frame.
 - Taps on buildings: a hit test against the tile's own buildings, giving the OSM id.
 - **Power:** ADPF, and a short thermal ladder measured on the owner's phone:
@@ -305,9 +306,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
   - follow mode at 30 fps.
 - **Terrain and relief everywhere,** from the best elevation model for each region and a global one elsewhere, with the dunes and San Gimignano among them.
 - Williamsburg in `real.py`'s own look, if the owner says yes.
-- **Cleanup:**
-  - the CPU frame path, the anchors and `SvgWarp` leave the app;
-  - the old plan's citations (`plan-vector D…`, `K…`) leave the code's comments.
+- **Cleanup:** the old plan's citations (`plan-vector D…`, `K…`) leave the code's comments.
 - Tag an alpha.
 
 ### 7. The engine becomes the main piece (about 8 h)
