@@ -141,9 +141,7 @@ Nothing is finished. Each part below is a first version on `app`. It gets rework
 | Likeness harness | references from the port, candidates from the host build; the engine's own references (`likeness/engine.json`); the desktop render tool |
 | The app | the core draws the maps where it has tiles, under today's map and the overlays, cross-fading to today's map (the port on Canvas) elsewhere; the honest state where the phone cannot draw (three device losses included); the painter switch on VK facts in debug builds |
 
-**Pending work, not on `app`:** `wip/exact-haze`, the haze and vignette in whole numbers, equal to the twin (step 2). Run host-debug, host-tsan and the oracle comparison before merging.
-
-The other local branches are history; `wip/build-pack`, `wip/buildings-registration`, `wip/app-map` and `wip/text-registration` landed on 20 October 2026. The old builders' worktrees went to the Trash on 20 October 2026; their work is on `app` or these branches.
+The local branches are history; `wip/build-pack`, `wip/buildings-registration`, `wip/app-map` and `wip/text-registration` landed on 20 October 2026, and `wip/exact-haze`'s last commit (the rest was on `app` already) the same night. The old builders' worktrees went to the Trash on 20 October 2026; their work is on `app` or these branches.
 
 ## What the deep dive found (20 October)
 
@@ -189,7 +187,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - the `CLOSEST` roof mapping;
   - gable triangles in the wall's material, with their 0.25 px edges;
   - the roofs' edge strokes through `ObjectStrokes`.
-- **The exact haze:** merge `wip/exact-haze`.
+- Done: **the exact haze**, the composite's haze and vignette in whole numbers, bit for bit the twin's (against the port's references no case moves by more than 0.01 of MAD); the engine's references are at version 2.
 - **Labels** are drawn by the core's frame instead of the Compose canvas, with the fonts loaded at the map's start.
 - **All of Amsterdam from the core:** `PackList.kt`, then the first publish of the `amsterdam` and `grachten` render packs after the user's yes (a `packs.yml` run with `renders=only`).
 - **The style file:** the tiles' style section becomes the engine's own, edited as data. Every pass reads its colours and widths from it, before step 4 adds more.
