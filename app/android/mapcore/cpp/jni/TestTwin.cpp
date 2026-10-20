@@ -395,6 +395,7 @@ Result draw(const Request& r) {
         if (!frame_at(0.02 * frames)) return out;
         w.residency().wait_idle();
         if (w.sun() != nullptr) w.sun()->wait_idle();
+        w.pack_stage().wait_idle(); // the packs' own stage T (scene/Packs.hpp)
         if (frames >= 2 && w.residency().stats().pending == 0 && w.cover()->missing() == 0) break;
     }
     // Then a second on, past every fade, twice (the frame slots).

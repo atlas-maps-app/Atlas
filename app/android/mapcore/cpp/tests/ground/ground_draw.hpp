@@ -17,12 +17,14 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace atlas::test {
@@ -67,7 +69,9 @@ draw_ground(const Session& session, const style::CameraState& camera, const styl
     const gpu::Device& device = *session.device;
     auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
     if (!cache) return std::nullopt;
-    std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes();
+    // The ground's own passes: the registry's buildings and text would stand over the ground these tests check.
+    constexpr std::array<std::string_view, 3> ground_only{"composite", "frosted", "ground"};
+    std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes(ground_only);
     passes::Ground* g = ground_of(passes);
     auto builder = frame::FrameBuilder::create(device, *cache, std::move(passes), {.steps = 0});
     if (!builder) return std::nullopt;

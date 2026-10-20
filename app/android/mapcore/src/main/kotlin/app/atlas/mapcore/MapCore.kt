@@ -240,6 +240,13 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     fun moment(theme: ByteBuffer): String = core.call("the core is closed") { Native.moment(it, theme) }
 
     /**
+     * The painter switch from now on: [on], what stands up is drawn in the renderer's painter's order (whole buildings
+     * by one point each, as the renders sort them, which makes some melt into each other), to compare with the core's
+     * true depth; off, true depth (the default). Off the main thread.
+     */
+    fun painterOrder(on: Boolean) = core.call(Unit) { Native.painter(it, on) }
+
+    /**
      * Closes the core: no call starts after this begins, the calls under way finish first, then the core is freed
      * (its last pipeline cache write among it). Under the lock of [shared], [facts] and [resetGuard], and the process's
      * core is forgotten only once it is freed: no other core starts in this process while its close runs.

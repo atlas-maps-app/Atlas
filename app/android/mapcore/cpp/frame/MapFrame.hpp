@@ -76,6 +76,11 @@ public:
     [[nodiscard]] std::string set_packs(std::vector<MapPack> packs);
     /// The moment's theme from now on (checked by style::read_theme_block).
     void set_theme(const style::ThemeBlock& theme) noexcept { theme_ = theme; }
+    /// The painter switch from now on (FrameOptions::painter), kept for every frame builder made.
+    void set_painter(bool on) noexcept {
+        painter_ = on;
+        if (builder_) builder_->set_painter(on);
+    }
 
     /// Whether the last frame's picture was complete.
     [[nodiscard]] bool complete() const noexcept;
@@ -113,6 +118,7 @@ private:
     std::chrono::steady_clock::time_point epoch_;
     std::vector<MapPack> packs_;
     std::optional<style::ThemeBlock> theme_;
+    bool painter_ = false;
     std::uint64_t active_number_ = 0;
     std::string active_id_;
     std::unique_ptr<FrameBuilder> builder_;

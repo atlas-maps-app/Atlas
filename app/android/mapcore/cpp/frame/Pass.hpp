@@ -40,6 +40,7 @@ struct AAssetManager; // <android/asset_manager.h>
 
 namespace atlas::scene {
 class TileBuild; // scene/Residency.hpp
+class PackBuild; // scene/Packs.hpp
 } // namespace atlas::scene
 
 namespace atlas::twin {
@@ -191,6 +192,15 @@ public:
         (void)build;
         return {};
     }
+    /// The pack-level stage T of the pass: what it derives from a whole pack rather than a tile (D13's canal names:
+    /// each name's first way in source order across the pack's label layer), once per pack, on a worker, when the
+    /// pack becomes the active or the coarser one (scene/Packs.hpp); kept with the pack (scene::PackBuild::keep) and
+    /// read in FrameState::active_pack and coarser_pack. It must not touch the pass's own state.
+    [[nodiscard]] virtual gpu::Result<void> build_pack(scene::PackBuild& build) const {
+        (void)build;
+        return {};
+    }
+
     /// The providers of set 1's globals the pass contributes (its glyphs' curves and bands, its sprites:
     /// frame/Globals.hpp), made once for `device` with `resources` (its fonts) as the world is made; the world
     /// registers them after its own and asks them every frame. None by default.
@@ -210,10 +220,14 @@ public:
 
     /// The pass's first ground slot this frame (where ground_slots' count starts), from its update on; 0 until then.
     [[nodiscard]] std::uint32_t first_ground_slot() const noexcept { return first_ground_slot_; }
+    /// The pass's place among its frame builder's passes: its PassTile in ResidentTile::passes and its PassPack in
+    /// ResidentPack::passes (TileBuild::pass, PackBuild::pass), set as the builder is made.
+    [[nodiscard]] std::uint32_t index() const noexcept { return index_; }
 
 private:
-    friend class FrameBuilder; // lays the ground slots out
+    friend class FrameBuilder; // lays the ground slots out, numbers the passes
     std::uint32_t first_ground_slot_ = 0;
+    std::uint32_t index_ = 0;
 };
 
 /// A pass's shader module of embedded SPIR-V `words`, its making announced as `name` (the module's symbol) alone.

@@ -164,6 +164,12 @@ void Labels::record(const frame::Recording& recording, std::uint32_t phase) {
 
 // ---- Set 1's sprites.
 
+std::vector<std::shared_ptr<frame::GlobalProvider>> Labels::providers(const gpu::Device& device,
+                                                                      const frame::Resources& resources) const {
+    (void)resources;
+    return {std::make_shared<SpriteGlobals>(device)};
+}
+
 void SpriteGlobals::update(const frame::FrameState& state, frame::Globals& globals) {
     ++updates_;
     std::erase_if(retired_, [&](const auto& r) { return r.second + retire_after <= updates_; });

@@ -351,9 +351,10 @@ TEST_CASE("a coarser pack is drawn around the active one, its items in the frame
         auto added = w.store().add({.id = id, .kind = tiles::PackKind::bundled, .path = path.string()});
         ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
     }
-    // The Westerkerk active, the canal ring around it, from higher up so both packs' tiles are in view.
+    // The Westerkerk active, the canal ring around it the world's own choice (the smallest pack whose box holds the
+    // Westerkerk's, as the app's map has it), from higher up so both packs' tiles are in view.
     w.set_active("amsterdam");
-    w.set_coarser("grachten");
+    w.set_coarser_enclosing(true);
     style::CameraState c = home();
     c.distance = 1600.0;
     c.flags = 0;
@@ -365,6 +366,18 @@ TEST_CASE("a coarser pack is drawn around the active one, its items in the frame
         w.residency().wait_idle();
     }
     ATLAS_REQUIRE(w.active() != nullptr);
+    ATLAS_REQUIRE(w.coarser() != nullptr);
+    CHECK(w.coarser()->id == "grachten");
+    // A pack named comes first: the active one itself is none, the canal ring named is the canal ring.
+    const auto one_frame = [&](std::uint64_t n) {
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+    };
+    w.set_coarser("amsterdam");
+    one_frame(61);
+    CHECK(w.coarser() == nullptr);
+    w.set_coarser("grachten");
+    one_frame(62);
     ATLAS_REQUIRE(w.coarser() != nullptr);
     CHECK(w.coarser()->id == "grachten");
     ATLAS_REQUIRE(w.mask().has_value());
@@ -432,8 +445,9 @@ TEST_CASE("a coarser pack is drawn around the active one, its items in the frame
     MESSAGE(active_tiles << " of the Westerkerk's tiles and " << coarser_tiles << " of the canal ring's drawn; of the "
                          << "canal ring's items " << masked << " masked inside the Westerkerk's box, " << shown
                          << " drawn, every one in the Westerkerk's frame");
-    // Without the coarser pack, its tiles go from the cover and its items' masks with them.
+    // Without the coarser pack (none named, none chosen), its tiles go from the cover and its items' masks with them.
     w.set_coarser({});
+    w.set_coarser_enclosing(false);
     ATLAS_REQUIRE((*builder)->derive(61, 0, nullptr));
     w.update((*builder)->state());
     for (const scene::CoverTile& t : w.cover()->tiles()) CHECK(t.drawn->pack == "amsterdam");
@@ -507,7 +521,7 @@ TEST_CASE("the world's providers fill set 1's globals: the heaps and the sun bou
     CHECK(stealing.error().text().find("sun_bits") != std::string::npos);
     auto fields = std::make_shared<CountingGlobals>(std::array{frame::Global::noise_rgba});
     REQUIRE(w.add_globals(fields).has_value());
-    CHECK(w.globals().size() == 3); // the heaps', the sun's, the fields'
+    CHECK(w.globals().size() == 5); // the heaps', the sun's, the registered text passes' (glyphs, sprites), the fields'
 
     (*builder)->set_inputs({.camera = home(), .scene = &w});
     auto output = platform::Offscreen::create(*session->device, {.width = 412, .height = 916}, 2);

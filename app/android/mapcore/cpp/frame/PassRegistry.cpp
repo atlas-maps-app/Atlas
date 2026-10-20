@@ -5,6 +5,9 @@
 #include "passes/Composite.hpp"
 #include "passes/Frosted.hpp"
 #include "passes/Ground.hpp"
+#include "passes/GroundText.hpp"
+#include "passes/Labels.hpp"
+#include "passes/Walls.hpp"
 
 #include <algorithm>
 #include <array>
@@ -20,9 +23,12 @@ template <class P>
 
 // ---- The passes, one line each, in the order the frame records phases that tie (the coordinator's lines).
 constexpr std::array registry{
-    Registration{.name = "composite", .make = &make<passes::Composite>}, // K7: the composite subpass (D5.4)
-    Registration{.name = "frosted", .make = &make<passes::Frosted>},     // K11b: the frosted backdrops (D5.1)
-    Registration{.name = "ground", .make = &make<passes::Ground>},       // K9: the ground (D10, D8's shadows)
+    Registration{.name = "composite", .make = &make<passes::Composite>},    // K7: the composite subpass (D5.4)
+    Registration{.name = "frosted", .make = &make<passes::Frosted>},        // K11b: the frosted backdrops (D5.1)
+    Registration{.name = "ground", .make = &make<passes::Ground>},          // K9: the ground (D10, D8's shadows)
+    Registration{.name = "buildings", .make = &make<passes::Buildings>},    // K10: the buildings (D10), true depth
+    Registration{.name = "ground_text", .make = &make<passes::GroundText>}, // K13: the canal names, the ground's last
+    Registration{.name = "labels", .make = &make<passes::Labels>},          // K13: the board's labels (D13)
 };
 
 } // namespace

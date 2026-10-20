@@ -6,8 +6,15 @@
 #include "tests/tiles/support.hpp"
 #include "tiles/layers/Buildings.hpp"
 
+#include <array>
 #include <cstdint>
+#include <filesystem>
+#include <format>
+#include <fstream>
 #include <optional>
+#include <string>
+#include <string_view>
+#include <unistd.h>
 #include <vector>
 
 namespace atlas::test::building {
@@ -129,5 +136,22 @@ inline constexpr std::uint32_t tile_features = 10;
 
 /// The melting pair's features.
 inline constexpr std::uint32_t melt_features = 2;
+
+/// Writes tile `t` (its `features`) as a render pack of 14/8414/5384 (the tile reader's tests' head: the Westerkerk's
+/// frame) to a file of its own in the tests' scratch folder, named for `name`; its path.
+[[nodiscard]] inline std::string write_pack(TileBytes t, std::uint32_t features, std::string_view name) {
+    const std::vector<std::byte> raw = t.encode();
+    constexpr std::array<std::uint8_t, 1> levels = {14};
+    const std::array<ChunkBytes, 1> chunks{
+        ChunkBytes{.tile = {14, 8414, 5384}, .raw = raw, .count = features, .reach = t.reach()}};
+    const std::vector<std::byte> bytes = pack_bytes(chunks, levels);
+    std::error_code ignored;
+    std::filesystem::create_directories(ATLAS_TEST_SCRATCH, ignored);
+    const std::filesystem::path path =
+        std::filesystem::path(ATLAS_TEST_SCRATCH) / std::format("atlas-{}-{}.atlas", name, ::getpid());
+    std::ofstream out(path, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())); // NOLINT
+    return path.string();
+}
 
 } // namespace atlas::test::building

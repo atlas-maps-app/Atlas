@@ -49,12 +49,10 @@
 #include <cstdlib>
 #include <filesystem>
 #include <format>
-#include <fstream>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
-#include <unistd.h>
 #include <vector>
 
 using namespace atlas;
@@ -820,21 +818,11 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
 }
 
 /// Writes a synthetic tile of tests/building/fixture.hpp (by default its every roof shape, `features` of them) as a
-/// render pack (14/8414/5384, the tile reader's tests' head: the Westerkerk's frame) to a file of its own, named for
-/// `name`; its path.
+/// render pack of its own, named for `name`; its path.
 [[nodiscard]] std::string synthetic_pack(test::TileBytes t = test::building::tile(),
                                          std::uint32_t features = test::building::tile_features,
                                          std::string_view name = "shapes") {
-    const std::vector<std::byte> raw = t.encode();
-    constexpr std::array<std::uint8_t, 1> levels = {14};
-    const std::array<test::ChunkBytes, 1> chunks{
-        test::ChunkBytes{.tile = {14, 8414, 5384}, .raw = raw, .count = features, .reach = t.reach()}};
-    const std::vector<std::byte> bytes = test::pack_bytes(chunks, levels);
-    const std::filesystem::path path =
-        std::filesystem::temp_directory_path() / std::format("atlas-buildings-test-{}-{}.atlas", name, ::getpid());
-    std::ofstream out(path, std::ios::binary);
-    out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())); // NOLINT
-    return path.string();
+    return test::building::write_pack(std::move(t), features, std::format("buildings-test-{}", name));
 }
 
 /// The camera state that snaps onto the grachten pack's view `name` (its knot's target, yaw, pitch and distance in the

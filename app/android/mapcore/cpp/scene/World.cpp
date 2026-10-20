@@ -58,12 +58,22 @@ World::create(const gpu::Device& device, std::span<const std::unique_ptr<frame::
             }
         }
     }
+    w->pack_stage_ = std::make_unique<PackStage>(w->store_, passes);
     return w;
 }
 
 World::~World() {
-    sun_.reset();       // its threads stop first
-    residency_.reset(); // then the residency's workers, before the heaps and the store go
+    pack_stage_.reset(); // the packs' thread stops first
+    sun_.reset();        // then the sun's
+    residency_.reset();  // then the residency's workers, before the heaps and the store go
+}
+
+const ResidentPack* World::built(const std::shared_ptr<const tiles::StorePack>& pack) const noexcept {
+    if (!pack) return nullptr;
+    for (const std::shared_ptr<const ResidentPack>& p : packs_) {
+        if (p->source == pack) return p.get();
+    }
+    return nullptr;
 }
 
 gpu::Result<void> World::add_globals(std::shared_ptr<frame::GlobalProvider> provider) {
@@ -83,6 +93,7 @@ gpu::Result<void> World::add_globals(std::shared_ptr<frame::GlobalProvider> prov
 
 void World::set_wake(std::function<void()> wake) {
     if (sun_) sun_->set_wake(wake);
+    pack_stage_->set_published(wake);
     residency_->set_published(std::move(wake));
 }
 
@@ -99,11 +110,15 @@ void World::choose(const style::CameraState& camera) {
         }
         return false;
     };
+    // The pack drawn stays while the store still holds it (a pack let go of, or added again, is another) and it still
+    // fits; else the first of the store's that does.
+    const std::vector<std::shared_ptr<const tiles::StorePack>> open = store_.packs();
     std::shared_ptr<const tiles::StorePack> pick;
-    if (active_ && (forced_.empty() ? holds(*active_) : active_->id == forced_)) {
+    if (active_ && std::ranges::find(open, active_) != open.end() &&
+        (forced_.empty() ? holds(*active_) : active_->id == forced_)) {
         pick = active_;
     } else {
-        for (const std::shared_ptr<const tiles::StorePack>& p : store_.packs()) {
+        for (const std::shared_ptr<const tiles::StorePack>& p : open) {
             if (!forced_.empty() ? p->id == forced_ && p->pack.is_render() && p->pack.head() != nullptr : holds(*p)) {
                 pick = p;
                 break;
@@ -122,23 +137,14 @@ void World::set_coarser(std::string id, std::optional<tiles::GridBox> mask) {
     mask_wanted_ = mask;
 }
 
-void World::choose_coarser() {
-    coarser_.reset();
-    mask_.reset();
-    if (coarser_wanted_.empty() || !active_ || coarser_wanted_ == active_->id) return;
-    for (const std::shared_ptr<const tiles::StorePack>& p : store_.packs()) {
-        if (p->id == coarser_wanted_ && p->pack.is_render() && p->pack.head() != nullptr) coarser_ = p;
-    }
-    if (!coarser_) return;
-    if (mask_wanted_) {
-        mask_ = mask_wanted_;
-        return;
-    }
-    // The active pack's box: its finest level's reach.
-    const tiles::RenderHead& head = *active_->pack.head();
-    if (head.levels.empty()) return;
+namespace {
+
+/// A render pack's box: its finest level's reach (none for a pack without one).
+[[nodiscard]] std::optional<tiles::GridBox> box_of(const tiles::StorePack& pack) {
+    const tiles::RenderHead* head = pack.pack.head();
+    if (!pack.pack.is_render() || head == nullptr || head->levels.empty()) return std::nullopt;
     std::optional<tiles::GridBox> box;
-    for (const tiles::ChunkRef& c : active_->pack.chunks().level(head.levels[0])) {
+    for (const tiles::ChunkRef& c : pack.pack.chunks().level(head->levels[0])) {
         const tiles::GridBox& b = c.reach.box;
         if (!box) {
             box = b;
@@ -149,7 +155,54 @@ void World::choose_coarser() {
             box->east = std::max(box->east, b.east);
         }
     }
-    mask_ = box;
+    return box;
+}
+
+} // namespace
+
+std::string World::enclosing_pack() {
+    const std::vector<std::shared_ptr<const tiles::StorePack>> open = store_.packs();
+    if (active_ == enclosing_for_ && open == enclosing_among_) return enclosing_id_;
+    enclosing_for_ = active_;
+    enclosing_among_ = open;
+    enclosing_id_.clear();
+    const std::optional<tiles::GridBox> inner = active_ ? box_of(*active_) : std::nullopt;
+    if (!inner) return enclosing_id_;
+    double smallest = 0;
+    for (const std::shared_ptr<const tiles::StorePack>& p : open) {
+        if (p == active_ || p->id == active_->id) continue;
+        const std::optional<tiles::GridBox> b = box_of(*p);
+        if (!b || b->south > inner->south || b->west > inner->west || b->north < inner->north ||
+            b->east < inner->east) {
+            continue;
+        }
+        const double area = static_cast<double>(b->north - b->south) * static_cast<double>(b->east - b->west);
+        if (enclosing_id_.empty() || area < smallest) {
+            enclosing_id_ = p->id;
+            smallest = area;
+        }
+    }
+    return enclosing_id_;
+}
+
+void World::choose_coarser() {
+    coarser_.reset();
+    mask_.reset();
+    if (!active_) return;
+    const std::string wanted = !coarser_wanted_.empty() ? coarser_wanted_
+                               : coarser_enclosing_     ? enclosing_pack()
+                                                        : std::string();
+    if (wanted.empty() || wanted == active_->id) return;
+    for (const std::shared_ptr<const tiles::StorePack>& p : store_.packs()) {
+        if (p->id == wanted && p->pack.is_render() && p->pack.head() != nullptr) coarser_ = p;
+    }
+    if (!coarser_) return;
+    if (mask_wanted_ && !coarser_wanted_.empty()) {
+        mask_ = mask_wanted_;
+        return;
+    }
+    // The active pack's box: its finest level's reach.
+    mask_ = box_of(*active_);
 }
 
 void World::place_items(const ResidentTile& tile) {
@@ -218,11 +271,31 @@ void World::release_idle(double seconds, std::uint64_t frame) {
     }
 }
 
+void World::take_packs() {
+    // The packs' own stage T: asked once per pack drawn, taken as it is built; what was built of a pack the store no
+    // longer holds (let go of, or added again) goes when the packs drawn change or a pack arrives.
+    pack_stage_->want(active_);
+    if (coarser_) pack_stage_->want(coarser_);
+    pack_stage_->take(arrived_);
+    if (arrived_.empty() && active_ == last_active_ && coarser_ == last_coarser_) return;
+    last_active_ = active_;
+    last_coarser_ = coarser_;
+    for (std::shared_ptr<const ResidentPack>& b : arrived_) packs_.push_back(std::move(b));
+    arrived_.clear();
+    const std::vector<std::shared_ptr<const tiles::StorePack>> open = store_.packs();
+    std::erase_if(packs_, [&open](const std::shared_ptr<const ResidentPack>& p) {
+        return std::ranges::find(open, p->source) == open.end();
+    });
+}
+
 void World::update(const frame::FrameState& state) {
     const double seconds = options_.clock ? options_.clock() : state.seconds;
     taken_.clear();
     residency_->take_published(items_, &taken_);
     if (!active_ || !state.view) {
+        // nothing drawn: no coarser pack, and nothing kept of the packs' stage T but what the drawn ones would need
+        choose_coarser();
+        take_packs();
         cover_.update(state.view ? *state.view : view::View({}, {}), frames_, {}, *residency_, seconds);
         if (sun_) sun_->prepare(state, nullptr, 0, cover_);
         residency_->want({});
@@ -235,6 +308,7 @@ void World::update(const frame::FrameState& state) {
     // The items in the frame drawn, the coarser pack's masked: every resident tile's when the frame, the coarser pack
     // or the mask changed, else the tiles just taken.
     choose_coarser();
+    take_packs();
     const std::string coarser_id = coarser_ ? coarser_->id : std::string();
     if (placed_frame_ != frames_.current() || placed_coarser_ != coarser_id || placed_mask_ != mask_) {
         for (const std::shared_ptr<const ResidentTile>& t : residency_->resident()) place_items(*t);

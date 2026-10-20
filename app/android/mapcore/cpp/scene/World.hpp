@@ -20,6 +20,7 @@
 #include "scene/Cover.hpp"
 #include "scene/Heaps.hpp"
 #include "scene/ItemTable.hpp"
+#include "scene/Packs.hpp"
 #include "scene/Residency.hpp"
 #include "scene/SunGlobals.hpp"
 #include "tiles/Store.hpp"
@@ -79,6 +80,10 @@ public:
     /// building is drawn once and whole, and its tiles wholly inside it are left out); without a box, the active pack's
     /// own, its finest level's reach. K11 chooses both per frame.
     void set_coarser(std::string id, std::optional<tiles::GridBox> mask = std::nullopt);
+    /// Without set_coarser's id, the coarser pack the world chooses itself (the app's map): the smallest other render
+    /// pack whose box (its finest level's reach) holds the active one's, so the canal ring is drawn around the
+    /// Westerkerk; none where no pack holds it.
+    void set_coarser_enclosing(bool on) noexcept { coarser_enclosing_ = on; }
     /// The coarser pack drawn now (null: none) and its mask.
     [[nodiscard]] const tiles::StorePack* coarser() const noexcept { return coarser_.get(); }
     [[nodiscard]] const std::optional<tiles::GridBox>& mask() const noexcept { return mask_; }
@@ -91,6 +96,10 @@ public:
     [[nodiscard]] Heaps* heaps() noexcept override { return heaps_.get(); }
     [[nodiscard]] std::span<frame::GlobalProvider* const> globals() noexcept override { return globals_; }
     [[nodiscard]] std::optional<view::GroundFrame> ground_frame() const noexcept override { return frames_.current(); }
+    [[nodiscard]] const ResidentPack* active_pack() const noexcept override { return built(active_); }
+    [[nodiscard]] const ResidentPack* coarser_pack() const noexcept override { return built(coarser_); }
+    /// The packs' stage T (tests: wait_idle).
+    [[nodiscard]] PackStage& pack_stage() noexcept { return *pack_stage_; }
 
     /// Adds a provider of set 1's globals that no pass owns (K17a's fields and byte tables, K13's glyphs and sprites),
     /// asked each frame after the world's own (the heaps', the sun's); refused when it fills a binding another fills.
@@ -120,16 +129,27 @@ private:
     /// whose finest level has a tile under the target.
     void choose(const style::CameraState& camera);
     void release_idle(double seconds, std::uint64_t frame);
-    /// The coarser pack and its mask for the frame (set_coarser's, else none).
+    /// The coarser pack and its mask for the frame (set_coarser's, else the enclosing pack's when chosen, else none).
     void choose_coarser();
+    /// The smallest other render pack whose box holds the active one's (set_coarser_enclosing), or "".
+    [[nodiscard]] std::string enclosing_pack();
     /// A resident tile's items in the frame drawn (converted from their pack's frame) and masked where they are the
     /// coarser pack's inside the mask.
     void place_items(const ResidentTile& tile);
+    /// The packs' stage T: asks for the packs drawn, takes what was built, drops what the store no longer holds.
+    void take_packs();
+    /// What was built of `pack`, or null.
+    [[nodiscard]] const ResidentPack* built(const std::shared_ptr<const tiles::StorePack>& pack) const noexcept;
 
     WorldOptions options_;
     tiles::Store store_;
     std::unique_ptr<Heaps> heaps_;
     std::unique_ptr<Residency> residency_;
+    std::unique_ptr<PackStage> pack_stage_;
+    std::vector<std::shared_ptr<const ResidentPack>> packs_;   ///< the packs' stage T, built so far
+    std::vector<std::shared_ptr<const ResidentPack>> arrived_; ///< taken this frame (kept for its capacity)
+    std::shared_ptr<const tiles::StorePack> last_active_;      ///< the packs drawn when packs_ was last pruned
+    std::shared_ptr<const tiles::StorePack> last_coarser_;
     std::unique_ptr<frame::GlobalProvider> heap_globals_;
     std::unique_ptr<SunGlobals> sun_;
     std::vector<std::shared_ptr<frame::GlobalProvider>> added_;
@@ -140,6 +160,11 @@ private:
     std::string forced_;
     std::shared_ptr<const tiles::StorePack> active_;
     std::string coarser_wanted_;
+    bool coarser_enclosing_ = false;
+    /// The enclosing pack's choice (set_coarser_enclosing), kept until the active pack or the store's packs change.
+    std::shared_ptr<const tiles::StorePack> enclosing_for_;
+    std::vector<std::shared_ptr<const tiles::StorePack>> enclosing_among_;
+    std::string enclosing_id_;
     std::optional<tiles::GridBox> mask_wanted_;
     std::shared_ptr<const tiles::StorePack> coarser_;
     std::optional<tiles::GridBox> mask_;

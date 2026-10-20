@@ -112,7 +112,7 @@ std::string MapFrame::set_packs(std::vector<MapPack> packs) {
 
 std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& cache, gpu::PipelineWatch* watch) {
     if (made()) return {};
-    auto builder = FrameBuilder::create(device, cache, make_passes(), FrameOptions{}, watch);
+    auto builder = FrameBuilder::create(device, cache, make_passes(), FrameOptions{.painter = painter_}, watch);
     if (!builder) return std::format("the map's frame: {}", builder.error().text());
     // The world's clock is the map's own: its workers stamp each tile's publication with it, the cover fades by it.
     auto clock = [epoch = epoch_] {
@@ -131,6 +131,9 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
     builder_ = std::move(*builder);
     world_ = std::move(*world);
     if (wake_) world_->set_wake(wake_);
+    // The coarser pack around the one drawn: the smallest listed pack that holds it (the canal ring around the
+    // Westerkerk), D3.
+    world_->set_coarser_enclosing(true);
     // The noise fields and the byte tables (K17a), kept under the app's cache: without them the effects that read them
     // stay stubbed, which the map's structural mode does anyway, so their failure only says so.
     auto fields = fx::FieldCache::create(

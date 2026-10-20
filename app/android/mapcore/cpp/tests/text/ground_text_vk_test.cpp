@@ -179,9 +179,7 @@ TEST_CASE("the canal names drawn: the glyphs' pixels are the CPU's coverage, on 
     auto world = scene::World::create(device, (*builder)->passes(),
                                       {.workers = 3, .sun = {.enabled = false}, .clock = [&now] { return now; }});
     ATLAS_REQUIRE(world.has_value(), world.error().text());
-    scene::World& w = **world;
-    auto globals = std::make_shared<passes::GlyphGlobals>(device);
-    ATLAS_REQUIRE(w.add_globals(globals).has_value());
+    scene::World& w = **world; // the pass brings set 1's glyphs (GroundText::providers)
     auto added = w.store().add({.id = "amsterdam",
                                 .kind = tiles::PackKind::bundled,
                                 .path = (std::filesystem::path(dir) / "amsterdam.atlas").string()});

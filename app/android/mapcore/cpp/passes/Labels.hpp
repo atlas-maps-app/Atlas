@@ -17,6 +17,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -45,6 +46,9 @@ public:
     void release() noexcept override;
     void update(const frame::FrameState& state) override;
     void record(const frame::Recording& recording, std::uint32_t phase) override;
+    /// Set 1's sprites (SpriteGlobals, below).
+    [[nodiscard]] std::vector<std::shared_ptr<frame::GlobalProvider>>
+    providers(const gpu::Device& device, const frame::Resources& resources) const override;
 
     // ---- For tests and logs.
 

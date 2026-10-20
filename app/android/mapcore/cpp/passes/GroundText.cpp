@@ -7,11 +7,13 @@
 #include "gen/spirv/text/slug.hpp"
 #include "gpu/Descriptors.hpp"
 #include "scene/Cover.hpp"
+#include "scene/Packs.hpp"
 #include "scene/Residency.hpp"
 #include "style/CameraState.hpp"
 #include "style/Theme.hpp"
 #include "text/Fonts.hpp"
 #include "text/Outlines.hpp"
+#include "tiles/Error.hpp"
 #include "tiles/Sections.hpp"
 #include "tiles/layers/Labels.hpp"
 #include "twin/Twin.hpp"
@@ -68,7 +70,48 @@ std::uint32_t GroundText::ground_slots(const frame::FrameState& state) const {
     return state.view.has_value() && state.cover != nullptr ? 1 : 0;
 }
 
+std::vector<std::shared_ptr<frame::GlobalProvider>> GroundText::providers(const gpu::Device& device,
+                                                                          const frame::Resources& resources) const {
+    if (resources.read) {
+        text::Fonts& fonts = text::shared_fonts();
+        for (std::size_t f = 0; f < text::face_count; ++f) {
+            const auto face = static_cast<text::Face>(f);
+            if (fonts.loaded(face)) continue;
+            const std::string path = std::format("{}/{}", text::asset_folder, text::file_of(face));
+            if (const auto bytes = resources.read(path); bytes) {
+                if (auto loaded = fonts.load(face, *bytes); !loaded) {
+                    log::warn("vk text: {} from {}: not loaded", path, resources.origin);
+                }
+            }
+        }
+    }
+    return {std::make_shared<GlyphGlobals>(device)};
+}
+
+gpu::Result<void> GroundText::build_pack(scene::PackBuild& b) const {
+    auto canals = text::pack_canals(b.pack().pack);
+    if (!canals) return gpu::fail(std::format("the canal names: {}", tiles::describe(canals.error())));
+    auto kept = std::make_shared<text::PackCanals>(std::move(*canals));
+    std::size_t bytes = sizeof(text::PackCanals) + (kept->candidates.capacity() * sizeof(text::CanalCandidate));
+    for (const text::CanalCandidate& c : kept->candidates) bytes += c.name.capacity();
+    b.keep(std::shared_ptr<const text::PackCanals>(std::move(kept)), bytes);
+    return {};
+}
+
 void GroundText::gather(const frame::FrameState& state) {
+    // The drawn pack's names whole, once its own stage T has given them; until then, or with none drawn, the cover's
+    // tiles' (a pack the tests hand over with use_pack stays).
+    const std::shared_ptr<const void>* built =
+        state.active_pack != nullptr && index() < state.active_pack->passes.size()
+            ? &state.active_pack->passes[index()].cpu
+            : nullptr;
+    if (built != nullptr && *built) {
+        pack_ = std::static_pointer_cast<const text::PackCanals>(*built);
+        pack_from_frame_ = true;
+    } else if (pack_from_frame_) {
+        pack_.reset();
+        pack_from_frame_ = false;
+    }
     if (pack_) {
         // The pack's names whole: read again only when the pack's data change.
         if (pack_ != pack_read_) {

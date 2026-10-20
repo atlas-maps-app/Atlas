@@ -66,14 +66,25 @@ public:
     void update(const frame::FrameState& state) override;
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& build) const override;
+    /// The pack-level stage T: the pack's canal names whole (text::pack_canals), which the renders' rule reads once the
+    /// pack is drawn (FrameState::active_pack).
+    [[nodiscard]] gpu::Result<void> build_pack(scene::PackBuild& build) const override;
+    /// Set 1's glyphs (GlyphGlobals, below), and the fonts from `resources` where they hold them (the map's: the APK's
+    /// assets, a host's repo; a face loaded already stays): the font source is the map's option, and without one the
+    /// fonts are those the app or a test loaded into text::shared_fonts.
+    [[nodiscard]] std::vector<std::shared_ptr<frame::GlobalProvider>>
+    providers(const gpu::Device& device, const frame::Resources& resources) const override;
     /// The twin (L1): the names the last update placed, each a `<text>` as the port writes it (its matrix as the
     /// vertex stage draws it: printed at rest; its opacity times its fade), in the ground layer at the pass's slot.
     void emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const override;
 
     /// The active pack's canal names whole (the pack-level stage T's: text::pack_canals), which the renders' rule reads
     /// in place of the cover's tiles' (a name's first way may lie in a tile the cover does not draw); null: the
-    /// cover's tiles again.
-    void use_pack(std::shared_ptr<const text::PackCanals> canals) noexcept { pack_ = std::move(canals); }
+    /// cover's tiles again. The frame's own (FrameState::active_pack's, once built) take its place.
+    void use_pack(std::shared_ptr<const text::PackCanals> canals) noexcept {
+        pack_ = std::move(canals);
+        pack_from_frame_ = false;
+    }
 
     // ---- For tests and logs.
 
@@ -102,7 +113,8 @@ private:
     text::CanalNames names_;
     std::vector<text::PlacedName> placed_;
     std::vector<std::uint32_t> tiles_; // the cover's tiles the candidates came from (keys and handles), sorted
-    std::shared_ptr<const text::PackCanals> pack_;      // the active pack's names whole (use_pack)
+    std::shared_ptr<const text::PackCanals> pack_;      // the active pack's names whole (use_pack, or the frame's)
+    bool pack_from_frame_ = false;                      // pack_ is the frame's active pack's
     std::shared_ptr<const text::PackCanals> pack_read_; // the pack data the names last read (held)
     double water_level_ = -1.5;
     std::unordered_map<std::string, Shaped> shaped_;

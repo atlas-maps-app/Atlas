@@ -275,6 +275,15 @@ public:
         });
     }
 
+    /// The painter switch for the map from now on (frame::FrameOptions::painter): the renderer's painter's order for
+    /// what stands up, to compare with true depth.
+    void painter(bool on) {
+        on_session([this, on] {
+            map_->set_painter(on);
+            ask_frame();
+        });
+    }
+
     /// Copies the frame records not read yet into `out` (at most `capacity`); returns how many. Any thread.
     std::size_t records(FrameRecord* out, std::size_t capacity) { return session_->records(out, capacity); }
 
@@ -758,6 +767,11 @@ jstring native_moment(JNIEnv* env, jclass /*cls*/, jlong handle, jobject theme) 
     return java(env, "");
 }
 
+void native_painter(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean on) {
+    Core* core = core_of(handle);
+    if (core != nullptr) core->painter(on == JNI_TRUE);
+}
+
 template <class F>
 void* fn(F f) {
     return reinterpret_cast<void*>(f);
@@ -857,8 +871,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 28>& methods() {
-    static const std::array<JNINativeMethod, 28> table{{
+const std::array<JNINativeMethod, 29>& methods() {
+    static const std::array<JNINativeMethod, 29> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -901,6 +915,7 @@ const std::array<JNINativeMethod, 28>& methods() {
         method("map", "(JI)Ljava/lang/String;", fn(&native_map)),
         method("packs", "(J[Ljava/lang/String;[J[I[Ljava/lang/String;[I[J[J)Ljava/lang/String;", fn(&native_packs)),
         method("moment", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_moment)),
+        method("painter", "(JZ)V", fn(&native_painter)),
     }};
     return table;
 }

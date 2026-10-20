@@ -148,7 +148,9 @@ gpu::Result<std::unique_ptr<FrameBuilder>> FrameBuilder::create(const gpu::Devic
     ATLAS_GPU_LET(layout, FrameLayout::create(device));
     self->layout_ = std::move(layout);
     self->passes_ = std::move(passes);
-    // The item kinds, before the world can build a tile: their rows are fixed from here on.
+    // The passes' numbers (their PassTile and PassPack), and the item kinds, before the world can build a tile: their
+    // rows are fixed from here on.
+    for (std::uint32_t i = 0; i < self->passes_.size(); ++i) self->passes_[i]->index_ = i;
     for (const std::unique_ptr<Pass>& p : self->passes_) p->kinds(self->selectors_);
     // Every phase in the frame's order: by slot, then order, then the registry's (a stable sort).
     for (std::uint32_t p = 0; p < self->passes_.size(); ++p) {
@@ -330,6 +332,8 @@ void FrameBuilder::stage_f() {
     state_.cover = scene != nullptr ? scene->cover() : nullptr;
     state_.items = scene != nullptr ? scene->items() : nullptr;
     state_.ground_frame = scene != nullptr ? scene->ground_frame() : std::nullopt;
+    state_.active_pack = scene != nullptr ? scene->active_pack() : nullptr;
+    state_.coarser_pack = scene != nullptr ? scene->coarser_pack() : nullptr;
     // Set 1's globals that no pass owns: each provider brings its bindings up to date (frame/Globals.hpp), and says
     // which effects its resources allow (FRAME_FIELDS: in full mode alone).
     if (scene != nullptr) {
