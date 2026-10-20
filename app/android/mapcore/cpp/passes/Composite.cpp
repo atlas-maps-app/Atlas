@@ -3,6 +3,7 @@
 
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
+#include "fx/Mat.hpp"
 #include "gen/spirv/frame/composite.hpp"
 #include "gen/spirv/frame/composite_glsl_composite_fs.hpp"
 #include "gen/spirv/frame/composite_x1.hpp"
@@ -183,6 +184,14 @@ void Composite::emit(const frame::FrameState& state, twin::Stream& out, std::uin
                                                 .colours = std::span(colours).first(stops)});
         out.rect({.fill = twin::Paint::gradient(haze)}, 0.0F, l.haze.x, width, l.haze.y - l.haze.x);
     }
+    // render/amsterdam.py:964: fin's grain over everything (its `grain` filter, overlaid at .09, .12 at night), once
+    // the fields are bound
+    if ((on & shaders::COMPOSITE_GRAIN) != 0U && (state.block.info.x & shaders::FRAME_FIELDS) != 0U) {
+        const bool night = (state.block.info.x & shaders::FRAME_NIGHT) != 0U;
+        const std::int32_t grain = out.filter("grain");
+        out.rect({.fill = twin::Paint::colour(0xFF00'0000U)}, 0.0F, 0.0F, width, height, 0.0F, 0.0F,
+                 {.opacity = night ? 0.12F : 0.09F, .blend = twin::Blend::overlay, .filter = grain});
+    }
     // render/amsterdam.py:964: fin's vignette over everything (its `vig` gradient: transparent to .55, then black)
     if ((on & shaders::COMPOSITE_VIGNETTE) != 0U && l.vignette.x > 0.0F) {
         const std::array<float, 2> offsets{0.55F, 1.0F};
@@ -201,17 +210,41 @@ void Composite::emit(const frame::FrameState& state, twin::Stream& out, std::uin
     }
 }
 
-hlsl::float3 composite_pixel(const shaders::FrameLayers& layers, std::span<const hlsl::float3> samples, hlsl::float2 p,
-                             hlsl::float2 frame) noexcept {
-    const auto n = static_cast<float>(layers.steps.y);
-    hlsl::float3 sum = {0.0F, 0.0F, 0.0F};
-    for (const hlsl::float3& c : samples) {
+hlsl::float3 composite_pixel_fx(const shaders::FrameLayers& layers, std::span<const hlsl::float3> samples,
+                                const CompositeInputs& inputs, hlsl::float2 p, hlsl::float2 frame) noexcept {
+    const std::uint32_t levels = layers.steps.y;
+    const auto n = static_cast<float>(levels);
+    // The samples' levels, the objects group's and the others' apart, as the shader sums them.
+    hlsl::float3 objects = {0.0F, 0.0F, 0.0F};
+    hlsl::float3 others = {0.0F, 0.0F, 0.0F};
+    std::uint32_t k = 0;
+    for (std::size_t s = 0; s < samples.size(); ++s) {
+        const hlsl::float3& c = samples[s];
         const hlsl::float3 l = {shaders::composite_level(c.x, n), shaders::composite_level(c.y, n),
                                 shaders::composite_level(c.z, n)};
-        sum = sum + l;
+        if (((inputs.objects >> s) & 1U) != 0U) {
+            objects = objects + l;
+            ++k;
+        } else {
+            others = others + l;
+        }
     }
-    const hlsl::float3 mean = shaders::composite_mean(sum, static_cast<std::uint32_t>(samples.size()));
-    return shaders::composite_steps(layers, mean, p, frame);
+    const auto count = static_cast<std::uint32_t>(samples.size());
+    hlsl::float3 mean;
+    if ((layers.steps.x & shaders::COMPOSITE_MAT) != 0U && k > 0 && k < count && inputs.mat) {
+        const hlsl::uint3 o = shaders::composite_mean_of(objects, k);
+        const std::span<const std::uint16_t> edge = fx::mat_edge_table(levels);
+        const hlsl::uint3 e = {edge[o.x], edge[o.y], edge[o.z]};
+        mean = shaders::composite_silhouette(e, shaders::composite_mean_of(others, count - k), k, count);
+    } else {
+        mean = shaders::composite_mean(objects + others, count);
+    }
+    return shaders::composite_steps_fx(layers, mean, p, frame, inputs.grain);
+}
+
+hlsl::float3 composite_pixel(const shaders::FrameLayers& layers, std::span<const hlsl::float3> samples, hlsl::float2 p,
+                             hlsl::float2 frame) noexcept {
+    return composite_pixel_fx(layers, samples, CompositeInputs{}, p, frame);
 }
 
 } // namespace atlas::passes

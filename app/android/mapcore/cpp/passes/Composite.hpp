@@ -1,9 +1,10 @@
 // The composite (plan-vector D5.4, K7): the main pass's second subpass, one full-screen triangle at pixel rate that
 // reads every sample of its pixel from tile memory, makes the pixel's colour from them and applies the screen steps
 // once, in the renders' order (shaders/shared/composite.slang, which the twin runs as C++: composite_pixel below). It
-// draws the haze and the vignette; `mat`'s coverage rule at the objects group's silhouettes and the grain (K17a), the
-// cloud shadows, the rain and the wash (K17) are stubbed, and with every step off the composite passes the colours
-// through bit for bit (CP/tests/frame/composite_vk_test.cpp).
+// draws the haze and the vignette (K7), `mat`'s coverage rule at the objects group's silhouettes and the grain (K17a:
+// each sample's stencil and the grain field's bytes, CP/tests/fx/composite_fx_vk_test.cpp); the cloud shadows, the
+// rain and the wash (K17) are stubbed, and with every step off the composite passes the colours through bit for bit
+// (CP/tests/frame/composite_vk_test.cpp).
 //
 // In both frame routes (the render pass's second subpass, or the local reads inside one dynamic rendering scope) and
 // every configuration (4x, 2x and 1x samples: a module each, and Slang's GLSL route where the device may not take
@@ -47,9 +48,24 @@ private:
     bool glsl_ = false;
 };
 
+/// What the composite reads of a pixel beside its samples' colours, for K17a's steps: which samples are the objects
+/// group's (the stencil's objects bit; sample s at bit s), whether mat runs (shaders/fx/mat.slang's mat_on), and the
+/// grain field's grey and alpha there with fin's opacity byte (shared/composite.slang's COMPOSITE_GRAIN_DAY or _NIGHT;
+/// all 0 where the grain does not run: the fields not bound).
+struct CompositeInputs {
+    std::uint32_t objects = 0;
+    bool mat = false;
+    hlsl::uint3 grain{0U, 0U, 0U};
+};
+
 /// The composite of one pixel as the GPU computes it (the shader's own text, as C++): the levels of its `n` samples'
-/// colours (`levels`: 255, or 1023 at 10 bits), the mean of their levels, the steps `layers` runs at CSS point `p` of a
-/// `frame`-sized frame; the finished colour as whole levels.
+/// colours (`levels`: 255, or 1023 at 10 bits), the pixel's colour from them (the mean of their levels, or mat's rule
+/// where the objects group covers some of them and mat runs), the steps `layers` runs at CSS point `p` of a
+/// `frame`-sized frame (the grain with `inputs`' bytes); the finished colour as whole levels.
+[[nodiscard]] hlsl::float3 composite_pixel_fx(const shaders::FrameLayers& layers, std::span<const hlsl::float3> samples,
+                                              const CompositeInputs& inputs, hlsl::float2 p,
+                                              hlsl::float2 frame) noexcept;
+/// composite_pixel_fx with no sample of the objects group and no grain.
 [[nodiscard]] hlsl::float3 composite_pixel(const shaders::FrameLayers& layers, std::span<const hlsl::float3> samples,
                                            hlsl::float2 p, hlsl::float2 frame) noexcept;
 

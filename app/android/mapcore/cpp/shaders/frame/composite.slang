@@ -11,11 +11,16 @@
 // from 1.3, with VK_KHR_format_feature_flags2, or with shaderStorageImageReadWithoutFormat).
 //
 // It reads its samples' colour only, never their alpha (the frame may be rgb10a2, with 2 bits of alpha; gpu/Facts.hpp).
-// The objects bit (the stencil, set 2 binding 1) is the composite's input for `mat`'s coverage rule, which K17a adds.
+// The multisampled variants read each sample's stencil too (set 2 binding 1): its objects bit tells the objects
+// group's samples from the others for `mat`'s coverage rule at the group's silhouettes (K17a). The grain reads the
+// grain field's grey and alpha at the pixel from set 1 (shaders/fx/mat.slang's fx_rgba).
 //
 // atlas: glsl-route composite_fs:fragment
 
 #include "shared/frame.slang"
+#include "shared/painter.slang"
+#define ATLAS_FX_FUNCTIONS
+#include "fx/mat.slang"
 
 #ifndef COMPOSITE_X1
 #define COMPOSITE_X1 0
@@ -31,6 +36,9 @@
 [[vk::input_attachment_index(0)]] [[vk::binding(0, 2)]] SubpassInput<float4> scene_colour;
 #else
 [[vk::input_attachment_index(0)]] [[vk::binding(0, 2)]] SubpassInputMS<float4> scene_colour;
+// A four-lane read (Slang 2026.19 emits a one-lane OpImageRead for SubpassInputMS<uint>, which SPIR-V refuses): the
+// stencil in x.
+[[vk::input_attachment_index(1)]] [[vk::binding(1, 2)]] SubpassInputMS<uint4> scene_stencil;
 #endif
 
 struct FullOut {
@@ -58,23 +66,48 @@ struct CompositeOut {
 
 [shader("fragment")]
 CompositeOut composite_fs(FullOut v) {
-    float n = float(frame.layers.steps.y);
+    uint levels = frame.layers.steps.y;
+    float n = float(levels);
 #if COMPOSITE_X1
     float3 c = scene_colour.SubpassLoad().rgb;
     float3 sum = {composite_level(c.x, n), composite_level(c.y, n), composite_level(c.z, n)};
-    uint count = 1u;
+    float3 mean = composite_mean(sum, 1u);
 #else
-    float3 sum = {0.0f, 0.0f, 0.0f};
+    // The samples' levels, the objects group's (the stencil's objects bit) and the others' apart.
+    float3 objects = {0.0f, 0.0f, 0.0f};
+    float3 others = {0.0f, 0.0f, 0.0f};
+    uint k = 0u;
     for (int s = 0; s < SAMPLES; ++s) {
         float3 c = scene_colour.SubpassLoad(s).rgb;
         float3 l = {composite_level(c.x, n), composite_level(c.y, n), composite_level(c.z, n)};
-        sum = sum + l;
+        if ((scene_stencil.SubpassLoad(s).x & OBJECTS_BIT) != 0u) {
+            objects = objects + l;
+            k = k + 1u;
+        } else {
+            others = others + l;
+        }
     }
     uint count = uint(SAMPLES);
+    float3 mean;
+    if ((frame.layers.steps.x & COMPOSITE_MAT) != 0u && k > 0u && k < count && mat_on(frame)) {
+        // A silhouette of the objects group: mat's coverage rule (shared/composite.slang).
+        uint3 o = composite_mean_of(objects, k);
+        uint3 e = {mat_edge_level(o.x, levels), mat_edge_level(o.y, levels), mat_edge_level(o.z, levels)};
+        mean = composite_silhouette(e, composite_mean_of(others, count - k), k, count);
+    } else {
+        mean = composite_mean(objects + others, count);
+    }
 #endif
-    float3 mean = composite_mean(sum, count);
+    // fin's grain: the field's grey and alpha here, at the moment's opacity, once the fields are bound.
+    uint3 grain = {0u, 0u, 0u};
+    if ((frame.layers.steps.x & COMPOSITE_GRAIN) != 0u && (frame.info.x & FRAME_FIELDS) != 0u) {
+        uint4 b = fx_rgba(fx_pixel(frame.camera, v.position.xy));
+        uint opacity = (frame.info.x & FRAME_NIGHT) != 0u ? COMPOSITE_GRAIN_NIGHT : COMPOSITE_GRAIN_DAY;
+        uint3 g = {b.y, b.z, opacity};
+        grain = g;
+    }
     float2 css = css_of_output(frame.camera, v.position.xy);
-    float3 finished = composite_steps(frame.layers, mean, css, frame.camera.frame.xy);
+    float3 finished = composite_steps_fx(frame.layers, mean, css, frame.camera.frame.xy, grain);
     CompositeOut o;
     o.colour = composite_output(finished, n);
     return o;
