@@ -197,10 +197,10 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     passes.push_back(std::move(owned));
     auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
     ATLAS_REQUIRE(builder.has_value(), builder.error().text());
-    double now = 0;
-    std::atomic<int> wakes{0}; // before the world: its threads call the wake until it is gone
-    auto world =
-        scene::World::create(*session->device, (*builder)->passes(), {.workers = 3, .clock = [&now] { return now; }});
+    std::atomic<double> now{0}; // the world's clock, read on its workers' threads too
+    std::atomic<int> wakes{0};  // before the world: its threads call the wake until it is gone
+    auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                      {.workers = 3, .clock = [&now] { return now.load(); }});
     ATLAS_REQUIRE(world.has_value(), world.error().text());
     scene::World& w = **world;
     w.set_wake([&wakes] { wakes.fetch_add(1); });
@@ -342,10 +342,10 @@ TEST_CASE("a coarser pack is drawn around the active one, its items in the frame
     passes.push_back(std::make_unique<BuildProbe>());
     auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
     ATLAS_REQUIRE(builder.has_value(), builder.error().text());
-    double now = 0;
-    auto world =
-        scene::World::create(*session->device, (*builder)->passes(),
-                             {.workers = 3, .clock = [&now] { return now; }}); // the sun on: the canal ring's lane too
+    std::atomic<double> now{0}; // the world's clock, read on its workers' threads too
+    auto world = scene::World::create(
+        *session->device, (*builder)->passes(),
+        {.workers = 3, .clock = [&now] { return now.load(); }}); // the sun on: the canal ring's lane too
     ATLAS_REQUIRE(world.has_value(), world.error().text());
     scene::World& w = **world;
     for (const auto& [id, path] : {std::pair{"amsterdam", westerkerk}, std::pair{"grachten", canals}}) {
@@ -521,9 +521,9 @@ TEST_CASE("the world's providers fill set 1's globals: the heaps and the sun bou
     passes.push_back(std::make_unique<BuildProbe>());
     auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
     ATLAS_REQUIRE(builder.has_value(), builder.error().text());
-    double now = 0;
-    auto world =
-        scene::World::create(*session->device, (*builder)->passes(), {.workers = 2, .clock = [&now] { return now; }});
+    std::atomic<double> now{0}; // the world's clock, read on its workers' threads too
+    auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                      {.workers = 2, .clock = [&now] { return now.load(); }});
     ATLAS_REQUIRE(world.has_value(), world.error().text());
     scene::World& w = **world;
     const std::filesystem::path path = std::filesystem::path(dir) / "amsterdam.atlas";

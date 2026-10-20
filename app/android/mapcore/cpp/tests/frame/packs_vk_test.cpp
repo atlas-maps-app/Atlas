@@ -96,9 +96,10 @@ TEST_CASE("a pack's own stage T: built once when it is drawn, published to the f
     ATLAS_REQUIRE(builder.has_value(), builder.error().text());
     frame::FrameBuilder& fb = **builder;
     CHECK(fb.passes()[0]->index() == 0);
-    double now = 0;
-    std::atomic<int> wakes{0}; // before the world: its threads call the wake until it is gone
-    auto world = scene::World::create(*session->device, fb.passes(), {.workers = 2, .clock = [&now] { return now; }});
+    std::atomic<double> now{0}; // the world's clock, read on its workers' threads too
+    std::atomic<int> wakes{0};  // before the world: its threads call the wake until it is gone
+    auto world =
+        scene::World::create(*session->device, fb.passes(), {.workers = 2, .clock = [&now] { return now.load(); }});
     ATLAS_REQUIRE(world.has_value(), world.error().text());
     scene::World& w = **world;
     w.set_wake([&wakes] { wakes.fetch_add(1); });
