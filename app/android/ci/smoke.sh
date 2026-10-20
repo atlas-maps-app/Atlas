@@ -554,18 +554,20 @@ pills_phase() {
     since_marker $label | grep -E 'AtlasMap: (vkbench|vk chrome|vk frosted)' | tail -5 | sed 's/.*AtlasMap: /  /'
     FAIL=1; vk_crashes $label; return
   fi
-  sleep 2 # a frame of the stand-in takes this emulator a third of a second
+  # A frame of the stand-in takes this emulator a third to half a second, and a few are in flight and queued: the frame
+  # on screen can be two seconds older than the line, so each capture waits 6 s into its 8 s still.
+  sleep 6
   # Raw captures for the check (a pure-Python PNG decoder takes half a minute a screen), PNGs to look at.
   adb exec-out screencap > "$OUT/pills-frosted.raw"
   adb exec-out screencap -p > "$OUT/pills-frosted.png"
   wait_line $label 30 "vkbench pills still: plain tint" || { echo "PILLS FAILED: no 'vkbench pills still: plain tint'"; FAIL=1; return; }
-  sleep 2
+  sleep 6
   adb exec-out screencap > "$OUT/pills-plain.raw"
   adb exec-out screencap -p > "$OUT/pills-plain.png"
   wait_line $label 30 "vkbench pills still: done"
   # The fade probe: the same still map and pills under a layer of alpha 0.5. A record of this API level, not a check.
   if wait_line $label 30 "vkbench fade: the map under a layer"; then
-    sleep 2
+    sleep 6
     adb exec-out screencap > "$OUT/pills-fade.raw"
     adb exec-out screencap -p > "$OUT/pills-fade.png"
     wait_line $label 30 "vkbench fade: done"
@@ -584,6 +586,7 @@ pills_phase() {
   python3 -I "$HERE/pillcheck.py" check "$OUT/pills-plain.raw" --shapes "$OUT/pills.txt" --expect plain > "$OUT/pills-plain.txt" 2>&1; rc_plain=$?
   rm -f "$OUT/pills-frosted.raw" "$OUT/pills-plain.raw"
   sed 's/^/  frosted: /' "$OUT/pills-frosted.txt"; sed 's/^/  plain tint: /' "$OUT/pills-plain.txt"
+  grep -E '^vk (chrome|frosted) ' "$OUT/pills.txt" | tail -4 | sed 's/^/  log: /' # the chrome's shapes and the core's glass
   if [ $rc_frosted -eq 0 ] && [ $rc_plain -eq 0 ]; then
     echo "PILLS: VK bench's still pills pass the pill check with the core's glass and fail it with their tint alone (emulator: still pills only)"
   else

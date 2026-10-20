@@ -408,7 +408,7 @@ object VkBench {
      * How long the Pills run holds the pills still, frosted, then with their tint alone, then under the fade probe's
      * layer (ms each).
      */
-    const val PILL_STILL_MS = 3000L
+    const val PILL_STILL_MS = 8000L
 
     /** The root-mean-square of the first [n] values. */
     fun rms(v: DoubleArray, n: Int): Double {

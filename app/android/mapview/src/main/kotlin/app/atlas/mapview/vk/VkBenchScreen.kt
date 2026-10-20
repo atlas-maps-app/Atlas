@@ -122,9 +122,9 @@ import kotlin.math.roundToInt
  * Every result is a `vkbench …` line (logcat, the screen, Copy); the report is recorded on disk as each step begins, so
  * a native crash cannot cost what was measured before it. The Pills run is step 3 alone, 20 s long, for the phone's own
  * screen recorder to film the pills frame by frame (ci/pillcheck.py reads the film's frames), then the pills still for
- * 3 s frosted and 3 s with their tint alone (`vkbench pills still: frosted|plain tint`), which CI's screen captures
+ * 8 s frosted and 8 s with their tint alone (`vkbench pills still: frosted|plain tint`), which CI's screen captures
  * judge: the emulator's software Vulkan draws the stand-in far slower than its display, so it checks still pills
- * alone; the moving check is the phone's. Last, 3 s of the map and its pills under a layer of alpha 0.5 (`vkbench fade:`):
+ * alone; the moving check is the phone's. Last, 8 s of the map and its pills under a layer of alpha 0.5 (`vkbench fade:`):
  * whether the SurfaceView follows a fading screen on this API level, which CI records.
  */
 @Composable
@@ -276,7 +276,7 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
                 source.pillsOn = pillsOn
                 // The core draws the pills' glass on the SurfaceView (unless the run asks for their tint alone), at the
                 // alpha of the layer over them, as the app's chrome under a fading screen.
-                SideEffect { shapes.coreDraws = host == VkHost.SURFACE && !pillsPlain }
+                SideEffect { shapes.coreDraws = coreDrawsGlass(host, pillsPlain) }
                 CompositionLocalProvider(LocalChromeAlpha provides chromeAlpha) {
                     androidx.compose.runtime.key(host) {
                         TextureBackdrop(host == VkHost.TEXTURE) { layerModifier ->
@@ -298,6 +298,12 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
         }
     }
 }
+
+/**
+ * Whether the core draws the pills' glass: on the SurfaceView host, unless the run asks for their tint alone (the pill
+ * check's plain case); on the TextureView host HWUI frosts them from the recorded window.
+ */
+internal fun coreDrawsGlass(host: VkHost, plain: Boolean): Boolean = host == VkHost.SURFACE && !plain
 
 /** The pills' boxes in dp (top and bottom pills, as the home's chrome), shifted by [dx]. */
 internal fun pillBoxes(widthDp: Float, heightDp: Float, dx: Float): List<FloatArray> = listOf(
@@ -906,6 +912,10 @@ private class BenchRun(
     private suspend fun stills() {
         if (!surfaceNow().attached) return
         pills(true, false)
+        // The camera without the still path's sway: the captures seconds apart (frosted, plain, the fade probe) show the
+        // same map, so the fade probe's fit compares like with like.
+        source.path = VkBench.Path.STILL
+        source.periodSeconds = 0.0
         for (plain in listOf(false, true)) {
             plainPills(plain)
             emit("vkbench pills still: ${if (plain) "plain tint" else "frosted"}")

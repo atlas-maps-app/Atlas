@@ -3,7 +3,9 @@ package app.atlas.mapview.vk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import app.atlas.mapcore.CameraState
 import app.atlas.mapcore.FrameRecords
+import app.atlas.mapcore.state.CameraWriter
 import app.atlas.mapview.VkFactsLines
 import org.junit.Test
 
@@ -12,6 +14,44 @@ import org.junit.Test
  * lines and the report as recorded while the bench runs.
  */
 class VkBenchTest {
+    @Test
+    fun theSurfaceViewHostWritesItsPillsFrostedAndThePlainTintAndTheTextureViewClear() {
+        // VK bench's pills as its screen places them (pillBoxes, the chrome's shape of each, frosted on the SurfaceView)
+        // and as its camera source writes them into each frame's camera state: frosted keep-outs, so the core draws
+        // their glass, only on the SurfaceView host and not for the pill check's plain tint.
+        val d = 2.625
+        for ((host, plain, frosted) in listOf(
+            Triple(VkHost.SURFACE, false, true),
+            Triple(VkHost.SURFACE, true, false),
+            Triple(VkHost.TEXTURE, false, false),
+        )) {
+            val shapes = ChromeShapes()
+            val source = BenchSource(CameraState(), shapes)
+            source.running = true
+            source.widthPx = 1080
+            source.heightPx = 1400
+            source.density = d
+            shapes.surfaceAt(0f, 233f)
+            for (b in pillBoxes(1080 / d.toFloat(), 1400 / d.toFloat(), 0f)) {
+                val slot = shapes.add()
+                shapes.place(
+                    slot, b[0] * d.toFloat(), 233f + b[1] * d.toFloat(), b[2] * d.toFloat(), 233f + b[3] * d.toFloat(),
+                    26f * d.toFloat(), 20f * d.toFloat(), 1.8f, host == VkHost.SURFACE, 0L,
+                )
+            }
+            shapes.coreDraws = coreDrawsGlass(host, plain)
+            val out = CameraWriter.allocate()
+            assertTrue(source.camera(16_666_667L, out))
+            assertEquals(2, out.getInt(CameraWriter.KEEP_OUT_COUNT_AT))
+            for (i in 0 until 2) {
+                val o = CameraWriter.KEEP_OUT_AT + i * CameraWriter.KEEP_OUT_SIZE
+                assertEquals("$host plain=$plain pill $i", if (frosted) 1 else 0, out.get(o + 23).toInt() and 0xFF)
+                // In dp from the surface's top left, as the core places its glass: the top pill 40 dp down.
+                if (i == 0) assertEquals(40f, out.getFloat(o + 4), 1e-3f)
+            }
+        }
+    }
+
     @Test
     fun thePathsMoveTheCameraAsScripted() {
         val c = VkBench.Camera()
