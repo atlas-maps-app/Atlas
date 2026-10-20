@@ -24,9 +24,10 @@ import kotlin.concurrent.withLock
 /**
  * L1, primitive parity (plan-vector D16; K7's framework): at a case's camera, the twin's stream (every registered
  * pass's emit, `CP/frame/FrameBuilder.cpp`'s emit over the world of the case's render pack) against the port's own SVG
- * at the same camera, element by element (L1Diff). The landed features must match: every element the twin emits
- * matches one of the port's, and the composite's (the haze, fin's vignette) are exact or one print step apart; the
- * port's elements the twin does not draw yet (the features of the packages to come) are listed by key, with counts.
+ * at the same camera, element by element in the view (L1Diff). The landed features must match: every element the twin
+ * emits in the view matches one of the port's (fills in pieces included, listed by key), exact or one print step
+ * apart, and none passes an element it overlaps out of the port's order; the port's elements the twin does not draw
+ * yet (the features of the packages to come) are listed by key, with counts, and those outside the view are counted.
  *
  * Cases: the Westerkerk home and the Main board at S1 (sunny and wet), and the smoke tier's eight sweep cameras.
  */
@@ -107,17 +108,23 @@ class L1Test {
                 ?: throw AssertionError("${case.name}: the twin failed: ${FrameHost.lastError()}")
             val twin = TwinCodec.decode(bytes)
             println("L1 ${case.name}: ${FrameHost.lastNotes()}")
+            val view = docs[0].first().viewBox
+            val spread = L1Diff.filterSpread(docs.flatten())
             for ((layer, name) in listOf(TwinCodec.GROUND to "ground", TwinCodec.OBJECTS to "objects")) {
                 val portElements = L1Diff.portElements(docs[if (layer == TwinCodec.GROUND) 0 else 1], structural = true)
-                val twinElements = L1Diff.twinElements(twin, layer)
-                val r = L1Diff.diff("${case.name} $name", portElements, twinElements)
+                val twinElements = L1Diff.twinElements(twin, layer, spread)
+                val r = L1Diff.diff("${case.name} $name", portElements, twinElements, view)
                 println(r.summary())
                 for ((k, n) in r.missing.entries.sortedByDescending { it.value }.take(8)) println("  missing $n × $k")
                 for ((k, n) in r.extra.entries.sortedByDescending { it.value }.take(8)) println("  extra $n × $k")
+                for ((k, n) in r.piecesByKey.entries.sortedByDescending { it.value }.take(8)) println("  in pieces $n × $k")
                 for (d in r.firstDiffering) println("  differs: $d")
-                // Every element the twin draws is the port's, in its order; vertices exact or one print step apart.
+                for (d in r.firstOutOfOrder) println("  out of order: $d")
+                // Every element the twin draws in the view is the port's, in its order where it overlaps another; vertices
+                // exact or one print step apart.
                 assertEquals("${case.name} $name: elements the twin draws that the port does not: ${r.extra}", 0, r.extra.values.sum())
                 assertEquals("${case.name} $name: matched elements whose vertices differ: ${r.firstDiffering}", 0, r.differs)
+                assertEquals("${case.name} $name: elements out of the port's order: ${r.firstOutOfOrder}", 0, r.outOfOrder)
                 matched += r.matched
             }
             cases++
