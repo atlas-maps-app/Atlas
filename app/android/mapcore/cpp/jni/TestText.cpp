@@ -136,24 +136,10 @@ std::expected<std::shared_ptr<const Candidates>, std::string> candidates_of(cons
     if (!pack) return std::unexpected(tl::describe(pack.error()));
     if (pack->head() == nullptr || pack->head()->levels.empty()) return std::unexpected("the pack has no render head");
     const auto t0 = std::chrono::steady_clock::now();
+    auto canals = text::pack_canals(*pack); // the pack-level stage T's reading
+    if (!canals) return std::unexpected(tl::describe(canals.error()));
     auto out = std::make_shared<Candidates>();
-    tl::Zstd zstd;
-    tl::TileDecoder decoder;
-    std::vector<std::byte> raw;
-    std::vector<std::byte> scratch;
-    const std::uint8_t finest = pack->head()->levels.front();
-    for (const tl::ChunkRef& c : pack->chunks().chunks()) {
-        if (c.tile.z != finest) continue;
-        Arena arena(1U << 20U, Growth::grows, "labels");
-        auto tile = pack->decode(c, zstd, decoder, arena, raw, scratch);
-        if (!tile) return std::unexpected(tl::describe(tile.error()));
-        if (const tl::Layer* labels = tile->layer(tl::LayerId::label)) {
-            text::canal_candidates(*labels, pack->head()->frame, out->all);
-        }
-    }
-    std::ranges::sort(out->all, {}, &text::CanalCandidate::index);
-    const auto [first, last] = std::ranges::unique(out->all, {}, &text::CanalCandidate::index);
-    out->all.erase(first, last);
+    out->all = std::move(canals->candidates);
     out->millis = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     read.emplace(path, out);
     return out;

@@ -1,6 +1,9 @@
 #include "text/CanalNames.hpp"
 
+#include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
+#include "tiles/Chunks.hpp"
+#include "tiles/Container.hpp"
 #include "tiles/layers/Labels.hpp"
 
 #include <algorithm>
@@ -52,6 +55,35 @@ void canal_candidates(const tiles::Layer& labels, const tiles::Frame& frame, std
                        .count = static_cast<std::uint32_t>(labels.integer(lb::count, i)),
                        .ground_key = static_cast<std::uint32_t>(labels.integer(lb::ground_key, i))});
     }
+}
+
+tiles::Result<PackCanals> pack_canals(const tiles::Pack& pack) {
+    PackCanals out;
+    const tiles::RenderHead* head = pack.head();
+    if (head == nullptr || head->levels.empty()) return out;
+    if (const tiles::StyleTables* style = pack.style()) {
+        if (const auto state = style->table("state")) {
+            if (const auto level = state->find("water_y")) out.water_level = level->number().value_or(-1.5);
+        }
+    }
+    tiles::Zstd zstd;
+    tiles::TileDecoder decoder;
+    std::vector<std::byte> raw;
+    std::vector<std::byte> scratch;
+    const std::uint8_t finest = head->levels.front();
+    for (const tiles::ChunkRef& c : pack.chunks().chunks()) {
+        if (c.tile.z != finest) continue;
+        Arena arena(std::size_t{1} << 20U, Growth::grows, "canal names");
+        auto tile = pack.decode(c, zstd, decoder, arena, raw, scratch);
+        if (!tile) return std::unexpected(tile.error());
+        if (const tiles::Layer* labels = tile->layer(tiles::LayerId::label)) {
+            canal_candidates(*labels, head->frame, out.candidates);
+        }
+    }
+    std::ranges::sort(out.candidates, {}, &CanalCandidate::index);
+    const auto [first, last] = std::ranges::unique(out.candidates, {}, &CanalCandidate::index);
+    out.candidates.erase(first, last);
+    return out;
 }
 
 std::vector<RuleName> canal_rule(std::span<const CanalCandidate> candidates, const CanalView& view) {

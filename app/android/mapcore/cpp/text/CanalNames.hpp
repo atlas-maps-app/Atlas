@@ -18,6 +18,7 @@
 #pragma once
 
 #include "text/GroundText.hpp"
+#include "tiles/Error.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Sections.hpp"
 
@@ -25,6 +26,10 @@
 #include <span>
 #include <string>
 #include <vector>
+
+namespace atlas::tiles {
+class Pack; // tiles/Container.hpp
+} // namespace atlas::tiles
 
 namespace atlas::text {
 
@@ -43,6 +48,17 @@ struct CanalCandidate {
 
 /// A tile's canal name candidates: its label layer's source-0 features, their points in `frame`'s metres.
 void canal_candidates(const tiles::Layer& labels, const tiles::Frame& frame, std::vector<CanalCandidate>& out);
+
+/// A render pack's canal names, whole (what the renders' S['labels'] holds of them): every candidate of the label
+/// layers of its finest level, by source order, each once; and the region's canal water level (the style's
+/// state.water_y, amsterdam.py's WATER_Y; -1.5 where it names none).
+struct PackCanals {
+    std::vector<CanalCandidate> candidates;
+    double water_level = -1.5;
+};
+
+/// `pack`'s canal names (a pack-level stage T: some milliseconds for the canal ring's 652), or the first tile's error.
+[[nodiscard]] tiles::Result<PackCanals> pack_canals(const tiles::Pack& pack);
 
 /// What the canal names read of a frame.
 struct CanalView {

@@ -58,25 +58,10 @@ CanalView view_of(const view::Camera& cam, bool rest = true, double seconds = 0.
             .seconds = seconds};
 }
 
-/// Every canal candidate of a bundled pack's finest level, by source order.
+/// Every canal candidate of a bundled pack's finest level, by source order (the pack-level stage T's reading).
 std::vector<CanalCandidate> pack_candidates(const tiles::Pack& pack) {
-    std::vector<CanalCandidate> out;
-    tiles::Zstd zstd;
-    tiles::TileDecoder decoder;
-    std::vector<std::byte> raw;
-    std::vector<std::byte> scratch;
-    const std::uint8_t finest = pack.head()->levels.front();
-    for (const tiles::ChunkRef& c : pack.chunks().chunks()) {
-        if (c.tile.z != finest) continue;
-        Arena arena(1U << 20U, Growth::grows, "labels");
-        auto tile = pack.decode(c, zstd, decoder, arena, raw, scratch);
-        if (!tile) continue;
-        if (const tiles::Layer* labels = tile->layer(tiles::LayerId::label)) {
-            text::canal_candidates(*labels, pack.head()->frame, out);
-        }
-    }
-    std::ranges::sort(out, {}, &CanalCandidate::index);
-    return out;
+    auto canals = text::pack_canals(pack);
+    return canals ? std::move(canals->candidates) : std::vector<CanalCandidate>{};
 }
 
 /// A pack view's camera as regions.py's cfg_for frames it: 412 × 915 CSS px.
