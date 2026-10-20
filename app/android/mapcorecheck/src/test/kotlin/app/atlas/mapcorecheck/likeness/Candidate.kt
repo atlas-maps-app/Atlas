@@ -122,9 +122,17 @@ class HostCore private constructor(val library: File, val passes: String) : Cand
     override fun draw(entry: RefEntry): CandidateFrame {
         val t0 = System.nanoTime()
         val w = entry.w; val h = entry.h
+        // A case this machine cannot draw is reported unavailable, with why, never thrown out of the run: whether it
+        // may fail the run is the gate's question.
+        val state = try {
+            CaseState.check(entry)?.let { throw CaseUnavailable(it) }
+            CaseState.camera(entry) to CaseState.theme(entry)
+        } catch (e: CaseUnavailable) {
+            return CandidateFrame(name, w, h, null, null, null, "unavailable here: ${e.message}", (System.nanoTime() - t0) / 1_000_000)
+        }
         val pixels = ByteBuffer.allocateDirect(w * h * 4)
         val owners = ByteBuffer.allocateDirect(w * h * 8).order(ByteOrder.LITTLE_ENDIAN)
-        val r = TestCases.render(TestCases.caseBuffer(entry), CaseState.camera(entry), CaseState.theme(entry), pixels, owners)
+        val r = TestCases.render(TestCases.caseBuffer(entry), state.first, state.second, pixels, owners)
         val ms = (System.nanoTime() - t0) / 1_000_000
         if (r < 0) return CandidateFrame(name, w, h, null, null, null, "the core failed: ${error(r)}: ${TestCases.lastError()}", ms)
         val px = IntArray(w * h)
@@ -192,16 +200,41 @@ class HostCore private constructor(val library: File, val passes: String) : Cand
     }
 }
 
+/** A case the candidate cannot draw on this machine, and why. */
+class CaseUnavailable(why: String) : Exception(why)
+
 /**
  * The camera state and the theme block of a case, as the app writes them for the core (plan-vector T9): the camera
  * through CameraWriter (at rest; engine mode unless the case says otherwise), the moment's theme through ThemeBlock from
  * the port's own THEMES after the case's region is loaded, resolved as LiveEngine.render resolves it (a named moment,
- * or the live one installed for its instant).
+ * or the live one installed for its instant). What a case lacks for them, or its pack missing here, is a
+ * [CaseUnavailable].
  */
 internal object CaseState {
+    /**
+     * Why [entry] cannot be drawn on this machine, or null: an effect probe (its scene is no camera's view: the frame
+     * draws the probes once their effects are its own, D16's EFFECTS gate), a case with no view or no moment, a pack
+     * this harness has no region for, or the pack's region or render pack not here.
+     */
+    fun check(entry: RefEntry): String? {
+        if (entry.isProbe || entry.mode == "effect") return "'${entry.name}' is an effect probe, which the frame does not draw yet"
+        if (entry.view == null) return "'${entry.name}' has no view"
+        if (entry.moment == null) return "'${entry.name}' has no moment"
+        val pack = entry.o.strOrNull("pack") ?: "bundled"
+        when (pack) {
+            "bundled" -> {}
+            "grachten" -> if (!AnchorCases.grachtenPack.isFile) return "the canal ring's pack is not on this machine (${AnchorCases.grachtenPack})"
+            else -> return "no region for the pack '$pack'"
+        }
+        val tiles = System.getProperty("atlas.tiles") ?: return "no folder of render packs (-Datlas.tiles)"
+        val render = File(tiles, "${if (pack == "bundled") "amsterdam" else pack}.atlas")
+        if (!render.isFile) return "the render pack of '$pack' is not on this machine ($render)"
+        return null
+    }
+
     /** The case's camera state. */
     fun camera(entry: RefEntry): ByteBuffer {
-        val v = entry.view ?: error("case '${entry.name}' has no view")
+        val v = entry.view ?: throw CaseUnavailable("'${entry.name}' has no view")
         val lat = v.dbl("lat"); val lon = v.dbl("lon"); val heightDp = v.int("heightDp"); val widthDp = v.int("widthDp")
         val engine = entry.o["engine"]?.jsonPrimitive?.content != "false"
         val b = CameraWriter.allocate()
@@ -217,15 +250,15 @@ internal object CaseState {
     /** The region of a case's pack. */
     private fun region(entry: RefEntry): LiveRegion = when (val pack = entry.o.strOrNull("pack") ?: "bundled") {
         "bundled" -> AnchorCases.westerkerk()
-        "grachten" -> AnchorCases.grachten() ?: error("the canal ring's pack is not on this machine")
-        else -> error("no region for the pack '$pack'")
+        "grachten" -> AnchorCases.grachten() ?: throw CaseUnavailable("the canal ring's pack is not on this machine (${AnchorCases.grachtenPack})")
+        else -> throw CaseUnavailable("no region for the pack '$pack'")
     }
 
     /** The case's theme block. */
     @Suppress("UNCHECKED_CAST")
     fun theme(entry: RefEntry): ByteBuffer {
         val region = region(entry)
-        val m = entry.moment ?: error("case '${entry.name}' has no moment")
+        val m = entry.moment ?: throw CaseUnavailable("'${entry.name}' has no moment")
         val (th, key) = LiveEngine.lock.withLock {
             // the region's own module state (its themes), as its render restores it
             LiveEngine.loadScene(region, if (region.kind == LiveRegion.Kind.LIVING) null else region.ladder.knots.first().name).state.restore()
@@ -236,7 +269,7 @@ internal object CaseState {
             }
             val named = (m["named"] as? JsonPrimitive)?.content
             val key = if (named != null) {
-                val th = Amsterdam.THEMES[named] ?: error("the engine has no moment '$named'")
+                val th = Amsterdam.THEMES[named] ?: throw CaseUnavailable("the engine has no moment '$named'")
                 if (region.kind == LiveRegion.Kind.REGION && th["wx"] == null) {
                     val d = (th["date"] as List<Number>).map { it.toInt() }
                     val hm = (th["hhmm"] as List<Number>).map { it.toInt() }
@@ -294,6 +327,33 @@ class CandidateTest {
         val m = HostCore.ownersOf(b, 2, 2)
         assertEquals(listOf(1, 0, 2, 1), m.frame.px.toList())
         assertEquals(listOf("w123", "n9"), m.owners.map { it.tag })
+    }
+
+    @Test
+    fun `a case this machine cannot draw is unavailable, with why, never thrown`() {
+        val dir = java.nio.file.Files.createTempDirectory("likeness-set").toFile()
+        try {
+            val size = "\"size\": {\"w\": 1080, \"h\": 2400, \"density\": 2.6213592233009706}"
+            val view = "\"view\": {\"lat\": 52.37, \"lon\": 4.88, \"zoom\": 17.0, \"bearing\": 0.0, \"pitch\": 0.0, \"cyDp\": 458.0, \"widthDp\": 412, \"heightDp\": 916}"
+            File(dir, "manifest.json").writeText(
+                "{\"key\": \"k\", \"entries\": {" +
+                    "\"probe mat S1\": {\"mode\": \"effect\", \"probe\": {\"effect\": \"mat\"}, $size}, " +
+                    "\"elsewhere S1\": {\"mode\": \"structural\", \"pack\": \"nowhere\", $size, $view, \"moment\": {\"named\": \"sunny\"}}, " +
+                    "\"no moment S1\": {\"mode\": \"structural\", $size, $view}}}",
+            )
+            val set = RefSetReader(dir)
+            val probe = set.entries.getValue("probe mat S1")
+            assertTrue(CaseState.check(probe)!!.contains("effect probe"))
+            assertTrue(CaseState.check(set.entries.getValue("elsewhere S1"))!!.contains("no region for the pack 'nowhere'"))
+            assertTrue(CaseState.check(set.entries.getValue("no moment S1"))!!.contains("no moment"))
+            // Drawn by the host core when it is built here: reported, not thrown.
+            val core = HostCore.load() ?: return
+            val f = core.draw(probe)
+            assertEquals(null, f.px)
+            assertTrue(f.note, f.note.startsWith("unavailable here: "))
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 
     @Test
