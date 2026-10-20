@@ -20,21 +20,24 @@ Atlas draws its map with its own engine. This is the one document about it: what
 
 ## The design
 
-1. **One data pipeline for the whole world, ours.** Atlas's packer (`:packer`, `:rendertiles`) builds everything on GitHub from OpenStreetMap (every Geofabrik extract) and open data:
+1. **One data pipeline for the whole world, ours.** Atlas's packer (`:packer`, `:rendertiles`) builds everything on GitHub from OpenStreetMap and open data:
    - render packs for street level everywhere, sharded so each job fits a free runner, and rebuilt monthly so only changed chunks change;
    - a mid-zoom base, with Planetiler running Atlas's own profile into Atlas's own format;
    - a small globe base, bundled in the APK;
-   - terrain and relief from a global elevation model.
+   - terrain and relief from the best elevation model for each region (national lidar where it exists, such as AHN in the Netherlands), and a global model everywhere else.
+
+   OpenStreetMap comes from Geofabrik's extracts, which are made for bulk processing and updated daily. Overpass is made for small live queries, and its public servers limit bulk use (about 10,000 queries and 1 GB a day), so it cannot build the world.
 
    The phone never builds tiles. It reads the chunks it shows by ranges and keeps them, and it can download whole regions for offline use.
 2. **Render tiles** (pack format 3) hold every value the look derives from the data, already derived: looks, heights, roof shapes, water levels, label candidates.
    - The values are stored in columns compressed with zstd, with a keep code per vertex for every simplification level.
    - A tile is memory-mapped, decoded straight into the GPU's heaps, and kept on disk once built.
-3. **The style is the renderer's.**
-   - Close up across Amsterdam: the living map's detail.
+3. **The style is the renderer's:** building traditions by country, and place-specific profiles wherever a place needs one.
+   - Close up across Amsterdam: the living map's profile.
+   - Williamsburg: `real.py`'s profile, if the owner says yes.
    - Everywhere else: the regions' rules, with each country's building tradition.
    - At the planet: the Globe board's look.
-   - The colours, widths and rules live in the engine's own style file, which the tiles carry, so refining the look is an edit to data.
+   - The colours, widths, rules, traditions and profiles live in the engine's own style file, which the tiles carry. Refining the look, or adding a tradition or a profile, is an edit to data.
 4. **Compact records, expanded on the GPU.** Walls, wall cells, windows, roof faces, trees and street furniture are records of a few bytes that the vertex stage expands, and repeated detail is instanced. Draws are indexed and batched per pipeline. meshoptimizer is the candidate for vertex-cache order and quantised vertices, if it measures better.
 5. **One pass in tile memory.** The main render pass has a scene subpass and a composite subpass at 4x MSAA, with its attachments kept in tile memory where the GPU allows.
    - The composite applies the screen effects once per pixel: haze, vignette, grain, `mat`, the wash and cloud shadows.
@@ -229,7 +232,7 @@ In this order, each held by L1 at the boards' views and by the engine's own refe
   - 2x MSAA while moving, where the GPU has it;
   - the offscreen passes at half resolution while moving;
   - follow mode at 30 fps.
-- **Terrain and relief everywhere** from the global elevation model, with the dunes and San Gimignano among them.
+- **Terrain and relief everywhere,** from the best elevation model for each region and a global one elsewhere, with the dunes and San Gimignano among them.
 - Williamsburg in `real.py`'s own look, if the owner says yes.
 - **Cleanup:**
   - the CPU frame path, the anchors and `SvgWarp` leave the app;
