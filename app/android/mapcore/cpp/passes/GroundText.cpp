@@ -281,9 +281,14 @@ void GroundText::emit(const frame::FrameState& state, twin::Stream& out, std::ui
     (void)phase;
     if (placed_.empty()) return;
     out.layer(twin::Layer::ground);
-    out.at(first_ground_slot());
+    out.at(first_ground_slot(), out.root());
+    std::size_t turned = 0;
     for (const text::PlacedName& p : placed_) {
-        const text::TextRun& run = p.drawn;
+        // The renders' own run: a name the frame turns for reading is D13's intended deviation, which L1 compares
+        // unturned and counts (the log's line below); a way a name left, fading out, is not the renders'.
+        if (p.leaving) continue;
+        turned += p.turned ? 1U : 0U;
+        const text::TextRun& run = p.rule;
         twin::Node node{.opacity = run.printed_opacity() * p.alpha, .transformed = true};
         if (state.rest) {
             node.transform = run.snapped_matrix();
@@ -300,12 +305,15 @@ void GroundText::emit(const frame::FrameState& state, twin::Stream& out, std::ui
                               .anchor = static_cast<twin::TextAnchor>(run.anchor)};
         out.text({.fill = twin::Paint::colour(0xFF00'0000U | run.fill)}, run.text, 0.0F, 0.0F, font, node);
     }
+    log::info("ground text twin: {} names, {} of them drawn turned for reading (D13), emitted as the renders draw them",
+              placed_.size(), turned);
 }
 
 // ---- Set 1's text globals.
 
 void TextGlobals::update(const frame::FrameState& state, frame::Globals& globals) {
     const vk::BufferUsageFlags storage = vk::BufferUsageFlagBits::eStorageBuffer;
+    ++updates_;
     if (!curves_) {
         // The glyphs' buffers, once, at the shared atlas's rows (record copies what is added before each frame draws).
         auto curves =
@@ -319,15 +327,18 @@ void TextGlobals::update(const frame::FrameState& state, frame::Globals& globals
         bands_ = std::move(*bands);
         curves_copied_ = 0;
         bands_copied_ = 0;
-        globals.buffer(frame::Global::glyph_curves, curves_.handle());
-        globals.buffer(frame::Global::glyph_bands, bands_.handle());
     }
-    // The board's sprites: a new set's texels in a buffer of their own; the last set's kept while frames read it.
-    std::erase_if(retired_, [&](const auto& r) { return r.second + gpu::Frames::in_flight < state.number; });
+    // Every frame (each frame builder drawing the world has its own set 1): a binding that did not change costs a
+    // comparison there.
+    globals.buffer(frame::Global::glyph_curves, curves_.handle());
+    globals.buffer(frame::Global::glyph_bands, bands_.handle());
+    // The board's sprites: a new set's texels in a buffer of their own; the sets' before it kept for a few updates
+    // more than the frames in flight of the frame builders that may read them.
+    std::erase_if(retired_, [&](const auto& r) { return r.second + retire_after <= updates_; });
     const labels::LabelSet* set = state.labels;
     const std::uint64_t revision = set != nullptr ? set->revision() : 0;
     if (set != labels_ || revision != labels_revision_) {
-        if (sprites_) retired_.emplace_back(std::move(sprites_), state.number);
+        if (sprites_) retired_.emplace_back(std::move(sprites_), updates_);
         sprites_ = gpu::Buffer{};
         sprite_texels_ = 0;
         labels_ = set;
@@ -344,11 +355,11 @@ void TextGlobals::update(const frame::FrameState& state, frame::Globals& globals
                 sprite_texels_ = set->texels().size();
             }
         }
-        if (sprites_) {
-            globals.buffer(frame::Global::sprites, sprites_.handle());
-        } else {
-            globals.reset(frame::Global::sprites);
-        }
+    }
+    if (sprites_) {
+        globals.buffer(frame::Global::sprites, sprites_.handle());
+    } else {
+        globals.reset(frame::Global::sprites);
     }
 }
 

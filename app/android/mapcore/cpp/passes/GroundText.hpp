@@ -150,7 +150,10 @@ private:
     std::uint64_t labels_revision_ = 0;
     gpu::Buffer sprites_;
     std::size_t sprite_texels_ = 0;
-    std::vector<std::pair<gpu::Buffer, std::uint64_t>> retired_; // buffer, the last frame that may read it
+    std::vector<std::pair<gpu::Buffer, std::uint64_t>> retired_; // buffer, the update it was let go of
+    std::uint64_t updates_ = 0;
+    /// Updates a let-go buffer is kept: two frame builders' frames in flight, and as many again.
+    static constexpr std::uint64_t retire_after = 4ULL * gpu::Frames::in_flight;
 };
 
 } // namespace atlas::passes

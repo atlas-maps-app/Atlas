@@ -243,7 +243,8 @@ TEST_CASE("the canal names drawn: the glyphs' pixels are the CPU's coverage, on 
         CHECK(inked > 300);
         CHECK(differ == 0);
         if (compared == 0) {
-            // The twin: the names as the port writes its <text>, at the matrices the vertex stage draws (printed).
+            // The twin: the names as the port writes its <text> (the renders' runs, unturned), at their printed
+            // matrices.
             twin::Stream stream;
             text->emit((*builder)->state(), stream, 0);
             const twin::Decoded d = twin::decode(stream.bytes());
@@ -251,7 +252,7 @@ TEST_CASE("the canal names drawn: the glyphs' pixels are the CPU's coverage, on 
             ATLAS_REQUIRE(d.document.elements.size() == text->names().size());
             for (std::size_t i = 0; i < d.document.elements.size(); ++i) {
                 const twin::Element& e = d.document.elements[i];
-                const text::TextRun& run = text->names()[i].drawn;
+                const text::TextRun& run = text->names()[i].rule;
                 CHECK(e.kind == twin::Op::text);
                 CHECK(e.layer == twin::Layer::ground);
                 CHECK(e.text == run.text);
