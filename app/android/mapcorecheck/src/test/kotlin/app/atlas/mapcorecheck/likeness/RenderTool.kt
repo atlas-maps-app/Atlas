@@ -33,44 +33,65 @@ class RenderTool {
     fun render() {
         val out = System.getProperty("atlas.render.out")
         assumeTrue("the render tool draws only when asked (-Datlas.render.out=<png>)", !out.isNullOrBlank())
+        val frame = HostFrames.draw(
+            pack = System.getProperty("atlas.render.pack")?.takeIf { it.isNotBlank() } ?: "bundled",
+            view = System.getProperty("atlas.render.view")?.takeIf { it.isNotBlank() } ?: "home",
+            moment = System.getProperty("atlas.render.moment")?.takeIf { it.isNotBlank() } ?: "sunny",
+            size = System.getProperty("atlas.render.size")?.takeIf { it.isNotBlank() } ?: "S1",
+            mode = System.getProperty("atlas.render.mode")?.takeIf { it.isNotBlank() } ?: "structural",
+        )
+        val file = File(out!!)
+        HostFrames.png(frame, file)
+        println("render tool: $file, ${frame.describe()}")
+    }
+}
+
+/** A frame the host core drew for the tools: its size, its R G B A bytes, its view, and how long it took. */
+internal class HostFrame(val w: Int, val h: Int, val density: Double, val rgba: ByteArray, val view: LiveView, val ms: Long) {
+    fun describe(): String =
+        "${w}x$h at $density, view ${"%.6f".format(view.lat)} ${"%.6f".format(view.lon)} zoom ${"%.2f".format(view.zoom)} " +
+            "bearing ${view.bearing} pitch ${view.pitch}, $ms ms on ${TestCases.device()}"
+}
+
+/** The tools' frames: the likeness harness's host core drawing a view and moment of a pack (RenderTool, EngineRefs). */
+internal object HostFrames {
+    /** [pack]'s [view] at [moment], [size], in [mode] (see [RenderTool] for the forms each takes). */
+    fun draw(pack: String, view: String, moment: String, size: String, mode: String): HostFrame {
         val core = HostCore.load()
         assertTrue("the host core: ${HostCore.unavailable}", core != null)
-        val pack = System.getProperty("atlas.render.pack")?.takeIf { it.isNotBlank() } ?: "bundled"
-        val moment = System.getProperty("atlas.render.moment")?.takeIf { it.isNotBlank() } ?: "sunny"
-        val mode = System.getProperty("atlas.render.mode")?.takeIf { it.isNotBlank() } ?: "structural"
-        val (w, h, density) = size(System.getProperty("atlas.render.size") ?: "S1")
+        val (w, h, density) = size(size)
         val widthDp = Math.round(w / density).toInt()
         val heightDp = Math.round(h / density).toInt()
-        val view = view(System.getProperty("atlas.render.view") ?: "home", pack, widthDp, heightDp)
-
+        val v = view(view, pack, widthDp, heightDp)
         val camera = CameraWriter.allocate()
         CameraWriter.header(camera, 1L, CameraWriter.REST)
-        CameraWriter.view(camera, view.lat, view.lon, view.bearing, view.pitch, LiveCamera.distance(view.lat, view.zoom, heightDp.toDouble()), widthDp / 2.0, view.cyDp)
+        CameraWriter.view(camera, v.lat, v.lon, v.bearing, v.pitch, LiveCamera.distance(v.lat, v.zoom, heightDp.toDouble()), widthDp / 2.0, v.cyDp)
         CameraWriter.frame(camera, w, h, widthDp, heightDp, density)
         CameraWriter.pack(camera, 0L, CameraWriter.PROFILE_NONE)
         CameraWriter.revisions(camera, 0, 0, 0)
         CameraWriter.keepOuts(camera, 0)
         val theme = CaseState.theme(pack, JsonObject(mapOf("named" to JsonPrimitive(moment))))
-        val case = TestCases.caseBuffer(w, h, density, mode, false, view, moment, false, pack)
-
+        val case = TestCases.caseBuffer(w, h, density, mode, false, v, moment, false, pack)
         val pixels = ByteBuffer.allocateDirect(w * h * 4)
         val owners = ByteBuffer.allocateDirect(w * h * 8).order(ByteOrder.LITTLE_ENDIAN)
         val t0 = System.nanoTime()
         val r = TestCases.render(case, camera, theme, pixels, owners)
         assertTrue("the core failed: ${HostCore.error(r)}: ${TestCases.lastError()}", r >= 0)
-        val image = BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
-        for (i in 0 until w * h) {
+        val rgba = ByteArray(w * h * 4)
+        pixels.get(0, rgba)
+        return HostFrame(w, h, density, rgba, v, (System.nanoTime() - t0) / 1_000_000)
+    }
+
+    /** Writes [frame] to [file] as a PNG. */
+    fun png(frame: HostFrame, file: File) {
+        val image = BufferedImage(frame.w, frame.h, BufferedImage.TYPE_INT_RGB)
+        val px = frame.rgba
+        for (i in 0 until frame.w * frame.h) {
             val o = i * 4
-            image.setRGB(i % w, i / w, ((pixels.get(o).toInt() and 0xFF) shl 16) or ((pixels.get(o + 1).toInt() and 0xFF) shl 8) or (pixels.get(o + 2).toInt() and 0xFF))
+            image.setRGB(i % frame.w, i / frame.w, ((px[o].toInt() and 0xFF) shl 16) or ((px[o + 1].toInt() and 0xFF) shl 8) or (px[o + 2].toInt() and 0xFF))
         }
-        val file = File(out!!)
         file.absoluteFile.parentFile?.mkdirs()
         assertTrue("the PNG could not be written to $file", ImageIO.write(image, "png", file))
-        println(
-            "render tool: $file, ${w}x$h at $density, $pack, view ${"%.6f".format(view.lat)} ${"%.6f".format(view.lon)} zoom " +
-                "${"%.2f".format(view.zoom)} bearing ${view.bearing} pitch ${view.pitch}, $moment, $mode, " +
-                "${(System.nanoTime() - t0) / 1_000_000} ms on ${TestCases.device()}",
-        )
     }
 
     private fun size(spec: String): Triple<Int, Int, Double> {

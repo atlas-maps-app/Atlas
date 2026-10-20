@@ -1,0 +1,33 @@
+{
+  "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
+  "version": "1",
+  "size": "S1",
+  "mode": "full",
+  "frames": [
+    {"name": "home sunny", "pack": "bundled", "view": "home", "moment": "sunny"},
+    {"name": "home grey", "pack": "bundled", "view": "home", "moment": "grey"},
+    {"name": "home wet", "pack": "bundled", "view": "home", "moment": "wet"},
+    {"name": "home night", "pack": "bundled", "view": "home", "moment": "night"},
+    {"name": "board sunny", "pack": "grachten", "view": "grachten_home", "moment": "sunny"},
+    {"name": "board grey", "pack": "grachten", "view": "grachten_home", "moment": "grey"},
+    {"name": "board wet", "pack": "grachten", "view": "grachten_home", "moment": "wet"},
+    {"name": "board night", "pack": "grachten", "view": "grachten_home", "moment": "night"}
+  ],
+  "versions": {
+    "1": {
+      "note": "Step 1: true depth (D32S8, the melting pair drawn right), the ground's and the buildings' mat, sun bits",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "ab38d011fdcc9abfd3f6190b11b63603e6c6295bbf60a5c8520315463eaeec99",
+          "home grey": "2fc300470fb50cceb8bd55eb45065b75d44a48b1ae4b73ad4c1f86643a324b4a",
+          "home wet": "610f492b55e8fcb85377eee0d3fe1d736acb66e65f30562ff527bfba98d1bdf4",
+          "home night": "0101cbf6a0455870891ec1c3048a7ddb14399370ed19ff765e57dcc424512cf7",
+          "board sunny": "3934174df9bb48d2e2aac4603428b284ab4dd84f2e1c85b046114f9c71301891",
+          "board grey": "50287cab6ac4a47e42aedd77acb621f4235dc6f2b8b57d485ece3020f98d1cf5",
+          "board wet": "0f70fe55ac8fc1e37cf58341d197ac13af7521178cf770a5ba777a9d44b561ff",
+          "board night": "fc9091bf2c6f68ec220cff8c6dea455a743eee56f54fbe8577105a0940f3a127"
+        }
+      }
+    }
+  }
+}

@@ -295,4 +295,10 @@ tasks.test {
         providers.systemProperty("atlas.render.$p").orNull?.let { systemProperty("atlas.render.$p", it) }
     }
     if (providers.systemProperty("atlas.render.out").isPresent) outputs.upToDateWhen { false }
+    // The engine's own references (likeness/EngineRefs.kt): a run that records them writes the source tree's
+    // likeness/engine.json, so it runs every time it is asked.
+    providers.systemProperty("atlas.engine.record").orNull?.let {
+        systemProperty("atlas.engine.record", it)
+        outputs.upToDateWhen { false }
+    }
 }
