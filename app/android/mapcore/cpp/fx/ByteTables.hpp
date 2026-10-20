@@ -15,6 +15,7 @@
 #include <array>
 #include <cstdint>
 #include <span>
+#include <vector>
 
 namespace atlas::fx::bytes {
 
@@ -116,3 +117,21 @@ private:
 };
 
 } // namespace atlas::fx::bytes
+
+namespace atlas::fx {
+
+/// Where each table begins in the byte tables' buffer, in bytes (shaders/fx/mat.slang's FX_TABLE_): the three 64 KB
+/// byte tables, then mat's edge levels (fx/Mat.hpp's mat_edge_table) for 8-bit outputs and for 10-bit ones, 16 bits an
+/// entry, little-endian.
+inline constexpr std::uint32_t table_to_linear = 0;
+inline constexpr std::uint32_t table_to_srgb = 65536;
+inline constexpr std::uint32_t table_mat = 131072;
+inline constexpr std::uint32_t table_edge8 = 196608;
+inline constexpr std::uint32_t table_edge10 = table_edge8 + (256 * 2);
+/// The byte tables' size in bytes.
+inline constexpr std::uint32_t tables_bytes = table_edge10 + (1024 * 2);
+
+/// The byte tables as the GPU reads them: to_linear, to_srgb, mat's opaque table, then mat's edge levels.
+[[nodiscard]] std::vector<std::uint8_t> gpu_tables();
+
+} // namespace atlas::fx

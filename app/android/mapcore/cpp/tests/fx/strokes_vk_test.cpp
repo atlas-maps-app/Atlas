@@ -9,8 +9,9 @@
 //     more than 2 levels, every one of them at a corner;
 //   - the variants and the tests: outlines over the ground and over two objects (pixel-aligned rectangles writing the
 //     objects bit), one behind an object (hidden there), one at the object's own slot (drawn over it), in structural
-//     mode (alpha a, the stroke's colour, through both pipelines) and in full mode with the fields bound (over the
-//     ground alpha min(1, 1.1·a)·a in mat's edge colour; over the objects alpha a in mat's colour from mat_table).
+//     mode (alpha a, the stroke's colour, through both pipelines) and in full mode with the fields bound, at a moment
+//     with weather (over the ground alpha min(1, 1.1·a)·a in mat's edge colour; over the objects alpha a in mat's
+//     colour from mat_table).
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBlock.hpp"
 #include "frame/FrameBuilder.hpp"
@@ -491,7 +492,7 @@ struct Drawn {
     std::vector<std::string> messages;
 };
 
-[[nodiscard]] Drawn draw(test::Session& session, const Scene& scene, frame::Mode mode) {
+[[nodiscard]] Drawn draw(test::Session& session, const Scene& scene, frame::Mode mode, bool weather = true) {
     Drawn out;
     const gpu::Device& device = *session.device;
     auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
@@ -507,8 +508,13 @@ struct Drawn {
     ATLAS_REQUIRE_OR_RETURN(out, builder.has_value(), builder.error().text());
     auto output = platform::Offscreen::create(device, {.width = frame_width, .height = frame_height}, 2);
     ATLAS_REQUIRE_OR_RETURN(out, output.has_value(), output.error().text());
-    (*builder)->set_inputs(
-        {.camera = standin::board_view(frame_width, frame_height, density), .mode = mode, .scene = &world});
+    // A moment with weather, where the renders give the objects group its `mat` (mat.slang's mat_on).
+    style::ThemeBlock theme{};
+    theme.flags = weather ? style::theme_flag::weather : 0U;
+    (*builder)->set_inputs({.camera = standin::board_view(frame_width, frame_height, density),
+                            .theme = theme,
+                            .mode = mode,
+                            .scene = &world});
     auto renderer = gpu::Renderer::create(device, **output, **builder, device.facts().choice);
     ATLAS_REQUIRE_OR_RETURN(out, renderer.has_value(), renderer.error().text());
     for (int n = 0; n < 4; ++n) {
@@ -673,20 +679,25 @@ TEST_CASE("thin strokes take the ground's variant and the objects' by the object
         return static_cast<double>(shader_area(s, x, y));
     };
 
-    for (const frame::Mode mode : {frame::Mode::structural, frame::Mode::full}) {
+    // Structural mode, full mode at a moment with weather, and full mode at one without (no mat: the renders give the
+    // group no filter there).
+    for (const auto& [mode, weather] : {std::pair{frame::Mode::structural, true}, std::pair{frame::Mode::full, true},
+                                        std::pair{frame::Mode::full, false}}) {
         const bool full = mode == frame::Mode::full;
+        const bool mat = full && weather;
         CAPTURE(full);
-        const Drawn drawn = draw(*session, scene, mode);
+        CAPTURE(weather);
+        const Drawn drawn = draw(*session, scene, mode, weather);
         ATLAS_REQUIRE(drawn.rgb.size() == std::size_t{frame_width} * frame_height * 3);
         CHECK_MESSAGE(drawn.messages.empty(), (drawn.messages.empty() ? std::string() : drawn.messages.front()));
         CHECK(drawn.fields_on == full);
-        if (full) ATLAS_REQUIRE(drawn.fields != nullptr);
-        const Expected e = expect(scene, segs, full, full ? drawn.fields.get() : nullptr, area);
+        if (mat) ATLAS_REQUIRE(drawn.fields != nullptr);
+        const Expected e = expect(scene, segs, mat, mat ? drawn.fields.get() : nullptr, area);
         const Compared c = compare(drawn, e);
-        MESSAGE(std::string(full ? "full" : "structural")
+        MESSAGE(std::string(mat ? "full" : (full ? "full without weather" : "structural"))
                 << ": " << c.stroked << " pixels stroked; the largest difference " << c.largest << " levels");
         CHECK_MESSAGE(c.beyond == 0, c.beyond << " pixels beyond a level a blend; the first " << c.first);
-        if (full) {
+        if (mat) {
             // The thinning shows: the ground variant's model with plain alpha would differ.
             const Expected plain = expect(scene, segs, false, nullptr, area);
             const Compared unthinned = compare(drawn, plain);

@@ -41,4 +41,12 @@ inline constexpr float mat_k2 = 0.9F;
 /// c · 256 + g.
 [[nodiscard]] std::span<const std::uint8_t, 65536> mat_table() noexcept;
 
+/// `mat`'s edge colour at the objects group's silhouettes (D5.4), for an output of `levels` levels (255 or 1023): the
+/// level of the colour the renders' filter gives a pixel the group covers in part, from the level `v` its interior
+/// takes after mat. The filter's alpha there is 1.1·A (A the coverage, below 1/1.1 at every multisampled coverage), its
+/// colour (0.9 + 0.2·G)·C·A in linear light, so the unpremultiplied colour is the interior's over 1.1: in linear light,
+/// sRGB's transfer functions in double (fdlibm's pow), rounded to the nearest level. The composite reads it from set
+/// 1's byte tables (shaders/fx/mat.slang's mat_edge_level) and the twin from here: one entry a level, 16 bits.
+[[nodiscard]] std::span<const std::uint16_t> mat_edge_table(std::uint32_t levels) noexcept;
+
 } // namespace atlas::fx

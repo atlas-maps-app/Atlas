@@ -1,9 +1,13 @@
 // `mat`'s byte arithmetic (fx/Mat.hpp), SvgFilterRaster's steps in its order.
 #include "fx/Mat.hpp"
 
+#include "base/assert.hpp"
+#include "base/pymath/PyMath.hpp"
 #include "fx/ByteTables.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <vector>
 
 namespace atlas::fx {
 
@@ -47,6 +51,35 @@ std::span<const std::uint8_t, 65536> mat_table() noexcept {
         return t;
     }();
     return table;
+}
+
+namespace {
+
+/// sRGB's transfer function and its inverse (IEC 61966-2-1), in double.
+[[nodiscard]] double linear_of(double c) noexcept {
+    return c <= 0.04045 ? c / 12.92 : pymath::pow((c + 0.055) / 1.055, 2.4);
+}
+[[nodiscard]] double srgb_of(double l) noexcept {
+    return l <= 0.0031308 ? l * 12.92 : (1.055 * pymath::pow(l, 1.0 / 2.4)) - 0.055;
+}
+
+[[nodiscard]] std::vector<std::uint16_t> edge_table(std::uint32_t levels) {
+    std::vector<std::uint16_t> t(levels + 1);
+    const auto n = static_cast<double>(levels);
+    for (std::uint32_t v = 0; v <= levels; ++v) {
+        const double e = srgb_of(linear_of(static_cast<double>(v) / n) / 1.1) * n;
+        t[v] = static_cast<std::uint16_t>(std::floor(e + 0.5));
+    }
+    return t;
+}
+
+} // namespace
+
+std::span<const std::uint16_t> mat_edge_table(std::uint32_t levels) noexcept {
+    static const std::vector<std::uint16_t> eight = edge_table(255);
+    static const std::vector<std::uint16_t> ten = edge_table(1023);
+    ATLAS_ASSERT(levels == 255 || levels == 1023, "the output holds 8 or 10 bits a channel");
+    return levels == 255 ? std::span<const std::uint16_t>(eight) : std::span<const std::uint16_t>(ten);
 }
 
 } // namespace atlas::fx

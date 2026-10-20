@@ -7,10 +7,11 @@
 //   - over a sample without the objects bit (stencil bit 7: the stroke alone over the ground), alpha min(1, 1.1·a)·a in
 //     mat's edge colour;
 //   - over a sample with it (the stroke on the group's own paint), alpha a in mat's colour;
-// in structural mode, or before the fields are bound (FRAME_FIELDS), alpha a in the stroke's colour through both. Each
-// draws at its primitive's painter slot with the depth test LESS_OR_EQUAL (over its own fill, under every nearer
-// primitive) and no depth or stencil writes, premultiplied source-over. The pass records them in a phase of its own in
-// Slot::translucent, its strokes in its own back-to-front order.
+// where mat does not run (mat.slang's mat_on: structural mode, the fields not yet bound, a moment without weather),
+// alpha a in the stroke's colour through both. Each draws at its primitive's painter slot with the depth test
+// LESS_OR_EQUAL (over its own fill, under every nearer primitive) and no depth or stencil writes, premultiplied
+// source-over. The pass records them in a phase of its own in Slot::translucent, its strokes in its own back-to-front
+// order.
 //
 // The first version's residual: the group's strokes have round joins (stroke-linejoin="round"), and untrimmed butt
 // segments cover a join's inside twice and miss its round wedge outside; CP/tests/fx/strokes_vk_test.cpp counts it at

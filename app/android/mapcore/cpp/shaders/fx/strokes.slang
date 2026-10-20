@@ -4,8 +4,8 @@
 // what the scene drew. Two pipelines draw the same segments, the stencil's objects bit choosing each sample's: over a
 // sample without it (the stroke stands alone over the ground) the renders' `mat` thins it, alpha min(1, 1.1·a)·a in
 // mat's edge colour; over a sample with it (the stroke lies on the group's own paint) alpha a in mat's colour, as the
-// group's other fragments take it. In structural mode (or before the fields are bound: FRAME_FIELDS) neither: alpha a
-// in the stroke's own colour.
+// group's other fragments take it. Where mat does not run (mat.slang's mat_on: structural mode, the fields not yet
+// bound, a moment without weather) neither: alpha a in the stroke's own colour.
 //
 // A pass keeps its own stroke vertex stage, so its per-frame decisions (facing, the detail band, the near plane) stay
 // in its shaders: it includes this file after `#define ATLAS_FX_FUNCTIONS` and returns stroke_corner (or stroke_none)
@@ -226,7 +226,7 @@ struct StrokeOut {
 StrokeOut strokes_ground_fs(StrokeVertex v) {
     StrokeOut o;
     float a = stroke_coverage(v);
-    if ((frame.info.x & FRAME_FIELDS) != 0u && a > 0.0f) {
+    if (mat_on(frame) && a > 0.0f) {
         float3 c = {v.colour.r, v.colour.g, v.colour.b};
         o.colour = stroke_alone(c, a, mat_grey(fx_pixel(frame.camera, v.position.xy)));
     } else {
@@ -242,7 +242,7 @@ StrokeOut strokes_objects_fs(StrokeVertex v) {
     StrokeOut o;
     float a = stroke_coverage(v);
     float3 c = {v.colour.r, v.colour.g, v.colour.b};
-    float3 m = mat_colour(frame.camera, c, v.position.xy, (frame.info.x & FRAME_FIELDS) != 0u);
+    float3 m = mat_colour(frame.camera, c, v.position.xy, mat_on(frame));
     float4 over = {m.r * a, m.g * a, m.b * a, a};
     o.colour = over;
     return o;

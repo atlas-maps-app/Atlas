@@ -14,6 +14,7 @@
 #pragma once
 
 #include "frame/Globals.hpp"
+#include "fx/ByteTables.hpp"
 #include "fx/Fields.hpp"
 #include "gpu/Device.hpp"
 #include "gpu/Memory.hpp"
@@ -30,16 +31,6 @@
 #include <vector>
 
 namespace atlas::fx {
-
-/// Where each table begins in the byte tables' buffer, in bytes (shaders/fx/mat.slang's FX_TABLE_).
-inline constexpr std::uint32_t table_to_linear = 0;
-inline constexpr std::uint32_t table_to_srgb = 65536;
-inline constexpr std::uint32_t table_mat = 131072;
-/// The byte tables' size in bytes.
-inline constexpr std::uint32_t tables_bytes = 196608;
-
-/// The byte tables as the GPU reads them: to_linear, to_srgb, then `mat`'s opaque table.
-[[nodiscard]] std::vector<std::uint8_t> gpu_tables();
 
 /// The fields' images and the byte tables' buffer on one device.
 class FieldImages {

@@ -4,6 +4,7 @@
 
 #include "base/assert.hpp"
 #include "base/pymath/PyMath.hpp"
+#include "fx/Mat.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -149,3 +150,24 @@ Argb ColourMatrix::apply(Argb p) const noexcept {
 }
 
 } // namespace atlas::fx::bytes
+
+namespace atlas::fx {
+
+std::vector<std::uint8_t> gpu_tables() {
+    std::vector<std::uint8_t> t(tables_bytes);
+    std::ranges::copy(bytes::to_linear(), t.begin() + table_to_linear);
+    std::ranges::copy(bytes::to_srgb(), t.begin() + table_to_srgb);
+    std::ranges::copy(mat_table(), t.begin() + table_mat);
+    auto put = [&t](std::uint32_t at, std::span<const std::uint16_t> levels) {
+        for (const std::uint16_t v : levels) {
+            t[at] = static_cast<std::uint8_t>(v & 0xFFU);
+            t[at + 1] = static_cast<std::uint8_t>(v >> 8U);
+            at += 2;
+        }
+    };
+    put(table_edge8, mat_edge_table(255));
+    put(table_edge10, mat_edge_table(1023));
+    return t;
+}
+
+} // namespace atlas::fx

@@ -5,9 +5,9 @@
 // shadows by multiply, the rain), the haze with the golden wash, then fin (the grain by overlay, the vignette)
 // (render/amsterdam.py:615 render, R/Amsterdam.kt render). The composite takes a pixel's samples, makes the pixel's
 // colour from them, and applies those steps once, in that order, each rounded to the output's levels as the renders'
-// raster rounds it. This revision (K7) draws the haze and the vignette; the coverage rule of `mat` at the objects group's
-// silhouettes and the grain (K17a), the cloud shadows, the rain and the wash (K17) are stubbed: a step whose bit is off
-// in FrameLayers.steps is skipped, so with every bit off the composite passes the colours through.
+// raster rounds it. It draws the haze and the vignette (K7), `mat`'s coverage rule at the objects group's silhouettes
+// and the grain (K17a); the cloud shadows, the rain and the wash (K17) are stubbed: a step whose bit is off in
+// FrameLayers.steps is skipped, so with every bit off the composite passes the colours through.
 //
 // The pixel's colour from its samples is exact (the twin computes the GPU's bits): each sample is read as the output's
 // level it holds (round(c · levels): an n-bit UNORM sample decodes to within a hair of level / levels), the levels are
@@ -22,8 +22,20 @@
 // fin's radialGradient over the frame's box (centre (.5, .46), radius .75 of the box, transparent to .55, the corner
 // opacity at 1), black source-over.
 //
+// `mat`'s coverage rule (D5.4, N13; K17a): the renders filter the objects group as one layer, and the filter's `in`
+// SourceAlpha squares a pixel's coverage A, thinning the group's silhouettes: its alpha is min(1, 1.1·A)·A, its colour
+// the interior's over 1.1 in linear light (CP/fx/Mat.hpp's mat_edge_table). Where a pixel's samples are the group's in
+// part (k of n by the objects bit, A = k/n), the composite takes the mean level E of the group's samples through the
+// edge table and the mean level G of the others, and composites them as the renders do, in whole numbers:
+// (E·11k² + G·(10n² − 11k²) + 5n²) / 10n². Where every sample or none is the group's, the mean as above.
+//
+// The grain (fin; K17a): the grain field's premultiplied grey and alpha overlaid at fin's opacity as Skia's 8-bit
+// pipeline overlays them, x86's division by 255 (CP/fx/Grain.hpp is its reference): integers, after the haze and
+// before the vignette. At 10 bits a channel, the change the 8-bit overlay makes to the nearest 8-bit level, scaled.
+//
 // It reads its samples' colour only, never their alpha: the frame may be rgb10a2, which keeps 2 bits of alpha
-// (gpu/Facts.hpp). Not exact as a module (the vignette takes a square root); the pass-through is exact by construction.
+// (gpu/Facts.hpp). Not exact as a module (the vignette takes a square root); the pass-through, the rule and the grain
+// are integer arithmetic, exact by construction.
 #pragma once
 
 /// The screen layers the composite applies, for one frame: 288 bytes.
@@ -45,8 +57,12 @@ static const uint COMPOSITE_HAZE = 8u;          // the haze by ground depth (Scr
 static const uint COMPOSITE_WASH = 16u;         // the golden wash (K17)
 static const uint COMPOSITE_GRAIN = 32u;        // fin: the paper grain by overlay (K17a)
 static const uint COMPOSITE_VIGNETTE = 64u;     // fin: the vignette
-/// The steps K7 draws; the others are stubbed whatever their bit says.
-static const uint COMPOSITE_DRAWN = 72u; // COMPOSITE_HAZE | COMPOSITE_VIGNETTE
+/// The steps the composite draws; the others are stubbed whatever their bit says.
+static const uint COMPOSITE_DRAWN = 105u; // COMPOSITE_MAT | COMPOSITE_HAZE | COMPOSITE_GRAIN | COMPOSITE_VIGNETTE
+
+/// fin's grain opacity as the byte Skia's stages scale by (CP/fx/Grain.hpp's skia_byte of .09, and of .12 at night).
+static const uint COMPOSITE_GRAIN_DAY = 23u;
+static const uint COMPOSITE_GRAIN_NIGHT = 31u;
 
 /// The output's level a sample holds: an n-bit UNORM value c decodes within 2^-12 of level / levels, so
 /// floor(c · levels + 1/2) is its level exactly.
@@ -74,6 +90,54 @@ inline float3 composite_mean(float3 sum, uint n) {
     float3 m = {composite_round_even(sum.x * share), composite_round_even(sum.y * share),
                 composite_round_even(sum.z * share)};
     return m;
+}
+
+/// The mean level of `k` samples (1 to 4) whose whole levels sum to `sum`, rounded half up.
+inline uint3 composite_mean_of(float3 sum, uint k) {
+    uint3 s = {uint(sum.x), uint(sum.y), uint(sum.z)};
+    uint twice = 2u * k;
+    uint3 m = {(2u * s.x + k) / twice, (2u * s.y + k) / twice, (2u * s.z + k) / twice};
+    return m;
+}
+
+/// `mat`'s coverage rule at a silhouette of the objects group: the group's `k` samples of the pixel's `n` (0 < k < n)
+/// through the edge table (`edge`, whole levels) composited with alpha 1.1·(k/n)² over the mean of the others
+/// (`other`), as whole levels: (E·11k² + G·(10n² − 11k²) + 5n²) / 10n².
+inline float3 composite_silhouette(uint3 edge, uint3 other, uint k, uint n) {
+    uint w = 11u * k * k;
+    uint d = 10u * n * n;
+    uint half = d / 2u;
+    float3 r = {float((edge.x * w + other.x * (d - w) + half) / d), float((edge.y * w + other.y * (d - w) + half) / d),
+                float((edge.z * w + other.z * (d - w) + half) / d)};
+    return r;
+}
+
+/// Skia's lowp division by 255 on x86, in a 16-bit lane: (v + 255) / 256.
+inline uint composite_div255(uint v) {
+    return ((v + 255u) & 0xFFFFu) >> 8u;
+}
+
+/// An 8-bit level `d` of the opaque canvas after the grain: its premultiplied grey `grey` and alpha `alpha` scaled by
+/// the opacity byte, then Skia's lowp overlay (s·(255 − da) is 0 under an opaque canvas), each step in its 16-bit lane.
+inline uint composite_grain_8(uint d, uint grey, uint alpha, uint opacity) {
+    uint s = composite_div255((grey * opacity) & 0xFFFFu);
+    uint sa = composite_div255((alpha * opacity) & 0xFFFFu);
+    uint term = 2u * d <= 255u ? (2u * s * d) & 0xFFFFu : (((sa * 255u) & 0xFFFFu) - ((2u * (sa - s) * (255u - d)) & 0xFFFFu)) & 0xFFFFu;
+    uint sum = (((d * (255u - sa)) & 0xFFFFu) + term) & 0xFFFFu;
+    return composite_div255(sum);
+}
+
+/// A whole level of an output of `n` levels after the grain (`grain`: grey, alpha, opacity byte): at 8 bits
+/// composite_grain_8; at 10, the change it makes to the nearest 8-bit level, scaled to 10 bits and rounded.
+inline float composite_grain_level(float level, uint3 grain, float n) {
+    uint d = uint(level);
+    if (n == 255.0f) {
+        return float(composite_grain_8(d, grain.x, grain.y, grain.z));
+    }
+    uint d8 = (d * 255u + 511u) / 1023u;
+    int delta = int(composite_grain_8(d8, grain.x, grain.y, grain.z)) - int(d8);
+    int r = int(d) + (delta * 1023 + (delta >= 0 ? 127 : -127)) / 255;
+    return float(r < 0 ? 0 : (r > 1023 ? 1023 : r));
 }
 
 /// A colour (0 to 1) at the nearest of the output's levels, as the renders' raster keeps each composited layer.
@@ -122,9 +186,11 @@ inline float composite_vignette_alpha(FrameLayers l, float2 p, float2 frame) {
     return l.vignette.x * ((r - 0.55f) / 0.45f);
 }
 
-/// The finished colour of a pixel, as levels of the output (whole numbers), from the mean of its samples (levels) at CSS
-/// point p of a W × H frame (`frame`): the screen steps that run, each composited and rounded to the output's levels.
-inline float3 composite_steps(FrameLayers l, float3 levels, float2 p, float2 frame) {
+/// The finished colour of a pixel, as levels of the output (whole numbers), from its colour (levels: the mean of its
+/// samples, or the rule's at a silhouette) at CSS point p of a W × H frame (`frame`): the screen steps that run, each
+/// composited and rounded to the output's levels. `grain`: the grain field's grey and alpha at the pixel and fin's
+/// opacity byte, 0 where the grain does not run (the fields not bound).
+inline float3 composite_steps_fx(FrameLayers l, float3 levels, float2 p, float2 frame, uint3 grain) {
     float n = float(l.steps.y);
     uint steps = l.steps.x & COMPOSITE_DRAWN;
     float3 c = levels;
@@ -134,12 +200,23 @@ inline float3 composite_steps(FrameLayers l, float3 levels, float2 p, float2 fra
         float3 h = l.haze_colour.xyz;
         c = composite_quantise(x + (h - x) * a, n);
     }
+    if ((steps & COMPOSITE_GRAIN) != 0u && grain.z != 0u) {
+        float3 g = {composite_grain_level(c.x, grain, n), composite_grain_level(c.y, grain, n),
+                    composite_grain_level(c.z, grain, n)};
+        c = g;
+    }
     if ((steps & COMPOSITE_VIGNETTE) != 0u) {
         float a = composite_vignette_alpha(l, p, frame);
         float3 x = c * (1.0f / n);
         c = composite_quantise(x * (1.0f - a), n);
     }
     return c;
+}
+
+/// composite_steps_fx without the grain.
+inline float3 composite_steps(FrameLayers l, float3 levels, float2 p, float2 frame) {
+    uint3 none = {0u, 0u, 0u};
+    return composite_steps_fx(l, levels, p, frame, none);
 }
 
 /// The colour to write for whole levels `levels` of the output: level / levels, which the UNORM attachment turns back

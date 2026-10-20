@@ -20,11 +20,14 @@
 #pragma once
 
 #include "shared/camera.slang"
+#include "shared/frame.slang"
 
-/// Where each table begins in set 1's byte tables (CP/fx/FieldCache.hpp's table_).
+/// Where each table begins in set 1's byte tables (CP/fx/FieldCache.hpp's table_): bytes, then 16-bit levels.
 static const uint FX_TABLE_TO_LINEAR = 0u;
 static const uint FX_TABLE_TO_SRGB = 65536u;
 static const uint FX_TABLE_MAT = 131072u;
+static const uint FX_TABLE_EDGE8 = 196608u;
+static const uint FX_TABLE_EDGE10 = 197120u;
 
 [[vk::binding(7, 1)]] Sampler2D<float4> noise_rgba;
 [[vk::binding(8, 1)]] Sampler2D<float4> noise_rg;
@@ -35,6 +38,26 @@ static const uint FX_TABLE_MAT = 131072u;
 uint fx_table_byte(uint index) {
     uint word = byte_tables[index >> 2u];
     return (word >> ((index & 3u) * 8u)) & 0xFFu;
+}
+
+/// The 16-bit entry `index` of the byte tables' 16-bit tables beginning at byte `at` (little-endian).
+uint fx_table_u16(uint at, uint index) {
+    uint b = at + index * 2u;
+    uint word = byte_tables[b >> 2u];
+    return (word >> ((b & 2u) * 8u)) & 0xFFFFu;
+}
+
+/// Whether `mat` runs this frame: the fields are bound in full mode (FRAME_FIELDS) and the moment has weather (the
+/// renders give the objects group and the ground's mat groups the filter only then: render/amsterdam.py:965, th['wx']).
+/// The `on` the mat groups' fragment stages give mat_colour, and the composite's rule at the silhouettes.
+bool mat_on(FrameBlock block) {
+    return (block.info.x & FRAME_FIELDS) != 0u && theme_has(block.theme, THEME_WEATHER);
+}
+
+/// `mat`'s edge level (CP/fx/Mat.hpp's mat_edge_table) for an interior level `v` of an output of `levels` levels (255
+/// or 1023): the colour the filter gives a pixel the objects group covers in part.
+uint mat_edge_level(uint v, uint levels) {
+    return fx_table_u16(levels == 255u ? FX_TABLE_EDGE8 : FX_TABLE_EDGE10, v);
 }
 
 /// The frame's upright device pixel under a fragment at SV_Position `position` (the output's pre-rotation undone): the
@@ -85,8 +108,8 @@ float3 mat_levels(float3 levels, uint g) {
     return out;
 }
 
-/// A colour (0 to 1, at 8-bit levels) after `mat` at the fragment at `position` (SV_Position) when `on` (the frame
-/// block's FRAME_FIELDS, which the frame sets in full mode alone, once the fields are bound), else the colour itself.
+/// A colour (0 to 1, at 8-bit levels) after `mat` at the fragment at `position` (SV_Position) when `on` (mat_on of the
+/// frame block: the fields bound in full mode, and the moment with weather), else the colour itself.
 float3 mat_colour(FrameCamera camera, float3 colour, float2 position, bool on) {
     if (!on) {
         return colour;

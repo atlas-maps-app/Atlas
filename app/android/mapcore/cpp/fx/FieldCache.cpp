@@ -609,14 +609,6 @@ std::string fields_line(FieldSize size, unsigned threads) {
 
 // ---- On the GPU (fx/FieldCache.hpp)
 
-std::vector<std::uint8_t> gpu_tables() {
-    std::vector<std::uint8_t> t(tables_bytes);
-    std::ranges::copy(bytes::to_linear(), t.begin() + table_to_linear);
-    std::ranges::copy(bytes::to_srgb(), t.begin() + table_to_srgb);
-    std::ranges::copy(mat_table(), t.begin() + table_mat);
-    return t;
-}
-
 namespace {
 
 /// The images' formats and bytes a pixel: rgba, rg, r (fx/Fields.hpp's placement_of).
