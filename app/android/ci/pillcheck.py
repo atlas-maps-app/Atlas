@@ -20,7 +20,9 @@ screen pixels; or the core's `vk frosted <n> shapes: ...`), and judges (a shape 
       least one was conclusive.
   compare IMAGE_A IMAGE_B --shapes LOG [--limit 2]
       The mean absolute difference of the two captures inside the frosted shapes (pixels the shape covers whole), over
-      R, G and B: the core's frosting (SurfaceView host) against HWUI's (TextureView host). Exit 0 within the limit.
+      R, G and B: the core's frosting (SurfaceView host) against HWUI's (TextureView host). A pill further apart than
+      32 differs in what the app draws on it (the weather chip with its forecast in one capture and without in the
+      other), not in its glass: it is left out, and so may be one in four at most. Exit 0 within the limit.
   film IMAGES... --shapes LOG [--min-share 0.95]
       A pill animation captured frame by frame: in each capture each frosted shape is found where its tint lies now
       (shifted along x by up to --search px from the logged box), and its glass judged on each straight side as check
@@ -322,12 +324,18 @@ def check(image, shapes, expect="frosted", out=sys.stdout):
     return ok
 
 
+# A pill this far apart in the two captures differs in what the app draws on it, not in its glass (see compare).
+CONTENT_MAD = 32.0
+
+
 def compare(a, b, shapes, limit=2.0, out=sys.stdout):
     if (a.width, a.height) != (b.width, b.height):
         print("compare: FAIL (the captures differ in size: %dx%d, %dx%d)" % (a.width, a.height, b.width, b.height), file=out)
         return False
     total = 0.0
     count = 0
+    pills = 0
+    apart = 0
     for n, shape in enumerate(shapes):
         if not full_glass(shape):
             continue
@@ -340,13 +348,20 @@ def compare(a, b, shapes, limit=2.0, out=sys.stdout):
                 i = (y * a.width + x) * 4
                 s_total += abs(a.rgba[i] - b.rgba[i]) + abs(a.rgba[i + 1] - b.rgba[i + 1]) + abs(a.rgba[i + 2] - b.rgba[i + 2])
                 s_count += 3
-        if s_count:
-            print("pill %d: MAD %.3f over %d pixels" % (n, s_total / s_count, s_count // 3), file=out)
+        if not s_count:
+            continue
+        pills += 1
+        if s_total / s_count > CONTENT_MAD:
+            apart += 1
+            print("pill %d: MAD %.3f over %d pixels: what the app draws on it differs, left out" % (n, s_total / s_count, s_count // 3), file=out)
+            continue
+        print("pill %d: MAD %.3f over %d pixels" % (n, s_total / s_count, s_count // 3), file=out)
         total += s_total
         count += s_count
     mad = total / count if count else float("nan")
-    ok = count > 0 and mad <= limit
-    print("compare: %s (MAD %.3f inside the frosted pills, limit %.1f)" % ("PASS" if ok else "FAIL", mad, limit), file=out)
+    ok = count > 0 and mad <= limit and apart <= max(1, pills // 4)
+    left = "; %d of %d pills left out" % (apart, pills) if apart else ""
+    print("compare: %s (MAD %.3f inside the frosted pills, limit %.1f%s)" % ("PASS" if ok else "FAIL", mad, limit, left), file=out)
     return ok
 
 
@@ -582,6 +597,17 @@ def selftest():
     other = _with_pills(base, _blurred(base, 7), shapes, tint=0.805)
     assert compare(frosted, other, shapes, out=quiet), "two frostings must compare within 2"
     assert not compare(frosted, plain, shapes, limit=2.0, out=quiet), "a frosting and a plain tint must not"
+    # A pill whose content differs (a chip's text in one capture, not in the other) is left out, one in four at most.
+    chip = Image(w, h, bytearray(other.rgba))
+    for y in range(30, 60):
+        for x in range(60, 300):
+            chip.rgba[(y * w + x) * 4 : (y * w + x) * 4 + 3] = b"\x10\x10\x10"
+    assert compare(frosted, chip, shapes, out=quiet), "a pill whose content differs is left out"
+    both = Image(w, h, bytearray(chip.rgba))
+    for y in range(160, 190):
+        for x in range(60, 200):
+            both.rgba[(y * w + x) * 4 : (y * w + x) * 4 + 3] = b"\x10\x10\x10"
+    assert not compare(frosted, both, shapes, out=quiet), "every pill apart is no frosting"
     # A film: whole pills, and pills whose glass lags them by 6 px.
     moved = [dict(s, left=s["left"] + 6, right=s["right"] + 6) for s in shapes]
     lagging = _with_pills(base, glass, moved, glass_dx=-6)
