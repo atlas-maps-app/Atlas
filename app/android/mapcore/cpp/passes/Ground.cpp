@@ -326,7 +326,8 @@ Ground::~Ground() { Ground::release(); }
 
 std::uint32_t Ground::slot(std::uint16_t group, std::uint32_t order, std::uint32_t sub) const noexcept {
     const std::int64_t s = frame_.base[group] + (static_cast<std::int64_t>(order) * frame_.stride[group]) + sub;
-    return first_ground_slot() + static_cast<std::uint32_t>(std::max<std::int64_t>(s, 0));
+    return (frame_.tail[group] ? first_tail_slot() : first_ground_slot()) +
+           static_cast<std::uint32_t>(std::max<std::int64_t>(s, 0));
 }
 
 gpu::Result<void> Ground::build(scene::TileBuild& b) const {
@@ -384,6 +385,11 @@ void Ground::select(const frame::FrameState& state, frame::Selectors& selectors)
 std::uint32_t Ground::ground_slots(const frame::FrameState& state) const {
     (void)state;
     return frame_.valid ? frame_.slots : 0;
+}
+
+std::uint32_t Ground::ground_tail_slots(const frame::FrameState& state) const {
+    (void)state;
+    return frame_.valid ? frame_.tail_slots : 0;
 }
 
 namespace {
@@ -626,8 +632,10 @@ void Ground::lay_out() {
     f.used.fill(false);
     f.base.fill(0);
     f.stride.fill(0);
+    f.tail.fill(false);
     if (!f.valid) {
         f.slots = 0;
+        f.tail_slots = 0;
         return;
     }
     // each group's least and greatest order among what is drawn
@@ -691,8 +699,14 @@ void Ground::lay_out() {
     for (std::uint16_t c = 0; c < 16; ++c) place(static_cast<std::uint16_t>(geo::group::road + c));
     for (std::uint16_t c = 0; c < 8; ++c) place(static_cast<std::uint16_t>(geo::group::over + c));
     for (std::uint16_t c = 0; c < 8; ++c) place(static_cast<std::uint16_t>(geo::group::marks + c));
+    // Over the marks lie the canal names (passes/GroundText.cpp: the next pass's slot), then the shadows: the tail,
+    // laid out after every pass's ground (frame::Pass::ground_tail_slots).
+    const std::int64_t head = std::min<std::int64_t>(cursor, shaders::PAINTER_SLOTS / 2);
+    cursor = 0;
+    f.tail[geo::group::shadow] = f.used[geo::group::shadow];
     place(geo::group::shadow);
-    f.slots = static_cast<std::uint32_t>(std::min<std::int64_t>(cursor, shaders::PAINTER_SLOTS / 2));
+    f.slots = static_cast<std::uint32_t>(head);
+    f.tail_slots = static_cast<std::uint32_t>(std::min<std::int64_t>(cursor, (shaders::PAINTER_SLOTS / 2) - head));
 }
 
 // ---------------------------------------------------------------- the GPU
@@ -858,7 +872,8 @@ void Ground::write_words(const frame::FrameState& state) {
     // the slot table: per group its absolute base (signed) and stride
     w.slots = static_cast<std::uint32_t>(v.size());
     for (std::size_t g = 0; g < geo::group::count; ++g) {
-        const std::int64_t base = static_cast<std::int64_t>(first_ground_slot()) + f.base[g];
+        const std::int64_t base =
+            static_cast<std::int64_t>(f.tail[g] ? first_tail_slot() : first_ground_slot()) + f.base[g];
         v.push_back(static_cast<std::uint32_t>(static_cast<std::int32_t>(base)));
         v.push_back(f.stride[g]);
     }

@@ -180,6 +180,13 @@ public:
         (void)state;
         return 0;
     }
+    /// The painter slots of the pass's ground that lie over every pass's ground_slots (the ground's shadows, over the
+    /// canal names, as the renders' base layer has them), laid out after them in the registry's order, a pass's own
+    /// from first_tail_slot(); asked with ground_slots. None by default.
+    [[nodiscard]] virtual std::uint32_t ground_tail_slots(const FrameState& state) const {
+        (void)state;
+        return 0;
+    }
     /// Stage F of the pass, on the render thread, before the frame records: its draw lists for the frame's cover and
     /// ranks, written into its own per-frame buffers.
     virtual void update(const FrameState& state) { (void)state; }
@@ -220,6 +227,8 @@ public:
 
     /// The pass's first ground slot this frame (where ground_slots' count starts), from its update on; 0 until then.
     [[nodiscard]] std::uint32_t first_ground_slot() const noexcept { return first_ground_slot_; }
+    /// The pass's first tail slot this frame (where ground_tail_slots' count starts), from its update on.
+    [[nodiscard]] std::uint32_t first_tail_slot() const noexcept { return first_tail_slot_; }
     /// The pass's place among its frame builder's passes: its PassTile in ResidentTile::passes and its PassPack in
     /// ResidentPack::passes (TileBuild::pass, PackBuild::pass), set as the builder is made.
     [[nodiscard]] std::uint32_t index() const noexcept { return index_; }
@@ -227,6 +236,7 @@ public:
 private:
     friend class FrameBuilder; // lays the ground slots out, numbers the passes
     std::uint32_t first_ground_slot_ = 0;
+    std::uint32_t first_tail_slot_ = 0;
     std::uint32_t index_ = 0;
 };
 

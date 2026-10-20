@@ -349,11 +349,16 @@ void FrameBuilder::stage_f() {
     }
     for (const std::unique_ptr<Pass>& p : passes_) p->select(state_, selectors_);
     state_.selectors = &selectors_;
-    // The ground's painter slots, every pass's in the registry's order from slot 0; the items' come after them.
+    // The ground's painter slots, every pass's in the registry's order from slot 0, then their tails over them (the
+    // ground's shadows over the canal names); the items' come after them.
     std::uint32_t ground = 0;
     for (const std::unique_ptr<Pass>& p : passes_) {
         p->first_ground_slot_ = ground;
         ground += p->ground_slots(state_);
+    }
+    for (const std::unique_ptr<Pass>& p : passes_) {
+        p->first_tail_slot_ = ground;
+        ground += p->ground_tail_slots(state_);
     }
     state_.ground_slots = ground;
     if (state_.items != nullptr) {

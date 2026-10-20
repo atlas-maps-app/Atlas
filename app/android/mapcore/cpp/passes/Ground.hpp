@@ -173,12 +173,15 @@ struct GroundFrame {
     std::vector<std::uint8_t> shadow_drawn; ///< per shadow of the drawn tiles (DrawnTile::shadows): drawn
     /// The land kinds' ranks (-1: none drawn), by the kind's place in the pack's `land` table.
     std::array<std::int32_t, geometry::group::land_kinds> kind_rank{};
-    /// Each group's slot base relative to the pass's first ground slot (slot = base + order · stride + sub) and stride.
+    /// Each group's slot base relative to the pass's first ground slot, or its first tail slot for a group of the
+    /// tail (slot = base + order · stride + sub), and stride.
     std::array<std::int64_t, geometry::group::count> base{};
     std::array<std::uint32_t, geometry::group::count> stride{};
     std::array<bool, geometry::group::count> used{};
-    std::uint32_t slots = 0; ///< the ground's painter slots this frame
-    bool water = false;      ///< any water drawn (at the street's height)
+    std::array<bool, geometry::group::count> tail{}; ///< laid out in the tail: over the canal names (the shadows)
+    std::uint32_t slots = 0;                         ///< the ground's painter slots this frame
+    std::uint32_t tail_slots = 0;                    ///< and its tail's (frame::Pass::ground_tail_slots)
+    bool water = false;                              ///< any water drawn (at the street's height)
     bool canopy = false;
     /// The ground shadows: the moment casts them (by day, the sun up, the region's), the sun toward which (the moment's
     /// bucket, sun::bucket_of), and whether any is drawn.
@@ -297,6 +300,7 @@ public:
     void release() noexcept override;
     void select(const frame::FrameState& state, frame::Selectors& selectors) override;
     [[nodiscard]] std::uint32_t ground_slots(const frame::FrameState& state) const override;
+    [[nodiscard]] std::uint32_t ground_tail_slots(const frame::FrameState& state) const override;
     void update(const frame::FrameState& state) override;
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& build) const override;
