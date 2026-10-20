@@ -8,10 +8,10 @@ Atlas draws its map with its own engine. This is the one document about it: what
 - **Built from the ground up.** A C++23 core on Vulkan (`app/android/mapcore/cpp`), behind a small Kotlin façade (`app.atlas.mapcore.MapCore`). It draws vector tiles every frame the camera moves, at the screen's own density, and nothing at rest. Labels are placed again for each view, and detail comes and goes with the zoom.
 - **Global, and it builds itself.** The map covers the entire world, from the globe down to a single street. The phone gathers up-to-date map data for any place, at any time, and builds the map itself. Pre-built packs are additions, not a requirement.
 - **Independent.** The app never relies on a single source. Every input has more than one way in, and the map keeps working offline with what it has.
-- **Resembles the renderer.** The Python renderer (`render/*.py`, ported byte for byte to Kotlin in `app/android/render`) is the starting point for the look: its features, rules, colours and light.
-  - The renderer is unfinished and has its issues, so it is a yardstick, not a specification.
-  - It is frozen: the look is refined in the engine.
-  - The engine fixes what is wrong, and goes on in the renderer's spirit where it stops.
+- **Matches the renderer.** The Python renderer (`render/*.py`, ported byte for byte to Kotlin in `app/android/render`) is the starting point for the look: its features, rules, colours and light.
+  - The engine matches it exactly, except where the renderer is wrong.
+  - The renderer is unfinished and has its issues. Each issue the engine fixes is named, such as melting buildings.
+  - The renderer is frozen as the yardstick: the look is refined in the engine, which goes on in the renderer's spirit where it stops.
   - When the engine is finished, the renderer and its port are retired.
 - **Custom where it counts.** The data model, tile format, rules, look, passes and shaders are Atlas's own. No general map engine and no third-party tile schema: OpenMapTiles is abolished.
   - An outside piece comes in only where it is cutting edge, fits, and plugs in without a sacrifice. Today that means Vulkan-Hpp, VMA, zstd, HarfBuzz, earcut.hpp and doctest in the core, Slang for the shaders, and Planetiler as the build tool for the world's mid zooms.
@@ -57,7 +57,8 @@ Atlas draws its map with its own engine. This is the one document about it: what
 6. **True depth for everything that stands up.** Buildings, parts, roofs, trees and things are drawn with a real depth buffer, kept in tile memory beside the samples, and roughly front to back for early rejection. They occlude correctly at every angle.
    - The renderer orders whole items by one point each, so at some angles its buildings melt into each other. The engine does not copy that.
    - The ground keeps the renderer's layering on its one plane: land cover, areas, roads, water and shadows, in its order.
-   - Flat detail on a wall (cells, windows, sashes, shutters, plinths, cornices, shop glazing, doors, numbers) is drawn by the wall's own shading from its record: crisp at any distance, with no overdraw and nothing fighting for depth.
+   - Flat detail on a wall (cells, windows, sashes, shutters, plinths, cornices, shop glazing, doors, numbers) keeps the renderer's exact shapes. It is expanded on the GPU from the wall's record and drawn clipped to its own wall, so nothing fights for depth.
+   - A switch draws the renderer's painter's order instead, to compare the two side by side.
    - What stands out from a wall (chimneys, dormers, hoist beams, shopfronts, signs, terraces) is geometry with depth.
 7. **Light and sun.** The renderer's light model and themes for the moment, and the sun test at every sample point, recomputed on the workers when the sun moves 0.5°. The moment's weather comes from more than one source, and the sun alone sets the moment when none answers.
 8. **Text.**
@@ -66,10 +67,12 @@ Atlas draws its map with its own engine. This is the one document about it: what
    - The core places them all for every view, with collisions and fades.
 9. **Levels** run from the street to the planet: full detail, a simplified level from the keep codes, blocks of merged footprints, the mid-zoom base, the globe. Fades and a triangle governor mean nothing pops and nothing is a hole.
 10. **Work only when needed.** Frames come on vsync only while something changes, with ADPF hints. Tiles, the sun and the noise fields are done on background workers. Nothing is done per frame that can be done once.
-11. **Deterministic everywhere, exact where it shows.**
+11. **Deterministic everywhere, exact wherever the result depends on it.**
     - The core's maths library (`pymath`: fdlibm as Java defines it, with Python's rounding and random stream) gives the same bits on every phone and host. So frames can be compared, and no decision differs between devices.
-    - It also matches the renderer's arithmetic, for as long as the renderer is the yardstick.
-    - The GPU uses plain float where the difference cannot be seen.
+    - Where the renderer's arithmetic decides a pixel, the engine uses it:
+      - the noise fields byte for byte, on the CPU, and on the GPU with exact fused multiply-adds where the device passes a byte check;
+      - the haze and vignette in whole numbers.
+    - Plain GPU float is used only where it gives the same pixels.
     - Neither the look nor the speed is given up for the other.
 12. **Built to keep improving:**
     - each pass, its shaders, its geometry builder and its twin live in files of their own;
@@ -81,9 +84,10 @@ Atlas draws its map with its own engine. This is the one document about it: what
 **What the rethink of 20 October changed** from the old plan:
 - **The renderer is a yardstick, not the eternal reference.** It is frozen, the look is refined in the engine, and the engine fixes the renderer's issues and replaces it.
 - **Buildings never melt.** True depth for what stands up, instead of the renderer's painter's order, which the old plan copied on purpose.
+- **The bar is the renderer's result exactly, apart from its named issues, at full speed.** Exactness is built wherever the result depends on it. The heavier fallbacks (integer blending, analytic coverage) are built only if a check shows a difference.
 - **The phone builds the map itself, anywhere, from live data.** The look's derivations move into the core as C++, so the phone builds natively, and the packer uses the same code. Packs become optional additions, for offline use and a fast first look.
 - **All data is Atlas's own.** OpenMapTiles is gone; Planetiler stays only as a build tool, running Atlas's own profile.
-- **Only the checks below remain.** The old plan's other gates are dropped.
+- **The checks that prove the result stay; the rest go.** Every check already built keeps running, and the full set of the renders' views runs nightly. The old plan's extra gates that were never built are not built.
 - **No cut changes the result.** A simplification may change how the engine gets there, never what Amsterdam or any rendered place looks like. The engine's references prove it.
 - **Two pieces get simpler.** VK check (never built) becomes VK facts' hash lines. Taps on buildings use a hit test against the tile's own buildings instead of an ID pass.
 - **One agent works through one ordered list,** instead of waves of packages. The engine comes before the rest of the app.
@@ -97,17 +101,18 @@ Atlas draws its map with its own engine. This is the one document about it: what
    - the phone's tiles against the packer's, byte for byte.
 2. **Element by element:** the twin (the core's per-frame code and the shaders' maths compiled as C++) emits what the GPU will draw. `L1Test` matches it against the port's SVG at the boards' views and the sweeps: in order for the ground, item by item for what stands up. Every new pass brings its twin and its cases.
 3. **The GPU against the twin** on lavapipe, per pass.
-4. **Likeness:** the smoke cases (the Westerkerk home and the Main board, by day and at night) against the port's renders on CI.
+4. **Likeness:** the smoke cases (the Westerkerk home and the Main board, by day and at night) against the port's renders on every push.
+5. **The full set:** every named view of the renders, the sweeps and the sizes, nightly on CI. The planted failures that already exist keep running.
 
 **Where the renderer is wrong, the engine does it right.** The difference is named in the case files (melting buildings is the first), so the yardstick never pulls the engine back to the renderer's issues.
 
 **The engine's own references, from step 1.** These are its frames at fixed views and moments: the boards' views first, then places around the world from step 4. They are stored per engine version, and every finished part is held to them. Every simplification is proven against them: Amsterdam and every other rendered place must turn out the same.
 
 **Always:**
-5. **CI:**
+6. **CI:**
    - `core.yml`: host builds and tests on x86_64 and arm64 under the validation layer, sanitizers, fuzzing, clang-tidy and the rule table.
    - `android.yml`: the APK, every module's tests, and the emulator run of every screen through `ci/smoke.sh`.
-6. **The owner's phone at each alpha:**
+7. **The owner's phone at each alpha:**
    - VK facts;
    - VK bench, with presented frames at p50 ≤ 16.7 ms and p95 ≤ 20 ms on the paths;
    - the ten-minute soak, with no climb in thermal headroom;
@@ -144,13 +149,14 @@ The other local branches and the worktrees under `/Volumes/Download/atlas` are h
 
 ## What is left, in order
 
-The engine is done first: it is the app's centerpiece, and the rest of the app builds on it. Sizes are rough hours of one agent's work, about 205 in all. If the estimates hold, steps 1 and 2 take this week, steps 3 and 4 the next, and steps 5 to 7 the week after.
+The engine is done first: it is the app's centerpiece, and the rest of the app builds on it. Sizes are rough hours of one agent's work, about 210 in all. If the estimates hold, steps 1 and 2 take this week, steps 3 and 4 the next, and steps 5 to 7 the week after.
 
 ### 1. The new map on the phone (about 18 h)
 - **True depth first,** before more passes are built on the old order:
   - the walls' pass writes real depth, roughly front to back;
   - the ground keeps its order and writes the plane's depth;
   - `L1Test` compares what stands up item by item;
+  - a switch shows the renderer's painter's order, for comparison;
   - the renderer's melting is named in the case files.
 - **Land the pending branches.** Write `build_pack`'s test, then register the buildings and the text passes:
   - `build_pack` feeds `text::pack_canals` and `GroundText::use_pack`;
@@ -216,9 +222,9 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
 - **Exactly the renderer:** the phone's tiles at the boards' views equal the packer's from the same data, and the frames equal the references.
 - The core draws every place at street level. Tag an alpha.
 
-### 4. The renderer's detail (about 42 h)
+### 4. The renderer's detail (about 45 h)
 In this order. Each feature's derivation goes into the core's stage P, and each is held by L1 at the boards' views and by the engine's own references:
-- **Facades.** Flat detail is drawn by the wall's own shading from its record:
+- **Facades.** Flat detail keeps the renderer's exact shapes, drawn clipped to its wall:
   - windows, dark or lit by their own sun bits, with deep windows, sashes, shutters and the glass gradients;
   - plinths, cornices, shop glazing and material faces;
   - church windows;
@@ -234,7 +240,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
   - the overlays: rails, big roads, runways with their designators, taxiways, marine lines and park edges.
 - **Water:** quays, reflections, sun glitter, drizzle rings, night streaks and houseboat cabins.
 - **Effects:**
-  - the crown, leaf, foliage and canopy filters, with the per-tree fields on the GPU in plain float;
+  - the crown, leaf, foliage and canopy filters, with the per-tree fields made on the GPU, exact where the device passes the byte check and from the CPU elsewhere;
   - the soft shadow blur, ripple and glints;
   - cloud shadows, rain and the golden wash;
   - clouds and the sun's glow when the sky shows.
@@ -305,6 +311,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
 - **The renderer's known issues:** melting buildings is fixed by design (true depth). Others are fixed in the engine as they are found and named in the case files (the default), or the owner lists them to be fixed first.
 - **Textures while the map moves:** decided on the phone with step 3's switch. The default is the lean given there.
 - **The crooked windows:** as the renders draw them (the default), kept in one place so one edit changes them.
+- **Building anywhere sooner:** the renderer's Kotlin port could build tiles on the phone first, exact but slower and heavier, until the C++ lands. The default: straight to C++.
 - **The sources for many users:** with several Overpass servers, Geofabrik and the packs, no one server carries the app. Before a public release, decide whether Atlas adds its own mirror. The default: public sources, with caching and changed-since refreshes.
 - **Williamsburg in its own look:** yes (the default), done last.
 - **The close-range look beyond Amsterdam:** no (the default).
