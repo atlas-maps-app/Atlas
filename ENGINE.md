@@ -59,6 +59,8 @@ Atlas draws its map with its own engine. This is the one document about it: what
    - The ground keeps the renderer's layering on its one plane: land cover, areas, roads, water and shadows, in its order.
    - Flat detail on a wall (cells, windows, sashes, shutters, plinths, cornices, shop glazing, doors, numbers) keeps the renderer's exact shapes. It is expanded on the GPU from the wall's record and drawn clipped to its own wall, so nothing fights for depth.
    - A switch draws the renderer's painter's order instead, to compare the two side by side.
+   - The depth is reversed float depth with stencil where the phone has it, else 24-bit.
+   - The painter ranks stay, for what is translucent and for the detail bands. So the twin still emits in the renderer's order, and only its test raster gains depth.
    - What stands out from a wall (chimneys, dormers, hoist beams, shopfronts, signs, terraces) is geometry with depth.
 7. **Light and sun.** The renderer's light model and themes for the moment, and the sun test at every sample point, recomputed on the workers when the sun moves 0.5°. The moment's weather comes from more than one source, and the sun alone sets the moment when none answers.
 8. **Text.**
@@ -147,15 +149,26 @@ Nothing is finished. Each part below is a first version on `app` (at `10c4529`, 
 
 The other local branches are history. The old builders' worktrees went to the Trash on 20 October 2026; their work is on `app` or these branches.
 
+## What the deep dive found (20 October)
+
+Before anything is built on them, the app's skeleton, the core and the modules were read for what should be done differently:
+- **The map is created per screen.** Twelve screens each create an `AtlasMap` with its own surface. Step 1 makes it one persistent map at the root.
+- **The core's painter's order is one contained piece.** It lives in `shaders/shared/painter.slang` and `frame/Ranks`. True depth changes what the objects' vertex stage writes, the ground's hand-over and the depth format, not the frame core.
+- **The tile store already opens packs from memory, files and remote ranges.** So tiles built on the phone become local packs, with no second tile path (step 3).
+- **There are two OpenStreetMap clients,** in `:providers` and in the port. They become one, shared by the engine and the app (step 3).
+- **Weather has a single source.** The moment's look depends on it, so a second source and a sun-only fallback come in step 3.
+- **The app's map still pulls in the CPU stack.** `:mapview` exports `:render`, `:anchor` and `:tiles` to the app; they leave with the CPU map (steps 6 and 7).
+- **The rest holds:** the device layer, frame core, scene, tile reader, sun, text, noise fields, the façade and the toolchain are current and fit the design.
+
 ## What is left, in order
 
-The engine is done first: it is the app's centerpiece, and the rest of the app builds on it. Sizes are rough hours of one agent's work, about 210 in all. If the estimates hold, steps 1 and 2 take this week, steps 3 and 4 the next, and steps 5 to 7 the week after.
+The engine is done first: it is the app's centerpiece, and the rest of the app builds on it. Sizes are rough hours of one agent's work, about 220 in all. If the estimates hold, steps 1 and 2 take this week, steps 3 and 4 the next, and steps 5 to 7 the week after.
 
-### 1. The new map on the phone (about 18 h)
+### 1. The new map on the phone (about 22 h)
 - **True depth first,** before more passes are built on the old order:
   - the walls' pass writes real depth, roughly front to back;
   - the ground keeps its order and writes the plane's depth;
-  - `L1Test` compares what stands up item by item;
+  - the twin keeps the renderer's order, so `L1Test` is unchanged, and the twin's test raster gains depth;
   - a switch shows the renderer's painter's order, for comparison;
   - the renderer's melting is named in the case files.
 - **Land the pending branches.** Write `build_pack`'s test, then register the buildings and the text passes:
@@ -163,7 +176,12 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - the providers feed `GlyphGlobals` and `SpriteGlobals`;
   - the font source becomes an option.
 
-  Then merge `wip/app-map`.
+  Then merge `wip/app-map`, reshaped as below.
+- **One map for the whole app.**
+  - Today twelve screens each create their own `AtlasMap`, and each brings its own Vulkan surface.
+  - Instead, one persistent map lives at the app's root (`AtlasRoot`), under every screen.
+  - Screens hand it their camera, overlays, chrome and map area, and the core draws into that area.
+  - Navigating never rebuilds the surface, tiles stay resident, and the camera flies between screens.
 - Wire `World::set_coarser` from `PackList` and `MapFrame`, so the canal ring is drawn around the Westerkerk.
 - Give the canal pack its sun bits: the world runs no sun bucket for it yet.
 - Give `core.yml`'s host jobs the bundled render packs (`ATLAS_TILES_DIR`), so the pack tests run on CI instead of skipping.
@@ -201,7 +219,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - an island's water level from the ring around it.
 - Tag an alpha.
 
-### 3. The phone builds the map anywhere (about 55 h)
+### 3. The phone builds the map anywhere (about 60 h)
 - **Stage P in the core.** The look's derivations move from the port's loaders into C++:
   - looks and traditions;
   - heights and roof shapes;
@@ -210,6 +228,11 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - label candidates and keep codes.
 
   They are held record for record to the port's, from the same data.
+- **One OpenStreetMap client** for the engine and the app's features, in a module of its own, failing over across every known server. Today there are two, one in `:providers` and one in the port.
+- **The core asks, the app fetches.** Remote packs already work this way: the core asks for a box's data on its I/O thread, and the app's client answers.
+- **Built tiles become local packs.** A C++ writer of format 3 turns each built window into a small pack, which the store opens like a downloaded one.
+- **The packer runs the core's stage P** through the host build, so `:rendertiles` stays only as the Kotlin reference.
+- **Budgets:** a window builds within about 50 MB of memory, in a few seconds on a mid-range phone, on background threads.
 - **Live data from more than one source:**
   - several Overpass servers, failing over;
   - Geofabrik's regional extracts, read natively on the phone (libosmium is the candidate reader);
@@ -217,6 +240,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - the renderer's regional sources (AHN and the tides in the Netherlands), and the best elevation model for the place, from more than one host.
 
   The same data gives the same tiles, whichever source it came from.
+- **Weather** comes from a second source too, and the sun alone sets the moment when none answers.
 - **Built in the background:** on the core's workers at background priority, nearest tiles first, prefetched along the camera's motion, never slowing a frame. Tiles are kept in the cache and refreshed by asking Overpass only for what changed since.
 - **Packs become additions:** the packer runs the same C++ through the host build, so a pack's tiles equal the phone's byte for byte. Regions can be downloaded for offline use and an instant first look.
 - **Exactly the renderer:** the phone's tiles at the boards' views equal the packer's from the same data, and the frames equal the references.
@@ -288,7 +312,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
 
 ### 7. The engine becomes the main piece (about 8 h)
 - **The app:** what it still takes from the port (the packs library and readers, the Overpass client, the moment and the weather themes, the shade walk's scoring) moves into modules of its own.
-- **Retire the renderer:** `render/`, the Kotlin port `:render` and the CPU raster leave the build. They stay in git history, or in an archive if the owner prefers.
+- **Retire the renderer:** `render/`, the Kotlin port `:render`, `:rendertiles`' Kotlin derivation and the CPU raster leave the build. `:mapview` then depends on `:mapcore` alone for drawing. They stay in git history, or in an archive if the owner prefers.
 - Tag the final alpha.
 
 ## The owner's answers and open questions
