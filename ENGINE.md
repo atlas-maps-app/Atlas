@@ -152,19 +152,24 @@ The other local branches are history. The old builders' worktrees went to the Tr
 ## What the deep dive found (20 October)
 
 Before anything is built on them, the app's skeleton, the core and the modules were read for what should be done differently:
-- **The map is created per screen.** Twelve screens each create an `AtlasMap` with its own surface. Step 1 makes it one persistent map at the root.
 - **The core's painter's order is one contained piece.** It lives in `shaders/shared/painter.slang` and `frame/Ranks`. True depth changes what the objects' vertex stage writes, the ground's hand-over and the depth format, not the frame core.
 - **The tile store already opens packs from memory, files and remote ranges.** So tiles built on the phone become local packs, with no second tile path (step 3).
-- **There are two OpenStreetMap clients,** in `:providers` and in the port. They become one, shared by the engine and the app (step 3).
-- **Weather has a single source.** The moment's look depends on it, so a second source and a sun-only fallback come in step 3.
 - **The app's map still pulls in the CPU stack.** `:mapview` exports `:render`, `:anchor` and `:tiles` to the app; they leave with the CPU map at the end of step 3 (the port itself in step 7).
 - **The rest holds:** the device layer, frame core, scene, tile reader, sun, text, noise fields, the façade and the toolchain are current and fit the design.
 
+The app's own findings are app work, done outside this plan:
+- one persistent map at the app's root instead of a map per screen;
+- one OpenStreetMap client instead of two;
+- a second weather source;
+- the app's features off OpenMapTiles.
+
+The engine builds on them.
+
 ## What is left, in order
 
-The engine is done first: it is the app's centerpiece, and the rest of the app builds on it. Sizes are rough hours of one agent's work, about 220 in all. If the estimates hold, steps 1 and 2 take this week, steps 3 and 4 the next, and steps 5 to 7 the week after.
+The engine is done first: it is the app's centerpiece, and the rest of the app builds on it. Sizes are rough hours of one agent's work, about 210 in all. If the estimates hold, steps 1 and 2 take this week, steps 3 and 4 the next, and steps 5 to 7 the week after.
 
-### 1. The new map on the phone (about 22 h)
+### 1. The new map on the phone (about 19 h)
 - **True depth first,** before more passes are built on the old order:
   - the walls' pass writes real depth, roughly front to back;
   - the ground keeps its order and writes the plane's depth;
@@ -176,12 +181,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - the providers feed `GlyphGlobals` and `SpriteGlobals`;
   - the font source becomes an option.
 
-  Then merge `wip/app-map`, reshaped as below.
-- **One map for the whole app.**
-  - Today twelve screens each create their own `AtlasMap`, and each brings its own Vulkan surface.
-  - Instead, one persistent map lives at the app's root (`AtlasRoot`), under every screen.
-  - Screens hand it their camera, overlays, chrome and map area, and the core draws into that area.
-  - Navigating never rebuilds the surface, tiles stay resident, and the camera flies between screens.
+  Then merge `wip/app-map` into the app's one persistent map at its root, so the core draws into each screen's map area.
 - Wire `World::set_coarser` from `PackList` and `MapFrame`, so the canal ring is drawn around the Westerkerk.
 - Give the canal pack its sun bits: the world runs no sun bucket for it yet.
 - Give `core.yml`'s host jobs the bundled render packs (`ATLAS_TILES_DIR`), so the pack tests run on CI instead of skipping.
@@ -219,7 +219,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - an island's water level from the ring around it.
 - Tag an alpha.
 
-### 3. The phone builds the map anywhere (about 63 h)
+### 3. The phone builds the map anywhere (about 60 h)
 - **Stage P in the core.** The look's derivations move from the port's loaders into C++:
   - looks and traditions;
   - heights and roof shapes;
@@ -228,8 +228,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - label candidates and keep codes.
 
   They are held record for record to the port's, from the same data.
-- **One OpenStreetMap client** for the engine and the app's features, in a module of its own, failing over across every known server. Today there are two, one in `:providers` and one in the port.
-- **The core asks, the app fetches.** Remote packs already work this way: the core asks for a box's data on its I/O thread, and the app's client answers.
+- **The core asks, the app fetches.** Remote packs already work this way: the core asks for a box's data on its I/O thread, and the app's OpenStreetMap client answers.
 - **Built tiles become local packs.** A C++ writer of format 3 turns each built window into a small pack, which the store opens like a downloaded one.
 - **The packer runs the core's stage P** through the host build, so `:rendertiles` stays only as the Kotlin reference.
 - **Budgets:** a window builds within about 50 MB of memory, in a few seconds on a mid-range phone, on background threads.
@@ -240,7 +239,6 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - the renderer's regional sources (AHN and the tides in the Netherlands), and the best elevation model for the place, from more than one host.
 
   The same data gives the same tiles, whichever source it came from.
-- **Weather** comes from a second source too, and the sun alone sets the moment when none answers.
 - **Built in the background:** on the core's workers at background priority, nearest tiles first, prefetched along the camera's motion, never slowing a frame. Tiles are kept in the cache and refreshed by asking Overpass only for what changed since.
 - **Packs become additions:** the packer runs the same C++ through the host build, so a pack's tiles equal the phone's byte for byte. Regions can be downloaded for offline use and an instant first look.
 - **Exactly the renderer:** the phone's tiles at the boards' views equal the packer's from the same data, and the frames equal the references.
@@ -277,7 +275,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
 - **The renderer's other ten regions** get their render packs as their features land, each with its own profile.
 - Tag an alpha after the water and another after the night. By then the Westerkerk home is within about 2.5 levels of its render, apart from the renderer's named issues.
 
-### 5. The world (about 40 h)
+### 5. The world (about 37 h)
 - **Levels:**
   - the simplified level from the keep codes;
   - blocks of merged footprints from about 5 km out;
@@ -293,7 +291,6 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
   - regions are built monthly on GitHub from Geofabrik's extracts with the core's stage P, and downloaded from the app;
   - inside the renderer's regions, each keeps its own profile;
   - a check compares their frames with the phone's own builds.
-- **The app off OpenMapTiles:** its addresses, way names and POIs come from the phone's own tiles and the packs, and `packs.yml` stops building OpenMapTiles tiles.
 - **References around the world:** a big city, a mountain town, a desert, a coast, the open sea and the poles.
 - Tag an alpha.
 
