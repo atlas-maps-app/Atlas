@@ -11,7 +11,9 @@
 //   - a tile that comes to be drawn fades in over 180 ms (D3 "Transitions": 150-200 ms), so the frame at rest is exact
 //     once the fades end.
 // Every place is composed in double relative to the eye (view::View::tile_place) through the frame drawn
-// (view/Frames.hpp), so a tile of another pack's frame is placed by its affine.
+// (view/Frames.hpp), so a tile of another pack's frame is placed by its affine. A coarser pack may be drawn around the
+// active one (D3): its tiles the same way, but those wholly inside the active pack's box (the mask), whose ground lies
+// under the active pack's; the world masks the coarser pack's items whose reference points lie inside it.
 #pragma once
 
 #include "scene/Cells.hpp"
@@ -67,6 +69,12 @@ struct CoverInputs {
     double margin_px = 40.0;
     /// How long a tile fades in, seconds.
     double fade_seconds = 0.18;
+    /// A coarser pack drawn around the active one (D3: the canal ring around the Westerkerk; null: none), the ladder
+    /// index its tiles are built at, and the box its tiles are left out under when they lie wholly inside it (the
+    /// active pack's box, whose ground covers them; their items inside it are masked by the world).
+    const tiles::StorePack* coarser = nullptr;
+    std::uint8_t coarser_tolerance = 0;
+    std::optional<tiles::GridBox> mask;
 };
 
 /// The frame's cover.
@@ -89,6 +97,10 @@ public:
     [[nodiscard]] bool fading() const noexcept { return fading_; }
 
 private:
+    /// The tiles of one pack (the active one, or the coarser one outside `mask`).
+    void cover(const tiles::StorePack& pack, const view::View& view, const view::Frames& frames, const CoverInputs& in,
+               std::uint8_t tolerance, const std::optional<tiles::GridBox>& mask, const Residency& residency,
+               double seconds);
     void draw(const ResidentTile& tile, std::uint64_t cells, const view::View& view, const view::Frames& frames,
               const Frustum& frustum, tiles::TileKey wanted, double seconds);
 
@@ -103,13 +115,14 @@ private:
         tiles::TileKey key;
         std::uint64_t cells = 0;
     };
-    void request(const tiles::TileKey& key, Lane lane, double priority, std::uint8_t tolerance);
+    void request(const tiles::TileKey& key, Lane lane, double priority, std::uint8_t tolerance, std::string_view pack);
 
     std::vector<CoverTile> tiles_;
     std::vector<Request> requests_;
     std::vector<Shown> shown_;
     std::vector<Pending> pending_;
-    std::string pack_id_;
+    std::string pack_id_;    // the active pack's
+    std::string coarser_id_; // the coarser pack's
     std::size_t missing_ = 0;
     double fade_seconds_ = 0.18;
     bool fading_ = false;

@@ -25,6 +25,8 @@ inline constexpr std::size_t bands = 4;
 namespace item_flag {
 inline constexpr std::uint16_t near_plane = 1; ///< its bounds may reach within the near plane (the clipping variant)
 inline constexpr std::uint16_t radius = 2;     ///< the renders' radius cut applies to it (in engine mode)
+/// It is masked: a coarser pack's item whose reference point lies inside the active pack's box (D3), never drawn.
+inline constexpr std::uint16_t masked = 4;
 } // namespace item_flag
 
 /// What a stage-T builder adds for one item.
@@ -76,6 +78,10 @@ public:
     std::uint32_t add(const ItemSpec& item);
     /// Frees a row (its tile left the scene).
     void remove(std::uint32_t row) noexcept;
+    /// Rewrites a live row with `item` (its tile's spec in another frame, say); the row keeps its number.
+    void update(std::uint32_t row, const ItemSpec& item) noexcept;
+    /// Sets or clears a live row's flag `flag` (item_flag::masked).
+    void set_flag(std::uint32_t row, std::uint16_t flag, bool on) noexcept;
     /// Frees every row of tile `tile`; returns how many.
     std::size_t remove_tile(std::uint32_t tile) noexcept;
     /// Forgets every row.

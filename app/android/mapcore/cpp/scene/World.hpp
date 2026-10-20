@@ -70,6 +70,14 @@ public:
     [[nodiscard]] tiles::Store& store() noexcept { return store_; }
     /// The pack the frame draws from now on (its store id), or the automatic choice (empty).
     void set_active(std::string id) { forced_ = std::move(id); }
+    /// A coarser pack drawn around the active one (its store id: the canal ring around the Westerkerk; empty: none),
+    /// and the box masking it (D3: the coarser pack's items whose reference points lie inside it are skipped, so a
+    /// building is drawn once and whole, and its tiles wholly inside it are left out); without a box, the active pack's
+    /// own, its finest level's reach. K11 chooses both per frame.
+    void set_coarser(std::string id, std::optional<tiles::GridBox> mask = std::nullopt);
+    /// The coarser pack drawn now (null: none) and its mask.
+    [[nodiscard]] const tiles::StorePack* coarser() const noexcept { return coarser_.get(); }
+    [[nodiscard]] const std::optional<tiles::GridBox>& mask() const noexcept { return mask_; }
 
     // frame::FrameScene
     [[nodiscard]] const view::Ladder* ladder(const style::CameraState& camera) override;
@@ -108,6 +116,11 @@ private:
     /// whose finest level has a tile under the target.
     void choose(const style::CameraState& camera);
     void release_idle(double seconds, std::uint64_t frame);
+    /// The coarser pack and its mask for the frame (set_coarser's, else none).
+    void choose_coarser();
+    /// A resident tile's items in the frame drawn (converted from their pack's frame) and masked where they are the
+    /// coarser pack's inside the mask.
+    void place_items(const ResidentTile& tile);
 
     WorldOptions options_;
     tiles::Store store_;
@@ -122,6 +135,15 @@ private:
     view::Frames frames_;
     std::string forced_;
     std::shared_ptr<const tiles::StorePack> active_;
+    std::string coarser_wanted_;
+    std::optional<tiles::GridBox> mask_wanted_;
+    std::shared_ptr<const tiles::StorePack> coarser_;
+    std::optional<tiles::GridBox> mask_;
+    /// What the items were last placed for: the frame drawn, the coarser pack and the mask.
+    std::optional<view::GroundFrame> placed_frame_;
+    std::string placed_coarser_;
+    std::optional<tiles::GridBox> placed_mask_;
+    std::vector<std::shared_ptr<const ResidentTile>> taken_;
     std::optional<view::Ladder> ladder_;
     /// Per resident tile (its handle): when the cover last drew it.
     std::vector<std::pair<std::uint32_t, double>> last_drawn_;

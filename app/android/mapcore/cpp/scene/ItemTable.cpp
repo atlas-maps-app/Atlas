@@ -46,6 +46,29 @@ std::uint32_t ItemTable::add(const ItemSpec& item) {
     return row;
 }
 
+void ItemTable::update(std::uint32_t row, const ItemSpec& item) noexcept {
+    if (!alive(row)) return;
+    x_[row] = item.x;
+    y_[row] = item.y;
+    z_[row] = item.z;
+    offset_[row] = item.offset;
+    cut_x_[row] = item.cut_x;
+    cut_z_[row] = item.cut_z;
+    order_[row] = item.order;
+    kind_[row] = item.kind;
+    flags_[row] = item.flags;
+    min_depth_[row] = item.min_depth;
+    radius_[row] = item.radius;
+    tile_[row] = item.tile;
+    owner_[row] = item.owner;
+    for (std::size_t b = 0; b < bands; ++b) slots_[row * bands + b] = item.slots[b];
+}
+
+void ItemTable::set_flag(std::uint32_t row, std::uint16_t flag, bool on) noexcept {
+    if (!alive(row)) return;
+    flags_[row] = static_cast<std::uint16_t>(on ? (flags_[row] | flag) : (flags_[row] & ~flag));
+}
+
 void ItemTable::remove(std::uint32_t row) noexcept {
     if (!alive(row)) return;
     alive_[row] = 0;

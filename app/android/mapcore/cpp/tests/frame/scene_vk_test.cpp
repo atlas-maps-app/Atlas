@@ -8,11 +8,14 @@
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/PassRegistry.hpp"
+#include "frame/Ranks.hpp"
+#include "frame/Selectors.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "scene/Heaps.hpp"
 #include "scene/World.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tiles/layers/Buildings.hpp"
+#include "view/Frames.hpp"
 #include "view/Ladder.hpp"
 
 #if !defined(__ANDROID__)
@@ -318,6 +321,123 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     CHECK(w.residency().resident().empty());
     CHECK(w.residency().stats().native_bytes == 0);
     CHECK(one_kept.expired());
+    (void)session->take_messages();
+}
+
+TEST_CASE("a coarser pack is drawn around the active one, its items in the frame drawn and masked inside its box") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
+    const std::filesystem::path canals = std::filesystem::path(dir) / "grachten.atlas";
+    if (dir.empty() || !std::filesystem::exists(canals)) {
+        MESSAGE("ATLAS_TILES_DIR has no canal ring's pack: the coarser pack is not checked here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<BuildProbe>());
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    double now = 0;
+    auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                      {.workers = 3, .sun = {.enabled = false}, .clock = [&now] { return now; }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    for (const auto& [id, path] : {std::pair{"amsterdam", westerkerk}, std::pair{"grachten", canals}}) {
+        auto added = w.store().add({.id = id, .kind = tiles::PackKind::bundled, .path = path.string()});
+        ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+    }
+    // The Westerkerk active, the canal ring around it, from higher up so both packs' tiles are in view.
+    w.set_active("amsterdam");
+    w.set_coarser("grachten");
+    style::CameraState c = home();
+    c.distance = 1600.0;
+    c.flags = 0;
+    (*builder)->set_inputs({.camera = c, .scene = &w});
+    for (std::uint64_t n = 1; n <= 60; ++n) {
+        now = static_cast<double>(n) * 0.016;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+        w.residency().wait_idle();
+    }
+    ATLAS_REQUIRE(w.active() != nullptr);
+    ATLAS_REQUIRE(w.coarser() != nullptr);
+    CHECK(w.coarser()->id == "grachten");
+    ATLAS_REQUIRE(w.mask().has_value());
+    const tiles::GridBox mask = *w.mask();
+    // Both packs' tiles are drawn; none of the canal ring's lies wholly inside the Westerkerk's box.
+    std::size_t active_tiles = 0;
+    std::size_t coarser_tiles = 0;
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        if (t.drawn->pack == "amsterdam") {
+            ++active_tiles;
+            continue;
+        }
+        ++coarser_tiles;
+        const tiles::GridBox& b = t.drawn->reach.box;
+        CHECK_FALSE((b.south >= mask.south && b.north <= mask.north && b.west >= mask.west && b.east <= mask.east));
+    }
+    CHECK(active_tiles > 0);
+    CHECK(coarser_tiles > 0);
+    // The canal ring's items: in the frame drawn (the Westerkerk's), masked where their reference point is inside.
+    const view::GroundFrame drawn = w.frames().current().value_or(view::GroundFrame{});
+    const tiles::Frame& cf = w.coarser()->pack.head()->frame;
+    std::size_t masked = 0;
+    std::size_t shown = 0;
+    std::size_t converted = 0;
+    for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+        for (std::size_t i = 0; i < t->rows.size(); ++i) {
+            const scene::ItemSpec& spec = t->items[i];
+            const std::uint32_t row = t->rows[i];
+            const bool is_masked = (w.items()->flags()[row] & scene::item_flag::masked) != 0;
+            if (t->pack == "amsterdam") {
+                CHECK_FALSE(is_masked);
+                CHECK(w.items()->x()[row] == spec.x);
+                continue;
+            }
+            const bool inside = spec.cut_x >= cf.x(mask.west) && spec.cut_x <= cf.x(mask.east) &&
+                                spec.cut_z >= cf.z(mask.north) && spec.cut_z <= cf.z(mask.south);
+            CHECK(is_masked == inside);
+            (inside ? masked : shown) += 1;
+            const view::Vec3 p = view::convert(t->frame, drawn, {spec.x, spec.y, spec.z});
+            CHECK(w.items()->x()[row] == p.x);
+            CHECK(w.items()->z()[row] == p.z);
+            converted += (w.items()->x()[row] != spec.x) ? 1U : 0U;
+        }
+    }
+    CHECK(masked > 0);
+    CHECK(shown > 0);
+    CHECK(converted > 0); // the two packs' frames differ
+    // The ranks never draw a masked item.
+    const std::optional<view::View>& frame_view = (*builder)->state().view;
+    if (!frame_view) {
+        FAIL("the frame has no view");
+        return;
+    }
+    frame::Selectors selectors;
+    frame::Ranks ranks;
+    ranks.update(*w.items(), frame_view->camera(), selectors);
+    std::size_t drawn_masked = 0;
+    for (std::uint32_t row = 0; row < w.items()->rows(); ++row) {
+        if (w.items()->alive(row) && (w.items()->flags()[row] & scene::item_flag::masked) != 0 &&
+            ranks.first_slot()[row] != frame::Ranks::none) {
+            ++drawn_masked;
+        }
+    }
+    CHECK(drawn_masked == 0);
+    MESSAGE(active_tiles << " of the Westerkerk's tiles and " << coarser_tiles << " of the canal ring's drawn; of the "
+                         << "canal ring's items " << masked << " masked inside the Westerkerk's box, " << shown
+                         << " drawn, every one in the Westerkerk's frame");
+    // Without the coarser pack, its tiles go from the cover and its items' masks with them.
+    w.set_coarser({});
+    ATLAS_REQUIRE((*builder)->derive(61, 0, nullptr));
+    w.update((*builder)->state());
+    for (const scene::CoverTile& t : w.cover()->tiles()) CHECK(t.drawn->pack == "amsterdam");
+    for (std::uint32_t row = 0; row < w.items()->rows(); ++row) {
+        if (w.items()->alive(row)) CHECK((w.items()->flags()[row] & scene::item_flag::masked) == 0);
+    }
     (void)session->take_messages();
 }
 

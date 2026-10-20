@@ -109,6 +109,76 @@ void World::choose(const style::CameraState& camera) {
     }
 }
 
+void World::set_coarser(std::string id, std::optional<tiles::GridBox> mask) {
+    coarser_wanted_ = std::move(id);
+    mask_wanted_ = mask;
+}
+
+void World::choose_coarser() {
+    coarser_.reset();
+    mask_.reset();
+    if (coarser_wanted_.empty() || !active_ || coarser_wanted_ == active_->id) return;
+    for (const std::shared_ptr<const tiles::StorePack>& p : store_.packs()) {
+        if (p->id == coarser_wanted_ && p->pack.is_render() && p->pack.head() != nullptr) coarser_ = p;
+    }
+    if (!coarser_) return;
+    if (mask_wanted_) {
+        mask_ = mask_wanted_;
+        return;
+    }
+    // The active pack's box: its finest level's reach.
+    const tiles::RenderHead& head = *active_->pack.head();
+    if (head.levels.empty()) return;
+    std::optional<tiles::GridBox> box;
+    for (const tiles::ChunkRef& c : active_->pack.chunks().level(head.levels[0])) {
+        const tiles::GridBox& b = c.reach.box;
+        if (!box) {
+            box = b;
+        } else {
+            box->south = std::min(box->south, b.south);
+            box->west = std::min(box->west, b.west);
+            box->north = std::max(box->north, b.north);
+            box->east = std::max(box->east, b.east);
+        }
+    }
+    mask_ = box;
+}
+
+void World::place_items(const ResidentTile& tile) {
+    const std::optional<view::GroundFrame>& drawn = frames_.current();
+    const bool convert = drawn && *drawn != tile.frame;
+    const bool coarse = coarser_ && tile.pack == coarser_->id && mask_;
+    // The mask in the tile's own frame (its items' reference points are its pack frame's metres).
+    double x0 = 0;
+    double x1 = 0;
+    double z0 = 0;
+    double z1 = 0;
+    if (coarse) {
+        const tiles::Frame& f = coarser_->pack.head()->frame;
+        x0 = f.x(mask_->west);
+        x1 = f.x(mask_->east);
+        z0 = f.z(mask_->north);
+        z1 = f.z(mask_->south);
+    }
+    for (std::size_t i = 0; i < tile.rows.size() && i < tile.items.size(); ++i) {
+        const ItemSpec& spec = tile.items[i];
+        ItemSpec placed = spec;
+        if (convert) {
+            const view::Vec3 p = view::convert(tile.frame, *drawn, {spec.x, spec.y, spec.z});
+            const view::Vec3 cut = view::convert(tile.frame, *drawn, {spec.cut_x, 0.0, spec.cut_z});
+            placed.x = p.x;
+            placed.y = p.y;
+            placed.z = p.z;
+            placed.cut_x = cut.x;
+            placed.cut_z = cut.z;
+        }
+        const bool inside = coarse && spec.cut_x >= x0 && spec.cut_x <= x1 && spec.cut_z >= z0 && spec.cut_z <= z1;
+        placed.flags =
+            static_cast<std::uint16_t>(inside ? (spec.flags | item_flag::masked) : (spec.flags & ~item_flag::masked));
+        items_.update(tile.rows[i], placed);
+    }
+}
+
 const view::Ladder* World::ladder(const style::CameraState& camera) {
     choose(camera);
     return ladder_ ? &*ladder_ : nullptr;
@@ -142,7 +212,8 @@ void World::release_idle(double seconds, std::uint64_t frame) {
 
 void World::update(const frame::FrameState& state) {
     const double seconds = options_.clock ? options_.clock() : state.seconds;
-    residency_->take_published(items_);
+    taken_.clear();
+    residency_->take_published(items_, &taken_);
     if (!active_ || !state.view) {
         cover_.update(state.view ? *state.view : view::View({}, {}), frames_, {}, *residency_, seconds);
         if (sun_) sun_->prepare(state, nullptr, 0, cover_);
@@ -153,6 +224,18 @@ void World::update(const frame::FrameState& state) {
     }
     const tiles::RenderHead& head = *active_->pack.head();
     frames_.set(view::frame_of(head.frame), seconds);
+    // The items in the frame drawn, the coarser pack's masked: every resident tile's when the frame, the coarser pack
+    // or the mask changed, else the tiles just taken.
+    choose_coarser();
+    const std::string coarser_id = coarser_ ? coarser_->id : std::string();
+    if (placed_frame_ != frames_.current() || placed_coarser_ != coarser_id || placed_mask_ != mask_) {
+        for (const std::shared_ptr<const ResidentTile>& t : residency_->resident()) place_items(*t);
+        placed_frame_ = frames_.current();
+        placed_coarser_ = coarser_id;
+        placed_mask_ = mask_;
+    } else {
+        for (const std::shared_ptr<const ResidentTile>& t : taken_) place_items(*t);
+    }
     const std::optional<std::string_view> snapped = state.placed ? state.placed->view() : std::nullopt;
     const double dist = state.placed ? state.placed->dist() : state.camera.distance;
     const CoverInputs in{.pack = active_.get(),
@@ -161,7 +244,13 @@ void World::update(const frame::FrameState& state) {
                          .fine_reach = options_.fine_reach,
                          .far = options_.far,
                          .margin_px = 40.0,
-                         .fade_seconds = 0.18};
+                         .fade_seconds = 0.18,
+                         .coarser = coarser_.get(),
+                         .coarser_tolerance =
+                             coarser_
+                                 ? coarser_->pack.head()->tolerance_of(std::nullopt, dist).value_or(std::uint8_t{0})
+                                 : std::uint8_t{0},
+                         .mask = mask_};
     cover_.update(*state.view, frames_, in, *residency_, seconds);
     if (sun_) sun_->prepare(state, active_, in.tolerance, cover_);
     residency_->want(cover_.requests());

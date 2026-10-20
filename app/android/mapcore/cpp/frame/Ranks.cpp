@@ -58,7 +58,7 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
     const auto cut_x = items.cut_x();
     const auto cut_z = items.cut_z();
     for (std::size_t i = 0; i < rows; ++i) {
-        if (alive[i] == 0) continue;
+        if (alive[i] == 0 || (flags[i] & scene::item_flag::masked) != 0) continue;
         // gatherItems: cc = cam.cam(p); dropped nearer than its minimum depth; sorted by cc[2] + offset
         const double dx = x[i] - c.x;
         const double dy = y[i] - c.y;

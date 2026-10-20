@@ -7,9 +7,10 @@
 
 namespace atlas::scene {
 
-void Cover::request(const tiles::TileKey& key, Lane lane, double priority, std::uint8_t tolerance) {
+void Cover::request(const tiles::TileKey& key, Lane lane, double priority, std::uint8_t tolerance,
+                    std::string_view pack) {
     for (Request& r : requests_) {
-        if (r.key == key) {
+        if (r.key == key && r.pack == pack) {
             if (lane < r.lane || (lane == r.lane && priority > r.priority)) {
                 r.lane = lane;
                 r.priority = priority;
@@ -17,7 +18,7 @@ void Cover::request(const tiles::TileKey& key, Lane lane, double priority, std::
             return;
         }
     }
-    requests_.push_back({.key = key, .pack = pack_id_, .lane = lane, .priority = priority, .level = tolerance});
+    requests_.push_back({.key = key, .pack = pack, .lane = lane, .priority = priority, .level = tolerance});
 }
 
 void Cover::draw(const ResidentTile& tile, std::uint64_t cells, const view::View& view, const view::Frames& frames,
@@ -57,25 +58,49 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
         shown_.clear();
         return;
     }
-    const tiles::Pack& pack = in.pack->pack;
+    pack_id_ = in.pack->id;
+    cover(*in.pack, view, frames, in, in.tolerance, std::nullopt, residency, seconds);
+    if (in.coarser != nullptr && in.coarser != in.pack && in.coarser->pack.is_render() &&
+        in.coarser->pack.head() != nullptr) {
+        coarser_id_ = in.coarser->id;
+        cover(*in.coarser, view, frames, in, in.coarser_tolerance, in.mask, residency, seconds);
+    }
+    std::erase_if(shown_, [](const Shown& s) { return !s.drawn; });
+    std::ranges::sort(tiles_, [](const CoverTile& a, const CoverTile& b) { return a.distance < b.distance; });
+    std::ranges::sort(requests_, [](const Request& a, const Request& b) {
+        return a.lane != b.lane ? a.lane < b.lane : a.priority > b.priority;
+    });
+}
+
+void Cover::cover(const tiles::StorePack& store_pack, const view::View& view, const view::Frames& frames,
+                  const CoverInputs& in, std::uint8_t tolerance, const std::optional<tiles::GridBox>& mask,
+                  const Residency& residency, double seconds) {
+    const tiles::Pack& pack = store_pack.pack;
     const tiles::RenderHead& head = *pack.head();
     if (head.levels.empty()) return;
-    pack_id_ = in.pack->id;
-    const view::GroundFrame frame = view::frame_of(head.frame);
+    const std::string_view id = mask ? std::string_view(coarser_id_) : std::string_view(pack_id_);
+    const bool active = !mask.has_value();
+    // Boxes and cells in the frame drawn (their grid boxes are degrees): the camera's.
+    const view::GroundFrame frame = frames.current().value_or(view::frame_of(head.frame));
     const Frustum frustum(view.camera(), in.margin_px, in.far);
     const std::uint8_t fine = head.levels[0];
     const bool has_coarse = head.levels.size() > 1;
     const std::uint8_t coarse = has_coarse ? head.levels[1] : fine;
     const std::uint32_t gap = has_coarse ? static_cast<std::uint32_t>(fine - coarse) : 0;
+    // A chunk wholly inside the mask (the active pack's box) is left out: the active pack draws there.
+    auto masked = [&mask](const tiles::GridBox& b) {
+        return mask && b.south >= mask->south && b.north <= mask->north && b.west >= mask->west && b.east <= mask->east;
+    };
+    const std::size_t pending_from = pending_.size();
 
     // An ancestor's cells over a descendant it stands in for, drawn once whatever how many it stands in for.
     auto stand_in = [&](const tiles::TileKey& parent, std::uint32_t x, std::uint32_t y) {
-        const ResidentTile* r = residency.find(parent, pack_id_);
+        const ResidentTile* r = residency.find(parent, id);
         if (r == nullptr) return false;
         const std::uint64_t over = cells_over(r->cells_per_side, gap, x, y);
-        for (Pending& p : pending_) {
-            if (p.key == parent) {
-                p.cells |= over;
+        for (std::size_t k = pending_from; k < pending_.size(); ++k) {
+            if (pending_[k].key == parent) {
+                pending_[k].cells |= over;
                 return true;
             }
         }
@@ -84,31 +109,33 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
     };
 
     for (const tiles::ChunkRef& c : pack.chunks().level(fine)) {
+        if (masked(c.reach.box)) continue;
         const Box box = box_of(c.reach.box, c.reach.top_cm, frame);
         if (!frustum.sees(box)) continue;
         const double d = frustum.distance(box);
         const double share = frustum.share(box);
         const double priority = share + 1.0e-3 / (1.0 + d); // by share of the screen, nearest first
         const tiles::TileKey parent{coarse, c.tile.x >> gap, c.tile.y >> gap};
-        if (in.pinned || d <= in.fine_reach || !has_coarse) {
-            if (const ResidentTile* r = residency.find(c.tile, pack_id_)) {
+        if ((active && in.pinned) || d <= in.fine_reach || !has_coarse) {
+            if (const ResidentTile* r = residency.find(c.tile, id)) {
                 const std::uint64_t cells = visible_cells(r->cells, r->cells_per_side, frame, frustum);
                 if (cells != 0) draw(*r, cells, view, frames, frustum, c.tile, seconds);
                 continue;
             }
-            ++missing_;
-            request(c.tile, Lane::visible, priority, in.tolerance);
+            if (active) ++missing_;
+            request(c.tile, Lane::visible, priority, tolerance, id);
             if (has_coarse) {
-                request(parent, Lane::ancestor, priority, in.tolerance);
+                request(parent, Lane::ancestor, priority, tolerance, id);
                 (void)stand_in(parent, c.tile.x, c.tile.y);
             }
         } else if (!stand_in(parent, c.tile.x, c.tile.y)) {
-            request(parent, Lane::visible, priority, in.tolerance);
+            request(parent, Lane::visible, priority, tolerance, id);
         }
     }
     // The next level's cells where the finest level has no tile.
     if (has_coarse) {
         for (const tiles::ChunkRef& c : pack.chunks().level(coarse)) {
+            if (masked(c.reach.box)) continue;
             const Box box = box_of(c.reach.box, c.reach.top_cm, frame);
             if (!frustum.sees(box)) continue;
             const std::uint32_t n = std::uint32_t{1} << gap;
@@ -118,23 +145,18 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
                     if (pack.chunks().find(child) != nullptr) continue;
                     if (!stand_in(c.tile, child.x, child.y)) {
                         const double d = frustum.distance(box);
-                        request(c.tile, Lane::visible, frustum.share(box) + 1.0e-3 / (1.0 + d), in.tolerance);
+                        request(c.tile, Lane::visible, frustum.share(box) + 1.0e-3 / (1.0 + d), tolerance, id);
                     }
                 }
             }
         }
     }
-    for (const Pending& p : pending_) {
-        const ResidentTile* r = residency.find(p.key, pack_id_);
+    for (std::size_t k = pending_from; k < pending_.size(); ++k) {
+        const ResidentTile* r = residency.find(pending_[k].key, id);
         if (r == nullptr) continue;
-        const std::uint64_t cells = visible_cells(r->cells, r->cells_per_side, frame, frustum) & p.cells;
-        if (cells != 0) draw(*r, cells, view, frames, frustum, p.key, seconds);
+        const std::uint64_t cells = visible_cells(r->cells, r->cells_per_side, frame, frustum) & pending_[k].cells;
+        if (cells != 0) draw(*r, cells, view, frames, frustum, pending_[k].key, seconds);
     }
-    std::erase_if(shown_, [](const Shown& s) { return !s.drawn; });
-    std::ranges::sort(tiles_, [](const CoverTile& a, const CoverTile& b) { return a.distance < b.distance; });
-    std::ranges::sort(requests_, [](const Request& a, const Request& b) {
-        return a.lane != b.lane ? a.lane < b.lane : a.priority > b.priority;
-    });
 }
 
 } // namespace atlas::scene
