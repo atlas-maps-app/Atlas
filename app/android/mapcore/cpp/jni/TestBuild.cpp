@@ -16,6 +16,7 @@
 #include <limits>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -72,7 +73,8 @@ JNIEXPORT jlongArray JNICALL Java_app_atlas_mapcorecheck_buildings_BuildHost_pri
     auto source = tl::MappedSource::open(string_of(env, path));
     if (!source) return nullptr;
     auto pack = tl::Pack::open(std::move(*source));
-    if (!pack || pack->head() == nullptr || level < 0 || level > std::numeric_limits<std::uint8_t>::max()) {
+    if (!pack || pack->head() == nullptr || level < 0 ||
+        std::cmp_greater(level, std::numeric_limits<std::uint8_t>::max())) {
         return nullptr;
     }
     const tl::RenderHead& head = *pack->head();

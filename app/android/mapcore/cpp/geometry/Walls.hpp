@@ -258,9 +258,9 @@ private:
     std::vector<std::uint32_t> triangles_;
 };
 
-/// The walls of `b` (its cells in both variants and a skillion's walls), flagged `variant` (prim_flag::dry for a
-/// houseboat's building).
-void walls(Builder& out, const Building& b, std::uint16_t variant);
+/// The walls of `bl` (its cells in both variants and a skillion's walls) into `b`, flagged `variant` (prim_flag::dry
+/// for a houseboat's building).
+void walls(Builder& b, const Building& bl, std::uint16_t variant);
 
 /// The triangles of a simple ring (earcut), as indexes into it, three a triangle; none for a degenerate ring.
 void triangulate(std::span<const V2> ring, std::vector<std::uint32_t>& out);

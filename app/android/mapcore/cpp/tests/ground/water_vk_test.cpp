@@ -307,7 +307,9 @@ void check_scene(test::Session& session, const std::filesystem::path& path, cons
         auto packed = (*output)->read_packed((*output)->latest());
         ATLAS_REQUIRE(packed.has_value(), packed.error().text());
         const platform::Pixels px = platform::to_rgba8(*packed);
-        const view::Camera& cam = (*builder)->state().view->camera();
+        const auto& framed = (*builder)->state().view;
+        ATLAS_REQUIRE(framed.has_value(), "the frame has a view");
+        const view::Camera& cam = framed->camera();
         CHECK(ground->decided().tiles.size() == (name == "cut" ? 2U : 1U));
         // the water's colour inside: without weather th['water']; with it wgrad's (flat here) under the tint at .12
         const std::array<double, 3> plate{0xD6, 0xCF, 0xC2};

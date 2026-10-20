@@ -3,6 +3,7 @@
 // Minkowski sum of the polygon and a disc). The outline of 16 points must lie within r · tan²(phi / (4 per)) of that
 // shape's boundary at every corner angle, needles included, and a dense grid of points must fall inside the outline
 // exactly where they fall inside the true shape, but for points that close to its boundary.
+#include "base/pymath/PyMath.hpp"
 #include "tests/base/require.hpp"
 #include "twin/building/BuildingShader.hpp"
 
@@ -10,11 +11,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <random>
 #include <vector>
 
 namespace {
 
+namespace pymath = atlas::pymath;
 namespace sh = atlas::shaders;
 using atlas::hlsl::float2;
 
@@ -22,6 +25,9 @@ struct P {
     double x;
     double y;
 };
+
+/// A generator of a seed given (the test's sequence is fixed, so every run checks the same cells).
+[[nodiscard]] std::mt19937_64 seeded(std::uint64_t seed) { return std::mt19937_64(seed); }
 
 /// The distance from p to segment ab.
 double segment_distance(P p, P a, P b) {
@@ -104,7 +110,7 @@ Measured measure(const std::vector<P>& corners, double r, double band) {
         const P b = o[(i + 1) % o.size()];
         for (int k = 0; k <= 8; ++k) {
             const double t = k / 8.0;
-            const P q{a.x + ((b.x - a.x) * t), a.y + ((b.y - a.y) * t)};
+            const P q{.x = a.x + ((b.x - a.x) * t), .y = a.y + ((b.y - a.y) * t)};
             m.worst = std::max(m.worst, std::abs(dilated_distance(q, corners, r)));
         }
     }
@@ -118,10 +124,16 @@ Measured measure(const std::vector<P>& corners, double r, double band) {
         x1 = std::max(x1, c.x);
         y1 = std::max(y1, c.y);
     }
+    // a grid of 0.01 px over the shape and twice the radius around it
     const double step = 0.01;
-    for (double y = y0 - (2 * r); y <= y1 + (2 * r); y += step) {
-        for (double x = x0 - (2 * r); x <= x1 + (2 * r); x += step) {
-            const P p{x, y};
+    const auto count = [step](double from, double to) { return static_cast<int>(std::floor((to - from) / step)); };
+    const double left = x0 - (2 * r);
+    const double top = y0 - (2 * r);
+    const int columns = count(left, x1 + (2 * r));
+    const int rows = count(top, y1 + (2 * r));
+    for (int j = 0; j <= rows; ++j) {
+        for (int i = 0; i <= columns; ++i) {
+            const P p{.x = left + (i * step), .y = top + (j * step)};
             const double d = dilated_distance(p, corners, r);
             if (std::abs(d) <= band) continue;
             ++m.grid;
@@ -154,18 +166,18 @@ TEST_CASE("buildings: a cell's edge is its polygon dilated by 0.15 px with round
     }
     // r · tan²(phi / 16) at most, for a needle's corner (phi up to pi) at four points a corner: 0.016 px at S1;
     // a pentagon's three a corner, r · tan²(pi / 12)
-    CHECK(worst <= r * std::tan(3.14159265358979 / 12) * std::tan(3.14159265358979 / 12) + 1e-4);
+    CHECK(worst <= r * pymath::tan(3.14159265358979 / 12) * pymath::tan(3.14159265358979 / 12) + 1e-4);
     // random convex quads, the cells of walls seen at any angle
-    std::mt19937_64 rng(20261019);
+    std::mt19937_64 rng = seeded(20261019);
     std::uniform_real_distribution<double> u(-1.0, 1.0);
     double worst_random = 0;
     std::size_t wrong = 0;
     for (int k = 0; k < 400; ++k) {
         // a parallelogram from two edges, some of them nearly parallel (needles)
-        const P a{50 + (10 * u(rng)), 50 + (10 * u(rng))};
-        const P e{30 * u(rng), 30 * u(rng)};
+        const P a{.x = 50 + (10 * u(rng)), .y = 50 + (10 * u(rng))};
+        const P e{.x = 30 * u(rng), .y = 30 * u(rng)};
         const double squeeze = k % 4 == 0 ? 0.002 : (k % 4 == 1 ? 0.05 : 1.0);
-        const P f{(-e.y * squeeze) + (5 * u(rng) * squeeze), (e.x * squeeze) + (5 * u(rng) * squeeze)};
+        const P f{.x = (-e.y * squeeze) + (5 * u(rng) * squeeze), .y = (e.x * squeeze) + (5 * u(rng) * squeeze)};
         const std::vector<P> quad{
             a, {a.x + e.x, a.y + e.y}, {a.x + e.x + f.x, a.y + e.y + f.y}, {a.x + f.x, a.y + f.y}};
         const Measured m = measure(quad, r, 0.02);
@@ -175,5 +187,5 @@ TEST_CASE("buildings: a cell's edge is its polygon dilated by 0.15 px with round
     MESSAGE("400 random cells (a quarter needles): the outline within " << worst_random << " px of the true boundary; "
                                                                         << wrong << " grid points on the wrong side");
     CHECK(wrong == 0);
-    CHECK(worst_random <= r * std::tan(3.14159265358979 / 16) * std::tan(3.14159265358979 / 16) + 1e-4);
+    CHECK(worst_random <= r * pymath::tan(3.14159265358979 / 16) * pymath::tan(3.14159265358979 / 16) + 1e-4);
 }

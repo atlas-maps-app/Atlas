@@ -130,7 +130,7 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
         passes::building_runs(cells, list_first, runs_);
         for (const passes::BuildingRun& run : runs_) {
             for (std::uint32_t i = run.first; i < run.end; ++i) {
-                shaders::BuildingPrim p;
+                shaders::BuildingPrim p{};
                 if (list == List::cells) {
                     const hlsl::uint4 pair = word4(words, list_at + (i / 2));
                     const bool odd = (i & 1U) != 0U;

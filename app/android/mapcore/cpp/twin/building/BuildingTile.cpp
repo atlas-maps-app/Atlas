@@ -40,7 +40,7 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     namespace gm = atlas::geometry;
     // The edged list without the near cells, which the frame cuts from their walls (stage T writes a wall's one cell,
     // then its cells), and the near cells' records: per tile cell, its edged primitives and its near cells.
-    const std::size_t grid = g.edged_first.size() > 0 ? g.edged_first.size() - 1 : 0;
+    const std::size_t grid = !g.edged_first.empty() ? g.edged_first.size() - 1 : 0;
     std::vector<const gm::Prim*> edged;
     edged.reserve(g.edged.size());
     std::vector<std::uint16_t> wall_near; // per edged record: its near slot as the heap holds it
@@ -111,8 +111,9 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     }
     for (std::uint32_t i = 0; i < n; ++i) {
         Words& w = out[layout.cells_at + (i / 2)];
-        w[2 * (i % 2)] = cells[i][0];
-        w[(2 * (i % 2)) + 1] = cells[i][1];
+        const std::size_t at = std::size_t{2} * (i % 2);
+        w[at] = cells[i][0];
+        w[at + 1] = cells[i][1];
     }
     // the n-gons whole, for the twin: their rings in the triangles' floats
     layout.rings.clear();
@@ -164,7 +165,7 @@ void building_colours(const shaders::Theme& theme, std::span<const BuildingLight
 }
 
 void building_runs(std::uint64_t cells, std::span<const std::uint32_t> first, std::vector<BuildingRun>& out) {
-    const std::size_t n = first.size() > 0 ? first.size() - 1 : 0;
+    const std::size_t n = !first.empty() ? first.size() - 1 : 0;
     const std::size_t own = out.size(); // the runs before are another list's: never joined
     for (std::size_t c = 0; c < n && c < 64; ++c) {
         if (((cells >> c) & 1U) == 0) continue;

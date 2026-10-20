@@ -254,7 +254,7 @@ using Vertex = std::array<double, 3>;
                               std::span<const std::array<Vertex, 3>> triangles) {
     constexpr double base = 3.814697265625e-6; // 2^-18
     if (!e.edged) return base;
-    const double f = static_cast<double>(cam.forward.w);
+    const auto f = static_cast<double>(cam.forward.w);
     const auto n = std::array<double, 3>{static_cast<double>(e.shape.plane.x), static_cast<double>(e.shape.plane.y),
                                          static_cast<double>(e.shape.plane.z)};
     double worst = 1.0;
@@ -381,7 +381,7 @@ struct Raster {
         for (std::int64_t y = std::max<std::int64_t>(0, lo_y); y < std::min<std::int64_t>(h, hi_y); ++y) {
             for (std::int64_t x = std::max<std::int64_t>(0, lo_x); x < std::min<std::int64_t>(w, hi_x); ++x) {
                 for (std::size_t s = 0; s < samples.size(); ++s) {
-                    const Pt p{static_cast<double>(x) + samples[s].x, static_cast<double>(y) + samples[s].y};
+                    const Pt p{.x = static_cast<double>(x) + samples[s].x, .y = static_cast<double>(y) + samples[s].y};
                     const double d = signed_distance(p, sh.poly);
                     const bool in = slivers && !sh.sliver ? std::abs(d) <= 0.25 : d <= reach;
                     if (!in) continue;
@@ -641,16 +641,19 @@ struct Compared {
         }
         if (c.wrong < 6 && std::getenv("ATLAS_BUILDINGS_DEBUG") != nullptr) { // NOLINT: a test's diagnosis
             std::string covering;
+            const std::size_t column = i % w;
+            const std::size_t row = i / w;
             for (std::size_t k = 0; k < shapes.size(); ++k) {
                 double d = 1e300;
                 for (std::size_t q = 0; q < n; ++q) {
-                    const Pt p{static_cast<double>(i % w) + samples[q].x, static_cast<double>(i / w) + samples[q].y};
+                    const Pt p{.x = static_cast<double>(column) + samples[q].x,
+                               .y = static_cast<double>(row) + samples[q].y};
                     d = std::min(d, signed_distance(p, shapes[k].poly));
                 }
                 if (d > 0.5 + shapes[k].stroke) continue;
                 double inside = 0;
-                const double z = depth_at(cam, shapes[k], (static_cast<double>(i % w) + samples[0].x) / density,
-                                          (static_cast<double>(i / w) + samples[0].y) / density, &inside);
+                const double z = depth_at(cam, shapes[k], (static_cast<double>(column) + samples[0].x) / density,
+                                          (static_cast<double>(row) + samples[0].y) / density, &inside);
                 covering +=
                     std::format("\n  shape {} colour {:06x} d {:.4f} stroke {:.4f} sliver {} depth {:.9g} "
                                 "(inside its triangle by {:.4f}) slack {:.3g} points",
@@ -926,11 +929,14 @@ TEST_CASE("buildings: a pair the renders melt drawn by true depth as their geome
             ATLAS_REQUIRE(frames[mode].has_value());
             made->renderer.reset();
         }
+        const std::optional<platform::Pixels>& depth = frames[0];
+        const std::optional<platform::Pixels>& painter = frames[1];
+        ATLAS_REQUIRE(depth.has_value() && painter.has_value());
         std::size_t differ = 0;
-        for (std::size_t i = 0; i + 3 < frames[0]->rgba.size(); i += 4) {
-            if (!std::equal(frames[0]->rgba.begin() + static_cast<std::ptrdiff_t>(i),
-                            frames[0]->rgba.begin() + static_cast<std::ptrdiff_t>(i + 3),
-                            frames[1]->rgba.begin() + static_cast<std::ptrdiff_t>(i))) {
+        for (std::size_t i = 0; i + 3 < depth->rgba.size(); i += 4) {
+            if (!std::equal(depth->rgba.begin() + static_cast<std::ptrdiff_t>(i),
+                            depth->rgba.begin() + static_cast<std::ptrdiff_t>(i + 3),
+                            painter->rgba.begin() + static_cast<std::ptrdiff_t>(i))) {
                 ++differ;
             }
         }

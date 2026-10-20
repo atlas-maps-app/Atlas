@@ -135,7 +135,7 @@ void SunGlobals::prepare_lane(Lane& lane, const frame::FrameState& state,
         lane.have_bucket = false;
         lane.pack_id = id;
     }
-    if (!usable) return;
+    if (!usable || !state.view) return;
     lane.fine = pack->pack.head()->levels[0];
 
     // The scene: the resident tiles of the finest zoom at their own levels, their halo at the cover's.
@@ -217,7 +217,7 @@ void SunGlobals::work(const std::stop_token& stop) {
             for (Lane& l : lanes_) {
                 if (lane == nullptr && l.next) lane = &l;
             }
-            if (lane == nullptr) continue;
+            if (lane == nullptr || !lane->next) continue;
             b = std::move(*lane->next);
             lane->next.reset();
             lane->building = true;

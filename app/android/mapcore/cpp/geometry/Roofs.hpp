@@ -18,7 +18,7 @@
 
 namespace atlas::geometry {
 
-/// The roof of `b`, flagged `variant` (prim_flag::dry for a houseboat's building).
-void roofs(Builder& out, const Building& b, std::uint16_t variant);
+/// The roof of `bl` into `b`, flagged `variant` (prim_flag::dry for a houseboat's building).
+void roofs(Builder& b, const Building& bl, std::uint16_t variant);
 
 } // namespace atlas::geometry
