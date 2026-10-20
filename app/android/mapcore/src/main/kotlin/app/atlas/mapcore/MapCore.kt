@@ -110,6 +110,11 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
         fun fieldsLine(): String =
             Native.load()?.let { "fields unavailable: the core did not load ($it)" } ?: Native.fieldsLine()
 
+        /** The core's ground line ([Native.groundLine]) over the APK's bundled Westerkerk; off the main thread, about 40 ms. */
+        fun groundLine(assets: AssetManager): String =
+            Native.load()?.let { "ground unavailable: the core did not load ($it)" }
+                ?: assets.openFd("tiles/amsterdam.atlas").use { Native.groundLine(it.parcelFileDescriptor.fd, it.startOffset, it.length) }
+
         /**
          * VK facts' "Reset guard" (debug and bench builds, D5.10): forgets every crash, every driver the crash guard
          * turned off and everything it turned off for one (10 bits after VK bench's colour stage, the profiles check),

@@ -17,6 +17,7 @@
 #include "frame/MapFrame.hpp"
 #include "fx/Fields.hpp"
 #include "gen/spirv/modules.hpp"
+#include "geometry/Ground.hpp"
 #include "gpu/Facts.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/PipelineCache.hpp"
@@ -787,8 +788,17 @@ jstring native_fields_line(JNIEnv* env, jclass /*cls*/) {
 
 // ---- end of K17a's natives ----
 
-const std::array<JNINativeMethod, 23>& methods() {
-    static const std::array<JNINativeMethod, 23> table{{
+// ---- K9's natives: the ground's check (VK facts) ----
+
+/// K9's ground check over the bundled Westerkerk, an asset's descriptor, offset and length (about 40 ms of one core):
+/// `ground <hash> ok` or `ground <hash> FAIL expected <hash>`.
+jstring native_ground_line(JNIEnv* env, jclass /*cls*/, jint fd, jlong offset, jlong length) {
+    return java(env, geometry::ground_line(fd, static_cast<std::uint64_t>(offset), static_cast<std::uint64_t>(length)));
+}
+// ---- end of K9's natives ----
+
+const std::array<JNINativeMethod, 24>& methods() {
+    static const std::array<JNINativeMethod, 24> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -814,6 +824,9 @@ const std::array<JNINativeMethod, 23>& methods() {
         // ---- K17a's natives ----
         method("fieldsLine", "()Ljava/lang/String;", fn(&native_fields_line)),
         // ---- end of K17a's natives ----
+        // ---- K9's natives ----
+        method("groundLine", "(IJJ)Ljava/lang/String;", fn(&native_ground_line)),
+        // ---- end of K9's natives ----
         method("pipelines", "(J)Ljava/lang/String;", fn(&native_pipelines)),
         method("resetGuard", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", fn(&native_reset_guard)),
         // The app's map (K11).

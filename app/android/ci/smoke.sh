@@ -27,7 +27,8 @@
 #                                            (K3b), which must read `pymath $ATLAS_PYMATH_HASH ok`; sun.txt, the core's
 #                                            sun bits on Bionic (K8), which must read `sun $ATLAS_SUN_HASH ok`;
 #                                            fields.txt, the core's noise fields at S1 on Bionic (K17a), which must end
-#                                            `hash <h> ok` (each field equal to the port's)
+#                                            `hash <h> ok` (each field equal to the port's); ground.txt, the ground's
+#                                            stage T on Bionic (K9), which must read `ground $ATLAS_GROUND_HASH ok`
 # Each measured run starts from the installed state (`pm clear`, the install's permissions granted again), so earlier
 # screens' downloads and kept scenes do not change what the home draws. `run-as` needs a debuggable APK, so the bench
 # phase never uses it: the screen list comes from the debug run and the timings from logcat (tag AtlasMap).
@@ -40,14 +41,16 @@
 # (its window or the app not back), a host's window that never came, a colour stage that drew no frames, or one that
 # drew none once it went on after the app came back, an app that did not come back to the foreground after the colour
 # stage's background step, a pymath line other than `pymath $ATLAS_PYMATH_HASH ok`, a sun line other than
-# `sun $ATLAS_SUN_HASH ok`, a fields line other than `fields 1080x2400 cpu <ms> gpu off hash <h> ok`, VK bench's still pills
-# failing ci/pillcheck.py with the core's glass or passing it with their tint alone, and (once the map's core draws the
-# home) the home's frosted pills failing it or further than MAD 2 from HWUI's on the TextureView. A frame that never
-# comes is "NO FRAME", a warning; a background step the bench ended before is skipped, saying so.
+# `sun $ATLAS_SUN_HASH ok`, a fields line other than `fields 1080x2400 cpu <ms> gpu off hash <h> ok`, a ground line
+# other than `ground $ATLAS_GROUND_HASH ok`, VK bench's still pills failing ci/pillcheck.py with the core's glass or
+# passing it with their tint alone, and (once the map's core draws the home) the home's frosted pills failing it or
+# further than MAD 2 from HWUI's on the TextureView. A frame that never comes is "NO FRAME", a warning; a background
+# step the bench ended before is skipped, saying so.
 # Environment: ATLAS_SCREENS (the debug loop's screens, default: all), ATLAS_MAP_WAIT (seconds to wait for the home's map),
 # ATLAS_IDLE (seconds the home is watched at rest, default 20), ATLAS_BENCH=0 (skip the bench phase), ATLAS_PROFILE=0
 # (skip simpleperf), ATLAS_PYMATH_HASH (the numerics hash the host build and the port compute; android.yml sets it),
-# ATLAS_SUN_HASH (the sun bits' hash the host build computes; android.yml sets it).
+# ATLAS_SUN_HASH (the sun bits' hash the host build computes; android.yml sets it), ATLAS_GROUND_HASH (the ground's
+# stage T hash the host build computes; android.yml sets it).
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 APK=$(ls "$1"/*.apk | head -1); OUT=$2; mkdir -p "$OUT"
@@ -390,6 +393,15 @@ vk_phase() {
   echo "fields: $(cat "$OUT/fields.txt")"
   if ! grep -qE '^fields 1080x2400 cpu [0-9]+ gpu off hash [0-9a-f]{16} ok$' "$OUT/fields.txt"; then
     echo "FIELDS FAILED: the emulator's noise fields read '$(cat "$OUT/fields.txt")', not 'fields 1080x2400 cpu <ms> gpu off hash <h> ok'"; FAIL=1
+  fi
+  # The ground's stage T on Bionic (K9's, D16's L0 c): VK facts logs `ground <hash> ok` over the bundled Westerkerk's
+  # every tile built and packed for the GPU, and the hash must be the host build's (ATLAS_GROUND_HASH, from android.yml).
+  since_marker vkfacts | grep -o 'AtlasMap: ground .*' | sed 's/AtlasMap: //' | tr -d '\r' | head -1 > "$OUT/ground.txt"
+  echo "ground: $(cat "$OUT/ground.txt")"
+  if [ -z "${ATLAS_GROUND_HASH:-}" ]; then
+    echo "GROUND FAILED: ATLAS_GROUND_HASH is not set (android.yml's emulator job sets the expected hash)"; FAIL=1
+  elif ! grep -qx "ground $ATLAS_GROUND_HASH ok" "$OUT/ground.txt"; then
+    echo "GROUND FAILED: the emulator's ground reads '$(cat "$OUT/ground.txt")', not 'ground $ATLAS_GROUND_HASH ok'"; FAIL=1
   fi
   vk_crashes vkfacts
 

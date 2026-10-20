@@ -117,8 +117,11 @@ fun VkFactsScreen(config: CoreConfig, modifier: Modifier = Modifier, guardReset:
             // equal to the port's (the hashes the host build's tests hold); smoke.sh fails on any other ending.
             val fields = runCatching { MapCore.fieldsLine() }.getOrElse { "fields unavailable: $it" }
             Log.i(EngineFrames.TAG, fields)
+            // The ground's stage T on the bundled Westerkerk (K9): `ground <hash> ok`, held by smoke.sh to the host build's.
+            val ground = runCatching { MapCore.groundLine(context.assets) }.getOrElse { "ground unavailable: $it" }
+            Log.i(EngineFrames.TAG, ground)
             Log.i(EngineFrames.TAG, "vkfacts done")
-            lines + pymath + sun + fields
+            lines + pymath + sun + fields + ground
         }
         status = if (core == null) VK_HONEST else "Done: ${report.size} lines."
     }

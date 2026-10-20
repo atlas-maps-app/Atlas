@@ -74,6 +74,17 @@ object Native {
 
     // ---- end of K17a's natives ----
 
+    // ---- K9's natives: the ground's check (VK facts) ----
+
+    /**
+     * The core's ground check (plan-vector K9, `CP/geometry/Ground.hpp`) over the bundled Westerkerk, given as an asset's
+     * [fd], [offset] and [length]: every tile's ground built and packed for the GPU, hashed: `ground <hash> ok`, or
+     * `ground <hash> FAIL expected <hash>`. About 40 ms of one core: never on the main thread.
+     */
+    @JvmStatic external fun groundLine(fd: Int, offset: Long, length: Long): String
+
+    // ---- end of K9's natives ----
+
     /** The last failure of [create] or [attach] on this thread, in words. */
     @JvmStatic external fun lastError(): String
 
