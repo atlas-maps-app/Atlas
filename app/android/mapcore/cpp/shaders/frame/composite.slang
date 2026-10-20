@@ -106,8 +106,11 @@ CompositeOut composite_fs(FullOut v) {
         uint3 g = {b.y, b.z, opacity};
         grain = g;
     }
-    float2 css = css_of_output(frame.camera, v.position.xy);
-    float3 finished = composite_steps_fx(frame.layers, mean, css, frame.camera.frame.xy, grain);
+    // The upright device pixel (the output's pre-rotation undone), where the haze and the vignette are taken.
+    int2 at = fx_pixel(frame.camera, v.position.xy);
+    uint2 pixel = {uint(at.x < 0 ? 0 : at.x), uint(at.y < 0 ? 0 : at.y)};
+    float3 box = {frame.camera.frame.x, frame.camera.frame.y, frame.camera.frame.z};
+    float3 finished = composite_steps_fx(frame.layers, mean, pixel, box, grain);
     CompositeOut o;
     o.colour = composite_output(finished, n);
     return o;

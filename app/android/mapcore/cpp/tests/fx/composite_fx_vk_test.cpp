@@ -5,11 +5,9 @@
 // composite_pixel_fx, the shader's own text as C++, with each sample's objects bit and the grain field's bytes)
 // predicts every pixel: the rule where the objects group covers some of a pixel's samples, the grain everywhere. In
 // every configuration, route and composite target the device has, at 8 bits a channel and at 10, by day and at night,
-// with K17a's steps alone and with every step the composite draws. With K17a's steps alone every pixel off lavapipe's
-// seam is the twin's, bit for bit; the seam's pixels, shaded twice in place where the composite writes the samples
-// (the rule and the grain then applied twice), are named and counted, never absorbed. With every step, K7's haze and
-// vignette (float arithmetic, not exact as a module) leave channels one level off the twin on lavapipe, as they do
-// without K17a's steps: counted and named apart, and no channel further off.
+// with K17a's steps alone and with every step the composite draws (the haze and the vignette, integer arithmetic too).
+// Every pixel off lavapipe's seam is the twin's, bit for bit; the seam's pixels, shaded twice in place where the
+// composite writes the samples (the steps then applied twice), are named and counted, never absorbed.
 #if !defined(__ANDROID__)
 
 #include "frame/FrameBlock.hpp"
@@ -190,22 +188,21 @@ std::vector<gpu::Configuration> composite_configurations(const gpu::Device& devi
 
 /// What the frame held against the twin.
 struct Outcome {
-    std::uint32_t wrong = 0;       ///< channels off the seam that differ (beyond `float_steps`' one level)
+    std::uint32_t wrong = 0;       ///< channels off the seam that differ
     std::uint32_t seam = 0;        ///< channels on the seam that differ
-    std::uint32_t one_off = 0;     ///< channels one level off where K7's float steps run (`float_steps`)
     std::uint32_t silhouettes = 0; ///< pixels where the rule ran
     std::string first;
 };
 
-/// The frame against the twin. With `float_steps` (the haze and the vignette, K7's, whose float arithmetic the GPU
-/// rounds its own way: not exact as a module), a channel one level off is counted apart.
+/// The frame against the twin.
 [[nodiscard]] Outcome compare(const platform::Packed& out, std::uint32_t layers, std::uint32_t samples,
                               const shaders::FrameLayers& frame_layers, const fx::ScreenFields& fields,
-                              std::uint32_t opacity, bool float_steps) {
+                              std::uint32_t opacity) {
     Outcome o;
     const std::uint32_t levels = frame_layers.steps.y;
     const auto n = static_cast<float>(levels);
     const std::uint32_t full = (1U << samples) - 1U;
+    const hlsl::float3 box = {static_cast<float>(out.width), static_cast<float>(out.height), 1.0F};
     for (std::uint32_t y = 0; y < out.height; ++y) {
         for (std::uint32_t x = 0; x < out.width; ++x) {
             std::array<hlsl::float3, 4> colour{};
@@ -226,10 +223,8 @@ struct Outcome {
             const passes::CompositeInputs inputs{
                 .objects = objects, .mat = true, .grain = {grain[0], grain[1], opacity}};
             if (objects != 0U && objects != full) ++o.silhouettes;
-            const hlsl::float3 want =
-                passes::composite_pixel_fx(frame_layers, std::span(colour.data(), samples), inputs,
-                                           {static_cast<float>(x) + 0.5F, static_cast<float>(y) + 0.5F},
-                                           {static_cast<float>(out.width), static_cast<float>(out.height)});
+            const hlsl::float3 want = passes::composite_pixel_fx(frame_layers, std::span(colour.data(), samples),
+                                                                 inputs, hlsl::uint2{x, y}, box);
             const std::size_t i = (static_cast<std::size_t>(y) * out.width) + x;
             for (std::size_t c = 0; c < 3; ++c) {
                 const std::uint32_t got = level_at(out, i, c);
@@ -237,10 +232,6 @@ struct Outcome {
                 if (got == expected) continue;
                 if (on_seam(x, y, out.width, out.height)) {
                     ++o.seam;
-                    continue;
-                }
-                if (float_steps && (got + 1 == expected || expected + 1 == got)) {
-                    ++o.one_off;
                     continue;
                 }
                 if (o.wrong == 0) {
@@ -295,6 +286,8 @@ TEST_CASE("the composite's mat rule at the objects group's silhouettes and fin's
                 ATLAS_REQUIRE(builder.has_value(), builder.error().text());
                 style::ThemeBlock theme{};
                 theme.flags = style::theme_flag::weather | (night ? style::theme_flag::night : 0U);
+                theme.haze = {.r = 0xC8, .g = 0xCD, .b = 0xD7, .a = 0xFF}; // a haze for the every-step run
+                theme.haze_max = 0.55;
                 (*builder)->set_inputs({.camera = standin::board_view(extent.width, extent.height, 1.0),
                                         .theme = theme,
                                         .seconds = 0.5,
@@ -315,15 +308,8 @@ TEST_CASE("the composite's mat rule at the objects group's silhouettes and fin's
                 const std::shared_ptr<const fx::ScreenFields> latest = fields.worker().latest();
                 ATLAS_REQUIRE(latest != nullptr);
                 const auto samples = static_cast<std::uint32_t>(config.samples());
-                const bool float_steps = (steps & (shaders::COMPOSITE_HAZE | shaders::COMPOSITE_VIGNETTE)) != 0U;
-                const Outcome o =
-                    compare(*packed, layers, samples, block.layers, *latest,
-                            night ? shaders::COMPOSITE_GRAIN_NIGHT : shaders::COMPOSITE_GRAIN_DAY, float_steps);
-                if (float_steps) {
-                    MESSAGE(gpu::name_of(config) << ", every step: " << o.one_off << " channels one level off the twin "
-                                                 << "where K7's haze and vignette run (float arithmetic the GPU rounds "
-                                                 << "its own way; the same with K17a's steps off), none further");
-                }
+                const Outcome o = compare(*packed, layers, samples, block.layers, *latest,
+                                          night ? shaders::COMPOSITE_GRAIN_NIGHT : shaders::COMPOSITE_GRAIN_DAY);
                 const std::string name =
                     std::format("{} in {}{}{}", gpu::name_of(config), gpu::colour_name(packed->format),
                                 night ? ", night" : "", steps == ~0U ? ", every step" : "");

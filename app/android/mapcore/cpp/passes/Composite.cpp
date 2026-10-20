@@ -211,7 +211,7 @@ void Composite::emit(const frame::FrameState& state, twin::Stream& out, std::uin
 }
 
 hlsl::float3 composite_pixel_fx(const shaders::FrameLayers& layers, std::span<const hlsl::float3> samples,
-                                const CompositeInputs& inputs, hlsl::float2 p, hlsl::float2 frame) noexcept {
+                                const CompositeInputs& inputs, hlsl::uint2 pixel, hlsl::float3 frame) noexcept {
     const std::uint32_t levels = layers.steps.y;
     const auto n = static_cast<float>(levels);
     // The samples' levels, the objects group's and the others' apart, as the shader sums them.
@@ -239,12 +239,14 @@ hlsl::float3 composite_pixel_fx(const shaders::FrameLayers& layers, std::span<co
     } else {
         mean = shaders::composite_mean(objects + others, count);
     }
-    return shaders::composite_steps_fx(layers, mean, p, frame, inputs.grain);
+    return shaders::composite_steps_fx(layers, mean, pixel, frame, inputs.grain);
 }
 
 hlsl::float3 composite_pixel(const shaders::FrameLayers& layers, std::span<const hlsl::float3> samples, hlsl::float2 p,
                              hlsl::float2 frame) noexcept {
-    return composite_pixel_fx(layers, samples, CompositeInputs{}, p, frame);
+    const hlsl::uint2 pixel = {static_cast<std::uint32_t>(p.x), static_cast<std::uint32_t>(p.y)};
+    const hlsl::float3 box = {frame.x, frame.y, 1.0F};
+    return composite_pixel_fx(layers, samples, CompositeInputs{}, pixel, box);
 }
 
 } // namespace atlas::passes

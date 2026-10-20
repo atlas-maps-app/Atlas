@@ -60,12 +60,14 @@ struct CompositeInputs {
 
 /// The composite of one pixel as the GPU computes it (the shader's own text, as C++): the levels of its `n` samples'
 /// colours (`levels`: 255, or 1023 at 10 bits), the pixel's colour from them (the mean of their levels, or mat's rule
-/// where the objects group covers some of them and mat runs), the steps `layers` runs at CSS point `p` of a
-/// `frame`-sized frame (the grain with `inputs`' bytes); the finished colour as whole levels.
+/// where the objects group covers some of them and mat runs), the steps `layers` runs at the upright device pixel
+/// `pixel` of the W × H CSS frame at its density (`frame`: W, H, density; the grain with `inputs`' bytes); the finished
+/// colour as whole levels.
 [[nodiscard]] hlsl::float3 composite_pixel_fx(const shaders::FrameLayers& layers, std::span<const hlsl::float3> samples,
-                                              const CompositeInputs& inputs, hlsl::float2 p,
-                                              hlsl::float2 frame) noexcept;
-/// composite_pixel_fx with no sample of the objects group and no grain.
+                                              const CompositeInputs& inputs, hlsl::uint2 pixel,
+                                              hlsl::float3 frame) noexcept;
+/// composite_pixel_fx at density 1 (`p`, the CSS point of the pixel's centre, is in device px), with no sample of the
+/// objects group and no grain.
 [[nodiscard]] hlsl::float3 composite_pixel(const shaders::FrameLayers& layers, std::span<const hlsl::float3> samples,
                                            hlsl::float2 p, hlsl::float2 frame) noexcept;
 

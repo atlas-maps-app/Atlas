@@ -320,4 +320,133 @@ TEST_CASE("the frame builder refuses the one-subpass form, which A0 did not buil
     (void)session->take_messages();
 }
 
+TEST_CASE("the composite's haze and vignette are the twin's, bit for bit off lavapipe's seam, at every density and "
+          "camera, in every configuration, route and target") {
+    // K17a (the coordinator's: A2's exact haze): the haze and fin's vignette in whole numbers (shared/composite.slang),
+    // checked on, not only stubbed, over the probe's known samples, at a moment with weather and a haze, at densities
+    // 1 and 2.625 and three pitches (the horizon, and so the haze's stops, at three places); the seam counted apart.
+    auto session = test::open_session();
+    if (!session) return;
+    const gpu::Device& device = *session->device;
+    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const vk::Extent2D extent{.width = 96, .height = 72};
+    constexpr std::uint32_t layers = 4;
+    std::size_t drawn = 0;
+    std::uint32_t seam_total = 0;
+    for (const gpu::Configuration& config : composite_configurations(device)) {
+        for (const gpu::Depth depth : {gpu::Depth::eight, gpu::Depth::deepest}) {
+            for (const auto& [density, pitch] : {std::pair{1.0, 46.0}, std::pair{2.625, 70.0}, std::pair{1.5, 30.0}}) {
+                auto output = platform::Offscreen::create(device, extent, 2, depth);
+                ATLAS_REQUIRE(output.has_value(), output.error().text());
+                if (depth == gpu::Depth::deepest && !gpu::ten_bit((*output)->format())) continue;
+                std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes();
+                passes.push_back(std::make_unique<SamplesPass>(layers));
+                auto builder = frame::FrameBuilder::create(device, *cache, std::move(passes),
+                                                           {.overdraw = false, .clear = {0, 0, 0, 1}, .steps = ~0U});
+                ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+                style::ThemeBlock theme{};
+                theme.flags = style::theme_flag::weather;
+                theme.haze = {.r = 0xC8, .g = 0xCD, .b = 0xD7, .a = 0xFF};
+                theme.haze_max = 0.55;
+                (*builder)->set_inputs({.camera = standin::board_view(extent.width, extent.height, density, pitch),
+                                        .theme = theme,
+                                        .seconds = 0.5,
+                                        .mode = frame::Mode::structural,
+                                        .scene = nullptr});
+                auto renderer = gpu::Renderer::create(device, **output, **builder, config);
+                ATLAS_REQUIRE(renderer.has_value(), describe(config) << ": " << renderer.error().text());
+                for (int f = 0; f < 3; ++f) {
+                    auto report = (*renderer)->draw(0);
+                    ATLAS_REQUIRE(report.has_value(), describe(config) << ": " << report.error().text());
+                }
+                (*renderer)->drain();
+                auto packed = (*output)->read_packed((*output)->latest());
+                ATLAS_REQUIRE(packed.has_value(), packed.error().text());
+                const shaders::FrameBlock& block = (*builder)->state().block;
+                const std::uint32_t steps = block.layers.steps.x;
+                CHECK((steps & shaders::COMPOSITE_HAZE) != 0U);
+                CHECK((steps & shaders::COMPOSITE_VIGNETTE) != 0U);
+                const std::uint32_t levels = gpu::ten_bit(packed->format) ? 1023U : 255U;
+                const auto samples = static_cast<std::uint32_t>(config.samples());
+                const auto n = static_cast<float>(levels);
+                const std::uint32_t full = (1U << samples) - 1U;
+                const hlsl::float3 frame_box = {block.camera.frame.x, block.camera.frame.y, block.camera.frame.z};
+                shaders::FrameLayers stubbed = block.layers;
+                stubbed.steps.x = 0;
+                std::uint32_t wrong = 0;
+                std::uint32_t seam = 0;
+                std::uint32_t changed = 0;
+                std::string first;
+                for (std::uint32_t y = 0; y < packed->height; ++y) {
+                    for (std::uint32_t x = 0; x < packed->width; ++x) {
+                        std::array<hlsl::float3, 4> colour{};
+                        for (std::uint32_t layer = 0; layer < layers; ++layer) {
+                            const std::uint32_t h =
+                                test_hash((x * 73856093U) ^ (y * 19349663U) ^ ((layer + 1U) * 83492791U));
+                            const hlsl::float3 c = {static_cast<float>(h % (levels + 1U)) / n,
+                                                    static_cast<float>((h / 7U) % (levels + 1U)) / n,
+                                                    static_cast<float>((h / 49U) % (levels + 1U)) / n};
+                            const std::uint32_t mask = layer == 0 ? full : (test_hash(h) & full);
+                            for (std::uint32_t s = 0; s < samples; ++s) {
+                                if ((mask >> s) & 1U) colour[s] = c;
+                            }
+                        }
+                        const hlsl::float3 want = passes::composite_pixel_fx(
+                            block.layers, std::span(colour.data(), samples), {}, hlsl::uint2{x, y}, frame_box);
+                        const hlsl::float3 bare = passes::composite_pixel_fx(stubbed, std::span(colour.data(), samples),
+                                                                             {}, hlsl::uint2{x, y}, frame_box);
+                        if (want.x != bare.x || want.y != bare.y || want.z != bare.z) ++changed;
+                        const std::size_t i = (static_cast<std::size_t>(y) * packed->width) + x;
+                        for (std::size_t c = 0; c < 3; ++c) {
+                            const std::uint32_t got = level_at(*packed, i, c);
+                            const auto expected = static_cast<std::uint32_t>(want[static_cast<int>(c)]);
+                            if (got == expected) continue;
+                            if (on_seam(x, y, packed->width, packed->height)) {
+                                ++seam;
+                                continue;
+                            }
+                            if (wrong == 0) {
+                                first = std::format("pixel ({}, {}) channel {}: {} where the twin has {}", x, y, c, got,
+                                                    expected);
+                            }
+                            ++wrong;
+                        }
+                    }
+                }
+                const std::string name = std::format("{} in {} at density {} and pitch {}", describe(config),
+                                                     gpu::colour_name(packed->format), density, pitch);
+                CHECK_MESSAGE(wrong == 0,
+                              name << ": " << wrong << " channels differ from the twin's; the first: " << first);
+                // The steps do something: the haze and the vignette change most pixels.
+                CHECK_MESSAGE(changed > packed->width * packed->height / 4, name << ": the steps changed " << changed);
+                if (config.target == gpu::CompositeTarget::direct) {
+                    CHECK_MESSAGE(seam == 0, name << ": " << seam << " channels on the diagonal differ");
+                } else if (seam > 0) {
+                    MESSAGE(name << ": " << seam << " channels of pixels on the clipped triangle's seam differ (shaded "
+                                 << "twice in place on lavapipe: the haze and the vignette applied twice there); every "
+                                 << "other pixel is the twin's");
+                    seam_total += seam;
+                }
+                const bool forced = config.route == gpu::Route::dynamic && device.enabled().local_read_forced;
+                for (const std::string& m : session->take_messages()) {
+                    const bool about_local_reads = m.find("LocalRead") != std::string::npos ||
+                                                   m.find("local read") != std::string::npos ||
+                                                   m.find("dynamicRenderingLocalRead") != std::string::npos;
+                    if (forced && about_local_reads) {
+                        MESSAGE(name << " (forced): the validation layer: " << m);
+                    } else {
+                        CHECK_MESSAGE(false, name << ": " << m);
+                    }
+                }
+                ++drawn;
+                renderer->reset();
+            }
+        }
+    }
+    CHECK(drawn >= 6);
+    MESSAGE(drawn << " frames with the haze and the vignette on; " << seam_total
+                  << " channels on lavapipe's seam differ");
+}
+
 #endif
