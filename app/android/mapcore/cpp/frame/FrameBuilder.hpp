@@ -194,8 +194,9 @@ public:
 
     /// The twin of frame `number` (D16's L1): stage F as record runs it (the world's update, set 1's globals, the
     /// selections, ground slots, ranks and the passes' updates), then every pass's phases emitted in the frame's order
-    /// into `out` (cleared first), under the frame's root group (twin::Stream::root: the SVG's clip to the frame). It
-    /// records nothing; `out` is left empty when the camera state names no frame size.
+    /// into `out` (cleared first), under the frame's groups (twin::Stream::root, the SVG's clip to the frame;
+    /// objects, the objects' shared group; ground, the ground's). It records nothing; `out` is left empty when the
+    /// camera state names no frame size.
     void emit(twin::Stream& out, std::uint64_t number);
 
     /// The owner of painter slot `slot` in the last frame (its item's ItemSpec::owner): 0 for a ground slot, a slot no

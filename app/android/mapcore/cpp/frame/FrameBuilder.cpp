@@ -452,7 +452,15 @@ void FrameBuilder::emit(twin::Stream& out, std::uint64_t number) {
     const std::int32_t vb = out.begin_clip("vb");
     out.rect({}, 0.0F, 0.0F, width, height);
     out.end_clip();
-    out.set_root(out.group({.node = {.clip = vb}, .parent = twin::none}));
+    const std::int32_t root = out.group({.node = {.clip = vb}, .parent = twin::none});
+    out.set_root(root);
+    // The groups the passes share, as the port's render writes them: the objects' `<g stroke-linejoin="round">` (the
+    // linejoin is its children's style), filtered by `mat` when the moment has weather, and the ground's `mat` group
+    // around the areas, the paving and the roads, then only.
+    const bool weather = state_.theme.has(style::theme_flag::weather);
+    const std::int32_t mat = weather ? out.filter("mat") : twin::none;
+    out.set_objects(out.group({.node = {.filter = mat}, .parent = root}));
+    out.set_ground(weather ? out.group({.node = {.filter = mat}, .parent = root}) : root);
     for (const Step& step : steps_) passes_[step.pass]->emit(state_, out, step.phase);
 }
 

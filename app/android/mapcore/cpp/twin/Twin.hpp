@@ -229,6 +229,15 @@ public:
     /// emit), for the passes' groups to hang from; none until set. clear forgets it.
     void set_root(std::int32_t group) noexcept { root_ = group; }
     [[nodiscard]] std::int32_t root() const noexcept { return root_; }
+    /// The objects' group under the root, which every pass drawing into the port's objects group shares (the SVG's
+    /// `<g stroke-linejoin="round">`, with `filter="url(#mat)"` when the moment has weather: K10, K14, K15), and the
+    /// ground's (the port's `<g filter="url(#mat)">` around the areas, the paving and the roads, when the moment has
+    /// weather; the root otherwise, where the port draws no group). FrameBuilder::emit defines them; clear forgets
+    /// them.
+    void set_objects(std::int32_t group) noexcept { objects_ = group; }
+    [[nodiscard]] std::int32_t objects() const noexcept { return objects_; }
+    void set_ground(std::int32_t group) noexcept { ground_ = group; }
+    [[nodiscard]] std::int32_t ground() const noexcept { return ground_; }
 
     // ---- Where the elements that follow go.
 
@@ -274,6 +283,8 @@ private:
     std::int32_t items_ = 0;
     std::int32_t clips_ = 0;
     std::int32_t root_ = none;
+    std::int32_t objects_ = none;
+    std::int32_t ground_ = none;
     bool in_clip_ = false;
     std::size_t elements_ = 0;
 };

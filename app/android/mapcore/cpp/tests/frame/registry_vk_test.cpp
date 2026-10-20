@@ -7,6 +7,7 @@
 #include "gpu/PipelineCache.hpp"
 #include "standin/View.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
+#include "twin/Twin.hpp"
 
 #include <doctest/doctest.h>
 
@@ -150,3 +151,42 @@ TEST_CASE("the frame records its passes' phases by slot, then order, then the re
     renderer->reset();
 }
 #endif
+
+TEST_CASE("the frame's twin hangs the passes from its root, the objects' shared group and the ground's") {
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, frame::make_passes());
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    for (const bool weather : {true, false}) {
+        style::ThemeBlock th{};
+        th.version = style::theme_block_version;
+        th.flags = weather ? style::theme_flag::weather : 0U;
+        (*builder)->set_inputs({.camera = standin::board_view(64, 48, 1.0), .theme = th});
+        twin::Stream out;
+        (*builder)->emit(out, 1);
+        const twin::Decoded d = twin::decode(out.bytes());
+        REQUIRE_MESSAGE(d.error.empty(), d.error);
+        const twin::Document& doc = d.document;
+        const std::int32_t root = out.root();
+        REQUIRE(root >= 0);
+        REQUIRE(out.objects() >= 0);
+        CHECK(doc.groups[static_cast<std::size_t>(root)].node.clip >= 0); // the clip to the frame, vb
+        CHECK(doc.clips.front().id == "vb");
+        const twin::Group& objects = doc.groups[static_cast<std::size_t>(out.objects())];
+        CHECK(objects.parent == root);
+        if (weather) {
+            REQUIRE(objects.node.filter >= 0);
+            CHECK(doc.filters[static_cast<std::size_t>(objects.node.filter)] == "mat");
+            REQUIRE(out.ground() != root);
+            const twin::Group& ground = doc.groups[static_cast<std::size_t>(out.ground())];
+            CHECK(ground.parent == root);
+            CHECK(ground.node.filter == objects.node.filter);
+        } else {
+            CHECK(objects.node.filter == twin::none); // the port's plain <g stroke-linejoin="round">
+            CHECK(out.ground() == root);              // and no ground group
+        }
+    }
+    (void)session->take_messages();
+}
