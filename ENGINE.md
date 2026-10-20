@@ -4,7 +4,8 @@ Atlas draws its map with its own engine. This is the one document about it: what
 
 ## What it is
 
-- **The main piece, built from the ground up.** A C++23 core on Vulkan (`app/android/mapcore/cpp`), behind a small Kotlin façade (`app.atlas.mapcore.MapCore`). It draws vector tiles every frame the camera moves, at the screen's own density, and nothing at rest. Labels are placed again for each view, and detail comes and goes with the zoom.
+- **The centerpiece of the app, purpose built for Atlas.** It is done first, and the rest of the app builds on it.
+- **Built from the ground up.** A C++23 core on Vulkan (`app/android/mapcore/cpp`), behind a small Kotlin façade (`app.atlas.mapcore.MapCore`). It draws vector tiles every frame the camera moves, at the screen's own density, and nothing at rest. Labels are placed again for each view, and detail comes and goes with the zoom.
 - **Resembles the renderer.** The Python renderer (`render/*.py`, ported byte for byte to Kotlin in `app/android/render`) is the starting point for the look: its features, rules, colours and light.
   - The renderer is unfinished and has its issues, so it is a yardstick, not a specification.
   - The engine fixes what is wrong, and goes on in the renderer's spirit where it stops.
@@ -59,7 +60,7 @@ Atlas draws its map with its own engine. This is the one document about it: what
 - **All data is Atlas's own.** OpenMapTiles is gone; Planetiler stays only as a build tool, running Atlas's own profile.
 - **Only the checks below remain.** The old plan's other gates are dropped.
 - **Two pieces get simpler.** VK check (never built) becomes VK facts' hash lines. Taps on buildings use a hit test against the tile's own buildings instead of an ID pass.
-- **One agent works through one ordered list,** instead of waves of packages.
+- **One agent works through one ordered list,** instead of waves of packages. The engine comes before the rest of the app.
 
 ## Checks
 
@@ -83,9 +84,9 @@ Atlas draws its map with its own engine. This is the one document about it: what
    - the ten-minute soak, with no climb in thermal headroom;
    - a look.
 
-## What is built
+## What exists so far
 
-On `app` at `10c4529`, with CI green.
+Nothing is finished. Each part below is a first version on `app` (at `10c4529`, with CI green). It gets reworked wherever the design above asks for more, starting with true depth.
 
 | Part | State |
 |---|---|
@@ -114,7 +115,7 @@ The other local branches and the worktrees under `/Volumes/Download/atlas` are h
 
 ## What is left, in order
 
-Sizes are rough hours of one agent's work, about 180 in all.
+The engine is done first: it is the app's centerpiece, and the rest of the app builds on it. Sizes are rough hours of one agent's work, about 180 in all.
 
 ### 1. The new map on the phone (about 16 h)
 - **True depth first,** before more passes are built on the old order:
