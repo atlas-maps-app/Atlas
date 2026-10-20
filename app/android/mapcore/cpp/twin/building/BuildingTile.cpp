@@ -1,0 +1,182 @@
+// The buildings' records in the walls heap (twin/building/BuildingTile.hpp).
+#include "twin/building/BuildingTile.hpp"
+
+#include "base/assert.hpp"
+#include "twin/building/BuildingShader.hpp"
+
+#include <algorithm>
+#include <bit>
+#include <cstdint>
+
+namespace atlas::passes {
+
+namespace {
+
+using Words = std::array<std::uint32_t, 4>;
+
+[[nodiscard]] std::uint32_t bits(float v) noexcept { return std::bit_cast<std::uint32_t>(v); }
+
+[[nodiscard]] float f32(double v) noexcept { return static_cast<float>(v); }
+
+static_assert(geometry::prim_flag::near == shaders::BUILDING_NEAR &&
+                  geometry::prim_flag::far == shaders::BUILDING_FAR &&
+                  geometry::prim_flag::weather == shaders::BUILDING_WEATHER &&
+                  geometry::prim_flag::dry == shaders::BUILDING_DRY &&
+                  geometry::prim_flag::edge == shaders::BUILDING_EDGE &&
+                  geometry::prim_flag::triangle == shaders::BUILDING_TRIANGLE &&
+                  geometry::prim_flag::polygon == shaders::BUILDING_POLYGON &&
+                  geometry::prim_flag::stroke_fine == shaders::BUILDING_STROKE_FINE &&
+                  geometry::prim_flag::stroke_wide == shaders::BUILDING_STROKE_WIDE &&
+                  geometry::prim_flag::stroke_cabin == shaders::BUILDING_STROKE_CABIN,
+              "geometry/Walls.hpp's prim_flag and building.slangh's flags");
+
+/// Two runs this close (primitives of cells not drawn between them) are drawn as one.
+constexpr std::uint32_t run_gap = 512;
+
+} // namespace
+
+std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildings& g, double origin_x, double origin_z,
+                                                     BuildingTile& layout) {
+    namespace gm = atlas::geometry;
+    // The edged list without the near cells, which the frame cuts from their walls (stage T writes a wall's one cell,
+    // then its cells), and the near cells' records: per tile cell, its edged primitives and its near cells.
+    const std::size_t grid = g.edged_first.size() > 0 ? g.edged_first.size() - 1 : 0;
+    std::vector<const gm::Prim*> edged;
+    edged.reserve(g.edged.size());
+    std::vector<std::uint16_t> wall_near; // per edged record: its near slot as the heap holds it
+    std::vector<std::array<std::uint32_t, 2>> cells;
+    layout.edged_first.assign(grid + 1, 0);
+    layout.cells_first.assign(grid + 1, 0);
+    for (std::size_t c = 0; c < grid; ++c) {
+        layout.edged_first[c] = static_cast<std::uint32_t>(edged.size());
+        layout.cells_first[c] = static_cast<std::uint32_t>(cells.size());
+        std::size_t wall = SIZE_MAX; // the edged record of the last wall drawn only far
+        for (std::uint32_t i = g.edged_first[c]; i < g.edged_first[c + 1]; ++i) {
+            const gm::Prim& q = g.edged[i];
+            const bool near_cell = q.kind == gm::PrimKind::cell && (q.flags & gm::prim_flag::near) != 0 &&
+                                   (q.flags & gm::prim_flag::far) == 0;
+            if (!near_cell) {
+                if (q.kind == gm::PrimKind::cell && (q.flags & gm::prim_flag::near) == 0) wall = edged.size();
+                edged.push_back(&q);
+                wall_near.push_back(q.near_slot);
+                continue;
+            }
+            ATLAS_ASSERT(wall != SIZE_MAX, "a near cell before its wall");
+            const gm::Prim& w = *edged[wall];
+            ATLAS_ASSERT(w.item == q.item && w.face == q.face && q.sample == w.sample + 1 + q.part,
+                         "a near cell that is not its wall's: its item, face and sample after the wall's");
+            ATLAS_ASSERT(q.ncol >= 1 && q.ncol <= 0xFF && q.nrow >= 1 && q.nrow <= 0xFF && q.part < q.ncol * q.nrow,
+                         "a wall's cells beyond the near cells' record");
+            if (q.part == 0) wall_near[wall] = q.near_slot;
+            ATLAS_ASSERT(q.near_slot == wall_near[wall] + q.part, "a wall's cells' slots not in a run");
+            cells.push_back({static_cast<std::uint32_t>(wall),
+                             std::uint32_t{q.part} | (std::uint32_t{q.ncol} << 16U) | (std::uint32_t{q.nrow} << 24U)});
+        }
+    }
+    layout.edged_first[grid] = static_cast<std::uint32_t>(edged.size());
+    layout.cells_first[grid] = static_cast<std::uint32_t>(cells.size());
+    layout.plain_first = g.plain_first;
+    const auto e = static_cast<std::uint32_t>(edged.size());
+    const auto p = static_cast<std::uint32_t>(g.plain.size());
+    const auto n = static_cast<std::uint32_t>(cells.size());
+    const auto f = static_cast<std::uint32_t>(g.faces.size());
+    const auto k = static_cast<std::uint32_t>(g.items.size());
+    ATLAS_ASSERT(k <= 0x1'0000U, "a tile with more buildings than the primitives' 16 bits of item hold");
+    layout.edged = e;
+    layout.plain = p;
+    layout.cells = n;
+    layout.faces = f;
+    layout.items = k;
+    layout.prims_at = 0;
+    layout.cells_at = (e + p) * shaders::BUILDING_PRIM_VECTORS;
+    layout.faces_at = layout.cells_at + ((n + 1) / 2);
+    layout.colours_at = layout.faces_at + (f * shaders::BUILDING_FACE_VECTORS);
+    layout.rows_at = layout.colours_at + f; // two slots of two words a face: f uint4
+    layout.vectors = layout.rows_at + ((k + 3) / 4);
+    std::vector<Words> out(layout.vectors, Words{0, 0, 0, 0});
+    const auto local = [&](const gm::V3& v) {
+        return std::array<std::uint32_t, 3>{bits(f32(v.x - origin_x)), bits(f32(v.y)), bits(f32(v.z - origin_z))};
+    };
+    const auto put_prim = [&](std::uint32_t at, const gm::Prim& q, std::uint16_t near_slot) {
+        const std::array<std::uint32_t, 4> w{q.face, q.sample, (q.item & 0xFFFFU) | (std::uint32_t{q.flags} << 16U),
+                                             std::uint32_t{near_slot} | (std::uint32_t{q.far_slot} << 16U)};
+        for (std::size_t c = 0; c < 4; ++c) {
+            const auto xyz = local(q.p[c]);
+            out[at + c] = {xyz[0], xyz[1], xyz[2], w[c]};
+        }
+    };
+    for (std::uint32_t i = 0; i < e; ++i) put_prim(i * shaders::BUILDING_PRIM_VECTORS, *edged[i], wall_near[i]);
+    for (std::uint32_t i = 0; i < p; ++i) {
+        put_prim((e + i) * shaders::BUILDING_PRIM_VECTORS, g.plain[i], g.plain[i].near_slot);
+    }
+    for (std::uint32_t i = 0; i < n; ++i) {
+        Words& w = out[layout.cells_at + (i / 2)];
+        w[2 * (i % 2)] = cells[i][0];
+        w[(2 * (i % 2)) + 1] = cells[i][1];
+    }
+    // the n-gons whole, for the twin: their rings in the triangles' floats
+    layout.rings.clear();
+    layout.ring_points.clear();
+    for (const gm::Polygon& poly : g.polygons) {
+        if (poly.count == 0) continue; // the frame draws nothing of it
+        layout.rings.push_back({.first = static_cast<std::uint32_t>(layout.ring_points.size() / 3),
+                                .points = static_cast<std::uint32_t>(poly.ring.size()),
+                                .prim = poly.first,
+                                .prims = poly.count});
+        for (const gm::V3& v : poly.ring) {
+            layout.ring_points.push_back(f32(v.x - origin_x));
+            layout.ring_points.push_back(f32(v.y));
+            layout.ring_points.push_back(f32(v.z - origin_z));
+        }
+    }
+    // in their triangles' order (stage T sorts the primitives by cell, not the n-gons), as the twin looks them up
+    std::ranges::sort(layout.rings, {}, &BuildingRing::prim);
+    // each face's geometry for the vertex stage, its light inputs for the CPU's light
+    std::vector<double> areas(f, 0.0);
+    for (const gm::Polygon& poly : g.polygons) areas[poly.face] = poly.area;
+    layout.lights.resize(f);
+    for (std::uint32_t i = 0; i < f; ++i) {
+        const gm::Face& face = g.faces[i];
+        std::uint32_t flags = 0;
+        if (face.lit == gm::Lit::day) flags |= shaders::BUILDING_FACE_DAY;
+        if (!face.facing) flags |= shaders::BUILDING_FACE_BOTH;
+        const auto t = local(face.test);
+        out[layout.faces_at + (i * 2)] = {bits(f32(face.normal.x)), bits(f32(face.normal.y)), bits(f32(face.normal.z)),
+                                          bits(f32(areas[i]))};
+        out[layout.faces_at + (i * 2) + 1] = {t[0], t[1], t[2], flags};
+        layout.lights[i] = {.normal = {face.normal.x, face.normal.y, face.normal.z}, .base = face.base, .flags = flags};
+    }
+    return out;
+}
+
+void building_colours(const shaders::Theme& theme, std::span<const BuildingLight> lights,
+                      std::span<std::uint32_t> out) {
+    for (std::size_t i = 0; i < lights.size() && (2 * i) + 1 < out.size(); ++i) {
+        const BuildingLight& l = lights[i];
+        const shaders::double3 rgb{static_cast<double>((l.base >> 16U) & 0xFFU),
+                                   static_cast<double>((l.base >> 8U) & 0xFFU), static_cast<double>(l.base & 0xFFU)};
+        const shaders::double3 n{l.normal[0], l.normal[1], l.normal[2]};
+        const hlsl::uint3 lit = shaders::light_bytes(theme, rgb, n, true);
+        const hlsl::uint3 unlit = shaders::light_bytes(theme, rgb, n, false);
+        out[2 * i] = lit.x | (lit.y << 8U) | (lit.z << 16U);
+        out[(2 * i) + 1] = unlit.x | (unlit.y << 8U) | (unlit.z << 16U);
+    }
+}
+
+void building_runs(std::uint64_t cells, std::span<const std::uint32_t> first, std::vector<BuildingRun>& out) {
+    const std::size_t n = first.size() > 0 ? first.size() - 1 : 0;
+    const std::size_t own = out.size(); // the runs before are another list's: never joined
+    for (std::size_t c = 0; c < n && c < 64; ++c) {
+        if (((cells >> c) & 1U) == 0) continue;
+        const std::uint32_t a = first[c];
+        const std::uint32_t z = first[c + 1];
+        if (a == z) continue;
+        if (out.size() > own && a <= out.back().end + run_gap && a >= out.back().first) {
+            out.back().end = std::max(out.back().end, z);
+        } else {
+            out.push_back({.first = a, .end = z});
+        }
+    }
+}
+
+} // namespace atlas::passes

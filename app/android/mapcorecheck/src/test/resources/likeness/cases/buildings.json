@@ -1,0 +1,25 @@
+{
+  "about": "The buildings' cases (plan-vector K10): close and far views where walls, cells and roofs decide the likeness, beyond the boards and sweeps of smoke.json. Near the Westerkerk (the bundled living map) a wall's ncol x nrow cells within 460 m, the Prinsengracht's houseboats drawn as boats on a moment with weather and as buildings on the living map's night, which has none; on the canal ring (the Main board's pack) its gables and roofs at a street's distance, straight down (every flat top seen from above), low over the roofs (pitch 70), and far (one cell a wall). Structural, engine mode, at S1; the full tier.",
+  "cases": [
+    {"name": "buildings westerkerk close sunny S1", "scene": {"pack": "bundled"}, "camera": {"lat": 52.37475, "lon": 4.88385, "distance": 180.0, "bearing": 52.0, "pitch": 52.0, "cy": 440.0},
+     "moment": {"named": "sunny"}, "size": "S1", "mode": "structural", "engine": true, "gates": ["WITHIN2", "FLAT", "OWNERS", "CEILING", "L1", "L2"], "tier": "full"},
+    {"name": "buildings westerkerk close night S1", "scene": {"pack": "bundled"}, "camera": {"lat": 52.37475, "lon": 4.88385, "distance": 180.0, "bearing": 52.0, "pitch": 52.0, "cy": 440.0},
+     "moment": {"named": "night"}, "size": "S1", "mode": "structural", "engine": true, "gates": ["WITHIN2", "FLAT", "OWNERS", "CEILING", "L1", "L2"], "tier": "full"},
+    {"name": "buildings prinsengracht boats wet S1", "scene": {"pack": "bundled"}, "camera": {"lat": 52.37420, "lon": 4.88460, "distance": 140.0, "bearing": 200.0, "pitch": 58.0, "cy": 457.5},
+     "moment": {"named": "wet"}, "size": "S1", "mode": "structural", "engine": true, "gates": ["WITHIN2", "FLAT", "OWNERS", "CEILING", "L1", "L2"], "tier": "full"},
+    {"name": "buildings prinsengracht boats night S1", "scene": {"pack": "bundled"}, "camera": {"lat": 52.37420, "lon": 4.88460, "distance": 140.0, "bearing": 200.0, "pitch": 58.0, "cy": 457.5},
+     "moment": {"named": "night"}, "size": "S1", "mode": "structural", "engine": true, "gates": ["WITHIN2", "FLAT", "OWNERS", "CEILING", "L1", "L2"], "tier": "full"},
+    {"name": "buildings canal gables sunny S1", "scene": {"pack": "grachten", "sha256": "3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec"},
+     "camera": {"lat": 52.36950, "lon": 4.88900, "distance": 220.0, "bearing": 120.0, "pitch": 48.0, "cy": 440.0},
+     "moment": {"named": "sunny"}, "size": "S1", "mode": "structural", "engine": true, "gates": ["WITHIN2", "FLAT", "OWNERS", "CEILING", "L1", "L2"], "tier": "full"},
+    {"name": "buildings canal straight down sunny S1", "scene": {"pack": "grachten", "sha256": "3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec"},
+     "camera": {"lat": 52.37100, "lon": 4.88700, "distance": 420.0, "bearing": 0.0, "pitch": 0.0, "cy": 457.5},
+     "moment": {"named": "sunny"}, "size": "S1", "mode": "structural", "engine": true, "gates": ["WITHIN2", "FLAT", "OWNERS", "CEILING", "L1", "L2"], "tier": "full"},
+    {"name": "buildings canal low grey S1", "scene": {"pack": "grachten", "sha256": "3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec"},
+     "camera": {"lat": 52.36800, "lon": 4.89100, "distance": 300.0, "bearing": 300.0, "pitch": 70.0, "cy": 440.0},
+     "moment": {"named": "grey"}, "size": "S1", "mode": "structural", "engine": true, "gates": ["WITHIN2", "FLAT", "OWNERS", "CEILING", "L1", "L2"], "tier": "full"},
+    {"name": "buildings canal far sunny S1", "scene": {"pack": "grachten", "sha256": "3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec"},
+     "camera": {"lat": 52.37000, "lon": 4.88800, "distance": 1500.0, "bearing": 30.0, "pitch": 55.0, "cy": 440.0},
+     "moment": {"named": "sunny"}, "size": "S1", "mode": "structural", "engine": true, "gates": ["WITHIN2", "FLAT", "OWNERS", "CEILING", "L1", "L2"], "tier": "full"}
+  ]
+}

@@ -1,0 +1,567 @@
+// The buildings' vertex stage (plan-vector D6, D7, D10; K10), shared by the GPU (shaders/building/walls.slang,
+// roofs.slang) and the twin (CP/twin/building/BuildingShader.hpp compiles it as C++ after base/hlsl.hpp and
+// frame/FrameBlock.hpp), so the twin computes what the vertex stage draws. Not a module (its extension keeps
+// cmake/Shaders.cmake from compiling it alone): every module that draws buildings includes it after
+// shared/frame.slang.
+//
+// A primitive is one polygon the port fills with face() (geometry/Walls.hpp): a wall's cell, the wall up to a skillion
+// slope, a houseboat's wall, a roof's face, or one triangle of an n-gon. Per frame the vertex stage decides it as the
+// port does at that camera:
+//   - its building's item is drawn (the rank table's entry), in the variant of its detail band (cells nearer than
+//     460 m: band 0, the band the ranks chose in double), and a houseboat as a boat only with weather;
+//   - its face turns to the eye: vdot(n, C - p) > 0 at the port's test point (a deck is drawn from either side);
+//   - its corners are clipped at the near plane as City.Camera.poly clips them (t = (near - a.z) / (b.z - a.z)),
+//     projected as Camera.pc projects them, kept only if their box reaches within 300 px of the frame
+//     (`cam.poly(q, margin=300)`) and their area is 0.12 px² or more (face(); an n-gon's triangles share their
+//     polygon's estimated area), and snapped to the SVG's 0.1 px at rest;
+//   - it draws at its painter slot: its item's first slot (the rank table's) plus its own place in the item.
+// A wall's cell (and a skillion's or a houseboat's wall) is filled and stroked in one colour, 0.3 px wide, with the
+// objects group's round joins: the same as its polygon dilated by 0.15 px, the joins' arcs included, which the vertex
+// stage draws as one opaque outline of 16 points (building_outline) under MSAA, its depth and objects bit written as
+// for any opaque fill. Its colour is the face's light (computed per frame by shaders/building/light.slang), lit or not
+// by its sample's sun bit, cross-faded while a tile's bits change (K8's lit_amount).
+#pragma once
+
+// The primitive's flags (geometry/Walls.hpp's prim_flag).
+static const uint BUILDING_NEAR = 1u;     // drawn when its building is in detail band 0 (nearer than 460 m)
+static const uint BUILDING_FAR = 2u;      // drawn in the bands beyond
+static const uint BUILDING_WEATHER = 4u;  // drawn only when the moment has weather (a houseboat as a boat)
+static const uint BUILDING_DRY = 8u;      // drawn only without weather (a houseboat as a building)
+static const uint BUILDING_EDGE = 16u;    // with its same-colour 0.3 px edge
+static const uint BUILDING_TRIANGLE = 32u; // three corners
+static const uint BUILDING_POLYGON = 64u; // one triangle of an n-gon: its area is the polygon's
+// Its thin stroke in the port's attributes (the objects' thin strokes draw it, K17a; the twin emits it): .25 px in the
+// roofs' edge colour, .45 px in it, .4 px #2A2C30 (a houseboat's cabin roof).
+static const uint BUILDING_STROKE_FINE = 128u;
+static const uint BUILDING_STROKE_WIDE = 256u;
+static const uint BUILDING_STROKE_CABIN = 512u;
+
+// A face's flags.
+static const uint BUILDING_FACE_DAY = 1u;  // lit whenever the sun is up, not by a sample (a deck, a cabin's roof)
+static const uint BUILDING_FACE_BOTH = 2u; // drawn from either side (no facing test)
+
+// No sample, and no sun bits for the tile yet.
+static const uint BUILDING_NO_SAMPLE = 0xFFFFFFFFu;
+static const uint BUILDING_NO_BITS = 0xFFFFFFFFu;
+
+// The vertices each primitive draws: an edged quad's outline, a plain polygon's fan (the static index buffers').
+static const uint BUILDING_EDGED_VERTICES = 16u;
+static const uint BUILDING_PLAIN_VERTICES = 5u;
+
+// The port's constants: half the cells' 0.3 px stroke, face()'s least area, cam.poly's margin (CSS px).
+static const float BUILDING_EDGE_HALF = 0.15f;
+static const float BUILDING_MIN_AREA = 0.12f;
+static const float BUILDING_MARGIN = 300.0f;
+
+// The words of a primitive (4 uint4), a face's geometry (2 uint4) and its light inputs (8 words), in the walls heap.
+static const uint BUILDING_PRIM_VECTORS = 4u;
+static const uint BUILDING_FACE_VECTORS = 2u;
+static const uint BUILDING_LIGHT_WORDS = 8u;
+
+/// A draw's push constants: the tile's place and where its records lie (64 bytes of the frame's 128).
+struct BuildingPush {
+    TilePlace place;
+    uint4 at;  // x: its first primitive of the draw's list (or near cell: two a uint4), y: its faces (uint4 indexes in
+               // the walls heap); z: this frame slot's colours (a u32 index); w: its rows (a uint4 index)
+    uint4 sun; // x: the tile's first sun texel (BUILDING_NO_BITS: none yet); y: its fade weight's bits; z: its edged
+               // list's first primitive (a near cell's wall); w: the draw's list is near cells (1) or primitives (0)
+};
+
+/// A primitive as the walls heap holds it.
+struct BuildingPrim {
+    float3 c0; // its corners, tile-local metres, in the port's order (a triangle repeats c2 in c3)
+    float3 c1;
+    float3 c2;
+    float3 c3;
+    uint face;
+    uint sample; // its sun sample in the tile's samples, or BUILDING_NO_SAMPLE
+    uint item;   // its building's item among the tile's
+    uint flags;
+    uint near_slot; // its painter slot within the item in band 0, and beyond
+    uint far_slot;
+};
+
+inline BuildingPrim building_prim(uint4 a, uint4 b, uint4 c, uint4 d) {
+    BuildingPrim p;
+    float3 c0 = {asfloat(a.x), asfloat(a.y), asfloat(a.z)};
+    float3 c1 = {asfloat(b.x), asfloat(b.y), asfloat(b.z)};
+    float3 c2 = {asfloat(c.x), asfloat(c.y), asfloat(c.z)};
+    float3 c3 = {asfloat(d.x), asfloat(d.y), asfloat(d.z)};
+    p.c0 = c0;
+    p.c1 = c1;
+    p.c2 = c2;
+    p.c3 = c3;
+    p.face = a.w;
+    p.sample = b.w;
+    p.item = c.w & 0xFFFFu;
+    p.flags = c.w >> 16u;
+    p.near_slot = d.w & 0xFFFFu;
+    p.far_slot = d.w >> 16u;
+    return p;
+}
+
+/// A wall's near cell, from its record's second word (`code`: its place k on the wall, row by row, | the wall's columns
+/// << 16 | its rows << 24) and its wall's primitive (the one-cell quad quadAt(a, b, y0, top, 0, 1): corners (a, y0),
+/// (b, y0), (b, top), (a, top)): the cell cut from it as the port cuts it (ya = y0 + (top - y0) · r / nrow, u0 = c /
+/// ncol, quadAt's corners, in float), drawn near with the wall's edge, its sample the k-th after the wall's (K8's
+/// order), its painter slot the k-th after the first cell's (which the wall's record keeps as its near slot: a wall
+/// with cells is drawn only far).
+inline BuildingPrim building_cell_prim(BuildingPrim wall, uint code) {
+    uint k = code & 0xFFFFu;
+    uint ncol = (code >> 16u) & 0xFFu;
+    uint nrow = code >> 24u;
+    uint r = k / ncol;
+    uint c = k - r * ncol;
+    float u0 = float(c) / float(ncol);
+    float u1 = float(c + 1u) / float(ncol);
+    float y0 = wall.c0.y;
+    float top = wall.c3.y;
+    float ya = y0 + ((top - y0) * float(r)) / float(nrow);
+    float yb = y0 + ((top - y0) * float(r + 1u)) / float(nrow);
+    float ex = wall.c1.x - wall.c0.x;
+    float ez = wall.c1.z - wall.c0.z;
+    float ax = wall.c0.x + ex * u0;
+    float az = wall.c0.z + ez * u0;
+    float bx = wall.c0.x + ex * u1;
+    float bz = wall.c0.z + ez * u1;
+    BuildingPrim p = wall;
+    float3 c0 = {ax, ya, az};
+    float3 c1 = {bx, ya, bz};
+    float3 c2 = {bx, yb, bz};
+    float3 c3 = {ax, yb, az};
+    p.c0 = c0;
+    p.c1 = c1;
+    p.c2 = c2;
+    p.c3 = c3;
+    p.flags = (wall.flags & ~BUILDING_FAR) | BUILDING_NEAR;
+    p.sample = wall.sample + 1u + k;
+    p.near_slot = wall.near_slot + k;
+    p.far_slot = 0u;
+    return p;
+}
+
+/// A face's geometry as the vertex stage reads it.
+struct BuildingFace {
+    float3 normal; // the port's unit normal
+    float area;    // an n-gon's area in space, m² (its triangles' area test)
+    float3 test;   // the point the port tests facing at, tile-local metres
+    uint flags;
+};
+
+inline BuildingFace building_face(uint4 a, uint4 b) {
+    BuildingFace f;
+    float3 n = {asfloat(a.x), asfloat(a.y), asfloat(a.z)};
+    float3 t = {asfloat(b.x), asfloat(b.y), asfloat(b.z)};
+    f.normal = n;
+    f.area = asfloat(a.w);
+    f.test = t;
+    f.flags = b.w;
+    return f;
+}
+
+/// What the frame draws of a primitive: nothing (count 0), or its corners (CSS px, snapped at rest) and its depth.
+struct BuildingShape {
+    uint count;    // corners after the near plane: 3 to 5, or 0 (not drawn)
+    float2 p0;     // the corners, in the port's order (a near-clipped polygon's as Camera.poly makes them)
+    float2 p1;
+    float2 p2;
+    float2 p3;
+    float2 p4;
+    float depth;   // its painter depth (painter.slang)
+    uint slot;     // its painter slot
+};
+
+/// Corner i of a shape.
+inline float2 building_corner(BuildingShape s, uint i) {
+    if (i == 0u) {
+        return s.p0;
+    }
+    if (i == 1u) {
+        return s.p1;
+    }
+    if (i == 2u) {
+        return s.p2;
+    }
+    if (i == 3u) {
+        return s.p3;
+    }
+    return s.p4;
+}
+
+/// The shape with corner i set.
+inline BuildingShape building_with_corner(BuildingShape s, uint i, float2 v) {
+    BuildingShape r = s;
+    if (i == 0u) {
+        r.p0 = v;
+    } else if (i == 1u) {
+        r.p1 = v;
+    } else if (i == 2u) {
+        r.p2 = v;
+    } else if (i == 3u) {
+        r.p3 = v;
+    } else {
+        r.p4 = v;
+    }
+    return r;
+}
+
+/// Corner i of a primitive.
+inline float3 building_prim_corner(BuildingPrim p, uint i) {
+    if (i == 0u) {
+        return p.c0;
+    }
+    if (i == 1u) {
+        return p.c1;
+    }
+    if (i == 2u) {
+        return p.c2;
+    }
+    return p.c3;
+}
+
+/// A shape that draws nothing.
+inline BuildingShape building_nothing() {
+    BuildingShape s;
+    float2 zero = {0.0f, 0.0f};
+    s.count = 0u;
+    s.p0 = zero;
+    s.p1 = zero;
+    s.p2 = zero;
+    s.p3 = zero;
+    s.p4 = zero;
+    s.depth = 1.0f;
+    s.slot = 0u;
+    return s;
+}
+
+/// The primitive as the frame draws it at its camera (see the file's head), for its item's rank table entry `rank`
+/// and the moment's theme flags `theme_flags`.
+inline BuildingShape building_shape(FrameCamera cam, uint theme_flags, TilePlace place, BuildingPrim p, BuildingFace f,
+                                    uint rank) {
+    BuildingShape s = building_nothing();
+    if (rank == RANK_NONE) {
+        return s;
+    }
+    bool near = rank_band(rank) == 0u;
+    if ((p.flags & (near ? BUILDING_NEAR : BUILDING_FAR)) == 0u) {
+        return s;
+    }
+    bool weather = (theme_flags & THEME_WEATHER) != 0u;
+    if ((p.flags & BUILDING_WEATHER) != 0u && !weather) {
+        return s;
+    }
+    if ((p.flags & BUILDING_DRY) != 0u && weather) {
+        return s;
+    }
+    // vdot(n, C - p) > 0: the face turns to the eye (the eye is the origin of the eye-relative frame)
+    if ((f.flags & BUILDING_FACE_BOTH) == 0u) {
+        float3 t = eye_relative(place, f.test);
+        float toward = -(((f.normal.x * t.x) + (f.normal.y * t.y)) + (f.normal.z * t.z));
+        if (!(toward > 0.0f)) {
+            return s;
+        }
+    }
+    // Camera.poly: the corners' camera coordinates, clipped at the near plane
+    uint n = (p.flags & BUILDING_TRIANGLE) != 0u ? 3u : 4u;
+    float near_z = cam.frame.w;
+    float3 origin = {0.0f, 0.0f, 0.0f};
+    float3 c[5] = {origin, origin, origin, origin, origin};
+    uint m = 0u;
+    for (uint i = 0u; i < n; ++i) {
+        float3 a = camera_of(cam, eye_relative(place, building_prim_corner(p, i)));
+        float3 b = camera_of(cam, eye_relative(place, building_prim_corner(p, (i + 1u) % n)));
+        bool ai = a.z >= near_z;
+        bool bi = b.z >= near_z;
+        if (ai) {
+            c[m] = a;
+            m = m + 1u;
+        }
+        if (ai != bi) {
+            float t = (near_z - a.z) / (b.z - a.z);
+            float3 q = {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, near_z};
+            c[m] = q;
+            m = m + 1u;
+        }
+    }
+    if (m < 3u) {
+        return s;
+    }
+    // Camera.pc, the box against the frame and the margin, the area (unsnapped, as face() measures it)
+    float2 zero = {0.0f, 0.0f};
+    float2 q[5] = {zero, zero, zero, zero, zero};
+    float min_x = 0.0f;
+    float max_x = 0.0f;
+    float min_y = 0.0f;
+    float max_y = 0.0f;
+    for (uint i = 0u; i < m; ++i) {
+        q[i] = css_of(cam, c[i]);
+        if (i == 0u) {
+            min_x = q[i].x;
+            max_x = q[i].x;
+            min_y = q[i].y;
+            max_y = q[i].y;
+        } else {
+            min_x = q[i].x < min_x ? q[i].x : min_x;
+            max_x = q[i].x > max_x ? q[i].x : max_x;
+            min_y = q[i].y < min_y ? q[i].y : min_y;
+            max_y = q[i].y > max_y ? q[i].y : max_y;
+        }
+    }
+    if (max_x < -BUILDING_MARGIN || min_x > cam.frame.x + BUILDING_MARGIN || max_y < -BUILDING_MARGIN ||
+        min_y > cam.frame.y + BUILDING_MARGIN) {
+        return s;
+    }
+    float area = 0.0f;
+    if ((p.flags & BUILDING_POLYGON) != 0u) {
+        // an n-gon: its projected area from its area in space, at its centre (a small polygon's, where it matters)
+        float3 t = eye_relative(place, f.test);
+        float3 k = camera_of(cam, t);
+        float toward = -(((f.normal.x * t.x) + (f.normal.y * t.y)) + (f.normal.z * t.z));
+        area = k.z > 0.0f ? (cam.forward.w * cam.forward.w) * f.area * abs(toward) / (k.z * k.z * k.z) : 1.0e30f;
+    } else {
+        float twice = 0.0f;
+        for (uint i = 0u; i < m; ++i) {
+            float2 a = q[i];
+            float2 b = q[(i + 1u) % m];
+            twice = twice + (a.x * b.y - b.x * a.y);
+        }
+        area = abs(twice) / 2.0f;
+    }
+    if (area < BUILDING_MIN_AREA) {
+        return s;
+    }
+    bool rest = camera_rests(cam);
+    for (uint i = 0u; i < m; ++i) {
+        float2 v = q[i];
+        if (rest) {
+            float2 snapped = {snap_tenth(v.x), snap_tenth(v.y)};
+            v = snapped;
+        }
+        s = building_with_corner(s, i, v);
+    }
+    s.count = m;
+    s.slot = rank_slot(rank) + (near ? p.near_slot : p.far_slot);
+    s.depth = painter_depth(s.slot);
+    return s;
+}
+
+/// Point v (0 to 4) of a plain polygon's fan of 3 triangles, (0, 1, 2), (0, 2, 3), (0, 3, 4), laid out so the fan
+/// fills what SVG's nonzero rule fills of the shape's corners in order: a convex polygon from its first corner (a
+/// triangle's and a pentagon's points past its last repeat it); a quad that is not convex (a roof's slope whose eave
+/// and ridge are not parallel need not be planar, so its projection can be) from its reflex corner; a crossed quad
+/// (its edges p[i-1] p[i] and p[i+1] p[i+2] crossing at x) as its two lobes, [x, p[i], p[i+1], p[i+2], p[i-1]], whose
+/// middle triangle has no area (x lies on p[i+1] p[i+2]).
+inline float2 building_plain_point(BuildingShape s, uint v) {
+    if (s.count != 4u) {
+        return building_corner(s, v < s.count ? v : s.count - 1u);
+    }
+    // each corner's turn: the cross product of its incoming and outgoing edges
+    float turn[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    uint positive = 0u;
+    uint negative = 0u;
+    for (uint i = 0u; i < 4u; ++i) {
+        float2 a = building_corner(s, (i + 3u) % 4u);
+        float2 b = building_corner(s, i);
+        float2 c = building_corner(s, (i + 1u) % 4u);
+        float t = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+        turn[i] = t;
+        if (t > 0.0f) {
+            positive = positive + 1u;
+        } else if (t < 0.0f) {
+            negative = negative + 1u;
+        }
+    }
+    uint w = v < 4u ? v : 3u; // the fan's point v of a convex quad
+    if (positive == 0u || negative == 0u) {
+        return building_corner(s, w);
+    }
+    if (positive == 1u || negative == 1u) {
+        // concave: from the corner whose turn has the minority's sign
+        bool minority_positive = positive == 1u;
+        uint r = 0u;
+        for (uint i = 0u; i < 4u; ++i) {
+            if ((turn[i] > 0.0f) == minority_positive && turn[i] != 0.0f) {
+                r = i;
+            }
+        }
+        return building_corner(s, (r + w) % 4u);
+    }
+    // crossed: corners i and i + 1 turn alike, i + 2 and i + 3 the other way
+    uint i0 = 0u;
+    for (uint i = 0u; i < 4u; ++i) {
+        if ((turn[i] > 0.0f) == (turn[(i + 1u) % 4u] > 0.0f) && (turn[(i + 3u) % 4u] > 0.0f) != (turn[i] > 0.0f)) {
+            i0 = i;
+        }
+    }
+    float2 a = building_corner(s, (i0 + 3u) % 4u); // p[i-1]
+    float2 b = building_corner(s, i0);             // p[i]
+    float2 c = building_corner(s, (i0 + 1u) % 4u); // p[i+1]
+    float2 d = building_corner(s, (i0 + 2u) % 4u); // p[i+2]
+    if (v == 1u) {
+        return b;
+    }
+    if (v == 2u) {
+        return c;
+    }
+    if (v == 3u) {
+        return d;
+    }
+    if (v == 4u) {
+        return a;
+    }
+    // where a b crosses c d
+    float2 ab = b - a;
+    float2 cd = d - c;
+    float den = ab.x * cd.y - ab.y * cd.x;
+    if (den == 0.0f) {
+        return a;
+    }
+    float t = ((c.x - a.x) * cd.y - (c.y - a.y) * cd.x) / den;
+    float2 x = {a.x + ab.x * t, a.y + ab.y * t};
+    return x;
+}
+
+/// The direction of angle a from x toward y (radians).
+inline float2 building_direction(float a) {
+    float2 d = {building_cos(a), building_sin(a)};
+    return d;
+}
+
+/// v turned by angle a (counter-clockwise in x, y).
+inline float2 building_turn(float2 v, float a) {
+    float c = building_cos(a);
+    float s = building_sin(a);
+    float2 r = {v.x * c - v.y * s, v.x * s + v.y * c};
+    return r;
+}
+
+/// v over its length (v itself when it has none).
+inline float2 building_unit(float2 v) {
+    float l = sqrt(v.x * v.x + v.y * v.y);
+    if (!(l > 0.0f)) {
+        return v;
+    }
+    float2 u = {v.x / l, v.y / l};
+    return u;
+}
+
+/// Point v (0 to 15) of the outline of shape s dilated by r CSS px with round joins: the Minkowski sum of its polygon and
+/// a disc, which is what a same-colour stroke of width 2r with round joins adds to a fill. The polygon's distinct
+/// corners share the 16 points (16 / count each, the rest repeating the last); a corner turning by phi from its incoming
+/// edge's outward normal to its outgoing edge's takes its points at phi (2k + 1) / (2 per) along the arc, at the radius
+/// 2r / (1 + cos(phi / (2 per))), which puts the chords between them, and the straight parts along the edges, within
+/// r tan²(phi / (4 per)) of the true outline on either side (0.016 px at S1 for a needle's corner, 0.004 px for a right
+/// angle, at 4 a corner). A polygon that snapping made flat (collinear corners) is the segment between its two farthest
+/// corners, its outline a capsule.
+inline float2 building_outline(BuildingShape s, uint v, float r) {
+    // the distinct corners, in order
+    float2 zero = {0.0f, 0.0f};
+    float2 u[5] = {zero, zero, zero, zero, zero};
+    uint m = 0u;
+    for (uint i = 0u; i < s.count; ++i) {
+        float2 c = building_corner(s, i);
+        bool same = m > 0u && c.x == u[m - 1u].x && c.y == u[m - 1u].y;
+        if (!same) {
+            u[m] = c;
+            m = m + 1u;
+        }
+    }
+    if (m > 1u && u[m - 1u].x == u[0].x && u[m - 1u].y == u[0].y) {
+        m = m - 1u;
+    }
+    if (m == 0u) {
+        return zero;
+    }
+    // its orientation: the shoelace sum's sign in x, y (zero: the corners lie on one line)
+    float twice = 0.0f;
+    for (uint i = 0u; i < m; ++i) {
+        float2 a = u[i];
+        float2 b = u[(i + 1u) % m];
+        twice = twice + (a.x * b.y - b.x * a.y);
+    }
+    if (m >= 3u && twice == 0.0f) {
+        // flat: the segment between its two farthest corners
+        float best = -1.0f;
+        float2 a0 = u[0];
+        float2 b0 = u[0];
+        for (uint i = 0u; i < m; ++i) {
+            for (uint j = i + 1u; j < m; ++j) {
+                float2 d = u[j] - u[i];
+                float l = d.x * d.x + d.y * d.y;
+                if (l > best) {
+                    best = l;
+                    a0 = u[i];
+                    b0 = u[j];
+                }
+            }
+        }
+        u[0] = a0;
+        u[1] = b0;
+        m = 2u;
+    }
+    uint per = BUILDING_EDGED_VERTICES / m;
+    uint j = v / per;
+    uint k = v - j * per;
+    if (j >= m) {
+        j = m - 1u;
+        k = per - 1u;
+    }
+    float2 at = u[j];
+    if (m == 1u) {
+        // a point: a disc
+        float step = 6.28318530718f / float(per);
+        float rr = 2.0f * r / (1.0f + building_cos(step / 2.0f));
+        float2 d = building_direction(step * (float(k) + 0.5f));
+        float2 o = {at.x + rr * d.x, at.y + rr * d.y};
+        return o;
+    }
+    if (m == 2u) {
+        // a segment: a half disc at each end, from one side's normal round the end to the other's
+        float2 e = building_unit(at - u[(j + 1u) % 2u]);
+        float2 side = {e.y, -e.x};
+        float step = 3.14159265359f / float(per);
+        float rr = 2.0f * r / (1.0f + building_cos(step / 2.0f));
+        float2 d = building_turn(side, step * (float(k) + 0.5f));
+        float2 o = {at.x + rr * d.x, at.y + rr * d.y};
+        return o;
+    }
+    float sign = twice > 0.0f ? 1.0f : -1.0f;
+    float2 d_in = building_unit(at - u[(j + m - 1u) % m]);
+    float2 d_out = building_unit(u[(j + 1u) % m] - at);
+    float2 n_in = {sign * d_in.y, -sign * d_in.x};
+    float2 n_out = {sign * d_out.y, -sign * d_out.x};
+    float phi = building_atan2(n_in.x * n_out.y - n_in.y * n_out.x, n_in.x * n_out.x + n_in.y * n_out.y);
+    if (phi * sign < 0.0f) {
+        phi = 0.0f; // not a convex corner (none of a projected face's): no arc
+    }
+    float step = phi / float(per);
+    float rr = 2.0f * r / (1.0f + building_cos(step / 2.0f));
+    float2 d = building_turn(n_in, step * (float(k) + 0.5f));
+    float2 o = {at.x + rr * d.x, at.y + rr * d.y};
+    return o;
+}
+
+/// How lit a face draws (0 unlit, 1 lit): by its sample's sun bit, cross-faded while its tile's bits change (K8's
+/// lit_amount); a face lit by day is always lit (its unlit and lit colours are the same at night).
+inline float building_sun_amount(uint face_flags, uint sample, uint2 texel, uint has_bits, float weight) {
+    if ((face_flags & BUILDING_FACE_DAY) != 0u) {
+        return 1.0f;
+    }
+    if (has_bits == 0u || sample == BUILDING_NO_SAMPLE) {
+        return 0.0f;
+    }
+    uint now = (texel.x >> (sample & 31u)) & 1u;
+    uint before = (texel.y >> (sample & 31u)) & 1u;
+    if (before == now) {
+        return float(now);
+    }
+    return now != 0u ? weight : 1.0f - weight;
+}
+
+/// A face's colour (0 to 1) from its lit and unlit light (0xBBGGRR as light.slang packs them) and how lit it is.
+inline float3 building_colour(uint lit, uint unlit, float amount) {
+    float3 l = {float(lit & 0xFFu), float((lit >> 8u) & 0xFFu), float((lit >> 16u) & 0xFFu)};
+    float3 u = {float(unlit & 0xFFu), float((unlit >> 8u) & 0xFFu), float((unlit >> 16u) & 0xFFu)};
+    float3 c = u + (l - u) * amount;
+    return c / 255.0f;
+}
