@@ -7,6 +7,7 @@ Atlas draws its map with its own engine. This is the one document about it: what
 - **The centerpiece of the app, purpose built for Atlas.** It is done first, and the rest of the app builds on it.
 - **Built from the ground up.** A C++23 core on Vulkan (`app/android/mapcore/cpp`), behind a small Kotlin façade (`app.atlas.mapcore.MapCore`). It draws vector tiles every frame the camera moves, at the screen's own density, and nothing at rest. Labels are placed again for each view, and detail comes and goes with the zoom.
 - **Global, and it builds itself.** The map covers the entire world, from the globe down to a single street. The phone gathers up-to-date map data for any place, at any time, and builds the map itself. Pre-built packs are additions, not a requirement.
+- **Independent.** The app never relies on a single source. Every input has more than one way in, and the map keeps working offline with what it has.
 - **Resembles the renderer.** The Python renderer (`render/*.py`, ported byte for byte to Kotlin in `app/android/render`) is the starting point for the look: its features, rules, colours and light.
   - The renderer is unfinished and has its issues, so it is a yardstick, not a specification.
   - It is frozen: the look is refined in the engine.
@@ -20,17 +21,21 @@ Atlas draws its map with its own engine. This is the one document about it: what
 
 ## The design
 
-1. **The phone builds the map itself, anywhere, anytime.** It gathers up-to-date data for any place in the world, and the core builds the tiles on its workers:
-   - OpenStreetMap from Overpass, the renderer's own source, tile by tile with margins, so a building on a tile's edge is built once;
-   - the regional sources the renderer uses, such as AHN and the tides in the Netherlands;
-   - elevation from the best model for each region (national lidar where it exists), and a global model elsewhere.
+1. **The phone builds the map itself, anywhere, anytime, from more than one source.** It gathers up-to-date data for any place in the world, and the core builds the tiles on its workers:
+   - **OpenStreetMap,** tile by tile with margins, so a building on a tile's edge is built once. The same data can come three ways, and the phone takes whichever answers:
+     - several Overpass servers (Overpass is the renderer's own source), failing over from one to the next;
+     - Geofabrik's regional extracts, read on the phone itself;
+     - Atlas's own packs.
+   - **The renderer's regional sources,** such as AHN and the tides in the Netherlands.
+   - **Elevation** from the best model for each region (national lidar where it exists) and a global model elsewhere, each from more than one host.
+   - Everything built is kept, so a place seen once works offline.
 
    **Packs are additions, not a requirement.**
    - Atlas's packer builds them on GitHub with the same code, for offline use and an instant first look. A packed tile and a tile the phone builds from the same data are the same, byte for byte.
    - They come from Geofabrik's extracts, which are made for bulk processing. Overpass suits a phone's live queries, but its public servers limit bulk use (about 10,000 queries and 1 GB a day).
 
    **The far zooms come from two small world bases,** built the same way:
-   - a mid-zoom base, with Planetiler running Atlas's own profile into Atlas's format;
+   - a mid-zoom base, with Planetiler running Atlas's own profile into Atlas's format, published in more than one place;
    - a globe base, bundled in the APK.
 
    No live source can hand a phone whole regions and countries at once, so these are the only prebuilt data the map needs.
@@ -54,7 +59,7 @@ Atlas draws its map with its own engine. This is the one document about it: what
    - The ground keeps the renderer's layering on its one plane: land cover, areas, roads, water and shadows, in its order.
    - Flat detail on a wall (cells, windows, sashes, shutters, plinths, cornices, shop glazing, doors, numbers) is drawn by the wall's own shading from its record: crisp at any distance, with no overdraw and nothing fighting for depth.
    - What stands out from a wall (chimneys, dormers, hoist beams, shopfronts, signs, terraces) is geometry with depth.
-7. **Light and sun.** The renderer's light model and themes for the moment, and the sun test at every sample point, recomputed on the workers when the sun moves 0.5°.
+7. **Light and sun.** The renderer's light model and themes for the moment, and the sun test at every sample point, recomputed on the workers when the sun moves 0.5°. The moment's weather comes from more than one source, and the sun alone sets the moment when none answers.
 8. **Text.**
    - Names on the ground (water and canal names along their ways) are shaped by HarfBuzz as Android shapes them, and drawn from the glyphs' outlines (Slug).
    - Place names in every script are sprites drawn by Android's own text stack.
@@ -199,7 +204,13 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - label candidates and keep codes.
 
   They are held record for record to the port's, from the same data.
-- **Live data on the phone:** Overpass, tile by tile with margins, plus the renderer's regional sources (AHN and the tides in the Netherlands) and the best elevation model for the place.
+- **Live data from more than one source:**
+  - several Overpass servers, failing over;
+  - Geofabrik's regional extracts, read natively on the phone (libosmium is the candidate reader);
+  - Atlas's packs;
+  - the renderer's regional sources (AHN and the tides in the Netherlands), and the best elevation model for the place, from more than one host.
+
+  The same data gives the same tiles, whichever source it came from.
 - **Built in the background:** on the core's workers at background priority, nearest tiles first, prefetched along the camera's motion, never slowing a frame. Tiles are kept in the cache and refreshed by asking Overpass only for what changed since.
 - **Packs become additions:** the packer runs the same C++ through the host build, so a pack's tiles equal the phone's byte for byte. Regions can be downloaded for offline use and an instant first look.
 - **Exactly the renderer:** the phone's tiles at the boards' views equal the packer's from the same data, and the frames equal the references.
@@ -283,6 +294,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
 - Never Google.
 - Global: the map covers the entire world.
 - The phone builds the map itself, anywhere and anytime, from up-to-date data; packs are additions, not a requirement.
+- The app is as independent as possible, and never relies on a single source.
 - The close-range look (quays, reflections, doors, shopfronts) applies across Amsterdam.
 - The city continues past the renders' radius.
 - Canal names read upright, with hysteresis.
@@ -293,7 +305,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
 - **The renderer's known issues:** melting buildings is fixed by design (true depth). Others are fixed in the engine as they are found and named in the case files (the default), or the owner lists them to be fixed first.
 - **Textures while the map moves:** decided on the phone with step 3's switch. The default is the lean given there.
 - **The crooked windows:** as the renders draw them (the default), kept in one place so one edit changes them.
-- **Overpass for many users:** its public servers suit one phone. Before a public release, Atlas may need more mirrors or its own instance (the default: public instances, with caching and changed-since refreshes).
+- **The sources for many users:** with several Overpass servers, Geofabrik and the packs, no one server carries the app. Before a public release, decide whether Atlas adds its own mirror. The default: public sources, with caching and changed-since refreshes.
 - **Williamsburg in its own look:** yes (the default), done last.
 - **The close-range look beyond Amsterdam:** no (the default).
 
