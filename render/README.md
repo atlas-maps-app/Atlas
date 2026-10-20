@@ -1,8 +1,8 @@
-# The engine and the data
+# The renderer and the data
 
 The Amsterdam render is Thursday 1 October 2026 at 16:00 (sunrise 07:42, sunset 19:18), the moment every living-map board shares; the one-real-day screens that were built on it went on 13 October.
 
-Atlas's own map engine (`render/`), the data fetchers (`fetch/`) and what they fetched (`data/`). This is the part the app is built from (the whole repo is on GitHub; `github.sh` still makes a stand-alone copy of just this part): the engine's look is the spec for the app's renderer, the fetchers and extracts are its data.
+Atlas's Python renderer (`render/`), where the map engine's look starts (`ENGINE.md`; it is retired once the engine is finished), the data fetchers (`fetch/`) and what they fetched (`data/`). This is the part the app is built from (the whole repo is on GitHub; `github.sh` still makes a stand-alone copy of just this part): the engine's look is the spec for the app's renderer, the fetchers and extracts are its data.
 
 - `render/amsterdam.py`: the living map at the Westerkerk and the shared kit; `regions.py`: every place beyond, framed by the one table `data/regions/places.py`; `generic.py`, `city.py`, `living.py`, `real.py` (shadows, open hours), `shade.py`, `terrain.py`, `relief.py`, `woods.py`, `coasters.py`: the layers; `views.py`, `closeup.py`: cameras; `minify.py`, `cull.py`: uploaded copies under 2 MB; `day_frames.py`: frames at any hour; `traditions/`: building traditions; `routes_ams.py`: walking routes with shade; `check.py`: the smoke test. Renders land in `cache/render/`.
 - `python3 render/check.py [place] [moment]` renders one place from its saved data (New York, sunny, by default) and checks the layers come out well-formed: no network, a few seconds.

@@ -26,12 +26,13 @@ The rest of the screens are arriving alpha by alpha.
 
 ## How it is made
 
-- **The map engine is our own.** It is a Kotlin port of the Python engine in `render/`. It builds the city as meshes from vector tiles:
+- **The map engine is our own**, built from the ground up: a C++23 core on Vulkan that draws the map from Atlas's own vector tiles every frame the camera moves. Its look starts from the Python renderer in `render/`:
   - buildings with the roofs and colours of their place's building tradition
   - canals, quays, streets and trees
   - the sun's light and shadows
   - labels placed without collisions
-  It draws them with Android's Canvas, which Skia puts on the GPU.
+
+  `ENGINE.md` says how it works and what is left. Until it is finished, the alphas draw the map with the renderer's Kotlin port on Android's Canvas. Once it is finished, the renderer is retired.
 - **Map data** is OpenStreetMap: OpenMapTiles vector tiles from OpenFreeMap online, and packs built here (Planetiler tiles and a full-tag place database per region) for offline use.
 - **Routing** is BRouter, running inside the app on its worldwide offline data. Atlas adds:
   - its own checks for truck and boat limits
@@ -48,7 +49,8 @@ The screens were designed first as boards, each a phone screen, fed by real open
 | Folder | What it holds |
 |---|---|
 | `app/` | The Android app. `app/ideas.md` holds the ideas, and `app/android/` the Kotlin and Compose project (its README has the modules and how to build) |
-| `render/`, `fetch/`, `data/` | The Python map engine the app's engine is ported from, the data fetchers, and what they fetched. `render/README.md` covers the engine, the pipelines and the data |
+| `ENGINE.md` | The map engine: what it is, how it works, and what is left |
+| `render/`, `fetch/`, `data/` | The Python renderer the engine's look starts from, the data fetchers, and what they fetched. `render/README.md` covers the renderer, the pipelines and the data |
 | `reviews/` | Mangrove reviews, a small Python package |
 | `.github/workflows/` | Build and test on every push, an emulator run of every screen, releases, and the offline packs |
 
