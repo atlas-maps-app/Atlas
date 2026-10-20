@@ -50,6 +50,14 @@ World::create(const gpu::Device& device, std::span<const std::unique_ptr<frame::
         w->sun_ = std::move(sun);
         w->globals_.push_back(w->sun_.get());
     }
+    // The providers the passes contribute (their glyphs, their sprites), with the world's resources.
+    for (const std::unique_ptr<frame::Pass>& p : passes) {
+        for (std::shared_ptr<frame::GlobalProvider>& g : p->providers(device, w->options_.resources)) {
+            if (auto added = w->add_globals(std::move(g)); !added) {
+                return gpu::fail(std::format("the {} pass's provider: {}", p->name(), added.error().text()));
+            }
+        }
+    }
     return w;
 }
 

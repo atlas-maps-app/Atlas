@@ -15,6 +15,9 @@
 // published wakes the frame loop at rest (World::set_wake, the wake given here), so the loop draws until the picture is
 // final and then rests (D1: at rest the map draws nothing). Render thread only, but the world's clock and the wake,
 // which its workers call.
+//
+// Every world made holds the passes' own providers of set 1's globals (frame::Pass::providers, made with the map's
+// resources: their fonts) and K17a's noise fields and byte tables (fx::FieldCache), kept under the app's cache.
 #pragma once
 
 #include "frame/FrameBuilder.hpp"
@@ -25,6 +28,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -41,12 +45,23 @@ struct MapPack {
     tiles::PackRef ref;
 };
 
+/// What a map is made with besides its workers and its wake.
+struct MapOptions {
+    /// The app's cache folder: the noise fields are kept under cache_dir/fields (fx::FieldCache); empty: none kept,
+    /// each world made makes them again.
+    std::filesystem::path cache_dir;
+    /// Where the passes' resources come from (their fonts: frame::files_under on a host, assets_of on Android); none
+    /// by default.
+    Resources resources;
+};
+
 /// The app's map.
 class MapFrame final : public standin::SessionMap {
 public:
     /// A map whose world builds tiles on `workers` threads (T8: 2-3 by core count); `wake` is called on a worker as
-    /// each tile is published (cheap and never blocking: the frame loop's frame request), for every world made.
-    MapFrame(unsigned workers, std::function<void()> wake);
+    /// each tile, a tile's sun bits or the noise fields are published (cheap and never blocking: the frame loop's frame
+    /// request), for every world made.
+    MapFrame(unsigned workers, std::function<void()> wake, MapOptions options = {});
     /// The session that draws it must have let go of it first (Session::map(nullptr), or the session's close).
     ~MapFrame() override;
     MapFrame(const MapFrame&) = delete;
@@ -94,6 +109,7 @@ private:
 
     unsigned workers_;
     std::function<void()> wake_;
+    MapOptions options_;
     std::chrono::steady_clock::time_point epoch_;
     std::vector<MapPack> packs_;
     std::optional<style::ThemeBlock> theme_;

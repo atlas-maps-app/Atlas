@@ -8,6 +8,7 @@
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/MapFrame.hpp"
+#include "fx/FieldCache.hpp"
 #include "gpu/Guard.hpp"
 #include "standin/Session.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
@@ -15,6 +16,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -23,6 +25,7 @@
 #include <format>
 #include <fstream>
 #include <memory>
+#include <span>
 #include <sstream>
 #include <string>
 #include <unistd.h>
@@ -253,7 +256,7 @@ TEST_CASE("the app's map draws through the session: the pack the camera names, c
     {
         // The map outlives the session that draws it (the bridge's Core closes its session first): declared before it.
         std::atomic<int> wakes{0};
-        frame::MapFrame map(2, [&wakes] { wakes.fetch_add(1); });
+        frame::MapFrame map(2, [&wakes] { wakes.fetch_add(1); }, {.cache_dir = dir});
         standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
         CHECK(map.set_packs(bundled(tiles_dir)) == "amsterdam listed\ngrachten listed\n");
 
@@ -275,6 +278,18 @@ TEST_CASE("the app's map draws through the session: the pack the camera names, c
         CHECK((drawn_flags(map) & flag::tone) == 0);
         CHECK(wakes.load() > 0);
         CHECK_FALSE(map.animating()); // the picture is final: nothing more at this camera
+        // The world holds K17a's noise fields, kept under the app's cache once made for the frame's size.
+        {
+            const std::span<frame::GlobalProvider* const> globals = map.world()->globals();
+            const auto fields =
+                std::ranges::find_if(globals, [](frame::GlobalProvider* g) { return g->name() == "fields"; });
+            ATLAS_REQUIRE(fields != globals.end(), "the map's world has no noise fields");
+            // The provider named "fields" is the map's FieldCache (no RTTI in the core's builds).
+            auto* cache =
+                static_cast<fx::FieldCache*>(*fields); // NOLINT(cppcoreguidelines-pro-type-static-cast-downcast)
+            cache->worker().wait_idle();
+            CHECK(fs::exists(dir / "fields"));
+        }
         MESSAGE("the Westerkerk complete after " << first << " frames, " << wakes.load() << " wakes; "
                                                  << map.tiles_line());
 

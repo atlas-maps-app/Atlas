@@ -4,8 +4,12 @@
 // the app writes them. The frame is drawn until the world settles (the cover's tiles built and drawn, the sun's bits
 // in, every fade over), then read back at 8 bits a channel (in the frame's own colour, 10 bits where the device draws
 // in them), its owner map drawn in the owner mode at one sample, its counts taken (and in the overdraw mode the
-// fragments it shades), and its twin emitted. Implemented in TestTwin.cpp.
+// fragments it shades), and its twin emitted. The world holds the passes' own providers of set 1's globals (made with
+// the repo's mapview assets: their fonts) and K17a's noise fields and byte tables (kept under the JVM's temporary
+// folder); a full-mode frame waits for its fields before it is drawn. Implemented in TestTwin.cpp.
 #pragma once
+
+#include <jni.h>
 
 #include <array>
 #include <cstddef>
@@ -36,7 +40,15 @@ struct Request {
     bool twin = false;
     /// The frame's counts in the overdraw mode too (at one sample): its shaded fragments, full-screen equivalents.
     bool overdraw = false;
+    /// The folder the passes' resources are read from (frame::files_under: their fonts; empty: none), and the folder
+    /// the noise fields are kept in (empty: none kept, made at each draw).
+    std::string resources;
+    std::string cache;
 };
+
+/// Fills `request`'s folders from the JVM's properties: the repo's mapview assets (atlas.repo, which :mapcorecheck's
+/// tests set) and a folder in java.io.tmpdir.
+void folders_from_jvm(JNIEnv* env, Request& request);
 
 /// What was drawn.
 struct Result {

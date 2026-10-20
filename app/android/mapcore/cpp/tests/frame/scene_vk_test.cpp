@@ -24,10 +24,12 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -565,3 +567,84 @@ TEST_CASE("the world's providers fill set 1's globals: the heaps and the sun bou
     renderer->reset();
 }
 #endif
+
+namespace {
+
+/// A pass that contributes a provider of set 1's glyph curves, made with the resources it is given (it reads
+/// probe.txt), or (`clash`) one of the sun's bits, which the world's sun fills.
+class ProviderProbe final : public frame::Pass {
+public:
+    explicit ProviderProbe(bool clash) noexcept : clash_(clash) {}
+    [[nodiscard]] std::string_view name() const noexcept override { return clash_ ? "clash probe" : "provider probe"; }
+    [[nodiscard]] std::span<const frame::Phase> phases() const noexcept override { return {}; }
+    [[nodiscard]] gpu::Result<void> prepare(const frame::PassContext& c) override {
+        (void)c;
+        return {};
+    }
+    void release() noexcept override {}
+    void record(const frame::Recording& r, std::uint32_t phase) override {
+        (void)r;
+        (void)phase;
+    }
+    [[nodiscard]] std::vector<std::shared_ptr<frame::GlobalProvider>>
+    providers(const gpu::Device& device, const frame::Resources& resources) const override {
+        (void)device;
+        if (resources.read) {
+            if (auto bytes = resources.read("probe.txt")) {
+                read.assign(reinterpret_cast<const char*>(bytes->data()), bytes->size()); // NOLINT
+            }
+            refused = !resources.read("../probe.txt").has_value() && !resources.read("/probe.txt").has_value();
+        }
+        made = std::make_shared<CountingGlobals>(
+            std::array{clash_ ? frame::Global::sun_bits : frame::Global::glyph_curves});
+        return {made};
+    }
+    mutable std::string read;
+    mutable bool refused = false;
+    mutable std::shared_ptr<CountingGlobals> made;
+
+private:
+    bool clash_;
+};
+
+} // namespace
+
+TEST_CASE("a pass's providers come with the world, made with the world's resources; a clash refuses the world") {
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "resources";
+    std::filesystem::create_directories(folder);
+    std::ofstream(folder / "probe.txt") << "the fonts' folder";
+    {
+        std::vector<std::unique_ptr<frame::Pass>> passes;
+        auto owned = std::make_unique<ProviderProbe>(false);
+        const ProviderProbe* probe = owned.get();
+        passes.push_back(std::move(owned));
+        auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+        ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+        auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                          {.workers = 1, .resources = frame::files_under(folder.string())});
+        ATLAS_REQUIRE(world.has_value(), world.error().text());
+        CHECK(probe->read == "the fonts' folder");
+        CHECK(probe->refused); // nothing outside the folder
+        REQUIRE(probe->made != nullptr);
+        const std::span<frame::GlobalProvider* const> globals = (*world)->globals();
+        CHECK(std::ranges::find(globals, probe->made.get()) != globals.end());
+        CHECK(globals.size() == 3); // the heaps', the sun's, the pass's
+    }
+    {
+        std::vector<std::unique_ptr<frame::Pass>> passes;
+        passes.push_back(std::make_unique<ProviderProbe>(true));
+        auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+        ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+        auto world = scene::World::create(*session->device, (*builder)->passes(), {.workers = 1});
+        REQUIRE_FALSE(world.has_value());
+        MESSAGE(world.error().text());
+        CHECK(world.error().text().find("clash probe") != std::string::npos);
+        CHECK(world.error().text().find("sun_bits") != std::string::npos);
+    }
+    const auto messages = session->take_messages();
+    CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
+}

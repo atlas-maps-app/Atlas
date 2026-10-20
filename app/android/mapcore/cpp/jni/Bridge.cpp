@@ -174,11 +174,14 @@ public:
                 self->render_env_ = e;
             },
             [self] { self->vm_->DetachCurrentThread(); });
-        // The app's map, its tiles built on 2 or 3 workers by core count (T8); a tile published wakes the frame loop.
-        core->map_ = std::make_unique<frame::MapFrame>(map_workers(), [self] { self->wake(); });
+        // The app's map, its tiles built on 2 or 3 workers by core count (T8); a tile published wakes the frame loop;
+        // the noise fields kept under the app's cache.
+        core->map_ = std::make_unique<frame::MapFrame>(
+            map_workers(), [self] { self->wake(); }, frame::MapOptions{.cache_dir = options.cache_dir});
 #else
         (void)env;
-        core->map_ = std::make_unique<frame::MapFrame>(map_workers(), nullptr);
+        core->map_ = std::make_unique<frame::MapFrame>(map_workers(), nullptr,
+                                                       frame::MapOptions{.cache_dir = options.cache_dir});
 #endif
         return core;
     }

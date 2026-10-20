@@ -3,6 +3,7 @@
 
 #include "base/log.hpp"
 #include "frame/PassRegistry.hpp"
+#include "fx/FieldCache.hpp"
 
 #include <algorithm>
 #include <format>
@@ -40,8 +41,9 @@ style::ThemeBlock with_profile(style::ThemeBlock theme, tiles::Profile profile) 
     return theme;
 }
 
-MapFrame::MapFrame(unsigned workers, std::function<void()> wake)
-    : workers_(std::max(1U, workers)), wake_(std::move(wake)), epoch_(std::chrono::steady_clock::now()) {}
+MapFrame::MapFrame(unsigned workers, std::function<void()> wake, MapOptions options)
+    : workers_(std::max(1U, workers)), wake_(std::move(wake)), options_(std::move(options)),
+      epoch_(std::chrono::steady_clock::now()) {}
 
 MapFrame::~MapFrame() {
     // The world goes before the descriptors of the packs it mapped (its mappings outlive them anyway).
@@ -116,7 +118,10 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
     auto clock = [epoch = epoch_] {
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - epoch).count();
     };
-    auto world = scene::World::create(device, (*builder)->passes(), {.workers = workers_, .clock = std::move(clock)});
+    // The passes' own providers of set 1's globals come with the world, made with the map's resources.
+    auto world =
+        scene::World::create(device, (*builder)->passes(),
+                             {.workers = workers_, .resources = options_.resources, .clock = std::move(clock)});
     if (!world) {
         const gpu::Announced named =
             gpu::announce_release({.kind = "frame", .detail = "(the map's frame builder)"}, watch);
@@ -126,6 +131,18 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
     builder_ = std::move(*builder);
     world_ = std::move(*world);
     if (wake_) world_->set_wake(wake_);
+    // The noise fields and the byte tables (K17a), kept under the app's cache: without them the effects that read them
+    // stay stubbed, which the map's structural mode does anyway, so their failure only says so.
+    auto fields = fx::FieldCache::create(
+        device, {.dir = options_.cache_dir.empty() ? std::filesystem::path() : options_.cache_dir / "fields"});
+    if (!fields) {
+        log::warn("vk map: the noise fields: {}", fields.error().text());
+    } else {
+        if (wake_) (*fields)->set_wake(wake_);
+        if (auto added = world_->add_globals(std::shared_ptr<GlobalProvider>(std::move(*fields))); !added) {
+            log::warn("vk map: the noise fields: {}", added.error().text());
+        }
+    }
     // The packs listed so far open in the new world; one that no longer opens is dropped, saying why.
     std::erase_if(packs_, [this](MapPack& p) {
         const std::string why = open(p);

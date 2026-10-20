@@ -24,9 +24,19 @@
 #include "gpu/PipelineCache.hpp"
 #include "gpu/Pipelines.hpp"
 
+#include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <memory>
+#include <optional>
 #include <span>
+#include <string>
 #include <string_view>
+#include <vector>
+
+#if defined(__ANDROID__)
+struct AAssetManager; // <android/asset_manager.h>
+#endif
 
 namespace atlas::scene {
 class TileBuild; // scene/Residency.hpp
@@ -38,10 +48,11 @@ class Stream; // twin/Twin.hpp
 
 namespace atlas::frame {
 
-class FrameBuilder; // frame/FrameBuilder.hpp
-class FrameLayout;  // frame/FrameLayout.hpp
-class Selectors;    // frame/Selectors.hpp
-struct FrameState;  // frame/FrameBuilder.hpp
+class FrameBuilder;   // frame/FrameBuilder.hpp
+class FrameLayout;    // frame/FrameLayout.hpp
+class GlobalProvider; // frame/Globals.hpp
+class Selectors;      // frame/Selectors.hpp
+struct FrameState;    // frame/FrameBuilder.hpp
 
 /// Where in the frame a phase records (D5.12's order).
 enum class Slot : std::uint8_t {
@@ -67,6 +78,25 @@ struct Phase {
     std::int32_t order = 0;
     std::uint32_t id = 0;
 };
+
+/// Where a pass's resources come from (its fonts: mapview's assets, svgfonts/…): the repo's files on a host, the APK's
+/// assets on Android, through one reader (files_under, assets_of).
+struct Resources {
+    /// The bytes of the resource at `path` (relative: "svgfonts/Geist-wght.ttf"), or nothing (absent, or no reader).
+    std::function<std::optional<std::vector<std::byte>>(std::string_view path)> read;
+    /// Where they come from, for logs ("files under <dir>", "the APK's assets"; empty: none).
+    std::string origin;
+};
+
+/// Resources read from the files under `dir` (a host's: the repo's app/android/mapview/src/main/assets). A path that
+/// leaves the folder (absolute, or through "..") reads nothing.
+[[nodiscard]] Resources files_under(std::string dir);
+
+#if defined(__ANDROID__)
+/// Resources read from the APK's assets through `assets` (AAssetManager_fromJava of the app's AssetManager, which the
+/// app keeps alive); none when it is null.
+[[nodiscard]] Resources assets_of(AAssetManager* assets);
+#endif
 
 /// How a pipeline counts in the overdraw mode (Counters.hpp): its fragments shaded as opaque ones, as translucent ones,
 /// or not at all (a pipeline outside the scene subpass).
@@ -159,6 +189,15 @@ public:
     /// (scene/Residency.hpp). Many tiles build at once: it must not touch the pass's own state.
     [[nodiscard]] virtual gpu::Result<void> build(scene::TileBuild& build) const {
         (void)build;
+        return {};
+    }
+    /// The providers of set 1's globals the pass contributes (its glyphs' curves and bands, its sprites:
+    /// frame/Globals.hpp), made once for `device` with `resources` (its fonts) as the world is made; the world
+    /// registers them after its own and asks them every frame. None by default.
+    [[nodiscard]] virtual std::vector<std::shared_ptr<GlobalProvider>> providers(const gpu::Device& device,
+                                                                                 const Resources& resources) const {
+        (void)device;
+        (void)resources;
         return {};
     }
 

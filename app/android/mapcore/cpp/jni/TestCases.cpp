@@ -202,6 +202,7 @@ JNIEXPORT jint JNICALL Java_app_atlas_mapcorecheck_likeness_TestCases_render(JNI
     request.clear = {channel(c->clear_argb, 16), channel(c->clear_argb, 8), channel(c->clear_argb, 0), 1.0F};
     request.pixels = true;
     request.owners = owners != nullptr;
+    atlas::jni::host_frame::folders_from_jvm(env, request);
     const atlas::jni::host_frame::Result result = atlas::jni::host_frame::draw(request);
     last_device = result.device + "; " + result.notes;
     if (!result.error.empty()) {

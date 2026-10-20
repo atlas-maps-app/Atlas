@@ -12,6 +12,7 @@
 #include "frame/FrameBlock.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/PassRegistry.hpp"
+#include "fx/FieldCache.hpp"
 #include "gpu/Device.hpp"
 #include "gpu/Frames.hpp"
 #include "gpu/Instance.hpp"
@@ -36,6 +37,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <format>
 #include <limits>
 #include <memory>
@@ -247,6 +249,40 @@ struct Session {
 
 } // namespace
 
+void folders_from_jvm(JNIEnv* env, Request& request) {
+    // A system property of the JVM ("" when it is not set or cannot be read).
+    auto property = [env](const char* name) -> std::string {
+        jclass system = env->FindClass("java/lang/System");
+        if (system == nullptr) {
+            env->ExceptionClear();
+            return {};
+        }
+        jmethodID get = env->GetStaticMethodID(system, "getProperty", "(Ljava/lang/String;)Ljava/lang/String;");
+        jstring key = env->NewStringUTF(name);
+        auto* value = get != nullptr && key != nullptr
+                          ? static_cast<jstring>(env->CallStaticObjectMethod(system, get, key)) // NOLINT
+                          : nullptr;
+        if (key != nullptr) env->DeleteLocalRef(key);
+        env->DeleteLocalRef(system);
+        if (env->ExceptionCheck() == JNI_TRUE) {
+            env->ExceptionClear();
+            return {};
+        }
+        if (value == nullptr) return {};
+        const char* chars = env->GetStringUTFChars(value, nullptr);
+        std::string out = chars != nullptr ? chars : "";
+        if (chars != nullptr) env->ReleaseStringUTFChars(value, chars);
+        env->DeleteLocalRef(value);
+        return out;
+    };
+    if (const std::string repo = property("atlas.repo"); !repo.empty()) {
+        request.resources = repo + "/app/android/mapview/src/main/assets";
+    }
+    if (const std::string temporary = property("java.io.tmpdir"); !temporary.empty()) {
+        request.cache = temporary + "/atlas-host-frame";
+    }
+}
+
 Result draw(const Request& r) {
     Result out;
     const auto camera = style::read_camera_state(r.camera);
@@ -288,12 +324,29 @@ Result draw(const Request& r) {
     frame::FrameBuilder& builder = **made;
     for (const auto& p : builder.passes()) out.passes += (out.passes.empty() ? "" : ",") + std::string(p->name());
     double now = 0;
-    auto world = scene::World::create(d, builder.passes(), {.workers = 2, .clock = [&now] { return now; }});
+    auto world =
+        scene::World::create(d, builder.passes(),
+                             {.workers = 2,
+                              .resources = r.resources.empty() ? frame::Resources{} : frame::files_under(r.resources),
+                              .clock = [&now] { return now; }});
     if (!world) {
         out.error = "the world: " + world.error().text();
         return out;
     }
     scene::World& w = **world;
+    // K17a's noise fields and byte tables, as the app's map holds them; a full-mode frame waits for its fields.
+    auto fields = fx::FieldCache::create(
+        d,
+        {.dir = r.cache.empty() ? std::filesystem::path() : std::filesystem::path(r.cache) / "fields", .threads = 2});
+    if (!fields) {
+        out.error = "the noise fields: " + fields.error().text();
+        return out;
+    }
+    fx::FieldCache& field_cache = **fields;
+    if (auto added = w.add_globals(std::shared_ptr<frame::GlobalProvider>(std::move(*fields))); !added) {
+        out.error = "the noise fields: " + added.error().text();
+        return out;
+    }
     for (const auto& [id, path] : r.packs) {
         if (auto added = w.store().add({.id = id, .kind = tiles::PackKind::render, .path = path}); !added) {
             out.error = std::format("the pack {} at {}: {}", id, path, tiles::describe(added.error()));
@@ -331,6 +384,11 @@ Result draw(const Request& r) {
         if (!report) out.error = "a frame: " + report.error().text();
         return report.has_value();
     };
+    if (r.full) {
+        // The frame's fields made (or read from the cache) before its first frame, which binds them.
+        field_cache.worker().request(fx::size_of(camera->width_px, camera->height_px, camera->density));
+        field_cache.worker().wait_idle();
+    }
     // Frames until the world settles: the cover's tiles built and drawn, the sun's bits in.
     int frames = 0;
     for (; frames < max_settle_frames; ++frames) {
@@ -596,6 +654,7 @@ JNIEXPORT jbyteArray JNICALL Java_app_atlas_mapcorecheck_frame_FrameHost_twin(JN
     request.full = full == JNI_TRUE;
     request.pixels = false;
     request.twin = true;
+    atlas::jni::host_frame::folders_from_jvm(env, request);
     const atlas::jni::host_frame::Result result = atlas::jni::host_frame::draw(request);
     last_error = result.error;
     last_notes = result.device + "; " + result.notes + "; passes " + result.passes;
@@ -626,6 +685,7 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_frame_FrameHost_stats(JNIE
     request.full = full == JNI_TRUE;
     request.pixels = false;
     request.overdraw = true;
+    atlas::jni::host_frame::folders_from_jvm(env, request);
     const atlas::jni::host_frame::Result result = atlas::jni::host_frame::draw(request);
     last_error = result.error;
     last_notes = result.device + "; " + result.notes + "; passes " + result.passes;

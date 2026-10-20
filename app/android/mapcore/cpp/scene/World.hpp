@@ -6,7 +6,8 @@
 // (scene/ItemTable.hpp). The frame builder asks it once a frame, on the render thread (frame::FrameScene); nothing in
 // it waits on I/O, decoding or the sun. At rest the frame loop sleeps: a tile or a tile's sun bits published wakes it
 // (set_wake), and it draws while a transition runs (animating). Set 1's globals that no pass owns come from the
-// world's providers (frame::FrameScene::globals): its heaps', its sun's (scene/SunGlobals.hpp) and those added to it.
+// world's providers (frame::FrameScene::globals): its heaps', its sun's (scene/SunGlobals.hpp), those the passes
+// contribute (frame::Pass::providers, made with WorldOptions::resources) and those added to it.
 //
 // Tiles leave as the budgets ask (D3: 40 MB of heaps; §3: 64 MB of decoded tiles in native memory): a resident tile the
 // cover has not drawn for `idle_seconds` is let go of once the heaps or the resident tiles' native bytes are over
@@ -50,6 +51,9 @@ struct WorldOptions {
     std::size_t native_budget = std::size_t{64} << 20U;
     /// The sun (scene/SunGlobals.hpp): its threads and disk cache, or none.
     SunOptions sun;
+    /// Where the passes' resources come from (their fonts: frame::files_under on a host, the APK's assets on Android),
+    /// for the providers they contribute (frame::Pass::providers).
+    frame::Resources resources;
     /// The frame's clock (seconds), from the workers' threads too; the frame state's time when absent.
     std::function<double()> clock;
 };
