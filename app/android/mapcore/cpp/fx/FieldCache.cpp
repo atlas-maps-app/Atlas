@@ -1,10 +1,16 @@
 // The screen-wide noise fields (fx/Fields.hpp): what a pixel keeps, the making on worker threads, the disk cache,
-// the worker and the reference hashes of fields.inc.
+// the worker and the reference hashes of fields.inc; and on the GPU (fx/FieldCache.hpp): the images, the byte tables
+// and their provider of set 1.
+#include "fx/FieldCache.hpp"
+
 #include "base/assert.hpp"
 #include "base/log.hpp"
 #include "base/pymath/PyMath.hpp"
+#include "frame/FrameBlock.hpp"
+#include "frame/FrameBuilder.hpp"
 #include "fx/ByteTables.hpp"
 #include "fx/Fields.hpp"
+#include "fx/Mat.hpp"
 #include "tiles/Checksums.hpp"
 #include "tiles/Source.hpp"
 
@@ -448,6 +454,11 @@ std::shared_ptr<const ScreenFields> FieldWorker::latest() const {
     return latest_;
 }
 
+void FieldWorker::on_publish(std::function<void()> wake) {
+    const std::lock_guard lock(mutex_);
+    wake_on_publish_ = std::move(wake);
+}
+
 void FieldWorker::wait_idle() {
     std::unique_lock lock(mutex_);
     idle_.wait(lock, [this] { return !busy_ && !next_; });
@@ -479,21 +490,26 @@ void FieldWorker::loop(const std::stop_token& stop) {
         const auto started = clock::now();
         std::shared_ptr<const ScreenFields> fields = disk_ != nullptr ? disk_->read(size) : nullptr;
         const bool from_disk = fields != nullptr;
-        if (!from_disk) {
-            fields = make_fields(size, MakeOptions{.threads = threads_});
-            if (disk_ != nullptr && !disk_->write(*fields)) {
-                log::warn("fields {}x{}: not kept on disk", size.width, size.height);
-            }
-        }
+        if (!from_disk) fields = make_fields(size, MakeOptions{.threads = threads_});
         const double ms = std::chrono::duration<double, std::milli>(clock::now() - started).count();
+        // Published first, so the frame takes them while they are written to disk.
+        std::function<void()> wake;
         {
             const std::lock_guard lock(mutex_);
-            latest_ = std::move(fields);
+            latest_ = fields;
             last_ms_ = ms;
             last_from_disk_ = from_disk;
+            version_.fetch_add(1, std::memory_order_acq_rel);
+            wake = wake_on_publish_;
+        }
+        if (wake) wake();
+        if (!from_disk && disk_ != nullptr && !disk_->write(*fields)) {
+            log::warn("fields {}x{}: not kept on disk", size.width, size.height);
+        }
+        {
+            const std::lock_guard lock(mutex_);
             busy_ = false;
         }
-        version_.fetch_add(1, std::memory_order_acq_rel);
         idle_.notify_all();
     }
 }
@@ -589,6 +605,239 @@ std::string fields_line(FieldSize size, unsigned threads) {
         }
     }
     return line + " ok";
+}
+
+// ---- On the GPU (fx/FieldCache.hpp)
+
+std::vector<std::uint8_t> gpu_tables() {
+    std::vector<std::uint8_t> t(tables_bytes);
+    std::ranges::copy(bytes::to_linear(), t.begin() + table_to_linear);
+    std::ranges::copy(bytes::to_srgb(), t.begin() + table_to_srgb);
+    std::ranges::copy(mat_table(), t.begin() + table_mat);
+    return t;
+}
+
+namespace {
+
+/// The images' formats and bytes a pixel: rgba, rg, r (fx/Fields.hpp's placement_of).
+constexpr std::array<vk::Format, 3> image_formats{vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8Unorm,
+                                                  vk::Format::eR8Unorm};
+constexpr std::array<std::uint32_t, 3> image_bytes{rgba_bytes, rg_bytes, r_bytes};
+constexpr std::array<frame::Global, 3> image_globals{frame::Global::noise_rgba, frame::Global::noise_rg,
+                                                     frame::Global::noise_r};
+
+/// The stages that read the fields.
+constexpr vk::PipelineStageFlags2 reading_stages = vk::PipelineStageFlagBits2::eVertexShader |
+                                                   vk::PipelineStageFlagBits2::eFragmentShader |
+                                                   vk::PipelineStageFlagBits2::eComputeShader;
+
+} // namespace
+
+gpu::Result<std::unique_ptr<FieldImages>> FieldImages::create(const gpu::Device& device) {
+    std::unique_ptr<FieldImages> self(new FieldImages(device)); // NOLINT(cppcoreguidelines-owning-memory)
+    ATLAS_GPU_LET(
+        tables, device.memory().buffer(tables_bytes, vk::BufferUsageFlagBits::eStorageBuffer, gpu::MemoryUse::upload));
+    const std::vector<std::uint8_t> t = gpu_tables();
+    std::memcpy(tables.bytes().data(), t.data(), t.size());
+    tables.flush();
+    self->tables_ = std::move(tables);
+    // The shaders fetch texels (Load): the sampler never filters.
+    ATLAS_VK_LET(sampler,
+                 device.handle().createSampler({.magFilter = vk::Filter::eNearest,
+                                                .minFilter = vk::Filter::eNearest,
+                                                .mipmapMode = vk::SamplerMipmapMode::eNearest,
+                                                .addressModeU = vk::SamplerAddressMode::eClampToEdge,
+                                                .addressModeV = vk::SamplerAddressMode::eClampToEdge,
+                                                .addressModeW = vk::SamplerAddressMode::eClampToEdge,
+                                                .maxLod = 0.0F}),
+                 "the noise fields' sampler");
+    self->sampler_ = std::move(sampler);
+    return self;
+}
+
+FieldImages::~FieldImages() = default;
+
+vk::ImageView FieldImages::view(std::uint32_t image) const noexcept {
+    ATLAS_ASSERT(ready_ && image < 3, "the fields have three images once staged");
+    return *current_.views[image];
+}
+
+gpu::Result<void> FieldImages::stage(const ScreenFields& fields) {
+    const FieldSize size = fields.size();
+    if (!ready_ || current_.size != size) {
+        Images next;
+        next.size = size;
+        for (std::size_t i = 0; i < 3; ++i) {
+            ATLAS_GPU_LET(image, device_.memory().image(
+                                     {.imageType = vk::ImageType::e2D,
+                                      .format = image_formats[i],
+                                      .extent = {.width = size.width, .height = size.height, .depth = 1},
+                                      .mipLevels = 1,
+                                      .arrayLayers = 1,
+                                      .samples = vk::SampleCountFlagBits::e1,
+                                      .tiling = vk::ImageTiling::eOptimal,
+                                      .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
+                                      .initialLayout = vk::ImageLayout::eUndefined},
+                                     gpu::MemoryUse::gpu));
+            ATLAS_VK_LET(
+                view,
+                device_.handle().createImageView({.image = image.handle(),
+                                                  .viewType = vk::ImageViewType::e2D,
+                                                  .format = image_formats[i],
+                                                  .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                                                       .levelCount = 1,
+                                                                       .layerCount = 1}}),
+                "a noise field's view");
+            next.images[i] = std::move(image);
+            next.views[i] = std::move(view);
+        }
+        // The frames before the upload's read the old images.
+        if (ready_) replaced_.push_back(std::move(current_));
+        current_ = std::move(next);
+        ready_ = true;
+    }
+    const std::size_t pixels = static_cast<std::size_t>(size.width) * size.height;
+    ATLAS_GPU_LET(staging, device_.memory().buffer(pixels * (rgba_bytes + rg_bytes + r_bytes),
+                                                   vk::BufferUsageFlagBits::eTransferSrc, gpu::MemoryUse::upload));
+    const std::array<std::span<const std::uint8_t>, 3> planes{fields.rgba(), fields.rg(), fields.r()};
+    std::size_t offset = 0;
+    for (std::size_t i = 0; i < 3; ++i) {
+        ATLAS_ASSERT(planes[i].size() == pixels * image_bytes[i], "a field's image holds its bytes a pixel");
+        std::memcpy(staging.bytes().subspan(offset).data(), planes[i].data(), planes[i].size());
+        offset += planes[i].size();
+    }
+    staging.flush();
+    // Staged bytes no frame recorded are let go at once.
+    staging_ = std::move(staging);
+    return {};
+}
+
+void FieldImages::record_upload(const vk::raii::CommandBuffer& cmd, const gpu::Sync& sync, std::uint64_t frame) {
+    if (!staging_) return;
+    const FieldSize size = current_.size;
+    const vk::DeviceSize pixels = static_cast<vk::DeviceSize>(size.width) * size.height;
+    std::array<gpu::ImageDependency, 3> to_copy{};
+    std::array<gpu::ImageDependency, 3> to_read{};
+    for (std::size_t i = 0; i < 3; ++i) {
+        // Earlier frames' reads of the image come first; what it held is not kept.
+        to_copy[i] = {.image = current_.images[i].handle(),
+                      .src_stage = reading_stages,
+                      .src_access = {},
+                      .dst_stage = vk::PipelineStageFlagBits2::eTransfer,
+                      .dst_access = vk::AccessFlagBits2::eTransferWrite,
+                      .old_layout = vk::ImageLayout::eUndefined,
+                      .new_layout = vk::ImageLayout::eTransferDstOptimal};
+        to_read[i] = {.image = current_.images[i].handle(),
+                      .src_stage = vk::PipelineStageFlagBits2::eTransfer,
+                      .src_access = vk::AccessFlagBits2::eTransferWrite,
+                      .dst_stage = reading_stages,
+                      .dst_access = vk::AccessFlagBits2::eShaderRead,
+                      .old_layout = vk::ImageLayout::eTransferDstOptimal,
+                      .new_layout = vk::ImageLayout::eShaderReadOnlyOptimal};
+    }
+    sync.barrier(cmd, {}, to_copy);
+    vk::DeviceSize offset = 0;
+    for (std::size_t i = 0; i < 3; ++i) {
+        const vk::BufferImageCopy region{
+            .bufferOffset = offset,
+            .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .layerCount = 1},
+            .imageExtent = {.width = size.width, .height = size.height, .depth = 1}};
+        cmd.copyBufferToImage(staging_.handle(), current_.images[i].handle(), vk::ImageLayout::eTransferDstOptimal,
+                              region);
+        offset += pixels * image_bytes[i];
+    }
+    sync.barrier(cmd, {}, to_read);
+    for (Images& old : replaced_)
+        retired_.push_back(Retired{.images = std::move(old), .last_frame = frame > 0 ? frame - 1 : 0});
+    replaced_.clear();
+    retired_.push_back(Retired{.staging = std::move(staging_), .last_frame = frame});
+    staging_ = gpu::Buffer();
+}
+
+void FieldImages::collect(std::uint64_t finished) noexcept {
+    std::erase_if(retired_, [finished](const Retired& r) { return r.last_frame <= finished; });
+}
+
+vk::DeviceSize FieldImages::bytes() const noexcept {
+    vk::DeviceSize total = tables_.size() + staging_.size();
+    for (const gpu::Image& i : current_.images) total += i.bytes();
+    for (const Images& r : replaced_) {
+        for (const gpu::Image& i : r.images) total += i.bytes();
+    }
+    for (const Retired& r : retired_) {
+        total += r.staging.size();
+        for (const gpu::Image& i : r.images.images) total += i.bytes();
+    }
+    return total;
+}
+
+// ---- FieldCache, the provider
+
+gpu::Result<std::unique_ptr<FieldCache>> FieldCache::create(const gpu::Device& device, FieldCacheOptions options) {
+    std::unique_ptr<FieldCache> self(new FieldCache()); // NOLINT(cppcoreguidelines-owning-memory)
+    ATLAS_GPU_LET(images, FieldImages::create(device));
+    self->images_ = std::move(images);
+    std::shared_ptr<const FieldDisk> disk =
+        options.dir.empty() ? nullptr : std::make_shared<const FieldDisk>(std::move(options.dir));
+    self->worker_ = std::make_unique<FieldWorker>(std::move(disk), options.threads);
+    return self;
+}
+
+FieldCache::~FieldCache() = default;
+
+bool FieldCache::bound_for(FieldSize size) const noexcept {
+    return uploaded_ && images_->ready() && images_->size() == size;
+}
+
+void FieldCache::update(const frame::FrameState& state, frame::Globals& globals) {
+    // Every frame, each binding (an unchanged one costs a comparison): every frame builder drawing the world gets them.
+    globals.buffer(frame::Global::byte_tables, images_->tables());
+    const style::CameraState& c = state.camera;
+    if (c.width_px > 0 && c.height_px > 0 && c.density > 0.0) {
+        const FieldSize size = size_of(c.width_px, c.height_px, c.density);
+        wanted_ = size;
+        worker_->request(size); // nothing to do when they are published or under way
+        take(size);
+    }
+    if (!images_->ready()) return;
+    for (std::size_t i = 0; i < 3; ++i) {
+        globals.image(image_globals[i], images_->view(static_cast<std::uint32_t>(i)), images_->sampler());
+    }
+}
+
+void FieldCache::take(FieldSize size) {
+    const std::uint64_t version = worker_->version();
+    if (version == taken_version_) return;
+    const std::shared_ptr<const ScreenFields> fields = worker_->latest();
+    if (fields == nullptr || fields->size() != size) return; // another size's: the frame's own come later
+    if (bound_for(size)) {                                   // the same size again: the images hold its fields
+        taken_version_ = version;
+        return;
+    }
+    // Images of their size and their bytes staged now, their upload recorded before the next frame's passes (record).
+    if (auto staged = images_->stage(*fields); !staged) {
+        if (failed_version_ != version) {
+            log::error("vk fields {}x{}: not on the GPU: {}", size.width, size.height, staged.error().text());
+        }
+        failed_version_ = version; // tried again next frame
+        uploaded_ = false;
+        return;
+    }
+    taken_version_ = version;
+    uploaded_ = true;
+    log::info("vk fields {}x{} {} in {} ms, on the GPU", size.width, size.height,
+              worker_->last_from_disk() ? "mapped" : "made", static_cast<long long>(pymath::round(worker_->last_ms())));
+}
+
+std::uint32_t FieldCache::frame_flags(const frame::FrameState& state) const noexcept {
+    (void)state;
+    return wanted_ && bound_for(*wanted_) ? shaders::FRAME_FIELDS : 0U;
+}
+
+void FieldCache::record(const gpu::FrameContext& frame) {
+    // The renderer's frame numbers: frames up to `finished` are done once this one records.
+    images_->collect(frame.number >= gpu::Frames::in_flight ? frame.number - gpu::Frames::in_flight : 0);
+    images_->record_upload(frame.cmd, frame.sync, frame.number);
 }
 
 } // namespace atlas::fx

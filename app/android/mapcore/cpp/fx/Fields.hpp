@@ -33,6 +33,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -200,7 +201,7 @@ private:
 inline constexpr std::uint32_t fields_algorithm = 1;
 
 /// The workers that make the fields: the latest size asked for, from the disk cache when it holds them, else made on
-/// `threads` threads and kept there; published for the frame to take.
+/// `threads` threads, published for the frame to take, then kept there.
 class FieldWorker {
 public:
     /// `disk` may be null (nothing kept); `threads` in all, the worker's own among them.
@@ -217,7 +218,9 @@ public:
     [[nodiscard]] std::shared_ptr<const ScreenFields> latest() const;
     /// How many times fields were published; the frame takes them again when it grows.
     [[nodiscard]] std::uint64_t version() const noexcept { return version_.load(std::memory_order_acquire); }
-    /// Waits until every request made so far is done.
+    /// Called on the worker's thread each time fields are published (cheap and never blocking: the frame loop's wake).
+    void on_publish(std::function<void()> wake);
+    /// Waits until every request made so far is done (published, and kept on disk).
     void wait_idle();
     /// The last publication's milliseconds and whether it came from disk.
     [[nodiscard]] double last_ms() const;
@@ -235,6 +238,7 @@ private:
     std::optional<FieldSize> current_; ///< under way or published
     bool busy_ = false;
     std::shared_ptr<const ScreenFields> latest_;
+    std::function<void()> wake_on_publish_;
     std::atomic<std::uint64_t> version_{0};
     double last_ms_ = 0;
     bool last_from_disk_ = false;
