@@ -91,11 +91,18 @@ namespace fs = std::filesystem;
 #endif
 }
 
+/// The innermost QuietMessages scope alive on this thread.
+thread_local const QuietMessages* quiet_scope = nullptr; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+
 VKAPI_ATTR vk::Bool32 VKAPI_CALL on_message(vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
                                             vk::DebugUtilsMessageTypeFlagsEXT /*types*/,
                                             const vk::DebugUtilsMessengerCallbackDataEXT* data, void* user) {
     const char* text = data != nullptr && data->pMessage != nullptr ? data->pMessage : "(no message)";
     const char* id = data != nullptr && data->pMessageIdName != nullptr ? data->pMessageIdName : "";
+    if (QuietMessages::drops(id)) {
+        static_cast<Messages*>(user)->quiet();
+        return vk::False;
+    }
     static_cast<Messages*>(user)->add(std::format("{}: {}", id, text));
     log::write(severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError ? log::Level::error : log::Level::warn,
                log::Line("vk validation {}: {}", id, text));
@@ -118,6 +125,29 @@ std::vector<std::string> Messages::take() {
 std::size_t Messages::count() const {
     const std::scoped_lock lock(mutex_);
     return total_;
+}
+
+void Messages::quiet() {
+    const std::scoped_lock lock(mutex_);
+    ++quieted_;
+}
+
+std::size_t Messages::quieted() const {
+    const std::scoped_lock lock(mutex_);
+    return quieted_;
+}
+
+QuietMessages::QuietMessages(std::span<const std::string_view> ids) noexcept : ids_(ids), outer_(quiet_scope) {
+    quiet_scope = this;
+}
+
+QuietMessages::~QuietMessages() { quiet_scope = outer_; }
+
+bool QuietMessages::drops(std::string_view id) noexcept {
+    for (const QuietMessages* q = quiet_scope; q != nullptr; q = q->outer_) {
+        if (std::ranges::find(q->ids_, id) != q->ids_.end()) return true;
+    }
+    return false;
 }
 
 Loader::Loader(Loader&& other) noexcept

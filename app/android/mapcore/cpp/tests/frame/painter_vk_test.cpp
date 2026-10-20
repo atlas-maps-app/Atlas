@@ -3,7 +3,9 @@
 // slots are the ranks' first slots), drawn in D6's two passes (the opaque ones front to back with the depth test and
 // writes, the translucent ones after in painter's order with writes off) equal the same triangles drawn in strict
 // painter's order without depth, bit for bit, at one sample and at the device's multisampling; and the owner mode's map
-// gives each pixel the owner of the shape strict painter's order leaves on top there.
+// gives each pixel the owner of the shape strict painter's order leaves on top there. The owner and overdraw twins of a
+// pass whose vertex stage has varyings are made without the validation layer's warning about the outputs their
+// fragment stages leave unread, which a pass's own pipeline leaving one unread still gets.
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
 #include "frame/PassRegistry.hpp"
@@ -27,7 +29,9 @@
 #include <numeric>
 #include <random>
 #include <ranges>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #if !defined(__ANDROID__)
@@ -249,7 +253,103 @@ struct Drawn {
     return d;
 }
 
+/// One pipeline: varying_vs (the colour as a varying) with `fragment`, which reads it (varying_fs) or leaves it unread
+/// (shapes_fs: stages mismatched on purpose). Nothing is drawn: the pipeline and its twins are what is checked.
+class VaryingsPass final : public frame::Pass {
+public:
+    explicit VaryingsPass(const char* fragment) noexcept : fragment_(fragment) {}
+    [[nodiscard]] std::string_view name() const noexcept override { return "varyings"; }
+    [[nodiscard]] std::span<const frame::Phase> phases() const noexcept override { return one_phase; }
+    [[nodiscard]] gpu::Result<void> prepare(const frame::PassContext& c) override {
+        ATLAS_GPU_LET(module, frame::make_module(c, "frame_test_shapes", spirv::frame_test_shapes));
+        module_ = std::move(module);
+        gpu::GraphicsDesc desc{.label = {.name = "varyings"},
+                               .module = *module_,
+                               .vertex = "varying_vs",
+                               .fragment = fragment_,
+                               .layout = c.layout.pipeline_layout(),
+                               .target = c.pass.scene_target()};
+        desc.depth_test = true;
+        desc.depth_write = true;
+        desc.depth_op = vk::CompareOp::eLess;
+        if (desc.target.colour_count == 2) desc.blends[1] = gpu::Blend::untouched();
+        ATLAS_GPU_LET(pipeline, frame::make_pipeline(c, desc, frame::Overdraw::opaque));
+        pipeline_ = std::move(pipeline);
+        return {};
+    }
+    void release() noexcept override {
+        pipeline_.clear();
+        module_.clear();
+    }
+    void record(const frame::Recording& r, std::uint32_t phase) override {
+        (void)r;
+        (void)phase;
+    }
+
+private:
+    static constexpr std::array<frame::Phase, 1> one_phase{
+        frame::Phase{.slot = frame::Slot::objects, .order = 0, .id = 1}};
+    const char* fragment_;
+    vk::raii::ShaderModule module_{nullptr};
+    vk::raii::Pipeline pipeline_{nullptr};
+};
+
+/// Makes the registered passes and a VaryingsPass with `fragment` in a frame with `options`, its pipelines and twins
+/// made for an offscreen output at one sample: whether they were.
+[[nodiscard]] bool make_varyings(const gpu::Device& device, const gpu::PipelineCache& cache, const char* fragment,
+                                 const frame::FrameOptions& options) {
+    auto output = platform::Offscreen::create(device, vk::Extent2D{.width = 64, .height = 48}, 2);
+    ATLAS_REQUIRE_OR_RETURN(false, output.has_value(), output.error().text());
+    std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes();
+    passes.push_back(std::make_unique<VaryingsPass>(fragment));
+    auto builder = frame::FrameBuilder::create(device, cache, std::move(passes), options);
+    ATLAS_REQUIRE_OR_RETURN(false, builder.has_value(), builder.error().text());
+    auto renderer = gpu::Renderer::create(device, **output, **builder,
+                                          {.config = gpu::FrameConfig::x1, .target = gpu::CompositeTarget::direct});
+    ATLAS_REQUIRE_OR_RETURN(false, renderer.has_value(), renderer.error().text());
+    renderer->reset();
+    return true;
+}
+
 } // namespace
+
+TEST_CASE("a pass with varyings has its owner and overdraw twins made without the layer's unread-output warning, which "
+          "its own pipeline still gets when it leaves one unread") {
+    auto session = test::open_session();
+    if (!session) return;
+    const gpu::Device& device = *session->device;
+    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const gpu::Messages& messages = session->instance->messages();
+    auto unread = [](const std::vector<std::string>& list) {
+        return std::ranges::count_if(list, [](const std::string& m) { return m.contains("OutputNotConsumed"); });
+    };
+
+    // The pass's own pipeline reads its varying: nothing to say, nothing dropped.
+    std::size_t quieted = messages.quieted();
+    CHECK(make_varyings(device, *cache, "varying_fs", {}));
+    CHECK(messages.quieted() == quieted);
+    auto said = session->take_messages();
+    CHECK_MESSAGE(said.empty(), (said.empty() ? std::string() : said.front()));
+
+    // Its twins read nothing of it: the layer warns while each is made, and the warning is dropped there.
+    for (const frame::FrameOptions& options :
+         {frame::FrameOptions{.owners = true}, frame::FrameOptions{.overdraw = true}}) {
+        quieted = messages.quieted();
+        CHECK(make_varyings(device, *cache, "varying_fs", options));
+        CHECK(messages.quieted() > quieted);
+        said = session->take_messages();
+        CHECK_MESSAGE(said.empty(), (said.empty() ? std::string() : said.front()));
+    }
+
+    // A pass's own pipeline that leaves the varying unread is still reported.
+    quieted = messages.quieted();
+    CHECK(make_varyings(device, *cache, "shapes_fs", {}));
+    CHECK(messages.quieted() == quieted);
+    said = session->take_messages();
+    CHECK(unread(said) >= 1);
+    MESSAGE("the mismatched pipeline: " << (said.empty() ? std::string("(nothing)") : said.front()));
+}
 
 TEST_CASE("the two-pass painter depth draws 2,000 random overlapping shapes as strict painter's order does") {
     auto session = test::open_session();

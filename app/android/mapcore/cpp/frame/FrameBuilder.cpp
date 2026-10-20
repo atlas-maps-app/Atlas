@@ -5,6 +5,7 @@
 #include "frame/FrameLayout.hpp"
 #include "gen/spirv/frame/overdraw.hpp"
 #include "gen/spirv/frame/owner.hpp"
+#include "gpu/Instance.hpp"
 #include "scene/Heaps.hpp"
 #include "scene/ItemTable.hpp"
 #include "twin/Twin.hpp"
@@ -14,6 +15,8 @@
 #include <chrono>
 #include <cstring>
 #include <format>
+#include <span>
+#include <string_view>
 
 namespace atlas::frame {
 
@@ -82,7 +85,9 @@ gpu::Result<vk::raii::ShaderModule> make_module(const PassContext& context, std:
 }
 
 gpu::Result<vk::raii::Pipeline> make_pipeline(const PassContext& context, gpu::GraphicsDesc desc, Overdraw overdraw) {
+    bool twin = false;
     if (context.owners && overdraw != Overdraw::none && context.owner_module) {
+        twin = true;
         // The owner twin: the same vertex stage, layout, target and tests; a fragment stage writing its painter slot,
         // blending off, so the latest primitive in painter's order covering a pixel leaves its slot there.
         desc.fragment_module = context.owner_module;
@@ -96,6 +101,7 @@ gpu::Result<vk::raii::Pipeline> make_pipeline(const PassContext& context, gpu::G
                           .mask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
                                   vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
     } else if (context.overdraw && overdraw != Overdraw::none && context.overdraw_module) {
+        twin = true;
         // The overdraw twin: the same vertex stage, layout, target and tests; a fragment stage adding 1/255 of red (an
         // opaque fragment) or green (a translucent one), onto red, green and blue only.
         desc.fragment_module = context.overdraw_module;
@@ -113,6 +119,11 @@ gpu::Result<vk::raii::Pipeline> make_pipeline(const PassContext& context, gpu::G
     const auto started = clock::now();
     auto made = [&] {
         const gpu::Announced named = gpu::announce(desc.label, context.watch);
+        // A twin's fragment stage reads none of the vertex stage's outputs, by design: the validation layer's warning
+        // about them is dropped while a twin is made, and then only (a pass's own pipeline leaving an output unread is
+        // reported as ever).
+        const gpu::QuietMessages quiet(twin ? std::span<const std::string_view>(gpu::unconsumed_outputs)
+                                            : std::span<const std::string_view>());
         return gpu::make_graphics(context.device.handle(), context.cache.handle(), desc);
     }();
     if (context.stats != nullptr) {

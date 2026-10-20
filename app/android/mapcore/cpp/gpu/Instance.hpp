@@ -5,9 +5,11 @@
 
 #include "gpu/Error.hpp"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -42,12 +44,44 @@ public:
     /// Everything reported since the last take.
     [[nodiscard]] std::vector<std::string> take();
     [[nodiscard]] std::size_t count() const;
+    /// Counts a message a QuietMessages scope dropped, and how many were.
+    void quiet();
+    [[nodiscard]] std::size_t quieted() const;
 
 private:
     mutable std::mutex mutex_;
     std::vector<std::string> list_;
     std::size_t total_ = 0;
+    std::size_t quieted_ = 0;
 };
+
+/// While it lives, the validation layer's messages with these ids that the thread making it causes are dropped: not
+/// kept for the tests, not logged, only counted (Messages::quieted). For a pipeline whose stages are mismatched by
+/// design: the owner and overdraw modes' twins, whose fragment stage reads none of the vertex stage's outputs, which
+/// frame/FrameBuilder.cpp's make_pipeline makes in one. The layer checks a pipeline's interface while it is created, on
+/// the creating thread, so other threads' messages, and all of them once the scope is gone, are reported as ever.
+/// Scopes nest.
+class QuietMessages {
+public:
+    explicit QuietMessages(std::span<const std::string_view> ids) noexcept;
+    ~QuietMessages();
+    QuietMessages(const QuietMessages&) = delete;
+    QuietMessages& operator=(const QuietMessages&) = delete;
+    QuietMessages(QuietMessages&&) = delete;
+    QuietMessages& operator=(QuietMessages&&) = delete;
+
+    /// Whether a scope alive on this thread drops `id`.
+    [[nodiscard]] static bool drops(std::string_view id) noexcept;
+
+private:
+    std::span<const std::string_view> ids_;
+    const QuietMessages* outer_;
+};
+
+/// The layer's ids for an output of the vertex stage that the fragment stage does not read, by the layer's version.
+inline constexpr std::array<std::string_view, 3> unconsumed_outputs{
+    "WARNING-Shader-OutputNotConsumed", "Undefined-Value-ShaderOutputNotConsumed",
+    "Undefined-Value-ShaderOutputNotConsumed-DynamicRendering"};
 
 /// The loader library, opened by path and closed last.
 class Loader {
