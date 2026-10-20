@@ -112,9 +112,53 @@ jobs:
           python3 --version
           python3 -I app/android/mapcore/rules/check_rules.py check
 
+  # The bundled render packs (the Westerkerk's living map and the canal ring, format 3), so the host jobs' pack tests run
+  # (ATLAS_TILES_DIR) instead of skipping: made by the packer through Gradle (:app:generateBundledTiles, as the APK
+  # carries them; the canal ring's element pack is fetched from packs-renders and checked against its SHA-256), and
+  # cached by their inputs, so a push that leaves the port, the render tiles' compiler and the packer alone takes them
+  # from the cache in seconds. A failure here leaves the host jobs to run without them, as before.
+  tiles:
+    needs: core-changes
+    if: ${{ !cancelled() && needs.core-changes.outputs.core != 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'app' || github.ref }}
+      - id: key
+        run: |
+          echo "key=bundled-tiles-${{ hashFiles('app/android/render/src/main/**', 'app/android/rendertiles/src/main/**', 'app/android/packer/src/main/**', 'app/android/app/src/main/assets/packs/**', 'app/android/gradle/libs.versions.toml', 'app/android/app/build.gradle.kts') }}" >> "$GITHUB_OUTPUT"
+      - id: cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/tiles
+          key: ${{ steps.key.outputs.key }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: gradle/actions/setup-gradle@v6
+      - name: The packer's render packs
+        if: steps.cache.outputs.cache-hit != 'true'
+        working-directory: app/android
+        run: |
+          pin() { grep "^$1=" mapcore/tools.properties | cut -d= -f2-; }
+          # the Android modules configure with the SDK the app builds against
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" \
+            "ndk;$(pin ndk.version)" "cmake;$(pin cmake.version)" > /dev/null
+          ./gradlew :app:generateBundledTiles --stacktrace
+          mkdir -p "$RUNNER_TEMP/tiles"
+          cp app/build/generated/tiles/tiles/*.atlas app/build/generated/tiles/tiles/bundled.json "$RUNNER_TEMP/tiles/"
+          ls -la "$RUNNER_TEMP/tiles"
+
   core:
     name: ${{ matrix.task }} ${{ matrix.arch }}
-    needs: core-changes
+    needs: [core-changes, tiles]
     if: ${{ !cancelled() && needs.core-changes.outputs.core != 'false' }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     # The nightly fuzz runs every target for up to 30 minutes, at most 120 minutes in all (see its step).
@@ -304,6 +348,22 @@ jobs:
           cat "$RUNNER_TEMP/vulkan.env"
 
       # ---- host-debug, host-tsan, host-release: build, unit tests (Vulkan on lavapipe), the feature probe, benchmarks.
+      # The bundled render packs (the tiles job's), for the pack tests: ATLAS_TILES_DIR beside the Vulkan variables.
+      - id: tiles
+        if: startsWith(matrix.task, 'host-') && needs.tiles.outputs.key != ''
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/tiles
+          key: ${{ needs.tiles.outputs.key }}
+      - name: The bundled render packs
+        if: startsWith(matrix.task, 'host-')
+        run: |
+          if [ -e "$RUNNER_TEMP/tiles/amsterdam.atlas" ] && [ -e "$RUNNER_TEMP/tiles/grachten.atlas" ]; then
+            echo "ATLAS_TILES_DIR=$RUNNER_TEMP/tiles" >> "$RUNNER_TEMP/vulkan.env"
+            ls -la "$RUNNER_TEMP/tiles"
+          else
+            echo "::warning::no bundled render packs from the tiles job: the pack tests skip"
+          fi
       - name: Build and test (${{ matrix.task }})
         if: startsWith(matrix.task, 'host-')
         working-directory: ${{ env.CP }}

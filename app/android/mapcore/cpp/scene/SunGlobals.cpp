@@ -41,14 +41,17 @@ SunGlobals::SunGlobals(const gpu::Device& device, const tiles::Store& store, con
     if (!options_.cache_dir.empty()) {
         cache_ = std::make_unique<sun::DiskCache>(options_.cache_dir, options_.cache_budget);
     }
-    worker_ =
-        std::make_unique<sun::Worker>(bits_, std::max(1U, options_.threads), cache_.get(), [this] { return now(); });
+    // The active pack's lane on the sun's threads; the coarser pack's, less urgent, on half as many.
+    const unsigned threads = std::max(1U, options_.threads);
+    lanes_[0].worker = std::make_unique<sun::Worker>(lanes_[0].bits, threads, cache_.get(), [this] { return now(); });
+    lanes_[1].worker = std::make_unique<sun::Worker>(lanes_[1].bits, std::max(1U, threads / 2), cache_.get(),
+                                                     [this] { return now(); });
     thread_ = std::jthread([this](const std::stop_token& stop) { work(stop); });
 }
 
 SunGlobals::~SunGlobals() {
-    thread_ = {};    // the builder stops first: it asks the worker
-    worker_.reset(); // then the worker, which publishes into the bits
+    thread_ = {};                            // the builder stops first: it asks the workers
+    for (Lane& l : lanes_) l.worker.reset(); // then the workers, which publish into the bits
 }
 
 double SunGlobals::now() const {
@@ -57,7 +60,8 @@ double SunGlobals::now() const {
 }
 
 void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<const tiles::StorePack>& pack,
-                         std::uint8_t level, Cover& cover) {
+                         std::uint8_t level, Cover& cover, const std::shared_ptr<const tiles::StorePack>& coarser,
+                         std::uint8_t coarser_level) {
     // Old buffers go once the frames that read them have finished.
     std::erase_if(retired_, [&](const auto& r) { return state.number >= r.second + gpu::Frames::in_flight; });
     texels_.clear();
@@ -68,85 +72,25 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
         c.sun_base = no_sun;
         c.sun_weight = 1.0F;
     }
-    if (!pack || !pack->pack.is_render() || pack->pack.head() == nullptr || !state.view) return;
-    const tiles::RenderHead& head = *pack->pack.head();
-    if (head.levels.empty()) return;
-    const std::uint8_t fine = head.levels[0];
-    if (pack->id != pack_id_) {
-        // Another pack: its own tiles from now on.
-        for (const auto& t : asked_) bits_.forget(tiles::TileKey::unpack(t.first));
-        asked_.clear();
-        wanted_.clear();
-        have_bucket_ = false;
-        pack_id_ = pack->id;
-    }
+    if (!state.view) return;
+    prepare_lane(lanes_[0], state, pack, level, drawn);
+    prepare_lane(lanes_[1], state, coarser, coarser_level, drawn);
 
-    // The scene: the resident tiles of the finest zoom at their own levels, their halo at the cover's.
-    std::vector<std::uint64_t> wanted;
-    std::vector<std::pair<std::uint64_t, std::uint8_t>> levels;
-    for (const std::shared_ptr<const ResidentTile>& r : residency_.resident()) {
-        if (r->pack != pack->id || r->key.z != fine) continue;
-        wanted.push_back(r->key.packed());
-        levels.emplace_back(r->key.packed(), r->level);
-    }
-    std::ranges::sort(wanted);
-    std::ranges::sort(levels);
-    const sun::Bucket bucket = sun::bucket_of(state.theme);
-    bool scene_changed = false;
-    if (wanted != wanted_ || level != level_) {
-        std::vector<std::pair<std::uint64_t, std::uint8_t>> asked;
-        for (const tiles::TileKey& k : residency_.sun_tiles(pack->id)) {
-            const auto it =
-                std::ranges::lower_bound(levels, k.packed(), {}, &std::pair<std::uint64_t, std::uint8_t>::first);
-            const bool resident = it != levels.end() && it->first == k.packed();
-            asked.emplace_back(k.packed(), resident ? it->second : level);
-        }
-        std::ranges::sort(asked);
-        // A tile that left the scene, or is made at another level, loses the bits of its old samples.
-        for (const auto& old : asked_) {
-            const auto it =
-                std::ranges::lower_bound(asked, old.first, {}, &std::pair<std::uint64_t, std::uint8_t>::first);
-            if (it == asked.end() || it->first != old.first || it->second != old.second) {
-                bits_.forget(tiles::TileKey::unpack(old.first));
-            }
-        }
-        scene_changed = asked != asked_;
-        asked_ = std::move(asked);
-        wanted_ = std::move(wanted);
-        level_ = level;
-    }
-    if (!asked_.empty() && (scene_changed || !have_bucket_ || bucket.key != bucket_)) {
-        Build b;
-        b.pack = pack;
-        for (const auto& [key, lv] : asked_) b.tiles.emplace_back(tiles::TileKey::unpack(key), lv);
-        for (const std::uint64_t key : wanted_) b.wanted.push_back(tiles::TileKey::unpack(key));
-        for (const CoverTile& c : drawn) b.visible.push_back(c.drawn->key);
-        b.bucket = bucket;
-        const view::Vec3& eye = state.view->camera().eye();
-        b.cx = eye.x;
-        b.cz = eye.z;
-        const double win_d =
-            state.placed ? state.placed->number("win_d").value_or(view::default_win_d) : view::default_win_d;
-        b.window_reach = win_d * 1.35;
-        {
-            const std::scoped_lock lock(mutex_);
-            next_ = std::move(b);
-        }
-        wake_.notify_one();
-        bucket_ = bucket.key;
-        have_bucket_ = true;
-    }
-
-    // Every drawn tile's bits: on the CPU, and its texels in the frame slot's half of the buffer.
+    // Every drawn tile's bits, its own pack's lane's: on the CPU, and its texels in the frame slot's half of the
+    // buffer.
     const double t = now();
     std::vector<std::uint32_t> local(drawn.size(), no_sun);
     for (std::size_t i = 0; i < drawn.size(); ++i) {
         CoverTile& c = drawn[i];
-        if (c.drawn->pack != pack->id || c.drawn->key.z != fine) continue; // a stand-in ancestor: not in the scene
-        c.sun = bits_.view(c.drawn->key, t);
+        Lane* lane = nullptr;
+        for (Lane& l : lanes_) {
+            if (!l.pack_id.empty() && c.drawn->pack == l.pack_id && c.drawn->key.z == l.fine) lane = &l;
+        }
+        if (lane == nullptr) continue; // a stand-in ancestor, or a pack without a lane: not in a scene
+        c.sun = lane->bits.view(c.drawn->key, t);
         if (!c.sun) continue;
         const auto base = static_cast<std::uint32_t>(texels_.size() / 2);
-        if (const auto w = bits_.texels(c.drawn->key, t, texels_)) {
+        if (const auto w = lane->bits.texels(c.drawn->key, t, texels_)) {
             local[i] = base;
             c.sun_weight = static_cast<float>(*w);
             if (*w < 1.0) fading_ = true;
@@ -177,6 +121,82 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
     buffer_.flush();
 }
 
+void SunGlobals::prepare_lane(Lane& lane, const frame::FrameState& state,
+                              const std::shared_ptr<const tiles::StorePack>& pack, std::uint8_t level,
+                              std::span<const CoverTile> drawn) {
+    const bool usable =
+        pack && pack->pack.is_render() && pack->pack.head() != nullptr && !pack->pack.head()->levels.empty();
+    const std::string id = usable ? pack->id : std::string();
+    if (id != lane.pack_id) {
+        // Another pack, or none: its own tiles from now on.
+        for (const auto& t : lane.asked) lane.bits.forget(tiles::TileKey::unpack(t.first));
+        lane.asked.clear();
+        lane.wanted.clear();
+        lane.have_bucket = false;
+        lane.pack_id = id;
+    }
+    if (!usable) return;
+    lane.fine = pack->pack.head()->levels[0];
+
+    // The scene: the resident tiles of the finest zoom at their own levels, their halo at the cover's.
+    std::vector<std::uint64_t> wanted;
+    std::vector<std::pair<std::uint64_t, std::uint8_t>> levels;
+    for (const std::shared_ptr<const ResidentTile>& r : residency_.resident()) {
+        if (r->pack != pack->id || r->key.z != lane.fine) continue;
+        wanted.push_back(r->key.packed());
+        levels.emplace_back(r->key.packed(), r->level);
+    }
+    std::ranges::sort(wanted);
+    std::ranges::sort(levels);
+    const sun::Bucket bucket = sun::bucket_of(state.theme);
+    bool scene_changed = false;
+    if (wanted != lane.wanted || level != lane.level) {
+        std::vector<std::pair<std::uint64_t, std::uint8_t>> asked;
+        for (const tiles::TileKey& k : residency_.sun_tiles(pack->id)) {
+            const auto it =
+                std::ranges::lower_bound(levels, k.packed(), {}, &std::pair<std::uint64_t, std::uint8_t>::first);
+            const bool resident = it != levels.end() && it->first == k.packed();
+            asked.emplace_back(k.packed(), resident ? it->second : level);
+        }
+        std::ranges::sort(asked);
+        // A tile that left the scene, or is made at another level, loses the bits of its old samples.
+        for (const auto& old : lane.asked) {
+            const auto it =
+                std::ranges::lower_bound(asked, old.first, {}, &std::pair<std::uint64_t, std::uint8_t>::first);
+            if (it == asked.end() || it->first != old.first || it->second != old.second) {
+                lane.bits.forget(tiles::TileKey::unpack(old.first));
+            }
+        }
+        scene_changed = asked != lane.asked;
+        lane.asked = std::move(asked);
+        lane.wanted = std::move(wanted);
+        lane.level = level;
+    }
+    if (!lane.asked.empty() && (scene_changed || !lane.have_bucket || bucket.key != lane.bucket)) {
+        Build b;
+        b.pack = pack;
+        for (const auto& [key, lv] : lane.asked) b.tiles.emplace_back(tiles::TileKey::unpack(key), lv);
+        for (const std::uint64_t key : lane.wanted) b.wanted.push_back(tiles::TileKey::unpack(key));
+        for (const CoverTile& c : drawn) {
+            if (c.drawn->pack == pack->id) b.visible.push_back(c.drawn->key);
+        }
+        b.bucket = bucket;
+        const view::Vec3& eye = state.view->camera().eye();
+        b.cx = eye.x;
+        b.cz = eye.z;
+        const double win_d =
+            state.placed ? state.placed->number("win_d").value_or(view::default_win_d) : view::default_win_d;
+        b.window_reach = win_d * 1.35;
+        {
+            const std::scoped_lock lock(mutex_);
+            lane.next = std::move(b);
+        }
+        wake_.notify_one();
+        lane.bucket = bucket.key;
+        lane.have_bucket = true;
+    }
+}
+
 void SunGlobals::update(const frame::FrameState& state, frame::Globals& globals) {
     (void)state;
     // Every frame (an unchanged binding costs a comparison): each frame builder drawing the world gets the buffer.
@@ -184,17 +204,23 @@ void SunGlobals::update(const frame::FrameState& state, frame::Globals& globals)
 }
 
 void SunGlobals::work(const std::stop_token& stop) {
-    std::vector<std::pair<std::uint64_t, std::uint8_t>> built;
-    std::string built_pack;
     for (;;) {
+        Lane* lane = nullptr;
         Build b;
         {
             std::unique_lock lock(mutex_);
-            if (!wake_.wait(lock, stop, [this] { return next_.has_value(); })) return;
-            if (!next_) continue;
-            b = std::move(*next_);
-            next_.reset();
-            building_ = true;
+            const auto asked = [this] {
+                return std::ranges::any_of(lanes_, [](const Lane& l) { return l.next.has_value(); });
+            };
+            if (!wake_.wait(lock, stop, asked)) return;
+            // The active pack's lane first.
+            for (Lane& l : lanes_) {
+                if (lane == nullptr && l.next) lane = &l;
+            }
+            if (lane == nullptr) continue;
+            b = std::move(*lane->next);
+            lane->next.reset();
+            lane->building = true;
         }
         std::vector<std::pair<std::uint64_t, std::uint8_t>> tiles;
         tiles.reserve(b.tiles.size());
@@ -202,29 +228,31 @@ void SunGlobals::work(const std::stop_token& stop) {
         std::shared_ptr<const sun::Scene> scene;
         {
             const std::scoped_lock lock(mutex_);
-            scene = scene_;
+            scene = lane->scene;
         }
-        if (!scene || b.pack->id != built_pack || tiles != built) {
+        if (!scene || b.pack->id != lane->built_pack || tiles != lane->built) {
             const auto started = std::chrono::steady_clock::now();
             scene = build(b);
             const double ms = ms_since(started);
             const std::scoped_lock lock(mutex_);
             if (scene) {
                 ++stats_.scenes;
-                stats_.scene_ms = ms;
-                stats_.tiles = scene->tiles().size();
-                stats_.resident = b.wanted.size();
+                if (lane == lanes_.data()) {
+                    stats_.scene_ms = ms;
+                    stats_.tiles = scene->tiles().size();
+                    stats_.resident = b.wanted.size();
+                }
             } else {
                 ++stats_.failed;
             }
-            scene_ = scene;
-            built = std::move(tiles);
-            built_pack = b.pack->id;
+            lane->scene = scene;
+            lane->built = std::move(tiles);
+            lane->built_pack = b.pack->id;
         }
-        if (scene) ask(scene, b);
+        if (scene) ask(*lane, scene, b);
         {
             const std::scoped_lock lock(mutex_);
-            building_ = false;
+            lane->building = false;
         }
         idle_.notify_all();
     }
@@ -295,7 +323,7 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b) {
     return std::make_shared<const sun::Scene>(std::move(made), tallest, std::move(chunks));
 }
 
-void SunGlobals::ask(const std::shared_ptr<const sun::Scene>& scene, const Build& b) {
+void SunGlobals::ask(Lane& lane, const std::shared_ptr<const sun::Scene>& scene, const Build& b) {
     const tiles::RenderHead& head = *b.pack->pack.head();
     std::vector<std::uint8_t> visible(scene->tiles().size(), 0);
     for (const tiles::TileKey& k : b.visible) {
@@ -308,18 +336,20 @@ void SunGlobals::ask(const std::shared_ptr<const sun::Scene>& scene, const Build
     std::erase_if(jobs, [&](const sun::TileJob& j) {
         const tiles::TileKey key = scene->tiles()[j.tile].key;
         if (std::ranges::find(b.wanted, key) == b.wanted.end()) return true;
-        const auto v = bits_.view(key, t);
+        const auto v = lane.bits.view(key, t);
         return v && v->now->bucket == b.bucket.key && (!j.windows || v->now->windows);
     });
-    if (!jobs.empty()) worker_->request(scene, b.bucket, std::move(jobs));
+    if (!jobs.empty()) lane.worker->request(scene, b.bucket, std::move(jobs));
 }
 
 void SunGlobals::wait_idle() {
     {
         std::unique_lock lock(mutex_);
-        idle_.wait(lock, [this] { return !next_.has_value() && !building_; });
+        idle_.wait(lock, [this] {
+            return std::ranges::none_of(lanes_, [](const Lane& l) { return l.next.has_value() || l.building; });
+        });
     }
-    worker_->wait_idle();
+    for (Lane& l : lanes_) l.worker->wait_idle();
 }
 
 SunStats SunGlobals::stats() const {
@@ -328,8 +358,8 @@ SunStats SunGlobals::stats() const {
         const std::scoped_lock lock(mutex_);
         s = stats_;
     }
-    s.runs = worker_->runs();
-    s.cached = worker_->cached();
+    s.runs = lanes_[0].worker->runs() + lanes_[1].worker->runs();
+    s.cached = lanes_[0].worker->cached() + lanes_[1].worker->cached();
     s.texels = last_texels_;
     return s;
 }

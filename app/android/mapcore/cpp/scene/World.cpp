@@ -334,7 +334,8 @@ void World::update(const frame::FrameState& state) {
                                  : std::uint8_t{0},
                          .mask = mask_};
     cover_.update(*state.view, frames_, in, *residency_, seconds);
-    if (sun_) sun_->prepare(state, active_, in.tolerance, cover_);
+    // The sun of the pack drawn and of the coarser pack around it, each in its own lane.
+    if (sun_) sun_->prepare(state, active_, in.tolerance, cover_, coarser_, in.coarser_tolerance);
     residency_->want(cover_.requests());
     for (const CoverTile& t : cover_.tiles()) {
         const std::uint32_t handle = t.drawn->handle;

@@ -263,10 +263,13 @@ const ResidentTile* Residency::find(tiles::TileKey key, std::string_view pack) c
 
 std::vector<tiles::TileKey> Residency::sun_tiles(std::string_view pack) const {
     const std::shared_ptr<const tiles::StorePack> p = pack_of(store_, pack);
-    if (!p) return {};
+    if (!p || p->pack.head() == nullptr || p->pack.head()->levels.empty()) return {};
+    // The finest zoom's resident tiles alone: the sun's scene is made of them and their halo (a pack's coarser zoom,
+    // resident farther off, has no sun bits).
+    const std::uint8_t fine = p->pack.head()->levels[0];
     std::vector<tiles::TileKey> resident;
     for (const std::shared_ptr<const ResidentTile>& t : resident_) {
-        if (t->pack == pack) resident.push_back(t->key);
+        if (t->pack == pack && t->key.z == fine) resident.push_back(t->key);
     }
     return sun::halo_of(p->pack, resident);
 }

@@ -1,5 +1,7 @@
 // The sun's bits in set 1 (plan-vector D8, K8's worker; frame/Globals.hpp's first provider that no pass owns): the
-// world's sun. Its scene is the active pack's resident tiles at their finest zoom and their 220 m halo
+// world's sun, in two lanes: the active pack's and the coarser pack's around it (the canal ring around the Westerkerk),
+// each with its own scene, bits and worker. A lane's scene is its pack's resident tiles at their finest zoom and their
+// 220 m halo
 // (Residency::sun_tiles), each made at the ladder level it is drawn at (a halo tile at the cover's), built on a thread
 // of its own whenever that set changes; K8's Worker runs the moment's bucket (sun::bucket_of the theme block: a named
 // moment's own sun, a live one's 0.5° bucket) over it, visible tiles nearest first, skipping a tile whose bits for the
@@ -31,6 +33,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <thread>
 #include <utility>
@@ -80,23 +83,30 @@ public:
     [[nodiscard]] std::span<const frame::Global> bindings() const noexcept override { return binding; }
     void update(const frame::FrameState& state, frame::Globals& globals) override;
 
-    /// The frame's sun, on the render thread after the cover's update: the scene and the bucket asked for where they
-    /// changed, and every tile `cover` draws given its bits (CoverTile::sun, sun_base, sun_weight) in frame slot
-    /// `state.slot`'s half of the buffer. `pack` is the active pack (null: none), `level` the cover's ladder level.
+    /// The frame's sun, on the render thread after the cover's update: each lane's scene and bucket asked for where
+    /// they changed, and every tile `cover` draws given its bits (CoverTile::sun, sun_base, sun_weight) in frame slot
+    /// `state.slot`'s half of the buffer. `pack` is the active pack (null: none) and `level` its tiles' ladder level;
+    /// `coarser` the coarser pack drawn around it (null: none) and `coarser_level` its tiles'.
     void prepare(const frame::FrameState& state, const std::shared_ptr<const tiles::StorePack>& pack,
-                 std::uint8_t level, Cover& cover);
+                 std::uint8_t level, Cover& cover, const std::shared_ptr<const tiles::StorePack>& coarser = nullptr,
+                 std::uint8_t coarser_level = 0);
 
     /// Called on a worker's thread as each tile's bits are published (cheap and never blocking: the frame loop's wake).
-    void set_wake(std::function<void()> wake) { bits_.on_publish(std::move(wake)); }
+    void set_wake(const std::function<void()>& wake) {
+        for (Lane& l : lanes_) l.bits.on_publish(wake);
+    }
     /// Whether a tile the cover drew last frame is still cross-fading its bits.
     [[nodiscard]] bool fading() const noexcept { return fading_; }
-    /// The bits, as the workers publish them.
-    [[nodiscard]] const sun::BitTiles& bits() const noexcept { return bits_; }
+    /// The bits, as the workers publish them: the active pack's lane's, or the coarser pack's.
+    [[nodiscard]] const sun::BitTiles& bits(bool coarser = false) const noexcept {
+        return lanes_[coarser ? 1 : 0].bits;
+    }
     /// The buffer set 1's sun_bits reads (empty before the first texels), its halves' texels.
     [[nodiscard]] const gpu::Buffer& buffer() const noexcept { return buffer_; }
     [[nodiscard]] std::size_t capacity() const noexcept { return capacity_; }
-    /// Waits until the scene asked for is built and its bucket run (tests).
+    /// Waits until the scenes asked for are built and their buckets run (tests).
     void wait_idle();
+    /// The active pack's lane's (scenes and runs: both lanes').
     [[nodiscard]] SunStats stats() const;
 
 private:
@@ -116,10 +126,34 @@ private:
         double window_reach = 0;
     };
 
+    /// One pack's sun: its bits and worker, the render thread's view of its scene, and the builder's.
+    struct Lane {
+        sun::BitTiles bits;
+        std::unique_ptr<sun::Worker> worker;
+        // The render thread's.
+        std::string pack_id;
+        std::uint8_t fine = 0;
+        std::vector<std::pair<std::uint64_t, std::uint8_t>> asked; ///< the scene's tiles (packed key, level), sorted
+        std::vector<std::uint64_t> wanted;                         ///< its resident tiles, sorted
+        std::uint8_t level = 0;
+        std::uint64_t bucket = 0;
+        bool have_bucket = false;
+        // The builder thread's request and results (under mutex_).
+        std::optional<Build> next;
+        bool building = false;
+        std::shared_ptr<const sun::Scene> scene;
+        // The builder thread's own.
+        std::vector<std::pair<std::uint64_t, std::uint8_t>> built;
+        std::string built_pack;
+    };
+
     void work(const std::stop_token& stop);
+    /// The lane's scene and bucket for the frame (the render thread): asked for where they changed.
+    void prepare_lane(Lane& lane, const frame::FrameState& state, const std::shared_ptr<const tiles::StorePack>& pack,
+                      std::uint8_t level, std::span<const CoverTile> drawn);
     [[nodiscard]] std::shared_ptr<const sun::Scene> build(const Build& b);
     [[nodiscard]] std::optional<double> maxh(const tiles::StorePack& pack, std::uint8_t level);
-    void ask(const std::shared_ptr<const sun::Scene>& scene, const Build& b);
+    void ask(Lane& lane, const std::shared_ptr<const sun::Scene>& scene, const Build& b);
     [[nodiscard]] double now() const;
 
     const gpu::Device& device_;
@@ -130,17 +164,11 @@ private:
     std::chrono::steady_clock::time_point started_ = std::chrono::steady_clock::now();
     static constexpr std::array<frame::Global, 1> binding{frame::Global::sun_bits};
 
-    sun::BitTiles bits_;
     std::unique_ptr<sun::DiskCache> cache_;
-    std::unique_ptr<sun::Worker> worker_;
+    /// The active pack's lane, then the coarser pack's.
+    std::array<Lane, 2> lanes_;
 
     // The render thread's.
-    std::string pack_id_;
-    std::vector<std::pair<std::uint64_t, std::uint8_t>> asked_; ///< the scene's tiles (packed key, level), sorted
-    std::vector<std::uint64_t> wanted_;                         ///< its resident tiles, sorted
-    std::uint8_t level_ = 0;
-    std::uint64_t bucket_ = 0;
-    bool have_bucket_ = false;
     std::vector<std::uint32_t> texels_;
     gpu::Buffer buffer_;
     std::size_t capacity_ = 0;                                   ///< texels per half
@@ -148,14 +176,10 @@ private:
     bool fading_ = false;
     std::size_t last_texels_ = 0;
 
-    // The builder thread's request and results.
+    // The builder thread's wakes (the lanes' requests and results are under mutex_).
     mutable std::mutex mutex_;
     std::condition_variable_any wake_;
     std::condition_variable idle_;
-    std::optional<Build> next_;
-    bool building_ = false;
-    std::shared_ptr<const sun::Scene> scene_;
-    std::shared_ptr<const tiles::StorePack> scene_pack_;
     std::vector<std::pair<std::uint64_t, double>> maxh_; ///< scene_maxh per (the pack identity's first word, level)
     SunStats stats_;
     std::jthread thread_; ///< last: it starts once every member above is made, and stops first

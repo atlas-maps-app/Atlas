@@ -343,8 +343,9 @@ TEST_CASE("a coarser pack is drawn around the active one, its items in the frame
     auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
     ATLAS_REQUIRE(builder.has_value(), builder.error().text());
     double now = 0;
-    auto world = scene::World::create(*session->device, (*builder)->passes(),
-                                      {.workers = 3, .sun = {.enabled = false}, .clock = [&now] { return now; }});
+    auto world =
+        scene::World::create(*session->device, (*builder)->passes(),
+                             {.workers = 3, .clock = [&now] { return now; }}); // the sun on: the canal ring's lane too
     ATLAS_REQUIRE(world.has_value(), world.error().text());
     scene::World& w = **world;
     for (const auto& [id, path] : {std::pair{"amsterdam", westerkerk}, std::pair{"grachten", canals}}) {
@@ -445,6 +446,21 @@ TEST_CASE("a coarser pack is drawn around the active one, its items in the frame
     MESSAGE(active_tiles << " of the Westerkerk's tiles and " << coarser_tiles << " of the canal ring's drawn; of the "
                          << "canal ring's items " << masked << " masked inside the Westerkerk's box, " << shown
                          << " drawn, every one in the Westerkerk's frame");
+    // The canal ring has its own sun lane: once its scene is built and its bucket run, every tile of it the cover draws
+    // at its finest zoom has its bits, as the Westerkerk's do.
+    REQUIRE(w.sun() != nullptr);
+    w.sun()->wait_idle();
+    one_frame(63);
+    std::size_t ring_lit = 0;
+    std::size_t ring_drawn = 0;
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        if (t.drawn->pack != "grachten" || t.drawn->key.z != w.coarser()->pack.head()->levels[0]) continue;
+        ++ring_drawn;
+        if (t.sun && t.sun_base != scene::no_sun) ++ring_lit;
+    }
+    MESSAGE(ring_lit << " of the canal ring's " << ring_drawn << " drawn tiles have their sun bits");
+    CHECK(ring_drawn > 0);
+    CHECK(ring_lit == ring_drawn);
     // Without the coarser pack (none named, none chosen), its tiles go from the cover and its items' masks with them.
     w.set_coarser({});
     w.set_coarser_enclosing(false);

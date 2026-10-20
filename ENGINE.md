@@ -132,7 +132,7 @@ Nothing is finished. Each part below is a first version on `app`. It gets rework
 | Data | render tiles, the packer's `render-tiles` and the core's reader (fuzzed); the Westerkerk and the canal ring bundled; render packs that build for `amsterdam` and `grachten` |
 | Numerics and style | pymath; the light, the theme and `ScreenLayers`; the rule table, which lists every line of the renderer that draws |
 | Frame core | camera, ladder, cover, residency, heaps, ranks and pass registry; the composite (haze, vignette, `mat`'s rule, grain); the twin and L1; the coarser pack around the active one, chosen as the smallest pack that holds it; the packs' own stage T (`Pass::build_pack`) |
-| Sun | the sun test on the workers, equal to the port on every sample of 21 board renders |
+| Sun | the sun test on the workers, equal to the port on every sample of 21 board renders; a lane for the pack drawn and one for the coarser pack around it |
 | Ground and water | drawn and registered; L1 matched in all 11 cases |
 | Buildings, first half | walls, parts, flat and gabled roofs and houseboats, with sun bits and edges, at their true depth (a pair the renderer melts is drawn right; the switch draws the renderer's order); held to the port's polygons and on lavapipe to a depth raster of the twin; registered |
 | Text | shaping, glyphs, canal names (read from the whole pack), and the board's labels placed; registered, the fonts from the map's resources |
@@ -166,9 +166,7 @@ The engine builds on them: step 3's "the core asks, the app fetches" has its fet
 The engine is done first: it is the app's centerpiece, and the rest of the app builds on it.
 
 ### 1. The new map on the phone
-- Done: true depth, the pending branches (the packs' stage T, the buildings and the text registered, the app's map), the canal ring around the Westerkerk, and the honest state after three device losses.
-- Give the canal pack its sun bits: the world runs no sun bucket for it yet.
-- Give `core.yml`'s host jobs the bundled render packs (`ATLAS_TILES_DIR`), so the pack tests run on CI instead of skipping.
+- Done: true depth, the pending branches (the packs' stage T, the buildings and the text registered, the app's map), the canal ring around the Westerkerk with its sun bits, the honest state after three device losses, and the bundled render packs on `core.yml`'s host jobs.
 - Turn on the ground's `mat` (`ATLAS_GROUND_MAT`).
 - **The desktop render tool:** the host build draws any view and moment to a PNG.
 - **The engine's own references begin:** the boards' views and moments, stored per engine version.
