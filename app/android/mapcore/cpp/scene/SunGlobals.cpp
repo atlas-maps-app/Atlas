@@ -260,22 +260,24 @@ void SunGlobals::work(const std::stop_token& stop) {
     }
 }
 
-std::optional<double> SunGlobals::maxh(const tiles::StorePack& pack, std::uint8_t level) {
-    std::uint64_t key = level;
-    for (std::size_t i = 0; i < 7; ++i) key |= std::to_integer<std::uint64_t>(pack.identity[i]) << (8U * (i + 1));
+std::optional<double> SunGlobals::maxh(const std::shared_ptr<const tiles::StorePack>& pack, std::uint8_t level) {
+    // The same pack by ownership, never by its identity (the APK's packs have none) or address (a pack let go of and
+    // another opened where it was are two).
+    const auto same = [&pack](const Tallest& t) { return !t.pack.owner_before(pack) && !pack.owner_before(t.pack); };
     {
         const std::scoped_lock lock(mutex_);
-        for (const auto& [k, v] : maxh_) {
-            if (k == key) return v;
+        std::erase_if(maxh_, [](const Tallest& t) { return t.pack.expired(); });
+        for (const Tallest& t : maxh_) {
+            if (t.level == level && same(t)) return t.h;
         }
     }
-    const auto h = sun::scene_maxh(pack.pack, level);
+    const auto h = sun::scene_maxh(pack->pack, level);
     if (!h) {
-        log::warn("vk sun: the tallest solid of {} at level {}: {}", pack.id, level, tiles::describe(h.error()));
+        log::warn("vk sun: the tallest solid of {} at level {}: {}", pack->id, level, tiles::describe(h.error()));
         return std::nullopt;
     }
     const std::scoped_lock lock(mutex_);
-    maxh_.emplace_back(key, *h);
+    maxh_.push_back({.pack = pack, .level = level, .h = *h});
     return *h;
 }
 
@@ -318,7 +320,7 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b) {
     }
     // The march ends at the scene's tallest solid, as the port's Index takes it: of every level the scene holds.
     for (const std::uint8_t level : levels) {
-        const auto h = maxh(*b.pack, level);
+        const auto h = maxh(b.pack, level);
         if (!h) return nullptr;
         tallest = pymath::max(tallest, *h);
     }

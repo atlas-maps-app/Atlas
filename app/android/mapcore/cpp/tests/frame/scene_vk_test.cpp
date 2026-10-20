@@ -235,6 +235,60 @@ TEST_CASE("a tile that finds no room in the heaps is not built again until a ran
     std::filesystem::remove(path, ignored);
 }
 
+TEST_CASE("the sun's scene of each pack marches to that pack's own tallest solid, though no pack has an identity") {
+    // The APK's packs come with no identity (all zeros): two of them at one level are still two packs to the sun, so
+    // the lower pack's tallest solid is never the taller pack's march (sun::Grid holds a scene to its tallest).
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    constexpr std::array<std::string_view, 1> buildings{"buildings"};
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, frame::make_passes(buildings));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    frame::FrameBuilder& fb = **builder;
+    std::atomic<double> now{0}; // the world's clock, read on its workers' threads too
+    auto world = scene::World::create(*session->device, fb.passes(),
+                                      {.workers = 1, .sun = {.threads = 2}, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    const std::string low =
+        test::building::write_pack(test::building::tile(), test::building::tile_features, "sun-low");
+    const std::string tall =
+        test::building::write_pack(test::building::melt_tile(), test::building::melt_features, "sun-tall");
+    style::CameraState camera = home();
+    camera.latitude = 52.37422;
+    camera.longitude = 4.88486;
+    camera.distance = 260.0;
+    fb.set_inputs({.camera = camera, .scene = &w});
+    std::uint64_t n = 0;
+    const auto frames = [&](int count) {
+        for (int i = 0; i < count; ++i) {
+            ++n;
+            now = static_cast<double>(n) * 0.016;
+            ATLAS_REQUIRE(fb.derive(n, 0, nullptr));
+            w.update(fb.state());
+            w.residency().wait_idle();
+            if (w.sun() != nullptr) w.sun()->wait_idle();
+        }
+    };
+    // The lower pack's scene first, then the taller one's in its place, both with the zero identity.
+    ATLAS_REQUIRE(w.sun() != nullptr);
+    auto added = w.store().add({.id = "low", .kind = tiles::PackKind::bundled, .path = low});
+    ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+    frames(6);
+    const std::uint64_t first = w.sun()->stats().scenes;
+    CHECK(first >= 1);
+    CHECK(w.store().remove("low"));
+    added = w.store().add({.id = "tall", .kind = tiles::PackKind::bundled, .path = tall});
+    ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+    frames(6);
+    CHECK(w.sun()->stats().scenes > first); // the taller pack's scene built, its grid held to its own tower
+    for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
+    std::error_code ignored;
+    std::filesystem::remove(low, ignored);
+    std::filesystem::remove(tall, ignored);
+}
+
 TEST_CASE("the world builds the cover's tiles on its workers, draws their visible cells and lets them go") {
     const std::string dir = environment("ATLAS_TILES_DIR");
     if (dir.empty()) {

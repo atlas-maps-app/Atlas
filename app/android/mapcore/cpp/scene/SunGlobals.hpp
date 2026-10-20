@@ -154,7 +154,7 @@ private:
     void prepare_lane(Lane& lane, const frame::FrameState& state, const std::shared_ptr<const tiles::StorePack>& pack,
                       std::uint8_t level, std::span<const CoverTile> drawn);
     [[nodiscard]] std::shared_ptr<const sun::Scene> build(const Build& b);
-    [[nodiscard]] std::optional<double> maxh(const tiles::StorePack& pack, std::uint8_t level);
+    [[nodiscard]] std::optional<double> maxh(const std::shared_ptr<const tiles::StorePack>& pack, std::uint8_t level);
     void ask(Lane& lane, const std::shared_ptr<const sun::Scene>& scene, const Build& b);
     [[nodiscard]] double now() const;
 
@@ -182,7 +182,13 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable_any wake_;
     std::condition_variable idle_;
-    std::vector<std::pair<std::uint64_t, double>> maxh_; ///< scene_maxh per (the pack identity's first word, level)
+    /// scene_maxh per pack (the store's own, never its identity: the APK's packs have none) and level.
+    struct Tallest {
+        std::weak_ptr<const tiles::StorePack> pack;
+        std::uint8_t level = 0;
+        double h = 0.0;
+    };
+    std::vector<Tallest> maxh_;
     SunStats stats_;
     std::jthread thread_; ///< last: it starts once every member above is made, and stops first
 };
