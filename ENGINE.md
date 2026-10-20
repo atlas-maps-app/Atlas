@@ -145,7 +145,7 @@ Nothing is finished. Each part below is a first version on `app` (at `10c4529`, 
 - `wip/text-registration`: the text passes' registration. It needs `build_pack` and the providers.
 - `wip/exact-haze`: haze and vignette in whole numbers, equal to the twin. Run host-debug, host-tsan and the oracle comparison before merging.
 
-The other local branches and the worktrees under `/Volumes/Download/atlas` are history.
+The other local branches are history. The old builders' worktrees went to the Trash on 20 October 2026; their work is on `app` or these branches.
 
 ## What is left, in order
 
