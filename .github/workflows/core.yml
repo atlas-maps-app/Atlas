@@ -161,8 +161,9 @@ jobs:
     needs: [core-changes, tiles]
     if: ${{ !cancelled() && needs.core-changes.outputs.core != 'false' }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
-    # The nightly fuzz runs every target for up to 30 minutes, at most 120 minutes in all (see its step).
-    timeout-minutes: ${{ (matrix.task == 'fuzz' && github.event_name == 'schedule') && 150 || 45 }}
+    # The nightly fuzz runs every target for up to 30 minutes, at most 120 minutes in all (see its step); tidy over every
+    # file (a header changed, ~380 of them) takes some 45 minutes on its own.
+    timeout-minutes: ${{ (matrix.task == 'fuzz' && github.event_name == 'schedule') && 150 || (matrix.task == 'tidy' && 80 || 45) }}
     # A newer push cancels this ref's older core jobs; the image job (below) is never cancelled by one.
     concurrency:
       group: core-${{ github.ref }}-${{ github.event_name }}-${{ matrix.task }}-${{ matrix.arch }}
