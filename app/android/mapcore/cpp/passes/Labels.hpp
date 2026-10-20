@@ -4,11 +4,12 @@
 // the composite, so they never trail the map and are not hazed. A label's points are projected by the frame's camera
 // onto the view's device pixels; the chrome's keep-out shapes (the camera state's) and the markers keep labels off
 // them; each sprite stands on whole device pixels where LabelPainter would draw its text (labels/Sprites.hpp's
-// sprite_at) and is copied texel for texel (shaders/text/sprite.slang). Its texels are set 1's (passes/GroundText.hpp's
-// TextGlobals); the frame slot's sprites to draw are the pass's own set (2). The log's line, `label place <ms> placed
-// <n>`, comes when the labels placed change, at most once a second.
+// sprite_at) and is copied texel for texel (shaders/text/sprite.slang). Its texels are set 1's (SpriteGlobals, below);
+// the frame slot's sprites to draw are the pass's own set (2). The log's line, `label place <ms> placed <n>`, comes
+// when the labels placed change, at most once a second.
 #pragma once
 
+#include "frame/Globals.hpp"
 #include "frame/Pass.hpp"
 #include "gen/layouts.hpp"
 #include "gpu/Memory.hpp"
@@ -16,7 +17,12 @@
 
 #include <array>
 #include <cstdint>
+#include <utility>
 #include <vector>
+
+namespace atlas::labels {
+struct LabelSet; // labels/Sprites.hpp
+} // namespace atlas::labels
 
 namespace atlas::passes {
 
@@ -69,6 +75,34 @@ private:
     vk::raii::PipelineLayout layout_{nullptr};
     vk::raii::ShaderModule module_{nullptr};
     vk::raii::Pipeline pipeline_{nullptr};
+};
+
+/// Set 1's sprites (frame/Globals.hpp; plan-vector D13): the texels of the frame's LabelSet, copied once a set into a
+/// buffer of its own; the buffer of the set before kept for a few updates more than the frames in flight of the frame
+/// builders that may read it. The world holds it (World::add_globals; the labels pass brings it).
+class SpriteGlobals final : public frame::GlobalProvider {
+public:
+    explicit SpriteGlobals(const gpu::Device& device) noexcept : device_(device) {}
+
+    [[nodiscard]] std::string_view name() const noexcept override { return "sprites"; }
+    [[nodiscard]] std::span<const frame::Global> bindings() const noexcept override { return owned; }
+    void update(const frame::FrameState& state, frame::Globals& globals) override;
+
+    /// The texels of the set copied last (for tests).
+    [[nodiscard]] std::size_t texels() const noexcept { return texels_; }
+
+private:
+    static constexpr std::array<frame::Global, 1> owned{frame::Global::sprites};
+    /// Updates a let-go buffer is kept: two frame builders' frames in flight, and as many again.
+    static constexpr std::uint64_t retire_after = 4ULL * gpu::Frames::in_flight;
+
+    const gpu::Device& device_;
+    const labels::LabelSet* set_ = nullptr; // the set copied last: its address and revision
+    std::uint64_t revision_ = 0;
+    gpu::Buffer buffer_;
+    std::size_t texels_ = 0;
+    std::vector<std::pair<gpu::Buffer, std::uint64_t>> retired_; // buffer, the update it was let go of
+    std::uint64_t updates_ = 0;
 };
 
 } // namespace atlas::passes

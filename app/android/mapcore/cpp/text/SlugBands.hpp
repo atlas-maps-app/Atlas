@@ -128,7 +128,7 @@ private:
 };
 
 /// The glyphs the frame's text draws, shared by its passes (the ground's text, then the house numbers and shop signs)
-/// and set 1's provider of their data (passes/GroundText.hpp's TextGlobals, which copies what was added since its last
+/// and set 1's provider of their data (passes/GroundText.hpp's GlyphGlobals, which copies what was added since its last
 /// copy to the GPU before the frame draws): each glyph's outline added on first use, by face, weight and glyph id, up
 /// to max_rows rows of each texture (the provider's buffers). Locked, so frames on two render threads may share it.
 class GlyphAtlas {

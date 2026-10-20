@@ -15,7 +15,7 @@
 // (calibrated against Skia's text on the emulator, identity until then) and scales the glyph's premultiplied colour.
 //
 // The glyphs' data are set 1's (frame/FrameLayout.hpp's glyph_curves and glyph_bands, which passes/GroundText.hpp's
-// TextGlobals fills): the curves (two points a texel, em units, rows of 4096 texels) and the bands (a texel's two 16-bit
+// GlyphGlobals fills): the curves (two points a texel, em units, rows of 4096 texels) and the bands (a texel's two 16-bit
 // values packed low first, the same rows). The frame slot's glyphs and the coverage tables are the pass's own set (2).
 
 #include "shared/frame.slang"
@@ -99,7 +99,7 @@ float2 slug_solve(float2 p1, float2 p2, float2 p3) {
     return float2((a.x * t1 - b.x * 2.0f) * t1 + p1.x, (a.x * t2 - b.x * 2.0f) * t2 + p1.x);
 }
 
-/// A band texel's two values; nothing past the buffer (set 1's placeholder until TextGlobals gives the bands: a glyph
+/// A band texel's two values; nothing past the buffer (set 1's placeholder until GlyphGlobals gives the bands: a glyph
 /// then has no curves, and draws nothing).
 uint2 slug_band_texel(uint2 at) {
     uint n;

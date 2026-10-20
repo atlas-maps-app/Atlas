@@ -1,7 +1,7 @@
 // The board's labels drawn by the frame (plan-vector D13, K13): the app's sprites (a LabelSet in the frame's inputs),
-// their texels in set 1 through TextGlobals, placed by LabelPainter's algorithm at their points' projections and drawn
-// in the composite subpass after the composite; on every configuration and route the host's Vulkan has, each sprite's
-// texels land on whole pixels at its place, blended over the frame as premultiplied colour, exactly.
+// their texels in set 1 through SpriteGlobals, placed by LabelPainter's algorithm at their points' projections and
+// drawn in the composite subpass after the composite; on every configuration and route the host's Vulkan has, each
+// sprite's texels land on whole pixels at its place, blended over the frame as premultiplied colour, exactly.
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/PassRegistry.hpp"
@@ -113,7 +113,7 @@ TEST_CASE("the board's labels drawn: each sprite's texels land whole at its plac
     passes.push_back(std::move(owned));
     auto builder = frame::FrameBuilder::create(device, *cache, std::move(passes), {.clear = clear, .steps = 0});
     ATLAS_REQUIRE(builder.has_value(), builder.error().text());
-    passes::TextGlobals globals(device);
+    passes::SpriteGlobals globals(device);
     const double lat0 = standin::origin_latitude;
     const double lon0 = standin::origin_longitude;
     const view::GroundFrame ground{
@@ -183,7 +183,7 @@ TEST_CASE("the board's labels drawn: each sprite's texels land whole at its plac
         CHECK(labels->draws().size() == 2); // the third's point is off the frame
         CHECK(texels == (31 * 13) + (17 * 9));
         CHECK(differ == 0);
-        CHECK(globals.sprite_texels() == (*set)->texels().size());
+        CHECK(globals.texels() == (*set)->texels().size());
         renderer->reset();
     }
     const auto messages = session->take_messages();

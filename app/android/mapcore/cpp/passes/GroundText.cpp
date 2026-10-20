@@ -6,7 +6,6 @@
 #include "frame/FrameLayout.hpp"
 #include "gen/spirv/text/slug.hpp"
 #include "gpu/Descriptors.hpp"
-#include "labels/Sprites.hpp"
 #include "scene/Cover.hpp"
 #include "scene/Residency.hpp"
 #include "style/CameraState.hpp"
@@ -309,13 +308,13 @@ void GroundText::emit(const frame::FrameState& state, twin::Stream& out, std::ui
               placed_.size(), turned);
 }
 
-// ---- Set 1's text globals.
+// ---- Set 1's glyphs.
 
-void TextGlobals::update(const frame::FrameState& state, frame::Globals& globals) {
-    const vk::BufferUsageFlags storage = vk::BufferUsageFlagBits::eStorageBuffer;
-    ++updates_;
+void GlyphGlobals::update(const frame::FrameState& state, frame::Globals& globals) {
+    (void)state;
     if (!curves_) {
-        // The glyphs' buffers, once, at the shared atlas's rows (record copies what is added before each frame draws).
+        // The buffers, once, at the shared atlas's rows (record copies what is added before each frame draws).
+        const vk::BufferUsageFlags storage = vk::BufferUsageFlagBits::eStorageBuffer;
         auto curves =
             device_.memory().buffer(glyph_capacity * sizeof(text::slug::CurveTexel), storage, gpu::MemoryUse::upload);
         auto bands = device_.memory().buffer(glyph_capacity * sizeof(std::uint32_t), storage, gpu::MemoryUse::upload);
@@ -332,38 +331,9 @@ void TextGlobals::update(const frame::FrameState& state, frame::Globals& globals
     // comparison there.
     globals.buffer(frame::Global::glyph_curves, curves_.handle());
     globals.buffer(frame::Global::glyph_bands, bands_.handle());
-    // The board's sprites: a new set's texels in a buffer of their own; the sets' before it kept for a few updates
-    // more than the frames in flight of the frame builders that may read them.
-    std::erase_if(retired_, [&](const auto& r) { return r.second + retire_after <= updates_; });
-    const labels::LabelSet* set = state.labels;
-    const std::uint64_t revision = set != nullptr ? set->revision() : 0;
-    if (set != labels_ || revision != labels_revision_) {
-        if (sprites_) retired_.emplace_back(std::move(sprites_), updates_);
-        sprites_ = gpu::Buffer{};
-        sprite_texels_ = 0;
-        labels_ = set;
-        labels_revision_ = revision;
-        if (set != nullptr && !set->texels().empty()) {
-            auto made = device_.memory().buffer(set->texels().size_bytes(), storage, gpu::MemoryUse::upload);
-            if (!made) {
-                log::error("text: the label sprites' buffer ({} texels): {}", set->texels().size(),
-                           made.error().text());
-            } else {
-                sprites_ = std::move(*made);
-                std::memcpy(sprites_.bytes().data(), set->texels().data(), set->texels().size_bytes());
-                sprites_.flush();
-                sprite_texels_ = set->texels().size();
-            }
-        }
-    }
-    if (sprites_) {
-        globals.buffer(frame::Global::sprites, sprites_.handle());
-    } else {
-        globals.reset(frame::Global::sprites);
-    }
 }
 
-void TextGlobals::record(const gpu::FrameContext& frame) {
+void GlyphGlobals::record(const gpu::FrameContext& frame) {
     (void)frame;
     if (!curves_ || !bands_) return;
     // The texels the frame's passes added since the last copy (the atlas only grows): into memory no frame in flight

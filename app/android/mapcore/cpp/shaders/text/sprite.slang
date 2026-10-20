@@ -8,7 +8,7 @@
 // Variants: this module writes colour attachment 0; sprite_loc1.slang writes attachment 1, where the composite writes
 // the dynamic route's 1x output beside the scene's colour (shaders/frame/composite_x1_loc1.slang).
 //
-// The texels are set 1's (frame/FrameLayout.hpp's sprites, which passes/GroundText.hpp's TextGlobals fills from the
+// The texels are set 1's (frame/FrameLayout.hpp's sprites, which passes/Labels.hpp's SpriteGlobals fills from the
 // frame's LabelSet): every sprite's rows one after another, premultiplied RGBA8, R in the low byte. The frame slot's
 // sprites to draw are the pass's own set (2).
 
@@ -64,7 +64,7 @@ SpriteColour sprite_fs(SpriteOut v) {
     // The pixel of the view under this fragment: its centre's whole part, from the sprite's corner.
     float2 view = css_of_output(frame.camera, v.position.xy) * frame.camera.frame.z;
     int2 texel = clamp(int2(floor(view)) - s.target.xy, int2(0, 0), s.target.zw - int2(1, 1));
-    // Nothing past the buffer (set 1's placeholder until TextGlobals gives the frame's sprites).
+    // Nothing past the buffer (set 1's placeholder until SpriteGlobals gives the frame's sprites).
     uint n;
     uint stride;
     sprite_texels.GetDimensions(n, stride);

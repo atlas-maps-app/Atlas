@@ -11,8 +11,8 @@
 //   - Record: one instanced draw, six vertices a glyph, at the pass's ground slot (one: the canal names are the last of
 //     the ground's marks), after the ground's translucent phases up to the tram tracks (K9's ground_order:
 //     canal_names), depth test on and writes off.
-// The glyphs' curves and bands are set 1's, filled by TextGlobals (below), which also gives set 1 the board's label
-// sprites; the frame slot's glyphs and the coverage tables are the pass's own set (2). The fonts are
+// The glyphs' curves and bands are set 1's, filled by GlyphGlobals (below); the frame slot's glyphs and the coverage
+// tables are the pass's own set (2). The fonts are
 // text::shared_fonts() (a face not loaded draws nothing).
 #pragma once
 
@@ -30,10 +30,6 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
-
-namespace atlas::labels {
-struct LabelSet; // labels/Sprites.hpp
-} // namespace atlas::labels
 
 namespace atlas::passes {
 
@@ -117,43 +113,31 @@ private:
     vk::raii::Pipeline pipeline_{nullptr};
 };
 
-/// Set 1's text globals (frame/Globals.hpp; plan-vector D13): the glyphs' curves and bands (text::slug::shared_glyphs,
-/// copied to the GPU as glyphs are added, before the frame draws: record) and the board's label sprites' texels (the
-/// frame's LabelSet, copied once a set). The world holds it (World::add_globals); the frame's text passes read it.
-class TextGlobals final : public frame::GlobalProvider {
+/// Set 1's glyphs (frame/Globals.hpp; plan-vector D13): the curves and bands of text::slug::shared_glyphs, copied to
+/// the GPU as the frame's text passes add glyphs, after their updates and before the frame's commands go (record). The
+/// world holds it (World::add_globals; the ground's text pass brings it).
+class GlyphGlobals final : public frame::GlobalProvider {
 public:
-    explicit TextGlobals(const gpu::Device& device) noexcept : device_(device) {}
+    explicit GlyphGlobals(const gpu::Device& device) noexcept : device_(device) {}
 
-    [[nodiscard]] std::string_view name() const noexcept override { return "text"; }
+    [[nodiscard]] std::string_view name() const noexcept override { return "glyphs"; }
     [[nodiscard]] std::span<const frame::Global> bindings() const noexcept override { return owned; }
     void update(const frame::FrameState& state, frame::Globals& globals) override;
     void record(const gpu::FrameContext& frame) override;
 
-    /// The glyphs' texels copied so far, and the sprites' (for tests).
-    [[nodiscard]] std::pair<std::size_t, std::size_t> glyph_texels() const noexcept {
+    /// The curve and band texels copied so far (for tests).
+    [[nodiscard]] std::pair<std::size_t, std::size_t> copied() const noexcept {
         return {curves_copied_, bands_copied_};
     }
-    [[nodiscard]] std::size_t sprite_texels() const noexcept { return sprite_texels_; }
 
 private:
-    static constexpr std::array<frame::Global, 3> owned{frame::Global::glyph_curves, frame::Global::glyph_bands,
-                                                        frame::Global::sprites};
+    static constexpr std::array<frame::Global, 2> owned{frame::Global::glyph_curves, frame::Global::glyph_bands};
 
     const gpu::Device& device_;
     gpu::Buffer curves_;
     gpu::Buffer bands_;
     std::size_t curves_copied_ = 0;
     std::size_t bands_copied_ = 0;
-    // The sprites: the set copied last (its address and revision), its buffer, and the buffers of sets before it,
-    // kept until the frames that read them are done.
-    const labels::LabelSet* labels_ = nullptr;
-    std::uint64_t labels_revision_ = 0;
-    gpu::Buffer sprites_;
-    std::size_t sprite_texels_ = 0;
-    std::vector<std::pair<gpu::Buffer, std::uint64_t>> retired_; // buffer, the update it was let go of
-    std::uint64_t updates_ = 0;
-    /// Updates a let-go buffer is kept: two frame builders' frames in flight, and as many again.
-    static constexpr std::uint64_t retire_after = 4ULL * gpu::Frames::in_flight;
 };
 
 } // namespace atlas::passes

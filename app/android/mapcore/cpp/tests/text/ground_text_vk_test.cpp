@@ -1,6 +1,6 @@
 // The ground's text drawn by the frame (plan-vector D13, K13): over the bundled Westerkerk at its home view, at rest,
 // the world's tiles bring their canal candidates (stage T), the pass places the renders' names, shapes them, adds their
-// glyphs to the shared data (set 1's, through TextGlobals) and draws them in the translucent slot; on every
+// glyphs to the shared data (set 1's, through GlyphGlobals) and draws them in the translucent slot; on every
 // configuration and route the host's Vulkan has, every pixel the glyphs reach is the CPU's coverage (text/SlugBands'
 // coverage at the pixel's centre, through the identity table) blended over the clear colour in the glyphs' order.
 #include "base/pymath/PyMath.hpp"
@@ -180,7 +180,7 @@ TEST_CASE("the canal names drawn: the glyphs' pixels are the CPU's coverage, on 
                                       {.workers = 3, .sun = {.enabled = false}, .clock = [&now] { return now; }});
     ATLAS_REQUIRE(world.has_value(), world.error().text());
     scene::World& w = **world;
-    auto globals = std::make_shared<passes::TextGlobals>(device);
+    auto globals = std::make_shared<passes::GlyphGlobals>(device);
     ATLAS_REQUIRE(w.add_globals(globals).has_value());
     auto added = w.store().add({.id = "amsterdam",
                                 .kind = tiles::PackKind::bundled,

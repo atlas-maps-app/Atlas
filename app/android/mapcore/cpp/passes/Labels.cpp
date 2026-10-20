@@ -162,4 +162,38 @@ void Labels::record(const frame::Recording& recording, std::uint32_t phase) {
     recording.counters.draw("label sprites", 2ULL * count, count);
 }
 
+// ---- Set 1's sprites.
+
+void SpriteGlobals::update(const frame::FrameState& state, frame::Globals& globals) {
+    ++updates_;
+    std::erase_if(retired_, [&](const auto& r) { return r.second + retire_after <= updates_; });
+    const labels::LabelSet* set = state.labels;
+    const std::uint64_t revision = set != nullptr ? set->revision() : 0;
+    if (set != set_ || revision != revision_) {
+        if (buffer_) retired_.emplace_back(std::move(buffer_), updates_);
+        buffer_ = gpu::Buffer{};
+        texels_ = 0;
+        set_ = set;
+        revision_ = revision;
+        if (set != nullptr && !set->texels().empty()) {
+            auto made = device_.memory().buffer(set->texels().size_bytes(), vk::BufferUsageFlagBits::eStorageBuffer,
+                                                gpu::MemoryUse::upload);
+            if (!made) {
+                log::error("labels: the sprites' buffer ({} texels): {}", set->texels().size(), made.error().text());
+            } else {
+                buffer_ = std::move(*made);
+                std::memcpy(buffer_.bytes().data(), set->texels().data(), set->texels().size_bytes());
+                buffer_.flush();
+                texels_ = set->texels().size();
+            }
+        }
+    }
+    // Every frame (each frame builder drawing the world has its own set 1).
+    if (buffer_) {
+        globals.buffer(frame::Global::sprites, buffer_.handle());
+    } else {
+        globals.reset(frame::Global::sprites);
+    }
+}
+
 } // namespace atlas::passes
