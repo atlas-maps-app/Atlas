@@ -19,3 +19,5 @@ Recorded from the real services on 13 October 2026, unchanged unless noted:
 
 `doc_*.json` were not recorded: Foursquare, Yelp and Tripadvisor need paid or personal keys, so these follow the
 response shapes in each provider's API reference.
+- `met_forecast.json`: written by hand (not recorded) from MET Norway's Locationforecast 2.0 `complete` schema around the
+  Westerkerk: hourly steps, then six-hour ones, with the symbols, fog and thunder the parser must read.

@@ -14,6 +14,9 @@ import org.junit.rules.TemporaryFolder
 import java.time.Instant
 import java.time.LocalDate
 
+/** MET Norway nowhere: these tests are Open-Meteo's, and no test may reach the real MET. */
+internal const val NO_MET = "http://127.0.0.1:9"
+
 class WeatherTest {
     @get:Rule
     val tmp = TemporaryFolder()
@@ -74,7 +77,7 @@ class WeatherTest {
         val cache = tmp.newFolder("cache")
         Mock().use { m ->
             m.fixture("meteo_forecast.json")
-            val w = Weather(testHttp(), cache, base = m.base) { fetched }
+            val w = Weather(testHttp(), cache, base = m.base, metBase = NO_MET) { fetched }
             val f = w.forecast(amsterdam)
             assertFalse(f.kept)
             val req = m.take()
@@ -87,7 +90,7 @@ class WeatherTest {
         }
         // No signal: a place 2 km away gets the kept forecast, marked as kept, with its original time.
         var now = fetched.plusSeconds(6 * 3600)
-        val offline = Weather(testHttp(), cache, base = "http://127.0.0.1:9") { now }
+        val offline = Weather(testHttp(), cache, base = "http://127.0.0.1:9", metBase = NO_MET) { now }
         val kept = offline.forecast(LatLon(52.36, 4.90))
         assertTrue(kept.kept)
         assertEquals(fetched, kept.fetchedAt)
@@ -114,7 +117,7 @@ class WeatherTest {
         val notAFolder = tmp.newFile("full")
         Mock().use { m ->
             m.fixture("meteo_forecast.json")
-            val f = Weather(testHttp(), notAFolder, base = m.base) { fetched }.forecast(amsterdam)
+            val f = Weather(testHttp(), notAFolder, base = m.base, metBase = NO_MET) { fetched }.forecast(amsterdam)
             assertEquals(48, f.hours.size)
             assertFalse(f.kept)
         }
@@ -142,7 +145,7 @@ class WeatherTest {
         Mock().use { m ->
             m.fixture("meteo_error.json", 400)
             try {
-                Weather(testHttp(), base = m.base).forecast(amsterdam)
+                Weather(testHttp(), base = m.base, metBase = NO_MET).forecast(amsterdam)
                 fail()
             } catch (e: ProviderException) {
                 assertTrue(e.message!!.contains("Latitude must be in range"))
@@ -154,7 +157,7 @@ class WeatherTest {
     fun aCommercialKeyUsesTheCustomerHost() = runBlocking {
         Mock().use { m ->
             m.fixture("meteo_forecast.json")
-            Weather(testHttp(), keys = Keys.of("open-meteo" to "k123"), customerBase = m.base).forecast(amsterdam)
+            Weather(testHttp(), keys = Keys.of("open-meteo" to "k123"), customerBase = m.base, metBase = NO_MET).forecast(amsterdam)
             assertEquals("k123", m.take().url.queryParameter("apikey"))
         }
     }
@@ -164,7 +167,7 @@ class WeatherTest {
         Mock().use { m ->
             m.fixture("meteo_marine.json")
             m.fixture("meteo_marine_land.json")
-            val w = Weather(testHttp(), marineBase = m.base)
+            val w = Weather(testHttp(), marineBase = m.base, metBase = NO_MET)
             val sea = w.marine(LatLon(52.47, 4.45))!!
             assertEquals(1.52, sea.now!!.waveHeight, 0.0)
             assertEquals(261.0, sea.now.waveDirection, 0.0)

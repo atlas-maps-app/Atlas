@@ -185,6 +185,10 @@ class Weather(
     private val marineBase: String = "https://marine-api.open-meteo.com",
     private val customerBase: String = "https://customer-api.open-meteo.com",
     private val customerMarineBase: String = "https://customer-marine-api.open-meteo.com",
+    /** MET Norway, the second source ([MetNorway]). */
+    private val metBase: String = "https://api.met.no",
+    /** The zone MET's days are grouped in: MET does not say the place's own. */
+    private val zone: () -> java.time.ZoneId = java.time.ZoneId::systemDefault,
     private val clock: () -> Instant = Instant::now,
 ) : Provider {
     override val info = INFO
@@ -194,19 +198,20 @@ class Weather(
     private fun key(): String? = keys.key(ID)?.takeIf { it.isNotBlank() }
 
     /**
-     * The forecast for [at]: fetched, or with no connection the kept one within [keptWithinM] (marked kept).
-     * Throws when there is neither.
+     * The forecast for [at]: fetched from Open-Meteo, or when it cannot answer from MET Norway, or with no connection
+     * the kept one within [keptWithinM] (marked kept). Throws when there is none of them.
      */
     suspend fun forecast(at: LatLon, keptWithinM: Double = 25_000.0): Forecast {
         val res = try {
             http.execute(http.request(forecastUrl(at)).build())
         } catch (e: IOException) {
             currentCoroutineContext().ensureActive()
-            return kept(at, keptWithinM) ?: throw e
+            return second(at) ?: kept(at, keptWithinM) ?: throw e
         }
-        // A 400 is our mistake (Open-Meteo says why); other failures are the server's, and the kept forecast stands in.
+        // A 400 is our mistake (Open-Meteo says why); other failures are the server's: MET Norway answers instead, and
+        // failing that the kept forecast stands in.
         if (res.code == 400) throw ProviderException(ID, "Open-Meteo refused the request: " + (runCatching { res.json().asObject()?.str("reason") }.getOrNull() ?: res.text.take(200)))
-        if (!res.ok) return kept(at, keptWithinM) ?: throw HttpException(res.code, res.url, res.text.take(300))
+        if (!res.ok) return second(at) ?: kept(at, keptWithinM) ?: throw HttpException(res.code, res.url, res.text.take(300))
         val now = clock()
         val json = res.json().asObject() ?: throw ProviderException(ID, "Open-Meteo answered something unexpected")
         val forecast = parseForecast(json, now)
@@ -216,6 +221,19 @@ class Weather(
         } catch (_: IOException) {
         }
         return forecast
+    }
+
+    /** MET Norway's forecast for [at], for when Open-Meteo cannot answer; null when MET cannot either. */
+    private suspend fun second(at: LatLon): Forecast? {
+        val res = try {
+            http.execute(http.request(MetNorway.url(metBase, at)).build())
+        } catch (e: IOException) {
+            currentCoroutineContext().ensureActive()
+            return null
+        }
+        if (!res.ok) return null
+        val json = runCatching { res.json().asObject() }.getOrNull() ?: return null
+        return runCatching { MetNorway.parse(json, at, clock(), zone()) }.getOrNull()?.takeIf { it.hours.isNotEmpty() }
     }
 
     /**

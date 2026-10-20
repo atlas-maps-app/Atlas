@@ -9,7 +9,7 @@ object Catalogue {
         Overpass.INFO, Nominatim.INFO, Photon.INFO,
         Mangrove.INFO, FoursquareRatings.INFO, YelpRatings.INFO, TripAdvisorRatings.INFO,
         OpenChargeMap.INFO, OsmChargers.INFO, NdwChargers.INFO, BnetzaChargers.INFO, Afdc.INFO, Chargemap.INFO,
-        Weather.INFO, Wikidata.INFO, OsmNotes.INFO, Transitous.INFO,
+        Weather.INFO, MetNorway.INFO, Wikidata.INFO, OsmNotes.INFO, Transitous.INFO,
     )
 
     /** Data bundled in the app rather than asked online, with the credit each licence requires. */

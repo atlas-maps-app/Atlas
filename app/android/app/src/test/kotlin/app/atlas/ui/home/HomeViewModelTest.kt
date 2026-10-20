@@ -206,7 +206,7 @@ class HomeViewModelTest {
         try {
             repeat(4) { server.enqueue(MockResponse.Builder().code(200).addHeader("Content-Type", "text/html").body("<html>Log in</html>").build()) }
             val cache = Files.createTempDirectory("atlas-weather").toFile()
-            val weather = Weather(Http(), cache, base = server.url("/").toString())
+            val weather = Weather(Http(), cache, base = server.url("/").toString(), metBase = "http://127.0.0.1:9")
             assertNull(forecastOrKept(weather, Services.WESTERKERK, online = true))
             val fixture = File(System.getProperty("atlas.repo")!!, "app/android/providers/src/test/resources/fixtures/meteo_forecast.json")
             File(cache, "weather").mkdirs()
