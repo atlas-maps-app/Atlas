@@ -882,6 +882,17 @@ void Session::read_profiles() {
     started_.guard->keep_facts(lines);
 }
 
+std::string Session::check(std::string_view name, const std::function<std::string(const gpu::Started&)>& check) {
+    if (closed_ || !started_.device || !started_.cache)
+        return std::format("{}: not run (the session has no device)", name);
+    if (const std::string off = started_.guard->checks_off(); !off.empty()) {
+        return std::format("{}: off (a check crashed under this driver and build: {})", name, off);
+    }
+    // Never inside VK bench's colour stage, whose marker a crash here would take.
+    if (colour_open()) return std::format("{}: not run (VK bench's colour stage is open)", name);
+    return behind(gpu::Stage::checks, [&] { return check(started_); });
+}
+
 std::string Session::facts() {
     read_profiles();
     std::string out = build_lines();

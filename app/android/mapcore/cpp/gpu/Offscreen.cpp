@@ -1,10 +1,10 @@
-// The host build's offscreen output (platform/host/Offscreen.hpp).
-#include "platform/host/Offscreen.hpp"
+// The offscreen output (gpu/Offscreen.hpp).
+#include "gpu/Offscreen.hpp"
 
 #include <cstring>
 #include <format>
 
-namespace atlas::platform {
+namespace atlas::gpu {
 
 gpu::Result<std::unique_ptr<Offscreen>> Offscreen::create(const gpu::Device& device, vk::Extent2D extent,
                                                           std::uint32_t images, gpu::Depth depth) {
@@ -177,4 +177,4 @@ gpu::Result<void> Offscreen::fill(const std::array<float, 4>& rgba) const {
     return {};
 }
 
-} // namespace atlas::platform
+} // namespace atlas::gpu

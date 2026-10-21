@@ -19,18 +19,19 @@ namespace atlas::gpu {
 
 namespace {
 
-constexpr std::array stage_names{"instance", "facts",    "device", "cache", "surface", "pipelines",
-                                 "frames",   "profiles", "colour", "close", "refused"};
+constexpr std::array stage_names{"instance", "facts",    "device", "cache",  "surface", "pipelines",
+                                 "frames",   "profiles", "colour", "checks", "close",   "refused"};
 static_assert(stage_names.size() == static_cast<std::size_t>(Stage::refused) + 1);
 
-/// The colour stage's and the profiles stage's names, as markers and off lines spell them, and a VK bench cell's in an
+/// The colour, profiles and checks stages' names, as markers and off lines spell them, and a VK bench cell's in an
 /// off line: the rungs below Vulkan off, whose crash turns off only what they guard, at once.
 constexpr std::string_view colour = "colour";
 constexpr std::string_view profiles = "profiles";
+constexpr std::string_view checks_rung = "checks";
 constexpr std::string_view cell_rung = "cell";
 
 [[nodiscard]] bool rung_below(std::string_view stage) noexcept {
-    return stage == colour || stage == profiles || stage == cell_rung;
+    return stage == colour || stage == profiles || stage == checks_rung || stage == cell_rung;
 }
 
 /// A plant that fires in a VK bench cell's work alone (`cell:<plant>`, Guard's constructor).
@@ -338,6 +339,13 @@ bool Guard::read_marker(const std::string& marker, const ProcessExits& exits, Gu
         log::error("{}{}: the profiles check is off for this driver and this build", v.line, ended);
         return true;
     }
+    if (stage == checks_rung) {
+        // One of VK facts' drawing checks crashed: they decide nothing (VK facts reports them), so they alone are off,
+        // at once, and this start goes on as it was, its cache kept.
+        turn_off(stage, what);
+        log::error("{}{}: VK facts' drawing checks are off for this driver and this build", v.line, ended);
+        return true;
+    }
     if (attempt >= 2) {
         // The retry crashed too: Vulkan off, for the driver, or for the system build where the stage is keyed to it
         // (write_marker).
@@ -381,6 +389,8 @@ std::string Guard::rung_off(std::string_view stage) const {
 std::string Guard::ten_bit_off() const { return rung_off(colour); }
 
 std::string Guard::profiles_off() const { return rung_off(profiles); }
+
+std::string Guard::checks_off() const { return rung_off(checks_rung); }
 
 std::string Guard::cell_off(const Configuration& configuration) const {
     if (pick_ && configuration == *pick_) return {}; // the pick follows Vulkan's ladder
@@ -588,10 +598,11 @@ std::vector<std::string> Guard::state() const {
     for (const GuardOff& o : off) {
         const bool system = o.driver == "system";
         const bool here = system ? o.version == system_ : o.driver == driver_ && o.version == version_;
-        const std::string gone = o.stage == colour      ? std::string("10 bits are off")
-                                 : o.stage == profiles  ? std::string("the profiles check is off")
-                                 : o.stage == cell_rung ? std::format("VK bench's cell {} is off", o.what)
-                                                        : std::string("Vulkan is off");
+        const std::string gone = o.stage == colour        ? std::string("10 bits are off")
+                                 : o.stage == profiles    ? std::string("the profiles check is off")
+                                 : o.stage == checks_rung ? std::string("VK facts' drawing checks are off")
+                                 : o.stage == cell_rung   ? std::format("VK bench's cell {} is off", o.what)
+                                                          : std::string("Vulkan is off");
         std::string whose = "another driver or version: not off here";
         if (o.build.empty()) {
             whose = "a build from before build IDs: not off for this one";
@@ -617,14 +628,19 @@ std::string Guard::clear(const std::filesystem::path& cache_file) const {
         const std::vector<GuardOff> off = turned_off();
         const auto ten = static_cast<std::size_t>(std::ranges::count(off, colour, &GuardOff::stage));
         const auto checks = static_cast<std::size_t>(std::ranges::count(off, profiles, &GuardOff::stage));
+        const auto drawing = static_cast<std::size_t>(std::ranges::count(off, checks_rung, &GuardOff::stage));
         const auto cells = static_cast<std::size_t>(std::ranges::count(off, cell_rung, &GuardOff::stage));
-        if (const std::size_t vulkan = off.size() - ten - checks - cells; vulkan > 0)
+        if (const std::size_t vulkan = off.size() - ten - checks - drawing - cells; vulkan > 0)
             forgot.push_back(std::format("{} {} turned off", vulkan, vulkan == 1 ? "driver" : "drivers"));
         if (ten > 0)
             forgot.push_back(std::format("10 bits turned off for {} {}", ten, ten == 1 ? "driver" : "drivers"));
         if (checks > 0) {
             forgot.push_back(
                 std::format("the profiles check turned off for {} {}", checks, checks == 1 ? "driver" : "drivers"));
+        }
+        if (drawing > 0) {
+            forgot.push_back(std::format("VK facts' drawing checks turned off for {} {}", drawing,
+                                         drawing == 1 ? "driver" : "drivers"));
         }
         if (cells > 0) forgot.push_back(std::format("{} VK bench {} turned off", cells, cells == 1 ? "cell" : "cells"));
         std::filesystem::remove(dir_ / "off", ec);

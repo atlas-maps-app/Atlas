@@ -22,7 +22,7 @@
 #include "tests/gpu/gpu_fixture.hpp"
 
 #if !defined(__ANDROID__)
-#include "platform/host/Offscreen.hpp"
+#include "gpu/Offscreen.hpp"
 #endif
 
 #include <doctest/doctest.h>
@@ -291,7 +291,7 @@ TEST_CASE("the fields' provider binds them for the frame's size once made, in fu
     auto builder = frame::FrameBuilder::create(device, *cache, frame::make_passes());
     ATLAS_REQUIRE(builder.has_value(), builder.error().text());
     const vk::Extent2D extent{.width = 96, .height = 72};
-    auto output = platform::Offscreen::create(device, extent, 2);
+    auto output = gpu::Offscreen::create(device, extent, 2);
     ATLAS_REQUIRE(output.has_value(), output.error().text());
     const style::CameraState wide = standin::board_view(96, 72, 2.0);
     const style::CameraState tall = standin::board_view(72, 96, 2.0);

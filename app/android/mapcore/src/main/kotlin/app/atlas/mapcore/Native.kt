@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 9
+    const val ABI = 10
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -92,6 +92,13 @@ object Native {
      * `twin unavailable: <why>`. About a second of two phone cores, on the core's render thread: never on the main thread.
      */
     @JvmStatic external fun twinLine(handle: Long, fd: Int, offset: Long, length: Long): String
+
+    /**
+     * The core's composite check (`CP/frame/CompositeCheck.hpp`) on the core's device: the composite's resolve form
+     * against its direct form, a few small frames offscreen behind the crash guard's checks stage (a crash there turns
+     * the check off alone): `composite.check: …`. On the core's render thread: never on the main thread.
+     */
+    @JvmStatic external fun compositeLine(handle: Long): String
 
     // ---- K13's natives: the text's kerning rule, the device's glyph check (VK facts) and the bundled fonts ----
 

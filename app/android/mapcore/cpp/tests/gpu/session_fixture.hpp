@@ -7,8 +7,8 @@
 
 #if !defined(__ANDROID__)
 
+#include "gpu/Offscreen.hpp"
 #include "gpu/Swapchain.hpp"
-#include "platform/host/Offscreen.hpp"
 #include "standin/Session.hpp"
 
 #include <memory>
@@ -26,7 +26,7 @@ offscreen_output(const gpu::Device& device, vk::Extent2D wanted, gpu::Depth dept
         return gpu::fail(ten ? "planted: the driver refused the 10-bit swapchain"
                              : "planted: the driver refused the swapchain");
     }
-    ATLAS_GPU_LET(images, platform::Offscreen::create(device, wanted, 3, depth));
+    ATLAS_GPU_LET(images, gpu::Offscreen::create(device, wanted, 3, depth));
     return std::unique_ptr<gpu::Output>(std::move(images));
 }
 

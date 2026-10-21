@@ -29,7 +29,7 @@
 #include <vector>
 
 #if !defined(__ANDROID__)
-#include "platform/host/Offscreen.hpp"
+#include "gpu/Offscreen.hpp"
 #endif
 
 using namespace atlas;
@@ -267,8 +267,8 @@ std::vector<gpu::Configuration> configurations(const gpu::Device& device) {
 
 /// One frame drawn: its pixels at 8 bits, its packed words, the frosted pass's plan and counts, its GPU times.
 struct Drawn {
-    platform::Pixels pixels;
-    platform::Packed packed;
+    gpu::Pixels pixels;
+    gpu::Packed packed;
     passes::FrostPlan plan;
     vk::Extent2D copy{};
     frame::Count frosted;
@@ -278,7 +278,7 @@ struct Drawn {
 [[nodiscard]] gpu::Result<Drawn> draw(const gpu::Device& device, const gpu::PipelineCache& cache,
                                       const gpu::Configuration& config, vk::Extent2D extent, gpu::Depth depth,
                                       const style::CameraState& camera) {
-    ATLAS_GPU_LET(output, platform::Offscreen::create(device, extent, 2, depth));
+    ATLAS_GPU_LET(output, gpu::Offscreen::create(device, extent, 2, depth));
     std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes();
     passes.push_back(std::make_unique<PatternPass>());
     ATLAS_GPU_LET(builder, frame::FrameBuilder::create(device, cache, std::move(passes),
@@ -293,7 +293,7 @@ struct Drawn {
     Drawn d;
     d.gpu = renderer->frames().last_times();
     ATLAS_GPU_LET(packed, output->read_packed(output->latest()));
-    d.pixels = platform::to_rgba8(packed);
+    d.pixels = gpu::to_rgba8(packed);
     d.packed = std::move(packed);
     for (std::size_t p = 0; p < builder->passes().size(); ++p) {
         if (builder->passes()[p]->name() != "frosted") continue;
@@ -323,7 +323,7 @@ struct Drawn {
 /// bilinear read of its region within it (shifted by `shift_x`, `shift_y` px: the test's check that no shift fits
 /// better), CSS's saturate() on the unpremultiplied colour, the coverage and the blend over the frame. In 8-bit
 /// levels, as doubles.
-[[nodiscard]] std::vector<double> model(const platform::Pixels& bare, const passes::FrostPlan& plan, double shift_x = 0,
+[[nodiscard]] std::vector<double> model(const gpu::Pixels& bare, const passes::FrostPlan& plan, double shift_x = 0,
                                         double shift_y = 0) {
     const std::uint32_t w = bare.width;
     std::vector<double> out(bare.rgba.size());
@@ -475,7 +475,7 @@ TEST_CASE("the frosted pass draws the glass inside the frosted shapes as the CPU
                         under[(std::size_t(y) * extent.width) + std::size_t(x)] = true;
                 }
             }
-            const std::uint32_t words = platform::words_per_pixel(bare->packed.format);
+            const std::uint32_t words = gpu::words_per_pixel(bare->packed.format);
             std::size_t moved = 0;
             std::size_t changed = 0;
             for (std::size_t p = 0; p < under.size(); ++p) {
@@ -549,13 +549,13 @@ TEST_CASE("the frosted pass draws the glass inside the frosted shapes as the CPU
                              << "); the frosted pass " << frosted->gpu.after_ns / 1e6 << " ms of GPU on "
                              << device.facts().name);
                 if (drawn == 0) {
-                    (void)platform::write_ppm(bare->pixels, scratch("frosted-bare.ppm").string());
-                    (void)platform::write_ppm(frosted->pixels, scratch("frosted.ppm").string());
+                    (void)gpu::write_ppm(bare->pixels, scratch("frosted-bare.ppm").string());
+                    (void)gpu::write_ppm(frosted->pixels, scratch("frosted.ppm").string());
                 }
                 eight = std::move(*frosted);
             } else if (eight) {
                 // At 10 bits the copy is 8-bit all the same: the glass within a few levels of the 8-bit frame's.
-                const platform::Difference d = platform::compare(eight->pixels, frosted->pixels, 0, false);
+                const gpu::Difference d = gpu::compare(eight->pixels, frosted->pixels, 0, false);
                 CHECK_MESSAGE(d.largest <= 4, name << ": against the 8-bit frame, up to " << d.largest << " levels");
             }
             ++drawn;
@@ -591,7 +591,7 @@ TEST_CASE("the frosted pass at the board's size: the home's twelve shapes, and i
     MESSAGE("the home's chrome at S1: " << frosted->plan.regions.size() << " regions, " << frosted->plan.groups.size()
                                         << " render passes; the frosted pass " << frosted->gpu.after_ns / 1e6
                                         << " ms of GPU on " << device.facts().name << " (the phone's: VK bench)");
-    (void)platform::write_ppm(frosted->pixels, scratch("frosted-home.ppm").string());
+    (void)gpu::write_ppm(frosted->pixels, scratch("frosted-home.ppm").string());
 }
 
 #endif

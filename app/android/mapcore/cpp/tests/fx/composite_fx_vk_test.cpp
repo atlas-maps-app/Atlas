@@ -18,9 +18,9 @@
 #include "gen/layouts.hpp"
 #include "gen/spirv/frame/test_samples.hpp"
 #include "gpu/Frames.hpp"
+#include "gpu/Offscreen.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "passes/Composite.hpp"
-#include "platform/host/Offscreen.hpp"
 #include "standin/View.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 
@@ -166,7 +166,7 @@ std::vector<gpu::Configuration> composite_configurations(const gpu::Device& devi
 }
 
 /// A pixel's channel `c` in the output's levels, as the image holds it.
-[[nodiscard]] std::uint32_t level_at(const platform::Packed& p, std::size_t i, std::size_t c) noexcept {
+[[nodiscard]] std::uint32_t level_at(const gpu::Packed& p, std::size_t i, std::size_t c) noexcept {
     const std::uint32_t w = p.words[i];
     switch (p.format) {
     case vk::Format::eA2B10G10R10UnormPack32: return (w >> (10 * c)) & 0x3FFU;
@@ -195,7 +195,7 @@ struct Outcome {
 };
 
 /// The frame against the twin.
-[[nodiscard]] Outcome compare(const platform::Packed& out, std::uint32_t layers, std::uint32_t samples,
+[[nodiscard]] Outcome compare(const gpu::Packed& out, std::uint32_t layers, std::uint32_t samples,
                               const shaders::FrameLayers& frame_layers, const fx::ScreenFields& fields,
                               std::uint32_t opacity) {
     Outcome o;
@@ -276,7 +276,7 @@ TEST_CASE("the composite's mat rule at the objects group's silhouettes and fin's
             }
             first = false;
             for (const auto& [night, steps] : runs) {
-                auto output = platform::Offscreen::create(device, extent, 2, depth);
+                auto output = gpu::Offscreen::create(device, extent, 2, depth);
                 ATLAS_REQUIRE(output.has_value(), output.error().text());
                 if (depth == gpu::Depth::deepest && !gpu::ten_bit((*output)->format())) continue;
                 std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes();

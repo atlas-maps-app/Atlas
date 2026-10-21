@@ -1,10 +1,10 @@
-// The host build's output (plan-vector T10, K1): frames drawn into offscreen images instead of a swapchain, read back
-// to memory for the tests (identical across runs and frame routes), the likeness harness's candidates and VK check's
-// twin later. The images take the frame's colour as a phone's swapchain does (gpu/Facts.hpp): R8G8B8A8_UNORM by
-// default, or where asked (Depth::deepest, as VK bench's colour stage asks) 10 bits a channel where the device draws
-// the frame in them (colour_offscreen, as if a surface offered every format; lavapipe does); the frame leaves them
-// ready to copy. A frame reads back at 8 bits a channel either way, a 10-bit one converted exactly (to_rgba8), so its
-// bytes, its hash and the likeness gates see 8 bits.
+// The offscreen output (plan-vector T10, K1): frames drawn into offscreen images instead of a swapchain, read back to
+// memory for the tests (identical across runs and frame routes), the likeness harness's candidates and, on the phone,
+// VK facts' composite check (frame/CompositeCheck.hpp). The images take the frame's colour as a phone's swapchain does
+// (gpu/Facts.hpp): R8G8B8A8_UNORM by default, or where asked (Depth::deepest, as VK bench's colour stage asks) 10 bits
+// a channel where the device draws the frame in them (colour_offscreen, as if a surface offered every format; lavapipe
+// does); the frame leaves them ready to copy. A frame reads back at 8 bits a channel either way, a 10-bit one converted
+// exactly (to_rgba8), so its bytes, its hash and the likeness gates see 8 bits.
 #pragma once
 
 #include "gpu/Device.hpp"
@@ -17,7 +17,7 @@
 #include <optional>
 #include <vector>
 
-namespace atlas::platform {
+namespace atlas::gpu {
 
 /// A frame's pixels, top row first, four bytes (R, G, B, A) each.
 struct Pixels {
@@ -134,4 +134,4 @@ struct Difference {
 };
 [[nodiscard]] Difference compare(const Pixels& a, const Pixels& b, int levels, bool alpha = true);
 
-} // namespace atlas::platform
+} // namespace atlas::gpu

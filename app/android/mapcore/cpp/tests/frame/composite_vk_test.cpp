@@ -5,17 +5,18 @@
 // picks each layer's colour and the samples it covers), so the twin (passes/Composite.hpp's composite_pixel, the
 // shader's own text as C++) predicts every pixel the composite writes, and the frame read back must equal it in every
 // channel of every pixel. Both routes are first-class (64 % of phones draw through the render pass, the device survey
-// of 18 October): each has its own cases, the render pass's with both composite targets.
+// of 18 October): each has its own cases, the render pass's with both composite targets. The probe is VK facts'
+// composite check's (frame/CompositeCheck.hpp), whose planted failure, lavapipe's clipped triangle, closes the file.
 #if !defined(__ANDROID__)
 
+#include "frame/CompositeCheck.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
 #include "frame/PassRegistry.hpp"
-#include "gen/spirv/frame/test_samples.hpp"
 #include "gpu/Frames.hpp"
+#include "gpu/Offscreen.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "passes/Composite.hpp"
-#include "platform/host/Offscreen.hpp"
 #include "standin/View.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 
@@ -42,59 +43,6 @@ namespace {
     x = x ^ (x >> 16U);
     return x;
 }
-
-/// The probe pass: `layers` full-screen triangles, each writing its colour into the samples its coverage picks.
-class SamplesPass final : public frame::Pass {
-public:
-    explicit SamplesPass(std::uint32_t layers) noexcept : layers_(layers) {}
-    [[nodiscard]] std::string_view name() const noexcept override { return "samples"; }
-    [[nodiscard]] std::span<const frame::Phase> phases() const noexcept override { return phase_list; }
-
-    [[nodiscard]] gpu::Result<void> prepare(const frame::PassContext& c) override {
-        release();
-        ATLAS_GPU_LET(module, frame::make_module(c, "frame_test_samples", spirv::frame_test_samples));
-        module_ = std::move(module);
-        gpu::GraphicsDesc desc{
-            .label = {.name = "samples", .module = "frame_test_samples", .configuration = c.configuration},
-            .module = *module_,
-            .vertex = "samples_vs",
-            .fragment = "samples_fs",
-            .layout = c.layout.pipeline_layout(),
-            .target = c.pass.scene_target()};
-        if (desc.target.colour_count == 2) desc.blends[1] = gpu::Blend::untouched();
-        ATLAS_GPU_LET(pipeline, frame::make_pipeline(c, desc, frame::Overdraw::opaque));
-        pipeline_ = std::move(pipeline);
-        samples_ = static_cast<std::uint32_t>(c.pass.spec().config.samples());
-        levels_ = gpu::ten_bit(c.pass.spec().colour_format) ? 1023U : 255U;
-        return {};
-    }
-    void release() noexcept override {
-        pipeline_.clear();
-        module_.clear();
-    }
-    void record(const frame::Recording& r, std::uint32_t phase) override {
-        (void)phase;
-        const vk::raii::CommandBuffer& cmd = r.frame.cmd;
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline_);
-        for (std::uint32_t layer = 0; layer < layers_; ++layer) {
-            layouts::frame_test_samples::SamplesPush p{};
-            p.layer = {layer, levels_, samples_, 0U};
-            cmd.pushConstants(
-                r.layout.pipeline_layout(), frame::push_stages, 0,
-                vk::ArrayProxy<const std::byte>(sizeof p, reinterpret_cast<const std::byte*>(&p))); // NOLINT
-            cmd.draw(3, 1, 0, 0);
-            r.counters.draw("probe", 1);
-        }
-    }
-
-private:
-    static constexpr std::array<frame::Phase, 1> phase_list{frame::Phase{.slot = frame::Slot::objects}};
-    std::uint32_t layers_;
-    std::uint32_t samples_ = 1;
-    std::uint32_t levels_ = 255;
-    vk::raii::ShaderModule module_{nullptr};
-    vk::raii::Pipeline pipeline_{nullptr};
-};
 
 /// The composite configurations the device has: per configuration, each route, and the composite's targets.
 std::vector<gpu::Configuration> composite_configurations(const gpu::Device& device) {
@@ -129,7 +77,7 @@ std::vector<gpu::Configuration> composite_configurations(const gpu::Device& devi
 }
 
 /// A pixel's channel `c` in the output's levels, as the image holds it.
-[[nodiscard]] std::uint32_t level_at(const platform::Packed& p, std::size_t i, std::size_t c) noexcept {
+[[nodiscard]] std::uint32_t level_at(const gpu::Packed& p, std::size_t i, std::size_t c) noexcept {
     const std::uint32_t w = p.words[i];
     switch (p.format) {
     case vk::Format::eA2B10G10R10UnormPack32: return (w >> (10 * c)) & 0x3FFU;
@@ -139,22 +87,9 @@ std::vector<gpu::Configuration> composite_configurations(const gpu::Device& devi
     }
 }
 
-/// Whether pixel (x, y) of a w × h frame lies on the diagonal from its top-left corner to its bottom-right one: where
-/// lavapipe, clipping the composite's full-screen triangle to the frame, joins the two triangles it draws it as.
-[[nodiscard]] bool on_seam(std::uint32_t x, std::uint32_t y, std::uint32_t w, std::uint32_t h) noexcept {
-    // The seam y = x·h / w meets the pixel's square [x, x + 1) × [y, y + 1).
-    const std::uint64_t wide = w;
-    const std::uint64_t high = h;
-    const std::uint64_t above = std::uint64_t{y} * wide; // the pixel's top edge, times w
-    const std::uint64_t below = above + wide;            // its bottom edge
-    const std::uint64_t left = std::uint64_t{x} * high;  // the seam's height at its left edge, times w
-    const std::uint64_t right = left + high;             // and at its right edge
-    return above < right && below > left;
-}
-
 /// The probe's frame against the twin's: per pixel, each sample's last colour, then composite_pixel. Counts the
 /// channels that differ, those on the seam apart (`on_seam_wrong`).
-[[nodiscard]] std::uint32_t mismatches(const platform::Packed& out, std::uint32_t layers, std::uint32_t samples,
+[[nodiscard]] std::uint32_t mismatches(const gpu::Packed& out, std::uint32_t layers, std::uint32_t samples,
                                        std::uint32_t levels, const shaders::FrameLayers& stubbed, std::string& first,
                                        std::uint32_t& on_seam_wrong) {
     std::uint32_t wrong = 0;
@@ -183,7 +118,7 @@ std::vector<gpu::Configuration> composite_configurations(const gpu::Device& devi
                 const std::uint32_t got = level_at(out, i, c);
                 const auto expected = static_cast<std::uint32_t>(want[static_cast<int>(c)]);
                 if (got == expected) continue;
-                if (on_seam(x, y, out.width, out.height)) {
+                if (frame::on_seam(x, y, out.width, out.height)) {
                     ++on_seam_wrong;
                     continue;
                 }
@@ -216,12 +151,12 @@ TEST_CASE("the frame builder draws every configuration, route and composite targ
     std::size_t dynamic = 0;
     for (const gpu::Configuration& config : configs) {
         for (const gpu::Depth depth : {gpu::Depth::eight, gpu::Depth::deepest}) {
-            auto output = platform::Offscreen::create(device, extent, 2, depth);
+            auto output = gpu::Offscreen::create(device, extent, 2, depth);
             ATLAS_REQUIRE(output.has_value(), output.error().text());
             if (depth == gpu::Depth::deepest && !gpu::ten_bit((*output)->format())) continue;
             ATLAS_REQUIRE((*output)->fill({1.0F, 0.0F, 1.0F, 1.0F}).has_value());
             std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes();
-            passes.push_back(std::make_unique<SamplesPass>(layers));
+            passes.push_back(std::make_unique<frame::SamplesProbe>(layers));
             auto builder = frame::FrameBuilder::create(device, *cache, std::move(passes),
                                                        {.overdraw = false, .clear = {0, 0, 0, 1}, .steps = 0});
             ATLAS_REQUIRE(builder.has_value(), builder.error().text());
@@ -306,7 +241,7 @@ TEST_CASE("the frame builder refuses the one-subpass form, which A0 did not buil
     const gpu::Device& device = *session->device;
     auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
     ATLAS_REQUIRE(cache.has_value(), cache.error().text());
-    auto output = platform::Offscreen::create(device, {.width = 32, .height = 32}, 2);
+    auto output = gpu::Offscreen::create(device, {.width = 32, .height = 32}, 2);
     ATLAS_REQUIRE(output.has_value(), output.error().text());
     auto builder = frame::FrameBuilder::create(device, *cache, frame::make_passes());
     ATLAS_REQUIRE(builder.has_value(), builder.error().text());
@@ -341,11 +276,11 @@ TEST_CASE("the composite's haze and vignette are the twin's, bit for bit off lav
             for (const auto& [density, pitch, screen] : {std::tuple{1.0, 46.0, true}, std::tuple{2.625, 70.0, true},
                                                          std::tuple{1.5, 30.0, true}, std::tuple{2.625, 70.0, false}}) {
                 if (!screen && depth != gpu::Depth::eight) continue;
-                auto output = platform::Offscreen::create(device, extent, 2, depth);
+                auto output = gpu::Offscreen::create(device, extent, 2, depth);
                 ATLAS_REQUIRE(output.has_value(), output.error().text());
                 if (depth == gpu::Depth::deepest && !gpu::ten_bit((*output)->format())) continue;
                 std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes();
-                passes.push_back(std::make_unique<SamplesPass>(layers));
+                passes.push_back(std::make_unique<frame::SamplesProbe>(layers));
                 auto builder = frame::FrameBuilder::create(device, *cache, std::move(passes),
                                                            {.overdraw = false, .clear = {0, 0, 0, 1}, .steps = ~0U});
                 if (!screen) (*builder)->set_steps(~(shaders::COMPOSITE_HAZE | shaders::COMPOSITE_VIGNETTE));
@@ -407,7 +342,7 @@ TEST_CASE("the composite's haze and vignette are the twin's, bit for bit off lav
                             const std::uint32_t got = level_at(*packed, i, c);
                             const auto expected = static_cast<std::uint32_t>(want[static_cast<int>(c)]);
                             if (got == expected) continue;
-                            if (on_seam(x, y, packed->width, packed->height)) {
+                            if (frame::on_seam(x, y, packed->width, packed->height)) {
                                 ++seam;
                                 continue;
                             }
@@ -458,6 +393,38 @@ TEST_CASE("the composite's haze and vignette are the twin's, bit for bit off lav
     CHECK(drawn >= 6);
     MESSAGE(drawn << " frames with the haze and the vignette on; " << seam_total
                   << " channels on lavapipe's seam differ");
+}
+
+TEST_CASE("VK facts' composite check: lavapipe, which clips the full-screen triangle, resolves differently from the "
+          "direct form on the diagonal alone") {
+    // The check's planted failure: lavapipe draws the composite's triangle as the two triangles of the frame's
+    // rectangle, so the resolve form shades the pixels on their diagonal twice in place; a phone's guard band does not.
+    auto session = test::open_session();
+    if (!session) return;
+    const gpu::Device& device = *session->device;
+    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const gpu::Configuration pick = device.facts().choice;
+    const auto check = frame::composite_check(device, *cache);
+    ATLAS_REQUIRE(check.has_value(), check.error().text());
+    const std::string line = frame::composite_line(device, *cache);
+    MESSAGE(gpu::name_of(pick) << ": " << line);
+    if (!check->has_value()) {
+        CHECK((pick.samples() == vk::SampleCountFlagBits::e1 || pick.form != gpu::FrameForm::composite));
+        CHECK(line.starts_with("composite.check: skipped ("));
+        return;
+    }
+    const frame::CompositeCheck& c = **check;
+    CHECK(c.resolve.config == pick.config);
+    CHECK(c.resolve.target == gpu::CompositeTarget::resolve);
+    CHECK(c.direct.route == gpu::Route::renderpass);
+    CHECK(c.direct.target == gpu::CompositeTarget::direct);
+    CHECK(c.differ > 0);
+    CHECK(c.on_seam == c.differ);
+    CHECK(line.starts_with(std::format("composite.check: the resolve form differs on {} pixels, all on the diagonal: "
+                                       "the driver clips the full-screen triangle (",
+                                       c.differ)));
+    CHECK(session->take_messages().empty());
 }
 
 #endif

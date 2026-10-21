@@ -15,6 +15,7 @@
 // nothing. The crashing starts run in child processes: this test binary, spawned with one test case, which on hosts
 // runs the core's session (standin/Session.hpp) in VK bench's order.
 #include "base/log.hpp"
+#include "frame/CompositeCheck.hpp"
 #include "gpu/Frames.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/PipelineCache.hpp"
@@ -65,7 +66,7 @@ namespace fs = std::filesystem;
 
 // The pipeline the crash is planted in: on hosts the composite, which the child makes as it prepares a configuration
 // for the host build's offscreen images (as VK bench's prepare does when PowerVR crashed), at the frame's 8 bits and in
-// the colour stage at 10; the Android build has no offscreen output (platform/host), so there the child makes the
+// the colour stage at 10; the Android build's test makes no offscreen output, so there the child makes the
 // pipelines every configuration shares, the shadow's among them, in both stages.
 #if defined(__ANDROID__)
 constexpr std::string_view planted = "shadow (module standin_standin";
@@ -106,8 +107,9 @@ struct Child {
 
 /// How the child's session begins: VK bench's 8-bit runs first (the pick's frame first), its first frame a 10-bit one,
 /// or a VK bench cell first (a configuration the facts would not pick: the pick's own in the other form), then the
-/// pick, as VK bench's matrix draws its cells before the pick's runs.
-enum class First : std::uint8_t { pick, ten, cell };
+/// pick, as VK bench's matrix draws its cells before the pick's runs; or VK facts' drawing checks after the facts,
+/// then the pick.
+enum class First : std::uint8_t { pick, ten, cell, checks };
 
 /// Runs this binary's child test case with the guard's folder, the plant, the core's build ID and the app's process
 /// exits as the façade would pass them (gpu::parse_exits' text; "" for none known); `first`: how its session begins.
@@ -123,6 +125,7 @@ Child spawn_child(const fs::path& dir, const std::string& plant, const std::stri
     env.push_back("ATLAS_GUARD_EXITS=" + exits);
     env.push_back(std::format("ATLAS_GUARD_TEN_FIRST={}", first == First::ten ? 1 : 0));
     env.push_back(std::format("ATLAS_GUARD_CELL_FIRST={}", first == First::cell ? 1 : 0));
+    env.push_back(std::format("ATLAS_GUARD_CHECKS_FIRST={}", first == First::checks ? 1 : 0));
     std::vector<char*> argv;
     argv.reserve(args.size() + 1);
     for (std::string& a : args) argv.push_back(a.data());
@@ -212,6 +215,13 @@ TEST_CASE("guard child start") {
                               .spirv = 42,
                               .city = std::make_shared<const standin::City>(standin::City::generate(32, 13.0))});
     (void)session.facts();
+    if (const char* checks_first = std::getenv("ATLAS_GUARD_CHECKS_FIRST"); // NOLINT(concurrency-mt-unsafe)
+        checks_first != nullptr && std::string_view(checks_first) == "1") {
+        // VK facts' drawing checks after the facts, behind their own stage, as VK facts runs them.
+        log::info("guard child: {}", session.check("composite.check", [](const gpu::Started& s) {
+            return frame::composite_line(*s.device, *s.cache);
+        }));
+    }
     std::string why;
     ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), {.width = 64, .height = 64}, why), why);
     const gpu::Configuration config = facts.choice;
@@ -774,6 +784,59 @@ TEST_CASE("the profiles check is a stage of its own, never the start's: a crash 
     CHECK_FALSE(fs::exists(dir / "guard"));
     CHECK(gpu::Guard(dir, "host-test-system", "build-p", "").clear() ==
           "vk guard reset: forgot the profiles check turned off for 1 driver");
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("VK facts' drawing checks are a stage of their own, never the start's: a crash there turns them off alone") {
+    // The composite check draws configurations the facts may not pick, a few small frames offscreen, and decides
+    // nothing: it runs behind its own stage when VK facts asks (the child's session does), and a crash in it turns off
+    // VK facts' drawing checks alone, at once.
+    if (!test::open_session()) return;
+    const fs::path dir = fresh("checks");
+    Child child = spawn_child(dir, "checks", "build-k", {}, First::checks);
+    CHECK(aborted(child));
+    const std::string marker = read(dir / "guard");
+    MESSAGE("marker after the checks stage's crash:\n" << marker);
+    CHECK(marker.starts_with("stage checks\n"));
+    CHECK_FALSE(has(marker, "driver unknown")); // the driver is known by then
+    {
+        auto next = gpu::start_guarded(options_in(dir, "", "build-k"));
+        ATLAS_REQUIRE(next.has_value(),
+                      "the start after a crash in the checks stage turned Vulkan off: " << next.error().line);
+        MESSAGE("found: " << next->guard_line);
+        CHECK(next->guard_line.starts_with("vk guard checks "));
+        CHECK(next->guard_line.ends_with(" attempt 1 build build-k"));
+        CHECK_FALSE(next->retried); // the cache is not the checks' to lose
+        CHECK(next->guard->checks_off() == next->guard_line);
+        CHECK(next->guard->profiles_off().empty());       // nor the profiles
+        CHECK(next->device->facts().ten_bit_off.empty()); // nor 10 bits
+        CHECK(
+            has(off_line(next->guard->state(), "checks"), "(this driver and build: VK facts' drawing checks are off)"));
+        CHECK(has(read(dir / "off"), "|build-k|checks||1\n"));
+        // The session says so, and draws nothing.
+        standin::Session session(*next, {.cache_file = dir / "pipelines.bin", .spirv = 42});
+        bool ran = false;
+        CHECK(session.check("composite.check", [&ran](const gpu::Started&) {
+            ran = true;
+            return std::string();
+        }) == std::format("composite.check: off (a check crashed under this driver and build: {})", next->guard_line));
+        CHECK_FALSE(ran);
+        session.close();
+    }
+    // Every later start leaves them off: the planted abort is never reached, and the start ends well.
+    child = spawn_child(dir, "checks", "build-k", {}, First::checks);
+    CHECK(WIFEXITED(child.status));
+    CHECK(WEXITSTATUS(child.status) == 0);
+    CHECK_FALSE(fs::exists(dir / "guard"));
+    CHECK(gpu::Guard(dir, "host-test-system", "build-k", "").clear() ==
+          "vk guard reset: forgot VK facts' drawing checks turned off for 1 driver");
+    // Without a plant the check runs behind its stage, and its marker goes with it.
+    child = spawn_child(dir, "", "build-k", {}, First::checks);
+    CHECK(WIFEXITED(child.status));
+    CHECK(WEXITSTATUS(child.status) == 0);
+    CHECK_FALSE(fs::exists(dir / "guard"));
+    CHECK_FALSE(fs::exists(dir / "off"));
     std::error_code ec;
     fs::remove_all(dir, ec);
 }

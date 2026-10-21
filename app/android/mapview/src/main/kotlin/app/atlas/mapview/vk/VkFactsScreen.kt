@@ -56,7 +56,7 @@ const val VK_HONEST = "This phone's graphics driver can't draw the Atlas map."
  * (model, SoC, Android, memory, thermal state), Android's Vulkan flags, the core's VkFacts read from the driver behind
  * the crash guard (GPU, driver and version, tiler, lazily allocated memory, Vulkan version, Android's Vulkan profiles,
  * memory types, sample counts, extensions, the frame configuration and route the core would pick, the surface's
- * capabilities from a small SurfaceView), the GLES probe the survey still reads, the core's numerics check (K3b's
+ * capabilities from a small SurfaceView, the composite check's `composite.check: …`), the GLES probe the survey still reads, the core's numerics check (K3b's
  * `pymath <hash> ok`), its sun check over the bundled Westerkerk (K8's `sun <hash> ok`), its noise fields, its ground
  * and its twin over the bundled Westerkerk (`fields …`, `ground <hash> ok`, `twin <hash> ok`: the app's frame at the
  * engine references' home, emitted without drawing) and the platform's kerning rule with the core's shaping held to
@@ -103,6 +103,9 @@ fun VkFactsScreen(config: CoreConfig, modifier: Modifier = Modifier, guardReset:
                 val c = core
                 if (c != null) {
                     addAll(c.facts())
+                    // The composite's resolve form against its direct form, a few small frames offscreen behind the
+                    // crash guard's checks stage: a driver that clips the full-screen triangle shows on the diagonal.
+                    add(c.compositeLine())
                 } else {
                     add("vulkan.state: $VK_HONEST")
                     add("vulkan.refused: $refused")

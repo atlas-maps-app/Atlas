@@ -38,6 +38,7 @@ QuirkSet quirks_for(std::uint32_t vendor_id, bool has_driver_id, vk::DriverId dr
         if (q.config) set.config = q.config;
         if (q.route) set.route = q.route;
         if (q.form) set.form = q.form;
+        if (q.target) set.target = q.target;
         set.glsl_route |= q.glsl_route;
         set.gpu_noise_off |= q.gpu_noise_off;
         text += std::format("{}{}", text.empty() ? "" : "; ", q.why);

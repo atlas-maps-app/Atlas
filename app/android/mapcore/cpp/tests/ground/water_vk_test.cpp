@@ -13,9 +13,9 @@
 #include "frame/PassRegistry.hpp"
 #include "geometry/Water.hpp"
 #include "gpu/Frames.hpp"
+#include "gpu/Offscreen.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "passes/Ground.hpp"
-#include "platform/host/Offscreen.hpp"
 #include "scene/World.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/ground/ground_draw.hpp"
@@ -288,7 +288,7 @@ void check_scene(test::Session& session, const std::filesystem::path& path, cons
         ATLAS_REQUIRE((*world)->store().add({.id = "rings", .kind = tiles::PackKind::bundled, .path = path.string()}),
                       "the synthetic pack opens");
         (*world)->set_active("rings");
-        auto output = platform::Offscreen::create(device, {.width = size, .height = size}, 2);
+        auto output = gpu::Offscreen::create(device, {.width = size, .height = size}, 2);
         ATLAS_REQUIRE(output.has_value(), output.error().text());
         (*builder)->set_inputs({.camera = camera, .theme = th, .seconds = 0, .scene = world->get()});
         const gpu::Configuration config{.config = gpu::FrameConfig::c,
@@ -306,7 +306,7 @@ void check_scene(test::Session& session, const std::filesystem::path& path, cons
         (*renderer)->drain();
         auto packed = (*output)->read_packed((*output)->latest());
         ATLAS_REQUIRE(packed.has_value(), packed.error().text());
-        const platform::Pixels px = platform::to_rgba8(*packed);
+        const gpu::Pixels px = gpu::to_rgba8(*packed);
         const auto& framed = (*builder)->state().view;
         ATLAS_REQUIRE(framed.has_value(), "the frame has a view");
         const view::Camera& cam = framed->camera();

@@ -2,7 +2,7 @@
 // for VK bench's colour stage the choice of 10 bits a channel where the surface offers them in sRGB, the device can
 // draw the frame in them and the crash guard has not turned them off, else 8 bits as before, with its reasons, as
 // VkFacts' colour lines say it; the exact conversion of a 10-bit frame to the 8 bits a channel the tests, the hashes
-// and the likeness gates read (platform/host); and the rule that keeps rgb10a2's 2 bits of alpha harmless: no blend
+// and the likeness gates read (gpu/Offscreen.hpp); and the rule that keeps rgb10a2's 2 bits of alpha harmless: no blend
 // reads the destination's alpha. None of these needs a device: the facts are written by hand, as a phone's would read.
 #include "gpu/Facts.hpp"
 #include "gpu/Pipelines.hpp"
@@ -17,7 +17,7 @@
 #include <vector>
 
 #if !defined(__ANDROID__)
-#include "platform/host/Offscreen.hpp"
+#include "gpu/Offscreen.hpp"
 #endif
 
 using namespace atlas;
@@ -284,8 +284,8 @@ TEST_CASE("no blend of the core reads the destination's alpha, and a pipeline th
 
 #if !defined(__ANDROID__)
 TEST_CASE("a 10-bit frame reads back at 8 bits exactly: each channel at its nearest level, and every level kept") {
-    using platform::level10;
-    using platform::level8;
+    using gpu::level10;
+    using gpu::level8;
     // Every 10-bit value to the nearest 8-bit level, against the rational arithmetic: |255 v - 1023 q| is least, and
     // never a tie.
     for (std::uint32_t v = 0; v < 1024; ++v) {
@@ -310,21 +310,20 @@ TEST_CASE("a 10-bit frame reads back at 8 bits exactly: each channel at its near
     }
     // The packings: rgb10a2 holds R in bits 0-9, bgr10a2 B; alpha in 30-31 at 0, 85, 170, 255; 8-bit B8G8R8A8 swapped.
     const std::uint32_t word = 1023U | (512U << 10) | (4U << 20) | (2U << 30);
-    platform::Packed packed{.width = 1, .height = 1, .format = F::eA2B10G10R10UnormPack32, .words = {word}};
-    CHECK(platform::to_rgba8(packed).rgba == std::vector<std::uint8_t>{255, 128, 1, 170});
+    gpu::Packed packed{.width = 1, .height = 1, .format = F::eA2B10G10R10UnormPack32, .words = {word}};
+    CHECK(gpu::to_rgba8(packed).rgba == std::vector<std::uint8_t>{255, 128, 1, 170});
     packed.format = F::eA2R10G10B10UnormPack32;
-    CHECK(platform::to_rgba8(packed).rgba == std::vector<std::uint8_t>{1, 128, 255, 170});
+    CHECK(gpu::to_rgba8(packed).rgba == std::vector<std::uint8_t>{1, 128, 255, 170});
     packed.format = F::eB8G8R8A8Unorm;
     packed.words = {0x44332211U};
-    CHECK(platform::to_rgba8(packed).rgba == std::vector<std::uint8_t>{0x33, 0x22, 0x11, 0x44});
+    CHECK(gpu::to_rgba8(packed).rgba == std::vector<std::uint8_t>{0x33, 0x22, 0x11, 0x44});
     packed.format = F::eR8G8B8A8Unorm;
-    CHECK(platform::to_rgba8(packed).rgba == std::vector<std::uint8_t>{0x11, 0x22, 0x33, 0x44});
-    CHECK(
-        platform::to_rgba8({.width = 1, .height = 1, .format = F::eR16G16B16A16Sfloat, .words = {0, 0}}).rgba.empty());
+    CHECK(gpu::to_rgba8(packed).rgba == std::vector<std::uint8_t>{0x11, 0x22, 0x33, 0x44});
+    CHECK(gpu::to_rgba8({.width = 1, .height = 1, .format = F::eR16G16B16A16Sfloat, .words = {0, 0}}).rgba.empty());
     // Between levels: 512 is not an 8-bit level's 10-bit value (128 is 514), 1023 and 4 (level 1) are.
     packed = {.width = 1, .height = 1, .format = F::eA2B10G10R10UnormPack32, .words = {word}};
-    CHECK(platform::share_between_levels(packed) == doctest::Approx(1.0 / 3.0));
+    CHECK(gpu::share_between_levels(packed) == doctest::Approx(1.0 / 3.0));
     packed.format = F::eR8G8B8A8Unorm;
-    CHECK(platform::share_between_levels(packed) == 0.0);
+    CHECK(gpu::share_between_levels(packed) == 0.0);
 }
 #endif

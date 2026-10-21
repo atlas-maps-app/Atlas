@@ -590,8 +590,14 @@ void choose_configuration(Facts& facts, bool msaa2_close) {
     // its multisampled frames through the render pass, whose composite writes the 1x image straight from the samples
     // (D5.3's configurations B and C), which one dynamic rendering scope cannot (it keeps one sample count).
     const bool dynamic_ok = facts.features.dynamic_rendering && facts.features.frame_local_read();
-    const bool direct_wanted = !facts.tiler && c.samples() != vk::SampleCountFlagBits::e1;
-    if (quirks.route && (*quirks.route == Route::renderpass || dynamic_ok)) {
+    // The quirk table's direct form (a driver that clips the full-screen triangle, as VK facts' composite check finds)
+    // takes the render pass with it.
+    const bool direct_quirk = quirks.target == CompositeTarget::direct && c.samples() != vk::SampleCountFlagBits::e1;
+    const bool direct_wanted = (!facts.tiler && c.samples() != vk::SampleCountFlagBits::e1) || direct_quirk;
+    if (direct_quirk) {
+        c.route = Route::renderpass;
+        facts.route_reason = "the quirk table: " + quirks.text;
+    } else if (quirks.route && (*quirks.route == Route::renderpass || dynamic_ok)) {
         c.route = *quirks.route;
         facts.route_reason = "the quirk table: " + quirks.text;
     } else if (dynamic_ok && !direct_wanted) {
@@ -614,6 +620,9 @@ void choose_configuration(Facts& facts, bool msaa2_close) {
     if (c.samples() == vk::SampleCountFlagBits::e1) {
         c.target = CompositeTarget::direct;
         facts.target_reason = "one sample: the composite writes the image";
+    } else if (direct_quirk) {
+        c.target = CompositeTarget::direct;
+        facts.target_reason = "the quirk table: " + quirks.text;
     } else if (facts.tiler) {
         c.target = CompositeTarget::resolve;
         facts.target_reason = "the samples, resolved on chip";

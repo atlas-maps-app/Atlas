@@ -4,16 +4,16 @@
 // stand-in's S1 frame reads back identically across two runs and identically through both frame routes at each depth,
 // and its 10-bit frame, at 8 bits, within a level of its 8-bit one; the frosted pills draw over both; its steady frame
 // stays within half a second; the pipeline cache is written, read back as a hit, and refused for other shaders or a
-// damaged file (pipeline creation with and without it is reported: lavapipe's cache is empty). The frames go to the
-// host build's offscreen images (platform/host), so these tests are the hosts' only: the Android build has no such
-// output, and on the emulator and the phone VK bench draws the stand-in into the window.
+// damaged file (pipeline creation with and without it is reported: lavapipe's cache is empty). The frames go to
+// offscreen images (gpu/Offscreen.hpp), and these tests are the hosts' only: on the emulator and the phone VK bench
+// draws the stand-in into the window.
 #if !defined(__ANDROID__)
 
 #include "base/build_info.hpp"
 #include "gpu/Frames.hpp"
+#include "gpu/Offscreen.hpp"
 #include "gpu/Passes.hpp"
 #include "gpu/PipelineCache.hpp"
-#include "platform/host/Offscreen.hpp"
 #include "standin/StandIn.hpp"
 #include "standin/View.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
@@ -114,8 +114,8 @@ std::string colour_at(const gpu::Device& device, gpu::Depth depth) {
 
 /// The stand-in's frame of `camera` at `extent` in `config`, after `frames` frames (the last one read back).
 struct Drawn {
-    platform::Pixels pixels; // at 8 bits a channel (a 10-bit frame converted exactly)
-    platform::Packed packed; // as the image holds it
+    gpu::Pixels pixels; // at 8 bits a channel (a 10-bit frame converted exactly)
+    gpu::Packed packed; // as the image holds it
     gpu::GpuTimes gpu;
     double frame_ms = 0; // the last frame, submit to finish, as the CPU saw it
     double pipelines_ms = 0;
@@ -127,7 +127,7 @@ struct Drawn {
 gpu::Result<Drawn> draw_standin(test::Session& s, const gpu::Configuration& config, vk::Extent2D extent,
                                 const style::CameraState& camera, int frames, const gpu::PipelineCache& cache,
                                 std::shared_ptr<const standin::City> city, gpu::Depth depth = gpu::Depth::eight) {
-    auto output = platform::Offscreen::create(*s.device, extent, 2, depth);
+    auto output = gpu::Offscreen::create(*s.device, extent, 2, depth);
     ATLAS_REQUIRE_OR_RETURN(std::unexpected(output.error()), output.has_value(), output.error().text());
     auto filled = (*output)->fill({1.0F, 0.0F, 1.0F, 1.0F});
     ATLAS_REQUIRE_OR_RETURN(std::unexpected(filled.error()), filled.has_value(), filled.error().text());
@@ -154,7 +154,7 @@ gpu::Result<Drawn> draw_standin(test::Session& s, const gpu::Configuration& conf
     auto packed = (*output)->read_packed((*output)->latest());
     ATLAS_REQUIRE_OR_RETURN(std::unexpected(packed.error()), packed.has_value(), packed.error().text());
     d.packed = std::move(*packed);
-    d.pixels = platform::to_rgba8(d.packed);
+    d.pixels = gpu::to_rgba8(d.packed);
     ATLAS_REQUIRE_OR_RETURN(gpu::fail("no pixels"), !d.pixels.rgba.empty(),
                             "no 8-bit pixels of " << vk::to_string(d.packed.format));
     renderer->reset();
@@ -167,7 +167,7 @@ gpu::Result<Drawn> draw_standin(test::Session& s, const gpu::Configuration& conf
 gpu::Result<Drawn> draw_reference(test::Session& s, const gpu::Configuration& config, vk::Extent2D extent,
                                   const style::CameraState& camera, const gpu::PipelineCache& cache,
                                   std::shared_ptr<const standin::City> city) {
-    auto output = platform::Offscreen::create(*s.device, extent, 2, vk::Format::eR16G16B16A16Unorm);
+    auto output = gpu::Offscreen::create(*s.device, extent, 2, vk::Format::eR16G16B16A16Unorm);
     ATLAS_REQUIRE_OR_RETURN(std::unexpected(output.error()), output.has_value(), output.error().text());
     auto content = standin::StandIn::create(*s.device, cache, std::move(city));
     ATLAS_REQUIRE_OR_RETURN(std::unexpected(content.error()), content.has_value(), content.error().text());
@@ -185,7 +185,7 @@ gpu::Result<Drawn> draw_reference(test::Session& s, const gpu::Configuration& co
     auto packed = (*output)->read_packed((*output)->latest());
     ATLAS_REQUIRE_OR_RETURN(std::unexpected(packed.error()), packed.has_value(), packed.error().text());
     d.packed = std::move(*packed);
-    d.pixels = platform::to_rgba8(d.packed);
+    d.pixels = gpu::to_rgba8(d.packed);
     const auto messages = s.take_messages();
     CHECK_MESSAGE(messages.empty(), describe(config)
                                         << " at 16 bits: " << (messages.empty() ? std::string() : messages.front()));
@@ -219,24 +219,24 @@ style::CameraState with_pills(style::CameraState c) {
 
 /// How a 10-bit frame at 8 bits compares with the 8-bit frame of the same configuration.
 struct Likeness {
-    platform::Difference any;   // pixels whose colour differs at all, and the largest difference
-    platform::Difference over1; // pixels whose colour differs by more than a level
-    platform::Difference alpha; // pixels whose alpha differs at all (rgb10a2 keeps 2 bits of it)
-    double between = 0;         // the 10-bit frame's colour channels between two 8-bit levels
+    gpu::Difference any;   // pixels whose colour differs at all, and the largest difference
+    gpu::Difference over1; // pixels whose colour differs by more than a level
+    gpu::Difference alpha; // pixels whose alpha differs at all (rgb10a2 keeps 2 bits of it)
+    double between = 0;    // the 10-bit frame's colour channels between two 8-bit levels
 };
 
 Likeness likeness(const Drawn& eight, const Drawn& ten) {
-    Likeness l{.any = platform::compare(eight.pixels, ten.pixels, 0, false),
-               .over1 = platform::compare(eight.pixels, ten.pixels, 1, false),
+    Likeness l{.any = gpu::compare(eight.pixels, ten.pixels, 0, false),
+               .over1 = gpu::compare(eight.pixels, ten.pixels, 1, false),
                .alpha = {},
-               .between = platform::share_between_levels(ten.packed)};
-    platform::Pixels a = eight.pixels;
-    platform::Pixels b = ten.pixels;
+               .between = gpu::share_between_levels(ten.packed)};
+    gpu::Pixels a = eight.pixels;
+    gpu::Pixels b = ten.pixels;
     for (std::size_t i = 0; i < a.rgba.size(); i += 4) {
         a.rgba[i] = a.rgba[i + 1] = a.rgba[i + 2] = 0;
         b.rgba[i] = b.rgba[i + 1] = b.rgba[i + 2] = 0;
     }
-    l.alpha = platform::compare(a, b, 0, true);
+    l.alpha = gpu::compare(a, b, 0, true);
     return l;
 }
 
@@ -249,7 +249,7 @@ std::string text_of(const Likeness& l) {
 
 /// Channel `c` (0 R, 1 G, 2 B) of pixel `i` in 8-bit levels, unrounded: an 8-bit frame's own level, a 10- or 16-bit
 /// frame's value at that scale.
-double level_of(const platform::Packed& p, std::size_t i, std::size_t c) {
+double level_of(const gpu::Packed& p, std::size_t i, std::size_t c) {
     switch (p.format) {
     case vk::Format::eR8G8B8A8Unorm: return static_cast<double>((p.words[i] >> (8 * c)) & 0xFFU);
     case vk::Format::eA2B10G10R10UnormPack32:
@@ -315,7 +315,7 @@ TEST_CASE("the main pass clears in every configuration, form, route and target t
     // lavapipe draws the frame in 10 bits, so the hosts test that path (the phone's where its surface offers it).
     if (session->device->facts().driver_id == vk::DriverId::eMesaLlvmpipe) CHECK(depths(*session->device).size() == 2);
     for (const gpu::Depth depth : depths(*session->device)) {
-        auto output = platform::Offscreen::create(*session->device, extent, 2, depth);
+        auto output = gpu::Offscreen::create(*session->device, extent, 2, depth);
         ATLAS_REQUIRE(output.has_value(), output.error().text());
         const bool ten = (*output)->colour().ten_bit();
         MESSAGE("the outputs: " << gpu::colour_name((*output)->format()) << " (" << (*output)->colour().reason << ")");
@@ -406,13 +406,13 @@ TEST_CASE("the stand-in's S1 frame is the same across runs and through both fram
                 // The 8-bit frames' lines as before this colour depth (their hashes are compared with earlier builds').
                 const std::string name = std::format("run {} {}{}", run, describe(config),
                                                      ten ? " in " + gpu::colour_name(drawn->packed.format) : "");
-                MESSAGE(name << ": hash " << std::format("{:016x}", platform::hash_of(drawn->pixels)) << ", GPU "
+                MESSAGE(name << ": hash " << std::format("{:016x}", gpu::hash_of(drawn->pixels)) << ", GPU "
                              << drawn->gpu.total_ns / 1e6 << " ms (offscreen " << drawn->gpu.offscreen_ns / 1e6
                              << ", main " << drawn->gpu.main_ns / 1e6 << "), fragments " << drawn->gpu.fragments << " ("
                              << static_cast<double>(drawn->gpu.fragments) / (s1.width * s1.height) << " FSE), draws "
                              << drawn->counters.draws << ", triangles " << drawn->counters.triangles);
                 if (run == 0) {
-                    (void)platform::write_ppm(
+                    (void)gpu::write_ppm(
                         drawn->pixels,
                         scratch(std::format("standin-{}-{}-{}-{}-{}.ppm", gpu::name_of(config.config),
                                             gpu::name_of(config.route), gpu::name_of(config.form),
@@ -438,7 +438,7 @@ TEST_CASE("the stand-in's S1 frame is the same across runs and through both fram
     for (const auto& [key, frames] : buckets) {
         CHECK_MESSAGE(frames.size() >= 2, key << " was drawn once only");
         for (std::size_t i = 1; i < frames.size(); ++i) {
-            const platform::Difference d = platform::compare(frames[0].second.pixels, frames[i].second.pixels, 0);
+            const gpu::Difference d = gpu::compare(frames[0].second.pixels, frames[i].second.pixels, 0);
             CHECK_MESSAGE(d.share == 0.0, frames[i].first << " differs from " << frames[0].first << " on "
                                                           << d.share * 100 << " % of pixels, by up to " << d.largest);
             const bool same = frames[0].second.packed.words == frames[i].second.packed.words;
@@ -451,7 +451,7 @@ TEST_CASE("the stand-in's S1 frame is the same across runs and through both fram
             sentinel += (p[i] == 255 && p[i + 1] == 0 && p[i + 2] == 255) ? 1 : 0;
         CHECK_MESSAGE(sentinel == 0, key << " left " << sentinel << " pixels unwritten");
     }
-    // The 10-bit frame, read back at 8 bits (exactly: platform::level8), against the 8-bit frame of the same
+    // The 10-bit frame, read back at 8 bits (exactly: gpu::level8), against the 8-bit frame of the same
     // configuration, form and target: within a level in colour. Their alpha may differ where the one-subpass form's
     // crowns write their coverage into it (2 bits hold 0, 1/3, 2/3 and 1): the surface is opaque and nothing reads it.
     //
@@ -478,7 +478,7 @@ TEST_CASE("the stand-in's S1 frame is the same across runs and through both fram
             ATLAS_REQUIRE(reference != references.end(), key << " has no 16-bit frame");
             const double off8 = worst_against(eight, reference->second);
             const double off10 = worst_against(deep, reference->second);
-            const platform::Difference at8 = platform::compare(deep.pixels, reference->second.pixels, 1, false);
+            const gpu::Difference at8 = gpu::compare(deep.pixels, reference->second.pixels, 1, false);
             const auto [nearer, apart] = nearer_where_apart(eight, deep, reference->second);
             MESSAGE(key << " against its 16-bit frame: rgba8 up to " << off8 << " levels off, " << ten_name << " up to "
                         << off10 << " (at 8 bits more than a level off on " << at8.share * 100 << " %); where the two "
@@ -491,16 +491,14 @@ TEST_CASE("the stand-in's S1 frame is the same across runs and through both fram
     }
     // The composite against one subpass: they differ where the coverage rule thins the silhouettes.
     const auto& composite = buckets.at("C composite direct").front().second.pixels;
-    const platform::Difference forms =
-        platform::compare(composite, buckets.at("C onepass resolve").front().second.pixels, 2);
+    const gpu::Difference forms = gpu::compare(composite, buckets.at("C onepass resolve").front().second.pixels, 2);
     MESSAGE("composite against one subpass: "
             << forms.share * 100 << " % of pixels differ by more than 2 levels, by up to " << forms.largest);
     CHECK(forms.share > 0.0);
     // The composite written into the samples and resolved, against the 1x image written straight from them: equal in
     // exact arithmetic; lavapipe runs the in-place composite so that later samples of a pixel see earlier samples'
     // results (a feedback loop's race), which moves some pixels where the effects change the colour.
-    const platform::Difference targets =
-        platform::compare(composite, buckets.at("C composite resolve").front().second.pixels, 0);
+    const gpu::Difference targets = gpu::compare(composite, buckets.at("C composite resolve").front().second.pixels, 0);
     MESSAGE("composite resolved against written straight: " << targets.share * 100 << " % of pixels differ, by up to "
                                                             << targets.largest);
 }
@@ -584,7 +582,7 @@ TEST_CASE("a renderer's end releases everything it prepared in the stand-in, ann
     CHECK_FALSE((*standin)->holds_prepared()); // only what every configuration shares
     const gpu::Configuration config = session->device->facts().choice;
     for (const gpu::Depth depth : depths(*session->device)) {
-        auto output = platform::Offscreen::create(*session->device, {.width = 64, .height = 64}, 2, depth);
+        auto output = gpu::Offscreen::create(*session->device, {.width = 64, .height = 64}, 2, depth);
         ATLAS_REQUIRE(output.has_value(), output.error().text());
         const std::string frame =
             std::format("frame (configuration {} {})", describe(config), gpu::colour_name((*output)->format()));
@@ -610,7 +608,7 @@ TEST_CASE("a renderer's end releases everything it prepared in the stand-in, ann
         CHECK_MESSAGE(messages.empty(), frame << ": " << (messages.empty() ? std::string() : messages.front()));
     }
     // The stand-in made once draws again after its frames went: the next renderer prepares it afresh.
-    auto output = platform::Offscreen::create(*session->device, {.width = 64, .height = 64}, 2);
+    auto output = gpu::Offscreen::create(*session->device, {.width = 64, .height = 64}, 2);
     ATLAS_REQUIRE(output.has_value(), output.error().text());
     auto renderer = gpu::Renderer::create(*session->device, **output, **standin, config, &watch);
     ATLAS_REQUIRE(renderer.has_value(), renderer.error().text());
@@ -651,7 +649,7 @@ TEST_CASE("the frosted pills draw over a 10-bit output and an 8-bit one") {
         drawn.push_back(std::move(*d));
     }
     // The pills cover about a tenth of the frame.
-    const platform::Difference pills = platform::compare(bare->pixels, drawn[0].pixels, 0, false);
+    const gpu::Difference pills = gpu::compare(bare->pixels, drawn[0].pixels, 0, false);
     MESSAGE("the pills change " << pills.share * 100 << " % of the frame");
     CHECK(pills.share > 0.05);
     // The frosted glass is drawn from an 8-bit copy of the frame, blurred six times at 8 bits and saturated by 1.8,
@@ -755,7 +753,7 @@ TEST_CASE("the stand-in's steady S1 frame takes at most half a second, and its p
     } else {
         CHECK(second->frame_ms <= budget);
     }
-    CHECK(platform::compare(first->pixels, second->pixels, 0).share == 0.0);
+    CHECK(gpu::compare(first->pixels, second->pixels, 0).share == 0.0);
     other = gpu::fail("closed");
     damaged = gpu::fail("closed");
     warm = gpu::fail("closed");

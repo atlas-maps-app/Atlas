@@ -56,10 +56,12 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace atlas::standin {
@@ -188,6 +190,11 @@ public:
     /// VkFacts' lines as text, the guard's state and this session's among them, after reading Android's profiles behind
     /// the guard's profiles stage (once a device; never inside the colour stage).
     [[nodiscard]] std::string facts();
+    /// Runs one of VK facts' checks that draw (`check`, on the session's start: its device and pipeline cache; its
+    /// line) behind the guard's checks stage, never inside VK bench's colour stage: a crash in one turns them off
+    /// alone, for this driver and build. Its line, or `<name>: off (…)` or `<name>: not run (…)`.
+    [[nodiscard]] std::string check(std::string_view name,
+                                    const std::function<std::string(const gpu::Started&)>& check);
     /// Writes the pipeline cache back, behind the guard's cache stage, where a pipeline was made through it since its
     /// last write (else nothing, and no marker).
     void save_cache();

@@ -5,7 +5,7 @@
 # Gradle's pinned fetch task (mapcore/tools.properties).
 #
 # Sources are found by directory, so a package adds its files without editing this file: everything under the core's
-# areas below goes into the core; platform/android or platform/host by target; jni/Test*.cpp (test entry points for
+# areas below goes into the core; platform/android on Android; jni/Test*.cpp (test entry points for
 # :mapcorecheck) into the host library only; tests/**/*.cpp into atlas_tests (a file ending in _vk_test.cpp uses
 # Vulkan-Hpp and gets its precompiled header; tests/planted/ is left out: CI adds one of its planted failures at a time
 # through ATLAS_EXTRA_TEST_SOURCES and requires the run to fail); bench/*_bench.cpp and fuzz/fuzz_*.cpp into their own
@@ -131,10 +131,8 @@ foreach(area IN LISTS ATLAS_AREAS)
 endforeach()
 if(ATLAS_ANDROID)
     file(GLOB_RECURSE _platform_sources CONFIGURE_DEPENDS platform/android/*.cpp)
-else()
-    file(GLOB_RECURSE _platform_sources CONFIGURE_DEPENDS platform/host/*.cpp)
+    list(APPEND _vulkan_sources ${_platform_sources})
 endif()
-list(APPEND _vulkan_sources ${_platform_sources})
 file(GLOB _jni_sources CONFIGURE_DEPENDS jni/*.cpp)
 set(_jni_test_sources ${_jni_sources})
 list(FILTER _jni_sources EXCLUDE REGEX "/Test[^/]*\\.cpp$")

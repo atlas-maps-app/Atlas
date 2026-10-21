@@ -28,7 +28,7 @@
 #include <vector>
 
 #if !defined(__ANDROID__)
-#include "platform/host/Offscreen.hpp"
+#include "gpu/Offscreen.hpp"
 
 using namespace atlas;
 
@@ -199,7 +199,7 @@ TEST_CASE("the canal names drawn: the glyphs' pixels are the CPU's coverage, on 
     ATLAS_REQUIRE(!configs.empty());
     std::size_t compared = 0;
     for (const gpu::Configuration& config : configs) {
-        auto output = platform::Offscreen::create(device, {.width = 412, .height = 916}, 2, gpu::Depth::eight);
+        auto output = gpu::Offscreen::create(device, {.width = 412, .height = 916}, 2, gpu::Depth::eight);
         ATLAS_REQUIRE(output.has_value(), output.error().text());
         auto renderer = gpu::Renderer::create(device, **output, **builder, config);
         ATLAS_REQUIRE(renderer.has_value(), gpu::name_of(config) << ": " << renderer.error().text());

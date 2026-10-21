@@ -9,9 +9,9 @@
 #include "frame/FrameBuilder.hpp"
 #include "frame/PassRegistry.hpp"
 #include "gpu/Frames.hpp"
+#include "gpu/Offscreen.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "passes/Ground.hpp"
-#include "platform/host/Offscreen.hpp"
 #include "scene/World.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 
@@ -31,7 +31,7 @@ namespace atlas::test {
 
 /// A frame the ground drew.
 struct GroundDraw {
-    platform::Pixels pixels;
+    gpu::Pixels pixels;
     passes::GroundFrame decided;
     frame::Count count;
     std::uint32_t kept = 0; ///< frames that kept the last frame's decisions, of `frames`
@@ -50,7 +50,7 @@ inline passes::Ground* ground_of(std::vector<std::unique_ptr<frame::Pass>>& pass
 }
 
 /// Writes a frame as a binary PPM.
-inline void write_ppm(const platform::Pixels& px, const std::filesystem::path& path) {
+inline void write_ppm(const gpu::Pixels& px, const std::filesystem::path& path) {
     std::filesystem::create_directories(path.parent_path());
     std::ofstream out(path, std::ios::binary);
     out << "P6\n" << px.width << " " << px.height << "\n255\n";
@@ -92,7 +92,7 @@ draw_ground(const Session& session, const style::CameraState& camera, const styl
     }
     (*world)->set_active(pack);
     const vk::Extent2D extent{.width = camera.width_px, .height = camera.height_px};
-    auto output = platform::Offscreen::create(device, extent, 2);
+    auto output = gpu::Offscreen::create(device, extent, 2);
     if (!output) return std::nullopt;
     (*builder)->set_inputs({.camera = camera, .theme = theme, .seconds = 0, .mode = mode, .scene = world->get()});
     const gpu::Configuration config{.config = gpu::FrameConfig::c,
@@ -119,8 +119,7 @@ draw_ground(const Session& session, const style::CameraState& camera, const styl
     (*renderer)->drain();
     auto packed = (*output)->read_packed((*output)->latest());
     if (!packed) return std::nullopt;
-    GroundDraw d{
-        .pixels = platform::to_rgba8(*packed), .decided = g->decided(), .count = (*builder)->total(), .kept = kept};
+    GroundDraw d{.pixels = gpu::to_rgba8(*packed), .decided = g->decided(), .count = (*builder)->total(), .kept = kept};
     if (after) after(*g, (*builder)->state());
     renderer->reset();
     return d;

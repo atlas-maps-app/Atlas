@@ -50,9 +50,10 @@
 # drew none once it went on after the app came back, an app that did not come back to the foreground after the colour
 # stage's background step, a pymath line other than `pymath $ATLAS_PYMATH_HASH ok`, a sun line other than
 # `sun $ATLAS_SUN_HASH ok`, a fields line other than `fields 1080x2400 cpu <ms> gpu off hash <h> ok`, a ground line
-# other than `ground $ATLAS_GROUND_HASH ok`, a twin line other than `twin $ATLAS_TWIN_HASH ok`, VK facts without `text.rounding: floor|round (probe …)` or with a
-# `text.glyphs:` line that is not every glyph equal, VK bench's still pills failing ci/pillcheck.py with the core's
-# glass or passing it with their tint alone, (once the map's core draws the home) the home's frosted pills failing
+# other than `ground $ATLAS_GROUND_HASH ok`, a twin line other than `twin $ATLAS_TWIN_HASH ok`, VK facts without
+# `text.rounding: floor|round (probe …)` or with a `text.glyphs:` line that is not every glyph equal, a composite check
+# apart off the diagonal or not run, VK bench's still pills failing ci/pillcheck.py with the core's glass or passing it
+# with their tint alone, (once the map's core draws the home) the home's frosted pills failing
 # it or further than MAD 2 from HWUI's on the TextureView, the core's first map frame above §3's emulator limits (3 s
 # first, 1.5 s warm), a map frame from 2 s after a swipe, a Java heap above 96 MB at the canal ring, a transitional
 # switch without its lines, or no honest state under atlas.vk.off. A frame that never comes is "NO FRAME", a
@@ -380,6 +381,14 @@ vk_phase() {
   # The frame's colour on the guest's surface (plan-vector D5, "Colour depth"): VK facts names it, from the surface, and
   # what VK bench's colour stage would draw (10 bits, off after a crash in it, or none).
   grep -q -E '^colour: [A-Za-z0-9]+ \(' "$OUT/vkfacts.txt" || { echo "VK FACTS FAILED: no 'colour:' line"; FAIL=1; }
+  # VK facts' composite check (frame/CompositeCheck.hpp): the composite's resolve form against its direct form, behind
+  # the crash guard's checks stage. Alike, or apart on the diagonal alone (a driver that clips the full-screen
+  # triangle, as the hosts' lavapipe does: the check's planted failure; the guest draws the direct form anyway, not
+  # being a tiler); apart off the diagonal, off, not run, unavailable or no line fails.
+  grep -E '^composite\.check: ' "$OUT/vkfacts.txt" || true
+  if ! grep -q -E '^composite\.check: the resolve form (draws as the direct form|differs on [0-9]+ pixels, all on the diagonal: the driver clips the full-screen triangle) \(' "$OUT/vkfacts.txt"; then
+    echo "COMPOSITE CHECK FAILED: VK facts' composite check found the resolve form apart off the diagonal, or did not run"; FAIL=1
+  fi
   grep -q -E '^colour\.stage: (rgb10a2|bgr10a2|off|none) \(' "$OUT/vkfacts.txt" || { echo "VK FACTS FAILED: no 'colour.stage:' line"; FAIL=1; }
   # The core's numerics on Bionic (K3b's acceptance, L0 d): VK facts logs `pymath <hash> ok`, and the hash must be
   # the one the host build and the port compute (ATLAS_PYMATH_HASH, from android.yml).

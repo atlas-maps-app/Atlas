@@ -29,7 +29,7 @@
 #include "tests/gpu/gpu_fixture.hpp"
 
 #if !defined(__ANDROID__)
-#include "platform/host/Offscreen.hpp"
+#include "gpu/Offscreen.hpp"
 #endif
 
 #include <doctest/doctest.h>
@@ -461,7 +461,7 @@ struct Drawn {
     auto builder = frame::FrameBuilder::create(device, *cache, std::move(passes),
                                                {.overdraw = false, .clear = {0, 0, 0, 1}, .steps = 0});
     ATLAS_REQUIRE_OR_RETURN(out, builder.has_value(), builder.error().text());
-    auto output = platform::Offscreen::create(device, {.width = frame_width, .height = frame_height}, 2);
+    auto output = gpu::Offscreen::create(device, {.width = frame_width, .height = frame_height}, 2);
     ATLAS_REQUIRE_OR_RETURN(out, output.has_value(), output.error().text());
     // A moment with weather, where the renders give the objects group its `mat` (mat.slang's mat_on).
     style::ThemeBlock theme{};

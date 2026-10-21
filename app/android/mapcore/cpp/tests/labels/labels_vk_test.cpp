@@ -26,7 +26,7 @@
 #include <vector>
 
 #if !defined(__ANDROID__)
-#include "platform/host/Offscreen.hpp"
+#include "gpu/Offscreen.hpp"
 
 using namespace atlas;
 
@@ -227,7 +227,7 @@ TEST_CASE("the board's labels drawn: each sprite's texels land whole at its plac
     ATLAS_REQUIRE(!configs.empty());
     for (const gpu::Configuration& config : configs) {
         auto output =
-            platform::Offscreen::create(device, {.width = frame_width, .height = frame_height}, 2, gpu::Depth::eight);
+            gpu::Offscreen::create(device, {.width = frame_width, .height = frame_height}, 2, gpu::Depth::eight);
         ATLAS_REQUIRE(output.has_value(), output.error().text());
         auto renderer = gpu::Renderer::create(device, **output, **builder, config);
         ATLAS_REQUIRE(renderer.has_value(), gpu::name_of(config) << ": " << renderer.error().text());

@@ -146,6 +146,9 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
         assets.openFd("tiles/amsterdam.atlas").use { Native.twinLine(h, it.parcelFileDescriptor.fd, it.startOffset, it.length) }
     }
 
+    /** The core's composite check line ([Native.compositeLine]); off the main thread, a few small frames. */
+    fun compositeLine(): String = core.call("composite.check: not run (the core is closed)") { Native.compositeLine(it) }
+
     /**
      * Draws into [surface]'s window ([widthPx] × [heightPx]); the core asks [source] for the camera at each paced vsync
      * after [requestFrame]. False with the reason in [lastAttachError].

@@ -17,7 +17,7 @@
 #include <vector>
 
 #if !defined(__ANDROID__)
-#include "platform/host/Offscreen.hpp"
+#include "gpu/Offscreen.hpp"
 #endif
 
 using namespace atlas;
@@ -114,7 +114,7 @@ TEST_CASE("the frame records its passes' phases by slot, then order, then the re
     auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
     ATLAS_REQUIRE(builder.has_value(), builder.error().text());
     (*builder)->set_inputs({.camera = standin::board_view(64, 48, 1.0)});
-    auto output = platform::Offscreen::create(*session->device, {.width = 64, .height = 48}, 2);
+    auto output = gpu::Offscreen::create(*session->device, {.width = 64, .height = 48}, 2);
     ATLAS_REQUIRE(output.has_value(), output.error().text());
     gpu::Configuration config = session->device->facts().choice;
     auto renderer = gpu::Renderer::create(*session->device, **output, **builder, config);

@@ -28,10 +28,10 @@
 #include "frame/FrameBuilder.hpp"
 #include "frame/PassRegistry.hpp"
 #include "gpu/Frames.hpp"
+#include "gpu/Offscreen.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "passes/Composite.hpp"
 #include "passes/Walls.hpp"
-#include "platform/host/Offscreen.hpp"
 #include "scene/SunGlobals.hpp"
 #include "scene/World.hpp"
 #include "style/Theme.hpp"
@@ -636,7 +636,7 @@ struct Stroked {
 
 /// The packs, the world, the builder and the renderer of one test frame.
 struct Scene {
-    std::unique_ptr<platform::Offscreen> output;
+    std::unique_ptr<gpu::Offscreen> output;
     std::unique_ptr<frame::FrameBuilder> builder;
     std::unique_ptr<scene::World> world;
     std::unique_ptr<gpu::Renderer> renderer;
@@ -654,8 +654,7 @@ struct Scene {
 }
 
 /// Draws `cam` until the world has built every tile the cover wants and their fades are over; the last frame's pixels.
-[[nodiscard]] std::optional<platform::Pixels> draw(Scene& s, const style::CameraState& cam,
-                                                   const style::ThemeBlock& th) {
+[[nodiscard]] std::optional<gpu::Pixels> draw(Scene& s, const style::CameraState& cam, const style::ThemeBlock& th) {
     s.builder->set_inputs(
         {.camera = cam, .theme = th, .seconds = s.now, .mode = frame::Mode::structural, .scene = s.world.get()});
     int waited = 0;
@@ -716,8 +715,7 @@ struct Scene {
 }
 
 /// Draws `cam` at moment `th` for two frames (both frame slots) once the world has settled; the last frame's pixels.
-[[nodiscard]] std::optional<platform::Pixels> redraw(Scene& s, const style::CameraState& cam,
-                                                     const style::ThemeBlock& th) {
+[[nodiscard]] std::optional<gpu::Pixels> redraw(Scene& s, const style::CameraState& cam, const style::ThemeBlock& th) {
     for (int n = 0; n < 2; ++n) {
         s.now += 0.25;
         s.builder->set_inputs(
@@ -778,7 +776,7 @@ struct Compared {
 
 /// The GPU's frame `got` against the exact raster of the twin's document `doc`, whose elements' depths are `depths`,
 /// drawn with frame block `block` (its camera and strokes) over cover tiles at `distances` from the eye.
-[[nodiscard]] Compared compare(const platform::Pixels& got, const twin::Document& doc,
+[[nodiscard]] Compared compare(const gpu::Pixels& got, const twin::Document& doc,
                                std::span<const twin::ElementDepth> depths, std::span<const double> distances,
                                const shaders::FrameBlock& block, const gpu::Configuration& config, double density,
                                std::uint32_t clear) {
@@ -826,12 +824,12 @@ struct Compared {
     }
     c.quads /= static_cast<double>(w) * static_cast<double>(h);
     if (const char* out = std::getenv("ATLAS_BUILDINGS_PPM"); out != nullptr) { // NOLINT: a test's diagnosis
-        platform::Pixels ref = got;
+        gpu::Pixels ref = got;
         for (std::size_t i = 0; i < std::size_t{w} * h; ++i) {
             const std::array<std::uint32_t, 3> want = resolved(exact_stroked, i);
             for (std::size_t k = 0; k < 3; ++k) ref.rgba[(i * 4) + k] = static_cast<std::uint8_t>(want[k]);
         }
-        (void)platform::write_ppm(ref, std::format("{}/exact {}.ppm", out, gpu::name_of(config)));
+        (void)gpu::write_ppm(ref, std::format("{}/exact {}.ppm", out, gpu::name_of(config)));
     }
     for (std::size_t i = 0; i < std::size_t{w} * h; ++i) {
         bool covered = false;
@@ -946,7 +944,7 @@ struct PackFile {
                                               std::span<const PackFile> packs, std::uint32_t clear) {
     const gpu::Device& device = *session.device;
     Scene s;
-    auto output = platform::Offscreen::create(device, {.width = w, .height = h}, 2);
+    auto output = gpu::Offscreen::create(device, {.width = w, .height = h}, 2);
     ATLAS_REQUIRE_OR_RETURN(std::nullopt, output.has_value(), output.error().text());
     s.output = std::move(*output);
     // the registry's composite, and the buildings pass of its own (the test reads its twin)
@@ -1052,7 +1050,7 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
             CHECK(r.sliver <= 4 * (r.slivers + r.ngons) + 4); // a few pixels each at most
             for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, name << ": " << m);
             if (const std::string out = environment("ATLAS_BUILDINGS_PPM"); !out.empty()) {
-                CHECK(platform::write_ppm(*pixels, std::format("{}/{}.ppm", out, name)));
+                CHECK(gpu::write_ppm(*pixels, std::format("{}/{}.ppm", out, name)));
             }
             if (then != nullptr && rest && config.config == gpu::FrameConfig::x1) {
                 // another moment: every drawn tile's colours again, on the CPU, frame slot by frame slot
@@ -1178,7 +1176,7 @@ TEST_CASE("buildings: a pair the renders melt drawn by true depth as their geome
                                     .target = gpu::CompositeTarget::direct};
         style::CameraState c = cam;
         c.flags |= style::camera_flag::rest;
-        std::array<std::optional<platform::Pixels>, 2> frames;
+        std::array<std::optional<gpu::Pixels>, 2> frames;
         for (std::size_t mode = 0; mode < 2; ++mode) {
             auto made = make_scene(*session, *cache, x1, c.width_px, c.height_px, packs, 0x808080);
             ATLAS_REQUIRE(made.has_value());
@@ -1187,8 +1185,8 @@ TEST_CASE("buildings: a pair the renders melt drawn by true depth as their geome
             ATLAS_REQUIRE(frames[mode].has_value());
             made->renderer.reset();
         }
-        const std::optional<platform::Pixels>& depth = frames[0];
-        const std::optional<platform::Pixels>& painter = frames[1];
+        const std::optional<gpu::Pixels>& depth = frames[0];
+        const std::optional<gpu::Pixels>& painter = frames[1];
         ATLAS_REQUIRE(depth.has_value() && painter.has_value());
         std::size_t differ = 0;
         for (std::size_t i = 0; i + 3 < depth->rgba.size(); i += 4) {

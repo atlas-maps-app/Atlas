@@ -20,7 +20,7 @@
 #include "view/Ladder.hpp"
 
 #if !defined(__ANDROID__)
-#include "platform/host/Offscreen.hpp"
+#include "gpu/Offscreen.hpp"
 #endif
 
 #include <doctest/doctest.h>
@@ -648,7 +648,7 @@ TEST_CASE("the world's providers fill set 1's globals: the heaps and the sun bou
     CHECK(w.globals().size() == 5); // the heaps', the sun's, the registered text passes' (glyphs, sprites), the fields'
 
     (*builder)->set_inputs({.camera = home(), .scene = &w});
-    auto output = platform::Offscreen::create(*session->device, {.width = 412, .height = 916}, 2);
+    auto output = gpu::Offscreen::create(*session->device, {.width = 412, .height = 916}, 2);
     ATLAS_REQUIRE(output.has_value(), output.error().text());
     auto renderer = gpu::Renderer::create(*session->device, **output, **builder, session->device->facts().choice);
     ATLAS_REQUIRE(renderer.has_value(), renderer.error().text());

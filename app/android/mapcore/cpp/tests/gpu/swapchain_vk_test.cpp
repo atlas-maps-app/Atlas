@@ -21,7 +21,7 @@
 #include <string>
 
 #if !defined(__ANDROID__)
-#include "platform/host/Offscreen.hpp"
+#include "gpu/Offscreen.hpp"
 #endif
 
 using namespace atlas;
@@ -131,7 +131,7 @@ TEST_CASE("the swapchain presents the stand-in on a headless surface and is rema
 #endif
 }
 
-// The hosts' only: it draws into the host build's offscreen images (platform/host), which the Android build has not.
+// The hosts' only: it draws into offscreen images (gpu/Offscreen.hpp), where the phones draw into their windows.
 #if !defined(__ANDROID__)
 TEST_CASE("the stand-in draws at Vulkan 1.1 under the validation layer, silent") {
     // What a Vulkan 1.1 phone allows: no 1.2-1.4 core structures, the composite's SPIR-V without the without-format
@@ -165,7 +165,7 @@ TEST_CASE("the stand-in draws at Vulkan 1.1 under the validation layer, silent")
     auto city = std::make_shared<const standin::City>(standin::City::generate(64, 13.0));
     const vk::Extent2D extent{.width = 270, .height = 600};
     for (const gpu::Depth depth : {gpu::Depth::eight, gpu::Depth::deepest}) {
-        auto output = platform::Offscreen::create(*s.device, extent, 2, depth);
+        auto output = gpu::Offscreen::create(*s.device, extent, 2, depth);
         ATLAS_REQUIRE(output.has_value(), output.error().text());
         MESSAGE("at Vulkan 1.1 in " << gpu::colour_name((*output)->format()));
         for (const gpu::Configuration config : {gpu::Configuration{.config = gpu::FrameConfig::c,

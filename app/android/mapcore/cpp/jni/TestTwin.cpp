@@ -16,9 +16,9 @@
 #include "gpu/Device.hpp"
 #include "gpu/Frames.hpp"
 #include "gpu/Instance.hpp"
+#include "gpu/Offscreen.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "jni/TestFrame.hpp"
-#include "platform/host/Offscreen.hpp"
 #include "scene/World.hpp"
 #include "style/CameraState.hpp"
 #include "style/Theme.hpp"
@@ -362,13 +362,13 @@ Result draw(const Request& r) {
     out.width = camera->width_px;
     out.height = camera->height_px;
     const vk::Extent2D extent{.width = camera->width_px, .height = camera->height_px};
-    auto output = platform::Offscreen::create(d, extent, 2, gpu::Depth::deepest);
+    auto output = gpu::Offscreen::create(d, extent, 2, gpu::Depth::deepest);
     if (!output) {
         out.error = "the output: " + output.error().text();
         return out;
     }
     const gpu::Configuration config = d.facts().choice;
-    platform::Offscreen& target = **output;
+    gpu::Offscreen& target = **output;
     auto renderer = gpu::Renderer::create(d, target, builder, config);
     if (!renderer) {
         out.error = std::format("the renderer ({}): {}", gpu::name_of(config), renderer.error().text());
@@ -454,12 +454,12 @@ Result draw(const Request& r) {
             return out;
         }
         frame::FrameBuilder& owners_builder = **owners_made;
-        auto owners_output = platform::Offscreen::create(d, extent, 2);
+        auto owners_output = gpu::Offscreen::create(d, extent, 2);
         if (!owners_output) {
             out.error = "the owner mode's output: " + owners_output.error().text();
             return out;
         }
-        platform::Offscreen& owners_target = **owners_output;
+        gpu::Offscreen& owners_target = **owners_output;
         const gpu::Configuration one{.config = gpu::FrameConfig::x1, .target = gpu::CompositeTarget::direct};
         auto owners_renderer = gpu::Renderer::create(d, owners_target, owners_builder, one);
         if (!owners_renderer) {
@@ -494,12 +494,12 @@ Result draw(const Request& r) {
             return out;
         }
         frame::FrameBuilder& overdraw_builder = **overdraw_made;
-        auto overdraw_output = platform::Offscreen::create(d, extent, 2);
+        auto overdraw_output = gpu::Offscreen::create(d, extent, 2);
         if (!overdraw_output) {
             out.error = "the overdraw mode's output: " + overdraw_output.error().text();
             return out;
         }
-        platform::Offscreen& overdraw_target = **overdraw_output;
+        gpu::Offscreen& overdraw_target = **overdraw_output;
         const gpu::Configuration one{.config = gpu::FrameConfig::x1, .target = gpu::CompositeTarget::direct};
         auto overdraw_renderer = gpu::Renderer::create(d, overdraw_target, overdraw_builder, one);
         if (!overdraw_renderer) {

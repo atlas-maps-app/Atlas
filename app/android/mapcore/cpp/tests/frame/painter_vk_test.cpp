@@ -35,7 +35,7 @@
 #include <vector>
 
 #if !defined(__ANDROID__)
-#include "platform/host/Offscreen.hpp"
+#include "gpu/Offscreen.hpp"
 #endif
 
 using namespace atlas;
@@ -215,7 +215,7 @@ private:
 /// The frame of `shapes` drawn with `config`, two-pass or strict, in colour or in the owner mode: its 8-bit pixels, and
 /// in the owner mode its owner map.
 struct Drawn {
-    platform::Pixels pixels;
+    gpu::Pixels pixels;
     std::vector<std::uint64_t> owners;
     std::uint64_t draws = 0;
 };
@@ -224,7 +224,7 @@ struct Drawn {
                                         const gpu::Configuration& config, bool strict, bool owners) {
     const gpu::Device& device = *session.device;
     const vk::Extent2D extent{.width = 160, .height = 120};
-    auto output = platform::Offscreen::create(device, extent, 2);
+    auto output = gpu::Offscreen::create(device, extent, 2);
     ATLAS_REQUIRE_OR_RETURN(std::nullopt, output.has_value(), output.error().text());
     std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes();
     passes.push_back(std::make_unique<ShapesPass>(shapes, strict));
@@ -298,7 +298,7 @@ private:
 /// made for an offscreen output at one sample: whether they were.
 [[nodiscard]] bool make_varyings(const gpu::Device& device, const gpu::PipelineCache& cache, const char* fragment,
                                  const frame::FrameOptions& options) {
-    auto output = platform::Offscreen::create(device, vk::Extent2D{.width = 64, .height = 48}, 2);
+    auto output = gpu::Offscreen::create(device, vk::Extent2D{.width = 64, .height = 48}, 2);
     ATLAS_REQUIRE_OR_RETURN(false, output.has_value(), output.error().text());
     std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes();
     passes.push_back(std::make_unique<VaryingsPass>(fragment));

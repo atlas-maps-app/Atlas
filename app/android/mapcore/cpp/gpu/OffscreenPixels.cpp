@@ -1,6 +1,6 @@
-// Frames as files and numbers on hosts (platform/host/Offscreen.hpp): 8 bits a channel from the image's packing, a
+// Frames read back as files and numbers (gpu/Offscreen.hpp): 8 bits a channel from the image's packing, a
 // hash, a PPM to look at, a comparison.
-#include "platform/host/Offscreen.hpp"
+#include "gpu/Offscreen.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -8,7 +8,7 @@
 #include <cstring>
 #include <memory>
 
-namespace atlas::platform {
+namespace atlas::gpu {
 
 std::uint32_t words_per_pixel(vk::Format format) noexcept {
     switch (format) {
@@ -109,4 +109,4 @@ Difference compare(const Pixels& a, const Pixels& b, int levels, bool alpha) {
     return d;
 }
 
-} // namespace atlas::platform
+} // namespace atlas::gpu

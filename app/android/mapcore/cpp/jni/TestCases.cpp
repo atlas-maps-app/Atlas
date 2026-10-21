@@ -6,7 +6,7 @@
 // case's render pack, at the camera state and the theme block Kotlin writes for the case as the app writes them
 // (CameraWriter, ThemeBlock), drawn on the host's Vulkan (lavapipe on this Mac and on CI) until the world settles. The
 // colour depth (plan-vector D5, "Colour depth"): the case takes the frame's colour as the phone does, 10 bits a channel
-// where the device draws the frame in them (lavapipe does), and platform::Offscreen::read gives it back at 8 bits
+// where the device draws the frame in them (lavapipe does), and gpu::Offscreen::read gives it back at 8 bits
 // exactly (each channel at its nearest level), so the gates see 8 bits. The owner map is the frame drawn again in the
 // owner mode at one sample: each pixel's latest painter slot, its item's OSM owner (FrameBuilder::owner_map); the
 // ground's slots have none yet.
