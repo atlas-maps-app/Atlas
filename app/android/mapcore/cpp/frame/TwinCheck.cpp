@@ -153,7 +153,7 @@ gpu::Result<TwinCheck> twin_check(const gpu::Device& device, const gpu::Pipeline
     out.tiles = world->cover()->tiles().size();
     for (const std::unique_ptr<Pass>& p : builder->passes()) {
         if (p->name() != "buildings") continue;
-        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): the pass named "buildings" is passes::Buildings
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): "buildings" is passes::Buildings
         const passes::Buildings::Emitted emitted = static_cast<const passes::Buildings&>(*p).emitted();
         out.elements = emitted.elements;
         out.sunlit = emitted.sunlit;
