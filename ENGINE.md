@@ -67,7 +67,10 @@ Atlas draws its map with its own engine. This is the one document about it: what
 8. **Text.**
    - Names on the ground (water and canal names along their ways) are shaped by HarfBuzz as Android shapes them, and drawn from the glyphs' outlines (Slug).
    - Place names in every script are sprites drawn by Android's own text stack.
-   - The core places them, with collisions and fades. Once placed, every label stays fixed where it is on the map and grows and shrinks with the zoom, like the map (the user, 21 October: "The text should be fixed where it is and only update in size"; then "every label stays where it is and grows and shrinks with the zoom, like the map"): no re-placing at rest, no sliding or jumping between its spots while the map moves, no fixed screen size.
+   - The core places them, with collisions and fades. Once placed, every label stays fixed where it is on the map and grows and shrinks with the zoom, like the map (the user, 21 October: "The text should be fixed where it is and only update in size"; then "every label stays where it is and grows and shrinks with the zoom, like the map"): no re-placing at rest, no sliding or jumping between its spots while the map moves, no fixed screen size. Since labels and the map scale together, a placement free of collisions stays free at every zoom.
+     - **A zoom band per label.** Each label scales with the map only within a band around the zoom it is drawn for, about 0.7 to 1.5 times its size there; beyond it, it fades out and the next level's labels fade in (quarters and districts out of town, streets and buildings close in).
+     - **A readable floor.** No label draws below a minimum size, which follows Android's text-size setting.
+     - Place names stay level on the screen when the map turns; water and canal names follow their water and read upright, with hysteresis.
 9. **Levels** run from the street to the planet: full detail, a simplified level from the keep codes, blocks of merged footprints, the mid-zoom base, the globe. Fades and a triangle governor mean nothing pops and nothing is a hole.
 10. **Work only when needed.** Frames come on vsync only while something changes, with ADPF hints. Tiles, the sun and the noise fields are done on background workers. Nothing is done per frame that can be done once.
 11. **Deterministic everywhere, exact wherever the result depends on it.**
@@ -195,7 +198,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - Because the grid follows the shadows' box, their softness follows the view as the camera moves, as each render would have it. The phone will show whether that reads well.
   - As the renders' other filters, they run in full mode (the app's); structural mode draws them sharp, as the likeness's structural references draw the group unfiltered.
   - The engine's references are at version 3.
-- **Labels** are drawn by the core's frame instead of the Compose canvas, with the fonts loaded at the map's start, each fixed where it is on the map and growing and shrinking with the zoom like the map (design point 8).
+- **Labels** are drawn by the core's frame instead of the Compose canvas, with the fonts loaded at the map's start, each fixed where it is on the map and growing and shrinking with the zoom like the map, within its zoom band and above a readable floor (design point 8).
 - **All of Amsterdam from the core:** `PackList.kt`, then the first publish of the `amsterdam` and `grachten` render packs after the user's yes (a `packs.yml` run with `renders=only`).
 - **The style file:** the tiles' style section becomes the engine's own, edited as data. Every pass reads its colours and widths from it, before step 4 adds more.
 - **VK facts and VK bench on the device:**
@@ -326,6 +329,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
 **Open**, each with a default so work never waits:
 - **The renderer's known issues:** melting buildings is fixed by design (true depth). Others are fixed in the engine as they are found and named in the case files (the default), or the user lists them to be fixed first.
 - **Textures while the map moves:** decided on the phone with step 3's switch. The default is the lean given there.
+- **Labels in tilted views:** shrinking toward the horizon with perspective, or keeping the size their zoom gives them; decided on the phone. The default: their zoom's size, above the readable floor.
 - **The crooked windows:** as the renders draw them (the default), kept in one place so one edit changes them.
 - **Building anywhere sooner:** the renderer's Kotlin port could build tiles on the phone first, exact but slower and heavier, until the C++ lands. The default: straight to C++.
 - **The sources for many users:** with several Overpass servers, Geofabrik and the packs, no one server carries the app. Before a public release, decide whether Atlas adds its own mirror. The default: public sources, with caching and changed-since refreshes.
