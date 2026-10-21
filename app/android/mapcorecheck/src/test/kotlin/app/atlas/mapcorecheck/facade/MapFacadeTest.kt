@@ -22,7 +22,8 @@ import java.nio.file.Files
  * after, kept when listed again, a broken one refused with its reason), the map turns on without a window (hosts have
  * none: it draws once one comes) and off, the moment's theme block is checked as the core reads it, and the labels'
  * block as `state.LabelBlock` writes it is read by the core (a sprite without points, or wider than a sprite may be,
- * refused for that: so its fields are read where they are written).
+ * or large images at a scale below 1, refused for that: so its fields are read where they are written; a block in the
+ * first layout, LBL1, refused).
  */
 class MapFacadeTest {
     companion object {
@@ -80,14 +81,22 @@ class MapFacadeTest {
                 assertEquals("the theme was refused: version", Native.moment(handle, block))
                 assertEquals("the theme must be a direct buffer of 256 bytes", Native.moment(handle, ByteBuffer.allocate(256)))
 
-                // The labels: two sprites as the app writes them; none (an empty block); refused, and why.
-                fun sprite(id: Int, width: Int, height: Int, points: DoubleArray) = LabelBlock.Sprite(
-                    id, 3, 40.5f, 10.5f, 20f, -7f, width, height, width / 2, height - 2, points, IntArray(width * height) { it * 0x01010101 },
+                // The labels: two sprites as the app writes them (the first with its image at the band's top); none (an
+                // empty block); refused, and why.
+                fun image(width: Int, height: Int) = LabelBlock.Image(width, height, width / 2, height - 2, IntArray(width * height) { it * 0x01010101 })
+                fun sprite(id: Int, width: Int, height: Int, points: DoubleArray, large: LabelBlock.Image? = null) =
+                    LabelBlock.Sprite(id, 3, 40.5f, 10.5f, 20f, -7f, image(width, height), large, points)
+                val two = listOf(
+                    sprite(1, 6, 4, doubleArrayOf(52.37, 4.88), image(9, 6)),
+                    sprite(2, 3, 5, doubleArrayOf(52.38, 4.89, 52.381, 4.891)),
                 )
-                val two = listOf(sprite(1, 6, 4, doubleArrayOf(52.37, 4.88)), sprite(2, 3, 5, doubleArrayOf(52.38, 4.89, 52.381, 4.891)))
-                assertEquals(8 + 2 * 44 + 8 * 6 + 4 * (24 + 15), LabelBlock.size(two))
+                assertEquals(12 + 2 * (44 + 16) + 8 * 6 + 4 * (24 + 54 + 15), LabelBlock.size(two))
                 assertEquals("", Native.labels(handle, LabelBlock.write(two), 1L, 0.7f))
                 assertEquals("", Native.labels(handle, LabelBlock.write(emptyList()), 2L, 0f))
+                assertEquals(
+                    "the labels were refused: the large images' scale is not 0 or from 1 to 4, or 0 with a large image",
+                    Native.labels(handle, LabelBlock.write(two, largeScale = 0.5f), 7L, 0f),
+                )
                 assertEquals(
                     "the labels were refused: a label has no points, or more than 1024",
                     Native.labels(handle, LabelBlock.write(listOf(sprite(3, 2, 2, DoubleArray(0)))), 3L, 0f),
@@ -98,6 +107,8 @@ class MapFacadeTest {
                 )
                 val notLabels = ByteBuffer.allocateDirect(8).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(7).putInt(0).flip() as ByteBuffer
                 assertEquals("the labels were refused: not a block of label sprites", Native.labels(handle, notLabels, 5L, 0f))
+                val first = ByteBuffer.allocateDirect(12).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(0x314C424C).putInt(0).putInt(0).flip() as ByteBuffer
+                assertEquals("the labels were refused: not a block of label sprites", Native.labels(handle, first, 8L, 0f))
                 assertEquals("the labels must be a direct buffer", Native.labels(handle, ByteBuffer.allocate(8), 6L, 0f))
 
                 // The screen's haze and vignette off, then on again (the app's Look settings).

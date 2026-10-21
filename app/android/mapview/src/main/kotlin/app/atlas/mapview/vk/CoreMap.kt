@@ -156,21 +156,24 @@ internal class CoreMap(
     private val labelLock = Any()
     private var labelsRevision = 0L
 
+    /** The sprites' maker for the painter of the last hand-over, which keeps the labels it drew (under [labelLock]). */
+    private var sprites: LabelSprites? = null
+
     /**
      * The labels the core draws for this map from now on: [labels] as sprites drawn by [painter] in [face] (none when
-     * empty), never smaller than [least] of their own size, unless a later hand-over ([revision], counted by the caller)
-     * went already. Off the main thread. "" or why the core refused them.
+     * empty), at their own size and at the band's top, never smaller than [least] of their own size, unless a later
+     * hand-over ([revision], counted by the caller) went already. Off the main thread. "" or why the core refused them.
      */
     fun labels(labels: List<MapLabel>, face: android.graphics.Typeface?, painter: LabelPainter, least: Float, revision: Long): String =
         synchronized(labelLock) {
             if (revision <= labelsRevision) return ""
             labelsRevision = revision
             if (face != null) painter.typeface = face
-            val sprites = LabelSprites(painter)
+            val maker = sprites?.takeIf { it.painter === painter } ?: LabelSprites(painter).also { sprites = it }
             val block = LabelBlock.write(labels.map { label ->
-                val s = sprites.sprite(label, labelIds.getOrPut(label.id) { labelIds.size + 1 })
+                val s = maker.sprite(label, labelIds.getOrPut(label.id) { labelIds.size + 1 })
                 val points = DoubleArray(2 * s.points.size) { i -> if (i % 2 == 0) s.points[i / 2].lat else s.points[i / 2].lon }
-                LabelBlock.Sprite(s.id, s.priority, s.half, s.pad, s.textHeight, s.baseline, s.width, s.height, s.anchorX, s.anchorY, points, s.pixels)
+                LabelBlock.Sprite(s.id, s.priority, s.half, s.pad, s.textHeight, s.baseline, s.own, s.large, points)
             })
             core.labels(block, revision, least)
         }

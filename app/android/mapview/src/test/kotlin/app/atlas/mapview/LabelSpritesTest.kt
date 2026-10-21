@@ -4,7 +4,9 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Typeface
 import app.atlas.geo.LatLon
+import app.atlas.mapcore.state.LabelBlock
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -17,8 +19,9 @@ import kotlin.math.roundToInt
 /**
  * The board's label sprites (plan-vector D13, K13) are LabelPainter's own pixels: each label's sprite, put down where
  * the vector engine puts it (its anchor on the text's centre and baseline, rounded as LabelPainter rounds them), equals
- * LabelPainter's drawing of it pixel for pixel, in the boards' Instrument Serif italic at three densities; and the
- * Main board's labels set by LabelPainter over a frame equal their sprites put down at LabelPainter's places.
+ * LabelPainter's drawing of it pixel for pixel, in the boards' Instrument Serif italic at three densities, and its
+ * large image a painter's at the band's top (LabelBlock.BAND_TOP times the density); and the Main board's labels set by
+ * LabelPainter over a frame equal their sprites put down at LabelPainter's places.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -43,28 +46,39 @@ class LabelSpritesTest {
         var sprites = 0
         for (density in floatArrayOf(2f, 2.625f, 3.5f)) {
             val painter = LabelPainter(density).also { it.typeface = face }
+            val large = LabelPainter(density * LabelBlock.BAND_TOP).also { it.typeface = face }
             val maker = LabelSprites(painter)
+            var own = 0L
+            var big = 0L
             for ((i, n) in names.withIndex()) {
                 val (kind, text) = n
                 val sprite = maker.sprite(MapLabel("t$i", text, kind, listOf(LatLon(52.37, 4.88))), i)
-                val w = sprite.width + 80
-                val h = sprite.height + 80
-                // at two whole-pixel anchors, so the frame's pixel grid plays no part
-                for ((x, y) in listOf(w / 2 to h / 2, w / 2 + 7 to h / 2 + 3)) {
-                    val direct = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                    painter.drawAt(Canvas(direct), kind, text, x, y)
-                    val put = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                    Canvas(put).drawBitmap(LabelSprites.bitmapOf(sprite), (x - sprite.anchorX).toFloat(), (y - sprite.anchorY).toFloat(), null)
-                    val a = LabelSprites.pixelsOf(direct)
-                    val b = LabelSprites.pixelsOf(put)
-                    assertEquals("$text at density $density: pixels differ", 0, differing(a, b))
-                    compared += a.size
+                for ((p, image) in listOf(painter to sprite.own, large to sprite.large)) {
+                    val w = image.width + 80
+                    val h = image.height + 80
+                    // at two whole-pixel anchors, so the frame's pixel grid plays no part
+                    for ((x, y) in listOf(w / 2 to h / 2, w / 2 + 7 to h / 2 + 3)) {
+                        val direct = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                        p.drawAt(Canvas(direct), kind, text, x, y)
+                        val put = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                        Canvas(put).drawBitmap(LabelSprites.bitmapOf(image), (x - image.anchorX).toFloat(), (y - image.anchorY).toFloat(), null)
+                        val a = LabelSprites.pixelsOf(direct)
+                        val b = LabelSprites.pixelsOf(put)
+                        assertEquals("$text at density ${p.density}: pixels differ", 0, differing(a, b))
+                        compared += a.size
+                    }
+                    assertTrue("$text: the image holds pixels", image.pixels.any { it != 0 })
                 }
-                assertTrue("$text: the sprite holds pixels", sprite.pixels.any { it != 0 })
+                assertTrue("$text: the large image is larger", sprite.large.width > sprite.own.width && sprite.large.height > sprite.own.height)
+                // a hand-over again takes the images kept
+                assertSame(sprite.large, maker.sprite(MapLabel("u$i", text, kind, listOf(LatLon(52.38, 4.89))), i + 100).large)
+                own += sprite.own.pixels.size
+                big += sprite.large.pixels.size
                 sprites++
             }
+            println("label sprites at density $density: ${names.size} labels, ${own / names.size} texels a label at its own size, ${big / names.size} at the band's top")
         }
-        println("label sprites: $sprites sprites at 3 densities equal LabelPainter's drawing, $compared pixels compared")
+        println("label sprites: $sprites sprites at 3 densities and their large images equal LabelPainter's drawing, $compared pixels compared")
     }
 
     @Test
@@ -110,9 +124,9 @@ class LabelSpritesTest {
             }
             if (!found) continue
             val sprite = maker.sprite(label, i)
-            val x = at[0].roundToInt() - sprite.anchorX
-            val y = (at[1] - m[3]).roundToInt() - sprite.anchorY
-            canvas.drawBitmap(LabelSprites.bitmapOf(sprite), x.toFloat(), y.toFloat(), null)
+            val x = at[0].roundToInt() - sprite.own.anchorX
+            val y = (at[1] - m[3]).roundToInt() - sprite.own.anchorY
+            canvas.drawBitmap(LabelSprites.bitmapOf(sprite.own), x.toFloat(), y.toFloat(), null)
             placed++
         }
         assertEquals("the same labels placed", painter.placedCount, placed)

@@ -240,9 +240,10 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     fun moment(theme: ByteBuffer): String = core.call("the core is closed") { Native.moment(it, theme) }
 
     /**
-     * The map's labels from now on, as `state.LabelBlock` writes them (each label's sprite, drawn once by the app, with
-     * what the core places it by; an empty block, none), at [revision]: the core places each where the board's painter
-     * would, keeps it there on the map and grows and shrinks it with the map, never smaller than [least] of its own size
+     * The map's labels from now on, as `state.LabelBlock` writes them (each label's sprite, drawn once by the app at its
+     * own size and at the band's top, with what the core places it by; an empty block, none), at [revision]: the core
+     * places each where the board's painter would, keeps it there on the map and grows and shrinks it with the map
+     * (grown, from the label drawn at the band's top, so it stays sharp), never smaller than [least] of its own size
      * (the readable floor). "" or why they were refused. Off the main thread.
      */
     fun labels(block: ByteBuffer, revision: Long, least: Float = 0f): String =

@@ -1,11 +1,13 @@
-// The board's labels (plan-vector D13, K13; passes/Labels.cpp): each a sprite the app rasterised once with the device's
-// own Skia exactly as LabelPainter draws it (text and halos, premultiplied, at the screen's density; mapview's
-// LabelSprites), drawn by the core at its placed position in the composite subpass after the composite, so it never
-// trails the map and is not hazed. At its own size a sprite stands on whole device pixels of the view and is copied
-// texel for texel (no filtering), so its pixels are LabelPainter's; grown or shrunk with the map (labels/Placement's
-// scale) it is sampled bilinearly, premultiplied, the texels beyond it clear, over its rectangle and a pixel around it.
-// Its fade scales it. The output's pre-rotation turns the quad, and the fragment stage finds its texel in the view's
-// own pixels (css_of_output).
+// The board's labels (plan-vector D13, K13; passes/Labels.cpp): each a sprite the app rasterised with the device's own
+// Skia exactly as LabelPainter draws it (text and halos, premultiplied, at the screen's density; mapview's
+// LabelSprites), at its own size and at the band's top, drawn by the core at its placed position in the composite
+// subpass after the composite, so it never trails the map and is not hazed. At its own size a sprite stands on whole
+// device pixels of the view and is copied texel for texel (no filtering), so its pixels are LabelPainter's; grown or
+// shrunk with the map (labels/Placement's scale) it is drawn from the image passes/Labels picked (grown, the label
+// drawn at the band's top, so within the band an image is only ever shrunk), each pixel the area its square covers of
+// the image's texels (a texel's width at least, which is the bilinear mix where an image is enlarged), premultiplied,
+// the texels beyond it clear, over its rectangle and a fringe around it. Its fade scales it. The output's pre-rotation
+// turns the quad, and the fragment stage finds its texel in the view's own pixels (css_of_output).
 //
 // Variants: this module writes colour attachment 0; sprite_loc1.slang writes attachment 1, where the composite writes
 // the dynamic route's 1x output beside the scene's colour (shaders/frame/composite_x1_loc1.slang).
@@ -24,8 +26,11 @@
 struct SpriteDraw {
     float4 target; // its top-left corner (x, y) in the view's device px and its size there (z, w): whole px at scale 1
     uint4 source;  // x: its first texel; y: its row's texels (its width); z: its rows (its height)
-    float4 fade;   // x: its opacity, 0 to 1 (the 250 ms fades); y: its scale (1: texel for texel)
+    float4 fade;   // x: its opacity, 0 to 1 (the 250 ms fades); y: its scale, view px a texel (1: texel for texel)
 };
+
+/// The widest a pixel's square is, in texels: a sprite shrunk below a third of its image is filtered as a third.
+static const float sprite_widest = 3.0f;
 
 [[vk::binding(0, 0)]] ConstantBuffer<FrameBlock> frame;
 [[vk::binding(13, 1)]] StructuredBuffer<uint> sprite_texels;
@@ -43,8 +48,9 @@ SpriteOut sprite_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     SpriteDraw s = sprite_draws[instance];
     FrameCamera c = frame.camera;
     // The view's device px to its normalised coordinates, then the output's pre-rotation (clip_of without the density:
-    // the corners are device px already); a scaled sprite's quad a pixel larger every way, for its filtered edge.
-    float fringe = s.fade.y != 1.0f ? 1.0f : 0.0f;
+    // the corners are device px already); a scaled sprite's quad larger every way by half a pixel's square, whole
+    // pixels, for its filtered edge.
+    float fringe = s.fade.y != 1.0f ? ceil(max(1.0f, s.fade.y) * 0.5f) : 0.0f;
     float2 px = s.target.xy - fringe + sprite_corners[vertex] * (s.target.zw + 2.0f * fringe);
     float2 n = {px.x * c.device.x - 1.0f, px.y * c.device.y - 1.0f};
     SpriteOut o;
@@ -72,6 +78,32 @@ float4 sprite_texel(SpriteDraw s, int2 texel, uint n) {
     return float4(float(t & 0xFFu), float((t >> 8u) & 0xFFu), float((t >> 16u) & 0xFFu), float(t >> 24u)) / 255.0f;
 }
 
+/// A scaled sprite over one pixel: the pixel's square, `w` texels wide each way about the pixel's centre `u` in the
+/// image's texels (texel i spans [i, i + 1)), each texel weighed by the area it shares with the square; at most four
+/// texels a row and a column (w at most sprite_widest).
+float4 sprite_area(SpriteDraw s, float2 u, float w, uint n) {
+    float2 lo = u - 0.5f * w;
+    float2 hi = u + 0.5f * w;
+    int2 first = int2(floor(lo));
+    float4 sum = float4(0.0f);
+    for (int j = 0; j < 4; ++j) {
+        int y = first.y + j;
+        float wy = min(hi.y, float(y + 1)) - max(lo.y, float(y));
+        if (wy <= 0.0f) {
+            break;
+        }
+        for (int i = 0; i < 4; ++i) {
+            int x = first.x + i;
+            float wx = min(hi.x, float(x + 1)) - max(lo.x, float(x));
+            if (wx <= 0.0f) {
+                break;
+            }
+            sum += sprite_texel(s, int2(x, y), n) * (wx * wy);
+        }
+    }
+    return sum / (w * w);
+}
+
 [shader("fragment")]
 SpriteColour sprite_fs(SpriteOut v) {
     SpriteDraw s = sprite_draws[v.sprite];
@@ -86,14 +118,9 @@ SpriteColour sprite_fs(SpriteOut v) {
         int2 texel = int2(floor(view - s.target.xy));
         c = sprite_texel(s, texel, n);
     } else {
-        // scaled: the four texels about the pixel's centre in the sprite, weighed by where it falls between them
-        float2 u = (view - s.target.xy) / s.fade.y - 0.5f;
-        float2 base = floor(u);
-        float2 f = u - base;
-        int2 t = int2(base);
-        float4 top = lerp(sprite_texel(s, t, n), sprite_texel(s, t + int2(1, 0), n), f.x);
-        float4 bottom = lerp(sprite_texel(s, t + int2(0, 1), n), sprite_texel(s, t + int2(1, 1), n), f.x);
-        c = lerp(top, bottom, f.y);
+        // scaled: the area of the pixel's square over the texels (a texel's width at least: the bilinear mix)
+        float k = s.fade.y;
+        c = sprite_area(s, (view - s.target.xy) / k, clamp(1.0f / k, 1.0f, sprite_widest), n);
     }
     SpriteColour o;
     o.colour = c * s.fade.x;

@@ -70,9 +70,10 @@ void Labels::update(const frame::FrameState& state) {
         if (draws_.size() >= max_draws) break;
         const std::uint32_t label = candidates_[d.candidate].label;
         const labels::LabelSprite& s = sprites[label];
-        const labels::SpriteAt at = labels::sprite_at(s, d);
+        const auto [image, at] = labels::image_at(s, set->large_scale(), d);
+        const labels::SpriteImage& from = image == 0 ? s.own : s.large;
         draws_.push_back({.target = {at.x, at.y, at.width, at.height},
-                          .source = {set->offsets()[label], s.width, s.height, 0},
+                          .source = {set->offsets()[label].at(image), from.width, from.height, 0},
                           .fade = {d.alpha, at.scale, 0.0F, 0.0F}});
     }
     if (draw_buffer_ && !draws_.empty()) {

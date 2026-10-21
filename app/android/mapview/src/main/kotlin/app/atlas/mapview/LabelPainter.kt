@@ -18,7 +18,7 @@ import kotlin.math.roundToInt
  * The text stands on whole pixels (its x and its baseline rounded), so a label drawn here and its sprite
  * ([LabelSprites], which the vector engine draws, plan-vector D13) are the same pixels: both are drawn by [drawAt].
  */
-internal class LabelPainter(private val density: Float) {
+internal class LabelPainter(val density: Float) {
     /** The labels' face: the boards' Instrument Serif italic, from the app; a serif italic until it is given. */
     var typeface: Typeface = Typeface.create(Typeface.SERIF, Typeface.ITALIC)
 

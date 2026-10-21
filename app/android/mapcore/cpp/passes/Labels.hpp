@@ -1,14 +1,15 @@
 // The board's labels (plan-vector D13, K13; ENGINE.md design point 8): the app's sprites (the frame's LabelSet:
-// MapCore.labels, each label drawn once by LabelSprites as LabelPainter draws it), placed in the core where
-// LabelPainter would place them and kept there, growing and shrinking with the map within their band, fading where they
-// meet another or leave it (labels/Placement, the map's scale the reciprocal of the camera's distance), and drawn in
-// the composite subpass after the composite, so they never trail the map and are not hazed. A label's points are
-// projected by the frame's camera onto the view's device pixels; the chrome's keep-out shapes (the camera state's) and
-// the markers keep labels off them; at its own size each sprite stands on whole device pixels where LabelPainter would
-// draw its text (labels/Sprites.hpp's sprite_at) and is copied texel for texel, scaled it is sampled bilinearly
-// (shaders/text/sprite.slang). Its texels are set 1's (SpriteGlobals, below); the frame slot's sprites to draw are the
-// pass's own set (2). The log's line, `label place <ms> placed <n>`, comes when the labels placed change, at most once
-// a second.
+// MapCore.labels, each label drawn by LabelSprites as LabelPainter draws it, at its own size and at the band's top),
+// placed in the core where LabelPainter would place them and kept there, growing and shrinking with the map within
+// their band, fading where they meet another or leave it (labels/Placement, the map's scale the reciprocal of the
+// camera's distance), and drawn in the composite subpass after the composite, so they never trail the map and are not
+// hazed. A label's points are projected by the frame's camera onto the view's device pixels; the chrome's keep-out
+// shapes (the camera state's) and the markers keep labels off them. At its own size each sprite stands on whole device
+// pixels where LabelPainter would draw its text (labels/Sprites.hpp's sprite_at) and is copied texel for texel; grown,
+// it is drawn from the label drawn at the band's top, so it stays sharp, and shrunk from its own image, each pixel the
+// area it covers of the image (shaders/text/sprite.slang). Its texels are set 1's (SpriteGlobals, below); the frame
+// slot's sprites to draw are the pass's own set (2). The log's line, `label place <ms> placed <n>`, comes when the
+// labels placed change, at most once a second.
 #pragma once
 
 #include "frame/Globals.hpp"

@@ -17,8 +17,9 @@ namespace atlas::jni {
 /// this process's start, which the crash guard reads a marker by (gpu/Guard.hpp). 4: Native.map, packs and moment
 /// (the app's map, K11). 5: Native.painter (the renderer's painter's order, to compare with true depth). 6:
 /// Native.labels (the map's labels drawn by the core, ENGINE.md step 2). 7: Native.screen (the screen's haze and
-/// vignette on or off, the app's Look settings).
-inline constexpr jint abi = 7;
+/// vignette on or off, the app's Look settings). 8: Native.labels' block holds each label at the band's top as well
+/// (LBL2), which a grown label is drawn from.
+inline constexpr jint abi = 8;
 
 /// The Kotlin class whose static natives the library registers.
 inline constexpr const char* native_class = "app/atlas/mapcore/Native";

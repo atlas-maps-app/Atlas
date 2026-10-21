@@ -810,7 +810,8 @@ void native_screen(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean haze,
 }
 
 /// The app's labels for the map (MK/state/LabelBlock.kt's block in a direct buffer, labels/Sprites.hpp's
-/// read_label_block), at `revision`, drawn no smaller than `least` of their own size; an empty block takes them away.
+/// read_label_block: each label at its own size and at the band's top), at `revision`, drawn no smaller than `least` of
+/// their own size; an empty block takes them away.
 /// "" or why they were refused.
 jstring native_labels(JNIEnv* env, jclass /*cls*/, jlong handle, jobject block, jlong revision, jfloat least) {
     Core* core = core_of(handle);
@@ -818,14 +819,15 @@ jstring native_labels(JNIEnv* env, jclass /*cls*/, jlong handle, jobject block, 
     void* address = block == nullptr ? nullptr : env->GetDirectBufferAddress(block);
     const jlong capacity = block == nullptr ? 0 : env->GetDirectBufferCapacity(block);
     if (address == nullptr || capacity < 0) return java(env, "the labels must be a direct buffer");
-    auto sprites =
+    auto read =
         labels::read_label_block(std::span(static_cast<const std::byte*>(address), static_cast<std::size_t>(capacity)));
-    if (!sprites) return java(env, std::format("the labels were refused: {}", sprites.error()));
-    if (sprites->empty()) {
+    if (!read) return java(env, std::format("the labels were refused: {}", read.error()));
+    if (read->sprites.empty()) {
         core->labels(nullptr);
         return java(env, "");
     }
-    auto set = labels::LabelSet::make(std::move(*sprites), static_cast<std::uint64_t>(revision), least);
+    auto set = labels::LabelSet::make(std::move(read->sprites), static_cast<std::uint64_t>(revision), least,
+                                      read->large_scale);
     if (!set) return java(env, std::format("the labels were refused: {}", labels::describe(set.error())));
     core->labels(std::move(*set));
     return java(env, "");

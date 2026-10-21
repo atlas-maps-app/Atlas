@@ -353,64 +353,120 @@ TEST_CASE("placed labels that the map's turn brings together: the one of lower p
     CHECK(lower->alpha == 0.0F);
 }
 
-TEST_CASE("a set of labels keeps every sprite's texels once, and a sprite goes where its anchor lands rounded") {
+TEST_CASE("a set of labels keeps every image's texels once, and a sprite goes where its anchor lands rounded") {
     std::vector<LabelSprite> sprites(2);
-    sprites[0] = {.id = 1,
-                  .priority = 3,
-                  .measures = measures(20, 10),
-                  .points = {{52.37, 4.88}},
-                  .width = 3,
-                  .height = 2,
-                  .pixels = {1, 2, 3, 4, 5, 6},
-                  .anchor_x = 1,
-                  .anchor_y = 1};
+    sprites[0] = {
+        .id = 1,
+        .priority = 3,
+        .measures = measures(20, 10),
+        .points = {{52.37, 4.88}},
+        .own = {.width = 3, .height = 2, .pixels = {1, 2, 3, 4, 5, 6}, .anchor_x = 1, .anchor_y = 1},
+        .large = {
+            .width = 4, .height = 3, .pixels = {9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9}, .anchor_x = 2, .anchor_y = 2}};
     sprites[1] = {.id = 2,
                   .priority = 1,
                   .measures = measures(20, 10),
                   .points = {{52.38, 4.89}},
-                  .width = 2,
-                  .height = 1,
-                  .pixels = {7, 8},
-                  .anchor_x = 0,
-                  .anchor_y = 0};
-    const auto set = LabelSet::make(sprites, 42);
+                  .own = {.width = 2, .height = 1, .pixels = {7, 8}, .anchor_x = 0, .anchor_y = 0}};
+    const auto set = LabelSet::make(sprites, 42, 0.0F, 1.5F);
     ATLAS_REQUIRE(set.has_value(), describe(set.error()));
     CHECK((*set)->revision() == 42);
-    CHECK(std::ranges::equal((*set)->texels(), std::array<std::uint32_t, 8>{1, 2, 3, 4, 5, 6, 7, 8}));
-    CHECK(std::ranges::equal((*set)->offsets(), std::array<std::uint32_t, 2>{0, 6}));
+    CHECK((*set)->large_scale() == 1.5F);
+    CHECK((*set)->texels().size() == 20);
+    CHECK(std::ranges::equal((*set)->texels().first(6), std::array<std::uint32_t, 6>{1, 2, 3, 4, 5, 6}));
+    CHECK(std::ranges::equal((*set)->texels().last(2), std::array<std::uint32_t, 2>{7, 8}));
+    CHECK(std::ranges::equal((*set)->offsets(), std::array<std::array<std::uint32_t, 2>, 2>{{{0, 6}, {18, 0}}}));
+    const LabelSprite& first = (*set)->sprites()[0];
     // Kotlin's roundToInt: halves up, also below zero
     Drawn d{.stand = {.x = 10.5F, .y = 0.0F}, .baseline = -2.5F};
-    CHECK(sprite_at((*set)->sprites()[0], d).x == 10.0F);
-    CHECK(sprite_at((*set)->sprites()[0], d).y == -3.0F);
-    CHECK(sprite_at((*set)->sprites()[0], d).width == 3.0F);
-    CHECK(sprite_at((*set)->sprites()[0], d).scale == 1.0F);
+    CHECK(sprite_at(first.own, d).x == 10.0F);
+    CHECK(sprite_at(first.own, d).y == -3.0F);
+    CHECK(sprite_at(first.own, d).width == 3.0F);
+    CHECK(sprite_at(first.own, d).scale == 1.0F);
     d.stand.x = 10.4999F;
-    CHECK(sprite_at((*set)->sprites()[0], d).x == 9.0F);
+    CHECK(sprite_at(first.own, d).x == 9.0F);
+    CHECK(image_at(first, 1.5F, d).image == 0);
     // scaled: about its anchor, where it falls
     d.scale = 1.5F;
-    const SpriteAt big = sprite_at((*set)->sprites()[0], d);
+    const SpriteAt big = sprite_at(first.own, d);
     CHECK(big.x == 10.4999F - 1.5F);
     CHECK(big.y == -2.5F - 1.5F);
     CHECK(big.width == 4.5F);
     CHECK(big.height == 3.0F);
     CHECK(big.scale == 1.5F);
-    // refused: pixels that are not width x height, and no points
+    // grown, from its large image, a texel a pixel at the band's top
+    const ImageAt grown = image_at(first, 1.5F, d);
+    CHECK(grown.image == 1);
+    CHECK(grown.at.x == 10.4999F - 2.0F);
+    CHECK(grown.at.y == -2.5F - 2.0F);
+    CHECK(grown.at.width == 4.0F);
+    CHECK(grown.at.scale == 1.0F);
+    d.scale = 1.2F;
+    CHECK(image_at(first, 1.5F, d).at.scale == doctest::Approx(0.8F));
+    // shrunk, or without a large image: from its own image
+    d.scale = 0.8F;
+    CHECK(image_at(first, 1.5F, d).image == 0);
+    CHECK(image_at(first, 1.5F, d).at.scale == 0.8F);
+    d.scale = 1.2F;
+    CHECK(image_at((*set)->sprites()[1], 1.5F, d).image == 0);
+    // refused: pixels that are not width x height, no image, no points, a large image without its scale, a scale
+    // below 1
     std::vector<LabelSprite> bad(1, sprites[0]);
-    bad[0].pixels.pop_back();
+    bad[0].own.pixels.pop_back();
     CHECK(LabelSet::make(bad, 1).error() == SpriteError::size);
     bad[0] = sprites[0];
+    bad[0].large.pixels.pop_back();
+    CHECK(LabelSet::make(bad, 1, 0.0F, 1.5F).error() == SpriteError::size);
+    bad[0] = sprites[0];
+    bad[0].own = {};
+    CHECK(LabelSet::make(bad, 1, 0.0F, 1.5F).error() == SpriteError::size);
+    bad[0] = sprites[0];
     bad[0].points.clear();
-    CHECK(LabelSet::make(bad, 1).error() == SpriteError::points);
+    CHECK(LabelSet::make(bad, 1, 0.0F, 1.5F).error() == SpriteError::points);
+    bad[0] = sprites[0];
+    CHECK(LabelSet::make(bad, 1).error() == SpriteError::scale);
+    CHECK(LabelSet::make(bad, 1, 0.0F, 0.5F).error() == SpriteError::scale);
+}
+
+TEST_CASE("a set's large images are kept by priority within its budget; the others grow from their own image") {
+    // Three labels whose own images take three quarters of their budget, each large image a quarter of the whole
+    // budget: two of them fit, the two of highest priority keep theirs.
+    const auto image = [](std::uint32_t width, std::uint32_t height) {
+        return SpriteImage{
+            .width = width, .height = height, .pixels = std::vector<std::uint32_t>(std::size_t{width} * height, 1U)};
+    };
+    const auto three = [&](std::uint32_t own_height) {
+        std::vector<LabelSprite> sprites(3);
+        for (std::uint32_t i = 0; i < 3; ++i) {
+            sprites[i] = {.id = i + 1,
+                          .priority = static_cast<std::int32_t>(i == 1 ? 9 : i),
+                          .measures = measures(20, 10),
+                          .points = {{52.37, 4.88}},
+                          .own = image(1024, own_height),
+                          .large = image(2048, 1024)};
+        }
+        return sprites;
+    };
+    const auto set = LabelSet::make(three(1024), 1, 0.0F, 1.5F);
+    ATLAS_REQUIRE(set.has_value(), describe(set.error()));
+    CHECK(!(*set)->sprites()[1].large.empty()); // priority 9
+    CHECK(!(*set)->sprites()[2].large.empty()); // priority 2
+    CHECK((*set)->sprites()[0].large.empty());  // priority 0: let go
+    CHECK((*set)->texels().size() == (3U * 1024U * 1024U) + (2U * 2048U * 1024U));
+    CHECK((*set)->texels().size() <= LabelSet::max_all_texels);
+    // own images beyond their budget: refused
+    CHECK(LabelSet::make(three(2048), 1, 0.0F, 1.5F).error() == SpriteError::budget);
 }
 
 TEST_CASE("a block of label sprites as the app writes it is read field for field, and a broken one refused") {
-    // Two sprites in MK/state/LabelBlock.kt's layout.
+    // Two sprites in MK/state/LabelBlock.kt's layout, the first with a large image.
     std::vector<std::byte> block;
     const auto put = [&](const auto& v) {
         const auto* p = reinterpret_cast<const std::byte*>(&v); // NOLINT: the value's bytes
         block.insert(block.end(), p, p + sizeof v);
     };
-    const auto sprite = [&](std::int32_t id, std::uint32_t w, std::uint32_t h, std::span<const double> points) {
+    const auto sprite = [&](std::int32_t id, std::uint32_t w, std::uint32_t h, std::span<const double> points,
+                            std::uint32_t lw, std::uint32_t lh) {
         put(id);
         put(std::int32_t{7});
         for (const float v : {40.5F, 10.5F, 20.0F, -7.0F}) put(v);
@@ -421,48 +477,76 @@ TEST_CASE("a block of label sprites as the app writes it is read field for field
         put(static_cast<std::uint32_t>(points.size() / 2));
         for (const double v : points) put(v);
         for (std::uint32_t i = 0; i < w * h; ++i) put(i * 0x01010101U);
+        put(lw);
+        put(lh);
+        put(std::int32_t{3});
+        put(std::int32_t{4});
+        for (std::uint32_t i = 0; i < lw * lh; ++i) put(0xFF000000U + i);
     };
     put(label_block_magic);
     put(std::uint32_t{2});
+    put(1.5F);
     const std::array<double, 2> one{52.37, 4.88};
     const std::array<double, 4> two{52.38, 4.89, 52.381, 4.891};
-    sprite(1, 3, 2, one);
-    sprite(9, 1, 1, two);
+    sprite(1, 3, 2, one, 5, 3);
+    sprite(9, 1, 1, two, 0, 0);
     const auto read = read_label_block(block);
     ATLAS_REQUIRE(read.has_value(), read.error());
-    ATLAS_REQUIRE(read->size() == 2);
-    const LabelSprite& a = (*read)[0];
+    CHECK(read->large_scale == 1.5F);
+    ATLAS_REQUIRE(read->sprites.size() == 2);
+    const LabelSprite& a = read->sprites[0];
     CHECK(a.id == 1);
     CHECK(a.priority == 7);
     CHECK(a.measures.half == 40.5F);
     CHECK(a.measures.pad == 10.5F);
     CHECK(a.measures.text_height == 20.0F);
     CHECK(a.measures.baseline == -7.0F);
-    CHECK(a.width == 3);
-    CHECK(a.height == 2);
-    CHECK(a.anchor_x == 1);
-    CHECK(a.anchor_y == 2);
+    CHECK(a.own.width == 3);
+    CHECK(a.own.height == 2);
+    CHECK(a.own.anchor_x == 1);
+    CHECK(a.own.anchor_y == 2);
     CHECK(a.points == std::vector<std::array<double, 2>>{{52.37, 4.88}});
-    CHECK(a.pixels == std::vector<std::uint32_t>{0, 0x01010101U, 0x02020202U, 0x03030303U, 0x04040404U, 0x05050505U});
-    CHECK((*read)[1].id == 9);
-    CHECK((*read)[1].points == std::vector<std::array<double, 2>>{{52.38, 4.89}, {52.381, 4.891}});
-    // refused: another magic, a block cut short in a sprite's head, points or pixels, bytes past the last sprite
+    CHECK(a.own.pixels ==
+          std::vector<std::uint32_t>{0, 0x01010101U, 0x02020202U, 0x03030303U, 0x04040404U, 0x05050505U});
+    CHECK(a.large.width == 5);
+    CHECK(a.large.height == 3);
+    CHECK(a.large.anchor_x == 3);
+    CHECK(a.large.anchor_y == 4);
+    CHECK(a.large.pixels.size() == 15);
+    CHECK(a.large.pixels.back() == 0xFF00000EU);
+    const LabelSprite& b = read->sprites[1];
+    CHECK(b.id == 9);
+    CHECK(b.points == std::vector<std::array<double, 2>>{{52.38, 4.89}, {52.381, 4.891}});
+    CHECK(b.large.empty());
+    CHECK(b.large.pixels.empty());
+    CHECK(LabelSet::make(read->sprites, 1, 0.0F, read->large_scale).has_value());
+    // refused: another magic, a block cut short in a sprite's head, points, pixels or large image, bytes past the last
+    // sprite
+    const std::size_t head = 12;
+    const std::size_t sprite_head = 44;
     std::vector<std::byte> bad = block;
     bad[0] = std::byte{0};
     CHECK(read_label_block(bad).error() == "not a block of label sprites");
-    CHECK(read_label_block(std::span(block).first(20)).error() == "the block ends in sprite 0's head");
-    CHECK(read_label_block(std::span(block).first(8 + 44 + 8)).error() == "the block ends in sprite 0's points");
-    CHECK(read_label_block(std::span(block).first(8 + 44 + 16 + 8)).error() == "the block ends in sprite 0's pixels");
+    CHECK(read_label_block(std::span(block).first(10)).error() == "the block ends before its count");
+    CHECK(read_label_block(std::span(block).first(24)).error() == "the block ends in sprite 0's head");
+    CHECK(read_label_block(std::span(block).first(head + sprite_head + 8)).error() ==
+          "the block ends in sprite 0's points");
+    CHECK(read_label_block(std::span(block).first(head + sprite_head + 16 + 8)).error() ==
+          "the block ends in sprite 0's pixels");
+    CHECK(read_label_block(std::span(block).first(head + sprite_head + 16 + 24 + 8)).error() ==
+          "the block ends in sprite 0's large image");
+    CHECK(read_label_block(std::span(block).first(head + sprite_head + 16 + 24 + 16 + 4)).error() ==
+          "the block ends in sprite 0's large image");
     bad = block;
     bad.push_back(std::byte{0});
     CHECK(read_label_block(bad).error() == "the block runs on past its sprites");
     // an empty block: no sprites
     std::vector<std::byte> none;
-    for (const std::uint32_t v : {label_block_magic, 0U}) {
+    for (const std::uint32_t v : {label_block_magic, 0U, 0U}) {
         const auto* p = reinterpret_cast<const std::byte*>(&v); // NOLINT: the value's bytes
         none.insert(none.end(), p, p + 4);
     }
-    CHECK(read_label_block(none).value().empty());
+    CHECK(read_label_block(none).value().sprites.empty());
 }
 
 TEST_CASE("a frame's placement takes at most 0.5 ms on one core (gated with ATLAS_TIMED=1)") {
