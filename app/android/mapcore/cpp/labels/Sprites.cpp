@@ -89,7 +89,7 @@ std::expected<LabelBlock, std::string> read_label_block(std::span<const std::byt
     std::size_t at = 0;
     const auto take = [&](void* out, std::size_t bytes) {
         if (block.size() - at < bytes) return false;
-        std::memcpy(out, block.data() + at, bytes);
+        if (bytes > 0) std::memcpy(out, block.data() + at, bytes); // an empty image's data() may be null
         at += bytes;
         return true;
     };
