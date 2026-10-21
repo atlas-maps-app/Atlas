@@ -132,7 +132,7 @@ Nothing is finished. Each part below is a first version on `app`. It gets rework
 |---|---|
 | Toolchain and CI | NDK r30, CMake presets for the hosts and Android, Slang shaders checked at build time, lavapipe under the validation layer |
 | Vulkan device layer | VK facts, the crash guard, frame configurations, both frame routes, the pipeline cache and the SurfaceView host; the VK facts and VK bench screens, measured on the user's phone; VK facts' hash lines (pymath, the sun, the noise fields, the ground, the twin), held to the host build's on CI's emulator, and its composite check, behind a guard stage of its own |
-| Data | render tiles, the packer's `render-tiles` and the core's reader (fuzzed); the Westerkerk and the canal ring bundled; render packs that build for `amsterdam` and `grachten` |
+| Data | render tiles, the packer's `render-tiles` and the core's reader (fuzzed); the core's writer of tiles and packs, the packer's bytes; the Westerkerk and the canal ring bundled; render packs that build for `amsterdam` and `grachten` |
 | Numerics and style | pymath; the light, the theme and `ScreenLayers`; the style file (`app/android/mapcore/style/engine.jsonc`), which every render pack carries and the core reads, typed, as a pack opens; the rule table, which lists every line of the renderer that draws |
 | Frame core | camera, ladder, cover, residency, heaps (one buffer and one virtual block of a 64 MB budget; a tile that finds no room waits for a range to go), ranks and pass registry; the composite (haze, vignette, `mat`'s rule, grain); the twin and L1; the coarser pack around the active one, chosen as the smallest pack that holds it; the packs' own stage T (`Pass::build_pack`) |
 | Sun | the sun test on the workers, equal to the port on every sample of 21 board renders; a lane for the pack drawn and one for the coarser pack around it |
@@ -250,6 +250,9 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   They are held record for record to the port's, from the same data.
 - **The core asks, the app fetches.** Remote packs already work this way: the core asks for a box's data on its I/O thread, and the app's OpenStreetMap client answers.
 - **Built tiles become local packs.** A C++ writer of format 3 turns each built window into a small pack, which the store opens like a downloaded one.
+  - Done: **the writer** (`tiles/TileWriter.hpp`, `tiles/PackWriter.hpp`). Stage P fills a tile's layers feature by feature, in the reader's own typed columns with the strings interned; the writer writes the packer's bytes for them, its string table in the order the columns use the strings. Then the pack around the tiles: the container, the chunks in level and Hilbert order, the checksums, `reach`, `rhead` and `style`.
+  - `writer_test` holds it to the packer. Every tile of the bundled packs, decoded and written again, is its own bytes (30 tiles, 14 of the 15 codecs the layers use; the 15th, house numbers among strings, on generated values). The canal ring's tiles, written into a pack of their own, open, pass every checksum and read as the packer's.
+  - The core vendors zstd's decompression alone, so a local pack's chunks are frames of raw blocks: the canal ring's is 4.2 MB against the packer's 1.8 MB. zstd's compressor joins `third_party` in a commit of its own; the tiles' bytes do not change with it.
 - **The packer runs the core's stage P** through the host build, so `:rendertiles` stays only as the Kotlin reference.
 - **Budgets:** a window builds within about 50 MB of memory, in a few seconds on a mid-range phone, on background threads.
 - **Live data from more than one source:**
