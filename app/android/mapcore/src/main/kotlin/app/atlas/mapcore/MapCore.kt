@@ -141,6 +141,11 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
         core.call(null) { Native.facts(it, config.cacheDir, config.guardDir, config.system, config.flags, "", 0L) }
             ?.lines()?.filter { it.isNotEmpty() } ?: listOf("vulkan: the core is closed")
 
+    /** The core's twin line ([Native.twinLine]) over the APK's bundled Westerkerk; off the main thread, about a second. */
+    fun twinLine(assets: AssetManager): String = core.call("twin unavailable: the core is closed") { h ->
+        assets.openFd("tiles/amsterdam.atlas").use { Native.twinLine(h, it.parcelFileDescriptor.fd, it.startOffset, it.length) }
+    }
+
     /**
      * Draws into [surface]'s window ([widthPx] × [heightPx]); the core asks [source] for the camera at each paced vsync
      * after [requestFrame]. False with the reason in [lastAttachError].

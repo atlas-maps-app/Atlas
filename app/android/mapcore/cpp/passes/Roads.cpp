@@ -76,7 +76,8 @@ void Ground::emit_fills(const frame::FrameState& state, twin::Stream& out, std::
                 rings.push_back({.order = g.fills[i].order, .tile = t, .fill = i});
             }
         }
-        std::ranges::sort(rings, {}, &Ring::order);
+        // stable: a feature's pieces in several tiles share its order and keep the tiles' order, on every libc++
+        std::ranges::stable_sort(rings, {}, &Ring::order);
         // draw_under's `<g filter="url(#mat)">`, whatever the moment (`mat` none where render defines none)
         const std::int32_t under =
             rings.empty() ? out.root() : out.group({.node = {.filter = mat}, .parent = out.root()});

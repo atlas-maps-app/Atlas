@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 8
+    const val ABI = 9
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -84,6 +84,15 @@ object Native {
     @JvmStatic external fun groundLine(fd: Int, offset: Long, length: Long): String
 
     // ---- end of K9's natives ----
+
+    /**
+     * The core's twin check (`CP/frame/TwinCheck.hpp`) on the core's device: the app's frame over the bundled Westerkerk,
+     * given as an asset's [fd], [offset] and [length], at the engine references' home on S1 and the sunny moment,
+     * settled without drawing, its twin's stream hashed: `twin <hash> ok`, `twin <hash> FAIL expected <hash>`, or
+     * `twin unavailable: <why>`. About a second of two phone cores, on the core's render thread: never on the main thread.
+     */
+    @JvmStatic external fun twinLine(handle: Long, fd: Int, offset: Long, length: Long): String
+
     // ---- K13's natives: the text's kerning rule, the device's glyph check (VK facts) and the bundled fonts ----
 
     /**

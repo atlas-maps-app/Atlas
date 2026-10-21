@@ -15,6 +15,7 @@
 #include "base/log.hpp"
 #include "check/NumericsCheck.hpp"
 #include "frame/MapFrame.hpp"
+#include "frame/TwinCheck.hpp"
 #include "fx/Fields.hpp"
 #include "gen/spirv/modules.hpp"
 #include "geometry/Ground.hpp"
@@ -298,6 +299,15 @@ public:
         on_session([this, &set] {
             map_->set_labels(std::move(set));
             ask_frame();
+        });
+    }
+
+    /// VK facts' twin check over the bundled Westerkerk (frame/TwinCheck.hpp) on the session's device, a world and a
+    /// frame builder of its own that draw nothing: `twin <hash> ok`, `… FAIL expected <hash>`, or why it could not run.
+    [[nodiscard]] std::string twin_line(const tiles::PackRef& westerkerk) {
+        return on_session([this, &westerkerk] {
+            if (!started_.device || !started_.cache) return std::string("twin unavailable: the session has no device");
+            return frame::twin_line(*started_.device, *started_.cache, westerkerk);
         });
     }
 
@@ -875,6 +885,18 @@ jstring native_ground_line(JNIEnv* env, jclass /*cls*/, jint fd, jlong offset, j
 }
 // ---- end of K9's natives ----
 
+/// The twin's check over the bundled Westerkerk, an asset's descriptor, offset and length (frame/TwinCheck.hpp: about
+/// a second of two cores on a phone, on the render thread): `twin <hash> ok` or `twin <hash> FAIL expected <hash>`.
+jstring native_twin_line(JNIEnv* env, jclass /*cls*/, jlong handle, jint fd, jlong offset, jlong length) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "twin unavailable: no core");
+    return java(env, core->twin_line({.id = "amsterdam",
+                                      .kind = tiles::PackKind::render,
+                                      .fd = fd,
+                                      .offset = static_cast<std::uint64_t>(offset),
+                                      .length = static_cast<std::uint64_t>(length)}));
+}
+
 // ---- K13's natives: the text's kerning rule, the device's glyph check (VK facts) and the bundled fonts ----
 
 /// K13's platform rule for kerning, which the app measured with Android's Paint (mapview's TextRounding): "floor" or
@@ -932,8 +954,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 31>& methods() {
-    static const std::array<JNINativeMethod, 31> table{{
+const std::array<JNINativeMethod, 32>& methods() {
+    static const std::array<JNINativeMethod, 32> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -962,6 +984,7 @@ const std::array<JNINativeMethod, 31>& methods() {
         // ---- K9's natives ----
         method("groundLine", "(IJJ)Ljava/lang/String;", fn(&native_ground_line)),
         // ---- end of K9's natives ----
+        method("twinLine", "(JIJJ)Ljava/lang/String;", fn(&native_twin_line)),
         // ---- K13's natives ----
         method("textRounding", "(Ljava/lang/String;)Ljava/lang/String;", fn(&native_text_rounding)),
         method("textCheckRuns", "()Ljava/lang/String;", fn(&native_text_check_runs)),

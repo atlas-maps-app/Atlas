@@ -111,7 +111,8 @@ void Ground::decide_water(const view::Camera& cam) {
             pieces.push_back({.ring = (std::uint64_t{fill.hole} << 32U) | fill.ring, .tile = t, .piece = &w});
         }
     }
-    std::ranges::sort(pieces, {}, &Piece::ring);
+    // stable: a ring's pieces keep the tiles' order, so its sum of areas is the same on every libc++
+    std::ranges::stable_sort(pieces, {}, &Piece::ring);
     for (std::size_t a = 0; a < pieces.size();) {
         std::size_t b = a;
         while (b < pieces.size() && pieces[b].ring == pieces[a].ring) ++b;

@@ -29,7 +29,8 @@
 #                                            must read `sun $ATLAS_SUN_HASH ok`; fields.txt, the core's noise fields at
 #                                            S1 on Bionic (K17a), which must end `hash <h> ok` (each field equal to the
 #                                            port's); ground.txt, the ground's stage T on Bionic (K9), which must read
-#                                            `ground $ATLAS_GROUND_HASH ok`; and in vkfacts.txt the core's shaping held
+#                                            `ground $ATLAS_GROUND_HASH ok`; twin.txt, the core's twin on Bionic, which
+#                                            must read `twin $ATLAS_TWIN_HASH ok`; and in vkfacts.txt the core's shaping held
 #                                            to the guest's own (K13), `text.glyphs: <n> runs, <m> glyphs equal
 #                                            Android's (rule <rule>)`
 #   map.txt, map-transition.txt, map-*.png   the map drawn by the core (K11): its first frame from a cleared state and
@@ -49,7 +50,7 @@
 # drew none once it went on after the app came back, an app that did not come back to the foreground after the colour
 # stage's background step, a pymath line other than `pymath $ATLAS_PYMATH_HASH ok`, a sun line other than
 # `sun $ATLAS_SUN_HASH ok`, a fields line other than `fields 1080x2400 cpu <ms> gpu off hash <h> ok`, a ground line
-# other than `ground $ATLAS_GROUND_HASH ok`, VK facts without `text.rounding: floor|round (probe …)` or with a
+# other than `ground $ATLAS_GROUND_HASH ok`, a twin line other than `twin $ATLAS_TWIN_HASH ok`, VK facts without `text.rounding: floor|round (probe …)` or with a
 # `text.glyphs:` line that is not every glyph equal, VK bench's still pills failing ci/pillcheck.py with the core's
 # glass or passing it with their tint alone, (once the map's core draws the home) the home's frosted pills failing
 # it or further than MAD 2 from HWUI's on the TextureView, the core's first map frame above §3's emulator limits (3 s
@@ -60,7 +61,8 @@
 # ATLAS_IDLE (seconds the home is watched at rest, default 20), ATLAS_BENCH=0 (skip the bench phase), ATLAS_PROFILE=0
 # (skip simpleperf), ATLAS_PYMATH_HASH (the numerics hash the host build and the port compute; android.yml sets it),
 # ATLAS_SUN_HASH (the sun bits' hash the host build computes; android.yml sets it), ATLAS_GROUND_HASH (the ground's
-# stage T hash the host build computes; android.yml sets it).
+# stage T hash the host build computes; android.yml sets it), ATLAS_TWIN_HASH (the twin check's hash the host build
+# computes; android.yml sets it).
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 APK=$(ls "$1"/*.apk | head -1); OUT=$2; mkdir -p "$OUT"
@@ -412,6 +414,16 @@ vk_phase() {
     echo "GROUND FAILED: ATLAS_GROUND_HASH is not set (android.yml's emulator job sets the expected hash)"; FAIL=1
   elif ! grep -qx "ground $ATLAS_GROUND_HASH ok" "$OUT/ground.txt"; then
     echo "GROUND FAILED: the emulator's ground reads '$(cat "$OUT/ground.txt")', not 'ground $ATLAS_GROUND_HASH ok'"; FAIL=1
+  fi
+  # The core's twin on Bionic (ENGINE.md's checks: VK facts' hash lines): VK facts logs `twin <hash> ok`, the app's frame
+  # over the bundled Westerkerk at the engine references' home emitted without drawing (frame/TwinCheck.hpp), and the
+  # hash must be the host build's (ATLAS_TWIN_HASH, from android.yml).
+  since_marker vkfacts | grep -o 'AtlasMap: twin .*' | sed 's/AtlasMap: //' | tr -d '\r' | head -1 > "$OUT/twin.txt"
+  echo "twin: $(cat "$OUT/twin.txt")"
+  if [ -z "${ATLAS_TWIN_HASH:-}" ]; then
+    echo "TWIN FAILED: ATLAS_TWIN_HASH is not set (android.yml's emulator job sets the expected hash)"; FAIL=1
+  elif ! grep -qx "twin $ATLAS_TWIN_HASH ok" "$OUT/twin.txt"; then
+    echo "TWIN FAILED: the emulator's twin reads '$(cat "$OUT/twin.txt")', not 'twin $ATLAS_TWIN_HASH ok'"; FAIL=1
   fi
   # The core's text on the guest (K13's acceptance): VK facts logs the kerning rule the guest's own Paint shows
   # (`text.rounding: floor|round (probe …)`), then the core's shaping of the canal names, runway designators and

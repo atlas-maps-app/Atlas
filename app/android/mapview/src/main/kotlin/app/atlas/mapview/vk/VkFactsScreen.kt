@@ -57,9 +57,11 @@ const val VK_HONEST = "This phone's graphics driver can't draw the Atlas map."
  * the crash guard (GPU, driver and version, tiler, lazily allocated memory, Vulkan version, Android's Vulkan profiles,
  * memory types, sample counts, extensions, the frame configuration and route the core would pick, the surface's
  * capabilities from a small SurfaceView), the GLES probe the survey still reads, the core's numerics check (K3b's
- * `pymath <hash> ok`), its sun check over the bundled Westerkerk (K8's `sun <hash> ok`) and the platform's kerning rule
- * with the core's shaping held to Android's under it (K13's `text.rounding: …` and `text.glyphs: …`). Every line also
- * goes to logcat as `vkfacts <line>`, the numerics as `pymath …` and the sun as `sun …`, then `vkfacts done`. Copy puts
+ * `pymath <hash> ok`), its sun check over the bundled Westerkerk (K8's `sun <hash> ok`), its noise fields, its ground
+ * and its twin over the bundled Westerkerk (`fields …`, `ground <hash> ok`, `twin <hash> ok`: the app's frame at the
+ * engine references' home, emitted without drawing) and the platform's kerning rule with the core's shaping held to
+ * Android's under it (K13's `text.rounding: …` and `text.glyphs: …`). Every line also goes to logcat as
+ * `vkfacts <line>`, the hashes as `pymath …`, `sun …`, `fields …`, `ground …` and `twin …`, then `vkfacts done`. Copy puts
  * the whole report on the clipboard for the paste back.
  *
  * The crash guard's state (D5.10) leads the report: what this start found (`guard:`, the `vk guard` line naming the
@@ -124,6 +126,11 @@ fun VkFactsScreen(config: CoreConfig, modifier: Modifier = Modifier, guardReset:
             // The ground's stage T on the bundled Westerkerk (K9): `ground <hash> ok`, held by smoke.sh to the host build's.
             val ground = runCatching { MapCore.groundLine(context.assets) }.getOrElse { "ground unavailable: $it" }
             Log.i(EngineFrames.TAG, ground)
+            // The core's twin on the bundled Westerkerk (the app's frame at the engine references' home, settled
+            // without drawing, on the core's device): `twin <hash> ok`, held by smoke.sh to the host build's.
+            val twin = core?.let { c -> runCatching { c.twinLine(context.assets) }.getOrElse { "twin unavailable: $it" } }
+                ?: "twin unavailable: no Vulkan"
+            Log.i(EngineFrames.TAG, twin)
             // The platform's kerning rule, measured with Android's Paint and told to the core, and the core's shaping
             // against Android's under it (K13): `text.rounding: …`, `text.glyphs: …`.
             val text = runCatching {
@@ -132,7 +139,7 @@ fun VkFactsScreen(config: CoreConfig, modifier: Modifier = Modifier, guardReset:
             }.getOrElse { listOf("text.rounding: unavailable: $it") }
             for (l in text) Log.i(EngineFrames.TAG, "vkfacts $l")
             Log.i(EngineFrames.TAG, "vkfacts done")
-            lines + pymath + sun + fields + ground + text
+            lines + pymath + sun + fields + ground + twin + text
         }
         status = if (core == null) VK_HONEST else "Done: ${report.size} lines."
     }

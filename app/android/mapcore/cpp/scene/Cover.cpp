@@ -66,7 +66,8 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
         cover(*in.coarser, view, frames, in, in.coarser_tolerance, in.mask, residency, seconds);
     }
     std::erase_if(shown_, [](const Shown& s) { return !s.drawn; });
-    std::ranges::sort(tiles_, [](const CoverTile& a, const CoverTile& b) { return a.distance < b.distance; });
+    // stable: tiles at one distance keep the cover's order, on every libc++
+    std::ranges::stable_sort(tiles_, [](const CoverTile& a, const CoverTile& b) { return a.distance < b.distance; });
     std::ranges::sort(requests_, [](const Request& a, const Request& b) {
         return a.lane != b.lane ? a.lane < b.lane : a.priority > b.priority;
     });
