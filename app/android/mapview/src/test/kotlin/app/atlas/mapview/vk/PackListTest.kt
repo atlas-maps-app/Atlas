@@ -35,9 +35,9 @@ class PackListTest {
         dir.deleteRecursively()
     }
 
-    /** A render pack as far as the lists read it: D1's header and a format-3 manifest. */
+    /** A render pack as far as the lists read it: D1's header and a format-3 manifest (each view at yaw 52, pitch 44). */
     private fun renderPack(id: String, profile: String, west: Double, south: Double, east: Double, north: Double, views: Map<String, Int> = emptyMap(), tz: String? = "Europe/Amsterdam"): ByteArray {
-        val v = views.entries.joinToString(",") { (k, d) -> """"$k":{"dist":$d}""" }
+        val v = views.entries.joinToString(",") { (k, d) -> """"$k":{"target":[-177,0,-521],"yaw":52,"pitch":44,"dist":$d,"cy":440}""" }
         val manifest = """{"format":"atlas-pack","version":3,"layout":"render-tiles","payload":1,"id":"$id","profile":"$profile",
             |"bbox":{"west":$west,"south":$south,"east":$east,"north":$north},"origin":{"lat":${(south + north) / 2},"lon":${(west + east) / 2}},
             |${tz?.let { """"tz":"$it",""" } ?: ""}"config":{"views":{$v}}}""".trimMargin().toByteArray()
@@ -63,7 +63,7 @@ class PackListTest {
     private fun bundledTiles(): File {
         val tiles = File(dir, "tiles").apply { mkdirs() }
         File(tiles, "amsterdam.atlas").writeBytes(renderPack("amsterdam", "living", 4.876, 52.371, 4.893, 52.378))
-        File(tiles, "grachten.atlas").writeBytes(renderPack("grachten", "region", 4.86, 52.35, 4.93, 52.39, mapOf("grachten_home" to 2300, "grachten_close" to 900)))
+        File(tiles, "grachten.atlas").writeBytes(renderPack("grachten", "region", 4.86, 52.35, 4.93, 52.39, mapOf("home" to 2300, "close" to 900)))
         File(tiles, PackList.INDEX).writeText(
             """{"format":3,"payload":1,"packs":[{"id":"amsterdam","file":"amsterdam.atlas","profile":"living"},
               |{"id":"grachten","file":"grachten.atlas","profile":"region"}]}""".trimMargin(),
@@ -82,6 +82,11 @@ class PackListTest {
         assertEquals(RegionFrame.living(), packs[0].frame)
         assertEquals(RegionFrame.region(LatLon((52.35 + 52.39) / 2, (4.86 + 4.93) / 2)), packs[1].frame)
         assertEquals(ZoneId.of("Europe/Amsterdam"), packs[1].zone)
+        // A region's views as its manifest frames them (the Main board is the canal ring's `home`); the living map has none.
+        assertEquals(listOf("home", "close"), packs[1].views.keys.toList())
+        val home = packs[1].views.getValue("home")
+        assertEquals(listOf(-177.0, -521.0, 52.0, 44.0, 2300.0, 440.0), listOf(home.x, home.z, home.yaw, home.pitch, home.distance, home.cy))
+        assertTrue(packs[0].views.isEmpty())
         assertEquals(1, list.revision)
         list.load()
         assertEquals("the same packs: no new revision", 1, list.revision)

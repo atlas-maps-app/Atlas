@@ -69,7 +69,10 @@ import app.atlas.mapcore.FrameRecords
 import app.atlas.mapcore.FrameSource
 import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.state.CameraWriter
+import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.mapview.EngineFrames
+import app.atlas.mapview.MapEngine
+import app.atlas.render.live.Moment
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -78,29 +81,33 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
+import java.time.ZoneId
 import kotlin.math.floor
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
  * VK bench (plan-vector K1, A0; `atlas.screen=vkbench`, or the debug and bench builds' "VK bench" shortcut): the
- * stand-in, a city-sized frame drawn through the real Vulkan core, measured on the phone's GPU before the renderer
- * exists. In order, at the frame's 8 bits a channel:
+ * stand-in, a city-sized frame drawn through the real Vulkan core, and the app's own map over the APK's bundled packs,
+ * measured on the phone's GPU. In order, at the frame's 8 bits a channel:
  *  1. every frame configuration (A, B, C, and 1x for MSAA's own cost) by both forms (the composite, and one subpass with
  *     the effects per fragment), both routes (dynamic rendering with local reads, a render pass with two subpasses)
  *     and, off a tiler, both targets of the composite, at the Main board's view and at pitch 70°;
  *  2. both hosts (the SurfaceView, the TextureView) with the pills on, under the scripted pan, pinch, orbit and tilt:
  *     presented intervals, the core's GPU time and HWUI's (`FrameMetrics.GPU_DURATION`), the render thread's time,
  *     graphics and native memory;
- *  3. the pills moving over the SurfaceView, placed through [ChromeShapes] as the app's chrome is (Compose lays them out,
+ *  3. the app's map (ENGINE.md step 2: the real paths), in the configuration the facts pick, as the app draws it: the
+ *     Westerkerk home still, turning, panning and pinched out to 8 km and back, then the Main board and its pitch of 70°,
+ *     turning; the map's first picture, and how many frames of each path were complete pictures (BenchRun's mapStage);
+ *  4. the pills moving over the SurfaceView, placed through [ChromeShapes] as the app's chrome is (Compose lays them out,
  *     the core draws their glass from the camera state), a second's move and a second's rest in each 2 s cycle: how
  *     many of the core's frames reach the display on their vsync, how many of the window's frames are late (a pill and
  *     its frosted glass drift apart when either is), how many of the core's frames while the pills move share their
  *     frame with the window's, and the frosted pass's GPU time;
- *  4. a soak: the thermal headroom every 10 s and its slope over minutes 5-10, the battery's charge used (unplugged);
+ *  5. a soak: the thermal headroom every 10 s and its slope over minutes 5-10, the battery's charge used (unplugged);
  * then pipeline creation (this launch's first, and again from an empty cache and from the cache file) and the A0
  * decisions the numbers point to; then, once all of that is recorded,
- *  5. the colour stage (plan-vector D5, "Colour depth"): where the surface offers 10 bits a channel, each configuration
+ *  6. the colour stage (plan-vector D5, "Colour depth"): where the surface offers 10 bits a channel, each configuration
  *     at the board's view at 10 bits and again at 8 beside it, the `vkbench colour` lines (what the 10 bits cost), the
  *     10-bit frames behind the crash guard's colour stage; where it offers none, each at 8 bits alone, saying so, so
  *     the stage's flow runs on every surface. A driver that crashes there has 10 bits turned off for it and this build
@@ -120,7 +127,7 @@ import kotlin.math.roundToInt
  * cut short is made again, so nothing measured in the background is a result. In the colour stage the run waits for
  * the app at most [VkBench.WINDOW_WAIT_SECONDS] seconds, as for a window, then the stage ends.
  * Every result is a `vkbench …` line (logcat, the screen, Copy); the report is recorded on disk as each step begins, so
- * a native crash cannot cost what was measured before it. The Pills run is step 3 alone, 20 s long, for the phone's own
+ * a native crash cannot cost what was measured before it. The Pills run is step 4 alone, 20 s long, for the phone's own
  * screen recorder to film the pills frame by frame (ci/pillcheck.py reads the film's frames), then the pills still for
  * 8 s frosted and 8 s with their tint alone (`vkbench pills still: frosted|plain tint`), which CI's screen captures
  * judge: the emulator's software Vulkan draws the stand-in far slower than its display, so it checks still pills
@@ -255,7 +262,7 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
 
     Column(modifier.fillMaxSize().background(Color.White)) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-            BasicText("VK bench: the stand-in on this phone's Vulkan", style = TextStyle(fontSize = 15.sp))
+            BasicText("VK bench: the stand-in and the map on this phone's Vulkan", style = TextStyle(fontSize = 15.sp))
             BasicText(status, style = TextStyle(fontSize = 12.sp, color = if (core == null && refused.isNotEmpty()) Color(0xFFB00020) else Color.Black))
             Row(Modifier.padding(vertical = 6.dp)) {
                 if (chosen == null && core != null) {
@@ -396,8 +403,10 @@ private fun Modifier.frostedFromBackdrop(leftPx: Float, topPx: Float): Modifier 
 
 /**
  * The core's camera source while the bench runs (on the render thread, allocating nothing): the scripted path's camera
- * at each vsync, and the pills as the chrome's keep-out shapes ([shapes], as Compose placed them; frosted by the core on
- * the SurfaceView).
+ * at each vsync, over the stand-in or, in the map stage, about the app's map's view ([mapView]) with the pack the app
+ * would draw there ([packs]' choice, as MapController names it); and the pills as the chrome's keep-out shapes
+ * ([shapes], as Compose placed them; frosted by the core on the SurfaceView). It counts the frames presented and how
+ * many of them were complete pictures (the map's: every tile its cover wants drawn).
  */
 internal class BenchSource(private val state: CameraState, private val shapes: ChromeShapes) : FrameSource {
     @Volatile var running = false
@@ -418,6 +427,21 @@ internal class BenchSource(private val state: CameraState, private val shapes: C
     @Volatile var pillsMoving = false
     @Volatile var pillsStartNs = 0L
     @Volatile var presentedFrames = 0L
+
+    /** The map stage's view (its paths are drawn about it), or null for the stand-in. */
+    @Volatile var mapView: VkBench.MapView? = null
+
+    /** The packs the map stage handed the core: each frame names the one the app would draw for its camera. */
+    @Volatile var packs: PackList? = null
+
+    /**
+     * Frames presented, and of them complete pictures; when the last complete one was presented (System.nanoTime), and
+     * its place among the frames presented ([presentedCount] then).
+     */
+    @Volatile var presentedCount = 0L
+    @Volatile var completeCount = 0L
+    @Volatile var completeAtNs = 0L
+    @Volatile var completeIndex = 0L
     private val cam = VkBench.Camera()
 
     override fun camera(vsyncNanos: Long, out: ByteBuffer): Boolean {
@@ -425,8 +449,14 @@ internal class BenchSource(private val state: CameraState, private val shapes: C
         val h = heightPx
         if (!running || paused || w <= 0 || h <= 0) return false
         val d = density
-        VkBench.cameraAt(path, view, (vsyncNanos - startNs) / 1e9, periodSeconds, cam)
+        val t = (vsyncNanos - startNs) / 1e9
+        val map = mapView
+        if (map != null) VkBench.mapCameraAt(path, map, t, periodSeconds, cam) else VkBench.cameraAt(path, view, t, periodSeconds, cam)
         state.write(out, 0, cam.latitude, cam.longitude, cam.bearing, cam.pitch, cam.distance, w / d / 2, h / d * 0.48, w, h, d)
+        if (map != null) {
+            val pack = packs?.choose(cam.latitude, cam.longitude, cam.distance)
+            CameraWriter.pack(out, pack?.number ?: 0L, pack?.profile ?: 0)
+        }
         // The pills as Compose last placed them (none while they are off), carried on to this vsync while they move.
         if (pillsOn) shapes.write(out, vsyncNanos) else CameraWriter.keepOuts(out, 0)
         return true
@@ -434,6 +464,13 @@ internal class BenchSource(private val state: CameraState, private val shapes: C
 
     override fun presented(frame: Long, nanos: Long, complete: Boolean) {
         presentedFrames = frame
+        val n = presentedCount + 1
+        presentedCount = n
+        if (complete) {
+            completeCount++
+            completeAtNs = System.nanoTime()
+            completeIndex = n
+        }
     }
 }
 
@@ -682,7 +719,7 @@ private class BenchRun(
             return
         }
         val matrix = VkBench.matrix(available, dynamic, tiler)
-        status("1/5: ${matrix.size} configurations × 2 views")
+        status("1/6: ${matrix.size} configurations × 2 views")
         for (view in VkBench.View.entries) {
             for (cfg in matrix) {
                 val cell = "${view.label} ${cfg.name}"
@@ -701,7 +738,7 @@ private class BenchRun(
 
         // 2. Both hosts with the pills, under the scripted paths, in the configuration the core picks.
         record("the hosts")
-        status("2/5: both hosts × 4 paths")
+        status("2/6: both hosts × 4 paths")
         val hostP95 = HashMap<VkHost, Double>()
         for (h in VkHost.entries) {
             surface = switchHost(h, "the ${h.label} host")
@@ -723,15 +760,20 @@ private class BenchRun(
             hostP95[h] = worst
         }
 
-        // 3. The pills moving over the SurfaceView.
+        // 3. The app's map at its real views, in the configuration the facts pick.
+        record("the map")
+        status("3/6: the map at its real views")
+        mapStage()
+
+        // 4. The pills moving over the SurfaceView.
         record("the pills")
-        status("3/5: the pills over the SurfaceView")
+        status("4/6: the pills over the SurfaceView")
         pillPhase(filmed = false)
 
-        // 4. The soak, in the picked configuration on the SurfaceView.
+        // 5. The soak, in the picked configuration on the SurfaceView.
         if (plan.soakSeconds > 0) {
             record("the soak")
-            status("4/5: the soak (${(plan.soakSeconds / 60).roundToInt()} minutes)")
+            status("5/6: the soak (${(plan.soakSeconds / 60).roundToInt()} minutes)")
             soak()
         }
 
@@ -758,7 +800,7 @@ private class BenchRun(
         emit("a0 route: renderpass ${VkBench.ms(routes[0] ?: Double.NaN)} ms, dynamic ${VkBench.ms(routes[1] ?: Double.NaN)} ms GPU at the board's view")
         emit("a0 host: SurfaceView p95 ${VkBench.ms(hostP95[VkHost.SURFACE] ?: Double.NaN)} ms, TextureView p95 ${VkBench.ms(hostP95[VkHost.TEXTURE] ?: Double.NaN)} ms (worst path)")
 
-        // 5. The colour stage: everything above is recorded first, so a driver's crash at 10 bits costs none of it. Each
+        // 6. The colour stage: everything above is recorded first, so a driver's crash at 10 bits costs none of it. Each
         // configuration that drew at the board's view, at 10 bits and again at 8 beside it (the same warmth, after the
         // soak), on the SurfaceView; the core opens the crash guard's colour stage for the 10-bit frames.
         record("the colour stage")
@@ -775,8 +817,8 @@ private class BenchRun(
             // Where the surface offers no 10 bits the stage still runs, each configuration at 8 bits alone, saying so.
             val cells = matrix.filter { "$viewKey ${it.name}" in gpuByCell }
             status(
-                if (format != null) "5/5: the colour stage, ${cells.size} configurations at 10 bits and at 8 beside them"
-                else "5/5: the colour stage, ${cells.size} configurations at 8 bits (no 10 bits here)",
+                if (format != null) "6/6: the colour stage, ${cells.size} configurations at 10 bits and at 8 beside them"
+                else "6/6: the colour stage, ${cells.size} configurations at 8 bits (no 10 bits here)",
             )
             awaitApp("the colour stage") // the stage begins with the app in the foreground
             emit(VkBench.colourStageLine(stage))
@@ -863,6 +905,104 @@ private class BenchRun(
         if (!inColour) return
         inColour = false
         core.bench(false, pickCode, pickRoute, pickForm, pickTarget, pills = false, texture = false)
+    }
+
+    /**
+     * The app's map (ENGINE.md step 2: VK bench runs the real paths): the core's map over the APK's bundled packs, drawn as
+     * the app draws it (the facts' own configuration, the sunny moment, the haze and the vignette as the Look settings
+     * have them, the painter's order as VK facts left it; no labels) under scripted paths at its real views
+     * ([VkBench.mapViews]): the Westerkerk home still, turning, panning and pinched out to 8 km and back, then the Main
+     * board and its pitch of 70°, turning. Before a view's first path the run waits, at most
+     * [VkBench.MAP_WAIT_SECONDS], for its complete picture: the first, at the home just after the map was turned on, is
+     * the map's first picture, its tiles built from the packs. Each path's line ends with how many of its frames were
+     * complete pictures. The map goes off after (the next step's bench call takes the window back).
+     */
+    private suspend fun mapStage() {
+        val surface = switchHost(VkHost.SURFACE, "the map")
+        if (!surface.attached) {
+            emit("vkbench map: the SurfaceView did not attach (${surface.error})")
+            return
+        }
+        val packs = MapEngine.packs(context.assets)
+        withContext(Dispatchers.IO) { runCatching { packs.load() } }
+        val living = packs.packs.firstOrNull { it.profile == CameraWriter.PROFILE_LIVING }
+        val canal = packs.packs.firstOrNull { it.id == VkBench.BOARD_PACK }
+        val views = VkBench.mapViews(living?.frame, canal?.frame, canal?.views?.get(VkBench.BOARD_VIEW))
+        if (views.isEmpty()) {
+            emit("vkbench map: unavailable (no bundled packs in this build)")
+            return
+        }
+        awaitApp("the map", VkHost.SURFACE)
+        val moment = "sunny"
+        val (said, lit) = withContext(Dispatchers.Default) {
+            val (refs, open) = packs.refs()
+            val opened = try {
+                core.packs(refs)
+            } finally {
+                for (r in open) runCatching { r.close() }
+            }
+            val theme = ThemeBlock.allocate()
+            val lit = runCatching {
+                CoreMoment.write(theme, Moment.Named(moment), living?.zone ?: ZoneId.of("Europe/Amsterdam"), MapEngine.options.daylight)
+                core.moment(theme)
+            }.getOrElse { "the moment could not be made: ${it.message ?: it}" }
+            opened to lit
+        }
+        emit(VkBench.mapHead(said.lines().filter { it.isNotBlank() }.joinToString(", "), moment, MapEngine.haze, MapEngine.vignette, MapEngine.painter))
+        if (lit.isNotEmpty()) {
+            emit("vkbench map: unavailable ($lit)")
+            return
+        }
+        core.painterOrder(MapEngine.painter)
+        core.screenEffects(MapEngine.haze, MapEngine.vignette)
+        source.packs = packs
+        val on = core.map(true, texture = false)
+        try {
+            if (on.isNotEmpty()) {
+                emit("vkbench map: unavailable ($on)")
+                return
+            }
+            for ((i, view) in views.withIndex()) {
+                emit(VkBench.mapPictureLine(view.label, awaitPicture(view), first = i == 0))
+                for (path in view.paths) {
+                    val label = "map ${view.label} ${path.label}"
+                    val presented = source.presentedCount
+                    val complete = source.completeCount
+                    val s = measure(label, path, VkBench.View.BOARD, plan.pathSeconds, VkHost.SURFACE, map = view)
+                    val extra = "complete ${source.completeCount - complete} of ${source.presentedCount - presented}"
+                    emit(VkBench.line(label, s, graphicsMb(), nativeMb(), extra))
+                }
+            }
+        } finally {
+            source.running = false
+            source.mapView = null
+            source.packs = null
+            core.map(false)
+        }
+    }
+
+    /**
+     * The map standing at [view] (swaying slightly) until a complete picture of it is presented, at most
+     * [VkBench.MAP_WAIT_SECONDS] (the app's going to the background meanwhile adds its time away): the seconds it took,
+     * or NaN. A picture counts once more frames were presented than the core keeps in flight, so none drawn before (the
+     * last view's, the stand-in's) is taken for it.
+     */
+    private suspend fun awaitPicture(view: VkBench.MapView): Double {
+        awaitApp("the map's ${view.label}", VkHost.SURFACE)
+        val base = source.presentedCount
+        val from = System.nanoTime()
+        source.mapView = view
+        source.path = VkBench.Path.STILL
+        source.periodSeconds = 4.0
+        source.startNs = from
+        source.running = true
+        val away = awayNs
+        while (System.nanoTime() - from - (awayNs - away) < VkBench.MAP_WAIT_SECONDS * 1_000_000_000L) {
+            if (!paused) core.requestFrame()
+            delay(50)
+            if (source.completeIndex > base + VkBench.IN_FLIGHT && !paused) return (source.completeAtNs - from - (awayNs - away)) / 1e9
+        }
+        return Double.NaN
     }
 
     /**
@@ -977,23 +1117,28 @@ private class BenchRun(
      */
     private suspend fun measure(
         label: String, path: VkBench.Path, view: VkBench.View, seconds: Double, host: VkHost, keep: Boolean = false, tenBit: Boolean? = null,
+        map: VkBench.MapView? = null,
     ): VkBench.Summary {
         awaitApp(label, host)
         val stopsBefore = stops
-        val s = measureOnce(path, view, seconds, host, keep, tenBit)
+        val s = measureOnce(path, view, seconds, host, keep, tenBit, map)
         if (stops == stopsBefore) return s
         emit(VkBench.cutShort(label))
         awaitApp(label, host)
         hostSwitch(host) // its window back, should the app have let go of it
-        return measureOnce(path, view, seconds, host, keep, tenBit)
+        return measureOnce(path, view, seconds, host, keep, tenBit, map)
     }
 
     /**
-     * Runs [path] at [view] for [seconds] (after half a second of warm-up) and summarises its frames; with [tenBit], only
-     * the frames drawn at that colour depth.
+     * Runs [path] at [view] (about the app's map's [map] view in the map stage) for [seconds] (after half a second of
+     * warm-up) and summarises its frames; with [tenBit], only the frames drawn at that colour depth.
      */
-    private suspend fun measureOnce(path: VkBench.Path, view: VkBench.View, seconds: Double, host: VkHost, keep: Boolean = false, tenBit: Boolean? = null): VkBench.Summary {
+    private suspend fun measureOnce(
+        path: VkBench.Path, view: VkBench.View, seconds: Double, host: VkHost, keep: Boolean = false, tenBit: Boolean? = null,
+        map: VkBench.MapView? = null,
+    ): VkBench.Summary {
         measureStartNs = System.nanoTime()
+        source.mapView = map
         source.path = path
         source.view = view
         source.periodSeconds = seconds

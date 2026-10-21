@@ -20,17 +20,18 @@
 #                                            screen's fade, NavDisplay's): VK bench's fade probe, ci/pillcheck.py fade
 #   vkfacts.txt, vkbench.txt, vkguard.txt    the Vulkan core (plan-vector K1, Appendix C): VK facts through the guest's
 #                                            Vulkan, VK bench in CI's length (the stand-in in every configuration the
-#                                            guest has, both hosts, the pills, the colour stage with the app sent to the
-#                                            background and brought back in it; then the crash guard's marker gone and
-#                                            VK facts' guard clear), and the crash guard's planted crash ending in the
-#                                            honest state on the next launch; pymath.txt, the core's numerics on Bionic
-#                                            (K3b), which must read `pymath $ATLAS_PYMATH_HASH ok`; sun.txt, the core's
-#                                            sun bits on Bionic (K8), which must read `sun $ATLAS_SUN_HASH ok`;
-#                                            fields.txt, the core's noise fields at S1 on Bionic (K17a), which must end
-#                                            `hash <h> ok` (each field equal to the port's); ground.txt, the ground's
-#                                            stage T on Bionic (K9), which must read `ground $ATLAS_GROUND_HASH ok`;
-#                                            and in vkfacts.txt the core's shaping held to the guest's own (K13),
-#                                            `text.glyphs: <n> runs, <m> glyphs equal Android's (rule <rule>)`
+#                                            guest has, both hosts, the app's map at its real views, the pills, the
+#                                            colour stage with the app sent to the background and brought back in it;
+#                                            then the crash guard's marker gone and VK facts' guard clear), and the
+#                                            crash guard's planted crash ending in the honest state on the next launch;
+#                                            pymath.txt, the core's numerics on Bionic (K3b), which must read `pymath
+#                                            $ATLAS_PYMATH_HASH ok`; sun.txt, the core's sun bits on Bionic (K8), which
+#                                            must read `sun $ATLAS_SUN_HASH ok`; fields.txt, the core's noise fields at
+#                                            S1 on Bionic (K17a), which must end `hash <h> ok` (each field equal to the
+#                                            port's); ground.txt, the ground's stage T on Bionic (K9), which must read
+#                                            `ground $ATLAS_GROUND_HASH ok`; and in vkfacts.txt the core's shaping held
+#                                            to the guest's own (K13), `text.glyphs: <n> runs, <m> glyphs equal
+#                                            Android's (rule <rule>)`
 #   map.txt, map-transition.txt, map-*.png   the map drawn by the core (K11): its first frame from a cleared state and
 #                                            warm, a swipe and the rest after it, the Java heap at the canal ring, the
 #                                            transitional rule's switch away from the core's tiles and back, and the
@@ -422,9 +423,10 @@ vk_phase() {
   fi
   vk_crashes vkfacts
 
-  # VK bench in CI's length: every configuration the guest has, both hosts with the pills, the pills moving, then the
-  # colour stage, with the app sent to the background and brought back in it (the colour stage runs at 8 bits alone,
-  # saying so, where the guest's surface offers no 10 bits). 900 s in all, the colour stage's wait included.
+  # VK bench in CI's length: every configuration the guest has, both hosts with the pills, the app's map at its real
+  # views, the pills moving, then the colour stage, with the app sent to the background and brought back in it (the
+  # colour stage runs at 8 bits alone, saying so, where the guest's surface offers no 10 bits). 900 s in all, the colour
+  # stage's wait included.
   vk_launch vkbench --es atlas.screen vkbench --es atlas.vk.bench ci --ez atlas.vk.ci true
   local done_ok=1 bench_start=$SECONDS left
   vk_background vkbench
@@ -441,6 +443,14 @@ vk_phase() {
     # not run (no 10 bits offered, or off after a crash in it).
     grep -q '^vkbench colour' "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: no 'vkbench colour' line"; FAIL=1; }
     grep -q -e '^a frame failed' -e '^device lost' "$OUT/vkbench.txt" && { echo "VK BENCH FAILED: a frame failed"; FAIL=1; }
+    # The app's map at its real views (ENGINE.md step 2: VK bench runs the real paths): its first picture complete, and
+    # a line for each path (the guest's software Vulkan is far slower than a phone: the numbers are the phone's to judge).
+    grep '^vkbench map' "$OUT/vkbench.txt" || true
+    grep -q '^vkbench map first picture: complete after ' "$OUT/vkbench.txt" ||
+      { echo "VK BENCH FAILED: the map's first picture was not complete (no 'vkbench map first picture: complete after' line)"; FAIL=1; }
+    for p in 'home still' 'home orbit' 'home pan' 'home pinch' 'board orbit' 'pitch70 orbit'; do
+      grep -q "^vkbench map $p: p50 " "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: no line for the map's $p"; FAIL=1; }
+    done
     # Configuration C's graphics memory ceiling at S1 (plan-vector §3: 225 MB; the emulator's pixel_7 is 1080 × 2400).
     awk '/^vkbench (board|pitch70|surface|texture) / { for (i = 1; i < NF; i++) if ($i == "graphics" && $(i + 1) + 0 > 225) { print; bad = 1 } }
          END { exit bad }' "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: graphics memory above configuration C's 225 MB"; FAIL=1; }

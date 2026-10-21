@@ -1,17 +1,19 @@
 package app.atlas.mapview.vk
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
+import app.atlas.geo.LatLon
 import app.atlas.mapcore.CameraState
 import app.atlas.mapcore.FrameRecords
 import app.atlas.mapcore.state.CameraWriter
 import app.atlas.mapview.VkFactsLines
+import app.atlas.render.live.RegionFrame
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * VK bench's plan and arithmetic (plan-vector K1): the paths, the matrix, the colour stage, the statistics, the report
- * lines and the report as recorded while the bench runs.
+ * VK bench's plan and arithmetic (plan-vector K1): the paths (the stand-in's, and the app's map's at its real views), the
+ * matrix, the colour stage, the statistics, the report lines and the report as recorded while the bench runs.
  */
 class VkBenchTest {
     @Test
@@ -71,6 +73,68 @@ class VkBenchTest {
         VkBench.cameraAt(VkBench.Path.STILL, VkBench.View.STEEP, 0.0, 30.0, c)
         assertEquals(70.0, c.pitch, 0.0)
         assertEquals(2300.0, c.distance, 0.0)
+    }
+
+    @Test
+    fun theMapsViewsAreTheHomeAndTheMainBoardAsTheEnginesReferencesFrameThem() {
+        // The bundled canal ring's `home` view (its manifest's config.views), in its region's frame.
+        val region = RegionFrame.region(LatLon(52.372, 4.891))
+        val board = PackList.ViewCamera(-177.0, -521.0, 52.0, 44.0, 2300.0, 440.0)
+        val views = VkBench.mapViews(RegionFrame.living(), region, board)
+        assertEquals(listOf("home", "board", "pitch70"), views.map { it.label })
+        val (home, main, steep) = views
+        // The home: 10 m west and 30 m north of the Westerkerk, bearing 52°, map pitch 52°, 430 m (RenderTool's `home`).
+        assertEquals(RegionFrame.living().lat(-10.0, -30.0), home.latitude, 0.0)
+        assertEquals(RegionFrame.living().lon(-10.0, -30.0), home.longitude, 0.0)
+        assertTrue(home.latitude > 52.3746 && home.longitude < 4.8840)
+        assertEquals(listOf(52.0, 52.0, 430.0), listOf(home.bearing, home.pitch, home.distance))
+        assertEquals(listOf(VkBench.Path.STILL, VkBench.Path.ORBIT, VkBench.Path.PAN, VkBench.Path.PINCH), home.paths)
+        // The Main board: as EngineVersion.knotView stands on grachten_home (the renders' pitch from the horizon).
+        assertEquals(region.lat(-177.0, -521.0), main.latitude, 0.0)
+        assertEquals(region.lon(-177.0, -521.0), main.longitude, 0.0)
+        assertEquals(listOf(52.0, 46.0, 2300.0), listOf(main.bearing, main.pitch, main.distance))
+        assertEquals(listOf(main.latitude, main.longitude, main.bearing, 70.0, 2300.0), listOf(steep.latitude, steep.longitude, steep.bearing, steep.pitch, steep.distance))
+        // A pack missing leaves its views out.
+        assertEquals(listOf("home"), VkBench.mapViews(RegionFrame.living(), null, null).map { it.label })
+        assertEquals(listOf("board", "pitch70"), VkBench.mapViews(null, region, board).map { it.label })
+        assertTrue(VkBench.mapViews(null, region, null).isEmpty())
+    }
+
+    @Test
+    fun theMapsPathsMoveAboutItsView() {
+        val home = VkBench.mapViews(RegionFrame.living(), null, null).single()
+        val c = VkBench.Camera()
+        VkBench.mapCameraAt(VkBench.Path.ORBIT, home, 22.5, 30.0, c)
+        assertEquals((52.0 + 270.0) % 360.0, c.bearing, 1e-9)
+        assertEquals(listOf(home.latitude, home.longitude, 52.0, 430.0), listOf(c.latitude, c.longitude, c.pitch, c.distance))
+        // the pinch: out to 8 km half way, back at the end, evenly in the logarithm
+        VkBench.mapCameraAt(VkBench.Path.PINCH, home, 15.0, 30.0, c)
+        assertEquals(VkBench.MAP_FAR, c.distance, 1e-6)
+        VkBench.mapCameraAt(VkBench.Path.PINCH, home, 7.5, 30.0, c)
+        assertEquals(kotlin.math.sqrt(430.0 * VkBench.MAP_FAR), c.distance, 1e-6)
+        VkBench.mapCameraAt(VkBench.Path.PINCH, home, 30.0, 30.0, c)
+        assertEquals(430.0, c.distance, 1e-9)
+        // the pan: half the view's distance along the view at a quarter of the way
+        VkBench.mapCameraAt(VkBench.Path.PAN, home, 7.5, 30.0, c)
+        val north = (c.latitude - home.latitude) * 110574.0
+        val east = (c.longitude - home.longitude) * 111320.0 * kotlin.math.cos(Math.toRadians(home.latitude))
+        assertEquals(215.0, kotlin.math.hypot(north, east), 1e-6)
+        // still: a sway of at most 2°, the bearing within [0, 360)
+        VkBench.mapCameraAt(VkBench.Path.STILL, home, 7.5, 30.0, c)
+        assertEquals(54.0, c.bearing, 1e-9)
+        val back = VkBench.MapView("t", 52.0, 4.0, 1.0, 40.0, 100.0, emptyList())
+        VkBench.mapCameraAt(VkBench.Path.STILL, back, 22.5, 30.0, c)
+        assertEquals(359.0, c.bearing, 1e-9)
+    }
+
+    @Test
+    fun theMapsLinesSayWhatItDrewAndHowSoonItWasComplete() {
+        assertEquals(
+            "vkbench map: the bundled packs (amsterdam opened, grachten opened), the sunny moment, haze on, vignette off, true depth",
+            VkBench.mapHead("amsterdam opened, grachten opened", "sunny", haze = true, vignette = false, painter = false),
+        )
+        assertEquals("vkbench map first picture: complete after 412.50 ms (at the home)", VkBench.mapPictureLine("home", 0.4125, first = true))
+        assertEquals("vkbench map board picture: not complete within 60 s (at the board)", VkBench.mapPictureLine("board", Double.NaN, first = false))
     }
 
     @Test

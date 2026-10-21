@@ -59,12 +59,21 @@ class PackList(
         val zone: ZoneId,
         /** Its views' eye distances (metres), for the choice by distance. */
         val distances: DoubleArray,
+        /** Its region's views by name (`home` for `grachten_home`, "" for the region's own), as its manifest gives them. */
+        val views: Map<String, ViewCamera>,
         /** A downloaded pack's file, or a bundled pack's asset name. */
         val file: File?,
         val asset: String?,
     ) {
         override fun toString() = "Pack($id #$number)"
     }
+
+    /**
+     * One of a region's views as the renders frame it (its manifest's `config.views`): the target ([x], [z] metres east
+     * and south of the pack's origin, in its [frame][Pack.frame]), the [yaw] and the renders' [pitch] (degrees from the
+     * horizon), the eye's [distance] (metres) and the principal point's height ([cy], dp; NaN for the frame's middle).
+     */
+    class ViewCamera(val x: Double, val z: Double, val yaw: Double, val pitch: Double, val distance: Double, val cy: Double)
 
     /** The APK's bundled render packs: its index and each pack's bytes. */
     interface BundledSource {
@@ -80,8 +89,15 @@ class PackList(
         override fun close() = closer.close()
     }
 
-    /** What the choice needs of a render pack's manifest. */
-    internal class Head(val box: BBox, val origin: LatLon, val zone: String?, val profile: String?, val distances: DoubleArray)
+    /** What the choice needs of a render pack's manifest, and its views. */
+    internal class Head(
+        val box: BBox,
+        val origin: LatLon,
+        val zone: String?,
+        val profile: String?,
+        val distances: DoubleArray,
+        val views: Map<String, ViewCamera> = emptyMap(),
+    )
 
     @Volatile
     var packs: List<Pack> = emptyList()
@@ -139,7 +155,7 @@ class PackList(
             id, numberOf(id), kind, h.box, profile,
             if (profile == CameraWriter.PROFILE_LIVING) RegionFrame.living() else RegionFrame.region(h.origin),
             runCatching { ZoneId.of(h.zone ?: AMSTERDAM) }.getOrDefault(ZoneId.of(AMSTERDAM)),
-            h.distances, file, asset,
+            h.distances, h.views, file, asset,
         )
     }
 
@@ -278,14 +294,30 @@ class PackList(
             val o = m["origin"] as? Map<*, *>
             val origin = if (o != null) LatLon(num(o["lat"]), num(o["lon"])) else box.center
             val profile = m["profile"] as? String
-            val views = ((m["config"] as? Map<*, *>)?.get("views") as? Map<*, *>)?.values
-                ?.mapNotNull { v -> ((v as? Map<*, *>)?.get("dist") as? Number)?.toDouble() }.orEmpty()
+            val config = ((m["config"] as? Map<*, *>)?.get("views") as? Map<*, *>).orEmpty()
+            val views = config.values.mapNotNull { v -> ((v as? Map<*, *>)?.get("dist") as? Number)?.toDouble() }
             val distances = if (profile != "living" && views.isNotEmpty()) views.toDoubleArray()
             else doubleArrayOf((ViewLadder.livingView()["dist"] as Number).toDouble())
-            return Head(box, origin, m["tz"] as? String, profile, distances)
+            val cameras = LinkedHashMap<String, ViewCamera>()
+            for ((k, v) in config) {
+                val name = k as? String ?: continue
+                cameraOf(v)?.let { cameras[name] = it }
+            }
+            return Head(box, origin, m["tz"] as? String, profile, distances, cameras)
         }
 
         private fun num(v: Any?): Double = (v as? Number)?.toDouble() ?: throw IOException("a number is missing in the manifest")
+
+        /** A view of a manifest's `config.views` as [ViewCamera], or null where it lacks a target, yaw, pitch or distance. */
+        private fun cameraOf(v: Any?): ViewCamera? {
+            val c = v as? Map<*, *> ?: return null
+            val t = (c["target"] as? List<*>)?.map { (it as? Number)?.toDouble() ?: return null } ?: return null
+            if (t.size != 3) return null
+            val yaw = (c["yaw"] as? Number)?.toDouble() ?: return null
+            val pitch = (c["pitch"] as? Number)?.toDouble() ?: return null
+            val dist = (c["dist"] as? Number)?.toDouble() ?: return null
+            return ViewCamera(t[0], t[2], yaw, pitch, dist, (c["cy"] as? Number)?.toDouble() ?: Double.NaN)
+        }
 
         /** The camera state's number for a manifest's profile label (`living`, `region`, …). */
         internal fun profileOf(label: String?): Int = when (label) {

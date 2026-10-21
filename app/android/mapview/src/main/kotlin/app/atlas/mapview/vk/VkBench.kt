@@ -1,5 +1,7 @@
 package app.atlas.mapview.vk
 
+import app.atlas.render.live.LiveCamera
+import app.atlas.render.live.RegionFrame
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -11,10 +13,10 @@ import kotlin.math.sqrt
 
 /**
  * VK bench's plan and arithmetic (plan-vector K1, A0), apart from the screen so the JVM tests hold it: the scripted
- * camera paths over the stand-in city, the matrix of frame configurations, forms, routes and hosts, the colour stage
- * (10 bits a channel, after every 8-bit run), the statistics of the frame records (percentiles, drops, the thermal
- * slope), the report lines `smoke.sh` and the owner's paste read, and the report as it is recorded while the bench
- * runs.
+ * camera paths over the stand-in city and over the app's map at its real views (ENGINE.md step 2), the matrix of frame
+ * configurations, forms, routes and hosts, the colour stage (10 bits a channel, after every 8-bit run), the statistics
+ * of the frame records (percentiles, drops, the thermal slope), the report lines `smoke.sh` and the user's paste read,
+ * and the report as it is recorded while the bench runs.
  */
 object VkBench {
     /**
@@ -80,6 +82,99 @@ object VkBench {
             Path.TILT -> out.pitch = 20.0 + 50.0 * (1 - cos(2 * PI * phase)) / 2
             Path.STILL -> out.bearing = view.bearing + 2.0 * sin(2 * PI * phase) // a slight sway, so every frame is drawn
         }
+    }
+
+    /**
+     * A view of the app's map that VK bench draws (ENGINE.md step 2: VK bench runs the real paths), and the paths it
+     * measures there, drawn around it: its target, bearing, map pitch (degrees from straight down) and distance.
+     */
+    class MapView(
+        val label: String,
+        val latitude: Double,
+        val longitude: Double,
+        val bearing: Double,
+        val pitch: Double,
+        val distance: Double,
+        val paths: List<Path>,
+    )
+
+    /** How far out the map's pinch goes, metres: 8 km (the core's cover reaches 9, PackList.CORE_REACH). */
+    const val MAP_FAR = 8000.0
+
+    /** The longest VK bench waits at a view of the map for its complete picture before measuring there, seconds. */
+    const val MAP_WAIT_SECONDS = 60
+
+    /** The frames the core keeps in flight (`CP/gpu/Frames.hpp`'s in_flight): drawn, not yet presented. */
+    const val IN_FLIGHT = 2
+
+    /** The map's pack of the Main board, and its view (`grachten_home`). */
+    const val BOARD_PACK = "grachten"
+    const val BOARD_VIEW = "home"
+
+    /**
+     * The app's map's views over the APK's bundled packs, in the order measured: the Westerkerk home in the living map's
+     * frame [living] (the engine's references' home: 10 m west and 30 m north of the Westerkerk, bearing 52°, map pitch
+     * 52°, 430 m), still, turning, panning and pinched out to [MAP_FAR] and back; then the Main board, the canal ring's
+     * [board] view in its region's frame [region] (2.3 km at map pitch 46°), turning, and its target at map pitch 70°,
+     * turning. A pack missing leaves its views out.
+     */
+    fun mapViews(living: RegionFrame?, region: RegionFrame?, board: PackList.ViewCamera?): List<MapView> = buildList {
+        if (living != null) {
+            add(MapView("home", living.lat(-10.0, -30.0), living.lon(-10.0, -30.0), 52.0, 52.0, 430.0, listOf(Path.STILL, Path.ORBIT, Path.PAN, Path.PINCH)))
+        }
+        if (region != null && board != null) {
+            val lat = region.lat(board.x, board.z)
+            val lon = region.lon(board.x, board.z)
+            val bearing = LiveCamera.bearing(board.yaw)
+            add(MapView("board", lat, lon, bearing, 90.0 - board.pitch, board.distance, listOf(Path.ORBIT)))
+            add(MapView("pitch70", lat, lon, bearing, 70.0, board.distance, listOf(Path.ORBIT)))
+        }
+    }
+
+    /**
+     * The camera of [path] about the map's [view], [t] seconds into a run of [period] seconds, written into [out]: a full
+     * turn, half the view's distance along it and back, out to [MAP_FAR] and back (evenly in the logarithm, as a pinch
+     * zooms), 20° to 70° and back, or a slight sway.
+     */
+    fun mapCameraAt(path: Path, view: MapView, t: Double, period: Double, out: Camera) {
+        val phase = if (period > 0) t / period else 0.0
+        out.latitude = view.latitude
+        out.longitude = view.longitude
+        out.bearing = view.bearing
+        out.pitch = view.pitch
+        out.distance = view.distance
+        when (path) {
+            Path.ORBIT -> out.bearing = view.bearing + 360.0 * phase
+            Path.PAN -> {
+                val along = view.distance / 2 * sin(2 * PI * phase)
+                val b = view.bearing * PI / 180.0
+                out.latitude = view.latitude - along * cos(b) / 110574.0
+                out.longitude = view.longitude + along * sin(b) / (111320.0 * cos(view.latitude * PI / 180.0))
+            }
+            Path.PINCH -> out.distance = exp(ln(view.distance) + (ln(MAP_FAR) - ln(view.distance)) * (1 - cos(2 * PI * phase)) / 2)
+            Path.TILT -> out.pitch = 20.0 + 50.0 * (1 - cos(2 * PI * phase)) / 2
+            Path.STILL -> out.bearing = view.bearing + 2.0 * sin(2 * PI * phase)
+        }
+        out.bearing = ((out.bearing % 360.0) + 360.0) % 360.0
+    }
+
+    /**
+     * The map's first line: what it draws from and with ([packs], the core's line for each pack; the moment; the Look
+     * settings' [haze] and [vignette]; the [painter]'s order or true depth).
+     */
+    fun mapHead(packs: String, moment: String, haze: Boolean, vignette: Boolean, painter: Boolean): String =
+        "vkbench map: the bundled packs (${packs.ifEmpty { "none" }}), the $moment moment, haze ${if (haze) "on" else "off"}, " +
+            "vignette ${if (vignette) "on" else "off"}, ${if (painter) "the painter's order" else "true depth"}"
+
+    /**
+     * The line of a view's complete picture: how long after the map stood at [view] its picture was complete (the first
+     * view's is the map's first picture, its tiles built after the map was turned on), or that it was not within [wait]
+     * seconds.
+     */
+    fun mapPictureLine(view: String, seconds: Double, first: Boolean, wait: Int = MAP_WAIT_SECONDS): String {
+        val what = if (first) "vkbench map first picture" else "vkbench map $view picture"
+        return if (seconds.isNaN()) "$what: not complete within $wait s (at the $view)"
+        else "$what: complete after ${ms(seconds * 1000.0)} ms (at the $view)"
     }
 
     /** One way of drawing the frame (`CP/gpu/Facts.hpp`'s Configuration, as `Native.bench` takes it). */
