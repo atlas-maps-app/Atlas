@@ -331,7 +331,6 @@ std::uint32_t Ground::slot(std::uint16_t group, std::uint32_t order, std::uint32
 }
 
 gpu::Result<void> Ground::build(scene::TileBuild& b) const {
-    index_.store(b.pass(), std::memory_order_relaxed);
     auto ground = std::make_shared<geo::GroundTile>(
         geo::build_ground(b.tile(), b.head(), b.style(), b.level(), {.x = b.origin().x, .z = b.origin().z}));
     const geo::GroundGpu gpu = geo::pack(*ground);
@@ -415,7 +414,8 @@ namespace {
 
 bool Ground::decide(const frame::FrameState& state) {
     GroundFrame& f = frame_;
-    const std::uint32_t me = index_.load(std::memory_order_relaxed);
+    // the tiles' PassTile of this pass: the one at its place among the passes that built them (FrameState::cover)
+    const std::uint32_t me = index();
     // the world's ground: a frame without a scene (a test's) draws none, and takes no painter slot
     f.kept = false;
     if (!state.view || state.cover == nullptr) {
@@ -450,7 +450,7 @@ bool Ground::decide(const frame::FrameState& state) {
     f.casting = !f.night && light.y > 0;
     // the tiles the cover draws, the visible cells of each together
     f.tiles.clear();
-    if (state.cover != nullptr && me != 0xFFFF'FFFFU) {
+    if (state.cover != nullptr) {
         for (const scene::CoverTile& c : state.cover->tiles()) {
             if (c.drawn == nullptr || me >= c.drawn->passes.size()) continue;
             const scene::PassTile& p = c.drawn->passes[me];

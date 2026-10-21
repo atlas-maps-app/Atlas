@@ -111,7 +111,6 @@ private:
     [[nodiscard]] const Shaped& shaped(const text::TextRun& run);
     void gather(const frame::FrameState& state);
 
-    mutable std::atomic<std::uint32_t> index_{0xFFFF'FFFFU}; // the pass's number in the registry (from build)
     text::CanalNames names_;
     std::vector<text::PlacedName> placed_;
     std::vector<std::uint32_t> tiles_; // the cover's tiles the candidates came from (keys and handles), sorted

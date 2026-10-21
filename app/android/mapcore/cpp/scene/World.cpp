@@ -58,6 +58,8 @@ World::create(const gpu::Device& device, std::span<const std::unique_ptr<frame::
         }
     }
     w->pack_stage_ = std::make_unique<PackStage>(w->store_, passes);
+    // The passes that build its tiles and packs, by name: a frame builder of other passes draws none of them.
+    for (const std::unique_ptr<frame::Pass>& p : passes) w->pass_names_.push_back(p->name());
     return w;
 }
 

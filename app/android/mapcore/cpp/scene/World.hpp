@@ -34,6 +34,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace atlas::scene {
@@ -94,6 +95,7 @@ public:
     [[nodiscard]] const Cover* cover() const noexcept override { return &cover_; }
     [[nodiscard]] const ItemTable* items() const noexcept override { return &items_; }
     [[nodiscard]] Heaps* heaps() noexcept override { return heaps_.get(); }
+    [[nodiscard]] std::span<const std::string_view> pass_names() const noexcept override { return pass_names_; }
     [[nodiscard]] std::span<frame::GlobalProvider* const> globals() noexcept override { return globals_; }
     [[nodiscard]] std::optional<view::GroundFrame> ground_frame() const noexcept override { return frames_.current(); }
     [[nodiscard]] const ResidentPack* active_pack() const noexcept override { return built(active_); }
@@ -142,6 +144,7 @@ private:
     [[nodiscard]] const ResidentPack* built(const std::shared_ptr<const tiles::StorePack>& pack) const noexcept;
 
     WorldOptions options_;
+    std::vector<std::string_view> pass_names_; ///< the passes that build its tiles and packs, in their order
     tiles::Store store_;
     std::unique_ptr<Heaps> heaps_;
     std::unique_ptr<Residency> residency_;

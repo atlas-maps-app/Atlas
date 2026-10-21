@@ -2,6 +2,7 @@
 #include "frame/FrameBuilder.hpp"
 
 #include "base/assert.hpp"
+#include "base/log.hpp"
 #include "frame/FrameLayout.hpp"
 #include "gen/spirv/frame/overdraw.hpp"
 #include "gen/spirv/frame/owner.hpp"
@@ -357,17 +358,32 @@ void FrameBuilder::record_slot(const gpu::FrameContext& frame, Slot slot) {
     }
 }
 
+bool FrameBuilder::built_by(std::span<const std::string_view> names) {
+    if (names.empty()) return true; // the scene does not say
+    const bool same =
+        std::ranges::equal(names, passes_, {}, {}, [](const std::unique_ptr<Pass>& p) { return p->name(); });
+    if (!same && !other_passes_said_) {
+        log::warn("vk frame: the scene's tiles were built by other passes than the frame's; it draws none of them");
+        other_passes_said_ = true;
+    }
+    return same;
+}
+
 void FrameBuilder::stage_f() {
     // The world for this view, set 1's globals, the detail bands, the ranks, then every pass's own stage F.
     ATLAS_ASSERT(state_.view.has_value(), "derive made the frame's view");
     const view::View& view = state_.view.value();
     FrameScene* scene = inputs_.scene;
     if (scene != nullptr) scene->update(state_);
-    state_.cover = scene != nullptr ? scene->cover() : nullptr;
-    state_.items = scene != nullptr ? scene->items() : nullptr;
+    // The scene's tiles and packs hold each pass's stage T at the place of the pass that built it: a builder of other
+    // passes draws none of them.
+    const bool ours = scene != nullptr && built_by(scene->pass_names());
+    state_.cover = ours ? scene->cover() : nullptr;
+    state_.items = ours ? scene->items() : nullptr;
+    state_.heaps = ours ? scene->heaps() : nullptr;
     state_.ground_frame = scene != nullptr ? scene->ground_frame() : std::nullopt;
-    state_.active_pack = scene != nullptr ? scene->active_pack() : nullptr;
-    state_.coarser_pack = scene != nullptr ? scene->coarser_pack() : nullptr;
+    state_.active_pack = ours ? scene->active_pack() : nullptr;
+    state_.coarser_pack = ours ? scene->coarser_pack() : nullptr;
     // the strokes of the active pack's style (a coarser pack around it is made with the same style file)
     state_.block.strokes = strokes_of(state_.active_pack);
     // Set 1's globals that no pass owns: each provider brings its bindings up to date (frame/Globals.hpp), and says

@@ -152,19 +152,18 @@ private:
     void write_jobs(std::uint32_t slot);
     void record_decide(const frame::Recording& recording);
     void record_strokes(const frame::Recording& recording);
-    /// The rows of a tile's items, written once into its range (the render thread, the first frame it is drawn).
-    void write_rows(const scene::ResidentTile& tile, const scene::PassTile& mine, const BuildingTile& b);
+    /// The rows of a tile's items, written once into its range in `heaps` (the render thread, the first frame it is
+    /// drawn).
+    void write_rows(scene::Heaps& heaps, const scene::ResidentTile& tile, const scene::PassTile& mine,
+                    const BuildingTile& b);
     /// The tile's faces' colours for this frame's moment into frame slot `slot`'s colours, unless they are its already.
-    void light(const shaders::Theme& theme, std::uint32_t slot, const scene::ResidentTile& tile,
+    void light(scene::Heaps& heaps, const shaders::Theme& theme, std::uint32_t slot, const scene::ResidentTile& tile,
                const scene::PassTile& mine, const BuildingTile& b);
 
     std::uint16_t kind_ = 0;
     mutable Emitted emitted_;
     mutable std::vector<twin::ElementDepth> depths_;
     Lighting lighting_;
-    // stage T's: the pass's place in the registry and the world's heaps, as the first build sees them
-    mutable std::atomic<std::uint32_t> pass_index_{0xFFFF'FFFFU};
-    mutable std::atomic<scene::Heaps*> heaps_{nullptr};
 
     // made in prepare
     vk::raii::ShaderModule draw_module_{nullptr};

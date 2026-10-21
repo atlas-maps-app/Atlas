@@ -29,7 +29,6 @@ namespace {
 
 namespace sl = layouts::text_slug;
 
-constexpr std::uint32_t none = 0xFFFF'FFFFU;
 constexpr std::size_t draw_bytes = sizeof(sl::GlyphDraw);
 constexpr std::size_t slot_bytes = GroundText::max_draws * draw_bytes;
 constexpr std::size_t glyph_capacity = std::size_t{text::slug::GlyphAtlas::max_rows} << text::slug::log_texture_width;
@@ -49,7 +48,6 @@ static_assert(static_cast<int>(text::Anchor::start) == static_cast<int>(twin::Te
 GroundText::~GroundText() { GroundText::release(); }
 
 gpu::Result<void> GroundText::build(scene::TileBuild& b) const {
-    index_.store(b.pass(), std::memory_order_relaxed);
     auto kept = std::make_shared<CanalTile>();
     if (const tiles::Layer* labels = b.tile().layer(tiles::LayerId::label)) {
         text::canal_candidates(*labels, b.head().frame, kept->candidates);
@@ -121,9 +119,9 @@ void GroundText::gather(const frame::FrameState& state) {
         return;
     }
     pack_read_.reset();
-    const std::uint32_t me = index_.load(std::memory_order_relaxed);
+    const std::uint32_t me = index();                           // the tiles' PassTile of this pass, as for the packs
     std::vector<std::pair<std::uint64_t, std::uint32_t>> tiles; // the tiles holding candidates: key, handle
-    if (state.cover != nullptr && me != none) {
+    if (state.cover != nullptr) {
         for (const scene::CoverTile& c : state.cover->tiles()) {
             if (c.drawn == nullptr || me >= c.drawn->passes.size()) continue;
             if (c.drawn->passes[me].cpu_as<CanalTile>() == nullptr) continue;
@@ -143,7 +141,7 @@ void GroundText::gather(const frame::FrameState& state) {
     // The candidates of the cover's tiles, each once, from the finest tile that holds it (the cover may hold a tile and
     // its ancestor): every tile the cover draws is the active pack's, so all are in the frame drawn's metres.
     std::vector<std::pair<std::uint8_t, const text::CanalCandidate*>> all; // its tile's zoom, the candidate
-    if (state.cover != nullptr && me != none) {
+    if (state.cover != nullptr) {
         for (const scene::CoverTile& c : state.cover->tiles()) {
             if (c.drawn == nullptr || me >= c.drawn->passes.size()) continue;
             const auto* kept = c.drawn->passes[me].cpu_as<CanalTile>();

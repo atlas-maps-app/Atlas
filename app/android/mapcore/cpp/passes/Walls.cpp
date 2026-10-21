@@ -29,9 +29,6 @@ using Words = std::array<std::uint32_t, 4>;
 
 [[nodiscard]] std::uint32_t bits(float v) noexcept { return std::bit_cast<std::uint32_t>(v); }
 
-/// The pass's place in the registry, unknown before the first tile builds.
-constexpr std::uint32_t no_index = 0xFFFF'FFFFU;
-
 } // namespace
 
 void Buildings::kinds(frame::Selectors& selectors) { kind_ = selectors.kind("building"); }
@@ -43,8 +40,6 @@ void Buildings::select(const frame::FrameState& state, frame::Selectors& selecto
 }
 
 gpu::Result<void> Buildings::build(scene::TileBuild& b) const {
-    pass_index_.store(b.pass(), std::memory_order_relaxed);
-    heaps_.store(&b.heaps(), std::memory_order_relaxed);
     const tiles::Style& style = b.style();
     const geometry::TileBuildings g =
         geometry::build_buildings({.tile = &b.tile(),
@@ -84,30 +79,27 @@ std::uint32_t first_item(const scene::ResidentTile& tile, std::uint16_t kind) no
     return static_cast<std::uint32_t>(tile.items.size());
 }
 
-void Buildings::write_rows(const scene::ResidentTile& tile, const scene::PassTile& mine, const BuildingTile& b) {
+void Buildings::write_rows(scene::Heaps& heaps, const scene::ResidentTile& tile, const scene::PassTile& mine,
+                           const BuildingTile& b) {
     if (rows_written_.contains(tile.handle)) return;
-    scene::Heaps* heaps = heaps_.load(std::memory_order_relaxed);
-    if (heaps == nullptr) return;
     const std::uint32_t first = first_item(tile, kind_);
     std::vector<std::uint32_t> rows(std::size_t{(b.items + 3) / 4} * 4, 0);
     for (std::uint32_t k = 0; k < b.items && first + k < tile.rows.size(); ++k) rows[k] = tile.rows[first + k];
-    heaps->write(mine.ranges[0], std::as_bytes(std::span(rows)), b.rows_at * 16);
-    heaps->flush();
+    heaps.write(mine.ranges[0], std::as_bytes(std::span(rows)), b.rows_at * 16);
+    heaps.flush();
     rows_written_.insert(tile.handle);
 }
 
-void Buildings::light(const shaders::Theme& theme, std::uint32_t slot, const scene::ResidentTile& tile,
-                      const scene::PassTile& mine, const BuildingTile& b) {
+void Buildings::light(scene::Heaps& heaps, const shaders::Theme& theme, std::uint32_t slot,
+                      const scene::ResidentTile& tile, const scene::PassTile& mine, const BuildingTile& b) {
     std::array<std::uint64_t, 2>& lit = lit_[tile.handle];
     if (lit[slot] == moment_) return;
-    scene::Heaps* heaps = heaps_.load(std::memory_order_relaxed);
-    if (heaps == nullptr) return;
     const auto started = std::chrono::steady_clock::now();
     colours_.resize(std::size_t{b.faces} * 2);
     building_colours(theme, b.lights, colours_);
-    heaps->write(mine.ranges[0], std::as_bytes(std::span(colours_)),
-                 (b.colours_at * 16) + (slot * b.faces * 2 * static_cast<std::uint32_t>(sizeof(std::uint32_t))));
-    heaps->flush();
+    heaps.write(mine.ranges[0], std::as_bytes(std::span(colours_)),
+                (b.colours_at * 16) + (slot * b.faces * 2 * static_cast<std::uint32_t>(sizeof(std::uint32_t))));
+    heaps.flush();
     lit[slot] = moment_;
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     ++lighting_.tiles;
@@ -125,9 +117,9 @@ void Buildings::update(const frame::FrameState& state) {
         strokes_->jobs_now = 0;
         strokes_->records_now = 0;
     }
-    if (state.cover == nullptr || state.ranks == nullptr) return;
-    const std::uint32_t index = pass_index_.load(std::memory_order_relaxed);
-    if (index == no_index) return;
+    if (state.cover == nullptr || state.ranks == nullptr || state.heaps == nullptr) return;
+    // the tiles' PassTile of this pass: the one at its place among the passes that built them (FrameState::cover)
+    const std::uint32_t me = index();
     // a new moment (the frame block's theme): every tile's colours again, slot by slot, as each is drawn
     const std::span<const std::byte> theme = std::as_bytes(std::span(&state.block.theme, 1));
     if (!std::ranges::equal(theme, theme_) || moment_ == 0) {
@@ -136,9 +128,9 @@ void Buildings::update(const frame::FrameState& state) {
     }
     const std::uint32_t slot = state.slot % 2;
     for (const scene::CoverTile& t : state.cover->tiles()) {
-        if (t.drawn == nullptr || index >= t.drawn->passes.size()) continue;
+        if (t.drawn == nullptr || me >= t.drawn->passes.size()) continue;
         const scene::ResidentTile& tile = *t.drawn;
-        const scene::PassTile& mine = tile.passes[index];
+        const scene::PassTile& mine = tile.passes[me];
         const auto* b = mine.cpu_as<BuildingTile>();
         if (b == nullptr || !mine.ranges[0]) continue;
         const std::uint32_t base = mine.ranges[0].offset / 16;
@@ -146,8 +138,8 @@ void Buildings::update(const frame::FrameState& state) {
         // a tile's rows and colours once, though it draws for several tiles (a stand-in ancestor, its cells over each)
         if (std::ranges::find(drawn_handles_, tile.handle) == drawn_handles_.end()) {
             drawn_handles_.push_back(tile.handle);
-            write_rows(tile, mine, *b);
-            light(state.block.theme, slot, tile, mine, *b);
+            write_rows(*state.heaps, tile, mine, *b);
+            light(*state.heaps, state.block.theme, slot, tile, mine, *b);
         }
         TileDraw d;
         shaders::BuildingPush push{};
@@ -290,12 +282,12 @@ void Buildings::record_walls(const frame::Recording& recording) {
 }
 
 void Buildings::emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const {
-    if (phase != draw_phase || state.cover == nullptr || state.ranks == nullptr) return;
-    const std::uint32_t index = pass_index_.load(std::memory_order_relaxed);
-    scene::Heaps* heaps = heaps_.load(std::memory_order_relaxed);
+    if (phase != draw_phase) return;
     emitted_ = {};
     depths_.clear();
-    if (index == no_index || heaps == nullptr) return;
+    if (state.cover == nullptr || state.ranks == nullptr || state.heaps == nullptr) return;
+    const std::uint32_t me = index();
+    scene::Heaps& heaps = *state.heaps;
     // the objects group: the port's `<g stroke-linejoin="round">`, with its `mat` filter where the moment has weather
     // (the renders' wx), under the frame's root (its clip to the frame). The frame will emit it for every objects pass
     // (K7); until then the pass's own, shaped the same.
@@ -305,11 +297,11 @@ void Buildings::emit(const frame::FrameState& state, twin::Stream& out, std::uin
     const std::span<const scene::CoverTile> tiles = state.cover->tiles();
     for (std::size_t i = 0; i < tiles.size(); ++i) {
         const scene::CoverTile& t = tiles[i];
-        if (t.drawn == nullptr || index >= t.drawn->passes.size()) continue;
-        const scene::PassTile& mine = t.drawn->passes[index];
+        if (t.drawn == nullptr || me >= t.drawn->passes.size()) continue;
+        const scene::PassTile& mine = t.drawn->passes[me];
         const auto* b = mine.cpu_as<BuildingTile>();
         if (b == nullptr || !mine.ranges[0]) continue;
-        const scene::Heaps::Writer w = heaps->writer(mine.ranges[0]);
+        const scene::Heaps::Writer w = heaps.writer(mine.ranges[0]);
         const std::uint32_t first = first_item(*t.drawn, kind_);
         const std::span<const std::uint32_t> rows(t.drawn->rows);
         twin::SunTexels sun;

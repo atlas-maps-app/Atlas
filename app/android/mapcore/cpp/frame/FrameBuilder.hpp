@@ -39,6 +39,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace atlas::scene {
@@ -80,9 +81,13 @@ struct FrameState {
     Mode mode = Mode::structural;
     /// The block set 0 holds this frame.
     shaders::FrameBlock block{};
-    /// The scene the frame draws (null: no tiles): the cover and the item table with their ranks and detail bands.
+    /// The scene the frame draws (null: no tiles): the cover and the item table with their ranks and detail bands,
+    /// and the geometry heaps its tiles lie in. Its tiles were built by passes of the same names in the same order as
+    /// the frame's (FrameScene::pass_names), so each pass finds its own in a tile's PassTile at its own place
+    /// (Pass::index); a scene built by other passes is not drawn.
     const scene::Cover* cover = nullptr;
     const scene::ItemTable* items = nullptr;
+    scene::Heaps* heaps = nullptr;
     const Ranks* ranks = nullptr;
     const Selectors* selectors = nullptr;
     /// The ground's painter slots this frame, every pass's (Pass::ground_slots): slots 0 to this, before every item's.
@@ -138,6 +143,9 @@ public:
     [[nodiscard]] virtual const scene::ItemTable* items() const noexcept = 0;
     /// The geometry heaps (null: none); set 1 binds them through their provider (globals).
     [[nodiscard]] virtual scene::Heaps* heaps() noexcept = 0;
+    /// The names of the passes whose stage T built the scene's tiles and packs, in their order (a tile's PassTile and
+    /// a pack's PassPack at each pass's place); none when the scene does not say.
+    [[nodiscard]] virtual std::span<const std::string_view> pass_names() const noexcept { return {}; }
     /// The frame drawn after update (view::Frames::current), or none.
     [[nodiscard]] virtual std::optional<view::GroundFrame> ground_frame() const noexcept { return std::nullopt; }
     /// The packs' stage T of the active pack and of the coarser one, once built (null otherwise).
@@ -228,6 +236,9 @@ private:
     void record_slot(const gpu::FrameContext& frame, Slot slot);
     /// Stage F after derive: the world's update, set 1's globals, the selections, ground slots, ranks, the updates.
     void stage_f();
+    /// Whether passes named `names`, in that order, are the frame's own (true for none: the scene does not say); says
+    /// so once when they are not.
+    [[nodiscard]] bool built_by(std::span<const std::string_view> names);
     void write_ring(std::uint32_t slot);
 
     /// One phase of one pass, in the frame's order.
@@ -258,6 +269,7 @@ private:
     std::uint32_t levels_ = 255;
     bool depth24_ = false; ///< the main pass's depth is 24-bit fixed point (painter.slang's scale)
     bool prepared_ = false;
+    bool other_passes_said_ = false; ///< built_by said once that a scene's passes are not the frame's
     double stage_f_ms_ = 0;
     double record_ms_ = 0;
     double pipelines_ms_ = 0;

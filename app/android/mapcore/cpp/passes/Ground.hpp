@@ -408,8 +408,6 @@ private:
     bool keep_ = false; ///< decisions_ hold the decisions at rest for key_
     /// The last frame's tiles, in order: their grounds and cells.
     std::vector<std::pair<const void*, std::uint64_t>> last_tiles_;
-    /// The pass's place in the registry (each tile's PassTile), learned as the first tile builds.
-    mutable std::atomic<std::uint32_t> index_{0xFFFF'FFFFU};
     std::unique_ptr<Pipelines> pipelines_;
     std::unique_ptr<Words> words_;
     // scratch, reused frame to frame
