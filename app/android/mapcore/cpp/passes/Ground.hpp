@@ -426,6 +426,11 @@ struct Ground::Pipelines {
     vk::raii::DescriptorPool pool{nullptr};
     std::array<vk::raii::DescriptorSet, 2> sets{vk::raii::DescriptorSet{nullptr}, vk::raii::DescriptorSet{nullptr}};
     std::array<gpu::Buffer, 2> buffers;
+    /// Set 3, the soft shadows' (Shadows.cpp): the grid, the blurred mask, and the grid as words for the compute
+    /// stages. Before the layouts made with it, so that it goes after them.
+    vk::raii::DescriptorSetLayout soft_set_layout{nullptr};
+    vk::raii::DescriptorPool soft_pool{nullptr};
+    vk::raii::DescriptorSet soft_set{nullptr};
     vk::raii::PipelineLayout layout{nullptr};
     // Ground.cpp
     vk::raii::Pipeline fill{nullptr};
@@ -447,12 +452,8 @@ struct Ground::Pipelines {
     // Shadows.cpp
     vk::raii::Pipeline shadow_union{nullptr};
     vk::raii::Pipeline shadow_composite{nullptr};
-    /// The soft shadows: set 3 (the grid, the blurred mask, the grid as words for the compute stages), whose layout
-    /// every pipeline layout of the pass holds; the compute stages' layout; the measuring, the grid, the mask and the
-    /// composite; the images, buffers and blur (null where the pass draws none: the owner mode).
-    vk::raii::DescriptorSetLayout soft_set_layout{nullptr};
-    vk::raii::DescriptorPool soft_pool{nullptr};
-    vk::raii::DescriptorSet soft_set{nullptr};
+    /// The soft shadows: the compute stages' layout; the measuring, the grid, the mask and the composite; the images,
+    /// buffers and blur (null where the pass draws none: the owner mode).
     vk::raii::PipelineLayout compute_layout{nullptr};
     vk::raii::Pipeline shadow_box{nullptr};
     vk::raii::Pipeline shadow_grid{nullptr};
