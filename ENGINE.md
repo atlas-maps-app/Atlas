@@ -210,9 +210,9 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
 - **All of Amsterdam from the core:** `PackList.kt`, then the first publish of the `amsterdam` and `grachten` render packs after the user's yes (a `packs.yml` run with `renders=only`).
 - **The style file:** the tiles' style section becomes the engine's own, edited as data. Every pass reads its colours and widths from it, before step 4 adds more.
 - **VK facts and VK bench on the device:**
-  - VK facts prints the hashes of the twin, pymath and the noise fields, to compare with CI's;
-  - it checks the composite's resolve form against the direct form, so a driver that clips the full-screen triangle uses the direct form;
-  - VK bench runs the real paths: the Westerkerk, the Main board, pitch 70°, and out to 8 km.
+  - Done: **VK bench runs the real paths.** After the stand-in's matrix and hosts it draws the app's map over the APK's bundled packs, as the app draws it (the facts' configuration, the sunny moment, the Look settings' haze and vignette, the painter switch as VK facts left it): the Westerkerk home still, turning, panning and pinched out to 8 km and back, then the Main board and its pitch of 70°, turning. It reports the map's first picture (its tiles built after the map is turned on) and, for each path, how many of its frames were complete pictures. CI's smoke run holds each line; the numbers are the phone's.
+  - VK facts prints the hashes of the twin, pymath and the noise fields, to compare with CI's (pymath, the sun, the noise fields and the ground's already; the twin's to come);
+  - it checks the composite's resolve form against the direct form, so a driver that clips the full-screen triangle uses the direct form.
 - **Refinements:**
   - `ObjectStrokes`' round joins;
   - snapping slivers: the area floor and the facing test decided as the port decides them, so L1 counts no slivers;
