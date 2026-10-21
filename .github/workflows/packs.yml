@@ -24,9 +24,11 @@ on:
         type: choice
         options: [also, only, skip]
         default: also
-  schedule:
-    # Monthly, on the 2nd at 02:17 UTC: Geofabrik's extracts of the 1st are out by then.
-    - cron: '17 2 2 * *'
+  # The monthly run (the 2nd at 02:17 UTC, once Geofabrik's extracts of the 1st are out) is off until the user says
+  # go (21 October 2026): the workflow has never run, and its first run publishes every region's packs and the render
+  # packs. To turn it on, restore:
+  # schedule:
+  #   - cron: '17 2 2 * *'
 
 permissions:
   contents: write
