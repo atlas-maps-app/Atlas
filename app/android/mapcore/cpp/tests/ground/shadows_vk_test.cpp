@@ -7,7 +7,8 @@
 // union at the standard 4x sample positions: the vertex stage's swept hulls (passes/Shadows.cpp) cover what the port's
 // hulls cover, sample for sample but where an edge passes within float rounding of a sample.
 //
-// Drawn soft (the sunny moment's 0.6 CSS px), each step is held to the CPU's: the box the GPU measured to the twin's
+// Drawn soft (the sunny moment's 0.6 CSS px, in full mode: structural mode turns the renders' filters off), each step
+// is held to the CPU's: the box the GPU measured to the twin's
 // paths' (one print step at most), the grid it worked out to fx::blur_grid's from that box, its mask to the twin's
 // paths rastered on that grid (sample for sample, as above), its blur of that mask to fx::square_blur_cpu's and the
 // fade bit for bit, and the frame to the result drawn back as soft_fs draws it.
@@ -252,9 +253,9 @@ TEST_CASE("ground: the soft shadows are the port's grid, its three boxes and its
             blurred.resize(std::size_t{stride} * extent.height);
             std::memcpy(blurred.data(), s->blurred[0].bytes().data(), blurred.size() * 4);
         },
-        40, [](passes::Ground& g) { g.keep_soft_shadows(true); });
+        40, [](passes::Ground& g) { g.keep_soft_shadows(true); }, frame::Mode::full);
     ATLAS_REQUIRE(a.has_value(), "the frame with the sun up was not drawn");
-    const auto b = test::draw_ground(*session, camera, set, dir, "amsterdam");
+    const auto b = test::draw_ground(*session, camera, set, dir, "amsterdam", {}, 40, {}, frame::Mode::full);
     ATLAS_REQUIRE(b.has_value(), "the frame with the sun set was not drawn");
     for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
     REQUIRE(soft);

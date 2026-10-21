@@ -193,6 +193,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - Each frame the GPU measures the drawn shadows' box, works out the same grid (`fx/BlurGrid.hpp`), draws their union on it into a 4x mask, runs vImage's three square boxes and the port's fade over it (`fx::square_blur_cpu`, bit for bit), and draws the result back as the port draws its bitmap, bilinear where the grid is coarser. The CPU does nothing per shadow.
   - Named differences from the port: the union's edges (4x samples against the port's coverage of each path) and the bilinear filter's rounding. At the home the frame is within two levels of the blurred result.
   - Because the grid follows the shadows' box, their softness follows the view as the camera moves, as each render would have it. The phone will show whether that reads well.
+  - As the renders' other filters, they run in full mode (the app's); structural mode draws them sharp, as the likeness's structural references draw the group unfiltered.
   - The engine's references are at version 3.
 - **Labels** are drawn by the core's frame instead of the Compose canvas, with the fonts loaded at the map's start, each fixed where it is on the map and growing and shrinking with the zoom like the map (design point 8).
 - **All of Amsterdam from the core:** `PackList.kt`, then the first publish of the `amsterdam` and `grachten` render packs after the user's yes (a `packs.yml` run with `renders=only`).

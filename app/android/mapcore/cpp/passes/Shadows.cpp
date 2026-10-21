@@ -103,7 +103,10 @@ const SoftShadows* Ground::soft_shadows() const noexcept {
 }
 
 bool Ground::soft(const frame::FrameState& state) const noexcept {
-    return frame_.shadows && state.theme.shadow_blur > 0 && pipelines_ != nullptr && pipelines_->soft != nullptr;
+    // a filter of the renders: in full mode alone (structural mode turns the filters off on both sides, and the
+    // likeness's structural references draw the group unfiltered)
+    return frame_.shadows && state.mode == frame::Mode::full && state.theme.shadow_blur > 0 && pipelines_ != nullptr &&
+           pipelines_->soft != nullptr;
 }
 
 void Ground::decide_shadows(const DrawnTile& t, TileDecisions& d) const {

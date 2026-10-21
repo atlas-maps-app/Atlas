@@ -391,8 +391,8 @@ private:
     // Shadows.cpp
     void decide_shadows(const DrawnTile& t, TileDecisions& d) const;
     [[nodiscard]] gpu::Result<void> make_soft_shadows(const frame::PassContext& context, Pipelines& p) const;
-    /// Whether this frame draws its shadows soft: some are drawn, the moment blurs them, and prepare made the soft
-    /// shadows' objects.
+    /// Whether this frame draws its shadows soft: some are drawn, the frame is in full mode, the moment blurs them,
+    /// and prepare made the soft shadows' objects.
     [[nodiscard]] bool soft(const frame::FrameState& state) const noexcept;
     void record_shadow_mask(const frame::Recording& r);
     void record_shadows(const frame::Recording& r);

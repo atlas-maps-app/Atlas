@@ -61,13 +61,13 @@ inline void write_ppm(const platform::Pixels& px, const std::filesystem::path& p
 }
 
 /// Draws `camera` with `theme` through the registry's passes and the ground over the bundled packs in `dir`, `pack`
-/// the active one, `frames` frames 50 ms apart; `before` sees the pass before the frame builder prepares it, `after`
-/// sees it and the last frame's state before the world goes.
+/// the active one, `frames` frames 50 ms apart, in `mode`; `before` sees the pass before the frame builder prepares
+/// it, `after` sees it and the last frame's state before the world goes.
 inline std::optional<GroundDraw>
 draw_ground(const Session& session, const style::CameraState& camera, const style::ThemeBlock& theme,
             const std::string& dir, const std::string& pack,
             const std::function<void(passes::Ground&, const frame::FrameState&)>& after = {}, int frames = 40,
-            const std::function<void(passes::Ground&)>& before = {}) {
+            const std::function<void(passes::Ground&)>& before = {}, frame::Mode mode = frame::Mode::structural) {
     const gpu::Device& device = *session.device;
     auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
     if (!cache) return std::nullopt;
@@ -94,7 +94,7 @@ draw_ground(const Session& session, const style::CameraState& camera, const styl
     const vk::Extent2D extent{.width = camera.width_px, .height = camera.height_px};
     auto output = platform::Offscreen::create(device, extent, 2);
     if (!output) return std::nullopt;
-    (*builder)->set_inputs({.camera = camera, .theme = theme, .seconds = 0, .scene = world->get()});
+    (*builder)->set_inputs({.camera = camera, .theme = theme, .seconds = 0, .mode = mode, .scene = world->get()});
     const gpu::Configuration config{.config = gpu::FrameConfig::c,
                                     .route = gpu::Route::renderpass,
                                     .form = gpu::FrameForm::composite,
