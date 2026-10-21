@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "2",
+  "version": "3",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -61,6 +61,21 @@
           "board grey": "a5628de9cc831947e7a82e69b64177d085dc36057b47c85375c154613f140e35",
           "board wet": "8aac2f6b76b586edc682f28416c3efd3529d2e600a078b84a07b2163897b375b",
           "board night": "5d1c844a959320592ab8a3d284894cc80d8106d06e5574984895a9a69bd49f8e"
+        }
+      }
+    },
+    "3": {
+      "note": "Step 2: the soft shadows, blurred on the port's own filter grid (WebKit's 4096² clamp, vImage's three boxes, the fade)",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "266bbcd194390bdde0eeb66db9a67272b7551f65b296b9bf48b4b48a01baadc8",
+          "home grey": "3980c94a37608c9a2535ca832d8b5c1d92fe3b2de122585851e2ea29d531d3e8",
+          "home wet": "3f6b1de2d5340045d9dd4c4a9444a0df2859a53899f8263ca48297069d00bba0",
+          "home night": "e70640c8dc18b60d36f9b8d0ff3b9786abff2786d2a95be7feab231ae0386126",
+          "board sunny": "1bb07ffc005d9f841c9d8d8a5e6c678dedc2a98ecbe2e6714dfb5dbfa0c818de",
+          "board grey": "98465dd5a3ad2bac7e68955aaabc1a9b76ebaad5fc20a03709f39045d0272f95",
+          "board wet": "7db80d08516e4c6057aadaf61b727b2ef38a9e0476eacd649ee7182a67559db1",
+          "board night": "81520f8c9814b1a472c3421fd0a1dd48aa35794ebd760fb1e46b7103084edce8"
         }
       }
     }

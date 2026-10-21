@@ -719,6 +719,7 @@ gpu::Result<void> Ground::prepare(const frame::PassContext& context) {
 void Ground::release() noexcept {
     pipelines_.reset();
     words_.reset();
+    drew_soft_ = false;
 }
 
 gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
@@ -727,11 +728,11 @@ gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
     const vk::raii::Device& d = context.device.handle();
     ATLAS_GPU_LET(module, frame::make_module(context, "ground_ground", spirv::ground_ground));
     p->module = std::move(module);
-    // set 2: the frame's words (one set per frame slot, each its own buffer)
-    const std::array bindings{
-        gpu::Binding{.slot = 0,
-                     .type = vk::DescriptorType::eStorageBuffer,
-                     .stages = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment}};
+    // set 2: the frame's words (one set per frame slot, each its own buffer); the soft shadows' compute stages read
+    // them too
+    constexpr vk::ShaderStageFlags stages =
+        vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eCompute;
+    const std::array bindings{gpu::Binding{.slot = 0, .type = vk::DescriptorType::eStorageBuffer, .stages = stages}};
     ATLAS_GPU_LET(set_layout, gpu::make_set_layout(d, bindings));
     p->set_layout = std::move(set_layout);
     const std::array<std::span<const gpu::Binding>, 1> kinds{bindings};
@@ -741,7 +742,21 @@ gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
         ATLAS_GPU_LET(set, gpu::allocate_set(d, p->pool, p->set_layout));
         s = std::move(set);
     }
-    const std::array<vk::DescriptorSetLayout, 1> extra{*p->set_layout};
+    // set 3: the soft shadows' grid, their blurred mask, and the grid as words for the compute stages (Shadows.cpp)
+    const std::array soft_bindings{
+        gpu::Binding{.slot = 0, .type = vk::DescriptorType::eStorageBuffer, .stages = stages},
+        gpu::Binding{
+            .slot = 1, .type = vk::DescriptorType::eStorageBuffer, .stages = vk::ShaderStageFlagBits::eFragment},
+        gpu::Binding{
+            .slot = 2, .type = vk::DescriptorType::eStorageBuffer, .stages = vk::ShaderStageFlagBits::eCompute}};
+    ATLAS_GPU_LET(soft_layout, gpu::make_set_layout(d, soft_bindings));
+    p->soft_set_layout = std::move(soft_layout);
+    const std::array<std::span<const gpu::Binding>, 1> soft_kinds{soft_bindings};
+    ATLAS_GPU_LET(soft_pool, gpu::make_pool(d, soft_kinds, 1));
+    p->soft_pool = std::move(soft_pool);
+    ATLAS_GPU_LET(soft_set, gpu::allocate_set(d, p->soft_pool, p->soft_set_layout));
+    p->soft_set = std::move(soft_set);
+    const std::array<vk::DescriptorSetLayout, 2> extra{*p->set_layout, *p->soft_set_layout};
     ATLAS_GPU_LET(layout, context.layout.make_layout(extra));
     p->layout = std::move(layout);
     ATLAS_GPU_CHECK(make_fill_pipelines(context, *p));
@@ -857,7 +872,9 @@ void Ground::write_words(const frame::FrameState& state) {
         v.push_back(0);
         v.push_back(lay.shadow_points.first);
         v.push_back(lay.shadows.first);
-        v.push_back(0);
+        // the shadows the soft shadows' box measures: none where the shadows' draw draws none
+        const bool casts = lay.shadow_draw.count != 0 && static_cast<bool>(g) && !t.ground->no_shadows;
+        v.push_back(casts ? static_cast<std::uint32_t>(t.ground->shadows.size()) : 0U);
         v.push_back(0);
     }
     w.plate_tile = static_cast<std::uint32_t>(f.tiles.size());
@@ -950,6 +967,11 @@ void Ground::push(const frame::Recording& r, std::uint32_t flags, std::uint32_t 
 
 void Ground::record(const frame::Recording& r, std::uint32_t phase) {
     if (!frame_.valid || pipelines_ == nullptr || words_ == nullptr || !words_->ready) return;
+    if (phase == phase_shadow_mask) {
+        // before the main pass: it binds every set it draws with
+        record_shadow_mask(r);
+        return;
+    }
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipelines_->layout, 2, *pipelines_->sets[words_->slot],
                            {});

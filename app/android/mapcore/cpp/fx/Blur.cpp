@@ -42,13 +42,16 @@ struct Channels {
 
 } // namespace
 
-std::uint32_t box_size(float sigma) noexcept {
-    if (!(sigma > 0.0F)) return 0; // none, and NaN
+float webkit_factor() noexcept {
     // SvgFilterRaster.kernel: 3f / 4f * sqrt(2 * Math.PI.toFloat()), Kotlin's sqrt(Float) through the double one.
     const auto two_pi = 2.0F * static_cast<float>(std::numbers::pi);
     const auto root = static_cast<float>(std::sqrt(static_cast<double>(two_pi)));
-    const float f = (3.0F / 4.0F) * root;
-    const float scaled = sigma * f;
+    return (3.0F / 4.0F) * root;
+}
+
+std::uint32_t box_size(float sigma) noexcept {
+    if (!(sigma > 0.0F)) return 0; // none, and NaN
+    const float scaled = sigma * webkit_factor();
     const auto floored = static_cast<float>(std::floor(static_cast<double>(scaled + 0.5F)));
     if (!(floored < 500.0F)) return 500;
     return std::max(2U, static_cast<std::uint32_t>(floored));
@@ -149,6 +152,42 @@ void blur_cpu(std::span<const std::uint32_t> source, std::span<std::uint32_t> ta
             std::uint32_t texel = cur[at];
             if (format == BlurFormat::r8) texel &= 0xFFU;
             target[index_of(at, line)] = texel;
+        }
+    }
+}
+
+void square_blur_cpu(std::span<std::uint8_t> image, std::uint32_t width, std::uint32_t height, std::uint32_t box,
+                     std::uint32_t passes) {
+    ATLAS_ASSERT(box % 2 == 1, "vImage's box is odd");
+    ATLAS_ASSERT(image.size() >= std::size_t{width} * height, "the image holds width × height texels");
+    if (width == 0 || height == 0) return;
+    const auto w = static_cast<std::int64_t>(width);
+    const auto h = static_cast<std::int64_t>(height);
+    const auto half = static_cast<std::int64_t>(box / 2);
+    const std::uint32_t area = box * box;
+    const std::uint32_t round = area / 2;
+    std::vector<std::uint32_t> rows(std::size_t{width} * height);
+    for (std::uint32_t p = 0; p < passes; ++p) {
+        // the sums along each row, its ends repeated
+        for (std::int64_t y = 0; y < h; ++y) {
+            const auto row = static_cast<std::size_t>(y * w);
+            for (std::int64_t x = 0; x < w; ++x) {
+                std::uint32_t sum = 0;
+                for (std::int64_t i = x - half; i <= x + half; ++i) {
+                    sum += image[row + static_cast<std::size_t>(std::clamp<std::int64_t>(i, 0, w - 1))];
+                }
+                rows[row + static_cast<std::size_t>(x)] = sum;
+            }
+        }
+        // their sums down each column, its ends repeated, divided once
+        for (std::int64_t x = 0; x < w; ++x) {
+            for (std::int64_t y = 0; y < h; ++y) {
+                std::uint32_t sum = 0;
+                for (std::int64_t j = y - half; j <= y + half; ++j) {
+                    sum += rows[static_cast<std::size_t>((std::clamp<std::int64_t>(j, 0, h - 1) * w) + x)];
+                }
+                image[static_cast<std::size_t>((y * w) + x)] = static_cast<std::uint8_t>((sum + round) / area);
+            }
         }
     }
 }

@@ -61,11 +61,13 @@ inline void write_ppm(const platform::Pixels& px, const std::filesystem::path& p
 }
 
 /// Draws `camera` with `theme` through the registry's passes and the ground over the bundled packs in `dir`, `pack`
-/// the active one, `frames` frames 50 ms apart; `after` sees the pass and the last frame's state before the world goes.
+/// the active one, `frames` frames 50 ms apart; `before` sees the pass before the frame builder prepares it, `after`
+/// sees it and the last frame's state before the world goes.
 inline std::optional<GroundDraw>
 draw_ground(const Session& session, const style::CameraState& camera, const style::ThemeBlock& theme,
             const std::string& dir, const std::string& pack,
-            const std::function<void(passes::Ground&, const frame::FrameState&)>& after = {}, int frames = 40) {
+            const std::function<void(passes::Ground&, const frame::FrameState&)>& after = {}, int frames = 40,
+            const std::function<void(passes::Ground&)>& before = {}) {
     const gpu::Device& device = *session.device;
     auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
     if (!cache) return std::nullopt;
@@ -73,6 +75,7 @@ draw_ground(const Session& session, const style::CameraState& camera, const styl
     constexpr std::array<std::string_view, 3> ground_only{"composite", "frosted", "ground"};
     std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes(ground_only);
     passes::Ground* g = ground_of(passes);
+    if (before) before(*g);
     auto builder = frame::FrameBuilder::create(device, *cache, std::move(passes), {.steps = 0});
     if (!builder) return std::nullopt;
     double now = 0;

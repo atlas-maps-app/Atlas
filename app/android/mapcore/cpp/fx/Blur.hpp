@@ -28,6 +28,9 @@ namespace atlas::fx {
 /// least 2 and at most 500, in single precision as SvgFilterRaster.kernel computes it.
 [[nodiscard]] std::uint32_t box_size(float sigma) noexcept;
 
+/// The factor box_size multiplies σ by, 3√(2π)/4, in single precision as SvgFilterRaster.kernel computes it.
+[[nodiscard]] float webkit_factor() noexcept;
+
 /// One box: it writes at p the mean of [p − left, p + right − 1], left + right texels.
 struct Box {
     std::uint32_t left = 0;
@@ -55,6 +58,17 @@ struct Run {
 
 /// WebKit's three boxes for a deviation of `sigma` pixels.
 [[nodiscard]] inline Run webkit_run(float sigma) noexcept { return webkit_boxes(box_size(sigma)); }
+
+/// vImage's square box for WebKit's size `d` when the sizes along both axes are equal: d, made odd (0 for none).
+[[nodiscard]] constexpr std::uint32_t vimage_box(std::uint32_t d) noexcept { return d == 0 || d % 2 != 0 ? d : d + 1; }
+
+/// vImage's square boxes on one 8-bit channel (SvgFilterRaster.boxBlurs when both sizes are equal: WebKit's blur on
+/// macOS, vImageBoxConvolve_ARGB8888 with the edge extended, three times): each pass replaces every texel of the
+/// `width` × `height` image (rows of `width` bytes) with the sum of the `box` × `box` texels around it (`box` odd),
+/// the image's edge texels repeated past its edges, divided once and rounded to the nearest level, (sum + box² / 2) /
+/// box² in whole numbers. `passes` passes, in place.
+void square_blur_cpu(std::span<std::uint8_t> image, std::uint32_t width, std::uint32_t height, std::uint32_t box,
+                     std::uint32_t passes = 3);
 
 /// How a box rounds its mean.
 enum class Rounding : std::uint8_t {

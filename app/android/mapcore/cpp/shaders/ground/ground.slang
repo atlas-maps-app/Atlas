@@ -17,6 +17,11 @@
 //   - shadow_vs: the ground shadows (passes/Shadows.cpp), moved by the moment's sun: a prism's footprint hull swept
 //     along its offset (each hull point twice, before and after its turn), a raised outline or a crown disc moved by
 //     it, their union set in the stencil and composited by flat_fs.
+//   - the soft shadows, where the moment blurs them (passes/Shadows.cpp): shadow_box_cs measures the box of the drawn
+//     shadows as Camera.poly keeps them and the SVG prints them, shadow_grid_cs works out from it the grid the port's
+//     raster blurs them on (shared/shadow_grid.slang, fx/BlurGrid.hpp), shadow_mask_vs and mask_fs draw their union on
+//     that grid into a 4x mask, which shadow_blur.slang blurs, and soft_fs draws the result back over the ground as the
+//     port draws its bitmap.
 //
 // Colours are the renders' 8-bit sRGB values, blended as the renders composite encoded values (D7, "Gamma"); a
 // translucent colour is premultiplied. Not an exact module: positions are the vertex stage's float maths, held to the
@@ -24,6 +29,7 @@
 
 #include "shared/frame.slang"
 #include "shared/painter.slang"
+#include "shared/shadow_grid.slang"
 
 // K17a's mat (render's `mat` filter over draw_under's land, the areas, the roads and draw_over's fills, D10), where
 // mat_on says: the frame's fields bound, in full mode, and the moment's weather, with which alone render defines #mat.
@@ -40,13 +46,22 @@
 /// The pass's words for this frame (passes/Ground.cpp's FrameWords): the tile table, the slot table, the theme's
 /// colours, the fills' visibility bits, the lines' runs and segments.
 [[vk::binding(0, 2)]] StructuredBuffer<uint> words;
+/// The soft shadows' grid, read; shadow_box_cs and shadow_grid_cs write it as words through binding 2, the same
+/// buffer (passes/Shadows.cpp).
+[[vk::binding(0, 3)]] StructuredBuffer<ShadowGrid> shadow_grid;
+/// The blurred mask, faded by the opacity: the grid's input rectangle, four texels to a word, push.colour.w words a
+/// row (shadow_blur.slang's last pass).
+[[vk::binding(1, 3)]] StructuredBuffer<uint> shadow_blurred;
+[[vk::binding(2, 3)]] RWStructuredBuffer<uint> shadow_words;
 
 /// A draw's own values: where its tables lie in `words`, its mode and its colours.
 struct GroundPush {
     uint4 at;     // x: the tile table's first word, y: the slot table's, z: the theme colours', w: the runs' (lines)
     uint4 mode;   // x: the GROUND_ flags, y: the painter slot of a screen pass, z: the instances' first word (lines), w: 0
-    float4 rows;  // x, y: a gradient's first and last rows (CSS px); z: a screen pass's opacity; w: 0
-    uint4 colour; // x, y: a gradient's two colours (RGBA8); z: a screen pass's colour; w: 0
+    float4 rows;  // x, y: a gradient's first and last rows (CSS px); z: a screen pass's opacity; w: 0 (the soft
+                  // shadows: shadow_box_cs and the mask's xyz the sun, shadow_grid_cs's σ, opacity and WebKit's factor)
+    uint4 colour; // x, y: a gradient's two colours (RGBA8); z: a screen pass's colour; w: 0 (the soft shadows: x, y the
+                  // mask's size in texels, w the blurred mask's words a row)
 };
 
 [[vk::push_constant]] ConstantBuffer<GroundPush> push;
@@ -63,7 +78,7 @@ static const uint TILE_WORDS = 20u;
 /// its ground range's first word in the ground heap, 9 its vertices' first word in it, 10 its fills', 11 its lines
 /// range's first word in the lines heap, 12 its polylines' first word in it, 13 the first word of its fills' visibility
 /// bits in `words`, 14 of its water pieces' at their level, 15 of its shadows', 16 its shadows' points' first word in
-/// its ground range, 17 its shadows' records'.
+/// its ground range, 17 its shadows' records', 18 how many shadows it draws from (0 where its region draws none).
 uint tile_word(uint t, uint k) {
     return words[push.at.x + t * TILE_WORDS + k];
 }
@@ -228,6 +243,7 @@ FillOut water_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID
 
 /// A shadow record's flags (geometry/Ground.hpp's shadow_flag).
 static const uint SHADOW_MOVED = 1u; // moved by its offset whole (a raised outline, a crown disc); else a swept hull
+static const uint SHADOW_TREE = 2u;  // a tree's crown (Camera.poly's margin of 40 CSS px; a solid's 900)
 
 /// Point `i` of tile `t`'s shadows' points (its ground range from `base`): x, z from the tile's origin.
 float2 shadow_point(uint base, uint t, uint i) {
@@ -242,36 +258,40 @@ bool facing(uint base, uint t, uint first, uint count, uint k, float2 d) {
     return dot(float2(e.y, -e.x), d) > 0.0f;
 }
 
-/// A shadow's vertex: its index from the ground heap at word `index` names the shadow (index >> 16) and its corner
-/// (index & 0xFFFF), its tile the instance. The offset is −L.xz / L.y · h (push.rows.xyz: L, toward the sun). A raised
-/// outline or a crown disc is moved by it whole. A footprint's hull is swept along it: the edges that face it move,
-/// the others stay, and the two points where the facing edges begin and end come twice, staying and moved (count + 2
-/// corners, a convex fan: the hull of the footprint and its moved copy). Drawn at the shadows' painter slot
-/// (push.mode.y), where the frame drew the shadow (its radius cut).
-[shader("vertex")]
-FillOut shadow_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID) {
-    uint base = tile_word(tile, 8u);
-    uint id = ground_heap[index];
-    uint s = id >> 16u;
-    uint j = id & 0xFFFFu;
-    FillOut o;
-    o.colour = float4(0.0f, 0.0f, 0.0f, 0.0f);
-    set_mat(o, false);
-    if (!bit(tile_word(tile, 15u), s)) {
-        o.position = FOLDED;
-        return o;
-    }
+/// One shadow of a tile: its record's points, how many, the flags, the height it is drawn at, and its offset −L.xz /
+/// L.y · h (push.rows.xyz: L, toward the sun).
+struct ShadowOf {
+    uint first;
+    uint count;
+    uint flags;
+    float y;
+    float2 d;
+};
+
+ShadowOf shadow_of(uint base, uint tile, uint s) {
     uint r = base + tile_word(tile, 17u) + 5u * s;
-    uint first = ground_heap[r];
-    uint count = ground_heap[r + 1u];
+    ShadowOf c;
+    c.first = ground_heap[r];
+    c.count = ground_heap[r + 1u];
     float h = asfloat(ground_heap[r + 2u]);
-    uint flags = ground_heap[r + 3u];
-    float y = asfloat(ground_heap[r + 4u]);
+    c.flags = ground_heap[r + 3u];
+    c.y = asfloat(ground_heap[r + 4u]);
     float3 sun = push.rows.xyz;
-    float2 d = float2(-sun.x / sun.y * h, -sun.z / sun.y * h);
+    c.d = float2(-sun.x / sun.y * h, -sun.z / sun.y * h);
+    return c;
+}
+
+/// Corner j of a shadow, tile-local x, z. A raised outline or a crown disc is moved by the offset whole. A footprint's
+/// hull is swept along it: the edges that face it move, the others stay, and the two points where the facing edges
+/// begin and end come twice, staying and moved (count + 2 corners, a convex fan: the hull of the footprint and its
+/// moved copy).
+float2 shadow_corner(uint base, uint tile, ShadowOf c, uint j) {
+    uint first = c.first;
+    uint count = c.count;
+    float2 d = c.d;
     uint i = min(j, count - 1u);
     bool moved = true;
-    if ((flags & SHADOW_MOVED) == 0u) {
+    if ((c.flags & SHADOW_MOVED) == 0u) {
         // the turning points: where the edge before a point and the edge after it face differently (two on a convex
         // hull, none when the offset is nothing)
         uint t1 = count;
@@ -309,8 +329,253 @@ FillOut shadow_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceI
         moved = facing(base, tile, first, count, copy == 0u ? (i + count - 1u) % count : i, d);
     }
     float2 q = shadow_point(base, tile, first + i);
-    float2 p = moved ? q + d : q;
-    o.position = place(tile, float3(p.x, y, p.y), push.mode.y);
+    return moved ? q + d : q;
+}
+
+/// A shadow's vertex: its index from the ground heap at word `index` names the shadow (index >> 16) and its corner
+/// (index & 0xFFFF), its tile the instance. Drawn at the shadows' painter slot (push.mode.y), where the frame drew the
+/// shadow (its radius cut).
+[shader("vertex")]
+FillOut shadow_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID) {
+    uint base = tile_word(tile, 8u);
+    uint id = ground_heap[index];
+    uint s = id >> 16u;
+    FillOut o;
+    o.colour = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    set_mat(o, false);
+    if (!bit(tile_word(tile, 15u), s)) {
+        o.position = FOLDED;
+        return o;
+    }
+    ShadowOf c = shadow_of(base, tile, s);
+    float2 p = shadow_corner(base, tile, c, id & 0xFFFFu);
+    o.position = place(tile, float3(p.x, c.y, p.y), push.mode.y);
+    return o;
+}
+
+// ---------------------------------------------------------------- the soft shadows (passes/Shadows.cpp)
+
+/// The order-preserving keys of the box shadow_box_cs folds this workgroup's shadows into.
+groupshared uint box_low_x;
+groupshared uint box_low_y;
+groupshared uint box_high_x;
+groupshared uint box_high_y;
+
+/// The box of the drawn shadows, one thread a shadow of one tile (the dispatch's y), 64 a workgroup, as the renders
+/// keep and print them (render/amsterdam.py:742–771, city.py's Camera.poly): a shadow the frame draws (its radius cut)
+/// has its corners' camera coordinates clipped at the near plane (each corner ahead of it, and where an edge crosses
+/// it) and projected; it is kept unless it has fewer than three points left or its box lies wholly beyond the margin
+/// past the frame (900 CSS px for a solid's, 40 for a tree's), and its box, snapped at rest as the SVG prints its
+/// points, folds into the frame's (words 0 to 3 of the grid, as box_key keys: the low corner by atomic min, the high
+/// one by atomic max).
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void shadow_box_cs(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID) {
+    if (local.x == 0u) {
+        box_low_x = 0xFFFFFFFFu;
+        box_low_y = 0xFFFFFFFFu;
+        box_high_x = 0u;
+        box_high_y = 0u;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    uint tile = group.y;
+    uint s = group.x * 64u + local.x;
+    if (s < tile_word(tile, 18u) && bit(tile_word(tile, 15u), s)) {
+        uint base = tile_word(tile, 8u);
+        ShadowOf c = shadow_of(base, tile, s);
+        uint corners = (c.flags & SHADOW_MOVED) != 0u ? c.count : c.count + 2u;
+        TilePlace at = place_of(tile);
+        float near = frame.camera.frame.w;
+        float2 low = float2(1.0e30f, 1.0e30f);
+        float2 high = float2(-1.0e30f, -1.0e30f);
+        uint points = 0u;
+        float2 p0 = shadow_corner(base, tile, c, 0u);
+        float3 k0 = camera_of(frame.camera, eye_relative(at, float3(p0.x, c.y, p0.y)));
+        float3 a = k0;
+        for (uint j = 1u; j <= corners; ++j) {
+            float3 b = k0;
+            if (j < corners) {
+                float2 p = shadow_corner(base, tile, c, j);
+                b = camera_of(frame.camera, eye_relative(at, float3(p.x, c.y, p.y)));
+            }
+            bool ahead = a.z >= near;
+            if (ahead) {
+                float2 q = css_of(frame.camera, a);
+                low = min(low, q);
+                high = max(high, q);
+                ++points;
+            }
+            if (ahead != (b.z >= near)) {
+                float t = (near - a.z) / (b.z - a.z);
+                float3 m = float3(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, near);
+                float2 q = css_of(frame.camera, m);
+                low = min(low, q);
+                high = max(high, q);
+                ++points;
+            }
+            a = b;
+        }
+        float margin = (c.flags & SHADOW_TREE) != 0u ? 40.0f : 900.0f;
+        bool kept = points >= 3u && !(high.x < -margin || low.x > frame.camera.frame.x + margin ||
+                                      high.y < -margin || low.y > frame.camera.frame.y + margin);
+        if (kept) {
+            if (camera_rests(frame.camera)) {
+                low = float2(snap_tenth(low.x), snap_tenth(low.y));
+                high = float2(snap_tenth(high.x), snap_tenth(high.y));
+            }
+            InterlockedMin(box_low_x, box_key(low.x));
+            InterlockedMin(box_low_y, box_key(low.y));
+            InterlockedMax(box_high_x, box_key(high.x));
+            InterlockedMax(box_high_y, box_key(high.y));
+        }
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (local.x == 0u && box_low_x != 0xFFFFFFFFu) {
+        InterlockedMin(shadow_words[0], box_low_x);
+        InterlockedMin(shadow_words[1], box_low_y);
+        InterlockedMax(shadow_words[2], box_high_x);
+        InterlockedMax(shadow_words[3], box_high_y);
+    }
+}
+
+/// WebKit's `ImageBuffer::sizeNeedsClamping` (fx/BlurGrid.cpp's clamp_scale): the factor that brings a w × h pixel
+/// area within 4096², the area's whole pixels counted in integers where they fit.
+float clamp_scale(float w, float h) {
+    if (!(w > 0.0f) || !(h > 0.0f)) {
+        return 1.0f;
+    }
+    float fw = floor(w);
+    float fh = floor(h);
+    bool over = fw <= 65535.0f && fh <= 65535.0f ? uint(fw) * uint(fh) > 16777216u : fw * fh > 16777216.0f;
+    return over ? sqrt(16777216.0f / (w * h)) : 1.0f;
+}
+
+/// WebKit's box size for a deviation of `sigma` filter px (fx::box_size): ⌊σ · f + ½⌋ for its factor f = 3√(2π)/4,
+/// at least 2 and at most 500; 0 for none.
+uint kernel_of(float sigma, float f) {
+    if (!(sigma > 0.0f)) {
+        return 0u;
+    }
+    float d = floor(sigma * f + 0.5f);
+    if (!(d < 500.0f)) {
+        return 500u;
+    }
+    return max(2u, uint(d));
+}
+
+/// The largest half box shadow_blur.slang holds (its HALF_MOST).
+static const uint SHADOW_HALF_MOST = 24u;
+
+/// The soft shadows' grid from their box: fx/BlurGrid.cpp's blur_grid, step by step in float. push.rows: x the
+/// deviation σ (CSS px), y the opacity (as printed), z WebKit's factor as the CPU computes it; push.colour.xy the
+/// mask's size in texels. The frame's clip is its CSS size rounded up, the canvas's scale its density. A grid larger
+/// than the mask, or a box the blur cannot hold, draws nothing.
+[shader("compute")]
+[numthreads(1, 1, 1)]
+void shadow_grid_cs() {
+    float x0 = box_value(shadow_words[0]);
+    float y0 = box_value(shadow_words[1]);
+    float x1 = box_value(shadow_words[2]);
+    float y1 = box_value(shadow_words[3]);
+    float bw = x1 - x0;
+    float bh = y1 - y0;
+    float sx = 0.0f;
+    float clamp = 1.0f;
+    int4 input = int4(0, 0, 0, 0);
+    int4 output = int4(0, 0, 0, 0);
+    uint box = 0u;
+    uint flags = 0u;
+    if (bw > 0.0f && bh > 0.0f) {
+        float r0 = x0 + (-0.1f) * bw;
+        float r1 = y0 + (-0.1f) * bh;
+        float r2 = 1.2f * bw;
+        float r3 = 1.2f * bh;
+        sx = frame.camera.frame.z;
+        float w = min(x1 + 1.0e4f, r0 + r2) - max(x0 - 1.0e4f, r0);
+        float h = min(y1 + 1.0e4f, r1 + r3) - max(y0 - 1.0e4f, r1);
+        float k1 = clamp_scale(w * sx, h * sx);
+        sx = sx * k1;
+        float k2 = clamp_scale(r2 * sx, r3 * sx);
+        sx = sx * k2;
+        clamp = k1 * k2;
+        int4 visible = int4(-1, -1, int(ceil(ceil(frame.camera.frame.x) * sx)) + 1,
+                            int(ceil(ceil(frame.camera.frame.y) * sx)) + 1);
+        float x = r0 * sx;
+        float y = r1 * sx;
+        int4 region = int4(int(floor(x)), int(floor(y)), int(ceil(x + r2 * sx)), int(ceil(y + r3 * sx)));
+        output = int4(max(region.x, visible.x), max(region.y, visible.y), min(region.z, visible.z),
+                      min(region.w, visible.w));
+        uint d = kernel_of(push.rows.x * sx, push.rows.z);
+        if (output.z > output.x && output.w > output.y && d > 0u) {
+            int reach = int(3u * (d / 2u + 1u));
+            box = d % 2u == 0u ? d + 1u : d;
+            int4 r = int4(max(output.x - reach, region.x), max(output.y - reach, region.y),
+                          min(output.z + reach, region.z), min(output.w + reach, region.w));
+            input = int4(r.x, r.y, r.z - r.x, r.w - r.y);
+            if (input.z > 0 && input.w > 0 && input.z <= int(push.colour.x) && input.w <= int(push.colour.y) &&
+                box / 2u <= SHADOW_HALF_MOST) {
+                flags = SHADOW_GRID_DRAWN | (clamp < 1.0f ? SHADOW_GRID_FILTERED : 0u);
+            }
+        }
+    }
+    shadow_words[4] = asuint(sx);
+    shadow_words[5] = asuint(clamp);
+    shadow_words[6] = asuint(push.rows.y);
+    shadow_words[7] = 0u;
+    shadow_words[8] = asuint(input.x);
+    shadow_words[9] = asuint(input.y);
+    shadow_words[10] = asuint(input.z);
+    shadow_words[11] = asuint(input.w);
+    shadow_words[12] = asuint(output.x);
+    shadow_words[13] = asuint(output.y);
+    shadow_words[14] = asuint(output.z);
+    shadow_words[15] = asuint(output.w);
+    shadow_words[16] = box;
+    shadow_words[17] = box / 2u;
+    shadow_words[18] = (box * box) / 2u;
+    shadow_words[19] = flags;
+    shadow_words[20] = asuint(box > 0u ? 1.0f / float(box * box) : 0.0f);
+    shadow_words[21] = 0u;
+    shadow_words[22] = 0u;
+    shadow_words[23] = 0u;
+}
+
+/// A shadow's vertex on the soft shadows' grid: shadow_vs's corner, its CSS point (snapped at rest, as the SVG prints
+/// it) in filter px from the grid's input corner, which are the mask's texels (push.colour.xy of them). No depth: the
+/// union is all the mask holds.
+struct MaskOut {
+    float4 position : SV_Position;
+};
+
+[shader("vertex")]
+MaskOut shadow_mask_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID) {
+    uint base = tile_word(tile, 8u);
+    uint id = ground_heap[index];
+    uint s = id >> 16u;
+    MaskOut o;
+    if (!bit(tile_word(tile, 15u), s)) {
+        o.position = FOLDED;
+        return o;
+    }
+    ShadowOf c = shadow_of(base, tile, s);
+    float2 p = shadow_corner(base, tile, c, id & 0xFFFFu);
+    float3 k = camera_of(frame.camera, eye_relative(place_of(tile), float3(p.x, c.y, p.y)));
+    float2 css = project_css(frame.camera, k);
+    ShadowGrid g = shadow_grid[0];
+    float2 texel = css * g.scale.x - float2(float(g.input.x), float(g.input.y));
+    float2 n = texel * float2(2.0f / float(push.colour.x), 2.0f / float(push.colour.y)) - 1.0f;
+    o.position = float4(n.x * k.z, n.y * k.z, 0.5f * k.z, k.z);
+    return o;
+}
+
+/// What each of the mask's samples a shadow covers holds: 252 of 255, so that a resolve's mean of four samples is a
+/// whole level for every count (63 for each), however the driver rounds.
+static const float MASK_SAMPLE = 252.0f / 255.0f;
+
+[shader("fragment")]
+ColourOut mask_fs(MaskOut v) {
+    ColourOut o;
+    o.colour = float4(MASK_SAMPLE, 0.0f, 0.0f, 1.0f);
     return o;
 }
 
@@ -358,6 +623,48 @@ ColourOut flat_fs(ScreenOut v) {
     float a = push.rows.z;
     ColourOut o;
     o.colour = float4(c.rgb * a, a);
+    return o;
+}
+
+/// The blurred mask's texel t of the grid's input rectangle (push.colour.w words a row).
+float blurred_at(int2 t) {
+    uint at = uint(t.y) * push.colour.w + (uint(t.x) >> 2u);
+    return float((shadow_blurred[at] >> ((uint(t.x) & 3u) * 8u)) & 0xFFu);
+}
+
+/// The soft shadows over the ground at the shadows' painter depth (screen_vs): the blurred mask drawn back as the
+/// port draws its bitmap (SvgCanvas.filtered). Each pixel's centre in filter px (its CSS point times the grid's
+/// scale); inside the grid's output, the mask there (faded by the blur's last pass): nearest where the scale is the
+/// density's, else between the four texels around it (the bitmap's bilinear filter, its edge texels repeated), as
+/// th['shadow'] (push.colour.z) at that alpha, premultiplied. Nothing elsewhere.
+[shader("fragment")]
+ColourOut soft_fs(ScreenOut v) {
+    ColourOut o;
+    o.colour = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    ShadowGrid g = shadow_grid[0];
+    if ((g.blur.w & SHADOW_GRID_DRAWN) == 0u) {
+        return o;
+    }
+    float2 f = css_of_output(frame.camera, v.position.xy) * g.scale.x;
+    if (f.x < float(g.output.x) || f.x >= float(g.output.z) || f.y < float(g.output.y) || f.y >= float(g.output.w)) {
+        return o;
+    }
+    float a = 0.0f;
+    if ((g.blur.w & SHADOW_GRID_FILTERED) == 0u) {
+        a = blurred_at(int2(floor(f)) - g.input.xy);
+    } else {
+        float2 u = f - 0.5f;
+        float2 i0 = floor(u);
+        float2 t = u - i0;
+        int2 lo = clamp(int2(i0), g.output.xy, g.output.zw - 1) - g.input.xy;
+        int2 hi = clamp(int2(i0) + 1, g.output.xy, g.output.zw - 1) - g.input.xy;
+        float top = lerp(blurred_at(lo), blurred_at(int2(hi.x, lo.y)), t.x);
+        float bottom = lerp(blurred_at(int2(lo.x, hi.y)), blurred_at(hi), t.x);
+        a = lerp(top, bottom, t.y);
+    }
+    float alpha = a / 255.0f;
+    float4 c = unpack(push.colour.z);
+    o.colour = float4(c.rgb * alpha, alpha);
     return o;
 }
 

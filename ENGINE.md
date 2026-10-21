@@ -133,7 +133,7 @@ Nothing is finished. Each part below is a first version on `app`. It gets rework
 | Numerics and style | pymath; the light, the theme and `ScreenLayers`; the rule table, which lists every line of the renderer that draws |
 | Frame core | camera, ladder, cover, residency, heaps (one buffer and one virtual block of a 64 MB budget; a tile that finds no room waits for a range to go), ranks and pass registry; the composite (haze, vignette, `mat`'s rule, grain); the twin and L1; the coarser pack around the active one, chosen as the smallest pack that holds it; the packs' own stage T (`Pass::build_pack`) |
 | Sun | the sun test on the workers, equal to the port on every sample of 21 board renders; a lane for the pack drawn and one for the coarser pack around it |
-| Ground and water | drawn and registered; L1 matched in all 11 cases |
+| Ground and water | drawn and registered; L1 matched in all 11 cases; the soft shadows on the port's own filter grid, their boxes and fade bit for bit |
 | Buildings, first half | walls, parts, flat and gabled roofs and houseboats, with sun bits and edges, at their true depth (a pair the renderer melts is drawn right; the switch draws the renderer's order); held to the port's polygons and on lavapipe to a depth raster of the twin; registered |
 | Text | shaping, glyphs, canal names (read from the whole pack), and the board's labels placed; registered, the fonts from the map's resources |
 | Noise fields, thin strokes | WebKit's turbulence byte for byte (scalar and NEON); `ObjectStrokes` |
@@ -188,6 +188,12 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - gable triangles in the wall's material, with their 0.25 px edges;
   - the roofs' edge strokes through `ObjectStrokes`.
 - Done: **the exact haze**, the composite's haze and vignette in whole numbers, bit for bit the twin's (against the port's references no case moves by more than 0.01 of MAD); the engine's references are at version 2.
+- Done: **the soft shadows**, pulled forward from step 4 because the renders blur the ground's shadows in every daytime moment the app shows (`sblur`: 2.6 CSS px overcast, 0.6 with the sun between clouds).
+  - The port blurs them on a grid of its own. WebKit draws a filter at most 4096² pixels large, and the shadows' filter region (their box, grown by a tenth; they reach 900 CSS px past the frame) is larger than that at the boards' views. So their grid is coarser than the device's, 0.43 of the density at the home and 0.70 at the Main board, and the renders' shadows are softer than the deviation alone makes them.
+  - Each frame the GPU measures the drawn shadows' box, works out the same grid (`fx/BlurGrid.hpp`), draws their union on it into a 4x mask, runs vImage's three square boxes and the port's fade over it (`fx::square_blur_cpu`, bit for bit), and draws the result back as the port draws its bitmap, bilinear where the grid is coarser. The CPU does nothing per shadow.
+  - Named differences from the port: the union's edges (4x samples against the port's coverage of each path) and the bilinear filter's rounding. At the home the frame is within two levels of the blurred result.
+  - Because the grid follows the shadows' box, their softness follows the view as the camera moves, as each render would have it. The phone will show whether that reads well.
+  - The engine's references are at version 3.
 - **Labels** are drawn by the core's frame instead of the Compose canvas, with the fonts loaded at the map's start.
 - **All of Amsterdam from the core:** `PackList.kt`, then the first publish of the `amsterdam` and `grachten` render packs after the user's yes (a `packs.yml` run with `renders=only`).
 - **The style file:** the tiles' style section becomes the engine's own, edited as data. Every pass reads its colours and widths from it, before step 4 adds more.
@@ -203,7 +209,8 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - at the canal ring's first sweep camera the frame draws OUDEZIJDS VOORBURGWAL, which the renders do not (the canal ring's region scene leaves it out; `L1Test` names it as known);
   - the first picture: ten tiles and 32 MB at the home before it is complete;
   - indexed ground draws;
-  - an island's water level from the ring around it.
+  - an island's water level from the ring around it;
+  - the soft shadows' three boxes in one dispatch where the device's shared memory holds their reach (three dispatches today, each a round trip of the mask through memory), if VK bench shows their cost.
 - Tag an alpha.
 
 ### 3. The phone builds the map anywhere
@@ -251,7 +258,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
 - **Water:** quays, reflections, sun glitter, drizzle rings, night streaks and houseboat cabins.
 - **Effects:**
   - the crown, leaf, foliage and canopy filters, with the per-tree fields made on the GPU, exact where the device passes the byte check and from the CPU elsewhere;
-  - the soft shadow blur, ripple and glints;
+  - ripple and glints (the soft shadows landed in step 2);
   - cloud shadows, rain and the golden wash;
   - clouds and the sun's glow when the sky shows.
 - **Textures while moving:** a switch between "fixed to the screen" and "fixed to the surfaces", for the user to judge on the phone. The lean:

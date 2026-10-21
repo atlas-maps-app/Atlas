@@ -21,7 +21,8 @@
 //     lines' runs and segments), written into this frame slot's buffer;
 //   - record: the opaque ground top first (above the water, the water, the land, the plate, the sky), then the
 //     translucent elements in the renders' order (the canopy, the water's tint and the end of its clip, the lines, the
-//     shadows), each phase at its order among every pass's (ground_order below).
+//     shadows), each phase at its order among every pass's (ground_order below). Where the moment blurs the shadows,
+//     an offscreen phase first draws them into a mask on the port's filter grid and blurs it (Shadows.cpp).
 //
 // The twin (emit) writes the same elements as the port's SVG elements, at the frame's painter slots.
 #pragma once
@@ -285,6 +286,8 @@ enum class Box : std::uint8_t { outside, unknown, inside };
 /// inside the frame, or neither.
 [[nodiscard]] Box cell_test(const view::Camera& cam, const geometry::CellBox& c);
 
+struct SoftShadows; // below
+
 class Ground final : public frame::Pass {
 public:
     Ground();
@@ -313,6 +316,14 @@ public:
     /// The absolute painter slot of a group's element this frame (from update on).
     [[nodiscard]] std::uint32_t slot(std::uint16_t group, std::uint32_t order, std::uint32_t sub) const noexcept;
 
+    /// The tests' look at the soft shadows: from the next prepare on, their grid and blurred mask lie in memory the
+    /// CPU reads, and each frame copies the resolved mask there too (SoftShadows::mask_copy).
+    void keep_soft_shadows(bool keep) noexcept { keep_soft_ = keep; }
+    /// The soft shadows' objects (null where prepare made none).
+    [[nodiscard]] const SoftShadows* soft_shadows() const noexcept;
+    /// Whether the last frame drew its shadows soft (the moment blurs them).
+    [[nodiscard]] bool drew_soft() const noexcept { return drew_soft_; }
+
     /// The phases' ids.
     enum PhaseId : std::uint8_t {
         phase_opaque = 0,
@@ -322,6 +333,7 @@ public:
         phase_over = 4,
         phase_marks = 5,
         phase_shadows = 6,
+        phase_shadow_mask = 7,
     };
 
     /// The pipelines, their layout and the pass's descriptor sets (Ground.cpp).
@@ -330,7 +342,8 @@ public:
     struct Words;
 
 private:
-    static constexpr std::array<frame::Phase, 7> phase_list{{
+    static constexpr std::array<frame::Phase, 8> phase_list{{
+        {.slot = frame::Slot::offscreen, .order = 0, .id = phase_shadow_mask},
         {.slot = frame::Slot::ground, .order = 0, .id = phase_opaque},
         {.slot = frame::Slot::translucent, .order = ground_order::canopy, .id = phase_canopy},
         {.slot = frame::Slot::translucent, .order = ground_order::water_tint, .id = phase_water_tint},
@@ -377,10 +390,17 @@ private:
     void emit_lines(const frame::FrameState& state, twin::Stream& out, std::int32_t above) const;
     // Shadows.cpp
     void decide_shadows(const DrawnTile& t, TileDecisions& d) const;
+    [[nodiscard]] gpu::Result<void> make_soft_shadows(const frame::PassContext& context, Pipelines& p) const;
+    /// Whether this frame draws its shadows soft: some are drawn, the moment blurs them, and prepare made the soft
+    /// shadows' objects.
+    [[nodiscard]] bool soft(const frame::FrameState& state) const noexcept;
+    void record_shadow_mask(const frame::Recording& r);
     void record_shadows(const frame::Recording& r);
     void emit_shadows(const frame::FrameState& state, twin::Stream& out) const;
 
     GroundFrame frame_;
+    bool keep_soft_ = false;
+    bool drew_soft_ = false;
     double select_ms_ = 0;
     /// The tiles' decisions, kept while the camera rests (their grounds held), reused as scratch while it moves.
     std::vector<std::unique_ptr<TileDecisions>> decisions_;
@@ -427,6 +447,43 @@ struct Ground::Pipelines {
     // Shadows.cpp
     vk::raii::Pipeline shadow_union{nullptr};
     vk::raii::Pipeline shadow_composite{nullptr};
+    /// The soft shadows: set 3 (the grid, the blurred mask, the grid as words for the compute stages), whose layout
+    /// every pipeline layout of the pass holds; the compute stages' layout; the measuring, the grid, the mask and the
+    /// composite; the images, buffers and blur (null where the pass draws none: the owner mode).
+    vk::raii::DescriptorSetLayout soft_set_layout{nullptr};
+    vk::raii::DescriptorPool soft_pool{nullptr};
+    vk::raii::DescriptorSet soft_set{nullptr};
+    vk::raii::PipelineLayout compute_layout{nullptr};
+    vk::raii::Pipeline shadow_box{nullptr};
+    vk::raii::Pipeline shadow_grid{nullptr};
+    vk::raii::Pipeline shadow_mask{nullptr};
+    vk::raii::Pipeline shadow_soft{nullptr};
+    std::unique_ptr<SoftShadows> soft;
+};
+
+/// The soft shadows' images and buffers, made for an output, and their blur (Shadows.cpp; shaders/ground/
+/// shadow_blur.slang). The mask's texels are filter px from the grid's input corner: as many as the view's device px
+/// and a reach around them, the most the grid's input can cover.
+struct SoftShadows {
+    vk::Extent2D extent{};    ///< the mask's texels
+    std::uint32_t stride = 0; ///< the blurred mask's words a row (four texels a word)
+    bool kept = false;        ///< the tests' look: the grid and the blurred mask readable, the mask copied each frame
+    gpu::Image samples;       ///< the union's 4x samples (R8, transient)
+    gpu::Image mask;          ///< their resolve (R8), the blur's first source
+    vk::raii::ImageView samples_view{nullptr};
+    vk::raii::ImageView mask_view{nullptr};
+    vk::raii::RenderPass pass{nullptr};
+    vk::raii::Framebuffer framebuffer{nullptr};
+    gpu::Buffer grid;                   ///< one ShadowGrid (shared/shadow_grid.slang)
+    std::array<gpu::Buffer, 2> blurred; ///< the blur's passes, back and forth; the last writes the first
+    gpu::Buffer mask_copy;              ///< the kept mask, a row of extent.width bytes after another
+    vk::raii::DescriptorSetLayout blur_set_layout{nullptr};
+    vk::raii::DescriptorPool blur_pool{nullptr};
+    std::array<vk::raii::DescriptorSet, 3> blur_sets{vk::raii::DescriptorSet{nullptr}, vk::raii::DescriptorSet{nullptr},
+                                                     vk::raii::DescriptorSet{nullptr}};
+    vk::raii::PipelineLayout blur_layout{nullptr};
+    vk::raii::ShaderModule blur_module{nullptr};
+    vk::raii::Pipeline blur{nullptr};
 };
 
 /// A pipeline of the ground's module named `name`, with its entry points, opaque on the scene's colour (Ground.cpp).
