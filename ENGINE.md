@@ -248,6 +248,12 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - label candidates and keep codes.
 
   They are held record for record to the port's, from the same data.
+  - Done: **their input, Overpass's JSON** (`osm/Overpass.hpp`). The core reads the JSON of an `out geom` query, the renderer's own `raw.json`, into its elements in the document's order, each value as Python's `json` module reads it: ids as integers, a coordinate as `float()` parses its digits, the tags in their order. A string without escapes is viewed in place.
+  - `float()` of a decimal is `pymath::decimal_to_double`: one exact operation where the digits and the power of ten are exact doubles, which covers every coordinate OpenStreetMap prints, else exactly in round()'s fixed-size integer. Apple's libc++ has no `std::from_chars` for doubles before macOS 26.
+  - It reads strict JSON and refuses, by name, what Overpass never writes and the port could not read alike: a key twice in one object, a null in a geometry, a lone surrogate.
+  - `OverpassParityTest` holds every value to the port's own `json.load` over the raw.json it unpacks from the Westerkerk's and the canal ring's packs (27,663 and 166,905 elements, each coordinate to the bit). The core reads the canal ring's 61 MB in 171 ms, the port in 1,054.
+  - A fuzz target replays its seeds on every host build.
+  - Geofabrik's extracts (PBF) come next to it as a second reader, held to the same values.
 - **The core asks, the app fetches.** Remote packs already work this way: the core asks for a box's data on its I/O thread, and the app's OpenStreetMap client answers.
 - **Built tiles become local packs.** A C++ writer of format 3 turns each built window into a small pack, which the store opens like a downloaded one.
   - Done: **the writer** (`tiles/TileWriter.hpp`, `tiles/PackWriter.hpp`). Stage P fills a tile's layers feature by feature, in the reader's own typed columns with the strings interned; the writer writes the packer's bytes for them, its string table in the order the columns use the strings. Then the pack around the tiles: the container, the chunks in level and Hilbert order, the checksums, `reach`, `rhead` and `style`.
