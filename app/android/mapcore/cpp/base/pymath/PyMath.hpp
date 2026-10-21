@@ -172,6 +172,14 @@ struct DivMod {
 /// Python's `round(n, k)` for an int: `n` for k >= 0, else the nearest multiple of 10^-k, ties to even.
 [[nodiscard]] std::int64_t round(std::int64_t n, int k) noexcept;
 
+/// Python's `float()` of a decimal, as its `json` module reads a number: the double nearest `digits` × 10^`e10`
+/// (`digits` ASCII digits without a sign, leading zeros allowed), ties to even, however many digits there are
+/// (CPython's correctly rounded dtoa; Java's parseDouble alike). One exact division or multiplication where the digits
+/// and the power of ten are both exact doubles (Clinger's fast path: every coordinate OpenStreetMap prints), else
+/// exactly in round()'s fixed-size integer; past 780 significant digits the rest only says whether more follows, which
+/// is all the rounding can need. Infinite past the largest double, 0 below half the least; `e10` within ±10^15.
+[[nodiscard]] double decimal_to_double(std::string_view digits, std::int64_t e10) noexcept;
+
 /// Python's `int(x)` for a float: truncation toward zero.
 [[nodiscard]] std::int64_t to_int(double x, std::source_location where = std::source_location::current()) noexcept;
 /// `math.floor(x)` as an int.

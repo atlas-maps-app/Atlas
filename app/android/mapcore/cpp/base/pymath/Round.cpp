@@ -299,6 +299,9 @@ private:
     return fdlibm::scalbn(static_cast<double>(q.low64()), e2 + drop);
 }
 
+/// The significant digits decimal_to_double keeps: more than the 767 a double's exact decimal can have.
+constexpr std::size_t kept_digits = 780;
+
 /// The port's BigDecimal path: BigDecimal(x).setScale(n, HALF_EVEN), then parseDouble of its text.
 [[nodiscard]] double round_exact(double x, int n) noexcept {
     // A double has at most 1,074 binary, so 1,074 decimal, places: at n >= 1,075 the scale keeps x exactly. Every
@@ -403,6 +406,61 @@ double round(double x, int n) noexcept {
         }
     }
     return round_exact(x, n);
+}
+
+double decimal_to_double(std::string_view digits, std::int64_t e10) noexcept {
+    // the significant digits: no leading zeros, the trailing ones moved into the exponent
+    const std::size_t first = digits.find_first_not_of('0');
+    if (first == std::string_view::npos) {
+        return 0.0;
+    }
+    digits.remove_prefix(first);
+    const std::size_t last = digits.find_last_not_of('0');
+    e10 += static_cast<std::int64_t>(digits.size() - 1 - last);
+    digits = digits.substr(0, last + 1);
+    // the value lies in [10^(n - 1 + e10), 10^(n + e10)): past the doubles, or below half the least of them
+    const auto n = static_cast<std::int64_t>(digits.size());
+    if (n + e10 > 310) {
+        return std::numeric_limits<double>::infinity();
+    }
+    if (n + e10 < -324) {
+        return 0.0;
+    }
+    if (n <= 15 && e10 >= -22 && e10 <= 22) {
+        // below 10^15 < 2^53 and a power of ten up to 10^22: both exact, so one IEEE operation rounds once, correctly
+        std::uint64_t m = 0;
+        for (const char c : digits) {
+            m = (m * 10) + static_cast<std::uint64_t>(c - '0');
+        }
+        const auto v = static_cast<double>(m);
+        return e10 >= 0 ? v * pow10[static_cast<std::size_t>(e10)] : v / pow10[static_cast<std::size_t>(-e10)];
+    }
+    // past the digits a rounding can need, whether any more follow (the last digit is not 0, so some does): a 1 below
+    // the kept ones stands for them
+    bool more = false;
+    if (digits.size() > kept_digits) {
+        e10 += static_cast<std::int64_t>(digits.size() - kept_digits);
+        digits = digits.substr(0, kept_digits);
+        more = true;
+    }
+    Big q(0);
+    for (std::size_t i = 0; i < digits.size(); i += 9) {
+        const std::size_t len = std::min<std::size_t>(9, digits.size() - i);
+        std::uint32_t chunk = 0;
+        std::uint32_t scale = 1;
+        for (std::size_t j = 0; j < len; ++j) {
+            chunk = (chunk * 10) + static_cast<std::uint32_t>(digits[i + j] - '0');
+            scale *= 10;
+        }
+        q.mul(scale);
+        q.add(chunk);
+    }
+    if (more) {
+        q.mul(10);
+        q.add(1);
+        e10 -= 1;
+    }
+    return nearest_double(q, static_cast<int>(e10));
 }
 
 std::int64_t java::round(double x) noexcept {
