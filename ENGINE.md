@@ -137,7 +137,7 @@ Nothing is finished. Each part below is a first version on `app`. It gets rework
 | Frame core | camera, ladder, cover, residency, heaps (one buffer and one virtual block of a 64 MB budget; a tile that finds no room waits for a range to go), ranks and pass registry; the composite (haze, vignette, `mat`'s rule, grain); the twin and L1; the coarser pack around the active one, chosen as the smallest pack that holds it; the packs' own stage T (`Pass::build_pack`) |
 | Sun | the sun test on the workers, equal to the port on every sample of 21 board renders; a lane for the pack drawn and one for the coarser pack around it |
 | Ground and water | drawn and registered; L1 matched in all 11 cases; the soft shadows on the port's own filter grid, their boxes and fade bit for bit |
-| Buildings, first half | walls, parts, flat and gabled roofs and houseboats, with sun bits and edges, at their true depth (a pair the renderer melts is drawn right; the switch draws the renderer's order); held to the port's polygons and on lavapipe to a depth raster of the twin; registered |
+| Buildings, first half | walls, parts, every roof shape and houseboats, with sun bits, edges and the roofs' thin edges, at their true depth (a pair the renderer melts is drawn right; the switch draws the renderer's order); held to the port's polygons and on lavapipe to a depth raster of the twin with its strokes; registered |
 | Text | shaping, glyphs, canal names (read from the whole pack), and the board's labels placed; registered, the fonts from the map's resources |
 | Noise fields, thin strokes | WebKit's turbulence byte for byte (scalar and NEON); `ObjectStrokes` |
 | Frosted glass | drawn by the core under the chrome |
@@ -185,11 +185,12 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - the frosted pills in the same frame as the map.
 
 ### 2. Every roof, the labels, the style file
-- **Roofs:**
-  - hipped, pyramidal and mansard roofs;
-  - the `CLOSEST` roof mapping;
-  - gable triangles in the wall's material, with their 0.25 px edges;
-  - the roofs' edge strokes through `ObjectStrokes`.
+- Done: **every roof shape**: hipped, pyramidal and mansard roofs, the `CLOSEST` roof mapping, gable triangles in the wall's material; `L1Test` matches them.
+- Done: **the roofs' thin edges**, each face's stroke as the renders draw it: .25 px in the roofs' edge colour on slopes, gable and hip ends and mansard faces, .45 px on flat tops, skillions and mansard tops, .4 px #2A2C30 on a cabin roof. An n-gon strokes its ring alone (stage T marks its triangles' edges on the ring, across points the triangulation drops), and the near plane's cut wherever it cuts a face, as the port strokes the polygon `Camera.poly` gives it.
+  - Before the main pass a compute stage decides each plain primitive the frame draws once, from the frame's jobs (each drawn tile's runs, the farthest tile first, 64 a workgroup), into a record of its shape. One draw per `ObjectStrokes` variant then draws a segment along each edge a record's stroke follows. The CPU does nothing per stroke.
+  - A stroke lies on its face's own plane (the reciprocal depth of the fan's triangle by its edge, carried past the edge) and 2^-16 nearer: over its own fill and over what lies behind its edge, under every nearer face. Across a triangle thinner than a pixel, whose plane tilts too steeply to carry on, it takes its edge's depth alone. Under the painter switch it draws at its face's slot.
+  - Named differences from the renders: butt segments instead of round joins (`ObjectStrokes`' residual); a pixel's coverage is the exact area of the stroke's rectangle in it while visibility is decided per sample, so where a nearer face hides a stroke's inner half the outer half looks dashed at one sample a pixel and is averaged at 4x; a concave n-gon the near plane cuts twice loses its ring's bridges along the cut; at 24-bit depth the strokes' lead falls below the buffer's resolution far off, as the cells' leads do.
+  - `buildings_vk_test` draws them in its exact raster (the shader's coverage in float, the depth test per sample, 8 bits a blend, in the frame's order) and holds every case within a level a blend. The engine's references are at version 4.
 - Done: **the exact haze**, the composite's haze and vignette in whole numbers, bit for bit the twin's (against the port's references no case moves by more than 0.01 of MAD); the engine's references are at version 2.
 - Done: **the soft shadows**, pulled forward from step 4 because the renders blur the ground's shadows in every daytime moment the app shows (`sblur`: 2.6 CSS px overcast, 0.6 with the sun between clouds).
   - The port blurs them on a grid of its own. WebKit draws a filter at most 4096² pixels large, and the shadows' filter region (their box, grown by a tenth; they reach 900 CSS px past the frame) is larger than that at the boards' views. So their grid is coarser than the device's, 0.43 of the density at the home and 0.70 at the Main board, and the renders' shadows are softer than the deviation alone makes them.
@@ -214,7 +215,10 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - the first picture: ten tiles and 32 MB at the home before it is complete;
   - indexed ground draws;
   - an island's water level from the ring around it;
-  - the soft shadows' three boxes in one dispatch where the device's shared memory holds their reach (three dispatches today, each a round trip of the mask through memory), if VK bench shows their cost.
+  - the soft shadows' three boxes in one dispatch where the device's shared memory holds their reach (three dispatches today, each a round trip of the mask through memory), if VK bench shows their cost;
+  - the roofs' thin edges' fragments: their quads cover about one frame at the Main board and a third of one at the home, each fragment working out the exact area of the stroke in its pixel; a closed form for the pixels away from a segment's ends, and a tighter margin, if VK bench shows their cost (their vertex stage runs 30 vertices a plain primitive, most of them drawing nothing);
+  - the roofs' thin edges' records: 64 bytes a plain primitive of the drawn runs in a buffer per frame slot (about 9 MB a slot at the canal ring's first sweep camera, grown by half again); one buffer for both slots, behind a barrier on the last frame's reads, would halve that;
+  - `FrameStatsTest`'s overdraw replay draws no buildings (its fresh frame builder's buildings pass never sees a tile built), so its fragment counts leave out the walls, the roofs and their strokes.
 - Tag an alpha.
 
 ### 3. The phone builds the map anywhere
