@@ -179,6 +179,8 @@ public:
     void set_inputs(const FrameInputs& inputs) noexcept { inputs_ = inputs; }
     /// The painter switch (FrameOptions::painter), from the next frame on.
     void set_painter(bool painter) noexcept { options_.painter = painter; }
+    /// The composite's steps the frame lets run from now on (FrameOptions::steps).
+    void set_steps(std::uint32_t steps) noexcept { options_.steps = steps; }
 
     [[nodiscard]] gpu::Result<void> prepare(const gpu::MainPass& pass, const gpu::Output& output) override;
     void release() override;

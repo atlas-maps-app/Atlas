@@ -84,6 +84,9 @@ public:
         painter_ = on;
         if (builder_) builder_->set_painter(on);
     }
+    /// The screen's haze and vignette on or off from now on (the app's Look settings: FrameOptions::steps without
+    /// their composite steps when off), kept for every frame builder made.
+    void set_screen(bool haze, bool vignette) noexcept;
 
     /// Whether the last frame's picture was complete.
     [[nodiscard]] bool complete() const noexcept;
@@ -123,6 +126,7 @@ private:
     std::optional<style::ThemeBlock> theme_;
     std::shared_ptr<const labels::LabelSet> labels_;
     bool painter_ = false;
+    std::uint32_t steps_ = ~0U;
     std::uint64_t active_number_ = 0;
     std::string active_id_;
     std::unique_ptr<FrameBuilder> builder_;

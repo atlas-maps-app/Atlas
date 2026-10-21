@@ -285,6 +285,14 @@ public:
         });
     }
 
+    /// The screen's haze and vignette for the map from now on, on or off.
+    void screen(bool haze, bool vignette) {
+        on_session([this, haze, vignette] {
+            map_->set_screen(haze, vignette);
+            ask_frame();
+        });
+    }
+
     /// The app's labels for the map from now on (null: none).
     void labels(std::shared_ptr<const labels::LabelSet> set) {
         on_session([this, &set] {
@@ -796,6 +804,11 @@ void native_painter(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean on) 
     if (core != nullptr) core->painter(on == JNI_TRUE);
 }
 
+void native_screen(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean haze, jboolean vignette) {
+    Core* core = core_of(handle);
+    if (core != nullptr) core->screen(haze == JNI_TRUE, vignette == JNI_TRUE);
+}
+
 /// The app's labels for the map (MK/state/LabelBlock.kt's block in a direct buffer, labels/Sprites.hpp's
 /// read_label_block), at `revision`, drawn no smaller than `least` of their own size; an empty block takes them away.
 /// "" or why they were refused.
@@ -917,8 +930,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 30>& methods() {
-    static const std::array<JNINativeMethod, 30> table{{
+const std::array<JNINativeMethod, 31>& methods() {
+    static const std::array<JNINativeMethod, 31> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -962,6 +975,7 @@ const std::array<JNINativeMethod, 30>& methods() {
         method("packs", "(J[Ljava/lang/String;[J[I[Ljava/lang/String;[I[J[J)Ljava/lang/String;", fn(&native_packs)),
         method("moment", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_moment)),
         method("labels", "(JLjava/nio/ByteBuffer;JF)Ljava/lang/String;", fn(&native_labels)),
+        method("screen", "(JZZ)V", fn(&native_screen)),
         method("painter", "(JZ)V", fn(&native_painter)),
     }};
     return table;

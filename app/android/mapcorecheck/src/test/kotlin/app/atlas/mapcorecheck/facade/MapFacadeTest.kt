@@ -18,7 +18,7 @@ import java.nio.file.Files
 
 /**
  * The app's map through the façade on the JVM against the core's host build (plan-vector K11, `CP/jni/Bridge.cpp`'s
- * map, packs, moment and labels): the packs the app lists open in the map's world (listed before it is made, opened
+ * map, packs, moment, labels and screen): the packs the app lists open in the map's world (listed before it is made, opened
  * after, kept when listed again, a broken one refused with its reason), the map turns on without a window (hosts have
  * none: it draws once one comes) and off, the moment's theme block is checked as the core reads it, and the labels'
  * block as `state.LabelBlock` writes it is read by the core (a sprite without points, or wider than a sprite may be,
@@ -99,6 +99,10 @@ class MapFacadeTest {
                 val notLabels = ByteBuffer.allocateDirect(8).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(7).putInt(0).flip() as ByteBuffer
                 assertEquals("the labels were refused: not a block of label sprites", Native.labels(handle, notLabels, 5L, 0f))
                 assertEquals("the labels must be a direct buffer", Native.labels(handle, ByteBuffer.allocate(8), 6L, 0f))
+
+                // The screen's haze and vignette off, then on again (the app's Look settings).
+                Native.screen(handle, false, false)
+                Native.screen(handle, true, true)
 
                 // Off, and modes the façade does not have.
                 assertEquals("", Native.map(handle, 0))

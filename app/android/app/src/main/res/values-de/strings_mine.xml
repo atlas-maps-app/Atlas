@@ -339,6 +339,9 @@
     <string name="mine_layers_hiking">Wandern</string>
     <string name="mine_layers_seamarks">Seezeichen</string>
     <string name="mine_layers_light">Tageslicht</string>
+    <string name="mine_layers_screen">Bildeffekte</string>
+    <string name="mine_layers_haze">Dunst</string>
+    <string name="mine_layers_vignette">Vignette</string>
     <string name="mine_layers_light_cd">Tageslicht %1$s</string>
     <string name="mine_layers_sunrise">Sonnenaufgang</string>
     <string name="mine_layers_noon">Mittag</string>

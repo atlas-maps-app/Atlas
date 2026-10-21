@@ -75,6 +75,10 @@ object SettingsKeys {
     /** The map's optional layers: `mapview.MapLayer` names. */
     val MAP_LAYERS = stringSetPreferencesKey("map.layers")
     val MAP_3D = booleanPreferencesKey("map.3d")
+
+    /** The screen's haze and vignette over the map (on when unset: the renders' look). */
+    val MAP_HAZE = booleanPreferencesKey("map.haze")
+    val MAP_VIGNETTE = booleanPreferencesKey("map.vignette")
     val UNITS = stringPreferencesKey("units")
 
     /** The language for place names, null for local names. */

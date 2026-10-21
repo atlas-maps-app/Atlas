@@ -99,6 +99,27 @@ object MapEngine {
         (core as? CoreState.Ready)?.core?.painterOrder(on)
     }
 
+    /**
+     * The screen's haze and vignette (the app's Look settings; on by default, the renders' look): off, the core draws
+     * the map without them, its own colours there and less work a pixel. Each map binding hands them to the core;
+     * [screenEffects] hands them to the core at once. Today's map (the renderer's port, where the core has no tiles)
+     * keeps them.
+     */
+    @Volatile
+    var haze: Boolean = true
+        private set
+
+    @Volatile
+    var vignette: Boolean = true
+        private set
+
+    /** Sets the screen's haze and vignette, and hands them to the running core (off the main thread). */
+    fun screenEffects(haze: Boolean, vignette: Boolean) {
+        this.haze = haze
+        this.vignette = vignette
+        (core as? CoreState.Ready)?.core?.screenEffects(haze, vignette)
+    }
+
     /** When the app's first screen began (SystemClock.uptimeMillis): the core's first-frame line counts from it. */
     @Volatile
     var startedAt: Long = 0

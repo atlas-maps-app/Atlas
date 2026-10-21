@@ -339,6 +339,9 @@
     <string name="mine_layers_hiking">Wandelen</string>
     <string name="mine_layers_seamarks">Zeetekens</string>
     <string name="mine_layers_light">Tijd van het licht</string>
+    <string name="mine_layers_screen">Schermeffecten</string>
+    <string name="mine_layers_haze">Nevel</string>
+    <string name="mine_layers_vignette">Vignet</string>
     <string name="mine_layers_light_cd">Tijd van het licht %1$s</string>
     <string name="mine_layers_sunrise">Zonsopgang</string>
     <string name="mine_layers_noon">Middag</string>

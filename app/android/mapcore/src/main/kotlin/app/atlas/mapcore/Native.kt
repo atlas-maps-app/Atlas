@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 6
+    const val ABI = 7
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -203,4 +203,7 @@ object Native {
      * drawn no smaller than [least] of their own size; "" or why they were refused.
      */
     @JvmStatic external fun labels(handle: Long, block: ByteBuffer, revision: Long, least: Float): String
+
+    /** The screen's haze and vignette for the map, each on or off (the app's Look settings). */
+    @JvmStatic external fun screen(handle: Long, haze: Boolean, vignette: Boolean)
 }

@@ -94,6 +94,8 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val themeName by settings.flow(SettingsKeys.MAP_THEME, Theme.AUTO.name).collectAsStateWithLifecycle(Theme.AUTO.name)
     val saved by settings.flow(SettingsKeys.MAP_LAYERS).collectAsStateWithLifecycle(null)
     val threeD by settings.flow(SettingsKeys.MAP_3D, true).collectAsStateWithLifecycle(true)
+    val haze by settings.flow(SettingsKeys.MAP_HAZE, true).collectAsStateWithLifecycle(true)
+    val vignette by settings.flow(SettingsKeys.MAP_VIGNETTE, true).collectAsStateWithLifecycle(true)
     val language by settings.flow(SettingsKeys.NAME_LANGUAGE).collectAsStateWithLifecycle(null)
     val twelve by settings.flow(MineKeys.CLOCK_12, false).collectAsStateWithLifecycle(false)
     val theme = runCatching { Theme.valueOf(themeName) }.getOrDefault(Theme.AUTO)
@@ -152,6 +154,11 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
                         else settings.set(SettingsKeys.MAP_LAYERS, LayersModel.toggled(layers, layer, on).map { it.name }.toSet())
                     }
                 }
+                ScreenChips(
+                    haze, vignette,
+                    onHaze = { on -> scope.launch { settings.set(SettingsKeys.MAP_HAZE, on) } },
+                    onVignette = { on -> scope.launch { settings.set(SettingsKeys.MAP_VIGNETTE, on) } },
+                )
                 LightScrubber(minutes, sun, twelve, onChange = { minutes = it }, onNow = { minutes = LayersModel.minuteOf(clock.instant(), zone) })
                 NamesRow(language) { code -> scope.launch { settings.set(SettingsKeys.NAME_LANGUAGE, code) } }
                 CoverageCard(coverage, coverageDone, onQuests = { nav.go(Dest.Quests(here.lat, here.lon)) })
@@ -195,6 +202,31 @@ private fun LayerChips(layers: Set<MapLayer>, onToggle: (MapLayer, Boolean) -> U
                 TextPill(
                     name, bt(12f, 700, 15.5f), if (on) INK else 0xFFF4F5F7, if (on) WHITE else INK, Modifier.semantics { contentDescription = name },
                     h = 36f, padH = 12f, symbol = info.symbol, symbolSize = 17f, gap = 6f, onClick = { onToggle(info.layer, !on) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The screen's effects over the map, each a chip as the layers' are (dark when on): the haze that thickens with the
+ * ground's distance and the vignette that darkens the corners, both the renders' and on by default; off, the map keeps
+ * its own colours there (and the phone does less work a pixel).
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ScreenChips(haze: Boolean, vignette: Boolean, onHaze: (Boolean) -> Unit, onVignette: (Boolean) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        CardLabel(stringResource(R.string.mine_layers_screen))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            for ((name, on, toggle) in listOf(
+                Triple(stringResource(R.string.mine_layers_haze), haze, onHaze),
+                Triple(stringResource(R.string.mine_layers_vignette), vignette, onVignette),
+            )) {
+                TextPill(
+                    name, bt(12f, 700, 15.5f), if (on) INK else 0xFFF4F5F7, if (on) WHITE else INK,
+                    Modifier.semantics { contentDescription = name },
+                    h = 36f, padH = 12f, onClick = { toggle(!on) },
                 )
             }
         }

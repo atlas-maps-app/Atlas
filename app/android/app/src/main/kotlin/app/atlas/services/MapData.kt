@@ -15,6 +15,8 @@ import app.atlas.render.live.LiveEngine
 import app.atlas.render.live.LiveRegions
 import app.atlas.render.live.PackLibrary
 import app.atlas.render.live.WxHour
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
@@ -115,6 +117,13 @@ class MapData(private val services: Services) {
         if (services.config.root == null) MapEngine.useCacheDir(File(services.dirs.cache, "engine"))
         MapEngine.weather = weather
         MapEngine.regions = regions
+        // the screen's haze and vignette as the Look settings have them, handed to the core as they change
+        services.scope.launch {
+            services.settings.data
+                .map { (it[SettingsKeys.MAP_HAZE] ?: true) to (it[SettingsKeys.MAP_VIGNETTE] ?: true) }
+                .distinctUntilChanged()
+                .collect { (haze, vignette) -> MapEngine.screenEffects(haze, vignette) }
+        }
     }
 
     private fun open(asset: String): InputStream = services.context.assets.open(asset)

@@ -339,6 +339,9 @@
     <string name="mine_layers_hiking">Randonnée</string>
     <string name="mine_layers_seamarks">Balisage</string>
     <string name="mine_layers_light">Heure de la lumière</string>
+    <string name="mine_layers_screen">Effets d\'écran</string>
+    <string name="mine_layers_haze">Brume</string>
+    <string name="mine_layers_vignette">Vignette</string>
     <string name="mine_layers_light_cd">Heure de la lumière %1$s</string>
     <string name="mine_layers_sunrise">Lever</string>
     <string name="mine_layers_noon">Midi</string>

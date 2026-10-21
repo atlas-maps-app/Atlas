@@ -26,6 +26,7 @@
 #include <format>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using namespace atlas;
@@ -336,7 +337,10 @@ TEST_CASE("the composite's haze and vignette are the twin's, bit for bit off lav
     std::uint32_t seam_total = 0;
     for (const gpu::Configuration& config : composite_configurations(device)) {
         for (const gpu::Depth depth : {gpu::Depth::eight, gpu::Depth::deepest}) {
-            for (const auto& [density, pitch] : {std::pair{1.0, 46.0}, std::pair{2.625, 70.0}, std::pair{1.5, 30.0}}) {
+            // and once with the screen's haze and vignette off (the app's Look settings: MapFrame::set_screen)
+            for (const auto& [density, pitch, screen] : {std::tuple{1.0, 46.0, true}, std::tuple{2.625, 70.0, true},
+                                                         std::tuple{1.5, 30.0, true}, std::tuple{2.625, 70.0, false}}) {
+                if (!screen && depth != gpu::Depth::eight) continue;
                 auto output = platform::Offscreen::create(device, extent, 2, depth);
                 ATLAS_REQUIRE(output.has_value(), output.error().text());
                 if (depth == gpu::Depth::deepest && !gpu::ten_bit((*output)->format())) continue;
@@ -344,6 +348,7 @@ TEST_CASE("the composite's haze and vignette are the twin's, bit for bit off lav
                 passes.push_back(std::make_unique<SamplesPass>(layers));
                 auto builder = frame::FrameBuilder::create(device, *cache, std::move(passes),
                                                            {.overdraw = false, .clear = {0, 0, 0, 1}, .steps = ~0U});
+                if (!screen) (*builder)->set_steps(~(shaders::COMPOSITE_HAZE | shaders::COMPOSITE_VIGNETTE));
                 ATLAS_REQUIRE(builder.has_value(), builder.error().text());
                 style::ThemeBlock theme{};
                 theme.flags = style::theme_flag::weather;
@@ -365,8 +370,8 @@ TEST_CASE("the composite's haze and vignette are the twin's, bit for bit off lav
                 ATLAS_REQUIRE(packed.has_value(), packed.error().text());
                 const shaders::FrameBlock& block = (*builder)->state().block;
                 const std::uint32_t steps = block.layers.steps.x;
-                CHECK((steps & shaders::COMPOSITE_HAZE) != 0U);
-                CHECK((steps & shaders::COMPOSITE_VIGNETTE) != 0U);
+                CHECK(((steps & shaders::COMPOSITE_HAZE) != 0U) == screen);
+                CHECK(((steps & shaders::COMPOSITE_VIGNETTE) != 0U) == screen);
                 const std::uint32_t levels = gpu::ten_bit(packed->format) ? 1023U : 255U;
                 const auto samples = static_cast<std::uint32_t>(config.samples());
                 const auto n = static_cast<float>(levels);
@@ -418,8 +423,14 @@ TEST_CASE("the composite's haze and vignette are the twin's, bit for bit off lav
                                                      gpu::colour_name(packed->format), density, pitch);
                 CHECK_MESSAGE(wrong == 0,
                               name << ": " << wrong << " channels differ from the twin's; the first: " << first);
-                // The steps do something: the haze and the vignette change most pixels.
-                CHECK_MESSAGE(changed > packed->width * packed->height / 4, name << ": the steps changed " << changed);
+                // The steps do something: the haze and the vignette change most pixels; off, none.
+                if (screen) {
+                    CHECK_MESSAGE(changed > packed->width * packed->height / 4,
+                                  name << ": the steps changed " << changed);
+                } else {
+                    CHECK_MESSAGE(changed == 0,
+                                  name << ": with the haze and the vignette off, the steps changed " << changed);
+                }
                 if (config.target == gpu::CompositeTarget::direct) {
                     CHECK_MESSAGE(seam == 0, name << ": " << seam << " channels on the diagonal differ");
                 } else if (seam > 0) {
