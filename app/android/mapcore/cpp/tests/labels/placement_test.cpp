@@ -1,7 +1,10 @@
-// The board's labels placed (plan-vector D13, K13): LabelPainter's placement held to mapview's own (the generated
-// frames' hash that mapview's LabelPlacementTest pins); the collision index's grid against every box; a label kept
-// while moving, faded over 250 ms where it changes, the rest frame's own choice; the sprites' set and where a sprite
-// goes; and the time a frame's placement takes (gated with ATLAS_TIMED=1, printed otherwise).
+// The board's labels placed (plan-vector D13, K13; ENGINE.md design point 8): LabelPainter's placement held to
+// mapview's own (the generated frames' hash that mapview's LabelPlacementTest pins); the collision index's grid against
+// every box; a label placed once and kept where it is on the map, at rest and moving, growing and shrinking with it,
+// fading out where it meets one kept before it and back once clear, the set placed anew beyond its band (the floor
+// raising its low end) and a label the frame brings in placed around the kept ones; the sprites' set and where a
+// sprite goes, at its own size and scaled; and the time a frame's placement takes (gated with ATLAS_TIMED=1, printed
+// otherwise).
 #include "labels/Placement.hpp"
 #include "labels/Sprites.hpp"
 #include "tests/base/require.hpp"
@@ -183,22 +186,31 @@ TEST_CASE("the collision index finds what a test of every box finds") {
     CHECK(!index.hits({.l = no_point, .t = no_point, .r = no_point, .b = no_point}));
 }
 
-TEST_CASE("moving, a placed label keeps its place while it fits; a change fades over 250 ms; at rest LabelPainter's") {
-    // Two labels on a frame of 400 x 300 px. The first by priority stands centred on its point; the second's first
-    // point is the same, where every spot meets the first, so it stands at its second point.
-    const std::array<Point, 1> p0{{{.x = 200, .y = 150}}};
-    const std::array<Point, 3> p1{{{.x = 200, .y = 150}, {.x = 60, .y = 60}, {.x = 300, .y = 250}}};
+/// The entry of candidate `c` among `drawn` that is leaving (or not), or null.
+const Drawn* entry(std::span<const Drawn> drawn, std::uint32_t c, bool leaving = false) {
+    const auto it =
+        std::ranges::find_if(drawn, [&](const Drawn& d) { return d.candidate == c && d.leaving == leaving; });
+    return it != drawn.end() ? &*it : nullptr;
+}
+
+TEST_CASE("a placed label stays where it is on the map, growing and shrinking with it, fading where it meets another") {
+    // Two labels on a frame of 400 x 300 px at a distance of 400 m. The first by priority stands centred on its point;
+    // the second's first point is the same, where every spot meets the first, so it stands at its second point.
+    std::array<Point, 1> p0{{{.x = 200, .y = 150}}};
+    std::array<Point, 3> p1{{{.x = 200, .y = 150}, {.x = 60, .y = 60}, {.x = 300, .y = 250}}};
     std::vector<Candidate> c{
         {.id = 7, .label = 0, .priority = 5, .measures = measures(40, 20), .points = p0},
         {.id = 9, .label = 1, .priority = 1, .measures = measures(30, 20), .points = p1},
     };
     const Frame frame{.width = 400, .height = 300};
+    const double at = 1.0 / 400.0;
     Placement placement;
-    auto drawn = placement.update(c, frame, true, 0.0);
+    auto drawn = placement.update(c, frame, at, 0.0);
     ATLAS_REQUIRE(drawn.size() == 2);
     CHECK(drawn[0].candidate == 0);
     CHECK(drawn[0].stand.x == 200.0F);
-    CHECK(drawn[0].alpha == 1.0F); // the first frame at once
+    CHECK(drawn[0].alpha == 1.0F); // the set's first frame at once
+    CHECK(drawn[0].scale == 1.0F);
     CHECK(drawn[1].candidate == 1);
     CHECK(drawn[1].stand.x == 60.0F);
     CHECK(drawn[1].stand.y == 60.0F);
@@ -206,54 +218,139 @@ TEST_CASE("moving, a placed label keeps its place while it fits; a change fades 
     CHECK(placement.placed() == 2);
     CHECK(placement.line().starts_with("label place "));
 
-    // Moving with the map: both keep their place.
-    const std::array<Point, 1> q0{{{.x = 190, .y = 150}}};
-    const std::array<Point, 3> q1{{{.x = 190, .y = 150}, {.x = 50, .y = 60}, {.x = 290, .y = 250}}};
-    c[0].points = q0;
-    c[1].points = q1;
-    drawn = placement.update(c, frame, false, 0.1);
+    // Moving with the map, and at rest again: both keep their points and spots (no re-placing).
+    p0 = {{{.x = 190, .y = 150}}};
+    p1 = {{{.x = 190, .y = 150}, {.x = 50, .y = 60}, {.x = 290, .y = 250}}};
+    drawn = placement.update(c, frame, at, 0.1);
     ATLAS_REQUIRE(drawn.size() == 2);
     CHECK(drawn[1].stand.x == 50.0F);
     CHECK(!placement.fading());
 
-    // A marker comes over the second's place: it takes its third point, fading out where it stood and in there.
-    const std::array<Box, 1> marker{{{.l = 0, .t = 0, .r = 120, .b = 120}}};
-    const Frame covered{.width = 400, .height = 300, .markers = marker};
-    drawn = placement.update(c, covered, false, 0.2);
-    ATLAS_REQUIRE(drawn.size() == 3);
-    const auto gone = std::ranges::find_if(drawn, [](const Drawn& d) { return d.candidate == 1 && d.leaving; });
-    const auto come = std::ranges::find_if(drawn, [](const Drawn& d) { return d.candidate == 1 && !d.leaving; });
-    ATLAS_REQUIRE(gone != drawn.end() && come != drawn.end());
-    CHECK(gone->alpha == 1.0F);
-    CHECK(gone->stand.x == 50.0F);
-    CHECK(come->alpha == 0.0F);
-    CHECK(come->stand.x == 290.0F);
-    CHECK(placement.fading());
-    drawn = placement.update(c, covered, false, 0.325);
-    ATLAS_REQUIRE(drawn.size() == 3);
-    const auto half_way = std::ranges::find_if(drawn, [](const Drawn& d) { return d.candidate == 1 && !d.leaving; });
-    ATLAS_REQUIRE(half_way != drawn.end());
-    CHECK(half_way->alpha == doctest::Approx(0.5));
-    drawn = placement.update(c, covered, false, 0.5);
+    // Zoomed in by a quarter about the frame's centre: the points spread, the labels grow by a quarter where they are.
+    const auto zoom = [](Point p, float k) {
+        return Point{.x = 200 + ((p.x - 200) * k), .y = 150 + ((p.y - 150) * k)};
+    };
+    p0 = {{zoom({.x = 190, .y = 150}, 1.25F)}};
+    p1 = {{zoom({.x = 190, .y = 150}, 1.25F), zoom({.x = 50, .y = 60}, 1.25F), zoom({.x = 290, .y = 250}, 1.25F)}};
+    drawn = placement.update(c, frame, at * 1.25, 0.2);
     ATLAS_REQUIRE(drawn.size() == 2);
+    CHECK(placement.size() == 1.25F);
+    CHECK(drawn[1].scale == 1.25F);
+    CHECK(drawn[1].stand.x == p1[1].x); // its second point still, centred on it
+    CHECK(drawn[1].stand.y == p1[1].y);
+    CHECK(drawn[1].stand.box.r - drawn[1].stand.box.l == 2.0F * 1.25F * (30.0F + 10.5F));
+    CHECK(drawn[1].baseline == p1[1].y + (7.0F * 1.25F));
     CHECK(!placement.fading());
 
-    // The camera stops with the marker gone: at rest LabelPainter's own place, the second point again, faded in.
-    drawn = placement.update(c, frame, true, 1.0);
-    ATLAS_REQUIRE(drawn.size() == 3);
-    const auto settled = std::ranges::find_if(drawn, [](const Drawn& d) { return d.candidate == 1 && !d.leaving; });
-    ATLAS_REQUIRE(settled != drawn.end());
-    CHECK(settled->stand.x == 50.0F);
-    CHECK(settled->alpha == 0.0F);
+    // A marker comes over the second's place: it fades out where it stands, taking no other point...
+    const std::array<Box, 1> marker{{{.l = 0, .t = 0, .r = 120, .b = 120}}};
+    const Frame covered{.width = 400, .height = 300, .markers = marker};
+    drawn = placement.update(c, covered, at * 1.25, 0.3);
+    const Drawn* fading = entry(drawn, 1);
+    ATLAS_REQUIRE(fading != nullptr);
+    CHECK(fading->stand.x == p1[1].x);
+    CHECK(fading->alpha == 1.0F);
+    CHECK(placement.placed() == 1);
+    drawn = placement.update(c, covered, at * 1.25, 0.425);
+    fading = entry(drawn, 1);
+    ATLAS_REQUIRE(fading != nullptr);
+    CHECK(fading->alpha == doctest::Approx(0.5));
+    CHECK(placement.fading());
+    drawn = placement.update(c, covered, at * 1.25, 0.6);
+    CHECK(entry(drawn, 1) == nullptr);
+    CHECK(drawn.size() == 1);
+    // ... and back in where it was once the marker goes, from where its fade had reached (turned half way)
+    drawn = placement.update(c, covered, at * 1.25, 0.7);
+    CHECK(entry(drawn, 1) == nullptr);
+    drawn = placement.update(c, frame, at * 1.25, 0.8);
+    const Drawn* back = entry(drawn, 1);
+    ATLAS_REQUIRE(back != nullptr);
+    CHECK(back->stand.x == p1[1].x);
+    CHECK(back->alpha == 0.0F);
+    drawn = placement.update(c, frame, at * 1.25, 1.2);
+    back = entry(drawn, 1);
+    ATLAS_REQUIRE(back != nullptr);
+    CHECK(back->alpha == 1.0F);
 
-    // Labels that no longer fit anywhere fade out where they stood.
-    const std::array<Box, 1> wall{{{.l = -1000, .t = -1000, .r = 1000, .b = 1000}}};
-    const Frame blocked{.width = 400, .height = 300, .keep_out = wall};
-    drawn = placement.update(c, blocked, false, 2.0);
-    CHECK(drawn.size() == 2);
-    CHECK(std::ranges::all_of(drawn, [](const Drawn& d) { return d.leaving && d.alpha == 1.0F; }));
-    drawn = placement.update(c, blocked, false, 2.3);
-    CHECK(drawn.empty());
+    // A label the frame brings in is placed around the kept ones, at the set's size, and fades in.
+    std::array<Point, 2> p2{{zoom({.x = 190, .y = 150}, 1.25F), {.x = 330, .y = 60}}};
+    c.push_back({.id = 11, .label = 2, .priority = 9, .measures = measures(20, 20), .points = p2});
+    drawn = placement.update(c, frame, at * 1.25, 1.3);
+    const Drawn* come = entry(drawn, 2);
+    ATLAS_REQUIRE(come != nullptr);
+    CHECK(come->stand.x == 330.0F); // its first point meets the first label, kept though of a lower priority
+    CHECK(come->alpha == 0.0F);
+    CHECK(come->scale == 1.25F);
+    CHECK(entry(drawn, 0) != nullptr);
+    CHECK(entry(drawn, 0)->alpha == 1.0F);
+
+    // Past the band (1.5 times the set's size): the set is placed anew at its own size, every label fading out where
+    // it stood (at the size it had) as its new place fades in.
+    drawn = placement.update(c, frame, at * 1.6, 2.0);
+    CHECK(placement.size() == 1.0F);
+    CHECK(placement.reference() == at * 1.6);
+    const Drawn* old = entry(drawn, 0, true);
+    ATLAS_REQUIRE(old != nullptr);
+    CHECK(old->scale == doctest::Approx(1.6));
+    CHECK(old->alpha == 1.0F);
+    // placed anew from scratch, by priority: the newcomer, the highest, now takes its first point, and fades in there
+    const Drawn* anew = entry(drawn, 2);
+    ATLAS_REQUIRE(anew != nullptr);
+    CHECK(anew->stand.x == p2[0].x);
+    CHECK(anew->scale == 1.0F);
+    CHECK(anew->alpha == 0.0F);
+    CHECK(entry(drawn, 2, true) != nullptr); // its place in the band before, fading out
+    CHECK(placement.fading());
+
+    // The readable floor raises the band's low end: from that size, shrinking to 0.85 of it is beyond the band.
+    drawn = placement.update(c, frame, at * 1.6, 3.0);
+    const Frame floored{.width = 400, .height = 300, .least = 0.9F};
+    drawn = placement.update(c, floored, at * 1.6 * 0.85, 3.1);
+    CHECK(placement.size() == 1.0F);
+    CHECK(placement.reference() == at * 1.6 * 0.85);
+    // without it, the same is within the band
+    Placement unfloored;
+    (void)unfloored.update(c, frame, at, 0.0);
+    (void)unfloored.update(c, frame, at * 0.85, 0.1);
+    CHECK(unfloored.size() == 0.85F);
+}
+
+TEST_CASE("placed labels that the map's turn brings together: the one of lower priority fades out, neither moves") {
+    // Two labels side by side, then the map turns a quarter about the frame's centre: their points come one above the
+    // other, close enough for their boxes to meet.
+    std::array<Point, 1> a{{{.x = 100, .y = 150}}};
+    std::array<Point, 1> b{{{.x = 300, .y = 150}}};
+    std::vector<Candidate> c{
+        {.id = 1, .label = 0, .priority = 2, .measures = measures(60, 20), .points = a},
+        {.id = 2, .label = 1, .priority = 1, .measures = measures(60, 20), .points = b},
+    };
+    const Frame frame{.width = 400, .height = 300};
+    Placement placement;
+    auto drawn = placement.update(c, frame, 0.01, 0.0);
+    ATLAS_REQUIRE(drawn.size() == 2);
+    a = {{{.x = 200, .y = 130}}};
+    b = {{{.x = 200, .y = 160}}};
+    drawn = placement.update(c, frame, 0.01, 0.1);
+    const Drawn* higher = entry(drawn, 0);
+    const Drawn* lower = entry(drawn, 1);
+    ATLAS_REQUIRE(higher != nullptr);
+    ATLAS_REQUIRE(lower != nullptr);
+    CHECK(higher->stand.x == 200.0F);
+    CHECK(higher->stand.y == 130.0F);
+    CHECK(higher->alpha == 1.0F);
+    CHECK(lower->stand.y == 160.0F); // where it is, fading out
+    CHECK(lower->alpha == 1.0F);
+    CHECK(placement.placed() == 1);
+    drawn = placement.update(c, frame, 0.01, 0.5);
+    CHECK(entry(drawn, 1) == nullptr);
+    // turned back: clear again (by more than the margin), it fades back in at its own place
+    a = {{{.x = 100, .y = 150}}};
+    b = {{{.x = 300, .y = 150}}};
+    drawn = placement.update(c, frame, 0.01, 0.6);
+    lower = entry(drawn, 1);
+    ATLAS_REQUIRE(lower != nullptr);
+    CHECK(lower->stand.x == 300.0F);
+    CHECK(lower->alpha == 0.0F);
 }
 
 TEST_CASE("a set of labels keeps every sprite's texels once, and a sprite goes where its anchor lands rounded") {
@@ -283,10 +380,20 @@ TEST_CASE("a set of labels keeps every sprite's texels once, and a sprite goes w
     CHECK(std::ranges::equal((*set)->offsets(), std::array<std::uint32_t, 2>{0, 6}));
     // Kotlin's roundToInt: halves up, also below zero
     Drawn d{.stand = {.x = 10.5F, .y = 0.0F}, .baseline = -2.5F};
-    CHECK(sprite_at((*set)->sprites()[0], d).x == 10);
-    CHECK(sprite_at((*set)->sprites()[0], d).y == -3);
+    CHECK(sprite_at((*set)->sprites()[0], d).x == 10.0F);
+    CHECK(sprite_at((*set)->sprites()[0], d).y == -3.0F);
+    CHECK(sprite_at((*set)->sprites()[0], d).width == 3.0F);
+    CHECK(sprite_at((*set)->sprites()[0], d).scale == 1.0F);
     d.stand.x = 10.4999F;
-    CHECK(sprite_at((*set)->sprites()[0], d).x == 9);
+    CHECK(sprite_at((*set)->sprites()[0], d).x == 9.0F);
+    // scaled: about its anchor, where it falls
+    d.scale = 1.5F;
+    const SpriteAt big = sprite_at((*set)->sprites()[0], d);
+    CHECK(big.x == 10.4999F - 1.5F);
+    CHECK(big.y == -2.5F - 1.5F);
+    CHECK(big.width == 4.5F);
+    CHECK(big.height == 3.0F);
+    CHECK(big.scale == 1.5F);
     // refused: pixels that are not width x height, and no points
     std::vector<LabelSprite> bad(1, sprites[0]);
     bad[0].pixels.pop_back();
@@ -297,8 +404,8 @@ TEST_CASE("a set of labels keeps every sprite's texels once, and a sprite goes w
 }
 
 TEST_CASE("a frame's placement takes at most 0.5 ms on one core (gated with ATLAS_TIMED=1)") {
-    // A busy board: 60 labels of up to four points, 8 keep-outs, 24 markers, panning 1,000 frames and a rest frame
-    // every tenth.
+    // A busy board: 60 labels of up to four points, 8 keep-outs, 24 markers, panning and slowly zooming in over 1,000
+    // frames (past the band once).
     Mix mix(5);
     const float width = 1080.0F;
     const float height = 2400.0F;
@@ -336,7 +443,7 @@ TEST_CASE("a frame's placement takes at most 0.5 ms on one core (gated with ATLA
             c[i].points = moved[i];
         }
         const Frame frame{.width = width, .height = height, .keep_out = keep_out, .markers = markers};
-        (void)placement.update(c, frame, f % 10 == 0, f / 60.0);
+        (void)placement.update(c, frame, (1.0 + (0.001 * f)) / 400.0, f / 60.0);
         ms.push_back(placement.millis());
         placed += placement.placed();
     }

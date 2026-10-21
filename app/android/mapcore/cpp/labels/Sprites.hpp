@@ -55,9 +55,10 @@ public:
     /// A label's points at most.
     static constexpr std::size_t max_points = 1024;
 
-    /// The set of `sprites` at `revision` (the camera state's labels revision), or why not.
+    /// The set of `sprites` at `revision` (the camera state's labels revision), drawn no smaller than `least` of their
+    /// own size (the readable floor, from Android's text size: placement's Frame::least), or why not.
     [[nodiscard]] static std::expected<std::shared_ptr<const LabelSet>, SpriteError>
-    make(std::vector<LabelSprite> sprites, std::uint64_t revision);
+    make(std::vector<LabelSprite> sprites, std::uint64_t revision, float least = 0.0F);
 
     [[nodiscard]] std::span<const LabelSprite> sprites() const noexcept { return sprites_; }
     /// Each sprite's first texel in texels().
@@ -65,6 +66,7 @@ public:
     /// Every sprite's pixels, one after another.
     [[nodiscard]] std::span<const std::uint32_t> texels() const noexcept { return texels_; }
     [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
+    [[nodiscard]] float least() const noexcept { return least_; }
 
 private:
     LabelSet() = default;
@@ -72,14 +74,19 @@ private:
     std::vector<std::uint32_t> offsets_;
     std::vector<std::uint32_t> texels_;
     std::uint64_t revision_ = 0;
+    float least_ = 0.0F;
 };
 
-/// Where a placed label's sprite goes on the frame: its top-left pixel, so that the sprite's anchor lands on the
-/// stand's x and baseline rounded as Kotlin's roundToInt rounds them (LabelPainter draws its text there, so the two
-/// match pixel for pixel).
+/// Where a placed label's sprite goes on the frame, device px: its top-left corner and its size, its anchor landing on
+/// the stand's x and baseline. At its own size (Drawn::scale 1) on whole pixels, those rounded as Kotlin's roundToInt
+/// rounds them (LabelPainter draws its text there, so the two match pixel for pixel); scaled, the sprite scaled about
+/// its anchor, where it falls.
 struct SpriteAt {
-    std::int32_t x = 0;
-    std::int32_t y = 0;
+    float x = 0.0F;
+    float y = 0.0F;
+    float width = 0.0F;
+    float height = 0.0F;
+    float scale = 1.0F;
 };
 [[nodiscard]] SpriteAt sprite_at(const LabelSprite& sprite, const Drawn& drawn) noexcept;
 

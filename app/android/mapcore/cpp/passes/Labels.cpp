@@ -60,18 +60,20 @@ void Labels::update(const frame::FrameState& state) {
     const labels::Frame frame{.width = static_cast<float>(state.camera.width_px),
                               .height = static_cast<float>(state.camera.height_px),
                               .keep_out = keep_out_,
-                              .markers = {}};
-    const auto drawn = placement_.update(candidates_, frame, state.rest, state.seconds);
+                              .markers = {},
+                              .least = set->least()};
+    // The map's scale: the reciprocal of the camera's distance (a tilted view keeps the zoom's size).
+    const double scale = state.camera.distance > 0.0 ? 1.0 / state.camera.distance : 0.0;
+    const auto drawn = placement_.update(candidates_, frame, scale, state.seconds);
     drawn_.assign(drawn.begin(), drawn.end());
     for (const labels::Drawn& d : drawn_) {
         if (draws_.size() >= max_draws) break;
         const std::uint32_t label = candidates_[d.candidate].label;
         const labels::LabelSprite& s = sprites[label];
         const labels::SpriteAt at = labels::sprite_at(s, d);
-        draws_.push_back(
-            {.target = {at.x, at.y, static_cast<std::int32_t>(s.width), static_cast<std::int32_t>(s.height)},
-             .source = {set->offsets()[label], s.width, 0, 0},
-             .fade = {d.alpha, 0.0F, 0.0F, 0.0F}});
+        draws_.push_back({.target = {at.x, at.y, at.width, at.height},
+                          .source = {set->offsets()[label], s.width, s.height, 0},
+                          .fade = {d.alpha, at.scale, 0.0F, 0.0F}});
     }
     if (draw_buffer_ && !draws_.empty()) {
         std::memcpy(draw_buffer_.bytes().data() + (slot * slot_bytes), draws_.data(), draws_.size() * draw_bytes);

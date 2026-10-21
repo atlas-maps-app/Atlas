@@ -17,7 +17,7 @@ std::string_view describe(SpriteError error) noexcept {
 }
 
 std::expected<std::shared_ptr<const LabelSet>, SpriteError> LabelSet::make(std::vector<LabelSprite> sprites,
-                                                                           std::uint64_t revision) {
+                                                                           std::uint64_t revision, float least) {
     std::uint64_t total = 0;
     for (const LabelSprite& s : sprites) {
         if (s.width == 0 || s.height == 0 || s.pixels.size() != std::uint64_t{s.width} * s.height) {
@@ -30,6 +30,7 @@ std::expected<std::shared_ptr<const LabelSet>, SpriteError> LabelSet::make(std::
     }
     std::shared_ptr<LabelSet> set(new LabelSet());
     set->revision_ = revision;
+    set->least_ = least > 0.0F ? least : 0.0F;
     set->offsets_.reserve(sprites.size());
     set->texels_.reserve(static_cast<std::size_t>(total));
     for (LabelSprite& s : sprites) {
@@ -50,7 +51,20 @@ SpriteAt sprite_at(const LabelSprite& sprite, const Drawn& drawn) noexcept {
         constexpr std::int64_t hi = std::numeric_limits<std::int32_t>::max();
         return static_cast<std::int32_t>(r < lo ? lo : (r > hi ? hi : r));
     };
-    return {.x = round(drawn.stand.x) - sprite.anchor_x, .y = round(drawn.baseline) - sprite.anchor_y};
+    const auto w = static_cast<float>(sprite.width);
+    const auto h = static_cast<float>(sprite.height);
+    if (drawn.scale == 1.0F) {
+        return {.x = static_cast<float>(round(drawn.stand.x) - sprite.anchor_x),
+                .y = static_cast<float>(round(drawn.baseline) - sprite.anchor_y),
+                .width = w,
+                .height = h};
+    }
+    const float k = drawn.scale;
+    return {.x = drawn.stand.x - (static_cast<float>(sprite.anchor_x) * k),
+            .y = drawn.baseline - (static_cast<float>(sprite.anchor_y) * k),
+            .width = w * k,
+            .height = h * k,
+            .scale = k};
 }
 
 } // namespace atlas::labels
