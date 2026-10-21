@@ -162,8 +162,15 @@ object L1Diff {
         return "$f; $s"
     }
 
+    /**
+     * A transform's entry as printed at '%.3f', a printed zero's sign dropped: the port prints a near-zero entry of a
+     * canal name's matrix as -0.000, which SvgParser reads back as +0 (it composes each transform with the identity, and
+     * -0 + 0 is +0) while the twin keeps the -0 it snapped to; either is the same matrix.
+     */
+    private fun t3(v: Float): String = f3(v).let { if (it == "-0.000") "0.000" else it }
+
     private fun nodeKey(opacity: Float, blend: Int, filter: String?, clip: String?, transform: FloatArray?): String =
-        "o ${f3(opacity)} b $blend f ${filter ?: "-"} c ${clip ?: "-"} t ${transform?.joinToString(",") { f3(it) } ?: "-"}"
+        "o ${f3(opacity)} b $blend f ${filter ?: "-"} c ${clip ?: "-"} t ${transform?.joinToString(",") { t3(it) } ?: "-"}"
 
     private fun svgNodeKey(n: SvgNode): String = nodeKey(n.opacity, n.blend.ordinal, n.filter?.id, n.clip?.id, n.transform)
 

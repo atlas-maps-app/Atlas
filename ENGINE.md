@@ -228,7 +228,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - snapping slivers: the area floor and the facing test decided as the port decides them, so L1 counts no slivers;
   - the densest tile's 12.7 MB, with 32-byte wall records, and the heaps back to D3's 40 MB;
   - the buildings' triangles: 2.06M at the Main board and 2.66M at the canal ring's first sweep camera, against §3's 600k for the frame (`FrameStatsTest` holds them to 2.8M meanwhile), measured on the phone by VK bench;
-  - at the canal ring's first sweep camera the frame draws OUDEZIJDS VOORBURGWAL, which the renders do not (the canal ring's region scene leaves it out; `L1Test` names it as known);
+  - Done: **OUDEZIJDS VOORBURGWAL at the canal ring's first sweep camera** was the check's difference, not the frame's. Both draw the name with the same matrix, whose first entry the port prints as -0.000. The port's SVG reader composes each transform with the identity and so reads it as +0, while the twin keeps the -0 it snapped to. `L1Test`'s transform keys drop a printed zero's sign now, as its coordinates already did, and it names no known difference;
   - the first picture: ten tiles and 32 MB at the home before it is complete;
   - indexed ground draws;
   - an island's water level from the ring around it;

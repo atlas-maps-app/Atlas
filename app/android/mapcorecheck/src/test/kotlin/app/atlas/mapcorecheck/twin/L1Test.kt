@@ -36,14 +36,10 @@ class L1Test {
     /**
      * Differences found and not yet resolved, each named with where it is followed (ENGINE.md): by case and layer, the
      * twin's extra elements' keys as L1Diff reports them, which pass as known (and are printed) while nothing else
-     * differs there.
+     * differs there. None today: the one there was (OUDEZIJDS VOORBURGWAL at the canal ring's first sweep camera) was
+     * the key's, a matrix entry the port prints as -0.000 (L1Diff's transform keys drop a printed zero's sign now).
      */
-    private val known: Map<String, Set<String>> = mapOf(
-        // the canal ring's region scene leaves this name out at its first sweep camera, the core draws it (step 2)
-        "canal sweep 0 sunny S1 ground" to setOf(
-            "text 'OUDEZIJDS VOORBURGWAL' Geist, Helvetica, sans-serif 3.200 700 false 0.300 1; fill #ffeaf2fa 1.000; stroke none",
-        ),
-    )
+    private val known: Map<String, Set<String>> = mapOf()
 
     private class Case(val name: String, val pack: String, val file: File, val region: () -> LiveRegion?, val view: (LiveRegion) -> LiveView, val moment: String)
 
