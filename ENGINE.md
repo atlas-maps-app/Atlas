@@ -320,6 +320,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
 - Canal names read upright, with hysteresis.
 - The canal ring is bundled for the first look offline.
 - The look is refined in the engine, not in the renderer. The renderer and its port are frozen as the yardstick from 20 October 2026.
+- Clouds, cloud shadows and reflections come in step 4, in the plan's order (21 October 2026); the soft shadows were pulled into step 2.
 
 **Open**, each with a default so work never waits:
 - **The renderer's known issues:** melting buildings is fixed by design (true depth). Others are fixed in the engine as they are found and named in the case files (the default), or the user lists them to be fixed first.
