@@ -14,9 +14,9 @@ namespace atlas::frame {
 
 namespace {
 
-/// The mode the map draws in until the composite's filters exist (K17a): D16's structural mode, every per-camera rule
-/// of the renders with mat, the grain and the cloud shadows off.
-constexpr Mode map_mode = Mode::structural;
+/// The mode the map draws in: full, every effect the core draws (`mat`'s rule, the grain once the noise fields are
+/// bound, the soft shadows), as the engine's references draw the app's frames (likeness/engine.json's mode).
+constexpr Mode map_mode = Mode::full;
 
 /// Whether two listings of a pack are the same bytes: the same id, kind, file or range, and identity.
 [[nodiscard]] bool same_source(const tiles::PackRef& a, const tiles::PackRef& b) noexcept {
@@ -136,7 +136,7 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
     // Westerkerk), D3.
     world_->set_coarser_enclosing(true);
     // The noise fields and the byte tables (K17a), kept under the app's cache: without them the effects that read them
-    // stay stubbed, which the map's structural mode does anyway, so their failure only says so.
+    // (the grain) stay stubbed and the rest of the frame draws as before, so their failure only says so.
     auto fields = fx::FieldCache::create(
         device, {.dir = options_.cache_dir.empty() ? std::filesystem::path() : options_.cache_dir / "fields"});
     if (!fields) {
