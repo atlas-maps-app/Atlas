@@ -138,7 +138,7 @@ Nothing is finished. Each part below is a first version on `app`. It gets rework
 | Sun | the sun test on the workers, equal to the port on every sample of 21 board renders; a lane for the pack drawn and one for the coarser pack around it |
 | Ground and water | drawn and registered; L1 matched in all 11 cases; the soft shadows on the port's own filter grid, their boxes and fade bit for bit |
 | Buildings, first half | walls, parts, every roof shape and houseboats, with sun bits, edges and the roofs' thin edges, at their true depth (a pair the renderer melts is drawn right; the switch draws the renderer's order); held to the port's polygons and on lavapipe to a depth raster of the twin with its strokes; registered |
-| Text | shaping, glyphs, canal names (read from the whole pack), and the board's labels placed; registered, the fonts from the map's resources |
+| Text | shaping, glyphs, canal names (read from the whole pack), and the board's labels drawn by the core, fixed on the map and scaled with it; registered, the fonts from the map's resources |
 | Noise fields, thin strokes | WebKit's turbulence byte for byte (scalar and NEON); `ObjectStrokes` |
 | Frosted glass | drawn by the core under the chrome |
 | Likeness harness | references from the port, candidates from the host build; the engine's own references (`likeness/engine.json`); the desktop render tool |
@@ -199,7 +199,13 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - Because the grid follows the shadows' box, their softness follows the view as the camera moves, as each render would have it. The phone will show whether that reads well.
   - As the renders' other filters, they run in full mode (the app's); structural mode draws them sharp, as the likeness's structural references draw the group unfiltered.
   - The engine's references are at version 3.
-- **Labels** are drawn by the core's frame instead of the Compose canvas, with the fonts loaded at the map's start, each fixed where it is on the map and growing and shrinking with the zoom like the map, within its zoom band and above a readable floor (design point 8).
+- Done: **the labels fixed on the map** (design point 8), drawn by the core's frame once its picture shows with nothing of today's map over it; elsewhere, and while today's map fades, the canvas draws them as before (LabelPainter, placed afresh every frame).
+  - The app hands the core each label as a sprite drawn by Android exactly as the board's painter draws it (`MapCore.labels`, the façade's ABI 6), with stable ids.
+  - The core places each label once, where the painter would (a set's first frame is the painter's placement exactly), and keeps its point and spot at rest and moving alike. The set grows and shrinks with the map's scale (the camera's distance, so a tilted view keeps the zoom's size) between 0.7 and 1.5 times its own size; beyond, it is placed anew at its own size as its old places fade out. A placed label that meets one kept before it (turning and tilting move the points, not the level boxes), a keep-out or a marker fades out where it stands and back once clear.
+  - The readable floor: 12 sp times Android's font scale, over the smallest label's 17 dp, raises the band's low end.
+  - A grown or shrunk sprite is sampled bilinearly; at its own size it is still copied texel for texel.
+  - Meanwhile (until step 6 brings them into the core): the core's labels lie under the canvas's routes, areas and markers, and keep clear of the chrome's shapes but not of the markers.
+  - Still to come: the levels' sets handing over at the band's ends (quarters and districts out of town, streets and buildings close in: the label candidates of step 3), sprites drawn at the band's top so a grown label stays sharp, and water names upright with hysteresis like the canal names.
 - **All of Amsterdam from the core:** `PackList.kt`, then the first publish of the `amsterdam` and `grachten` render packs after the user's yes (a `packs.yml` run with `renders=only`).
 - **The style file:** the tiles' style section becomes the engine's own, edited as data. Every pass reads its colours and widths from it, before step 4 adds more.
 - **VK facts and VK bench on the device:**
