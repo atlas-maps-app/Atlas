@@ -69,6 +69,9 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     /** The engine's typefaces, set by the view from its assets. */
     var fonts: SvgFonts? = null
 
+    /** Android's text size, a fraction of the default (Configuration.fontScale): the labels' readable floor follows it. */
+    var fontScale = 1f
+
     /** The labels' face (the boards' Instrument Serif italic), given by the app. */
     var labelTypeface: android.graphics.Typeface? = null
     val frames: EngineFrames = EngineFrames(fonts = { fonts ?: SvgFonts.system() }, onChange = { main.post(published) })
@@ -179,6 +182,15 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     private var canvasFrameAtWant = 0L
     private var transitionJob: Job? = null
     private var sentMoment: Moment? = null
+
+    /** The labels last handed to the core: the list (by identity), its face, the density, whether the core draws them. */
+    private class SentLabels(val labels: List<MapLabel>, val face: android.graphics.Typeface?, val density: Float, val draws: Boolean)
+    private var sentLabels: SentLabels? = null
+    private var labelsRevision = 0L
+
+    /** Whether the core draws the labels now (the canvas does not); the painter its sprites are drawn with. */
+    private var coreLabels = false
+    private var spritePainter: LabelPainter? = null
     private var movedAt = 0L
     private var panelLine = ""
     private var panelJob: Job? = null
@@ -337,6 +349,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         if (mapCore == null || packs == null || closed) {
             if (old != null) {
                 core = null
+                sentLabels = null
+                coreLabels = false
                 closeCore(old)
                 noteChrome()
                 lastRequest = null
@@ -350,6 +364,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         core = c
         coreWanted = null
         sentMoment = null
+        sentLabels = null
+        coreLabels = false
         publishedCamera = null
         noteChrome()
         scope.launch {
@@ -514,6 +530,28 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         if (at < 0 || !MapEngine.firstFrameLogged.compareAndSet(false, true)) return
         val from = MapEngine.startedAt.takeIf { it > 0 } ?: android.os.Process.getStartUptimeMillis()
         Log.i(EngineFrames.TAG, "vk first frame ${at - from} ${if (MapEngine.firstLaunch) "first" else "warm"}")
+    }
+
+    /**
+     * The labels: the core draws them once its picture shows with nothing of today's map over it (fixed where they are
+     * on the map, growing and shrinking with it, ENGINE.md design point 8), today's map's canvas until then; handed over
+     * off the main thread when that, the labels or their face change.
+     */
+    private fun sendLabels(c: CoreMap) {
+        val draws = coreWanted == Transition.Path.CORE && c.transition.canvas == 0f
+        val labels = if (draws) overlays.labels else emptyList()
+        val face = labelTypeface
+        val sent = sentLabels
+        if (sent != null && sent.labels === labels && sent.face === face && sent.density == density && sent.draws == draws) return
+        sentLabels = SentLabels(labels, face, density, draws)
+        coreLabels = draws
+        val revision = ++labelsRevision
+        val painter = spritePainter?.takeIf { sent?.density == density } ?: LabelPainter(density).also { spritePainter = it }
+        val least = READABLE_SP * fontScale / painter.smallestSize
+        scope.launch(Dispatchers.Default) {
+            val why = c.labels(labels, face, painter, least, revision)
+            if (why.isNotEmpty()) Log.w(EngineFrames.TAG, "vk labels: $why")
+        }
     }
 
     /** The moment the core lights the map by, handed over off the main thread when it changed. */
@@ -721,7 +759,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             pt.layoutMarkers(g, ov.markers)
             pt.drawGround(canvas, g, ov)
             labelTypeface?.let { pt.labels.typeface = it }
-            pt.drawLabels(canvas, g, ov)
+            c?.let(::sendLabels)
+            if (!coreLabels) pt.drawLabels(canvas, g, ov)
             pt.drawMarkers(canvas)
             ov.location?.let { pt.drawLocation(canvas, g, it) }
             tape?.let { pt.drawTape(canvas, g, it, units, Locale.getDefault()) }
@@ -1110,6 +1149,9 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
 
         /** How long a new exact frame takes to fade in over the last, ms. */
         const val FADE_MS = 180.0
+
+        /** The least text size a label draws at, sp: Android's text size scales it (the core's readable floor). */
+        const val READABLE_SP = 12f
 
         /** The live moment moves on in steps of this many seconds (each step is a new frame). */
         const val MOMENT_STEP_S = 300L

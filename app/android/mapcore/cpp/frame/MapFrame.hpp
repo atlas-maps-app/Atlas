@@ -21,6 +21,7 @@
 #pragma once
 
 #include "frame/FrameBuilder.hpp"
+#include "labels/Sprites.hpp"
 #include "scene/World.hpp"
 #include "standin/SessionMap.hpp"
 #include "style/Theme.hpp"
@@ -76,6 +77,8 @@ public:
     [[nodiscard]] std::string set_packs(std::vector<MapPack> packs);
     /// The moment's theme from now on (checked by style::read_theme_block).
     void set_theme(const style::ThemeBlock& theme) noexcept { theme_ = theme; }
+    /// The app's labels from now on (MapCore.labels; null: none), drawn by the labels pass.
+    void set_labels(std::shared_ptr<const labels::LabelSet> labels) noexcept { labels_ = std::move(labels); }
     /// The painter switch from now on (FrameOptions::painter), kept for every frame builder made.
     void set_painter(bool on) noexcept {
         painter_ = on;
@@ -118,6 +121,7 @@ private:
     std::chrono::steady_clock::time_point epoch_;
     std::vector<MapPack> packs_;
     std::optional<style::ThemeBlock> theme_;
+    std::shared_ptr<const labels::LabelSet> labels_;
     bool painter_ = false;
     std::uint64_t active_number_ = 0;
     std::string active_id_;

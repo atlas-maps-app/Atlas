@@ -90,4 +90,13 @@ struct SpriteAt {
 };
 [[nodiscard]] SpriteAt sprite_at(const LabelSprite& sprite, const Drawn& drawn) noexcept;
 
+/// The magic number that opens a block of label sprites ('LBL1', little-endian).
+inline constexpr std::uint32_t label_block_magic = 0x314C'424CU;
+
+/// The sprites of a block as the app writes it (MK/state/LabelBlock.kt; Native.labels), little-endian: the magic and
+/// the count (u32 each); per sprite its id and priority (i32), its measures (f32: half its text's width plus the pad,
+/// the pad, its text's height, its baseline's offset), its width and height (u32), its anchor (i32 x, y), its points'
+/// count (u32), its points (f64 latitude, longitude each), its pixels (width x height u32). Or why it was refused.
+[[nodiscard]] std::expected<std::vector<LabelSprite>, std::string> read_label_block(std::span<const std::byte> block);
+
 } // namespace atlas::labels

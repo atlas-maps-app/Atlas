@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 5
+    const val ABI = 6
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -197,4 +197,10 @@ object Native {
 
     /** The painter switch for the map ([on]: the renderer's painter's order for what stands up, else true depth). */
     @JvmStatic external fun painter(handle: Long, on: Boolean)
+
+    /**
+     * The map's labels (`state.LabelBlock`'s block in a direct buffer; an empty block takes them away) at [revision],
+     * drawn no smaller than [least] of their own size; "" or why they were refused.
+     */
+    @JvmStatic external fun labels(handle: Long, block: ByteBuffer, revision: Long, least: Float): String
 }

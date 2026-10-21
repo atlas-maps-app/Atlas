@@ -22,6 +22,7 @@
 #include "gpu/Guard.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "gpu/Swapchain.hpp"
+#include "labels/Sprites.hpp"
 #include "standin/Session.hpp"
 #include "style/CameraState.hpp"
 #include "style/Theme.hpp"
@@ -280,6 +281,14 @@ public:
     void painter(bool on) {
         on_session([this, on] {
             map_->set_painter(on);
+            ask_frame();
+        });
+    }
+
+    /// The app's labels for the map from now on (null: none).
+    void labels(std::shared_ptr<const labels::LabelSet> set) {
+        on_session([this, &set] {
+            map_->set_labels(std::move(set));
             ask_frame();
         });
     }
@@ -787,6 +796,28 @@ void native_painter(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean on) 
     if (core != nullptr) core->painter(on == JNI_TRUE);
 }
 
+/// The app's labels for the map (MK/state/LabelBlock.kt's block in a direct buffer, labels/Sprites.hpp's
+/// read_label_block), at `revision`, drawn no smaller than `least` of their own size; an empty block takes them away.
+/// "" or why they were refused.
+jstring native_labels(JNIEnv* env, jclass /*cls*/, jlong handle, jobject block, jlong revision, jfloat least) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    void* address = block == nullptr ? nullptr : env->GetDirectBufferAddress(block);
+    const jlong capacity = block == nullptr ? 0 : env->GetDirectBufferCapacity(block);
+    if (address == nullptr || capacity < 0) return java(env, "the labels must be a direct buffer");
+    auto sprites =
+        labels::read_label_block(std::span(static_cast<const std::byte*>(address), static_cast<std::size_t>(capacity)));
+    if (!sprites) return java(env, std::format("the labels were refused: {}", sprites.error()));
+    if (sprites->empty()) {
+        core->labels(nullptr);
+        return java(env, "");
+    }
+    auto set = labels::LabelSet::make(std::move(*sprites), static_cast<std::uint64_t>(revision), least);
+    if (!set) return java(env, std::format("the labels were refused: {}", labels::describe(set.error())));
+    core->labels(std::move(*set));
+    return java(env, "");
+}
+
 template <class F>
 void* fn(F f) {
     return reinterpret_cast<void*>(f);
@@ -886,8 +917,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 29>& methods() {
-    static const std::array<JNINativeMethod, 29> table{{
+const std::array<JNINativeMethod, 30>& methods() {
+    static const std::array<JNINativeMethod, 30> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -930,6 +961,7 @@ const std::array<JNINativeMethod, 29>& methods() {
         method("map", "(JI)Ljava/lang/String;", fn(&native_map)),
         method("packs", "(J[Ljava/lang/String;[J[I[Ljava/lang/String;[I[J[J)Ljava/lang/String;", fn(&native_packs)),
         method("moment", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_moment)),
+        method("labels", "(JLjava/nio/ByteBuffer;JF)Ljava/lang/String;", fn(&native_labels)),
         method("painter", "(JZ)V", fn(&native_painter)),
     }};
     return table;

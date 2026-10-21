@@ -88,6 +88,7 @@ fun AtlasMap(
     }
     SideEffect {
         controller.density = density.density
+        controller.fontScale = density.fontScale
         controller.style = style
         controller.labelTypeface = labelTypeface
         controller.overlays = overlays

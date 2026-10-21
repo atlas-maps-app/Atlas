@@ -2,6 +2,8 @@
 
 #include "base/pymath/PyMath.hpp"
 
+#include <cstring>
+#include <format>
 #include <limits>
 
 namespace atlas::labels {
@@ -41,6 +43,46 @@ std::expected<std::shared_ptr<const LabelSet>, SpriteError> LabelSet::make(std::
     }
     set->sprites_ = std::move(sprites);
     return std::shared_ptr<const LabelSet>(std::move(set));
+}
+
+std::expected<std::vector<LabelSprite>, std::string> read_label_block(std::span<const std::byte> block) {
+    std::size_t at = 0;
+    const auto take = [&](void* out, std::size_t bytes) {
+        if (block.size() - at < bytes) return false;
+        std::memcpy(out, block.data() + at, bytes);
+        at += bytes;
+        return true;
+    };
+    std::uint32_t magic = 0;
+    std::uint32_t count = 0;
+    if (!take(&magic, 4) || magic != label_block_magic) return std::unexpected("not a block of label sprites");
+    if (!take(&count, 4)) return std::unexpected("the block ends before its count");
+    std::vector<LabelSprite> out;
+    out.reserve(std::min<std::size_t>(count, block.size() / 44));
+    for (std::uint32_t i = 0; i < count; ++i) {
+        LabelSprite s;
+        std::uint32_t points = 0;
+        if (!take(&s.id, 4) || !take(&s.priority, 4) || !take(&s.measures.half, 4) || !take(&s.measures.pad, 4) ||
+            !take(&s.measures.text_height, 4) || !take(&s.measures.baseline, 4) || !take(&s.width, 4) ||
+            !take(&s.height, 4) || !take(&s.anchor_x, 4) || !take(&s.anchor_y, 4) || !take(&points, 4)) {
+            return std::unexpected(std::format("the block ends in sprite {}'s head", i));
+        }
+        if (points > LabelSet::max_points || s.width > LabelSet::max_sprite_side ||
+            s.height > LabelSet::max_sprite_side) {
+            return std::unexpected(std::format("sprite {} is larger than a sprite may be", i));
+        }
+        s.points.resize(points);
+        for (std::array<double, 2>& p : s.points) {
+            if (!take(p.data(), 16)) return std::unexpected(std::format("the block ends in sprite {}'s points", i));
+        }
+        s.pixels.resize(std::size_t{s.width} * s.height);
+        if (!take(s.pixels.data(), s.pixels.size() * 4)) {
+            return std::unexpected(std::format("the block ends in sprite {}'s pixels", i));
+        }
+        out.push_back(std::move(s));
+    }
+    if (at != block.size()) return std::unexpected("the block runs on past its sprites");
+    return out;
 }
 
 SpriteAt sprite_at(const LabelSprite& sprite, const Drawn& drawn) noexcept {

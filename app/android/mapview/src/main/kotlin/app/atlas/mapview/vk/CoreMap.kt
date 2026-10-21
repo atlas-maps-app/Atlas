@@ -8,9 +8,13 @@ import android.util.Log
 import app.atlas.mapcore.CameraState
 import app.atlas.mapcore.FrameRecords
 import app.atlas.mapcore.MapCore
+import app.atlas.mapcore.state.LabelBlock
 import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.mapview.EngineFrames
+import app.atlas.mapview.LabelPainter
+import app.atlas.mapview.LabelSprites
 import app.atlas.mapview.MapEngine
+import app.atlas.mapview.MapLabel
 import app.atlas.render.live.Moment
 import java.time.ZoneId
 import java.util.Locale
@@ -145,6 +149,30 @@ internal class CoreMap(
         }
         return why
     }
+
+    /** The ids the core knows this map's labels by: stable while the map lives (a label keeps its place by its id). */
+    private val labelIds = HashMap<String, Int>()
+    private val labelLock = Any()
+    private var labelsRevision = 0L
+
+    /**
+     * The labels the core draws for this map from now on: [labels] as sprites drawn by [painter] in [face] (none when
+     * empty), never smaller than [least] of their own size, unless a later hand-over ([revision], counted by the caller)
+     * went already. Off the main thread. "" or why the core refused them.
+     */
+    fun labels(labels: List<MapLabel>, face: android.graphics.Typeface?, painter: LabelPainter, least: Float, revision: Long): String =
+        synchronized(labelLock) {
+            if (revision <= labelsRevision) return ""
+            labelsRevision = revision
+            if (face != null) painter.typeface = face
+            val sprites = LabelSprites(painter)
+            val block = LabelBlock.write(labels.map { label ->
+                val s = sprites.sprite(label, labelIds.getOrPut(label.id) { labelIds.size + 1 })
+                val points = DoubleArray(2 * s.points.size) { i -> if (i % 2 == 0) s.points[i / 2].lat else s.points[i / 2].lon }
+                LabelBlock.Sprite(s.id, s.priority, s.half, s.pad, s.textHeight, s.baseline, s.width, s.height, s.anchorX, s.anchorY, points, s.pixels)
+            })
+            core.labels(block, revision, least)
+        }
 
     /** This map leaves the screen: the core's map goes off if this map was the one drawing (off the main thread). */
     fun close() {

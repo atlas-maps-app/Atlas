@@ -37,6 +37,9 @@ internal class LabelPainter(private val density: Float) {
     /** The pad about a label's text that its box keeps clear, px. */
     val pad: Float get() = 4f * density
 
+    /** The smallest label's text size, dp (a quarter's). */
+    val smallestSize: Float get() = AREA_SIZE
+
     /** Labels placed in the last [draw], for tests and the debug panel. */
     var placedCount = 0
         private set

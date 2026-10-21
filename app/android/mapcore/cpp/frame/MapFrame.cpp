@@ -186,8 +186,12 @@ void MapFrame::next(const style::CameraState& camera, double seconds) {
     if (const tiles::StorePack* pack = world_->active(); pack != nullptr && pack->pack.head() != nullptr) {
         theme = with_profile(theme, pack->pack.head()->profile);
     }
-    builder_->set_inputs(
-        {.camera = camera, .theme = theme, .seconds = seconds, .mode = map_mode, .scene = world_.get()});
+    builder_->set_inputs({.camera = camera,
+                          .theme = theme,
+                          .seconds = seconds,
+                          .mode = map_mode,
+                          .scene = world_.get(),
+                          .labels = labels_.get()});
 }
 
 standin::MapCounts MapFrame::counts() const noexcept {

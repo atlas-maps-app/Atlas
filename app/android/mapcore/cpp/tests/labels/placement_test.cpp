@@ -403,6 +403,68 @@ TEST_CASE("a set of labels keeps every sprite's texels once, and a sprite goes w
     CHECK(LabelSet::make(bad, 1).error() == SpriteError::points);
 }
 
+TEST_CASE("a block of label sprites as the app writes it is read field for field, and a broken one refused") {
+    // Two sprites in MK/state/LabelBlock.kt's layout.
+    std::vector<std::byte> block;
+    const auto put = [&](const auto& v) {
+        const auto* p = reinterpret_cast<const std::byte*>(&v); // NOLINT: the value's bytes
+        block.insert(block.end(), p, p + sizeof v);
+    };
+    const auto sprite = [&](std::int32_t id, std::uint32_t w, std::uint32_t h, std::span<const double> points) {
+        put(id);
+        put(std::int32_t{7});
+        for (const float v : {40.5F, 10.5F, 20.0F, -7.0F}) put(v);
+        put(w);
+        put(h);
+        put(std::int32_t{1});
+        put(std::int32_t{2});
+        put(static_cast<std::uint32_t>(points.size() / 2));
+        for (const double v : points) put(v);
+        for (std::uint32_t i = 0; i < w * h; ++i) put(i * 0x01010101U);
+    };
+    put(label_block_magic);
+    put(std::uint32_t{2});
+    const std::array<double, 2> one{52.37, 4.88};
+    const std::array<double, 4> two{52.38, 4.89, 52.381, 4.891};
+    sprite(1, 3, 2, one);
+    sprite(9, 1, 1, two);
+    const auto read = read_label_block(block);
+    ATLAS_REQUIRE(read.has_value(), read.error());
+    ATLAS_REQUIRE(read->size() == 2);
+    const LabelSprite& a = (*read)[0];
+    CHECK(a.id == 1);
+    CHECK(a.priority == 7);
+    CHECK(a.measures.half == 40.5F);
+    CHECK(a.measures.pad == 10.5F);
+    CHECK(a.measures.text_height == 20.0F);
+    CHECK(a.measures.baseline == -7.0F);
+    CHECK(a.width == 3);
+    CHECK(a.height == 2);
+    CHECK(a.anchor_x == 1);
+    CHECK(a.anchor_y == 2);
+    CHECK(a.points == std::vector<std::array<double, 2>>{{52.37, 4.88}});
+    CHECK(a.pixels == std::vector<std::uint32_t>{0, 0x01010101U, 0x02020202U, 0x03030303U, 0x04040404U, 0x05050505U});
+    CHECK((*read)[1].id == 9);
+    CHECK((*read)[1].points == std::vector<std::array<double, 2>>{{52.38, 4.89}, {52.381, 4.891}});
+    // refused: another magic, a block cut short in a sprite's head, points or pixels, bytes past the last sprite
+    std::vector<std::byte> bad = block;
+    bad[0] = std::byte{0};
+    CHECK(read_label_block(bad).error() == "not a block of label sprites");
+    CHECK(read_label_block(std::span(block).first(20)).error() == "the block ends in sprite 0's head");
+    CHECK(read_label_block(std::span(block).first(8 + 44 + 8)).error() == "the block ends in sprite 0's points");
+    CHECK(read_label_block(std::span(block).first(8 + 44 + 16 + 8)).error() == "the block ends in sprite 0's pixels");
+    bad = block;
+    bad.push_back(std::byte{0});
+    CHECK(read_label_block(bad).error() == "the block runs on past its sprites");
+    // an empty block: no sprites
+    std::vector<std::byte> none;
+    for (const std::uint32_t v : {label_block_magic, 0U}) {
+        const auto* p = reinterpret_cast<const std::byte*>(&v); // NOLINT: the value's bytes
+        none.insert(none.end(), p, p + 4);
+    }
+    CHECK(read_label_block(none).value().empty());
+}
+
 TEST_CASE("a frame's placement takes at most 0.5 ms on one core (gated with ATLAS_TIMED=1)") {
     // A busy board: 60 labels of up to four points, 8 keep-outs, 24 markers, panning and slowly zooming in over 1,000
     // frames (past the band once).
