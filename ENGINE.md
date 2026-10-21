@@ -131,7 +131,7 @@ Nothing is finished. Each part below is a first version on `app`. It gets rework
 | Part | State |
 |---|---|
 | Toolchain and CI | NDK r30, CMake presets for the hosts and Android, Slang shaders checked at build time, lavapipe under the validation layer |
-| Vulkan device layer | VK facts, the crash guard, frame configurations, both frame routes, the pipeline cache and the SurfaceView host; the VK facts and VK bench screens, measured on the user's phone |
+| Vulkan device layer | VK facts, the crash guard, frame configurations, both frame routes, the pipeline cache and the SurfaceView host; the VK facts and VK bench screens, measured on the user's phone; VK facts' hash lines (pymath, the sun, the noise fields, the ground, the twin), held to the host build's on CI's emulator, and its composite check, behind a guard stage of its own |
 | Data | render tiles, the packer's `render-tiles` and the core's reader (fuzzed); the Westerkerk and the canal ring bundled; render packs that build for `amsterdam` and `grachten` |
 | Numerics and style | pymath; the light, the theme and `ScreenLayers`; the style file (`app/android/mapcore/style/engine.jsonc`), which every render pack carries and the core reads, typed, as a pack opens; the rule table, which lists every line of the renderer that draws |
 | Frame core | camera, ladder, cover, residency, heaps (one buffer and one virtual block of a 64 MB budget; a tile that finds no room waits for a range to go), ranks and pass registry; the composite (haze, vignette, `mat`'s rule, grain); the twin and L1; the coarser pack around the active one, chosen as the smallest pack that holds it; the packs' own stage T (`Pass::build_pack`) |
@@ -141,7 +141,7 @@ Nothing is finished. Each part below is a first version on `app`. It gets rework
 | Text | shaping, glyphs, canal names (read from the whole pack), and the board's labels drawn by the core, fixed on the map and scaled with it; registered, the fonts from the map's resources |
 | Noise fields, thin strokes | WebKit's turbulence byte for byte (scalar and NEON); `ObjectStrokes` |
 | Frosted glass | drawn by the core under the chrome |
-| Likeness harness | references from the port, candidates from the host build; the engine's own references (`likeness/engine.json`); the desktop render tool |
+| Likeness harness | references from the port, candidates from the host build, with their owner maps (real since 21 October); the engine's own references (`likeness/engine.json`); the desktop render tool |
 | The app | the core draws the maps where it has tiles, under today's map and the overlays, cross-fading to today's map (the port on Canvas) elsewhere; the honest state where the phone cannot draw (three device losses included); the painter switch on VK facts in debug builds |
 
 The local branches are history; `wip/build-pack`, `wip/buildings-registration`, `wip/app-map` and `wip/text-registration` landed on 20 October 2026, and `wip/exact-haze`'s last commit (the rest was on `app` already) the same night. The old builders' worktrees went to the Trash on 20 October 2026; their work is on `app` or these branches.
