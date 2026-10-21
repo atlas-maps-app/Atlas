@@ -5,7 +5,7 @@ Atlas draws its map with its own engine. This is the one document about it: what
 ## What it is
 
 - **The centerpiece of the app, purpose built for Atlas.** It is done first, and the rest of the app builds on it.
-- **Built from the ground up.** A C++23 core on Vulkan (`app/android/mapcore/cpp`), behind a small Kotlin façade (`app.atlas.mapcore.MapCore`). It draws vector tiles every frame the camera moves, at the screen's own density, and nothing at rest. A label stays where it is on the map and only changes in size, and detail comes and goes with the zoom.
+- **Built from the ground up.** A C++23 core on Vulkan (`app/android/mapcore/cpp`), behind a small Kotlin façade (`app.atlas.mapcore.MapCore`). It draws vector tiles every frame the camera moves, at the screen's own density, and nothing at rest. A label stays where it is on the map and grows and shrinks with the zoom, like the map itself, and detail comes and goes with the zoom.
 - **Global, and it builds itself.** The map covers the entire world, from the globe down to a single street. The phone gathers up-to-date map data for any place, at any time, and builds the map itself. Pre-built packs are additions, not a requirement.
 - **Independent.** The app never relies on a single source. Every input has more than one way in, and the map keeps working offline with what it has.
 - **Matches the renderer.** The Python renderer (`render/*.py`, ported byte for byte to Kotlin in `app/android/render`) is the starting point for the look: its features, rules, colours and light.
@@ -67,7 +67,7 @@ Atlas draws its map with its own engine. This is the one document about it: what
 8. **Text.**
    - Names on the ground (water and canal names along their ways) are shaped by HarfBuzz as Android shapes them, and drawn from the glyphs' outlines (Slug).
    - Place names in every script are sprites drawn by Android's own text stack.
-   - The core places them, with collisions and fades. Once placed, a label stays fixed where it is on the map and only its size follows the zoom (the user, 21 October: "The text should be fixed where it is and only update in size"): no re-placing at rest, no sliding or jumping between its spots while the map moves.
+   - The core places them, with collisions and fades. Once placed, every label stays fixed where it is on the map and grows and shrinks with the zoom, like the map (the user, 21 October: "The text should be fixed where it is and only update in size"; then "every label stays where it is and grows and shrinks with the zoom, like the map"): no re-placing at rest, no sliding or jumping between its spots while the map moves, no fixed screen size.
 9. **Levels** run from the street to the planet: full detail, a simplified level from the keep codes, blocks of merged footprints, the mid-zoom base, the globe. Fades and a triangle governor mean nothing pops and nothing is a hole.
 10. **Work only when needed.** Frames come on vsync only while something changes, with ADPF hints. Tiles, the sun and the noise fields are done on background workers. Nothing is done per frame that can be done once.
 11. **Deterministic everywhere, exact wherever the result depends on it.**
@@ -194,7 +194,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - Named differences from the port: the union's edges (4x samples against the port's coverage of each path) and the bilinear filter's rounding. At the home the frame is within two levels of the blurred result.
   - Because the grid follows the shadows' box, their softness follows the view as the camera moves, as each render would have it. The phone will show whether that reads well.
   - The engine's references are at version 3.
-- **Labels** are drawn by the core's frame instead of the Compose canvas, with the fonts loaded at the map's start, each fixed where it is on the map and changing only in size (design point 8).
+- **Labels** are drawn by the core's frame instead of the Compose canvas, with the fonts loaded at the map's start, each fixed where it is on the map and growing and shrinking with the zoom like the map (design point 8).
 - **All of Amsterdam from the core:** `PackList.kt`, then the first publish of the `amsterdam` and `grachten` render packs after the user's yes (a `packs.yml` run with `renders=only`).
 - **The style file:** the tiles' style section becomes the engine's own, edited as data. Every pass reads its colours and widths from it, before step 4 adds more.
 - **VK facts and VK bench on the device:**
