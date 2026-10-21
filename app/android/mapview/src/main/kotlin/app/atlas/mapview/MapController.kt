@@ -75,7 +75,10 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     /** The labels' face (the boards' Instrument Serif italic), given by the app. */
     var labelTypeface: android.graphics.Typeface? = null
     val frames: EngineFrames = EngineFrames(fonts = { fonts ?: SvgFonts.system() }, onChange = { main.post(published) })
-    private val engineChanged: () -> Unit = { frames.invalidate() }
+    private val engineChanged: () -> Unit = {
+        frames.invalidate()
+        main.post(repack)
+    }
 
     /** Bumped on the main thread whenever there is something new to draw; the view's draw reads it. */
     val frameTick = mutableIntStateOf(0)
@@ -243,6 +246,26 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
 
     /** The camera came to rest (an animation ended, the fingers lifted): the core's last frame snaps (D4). */
     private val settle = Runnable { if (!closed) publishCamera(force = true) }
+
+    /**
+     * The packs on the phone may have changed (a region downloaded with its render pack, a first visit's render pack
+     * fetched): the core is handed them again off the main thread, and where they changed the map draws what it can
+     * draw now, the transitional rule asked again. Nothing when the list is the same.
+     */
+    private val repack = Runnable {
+        val c = core ?: return@Runnable
+        if (closed) return@Runnable
+        scope.launch {
+            val said = withContext(Dispatchers.Default) { runCatching { c.handPacks() }.getOrDefault("") }
+            if (core !== c || closed || said.isEmpty()) return@launch
+            Log.i(EngineFrames.TAG, "vk packs again: ${said.lines().filter { it.isNotBlank() }.joinToString(", ")}")
+            publishCamera(force = true)
+            update()
+        }
+    }
+
+    /** When the map last asked for a published render pack of the place it stands on (SystemClock.uptimeMillis). */
+    private var fetchCheckedAt = 0L
 
     /**
      * The ground frame gestures and overlays take: the region today's map draws, or, where the core's picture is the
@@ -639,6 +662,13 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
                     lastRequest = null
                     canvasFrameAtWant = shown?.number ?: 0L
                 }
+            }
+            // Where the core has no tiles, online, a published render pack holding the place comes once in the
+            // background (PackList.fetchAt), and the core is handed it when it is on the phone; asked twice a second.
+            val now = SystemClock.uptimeMillis()
+            if (wanted == Transition.Path.CANVAS && now - fetchCheckedAt >= FETCH_CHECK_MS) {
+                fetchCheckedAt = now
+                c.packs.fetchAt(LatLon(view.lat, view.lon)) { main.post(repack) }
             }
         }
         if (c != null) {
@@ -1167,6 +1197,9 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         /** The core's panel line refreshes this often while the map moves, and lingers this long after (ms). */
         const val PANEL_MS = 1_000L
         const val PANEL_LINGER_MS = 5_000L
+
+        /** How often the map asks for a published render pack where the core has no tiles, ms. */
+        const val FETCH_CHECK_MS = 500L
 
         /** How long the core draws alone before today's map lets go of its frame and scenes (ms). */
         const val IDLE_MS = 10_000L
