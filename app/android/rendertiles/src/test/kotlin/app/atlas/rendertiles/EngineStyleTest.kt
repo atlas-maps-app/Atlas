@@ -1,0 +1,145 @@
+package app.atlas.rendertiles
+
+import app.atlas.render.Amsterdam
+import app.atlas.render.Regions
+import app.atlas.rendertiles.compile.EngineStyle
+import app.atlas.rendertiles.compile.Style
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
+import org.junit.Test
+import java.io.File
+
+/**
+ * The engine's style file (`app/android/mapcore/style/engine.jsonc`) holds the renderer's values: its tables equal the
+ * port's (read by reflection where the port keeps them private), and each value the port's drawing code types as a
+ * literal is that literal, checked in the port's source (as RenderTablesTest checks the runways' order). Where the engine
+ * differs from the renderer on purpose, the value is named in [DIFFERENCES] with why, and is not held.
+ */
+class EngineStyleTest {
+    private fun port(name: String): Any? = Amsterdam::class.java.getDeclaredField(name).apply { isAccessible = true }.get(Amsterdam)
+
+    private val t = EngineStyle.tables
+
+    @Suppress("UNCHECKED_CAST")
+    private fun value(path: String): Any? {
+        val (table, key) = path.split('.')
+        return (t[table] as Map<String, Any?>)[key] ?: throw AssertionError("the style file has no $path")
+    }
+
+    /** A width as the renders' SVG writes it: `.25` for 0.25. */
+    private fun css(path: String): String = (value(path) as Double).toString().removePrefix("0")
+
+    @Test
+    fun `the tables are the port's`() {
+        val tables = mapOf(
+            "land" to Regions.LAND.entries.associate { (k, v) -> k to listOf(v.first, v.second) },
+            "area" to port("AREA"),
+            "surf" to Amsterdam.SURF,
+            "surf_colour" to port("SURF_COLOUR"),
+        )
+        for ((name, theirs) in tables) {
+            if (name in DIFFERENCES) continue
+            assertEquals(name, theirs, t[name])
+            assertEquals("$name's order", (theirs as Map<*, *>).keys.toList(), (t[name] as Map<*, *>).keys.toList())
+        }
+    }
+
+    @Test
+    fun `the values are the port's literals`() {
+        val src = File(Packs.repo, "app/android/render/src/main/kotlin/app/atlas/render")
+        assumeTrue(src.isDirectory)
+        val amsterdam = File(src, "Amsterdam.kt").readText()
+        val regions = File(src, "Regions.kt").readText()
+        // the values, the port's file and the source text that types them there
+        val literals = listOf(
+            Triple(listOf("ground.area_other"), amsterdam, """AREA[a["kind"]] ?: "${value("ground.area_other")}""""),
+            Triple(listOf("ground.cycleway"), amsterdam, """else if (hw == "cycleway") col = "${value("ground.cycleway")}""""),
+            Triple(listOf("rail.ballast_half_width"), regions, """ribbon(rp, if (!crane) ${value("rail.ballast_half_width")} else 0.5)"""),
+            Triple(listOf("rail.ballast"), regions, """dd, nightC(th, "${value("rail.ballast")}")))"""),
+            Triple(
+                listOf("rail.rails_width", "rail.rails_day", "rail.rails_night"), regions,
+                """stroke-width=\"${css("rail.rails_width")}\"/>", rl, if (!night) "${value("rail.rails_day")}" else "${value("rail.rails_night")}")""",
+            ),
+            Triple(
+                listOf("big_roads.asphalt_day", "big_roads.asphalt_night"), regions,
+                """nightC(th, if (!night) "${value("big_roads.asphalt_day")}" else "${value("big_roads.asphalt_night")}", 1.0)""",
+            ),
+            Triple(
+                listOf("big_roads.lines_day", "big_roads.lines_night"), regions,
+                """val mk = if (!night) "${value("big_roads.lines_day")}" else "${value("big_roads.lines_night")}"""",
+            ),
+            Triple(listOf("big_roads.lines_width"), regions, """val sw = px(cam, ${value("big_roads.lines_width")}, rp[rp.size / 2])"""),
+            Triple(
+                listOf("big_roads.lane_dash"), regions,
+                (value("big_roads.lane_dash") as List<*>).joinToString(", ", "y + 0.01, ", ")"),
+            ),
+            Triple(
+                listOf("runways.marks_day", "runways.marks_night"), regions,
+                """val mk = if (!night) "${value("runways.marks_day")}" else "${value("runways.marks_night")}"""",
+            ),
+            Triple(listOf("marine"), regions, marine(0, "to %s")),
+            Triple(listOf("marine"), regions, marine(1, "to \"%s\"")),
+            Triple(
+                listOf("trams.width", "trams.day", "trams.night"), amsterdam,
+                """stroke-width=\"${css("trams.width")}\" fill=\"none\"/>", pp.joinToString("L") { pf("%.1f %.1f", it.x, it.y) }, """ +
+                    """if (!night) "${value("trams.day")}" else "${value("trams.night")}")""",
+            ),
+            Triple(
+                listOf("bridges.lines", "bridges.lines_width"), amsterdam,
+                """stroke=\"${value("bridges.lines")}\" stroke-width=\"${css("bridges.lines_width")}\" fill=\"none\"/>"""",
+            ),
+            Triple(
+                listOf("buildings.roof_edge_day", "buildings.roof_edge_night"), amsterdam,
+                """val edge = if (!night) "${value("buildings.roof_edge_day")}" else "${value("buildings.roof_edge_night")}"""",
+            ),
+            Triple(listOf("buildings.roof_edge_slope"), amsterdam, """pf(" stroke=\"%s\" stroke-width=\"${css("buildings.roof_edge_slope")}\"", edge)"""),
+            Triple(listOf("buildings.roof_edge_top"), amsterdam, """pf(" stroke=\"%s\" stroke-width=\"${css("buildings.roof_edge_top")}\"", edge)"""),
+            Triple(listOf("buildings.wall_edge"), amsterdam, """colL, pf(" stroke=\"%s\" stroke-width=\"${css("buildings.wall_edge")}\"", colL)"""),
+            Triple(listOf("houseboats.hull"), amsterdam, """val hull = if (lens != "truth") hx("${value("houseboats.hull")}")"""),
+            Triple(listOf("houseboats.deck"), amsterdam, """if (lens == null) hx("${value("houseboats.deck")}") else hx("#FFFFFF")"""),
+            Triple(
+                listOf("houseboats.cabin_edge", "houseboats.cabin_edge_width"), amsterdam,
+                """" stroke=\"${value("houseboats.cabin_edge")}\" stroke-width=\"${css("houseboats.cabin_edge_width")}\""""",
+            ),
+            Triple(
+                listOf("canal_names"), amsterdam,
+                """V3(-uz, 0.0, ux), ${value("canal_names.size")}, "${value("canal_names.fill")}", ${value("canal_names.opacity")}, """ +
+                    """${value("canal_names.weight")}, ${value("canal_names.spacing")})""",
+            ),
+        )
+        for ((paths, file, text) in literals) {
+            if (paths.any { it in DIFFERENCES || it.substringBefore('.') in DIFFERENCES }) continue
+            assertTrue("${paths.joinToString()}: the port types `$text`", file.contains(text))
+        }
+    }
+
+    /** regions.py's marine works' widths (column 0) or colours (column 1), as draw_over's literal map types them. */
+    @Suppress("UNCHECKED_CAST")
+    private fun marine(column: Int, format: String): String =
+        (t["marine"] as Map<String, List<Any?>>).entries.joinToString(", ", "mapOf(", ")") { (kind, v) -> "\"$kind\" " + format.format(v[column]) }
+
+    @Test
+    fun `the file names no table the packer writes itself`() {
+        assertEquals(emptyList<String>(), t.keys.filter { it in Style.OWN })
+    }
+
+    @Test
+    fun `numbers are read as Python reads them`() {
+        val read = EngineStyle.parse(
+            """
+            // a comment
+            { "b": { "int": 700, "long": 4294967296, "double": 0.25, "exp": 1e2, "neg": -3 },
+              /* another */ "a": ["#FFFFFF", 0, true, null] }
+            """.trimIndent(),
+        )
+        assertEquals(listOf("b", "a"), read.keys.toList())
+        assertEquals(mapOf("int" to 700, "long" to 4294967296L, "double" to 0.25, "exp" to 100.0, "neg" to -3), read["b"])
+        assertEquals(listOf("#FFFFFF", 0, true, null), read["a"])
+    }
+
+    companion object {
+        /** The style file's values that differ from the renderer's on purpose (a table or `table.key`), and why: none yet. */
+        val DIFFERENCES: Map<String, String> = emptyMap()
+    }
+}

@@ -1,0 +1,131 @@
+// The engine's style (ENGINE.md, design point 3): the colours and widths the core draws with, as data. The packer
+// writes these tables into every render pack's `style` section (rendertiles' Style), beside the tables of the format
+// (the keep ladder, the tag keys, the orders and stages) and those the region's load derives (its palette and state,
+// the scene's scalars, its tradition), and the core reads them from the pack (tiles/Style.hpp). Refining the look is
+// an edit here; the app's build makes the bundled packs again with it, and a pack made with it draws with it.
+//
+// Every value here is the renderer's today: EngineStyleTest holds each to the port of render/*.py (its tables, or the
+// literal where its drawing code types one) and names where the engine differs on purpose (nowhere yet). The tables
+// stage P derives from (the materials, the palettes, the traditions) stay the port's until the core derives the
+// tiles itself (ENGINE.md, step 3).
+//
+// Colours are #RRGGBB in sRGB; widths are CSS px, as the renders' SVG has them.
+{
+    // regions.py's LAND: each land kind's colour and draw order (lower first). The core draws the colours; the kinds
+    // and their orders are stage P's (the port's regions.land_kind and its ground keys).
+    "land": {
+        "farmland": ["#D8D4AC", 0], "residential": ["#E4DFD6", 0], "industrial": ["#D3CEC6", 0],
+        "port": ["#C3C1BB", 1], "commercial": ["#E0D8D0", 0], "retail": ["#E4D7D0", 0], "construction": ["#D9CDB9", 0],
+        "railway": ["#D2CCC3", 0], "military": ["#D6D2C6", 0], "brownfield": ["#D7CDBC", 0],
+        "greenfield": ["#CBD3A8", 0], "education": ["#E2DBCF", 0], "static_caravan": ["#DCD5C8", 1],
+        "farmyard": ["#D9CFB8", 1], "meadow": ["#C2D19B", 1], "grass": ["#B8CC96", 2], "grassland": ["#BFCF9C", 2],
+        "village_green": ["#B8CC96", 2], "recreation_ground": ["#B8CC96", 2], "park": ["#B2CA90", 2],
+        "garden": ["#B5CC92", 2], "cemetery": ["#B4C2A0", 2], "allotments": ["#C7CE9A", 2], "orchard": ["#B6C98C", 2],
+        "golf_course": ["#B1CD8E", 2], "heath": ["#BCAB8C", 2], "scrub": ["#9CB084", 3], "forest": ["#7E9B6B", 3],
+        "wood": ["#7E9B6B", 3], "wetland": ["#A6BBAB", 3], "sand": ["#E4D6B3", 4], "beach": ["#EDE1C1", 4],
+        "dune": ["#E4D6B3", 4], "bare_rock": ["#B1ACA2", 4], "stone": ["#ADA89F", 4], "scree": ["#B5B0A6", 4],
+        "apron": ["#C7C5C0", 5], "parking": ["#C9C6BE", 5], "pedestrian": ["#D6CDBE", 5], "playground": ["#D9B48A", 5],
+        "pitch": ["#A3C28C", 5], "track": ["#C98F74", 5], "flowerbed": ["#B9C48F", 5]
+    },
+
+    // amsterdam.py's AREA: an area's colour by its kind (the living map's parks, squares, parkings, bridges).
+    "area": {
+        "park": "#A9C38A", "garden": "#A9C38A", "grass": "#A9C38A", "playground": "#D9B48A", "pedestrian": "#DCD3C4",
+        "square": "#DCD3C4", "memorial": "#E3B3C0", "parking": "#C9C4BA", "bridge": "#CFC6B6"
+    },
+
+    // amsterdam.py's SURF: a mapped surface's colour (an area's `surface`, before its kind's).
+    "surf": {
+        "paving_stones": "#C9B9A6", "sett": "#A89A88", "asphalt": "#9B9A99", "concrete": "#C4C2BC", "wood": "#A88A62",
+        "bricks": "#B98870", "cobblestone": "#A89A88"
+    },
+
+    // amsterdam.py's SURF_COLOUR: a mapped `surface:colour`'s colour, before the surface's.
+    "surf_colour": {
+        "red": "#C0665A", "grey": "#9B9A99", "gray": "#9B9A99", "black": "#5A5A5A", "green": "#6F9A6A", "blue": "#6A86B0"
+    },
+
+    "ground": {
+        // amsterdam.py's area colour for a kind AREA does not name
+        "area_other": "#DCD3C4",
+        // amsterdam.py's road colour for a cycleway without a mapped surface:colour (red, the Dutch default)
+        "cycleway": "#C98A7A"
+    },
+
+    // regions.py's draw_over: a railway's ballast (its colour and half width in metres; darker at night, as the land)
+    // and its two rails (by day, at night, their width)
+    "rail": {
+        "ballast": "#A0978B",
+        "ballast_half_width": 1.6,
+        "rails_day": "#5E5A56",
+        "rails_night": "#1A1C22",
+        "rails_width": 0.7
+    },
+
+    // regions.py's draw_over: a big road's asphalt and its edge and lane lines (by day and at night; the lines' width
+    // in metres, the lane lines' dashes and gaps in metres)
+    "big_roads": {
+        "asphalt_day": "#77777A",
+        "asphalt_night": "#22252E",
+        "lines_day": "#F2F1EC",
+        "lines_night": "#5A5E6A",
+        "lines_width": 0.18,
+        "lane_dash": [3.0, 9.0]
+    },
+
+    // regions.py's draw_over: a runway's designators and threshold bars, by day and at night
+    "runways": {
+        "marks_day": "#F4F3EE",
+        "marks_night": "#4A4F5C"
+    },
+
+    // regions.py's draw_over: marine works, each a strip of this width in metres where its way is open, and its colour
+    "marine": {
+        "breakwater": [9.0, "#9E9A92"],
+        "groyne": [4.0, "#8E8A84"],
+        "pier": [5.0, "#A89A86"],
+        "quay": [3.0, "#B4AEA4"]
+    },
+
+    // amsterdam.py's tram tracks: by day, at night, and their width
+    "trams": {
+        "day": "#6E6A66",
+        "night": "#2A2E3A",
+        "width": 0.9
+    },
+
+    // amsterdam.py's lines along a bridge's sides (by day without weather; none at night), and their width
+    "bridges": {
+        "lines": "#5A4E44",
+        "lines_width": 1.2
+    },
+
+    "buildings": {
+        // draw_building's `edge`: the roofs' thin edges, by day and at night
+        "roof_edge_day": "#6F695F",
+        "roof_edge_night": "#2E3446",
+        // their widths: on slopes, gable and hip ends and mansard faces; on flat tops, skillions and mansard tops
+        "roof_edge_slope": 0.25,
+        "roof_edge_top": 0.45,
+        // a wall's stroke, in the wall's own colour
+        "wall_edge": 0.3
+    },
+
+    // draw_houseboat: the hull's and the deck's colours, and the cabin roof's edge
+    "houseboats": {
+        "hull": "#23272B",
+        "deck": "#6E5E4C",
+        "cabin_edge": "#2A2C30",
+        "cabin_edge_width": 0.4
+    },
+
+    // amsterdam.py's canal names on the water (ground_text): their fill and its opacity, the face's weight, and the
+    // letters' size and spacing in metres on the water
+    "canal_names": {
+        "fill": "#EAF2FA",
+        "opacity": 0.85,
+        "weight": 700,
+        "size": 3.2,
+        "spacing": 0.3
+    }
+}

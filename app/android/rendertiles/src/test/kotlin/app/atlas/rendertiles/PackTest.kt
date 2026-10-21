@@ -8,6 +8,7 @@ import app.atlas.render.live.LiveRegion
 import app.atlas.render.live.Lod
 import app.atlas.render.live.Moment
 import app.atlas.rendertiles.codec.TileFormatException
+import app.atlas.rendertiles.compile.EngineStyle
 import app.atlas.rendertiles.compile.SceneToTiles
 import app.atlas.rendertiles.model.Format
 import app.atlas.rendertiles.model.Keep
@@ -82,6 +83,8 @@ class PackTest {
             assertEquals(Keep.TOLERANCES.toList(), s["keep"])
             assertEquals(Regions.LAND.entries.associate { (k, v) -> k to listOf(v.first, v.second) }, s["land"])
             assertEquals(Amsterdam.SURF, s["surf"]); assertEquals(Amsterdam.MATERIAL, s["material"])
+            // the engine's style file, table for table
+            for ((k, v) in EngineStyle.tables) assertEquals(k, v, s[k])
             @Suppress("UNCHECKED_CAST")
             val state = s["state"] as Map<String, Any?>
             assertEquals(Amsterdam.WATER_Y, state["water_y"]); assertEquals(Amsterdam.QUAY_COL, state["quay_col"]); assertEquals(Amsterdam.TONE, state["tone"])

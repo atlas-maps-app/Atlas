@@ -1,5 +1,6 @@
 package app.atlas.rendertiles.model
 
+import app.atlas.rendertiles.compile.EngineStyle
 import java.security.MessageDigest
 
 /**
@@ -7,15 +8,16 @@ import java.security.MessageDigest
  * `EngineVersion`, which versions what the port draws). Tiles, the core's expanded-tile cache and the likeness
  * references are keyed by both.
  *
- * [ID] hashes the payload version, [DERIVATION] and the schema (every layer's columns, the tag keys each carries, the
- * keep ladder), so a change of the format changes it by itself; a change of how a value is derived that keeps the
- * format bumps [DERIVATION].
+ * [ID] hashes the payload version, [DERIVATION], the schema (every layer's columns, the tag keys each carries, the
+ * keep ladder) and the engine's style file (its tables as the `style` section writes them, so its comments do not
+ * count), so a change of the format or of the style changes it by itself; a change of how a value is derived that
+ * keeps the format bumps [DERIVATION].
  */
 object StyleVersion {
     /** Bumped when the packer derives a value differently while the format stays the same. */
     const val DERIVATION = 1
 
-    /** `s<payload>.<derivation>-` and 16 hex digits of the schema's hash. */
+    /** `s<payload>.<derivation>-` and 16 hex digits of the schema's and the style's hash. */
     val ID: String by lazy {
         val md = MessageDigest.getInstance("SHA-256")
         fun put(s: String) {
@@ -30,6 +32,8 @@ object StyleVersion {
         }
         for ((layer, keys) in Schema.RENDER_TAGS) put("tags ${layer.label} ${keys.joinToString(",")}")
         put("keep ${Keep.TOLERANCES.joinToString(",")}")
+        put("style")
+        md.update(StyleTables(EngineStyle.tables).toBytes())
         "s${Format.PAYLOAD}.$DERIVATION-" + md.digest().joinToString("") { "%02x".format(it.toInt() and 0xFF) }.substring(0, 16)
     }
 }

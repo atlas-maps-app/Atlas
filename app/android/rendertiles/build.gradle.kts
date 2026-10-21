@@ -24,6 +24,12 @@ dependencies {
     testImplementation(libs.junit)
 }
 
+// The engine's style file (app/android/mapcore/style), whose tables Style writes into every pack's `style` section: in the
+// jar as /style/, so the bundled tiles are made again when it changes.
+tasks.processResources {
+    from(rootProject.file("mapcore/style")) { into("style") }
+}
+
 tasks.test {
     // the canal ring's scene is loaded whole, as the packer loads it
     maxHeapSize = "3g"

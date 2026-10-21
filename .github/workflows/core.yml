@@ -115,8 +115,9 @@ jobs:
   # The bundled render packs (the Westerkerk's living map and the canal ring, format 3), so the host jobs' pack tests run
   # (ATLAS_TILES_DIR) instead of skipping: made by the packer through Gradle (:app:generateBundledTiles, as the APK
   # carries them; the canal ring's element pack is fetched from packs-renders and checked against its SHA-256), and
-  # cached by their inputs, so a push that leaves the port, the render tiles' compiler and the packer alone takes them
-  # from the cache in seconds. A failure here leaves the host jobs to run without them, as before.
+  # cached by their inputs, so a push that leaves the port, the render tiles' compiler, the engine's style file and the
+  # packer alone takes them from the cache in seconds. A failure here leaves the host jobs to run without them, as
+  # before.
   tiles:
     needs: core-changes
     if: ${{ !cancelled() && needs.core-changes.outputs.core != 'false' }}
@@ -130,7 +131,7 @@ jobs:
           ref: ${{ github.event_name == 'schedule' && 'app' || github.ref }}
       - id: key
         run: |
-          echo "key=bundled-tiles-${{ hashFiles('app/android/render/src/main/**', 'app/android/rendertiles/src/main/**', 'app/android/packer/src/main/**', 'app/android/app/src/main/assets/packs/**', 'app/android/gradle/libs.versions.toml', 'app/android/app/build.gradle.kts') }}" >> "$GITHUB_OUTPUT"
+          echo "key=bundled-tiles-${{ hashFiles('app/android/render/src/main/**', 'app/android/rendertiles/src/main/**', 'app/android/rendertiles/build.gradle.kts', 'app/android/mapcore/style/**', 'app/android/packer/src/main/**', 'app/android/app/src/main/assets/packs/**', 'app/android/gradle/libs.versions.toml', 'app/android/app/build.gradle.kts') }}" >> "$GITHUB_OUTPUT"
       - id: cache
         uses: actions/cache@v6
         with:
