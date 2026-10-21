@@ -25,6 +25,7 @@
 #include "gpu/PipelineCache.hpp"
 #include "passes/ObjectStrokes.hpp"
 #include "standin/View.hpp"
+#include "tests/fx/stroke_area.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 
 #if !defined(__ANDROID__)
@@ -169,54 +170,8 @@ struct Scene {
 
 /// The shader's coverage (strokes.slang's stroke_area) step by step in float, as the twin of the GPU's.
 [[nodiscard]] float shader_area(const Seg& s, std::uint32_t x, std::uint32_t y) {
-    const auto ax = static_cast<float>(s.ax);
-    const auto ay = static_cast<float>(s.ay);
-    const float dx = static_cast<float>(s.bx) - ax;
-    const float dy = static_cast<float>(s.by) - ay;
-    const float len = std::sqrt((dx * dx) + (dy * dy));
-    const auto hw = static_cast<float>(s.hw);
-    if (!(len > 0.0F) || !(hw > 0.0F)) return 0.0F;
-    const float ux = dx / len;
-    const float uy = dy / len;
-    const float nx = -uy;
-    const float ny = ux;
-    const float rx = (static_cast<float>(x) + 0.5F) - ax;
-    const float ry = (static_cast<float>(y) + 0.5F) - ay;
-    const float sc = (rx * ux) + (ry * uy);
-    const float tc = (rx * nx) + (ry * ny);
-    constexpr float half_diagonal = 0.70710678F;
-    if (std::abs(tc) > hw + half_diagonal || sc < -half_diagonal || sc > len + half_diagonal) return 0.0F;
-    std::vector<std::array<float, 2>> p;
-    for (const auto& o :
-         {std::array{-0.5F, -0.5F}, std::array{0.5F, -0.5F}, std::array{0.5F, 0.5F}, std::array{-0.5F, 0.5F}}) {
-        p.push_back({(o[0] * ux) + (o[1] * uy), tc + ((o[0] * nx) + (o[1] * ny))});
-    }
-    auto clip = [&p](std::size_t axis, float bound, float side) {
-        std::vector<std::array<float, 2>> q;
-        for (std::size_t i = 0; i < p.size(); ++i) {
-            const auto& c = p[i];
-            const auto& e = p[(i + 1) % p.size()];
-            const float dc = side * (c[axis] - bound);
-            const float de = side * (e[axis] - bound);
-            if (dc <= 0.0F) q.push_back(c);
-            if ((dc <= 0.0F) != (de <= 0.0F)) {
-                const float t = dc / (dc - de);
-                q.push_back({c[0] + ((e[0] - c[0]) * t), c[1] + ((e[1] - c[1]) * t)});
-            }
-        }
-        p = std::move(q);
-    };
-    clip(0, -sc, -1.0F);
-    clip(0, len - sc, 1.0F);
-    clip(1, -hw, -1.0F);
-    clip(1, hw, 1.0F);
-    float twice = 0.0F;
-    for (std::size_t i = 0; i < p.size(); ++i) {
-        const auto& c = p[i];
-        const auto& e = p[(i + 1) % p.size()];
-        twice += (c[0] * e[1]) - (e[0] * c[1]);
-    }
-    return std::min(std::abs(twice) * 0.5F, 1.0F);
+    return test::stroke_area(static_cast<float>(s.ax), static_cast<float>(s.ay), static_cast<float>(s.bx),
+                             static_cast<float>(s.by), static_cast<float>(s.hw), x, y);
 }
 
 /// The true stroke's coverage of pixel (x, y) by outline `o` (round joins: inside one of its rectangles, or within half

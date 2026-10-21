@@ -48,7 +48,6 @@
 #include "sun/Samples.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 
 namespace atlas::passes {
@@ -315,20 +314,9 @@ gpu::Result<void> Ground::make_soft_shadows(const frame::PassContext& context, P
     ATLAS_GPU_LET(compute_layout, gpu::make_layout(d, sets, frame::push_bytes, vk::ShaderStageFlagBits::eCompute));
     p.compute_layout = std::move(compute_layout);
     auto compute = [&](std::string_view name, std::string_view module, vk::ShaderModule code, const char* entry,
-                       vk::PipelineLayout layout) -> gpu::Result<vk::raii::Pipeline> {
-        const gpu::PipelineLabel label{.name = name, .module = module, .configuration = context.configuration};
-        context.cache.note_made();
-        const auto started = std::chrono::steady_clock::now();
-        auto made = [&] {
-            const gpu::Announced named = gpu::announce(label, context.watch);
-            return gpu::make_compute(d, context.cache.handle(), label, code, entry, layout);
-        }();
-        if (context.stats != nullptr) {
-            context.stats->ms +=
-                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
-            ++context.stats->count;
-        }
-        return made;
+                       vk::PipelineLayout layout) {
+        return frame::make_compute(context, {.name = name, .module = module, .configuration = context.configuration},
+                                   code, entry, layout);
     };
     ATLAS_GPU_LET(box, compute("ground shadow box", "ground_ground", *p.module, "shadow_box_cs", *p.compute_layout));
     p.shadow_box = std::move(box);

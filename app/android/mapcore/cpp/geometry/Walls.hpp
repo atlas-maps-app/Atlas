@@ -88,6 +88,9 @@ inline constexpr std::uint16_t polygon = 64;  ///< one triangle of an n-gon: its
 inline constexpr std::uint16_t stroke_fine = 128;
 inline constexpr std::uint16_t stroke_wide = 256;
 inline constexpr std::uint16_t stroke_cabin = 512;
+/// An n-gon's triangle's edges that lie on its polygon's ring, which its stroke follows: its first edge (corner 0 to
+/// 1), its second (1 to 2), its third (2 back to 0); outline << k for edge k. The cuts between its triangles have none.
+inline constexpr std::uint16_t outline = 1024;
 /// Every variant: drawn at any distance.
 inline constexpr std::uint16_t any = near | far;
 } // namespace prim_flag
@@ -256,6 +259,7 @@ public:
 
 private:
     std::vector<std::uint32_t> triangles_;
+    std::vector<std::uint8_t> used_; ///< an n-gon's ring points its triangles use
 };
 
 /// The walls of `bl` (its cells in both variants and a skillion's walls) into `b`, flagged `variant` (prim_flag::dry

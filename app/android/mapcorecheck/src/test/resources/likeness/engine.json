@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "3",
+  "version": "4",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -86,6 +86,21 @@
           "board grey": "ae07e2a12c5758190bfc1a29a707e615ee94872e739cd87ae40be352b0590e38",
           "board wet": "8aac2f6b76b586edc682f28416c3efd3529d2e600a078b84a07b2163897b375b",
           "board night": "5d1c844a959320592ab8a3d284894cc80d8106d06e5574984895a9a69bd49f8e"
+        }
+      }
+    },
+    "4": {
+      "note": "Step 2: the roofs' thin edges (each face's .25, .45 or .4 px stroke through ObjectStrokes, on its face's plane and a little nearer)",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "baf62e51878b2f142b82052d7d465972ac96d7d86397c085093beed4942705aa",
+          "home grey": "84c77b1fa50bc6c182ac9101b1a526493e63efabd1025392f09bacb64e5315e8",
+          "home wet": "fbcd3a35829d48bac7097ee52710454101e225ec63e81c9517a2a39f2fec2766",
+          "home night": "0a7f5c9a47d5f720b2a63ec53d4513c42f80c760a76f597f904965917ffcc5dc",
+          "board sunny": "49abc51b842ec13900f9b5ad5df2d575e6db6f28c15adcf585794e83bc96e751",
+          "board grey": "54d0949376c1f4b761f3321ef0f3f3d03b54c4990ed1bcee1bc623a03983c3c7",
+          "board wet": "fbf41996bedced44519dabcbd8f5a26fa06cbf3d29139e8b00d26cbc74844050",
+          "board night": "a1b7495f0ac207b7f1e75ad96ff0021d5920a995a69ec81b0c74394c69902cf0"
         }
       }
     }

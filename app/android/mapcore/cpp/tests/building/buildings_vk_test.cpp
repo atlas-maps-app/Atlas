@@ -4,11 +4,14 @@
 // bits (K8's, through set 1's sun_bits), every building's walls, cells and roofs at their true depth with the objects
 // bit, their light dispatched per frame, against an exact CPU raster of what the pass's twin says it draws: each
 // element's polygon, a cell's grown by its 0.15 px edge with round joins (the true Minkowski sum, not the vertex
-// stage's outline; the roofs' thin edge strokes left out: the objects' thin strokes draw them, K17a's ObjectStrokes,
-// which has not landed), each sample ending with the nearest element there by the depth the vertex stage gives it (the
+// stage's outline), each sample ending with the nearest element there by the depth the vertex stage gives it (the
 // twin's ElementDepth: an edged element's face plane, a plain one's corners over its fan, with their leads), sampled
 // where the GPU samples; and under the painter switch, the latest element in the twin's painter order, as the renders
-// paint. At one sample a pixel (configuration X1) every pixel must be the reference's colour, but where a sample lies
+// paint. Over it the roofs' thin edges, as the objects' thin strokes draw them (each segment along an edge a shape's
+// stroke follows, its pixels covered by the shader's area in float, blended at each sample where its depth, its face's
+// carried past the edge with the strokes' lead, passes the sample's shape's; 8 bits after each blend), held within a
+// level a blend where a stroke reaches (lavapipe blends 8-bit targets in fixed point). At one sample a pixel
+// (configuration X1) every pixel must be the reference's colour, but where a sample lies
 // within 0.02 px of a shape's boundary (the reference drawn 0.02 px larger or smaller ends that sample with another
 // shape), or where the two nearest elements of different colours there lie within 2^-17 of their depth of each other
 // (the rasteriser's rounding against the twin's; counted apart and bounded); at 4x every pixel's samples are averaged
@@ -34,6 +37,7 @@
 #include "style/Theme.hpp"
 #include "sun/Buckets.hpp"
 #include "tests/building/fixture.hpp"
+#include "tests/fx/stroke_area.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Container.hpp"
@@ -334,10 +338,12 @@ constexpr std::int32_t uncovered = -1;
     return static_cast<double>(nearer - farther) <= static_cast<double>(nearer) * slack;
 }
 
-/// What a raster gives each sample: the shape it ends with, or `uncovered`; and, from a raster asked for them, whether
-/// the two nearest shapes of different colours there are tied in depth.
+/// What a raster gives each sample: the shape it ends with, or `uncovered`, and that shape's depth there (by true
+/// depth); and, from a raster asked for them, whether the two nearest shapes of different colours there are tied in
+/// depth.
 struct Raster {
     std::vector<std::int32_t> shape;
+    std::vector<float> depth;
     std::vector<std::uint8_t> tie;
 };
 
@@ -417,6 +423,212 @@ struct Raster {
             out.tie[i] = tied(nearest[i], other[i], slack) ? 1 : 0;
         }
     }
+    out.depth = std::move(nearest);
+    return out;
+}
+
+/// The thin strokes' margin around their rectangles, output px (strokes.slang's STROKE_MARGIN).
+constexpr float stroke_margin = 1.5F;
+
+/// A roof's thin stroke's segment as the frame draws it (shaders/building/draw.slang's roof_strokes_vs, through
+/// strokes.slang's stroke_quad): its ends in device px as the vertex stage gives them, half its width there, its
+/// colour, its quad's corners (device px) with the depth the vertex stage gives each (its face's reciprocal depth,
+/// affine over the corners it was cut from, with the strokes' lead; under the painter switch its face's slot's), and
+/// its face's painter slot.
+struct StrokeSeg {
+    float ax = 0;
+    float ay = 0;
+    float bx = 0;
+    float by = 0;
+    float hw = 0;
+    std::uint32_t colour = 0;
+    std::array<std::array<float, 2>, 4> quad{};
+    std::array<float, 4> depth{};
+    std::uint32_t slot = 0;
+
+    /// Its depth at device point (x, y), as the rasteriser interpolates it over the quad's two triangles (stroke_quad's
+    /// corners 0, 1, 2 and 2, 1, 3).
+    [[nodiscard]] float depth_at(double x, double y) const {
+        const auto in = [&](std::size_t i, std::size_t j, std::size_t k, double& v) {
+            const auto px = static_cast<double>(quad[i][0]);
+            const auto py = static_cast<double>(quad[i][1]);
+            const auto qx = static_cast<double>(quad[j][0]);
+            const auto qy = static_cast<double>(quad[j][1]);
+            const auto rx = static_cast<double>(quad[k][0]);
+            const auto ry = static_cast<double>(quad[k][1]);
+            const double det = ((qx - px) * (ry - py)) - ((rx - px) * (qy - py));
+            if (det == 0.0) return false;
+            const double l1 = (((x - px) * (ry - py)) - ((rx - px) * (y - py))) / det;
+            const double l2 = (((qx - px) * (y - py)) - ((x - px) * (qy - py))) / det;
+            v = ((1.0 - l1 - l2) * static_cast<double>(depth[i])) + (l1 * static_cast<double>(depth[j])) +
+                (l2 * static_cast<double>(depth[k]));
+            return l1 >= 0.0 && l2 >= 0.0 && l1 + l2 <= 1.0;
+        };
+        double v = 0;
+        if (in(0, 1, 2, v)) return static_cast<float>(v);
+        (void)in(2, 1, 3, v);
+        return static_cast<float>(v);
+    }
+};
+
+/// The roofs' thin strokes of the document's elements in the order the frame draws them (the drawn tiles by their
+/// distance from the eye, `distances` in the cover's order, the farthest first: the pass sorts them nearest first,
+/// stably, and takes them backwards; each tile's elements as it emits them, its plain list's order): each stroked
+/// plain element's segments along the edges its shape's stroke follows (an n-gon's, its triangles'), as the frame
+/// draws them at frame camera `cam`.
+[[nodiscard]] std::vector<StrokeSeg> strokes_of(const twin::Document& doc, std::span<const twin::ElementDepth> depths,
+                                                std::span<const double> distances, const shaders::FrameCamera& cam) {
+    namespace sh = atlas::shaders;
+    std::vector<StrokeSeg> out;
+    // output px from normalised coordinates (strokes.slang's stroke_output_scale: the tests' outputs are not turned)
+    const hlsl::float2 scale = {cam.device.x, cam.device.y};
+    const auto add = [&](const sh::BuildingShape& s, float width, std::uint32_t colour) {
+        for (std::uint32_t k = 0; k < s.count; ++k) {
+            if ((s.strokes & (1U << k)) == 0U) continue;
+            const hlsl::float3 a = sh::building_corner_vertex(s, k);
+            const hlsl::float3 b = sh::building_corner_vertex(s, k + 1 < s.count ? k + 1 : 0);
+            const hlsl::float3 c = sh::building_corner_vertex(s, sh::building_stroke_third(s.count, k));
+            const hlsl::float4 ca = sh::clip_of(cam, {a.x, a.y}, 1.0F, 0.0F);
+            const hlsl::float4 cb = sh::clip_of(cam, {b.x, b.y}, 1.0F, 0.0F);
+            const hlsl::float4 cc = sh::clip_of(cam, {c.x, c.y}, 1.0F, 0.0F);
+            // stroke_quad's ends and corners
+            const hlsl::float2 pa = {((ca.x / ca.w) + 1.0F) / scale.x, ((ca.y / ca.w) + 1.0F) / scale.y};
+            const hlsl::float2 pb = {((cb.x / cb.w) + 1.0F) / scale.x, ((cb.y / cb.w) + 1.0F) / scale.y};
+            const hlsl::float2 d = pb - pa;
+            const float len = std::sqrt((d.x * d.x) + (d.y * d.y));
+            if (!(len > 0.0F)) continue;
+            const hlsl::float2 u = {d.x / len, d.y / len};
+            const hlsl::float2 nrm = {-u.y, u.x};
+            StrokeSeg g{.ax = pa.x,
+                        .ay = pa.y,
+                        .bx = pb.x,
+                        .by = pb.y,
+                        .hw = 0.5F * width * cam.frame.z,
+                        .colour = colour,
+                        .slot = s.slot};
+            const hlsl::float3 oa = {pa.x, pa.y, a.z};
+            const hlsl::float3 ob = {pb.x, pb.y, b.z};
+            const hlsl::float3 oc = {((cc.x / cc.w) + 1.0F) / scale.x, ((cc.y / cc.w) + 1.0F) / scale.y, c.z};
+            for (std::uint32_t q = 0; q < 4; ++q) {
+                const float along = (q & 1U) != 0U ? len + stroke_margin : -stroke_margin;
+                const float across = (q & 2U) != 0U ? g.hw + stroke_margin : -(g.hw + stroke_margin);
+                const hlsl::float2 px = {pa.x + (u.x * along) + (nrm.x * across),
+                                         pa.y + (u.y * along) + (nrm.y * across)};
+                g.quad[q] = {px.x, px.y};
+                // the vertex stage's corner in output px, back from its normalised coordinates
+                const hlsl::float2 ndc = {(px.x * scale.x) - 1.0F, (px.y * scale.y) - 1.0F};
+                const hlsl::float2 here = {(ndc.x + 1.0F) / scale.x, (ndc.y + 1.0F) / scale.y};
+                g.depth[q] = sh::building_stroke_depth(cam, s.slot, sh::building_stroke_recip(oa, ob, oc, here));
+            }
+            out.push_back(g);
+        }
+    };
+    // each cover tile's stroked elements, in the order they were emitted
+    std::vector<std::vector<const twin::Element*>> by_tile(distances.size());
+    std::vector<const twin::Element*> emitted(depths.size(), nullptr);
+    for (const twin::Element* e : doc.order(twin::Layer::objects)) {
+        if (e->kind != twin::Op::path || e->sequence >= depths.size()) continue;
+        // a roof's thin stroke (a cell's same-colour 0.3 px edge is the walls' outline)
+        if (e->style.stroke.kind != twin::Paint::Kind::colour || std::abs(e->style.stroke_width - 0.3F) < 1e-6F) {
+            continue;
+        }
+        if (depths[e->sequence].edged || depths[e->sequence].tile >= distances.size()) continue;
+        emitted[e->sequence] = e;
+    }
+    for (const twin::Element* e : emitted) {
+        if (e != nullptr) by_tile[depths[e->sequence].tile].push_back(e);
+    }
+    std::vector<std::size_t> order(distances.size());
+    for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::ranges::stable_sort(order, {}, [&](std::size_t i) { return distances[i]; });
+    std::ranges::reverse(order);
+    for (const std::size_t t : order) {
+        for (const twin::Element* e : by_tile[t]) {
+            const twin::ElementDepth& ed = depths[e->sequence];
+            const std::uint32_t colour = e->style.stroke.argb & 0xFF'FFFFU;
+            if (ed.triangles.empty()) {
+                add(ed.shape, e->style.stroke_width, colour);
+            } else {
+                for (const sh::BuildingShape& tri : ed.triangles) add(tri, e->style.stroke_width, colour);
+            }
+        }
+    }
+    return out;
+}
+
+/// What the strokes leave each sample of a raster: its colour (levels, rounded after each blend as the attachment
+/// keeps them), how many strokes blended over it (at most 255), and whether a stroke's depth there was tied with the
+/// sample's shape's.
+struct Stroked {
+    std::vector<std::array<std::uint8_t, 3>> colour;
+    std::vector<std::uint8_t> blends;
+    std::vector<std::uint8_t> tie;
+};
+
+/// The raster `r` of `shapes` (its samples at `samples` of each pixel of w × h) with the strokes `segs` blended over it
+/// in their order, as the frame's two pipelines of them blend (structural mode: alpha a, the stroke's colour, over the
+/// ground and over the objects alike): each pixel's coverage (the shader's, in float) at each of its samples where the
+/// stroke's depth passes GREATER_OR_EQUAL against the sample's shape's (by true depth, or under the painter switch by
+/// their slots), premultiplied source over, then 8 bits.
+[[nodiscard]] Stroked stroke(const Raster& r, std::span<const Shape> shapes, std::span<const StrokeSeg> segs,
+                             std::uint32_t w, std::uint32_t h, std::span<const Pt> samples,
+                             const shaders::FrameCamera& cam, std::uint32_t clear) {
+    const bool painter = (cam.flags.x & shaders::CAMERA_PAINTER) != 0U;
+    const std::size_t n = std::size_t{w} * h * samples.size();
+    Stroked out;
+    out.colour.resize(n);
+    out.blends.assign(n, 0);
+    out.tie.assign(n, 0);
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::uint32_t c = r.shape[i] == uncovered ? clear : shapes[static_cast<std::size_t>(r.shape[i])].colour;
+        out.colour[i] = {static_cast<std::uint8_t>((c >> 16U) & 0xFFU), static_cast<std::uint8_t>((c >> 8U) & 0xFFU),
+                         static_cast<std::uint8_t>(c & 0xFFU)};
+    }
+    constexpr double rounding = 3.814697265625e-6; // 2^-18: the rasteriser's rounding of the stroke's quad
+    for (const StrokeSeg& g : segs) {
+        const float reach = g.hw + 1.0F;
+        const auto x0 = static_cast<std::int64_t>(std::floor(std::min(g.ax, g.bx) - reach));
+        const auto x1 = static_cast<std::int64_t>(std::ceil(std::max(g.ax, g.bx) + reach));
+        const auto y0 = static_cast<std::int64_t>(std::floor(std::min(g.ay, g.by) - reach));
+        const auto y1 = static_cast<std::int64_t>(std::ceil(std::max(g.ay, g.by) + reach));
+        const std::array<double, 3> level{static_cast<double>((g.colour >> 16U) & 0xFFU),
+                                          static_cast<double>((g.colour >> 8U) & 0xFFU),
+                                          static_cast<double>(g.colour & 0xFFU)};
+        for (std::int64_t y = std::max<std::int64_t>(0, y0); y <= std::min<std::int64_t>(h - 1, y1); ++y) {
+            for (std::int64_t x = std::max<std::int64_t>(0, x0); x <= std::min<std::int64_t>(w - 1, x1); ++x) {
+                const float a = test::stroke_area(g.ax, g.ay, g.bx, g.by, g.hw, static_cast<std::uint32_t>(x),
+                                                  static_cast<std::uint32_t>(y));
+                if (!(a > 0.0F)) continue;
+                for (std::size_t s = 0; s < samples.size(); ++s) {
+                    const std::size_t i =
+                        (((static_cast<std::size_t>(y) * w) + static_cast<std::size_t>(x)) * samples.size()) + s;
+                    const std::int32_t k = r.shape[i];
+                    bool pass = k == uncovered;
+                    if (!pass && painter) {
+                        pass = g.slot >= shapes[static_cast<std::size_t>(k)].depth.shape.slot;
+                    } else if (!pass) {
+                        const float z =
+                            g.depth_at(static_cast<double>(x) + samples[s].x, static_cast<double>(y) + samples[s].y);
+                        const float under = r.depth[i];
+                        pass = z >= under;
+                        const double slack = shapes[static_cast<std::size_t>(k)].slack + rounding;
+                        if (std::abs(static_cast<double>(z) - static_cast<double>(under)) <=
+                            static_cast<double>(under) * slack) {
+                            out.tie[i] = 1;
+                        }
+                    }
+                    if (!pass) continue;
+                    if (out.blends[i] < 255) ++out.blends[i];
+                    std::array<std::uint8_t, 3>& dst = out.colour[i];
+                    for (std::size_t c = 0; c < 3; ++c) {
+                        const double v = (level[c] * static_cast<double>(a)) +
+                                         (static_cast<double>(dst[c]) * (1.0 - static_cast<double>(a)));
+                        dst[c] = static_cast<std::uint8_t>(std::clamp(std::round(v), 0.0, 255.0));
+                    }
+                }
+            }
+        }
+    }
     return out;
 }
 
@@ -431,6 +643,13 @@ struct Scene {
     bool settled = false; ///< every tile the cover wants built and faded in
     bool lit = false;     ///< every tile drawn with its own sun bits, their fade over
 };
+
+/// The distance from the eye of each tile the scene's cover draws, in the cover's order.
+[[nodiscard]] std::vector<double> distances(const Scene& s) {
+    std::vector<double> out;
+    for (const scene::CoverTile& t : s.world->cover()->tiles()) out.push_back(t.distance);
+    return out;
+}
 
 /// Draws `cam` until the world has built every tile the cover wants and their fades are over; the last frame's pixels.
 [[nodiscard]] std::optional<platform::Pixels> draw(Scene& s, const style::CameraState& cam,
@@ -549,14 +768,18 @@ struct Compared {
     std::size_t wrong = 0;   ///< pixels that differ otherwise
     std::size_t slivers = 0; ///< such quads in the frame
     std::size_t ngons = 0;   ///< n-gons in the frame
+    std::size_t segments = 0; ///< the roofs' thin strokes' segments the twin's elements give
+    double quads = 0;         ///< the area their quads cover, full frames (the fragments their draws shade)
+    std::size_t stroked = 0;  ///< pixels a stroke reaches in the reference (held to it within the blends' rounding)
     std::string first;
 };
 
 /// The GPU's frame `got` against the exact raster of the twin's document `doc`, whose elements' depths are `depths`,
-/// drawn at frame camera `cam`.
+/// drawn at frame camera `cam` over cover tiles at `distances` from the eye.
 [[nodiscard]] Compared compare(const platform::Pixels& got, const twin::Document& doc,
-                               std::span<const twin::ElementDepth> depths, const shaders::FrameCamera& cam,
-                               const gpu::Configuration& config, double density, std::uint32_t clear) {
+                               std::span<const twin::ElementDepth> depths, std::span<const double> distances,
+                               const shaders::FrameCamera& cam, const gpu::Configuration& config, double density,
+                               std::uint32_t clear) {
     const std::vector<Pt> samples = sample_positions(config.samples());
     const std::uint32_t w = got.width;
     const std::uint32_t h = got.height;
@@ -564,20 +787,24 @@ struct Compared {
     const std::vector<Shape> shapes = shapes_of(doc, density, depths, cam);
     const Raster exact_raster = raster(shapes, w, h, samples, 0.0, cam, density, true);
     const std::vector<std::int32_t>& exact = exact_raster.shape;
-    const std::vector<std::int32_t> grown = raster(shapes, w, h, samples, tolerance, cam, density).shape;
-    const std::vector<std::int32_t> shrunk = raster(shapes, w, h, samples, -tolerance, cam, density).shape;
+    const Raster grown_raster = raster(shapes, w, h, samples, tolerance, cam, density);
+    const Raster shrunk_raster = raster(shapes, w, h, samples, -tolerance, cam, density);
+    const std::vector<std::int32_t>& grown = grown_raster.shape;
+    const std::vector<std::int32_t>& shrunk = shrunk_raster.shape;
     const std::vector<std::int32_t> near_sliver = raster(shapes, w, h, samples, 0.0, cam, density, false, true).shape;
+    // the roofs' thin strokes over each of them
+    const std::vector<StrokeSeg> segs = strokes_of(doc, depths, distances, cam);
+    const Stroked exact_stroked = stroke(exact_raster, shapes, segs, w, h, samples, cam, clear);
+    const Stroked grown_stroked = stroke(grown_raster, shapes, segs, w, h, samples, cam, clear);
+    const Stroked shrunk_stroked = stroke(shrunk_raster, shapes, segs, w, h, samples, cam, clear);
     const std::size_t n = samples.size();
-    const auto colour = [&](std::int32_t k) {
-        return k == uncovered ? clear : shapes[static_cast<std::size_t>(k)].colour;
-    };
-    const auto resolved = [&](const std::vector<std::int32_t>& r, std::size_t i) {
+    const auto resolved = [&](const Stroked& r, std::size_t i) {
         // the composite's mean of the samples' levels, rounded half to even (passes/Composite.hpp's composite_pixel)
         std::array<hlsl::float3, 4> cs{};
         for (std::size_t s = 0; s < n; ++s) {
-            const std::uint32_t c = colour(r[(i * n) + s]);
-            cs[s] = {static_cast<float>((c >> 16U) & 0xFFU) / 255.0F, static_cast<float>((c >> 8U) & 0xFFU) / 255.0F,
-                     static_cast<float>(c & 0xFFU) / 255.0F};
+            const std::array<std::uint8_t, 3>& c = r.colour[(i * n) + s];
+            cs[s] = {static_cast<float>(c[0]) / 255.0F, static_cast<float>(c[1]) / 255.0F,
+                     static_cast<float>(c[2]) / 255.0F};
         }
         shaders::FrameLayers stubbed{};
         stubbed.steps = {0U, 255U, 0U, 0U};
@@ -588,23 +815,45 @@ struct Compared {
     Compared c;
     c.slivers = static_cast<std::size_t>(std::ranges::count_if(shapes, [](const Shape& sh) { return sh.sliver; }));
     c.ngons = static_cast<std::size_t>(std::ranges::count_if(shapes, [](const Shape& sh) { return sh.ngon; }));
+    c.segments = segs.size();
+    for (const StrokeSeg& g : segs) {
+        const double len = pymath::hypot(static_cast<double>(g.bx - g.ax), static_cast<double>(g.by - g.ay));
+        const auto margin = static_cast<double>(stroke_margin);
+        c.quads += (len + (2.0 * margin)) * ((2.0 * static_cast<double>(g.hw)) + (2.0 * margin));
+    }
+    c.quads /= static_cast<double>(w) * static_cast<double>(h);
     if (const char* out = std::getenv("ATLAS_BUILDINGS_PPM"); out != nullptr) { // NOLINT: a test's diagnosis
         platform::Pixels ref = got;
         for (std::size_t i = 0; i < std::size_t{w} * h; ++i) {
-            const std::array<std::uint32_t, 3> want = resolved(exact, i);
+            const std::array<std::uint32_t, 3> want = resolved(exact_stroked, i);
             for (std::size_t k = 0; k < 3; ++k) ref.rgba[(i * 4) + k] = static_cast<std::uint8_t>(want[k]);
         }
         (void)platform::write_ppm(ref, std::format("{}/exact {}.ppm", out, gpu::name_of(config)));
     }
     for (std::size_t i = 0; i < std::size_t{w} * h; ++i) {
         bool covered = false;
-        for (std::size_t s = 0; s < n; ++s) covered = covered || exact[(i * n) + s] != uncovered;
-        for (std::size_t s = 0; s < n; ++s) covered = covered || grown[(i * n) + s] != uncovered;
-        if (!covered) continue;
+        std::uint32_t blends = 0; // the most strokes a sample of the pixel took, in any of the three rasters
+        for (std::size_t s = 0; s < n; ++s) {
+            const std::size_t k = (i * n) + s;
+            covered = covered || exact[k] != uncovered || grown[k] != uncovered;
+            blends = std::max({blends, std::uint32_t{exact_stroked.blends[k]}, std::uint32_t{grown_stroked.blends[k]},
+                               std::uint32_t{shrunk_stroked.blends[k]}});
+        }
+        if (!covered && blends == 0) continue;
         ++c.pixels;
-        const std::array<std::uint32_t, 3> want = resolved(exact, i);
+        if (blends > 0) ++c.stroked;
         const std::array<std::uint32_t, 3> have{got.rgba[i * 4], got.rgba[(i * 4) + 1], got.rgba[(i * 4) + 2]};
-        if (want == have) {
+        // a pixel a stroke reaches within a level a blend (the attachment's 8 bits after each, lavapipe blending them
+        // in fixed point; and one more where the composite averages samples), the rest exactly
+        const std::uint32_t levels = blends + (blends > 0 && n > 1 ? 1U : 0U);
+        const auto same = [&](const std::array<std::uint32_t, 3>& v) {
+            for (std::size_t k = 0; k < 3; ++k) {
+                if ((v[k] > have[k] ? v[k] - have[k] : have[k] - v[k]) > levels) return false;
+            }
+            return true;
+        };
+        const std::array<std::uint32_t, 3> want = resolved(exact_stroked, i);
+        if (same(want)) {
             ++c.agree;
             continue;
         }
@@ -617,9 +866,9 @@ struct Compared {
             const std::size_t k = (i * n) + s;
             ambiguous = ambiguous || exact[k] != grown[k] || exact[k] != shrunk[k];
             sliver = sliver || near_sliver[k] != uncovered;
-            tie = tie || exact_raster.tie[k] != 0;
+            tie = tie || exact_raster.tie[k] != 0 || exact_stroked.tie[k] != 0;
         }
-        if (ambiguous || resolved(grown, i) == have || resolved(shrunk, i) == have) {
+        if (ambiguous || same(resolved(grown_stroked, i)) || same(resolved(shrunk_stroked, i))) {
             ++c.boundary;
             continue;
         }
@@ -769,12 +1018,15 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
             s.buildings->emit(s.builder->state(), stream, passes::Buildings::draw_phase);
             const twin::Decoded decoded = twin::decode(stream.bytes());
             ATLAS_REQUIRE(decoded.error.empty(), decoded.error);
-            const Compared r = compare(*pixels, decoded.document, s.buildings->depths(),
+            const Compared r = compare(*pixels, decoded.document, s.buildings->depths(), distances(s),
                                        s.builder->state().block.camera, config, c.density, clear);
             const std::string name = std::format("{} {} {}{}", view, gpu::name_of(config), rest ? "at rest" : "moving",
                                                  painter ? " (painter's order)" : "");
-            MESSAGE(name << ": " << stream.elements() << " elements; " << r.pixels << " pixels of buildings, "
-                         << r.agree << " the exact raster's, " << r.boundary
+            const passes::Buildings::StrokeCounts strokes = s.buildings->stroke_counts();
+            MESSAGE(name << ": " << stream.elements() << " elements, " << r.segments << " stroke segments from "
+                         << strokes.records << " records in " << strokes.jobs << " jobs, their quads " << r.quads
+                         << " frames; " << r.pixels << " pixels of buildings (" << r.stroked
+                         << " reached by a stroke), " << r.agree << " the exact raster's, " << r.boundary
                          << " within 0.02 px of a shape's boundary, " << r.tie << " where two are tied in depth, "
                          << r.sliver << " near the " << r.slivers << " quads snapping made concave or crossed or the "
                          << r.ngons << " n-gons' boundaries, " << r.seam << " on the composite's seam, " << r.wrong
@@ -783,6 +1035,9 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
                          << static_cast<double>(heap.total_used()) / (1 << 20) << " MB; "
                          << frame::text_of(s.builder->total()));
             CHECK(stream.elements() >= least);
+            // the roofs' thin edges drawn: a record a plain primitive of the drawn runs
+            CHECK(s.buildings->strokes());
+            CHECK(strokes.records >= r.segments / 5);
             // the sunny moment's sun bits reach the frame: some faces lit by them, as the GPU draws them
             const passes::Buildings::Emitted emitted = s.buildings->emitted();
             MESSAGE(name << ": " << emitted.sunlit << " of " << emitted.elements << " elements lit by their sun bit");
@@ -806,8 +1061,8 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
                 s.buildings->emit(s.builder->state(), after, passes::Buildings::draw_phase);
                 const twin::Decoded d2 = twin::decode(after.bytes());
                 ATLAS_REQUIRE(d2.error.empty(), d2.error);
-                const Compared r2 = compare(*again, d2.document, s.buildings->depths(), s.builder->state().block.camera,
-                                            config, c.density, clear);
+                const Compared r2 = compare(*again, d2.document, s.buildings->depths(), distances(s),
+                                            s.builder->state().block.camera, config, c.density, clear);
                 MESSAGE(name << ", the moment changed: the CPU lit " << l.tiles << " tiles' slots, " << l.faces
                              << " faces, in " << l.ms << " ms ("
                              << (l.tiles > 0 ? l.ms / static_cast<double>(l.tiles) : 0.0) << " ms a tile, the longest "

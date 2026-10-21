@@ -11,7 +11,8 @@
 // in its shaders: it includes this file after `#define ATLAS_FX_FUNCTIONS` and returns stroke_corner (or stroke_none)
 // for each of six vertices a segment (two triangles), and ObjectStrokes makes the two pipelines with this module's
 // fragment stages. A stroke draws at its primitive's painter slot, over that primitive's own fill (the depth test is
-// GREATER_OR_EQUAL, the depth being reversed) and under every nearer one.
+// GREATER_OR_EQUAL, the depth being reversed) and under every nearer one; a pass whose primitives stand at their true
+// depth (the roofs' edges: shaders/building/draw.slang) takes stroke_quad's corners and gives each its own depth.
 //
 // The first version's residual (named, and counted at the corners by CP/tests/fx/strokes_vk_test.cpp): the objects
 // group's strokes have round joins (stroke-linejoin="round"); butt segments, untrimmed, cover a join's inside twice and
@@ -71,9 +72,10 @@ inline StrokeVertex stroke_none() {
 /// Vertex `corner` (0 to 5: triangles 0, 1, 2 and 3, 4, 5) of the quad of the stroke from `clip_a` to `clip_b` (the
 /// pass's clip positions of its ends, as clip_of gives them: w > 0, the pass having culled or clipped the segment at the
 /// near plane), `width_css` CSS px wide (the device's px are CSS px times the density), in `colour` (sRGB 0 to 1,
-/// alpha its opacity), at painter slot `slot` (its primitive's). A segment of no length or width draws nothing.
-inline StrokeVertex stroke_corner(FrameCamera camera, float4 clip_a, float4 clip_b, float width_css, float4 colour,
-                                  uint slot, uint corner) {
+/// alpha its opacity), at depth `depth` (a pass whose strokes take another depth at each corner sets the position's z
+/// after). A segment of no length or width draws nothing.
+inline StrokeVertex stroke_quad(FrameCamera camera, float4 clip_a, float4 clip_b, float width_css, float4 colour,
+                                uint corner, float depth) {
     if (!(clip_a.w > 0.0f) || !(clip_b.w > 0.0f) || !(width_css > 0.0f)) {
         return stroke_none();
     }
@@ -96,7 +98,7 @@ inline StrokeVertex stroke_corner(FrameCamera camera, float4 clip_a, float4 clip
     float across = (k & 2u) != 0u ? hw + STROKE_MARGIN : -(hw + STROKE_MARGIN);
     float2 px = {a.x + u.x * along + n.x * across, a.y + u.y * along + n.y * across};
     StrokeVertex o;
-    float4 position = {px.x * scale.x - 1.0f, px.y * scale.y - 1.0f, painter_depth(camera, slot), 1.0f};
+    float4 position = {px.x * scale.x - 1.0f, px.y * scale.y - 1.0f, depth, 1.0f};
     float4 ends = {a.x, a.y, b.x, b.y};
     float4 style = {hw, 0.0f, 0.0f, 0.0f};
     o.position = position;
@@ -104,6 +106,12 @@ inline StrokeVertex stroke_corner(FrameCamera camera, float4 clip_a, float4 clip
     o.style = style;
     o.colour = colour;
     return o;
+}
+
+/// stroke_quad's vertex at painter slot `slot` (its primitive's).
+inline StrokeVertex stroke_corner(FrameCamera camera, float4 clip_a, float4 clip_b, float width_css, float4 colour,
+                                  uint slot, uint corner) {
+    return stroke_quad(camera, clip_a, clip_b, width_css, colour, corner, painter_depth(camera, slot));
 }
 
 /// Clips the convex polygon `p` (`count` points, at most 8 once clipped) to the side of the line `axis` = `bound`

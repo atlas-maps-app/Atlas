@@ -120,6 +120,53 @@ Checked check_tile(const gm::TileBuildings& g, const atlas::sun::SunTile& st) {
             CHECK(g.plain[i].polygon == k);
         }
     }
+    // an n-gon's triangles' edges on its ring (prim_flag::outline << k for edge k), which its stroke follows: each edge
+    // between two of the ring's points its triangles use that follow each other there (earcut drops a ring's duplicate
+    // and collinear points, and an edge runs over them), and the ring's every such edge once
+    for (const gm::Polygon& poly : g.polygons) {
+        const std::size_t n = poly.ring.size();
+        bool unique = true;
+        const auto index_of = [&](const gm::V3& v) {
+            std::size_t found = n;
+            for (std::size_t i = 0; i < n; ++i) {
+                if (poly.ring[i].x != v.x || poly.ring[i].y != v.y || poly.ring[i].z != v.z) continue;
+                unique = unique && found == n;
+                found = i;
+            }
+            return found;
+        };
+        std::vector<std::uint8_t> used(n, 0);
+        std::vector<std::array<std::size_t, 3>> corners;
+        for (std::uint32_t t = poly.first; t < poly.first + poly.count; ++t) {
+            const gm::Prim& p = g.plain[t];
+            const std::array<std::size_t, 3> at{index_of(p.p[0]), index_of(p.p[1]), index_of(p.p[2])};
+            for (const std::size_t i : at) {
+                REQUIRE(i < n);
+                used[i] = 1;
+            }
+            corners.push_back(at);
+        }
+        if (!unique) continue; // a ring through one point twice: its corners' places on it are not known
+        const auto next_used = [&](std::size_t i) {
+            for (std::size_t k = (i + 1) % n; k != i; k = (k + 1) % n) {
+                if (used[k] != 0) return k;
+            }
+            return i;
+        };
+        std::size_t marked = 0;
+        for (std::size_t t = 0; t < corners.size(); ++t) {
+            const std::uint16_t flags = g.plain[poly.first + t].flags;
+            for (std::uint32_t k = 0; k < 3; ++k) {
+                const std::size_t u = corners[t][k];
+                const std::size_t v = corners[t][(k + 1) % 3];
+                const bool ring = next_used(u) == v || next_used(v) == u;
+                const bool outline = (flags & (std::uint32_t{gm::prim_flag::outline} << k)) != 0;
+                CHECK(ring == outline);
+                if (outline) ++marked;
+            }
+        }
+        CHECK(marked == static_cast<std::size_t>(std::ranges::count(used, std::uint8_t{1})));
+    }
     return c;
 }
 

@@ -196,7 +196,7 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
                 }
                 out_.path(style_of(p.flags, argb), points_, true);
                 if (depths_ != nullptr) {
-                    depths_->push_back({.shape = s, .edged = edged, .triangles = {}});
+                    depths_->push_back({.shape = s, .edged = edged, .triangles = {}, .tile = tile_});
                     if (ring < b.rings.size()) depths_->back().triangles = triangles_;
                 }
                 ++elements_;

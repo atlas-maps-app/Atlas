@@ -43,6 +43,10 @@ static const uint BUILDING_POLYGON = 64u; // one triangle of an n-gon: its area 
 static const uint BUILDING_STROKE_FINE = 128u;
 static const uint BUILDING_STROKE_WIDE = 256u;
 static const uint BUILDING_STROKE_CABIN = 512u;
+static const uint BUILDING_STROKES = BUILDING_STROKE_FINE | BUILDING_STROKE_WIDE | BUILDING_STROKE_CABIN;
+// An n-gon's triangle's edges on its polygon's ring, which its stroke follows: BUILDING_OUTLINE << k for edge k (corner
+// k to k + 1, the third back to the first). The cuts between its triangles have none.
+static const uint BUILDING_OUTLINE = 1024u;
 
 // A face's flags.
 static const uint BUILDING_FACE_DAY = 1u;  // lit whenever the sun is up, not by a sample (a deck, a cabin's roof)
@@ -71,6 +75,10 @@ static const float BUILDING_CELL_LEAD = 1.52587890625e-5f;
 static const uint BUILDING_CELL_LEADS = 16u; // a cell's lead is (row + column) modulo this, times BUILDING_CELL_LEAD
 static const float BUILDING_ROOF_LEAD = 2.44140625e-4f;
 static const float BUILDING_PLANE_SPAN = 1.953125e-3f;
+// A roof's thin stroke's lead over its own face (2^-16 more than the face's): it lies on its face's plane (the
+// reciprocal depth the rasteriser gives the face's own triangle, carried on past the edge) a little nearer, over its
+// own fill however the rasteriser rounds the two interpolations, and under every face nearer than that.
+static const float BUILDING_STROKE_LEAD = 1.52587890625e-5f;
 
 // The words of a primitive (4 uint4), a face's geometry (2 uint4) and its light inputs (8 words), in the walls heap.
 static const uint BUILDING_PRIM_VECTORS = 4u;
@@ -203,6 +211,9 @@ struct BuildingShape {
     float lead;    // its reciprocal depth's lead, a fraction of it (the cells' and the roofs')
     float depth;   // its painter depth (painter.slang)
     uint slot;     // its painter slot
+    uint strokes;  // the edges its thin stroke follows (bit k: corner k to k + 1, the last back to the first): every
+                   // edge of a primitive with one, an n-gon's triangle's only along its polygon's ring, and the near
+                   // plane's cut wherever it cut the shape (the port strokes the polygon Camera.poly gives it)
 };
 
 /// Corner i of a shape.
@@ -297,6 +308,7 @@ inline BuildingShape building_nothing() {
     s.lead = 0.0f;
     s.depth = 0.0f;
     s.slot = 0u;
+    s.strokes = 0u;
     return s;
 }
 
@@ -327,25 +339,33 @@ inline BuildingShape building_shape(FrameCamera cam, uint theme_flags, TilePlace
             return s;
         }
     }
-    // Camera.poly: the corners' camera coordinates, clipped at the near plane
+    // Camera.poly: the corners' camera coordinates, clipped at the near plane; and the edges the stroke follows (the
+    // shape's edge from corner m on lies along the primitive's edge i from a corner kept or where it comes back in,
+    // along the near plane from where it leaves)
     uint n = (p.flags & BUILDING_TRIANGLE) != 0u ? 3u : 4u;
     float near_z = cam.frame.w;
     float3 origin = {0.0f, 0.0f, 0.0f};
     float3 c[5] = {origin, origin, origin, origin, origin};
     uint m = 0u;
+    bool stroked = (p.flags & BUILDING_STROKES) != 0u;
+    bool outlined = (p.flags & BUILDING_POLYGON) != 0u;
+    uint strokes = 0u;
     for (uint i = 0u; i < n; ++i) {
         float3 a = camera_of(cam, eye_relative(place, building_prim_corner(p, i)));
         float3 b = camera_of(cam, eye_relative(place, building_prim_corner(p, (i + 1u) % n)));
         bool ai = a.z >= near_z;
         bool bi = b.z >= near_z;
+        bool along = stroked && (!outlined || (p.flags & (BUILDING_OUTLINE << i)) != 0u);
         if (ai) {
             c[m] = a;
+            strokes = along ? strokes | (1u << m) : strokes;
             m = m + 1u;
         }
         if (ai != bi) {
             float t = (near_z - a.z) / (b.z - a.z);
             float3 q = {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, near_z};
             c[m] = q;
+            strokes = (ai ? stroked : along) ? strokes | (1u << m) : strokes;
             m = m + 1u;
         }
     }
@@ -411,6 +431,7 @@ inline BuildingShape building_shape(FrameCamera cam, uint theme_flags, TilePlace
         hi = i == 0u || recip > hi ? recip : hi;
     }
     s.count = m;
+    s.strokes = strokes;
     // the face's plane in camera coordinates: its normal turned with the tile's place (x scaled, so the normal's x is
     // divided) and the camera, through its test point
     float3 nrm = {f.normal.x / place.scale.x, f.normal.y, f.normal.z};
@@ -433,6 +454,152 @@ inline float building_depth(FrameCamera cam, BuildingShape s, float recip) {
         return s.depth;
     }
     return true_depth(cam, recip + recip * s.lead);
+}
+
+/// The corner of a shape whose triangle with its edge k (corner k to k + 1, the last back to the first) the roofs' fan
+/// fills by that edge, a convex shape's fan from its first corner: (0, 1, 2) by the first edge, (0, k, k + 1) by those
+/// after, (0, count - 2, count - 1) by the last.
+inline uint building_stroke_third(uint count, uint k) {
+    if (k == 0u) {
+        return 2u;
+    }
+    if (k + 1u == count) {
+        return count - 2u;
+    }
+    return 0u;
+}
+
+/// How far a stroke's third corner must lie from its edge's line for the stroke to take the plane of the three, output
+/// px: across a thinner triangle (a sliver, or a face snapping squeezed) that plane tilts too steeply to carry on past
+/// it, so the stroke takes its edge's depth alone.
+static const float BUILDING_STROKE_FLAT = 1.0f;
+
+/// The reciprocal depth of a roof's thin stroke along a shape's edge from `a` to `b` (x, y output px, z the corner's
+/// reciprocal depth) at point `p`: its face's, affine over the triangle of a, b and `c` (the fan's triangle the face's
+/// own pixels by the edge take theirs from), carried on past it, and kept within the three corners' reciprocal depths
+/// widened by BUILDING_PLANE_SPAN either way; along the edge alone where c lies within BUILDING_STROKE_FLAT of the
+/// edge's line.
+inline float building_stroke_recip(float3 a, float3 b, float3 c, float2 p) {
+    float2 ab = {b.x - a.x, b.y - a.y};
+    float2 ac = {c.x - a.x, c.y - a.y};
+    float2 ap = {p.x - a.x, p.y - a.y};
+    float det = ab.x * ac.y - ab.y * ac.x;
+    float l2 = ab.x * ab.x + ab.y * ab.y;
+    float r = a.z;
+    if (det * det >= (BUILDING_STROKE_FLAT * BUILDING_STROKE_FLAT) * l2 && det != 0.0f) {
+        float u = (ap.x * ac.y - ap.y * ac.x) / det;
+        float v = (ab.x * ap.y - ab.y * ap.x) / det;
+        r = a.z + ((b.z - a.z) * u + (c.z - a.z) * v);
+    } else {
+        float t = l2 > 0.0f ? (ap.x * ab.x + ap.y * ab.y) / l2 : 0.0f;
+        r = a.z + (b.z - a.z) * t;
+    }
+    float lo = a.z < b.z ? a.z : b.z;
+    lo = c.z < lo ? c.z : lo;
+    float hi = a.z > b.z ? a.z : b.z;
+    hi = c.z > hi ? c.z : hi;
+    lo = lo - lo * BUILDING_PLANE_SPAN;
+    hi = hi + hi * BUILDING_PLANE_SPAN;
+    if (!(r >= lo)) {
+        r = lo;
+    }
+    if (!(r <= hi)) {
+        r = hi;
+    }
+    return r;
+}
+
+/// The depth a roof's thin stroke draws at where its reciprocal depth is `recip`: over its own face by
+/// BUILDING_STROKE_LEAD (a plain shape's lead is the roofs'), or under the painter switch its face's painter depth,
+/// slot `slot`'s (over its own fill, the strokes' depth test being GREATER_OR_EQUAL).
+inline float building_stroke_depth(FrameCamera cam, uint slot, float recip) {
+    if ((cam.flags.x & CAMERA_PAINTER) != 0u) {
+        return painter_depth(cam, slot);
+    }
+    return true_depth(cam, recip + recip * (BUILDING_ROOF_LEAD + BUILDING_STROKE_LEAD));
+}
+
+// A roof's thin stroke's record, which the strokes' compute stage writes for each plain primitive the frame draws and
+// their vertex stage reads (shaders/building/draw.slang's roof_strokes_cs, roof_strokes_vs): 4 uint4, its header and
+// its shape's five corners (x, y CSS px, then the reciprocal depth). Six vertices (two triangles) a segment, along each
+// of the shape's five edges.
+static const uint BUILDING_STROKE_RECORD_VECTORS = 4u;
+static const uint BUILDING_STROKE_VERTICES = 30u;
+// The header's stroke: the roofs' fine edge, their wide one, a cabin roof's (0: none).
+static const uint BUILDING_STROKE_STYLE_FINE = 1u;
+static const uint BUILDING_STROKE_STYLE_WIDE = 2u;
+static const uint BUILDING_STROKE_STYLE_CABIN = 3u;
+
+struct BuildingStrokeRecord {
+    uint4 v0;
+    uint4 v1;
+    uint4 v2;
+    uint4 v3;
+};
+
+/// The header of the record of a plain primitive with flags `flags` that the frame draws as shape `s`: its corners
+/// (bits 0-2), the edges its stroke follows (bits 3-7), its stroke (bits 8-9) and its painter slot (bits 10-29); 0
+/// where it draws no stroke.
+inline uint building_stroke_header(uint flags, BuildingShape s) {
+    uint style = (flags & BUILDING_STROKE_FINE) != 0u
+                     ? BUILDING_STROKE_STYLE_FINE
+                     : ((flags & BUILDING_STROKE_WIDE) != 0u
+                            ? BUILDING_STROKE_STYLE_WIDE
+                            : ((flags & BUILDING_STROKE_CABIN) != 0u ? BUILDING_STROKE_STYLE_CABIN : 0u));
+    if (style == 0u || s.count == 0u || s.strokes == 0u) {
+        return 0u;
+    }
+    return (s.count | (s.strokes << 3u)) | ((style << 8u) | ((s.slot & 0xFFFFFu) << 10u));
+}
+
+/// A header's fields.
+inline uint building_stroke_count(uint header) {
+    return header & 7u;
+}
+inline uint building_stroke_edges(uint header) {
+    return (header >> 3u) & 31u;
+}
+inline uint building_stroke_style(uint header) {
+    return (header >> 8u) & 3u;
+}
+inline uint building_stroke_slot(uint header) {
+    return header >> 10u;
+}
+
+/// The record of header `header` and shape `s`.
+inline BuildingStrokeRecord building_stroke_record(uint header, BuildingShape s) {
+    BuildingStrokeRecord r;
+    uint4 v0 = {header, asuint(s.p0.x), asuint(s.p0.y), asuint(s.r0)};
+    uint4 v1 = {asuint(s.p1.x), asuint(s.p1.y), asuint(s.r1), asuint(s.p2.x)};
+    uint4 v2 = {asuint(s.p2.y), asuint(s.r2), asuint(s.p3.x), asuint(s.p3.y)};
+    uint4 v3 = {asuint(s.r3), asuint(s.p4.x), asuint(s.p4.y), asuint(s.r4)};
+    r.v0 = v0;
+    r.v1 = v1;
+    r.v2 = v2;
+    r.v3 = v3;
+    return r;
+}
+
+/// Corner j of a record (x, y CSS px, the reciprocal depth).
+inline float3 building_stroke_corner(BuildingStrokeRecord r, uint j) {
+    float3 c0 = {asfloat(r.v0.y), asfloat(r.v0.z), asfloat(r.v0.w)};
+    float3 c1 = {asfloat(r.v1.x), asfloat(r.v1.y), asfloat(r.v1.z)};
+    float3 c2 = {asfloat(r.v1.w), asfloat(r.v2.x), asfloat(r.v2.y)};
+    float3 c3 = {asfloat(r.v2.z), asfloat(r.v2.w), asfloat(r.v3.x)};
+    float3 c4 = {asfloat(r.v3.y), asfloat(r.v3.z), asfloat(r.v3.w)};
+    if (j == 0u) {
+        return c0;
+    }
+    if (j == 1u) {
+        return c1;
+    }
+    if (j == 2u) {
+        return c2;
+    }
+    if (j == 3u) {
+        return c3;
+    }
+    return c4;
 }
 
 /// The reciprocal depth of an edged shape's face plane at CSS point `css` (r = near · dot(n, ray) / d along the ray

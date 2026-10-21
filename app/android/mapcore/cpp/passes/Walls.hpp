@@ -16,16 +16,25 @@
 //     tile from the nearest, at their true depth, so early depth testing shades each visible sample about once; the
 //     vertex stage decides every primitive at the frame (shaders/building/building.slangh) from its building's rank
 //     entry (its first painter slot and detail band, through the tile's rows).
-//   - The twin (emit): every primitive the vertex stage draws, as the port's SVG element
+//   - The roofs' thin edges (each face's .25, .45 or .4 px stroke, drawn as the objects' thin strokes through
+//     ObjectStrokes): stage F writes this frame slot's jobs (each drawn tile's plain runs, the farthest tile first, cut
+//     into runs of at most 64); before the main pass (the decide phase) a compute stage decides each such primitive
+//     once into a record of its shape at the job's slots (shaders/building/draw.slang's roof_strokes_cs); after every
+//     element of the ground (the strokes phase: translucent, at ground_order::objects) one draw a variant draws a
+//     segment along each edge each record's stroke follows (roof_strokes_vs), at its face's own depth carried past the
+//     edge and a little nearer, so a face's stroke lies over its own fill and over what lies behind its edge, under
+//     every nearer face, as the renders paint it after its fill. None in the owner mode (its map takes a face's pixels
+//     where its fill drew); where the device cannot make them, the roofs are drawn without them.
+//   - The twin (emit): every primitive the vertex stage draws, as the port's SVG element, its stroke in its style
 //   (twin/building/BuildingTwin.hpp).
-// The roofs' half of the pass (its pipeline and draws) is passes/Roofs.cpp. The roofs' thin edge strokes are the
-// objects' thin strokes' (K17a's ObjectStrokes), drawn from this pass once that lands; the twin emits them already.
+// The roofs' half of the pass (its pipelines and draws, the strokes') is passes/Roofs.cpp.
 #pragma once
 
 #include "frame/FrameBlock.hpp"
 #include "frame/Pass.hpp"
 #include "geometry/Walls.hpp"
 #include "gpu/Memory.hpp"
+#include "passes/ObjectStrokes.hpp"
 #include "scene/Heaps.hpp"
 #include "twin/building/BuildingTile.hpp"
 #include "twin/building/BuildingTwin.hpp"
@@ -66,8 +75,21 @@ public:
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& build) const override;
     void emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const override;
 
-    /// The phase: the drawing (objects).
+    /// The phases: the drawing (objects); the roofs' thin edges, decided before the main pass (offscreen) and drawn
+    /// after every element of the ground (translucent, at ground_order::objects: passes/Ground.hpp).
     static constexpr std::uint32_t draw_phase = 0;
+    static constexpr std::uint32_t decide_phase = 1;
+    static constexpr std::uint32_t strokes_phase = 2;
+    static constexpr std::int32_t strokes_order = 1000;
+
+    /// What the last frame's strokes were: their jobs and records (one a plain primitive of the drawn runs).
+    struct StrokeCounts {
+        std::uint32_t jobs = 0;
+        std::uint32_t records = 0;
+    };
+    [[nodiscard]] StrokeCounts stroke_counts() const noexcept { return stroke_counts_; }
+    /// Whether the roofs' thin edges are drawn (the pass made their pipelines: not in the owner mode).
+    [[nodiscard]] bool strokes() const noexcept { return strokes_ != nullptr; }
 
     /// The item kind the pass's items take (its Selectors row, from kinds()).
     [[nodiscard]] std::uint16_t kind() const noexcept { return kind_; }
@@ -98,8 +120,11 @@ public:
     static constexpr std::uint32_t plain_indices = 9; // a fan of 3 triangles over 5 points
 
 private:
-    static constexpr std::array<frame::Phase, 1> phase_list{
-        frame::Phase{.slot = frame::Slot::objects, .order = 0, .id = draw_phase}};
+    static constexpr std::array<frame::Phase, 3> phase_list{{
+        {.slot = frame::Slot::objects, .order = 0, .id = draw_phase},
+        {.slot = frame::Slot::offscreen, .order = 0, .id = decide_phase},
+        {.slot = frame::Slot::translucent, .order = strokes_order, .id = strokes_phase},
+    }};
 
     using Run = BuildingRun;
     /// One tile's draws: its push constants (without the list's first primitive or near cell, nor its list's kind),
@@ -116,9 +141,17 @@ private:
         double distance = 0;          ///< the tile's distance from the eye (the draws go nearest first)
     };
 
+    /// The roofs' thin edges' pipelines, sets and buffers (below; made in passes/Roofs.cpp).
+    struct Strokes;
+
     [[nodiscard]] gpu::Result<void> prepare_roofs(const frame::PassContext& context);
+    [[nodiscard]] gpu::Result<void> prepare_strokes(const frame::PassContext& context);
     void record_walls(const frame::Recording& recording);
     void record_roofs(const frame::Recording& recording);
+    /// This frame slot's stroke jobs, from the draws (stage F).
+    void write_jobs(std::uint32_t slot);
+    void record_decide(const frame::Recording& recording);
+    void record_strokes(const frame::Recording& recording);
     /// The rows of a tile's items, written once into its range (the render thread, the first frame it is drawn).
     void write_rows(const scene::ResidentTile& tile, const scene::PassTile& mine, const BuildingTile& b);
     /// The tile's faces' colours for this frame's moment into frame slot `slot`'s colours, unless they are its already.
@@ -140,6 +173,8 @@ private:
     gpu::Buffer edged_index_;
     gpu::Buffer plain_index_;
     vk::PipelineLayout frame_layout_;
+    std::unique_ptr<Strokes> strokes_;
+    StrokeCounts stroke_counts_;
 
     // the render thread's, per frame
     std::vector<TileDraw> draws_;
@@ -152,6 +187,28 @@ private:
     std::uint64_t moment_ = 0;
     std::unordered_map<std::uint32_t, std::array<std::uint64_t, 2>> lit_;
     std::vector<std::uint32_t> colours_;
+};
+
+struct Buildings::Strokes {
+    const gpu::Device* device = nullptr;
+    /// Set 2: the jobs (the compute stage's), the records as the vertex stage reads them and as the compute stage
+    /// writes them; a set, a jobs buffer (written by the CPU) and a records buffer (the GPU's) a frame slot.
+    vk::raii::DescriptorSetLayout set_layout{nullptr};
+    vk::raii::DescriptorPool pool{nullptr};
+    std::array<vk::raii::DescriptorSet, 2> sets{vk::raii::DescriptorSet{nullptr}, vk::raii::DescriptorSet{nullptr}};
+    std::array<gpu::Buffer, 2> jobs;
+    std::array<gpu::Buffer, 2> records;
+    /// The strokes' pipelines' layout (the frame's sets, then set 2), the compute stage's, and its pipeline.
+    vk::raii::PipelineLayout layout{nullptr};
+    vk::raii::PipelineLayout compute_layout{nullptr};
+    vk::raii::Pipeline decide{nullptr};
+    /// roof_strokes_vs's two pipelines.
+    ObjectStrokes draw;
+    // the render thread's, per frame: the jobs' words, the frame slot they went to, and what they hold
+    std::vector<std::uint32_t> words;
+    std::uint32_t slot = 0;
+    std::uint32_t jobs_now = 0;
+    std::uint32_t records_now = 0;
 };
 
 } // namespace atlas::passes

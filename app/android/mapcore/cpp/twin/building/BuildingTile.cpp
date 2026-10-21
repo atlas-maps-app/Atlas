@@ -27,7 +27,8 @@ static_assert(geometry::prim_flag::near == shaders::BUILDING_NEAR &&
                   geometry::prim_flag::polygon == shaders::BUILDING_POLYGON &&
                   geometry::prim_flag::stroke_fine == shaders::BUILDING_STROKE_FINE &&
                   geometry::prim_flag::stroke_wide == shaders::BUILDING_STROKE_WIDE &&
-                  geometry::prim_flag::stroke_cabin == shaders::BUILDING_STROKE_CABIN,
+                  geometry::prim_flag::stroke_cabin == shaders::BUILDING_STROKE_CABIN &&
+                  geometry::prim_flag::outline == shaders::BUILDING_OUTLINE,
               "geometry/Walls.hpp's prim_flag and building.slangh's flags");
 
 /// Two runs this close (primitives of cells not drawn between them) are drawn as one.

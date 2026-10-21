@@ -26,7 +26,9 @@ import java.util.Random
  * fragments; each case's counts per pass and kind are printed. The buildings (every face and near cell with its exact
  * edge, at true depth) are over §3's triangles where the city is dense: 2.06M at the Main board and 2.66M at the canal
  * ring's first sweep camera when they were registered (ENGINE.md, step 1), measured on the phone by VK bench, and held
- * here to 2.8M, so they only come down (step 2's refinements). And the likeness harness's candidate
+ * here to 2.8M, so they only come down (step 2's refinements). The roofs' thin edges are counted apart: ten triangles
+ * a plain primitive of the drawn runs (a segment of two along each of its shape's five edges, most of them drawing
+ * nothing), 1.15M at the Main board when they came, held to 2M. And the likeness harness's candidate
  * (CP/jni/TestCases.cpp) is that frame: it fills the pixels and the owner map.
  */
 class FrameStatsTest {
@@ -100,13 +102,16 @@ class FrameStatsTest {
             println("stats ${case.name}: ${FrameHost.lastNotes()}")
             for (l in lines) println("  $l")
             val total = counts(lines.first { it.startsWith("total ") })
-            val buildings = lines.firstOrNull { it.startsWith("pass buildings ") }?.let { counts(it).getValue("triangles") } ?: 0L
+            val pass = lines.firstOrNull { it.startsWith("pass buildings ") }?.let { counts(it).getValue("triangles") } ?: 0L
+            val strokes = lines.firstOrNull { it.startsWith("kind buildings roof strokes ") }?.let { counts(it).getValue("triangles") } ?: 0L
+            val buildings = pass - strokes
             val fse = lines.first { it.startsWith("fse ") }.split(' ')
             val opaque = fse[2].toDouble()
             assertTrue("${case.name}: ${total["draws"]} draws, over 300", total.getValue("draws") <= 300)
-            val others = total.getValue("triangles") - buildings
+            val others = total.getValue("triangles") - pass
             assertTrue("${case.name}: $others triangles besides the buildings', over 600k", others <= 600_000)
             assertTrue("${case.name}: the buildings' $buildings triangles, over the 2.8M they were registered with", buildings <= 2_800_000)
+            assertTrue("${case.name}: the roofs' thin edges' $strokes triangles, over 2M", strokes <= 2_000_000)
             assertTrue("${case.name}: ${total["instances"]} instances, over 30k", total.getValue("instances") <= 30_000)
             assertTrue("${case.name}: $opaque full screens of opaque fragments, over 1.6", opaque <= 1.6)
             n++

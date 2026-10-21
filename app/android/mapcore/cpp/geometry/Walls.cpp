@@ -219,14 +219,35 @@ void Builder::polygon(std::vector<V3> ring, std::span<const V2> plan, PrimKind k
                  .kind = kind,
                  .flags = static_cast<std::uint16_t>(flags | stroke_of(kind))};
     triangulate(plan, triangles_);
+    // an edge of a triangle lies on the ring where its two corners follow each other there, but for points between
+    // them that no triangle uses (earcut drops a ring's duplicate and collinear points: the edge runs over them)
+    const std::size_t n = poly.ring.size();
+    used_.assign(n, 0);
+    for (const std::uint32_t i : triangles_) used_[i] = 1;
+    const auto follows = [&](std::uint32_t u, std::uint32_t v) {
+        for (std::size_t k = (u + 1) % n; k != u; k = (k + 1) % n) {
+            if (k == v) return true;
+            if (used_[k] != 0) return false;
+        }
+        return false;
+    };
+    const auto on_ring = [&](std::uint32_t u, std::uint32_t v) { return follows(u, v) || follows(v, u); };
     for (std::size_t t = 0; t + 2 < triangles_.size(); t += 3) {
-        const V3& a = poly.ring[triangles_[t]];
-        const V3& b = poly.ring[triangles_[t + 1]];
-        const V3& c = poly.ring[triangles_[t + 2]];
+        const std::uint32_t i = triangles_[t];
+        const std::uint32_t j = triangles_[t + 1];
+        const std::uint32_t k = triangles_[t + 2];
+        const V3& a = poly.ring[i];
+        const V3& b = poly.ring[j];
+        const V3& c = poly.ring[k];
+        std::uint32_t outline = 0;
+        if (on_ring(i, j)) outline |= prim_flag::outline;
+        if (on_ring(j, k)) outline |= std::uint32_t{prim_flag::outline} << 1U;
+        if (on_ring(k, i)) outline |= std::uint32_t{prim_flag::outline} << 2U;
         out.plain.push_back({.p = {a, b, c, c},
                              .kind = kind,
                              .cell = cell,
-                             .flags = static_cast<std::uint16_t>(poly.flags | prim_flag::triangle | prim_flag::polygon),
+                             .flags = static_cast<std::uint16_t>(poly.flags | prim_flag::triangle | prim_flag::polygon |
+                                                                 static_cast<std::uint16_t>(outline)),
                              .face = face,
                              .sample = sun,
                              .item = item,

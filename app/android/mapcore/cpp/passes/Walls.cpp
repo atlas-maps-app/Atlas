@@ -120,6 +120,11 @@ void Buildings::update(const frame::FrameState& state) {
     draws_.clear();
     runs_.clear();
     drawn_handles_.clear();
+    stroke_counts_ = {};
+    if (strokes_ != nullptr) {
+        strokes_->jobs_now = 0;
+        strokes_->records_now = 0;
+    }
     if (state.cover == nullptr || state.ranks == nullptr) return;
     const std::uint32_t index = pass_index_.load(std::memory_order_relaxed);
     if (index == no_index) return;
@@ -169,6 +174,7 @@ void Buildings::update(const frame::FrameState& state) {
     }
     // the nearest tiles first, so early depth testing rejects what they hide in the tiles behind
     std::ranges::stable_sort(draws_, {}, &TileDraw::distance);
+    if (strokes_ != nullptr) write_jobs(slot);
     // the tiles no longer drawn are forgotten once many are kept (their rows written again if they come back: the
     // same; their colours lit again)
     if (rows_written_.size() > 4096) {
@@ -229,6 +235,7 @@ gpu::Result<void> Buildings::prepare(const frame::PassContext& context) {
 }
 
 void Buildings::release() noexcept {
+    strokes_.reset();
     walls_.clear();
     roofs_.clear();
     draw_module_.clear();
@@ -239,9 +246,15 @@ void Buildings::release() noexcept {
 }
 
 void Buildings::record(const frame::Recording& recording, std::uint32_t phase) {
-    if (phase != draw_phase) return;
-    record_walls(recording);
-    record_roofs(recording);
+    switch (phase) {
+    case draw_phase:
+        record_walls(recording);
+        record_roofs(recording);
+        break;
+    case decide_phase: record_decide(recording); break;
+    case strokes_phase: record_strokes(recording); break;
+    default: break;
+    }
 }
 
 void Buildings::record_walls(const frame::Recording& recording) {
@@ -289,7 +302,9 @@ void Buildings::emit(const frame::FrameState& state, twin::Stream& out, std::uin
     const bool wx = (state.block.theme.flags.x & shaders::THEME_WEATHER) != 0U;
     const std::int32_t objects =
         out.group({.node = {.filter = wx ? out.filter("mat") : twin::none}, .parent = out.root()});
-    for (const scene::CoverTile& t : state.cover->tiles()) {
+    const std::span<const scene::CoverTile> tiles = state.cover->tiles();
+    for (std::size_t i = 0; i < tiles.size(); ++i) {
+        const scene::CoverTile& t = tiles[i];
         if (t.drawn == nullptr || index >= t.drawn->passes.size()) continue;
         const scene::PassTile& mine = t.drawn->passes[index];
         const auto* b = mine.cpu_as<BuildingTile>();
@@ -302,7 +317,7 @@ void Buildings::emit(const frame::FrameState& state, twin::Stream& out, std::uin
             sun = {.now = t.sun->now->words, .before = t.sun->before->words, .weight = t.sun_weight, .has = true};
         }
         twin::BuildingTwin twin(state.block, state.ranks->table(), out, objects);
-        twin.record_depths(&depths_);
+        twin.record_depths(&depths_, static_cast<std::uint32_t>(i));
         twin.tile(*b, rows.subspan(std::min<std::size_t>(first, rows.size())), w.bytes(), t.place, t.cells, sun);
         emitted_.elements += twin.elements();
         emitted_.sunlit += twin.sunlit();

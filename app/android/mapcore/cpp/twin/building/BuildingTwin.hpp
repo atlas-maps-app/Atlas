@@ -35,11 +35,13 @@ struct SunTexels {
 /// (its corners and their reciprocal depths, its face's plane, its span and lead), and whether its depth is its face
 /// plane's (an edged outline: building_plane_recip) or its corners' over its fan (a plain polygon:
 /// building_plain_vertex); an n-gon's, each of its triangles the frame draws, over its own corners (`shape` is the
-/// first of them).
+/// first of them); and the cover tile it was drawn for (its place in the cover's list: the order the roofs' thin edges
+/// are drawn in follows the tiles').
 struct ElementDepth {
     shaders::BuildingShape shape{};
     bool edged = false;
     std::vector<shaders::BuildingShape> triangles;
+    std::uint32_t tile = 0;
 };
 
 /// Emits the buildings of the tiles a frame draws.
@@ -59,8 +61,12 @@ public:
     /// Elements emitted so far, and how many of them their sun bit lit (wholly or fading in).
     [[nodiscard]] std::size_t elements() const noexcept { return elements_; }
     [[nodiscard]] std::size_t sunlit() const noexcept { return sunlit_; }
-    /// Appends each element's depth to `out` as it is emitted, in the stream's order (null: none).
-    void record_depths(std::vector<ElementDepth>* out) noexcept { depths_ = out; }
+    /// Appends each element's depth to `out` as it is emitted, in the stream's order (null: none), as drawn for cover
+    /// tile `tile`.
+    void record_depths(std::vector<ElementDepth>* out, std::uint32_t tile = 0) noexcept {
+        depths_ = out;
+        tile_ = tile;
+    }
 
 private:
     const shaders::FrameBlock& block_;
@@ -76,6 +82,7 @@ private:
     std::vector<Point> points_;
     std::vector<shaders::BuildingShape> triangles_; // an n-gon's drawn triangles
     std::vector<ElementDepth>* depths_ = nullptr;
+    std::uint32_t tile_ = 0;
 };
 
 } // namespace atlas::twin

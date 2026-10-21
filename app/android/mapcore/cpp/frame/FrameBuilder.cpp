@@ -133,6 +133,21 @@ gpu::Result<vk::raii::Pipeline> make_pipeline(const PassContext& context, gpu::G
     return made;
 }
 
+gpu::Result<vk::raii::Pipeline> make_compute(const PassContext& context, const gpu::PipelineLabel& label,
+                                             vk::ShaderModule code, const char* entry, vk::PipelineLayout layout) {
+    context.cache.note_made();
+    const auto started = clock::now();
+    auto made = [&] {
+        const gpu::Announced named = gpu::announce(label, context.watch);
+        return gpu::make_compute(context.device.handle(), context.cache.handle(), label, code, entry, layout);
+    }();
+    if (context.stats != nullptr) {
+        context.stats->ms += ms_since(started);
+        ++context.stats->count;
+    }
+    return made;
+}
+
 FrameBuilder::FrameBuilder(const gpu::Device& device, const gpu::PipelineCache& cache, FrameOptions options,
                            gpu::PipelineWatch* watch) noexcept
     : device_(device), cache_(cache), options_(options), watch_(watch) {}

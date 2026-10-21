@@ -253,4 +253,10 @@ private:
 [[nodiscard]] gpu::Result<vk::raii::Pipeline> make_pipeline(const PassContext& context, gpu::GraphicsDesc desc,
                                                             Overdraw overdraw);
 
+/// A pass's compute pipeline of `entry` in `code`, made through the context's cache with its making announced as
+/// `label` alone.
+[[nodiscard]] gpu::Result<vk::raii::Pipeline> make_compute(const PassContext& context, const gpu::PipelineLabel& label,
+                                                           vk::ShaderModule code, const char* entry,
+                                                           vk::PipelineLayout layout);
+
 } // namespace atlas::frame
