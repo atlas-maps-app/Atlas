@@ -238,7 +238,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
   - windows, dark or lit by their own sun bits, with deep windows, sashes, shutters and the glass gradients;
   - plinths, cornices, shop glazing and material faces;
   - church windows;
-  - tradition walls and roofs (the tiles must carry the traditions' entries);
+  - the buildings' looks: Amsterdam with the looks from each building's tags (the renderer's New looks: the canal houses' varied brick and plaster, every other building its own type's look), which read richer than its tradition kit today; tradition walls and roofs where the renderer draws a place with them (the tiles must carry the traditions' entries). Making the tradition kits more advanced comes after the engine (the user, 21 October);
   - doors and house numbers.
 
   Chimneys, dormers, hoist beams, shopfronts, signs and terraces are geometry with depth.
