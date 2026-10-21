@@ -72,7 +72,10 @@ Result<Pack> Pack::open(std::unique_ptr<ByteSource> source) {
         if (!style_bytes) return std::unexpected(style_bytes.error());
         auto s = read_style(std::move(*style_bytes));
         if (!s) return std::unexpected(s.error());
-        p.style_.emplace(std::move(*s));
+        auto typed = Style::of(*s);
+        if (!typed) return std::unexpected(typed.error());
+        p.style_tables_.emplace(std::move(*s));
+        p.style_.emplace(std::move(*typed));
     }
 
     // The chunk table can be long (a planet's base asset holds about a hundred thousand chunks): no size cap but the

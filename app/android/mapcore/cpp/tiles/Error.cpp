@@ -26,6 +26,13 @@ TileError column_error(Fault fault, LayerId layer, std::string_view column, std:
     return e;
 }
 
+TileError style_error(Fault fault, std::string_view name) noexcept {
+    TileError e = error(fault, Site::style);
+    const std::size_t n = std::min(name.size(), e.column.size() - 1);
+    std::ranges::copy(name.substr(0, n), e.column.begin());
+    return e;
+}
+
 std::string_view name_of(Fault fault) noexcept {
     switch (fault) {
     case Fault::truncated: return "the bytes end early";
@@ -97,6 +104,8 @@ std::string describe(const TileError& e) {
     if (e.site == Site::column || e.layer != LayerId::none) {
         out += std::format(" {}", name_of(e.layer));
         if (!e.column_name().empty()) out += std::format(".{}", e.column_name());
+    } else if (!e.column_name().empty()) {
+        out += std::format(" {}", e.column_name());
     }
     out += std::format(": {}", name_of(e.fault));
     if (e.detail != 0) out += std::format(" ({})", e.detail);

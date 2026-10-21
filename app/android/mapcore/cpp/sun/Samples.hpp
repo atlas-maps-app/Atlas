@@ -25,6 +25,7 @@
 #include "tiles/Container.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Sections.hpp"
+#include "tiles/Style.hpp"
 
 #include <array>
 #include <cstdint>
@@ -33,7 +34,7 @@
 
 namespace atlas::sun {
 
-/// The region's values the samples read: the port's module state after the region's load (the style section's
+/// The region's values the samples read: the port's module state after the region's load (the pack's style: its
 /// `state` and `scene` tables).
 struct Region {
     double water_y = -1.5;   ///< WATER_Y: the water's level below the street, metres
@@ -42,8 +43,8 @@ struct Region {
     bool no_shadows = false; ///< S['no_shadows']: no ground shadows
 };
 
-/// The region's values from a pack's style tables (the port's defaults where a table lacks one).
-[[nodiscard]] Region region_of(const tiles::StyleTables& style) noexcept;
+/// The region's values of a pack's style.
+[[nodiscard]] Region region_of(const tiles::Style& style) noexcept;
 
 /// What a sample is: one kind of answer the renderer asks for.
 enum class Kind : std::uint8_t {

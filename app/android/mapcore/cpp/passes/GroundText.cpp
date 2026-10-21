@@ -54,11 +54,8 @@ gpu::Result<void> GroundText::build(scene::TileBuild& b) const {
     if (const tiles::Layer* labels = b.tile().layer(tiles::LayerId::label)) {
         text::canal_candidates(*labels, b.head().frame, kept->candidates);
     }
-    if (const tiles::StyleTables* style = b.style()) {
-        if (const auto state = style->table("state")) {
-            if (const auto level = state->find("water_y")) kept->water_level = level->number().value_or(-1.5);
-        }
-    }
+    kept->water_level = b.style().water_y;
+    kept->look = b.style().canal_names;
     std::size_t bytes = sizeof(CanalTile) + (kept->candidates.capacity() * sizeof(text::CanalCandidate));
     for (const text::CanalCandidate& c : kept->candidates) bytes += c.name.capacity();
     b.keep(std::shared_ptr<const CanalTile>(std::move(kept)), bytes);
@@ -118,6 +115,7 @@ void GroundText::gather(const frame::FrameState& state) {
             pack_read_ = pack_;
             tiles_.clear();
             water_level_ = pack_->water_level;
+            look_ = pack_->look;
             names_.set_candidates(pack_->candidates);
         }
         return;
@@ -152,6 +150,7 @@ void GroundText::gather(const frame::FrameState& state) {
             if (kept == nullptr) continue;
             for (const text::CanalCandidate& k : kept->candidates) all.emplace_back(c.drawn->key.z, &k);
             water_level_ = kept->water_level;
+            look_ = kept->look;
         }
     }
     std::ranges::sort(all, [](const auto& a, const auto& b) {
@@ -209,6 +208,7 @@ void GroundText::update(const frame::FrameState& state) {
                                .night = state.theme.has(style::theme_flag::night),
                                .weather = state.theme.has(style::theme_flag::weather),
                                .water_level = water_level_,
+                               .look = look_,
                                .rest = state.rest,
                                .seconds = state.seconds};
     const auto names = names_.update(view);

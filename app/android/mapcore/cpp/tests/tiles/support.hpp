@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -595,20 +596,124 @@ head_bytes(std::span<const std::uint8_t> levels, tiles::Profile profile = tiles:
     return r.bytes;
 }
 
-/// The `style` bytes with one table: `LAND` = {"park": "#a8c890"}.
-[[nodiscard]] inline std::vector<std::byte> style_bytes() {
+/// Typed values (rendertiles' Values) for the test sections, each a writer of its bytes.
+namespace values {
+
+using ValueBytes = std::function<void(Sink&)>;
+
+/// A string, a Double, an Int, a boolean, null.
+[[nodiscard]] inline ValueBytes text(std::string_view v) {
+    return [v](Sink& s) {
+        s.u8(6);
+        s.utf8(v);
+    };
+}
+[[nodiscard]] inline ValueBytes real(double v) {
+    return [v](Sink& s) {
+        s.u8(5);
+        s.f64(v);
+    };
+}
+[[nodiscard]] inline ValueBytes integer(std::int64_t v) {
+    return [v](Sink& s) {
+        s.u8(3);
+        s.varz(v);
+    };
+}
+[[nodiscard]] inline ValueBytes boolean(bool v) {
+    return [v](Sink& s) { s.u8(v ? 2 : 1); };
+}
+[[nodiscard]] inline ValueBytes null() {
+    return [](Sink& s) { s.u8(0); };
+}
+
+/// A list of values; a map of keys and values, in its order.
+[[nodiscard]] inline ValueBytes list(std::vector<ValueBytes> values) {
+    return [values = std::move(values)](Sink& s) {
+        s.u8(7);
+        s.varu(values.size());
+        for (const ValueBytes& v : values) v(s);
+    };
+}
+using Field = std::pair<std::string_view, ValueBytes>;
+[[nodiscard]] inline ValueBytes map(std::vector<Field> fields) {
+    return [fields = std::move(fields)](Sink& s) {
+        s.u8(8);
+        s.varu(fields.size());
+        for (const auto& [key, v] : fields) {
+            s.utf8(key);
+            v(s);
+        }
+    };
+}
+
+} // namespace values
+
+/// The tables of a test pack's style: the engine's style file's values (app/android/mapcore/style/engine.jsonc) with
+/// its land, area and surface tables empty (so a test pack's ground draws no land fill and every area in
+/// `area_other`), the port's default state (WATER_Y -1.5, no TONE, no WIN_STYLE), an empty scene, and a table the core
+/// does not know: `LAND` = {"park": "#a8c890"}.
+[[nodiscard]] inline std::vector<values::Field> style_tables() {
+    namespace v = values;
+    return {
+        {"LAND", v::map({{"park", v::text("#a8c890")}})},
+        {"land", v::map({})},
+        {"area", v::map({})},
+        {"surf", v::map({})},
+        {"surf_colour", v::map({})},
+        {"ground", v::map({{"area_other", v::text("#DCD3C4")}, {"cycleway", v::text("#C98A7A")}})},
+        {"rail", v::map({{"ballast", v::text("#A0978B")},
+                         {"ballast_half_width", v::real(1.6)},
+                         {"rails_day", v::text("#5E5A56")},
+                         {"rails_night", v::text("#1A1C22")},
+                         {"rails_width", v::real(0.7)}})},
+        {"big_roads", v::map({{"asphalt_day", v::text("#77777A")},
+                              {"asphalt_night", v::text("#22252E")},
+                              {"lines_day", v::text("#F2F1EC")},
+                              {"lines_night", v::text("#5A5E6A")},
+                              {"lines_width", v::real(0.18)},
+                              {"lane_dash", v::list({v::real(3.0), v::real(9.0)})}})},
+        {"runways", v::map({{"marks_day", v::text("#F4F3EE")}, {"marks_night", v::text("#4A4F5C")}})},
+        {"marine", v::map({{"breakwater", v::list({v::real(9.0), v::text("#9E9A92")})},
+                           {"groyne", v::list({v::real(4.0), v::text("#8E8A84")})},
+                           {"pier", v::list({v::real(5.0), v::text("#A89A86")})},
+                           {"quay", v::list({v::real(3.0), v::text("#B4AEA4")})}})},
+        {"trams", v::map({{"day", v::text("#6E6A66")}, {"night", v::text("#2A2E3A")}, {"width", v::real(0.9)}})},
+        {"bridges", v::map({{"lines", v::text("#5A4E44")}, {"lines_width", v::real(1.2)}})},
+        {"buildings", v::map({{"roof_edge_day", v::text("#6F695F")},
+                              {"roof_edge_night", v::text("#2E3446")},
+                              {"roof_edge_slope", v::real(0.25)},
+                              {"roof_edge_top", v::real(0.45)},
+                              {"wall_edge", v::real(0.3)}})},
+        {"houseboats", v::map({{"hull", v::text("#23272B")},
+                               {"deck", v::text("#6E5E4C")},
+                               {"cabin_edge", v::text("#2A2C30")},
+                               {"cabin_edge_width", v::real(0.4)}})},
+        {"canal_names", v::map({{"fill", v::text("#EAF2FA")},
+                                {"opacity", v::real(0.85)},
+                                {"weight", v::integer(700)},
+                                {"size", v::real(3.2)},
+                                {"spacing", v::real(0.3)}})},
+        {"state", v::map({{"water_y", v::real(-1.5)}, {"tone", v::boolean(false)}, {"win_style", v::null()}})},
+        {"scene", v::map({})},
+    };
+}
+
+/// The `style` bytes of `tables`.
+[[nodiscard]] inline std::vector<std::byte> style_bytes(std::span<const values::Field> tables) {
     Sink s;
     s.u32(tiles::style_magic);
     s.u16(tiles::payload_version);
-    s.varu(1);
-    s.utf8("LAND");
-    s.u8(8);
-    s.varu(1);
-    s.utf8("park");
-    s.u8(6);
-    s.utf8("#a8c890");
+    s.varu(tables.size());
+    for (const auto& [name, v] : tables) {
+        s.utf8(name);
+        v(s);
+    }
     return s.bytes;
 }
+
+/// The `style` bytes of a test pack (style_tables()).
+[[nodiscard]] inline std::vector<std::byte> style_bytes() { return style_bytes(style_tables()); }
 
 /// What a test pack holds other than its own: another `reach` or `rhead`, none of `reach`, sections after the others.
 struct PackOptions {

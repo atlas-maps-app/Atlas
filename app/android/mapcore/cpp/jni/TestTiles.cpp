@@ -168,7 +168,7 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_tiles_TileHost_pack(JNIEnv
             out += std::format("band {} {}\n", b.tolerance, b.up_to ? bits(*b.up_to) : std::string("last"));
         }
     }
-    if (const StyleTables* s = pack->style()) {
+    if (const StyleTables* s = pack->style_tables()) {
         for (const auto& [name, value] : s->tables()) {
             out += std::format("table {} ", name);
             value_text(out, value);

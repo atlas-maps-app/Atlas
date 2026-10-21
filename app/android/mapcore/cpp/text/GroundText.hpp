@@ -78,10 +78,11 @@ struct Runway {
 
 /// regions.py:628 runway_ends' designations: at each end, the last of the ref's names whose number times ten lies
 /// within 30° of the heading from that end, 60 m in, 18 m tall in Geist 800 with spacing 0.05, in the marking colour
-/// (#F4F3EE, #4A4F5C at night). The names of a ref without '/' are none. A name's number is its leading decimal digits
-/// as the port reads them: the Basic Multilingual Plane's (Character.isDigit on each UTF-16 unit; Python's \d would
-/// take the other planes' too, which no ref holds).
-[[nodiscard]] std::vector<TextRun> runway_designators(const view::Camera& camera, const Runway& runway, bool night);
+/// `mark` (0xRRGGBB: the style's runways' marks by day or at night). The names of a ref without '/' are none. A name's
+/// number is its leading decimal digits as the port reads them: the Basic Multilingual Plane's (Character.isDigit on
+/// each UTF-16 unit; Python's \d would take the other planes' too, which no ref holds).
+[[nodiscard]] std::vector<TextRun> runway_designators(const view::Camera& camera, const Runway& runway,
+                                                      std::uint32_t mark);
 
 /// A shaped run laid out as Slug glyph instances: each glyph's em-to-device-pixel map under the run's (snapped)
 /// matrix at `density` device px a CSS px, its place in the textures, its premultiplied colour.

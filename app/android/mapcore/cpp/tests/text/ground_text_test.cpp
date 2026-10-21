@@ -54,6 +54,8 @@ CanalView view_of(const view::Camera& cam, bool rest = true, double seconds = 0.
             .night = false,
             .weather = true,
             .water_level = -1.5,
+            // the port's look of the canal names (a pack's comes from its style)
+            .look = {.fill = 0xEAF2FA, .opacity = 0.85, .weight = 700, .size = 3.2, .spacing = 0.3},
             .rest = rest,
             .seconds = seconds};
 }
@@ -267,10 +269,11 @@ TEST_CASE("a name whose baseline points past 100° from screen right is turned, 
 
 TEST_CASE("runway designators: the ref's name for each end, 60 m in, 18 m tall in Geist 800") {
     const view::Camera cam = camera(0.0, 60.0, {0, 0, 0}, 1500.0);
+    constexpr std::uint32_t day = 0xF4F3EE; // the marking colour by day, as the style gives it
     // A runway from the south (z 1000) to the north (z -1000): from its south end the heading is 0°, so 36; from the
     // north end 180°, so 18.
     const text::Runway runway{.points = {{0, 1000}, {0, 0}, {0, -1000}}, .ref = "18C/36C"};
-    const auto runs = text::runway_designators(cam, runway, false);
+    const auto runs = text::runway_designators(cam, runway, day);
     ATLAS_REQUIRE(runs.size() == 2);
     CHECK(runs[0].text == "36C");
     CHECK(runs[1].text == "18C");
@@ -280,23 +283,23 @@ TEST_CASE("runway designators: the ref's name for each end, 60 m in, 18 m tall i
     const auto south_end = cam.proj({0, 0.09, 940});
     ATLAS_REQUIRE(south_end.has_value());
     CHECK(runs[0].matrix[4] == south_end->x);
-    CHECK(text::runway_designators(cam, runway, true)[0].fill == 0x4A4F5CU);
+    CHECK(text::runway_designators(cam, runway, 0x4A4F5CU)[0].fill == 0x4A4F5CU);
     // A ref without a slash names nothing; a name whose number is off the heading by 30° or more is not taken.
-    CHECK(text::runway_designators(cam, {.points = runway.points, .ref = "36C"}, false).empty());
-    CHECK(text::runway_designators(cam, {.points = runway.points, .ref = " 09 / 27 "}, false).empty());
-    const auto padded = text::runway_designators(cam, {.points = runway.points, .ref = " 18 / 36 "}, false);
+    CHECK(text::runway_designators(cam, {.points = runway.points, .ref = "36C"}, day).empty());
+    CHECK(text::runway_designators(cam, {.points = runway.points, .ref = " 09 / 27 "}, day).empty());
+    const auto padded = text::runway_designators(cam, {.points = runway.points, .ref = " 18 / 36 "}, day);
     ATLAS_REQUIRE(padded.size() == 2);
     CHECK(padded[0].text == "36");
     // The number is read from the BMP's decimal digits, as the port's Character.isDigit reads them: Arabic-Indic
     // ٣٦ is 36, fullwidth １８ is 18; a digit past the BMP (mathematical bold 𝟑) ends the number before it starts.
-    const auto eastern = text::runway_designators(cam, {.points = runway.points, .ref = "١٨/٣٦L"}, false);
+    const auto eastern = text::runway_designators(cam, {.points = runway.points, .ref = "١٨/٣٦L"}, day);
     ATLAS_REQUIRE(eastern.size() == 2);
     CHECK(eastern[0].text == "٣٦L");
     CHECK(eastern[1].text == "١٨");
-    const auto wide = text::runway_designators(cam, {.points = runway.points, .ref = "１８/x"}, false);
+    const auto wide = text::runway_designators(cam, {.points = runway.points, .ref = "１８/x"}, day);
     ATLAS_REQUIRE(wide.size() == 1);
     CHECK(wide[0].text == "１８");
-    CHECK(text::runway_designators(cam, {.points = runway.points, .ref = "\U0001D7D1\U0001D7D4/x"}, false).empty());
+    CHECK(text::runway_designators(cam, {.points = runway.points, .ref = "\U0001D7D1\U0001D7D4/x"}, day).empty());
 }
 
 TEST_CASE("a run laid out: each glyph under the snapped matrix at its anchored x, in device px") {

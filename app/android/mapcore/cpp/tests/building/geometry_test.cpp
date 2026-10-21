@@ -179,7 +179,12 @@ TEST_CASE("buildings: stage T of a synthetic tile, every roof shape and a houseb
     const std::vector<std::byte> raw = f.t.encode();
     auto tile = decoder.decode(raw, arena);
     ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
-    const gm::TileBuildings g = gm::build_buildings({.tile = &*tile, .head = &f.head, .level = 0, .kind = 7});
+    // the houseboat's hull and deck in the test's colours (a pack's come from its style)
+    const gm::TileBuildings g = gm::build_buildings({.tile = &*tile,
+                                                     .head = &f.head,
+                                                     .level = 0,
+                                                     .region = {.water_y = -1.5, .hull = 0x112233, .deck = 0x445566},
+                                                     .kind = 7});
     const atlas::sun::SunTile st = atlas::sun::make_tile(*tile, f.head, atlas::sun::Region{}, 0, {});
     const Checked c = check_tile(g, st);
     CHECK_MESSAGE(c.wrong == 0, c.first_wrong);
@@ -238,7 +243,7 @@ TEST_CASE("buildings: stage T of a synthetic tile, every roof shape and a houseb
         if (p.kind != gm::PrimKind::hull_wall) continue;
         CHECK(p.p[0].y == -1.5 - 0.15);
         CHECK(p.p[2].y == -1.5 + 0.7);
-        CHECK(g.faces[p.face].base == gm::hull_rgb);
+        CHECK(g.faces[p.face].base == 0x112233U);
     }
 }
 
@@ -253,8 +258,9 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
         ATLAS_REQUIRE(pack.has_value(), tl::describe(pack.error()));
         const tl::RenderHead* head = pack->head();
         ATLAS_REQUIRE(head != nullptr);
-        const atlas::sun::Region region =
-            pack->style() != nullptr ? atlas::sun::region_of(*pack->style()) : atlas::sun::Region{};
+        ATLAS_REQUIRE(pack->style() != nullptr);
+        const tl::Style& style = *pack->style();
+        const atlas::sun::Region region = atlas::sun::region_of(style);
         // the levels the pack's views and bands load at, and the unsimplified one
         std::vector<std::uint8_t> levels{0};
         for (const tl::HeadView& v : head->views()) levels.push_back(v.tolerance);
@@ -281,8 +287,12 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
                 auto tile = pack->decode(chunk, zstd, decoder, arena, raw, scratch);
                 ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
                 const auto t0 = std::chrono::steady_clock::now();
-                const gm::TileBuildings g = gm::build_buildings(
-                    {.tile = &*tile, .head = head, .level = level, .region = {.water_y = region.water_y}, .kind = 0});
+                const gm::TileBuildings g =
+                    gm::build_buildings({.tile = &*tile,
+                                         .head = head,
+                                         .level = level,
+                                         .region = {.water_y = style.water_y, .hull = style.hull, .deck = style.deck},
+                                         .kind = 0});
                 ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
                 const atlas::sun::SunTile st = atlas::sun::make_tile(*tile, *head, region, level, {});
                 const Checked c = check_tile(g, st);

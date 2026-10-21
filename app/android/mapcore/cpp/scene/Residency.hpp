@@ -18,6 +18,7 @@
 #include "scene/Heaps.hpp"
 #include "scene/ItemTable.hpp"
 #include "tiles/Store.hpp"
+#include "tiles/Style.hpp"
 #include "view/Camera.hpp"
 #include "view/Ladder.hpp"
 
@@ -95,15 +96,15 @@ struct ResidentTile {
 /// What a pass's builder sees of a tile and writes for it (frame::Pass::build), on a worker.
 class TileBuild {
 public:
-    TileBuild(const tiles::Tile& tile, const tiles::RenderHead& head, const tiles::StyleTables* style,
-              std::uint8_t level, view::Vec3 origin, Heaps& heaps, PassTile& out, std::vector<ItemSpec>& items,
-              std::uint32_t pass) noexcept
+    TileBuild(const tiles::Tile& tile, const tiles::RenderHead& head, const tiles::Style& style, std::uint8_t level,
+              view::Vec3 origin, Heaps& heaps, PassTile& out, std::vector<ItemSpec>& items, std::uint32_t pass) noexcept
         : tile_(tile), head_(head), style_(style), level_(level), origin_(origin), heaps_(heaps), out_(out),
           items_(items), pass_(pass) {}
 
     [[nodiscard]] const tiles::Tile& tile() const noexcept { return tile_; }
     [[nodiscard]] const tiles::RenderHead& head() const noexcept { return head_; }
-    [[nodiscard]] const tiles::StyleTables* style() const noexcept { return style_; }
+    /// The pack's style.
+    [[nodiscard]] const tiles::Style& style() const noexcept { return style_; }
     /// The ladder index the tile is built at (the rings' simplification and the variants').
     [[nodiscard]] std::uint8_t level() const noexcept { return level_; }
     /// The tile's south-west corner at street level in its pack frame's metres: its positions are float metres from it.
@@ -131,7 +132,7 @@ public:
 private:
     const tiles::Tile& tile_;
     const tiles::RenderHead& head_;
-    const tiles::StyleTables* style_;
+    const tiles::Style& style_;
     std::uint8_t level_;
     view::Vec3 origin_;
     Heaps& heaps_;

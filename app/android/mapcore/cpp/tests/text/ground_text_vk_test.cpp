@@ -362,6 +362,7 @@ TEST_CASE("the names from the pack whole: at the Main board the pass's names are
                                .night = false,
                                .weather = false,
                                .water_level = canals->water_level,
+                               .look = canals->look,
                                .rest = true,
                                .seconds = now};
     std::vector<std::string> rule;

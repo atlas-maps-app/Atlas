@@ -185,8 +185,9 @@ TEST_CASE("ground: every tile of the bundled packs builds and packs, its triangl
         auto pack = atlas::test::open_pack((std::filesystem::path(dir) / (std::string(name) + ".atlas")).string());
         ATLAS_REQUIRE(pack.has_value(), "the pack opens");
         const tl::RenderHead& head = *pack->head();
-        const geo::GroundStyle style = geo::GroundStyle::of(pack->style());
-        CHECK(!style.land_kinds().empty());
+        ATLAS_REQUIRE(pack->style() != nullptr);
+        const tl::Style& style = *pack->style();
+        CHECK(!style.land_kinds.empty());
         tl::Zstd zstd;
         tl::TileDecoder decoder;
         std::vector<std::byte> raw;

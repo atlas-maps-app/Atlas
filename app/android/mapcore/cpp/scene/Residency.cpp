@@ -188,7 +188,8 @@ void Residency::work(const std::stop_token& stop) {
 std::shared_ptr<ResidentTile> Residency::build(const Job& job, tiles::Zstd& zstd, tiles::TileDecoder& decoder,
                                                Arena& arena, std::vector<std::byte>& raw) {
     const std::shared_ptr<const tiles::StorePack> pack = pack_of(store_, job.pack);
-    if (!pack || !pack->pack.is_render() || pack->pack.head() == nullptr) return nullptr;
+    if (!pack || !pack->pack.is_render() || pack->pack.head() == nullptr || pack->pack.style() == nullptr)
+        return nullptr;
     const tiles::ChunkRef* chunk = pack->pack.chunks().find(job.request.key);
     if (chunk == nullptr) return nullptr;
     auto decoded = store_.decode({.pack = pack, .chunk = chunk}, zstd, decoder, arena, raw);
@@ -211,7 +212,7 @@ std::shared_ptr<ResidentTile> Residency::build(const Job& job, tiles::Zstd& zstd
     out->reach = chunk->reach;
     out->passes.resize(passes_.size());
     for (std::uint32_t p = 0; p < passes_.size(); ++p) {
-        TileBuild b(tile, head, pack->pack.style(), job.request.level, out->origin, heaps_, out->passes[p], out->items,
+        TileBuild b(tile, head, *pack->pack.style(), job.request.level, out->origin, heaps_, out->passes[p], out->items,
                     p);
         if (auto built = passes_[p]->build(b); !built) {
             log::warn("vk tiles: {}/{}/{} of {}: the {} pass: {}", job.request.key.z, job.request.key.x,

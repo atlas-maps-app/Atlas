@@ -121,6 +121,7 @@ std::optional<view::CameraSpec> spec_of(const std::vector<double>& v) {
 
 /// A pack's canal name candidates, by source order: its finest level's label layers, read once per JVM.
 struct Candidates {
+    tiles::CanalNamesStyle look; ///< the pack's style's canal names
     std::vector<text::CanalCandidate> all;
     double millis = 0.0;
 };
@@ -140,6 +141,7 @@ std::expected<std::shared_ptr<const Candidates>, std::string> candidates_of(cons
     if (!canals) return std::unexpected(tl::describe(canals.error()));
     auto out = std::make_shared<Candidates>();
     out->all = std::move(canals->candidates);
+    out->look = canals->look;
     out->millis = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     read.emplace(path, out);
     return out;
@@ -187,6 +189,7 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_text_TextHost_canalRule(JN
                                 .night = night == JNI_TRUE,
                                 .weather = weather == JNI_TRUE,
                                 .water_level = v[12],
+                                .look = (*candidates)->look,
                                 .rest = true,
                                 .seconds = 0.0};
     const auto rule = text::canal_rule((*candidates)->all, canal);
@@ -221,7 +224,7 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_text_TextHost_groundText(J
 /// A runway's designators: `camera` as spec_of reads it, `points` x and z pairs, its ref; the elements, a line each.
 JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_text_TextHost_runways(JNIEnv* env, jclass, jdoubleArray camera,
                                                                             jdoubleArray points, jstring ref,
-                                                                            jboolean night) {
+                                                                            jint mark) {
     const auto spec = spec_of(doubles_of(env, camera));
     if (!spec) return java_of(env, "error=the camera needs 11 values");
     const std::vector<double> p = doubles_of(env, points);
@@ -229,7 +232,10 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_text_TextHost_runways(JNIE
     for (std::size_t i = 0; i + 1 < p.size(); i += 2) runway.points.push_back({p[i], p[i + 1]});
     const view::Camera cam(*spec);
     std::string out;
-    for (const text::TextRun& run : text::runway_designators(cam, runway, night == JNI_TRUE)) out += run.svg() + "\n";
+    for (const text::TextRun& run :
+         text::runway_designators(cam, runway, static_cast<std::uint32_t>(mark) & 0xFFFFFFU)) {
+        out += run.svg() + "\n";
+    }
     return java_of(env, out);
 }
 

@@ -3,9 +3,9 @@
 //
 // - At rest, the renders' rule: none at night or with the engine's pitch at 20° or less; per name, the first canal way
 //   in source order whose middle vertex lies within the radius, anchored at that vertex at the water's level + 0.05 m
-//   (0.1 m without weather), the baseline along the segment into it, the name in capitals in Geist 700, 3.2 m with
-//   letter spacing 0.3, centred, #EAF2FA at 0.85, by ground_text; a way whose map degenerates is passed over, so the
-//   next way of that name may take it.
+//   (0.1 m without weather), the baseline along the segment into it, the name in capitals in Geist in the style's
+//   canal names (700, 3.2 m with letter spacing 0.3, #EAF2FA at 0.85), centred, by ground_text; a way whose map
+//   degenerates is passed over, so the next way of that name may take it.
 // - While moving, a placed name keeps its way while the rule could still draw it there (its middle within the radius,
 //   its map whole); then it takes the way of that name nearest the view's target among those the rule could draw
 //   within nine tenths of the radius (the one that will hold the longest as the camera goes on, never one at the
@@ -21,6 +21,7 @@
 #include "tiles/Error.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Sections.hpp"
+#include "tiles/Style.hpp"
 
 #include <cstdint>
 #include <span>
@@ -50,11 +51,12 @@ struct CanalCandidate {
 void canal_candidates(const tiles::Layer& labels, const tiles::Frame& frame, std::vector<CanalCandidate>& out);
 
 /// A render pack's canal names, whole (what the renders' S['labels'] holds of them): every candidate of the label
-/// layers of its finest level, by source order, each once; and the region's canal water level (the style's
-/// state.water_y, amsterdam.py's WATER_Y; -1.5 where it names none).
+/// layers of its finest level, by source order, each once; the region's canal water level (the style's state.water_y,
+/// amsterdam.py's WATER_Y) and the style's canal names.
 struct PackCanals {
     std::vector<CanalCandidate> candidates;
     double water_level = -1.5;
+    tiles::CanalNamesStyle look;
 };
 
 /// `pack`'s canal names (a pack-level stage T: some milliseconds for the canal ring's 652), or the first tile's error.
@@ -72,8 +74,9 @@ struct CanalView {
     bool night = false;
     /// The theme has weather (th['wx']): the names sit on the water, else 0.1 m up.
     bool weather = true;
-    /// The canal water's level (amsterdam.py's WATER_Y).
+    /// The canal water's level (amsterdam.py's WATER_Y), and the names' look (the pack's style).
     double water_level = -1.5;
+    tiles::CanalNamesStyle look;
     bool rest = true;
     /// The frame's time, seconds (for the fades).
     double seconds = 0.0;

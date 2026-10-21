@@ -10,7 +10,7 @@
 #include "gen/spirv/building/draw.hpp"
 #include "scene/Cover.hpp"
 #include "scene/Residency.hpp"
-#include "sun/Samples.hpp"
+#include "tiles/Style.hpp"
 #include "twin/Twin.hpp"
 #include "twin/building/BuildingShader.hpp"
 #include "twin/building/BuildingTwin.hpp"
@@ -45,13 +45,13 @@ void Buildings::select(const frame::FrameState& state, frame::Selectors& selecto
 gpu::Result<void> Buildings::build(scene::TileBuild& b) const {
     pass_index_.store(b.pass(), std::memory_order_relaxed);
     heaps_.store(&b.heaps(), std::memory_order_relaxed);
-    const tiles::StyleTables* style = b.style();
-    const sun::Region region = style != nullptr ? sun::region_of(*style) : sun::Region{};
-    const geometry::TileBuildings g = geometry::build_buildings({.tile = &b.tile(),
-                                                                 .head = &b.head(),
-                                                                 .level = b.level(),
-                                                                 .region = {.water_y = region.water_y},
-                                                                 .kind = kind_});
+    const tiles::Style& style = b.style();
+    const geometry::TileBuildings g =
+        geometry::build_buildings({.tile = &b.tile(),
+                                   .head = &b.head(),
+                                   .level = b.level(),
+                                   .region = {.water_y = style.water_y, .hull = style.hull, .deck = style.deck},
+                                   .kind = kind_});
     if (g.items.empty()) return {};
     auto layout = std::make_shared<BuildingTile>();
     const std::vector<Words> words = heap_words(g, b.origin().x, b.origin().z, *layout);

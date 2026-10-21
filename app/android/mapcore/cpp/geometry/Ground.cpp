@@ -33,37 +33,8 @@ namespace tl = atlas::tiles;
 
 namespace {
 
-// ---------------------------------------------------------------- the renders' literals (code, not tables)
+// ---------------------------------------------------------------- the renders' literals (code, not the style)
 
-// render/amsterdam.py:685 a cycleway's guessed surface:colour=red, the Dutch default
-constexpr Rgba cycleway{.r = 0xC9, .g = 0x8A, .b = 0x7A, .a = 255};
-// amsterdam.py:661 AREA's default
-constexpr std::string_view area_default = "#DCD3C4";
-// regions.py:557-559 a rail's ballast and rails
-constexpr Rgba ballast{.r = 0xA0, .g = 0x97, .b = 0x8B, .a = 255};
-constexpr Rgba rails_day{.r = 0x5E, .g = 0x5A, .b = 0x56, .a = 255};
-constexpr Rgba rails_night{.r = 0x1A, .g = 0x1C, .b = 0x22, .a = 255};
-// regions.py:570-572 a big road's asphalt and its markings
-constexpr Rgba asphalt_day{.r = 0x77, .g = 0x77, .b = 0x7A, .a = 255};
-constexpr Rgba asphalt_night{.r = 0x22, .g = 0x25, .b = 0x2E, .a = 255};
-constexpr Rgba marks_day{.r = 0xF2, .g = 0xF1, .b = 0xEC, .a = 255};
-constexpr Rgba marks_night{.r = 0x5A, .g = 0x5E, .b = 0x6A, .a = 255};
-// regions.py:606-607 marine works: (kind, width, colour)
-struct Marine {
-    std::string_view kind;
-    double width;
-    Rgba colour;
-};
-constexpr std::array<Marine, 4> marine{
-    {{.kind = "breakwater", .width = 9.0, .colour = {.r = 0x9E, .g = 0x9A, .b = 0x92, .a = 255}},
-     {.kind = "groyne", .width = 4.0, .colour = {.r = 0x8E, .g = 0x8A, .b = 0x84, .a = 255}},
-     {.kind = "pier", .width = 5.0, .colour = {.r = 0xA8, .g = 0x9A, .b = 0x86, .a = 255}},
-     {.kind = "quay", .width = 3.0, .colour = {.r = 0xB4, .g = 0xAE, .b = 0xA4, .a = 255}}}};
-// amsterdam.py:719 tram tracks
-constexpr Rgba tram_day{.r = 0x6E, .g = 0x6A, .b = 0x66, .a = 255};
-constexpr Rgba tram_night{.r = 0x2A, .g = 0x2E, .b = 0x3A, .a = 255};
-// amsterdam.py:697 a bridge's lines (by day without weather; none at night)
-constexpr Rgba bridge_lines{.r = 0x5A, .g = 0x4E, .b = 0x44, .a = 255};
 // regions.py:501 the canopy's fill (drawn at .55; the filter is K17's)
 constexpr Rgba canopy_black{.r = 0, .g = 0, .b = 0, .a = 255};
 
@@ -147,7 +118,7 @@ private:
 /// Builds one tile's ground.
 class Builder {
 public:
-    Builder(const tl::Tile& tile, const tl::RenderHead& head, const GroundStyle& style, std::uint8_t level,
+    Builder(const tl::Tile& tile, const tl::RenderHead& head, const tl::Style& style, std::uint8_t level,
             GroundTile& out) noexcept
         : tile_(tile), head_(head), style_(style), level_(level), out_(out) {}
 
@@ -231,10 +202,11 @@ private:
             if (l->integer(tl::ground::source, i) == tl::ground::source_land) {
                 // draw_under: every land ring whole, grouped by kind at 0.01; the canopy over forest, wood and scrub
                 const std::optional<std::uint16_t> k = style_.land_kind(kind);
-                if (!k) continue; // LAND[kind] would raise: the packer writes only LAND's kinds
+                // LAND[kind] would raise: the packer writes only LAND's kinds (and the GPU's groups hold so many)
+                if (!k || *k >= group::land_kinds) continue;
                 const std::uint32_t first = ring(r, false);
                 const auto count = static_cast<std::uint32_t>(out_.points.size() - first);
-                const Rgba c = style_.land_colour(*k);
+                const Rgba c = rgba(style_.land_colours[*k]);
                 const auto order = static_cast<std::uint32_t>(tl::ground_key::order(key));
                 fill(FillKind::land, static_cast<std::uint16_t>(group::land + *k), order, cell, first, count, 0.01, 600,
                      0.3, {.day = c, .night = darken(c, 0.2)});
@@ -246,10 +218,10 @@ private:
             }
             // render's areas: AREA's colour, a square in its mapped surface (TONE), five and a half times darker at
             // night, at 0.02, in data order
-            Rgba c = style_.area_colour(kind);
-            if (in(kind, surfaced) && style_.tone()) {
+            Rgba c = rgba(style_.area_colour(kind));
+            if (in(kind, surfaced) && style_.tone) {
                 if (const auto sf = l->string(l->schema->slot("tag:surface"), i)) {
-                    if (const auto s = style_.surf(*sf)) c = *s;
+                    if (const auto s = style_.surface(*sf)) c = rgba(*s);
                 }
             }
             const std::uint32_t first = ring(r, true);
@@ -278,13 +250,13 @@ private:
             Rgba c = theme_colour(ThemeColour::road);
             const std::optional<std::string_view> sf = l->string(surface, i);
             if (sf) {
-                if (const auto s = style_.surf(*sf)) c = *s;
+                if (const auto s = style_.surface(*sf)) c = rgba(*s);
             }
             const std::optional<std::string_view> sc = l->string(surface_colour, i);
             if (sc && !sc->empty()) {
-                if (const auto s = style_.surf_colour(*sc)) c = *s;
+                if (const auto s = style_.surface_colour(*sc)) c = rgba(*s);
             } else if (hw == "cycleway") {
-                c = cycleway;
+                c = rgba(style_.cycleway);
             }
             const double w = l->decimal(tl::road::w, i).value_or(0.0);
             const bool bridge = l->boolean(tl::road::bridge, i).value_or(false);
@@ -326,8 +298,8 @@ private:
                                     .order = order,
                                     .first = p,
                                     .count = 1,
-                                    .width = {.css = 1.2},
-                                    .paint = {.day = bridge_lines, .night = bridge_lines}});
+                                    .width = {.css = style_.bridge_lines_width},
+                                    .paint = {.day = rgba(style_.bridge_lines), .night = rgba(style_.bridge_lines)}});
         }
     }
 
@@ -390,18 +362,19 @@ private:
                                     .order = order,
                                     .first = p,
                                     .count = 1,
-                                    .width = {.css = 0.9},
-                                    .paint = {.day = tram_day, .night = tram_night}});
+                                    .width = {.css = style_.trams_width},
+                                    .paint = {.day = rgba(style_.trams.day), .night = rgba(style_.trams.night)}});
         }
     }
 
-    /// draw_over's rail: the ballast (ribbon 1.6; a crane rail's 0.5, tested and not drawn) and the two rails.
+    /// draw_over's rail: the ballast (its ribbon; a crane rail's 0.5, tested and not drawn) and the two rails.
     void rail(std::uint8_t cell, std::uint16_t g, std::uint32_t order, std::uint32_t c0, std::uint32_t n,
               bool is_crane) {
         if (!is_crane) {
             ribbon_.clear();
-            ribbon(points(c0, n), 1.6, ribbon_);
+            ribbon(points(c0, n), style_.ballast_half_width, ribbon_);
             const std::uint32_t first = put(ribbon_);
+            const Rgba ballast = rgba(style_.ballast);
             Fill& f = fill(FillKind::rail, g, order, cell, first, static_cast<std::uint32_t>(ribbon_.size()), 0.04, 600,
                            0.3, {.day = ballast, .night = darken(ballast, 0.2)});
             f.line = c0;
@@ -421,8 +394,8 @@ private:
                                 .order = order,
                                 .first = p0,
                                 .count = 2,
-                                .width = {.css = 0.7},
-                                .paint = {.day = rails_day, .night = rails_night},
+                                .width = {.css = style_.rails_width},
+                                .paint = {.day = rgba(style_.rails.day), .night = rgba(style_.rails.night)},
                                 .line = c0,
                                 .line_count = n});
     }
@@ -441,10 +414,11 @@ private:
         const std::uint32_t first = put(ribbon_);
         const auto asphalt = static_cast<std::uint32_t>(out_.fills.size());
         Fill& f = fill(FillKind::big, g, order, cell, first, static_cast<std::uint32_t>(ribbon_.size()), y, 600, 0.3,
-                       {.day = asphalt_day, .night = asphalt_night});
+                       {.day = rgba(style_.asphalt.day), .night = rgba(style_.asphalt.night)});
         f.line = c0;
         f.line_count = n;
-        const Width sw{.css = 0, .metres = 0.18, .at = out_.points[c0 + (n / 2)]};
+        const Width sw{.css = 0, .metres = style_.road_lines_width, .at = out_.points[c0 + (n / 2)]};
+        const Paint line_paint{.day = rgba(style_.road_lines.day), .night = rgba(style_.road_lines.night)};
         // the edge lines: lineD(offset(w / 2 - 0.5)) + lineD(offset(-(w / 2 - 0.5))), at y + 0.01
         const auto e0 = static_cast<std::uint32_t>(out_.polylines.size());
         for (const double off : {(w / 2) - 0.5, -((w / 2) - 0.5)}) {
@@ -460,12 +434,12 @@ private:
                                 .first = e0,
                                 .count = 2,
                                 .width = sw,
-                                .paint = {.day = marks_day, .night = marks_night},
+                                .paint = line_paint,
                                 .fill = asphalt,
                                 .line = c0,
                                 .line_count = n});
         if (lanes <= 1) return;
-        // the lane lines: dashes (3 on, 9 off) along offset(x0 + lw · i) for i in 1 to lanes - 1
+        // the lane lines: dashes (the style's, 3 on and 9 off) along offset(x0 + lw · i) for i in 1 to lanes - 1
         const double lw = (w - (motorway ? 3.0 : 1.0)) / static_cast<double>(lanes);
         const double x0 = -(w / 2) + (motorway ? 2.0 : 0.5);
         const auto d0 = static_cast<std::uint32_t>(out_.polylines.size());
@@ -473,7 +447,7 @@ private:
             side_.clear();
             offset_line(points(c0, n), x0 + (lw * static_cast<double>(k)), side_);
             dashes_.clear();
-            dashes(side_, 3.0, 9.0, dashes_);
+            dashes(side_, style_.lane_dash[0], style_.lane_dash[1], dashes_);
             for (const Dash& d : dashes_) {
                 const std::array<P2, 2> ab{d.a, d.b};
                 polyline(put(ab), 2, y + 0.01);
@@ -487,7 +461,7 @@ private:
                                 .first = d0,
                                 .count = static_cast<std::uint32_t>(out_.polylines.size()) - d0,
                                 .width = sw,
-                                .paint = {.day = marks_day, .night = marks_night},
+                                .paint = line_paint,
                                 .fill = asphalt,
                                 .line = c0,
                                 .line_count = n});
@@ -496,8 +470,8 @@ private:
     /// draw_over's marine works: a closed way as it is, else its ribbon, at 0.3.
     void marine_of(std::uint8_t cell, std::uint16_t g, std::uint32_t order, std::uint32_t c0, std::uint32_t n,
                    std::string_view kind, bool is_closed) {
-        const auto* const m = std::ranges::find(marine, kind, &Marine::kind);
-        if (m == marine.end()) return;
+        const tl::MarineStyle* m = style_.marine_of(kind);
+        if (m == nullptr) return;
         std::uint32_t first = c0;
         std::uint32_t count = n;
         if (!is_closed) {
@@ -506,8 +480,9 @@ private:
             first = put(ribbon_);
             count = static_cast<std::uint32_t>(ribbon_.size());
         }
-        Fill& f = fill(FillKind::marine, g, order, cell, first, count, 0.3, 600, 0.3,
-                       {.day = m->colour, .night = darken(m->colour, 0.2)});
+        const Rgba c = rgba(m->colour);
+        Fill& f =
+            fill(FillKind::marine, g, order, cell, first, count, 0.3, 600, 0.3, {.day = c, .night = darken(c, 0.2)});
         f.line = c0;
         f.line_count = n;
     }
@@ -529,13 +504,13 @@ private:
                            {.day = theme_colour(ThemeColour::water), .night = theme_colour(ThemeColour::water)});
             f.ring = static_cast<std::uint32_t>(l->integer(tl::water::index, i));
             f.hole = hole;
-            f.level = l->decimal(tl::water::level, i).value_or(style_.water_y());
+            f.level = l->decimal(tl::water::level, i).value_or(style_.water_y);
         }
     }
 
     const tl::Tile& tile_;
     const tl::RenderHead& head_;
-    const GroundStyle& style_;
+    const tl::Style& style_;
     std::uint8_t level_;
     GroundTile& out_;
     std::vector<std::uint32_t> kept_;
@@ -558,30 +533,6 @@ std::optional<std::uint16_t> group_of_key(std::uint64_t key) noexcept {
     case tl::ground_key::marks: return cls < 8 ? std::optional<std::uint16_t>(group::marks + cls) : std::nullopt;
     default: return std::nullopt; // land: its kind's group
     }
-}
-
-std::optional<Rgba> hex(std::string_view s) noexcept {
-    if (s.empty() || s[0] != '#') return std::nullopt;
-    s.remove_prefix(1);
-    auto digit = [](char c) -> int {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-        return -1;
-    };
-    std::array<int, 6> d{};
-    if (s.size() == 3) {
-        for (std::size_t i = 0; i < 3; ++i) d[2 * i] = d[(2 * i) + 1] = digit(s[i]);
-    } else if (s.size() == 6) {
-        for (std::size_t i = 0; i < 6; ++i) d[i] = digit(s[i]);
-    } else {
-        return std::nullopt;
-    }
-    if (std::ranges::any_of(d, [](int v) { return v < 0; })) return std::nullopt;
-    return Rgba{.r = static_cast<std::uint8_t>((d[0] * 16) + d[1]),
-                .g = static_cast<std::uint8_t>((d[2] * 16) + d[3]),
-                .b = static_cast<std::uint8_t>((d[4] * 16) + d[5]),
-                .a = 255};
 }
 
 Rgba darken(Rgba c, double k) noexcept {
@@ -655,64 +606,6 @@ void build_shadows(const sun::TileCasters& casters, GroundTile& out) {
         }
         out.shadows.push_back(sh);
     }
-}
-
-GroundStyle GroundStyle::of(const tiles::StyleTables* style) {
-    GroundStyle s;
-    if (style == nullptr) return s;
-    auto colours = [](const std::optional<tl::Value>& table, std::vector<std::pair<std::string_view, Rgba>>& out) {
-        if (!table) return;
-        for (std::size_t i = 0; i < table->size(); ++i) {
-            if (const auto v = table->child(i).string()) {
-                if (const auto c = hex(*v)) out.emplace_back(table->key(i), *c);
-            }
-        }
-    };
-    if (const auto land = style->table("land")) {
-        // LAND: kind -> [colour, draw order], in LAND's order
-        for (std::size_t i = 0; i < land->size() && s.land_kinds_.size() < group::land_kinds; ++i) {
-            const tl::Value entry = land->child(i);
-            const auto c = entry.size() > 0 ? entry.child(0).string() : std::nullopt;
-            s.land_kinds_.push_back(land->key(i));
-            s.land_colours_.push_back(c ? hex(*c).value_or(Rgba{}) : Rgba{});
-        }
-    }
-    colours(style->table("area"), s.areas_);
-    colours(style->table("surf"), s.surf_);
-    colours(style->table("surf_colour"), s.surf_colour_);
-    if (const auto state = style->table("state")) {
-        if (const auto tone = state->find("tone")) s.tone_ = tone->boolean().value_or(false);
-        if (const auto wy = state->find("water_y")) s.water_y_ = wy->number().value_or(-1.5);
-    }
-    s.no_shadows_ = sun::region_of(*style).no_shadows;
-    return s;
-}
-
-std::optional<std::uint16_t> GroundStyle::land_kind(std::string_view kind) const noexcept {
-    const auto it = std::ranges::find(land_kinds_, kind);
-    if (it == land_kinds_.end()) return std::nullopt;
-    return static_cast<std::uint16_t>(it - land_kinds_.begin());
-}
-
-Rgba GroundStyle::area_colour(std::string_view kind) const noexcept {
-    for (const auto& [k, c] : areas_) {
-        if (k == kind) return c;
-    }
-    return hex(area_default).value_or(Rgba{});
-}
-
-std::optional<Rgba> GroundStyle::surf(std::string_view surface) const noexcept {
-    for (const auto& [k, c] : surf_) {
-        if (k == surface) return c;
-    }
-    return std::nullopt;
-}
-
-std::optional<Rgba> GroundStyle::surf_colour(std::string_view colour) const noexcept {
-    for (const auto& [k, c] : surf_colour_) {
-        if (k == colour) return c;
-    }
-    return std::nullopt;
 }
 
 namespace {
@@ -888,7 +781,8 @@ tiles::Result<std::uint64_t> ground_check(const tiles::Pack& pack) {
     if (head == nullptr || head->levels.empty()) {
         return std::unexpected(tiles::error(tiles::Fault::missing, tiles::Site::none));
     }
-    const GroundStyle style = GroundStyle::of(pack.style());
+    if (pack.style() == nullptr) return std::unexpected(tiles::error(tiles::Fault::missing, tiles::Site::style));
+    const tiles::Style& style = *pack.style();
     tiles::Zstd zstd;
     tiles::TileDecoder decoder;
     std::vector<std::byte> raw;
@@ -943,7 +837,7 @@ std::string ground_line(int fd, std::uint64_t offset, std::uint64_t length) {
     return ground_line(*pack);
 }
 
-GroundTile build_ground(const tiles::Tile& tile, const tiles::RenderHead& head, const GroundStyle& style,
+GroundTile build_ground(const tiles::Tile& tile, const tiles::RenderHead& head, const tiles::Style& style,
                         std::uint8_t level, P2 origin) {
     GroundTile out;
     out.origin = origin;
@@ -980,7 +874,7 @@ GroundTile build_ground(const tiles::Tile& tile, const tiles::RenderHead& head, 
         ((s.x.capacity() + s.z.capacity() + s.h.capacity() + s.min.capacity()) * sizeof(double)) +
         ((s.first.capacity() + s.record.capacity()) * sizeof(std::uint32_t)) + s.source.capacity() +
         ((t.x.capacity() + t.z.capacity() + t.h.capacity() + t.crown.capacity() + t.gy.capacity()) * sizeof(double));
-    out.no_shadows = style.no_shadows();
+    out.no_shadows = style.no_shadows;
     // each caster's place in the renders' loops: the solids (buildings, then parts) and the trees by source order
     for (std::uint32_t i = 0; i < s.size(); ++i) {
         const bool part = s.source[i] == sun::Source::part;

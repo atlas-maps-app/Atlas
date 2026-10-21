@@ -284,7 +284,7 @@ std::optional<double> SunGlobals::maxh(const std::shared_ptr<const tiles::StoreP
 std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b) {
     const tiles::Pack& p = b.pack->pack;
     const tiles::RenderHead* head = p.head();
-    const tiles::StyleTables* style = p.style();
+    const tiles::Style* style = p.style();
     if (head == nullptr || style == nullptr) return nullptr;
     const sun::Region region = sun::region_of(*style);
     tiles::Zstd zstd;

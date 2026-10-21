@@ -4,13 +4,19 @@
 #include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Container.hpp"
+#include "tiles/Style.hpp"
 
 #include <doctest/doctest.h>
 
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace {
 
@@ -71,9 +77,11 @@ TEST_CASE("tiles: a render pack opens, finds and unpacks its chunks, and verifie
     CHECK(pack->head()->frame.kz == 110540.0);
     CHECK(atlas::test::held(atlas::test::held(pack->head()->view("home")).camera.find("dist")).real() == 430.0);
     CHECK(!pack->head()->view("away"));
+    ATLAS_REQUIRE(pack->style_tables() != nullptr);
+    CHECK(atlas::test::held(atlas::test::held(pack->style_tables()->table("LAND")).find("park")).string() == "#a8c890");
+    CHECK(!pack->style_tables()->table("SURF"));
     ATLAS_REQUIRE(pack->style() != nullptr);
-    CHECK(atlas::test::held(atlas::test::held(pack->style()->table("LAND")).find("park")).string() == "#a8c890");
-    CHECK(!pack->style()->table("SURF"));
+    CHECK(pack->style()->canal_names.weight == 700);
     Zstd zstd;
     std::vector<std::byte> raw;
     std::vector<std::byte> scratch;
@@ -488,6 +496,118 @@ TEST_CASE("tiles: rhead and style refuse what they must") {
     CHECK(read_style(style));
     style[4] = std::byte{9};
     CHECK(read_style(style).error().fault == Fault::bad_version);
+}
+
+TEST_CASE("tiles: a style's values, typed; one missing or of another kind is the pack's error, named") {
+    namespace v = atlas::test::values;
+    const auto typed = [](std::span<const v::Field> tables) -> Result<Style> {
+        auto read = read_style(atlas::test::style_bytes(tables));
+        if (!read) return std::unexpected(read.error());
+        return Style::of(*read);
+    };
+    auto tables = atlas::test::style_tables();
+    const auto set = [&tables](std::string_view name, v::ValueBytes value) {
+        for (auto& [table, bytes] : tables) {
+            if (table == name) {
+                bytes = std::move(value);
+                return;
+            }
+        }
+    };
+    set("land", v::map({{"park", v::list({v::text("#B2CA90"), v::integer(2)})},
+                        {"sand", v::list({v::text("#E4D6B3"), v::integer(4)})}}));
+    set("area", v::map({{"park", v::text("#A9C38A")}}));
+    set("surf_colour", v::map({{"red", v::text("#C0665A")}}));
+    set("state", v::map({{"water_y", v::real(-0.4)}, {"tone", v::boolean(true)}, {"win_style", v::text("paris")}}));
+    set("scene", v::map({{"no_shadows", v::integer(1)}}));
+    const auto style = typed(tables);
+    ATLAS_REQUIRE(style);
+    CHECK(style->land_kind("sand") == std::uint16_t{1});
+    CHECK(!style->land_kind("forest"));
+    CHECK(style->land_colours == std::vector<StyleRgb>{0xB2CA90, 0xE4D6B3});
+    CHECK(style->area_colour("park") == 0xA9C38AU);
+    CHECK(style->area_colour("square") == 0xDCD3C4U); // area_other
+    CHECK(!style->surface("asphalt"));
+    CHECK(style->surface_colour("red") == StyleRgb{0xC0665A});
+    CHECK(style->marine_of("pier")->width == 5.0);
+    CHECK(style->marine_of("pier")->colour == 0xA89A86U);
+    CHECK(style->marine_of("dock") == nullptr);
+    CHECK(style->lane_dash == std::array<double, 2>{3.0, 9.0});
+    CHECK(style->edges.roof.night == 0x2E3446U);
+    CHECK(style->edges.cabin_width == 0.4F);
+    CHECK(style->canal_names.size == 3.2);
+    CHECK(style->water_y == -0.4);
+    CHECK(style->tone);
+    CHECK(style->paris);
+    CHECK(style->no_shadows); // Python's truth of 1
+
+    // the fault of the refusal (nothing when the style is taken), named `name`
+    const auto refused = [&](std::string_view name) -> std::optional<Fault> {
+        const auto s = typed(tables);
+        if (s) return std::nullopt;
+        CHECK(s.error().site == Site::style);
+        CHECK(s.error().column_name() == name);
+        return s.error().fault;
+    };
+    SUBCASE("a table missing") {
+        std::erase_if(tables, [](const v::Field& t) { return t.first == "trams"; });
+        CHECK(refused("trams") == Fault::missing);
+        CHECK(describe(typed(tables).error()) == "style trams: " + std::string(name_of(Fault::missing)));
+    }
+    SUBCASE("a value missing") {
+        set("houseboats",
+            v::map({{"hull", v::text("#23272B")}, {"deck", v::text("#6E5E4C")}, {"cabin_edge", v::text("#2A2C30")}}));
+        CHECK(refused("houseboats.cabin_edge_width") == Fault::missing);
+    }
+    SUBCASE("a colour that is not one") {
+        set("ground", v::map({{"area_other", v::text("DCD3C4")}, {"cycleway", v::text("#C98A7A")}}));
+        CHECK(refused("ground.area_other") == Fault::bad_value);
+    }
+    SUBCASE("a number that is not finite") {
+        set("trams",
+            v::map({{"day", v::text("#6E6A66")}, {"night", v::text("#2A2E3A")}, {"width", v::real(std::nan(""))}}));
+        CHECK(refused("trams.width") == Fault::bad_value);
+    }
+    SUBCASE("a number that is a string") {
+        set("bridges", v::map({{"lines", v::text("#5A4E44")}, {"lines_width", v::text("1.2")}}));
+        CHECK(refused("bridges.lines_width") == Fault::bad_value);
+    }
+    SUBCASE("a weight that is not a whole number") {
+        set("canal_names", v::map({{"fill", v::text("#EAF2FA")},
+                                   {"opacity", v::real(0.85)},
+                                   {"weight", v::real(700.0)},
+                                   {"size", v::real(3.2)},
+                                   {"spacing", v::real(0.3)}}));
+        CHECK(refused("canal_names.weight") == Fault::bad_value);
+    }
+    SUBCASE("a land entry that is not a colour and an order") {
+        set("land", v::map({{"park", v::text("#B2CA90")}}));
+        CHECK(refused("land.park") == Fault::bad_value);
+    }
+    SUBCASE("a table that is not a map") {
+        set("runways", v::list({}));
+        CHECK(refused("runways") == Fault::bad_value);
+    }
+    SUBCASE("a lane dash of three") {
+        set("big_roads", v::map({{"asphalt_day", v::text("#77777A")},
+                                 {"asphalt_night", v::text("#22252E")},
+                                 {"lines_day", v::text("#F2F1EC")},
+                                 {"lines_night", v::text("#5A5E6A")},
+                                 {"lines_width", v::real(0.18)},
+                                 {"lane_dash", v::list({v::real(3.0), v::real(9.0), v::real(1.0)})}}));
+        CHECK(refused("big_roads.lane_dash") == Fault::bad_value);
+    }
+}
+
+TEST_CASE("tiles: a style's colours are #RRGGBB or #RGB") {
+    CHECK(style_rgb("#6F695F") == StyleRgb{0x6F695F});
+    CHECK(style_rgb("#eaf2fa") == StyleRgb{0xEAF2FA});
+    CHECK(style_rgb("#000") == StyleRgb{0});
+    CHECK(style_rgb("#abc") == StyleRgb{0xAABBCC});
+    CHECK(!style_rgb("6F695F"));
+    CHECK(!style_rgb("#6F695"));
+    CHECK(!style_rgb("#6F695G"));
+    CHECK(!style_rgb(""));
 }
 
 TEST_CASE("tiles: a zstd frame must be one frame that fills its chunk exactly") {

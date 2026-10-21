@@ -1004,19 +1004,8 @@ void TileSamples::add(Kind k, Source src, std::uint32_t own, std::uint32_t e, st
     part.push_back(static_cast<std::uint16_t>(std::min<std::uint32_t>(p, 0xFFFFU)));
 }
 
-Region region_of(const tiles::StyleTables& style) noexcept {
-    Region r;
-    if (const auto state = style.table("state")) {
-        if (const auto w = state->find("water_y")) r.water_y = w->number().value_or(r.water_y);
-        if (const auto t = state->find("tone")) r.tone = t->boolean().value_or(false);
-        if (const auto ws = state->find("win_style")) r.paris = ws->string().value_or(std::string_view{}) == "paris";
-    }
-    if (const auto scene = style.table("scene")) {
-        if (const auto ns = scene->find("no_shadows")) {
-            r.no_shadows = ns->boolean().value_or(false) || ns->number().value_or(0.0) != 0.0; // Python's truth
-        }
-    }
-    return r;
+Region region_of(const tiles::Style& style) noexcept {
+    return {.water_y = style.water_y, .paris = style.paris, .tone = style.tone, .no_shadows = style.no_shadows};
 }
 
 void collect_decks(const tiles::Tile& tile, const tiles::RenderHead& head, std::uint8_t level, std::vector<Deck>& out) {

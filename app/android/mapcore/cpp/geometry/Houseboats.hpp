@@ -12,11 +12,8 @@
 namespace atlas::geometry {
 
 /// The boat of houseboat `bl` (its values and footprint) into `b`, flagged prim_flag::weather, after its sun samples
-/// (K8's order: the hull's walls, then the cabin's) and its own painter slots (Builder::boat_slot).
+/// (K8's order: the hull's walls, then the cabin's) and its own painter slots (Builder::boat_slot), its hull and deck
+/// in the region's colours (the style's).
 void houseboat(Builder& b, const Building& bl, const BuildingRegion& region);
-
-/// The hull's colour and the deck's (draw_houseboat's #23272B and #6E5E4C).
-inline constexpr std::uint32_t hull_rgb = 0x23272BU;
-inline constexpr std::uint32_t deck_rgb = 0x6E5E4CU;
 
 } // namespace atlas::geometry

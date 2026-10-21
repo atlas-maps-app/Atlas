@@ -41,8 +41,10 @@ inline constexpr std::int32_t canal_names_order = 650;
 /// What stage T keeps of a tile for the canal names.
 struct CanalTile {
     std::vector<text::CanalCandidate> candidates;
-    /// The region's canal water level (amsterdam.py's WATER_Y, the pack's style state.water_y).
+    /// The region's canal water level (amsterdam.py's WATER_Y, the pack's style state.water_y), and the names' look
+    /// (the pack's style).
     double water_level = -1.5;
+    tiles::CanalNamesStyle look;
 };
 
 /// The ground's text pass.
@@ -117,6 +119,7 @@ private:
     bool pack_from_frame_ = false;                      // pack_ is the frame's active pack's
     std::shared_ptr<const text::PackCanals> pack_read_; // the pack data the names last read (held)
     double water_level_ = -1.5;
+    tiles::CanalNamesStyle look_;
     std::unordered_map<std::string, Shaped> shaped_;
     std::vector<layouts::text_slug::GlyphDraw> draws_;
     std::vector<text::GlyphInstance> laid_;

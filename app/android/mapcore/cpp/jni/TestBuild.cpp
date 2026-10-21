@@ -73,13 +73,12 @@ JNIEXPORT jlongArray JNICALL Java_app_atlas_mapcorecheck_buildings_BuildHost_pri
     auto source = tl::MappedSource::open(string_of(env, path));
     if (!source) return nullptr;
     auto pack = tl::Pack::open(std::move(*source));
-    if (!pack || pack->head() == nullptr || level < 0 ||
+    if (!pack || pack->head() == nullptr || pack->style() == nullptr || level < 0 ||
         std::cmp_greater(level, std::numeric_limits<std::uint8_t>::max())) {
         return nullptr;
     }
     const tl::RenderHead& head = *pack->head();
-    const atlas::sun::Region region =
-        pack->style() != nullptr ? atlas::sun::region_of(*pack->style()) : atlas::sun::Region{};
+    const tl::Style& style = *pack->style();
     tl::Zstd zstd;
     tl::TileDecoder decoder;
     std::vector<std::byte> raw;
@@ -90,11 +89,12 @@ JNIEXPORT jlongArray JNICALL Java_app_atlas_mapcorecheck_buildings_BuildHost_pri
         arena.reset();
         auto tile = pack->decode(chunk, zstd, decoder, arena, raw, scratch);
         if (!tile) return nullptr;
-        const gm::TileBuildings g = gm::build_buildings({.tile = &*tile,
-                                                         .head = &head,
-                                                         .level = static_cast<std::uint8_t>(level),
-                                                         .region = {.water_y = region.water_y},
-                                                         .kind = 0});
+        const gm::TileBuildings g =
+            gm::build_buildings({.tile = &*tile,
+                                 .head = &head,
+                                 .level = static_cast<std::uint8_t>(level),
+                                 .region = {.water_y = style.water_y, .hull = style.hull, .deck = style.deck},
+                                 .kind = 0});
         for (const std::vector<gm::Prim>* list : {&g.edged, &g.plain}) {
             for (const gm::Prim& p : *list) {
                 if ((p.flags & gm::prim_flag::polygon) != 0) continue; // its n-gon's record stands for it

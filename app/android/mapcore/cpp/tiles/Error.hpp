@@ -74,7 +74,8 @@ enum class LayerId : std::uint8_t {
     variant = 15,
 };
 
-/// A reader's error: fault, site, and for a column the layer and the column's name (cut to 31 bytes).
+/// A reader's error: fault, site, and for a column the layer and the column's name, for a style's value its name
+/// (`table.key`; each cut to 31 bytes).
 struct TileError {
     Fault fault = Fault::truncated;
     Site site = Site::none;
@@ -92,12 +93,15 @@ struct TileError {
 [[nodiscard]] TileError column_error(Fault fault, LayerId layer, std::string_view column,
                                      std::uint64_t detail = 0) noexcept;
 
+/// An error in a value of the style section, named `table.key` (tiles/Style.hpp).
+[[nodiscard]] TileError style_error(Fault fault, std::string_view name) noexcept;
+
 /// The fault's, site's and layer's names, as the messages and the JNI tests write them.
 [[nodiscard]] std::string_view name_of(Fault fault) noexcept;
 [[nodiscard]] std::string_view name_of(Site site) noexcept;
 [[nodiscard]] std::string_view name_of(LayerId layer) noexcept;
 
-/// One line for logs and tests: "<site>[ <layer>.<column>]: <fault> (<detail>)".
+/// One line for logs and tests: "<site>[ <layer>.<column>][ <style value>]: <fault> (<detail>)".
 [[nodiscard]] std::string describe(const TileError& e);
 
 /// A value or a reader's error.

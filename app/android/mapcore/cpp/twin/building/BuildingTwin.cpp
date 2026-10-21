@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <iterator>
 
@@ -20,6 +21,14 @@ using Words = std::array<std::uint32_t, 4>;
     std::memcpy(w.data(), bytes.data() + (i * sizeof(Words)), sizeof(Words));
     hlsl::uint4 v = {w[0], w[1], w[2], w[3]};
     return v;
+}
+
+/// A colour of the frame block (sRGB 0 to 1 at 8-bit levels) as ARGB, opaque.
+[[nodiscard]] std::uint32_t argb_of(const hlsl::float4& c) noexcept {
+    const auto byte = [](float v) {
+        return static_cast<std::uint32_t>(std::lround(std::clamp(v, 0.0F, 1.0F) * 255.0F));
+    };
+    return 0xFF00'0000U | (byte(c.x) << 16U) | (byte(c.y) << 8U) | byte(c.z);
 }
 
 /// Texel `t`'s bits of one plane (samples 32t to 32t + 31, as BitTiles::texels writes them): half of a 64-bit word.
@@ -88,26 +97,28 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
     const std::uint32_t theme_flags = theme.flags.x;
     items_.assign(b.items, none);
     ring_done_.assign(b.rings.size(), 0);
-    // the roofs' edge colour (draw_building's `edge`), by day and at night
-    const std::uint32_t edge = (theme_flags & shaders::THEME_NIGHT) != 0U ? 0xFF2E'3446U : 0xFF6F'695FU;
-    // an element's style: its fill, and its stroke in the port's attributes (a cell's same-colour .3 px edge, a roof's
-    // .25 or .45 px edge, a cabin roof's .4 px), joined round as the objects group joins them
+    // the frame's strokes (its pack's style): the roofs' edge colour (draw_building's `edge`), by day and at night
+    const shaders::FrameStrokes& strokes = block_.strokes;
+    const std::uint32_t edge =
+        argb_of((theme_flags & shaders::THEME_NIGHT) != 0U ? strokes.roof_night : strokes.roof_day);
+    // an element's style: its fill, and its stroke in the port's attributes (a cell's same-colour edge, a roof's edge
+    // on its slopes or its tops, a cabin roof's), joined round as the objects group joins them
     const auto style_of = [&](std::uint32_t flags, std::uint32_t argb) {
         Style style{.fill = Paint::colour(argb)};
         style.join = Join::round;
         style.stroke = Paint{};
         if ((flags & shaders::BUILDING_EDGE) != 0U) {
             style.stroke = Paint::colour(argb);
-            style.stroke_width = 2.0F * shaders::BUILDING_EDGE_HALF;
+            style.stroke_width = strokes.widths.w;
         } else if ((flags & shaders::BUILDING_STROKE_FINE) != 0U) {
             style.stroke = Paint::colour(edge);
-            style.stroke_width = 0.25F;
+            style.stroke_width = strokes.widths.x;
         } else if ((flags & shaders::BUILDING_STROKE_WIDE) != 0U) {
             style.stroke = Paint::colour(edge);
-            style.stroke_width = 0.45F;
+            style.stroke_width = strokes.widths.y;
         } else if ((flags & shaders::BUILDING_STROKE_CABIN) != 0U) {
-            style.stroke = Paint::colour(0xFF2A'2C30U);
-            style.stroke_width = 0.4F;
+            style.stroke = Paint::colour(argb_of(strokes.cabin));
+            style.stroke_width = strokes.widths.z;
         }
         return style;
     };

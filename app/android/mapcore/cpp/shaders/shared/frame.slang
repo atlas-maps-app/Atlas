@@ -1,12 +1,12 @@
 // The frame's uniform block (plan-vector D5.6): set 0, binding 0, at each frame's dynamic offset in the frame's ring.
 // What every pass reads of the frame: the camera (camera.slang), the moment's theme (theme.slang), the screen layers the
-// composite applies (composite.slang) and the frame's counts. CP/frame/FrameBuilder.cpp writes it once a frame, before
+// composite applies (composite.slang), the frame's counts and its pack's strokes. CP/frame/FrameBuilder.cpp writes it once a frame, before
 // the frame records; set 0 also holds the frame's rank table (binding 1: each item's first painter slot, CP/frame/
 // Ranks.cpp) and its selector table (binding 2: per item kind, the frame's detail choices, CP/frame/Selectors.cpp),
 // storage buffers at the same frame's offsets.
 //
 // Shared with the C++ twin (after base/hlsl.hpp, by CP/frame/FrameBlock.hpp): four-lane vectors of 32-bit values only,
-// so std140, std430 and C++ lay it out the same way: 704 bytes.
+// so std140, std430 and C++ lay it out the same way: 768 bytes.
 #pragma once
 
 #include "camera.slang"
@@ -21,11 +21,23 @@ static const uint FRAME_NIGHT = 4u;  // the moment is night (th['night'])
 // is in full mode: the effects that read them (mat, grain) run; off, they are stubbed.
 static const uint FRAME_FIELDS = 256u;
 
+/// The thin strokes of the buildings in the style of the frame's active pack (tiles/Style.hpp's EdgesStyle, the engine's
+/// style file's `buildings` and `houseboats`; a coarser pack drawn around it, made with the same file, draws them so
+/// too): the roofs' edges by day and at night and a houseboat cabin roof's, sRGB 0 to 1 at 8-bit levels (opaque); their
+/// widths in CSS px: x a roof's on its slopes, y on its tops, z a cabin roof's, w a wall's (in its own colour).
+struct FrameStrokes {
+    float4 roof_day;
+    float4 roof_night;
+    float4 cabin;
+    float4 widths;
+};
+
 struct FrameBlock {
     FrameCamera camera;
     Theme theme;
     FrameLayers layers;
     uint4 info; // x: the FRAME_ bits; y: the frame's painter slots (the ground's and the items'); z: its items; w: 0
+    FrameStrokes strokes;
 };
 
 /// Set 0's bindings: the block, the rank table, the selector table.

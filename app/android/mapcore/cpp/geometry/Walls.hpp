@@ -83,8 +83,8 @@ inline constexpr std::uint16_t triangle = 32; ///< three corners (the fourth rep
 inline constexpr std::uint16_t polygon = 64;  ///< one triangle of an n-gon: its area is the polygon's
 /// Its stroke in the port's attributes, beside a cell's same-colour edge: the roofs' fine edge (.25 px in the edge
 /// colour: a gable roof's slopes, gable ends and hip ends, a mansard's brisis faces), their wide one (.45 px: a flat
-/// top, a skillion roof, a mansard's top), a houseboat's cabin roof (.4 px #2A2C30). The objects' thin strokes draw
-/// them (K17a's ObjectStrokes); the twin emits them.
+/// top, a skillion roof, a mansard's top), a houseboat's cabin roof (.4 px #2A2C30), each in the pack's style (the
+/// frame block's strokes). The roofs' strokes draw them; the twin emits them.
 inline constexpr std::uint16_t stroke_fine = 128;
 inline constexpr std::uint16_t stroke_wide = 256;
 inline constexpr std::uint16_t stroke_cabin = 512;
@@ -164,7 +164,9 @@ struct TileBuildings {
 
 /// The region's values the buildings read (sun/Samples.hpp's Region: the port's module state after the region's load).
 struct BuildingRegion {
-    double water_y = -1.5; ///< WATER_Y: a houseboat's waterline
+    double water_y = -1.5;  ///< WATER_Y: a houseboat's waterline
+    std::uint32_t hull = 0; ///< the style's houseboats' hull (0xRRGGBB)
+    std::uint32_t deck = 0; ///< and deck
 };
 
 /// What stage T is given.

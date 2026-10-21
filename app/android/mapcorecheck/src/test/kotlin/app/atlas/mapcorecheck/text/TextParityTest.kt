@@ -16,6 +16,7 @@ import app.atlas.render.live.LiveView
 import app.atlas.render.live.Moment
 import app.atlas.render.py.truthy
 import app.atlas.render.v3
+import app.atlas.rendertiles.compile.EngineStyle
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -54,8 +55,8 @@ internal object TextHost {
         spacing: Double, anchor: Int,
     ): String
 
-    /** A runway's designators ([points] as x, z pairs): the elements, a line each. */
-    @JvmStatic external fun runways(camera: DoubleArray, points: DoubleArray, ref: String, night: Boolean): String
+    /** A runway's designators ([points] as x, z pairs) in the marking colour [mark] (0xRRGGBB): the elements, a line each. */
+    @JvmStatic external fun runways(camera: DoubleArray, points: DoubleArray, ref: String, mark: Int): String
 
     /** str.upper() of each code point alone: per code point, its capital form's length, then its code points. */
     @JvmStatic external fun upper(codePoints: IntArray): IntArray
@@ -203,6 +204,10 @@ class TextParityTest {
         assertTrue("some are refused", none > 500)
     }
 
+    /** The style's runway marks, by day and at night. */
+    @Suppress("UNCHECKED_CAST")
+    private val runwayMarks = EngineStyle.tables["runways"] as Map<String, String>
+
     @Test
     fun runwayDesignatorsAreThePorts() {
         val random = Random(18)
@@ -225,9 +230,11 @@ class TextParityTest {
             }
             val ref = refs[random.nextInt(refs.size)]
             val night = random.nextBoolean()
-            val mk = if (!night) "#F4F3EE" else "#4A4F5C"
+            // the marking colour as draw_over picks it, the style's (EngineStyleTest holds it to the port's)
+            val mk = runwayMarks.getValue(if (!night) "marks_day" else "marks_night")
             val want = TEXT.findAll(Regions.runwayEnds(cam, points, 45.0, ref, mk, night)).map { it.value }.toList()
-            val got = TextHost.runways(camera, points.flatMap { listOf(it.x, it.y) }.toDoubleArray(), ref, night).lines().filter { it.isNotEmpty() }
+            val got = TextHost.runways(camera, points.flatMap { listOf(it.x, it.y) }.toDoubleArray(), ref, mk.removePrefix("#").toInt(16))
+                .lines().filter { it.isNotEmpty() }
             assertEquals("case $i: ref '$ref'", want, got)
             designators += want.size; runways++
         }

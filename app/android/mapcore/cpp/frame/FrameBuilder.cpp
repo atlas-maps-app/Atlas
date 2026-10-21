@@ -8,6 +8,8 @@
 #include "gpu/Instance.hpp"
 #include "scene/Heaps.hpp"
 #include "scene/ItemTable.hpp"
+#include "scene/Packs.hpp"
+#include "tiles/Style.hpp"
 #include "twin/Twin.hpp"
 #include "view/Snap.hpp"
 
@@ -61,6 +63,23 @@ using clock = std::chrono::steady_clock;
                shaders::COMPOSITE_VIGNETTE;
     }
     return shaders::COMPOSITE_RAIN | shaders::COMPOSITE_HAZE | shaders::COMPOSITE_WASH | shaders::COMPOSITE_VIGNETTE;
+}
+
+/// A colour of the style as the shaders take it: sRGB 0 to 1 at 8-bit levels, opaque.
+[[nodiscard]] hlsl::float4 unit(tiles::StyleRgb c) noexcept {
+    const auto level = [c](unsigned shift) { return static_cast<float>((c >> shift) & 0xFFU) / 255.0F; };
+    return {level(16U), level(8U), level(0U), 1.0F};
+}
+
+/// The buildings' thin strokes in `pack`'s style (none without a pack: nothing draws them).
+[[nodiscard]] shaders::FrameStrokes strokes_of(const scene::ResidentPack* pack) noexcept {
+    const tiles::Style* style = pack != nullptr && pack->source ? pack->source->pack.style() : nullptr;
+    if (style == nullptr) return {};
+    const tiles::EdgesStyle& e = style->edges;
+    return {.roof_day = unit(e.roof.day),
+            .roof_night = unit(e.roof.night),
+            .cabin = unit(e.cabin),
+            .widths = {e.roof_slope, e.roof_top, e.cabin_width, e.wall}};
 }
 
 } // namespace
@@ -349,6 +368,8 @@ void FrameBuilder::stage_f() {
     state_.ground_frame = scene != nullptr ? scene->ground_frame() : std::nullopt;
     state_.active_pack = scene != nullptr ? scene->active_pack() : nullptr;
     state_.coarser_pack = scene != nullptr ? scene->coarser_pack() : nullptr;
+    // the strokes of the active pack's style (a coarser pack around it is made with the same style file)
+    state_.block.strokes = strokes_of(state_.active_pack);
     // Set 1's globals that no pass owns: each provider brings its bindings up to date (frame/Globals.hpp), and says
     // which effects its resources allow (FRAME_FIELDS: in full mode alone).
     if (scene != nullptr) {

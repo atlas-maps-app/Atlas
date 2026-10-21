@@ -1,9 +1,9 @@
 // A pack, opened (D1's container, plan-vector D2 and Appendix A): its header, directory, chunk table and, for a render
-// pack, its `reach`, `rhead` and `style`, read from a byte source (mapped, or fetched by ranges) and checked: every
-// section inside the pack, the CRC-32 of each section read whole (the chunk table, `reach`, `rhead`, `style`), each
-// chunk's SHA-256 when it is decompressed. The `chunks` section, possibly gigabytes read a chunk at a time (by ranges,
-// for a remote pack), has its CRC-32 checked only by verify(), which reads it whole; its chunks' own hashes protect it
-// chunk by chunk. Sections the core does not know are skipped.
+// pack, its `reach`, `rhead` and `style` (and the style's values, typed: tiles/Style.hpp), read from a byte source
+// (mapped, or fetched by ranges) and checked: every section inside the pack, the CRC-32 of each section read whole (the
+// chunk table, `reach`, `rhead`, `style`), each chunk's SHA-256 when it is decompressed. The `chunks` section, possibly
+// gigabytes read a chunk at a time (by ranges, for a remote pack), has its CRC-32 checked only by verify(), which reads
+// it whole; its chunks' own hashes protect it chunk by chunk. Sections the core does not know are skipped.
 #pragma once
 
 #include "base/arena.hpp"
@@ -13,6 +13,7 @@
 #include "tiles/Payload.hpp"
 #include "tiles/Sections.hpp"
 #include "tiles/Source.hpp"
+#include "tiles/Style.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -41,9 +42,10 @@ public:
     [[nodiscard]] const ChunkTable& chunks() const noexcept { return chunks_; }
     [[nodiscard]] const ByteSource& source() const noexcept { return *source_; }
 
-    /// `rhead` and `style` (render packs only; null for an element pack).
+    /// `rhead`, the style's values and the `style` section's tables (render packs only; null for an element pack).
     [[nodiscard]] const RenderHead* head() const noexcept { return head_ ? &*head_ : nullptr; }
-    [[nodiscard]] const StyleTables* style() const noexcept { return style_ ? &*style_ : nullptr; }
+    [[nodiscard]] const Style* style() const noexcept { return style_ ? &*style_ : nullptr; }
+    [[nodiscard]] const StyleTables* style_tables() const noexcept { return style_tables_ ? &*style_tables_ : nullptr; }
 
     /// A chunk's stored (compressed) bytes: in place for a mapped pack, else copied into `scratch`.
     [[nodiscard]] Result<std::span<const std::byte>> stored(const ChunkRef& chunk,
@@ -69,7 +71,8 @@ private:
     std::vector<Section> sections_;
     ChunkTable chunks_;
     std::optional<RenderHead> head_;
-    std::optional<StyleTables> style_;
+    std::optional<StyleTables> style_tables_;
+    std::optional<Style> style_;
 };
 
 /// A section's bytes as stored, checked against its CRC-32, then decompressed by its method (stored or zstd) into an

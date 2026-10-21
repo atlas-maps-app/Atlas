@@ -67,8 +67,8 @@ void houseboat(Builder& b, const Building& bl, const BuildingRegion& region) {
         cab.emplace_back(ce.x + ((p.x - ce.x) * 0.84), ce.z + ((p.z - ce.z) * 0.8));
         roof.emplace_back(ce.x + ((p.x - ce.x) * 0.88), ce.z + ((p.z - ce.z) * 0.86));
     }
-    boat_walls(b, poly, lo, deck, hull_rgb, PrimKind::hull_wall);
-    day_top(b, poly, deck, deck_rgb, PrimKind::deck);
+    boat_walls(b, poly, lo, deck, region.hull, PrimKind::hull_wall);
+    day_top(b, poly, deck, region.deck, PrimKind::deck);
     boat_walls(b, cab, deck, top, bl.v.wall_rgb, PrimKind::cabin_wall);
     day_top(b, roof, top, bl.v.roof_rgb, PrimKind::cabin_roof);
 }

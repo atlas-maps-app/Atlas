@@ -231,7 +231,7 @@ std::optional<TextRun> ground_text(const view::Camera& camera, std::string_view 
                    .opacity = opacity};
 }
 
-std::vector<TextRun> runway_designators(const view::Camera& camera, const Runway& runway, bool night) {
+std::vector<TextRun> runway_designators(const view::Camera& camera, const Runway& runway, std::uint32_t mark) {
     std::vector<TextRun> out;
     const auto& pts = runway.points;
     if (pts.size() < 2) return out;
@@ -248,7 +248,6 @@ std::vector<TextRun> runway_designators(const view::Camera& camera, const Runway
             start = slash + 1;
         }
     }
-    const std::uint32_t mark = night ? 0x4A4F5CU : 0xF4F3EEU;
     for (int end = 0; end < 2; ++end) {
         const auto& p0 = end == 0 ? pts[0] : pts[pts.size() - 1];
         const auto& p1 = end == 0 ? pts[1] : pts[pts.size() - 2];

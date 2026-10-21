@@ -221,10 +221,11 @@ struct Shape {
 using Vertex = std::array<double, 3>;
 
 /// The triangles the vertex stage draws an element as, each corner with its reciprocal depth (Shape::triangles): an
-/// edged element's outline fan, 14 triangles from its first point, each point its face plane's within the shape's span;
-/// a plain one's fan of 3 over its corners; an n-gon's triangles, each over its own corners.
+/// edged element's outline fan `half` its stroke's width out, 14 triangles from its first point, each point its face
+/// plane's within the shape's span; a plain one's fan of 3 over its corners; an n-gon's triangles, each over its own
+/// corners.
 [[nodiscard]] std::vector<std::array<Vertex, 3>> triangles_of(const shaders::FrameCamera& cam,
-                                                              const twin::ElementDepth& e) {
+                                                              const twin::ElementDepth& e, float half) {
     namespace sh = atlas::shaders;
     std::vector<Vertex> fan;
     std::vector<std::array<Vertex, 3>> out;
@@ -238,7 +239,7 @@ using Vertex = std::array<double, 3>;
     };
     if (e.edged) {
         for (std::uint32_t v = 0; v < sh::BUILDING_EDGED_VERTICES; ++v) {
-            const hlsl::float2 o = sh::building_outline(e.shape, v, sh::BUILDING_EDGE_HALF);
+            const hlsl::float2 o = sh::building_outline(e.shape, v, half);
             const float r = sh::building_plane_recip(cam, e.shape, o);
             fan.push_back({static_cast<double>(o.x), static_cast<double>(o.y), static_cast<double>(r)});
         }
@@ -273,10 +274,11 @@ using Vertex = std::array<double, 3>;
     return base * worst;
 }
 
-/// The document's shapes, each with its depth from `depths` (the pass's, in the stream's order) at frame camera `cam`.
+/// The document's shapes, each with its depth from `depths` (the pass's, in the stream's order) at frame camera `cam`,
+/// a wall's stroke `wall` CSS px wide (the frame's strokes').
 [[nodiscard]] std::vector<Shape> shapes_of(const twin::Document& doc, double density,
-                                           std::span<const twin::ElementDepth> depths,
-                                           const shaders::FrameCamera& cam) {
+                                           std::span<const twin::ElementDepth> depths, const shaders::FrameCamera& cam,
+                                           float wall) {
     std::vector<Shape> out;
     for (const twin::Element* e : doc.order(twin::Layer::objects)) {
         if (e->kind != twin::Op::path || e->points.size() < 3) continue;
@@ -284,17 +286,17 @@ using Vertex = std::array<double, 3>;
         for (const twin::Point& p : e->points) {
             sh.poly.push_back({static_cast<double>(p.x) * density, static_cast<double>(p.y) * density});
         }
-        // the cells' same-colour 0.3 px edges, which the pass draws; the roofs' thin edge strokes (.25, .45 and .4 px
-        // in other colours) are the objects' thin strokes' (K17a's ObjectStrokes), left out until that pass lands
+        // the cells' same-colour edges, which the pass draws; the roofs' thin edge strokes (.25, .45 and .4 px in other
+        // colours) are drawn by the strokes' own draws and rastered apart
         const bool stroked =
-            e->style.stroke.kind == twin::Paint::Kind::colour && std::abs(e->style.stroke_width - 0.3F) < 1e-6F;
+            e->style.stroke.kind == twin::Paint::Kind::colour && std::abs(e->style.stroke_width - wall) < 1e-6F;
         sh.stroke = stroked ? static_cast<double>(e->style.stroke_width) * density / 2 : 0.0;
         sh.colour = e->style.fill.argb & 0xFF'FFFFU;
         sh.sliver = (stroked || sh.poly.size() == 4) && turns_both_ways(sh.poly);
         sh.ngon = !stroked && sh.poly.size() >= 5;
         if (e->sequence < depths.size()) {
             sh.depth = depths[e->sequence];
-            sh.triangles = triangles_of(cam, sh.depth);
+            sh.triangles = triangles_of(cam, sh.depth, 0.5F * wall);
             sh.slack = slack_of(cam, sh.depth, sh.triangles);
         }
         out.push_back(std::move(sh));
@@ -775,16 +777,17 @@ struct Compared {
 };
 
 /// The GPU's frame `got` against the exact raster of the twin's document `doc`, whose elements' depths are `depths`,
-/// drawn at frame camera `cam` over cover tiles at `distances` from the eye.
+/// drawn with frame block `block` (its camera and strokes) over cover tiles at `distances` from the eye.
 [[nodiscard]] Compared compare(const platform::Pixels& got, const twin::Document& doc,
                                std::span<const twin::ElementDepth> depths, std::span<const double> distances,
-                               const shaders::FrameCamera& cam, const gpu::Configuration& config, double density,
+                               const shaders::FrameBlock& block, const gpu::Configuration& config, double density,
                                std::uint32_t clear) {
+    const shaders::FrameCamera& cam = block.camera;
     const std::vector<Pt> samples = sample_positions(config.samples());
     const std::uint32_t w = got.width;
     const std::uint32_t h = got.height;
     constexpr double tolerance = 0.02;
-    const std::vector<Shape> shapes = shapes_of(doc, density, depths, cam);
+    const std::vector<Shape> shapes = shapes_of(doc, density, depths, cam, block.strokes.widths.w);
     const Raster exact_raster = raster(shapes, w, h, samples, 0.0, cam, density, true);
     const std::vector<std::int32_t>& exact = exact_raster.shape;
     const Raster grown_raster = raster(shapes, w, h, samples, tolerance, cam, density);
@@ -1019,7 +1022,7 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
             const twin::Decoded decoded = twin::decode(stream.bytes());
             ATLAS_REQUIRE(decoded.error.empty(), decoded.error);
             const Compared r = compare(*pixels, decoded.document, s.buildings->depths(), distances(s),
-                                       s.builder->state().block.camera, config, c.density, clear);
+                                       s.builder->state().block, config, c.density, clear);
             const std::string name = std::format("{} {} {}{}", view, gpu::name_of(config), rest ? "at rest" : "moving",
                                                  painter ? " (painter's order)" : "");
             const passes::Buildings::StrokeCounts strokes = s.buildings->stroke_counts();
@@ -1062,7 +1065,7 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
                 const twin::Decoded d2 = twin::decode(after.bytes());
                 ATLAS_REQUIRE(d2.error.empty(), d2.error);
                 const Compared r2 = compare(*again, d2.document, s.buildings->depths(), distances(s),
-                                            s.builder->state().block.camera, config, c.density, clear);
+                                            s.builder->state().block, config, c.density, clear);
                 MESSAGE(name << ", the moment changed: the CPU lit " << l.tiles << " tiles' slots, " << l.faces
                              << " faces, in " << l.ms << " ms ("
                              << (l.tiles > 0 ? l.ms / static_cast<double>(l.tiles) : 0.0) << " ms a tile, the longest "

@@ -60,8 +60,8 @@ static const uint BUILDING_NO_BITS = 0xFFFFFFFFu;
 static const uint BUILDING_EDGED_VERTICES = 16u;
 static const uint BUILDING_PLAIN_VERTICES = 5u;
 
-// The port's constants: half the cells' 0.3 px stroke, face()'s least area, cam.poly's margin (CSS px).
-static const float BUILDING_EDGE_HALF = 0.15f;
+// The port's constants: face()'s least area, cam.poly's margin (CSS px). (A cell's stroke is the style's: the frame
+// block's strokes.widths.w.)
 static const float BUILDING_MIN_AREA = 0.12f;
 static const float BUILDING_MARGIN = 300.0f;
 

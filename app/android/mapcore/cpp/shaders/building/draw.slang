@@ -120,7 +120,8 @@ BuildingOut walls_vs(uint vertex : SV_VulkanVertexID) {
         o.colour = float3(0.0f);
         return o;
     }
-    float2 css = building_outline(d.shape, vertex - index * BUILDING_EDGED_VERTICES, BUILDING_EDGE_HALF);
+    // the outline of the wall's same-colour stroke, half its width out (the style's)
+    float2 css = building_outline(d.shape, vertex - index * BUILDING_EDGED_VERTICES, 0.5f * frame.strokes.widths.w);
     float depth = building_depth(frame.camera, d.shape, building_plane_recip(frame.camera, d.shape, css));
     o.position = clip_of(frame.camera, css, 1.0f, depth);
     o.colour = colour_of(d);
@@ -149,12 +150,6 @@ BuildingOut roofs_vs(uint vertex : SV_VulkanVertexID) {
 static const uint STROKE_JOB_VECTORS = 5u;
 /// The jobs a row of workgroups covers (Vulkan's least maxComputeWorkGroupCount[0]).
 static const uint STROKE_JOB_ROW = 65535u;
-
-/// The roofs' edge colours, sRGB 0 to 1 at 8-bit levels: draw_building's `edge` ('#6F695F', at night '#2E3446') and a
-/// houseboat's cabin roof's #2A2C30 (twin/building/BuildingTwin.cpp's style_of).
-static const float4 BUILDING_EDGE_DAY = {111.0f / 255.0f, 105.0f / 255.0f, 95.0f / 255.0f, 1.0f};
-static const float4 BUILDING_EDGE_NIGHT = {46.0f / 255.0f, 52.0f / 255.0f, 70.0f / 255.0f, 1.0f};
-static const float4 BUILDING_EDGE_CABIN = {42.0f / 255.0f, 44.0f / 255.0f, 48.0f / 255.0f, 1.0f};
 
 /// Each plain primitive of a job's run, decided once for the frame into its record (the push constants' at.x: the
 /// frame's jobs).
@@ -206,11 +201,15 @@ StrokeVertex roof_strokes_vs(uint vertex : SV_VulkanVertexID) {
     float3 a = building_stroke_corner(r, k);
     float3 b = building_stroke_corner(r, k + 1u < count ? k + 1u : 0u);
     float3 c = building_stroke_corner(r, building_stroke_third(count, k));
+    // the stroke's width and colour, the style's (draw_building's `edge`, a houseboat cabin roof's)
     uint style = building_stroke_style(header);
-    float width = style == BUILDING_STROKE_STYLE_FINE ? 0.25f : (style == BUILDING_STROKE_STYLE_WIDE ? 0.45f : 0.4f);
+    FrameStrokes strokes = frame.strokes;
+    float width = style == BUILDING_STROKE_STYLE_FINE
+                      ? strokes.widths.x
+                      : (style == BUILDING_STROKE_STYLE_WIDE ? strokes.widths.y : strokes.widths.z);
     float4 colour = style == BUILDING_STROKE_STYLE_CABIN
-                        ? BUILDING_EDGE_CABIN
-                        : ((frame.theme.flags.x & THEME_NIGHT) != 0u ? BUILDING_EDGE_NIGHT : BUILDING_EDGE_DAY);
+                        ? strokes.cabin
+                        : ((frame.theme.flags.x & THEME_NIGHT) != 0u ? strokes.roof_night : strokes.roof_day);
     float2 pa = {a.x, a.y};
     float2 pb = {b.x, b.y};
     float2 pc = {c.x, c.y};

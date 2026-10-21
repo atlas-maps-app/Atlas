@@ -27,8 +27,9 @@ namespace {
     ux /= length;
     uz /= length;
     const double y = view.weather ? view.water_level + 0.05 : 0.1;
-    return ground_text(*view.camera, upper(c.name), {c.mid_x, y, c.mid_z}, {ux, 0.0, uz}, {-uz, 0.0, ux}, 3.2,
-                       0xEAF2FAU, 0.85, 700, 0.3);
+    const tiles::CanalNamesStyle& look = view.look;
+    return ground_text(*view.camera, upper(c.name), {c.mid_x, y, c.mid_z}, {ux, 0.0, uz}, {-uz, 0.0, ux}, look.size,
+                       look.fill, look.opacity, look.weight, look.spacing);
 }
 
 [[nodiscard]] bool drawn_at_all(const CanalView& view) noexcept { return !view.night && view.pitch > 20; }
@@ -61,10 +62,9 @@ tiles::Result<PackCanals> pack_canals(const tiles::Pack& pack) {
     PackCanals out;
     const tiles::RenderHead* head = pack.head();
     if (head == nullptr || head->levels.empty()) return out;
-    if (const tiles::StyleTables* style = pack.style()) {
-        if (const auto state = style->table("state")) {
-            if (const auto level = state->find("water_y")) out.water_level = level->number().value_or(-1.5);
-        }
+    if (const tiles::Style* style = pack.style()) {
+        out.water_level = style->water_y;
+        out.look = style->canal_names;
     }
     tiles::Zstd zstd;
     tiles::TileDecoder decoder;

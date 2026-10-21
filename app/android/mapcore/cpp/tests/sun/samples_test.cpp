@@ -227,11 +227,14 @@ TEST_CASE("sun: a tile's samples, kind by kind, in their order") {
     CHECK(hash_of(at7.samples) == h);
 }
 
-TEST_CASE("sun: the region's values from a pack's style tables, the port's defaults without them") {
-    const tl::StyleTables none;
-    const Region r = region_of(none);
-    CHECK(r.water_y == -1.5);
-    CHECK(!r.paris);
+TEST_CASE("sun: the region's values are the pack's style's") {
+    tl::Style style;
+    style.water_y = -0.4;
+    style.paris = true;
+    style.no_shadows = true;
+    const Region r = region_of(style);
+    CHECK(r.water_y == -0.4);
+    CHECK(r.paris);
     CHECK(!r.tone);
-    CHECK(!r.no_shadows);
+    CHECK(r.no_shadows);
 }

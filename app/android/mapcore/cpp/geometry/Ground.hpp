@@ -16,6 +16,7 @@
 #include "tiles/Container.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Sections.hpp"
+#include "tiles/Style.hpp"
 
 #include <array>
 #include <cstdint>
@@ -105,8 +106,13 @@ enum class ThemeColour : std::uint8_t { ground = 0, road = 1, water = 2 };
     return {.r = static_cast<std::uint8_t>(c), .g = 0, .b = 0, .a = 0};
 }
 
-/// city.py's hx: a CSS hex colour (#rgb or #rrggbb) as 8-bit channels; nothing for anything else.
-[[nodiscard]] std::optional<Rgba> hex(std::string_view s) noexcept;
+/// A colour of the style (0xRRGGBB), opaque.
+[[nodiscard]] constexpr Rgba rgba(tiles::StyleRgb c) noexcept {
+    return {.r = static_cast<std::uint8_t>(c >> 16U),
+            .g = static_cast<std::uint8_t>(c >> 8U),
+            .b = static_cast<std::uint8_t>(c),
+            .a = 255};
+}
 
 /// city.py's tohex(mulc(hx(c), k)): each channel times k, rounded as Python rounds (ties to even), clamped to 0-255.
 [[nodiscard]] Rgba darken(Rgba c, double k) noexcept;
@@ -364,37 +370,6 @@ void build_shadows(const sun::TileCasters& casters, GroundTile& out);
 /// triangles (a swept hull's fan over its points twice, a moved outline's earcut, a crown's fan).
 [[nodiscard]] GroundGpu pack(const GroundTile& ground);
 
-/// The region's values the ground reads (the style section's tables): the land kinds (their colours, by their place
-/// in `land`), the areas' colours, the surfaces' (SURF, SURF_COLOUR), TONE and WATER_Y.
-class GroundStyle {
-public:
-    /// The style of a pack's `style` section (the port's defaults where a table lacks a value).
-    [[nodiscard]] static GroundStyle of(const tiles::StyleTables* style);
-
-    /// The land kind's place in `land` (its group's offset), or nothing for a kind the table lacks.
-    [[nodiscard]] std::optional<std::uint16_t> land_kind(std::string_view kind) const noexcept;
-    [[nodiscard]] std::span<const std::string_view> land_kinds() const noexcept { return land_kinds_; }
-    [[nodiscard]] Rgba land_colour(std::uint16_t kind) const noexcept { return land_colours_[kind]; }
-    /// AREA's colour of a kind ('#DCD3C4' for the others), SURF's of a surface, SURF_COLOUR's of a surface:colour.
-    [[nodiscard]] Rgba area_colour(std::string_view kind) const noexcept;
-    [[nodiscard]] std::optional<Rgba> surf(std::string_view surface) const noexcept;
-    [[nodiscard]] std::optional<Rgba> surf_colour(std::string_view colour) const noexcept;
-    [[nodiscard]] bool tone() const noexcept { return tone_; }
-    [[nodiscard]] double water_y() const noexcept { return water_y_; }
-    /// S['no_shadows'] (sun::region_of): the region draws no ground shadows.
-    [[nodiscard]] bool no_shadows() const noexcept { return no_shadows_; }
-
-private:
-    std::vector<std::string_view> land_kinds_;
-    std::vector<Rgba> land_colours_;
-    std::vector<std::pair<std::string_view, Rgba>> areas_;
-    std::vector<std::pair<std::string_view, Rgba>> surf_;
-    std::vector<std::pair<std::string_view, Rgba>> surf_colour_;
-    bool tone_ = false;
-    double water_y_ = -1.5;
-    bool no_shadows_ = false;
-};
-
 // ---------------------------------------------------------------- the ground's check on the phones' Bionic
 
 /// The ground's check over the bundled Westerkerk (the app's tiles/amsterdam.atlas), for the emulator's and the phone's
@@ -415,9 +390,9 @@ inline constexpr std::uint64_t ground_check_expected = 0x64B6'5C2F'CC20'964FULL;
 [[nodiscard]] std::string ground_line(int fd, std::uint64_t offset, std::uint64_t length);
 
 /// The ground of `tile` at ladder `level` (its areas simplified there; land, water and lines whole), in `head`'s frame,
-/// with `style`'s colours, and its shadows' casters at that level (sun::solids_of). `origin` is the tile's south-west
+/// in its pack's `style`, and its shadows' casters at that level (sun::solids_of). `origin` is the tile's south-west
 /// corner at street level (the residency's).
-[[nodiscard]] GroundTile build_ground(const tiles::Tile& tile, const tiles::RenderHead& head, const GroundStyle& style,
+[[nodiscard]] GroundTile build_ground(const tiles::Tile& tile, const tiles::RenderHead& head, const tiles::Style& style,
                                       std::uint8_t level, P2 origin);
 
 } // namespace atlas::geometry

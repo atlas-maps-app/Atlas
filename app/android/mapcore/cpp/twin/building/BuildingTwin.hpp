@@ -5,10 +5,10 @@
 // skillion roof, a mansard's top, a deck, a cabin roof) one element of its whole ring when the frame draws any of its
 // triangles; filled with its face's light, stroked as the port strokes it (a wall's cell, a skillion's or a houseboat's
 // wall 0.3 px in the same colour, a roof .25 or .45 px in the roofs' edge colour, a cabin roof .4 px #2A2C30: the
-// objects' thin strokes draw those, K17a), with the objects group's round joins, at its painter slot, in its building's
-// item (its OSM owner, an area). Its colours are the faces' light as the pass's CPU writes it (light.slang's light()
-// and tohex in binary64, the port's bits), lit by its sample's sun bit. Plain data in, no Vulkan: the pass's emit and
-// the tests call it alike.
+// frame block's strokes, its pack's style; the roofs' strokes draw those), with the objects group's round joins, at its
+// painter slot, in its building's item (its OSM owner, an area). Its colours are the faces' light as the pass's CPU
+// writes it (light.slang's light() and tohex in binary64, the port's bits), lit by its sample's sun bit. Plain data in,
+// no Vulkan: the pass's emit and the tests call it alike.
 #pragma once
 
 #include "frame/FrameBlock.hpp"

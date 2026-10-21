@@ -23,9 +23,11 @@ using namespace atlas::hlsl;
 static_assert(sizeof(FrameCamera) == 112, "camera.slang's FrameCamera: seven four-lane vectors");
 static_assert(sizeof(TilePlace) == 32);
 static_assert(sizeof(FrameLayers) == 288, "composite.slang's FrameLayers: eighteen four-lane vectors");
-static_assert(sizeof(FrameBlock) == 704, "frame.slang's FrameBlock: the camera, the theme, the layers and the counts");
+static_assert(sizeof(FrameStrokes) == 64, "frame.slang's FrameStrokes: four four-lane vectors");
+static_assert(sizeof(FrameBlock) == 768,
+              "frame.slang's FrameBlock: the camera, the theme, the layers, the counts and the strokes");
 static_assert(offsetof(FrameBlock, theme) == 112 && offsetof(FrameBlock, layers) == 400 &&
-              offsetof(FrameBlock, info) == 688);
+              offsetof(FrameBlock, info) == 688 && offsetof(FrameBlock, strokes) == 704);
 static_assert(alignof(FrameBlock) == 16);
 
 } // namespace atlas::shaders
