@@ -152,8 +152,13 @@ else()
     target_link_libraries(atlas_core_requirements INTERFACE ${CMAKE_DL_LIBS})
 endif()
 
-# The data compiled into the core (cmake/Data.cmake): the engine's style file, which the packs it builds carry.
+# The data compiled into the core (cmake/Data.cmake): the engine's style file, which the packs it builds carry, and the
+# building traditions a window takes from its country (render/traditions' five, read as data until the renderer
+# retires and they join the engine's style).
 atlas_embed_data(engine_style "${CMAKE_CURRENT_SOURCE_DIR}/../style/engine.jsonc")
+foreach(_tradition IN ITEMS fr_paris gb_terrace it_tuscan nl_amsterdam no_timber)
+    atlas_embed_data(tradition_${_tradition} "${CMAKE_CURRENT_SOURCE_DIR}/../../../../render/traditions/${_tradition}.json")
+endforeach()
 
 add_library(atlas_core OBJECT ${_core_sources})
 target_link_libraries(atlas_core PUBLIC atlas_core_requirements)

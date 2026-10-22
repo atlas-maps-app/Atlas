@@ -641,4 +641,12 @@ std::expected<Document, ReadError> read_overpass(std::span<const std::byte> json
     return doc;
 }
 
+Document select(const Document& from, const std::function<bool(const Element&)>& keep) {
+    Document out;
+    for (const Element& e : from.elements_) {
+        if (keep(e)) out.elements_.push_back(e);
+    }
+    return out;
+}
+
 } // namespace atlas::osm

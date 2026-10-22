@@ -655,11 +655,15 @@ struct VariantFeature {
     Attributes attributes;
 };
 
-/// How a scene is cut: the levels, whether rings carry keep codes, whether facades (doors, shopfronts) are drawn.
+/// How a scene is cut: the levels, whether rings carry keep codes, whether facades (doors, shopfronts) are drawn, the
+/// one tile kept (a window's; none: every tile), and whether a tradition's details refuse the cut (the packer's) or
+/// are left out (a window's).
 struct CutPlan {
     std::span<const std::uint8_t> levels;
     bool keep = false;
     bool facades = true;
+    std::optional<tl::TileKey> only;
+    bool details_refused = true;
 };
 
 class Cutter {
@@ -757,6 +761,7 @@ private:
     /// What a scene can hold that the tiles do not carry yet: the cut refuses it, as the packer's build fails.
     void unsupported() {
         if (!s_.gantries.empty() || !s_.conveyors.empty()) fail("render tiles cannot carry gantries or conveyors yet");
+        if (!plan_.details_refused) return;
         for (const auto* list : {&s_.buildings, &s_.parts}) {
             for (const Building& b : *list) {
                 if (b.lv_why || b.roof_why || b.look == LookPath::tradition || b.party) {
@@ -826,7 +831,13 @@ private:
         add(key, p);
     }
 
+    /// Whether the cut keeps tile `key` (a window keeps its own alone).
+    [[nodiscard]] bool wanted(const tl::TileKey& key) const noexcept {
+        return !plan_.only || key.packed() == plan_.only->packed();
+    }
+
     void add(const tl::TileKey& key, const Pending& p) {
+        if (!wanted(key)) return;
         auto [it, fresh] = tiles_.try_emplace(key.packed());
         if (fresh) order_.push_back(key);
         it->second.push_back(p);
@@ -1223,6 +1234,7 @@ private:
                 for (std::uint32_t x = t0.x; x <= t1.x; ++x) {
                     for (std::uint32_t y = t0.y; y <= t1.y; ++y) {
                         const tl::TileKey key(z_, x, y);
+                        if (!wanted(key)) continue;
                         const Box4 tb = tl::tile_box(key);
                         std::optional<Piece> piece;
                         if (ring_inside(ring, tb)) {
@@ -1688,9 +1700,19 @@ std::expected<std::vector<tiles::TileFill>, CutError> cut_living(const Scene& sc
     return cutter.run();
 }
 
-std::expected<std::vector<tiles::TileFill>, CutError> cut_region(const Scene& scene, const tiles::Frame& frame,
-                                                                 std::span<const CutVariant> variants) {
-    Cutter cutter(scene, frame, {.levels = region_levels, .keep = true, .facades = false});
+namespace {
+
+/// A region's cut by `plan`, with its variants: a building's or part's attributes at each variant's tolerance, carried
+/// where they differ from tolerance 0's (for a window, only of the features in its tile).
+std::expected<std::vector<tiles::TileFill>, CutError>
+cut_with(const CutPlan& plan, const Scene& scene, const tiles::Frame& frame, std::span<const CutVariant> variants) {
+    Cutter cutter(scene, frame, plan);
+    const auto kept = [&](const Building& b) {
+        if (!plan.only) return true;
+        const V2 c = geometry::centroid(b.poly);
+        const tiles::GridPoint ref = tiles::nearest_grid(frame, c.x, c.z);
+        return tiles::tile_of(plan.only->z, ref.lat, ref.lon).packed() == plan.only->packed();
+    };
     for (const CutVariant& v : variants) {
         const int level = tiles::keep::level_of(v.tolerance);
         if (v.scene == nullptr || level <= 0) {
@@ -1716,6 +1738,7 @@ std::expected<std::vector<tiles::TileFill>, CutError> cut_region(const Scene& sc
                         CutError{std::format("at {} m: {} {} is {}, not {}", v.tolerance, part ? "part" : "building", i,
                                              theirs[i].id, mine[i].id)});
                 }
+                if (!kept(mine[i])) continue;
                 const Attributes a = cutter.attributes(scene, mine[i], part, cutter.grid());
                 Attributes b = cutter.attributes(other, theirs[i], part, grid);
                 if (!same(a, b)) {
@@ -1728,6 +1751,26 @@ std::expected<std::vector<tiles::TileFill>, CutError> cut_region(const Scene& sc
         }
     }
     return cutter.run();
+}
+
+constexpr std::array<std::uint8_t, 1> window_levels{14};
+
+} // namespace
+
+std::expected<std::vector<tiles::TileFill>, CutError> cut_region(const Scene& scene, const tiles::Frame& frame,
+                                                                 std::span<const CutVariant> variants) {
+    return cut_with({.levels = region_levels, .keep = true, .facades = false}, scene, frame, variants);
+}
+
+std::expected<std::vector<tiles::TileFill>, CutError> cut_window(const Scene& scene, const tiles::Frame& frame,
+                                                                 std::span<const CutVariant> variants,
+                                                                 const tiles::TileKey& tile) {
+    if (tile.z != window_levels[0]) {
+        return std::unexpected(
+            CutError{std::format("a window is a tile of L{}, not of L{}", window_levels[0], tile.z)});
+    }
+    return cut_with({.levels = window_levels, .keep = true, .facades = false, .only = tile, .details_refused = false},
+                    scene, frame, variants);
 }
 
 } // namespace atlas::load

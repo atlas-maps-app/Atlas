@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <deque>
 #include <expected>
+#include <functional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -99,6 +100,7 @@ public:
 
 private:
     friend std::expected<Document, ReadError> read_overpass(std::span<const std::byte> json);
+    friend Document select(const Document& from, const std::function<bool(const Element&)>& keep);
 
     std::vector<Element> elements_;
     std::vector<Tag> tags_;
@@ -110,5 +112,9 @@ private:
 
 /// The document's elements, or why it cannot be read. The document's bytes must outlive the result.
 [[nodiscard]] std::expected<Document, ReadError> read_overpass(std::span<const std::byte> json);
+
+/// The elements of `from` that `keep` keeps, in their order: what a query of a smaller box returns from a region's data
+/// (a window's, load/Window.hpp). The elements view `from`'s values, so `from` (and its bytes) must outlive the result.
+[[nodiscard]] Document select(const Document& from, const std::function<bool(const Element&)>& keep);
 
 } // namespace atlas::osm

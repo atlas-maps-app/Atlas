@@ -4,8 +4,8 @@
 // outline has at least three points and a box around them, and each index (a place's building, a building's places, a
 // tree's node, a place among the nodes) points into its list. The region takes, by the input's size, a tradition with
 // every rule and detail generic.py reads (load/Generic.hpp's looks), or none; the living map Amsterdam's New looks or
-// none. Each scene is cut into its render tiles too (load/Cut.hpp), which must cut or refuse. Seeds:
-// fuzz/corpus/fuzz_load (the unit test's document, with a record of each kind, and the reader's seed).
+// none. Each scene is cut into its render tiles too (load/Cut.hpp), and the region's into a window, which must cut or
+// refuse. Seeds: fuzz/corpus/fuzz_load (the unit test's document, with a record of each kind, and the reader's seed).
 #include "base/assert.hpp"
 #include "load/Amsterdam.hpp"
 #include "load/Cut.hpp"
@@ -13,6 +13,7 @@
 #include "load/Regions.hpp"
 #include "load/Tradition.hpp"
 #include "osm/Overpass.hpp"
+#include "tiles/Grid.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -84,6 +85,15 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         if (const auto tiles = atlas::load::cut_region(*regional, region.frame, {})) {
             for (const atlas::tiles::TileFill& t : *tiles)
                 ATLAS_ASSERT(t.level() == 14 || t.level() == 12, "a tile's level");
+        }
+        // a window's cut (the Westerkerk's L14 tile): that tile alone, or none, and a tradition's details left out
+        const atlas::tiles::TileKey window = atlas::tiles::tile_of(14, 523'746'000, 48'840'000);
+        if (const auto tiles = atlas::load::cut_window(*regional, region.frame, {}, window)) {
+            ATLAS_ASSERT(tiles->size() <= 1, "a window's tiles");
+            for (const atlas::tiles::TileFill& t : *tiles) {
+                ATLAS_ASSERT(atlas::tiles::TileKey(t.level(), t.x(), t.y()).packed() == window.packed(),
+                             "a window's tile");
+            }
         }
     }
     const atlas::load::Looks looks{

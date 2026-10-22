@@ -20,6 +20,7 @@
 #pragma once
 
 #include "load/Scene.hpp"
+#include "tiles/Chunks.hpp"
 #include "tiles/Sections.hpp"
 #include "tiles/TileWriter.hpp"
 
@@ -52,5 +53,15 @@ struct CutVariant {
 /// holds the ground (the areas and the land cover) and the water at the ladder's 4 m, and the labels.
 [[nodiscard]] std::expected<std::vector<tiles::TileFill>, CutError>
 cut_region(const Scene& scene, const tiles::Frame& frame, std::span<const CutVariant> variants);
+
+/// One window of the map the phone builds (load/Window.hpp): a region's cut at L14 alone, of the features whose
+/// reference point lies in `tile` and the water clipped to its edges, with keep codes and the variants of the features
+/// in it. A tradition's details (trad, party, lv_why, roof_why), which the tiles have no columns for until step 4's
+/// facades, are left out where the packer's cut refuses them; the looks they lead to (the levels, the roofs, the
+/// colours) are carried.
+[[nodiscard]] std::expected<std::vector<tiles::TileFill>, CutError> cut_window(const Scene& scene,
+                                                                               const tiles::Frame& frame,
+                                                                               std::span<const CutVariant> variants,
+                                                                               const tiles::TileKey& tile);
 
 } // namespace atlas::load
