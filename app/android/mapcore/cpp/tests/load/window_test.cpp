@@ -6,10 +6,14 @@
 //     lists are taken out (a window's lists hold its own data, so its indexes and the ground's ranks are its own), and
 //     the variants of the region's home view, which a window has no views for, are left out;
 //   - a window in Paris, anywhere's place (its country's tradition, its frame cell's frame) builds, with fr_paris's
-//     looks, and its pack opens and says what it is.
+//     looks, and its pack opens and says what it is;
+//   - a window leaves out what its tiles cannot carry yet (a sign gantry, a goods conveyor), which the packer's cut
+//     refuses.
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "load/Countries.hpp"
+#include "load/Cut.hpp"
+#include "load/Regions.hpp"
 #include "load/Window.hpp"
 #include "osm/Overpass.hpp"
 #include "tests/base/require.hpp"
@@ -90,6 +94,66 @@ std::vector<std::string> masked(const std::string& dump, int skip) {
 }
 
 } // namespace
+
+TEST_CASE("load: a window leaves out what its tiles cannot carry yet, which the packer's cut refuses") {
+    // a house by the Westerkerk, a sign gantry over the road beside it and a goods conveyor: the tiles have no columns
+    // for gantries and conveyors until step 4's things
+    const tl::TileKey k = tl::tile_of(14, 523'746'000, 48'840'000);
+    const std::string house = R"({"type": "way", "id": 10, "tags": {"building": "house"}, "geometry": [
+    {"lat": 52.3745, "lon": 4.8840}, {"lat": 52.3745, "lon": 4.8842}, {"lat": 52.3747, "lon": 4.8842},
+    {"lat": 52.3747, "lon": 4.8840}, {"lat": 52.3745, "lon": 4.8840}]})";
+    const std::string uncarried = R"({"type": "way", "id": 11, "tags": {"man_made": "gantry", "height": "7"},
+    "geometry": [{"lat": 52.3744, "lon": 4.8835}, {"lat": 52.3744, "lon": 4.8838}]},
+{"type": "way", "id": 12, "tags": {"man_made": "goods_conveyor"},
+    "geometry": [{"lat": 52.3748, "lon": 4.8835}, {"lat": 52.3749, "lon": 4.8845}]})";
+    const auto answer = [](const std::string& elements) {
+        return R"({"version": 0.6, "osm3s": {"timestamp_osm_base": "2026-10-22T18:00:00Z"}, "elements": [
+)" + elements + "]}";
+    };
+    const std::string with = answer(house + ",\n" + uncarried);
+    const std::string without = answer(house);
+    const auto bytes = [](const std::string& s) { return std::as_bytes(std::span(s.data(), s.size())); };
+    const load::WindowPlace place = load::place_of(k);
+    // a window's one tile, as its canonical dump (or why it is not there)
+    const auto tile_of = [](const std::vector<std::byte>& pack) -> std::string {
+        auto opened = tl::Pack::open(std::make_unique<tl::MemorySource>(pack));
+        if (!opened) return "the pack does not open: " + tl::describe(opened.error());
+        if (opened->chunks().chunks().size() != 1) return "not one tile";
+        tl::Zstd zstd;
+        tl::TileDecoder decoder;
+        atlas::Arena arena(1U << 20U, atlas::Growth::grows, "window test, a tile without what it cannot carry");
+        std::vector<std::byte> raw;
+        std::vector<std::byte> scratch;
+        const auto tile = opened->decode(opened->chunks().chunks()[0], zstd, decoder, arena, raw, scratch);
+        if (!tile) return "the tile does not decode: " + tl::describe(tile.error());
+        return tl::canonical_dump(*tile);
+    };
+    const auto built = load::build_window(bytes(with), k, place);
+    ATLAS_REQUIRE(built.has_value(), built.error().what);
+    const auto plain = load::build_window(bytes(without), k, place);
+    ATLAS_REQUIRE(plain.has_value(), plain.error().what);
+    // the window builds the tile it builds without them
+    CHECK(built->features > 0);
+    CHECK(built->features == plain->features);
+    const std::string tile = tile_of(built->pack);
+    CHECK(tile.starts_with("tile "));
+    CHECK(tile == tile_of(plain->pack));
+    // the packer's cut of the same scene refuses them, named, as the packer's build fails
+    const auto doc = osm::read_overpass(bytes(with));
+    ATLAS_REQUIRE(doc.has_value());
+    const load::RegionConfig config{.name = place.region,
+                                    .frame = place.frame,
+                                    .bbox = load::window_box(k),
+                                    .tradition = place.tradition ? load::tradition_named(*place.tradition) : nullptr,
+                                    .palette = load::region_palette(place.region)};
+    const auto scene = load::load_region(*doc, config);
+    ATLAS_REQUIRE(scene.has_value());
+    CHECK(scene->gantries.size() == 1);
+    CHECK(scene->conveyors.size() == 1);
+    const auto refused = load::cut_region(*scene, place.frame, {});
+    ATLAS_REQUIRE(!refused.has_value());
+    CHECK(refused.error().what == "render tiles cannot carry gantries or conveyors yet");
+}
 
 TEST_CASE("load: where a window is, by the port's Countries") {
     CHECK(load::country_of(52.3746, 4.8840) == "NL");

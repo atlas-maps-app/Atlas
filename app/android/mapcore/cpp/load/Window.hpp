@@ -11,7 +11,8 @@
 //     region it builds: the building tradition, the time zone; Amsterdam's palette;
 //   - its tile: the features whose reference point lies in it (a building on its edge is built once, by the window of
 //     its reference point) and the water clipped at its edges, with keep codes and the variants of the live map's
-//     bands; a tradition's details are left out until step 4's facades give them columns (cut_window);
+//     bands; what the tiles have no columns for yet is left out (cut_window): gantries and conveyors until step 4's
+//     things, a tradition's details until its facades;
 //   - its pack: that tile, a head (profile region, level 14, the frame, the window's name, the core's stage P version,
 //     the style version, its data's SHA-256, no views, the live map's bands) and its style (load/PackStyle.hpp).
 // A window builds within about 50 MB on a mid-range phone in a few seconds (ENGINE.md's budget), on a worker.

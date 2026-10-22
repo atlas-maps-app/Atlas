@@ -16,7 +16,8 @@ import java.time.Instant
  * The windows the phone builds and builds again (ENGINE.md step 3), with a core and servers of the test's own: a window
  * the core wants is fetched whole, built and its data kept; one in view is left alone for a week, then asked only for
  * the changes since its data's date and built from the merge; nothing changed only marks it checked; a refused merge, no
- * changes or data fetched whole a month ago fetch it whole; an answer older than the kept data is never built.
+ * changes or data fetched whole a month ago fetch it whole; an answer older than the kept data is never built; a window
+ * whose data does not come waits twice as long after each failure in a row, one whose data the core refuses a day.
  */
 class WindowsTest {
     private val dir: File = Files.createTempDirectory("windows").toFile()
@@ -55,12 +56,14 @@ class WindowsTest {
         val built = ArrayList<String>()
         val merged = ArrayList<Pair<String, String>>()
         var mergeWith: (File, ByteBuffer) -> ByteArray? = { _, _ -> null }
+        var refusal = ""
 
         override fun wanted() = wanted
         override fun inView() = inView
         override fun box(w: MapCore.Window) = doubleArrayOf(52.36, 4.87, 52.38, 4.89)
         override fun build(w: MapCore.Window, json: File, file: File): String {
             built += json.readText()
+            if (refusal.isNotEmpty()) return refusal
             file.writeText("pack ${built.size}")
             return ""
         }
@@ -218,5 +221,68 @@ class WindowsTest {
         whole = { answer("2026-10-30T12:00:00Z", id = 7) }
         assertTrue(windows.step(core))
         assertEquals(3, fetched.size)
+    }
+
+    @Test
+    fun aWindowWhoseDataTheCoreRefusesIsAskedForAgainOnlyADayLater() {
+        val core = Core()
+        core.wanted = listOf(w)
+        core.refusal = "the data does not read: duplicate at byte 12"
+        assertFalse(windows.step(core))
+        assertEquals(1, fetched.size)
+        assertFalse(windows.fileOf(w).exists())
+        // the same data and core refuse it again: not asked for in five minutes, nor in half a day
+        now += Windows.RETRY_MS + 1
+        assertFalse(windows.step(core))
+        now += day / 2
+        assertFalse(windows.step(core))
+        assertEquals(1, fetched.size)
+        // a day after
+        now += day / 2
+        core.refusal = ""
+        assertTrue(windows.step(core))
+        assertEquals(2, fetched.size)
+        assertTrue(windows.fileOf(w).exists())
+    }
+
+    @Test
+    fun aWindowWhoseDataDoesNotComeWaitsTwiceAsLongAfterEachFailureInARow() {
+        val core = Core()
+        core.wanted = listOf(w)
+        whole = { throw IOException("no server answered") }
+        assertFalse(windows.step(core))
+        assertEquals(1, fetched.size)
+        // five minutes after the first failure; then ten after the second
+        now += Windows.RETRY_MS + 1
+        assertFalse(windows.step(core))
+        assertEquals(2, fetched.size)
+        now += Windows.RETRY_MS + 1
+        assertFalse(windows.step(core))
+        assertEquals(2, fetched.size)
+        now += Windows.RETRY_MS
+        assertFalse(windows.step(core))
+        assertEquals(3, fetched.size)
+        // however often it fails, two hours at most
+        for (times in 4..12) {
+            now += Windows.RETRY_CAP_MS + 1
+            assertFalse(windows.step(core))
+            assertEquals(times, fetched.size)
+        }
+        assertEquals(Windows.RETRY_MS, Windows.waitAfter(refused = false, times = 1))
+        assertEquals(2 * Windows.RETRY_MS, Windows.waitAfter(refused = false, times = 2))
+        assertEquals(Windows.RETRY_CAP_MS, Windows.waitAfter(refused = false, times = 12))
+        assertEquals(Windows.RETRY_CAP_MS, Windows.waitAfter(refused = false, times = 1000))
+        assertEquals(Windows.REFUSED_MS, Windows.waitAfter(refused = true, times = 1))
+        // once its data comes, it is built, and its failures are forgotten: the next waits five minutes again
+        now += Windows.RETRY_CAP_MS + 1
+        whole = { answer("2026-10-22T11:59:00Z") }
+        assertTrue(windows.step(core))
+        assertEquals(13, fetched.size)
+        whole = { throw IOException("no server answered") }
+        assertFalse(windows.step(core))
+        assertEquals(14, fetched.size)
+        now += Windows.RETRY_MS + 1
+        assertFalse(windows.step(core))
+        assertEquals(15, fetched.size)
     }
 }

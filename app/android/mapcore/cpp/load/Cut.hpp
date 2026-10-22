@@ -57,9 +57,9 @@ cut_region(const Scene& scene, const tiles::Frame& frame, std::span<const CutVar
 
 /// One window of the map the phone builds (load/Window.hpp): a region's cut at L14 alone, of the features whose
 /// reference point lies in `tile` and the water clipped to its edges, with keep codes and the variants of the features
-/// in it. A tradition's details (trad, party, lv_why, roof_why), which the tiles have no columns for until step 4's
-/// facades, are left out where the packer's cut refuses them; the looks they lead to (the levels, the roofs, the
-/// colours) are carried.
+/// in it. What the tiles have no columns for yet is left out where the packer's cut refuses it: gantries and conveyors
+/// until step 4's things, a tradition's details (trad, party, lv_why, roof_why) until step 4's facades; the looks the
+/// details lead to (the levels, the roofs, the colours) are carried.
 [[nodiscard]] std::expected<std::vector<tiles::TileFill>, CutError> cut_window(const Scene& scene,
                                                                                const tiles::Frame& frame,
                                                                                std::span<const CutVariant> variants,

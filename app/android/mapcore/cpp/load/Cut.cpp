@@ -656,14 +656,14 @@ struct VariantFeature {
 };
 
 /// How a scene is cut: the levels, whether rings carry keep codes, whether facades (doors, shopfronts) are drawn, the
-/// one tile kept (a window's; none: every tile), and whether a tradition's details refuse the cut (the packer's) or
-/// are left out (a window's).
+/// one tile kept (a window's; none: every tile), and whether what the tiles cannot carry yet (gantries and conveyors,
+/// a tradition's details) refuses the cut (the packer's) or is left out (a window's).
 struct CutPlan {
     std::span<const std::uint8_t> levels;
     bool keep = false;
     bool facades = true;
     std::optional<tl::TileKey> only;
-    bool details_refused = true;
+    bool uncarried_refused = true;
     /// Whether the ground's and the lines' features carry their element (id, otype, part: load/Scene.hpp's Origin), by
     /// which the frame orders the ground across windows; the packer's tiles do not.
     bool identity = false;
@@ -762,10 +762,15 @@ public:
     }
 
 private:
-    /// What a scene can hold that the tiles do not carry yet: the cut refuses it, as the packer's build fails.
+    /// What a scene can hold that the tiles do not carry yet: gantries and conveyors (step 4's things) and a
+    /// tradition's details (step 4's facades). The packer's cut refuses it, as the packer's build fails; a window's
+    /// leaves it out, so a window near a sign gantry over a motorway or a port's conveyor still builds.
     void unsupported() {
-        if (!s_.gantries.empty() || !s_.conveyors.empty()) fail("render tiles cannot carry gantries or conveyors yet");
-        if (!plan_.details_refused) return;
+        if (!plan_.uncarried_refused) return;
+        if (!s_.gantries.empty() || !s_.conveyors.empty()) {
+            fail("render tiles cannot carry gantries or conveyors yet");
+            return;
+        }
         for (const auto* list : {&s_.buildings, &s_.parts}) {
             for (const Building& b : *list) {
                 if (b.lv_why || b.roof_why || b.look == LookPath::tradition || b.party) {
@@ -1828,14 +1833,14 @@ cut_with(const CutPlan& plan, const Scene& scene, const tiles::Frame& frame, std
 
 constexpr std::array<std::uint8_t, 1> window_levels{14};
 
-/// A window's cut: L14 alone, the features in its tile, keep codes, no facades, a tradition's details left out, the
-/// ground's elements carried.
+/// A window's cut: L14 alone, the features in its tile, keep codes, no facades, what the tiles cannot carry yet left
+/// out, the ground's elements carried.
 [[nodiscard]] CutPlan window_plan(const tiles::TileKey& tile) {
     return {.levels = window_levels,
             .keep = true,
             .facades = false,
             .only = tile,
-            .details_refused = false,
+            .uncarried_refused = false,
             .identity = true};
 }
 

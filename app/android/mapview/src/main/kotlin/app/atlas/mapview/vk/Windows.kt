@@ -29,6 +29,11 @@ import java.util.zip.GZIPOutputStream
  * data, where its data was last fetched whole more than [WHOLE_MS] ago (so a change a diff could miss lives a month at
  * most), and where no server gives the changes or the core cannot merge them exactly. An answer older than the kept
  * data is never built: the window stays as it is until a server catches up.
+ *
+ * A window that failed waits before it is tried again, so the public servers are never asked for the same data over
+ * and over: one whose data did not come (no server answered, or only with older data) [RETRY_MS], then twice as long
+ * after each failure in a row, [RETRY_CAP_MS] at most; one whose data the core refused, [REFUSED_MS] (the same data and
+ * the same core refuse it again; the app's next start, perhaps with a newer core, tries it at once).
  */
 class Windows(
     private val dir: File,
@@ -66,8 +71,22 @@ class Windows(
         override fun merge(w: MapCore.Window, kept: File, diff: ByteBuffer, out: File) = w.merge(kept, diff, out)
     }
 
-    private val failed = ConcurrentHashMap<MapCore.Window, Long>()
+    /** A window that failed lately: when it last did, whether the core refused its data, and how often in a row. */
+    private class Failure(val at: Long, val refused: Boolean, val times: Int)
+
+    private val failed = ConcurrentHashMap<MapCore.Window, Failure>()
     private val busy = AtomicBoolean(false)
+
+    /** Whether window [w] may be tried at [now]: it has not failed lately, or it has waited long enough since. */
+    private fun ready(w: MapCore.Window, now: Long): Boolean {
+        val f = failed[w] ?: return true
+        return now - f.at > waitAfter(f.refused, f.times)
+    }
+
+    /** Window [w] failed at [now]: [refused], the core refused its data; else its data did not come. */
+    private fun fail(w: MapCore.Window, now: Long, refused: Boolean) {
+        failed[w] = Failure(now, refused, (failed[w]?.times ?: 0) + 1)
+    }
 
     /** Builds the nearest window [core] wants, else refreshes the nearest aged one in view; true when one was built (the packs are to be handed again). */
     fun step(core: MapCore): Boolean = step(Of(core))
@@ -80,9 +99,8 @@ class Windows(
         runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND) }
         try {
             val now = clock()
-            val ready = { w: MapCore.Window -> failed[w]?.let { now - it > RETRY_MS } ?: true }
-            core.wanted().firstOrNull(ready)?.let { return whole(core, it, now, null) }
-            val aged = core.inView().firstOrNull { ready(it) && aged(it, now) } ?: return false
+            core.wanted().firstOrNull { ready(it, now) }?.let { return whole(core, it, now, null) }
+            val aged = core.inView().firstOrNull { ready(it, now) && aged(it, now) } ?: return false
             return refresh(core, aged, now)
         } finally {
             priority?.let { p -> runCatching { android.os.Process.setThreadPriority(p) } }
@@ -115,13 +133,13 @@ class Windows(
             try {
                 fetch(core.box(w), answer)
             } catch (e: Exception) {
-                failed[w] = now
+                fail(w, now, refused = false)
                 Log.w(EngineFrames.TAG, "vk window ${w.id}: no data: ${e.message}")
                 return false
             }
             val date = runCatching { headOf(answer, false) }.getOrNull()?.base
             if (kept != null && (date == null || date.isBefore(kept))) {
-                failed[w] = now
+                fail(w, now, refused = false)
                 Log.w(EngineFrames.TAG, "vk window ${w.id}: the data that came is from $date, older than the window's $kept")
                 return false
             }
@@ -136,8 +154,8 @@ class Windows(
         val t1 = clock()
         val why = core.build(w, json, fileOf(w))
         if (why.isNotEmpty()) {
-            failed[w] = now
-            Log.w(EngineFrames.TAG, "vk window ${w.id}: $why")
+            fail(w, now, refused = true)
+            Log.w(EngineFrames.TAG, "vk window ${w.id}: $why; tried again in a day")
             return false
         }
         val built = clock() - t1
@@ -219,8 +237,21 @@ class Windows(
     }
 
     companion object {
-        /** How long a window whose data or build failed waits before it is tried again. */
+        /** How long a window whose data did not come waits before it is asked for again, after its first failure. */
         const val RETRY_MS = 5 * 60 * 1000L
+
+        /** The longest a window whose data did not come waits, however often it failed in a row: two hours. */
+        const val RETRY_CAP_MS = 2 * 3600 * 1000L
+
+        /** How long a window whose data the core refused waits before it is fetched and built again: a day. */
+        const val REFUSED_MS = 24 * 3600 * 1000L
+
+        /**
+         * How long a window waits after its [times]th failure in a row: [REFUSED_MS] where the core [refused] its data,
+         * else [RETRY_MS], twice as long after each failure in a row, [RETRY_CAP_MS] at most.
+         */
+        fun waitAfter(refused: Boolean, times: Int): Long =
+            if (refused) REFUSED_MS else minOf(RETRY_MS shl (times - 1).coerceIn(0, 10), RETRY_CAP_MS)
 
         /** How old a window's data may grow before it is built again: a week. */
         const val REFRESH_MS = 7 * 24 * 3600 * 1000L
