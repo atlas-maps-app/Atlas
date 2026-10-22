@@ -472,7 +472,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
   1. fast-forward `app` in the main checkout;
   2. push it: `git push https://github.com/atlas-maps-app/Atlas.git app`;
   3. let CI decide;
-  4. at the end of a step, tag an alpha and tell the user.
+  4. at the end of a step, tag an alpha and tell the user. Besides, every night `alpha.yml` makes the latest commit of `app` that Core and Android built green the next alpha, when the app changed since the last one (the user, 23 October; `.github/scripts/nightly-alpha.sh` chooses, `release.yml` publishes). Scheduled workflows run from the repository's default branch only, which is `app` since 23 October (until then `main`, where neither this nor CI's nightly jobs ever ran).
 - **Ask first** before publishing anything else: render packs, other release assets, or a new workflow's first run.
 - **Stop at the user's budget cap:** commit tested work, report, and wait.
 - **Build.** In `app/android/mapcore/cpp`, with `PATH=$HOME/Library/Android/sdk/cmake/4.1.2/bin:$PATH` and `ATLAS_REQUIRE_VULKAN=1`:
