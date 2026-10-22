@@ -119,8 +119,8 @@ class MapFacadeTest {
                 assertEquals("the labels must be a direct buffer", Native.labels(handle, ByteBuffer.allocate(8), 6L, 0f))
 
                 // The screen's haze and vignette off, then on again (the app's Look settings).
-                Native.screen(handle, false, false)
-                Native.screen(handle, true, true)
+                Native.screen(handle, false, false, false)
+                Native.screen(handle, true, true, true)
 
                 // Off, and modes the façade does not have.
                 assertEquals("", Native.map(handle, 0))

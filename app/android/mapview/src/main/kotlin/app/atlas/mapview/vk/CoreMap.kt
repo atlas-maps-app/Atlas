@@ -110,7 +110,7 @@ internal class CoreMap(
             if (gone) return ""
             owner = this
             core.painterOrder(MapEngine.painter)
-            core.screenEffects(MapEngine.haze, MapEngine.vignette)
+            core.screenEffects(MapEngine.haze, MapEngine.vignette, MapEngine.grain)
             core.map(true, texture)
         }
         val packs = said.lines().filter { it.isNotBlank() }.joinToString(", ")

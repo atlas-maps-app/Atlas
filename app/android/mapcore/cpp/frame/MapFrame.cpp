@@ -159,10 +159,11 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
     return {};
 }
 
-void MapFrame::set_screen(bool haze, bool vignette) noexcept {
+void MapFrame::set_screen(bool haze, bool vignette, bool grain) noexcept {
     steps_ = ~0U;
     if (!haze) steps_ &= ~shaders::COMPOSITE_HAZE;
     if (!vignette) steps_ &= ~shaders::COMPOSITE_VIGNETTE;
+    if (!grain) steps_ &= ~shaders::COMPOSITE_GRAIN;
     if (builder_) builder_->set_steps(steps_);
 }
 

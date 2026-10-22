@@ -954,7 +954,7 @@ private class BenchRun(
             return
         }
         core.painterOrder(MapEngine.painter)
-        core.screenEffects(MapEngine.haze, MapEngine.vignette)
+        core.screenEffects(MapEngine.haze, MapEngine.vignette, MapEngine.grain)
         source.packs = packs
         val on = core.map(true, texture = false)
         try {

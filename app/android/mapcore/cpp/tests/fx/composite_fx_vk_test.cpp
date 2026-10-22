@@ -273,6 +273,8 @@ TEST_CASE("the composite's mat rule at the objects group's silhouettes and fin's
             if (first) {
                 runs.emplace_back(true, shaders::COMPOSITE_MAT | shaders::COMPOSITE_GRAIN);
                 runs.emplace_back(false, ~0U);
+                // the grain off, as the app's Look settings turn it off (MapFrame::set_screen): `mat` alone
+                runs.emplace_back(false, shaders::COMPOSITE_MAT);
             }
             first = false;
             for (const auto& [night, steps] : runs) {
@@ -303,6 +305,8 @@ TEST_CASE("the composite's mat rule at the objects group's silhouettes and fin's
                 (*renderer)->drain();
                 const shaders::FrameBlock& block = (*builder)->state().block;
                 ATLAS_REQUIRE((block.info.x & shaders::FRAME_FIELDS) != 0U, "the fields are bound");
+                CHECK(((block.layers.steps.x & shaders::COMPOSITE_GRAIN) != 0U) ==
+                      ((steps & shaders::COMPOSITE_GRAIN) != 0U));
                 auto packed = (*output)->read_packed((*output)->latest());
                 ATLAS_REQUIRE(packed.has_value(), packed.error().text());
                 const std::shared_ptr<const fx::ScreenFields> latest = fields.worker().latest();
@@ -310,9 +314,11 @@ TEST_CASE("the composite's mat rule at the objects group's silhouettes and fin's
                 const auto samples = static_cast<std::uint32_t>(config.samples());
                 const Outcome o = compare(*packed, layers, samples, block.layers, *latest,
                                           night ? shaders::COMPOSITE_GRAIN_NIGHT : shaders::COMPOSITE_GRAIN_DAY);
-                const std::string name =
-                    std::format("{} in {}{}{}", gpu::name_of(config), gpu::colour_name(packed->format),
-                                night ? ", night" : "", steps == ~0U ? ", every step" : "");
+                const std::string name = std::format("{} in {}{}{}", gpu::name_of(config),
+                                                     gpu::colour_name(packed->format), night ? ", night" : "",
+                                                     steps == ~0U                               ? ", every step"
+                                                     : (steps & shaders::COMPOSITE_GRAIN) == 0U ? ", no grain"
+                                                                                                : "");
                 CHECK_MESSAGE(o.wrong == 0,
                               name << ": " << o.wrong << " channels differ from the twin's; the first: " << o.first);
                 if (samples > 1) CHECK_MESSAGE(o.silhouettes > 0, name << ": no silhouette pixel");

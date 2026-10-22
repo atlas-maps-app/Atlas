@@ -302,10 +302,10 @@ public:
         });
     }
 
-    /// The screen's haze and vignette for the map from now on, on or off.
-    void screen(bool haze, bool vignette) {
-        on_session([this, haze, vignette] {
-            map_->set_screen(haze, vignette);
+    /// The screen's haze, vignette and paper grain for the map from now on, on or off.
+    void screen(bool haze, bool vignette, bool grain) {
+        on_session([this, haze, vignette, grain] {
+            map_->set_screen(haze, vignette, grain);
             ask_frame();
         });
     }
@@ -953,9 +953,9 @@ void native_painter(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean on) 
     if (core != nullptr) core->painter(on == JNI_TRUE);
 }
 
-void native_screen(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean haze, jboolean vignette) {
+void native_screen(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean haze, jboolean vignette, jboolean grain) {
     Core* core = core_of(handle);
-    if (core != nullptr) core->screen(haze == JNI_TRUE, vignette == JNI_TRUE);
+    if (core != nullptr) core->screen(haze == JNI_TRUE, vignette == JNI_TRUE, grain == JNI_TRUE);
 }
 
 /// The app's labels for the map (MK/state/LabelBlock.kt's block in a direct buffer, labels/Sprites.hpp's
@@ -1148,7 +1148,7 @@ const std::array<JNINativeMethod, 39>& methods() {
         method("packs", "(J[Ljava/lang/String;[J[I[Ljava/lang/String;[I[J[J)Ljava/lang/String;", fn(&native_packs)),
         method("moment", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_moment)),
         method("labels", "(JLjava/nio/ByteBuffer;JF)Ljava/lang/String;", fn(&native_labels)),
-        method("screen", "(JZZ)V", fn(&native_screen)),
+        method("screen", "(JZZZ)V", fn(&native_screen)),
         method("painter", "(JZ)V", fn(&native_painter)),
         method("wantedWindows", "(J)[J", fn(&native_wanted_windows)),
         method("windowBox", "(III)[D", fn(&native_window_box)),

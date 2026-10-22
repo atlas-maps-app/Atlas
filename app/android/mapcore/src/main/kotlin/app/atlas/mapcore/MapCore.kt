@@ -262,10 +262,11 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
         core.call("the core is closed") { Native.labels(it, block, revision, least) }
 
     /**
-     * The screen's haze and vignette from now on, each on (the renders' look, the default) or off: off, the map's
-     * picture keeps its own colours there, and the composite does less work a pixel. Off the main thread.
+     * The screen's haze, vignette and paper grain from now on, each on (the renders' look, the default) or off: off,
+     * the map's picture keeps its own colours there, and the composite does less work a pixel. Off the main thread.
      */
-    fun screenEffects(haze: Boolean, vignette: Boolean) = core.call(Unit) { Native.screen(it, haze, vignette) }
+    fun screenEffects(haze: Boolean, vignette: Boolean, grain: Boolean) =
+        core.call(Unit) { Native.screen(it, haze, vignette, grain) }
 
     /**
      * The painter switch from now on: [on], what stands up is drawn in the renderer's painter's order (whole buildings

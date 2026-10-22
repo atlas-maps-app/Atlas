@@ -96,6 +96,7 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val threeD by settings.flow(SettingsKeys.MAP_3D, true).collectAsStateWithLifecycle(true)
     val haze by settings.flow(SettingsKeys.MAP_HAZE, true).collectAsStateWithLifecycle(true)
     val vignette by settings.flow(SettingsKeys.MAP_VIGNETTE, true).collectAsStateWithLifecycle(true)
+    val grain by settings.flow(SettingsKeys.MAP_GRAIN, true).collectAsStateWithLifecycle(true)
     val language by settings.flow(SettingsKeys.NAME_LANGUAGE).collectAsStateWithLifecycle(null)
     val twelve by settings.flow(MineKeys.CLOCK_12, false).collectAsStateWithLifecycle(false)
     val theme = runCatching { Theme.valueOf(themeName) }.getOrDefault(Theme.AUTO)
@@ -155,9 +156,10 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
                     }
                 }
                 ScreenChips(
-                    haze, vignette,
+                    haze, vignette, grain,
                     onHaze = { on -> scope.launch { settings.set(SettingsKeys.MAP_HAZE, on) } },
                     onVignette = { on -> scope.launch { settings.set(SettingsKeys.MAP_VIGNETTE, on) } },
+                    onGrain = { on -> scope.launch { settings.set(SettingsKeys.MAP_GRAIN, on) } },
                 )
                 LightScrubber(minutes, sun, twelve, onChange = { minutes = it }, onNow = { minutes = LayersModel.minuteOf(clock.instant(), zone) })
                 NamesRow(language) { code -> scope.launch { settings.set(SettingsKeys.NAME_LANGUAGE, code) } }
@@ -215,13 +217,21 @@ private fun LayerChips(layers: Set<MapLayer>, onToggle: (MapLayer, Boolean) -> U
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun ScreenChips(haze: Boolean, vignette: Boolean, onHaze: (Boolean) -> Unit, onVignette: (Boolean) -> Unit) {
+private fun ScreenChips(
+    haze: Boolean,
+    vignette: Boolean,
+    grain: Boolean,
+    onHaze: (Boolean) -> Unit,
+    onVignette: (Boolean) -> Unit,
+    onGrain: (Boolean) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         CardLabel(stringResource(R.string.mine_layers_screen))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             for ((name, on, toggle) in listOf(
                 Triple(stringResource(R.string.mine_layers_haze), haze, onHaze),
                 Triple(stringResource(R.string.mine_layers_vignette), vignette, onVignette),
+                Triple(stringResource(R.string.mine_layers_grain), grain, onGrain),
             )) {
                 TextPill(
                     name, bt(12f, 700, 15.5f), if (on) INK else 0xFFF4F5F7, if (on) WHITE else INK,

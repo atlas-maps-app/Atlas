@@ -76,9 +76,10 @@ object SettingsKeys {
     val MAP_LAYERS = stringSetPreferencesKey("map.layers")
     val MAP_3D = booleanPreferencesKey("map.3d")
 
-    /** The screen's haze and vignette over the map (on when unset: the renders' look). */
+    /** The screen's haze, vignette and paper grain over the map (on when unset: the renders' look). */
     val MAP_HAZE = booleanPreferencesKey("map.haze")
     val MAP_VIGNETTE = booleanPreferencesKey("map.vignette")
+    val MAP_GRAIN = booleanPreferencesKey("map.grain")
     val UNITS = stringPreferencesKey("units")
 
     /** The language for place names, null for local names. */

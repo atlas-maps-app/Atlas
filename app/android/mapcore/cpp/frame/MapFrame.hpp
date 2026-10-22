@@ -84,9 +84,9 @@ public:
         painter_ = on;
         if (builder_) builder_->set_painter(on);
     }
-    /// The screen's haze and vignette on or off from now on (the app's Look settings: FrameOptions::steps without
-    /// their composite steps when off), kept for every frame builder made.
-    void set_screen(bool haze, bool vignette) noexcept;
+    /// The screen's haze, vignette and paper grain on or off from now on (the app's Look settings: FrameOptions::steps
+    /// without their composite steps when off), kept for every frame builder made.
+    void set_screen(bool haze, bool vignette, bool grain) noexcept;
 
     /// Whether the last frame's picture was complete.
     [[nodiscard]] bool complete() const noexcept;

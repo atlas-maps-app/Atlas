@@ -126,12 +126,12 @@ class MapData(private val services: Services) {
             overpass.windowDiff(app.atlas.geo.BBox(b[1], b[0], b[3], b[2]), since, java.time.Instant.parse(notBefore))
         }
         MapEngine.windowsAllowed = { !services.ciDemo }
-        // the screen's haze and vignette as the Look settings have them, handed to the core as they change
+        // the screen's haze, vignette and paper grain as the Look settings have them, handed to the core as they change
         services.scope.launch {
             services.settings.data
-                .map { (it[SettingsKeys.MAP_HAZE] ?: true) to (it[SettingsKeys.MAP_VIGNETTE] ?: true) }
+                .map { Triple(it[SettingsKeys.MAP_HAZE] ?: true, it[SettingsKeys.MAP_VIGNETTE] ?: true, it[SettingsKeys.MAP_GRAIN] ?: true) }
                 .distinctUntilChanged()
-                .collect { (haze, vignette) -> MapEngine.screenEffects(haze, vignette) }
+                .collect { (haze, vignette, grain) -> MapEngine.screenEffects(haze, vignette, grain) }
         }
     }
 
