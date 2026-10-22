@@ -8,6 +8,7 @@
 #include "base/arena.hpp"
 #include "load/Amsterdam.hpp"
 #include "load/Cut.hpp"
+#include "load/PackStyle.hpp"
 #include "load/Regions.hpp"
 #include "osm/Overpass.hpp"
 #include "tests/base/require.hpp"
@@ -19,6 +20,7 @@
 #include "tiles/Json.hpp"
 #include "tiles/PackWriter.hpp"
 #include "tiles/Payload.hpp"
+#include "tiles/SectionWriter.hpp"
 #include "tiles/Source.hpp"
 #include "tiles/TileWriter.hpp"
 
@@ -193,7 +195,8 @@ TEST_CASE("load: the Westerkerk's tiles cut from its raw.json are the packer's, 
     CHECK(wrong == 0);
 }
 
-TEST_CASE("load: the Westerkerk's pack written from its raw.json opens, checks and holds the packer's chunks") {
+TEST_CASE(
+    "load: the Westerkerk's pack written from its raw.json, with the core's own head and style, is the packer's") {
     const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
     if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR is not set: the bundled pack is not compared here");
@@ -212,27 +215,50 @@ TEST_CASE("load: the Westerkerk's pack written from its raw.json opens, checks a
         tiles.push_back(
             {.key = tl::TileKey(t.level(), t.x(), t.y()), .raw = std::move(*raw), .count = count, .reach = *reach});
     }
-    // the bundled pack's rhead as it is and its style's tables, which a pack of the living map carries
+    // the core's own rhead and style: the head of the bundled pack's values (the packer's views, source and engine
+    // version) with the core's style version, the style the core composes for the living map
     auto pack = atlas::test::open_pack(dir + "/amsterdam.atlas");
     ATLAS_REQUIRE(pack.has_value(), tl::describe(pack.error()));
     ATLAS_REQUIRE(pack->head() != nullptr);
-    const tl::Section* head = tl::find_section(pack->sections(), tl::section_head);
-    const tl::Section* style = tl::find_section(pack->sections(), tl::section_style);
-    ATLAS_REQUIRE(head != nullptr && style != nullptr);
-    std::vector<std::byte> head_scratch;
-    std::vector<std::byte> style_scratch;
-    const auto head_bytes = pack->source().bytes(head->offset, head->stored, head_scratch);
-    const auto style_stored = pack->source().bytes(style->offset, style->stored, style_scratch);
-    ATLAS_REQUIRE(head_bytes.has_value() && style_stored.has_value());
-    tl::Zstd zstd;
-    std::vector<std::byte> style_tables(style->raw);
-    ATLAS_REQUIRE(zstd.frame(*style_stored, style_tables, tl::Site::style).has_value());
+    const tl::RenderHead& bundled = *pack->head();
+    std::vector<tl::HeadViewOut> views;
+    for (const tl::HeadView& v : bundled.views()) {
+        views.push_back({.name = v.name, .camera = v.camera, .tolerance = v.tolerance});
+    }
+    const std::string version = load::style_version();
+    const auto head = tl::encode_head({.profile = bundled.profile,
+                                       .levels = bundled.levels,
+                                       .frame = bundled.frame,
+                                       .region = bundled.region,
+                                       .engine_version = bundled.engine_version,
+                                       .style_version = version,
+                                       .source = bundled.source,
+                                       .views = views,
+                                       .bands = bundled.bands()});
+    ATLAS_REQUIRE(head.has_value(), tl::describe(head.error()));
+    const auto style = load::style_section({.palette = load::amsterdam_palette(), .state = {}});
+    ATLAS_REQUIRE(style.has_value());
     const std::string manifest = R"({"layout":"render-tiles","payload":1,"builder":"cut_test"})";
-    const auto bytes = tl::write_pack(
-        tiles, {.levels = pack->head()->levels, .manifest = manifest, .head = *head_bytes, .style = style_tables});
+    const auto bytes =
+        tl::write_pack(tiles, {.levels = bundled.levels, .manifest = manifest, .head = *head, .style = *style});
     ATLAS_REQUIRE(bytes.has_value(), tl::describe(bytes.error()));
     auto mine = tl::Pack::open(std::make_unique<tl::MemorySource>(*bytes));
     ATLAS_REQUIRE(mine.has_value(), tl::describe(mine.error()));
+    // the sections the packer wrote: the same head (stored as it is), the same style tables (each compressed its own
+    // way)
+    const tl::Section* head_ours = tl::find_section(mine->sections(), tl::section_head);
+    const tl::Section* head_theirs = tl::find_section(pack->sections(), tl::section_head);
+    const tl::Section* style_theirs = tl::find_section(pack->sections(), tl::section_style);
+    ATLAS_REQUIRE(head_ours != nullptr && head_theirs != nullptr && style_theirs != nullptr);
+    CHECK(head_ours->raw == head_theirs->raw);
+    CHECK(head_ours->crc == head_theirs->crc);
+    std::vector<std::byte> scratch;
+    const auto stored = pack->source().bytes(style_theirs->offset, style_theirs->stored, scratch);
+    ATLAS_REQUIRE(stored.has_value());
+    std::vector<std::byte> theirs_style(style_theirs->raw);
+    tl::Zstd zstd;
+    ATLAS_REQUIRE(zstd.frame(*stored, theirs_style, tl::Site::style).has_value());
+    CHECK(theirs_style == *style);
     const auto verified = mine->verify();
     CHECK_MESSAGE(verified.has_value(), (verified ? std::string() : tl::describe(verified.error())));
     // the packer's chunks in the packer's order: each tile's hash, size, feature count and reach

@@ -19,6 +19,7 @@ include(Warnings)
 include(Sanitizers)
 include(Tidy)
 include(Shaders)
+include(Data)
 
 option(ATLAS_TESTS "Build the unit tests" ${ATLAS_HOST})
 option(ATLAS_BENCH "Build the microbenchmarks" OFF)
@@ -150,6 +151,9 @@ if(ATLAS_ANDROID)
 else()
     target_link_libraries(atlas_core_requirements INTERFACE ${CMAKE_DL_LIBS})
 endif()
+
+# The data compiled into the core (cmake/Data.cmake): the engine's style file, which the packs it builds carry.
+atlas_embed_data(engine_style "${CMAKE_CURRENT_SOURCE_DIR}/../style/engine.jsonc")
 
 add_library(atlas_core OBJECT ${_core_sources})
 target_link_libraries(atlas_core PUBLIC atlas_core_requirements)

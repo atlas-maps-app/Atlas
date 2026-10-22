@@ -9,6 +9,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace atlas::tiles {
@@ -27,10 +28,11 @@ struct Span {
 /// children are consecutive and the root comes last. The first failure sticks.
 class Parser {
 public:
-    Parser(std::span<const std::byte> json, std::vector<ValueNode>& nodes, std::vector<char>& text,
+    Parser(std::span<const std::byte> json, JsonOptions options, std::vector<ValueNode>& nodes, std::vector<char>& text,
            std::vector<Span>& spans)
         : begin_(reinterpret_cast<const char*>(json.data())), // NOLINT: the bytes read as the characters they are
-          at_(begin_), end_(begin_ + json.size()), nodes_(&nodes), text_(&text), spans_(&spans) {}
+          at_(begin_), end_(begin_ + json.size()), comments_(options.comments), nodes_(&nodes), text_(&text),
+          spans_(&spans) {}
 
     [[nodiscard]] const std::optional<JsonError>& error() const noexcept { return error_; }
 
@@ -39,6 +41,7 @@ public:
         ValueNode root;
         if (!value(root, 0)) return false;
         space();
+        if (error_) return false; // an unclosed comment after the value
         if (at_ != end_) return fail(JsonFault::syntax);
         nodes_->push_back(root);
         return true;
@@ -51,8 +54,25 @@ private:
         return false;
     }
 
-    void space() noexcept {
-        while (at_ < end_ && (*at_ == ' ' || *at_ == '\t' || *at_ == '\n' || *at_ == '\r')) ++at_;
+    /// White space, and with comments on, the comments among it (an unclosed `/*` is a truncated document).
+    void space() {
+        for (;;) {
+            while (at_ < end_ && (*at_ == ' ' || *at_ == '\t' || *at_ == '\n' || *at_ == '\r')) ++at_;
+            if (!comments_ || end_ - at_ < 2 || *at_ != '/') return;
+            if (at_[1] == '/') {
+                while (at_ < end_ && *at_ != '\n') ++at_;
+            } else if (at_[1] == '*') {
+                const std::string_view rest(at_ + 2, static_cast<std::size_t>(end_ - at_ - 2));
+                const std::size_t close = rest.find("*/");
+                if (close == std::string_view::npos) {
+                    fail(JsonFault::truncated);
+                    return;
+                }
+                at_ += 2 + close + 2;
+            } else {
+                return;
+            }
+        }
     }
 
     bool expect(char c) {
@@ -337,6 +357,7 @@ private:
     const char* begin_;
     const char* at_;
     const char* end_;
+    bool comments_ = false;
     std::vector<ValueNode>* nodes_;
     std::vector<char>* text_;
     std::vector<Span>* spans_;
@@ -358,10 +379,10 @@ std::string_view name_of(JsonError::Fault fault) noexcept {
     return "unknown";
 }
 
-std::expected<JsonValue, JsonError> read_json(std::span<const std::byte> json) {
+std::expected<JsonValue, JsonError> read_json(std::span<const std::byte> json, JsonOptions options) {
     JsonValue out;
     std::vector<Span> spans;
-    Parser p(json, out.nodes_, out.text_, spans);
+    Parser p(json, options, out.nodes_, out.text_, spans);
     if (!p.document()) return std::unexpected(p.error().value_or(JsonError{}));
     out.root_ = static_cast<std::uint32_t>(out.nodes_.size() - 1);
     out.strings_.reserve(spans.size());

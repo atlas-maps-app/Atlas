@@ -1,8 +1,9 @@
-// Fuzzes the JSON reader (tiles/Json.hpp) and the building traditions read from it (load/Tradition.hpp) with arbitrary
-// bytes: neither may read past its input or fail an invariant, a refusal must name a byte inside the input, and every
-// tree the reader accepts must hold together: each container's children lie in the nodes before it, nested no deeper
-// than the values' coding allows, each string and key in the pool and UTF-8, each map's keys different. A tradition
-// read must hold what generic.py's looks rely on: options to pick from and colours to choose, a roof for every age.
+// Fuzzes the JSON reader (tiles/Json.hpp), strict and with comments, and the building traditions read from it
+// (load/Tradition.hpp) with arbitrary bytes: neither may read past its input or fail an invariant, a refusal must name
+// a byte inside the input, what strict JSON accepts the reader with comments accepts too, and every tree the reader
+// accepts must hold together: each container's children lie in the nodes before it, nested no deeper than the values'
+// coding allows, each string and key in the pool and UTF-8, each map's keys different. A tradition read must hold what
+// generic.py's looks rely on: options to pick from and colours to choose, a roof for every age.
 // Seeds: fuzz/corpus/fuzz_json (render/traditions' five files).
 #include "base/assert.hpp"
 #include "load/Tradition.hpp"
@@ -45,7 +46,15 @@ void check(const Value& v, unsigned depth) {
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
     const std::span<const std::byte> bytes(reinterpret_cast<const std::byte*>(data), size); // NOLINT: libFuzzer's bytes
+    // with comments (the style file's reading): what strict JSON accepts reads alike, and every tree holds together
+    const auto commented = atlas::tiles::read_json(bytes, {.comments = true});
+    if (commented) {
+        check(commented->root(), 0);
+    } else {
+        ATLAS_ASSERT(commented.error().at <= size, "a refusal past the input");
+    }
     const auto doc = atlas::tiles::read_json(bytes);
+    if (doc) ATLAS_ASSERT(commented.has_value(), "strict JSON refused where comments are taken");
     if (!doc) {
         ATLAS_ASSERT(doc.error().at <= size, "a refusal past the input");
         return 0;

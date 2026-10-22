@@ -7,7 +7,9 @@
 // It reads strict JSON (RFC 8259: no NaN or Infinity, no control characters in strings, well-formed UTF-8, nothing
 // after the value but white space) and refuses, by name, what Python reads but the core keeps out: a key twice in one
 // object (Python keeps the last value in the first place), a lone surrogate, an integer past 64 bits (Python's are
-// unbounded), values nested deeper than the values' coding allows (max_value_depth).
+// unbounded), values nested deeper than the values' coding allows (max_value_depth). Asked to, it also takes comments
+// where white space may stand, as the packer reads the engine's style file (kotlinx's allowComments: `//` to the line's
+// end, `/* */`).
 #pragma once
 
 #include "tiles/Values.hpp"
@@ -20,6 +22,8 @@
 #include <vector>
 
 namespace atlas::tiles {
+
+struct JsonOptions;
 
 /// Why a document cannot be read, and the byte where that was found.
 struct JsonError {
@@ -53,7 +57,7 @@ public:
     [[nodiscard]] Value root() const noexcept { return nodes_.empty() ? Value() : Value(nodes_, strings_, root_); }
 
 private:
-    friend std::expected<JsonValue, JsonError> read_json(std::span<const std::byte> json);
+    friend std::expected<JsonValue, JsonError> read_json(std::span<const std::byte> json, JsonOptions options);
 
     std::vector<ValueNode> nodes_;
     std::vector<char> text_;                ///< every string's bytes, one after another
@@ -61,7 +65,12 @@ private:
     std::uint32_t root_ = 0;
 };
 
+/// What a document may hold besides strict JSON.
+struct JsonOptions {
+    bool comments = false; ///< `//` and `/* */` comments where white space may stand (JSON with comments)
+};
+
 /// The document's value, or why it cannot be read.
-[[nodiscard]] std::expected<JsonValue, JsonError> read_json(std::span<const std::byte> json);
+[[nodiscard]] std::expected<JsonValue, JsonError> read_json(std::span<const std::byte> json, JsonOptions options = {});
 
 } // namespace atlas::tiles

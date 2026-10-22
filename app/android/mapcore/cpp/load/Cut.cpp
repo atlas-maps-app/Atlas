@@ -4,6 +4,7 @@
 #include "geometry/RoofShapes.hpp"
 #include "load/Keep.hpp"
 #include "load/Real.hpp"
+#include "load/Tables.hpp"
 #include "text/Shaper.hpp"
 #include "tiles/Grid.hpp"
 #include "tiles/Schema.hpp"
@@ -56,37 +57,13 @@ constexpr double crown_reach = 0.8;
 /// The flags' near_water: a quay edge within 16 m.
 constexpr double near_water_reach = 16.0;
 
-struct Material {
-    std::string_view name;
-    std::string_view col;
-};
-// amsterdam.py's MATERIAL and CLAY (the style file's `material` and `clay`, which EngineStyleTest holds to them)
-constexpr std::array<Material, 11> materials = {{
-    {.name = "brick", .col = "#9C5A45"},
-    {.name = "stone", .col = "#CFC6B4"},
-    {.name = "copper", .col = "#5E9E86"},
-    {.name = "glass", .col = "#A9C2D6"},
-    {.name = "concrete", .col = "#BDBAB2"},
-    {.name = "wood", .col = "#9C7A55"},
-    {.name = "roof_tiles", .col = "#A5553C"},
-    {.name = "slate", .col = "#56606A"},
-    {.name = "metal", .col = "#9AA3AB"},
-    {.name = "plaster", .col = "#E6E0D4"},
-    {.name = "sandstone", .col = "#D8C49A"},
-}};
-constexpr std::string_view clay = "#E4E0D8";
-constexpr std::uint32_t clay_rgb = 0xE4E0D8; // hx(CLAY)
-
-// amsterdam.py's CHURCHES, WAREHOUSES, SHOP_FLOORS, FURNITURE, BOLLARDS and ROAD_ORDER (SceneToTiles' and GroundKeys'
-// copies, which RenderTablesTest holds to the port's)
+// amsterdam.py's CHURCHES, WAREHOUSES, SHOP_FLOORS, FURNITURE and BOLLARDS (SceneToTiles' copies, which
+// RenderTablesTest holds to the port's); MATERIAL, CLAY and ROAD_ORDER are load/Tables.hpp's
 constexpr std::array<std::string_view, 3> churches = {"church", "cathedral", "chapel"};
 constexpr std::array<std::string_view, 3> warehouses = {"industrial", "warehouse", "service"};
 constexpr std::array<std::string_view, 2> shop_floors = {"retail", "commercial"};
 constexpr std::array<std::string_view, 3> furniture = {"bench", "bicycle_parking", "waste_basket"};
 constexpr std::array<std::string_view, 2> bollards = {"bollard", "block"};
-constexpr std::array<std::string_view, 12> road_order = {"path",        "footway",    "steps",         "cycleway",
-                                                         "service",     "pedestrian", "living_street", "unclassified",
-                                                         "residential", "busway",     "tertiary",      "secondary"};
 
 [[nodiscard]] bool in(std::optional<std::string_view> v, std::span<const std::string_view> set) noexcept {
     return v.has_value() && std::ranges::find(set, *v) != set.end();
@@ -645,19 +622,6 @@ struct Pending {
     if (!any) return std::nullopt;
     return static_cast<std::int64_t>(v);
 }
-
-// regions.py's draw_over: runways, taxiways and stands by this order (GroundKeys.AERO_ORDER)
-struct AeroOrder {
-    std::string_view kind;
-    int order;
-};
-constexpr std::array<AeroOrder, 5> aero_order = {{
-    {.kind = "parking_position", .order = 3},
-    {.kind = "taxilane", .order = 1},
-    {.kind = "taxiway", .order = 1},
-    {.kind = "stopway", .order = 0},
-    {.kind = "runway", .order = 2},
-}};
 
 /// One of regions.py's lines (rendertiles' LINE sources 1 to 6): which list, its index, its line on the grid, its key
 /// among the ground's (0: none), and how far and how high the renders draw it.

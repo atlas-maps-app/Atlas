@@ -110,3 +110,28 @@ TEST_CASE("json: what it refuses, by name") {
     CHECK(at.error().at == 21);
     CHECK(tiles::name_of(Fault::duplicate) == "duplicate");
 }
+
+TEST_CASE("json: comments where asked for, as the packer reads the style file") {
+    using Fault = tiles::JsonError::Fault;
+    const std::string_view text =
+        "// a style\n{\n  /* the land */ \"a\": [1, // one\n 2], \"b\": \"//no /* comment */\"\n}"
+        " // the end";
+    const auto doc = tiles::read_json(std::as_bytes(std::span(text.data(), text.size())), {.comments = true});
+    ATLAS_REQUIRE(doc.has_value());
+    const tiles::Value root = doc->root();
+    CHECK(root.size() == 2);
+    CHECK(at(root, "a").size() == 2);
+    CHECK(at(root, "a").child(1).integer() == 2);
+    CHECK(at(root, "b").string() == "//no /* comment */"); // inside a string, not a comment
+    CHECK(fault_of(text) == Fault::syntax);                // strict JSON has none
+    auto with = [](std::string_view s) -> std::optional<Fault> {
+        const auto v = tiles::read_json(std::as_bytes(std::span(s.data(), s.size())), {.comments = true});
+        if (v) return std::nullopt;
+        return v.error().fault;
+    };
+    CHECK(with("[1] /* open") == Fault::truncated);
+    CHECK(with("[1 /**/, 2]") == std::nullopt);
+    CHECK(with("/ [1]") == Fault::syntax);
+    CHECK(with("[1] /") == Fault::syntax);
+    CHECK(with("// only a comment") == Fault::truncated);
+}
