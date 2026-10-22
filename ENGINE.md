@@ -193,6 +193,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - `buildings_vk_test` draws them in its exact raster (the shader's coverage in float, the depth test per sample, 8 bits a blend, in the frame's order) and holds every case within a level a blend. The engine's references are at version 4.
 - Done: **the exact haze**, the composite's haze and vignette in whole numbers, bit for bit the twin's (against the port's references no case moves by more than 0.01 of MAD); the engine's references are at version 2.
 - Done: **the haze and the vignette optional** (the user, 21 October: for the pure look, and they seemed to cost frame time): two chips in the app's Look settings, on by default. Off, the core's composite skips them (its per-pixel search of the haze's stops and the vignette's square root and divisions); today's map, the renderer's port, keeps them where it still draws.
+- Done: **the grain optional too** (the user, 23 October): a third chip beside them, on by default (`MapCore.screenEffects`' grain, the façade's ABI 15). Off, the composite leaves out the paper grain's step; `composite_fx_vk_test` holds a frame drawn so to the twin's, with no grain in it.
 - Done: **the soft shadows**, pulled forward from step 4 because the renders blur the ground's shadows in every daytime moment the app shows (`sblur`: 2.6 CSS px overcast, 0.6 with the sun between clouds).
   - The port blurs them on a grid of its own. WebKit draws a filter at most 4096² pixels large, and the shadows' filter region (their box, grown by a tenth; they reach 900 CSS px past the frame) is larger than that at the boards' views. So their grid is coarser than the device's, 0.43 of the density at the home and 0.70 at the Main board, and the renders' shadows are softer than the deviation alone makes them.
   - Each frame the GPU measures the drawn shadows' box, works out the same grid (`fx/BlurGrid.hpp`), draws their union on it into a 4x mask, runs vImage's three square boxes and the port's fade over it (`fx::square_blur_cpu`, bit for bit), and draws the result back as the port draws its bitmap, bilinear where the grid is coarser. The CPU does nothing per shadow.
@@ -451,7 +452,7 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
 - The canal ring is bundled for the first look offline.
 - The look is refined in the engine, not in the renderer. The renderer and its port are frozen as the yardstick from 20 October 2026.
 - Clouds, cloud shadows and reflections come in step 4, in the plan's order (21 October 2026); the soft shadows were pulled into step 2.
-- The haze and the vignette are optional, on by default, in the app's Look settings (21 October 2026).
+- The haze and the vignette are optional, on by default, in the app's Look settings (21 October 2026), and so is the grain (23 October 2026).
 
 **Open**, each with a default so work never waits:
 - **The renderer's known issues:** melting buildings is fixed by design (true depth). Others are fixed in the engine as they are found and named in the case files (the default), or the user lists them to be fixed first.
