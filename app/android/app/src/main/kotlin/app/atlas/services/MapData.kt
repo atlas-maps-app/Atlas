@@ -117,8 +117,14 @@ class MapData(private val services: Services) {
         if (services.config.root == null) MapEngine.useCacheDir(File(services.dirs.cache, "engine"))
         MapEngine.weather = weather
         MapEngine.regions = regions
-        // the windows the phone builds (ENGINE.md step 3): their data from the same Overpass servers
-        MapEngine.windowData = { b -> overpass.window(app.atlas.geo.BBox(b[1], b[0], b[3], b[2])) }
+        // the windows the phone builds (ENGINE.md step 3): their data from the same Overpass servers, from one whose data
+        // is of the last day where one answers; built again after a week from the changes since
+        MapEngine.windowData = { b ->
+            overpass.window(app.atlas.geo.BBox(b[1], b[0], b[3], b[2]), freshAfter = java.time.Instant.now().minus(java.time.Duration.ofDays(1)))
+        }
+        MapEngine.windowDiff = { b, since, notBefore ->
+            overpass.windowDiff(app.atlas.geo.BBox(b[1], b[0], b[3], b[2]), since, java.time.Instant.parse(notBefore))
+        }
         MapEngine.windowsAllowed = { !services.ciDemo }
         // the screen's haze and vignette as the Look settings have them, handed to the core as they change
         services.scope.launch {

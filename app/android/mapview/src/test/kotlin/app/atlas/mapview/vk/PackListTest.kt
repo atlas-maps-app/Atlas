@@ -186,6 +186,32 @@ class PackListTest {
     }
 
     @Test
+    fun aWindowBuiltAgainAtItsPathIsListedAgainWithItsTimeAndSize() {
+        val windows = File(dir, "windows").apply { mkdirs() }
+        val file = File(windows, "14-8414-5383.atlas")
+        file.writeBytes(renderPack("window", "region", 4.87, 52.36, 4.90, 52.38))
+        file.setLastModified(1_700_000_000_000L)
+        val list = PackList(null, null, windows = { windows })
+        list.load()
+        val first = list.revision
+        assertEquals(listOf("window/14/8414/5383"), list.packs.map { it.id })
+        assertEquals(MapCore.PackRef.WINDOW, list.packs.single().kind)
+        val (refs, _) = list.refs()
+        assertEquals(file.path, refs.single().path)
+        assertEquals(1_700_000_000_000L, refs.single().offset)
+        assertEquals(file.length(), refs.single().length)
+        // listed again unchanged: the same list
+        list.load()
+        assertEquals(first, list.revision)
+        // built again: new bytes at the same path, listed anew
+        file.writeBytes(renderPack("window", "region", 4.87, 52.36, 4.90, 52.38, tz = "Europe/Paris"))
+        file.setLastModified(1_700_604_800_000L)
+        list.load()
+        assertTrue(list.revision > first)
+        assertEquals(1_700_604_800_000L, list.refs().first.single().offset)
+    }
+
+    @Test
     fun aWindowsFileNamesItsWindow() {
         assertEquals(app.atlas.mapcore.MapCore.Window(14, 8414, 5384), Windows.windowOf(java.io.File("14-8414-5384.atlas")))
         assertEquals("window/14/8414/5384", Windows.windowOf(java.io.File("14-8414-5384.atlas"))?.id)

@@ -185,5 +185,66 @@ class OverpassClientTest {
         assertEquals(2, tried.size)
         assertTrue(String(bytes).contains("\"id\":2"))
     }
+
+    @Test
+    fun aWindowsDataFromAHostFarBehindIsPassedOverForAFreshOneAndTakenWhenNoneIsFresh() {
+        // on 22 October 2026 one of the hosts answered with data from June
+        val times = listOf("2026-06-01T08:52:28Z", "2026-10-22T13:01:36Z")
+        val tried = ArrayList<String>()
+        val client = OverpassClient(http = { url, _, _ ->
+            tried += url
+            answer(node(tried.size.toLong(), 52.0, 4.0), time = times[(tried.size - 1) % 2])
+        }, hosts = listOf("https://a", "https://b"), pause = {})
+        val fresh = client.window(BBox(4.0, 52.0, 4.01, 52.01), freshAfter = java.time.Instant.parse("2026-10-21T13:00:00Z"))
+        assertEquals(2, tried.size)
+        assertEquals(java.time.Instant.parse("2026-10-22T13:01:36Z"), OverpassClient.dataDate(fresh))
+        // none fresh: the newest of what came
+        tried.clear()
+        val stale = OverpassClient(http = { url, _, _ ->
+            tried += url
+            answer(node(tried.size.toLong(), 52.0, 4.0), time = if (tried.size == 1) "2026-06-01T08:52:28Z" else "2026-07-01T00:00:00Z")
+        }, hosts = listOf("https://a", "https://b"), pause = {}).window(BBox(4.0, 52.0, 4.01, 52.01), freshAfter = java.time.Instant.parse("2026-10-21T13:00:00Z"))
+        assertEquals(java.time.Instant.parse("2026-07-01T00:00:00Z"), OverpassClient.dataDate(stale))
+    }
+
+    @Test
+    fun aWindowsChangesAreAskedAsAnAugmentedDiffOfItsQueryInXml() {
+        val client = OverpassClient()
+        val q = client.windowDiffQuery(BBox(4.87, 52.36, 4.89, 52.38), "2026-10-15T08:16:19Z")
+        val box = "52.36,4.87,52.38,4.89"
+        assertEquals(
+            "[out:xml][timeout:240][adiff:\"2026-10-15T08:16:19Z\"];(node($box)(if:count_tags()>0);way($box);" +
+                "relation[type=multipolygon]($box);relation[boundary~\"^(national_park|protected_area)$\"]($box););out geom;",
+            q,
+        )
+        // the same elements as the window's own query
+        assertEquals(client.windowQuery(BBox(4.87, 52.36, 4.89, 52.38)).substringAfter(";"), q.substringAfter("];"))
+    }
+
+    @Test
+    fun aWindowsChangesFromAHostBehindTheKeptDataOrWithARemarkAreAskedElsewhere() {
+        fun diff(base: String, body: String = "") = ByteArrayInputStream(
+            ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<osm version=\"0.6\" generator=\"Overpass API\">\n" +
+                "<meta osm_base=\"$base\"/>\n$body\n</osm>\n").toByteArray(),
+        )
+        val tried = ArrayList<String>()
+        val client = OverpassClient(http = { url, form, _ ->
+            tried += url
+            assertTrue(form.getValue("data").startsWith("[out:xml][timeout:240][adiff:\"2026-10-15T08:16:19Z\"];"))
+            when (tried.size) {
+                1 -> diff("2026-06-01T08:52:28Z") // behind the kept data
+                2 -> diff("2026-10-22T13:00:00Z", "<remark> runtime error: Query timed out </remark>")
+                else -> diff("2026-10-22T13:01:36Z", "<action type=\"create\"><node id=\"1\" lat=\"52\" lon=\"4\"/></action>")
+            }
+        }, hosts = listOf("https://a", "https://b", "https://c"), pause = {})
+        val bytes = client.windowDiff(BBox(4.0, 52.0, 4.01, 52.01), "2026-10-15T08:16:19Z", java.time.Instant.parse("2026-10-15T08:46:19Z"))
+        assertEquals(3, tried.size)
+        assertTrue(String(bytes).contains("<action type=\"create\">"))
+        assertEquals(java.time.Instant.parse("2026-10-22T13:01:36Z"), OverpassClient.dataDate(bytes))
+        // every host behind: no changes
+        val behind = OverpassClient(http = { _, _, _ -> diff("2026-06-01T08:52:28Z") }, hosts = listOf("https://a"), pause = {})
+        val failed = runCatching { behind.windowDiff(BBox(4.0, 52.0, 4.01, 52.01), "2026-10-15T08:16:19Z", java.time.Instant.parse("2026-10-15T08:46:19Z")) }
+        assertTrue(failed.exceptionOrNull() is IOException)
+    }
 }
 

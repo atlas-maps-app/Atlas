@@ -67,6 +67,9 @@ class PackList(
         /** A downloaded pack's file, or a bundled pack's asset name. */
         val file: File?,
         val asset: String?,
+        /** Its file's time and size as listed (0 for an asset): a file built again at the same path, a window's, is new bytes. */
+        val time: Long = file?.lastModified() ?: 0L,
+        val size: Long = file?.length() ?: 0L,
     ) {
         override fun toString() = "Pack($id #$number)"
     }
@@ -150,7 +153,7 @@ class PackList(
             out[w.id] = packOf(w.id, MapCore.PackRef.WINDOW, head, file, null)
         }
         val list = out.values.toList()
-        if (list.map { Triple(it.id, it.file, it.asset) } != packs.map { Triple(it.id, it.file, it.asset) }) {
+        if (list.map { listOf(it.id, it.file, it.asset, it.time, it.size) } != packs.map { listOf(it.id, it.file, it.asset, it.time, it.size) }) {
             packs = list
             revision++
         }
@@ -179,7 +182,8 @@ class PackList(
             val file = p.file
             val asset = p.asset
             if (file != null) {
-                refs += MapCore.PackRef(p.id, p.number, p.kind, path = file.path)
+                // a file's time and size as listed: the core opens a file built again at the same path anew
+                refs += MapCore.PackRef(p.id, p.number, p.kind, path = file.path, offset = p.time, length = p.size)
             } else if (asset != null) {
                 val r = runCatching { bundled?.range(asset) }.getOrNull() ?: continue
                 open += r

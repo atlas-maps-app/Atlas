@@ -9,6 +9,7 @@ import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.time.Instant
 import java.util.zip.GZIPInputStream
 
 /** Posts a form and hands back the response body. The phone may supply OkHttp; [HttpUrlPost] needs nothing. */
@@ -74,31 +75,80 @@ class OverpassClient(
      * box on each statement and none on `out geom`, so a relation's members come whole (with a global box, Overpass
      * leaves out the geometry of the members beyond it).
      */
-    fun windowQuery(b: BBox): String {
+    fun windowQuery(b: BBox): String = "[out:json][timeout:240];" + windowStatements(b)
+
+    /**
+     * The QL of a window's changes since [since] (an ISO date; ENGINE.md step 3: a window built again after a week):
+     * Overpass's augmented diff of [windowQuery] between that date and now. Overpass runs the query at both dates and
+     * prints each element whose output differs, as it was and as it is, with its points (`out geom`), so a way whose
+     * node moved is among them. In XML: Overpass's JSON prints no actions.
+     */
+    fun windowDiffQuery(b: BBox, since: String): String = "[out:xml][timeout:240][adiff:\"$since\"];" + windowStatements(b)
+
+    private fun windowStatements(b: BBox): String {
         val box = "${num(b.south)},${num(b.west)},${num(b.north)},${num(b.east)}"
-        return "[out:json][timeout:240];(node($box)(if:count_tags()>0);way($box);relation[type=multipolygon]($box);" +
+        return "(node($box)(if:count_tags()>0);way($box);relation[type=multipolygon]($box);" +
             "relation[boundary~\"^(national_park|protected_area)$\"]($box););out geom;"
     }
 
     /**
-     * Overpass's JSON for a window's box ([windowQuery]), its bytes as they came, from the first host that answers
-     * whole, each tried in turn (a query that timed out part-way answers 200 with a remark, and is tried again elsewhere).
+     * Overpass's JSON for a window's box ([windowQuery]), its bytes as they came, from the first host that answers whole
+     * with data from [freshAfter] on, each tried in turn (a query that timed out part-way answers 200 with a remark, and
+     * is tried again elsewhere). A host whose data is older is passed over while another may answer (on 22 October 2026
+     * one of them answered with data from June); where none does, the newest answer that came is taken.
      */
-    fun window(b: BBox): ByteArray {
+    fun window(b: BBox, freshAfter: Instant? = null): ByteArray {
         var lastError: Exception? = null
+        var older: Pair<Instant, ByteArray>? = null
         for ((attempt, host) in hosts.withIndex()) {
             try {
                 val bytes = http.post("$host/api/interpreter", mapOf("data" to windowQuery(b)), userAgent).use { it.readBytes() }
                 val tail = String(bytes, maxOf(0, bytes.size - 4096), minOf(bytes.size, 4096), Charsets.UTF_8)
                 if (tail.contains("\"remark\"") && tail.contains("runtime error", ignoreCase = true)) throw IOException("Overpass ran out of time or memory")
-                return bytes
+                val date = dataDate(bytes)
+                if (freshAfter == null || (date != null && !date.isBefore(freshAfter))) return bytes
+                log("$host's data is from $date, before $freshAfter")
+                if (date != null && (older == null || date.isAfter(older.first))) older = date to bytes
+                continue
             } catch (e: IOException) {
                 lastError = e
                 log("retry after $host: ${e.message}")
             }
             pause(backoffSeconds * 1000 * (attempt + 1))
         }
+        older?.let { return it.second }
         throw IOException("Overpass failed for the window $b: ${lastError?.message}", lastError)
+    }
+
+    /**
+     * Overpass's changes to a window's data since [since] ([windowDiffQuery]), its XML as it came, from the first host
+     * that answers whole with data not older than [notBefore] (the kept data's own date: a host behind it knows nothing
+     * newer), each tried in turn. A remark (the query failed or ran out of time, or the host keeps no history of the
+     * data) is tried again elsewhere.
+     */
+    fun windowDiff(b: BBox, since: String, notBefore: Instant): ByteArray {
+        var lastError: Exception? = null
+        for ((attempt, host) in hosts.withIndex()) {
+            try {
+                val bytes = http.post("$host/api/interpreter", mapOf("data" to windowDiffQuery(b, since)), userAgent).use { it.readBytes() }
+                val head = String(bytes, 0, minOf(bytes.size, 4096), Charsets.UTF_8)
+                val tail = String(bytes, maxOf(0, bytes.size - 4096), minOf(bytes.size, 4096), Charsets.UTF_8)
+                val remark = sequenceOf(head, tail).firstNotNullOfOrNull { t ->
+                    t.substringAfter("<remark>", "").takeIf { it.isNotEmpty() }?.substringBefore("</remark>")?.trim()
+                }
+                if (remark != null) throw IOException("Overpass remark: ${remark.take(200)}")
+                val date = dataDate(bytes) ?: throw IOException("$host's answer has no date")
+                if (!date.isBefore(notBefore)) return bytes
+                log("$host's data is from $date, behind the window's $notBefore")
+                lastError = IOException("$host's data is from $date, behind the window's $notBefore")
+                continue
+            } catch (e: IOException) {
+                lastError = e
+                log("retry after $host: ${e.message}")
+            }
+            pause(backoffSeconds * 1000 * (attempt + 1))
+        }
+        throw IOException("Overpass gave no changes for the window $b: ${lastError?.message}", lastError)
     }
 
     fun fetch(box: BBox): OverpassResult {
@@ -158,6 +208,12 @@ class OverpassClient(
     companion object {
         val HOSTS = listOf("https://overpass-api.de", "https://overpass.private.coffee", "https://overpass.kumi.systems", "https://overpass-api.de")
         const val USER_AGENT = "Atlas/1 (offline maps on OpenStreetMap; +https://github.com/atlas-maps-app/Atlas)"
+
+        private val DATE = Regex("""(?:"timestamp_osm_base"\s*:\s*"|osm_base=")(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)"""")
+
+        /** The date of an answer's data: its JSON's `osm3s.timestamp_osm_base`, its XML's `meta osm_base`; null for none. */
+        fun dataDate(answer: ByteArray): Instant? =
+            DATE.find(String(answer, 0, minOf(answer.size, 2048), Charsets.UTF_8))?.let { runCatching { Instant.parse(it.groupValues[1]) }.getOrNull() }
 
         /** 0.001 square degrees: the ring of the canal district (0.0009) answered whole, the whole box (0.0017) did not. */
         const val MAX_AREA = 0.001

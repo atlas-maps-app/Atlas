@@ -196,6 +196,14 @@ object MapEngine {
     @Volatile
     var windowData: ((DoubleArray) -> ByteArray)? = null
 
+    /**
+     * Overpass's changes to a window's data since a date (an augmented diff of the window's query, its XML), from a
+     * server whose data is not older than the second date (ENGINE.md step 3: a window built again after a week); the
+     * app sets it with its own servers. Null: an aged window is fetched whole again.
+     */
+    @Volatile
+    var windowDiff: ((DoubleArray, String, String) -> ByteArray)? = null
+
     /** Where the windows the phone built are kept: the engine's cache's `windows/`; null without a cache. */
     fun windowsDir(): File? = cacheDir?.let { File(it, "windows") }
 
@@ -212,7 +220,7 @@ object MapEngine {
         val dir = windowsDir() ?: return null
         val data = windowData ?: return null
         return windowsBuilder ?: synchronized(this) {
-            windowsBuilder ?: app.atlas.mapview.vk.Windows(dir, data).also { windowsBuilder = it }
+            windowsBuilder ?: app.atlas.mapview.vk.Windows(dir, data, windowDiff).also { windowsBuilder = it }
         }
     }
 
