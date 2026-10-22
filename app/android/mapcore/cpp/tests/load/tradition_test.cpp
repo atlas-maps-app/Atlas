@@ -120,6 +120,9 @@ TEST_CASE("tradition: what a file cannot hold, refused by its path") {
     CHECK(with(R"([["brick", "#8E5A46", 1]])", R"([["brick", 1]])") == "walls.default[0]");
     CHECK(with(R"([["brick", "#8E5A46", 1]])", R"([])") == "walls.default");
     CHECK(with(R"("walls": {"default": [["brick", "#8E5A46", 1]]})",
+               R"("walls": {"default": {"before:71111111111111111104": [["brick", "#8E5A46", 1]]}})") ==
+          "walls.default.before:71111111111111111104"); // a year past what an int holds (CI's fuzz found it)
+    CHECK(with(R"("walls": {"default": [["brick", "#8E5A46", 1]]})",
                R"("walls": {"default": {"before:18x0": [["brick", "#8E5A46", 1]]}})") == "walls.default.before:18x0");
     CHECK(with(R"("colours": ["#737E88"])", R"("colours": [])") == "roof.default.colours");
     CHECK(with(R"({"shapes": [["flat", 1]], "material": "metal", "colours": ["#737E88"]})",

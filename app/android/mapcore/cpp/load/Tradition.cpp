@@ -142,13 +142,12 @@ struct TraditionReader {
                 continue; // era() reads no other key
             }
             const std::string_view digits = k.substr(before ? 7 : 6);
+            if (digits.empty() || digits.size() > 9) return fail(here, "a year that is not a whole number");
             std::int64_t year = 0;
-            bool ok = !digits.empty() && digits.size() <= 9;
             for (const char c : digits) {
-                ok = ok && c >= '0' && c <= '9';
+                if (c < '0' || c > '9') return fail(here, "a year that is not a whole number");
                 year = (year * 10) + (c - '0');
             }
-            if (!ok) return fail(here, "a year that is not a whole number");
             typename Era<T>::Branch b{.before = before, .year = year, .value = std::nullopt};
             if (!one(v.child(i), here, b.value)) return false;
             out.branches.push_back(std::move(b));
