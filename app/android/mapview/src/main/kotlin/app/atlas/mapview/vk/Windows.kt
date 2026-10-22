@@ -68,6 +68,10 @@ class Windows(
 
     fun step(core: Core): Boolean {
         if (!busy.compareAndSet(false, true)) return false
+        // built behind the screen: at background priority while it is (a shared I/O thread: its own given back after),
+        // so a window's seconds of work never take a core from the frames
+        val priority = runCatching { android.os.Process.getThreadPriority(android.os.Process.myTid()) }.getOrNull()
+        runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND) }
         try {
             val now = clock()
             val ready = { w: MapCore.Window -> failed[w]?.let { now - it > RETRY_MS } ?: true }
@@ -75,6 +79,7 @@ class Windows(
             val aged = core.inView().firstOrNull { ready(it) && aged(it, now) } ?: return false
             return refresh(core, aged, now)
         } finally {
+            priority?.let { p -> runCatching { android.os.Process.setThreadPriority(p) } }
             busy.set(false)
         }
     }
