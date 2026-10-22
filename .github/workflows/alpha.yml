@@ -1,0 +1,51 @@
+# The nightly alpha (the user, 23 October 2026): every night the latest commit of `app` that Core and Android built
+# green on its push becomes the next alpha, when the app changed since the last one (.github/scripts/nightly-alpha.sh
+# chooses). It is tagged v0.1.0-alpha.<n+1>, annotated with the commits since, and release.yml builds, signs and
+# publishes it as it does an alpha tagged by hand. A tag pushed with the workflow's own token starts no workflow, so
+# this one starts release.yml itself. Scheduled and dispatched workflows run from the default branch's file.
+name: Nightly alpha
+
+on:
+  schedule:
+    - cron: '47 3 * * *' # 03:47 UTC: after the night's CI (02:23), before the morning in Amsterdam
+  workflow_dispatch:
+
+permissions:
+  contents: write # the tag
+  actions: write # release.yml's dispatch
+
+concurrency:
+  group: nightly-alpha
+  cancel-in-progress: false
+
+jobs:
+  alpha:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: app
+          fetch-depth: 0
+      - name: The latest green commit since the last alpha
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ runner.temp }}/alpha-notes.txt
+        run: bash .github/scripts/nightly-alpha.sh
+      - name: Tag it and release it
+        if: steps.pick.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.pick.outputs.tag }}
+          SHA: ${{ steps.pick.outputs.sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -F "$RUNNER_TEMP/alpha-notes.txt" "$SHA"
+          git push origin "refs/tags/$TAG"
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f tag="$TAG"
+          {
+            echo "### $TAG from ${SHA:0:7}"
+            cat "$RUNNER_TEMP/alpha-notes.txt"
+          } >> "$GITHUB_STEP_SUMMARY"
