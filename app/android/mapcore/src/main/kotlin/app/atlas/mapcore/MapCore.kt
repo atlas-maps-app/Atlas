@@ -302,6 +302,16 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
             /** The window of a key the core packed (`z shl 48 or x shl 24 or y`). */
             fun of(packed: Long): Window =
                 Window((packed ushr 48).toInt(), ((packed ushr 24) and 0xFFFFFF).toInt(), (packed and 0xFFFFFF).toInt())
+
+            /**
+             * The version of a window built now: `<stage P's> <the style's>`, as a window's manifest names them
+             * (`engine_version`, `style_version`). A window of another version is built again from the data it keeps
+             * before the map lists it, so a frame cell's windows are of one version.
+             */
+            fun version(): String = current
+
+            // the core's, once it is loaded (an initializer that throws is tried again on the next call)
+            private val current: String by lazy { Native.windowVersion() }
         }
     }
 

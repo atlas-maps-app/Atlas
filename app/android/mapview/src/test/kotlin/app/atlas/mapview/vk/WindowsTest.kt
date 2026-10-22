@@ -17,7 +17,9 @@ import java.time.Instant
  * the core wants is fetched whole, built and its data kept; one in view is left alone for a week, then asked only for
  * the changes since its data's date and built from the merge; nothing changed only marks it checked; a refused merge, no
  * changes or data fetched whole a month ago fetch it whole; an answer older than the kept data is never built; a window
- * whose data does not come waits twice as long after each failure in a row, one whose data the core refuses a day.
+ * whose data does not come waits twice as long after each failure in a row, one whose data the core refuses a day; a
+ * window built lately is not fetched again though the core still wants its place; one of another version is built
+ * again from its kept data, with no server asked.
  */
 class WindowsTest {
     private val dir: File = Files.createTempDirectory("windows").toFile()
@@ -50,6 +52,18 @@ class WindowsTest {
         return String(bytes)
     }
 
+    /** A window's pack as far as the lists read it, of [version] (`<engine> <style>`): D1's header and its manifest. */
+    private fun pack(version: String): ByteArray {
+        val (engine, style) = version.split(' ')
+        val manifest = """{"layout":"render-tiles","payload":1,"profile":"region","bbox":{"west":4.87,"south":52.36,"east":4.89,
+            |"north":52.38},"chunks":1,"engine_version":"$engine","style_version":"$style"}""".trimMargin().toByteArray()
+        return "ATLASPCK".toByteArray(Charsets.US_ASCII) + byteArrayOf(0, 3, 0, 0) +
+            ByteBuffer.allocate(8).putInt(manifest.size).putInt(0).array() + manifest + ByteArray(48)
+    }
+
+    /** The version a window's pack names. */
+    private fun versionOf(f: File): String? = f.inputStream().use { PackList.readHead(it) }.version
+
     private inner class Core : Windows.Core {
         var wanted = listOf<MapCore.Window>()
         var inView = listOf<MapCore.Window>()
@@ -58,15 +72,21 @@ class WindowsTest {
         var mergeWith: (File, ByteBuffer) -> ByteArray? = { _, _ -> null }
         var refusal = ""
 
+        /** The version of a window it builds now; with one, it writes a pack's header and manifest that name it. */
+        var version: String? = null
+
         override fun wanted() = wanted
         override fun inView() = inView
         override fun box(w: MapCore.Window) = doubleArrayOf(52.36, 4.87, 52.38, 4.89)
         override fun build(w: MapCore.Window, json: File, file: File): String {
             built += json.readText()
             if (refusal.isNotEmpty()) return refusal
-            file.writeText("pack ${built.size}")
+            val v = version
+            if (v == null) file.writeText("pack ${built.size}") else file.writeBytes(pack(v))
             return ""
         }
+
+        override fun version() = version
 
         override fun merge(w: MapCore.Window, kept: File, diff: ByteBuffer, out: File): Boolean {
             merged += kept.readText() to text(diff)
@@ -321,5 +341,48 @@ class WindowsTest {
         assertEquals(4, fetched.size)
         assertEquals(String(answer("2026-10-29T12:00:00Z", id = 8)), core.built.last())
         assertEquals(String(answer("2026-10-29T12:00:00Z", id = 8)), unzipped(windows.dataOf(w)))
+    }
+
+    @Test
+    fun aWindowOfAnotherVersionIsBuiltAgainFromItsKeptDataWithNoServerAsked() {
+        // built at one style version; then the app is updated (a new process), and windows are built at another
+        val core = Core()
+        core.version = "core-p1 s1.1-aaaa"
+        built(core)
+        val checked = windows.dataOf(w).lastModified()
+        core.version = "core-p1 s1.1-bbbb"
+        val next = MapCore.Window(14, 8415, 5383)
+        core.wanted = listOf(w, next) // the core holds no tile of either: PackList does not list the old window
+        val updated = Windows(dir, fetch = { b, file -> fetched += b; file.writeBytes(whole()) }, clock = { now })
+        assertTrue(updated.step(core))
+        assertEquals(1, fetched.size)
+        assertEquals(listOf(core.built[0], core.built[0]), core.built)
+        assertEquals("core-p1 s1.1-bbbb", versionOf(updated.fileOf(w)))
+        // its data keeps its date; the next step goes on to the window the core wants next, the old one built lately
+        assertEquals(checked, updated.dataOf(w).lastModified())
+        assertTrue(updated.step(core))
+        assertEquals(2, fetched.size)
+        assertTrue(updated.fileOf(next).exists())
+        core.wanted = listOf(w)
+        assertFalse(updated.step(core))
+        assertEquals(2, fetched.size)
+    }
+
+    @Test
+    fun aWindowOfAnotherVersionWithoutDataGoesAndIsFetchedOnceWanted() {
+        val core = Core()
+        core.version = "core-p1 s1.1-aaaa"
+        built(core)
+        windows.dataOf(w).delete()
+        core.version = "core-p1 s1.1-bbbb"
+        core.wanted = emptyList()
+        val updated = Windows(dir, fetch = { b, file -> fetched += b; file.writeBytes(whole()) }, clock = { now })
+        assertFalse(updated.step(core))
+        assertFalse(updated.fileOf(w).exists())
+        assertEquals(1, core.built.size)
+        core.wanted = listOf(w)
+        assertTrue(updated.step(core))
+        assertEquals(2, fetched.size)
+        assertEquals("core-p1 s1.1-bbbb", versionOf(updated.fileOf(w)))
     }
 }

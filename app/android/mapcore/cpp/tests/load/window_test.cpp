@@ -228,6 +228,10 @@ TEST_CASE("load: a window that holds nothing to draw is a pack without a tile, w
         CHECK(m.find("chunks").value_or(tl::Value()).integer() == static_cast<std::int64_t>(tiles));
         CHECK(m.find("engine_version").value_or(tl::Value()).string() == load::stage_p_version);
         CHECK(m.find("style_version").value_or(tl::Value()).string() == load::style_version());
+        // the version the app holds a window to (load::window_version): one of another is built again first
+        CHECK(std::format("{} {}", m.find("engine_version").value_or(tl::Value()).string().value_or(""),
+                          m.find("style_version").value_or(tl::Value()).string().value_or("")) ==
+              load::window_version());
         CHECK(m.find("window").value_or(tl::Value()).string() == place.name);
     }
     // in the store: a window without a tile joins no cell; with its house, its frame cell's pack; built again without

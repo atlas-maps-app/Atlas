@@ -86,6 +86,8 @@ struct Traditions {
 
 } // namespace
 
+std::string window_version() { return std::format("{} {}", stage_p_version, style_version()); }
+
 std::array<double, 4> window_box(const tiles::TileKey& tile, double margin) noexcept {
     const std::array<std::int32_t, 4> b = tl::tile_box(tile);
     const double south = degrees(b[0]);

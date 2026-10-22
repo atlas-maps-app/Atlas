@@ -850,6 +850,9 @@ jdoubleArray native_window_box(JNIEnv* env, jclass /*cls*/, jint z, jint x, jint
     return out;
 }
 
+/// The version of a window built now (load::window_version): its stage P's and its style's.
+jstring native_window_version(JNIEnv* env, jclass /*cls*/) { return java(env, load::window_version()); }
+
 /// Writes `bytes` to `target` by a file beside it renamed once whole: "" or why not.
 std::string write_whole(const std::string& target, std::span<const char> bytes) {
     const std::string part = target + ".part";
@@ -1098,8 +1101,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 38>& methods() {
-    static const std::array<JNINativeMethod, 38> table{{
+const std::array<JNINativeMethod, 39>& methods() {
+    static const std::array<JNINativeMethod, 39> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1149,6 +1152,7 @@ const std::array<JNINativeMethod, 38>& methods() {
         method("painter", "(JZ)V", fn(&native_painter)),
         method("wantedWindows", "(J)[J", fn(&native_wanted_windows)),
         method("windowBox", "(III)[D", fn(&native_window_box)),
+        method("windowVersion", "()Ljava/lang/String;", fn(&native_window_version)),
         method("buildWindow", "(IIILjava/lang/String;Ljava/lang/String;)Ljava/lang/String;", fn(&native_build_window)),
         method("windowsInView", "(J)[J", fn(&native_windows_in_view)),
         method("mergeWindow", "(IIILjava/lang/String;Ljava/nio/ByteBuffer;Ljava/lang/String;)Z",

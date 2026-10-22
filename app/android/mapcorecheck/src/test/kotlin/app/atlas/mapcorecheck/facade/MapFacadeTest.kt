@@ -37,6 +37,12 @@ class MapFacadeTest {
         }
     }
 
+    /** A pack's JSON manifest, after its 20-byte header (whose bytes 12 to 15 give its length, big-endian). */
+    private fun manifestOf(file: File): String {
+        val bytes = file.readBytes()
+        return String(bytes, 20, ByteBuffer.wrap(bytes, 12, 4).int, Charsets.UTF_8)
+    }
+
     private fun packs(handle: Long, tiles: File, vararg ids: String): String = Native.packs(
         handle, arrayOf(*ids), LongArray(ids.size) { it + 1L }, IntArray(ids.size), Array(ids.size) { File(tiles, "${ids[it]}.atlas").path },
         IntArray(ids.size) { -1 }, LongArray(ids.size), LongArray(ids.size),
@@ -151,6 +157,11 @@ class MapFacadeTest {
             assertEquals("", Native.buildWindow(14, x, y, raw.path, file.path))
             assertTrue(file.isFile && file.length() > 0)
             assertTrue(!File(dir, "14-$x-$y.atlas.part").exists())
+            // its manifest counts its tile and names the version of a window built now, as the core gives it
+            val version = Native.windowVersion()
+            assertTrue(version, Regex("""core-p\d+ s\S+""").matches(version))
+            val manifest = manifestOf(file)
+            assertTrue(manifest, manifest.contains(""""chunks":1,"engine_version":"${version.substringBefore(' ')}","style_version":"${version.substringAfter(' ')}""""))
             // a window of another level, data that is no Overpass answer, or no data: refused, saying why
             assertTrue(Native.buildWindow(13, x / 2, y / 2, raw.path, File(dir, "w13").path).contains("no window"))
             val junk = File(dir, "junk.json").apply { writeText("nope") }

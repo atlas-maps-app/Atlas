@@ -40,6 +40,12 @@ import java.util.zip.GZIPOutputStream
  * the core did not take into its frame cell, or one built while the map has not handed the core its packs again. It is
  * fetched whole again once its data is [REFRESH_MS] old, and never built from data older than what it keeps. Until 22
  * October such a window was fetched again every half second while its place was in view.
+ *
+ * A window of another version than a window built now ([Core.version]: another stage P or style, as after an update of
+ * the app or an edit to the style file) is built again from the data it keeps, on the phone, before anything else: the
+ * folder is read once, on the first step, and [PackList] does not list such a window meanwhile, so a frame cell's
+ * windows are of one version (the core refuses a window of another version than its cell's). One that keeps no data
+ * that builds goes, and is fetched whole when the core wants its place.
  */
 class Windows(
     private val dir: File,
@@ -67,6 +73,9 @@ class Windows(
          * IllegalStateException where it cannot merge exactly.
          */
         fun merge(w: MapCore.Window, kept: File, diff: ByteBuffer, out: File): Boolean
+
+        /** The version of a window built now ([MapCore.Window.version]); null where it is not known. */
+        fun version(): String? = null
     }
 
     private class Of(private val core: MapCore) : Core {
@@ -75,6 +84,7 @@ class Windows(
         override fun box(w: MapCore.Window) = w.box()
         override fun build(w: MapCore.Window, json: File, file: File) = w.build(json, file)
         override fun merge(w: MapCore.Window, kept: File, diff: ByteBuffer, out: File) = w.merge(kept, diff, out)
+        override fun version() = runCatching { MapCore.Window.version() }.getOrNull()
     }
 
     /** A window that failed lately: when it last did, whether the core refused its data, and how often in a row. */
@@ -82,6 +92,9 @@ class Windows(
 
     private val failed = ConcurrentHashMap<MapCore.Window, Failure>()
     private val busy = AtomicBoolean(false)
+
+    /** The windows of another version than a window built now, still to be built again; read on the first step. */
+    private var stale: ArrayDeque<MapCore.Window>? = null
 
     /** Whether window [w] may be tried at [now]: it has not failed lately, or it has waited long enough since. */
     private fun ready(w: MapCore.Window, now: Long): Boolean {
@@ -105,6 +118,7 @@ class Windows(
         runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND) }
         try {
             val now = clock()
+            nextStale(core)?.let { return rebuild(core, it) }
             core.wanted().firstOrNull { ready(it, now) && !builtLately(it, now) }?.let { return whole(core, it, now, keptBase(it)) }
             val aged = core.inView().firstOrNull { ready(it, now) && aged(it, now) } ?: return false
             return refresh(core, aged, now)
@@ -139,6 +153,48 @@ class Windows(
 
     /** Window [w]'s working files beside its pack: its answer as it comes, its kept data unzipped, a merge's result. */
     private fun workOf(w: MapCore.Window, what: String): File = File(dir, "${w.z}-${w.x}-${w.y}.$what.json")
+
+    /**
+     * The next window of the folder whose pack is of another version than [core]'s window built now (or does not say,
+     * or does not read), by its name; null when none is left, or while the core's version is not known. The folder is
+     * read once: a window built later is of the core's version.
+     */
+    private fun nextStale(core: Core): MapCore.Window? {
+        val left = stale ?: run {
+            val version = core.version() ?: return null
+            val found = dir.listFiles().orEmpty().sortedBy { it.name }.mapNotNull { f ->
+                val w = windowOf(f) ?: return@mapNotNull null
+                val head = runCatching { f.inputStream().use { PackList.readHead(it) } }.getOrNull()
+                w.takeIf { head?.version != version }
+            }
+            ArrayDeque(found).also { stale = it }
+        }
+        return left.removeFirstOrNull()
+    }
+
+    /**
+     * Builds window [w], of another version, again from the data it keeps, on the phone: no server is asked, and its
+     * data keeps its date. Where it keeps no data that builds, its pack goes, and it is fetched whole once the core wants
+     * its place. True when it was built (the packs are to be handed again).
+     */
+    private fun rebuild(core: Core, w: MapCore.Window): Boolean {
+        val kept = workOf(w, "kept")
+        try {
+            val data = dataOf(w)
+            val read = data.exists() && runCatching { unzip(data, kept) }.isSuccess
+            val t0 = clock()
+            val why = if (read) core.build(w, kept, fileOf(w)) else "it keeps no data that reads"
+            if (why.isEmpty()) {
+                Log.i(EngineFrames.TAG, "vk window ${w.id}: of another version, built again from its kept data in ${clock() - t0} ms")
+                return true
+            }
+            fileOf(w).delete()
+            Log.w(EngineFrames.TAG, "vk window ${w.id}: of another version, not built again ($why): fetched once wanted")
+            return false
+        } finally {
+            kept.delete()
+        }
+    }
 
     /** Fetches window [w]'s data whole and builds it; with [kept] (the date of the data it holds), never from older data. */
     private fun whole(core: Core, w: MapCore.Window, now: Long, kept: Instant?): Boolean {

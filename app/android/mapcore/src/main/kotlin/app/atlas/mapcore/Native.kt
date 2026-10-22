@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 13
+    const val ABI = 14
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -219,6 +219,9 @@ object Native {
 
     /** The box whose data window ([z], [x], [y]) needs: south, west, north, east, degrees. */
     @JvmStatic external fun windowBox(z: Int, x: Int, y: Int): DoubleArray
+
+    /** The version of a window built now: its stage P's and its style's (its manifest's engine and style versions). */
+    @JvmStatic external fun windowVersion(): String
 
     /**
      * Builds window ([z], [x], [y]) from Overpass's JSON for its box, in the file at [json] (which the core maps), and

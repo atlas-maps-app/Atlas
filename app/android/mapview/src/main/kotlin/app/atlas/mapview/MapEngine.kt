@@ -185,7 +185,10 @@ object MapEngine {
 
     /** The packs the core draws from: the APK's bundled render packs and the regions' library's (made once). */
     fun packs(assets: AssetManager): PackList = packList ?: synchronized(this) {
-        packList ?: PackList(AssetPacks(assets), regions?.library, online = { online() }, worker = packWorker, windows = { windowsDir() })
+        packList ?: PackList(
+            AssetPacks(assets), regions?.library, online = { online() }, worker = packWorker, windows = { windowsDir() },
+            windowVersion = { runCatching { MapCore.Window.version() }.getOrNull() },
+        )
             .also { packList = it }
     }
 

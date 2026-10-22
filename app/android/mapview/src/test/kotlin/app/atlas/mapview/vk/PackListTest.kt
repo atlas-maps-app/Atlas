@@ -37,13 +37,14 @@ class PackListTest {
 
     /**
      * A render pack as far as the lists read it: D1's header and a format-3 manifest (each view at yaw 52, pitch 44),
-     * with its tiles' count where [chunks] gives it.
+     * with its tiles' count where [chunks] gives it, and its engine and style versions where [version] does.
      */
-    private fun renderPack(id: String, profile: String, west: Double, south: Double, east: Double, north: Double, views: Map<String, Int> = emptyMap(), tz: String? = "Europe/Amsterdam", chunks: Int? = null): ByteArray {
+    private fun renderPack(id: String, profile: String, west: Double, south: Double, east: Double, north: Double, views: Map<String, Int> = emptyMap(), tz: String? = "Europe/Amsterdam", chunks: Int? = null, version: String? = null): ByteArray {
         val v = views.entries.joinToString(",") { (k, d) -> """"$k":{"target":[-177,0,-521],"yaw":52,"pitch":44,"dist":$d,"cy":440}""" }
+        val versions = version?.split(' ')?.let { (engine, style) -> """"engine_version":"$engine","style_version":"$style",""" } ?: ""
         val manifest = """{"format":"atlas-pack","version":3,"layout":"render-tiles","payload":1,"id":"$id","profile":"$profile",
             |"bbox":{"west":$west,"south":$south,"east":$east,"north":$north},"origin":{"lat":${(south + north) / 2},"lon":${(west + east) / 2}},
-            |${tz?.let { """"tz":"$it",""" } ?: ""}${chunks?.let { """"chunks":$it,""" } ?: ""}"config":{"views":{$v}}}""".trimMargin().toByteArray()
+            |${tz?.let { """"tz":"$it",""" } ?: ""}${chunks?.let { """"chunks":$it,""" } ?: ""}$versions"config":{"views":{$v}}}""".trimMargin().toByteArray()
         val out = ByteArrayOutputStream()
         out.write("ATLASPCK".toByteArray(Charsets.US_ASCII))
         out.write(byteArrayOf(0, 3, 0, 0))
@@ -227,6 +228,27 @@ class PackListTest {
         assertEquals(listOf("window/14/8415/5383", "window/14/8416/5383"), list.packs.map { it.id })
         assertFalse(list.covers(52.37, 4.88, 400.0))
         assertTrue(list.covers(52.37, 4.90, 400.0))
+    }
+
+    @Test
+    fun aWindowOfAnotherVersionIsNotListedUntilItIsBuiltAgain() {
+        // windows built at another style version (as after an update), or before windows named theirs, wait for Windows
+        // to build them again, so a frame cell's windows are of one version; where the version is not known, all list
+        val windows = File(dir, "windows").apply { mkdirs() }
+        File(windows, "14-8414-5383.atlas").writeBytes(renderPack("window", "region", 4.87, 52.36, 4.89, 52.38, chunks = 1, version = "core-p1 s1.1-aaaa"))
+        File(windows, "14-8415-5383.atlas").writeBytes(renderPack("window", "region", 4.89, 52.36, 4.91, 52.38, chunks = 1, version = "core-p1 s1.1-bbbb"))
+        File(windows, "14-8416-5383.atlas").writeBytes(renderPack("window", "region", 4.91, 52.36, 4.93, 52.38, chunks = 1))
+        var version: String? = "core-p1 s1.1-bbbb"
+        val list = PackList(null, null, windows = { windows }, windowVersion = { version })
+        list.load()
+        assertEquals(listOf("window/14/8415/5383"), list.packs.map { it.id })
+        // built again at the version: listed
+        File(windows, "14-8414-5383.atlas").writeBytes(renderPack("window", "region", 4.87, 52.36, 4.89, 52.38, chunks = 1, version = "core-p1 s1.1-bbbb"))
+        list.load()
+        assertEquals(listOf("window/14/8414/5383", "window/14/8415/5383"), list.packs.map { it.id })
+        version = null
+        list.load()
+        assertEquals(3, list.packs.size)
     }
 
     @Test

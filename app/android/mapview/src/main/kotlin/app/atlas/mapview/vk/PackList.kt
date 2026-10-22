@@ -45,6 +45,11 @@ class PackList(
     private val worker: Executor? = null,
     /** The folder of the windows the phone built (ENGINE.md step 3: [Windows]), or null for none. */
     private val windows: () -> File? = { null },
+    /**
+     * The version of a window built now ([MapCore.Window.version]), or null where it is not known (the JVM's tests): a
+     * window of another version is not listed until [Windows] has built it again from the data it keeps.
+     */
+    private val windowVersion: () -> String? = { null },
 ) {
     /** One pack the core can draw. */
     class Pack internal constructor(
@@ -96,8 +101,8 @@ class PackList(
     }
 
     /**
-     * What the choice needs of a render pack's manifest, and its views; [chunks], how many tiles it holds, where the
-     * manifest says (null where it does not).
+     * What the choice needs of a render pack's manifest, and its views; [chunks], how many tiles it holds, and
+     * [version], `<engine version> <style version>`, where the manifest says (null where it does not).
      */
     internal class Head(
         val box: BBox,
@@ -107,6 +112,7 @@ class PackList(
         val distances: DoubleArray,
         val views: Map<String, ViewCamera> = emptyMap(),
         val chunks: Int? = null,
+        val version: String? = null,
     )
 
     @Volatile
@@ -152,11 +158,14 @@ class PackList(
         }
         // the windows the phone built: each its own pack, which the core takes into its frame cell's; not one that holds
         // nothing to draw (the open sea far from a coast, the middle of a field), where the core would have no tile, so
-        // the place is today's map's (Windows does not fetch such a window again for a week)
+        // the place is today's map's (Windows does not fetch such a window again for a week); nor one of another
+        // version than a window built now (another stage P or style, as after an update), which Windows builds again
+        // from its kept data first, so a frame cell's windows are of one version
+        val version = windowVersion()
         windows()?.listFiles()?.sortedBy { it.name }?.forEach { file ->
             val w = Windows.windowOf(file) ?: return@forEach
             val head = runCatching { file.inputStream().use { readHead(it) } }.getOrNull() ?: return@forEach
-            if (head.chunks == 0) return@forEach
+            if (head.chunks == 0 || (version != null && head.version != version)) return@forEach
             out[w.id] = packOf(w.id, MapCore.PackRef.WINDOW, head, file, null)
         }
         val list = out.values.toList()
@@ -294,7 +303,7 @@ class PackList(
         /**
          * What the choice needs of a render pack (format 3), from the start of its bytes: D1's container header, then
          * its JSON manifest ([PackLibrary.renderHead] reads the same from a file): the box, the origin, the time zone,
-         * the profile and its views' distances, and its tiles' count.
+         * the profile and its views' distances, its tiles' count and its version.
          */
         internal fun readHead(input: InputStream): Head {
             val d = DataInputStream(input)
@@ -323,7 +332,10 @@ class PackList(
                 val name = k as? String ?: continue
                 cameraOf(v)?.let { cameras[name] = it }
             }
-            return Head(box, origin, m["tz"] as? String, profile, distances, cameras, (m["chunks"] as? Number)?.toInt())
+            val engine = m["engine_version"] as? String
+            val style = m["style_version"] as? String
+            val version = if (engine != null && style != null) "$engine $style" else null
+            return Head(box, origin, m["tz"] as? String, profile, distances, cameras, (m["chunks"] as? Number)?.toInt(), version)
         }
 
         private fun num(v: Any?): Double = (v as? Number)?.toDouble() ?: throw IOException("a number is missing in the manifest")

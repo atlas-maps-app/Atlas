@@ -46,6 +46,11 @@ inline constexpr double window_margin = 200.0;
 /// data (the port's packs name EngineVersion.ID there).
 inline constexpr std::string_view stage_p_version = "core-p1";
 
+/// The version of a window built now: `<stage P's> <the style's>`, its manifest's engine_version and style_version. A
+/// window of another version is built again from the data it keeps before it is drawn (the app's Windows), so a frame
+/// cell's windows are of one version, and an edit to the style file reaches every window.
+[[nodiscard]] std::string window_version();
+
 /// The box whose data a window needs, [south, west, north, east] degrees: its tile's box grown by `margin` metres
 /// (along the parallels at the box's own latitudes, so the margin is at least `margin` everywhere).
 [[nodiscard]] std::array<double, 4> window_box(const tiles::TileKey& tile, double margin = window_margin) noexcept;
