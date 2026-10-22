@@ -283,18 +283,20 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
         fun box(): DoubleArray = Native.windowBox(z, x, y)
 
         /**
-         * Builds it from Overpass's JSON for [box] ([json], a direct buffer) and writes its pack to [file], which the map
-         * then lists as a pack of kind window: "" or why not. Off the main thread: a few seconds and tens of MB.
+         * Builds it from Overpass's JSON for [box], in the file [json] (which the core maps: the data never passes
+         * through the app's heap), and writes its pack to [file], which the map then lists as a pack of kind window: ""
+         * or why not. Off the main thread: a few seconds and tens of MB.
          */
-        fun build(json: java.nio.ByteBuffer, file: java.io.File): String = Native.buildWindow(z, x, y, json, file.path)
+        fun build(json: java.io.File, file: java.io.File): String = Native.buildWindow(z, x, y, json.path, file.path)
 
         /**
-         * Its kept data ([kept]: Overpass's JSON of its query, as fetched or merged before) brought up to the date of
-         * Overpass's diff of that query since the data's date ([diff]: its XML), both direct buffers: the merged JSON to
-         * build it from and keep, or null where nothing it holds changed. Throws IllegalStateException with why where
-         * the diff cannot be merged exactly (the window is then fetched whole). Off the main thread.
+         * Its kept data (the file [kept]: Overpass's JSON of its query, as fetched or merged before) brought up to the
+         * date of Overpass's diff of that query since the data's date ([diff]: its XML, a direct buffer), written to
+         * [out] to build it from and keep: true; false where nothing it holds changed. Throws IllegalStateException with
+         * why where the diff cannot be merged exactly (the window is then fetched whole). Off the main thread.
          */
-        fun merge(kept: java.nio.ByteBuffer, diff: java.nio.ByteBuffer): ByteArray? = Native.mergeWindow(z, x, y, kept, diff)
+        fun merge(kept: java.io.File, diff: java.nio.ByteBuffer, out: java.io.File): Boolean =
+            Native.mergeWindow(z, x, y, kept.path, diff, out.path)
 
         companion object {
             /** The window of a key the core packed (`z shl 48 or x shl 24 or y`). */

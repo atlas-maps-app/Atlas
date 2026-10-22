@@ -181,9 +181,11 @@ class OverpassClientTest {
             assertTrue(form.getValue("data").startsWith("[out:json][timeout:240];(node("))
             if (tried.size == 1) answer(node(1, 52.0, 4.0), remark = "runtime error: Query timed out") else answer(node(2, 52.0, 4.0))
         }, pause = {})
-        val bytes = client.window(BBox(4.0, 52.0, 4.01, 52.01))
+        val into = java.io.File.createTempFile("window", ".json")
+        client.window(BBox(4.0, 52.0, 4.01, 52.01), into)
         assertEquals(2, tried.size)
-        assertTrue(String(bytes).contains("\"id\":2"))
+        assertTrue(into.readText().contains("\"id\":2"))
+        into.delete()
     }
 
     @Test
@@ -195,16 +197,21 @@ class OverpassClientTest {
             tried += url
             answer(node(tried.size.toLong(), 52.0, 4.0), time = times[(tried.size - 1) % 2])
         }, hosts = listOf("https://a", "https://b"), pause = {})
-        val fresh = client.window(BBox(4.0, 52.0, 4.01, 52.01), freshAfter = java.time.Instant.parse("2026-10-21T13:00:00Z"))
+        val fresh = java.io.File.createTempFile("window", ".json")
+        client.window(BBox(4.0, 52.0, 4.01, 52.01), fresh, freshAfter = java.time.Instant.parse("2026-10-21T13:00:00Z"))
         assertEquals(2, tried.size)
-        assertEquals(java.time.Instant.parse("2026-10-22T13:01:36Z"), OverpassClient.dataDate(fresh))
+        assertEquals(java.time.Instant.parse("2026-10-22T13:01:36Z"), OverpassClient.dataDate(fresh.readBytes()))
         // none fresh: the newest of what came
         tried.clear()
-        val stale = OverpassClient(http = { url, _, _ ->
+        val stale = java.io.File.createTempFile("window", ".json")
+        OverpassClient(http = { url, _, _ ->
             tried += url
             answer(node(tried.size.toLong(), 52.0, 4.0), time = if (tried.size == 1) "2026-06-01T08:52:28Z" else "2026-07-01T00:00:00Z")
-        }, hosts = listOf("https://a", "https://b"), pause = {}).window(BBox(4.0, 52.0, 4.01, 52.01), freshAfter = java.time.Instant.parse("2026-10-21T13:00:00Z"))
-        assertEquals(java.time.Instant.parse("2026-07-01T00:00:00Z"), OverpassClient.dataDate(stale))
+        }, hosts = listOf("https://a", "https://b"), pause = {}).window(BBox(4.0, 52.0, 4.01, 52.01), stale, freshAfter = java.time.Instant.parse("2026-10-21T13:00:00Z"))
+        assertEquals(java.time.Instant.parse("2026-07-01T00:00:00Z"), OverpassClient.dataDate(stale.readBytes()))
+        assertTrue(!java.io.File(stale.path + ".older").exists())
+        fresh.delete()
+        stale.delete()
     }
 
     @Test

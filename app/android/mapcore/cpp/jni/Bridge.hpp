@@ -21,8 +21,9 @@ namespace atlas::jni {
 /// (LBL2), which a grown label is drawn from. 9: Native.twinLine (VK facts' twin check, frame/TwinCheck.hpp). 10:
 /// Native.compositeLine (VK facts' composite check, frame/CompositeCheck.hpp). 11: Native.wantedWindows, windowBox
 /// and buildWindow (the windows the phone builds, ENGINE.md step 3). 12: Native.windowsInView and mergeWindow (a
-/// window built again from Overpass's diff since its data's date).
-inline constexpr jint abi = 12;
+/// window built again from Overpass's diff since its data's date). 13: Native.buildWindow and mergeWindow take the
+/// window's data as files, which the core maps.
+inline constexpr jint abi = 13;
 
 /// The Kotlin class whose static natives the library registers.
 inline constexpr const char* native_class = "app/atlas/mapcore/Native";

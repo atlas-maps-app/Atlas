@@ -2,7 +2,6 @@ package app.atlas.mapview.vk
 
 import app.atlas.mapcore.MapCore
 import org.junit.After
-import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -37,6 +36,13 @@ class WindowsTest {
                 "  \"elements\": [\n\n{\n  \"type\": \"node\",\n  \"id\": $id,\n  \"lat\": 52.0,\n  \"lon\": 4.0\n}\n\n  ]\n}\n"
             ).toByteArray()
 
+    /** A kept data file's JSON. */
+    private fun unzipped(f: File): String {
+        val plain = File(dir, "unzipped.json")
+        Windows.unzip(f, plain)
+        return plain.readText().also { plain.delete() }
+    }
+
     private fun text(b: ByteBuffer): String {
         val bytes = ByteArray(b.remaining())
         b.duplicate().get(bytes)
@@ -48,20 +54,22 @@ class WindowsTest {
         var inView = listOf<MapCore.Window>()
         val built = ArrayList<String>()
         val merged = ArrayList<Pair<String, String>>()
-        var mergeWith: (ByteBuffer, ByteBuffer) -> ByteArray? = { _, _ -> null }
+        var mergeWith: (File, ByteBuffer) -> ByteArray? = { _, _ -> null }
 
         override fun wanted() = wanted
         override fun inView() = inView
         override fun box(w: MapCore.Window) = doubleArrayOf(52.36, 4.87, 52.38, 4.89)
-        override fun build(w: MapCore.Window, json: ByteBuffer, file: File): String {
-            built += text(json)
+        override fun build(w: MapCore.Window, json: File, file: File): String {
+            built += json.readText()
             file.writeText("pack ${built.size}")
             return ""
         }
 
-        override fun merge(w: MapCore.Window, kept: ByteBuffer, diff: ByteBuffer): ByteArray? {
-            merged += text(kept) to text(diff)
-            return mergeWith(kept, diff)
+        override fun merge(w: MapCore.Window, kept: File, diff: ByteBuffer, out: File): Boolean {
+            merged += kept.readText() to text(diff)
+            val bytes = mergeWith(kept, diff) ?: return false
+            out.writeBytes(bytes)
+            return true
         }
     }
 
@@ -71,7 +79,7 @@ class WindowsTest {
     private var changes: (String, String) -> ByteArray = { _, _ -> "<osm/>".toByteArray() }
     private val windows = Windows(
         dir,
-        fetch = { b -> fetched += b; whole() },
+        fetch = { b, file -> fetched += b; file.writeBytes(whole()) },
         fetchDiff = { _, since, notBefore -> diffs += since to notBefore; changes(since, notBefore) },
         clock = { now },
     )
@@ -92,7 +100,7 @@ class WindowsTest {
         assertEquals(listOf(String(answer("2026-10-22T11:59:00Z"))), core.built)
         assertTrue(windows.fileOf(w).exists())
         assertEquals("14-8414-5383.json.gz", windows.dataOf(w).name)
-        assertEquals(String(answer("2026-10-22T11:59:00Z")), text(Windows.unzip(windows.dataOf(w))))
+        assertEquals(String(answer("2026-10-22T11:59:00Z")), unzipped(windows.dataOf(w)))
         assertEquals(now, windows.dataOf(w).lastModified())
         val head = Windows.Head.of(answer("2026-10-22T11:59:00Z"))!!
         assertEquals(Instant.parse("2026-10-22T11:59:00Z"), head.base)
@@ -116,7 +124,7 @@ class WindowsTest {
         assertEquals(1, fetched.size)
         assertEquals(String(answer("2026-10-22T11:59:00Z")) to "<osm>the changes</osm>", core.merged.single())
         assertEquals(String(merged), core.built.last())
-        assertArrayEquals(merged, Windows.unzip(windows.dataOf(w)).let { b -> ByteArray(b.remaining()).also { b.get(it) } })
+        assertEquals(String(merged), unzipped(windows.dataOf(w)))
         val head = Windows.Head.of(merged)!!
         assertEquals(Instant.parse("2026-10-30T11:58:00Z"), head.base)
         assertEquals(Instant.parse("2026-10-22T11:59:00Z"), head.whole)
@@ -170,12 +178,12 @@ class WindowsTest {
         assertTrue(windows.step(core))
         assertEquals(1, diffs.size)
         assertEquals(2, fetched.size)
-        assertEquals(Instant.parse("2026-11-20T12:00:00Z"), Windows.Head.of(Windows.unzip(windows.dataOf(w)))!!.whole)
+        assertEquals(Instant.parse("2026-11-20T12:00:00Z"), Windows.headOf(windows.dataOf(w))!!.whole)
     }
 
     @Test
     fun withNoChangesToAskForAnAgedWindowIsFetchedWholeButNeverFromOlderData() {
-        val plain = Windows(dir, fetch = { b -> fetched += b; whole() }, clock = { now })
+        val plain = Windows(dir, fetch = { b, file -> fetched += b; file.writeBytes(whole()) }, clock = { now })
         val core = Core()
         core.wanted = listOf(w)
         assertTrue(plain.step(core))
@@ -201,7 +209,7 @@ class WindowsTest {
         whole = { answer("2026-06-01T08:52:28Z", id = 6) } // a server months behind
         assertFalse(windows.step(core))
         assertEquals(1, core.built.size)
-        assertEquals(String(answer("2026-10-22T11:59:00Z")), text(Windows.unzip(windows.dataOf(w))))
+        assertEquals(String(answer("2026-10-22T11:59:00Z")), unzipped(windows.dataOf(w)))
         // tried again after five minutes, not before
         now += Windows.RETRY_MS / 2
         assertFalse(windows.step(core))

@@ -4,6 +4,7 @@ import app.atlas.geo.BBox
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
@@ -92,32 +93,44 @@ class OverpassClient(
     }
 
     /**
-     * Overpass's JSON for a window's box ([windowQuery]), its bytes as they came, from the first host that answers whole
-     * with data from [freshAfter] on, each tried in turn (a query that timed out part-way answers 200 with a remark, and
-     * is tried again elsewhere). A host whose data is older is passed over while another may answer (on 22 October 2026
-     * one of them answered with data from June); where none does, the newest answer that came is taken.
+     * Overpass's JSON for a window's box ([windowQuery]), streamed into [into] as it comes (a dense window's answer is
+     * tens of MB, which never pass through the app's heap), from the first host that answers whole with data from
+     * [freshAfter] on, each tried in turn (a query that timed out part-way answers 200 with a remark, and is tried again
+     * elsewhere). A host whose data is older is passed over while another may answer (on 22 October 2026 one of them
+     * answered with data from June); where none does, the newest answer that came is taken. Throws where none came.
      */
-    fun window(b: BBox, freshAfter: Instant? = null): ByteArray {
+    fun window(b: BBox, into: File, freshAfter: Instant? = null) {
         var lastError: Exception? = null
-        var older: Pair<Instant, ByteArray>? = null
-        for ((attempt, host) in hosts.withIndex()) {
-            try {
-                val bytes = http.post("$host/api/interpreter", mapOf("data" to windowQuery(b)), userAgent).use { it.readBytes() }
-                val tail = String(bytes, maxOf(0, bytes.size - 4096), minOf(bytes.size, 4096), Charsets.UTF_8)
-                if (tail.contains("\"remark\"") && tail.contains("runtime error", ignoreCase = true)) throw IOException("Overpass ran out of time or memory")
-                val date = dataDate(bytes)
-                if (freshAfter == null || (date != null && !date.isBefore(freshAfter))) return bytes
-                log("$host's data is from $date, before $freshAfter")
-                if (date != null && (older == null || date.isAfter(older.first))) older = date to bytes
-                continue
-            } catch (e: IOException) {
-                lastError = e
-                log("retry after $host: ${e.message}")
+        val older = File(into.path + ".older")
+        var olderDate: Instant? = null
+        older.delete()
+        try {
+            for ((attempt, host) in hosts.withIndex()) {
+                try {
+                    http.post("$host/api/interpreter", mapOf("data" to windowQuery(b)), userAgent).use { input ->
+                        into.outputStream().buffered(1 shl 16).use { input.copyTo(it, 1 shl 16) }
+                    }
+                    val tail = String(tailOf(into, 4096), Charsets.UTF_8)
+                    if (tail.contains("\"remark\"") && tail.contains("runtime error", ignoreCase = true)) throw IOException("Overpass ran out of time or memory")
+                    val date = dataDate(headOf(into, 2048))
+                    if (freshAfter == null || (date != null && !date.isBefore(freshAfter))) return
+                    log("$host's data is from $date, before $freshAfter")
+                    if (date != null && (olderDate == null || date.isAfter(olderDate))) {
+                        if (!into.renameTo(older)) throw IOException("$into could not be set aside")
+                        olderDate = date
+                    }
+                    continue
+                } catch (e: IOException) {
+                    lastError = e
+                    log("retry after $host: ${e.message}")
+                }
+                pause(backoffSeconds * 1000 * (attempt + 1))
             }
-            pause(backoffSeconds * 1000 * (attempt + 1))
+            if (olderDate != null && older.renameTo(into)) return
+            throw IOException("Overpass failed for the window $b: ${lastError?.message}", lastError)
+        } finally {
+            older.delete()
         }
-        older?.let { return it.second }
-        throw IOException("Overpass failed for the window $b: ${lastError?.message}", lastError)
     }
 
     /**
@@ -210,6 +223,25 @@ class OverpassClient(
         const val USER_AGENT = "Atlas/1 (offline maps on OpenStreetMap; +https://github.com/atlas-maps-app/Atlas)"
 
         private val DATE = Regex("""(?:"timestamp_osm_base"\s*:\s*"|osm_base=")(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)"""")
+
+        /** The first [n] bytes of [file] (fewer where it is shorter). */
+        fun headOf(file: File, n: Int): ByteArray = file.inputStream().use { input ->
+            val out = ByteArray(n)
+            var k = 0
+            while (k < n) {
+                val r = input.read(out, k, n - k)
+                if (r < 0) break
+                k += r
+            }
+            out.copyOf(k)
+        }
+
+        /** The last [n] bytes of [file] (fewer where it is shorter). */
+        fun tailOf(file: File, n: Int): ByteArray = java.io.RandomAccessFile(file, "r").use { f ->
+            val k = minOf(f.length(), n.toLong()).toInt()
+            f.seek(f.length() - k)
+            ByteArray(k).also { f.readFully(it) }
+        }
 
         /** The date of an answer's data: its JSON's `osm3s.timestamp_osm_base`, its XML's `meta osm_base`; null for none. */
         fun dataDate(answer: ByteArray): Instant? =

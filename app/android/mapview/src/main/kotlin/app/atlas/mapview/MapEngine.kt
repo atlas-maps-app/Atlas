@@ -190,11 +190,11 @@ object MapEngine {
     }
 
     /**
-     * Overpass's JSON for a window's box (south, west, north, east), with the window's query (ENGINE.md step 3); the
-     * app sets it with its own servers. Null: the phone builds no windows.
+     * Overpass's JSON for a window's box (south, west, north, east), with the window's query (ENGINE.md step 3),
+     * streamed into the file given; the app sets it with its own servers. Null: the phone builds no windows.
      */
     @Volatile
-    var windowData: ((DoubleArray) -> ByteArray)? = null
+    var windowData: ((DoubleArray, File) -> Unit)? = null
 
     /**
      * Overpass's changes to a window's data since a date (an augmented diff of the window's query, its XML), from a

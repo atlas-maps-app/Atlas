@@ -4,9 +4,7 @@ import android.util.Log
 import app.atlas.mapcore.MapCore
 import app.atlas.mapview.EngineFrames
 import java.io.File
-import java.io.RandomAccessFile
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -17,9 +15,11 @@ import java.util.zip.GZIPOutputStream
  * The windows the phone builds (ENGINE.md step 3: the core asks, the app fetches): one L14 tile of the map each, built
  * by the core from OpenStreetMap's data of its box. The core says which it wants, nearest first
  * ([MapCore.wantedWindows]); [step] takes the nearest one not under way and not failed lately, fetches its data with
- * [fetch] (the app's Overpass servers, one query at a time), has the core build it into [dir] as `14-<x>-<y>.atlas`,
- * keeps the data beside it (`14-<x>-<y>.json.gz`), and says so, so the map hands its packs again ([PackList] lists the
- * file; the core takes it into its frame cell's pack). One window at a time, on the caller's background thread.
+ * [fetch] (the app's Overpass servers, one query at a time) into a file beside it, has the core build it from that
+ * file, which it maps (a dense window's data is tens of MB, which never pass through the app's heap), into [dir] as
+ * `14-<x>-<y>.atlas`, keeps the data beside it (`14-<x>-<y>.json.gz`), and says so, so the map hands its packs again
+ * ([PackList] lists the file; the core takes it into its frame cell's pack). One window at a time, on the caller's
+ * background thread.
  *
  * A window built again after a week: where the core wants none, [step] takes the nearest window drawn in view
  * ([MapCore.windowsInView]) whose data was fetched or checked more than [REFRESH_MS] ago, asks Overpass with [fetchDiff]
@@ -32,8 +32,11 @@ import java.util.zip.GZIPOutputStream
  */
 class Windows(
     private val dir: File,
-    /** Overpass's JSON for a box (south, west, north, east): the window's query ([MapCore.Window.box]); throws when no server answers. */
-    private val fetch: (DoubleArray) -> ByteArray,
+    /**
+     * Overpass's JSON for a box (south, west, north, east), the window's query ([MapCore.Window.box]), streamed into the
+     * file given; throws when no server answers.
+     */
+    private val fetch: (DoubleArray, File) -> Unit,
     /**
      * Overpass's changes to a box's data since a date (its XML; the dates as Overpass writes them), from a server whose
      * data is not older than the second date; throws when none answers. Null: windows are fetched whole again.
@@ -46,18 +49,21 @@ class Windows(
         fun wanted(): List<MapCore.Window>
         fun inView(): List<MapCore.Window>
         fun box(w: MapCore.Window): DoubleArray
-        /** "" or why not. */
-        fun build(w: MapCore.Window, json: ByteBuffer, file: File): String
-        /** The merged JSON, or null where nothing changed; throws IllegalStateException where it cannot merge exactly. */
-        fun merge(w: MapCore.Window, kept: ByteBuffer, diff: ByteBuffer): ByteArray?
+        /** Builds window [w] from the JSON in [json] into the pack [file]: "" or why not. */
+        fun build(w: MapCore.Window, json: File, file: File): String
+        /**
+         * The kept data [kept] merged with [diff] into [out]: true; false where nothing changed (nothing written); throws
+         * IllegalStateException where it cannot merge exactly.
+         */
+        fun merge(w: MapCore.Window, kept: File, diff: ByteBuffer, out: File): Boolean
     }
 
     private class Of(private val core: MapCore) : Core {
         override fun wanted() = core.wantedWindows()
         override fun inView() = core.windowsInView()
         override fun box(w: MapCore.Window) = w.box()
-        override fun build(w: MapCore.Window, json: ByteBuffer, file: File) = w.build(json, file)
-        override fun merge(w: MapCore.Window, kept: ByteBuffer, diff: ByteBuffer) = w.merge(kept, diff)
+        override fun build(w: MapCore.Window, json: File, file: File) = w.build(json, file)
+        override fun merge(w: MapCore.Window, kept: File, diff: ByteBuffer, out: File) = w.merge(kept, diff, out)
     }
 
     private val failed = ConcurrentHashMap<MapCore.Window, Long>()
@@ -97,30 +103,38 @@ class Windows(
         return at > 0 && now - at > REFRESH_MS
     }
 
+    /** Window [w]'s working files beside its pack: its answer as it comes, its kept data unzipped, a merge's result. */
+    private fun workOf(w: MapCore.Window, what: String): File = File(dir, "${w.z}-${w.x}-${w.y}.$what.json")
+
     /** Fetches window [w]'s data whole and builds it; with [kept] (the date of the data it holds), never from older data. */
     private fun whole(core: Core, w: MapCore.Window, now: Long, kept: Instant?): Boolean {
-        val t0 = clock()
-        val bytes = try {
-            fetch(core.box(w))
-        } catch (e: Exception) {
-            failed[w] = now
-            Log.w(EngineFrames.TAG, "vk window ${w.id}: no data: ${e.message}")
-            return false
+        dir.mkdirs()
+        val answer = workOf(w, "answer")
+        try {
+            val t0 = clock()
+            try {
+                fetch(core.box(w), answer)
+            } catch (e: Exception) {
+                failed[w] = now
+                Log.w(EngineFrames.TAG, "vk window ${w.id}: no data: ${e.message}")
+                return false
+            }
+            val date = runCatching { headOf(answer, false) }.getOrNull()?.base
+            if (kept != null && (date == null || date.isBefore(kept))) {
+                failed[w] = now
+                Log.w(EngineFrames.TAG, "vk window ${w.id}: the data that came is from $date, older than the window's $kept")
+                return false
+            }
+            return build(core, w, answer, now, "${answer.length()} bytes fetched in ${clock() - t0} ms")
+        } finally {
+            answer.delete()
         }
-        val date = Head.of(bytes)?.base
-        if (kept != null && (date == null || date.isBefore(kept))) {
-            failed[w] = now
-            Log.w(EngineFrames.TAG, "vk window ${w.id}: the data that came is from $date, older than the window's $kept")
-            return false
-        }
-        return build(core, w, bytes, now, "${bytes.size} bytes fetched in ${clock() - t0} ms")
     }
 
-    /** Builds window [w] from [json] and keeps the data beside it. */
-    private fun build(core: Core, w: MapCore.Window, json: ByteArray, now: Long, how: String): Boolean {
-        dir.mkdirs()
+    /** Builds window [w] from the JSON in [json] and keeps the data beside it. */
+    private fun build(core: Core, w: MapCore.Window, json: File, now: Long, how: String): Boolean {
         val t1 = clock()
-        val why = core.build(w, direct(json), fileOf(w))
+        val why = core.build(w, json, fileOf(w))
         if (why.isNotEmpty()) {
             failed[w] = now
             Log.w(EngineFrames.TAG, "vk window ${w.id}: $why")
@@ -144,14 +158,10 @@ class Windows(
     private fun refresh(core: Core, w: MapCore.Window, now: Long): Boolean {
         val diffs = fetchDiff
         val data = dataOf(w)
-        val head = if (data.exists()) runCatching { headOf(data) }.getOrNull() else null
+        val head = if (data.exists()) runCatching { headOf(data, true) }.getOrNull() else null
         if (diffs == null || head == null) return whole(core, w, now, head?.base)
         if (now - head.whole.toEpochMilli() > WHOLE_MS) {
             Log.i(EngineFrames.TAG, "vk window ${w.id}: its data was fetched whole on ${head.whole}: fetched whole again")
-            return whole(core, w, now, head.base)
-        }
-        val kept = runCatching { unzip(data) }.getOrElse {
-            Log.w(EngineFrames.TAG, "vk window ${w.id}: its data does not read: ${it.message}; fetched whole")
             return whole(core, w, now, head.base)
         }
         val since = head.base.minusMillis(MARGIN_MS).toString()
@@ -163,19 +173,30 @@ class Windows(
             return whole(core, w, now, head.base)
         }
         val fetched = clock() - t0
-        val merged = try {
-            core.merge(w, kept, direct(diff))
-        } catch (e: IllegalStateException) {
-            Log.w(EngineFrames.TAG, "vk window ${w.id}: ${e.message}; fetched whole")
-            return whole(core, w, now, head.base)
+        val kept = workOf(w, "kept")
+        val merged = workOf(w, "merged")
+        try {
+            runCatching { unzip(data, kept) }.onFailure {
+                Log.w(EngineFrames.TAG, "vk window ${w.id}: its data does not read: ${it.message}; fetched whole")
+                return whole(core, w, now, head.base)
+            }
+            val changed = try {
+                core.merge(w, kept, direct(diff), merged)
+            } catch (e: IllegalStateException) {
+                Log.w(EngineFrames.TAG, "vk window ${w.id}: ${e.message}; fetched whole")
+                return whole(core, w, now, head.base)
+            }
+            if (!changed) {
+                data.setLastModified(now)
+                failed.remove(w)
+                Log.i(EngineFrames.TAG, "vk window ${w.id}: nothing changed since $since (${diff.size} bytes in $fetched ms)")
+                return false
+            }
+            return build(core, w, merged, now, "the changes since $since fetched (${diff.size} bytes) in $fetched ms, merged")
+        } finally {
+            kept.delete()
+            merged.delete()
         }
-        if (merged == null) {
-            data.setLastModified(now)
-            failed.remove(w)
-            Log.i(EngineFrames.TAG, "vk window ${w.id}: nothing changed since $since (${diff.size} bytes in $fetched ms)")
-            return false
-        }
-        return build(core, w, merged, now, "the changes since $since fetched (${diff.size} bytes) in $fetched ms, merged")
     }
 
     /** What a window's data says of itself: its date, and when it was last fetched whole (the core's merges say). */
@@ -186,13 +207,6 @@ class Windows(
 
             /** The head of Overpass's JSON (or a merge's); null where it says no date. */
             fun of(json: ByteArray): Head? = of(String(json, 0, minOf(json.size, HEAD_BYTES), Charsets.UTF_8))
-
-            fun of(json: ByteBuffer): Head? {
-                val b = json.duplicate()
-                val head = ByteArray(minOf(b.remaining(), HEAD_BYTES))
-                b.get(head)
-                return of(head)
-            }
 
             private fun of(text: String): Head? {
                 val base = BASE.find(text)?.let { runCatching { Instant.parse(it.groupValues[1]) }.getOrNull() } ?: return null
@@ -231,48 +245,36 @@ class Windows(
 
         private fun direct(bytes: ByteArray): ByteBuffer = ByteBuffer.allocateDirect(bytes.size).put(bytes).flip() as ByteBuffer
 
-        /** Writes [json] gzipped to [file], by a file beside it renamed once whole. */
-        internal fun keep(json: ByteArray, file: File) {
+        /** Gzips the data in [json] into [file], by a file beside it renamed once whole. */
+        internal fun keep(json: File, file: File) {
             val part = File(file.path + ".part")
-            GZIPOutputStream(part.outputStream().buffered(1 shl 16), 1 shl 16).use { it.write(json) }
+            json.inputStream().buffered(1 shl 16).use { input ->
+                GZIPOutputStream(part.outputStream().buffered(1 shl 16), 1 shl 16).use { input.copyTo(it, 1 shl 16) }
+            }
             if (!part.renameTo(file)) {
                 part.delete()
                 throw java.io.IOException("$part could not be renamed")
             }
         }
 
-        /** What a kept data file says of itself, from its first bytes. */
-        internal fun headOf(file: File): Head? = GZIPInputStream(file.inputStream(), 1 shl 12).use { input ->
-            val head = ByteArray(2048)
-            var n = 0
-            while (n < head.size) {
-                val r = input.read(head, n, head.size - n)
-                if (r < 0) break
-                n += r
-            }
-            Head.of(head.copyOf(n))
-        }
-
-        /** A kept data file, unzipped into a direct buffer (its size from the gzip trailer). */
-        internal fun unzip(file: File): ByteBuffer {
-            val size = RandomAccessFile(file, "r").use { f ->
-                f.seek(f.length() - 4)
-                val b = ByteArray(4)
-                f.readFully(b)
-                ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN).int.toLong() and 0xFFFFFFFFL
-            }
-            val out = ByteBuffer.allocateDirect(size.toInt())
-            GZIPInputStream(file.inputStream().buffered(1 shl 16), 1 shl 16).use { input ->
-                val chunk = ByteArray(1 shl 16)
-                while (true) {
-                    val n = input.read(chunk)
-                    if (n < 0) break
-                    if (n > out.remaining()) throw java.io.IOException("$file holds more than its trailer says")
-                    out.put(chunk, 0, n)
+        /** What a window's data file says of itself, from its first bytes ([zipped]: a kept one, gzipped). */
+        internal fun headOf(file: File, zipped: Boolean = true): Head? =
+            (if (zipped) GZIPInputStream(file.inputStream(), 1 shl 12) else file.inputStream()).use { input ->
+                val head = ByteArray(2048)
+                var n = 0
+                while (n < head.size) {
+                    val r = input.read(head, n, head.size - n)
+                    if (r < 0) break
+                    n += r
                 }
+                Head.of(head.copyOf(n))
             }
-            if (out.hasRemaining()) throw java.io.IOException("$file holds less than its trailer says")
-            return out.flip() as ByteBuffer
+
+        /** A kept data file unzipped into [into], for the core to map. */
+        internal fun unzip(file: File, into: File) {
+            GZIPInputStream(file.inputStream().buffered(1 shl 16), 1 shl 16).use { input ->
+                into.outputStream().buffered(1 shl 16).use { input.copyTo(it, 1 shl 16) }
+            }
         }
     }
 }

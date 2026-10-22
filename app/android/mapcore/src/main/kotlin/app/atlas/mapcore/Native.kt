@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 12
+    const val ABI = 13
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -221,20 +221,21 @@ object Native {
     @JvmStatic external fun windowBox(z: Int, x: Int, y: Int): DoubleArray
 
     /**
-     * Builds window ([z], [x], [y]) from Overpass's JSON for its box ([json], direct) and writes its pack to [path]:
-     * "" or why not. On the caller's thread, a background one: a few seconds and tens of MB.
+     * Builds window ([z], [x], [y]) from Overpass's JSON for its box, in the file at [json] (which the core maps), and
+     * writes its pack to [path]: "" or why not. On the caller's thread, a background one: a few seconds and tens of MB.
      */
-    @JvmStatic external fun buildWindow(z: Int, x: Int, y: Int, json: ByteBuffer, path: String): String
+    @JvmStatic external fun buildWindow(z: Int, x: Int, y: Int, json: String, path: String): String
 
     /** The places in view the map draws from windows, nearest first, each its tile's key packed as [wantedWindows]'. */
     @JvmStatic external fun windowsInView(handle: Long): LongArray
 
     /**
-     * Window ([z], [x], [y])'s kept data ([kept], Overpass's JSON of its query, direct) brought up to the date of
-     * Overpass's diff of the same query since then ([diff], its XML, direct): the merged JSON, or null where the diff
-     * changes nothing; an IllegalStateException says why where it cannot be merged exactly. On a background thread.
+     * Window ([z], [x], [y])'s kept data (Overpass's JSON of its query, in the file at [kept], which the core maps)
+     * brought up to the date of Overpass's diff of the same query since then ([diff], its XML, direct), written to the
+     * file at [out]: true; false where the diff changes nothing (no file written); an IllegalStateException says why
+     * where it cannot be merged exactly. On a background thread.
      */
-    @JvmStatic external fun mergeWindow(z: Int, x: Int, y: Int, kept: ByteBuffer, diff: ByteBuffer): ByteArray?
+    @JvmStatic external fun mergeWindow(z: Int, x: Int, y: Int, kept: String, diff: ByteBuffer, out: String): Boolean
 
     /**
      * The map's labels (`state.LabelBlock`'s block in a direct buffer; an empty block takes them away) at [revision],

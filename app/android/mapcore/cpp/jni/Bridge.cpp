@@ -33,6 +33,7 @@
 #include "sun/Buckets.hpp"
 #include "text/Fonts.hpp"
 #include "text/Shaper.hpp"
+#include "tiles/Source.hpp"
 
 #if defined(__ANDROID__)
 #include "platform/android/Android.hpp"
@@ -849,63 +850,70 @@ jdoubleArray native_window_box(JNIEnv* env, jclass /*cls*/, jint z, jint x, jint
     return out;
 }
 
-/// Builds window (z, x, y) from Overpass's JSON for its box (a direct buffer) and writes its pack to `path`, by a file
-/// beside it renamed once whole: "" or why not. On the caller's thread, a background one (a few seconds, tens of MB).
-jstring native_build_window(JNIEnv* env, jclass /*cls*/, jint z, jint x, jint y, jobject json, jstring path) {
-    void* address = json == nullptr ? nullptr : env->GetDirectBufferAddress(json);
-    const jlong capacity = json == nullptr ? 0 : env->GetDirectBufferCapacity(json);
-    if (address == nullptr || capacity <= 0) return java(env, "the window's data must be a direct buffer");
-    if (std::cmp_not_equal(z, load::window_level) || x < 0 || y < 0 || x >= (1 << 14) || y >= (1 << 14)) {
-        return java(env, std::format("no window {}/{}/{}", z, x, y));
-    }
-    const tiles::TileKey key(static_cast<std::uint8_t>(z), static_cast<std::uint32_t>(x),
-                             static_cast<std::uint32_t>(y));
-    const auto built =
-        load::build_window(std::span(static_cast<const std::byte*>(address), static_cast<std::size_t>(capacity)), key,
-                           load::place_of(key));
-    if (!built) return java(env, built.error().what);
-    const std::string target = string_of(env, path);
+/// Writes `bytes` to `target` by a file beside it renamed once whole: "" or why not.
+std::string write_whole(const std::string& target, std::span<const char> bytes) {
     const std::string part = target + ".part";
     {
         std::ofstream out(part, std::ios::binary | std::ios::trunc);
-        out.write(reinterpret_cast<const char*>(built->pack.data()), // NOLINT: the pack's bytes as chars
-                  static_cast<std::streamsize>(built->pack.size()));
-        if (!out.good()) return java(env, std::format("{} could not be written", part));
+        out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        if (!out.good()) return std::format("{} could not be written", part);
     }
     std::error_code e;
     std::filesystem::rename(part, target, e);
-    if (e) return java(env, std::format("{} could not be renamed: {}", part, e.message()));
+    if (e) return std::format("{} could not be renamed: {}", part, e.message());
+    return {};
+}
+
+/// Builds window (z, x, y) from Overpass's JSON for its box, in the file at `json` (mapped: the data never passes
+/// through the app's heap), and writes its pack to `path`, by a file beside it renamed once whole: "" or why not. On
+/// the caller's thread, a background one (a few seconds, tens of MB).
+jstring native_build_window(JNIEnv* env, jclass /*cls*/, jint z, jint x, jint y, jstring json, jstring path) {
+    if (std::cmp_not_equal(z, load::window_level) || x < 0 || y < 0 || x >= (1 << 14) || y >= (1 << 14)) {
+        return java(env, std::format("no window {}/{}/{}", z, x, y));
+    }
+    const std::string source = string_of(env, json);
+    const auto data = tiles::MappedSource::open(source);
+    if (!data)
+        return java(env, std::format("the window's data {} does not open: {}", source, tiles::describe(data.error())));
+    const tiles::TileKey key(static_cast<std::uint8_t>(z), static_cast<std::uint32_t>(x),
+                             static_cast<std::uint32_t>(y));
+    const auto built = load::build_window((*data)->view(0, (*data)->size()), key, load::place_of(key));
+    if (!built) return java(env, built.error().what);
+    const auto bytes = std::as_bytes(std::span(built->pack));
+    const std::string why =
+        write_whole(string_of(env, path), std::span(reinterpret_cast<const char*>(bytes.data()),
+                                                    bytes.size())); // NOLINT: the pack's bytes as chars
+    if (!why.empty()) return java(env, why);
     log::info("vk window {}/{}/{}: {} features, {} bytes; loaded in {:.0f} ms, cut in {:.0f} ms, written in {:.0f} ms",
               z, x, y, built->features, built->pack.size(), built->load_ms, built->cut_ms, built->write_ms);
     return java(env, "");
 }
 
-/// Window (z, x, y)'s kept data (Overpass's JSON of its query, as fetched or as merged before; a direct buffer)
-/// brought up to the date of Overpass's diff of the same query since then (its XML, a direct buffer): the merged JSON,
-/// or null where the diff changes nothing the data holds. Where the diff or the data cannot be merged exactly, an
-/// IllegalStateException says why (the app then fetches the window whole). On the caller's thread, a background one.
-jbyteArray native_merge_window(JNIEnv* env, jclass /*cls*/, jint z, jint x, jint y, jobject kept, jobject diff) {
-    const auto direct = [env](jobject buffer) {
-        void* address = buffer == nullptr ? nullptr : env->GetDirectBufferAddress(buffer);
-        const jlong capacity = buffer == nullptr ? 0 : env->GetDirectBufferCapacity(buffer);
-        return address == nullptr || capacity <= 0
-                   ? std::span<const std::byte>()
-                   : std::span(static_cast<const std::byte*>(address), static_cast<std::size_t>(capacity));
-    };
-    const auto refuse = [env](const std::string& why) {
+/// Window (z, x, y)'s kept data (Overpass's JSON of its query, as fetched or as merged before, in the file at `kept`,
+/// mapped) brought up to the date of Overpass's diff of the same query since then (its XML, a direct buffer), written
+/// to `out` by a file beside it renamed once whole: true; false where the diff changes nothing the data holds (no file
+/// written). Where the diff or the data cannot be merged exactly, an IllegalStateException says why (the app then
+/// fetches the window whole). On the caller's thread, a background one.
+jboolean native_merge_window(JNIEnv* env, jclass /*cls*/, jint z, jint x, jint y, jstring kept, jobject diff,
+                             jstring out) {
+    const auto refuse = [env](const std::string& why) -> jboolean {
         env->ThrowNew(env->FindClass("java/lang/IllegalStateException"), why.c_str());
-        return nullptr;
+        return JNI_FALSE;
     };
-    const std::span<const std::byte> data = direct(kept);
-    const std::span<const std::byte> changes = direct(diff);
-    if (data.empty() || changes.empty()) return refuse("the kept data and the diff must be direct buffers");
+    void* address = diff == nullptr ? nullptr : env->GetDirectBufferAddress(diff);
+    const jlong capacity = diff == nullptr ? 0 : env->GetDirectBufferCapacity(diff);
+    if (address == nullptr || capacity <= 0) return refuse("the diff must be a direct buffer");
+    const std::string source = string_of(env, kept);
+    const auto data = tiles::MappedSource::open(source);
+    if (!data) return refuse(std::format("the kept data {} does not open: {}", source, tiles::describe(data.error())));
     const auto t0 = std::chrono::steady_clock::now();
-    const auto read = osm::read_diff(changes);
+    const auto read =
+        osm::read_diff(std::span(static_cast<const std::byte*>(address), static_cast<std::size_t>(capacity)));
     if (!read) {
         return refuse(std::format("the diff is refused: {} at byte {}: {}", osm::name_of(read.error().fault),
                                   read.error().at, read.error().what));
     }
-    const auto merged = osm::merge_diff(data, *read);
+    const auto merged = osm::merge_diff((*data)->view(0, (*data)->size()), *read);
     if (!merged) {
         return refuse(std::format("the merge is refused: {} at byte {}: {}", osm::name_of(merged.error().fault),
                                   merged.error().at, merged.error().what));
@@ -915,13 +923,10 @@ jbyteArray native_merge_window(JNIEnv* env, jclass /*cls*/, jint z, jint x, jint
               z, x, y, read->osm_base, read->changes.size(), merged->kept, merged->replaced, merged->added,
               merged->removed, merged->absent,
               std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
-    if (!merged->changed()) return nullptr;
-    jbyteArray out = env->NewByteArray(static_cast<jsize>(merged->json.size()));
-    if (out != nullptr) {
-        env->SetByteArrayRegion(out, 0, static_cast<jsize>(merged->json.size()),
-                                reinterpret_cast<const jbyte*>(merged->json.data())); // NOLINT: chars as JNI's bytes
-    }
-    return out;
+    if (!merged->changed()) return JNI_FALSE;
+    const std::string why = write_whole(string_of(env, out), merged->json);
+    if (!why.empty()) return refuse(why);
+    return JNI_TRUE;
 }
 
 /// The moment's theme for the map (MK/state/ThemeBlock.kt's 256 bytes in a direct buffer); "" or why it was refused.
@@ -1144,10 +1149,10 @@ const std::array<JNINativeMethod, 38>& methods() {
         method("painter", "(JZ)V", fn(&native_painter)),
         method("wantedWindows", "(J)[J", fn(&native_wanted_windows)),
         method("windowBox", "(III)[D", fn(&native_window_box)),
-        method("buildWindow", "(IIILjava/nio/ByteBuffer;Ljava/lang/String;)Ljava/lang/String;",
-               fn(&native_build_window)),
+        method("buildWindow", "(IIILjava/lang/String;Ljava/lang/String;)Ljava/lang/String;", fn(&native_build_window)),
         method("windowsInView", "(J)[J", fn(&native_windows_in_view)),
-        method("mergeWindow", "(IIILjava/nio/ByteBuffer;Ljava/nio/ByteBuffer;)[B", fn(&native_merge_window)),
+        method("mergeWindow", "(IIILjava/lang/String;Ljava/nio/ByteBuffer;Ljava/lang/String;)Z",
+               fn(&native_merge_window)),
     }};
     return table;
 }

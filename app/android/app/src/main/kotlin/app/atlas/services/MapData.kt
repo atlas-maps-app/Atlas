@@ -119,8 +119,8 @@ class MapData(private val services: Services) {
         MapEngine.regions = regions
         // the windows the phone builds (ENGINE.md step 3): their data from the same Overpass servers, from one whose data
         // is of the last day where one answers; built again after a week from the changes since
-        MapEngine.windowData = { b ->
-            overpass.window(app.atlas.geo.BBox(b[1], b[0], b[3], b[2]), freshAfter = java.time.Instant.now().minus(java.time.Duration.ofDays(1)))
+        MapEngine.windowData = { b, file ->
+            overpass.window(app.atlas.geo.BBox(b[1], b[0], b[3], b[2]), file, freshAfter = java.time.Instant.now().minus(java.time.Duration.ofDays(1)))
         }
         MapEngine.windowDiff = { b, since, notBefore ->
             overpass.windowDiff(app.atlas.geo.BBox(b[1], b[0], b[3], b[2]), since, java.time.Instant.parse(notBefore))
