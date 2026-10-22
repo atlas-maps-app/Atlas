@@ -276,6 +276,9 @@ tasks.test {
     providers.systemProperty("atlas.l0.damages").orNull?.let { systemProperty("atlas.l0.damages", it) }
     // K3b's parity sweep: arguments a function (CI's build job runs 10^5; the nightly the plan's 10^7)
     providers.systemProperty("atlas.numerics.n").orNull?.let { systemProperty("atlas.numerics.n", it) }
+    // Stage P's parity (load/AmsterdamParityTest.kt): more raw.json files the living map's load is held to the port
+    // over, a list split by the path separator (the renderer's data/regions on the Mac)
+    providers.systemProperty("atlas.load.raws").orNull?.let { systemProperty("atlas.load.raws", it) }
 
     // K4's likeness harness: the references are inputs (they live outside the build folder), the report goes to
     // atlas.likeness.report, and the harness's settings pass through.
