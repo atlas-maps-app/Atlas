@@ -34,6 +34,12 @@ import java.util.zip.GZIPOutputStream
  * and over: one whose data did not come (no server answered, or only with older data) [RETRY_MS], then twice as long
  * after each failure in a row, [RETRY_CAP_MS] at most; one whose data the core refused, [REFUSED_MS] (the same data and
  * the same core refuse it again; the app's next start, perhaps with a newer core, tries it at once).
+ *
+ * Nor is a window built lately fetched again where the core still wants its place: one that holds nothing to draw (the
+ * open sea far from a coast, the middle of a field: [PackList] does not list it, so the core holds no tile there), one
+ * the core did not take into its frame cell, or one built while the map has not handed the core its packs again. It is
+ * fetched whole again once its data is [REFRESH_MS] old, and never built from data older than what it keeps. Until 22
+ * October such a window was fetched again every half second while its place was in view.
  */
 class Windows(
     private val dir: File,
@@ -99,7 +105,7 @@ class Windows(
         runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND) }
         try {
             val now = clock()
-            core.wanted().firstOrNull { ready(it, now) }?.let { return whole(core, it, now, null) }
+            core.wanted().firstOrNull { ready(it, now) && !builtLately(it, now) }?.let { return whole(core, it, now, keptBase(it)) }
             val aged = core.inView().firstOrNull { ready(it, now) && aged(it, now) } ?: return false
             return refresh(core, aged, now)
         } finally {
@@ -113,6 +119,16 @@ class Windows(
 
     /** The data window [w] was last built from: Overpass's JSON of its query, as fetched or merged, gzipped. */
     fun dataOf(w: MapCore.Window): File = File(dir, "${w.z}-${w.x}-${w.y}.json.gz")
+
+    /**
+     * Whether window [w] was built, or its data checked, within [REFRESH_MS]: its pack is there though the core may still
+     * want its place (it holds nothing to draw, the core did not take it, or the map has not handed it over yet).
+     */
+    private fun builtLately(w: MapCore.Window, now: Long): Boolean = fileOf(w).exists() && !aged(w, now)
+
+    /** The date of the data window [w] keeps; null where it keeps none, or none that reads. */
+    private fun keptBase(w: MapCore.Window): Instant? =
+        dataOf(w).takeIf { it.exists() }?.let { runCatching { headOf(it, true) }.getOrNull()?.base }
 
     /** Whether window [w]'s data was fetched or checked more than [REFRESH_MS] ago (its pack's age where it keeps none). */
     private fun aged(w: MapCore.Window, now: Long): Boolean {

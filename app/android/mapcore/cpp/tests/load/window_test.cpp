@@ -8,11 +8,13 @@
 //   - a window in Paris, anywhere's place (its country's tradition, its frame cell's frame) builds, with fr_paris's
 //     looks, and its pack opens and says what it is;
 //   - a window leaves out what its tiles cannot carry yet (a sign gantry, a goods conveyor), which the packer's cut
-//     refuses.
+//     refuses;
+//   - a window that holds nothing to draw is a pack without a tile, whose manifest says so, and joins no frame cell.
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "load/Countries.hpp"
 #include "load/Cut.hpp"
+#include "load/PackStyle.hpp"
 #include "load/Regions.hpp"
 #include "load/Window.hpp"
 #include "osm/Overpass.hpp"
@@ -31,9 +33,14 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <expected>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iterator>
+#include <span>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -48,6 +55,25 @@ using atlas::test::query;
 std::string read_text(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary);
     return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+/// A pack's JSON manifest, after its 20-byte header (whose bytes 12 to 15 give its length, big-endian).
+std::expected<tl::JsonValue, tl::JsonError> manifest_of(std::span<const std::byte> pack) {
+    const auto length = (std::to_integer<std::uint32_t>(pack[12]) << 24U) |
+                        (std::to_integer<std::uint32_t>(pack[13]) << 16U) |
+                        (std::to_integer<std::uint32_t>(pack[14]) << 8U) | std::to_integer<std::uint32_t>(pack[15]);
+    return tl::read_json(pack.subspan(20, length));
+}
+
+/// Writes a pack into the tests' scratch folder, under `name`; returns its path.
+std::string written(const std::vector<std::byte>& pack, const std::string& name) {
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "windows";
+    std::filesystem::create_directories(folder);
+    const std::filesystem::path file = folder / name;
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(pack.data()), // NOLINT: the pack's bytes as chars
+              static_cast<std::streamsize>(pack.size()));
+    return file.string();
 }
 
 /// A canonical dump without the places in the scene's lists (a feature's index, the ground's ranks, a tree's node, a
@@ -153,6 +179,74 @@ TEST_CASE("load: a window leaves out what its tiles cannot carry yet, which the 
     const auto refused = load::cut_region(*scene, place.frame, {});
     ATLAS_REQUIRE(!refused.has_value());
     CHECK(refused.error().what == "render tiles cannot carry gantries or conveyors yet");
+}
+
+TEST_CASE("load: a window that holds nothing to draw is a pack without a tile, which says so and joins no cell") {
+    // The Westerkerk's window: a house in it; no data at all (the open sea, where no coastline is near); a house in its
+    // margin alone, which the window beside it draws. Until 22 October such a window wrote no tile, so the core kept
+    // asking for its place and the app fetched its data again every half second while it was in view.
+    const tl::TileKey k = tl::tile_of(14, 523'746'000, 48'840'000);
+    const std::array<std::int32_t, 4> tb = tl::tile_box(k);
+    const auto ring = [](double lat, double lon) {
+        return std::format(R"([{{"lat": {:.7f}, "lon": {:.7f}}}, {{"lat": {:.7f}, "lon": {:.7f}}},
+    {{"lat": {:.7f}, "lon": {:.7f}}}, {{"lat": {:.7f}, "lon": {:.7f}}}, {{"lat": {:.7f}, "lon": {:.7f}}}])",
+                           lat, lon, lat, lon + 0.0002, lat + 0.0002, lon + 0.0002, lat + 0.0002, lon, lat, lon);
+    };
+    const auto house = [&ring](int id, double lat, double lon) {
+        return std::format(R"({{"type": "way", "id": {}, "tags": {{"building": "house"}}, "geometry": {}}})", id,
+                           ring(lat, lon));
+    };
+    const auto answer = [](const std::string& elements) {
+        return R"({"version": 0.6, "osm3s": {"timestamp_osm_base": "2026-10-22T18:00:00Z"}, "elements": [
+)" + elements + "]}";
+    };
+    const auto bytes = [](const std::string& s) { return std::as_bytes(std::span(s.data(), s.size())); };
+    const double north = static_cast<double>(tb[2]) / 1e7;
+    const double middle = static_cast<double>(tb[1] + tb[3]) / 2e7;
+    const std::string with = answer(house(10, 52.3745, 4.8840));
+    const std::string none = answer("");
+    const std::string margin = answer(house(11, north + 0.0004, middle)); // about 45 m north of the tile
+    const load::WindowPlace place = load::place_of(k);
+    const auto built = load::build_window(bytes(with), k, place);
+    ATLAS_REQUIRE(built.has_value(), built.error().what);
+    const auto empty = load::build_window(bytes(none), k, place);
+    ATLAS_REQUIRE(empty.has_value(), empty.error().what);
+    const auto beside = load::build_window(bytes(margin), k, place);
+    ATLAS_REQUIRE(beside.has_value(), beside.error().what);
+    CHECK(built->features > 0);
+    CHECK(empty->features == 0);
+    CHECK(beside->features == 0);
+    // each says in its manifest how many tiles it holds, and the versions it was built with, as the packer's say them
+    for (const auto* w : {&*built, &*empty, &*beside}) {
+        auto pack = tl::Pack::open(std::make_unique<tl::MemorySource>(w->pack));
+        ATLAS_REQUIRE(pack.has_value(), tl::describe(pack.error()));
+        const auto manifest = manifest_of(w->pack);
+        ATLAS_REQUIRE(manifest.has_value());
+        const tl::Value m = manifest->root();
+        const std::size_t tiles = w == &*built ? 1 : 0;
+        CHECK(pack->chunks().chunks().size() == tiles);
+        CHECK(m.find("chunks").value_or(tl::Value()).integer() == static_cast<std::int64_t>(tiles));
+        CHECK(m.find("engine_version").value_or(tl::Value()).string() == load::stage_p_version);
+        CHECK(m.find("style_version").value_or(tl::Value()).string() == load::style_version());
+        CHECK(m.find("window").value_or(tl::Value()).string() == place.name);
+    }
+    // in the store: a window without a tile joins no cell; with its house, its frame cell's pack; built again without
+    // it (the house gone), it leaves the cell, whose pack goes with its last window
+    tl::Store store;
+    const std::string id = "window/" + place.name;
+    const auto add = [&store, &id](const std::vector<std::byte>& pack, const std::string& name) {
+        return store.add({.id = id, .kind = tl::PackKind::window, .path = written(pack, name)});
+    };
+    ATLAS_REQUIRE(add(empty->pack, "nothing.atlas").has_value());
+    CHECK(store.packs().empty());
+    CHECK(store.find(k).empty());
+    ATLAS_REQUIRE(add(built->pack, "house.atlas").has_value());
+    CHECK(store.find(k).size() == 1);
+    CHECK(store.holder_of(id) == tl::Store::cell_id(tl::TileKey(10, k.x >> 4U, k.y >> 4U)));
+    ATLAS_REQUIRE(add(beside->pack, "margin.atlas").has_value());
+    CHECK(store.packs().empty());
+    CHECK(store.find(k).empty());
+    CHECK(store.holder_of(id) == id);
 }
 
 TEST_CASE("load: where a window is, by the port's Countries") {

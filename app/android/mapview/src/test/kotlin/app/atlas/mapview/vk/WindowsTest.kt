@@ -273,16 +273,53 @@ class WindowsTest {
         assertEquals(Windows.RETRY_CAP_MS, Windows.waitAfter(refused = false, times = 12))
         assertEquals(Windows.RETRY_CAP_MS, Windows.waitAfter(refused = false, times = 1000))
         assertEquals(Windows.REFUSED_MS, Windows.waitAfter(refused = true, times = 1))
-        // once its data comes, it is built, and its failures are forgotten: the next waits five minutes again
+        // once its data comes, it is built, and its failures are forgotten: once its data has aged (a window built lately
+        // is not fetched again, though the core still wants it), the next failure waits five minutes again
         now += Windows.RETRY_CAP_MS + 1
         whole = { answer("2026-10-22T11:59:00Z") }
         assertTrue(windows.step(core))
         assertEquals(13, fetched.size)
+        now += Windows.REFRESH_MS + 1
         whole = { throw IOException("no server answered") }
         assertFalse(windows.step(core))
         assertEquals(14, fetched.size)
         now += Windows.RETRY_MS + 1
         assertFalse(windows.step(core))
         assertEquals(15, fetched.size)
+    }
+
+    @Test
+    fun aWindowBuiltLatelyIsNotFetchedAgainThoughTheCoreStillWantsItsPlace() {
+        // A window that holds nothing to draw (the core holds no tile there, so it keeps wanting the place), or one built
+        // while the map has not handed the core its packs again. Until 22 October it was fetched again every half second.
+        val core = Core()
+        core.wanted = listOf(w)
+        assertTrue(windows.step(core))
+        repeat(10) {
+            now += 500
+            assertFalse(windows.step(core))
+        }
+        now += 6 * day
+        assertFalse(windows.step(core))
+        assertEquals(1, fetched.size)
+        // the next window the core wants is fetched at once
+        val next = MapCore.Window(14, 8415, 5383)
+        core.wanted = listOf(w, next)
+        assertTrue(windows.step(core))
+        assertEquals(2, fetched.size)
+        assertTrue(windows.fileOf(next).exists())
+        // a week on, it is fetched whole again, never built from data older than it keeps, and built from newer data
+        core.wanted = listOf(w)
+        now += day
+        whole = { answer("2026-06-01T08:52:28Z", id = 6) } // a server months behind
+        assertFalse(windows.step(core))
+        assertEquals(3, fetched.size)
+        assertEquals(2, core.built.size)
+        now += Windows.RETRY_MS + 1
+        whole = { answer("2026-10-29T12:00:00Z", id = 8) }
+        assertTrue(windows.step(core))
+        assertEquals(4, fetched.size)
+        assertEquals(String(answer("2026-10-29T12:00:00Z", id = 8)), core.built.last())
+        assertEquals(String(answer("2026-10-29T12:00:00Z", id = 8)), unzipped(windows.dataOf(w)))
     }
 }

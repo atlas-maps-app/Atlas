@@ -35,12 +35,15 @@ class PackListTest {
         dir.deleteRecursively()
     }
 
-    /** A render pack as far as the lists read it: D1's header and a format-3 manifest (each view at yaw 52, pitch 44). */
-    private fun renderPack(id: String, profile: String, west: Double, south: Double, east: Double, north: Double, views: Map<String, Int> = emptyMap(), tz: String? = "Europe/Amsterdam"): ByteArray {
+    /**
+     * A render pack as far as the lists read it: D1's header and a format-3 manifest (each view at yaw 52, pitch 44),
+     * with its tiles' count where [chunks] gives it.
+     */
+    private fun renderPack(id: String, profile: String, west: Double, south: Double, east: Double, north: Double, views: Map<String, Int> = emptyMap(), tz: String? = "Europe/Amsterdam", chunks: Int? = null): ByteArray {
         val v = views.entries.joinToString(",") { (k, d) -> """"$k":{"target":[-177,0,-521],"yaw":52,"pitch":44,"dist":$d,"cy":440}""" }
         val manifest = """{"format":"atlas-pack","version":3,"layout":"render-tiles","payload":1,"id":"$id","profile":"$profile",
             |"bbox":{"west":$west,"south":$south,"east":$east,"north":$north},"origin":{"lat":${(south + north) / 2},"lon":${(west + east) / 2}},
-            |${tz?.let { """"tz":"$it",""" } ?: ""}"config":{"views":{$v}}}""".trimMargin().toByteArray()
+            |${tz?.let { """"tz":"$it",""" } ?: ""}${chunks?.let { """"chunks":$it,""" } ?: ""}"config":{"views":{$v}}}""".trimMargin().toByteArray()
         val out = ByteArrayOutputStream()
         out.write("ATLASPCK".toByteArray(Charsets.US_ASCII))
         out.write(byteArrayOf(0, 3, 0, 0))
@@ -209,6 +212,21 @@ class PackListTest {
         list.load()
         assertTrue(list.revision > first)
         assertEquals(1_700_604_800_000L, list.refs().first.single().offset)
+    }
+
+    @Test
+    fun aWindowThatHoldsNothingToDrawIsNotListedAndItsPlaceIsTodaysMaps() {
+        // the open sea far from a coast, the middle of a field: the core would hold no tile there; a window that holds
+        // its tile is listed, and so is a pack whose manifest does not count its tiles
+        val windows = File(dir, "windows").apply { mkdirs() }
+        File(windows, "14-8414-5383.atlas").writeBytes(renderPack("window", "region", 4.87, 52.36, 4.89, 52.38, chunks = 0))
+        File(windows, "14-8415-5383.atlas").writeBytes(renderPack("window", "region", 4.89, 52.36, 4.91, 52.38, chunks = 1))
+        File(windows, "14-8416-5383.atlas").writeBytes(renderPack("window", "region", 4.91, 52.36, 4.93, 52.38))
+        val list = PackList(null, null, windows = { windows })
+        list.load()
+        assertEquals(listOf("window/14/8415/5383", "window/14/8416/5383"), list.packs.map { it.id })
+        assertFalse(list.covers(52.37, 4.88, 400.0))
+        assertTrue(list.covers(52.37, 4.90, 400.0))
     }
 
     @Test

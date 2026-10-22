@@ -73,7 +73,8 @@ public:
     /// tile the core built, load/Window.hpp) joins the pack of its frame cell instead (cell_id), which holds every
     /// window of the cell and replaces the cell's last one: composed, nothing copied (compose_pack), its head the
     /// first window's under the cell's name, its style the first window's. A window whose frame or style version is not
-    /// its cell's is refused.
+    /// its cell's is refused. A window without a tile (it holds nothing to draw) joins no cell, and an earlier build of
+    /// it leaves its cell.
     [[nodiscard]] Result<void> add(const PackRef& ref);
 
     /// Removes the pack `id` (a window: from its cell's pack); returns whether there was one. Readers holding it keep

@@ -204,8 +204,17 @@ Result<void> Store::add_window(const PackRef& ref) {
         (!chunks.empty() && chunks[0].tile.z != 14)) {
         return std::unexpected(error(Fault::bad_value, Site::head, chunks.size()));
     }
-    Window w{.id = ref.id, .source = *source, .frame = head.frame, .style_version = std::string(head.style_version)};
-    if (!chunks.empty()) w.chunk = chunks[0];
+    if (chunks.empty()) {
+        // A window without features holds nothing to draw (the open sea, the middle of a field; the app does not list
+        // one): it joins no cell, and an earlier build of it, which held a tile, leaves its cell.
+        (void)remove(ref.id);
+        return {};
+    }
+    Window w{.id = ref.id,
+             .chunk = chunks[0],
+             .source = *source,
+             .frame = head.frame,
+             .style_version = std::string(head.style_version)};
     Zstd zstd;
     for (const Section& section : pack->sections()) {
         if (section.name != section_head && section.name != section_style) continue;
@@ -230,11 +239,6 @@ Result<void> Store::add_window(const PackRef& ref) {
         break;
     }
     std::erase_if(it->windows, [&](const Window& o) { return o.id == w.id; });
-    if (chunks.empty()) {
-        // a window without features adds nothing to draw
-        if (it->windows.empty()) cells_.erase(it);
-        return {};
-    }
     it->windows.push_back(std::move(w));
     auto composed = compose(*it);
     if (!composed) {

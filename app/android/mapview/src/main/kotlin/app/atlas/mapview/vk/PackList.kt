@@ -95,7 +95,10 @@ class PackList(
         override fun close() = closer.close()
     }
 
-    /** What the choice needs of a render pack's manifest, and its views. */
+    /**
+     * What the choice needs of a render pack's manifest, and its views; [chunks], how many tiles it holds, where the
+     * manifest says (null where it does not).
+     */
     internal class Head(
         val box: BBox,
         val origin: LatLon,
@@ -103,6 +106,7 @@ class PackList(
         val profile: String?,
         val distances: DoubleArray,
         val views: Map<String, ViewCamera> = emptyMap(),
+        val chunks: Int? = null,
     )
 
     @Volatile
@@ -146,10 +150,13 @@ class PackList(
                 out[r.id] = packOf(r.id, MapCore.PackRef.RENDER, head, r.file, null)
             }
         }
-        // the windows the phone built: each its own pack, which the core takes into its frame cell's
+        // the windows the phone built: each its own pack, which the core takes into its frame cell's; not one that holds
+        // nothing to draw (the open sea far from a coast, the middle of a field), where the core would have no tile, so
+        // the place is today's map's (Windows does not fetch such a window again for a week)
         windows()?.listFiles()?.sortedBy { it.name }?.forEach { file ->
             val w = Windows.windowOf(file) ?: return@forEach
             val head = runCatching { file.inputStream().use { readHead(it) } }.getOrNull() ?: return@forEach
+            if (head.chunks == 0) return@forEach
             out[w.id] = packOf(w.id, MapCore.PackRef.WINDOW, head, file, null)
         }
         val list = out.values.toList()
@@ -287,7 +294,7 @@ class PackList(
         /**
          * What the choice needs of a render pack (format 3), from the start of its bytes: D1's container header, then
          * its JSON manifest ([PackLibrary.renderHead] reads the same from a file): the box, the origin, the time zone,
-         * the profile and its views' distances.
+         * the profile and its views' distances, and its tiles' count.
          */
         internal fun readHead(input: InputStream): Head {
             val d = DataInputStream(input)
@@ -316,7 +323,7 @@ class PackList(
                 val name = k as? String ?: continue
                 cameraOf(v)?.let { cameras[name] = it }
             }
-            return Head(box, origin, m["tz"] as? String, profile, distances, cameras)
+            return Head(box, origin, m["tz"] as? String, profile, distances, cameras, (m["chunks"] as? Number)?.toInt())
         }
 
         private fun num(v: Any?): Double = (v as? Number)?.toDouble() ?: throw IOException("a number is missing in the manifest")
