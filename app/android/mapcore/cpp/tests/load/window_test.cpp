@@ -18,6 +18,7 @@
 #include "tiles/Grid.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Source.hpp"
+#include "tiles/Store.hpp"
 
 #include <doctest/doctest.h>
 
@@ -311,4 +312,87 @@ TEST_CASE("load: a window anywhere: Paris, with its country's tradition (ATLAS_R
     MESSAGE("Paris's window ", place.name, ": ", mine.elements().size(), " elements, ", built->features, " features, ",
             built->pack.size(), " bytes; loaded at five tolerances in ", built->load_ms, " ms, cut in ", built->cut_ms,
             " ms, written in ", built->write_ms, " ms");
+}
+
+TEST_CASE(
+    "load: the windows of a frame cell are one pack in the store, composed from their files (ATLAS_REGIONS_DIR)") {
+    const std::string regions = atlas::test::environment("ATLAS_REGIONS_DIR");
+    if (regions.empty()) {
+        MESSAGE("ATLAS_REGIONS_DIR is not set: no windows are built here");
+        return;
+    }
+    const std::string text = read_text(std::filesystem::path(regions) / "grachten" / "raw.json");
+    ATLAS_REQUIRE(!text.empty());
+    const auto doc = osm::read_overpass(std::as_bytes(std::span(text.data(), text.size())));
+    ATLAS_REQUIRE(doc.has_value());
+    // three windows of the canal ring, anywhere's way: their frame cell's frame, the Netherlands' tradition
+    const tl::TileKey a = tl::tile_of(14, 523'746'000, 48'840'000); // the Westerkerk's
+    const std::array<tl::TileKey, 3> keys = {a, tl::TileKey(14, a.x + 1, a.y), tl::TileKey(14, a.x, a.y + 1)};
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "windows";
+    std::filesystem::create_directories(folder);
+    tl::Store store;
+    std::vector<std::vector<std::byte>> tiles;
+    for (const tl::TileKey& k : keys) {
+        ATLAS_REQUIRE((k.x >> 4U) == (a.x >> 4U) && (k.y >> 4U) == (a.y >> 4U)); // one frame cell
+        const auto built =
+            load::build_window(query(*doc, load::window_box(k)), tl::Sha256Digest{}, k, load::place_of(k));
+        ATLAS_REQUIRE(built.has_value(), built.error().what);
+        const std::filesystem::path file = folder / (std::to_string(k.x) + "-" + std::to_string(k.y) + ".atlas");
+        {
+            std::ofstream out(file, std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char*>(built->pack.data()), // NOLINT: the pack's bytes as chars
+                      static_cast<std::streamsize>(built->pack.size()));
+        }
+        // each window's own tile, to hold the cell's to
+        auto own = tl::Pack::open(std::make_unique<tl::MemorySource>(built->pack));
+        ATLAS_REQUIRE(own.has_value(), tl::describe(own.error()));
+        tl::Zstd zstd;
+        std::vector<std::byte> raw;
+        std::vector<std::byte> scratch;
+        ATLAS_REQUIRE(own->unpack(own->chunks().chunks()[0], zstd, raw, scratch).has_value());
+        tiles.push_back(raw);
+        const auto added =
+            store.add({.id = "window/" + load::place_of(k).name, .kind = tl::PackKind::window, .path = file.string()});
+        ATLAS_REQUIRE(added.has_value(), tl::describe(added.error()));
+    }
+    const tl::TileKey cell(10, a.x >> 4U, a.y >> 4U);
+    auto packs = store.packs();
+    ATLAS_REQUIRE(packs.size() == 1);
+    CHECK(packs[0]->id == tl::Store::cell_id(cell));
+    CHECK(packs[0]->kind == tl::PackKind::window);
+    ATLAS_REQUIRE(packs[0]->pack.head() != nullptr);
+    CHECK(packs[0]->pack.head()->region == tl::Store::cell_id(cell));
+    CHECK(packs[0]->pack.head()->frame.lat0 == load::frame_of(a).lat0);
+    CHECK(packs[0]->pack.chunks().chunks().size() == 3);
+    // every window's tile comes out of the cell's pack as it went in, checked against its SHA-256
+    tl::Zstd zstd;
+    tl::TileDecoder decoder;
+    atlas::Arena arena(8U << 20U, atlas::Growth::grows, "window test, a cell's tile");
+    for (std::size_t i = 0; i < keys.size(); ++i) {
+        const std::vector<tl::StoreHit> hits = store.find(keys[i]);
+        ATLAS_REQUIRE(hits.size() == 1);
+        std::vector<std::byte> raw;
+        arena.reset();
+        const auto tile = store.decode(hits[0], zstd, decoder, arena, raw);
+        ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+        CHECK(raw == tiles[i]);
+    }
+    // a window built again replaces itself; one removed leaves the others; the last removed, the cell's pack
+    CHECK(
+        store
+            .add({.id = "window/" + load::place_of(keys[1]).name,
+                  .kind = tl::PackKind::window,
+                  .path = (folder / (std::to_string(keys[1].x) + "-" + std::to_string(keys[1].y) + ".atlas")).string()})
+            .has_value());
+    CHECK(store.packs()[0]->pack.chunks().chunks().size() == 3);
+    CHECK(store.remove("window/" + load::place_of(keys[0]).name));
+    packs = store.packs();
+    ATLAS_REQUIRE(packs.size() == 1);
+    CHECK(packs[0]->pack.chunks().chunks().size() == 2);
+    CHECK(store.find(keys[0]).empty());
+    CHECK(store.find(keys[2]).size() == 1);
+    CHECK(store.remove("window/" + load::place_of(keys[1]).name));
+    CHECK(store.remove("window/" + load::place_of(keys[2]).name));
+    CHECK(store.packs().empty());
+    CHECK_FALSE(store.remove("window/none"));
 }

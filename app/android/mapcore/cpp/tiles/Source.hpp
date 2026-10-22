@@ -104,4 +104,31 @@ private:
     Fetch fetch_;
 };
 
+/// A slice of a source: `length` bytes from `offset`.
+struct SourceSlice {
+    std::shared_ptr<const ByteSource> source;
+    std::uint64_t offset = 0;
+    std::uint64_t length = 0;
+};
+
+/// Slices of other sources one after another, read as one source: the windows of a frame cell as one pack
+/// (tiles/PackWriter.hpp's compose_pack), its own bytes in memory around the windows' chunks where they lie. A view
+/// within one slice is its source's view; a read across slices copies from each.
+class ConcatSource final : public ByteSource {
+public:
+    explicit ConcatSource(std::vector<SourceSlice> slices);
+
+    [[nodiscard]] std::uint64_t size() const noexcept override { return size_; }
+    [[nodiscard]] std::span<const std::byte> view(std::uint64_t offset, std::uint64_t length) const noexcept override;
+    [[nodiscard]] Result<void> read(std::uint64_t offset, std::span<std::byte> out) const override;
+
+private:
+    /// The slice holding byte `offset` (offset below size_).
+    [[nodiscard]] std::size_t slice_at(std::uint64_t offset) const noexcept;
+
+    std::vector<SourceSlice> slices_;
+    std::vector<std::uint64_t> starts_; ///< each slice's first byte in this source
+    std::uint64_t size_ = 0;
+};
+
 } // namespace atlas::tiles

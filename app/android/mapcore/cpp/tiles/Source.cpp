@@ -110,4 +110,39 @@ Result<void> RangeSource::read(std::uint64_t offset, std::span<std::byte> out) c
     return fetch_(offset, out);
 }
 
+ConcatSource::ConcatSource(std::vector<SourceSlice> slices) : slices_(std::move(slices)) {
+    starts_.reserve(slices_.size());
+    for (const SourceSlice& s : slices_) {
+        starts_.push_back(size_);
+        size_ += s.length;
+    }
+}
+
+std::size_t ConcatSource::slice_at(std::uint64_t offset) const noexcept {
+    const auto it = std::ranges::upper_bound(starts_, offset);
+    return static_cast<std::size_t>(it - starts_.begin()) - 1;
+}
+
+std::span<const std::byte> ConcatSource::view(std::uint64_t offset, std::uint64_t length) const noexcept {
+    if (!inside(size_, offset, length) || length == 0) return {};
+    const std::size_t i = slice_at(offset);
+    const std::uint64_t within = offset - starts_[i];
+    if (within + length > slices_[i].length) return {}; // across two slices: read() copies it
+    return slices_[i].source->view(slices_[i].offset + within, length);
+}
+
+Result<void> ConcatSource::read(std::uint64_t offset, std::span<std::byte> out) const {
+    if (!inside(size_, offset, out.size())) return std::unexpected(error(Fault::truncated, Site::file, offset));
+    std::size_t done = 0;
+    while (done < out.size()) {
+        const std::uint64_t at = offset + done;
+        const std::size_t i = slice_at(at);
+        const std::uint64_t within = at - starts_[i];
+        const auto n = static_cast<std::size_t>(std::min<std::uint64_t>(slices_[i].length - within, out.size() - done));
+        if (auto r = slices_[i].source->read(slices_[i].offset + within, out.subspan(done, n)); !r) return r;
+        done += n;
+    }
+    return {};
+}
+
 } // namespace atlas::tiles

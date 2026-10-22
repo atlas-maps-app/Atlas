@@ -6,9 +6,11 @@
 #include "tiles/Schema.hpp"
 #include "tiles/Sections.hpp"
 #include "tiles/Sink.hpp"
+#include "tiles/Source.hpp"
 
 #include <algorithm>
 #include <array>
+#include <memory>
 #include <numeric>
 #include <string_view>
 #include <utility>
@@ -83,61 +85,81 @@ std::vector<std::byte> zstd_raw_frame(std::span<const std::byte> raw) {
     return out.take();
 }
 
-Result<std::vector<std::byte>> write_pack(std::span<const PackTile> tiles, const PackParts& parts) {
-    // the chunks: by rhead's levels, finest first, then along the Hilbert curve
-    std::vector<std::pair<std::size_t, std::uint64_t>> rank(tiles.size());
-    for (std::size_t i = 0; i < tiles.size(); ++i) {
-        const TileKey k = tiles[i].key;
-        const auto level = std::ranges::find(parts.levels, k.z);
-        if (level == parts.levels.end()) return std::unexpected(error(Fault::bad_value, Site::chunk_table, k.packed()));
-        if (tiles[i].raw.size() > max_tile_bytes) {
-            return std::unexpected(error(Fault::too_big, Site::chunk, k.packed()));
-        }
-        rank[i] = {static_cast<std::size_t>(level - parts.levels.begin()), hilbert(k.z, k.x, k.y)};
+namespace {
+
+/// What the chunk table and `reach` say of one chunk: its tile, its stored frame's size, its raw size, its features,
+/// its SHA-256 and its reach.
+struct ChunkMeta {
+    TileKey key;
+    std::uint64_t stored = 0;
+    std::uint64_t raw = 0;
+    std::uint32_t count = 0;
+    Sha256Digest sha256{};
+    Reach reach;
+};
+
+/// The order the chunks go in: by rhead's levels, finest first, then along the Hilbert curve; or why they cannot be
+/// packed (a tile of a level rhead lacks, a tile past max_tile_bytes, a tile twice).
+Result<std::vector<std::size_t>> chunk_order(std::span<const ChunkMeta> chunks, std::span<const std::uint8_t> levels) {
+    std::vector<std::pair<std::size_t, std::uint64_t>> rank(chunks.size());
+    for (std::size_t i = 0; i < chunks.size(); ++i) {
+        const TileKey k = chunks[i].key;
+        const auto level = std::ranges::find(levels, k.z);
+        if (level == levels.end()) return std::unexpected(error(Fault::bad_value, Site::chunk_table, k.packed()));
+        if (chunks[i].raw > max_tile_bytes) return std::unexpected(error(Fault::too_big, Site::chunk, k.packed()));
+        rank[i] = {static_cast<std::size_t>(level - levels.begin()), hilbert(k.z, k.x, k.y)};
     }
-    std::vector<std::size_t> order(tiles.size());
+    std::vector<std::size_t> order(chunks.size());
     std::ranges::iota(order, std::size_t{0});
     std::ranges::stable_sort(order, [&](std::size_t a, std::size_t b) { return rank[a] < rank[b]; });
     for (std::size_t i = 1; i < order.size(); ++i) {
-        if (tiles[order[i]].key.packed() == tiles[order[i - 1]].key.packed()) {
-            return std::unexpected(error(Fault::duplicate, Site::chunk_table, tiles[order[i]].key.packed()));
+        if (chunks[order[i]].key.packed() == chunks[order[i - 1]].key.packed()) {
+            return std::unexpected(error(Fault::duplicate, Site::chunk_table, chunks[order[i]].key.packed()));
         }
     }
+    return order;
+}
+
+/// A pack's bytes around its chunks: before them the header, the manifest, the directory, the chunk table and
+/// `reach`; after them `rhead` and the style.
+struct Around {
+    Sink before;
+    Sink after;
+};
+
+/// The bytes around chunks laid out in `order`, their frames' CRC-32 `chunks_crc`.
+Around around(std::span<const ChunkMeta> chunks, std::span<const std::size_t> order, std::uint32_t chunks_crc,
+              const PackParts& parts) {
     Sink table;
-    table.varu(tiles.size());
+    table.varu(chunks.size());
     Sink reach;
     reach.u32(reach_magic);
     reach.u16(payload_version);
     reach.u16(reach_entry_bytes);
-    reach.u32(tiles.size());
-    std::vector<std::vector<std::byte>> frames;
-    frames.reserve(tiles.size());
-    Entry chunks{.name = section_chunks, .method = Method::zstd};
+    reach.u32(chunks.size());
+    Entry entry{.name = section_chunks, .crc = chunks_crc, .method = Method::zstd};
     for (const std::size_t i : order) {
-        const PackTile& t = tiles[i];
-        std::vector<std::byte>& frame = frames.emplace_back(zstd_raw_frame(t.raw));
-        const Sha256Digest digest = Sha256::of(t.raw);
-        table.u8(t.key.z);
-        table.varu(t.key.x);
-        table.varu(t.key.y);
-        table.varu(frame.size());
-        table.varu(t.raw.size());
-        table.varu(t.count);
-        table.raw(digest);
-        reach.i32(t.reach.box.south);
-        reach.i32(t.reach.box.west);
-        reach.i32(t.reach.box.north);
-        reach.i32(t.reach.box.east);
-        reach.i32(t.reach.top_cm);
-        chunks.stored += frame.size();
-        chunks.raw += t.raw.size();
-        chunks.crc = crc32(frame, chunks.crc);
+        const ChunkMeta& c = chunks[i];
+        table.u8(c.key.z);
+        table.varu(c.key.x);
+        table.varu(c.key.y);
+        table.varu(c.stored);
+        table.varu(c.raw);
+        table.varu(c.count);
+        table.raw(c.sha256);
+        reach.i32(c.reach.box.south);
+        reach.i32(c.reach.box.west);
+        reach.i32(c.reach.box.north);
+        reach.i32(c.reach.box.east);
+        reach.i32(c.reach.top_cm);
+        entry.stored += c.stored;
+        entry.raw += c.raw;
     }
     const std::vector<std::byte> style = zstd_raw_frame(parts.style);
     const std::array<Entry, 5> entries{{
         {.name = section_tiles, .stored = table.size(), .raw = table.size(), .crc = crc32(table.bytes())},
         {.name = section_reach, .stored = reach.size(), .raw = reach.size(), .crc = crc32(reach.bytes())},
-        chunks,
+        entry,
         {.name = section_head, .stored = parts.head.size(), .raw = parts.head.size(), .crc = crc32(parts.head)},
         {.name = section_style,
          .stored = style.size(),
@@ -148,25 +170,75 @@ Result<std::vector<std::byte>> write_pack(std::span<const PackTile> tiles, const
     // the directory's size does not depend on the offsets in it (each a u64)
     const std::size_t directory_bytes = directory(entries, 0).size();
     const Sink dir = directory(entries, container_header_bytes + parts.manifest.size() + directory_bytes);
+    Around out;
+    out.before.reserve(container_header_bytes + parts.manifest.size() + dir.size() + table.size() + reach.size());
+    for (const char c : std::string_view("ATLASPCK")) out.before.u8(static_cast<std::uint8_t>(c));
+    out.before.u8(0);
+    out.before.u8(format_render);
+    out.before.u8(0);
+    out.before.u8(0);
+    out.before.u32be(parts.manifest.size());
+    out.before.u32be(dir.size());
+    out.before.raw(std::as_bytes(std::span(parts.manifest.data(), parts.manifest.size())));
+    out.before.raw(dir.bytes());
+    out.before.raw(table.bytes());
+    out.before.raw(reach.bytes());
+    out.after.raw(parts.head);
+    out.after.raw(style);
+    return out;
+}
+
+} // namespace
+
+Result<std::vector<std::byte>> write_pack(std::span<const PackTile> tiles, const PackParts& parts) {
+    std::vector<ChunkMeta> chunks(tiles.size());
+    for (std::size_t i = 0; i < tiles.size(); ++i) {
+        chunks[i] = {.key = tiles[i].key, .raw = tiles[i].raw.size(), .count = tiles[i].count, .reach = tiles[i].reach};
+    }
+    const auto order = chunk_order(chunks, parts.levels);
+    if (!order) return std::unexpected(order.error());
+    std::vector<std::vector<std::byte>> frames(tiles.size());
+    std::uint32_t crc = 0;
+    std::uint64_t stored = 0;
+    for (const std::size_t i : *order) {
+        frames[i] = zstd_raw_frame(tiles[i].raw);
+        chunks[i].stored = frames[i].size();
+        chunks[i].sha256 = Sha256::of(tiles[i].raw);
+        crc = crc32(frames[i], crc);
+        stored += frames[i].size();
+    }
+    const Around a = around(chunks, *order, crc, parts);
     Sink out;
-    std::uint64_t total = container_header_bytes + parts.manifest.size() + dir.size();
-    for (const Entry& e : entries) total += e.stored;
-    out.reserve(total);
-    for (const char c : std::string_view("ATLASPCK")) out.u8(static_cast<std::uint8_t>(c));
-    out.u8(0);
-    out.u8(format_render);
-    out.u8(0);
-    out.u8(0);
-    out.u32be(parts.manifest.size());
-    out.u32be(dir.size());
-    out.raw(std::as_bytes(std::span(parts.manifest.data(), parts.manifest.size())));
-    out.raw(dir.bytes());
-    out.raw(table.bytes());
-    out.raw(reach.bytes());
-    for (const std::vector<std::byte>& frame : frames) out.raw(frame);
-    out.raw(parts.head);
-    out.raw(style);
+    out.reserve(a.before.size() + stored + a.after.size());
+    out.raw(a.before.bytes());
+    for (const std::size_t i : *order) out.raw(frames[i]);
+    out.raw(a.after.bytes());
     return out.take();
+}
+
+Result<std::unique_ptr<ByteSource>> compose_pack(std::span<const ComposedChunk> chunks, const PackParts& parts) {
+    std::vector<ChunkMeta> metas(chunks.size());
+    for (std::size_t i = 0; i < chunks.size(); ++i) {
+        const ComposedChunk& c = chunks[i];
+        if (!c.frame.source || c.frame.length == 0) return std::unexpected(error(Fault::missing, Site::chunk, i));
+        metas[i] = {.key = c.key,
+                    .stored = c.frame.length,
+                    .raw = c.raw,
+                    .count = c.count,
+                    .sha256 = c.sha256,
+                    .reach = c.reach};
+    }
+    const auto order = chunk_order(metas, parts.levels);
+    if (!order) return std::unexpected(order.error());
+    Around a = around(metas, *order, 0, parts);
+    std::vector<SourceSlice> slices;
+    slices.reserve(chunks.size() + 2);
+    const auto before = std::make_shared<const MemorySource>(a.before.take());
+    slices.push_back({.source = before, .offset = 0, .length = before->size()});
+    for (const std::size_t i : *order) slices.push_back(chunks[i].frame);
+    const auto after = std::make_shared<const MemorySource>(a.after.take());
+    slices.push_back({.source = after, .offset = 0, .length = after->size()});
+    return std::make_unique<ConcatSource>(std::move(slices));
 }
 
 } // namespace atlas::tiles

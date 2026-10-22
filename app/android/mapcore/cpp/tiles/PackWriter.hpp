@@ -10,11 +10,14 @@
 // in third_party; the tiles' own bytes, the packer's, do not change with it.
 #pragma once
 
+#include "tiles/Checksums.hpp"
 #include "tiles/Chunks.hpp"
 #include "tiles/Error.hpp"
+#include "tiles/Source.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -40,6 +43,25 @@ struct PackParts {
 /// The pack of `tiles` (format 3), or why it cannot be one: a tile twice, a tile of a level `rhead` lacks, a tile past
 /// max_tile_bytes.
 [[nodiscard]] Result<std::vector<std::byte>> write_pack(std::span<const PackTile> tiles, const PackParts& parts);
+
+/// A chunk another pack holds, to compose into one: its tile, its raw size, its features, its SHA-256, its reach, and
+/// its stored frame where it lies (that pack's source, the chunk's offset and stored size).
+struct ComposedChunk {
+    TileKey key;
+    std::uint64_t raw = 0;
+    std::uint32_t count = 0;
+    Sha256Digest sha256{};
+    Reach reach;
+    SourceSlice frame;
+};
+
+/// A pack of chunks that lie in other packs (the windows of a frame cell as one, tiles/Store.hpp), as one source
+/// Pack::open reads like a written pack: its header, manifest, directory, chunk table and `reach` in memory, then each
+/// chunk's frame where it lies, in write_pack's order, then `rhead` and the style. Nothing is copied but what is
+/// written in memory; the `chunks` section's CRC-32, which verify() alone reads, is left 0. Refused as write_pack
+/// refuses, and a chunk without a frame.
+[[nodiscard]] Result<std::unique_ptr<ByteSource>> compose_pack(std::span<const ComposedChunk> chunks,
+                                                               const PackParts& parts);
 
 /// One zstd frame holding `raw` in raw blocks, its content size given.
 [[nodiscard]] std::vector<std::byte> zstd_raw_frame(std::span<const std::byte> raw);

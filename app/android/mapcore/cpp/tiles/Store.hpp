@@ -67,11 +67,19 @@ public:
     explicit Store(ExpandedCache* cache = nullptr) noexcept : cache_(cache) {}
 
     /// Opens a pack and adds it (replacing one of the same id). A remote pack opens from its cached head when the cache
-    /// has it, so it opens offline; else its head is fetched and cached.
+    /// has it, so it opens offline; else its head is fetched and cached. A window (PackKind::window: a pack of one L14
+    /// tile the core built, load/Window.hpp) joins the pack of its frame cell instead (cell_id), which holds every
+    /// window of the cell and replaces the cell's last one: composed, nothing copied (compose_pack), its head the
+    /// first window's under the cell's name, its style the first window's. A window whose frame or style version is not
+    /// its cell's is refused.
     [[nodiscard]] Result<void> add(const PackRef& ref);
 
-    /// Removes the pack `id`; returns whether there was one. Readers holding it keep it until they let go.
+    /// Removes the pack `id` (a window: from its cell's pack); returns whether there was one. Readers holding it keep
+    /// it until they let go.
     bool remove(std::string_view id);
+
+    /// The id of the pack holding the windows of the frame cell `cell` (an L10 tile): `cells/<z>/<x>/<y>`.
+    [[nodiscard]] static std::string cell_id(TileKey cell);
 
     /// Every open pack, in lookup order (by kind, then in the order added).
     [[nodiscard]] std::vector<std::shared_ptr<const StorePack>> packs() const;
@@ -92,12 +100,38 @@ public:
     [[nodiscard]] Result<Tile> decode(const StoreHit& hit, Zstd& zstd, TileDecoder& decoder, Arena& arena,
                                       std::vector<std::byte>& raw) const;
 
+    /// The level of the frame cells windows are grouped by (load/Window.hpp's frame_cell_level).
+    static constexpr std::uint8_t cell_level = 10;
+
 private:
+    /// A window in its cell: its id, its tile and chunk, its bytes, its head's and style's.
+    struct Window {
+        std::string id;
+        ChunkRef chunk;
+        std::shared_ptr<const ByteSource> source;
+        std::vector<std::byte> head;
+        std::vector<std::byte> style;
+        Frame frame;
+        std::string style_version;
+    };
+    /// A frame cell's windows, by id.
+    struct Cell {
+        TileKey key;
+        std::vector<Window> windows;
+    };
+
     [[nodiscard]] Result<Pack> open_remote(const PackRef& ref);
+    [[nodiscard]] Result<void> add_window(const PackRef& ref);
+    /// Puts `entry` in the lookup order (replacing a pack of its id); under mutex_.
+    void insert(std::shared_ptr<const StorePack> entry);
+    /// The pack of `cell`'s windows, or nothing for a cell without one; under cells_mutex_.
+    [[nodiscard]] Result<std::shared_ptr<const StorePack>> compose(const Cell& cell) const;
 
     ExpandedCache* cache_;
     mutable std::mutex mutex_;
     std::vector<std::shared_ptr<const StorePack>> packs_; ///< in lookup order
+    std::mutex cells_mutex_;                              ///< taken before mutex_, never after
+    std::vector<Cell> cells_;
 };
 
 } // namespace atlas::tiles

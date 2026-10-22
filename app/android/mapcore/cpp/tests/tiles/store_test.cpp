@@ -114,10 +114,11 @@ TEST_CASE("tiles: the store opens packs from a file and from a range of a file, 
     CHECK(raw[1] == std::byte{'a'});
     CHECK(store.find({14, 1, 1}).empty());
 
-    // the same id again replaces it; removing it leaves the other
-    ATLAS_REQUIRE(store.add({.id = "grachten", .kind = PackKind::window, .path = dir.file("render.atlas")}));
+    // the same id again replaces it (a window joins its frame cell's pack instead: window_test); removing it leaves the
+    // other
+    ATLAS_REQUIRE(store.add({.id = "grachten", .kind = PackKind::world_mid, .path = dir.file("render.atlas")}));
     CHECK(store.packs().size() == 2);
-    CHECK(store.packs()[1]->kind == PackKind::window);
+    CHECK(store.packs()[1]->kind == PackKind::world_mid);
     CHECK(store.remove("grachten"));
     CHECK(!store.remove("grachten"));
     CHECK(store.packs().size() == 1);
