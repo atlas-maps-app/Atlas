@@ -24,8 +24,9 @@ import kotlin.math.min
 /**
  * The packs the core draws from (plan-vector D3 "Packs on the phone", K11): the render packs the APK carries
  * (`tiles/bundled.json`, stored uncompressed, so the core maps each where it lies in the APK), the render packs the
- * library keeps beside the element packs ([PackLibrary.localRenders]), and, online, a region's published render pack
- * fetched on the first visit to its box ([fetchAt]: K20a's [PackLibrary.rendersAt] and [PackLibrary.downloadRender]).
+ * library keeps beside the element packs ([PackLibrary.localRenders]), the windows the phone built ([Windows]), and,
+ * online, a region's published render pack fetched on the first visit to its box ([fetchAt]: K20a's
+ * [PackLibrary.rendersAt] and [PackLibrary.downloadRender]).
  *
  * Per camera it names the pack the frame draws ([choose]), as the live map has always chosen its region
  * ([app.atlas.render.live.LiveRegions]): of the packs whose box holds the target, the one whose own views best fit the
@@ -42,6 +43,8 @@ class PackList(
     private val online: () -> Boolean = { false },
     /** Where downloads run. */
     private val worker: Executor? = null,
+    /** The folder of the windows the phone built (ENGINE.md step 3: [Windows]), or null for none. */
+    private val windows: () -> File? = { null },
 ) {
     /** One pack the core can draw. */
     class Pack internal constructor(
@@ -139,6 +142,12 @@ class PackList(
                 out.remove(r.id)
                 out[r.id] = packOf(r.id, MapCore.PackRef.RENDER, head, r.file, null)
             }
+        }
+        // the windows the phone built: each its own pack, which the core takes into its frame cell's
+        windows()?.listFiles()?.sortedBy { it.name }?.forEach { file ->
+            val w = Windows.windowOf(file) ?: return@forEach
+            val head = runCatching { file.inputStream().use { readHead(it) } }.getOrNull() ?: return@forEach
+            out[w.id] = packOf(w.id, MapCore.PackRef.WINDOW, head, file, null)
         }
         val list = out.values.toList()
         if (list.map { Triple(it.id, it.file, it.asset) } != packs.map { Triple(it.id, it.file, it.asset) }) {

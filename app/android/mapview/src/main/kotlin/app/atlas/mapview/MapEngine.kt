@@ -185,7 +185,35 @@ object MapEngine {
 
     /** The packs the core draws from: the APK's bundled render packs and the regions' library's (made once). */
     fun packs(assets: AssetManager): PackList = packList ?: synchronized(this) {
-        packList ?: PackList(AssetPacks(assets), regions?.library, online = { online() }, worker = packWorker).also { packList = it }
+        packList ?: PackList(AssetPacks(assets), regions?.library, online = { online() }, worker = packWorker, windows = { windowsDir() })
+            .also { packList = it }
+    }
+
+    /**
+     * Overpass's JSON for a window's box (south, west, north, east), with the window's query (ENGINE.md step 3); the
+     * app sets it with its own servers. Null: the phone builds no windows.
+     */
+    @Volatile
+    var windowData: ((DoubleArray) -> ByteArray)? = null
+
+    /** Where the windows the phone built are kept: the engine's cache's `windows/`; null without a cache. */
+    fun windowsDir(): File? = cacheDir?.let { File(it, "windows") }
+
+    @Volatile
+    private var windowsBuilder: app.atlas.mapview.vk.Windows? = null
+
+    /** Whether the phone builds windows now (the app's: not in CI's demo run, which asks no Overpass server for them). */
+    @Volatile
+    var windowsAllowed: () -> Boolean = { true }
+
+    /** The windows the phone builds, online, once the app gave a cache and their data's source; else null. */
+    fun windows(): app.atlas.mapview.vk.Windows? {
+        if (!online() || !windowsAllowed()) return null
+        val dir = windowsDir() ?: return null
+        val data = windowData ?: return null
+        return windowsBuilder ?: synchronized(this) {
+            windowsBuilder ?: app.atlas.mapview.vk.Windows(dir, data).also { windowsBuilder = it }
+        }
     }
 
     /**

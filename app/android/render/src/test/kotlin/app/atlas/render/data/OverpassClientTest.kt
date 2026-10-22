@@ -159,4 +159,31 @@ class OverpassClientTest {
         val bytes = PackWriter.toBytes(built)
         assertEquals(a, PackReader.open(bytes).elements().toList())
     }
+
+    @Test
+    fun aWindowAsksForItsBoxOnEveryStatementAndItsRelationsWhole() {
+        val client = OverpassClient()
+        val q = client.windowQuery(BBox(4.87, 52.36, 4.89, 52.38))
+        val box = "52.36,4.87,52.38,4.89"
+        assertEquals(
+            "[out:json][timeout:240];(node($box)(if:count_tags()>0);way($box);relation[type=multipolygon]($box);" +
+                "relation[boundary~\"^(national_park|protected_area)$\"]($box););out geom;",
+            q,
+        )
+        assertTrue(!q.contains("[bbox:"))
+    }
+
+    @Test
+    fun aWindowsAnswerIsItsBytesAndOneThatRanOutIsAskedElsewhere() {
+        val tried = ArrayList<String>()
+        val client = OverpassClient(http = { url, form, _ ->
+            tried += url
+            assertTrue(form.getValue("data").startsWith("[out:json][timeout:240];(node("))
+            if (tried.size == 1) answer(node(1, 52.0, 4.0), remark = "runtime error: Query timed out") else answer(node(2, 52.0, 4.0))
+        }, pause = {})
+        val bytes = client.window(BBox(4.0, 52.0, 4.01, 52.01))
+        assertEquals(2, tried.size)
+        assertTrue(String(bytes).contains("\"id\":2"))
+    }
 }
+

@@ -267,6 +267,9 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     /** When the map last asked for a published render pack of the place it stands on (SystemClock.uptimeMillis). */
     private var fetchCheckedAt = 0L
 
+    /** When the map last asked the core which windows it wants (SystemClock.uptimeMillis). */
+    private var windowCheckedAt = 0L
+
     /**
      * The ground frame gestures and overlays take: the region today's map draws, or, where the core's picture is the
      * one seen, the pack the core draws.
@@ -669,6 +672,16 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             if (wanted == Transition.Path.CANVAS && now - fetchCheckedAt >= FETCH_CHECK_MS) {
                 fetchCheckedAt = now
                 c.packs.fetchAt(LatLon(view.lat, view.lon)) { main.post(repack) }
+            }
+            // The windows the core wants (ENGINE.md step 3): the nearest built in the background, one at a time, and
+            // the core handed it when it is.
+            if (now - windowCheckedAt >= FETCH_CHECK_MS) {
+                windowCheckedAt = now
+                MapEngine.windows()?.let { w ->
+                    scope.launch(Dispatchers.IO) {
+                        if (runCatching { w.step(c.core) }.getOrDefault(false)) main.post(repack)
+                    }
+                }
             }
         }
         if (c != null) {

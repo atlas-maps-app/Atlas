@@ -69,6 +69,38 @@ class OverpassClient(
 
     private fun num(v: Double): String = java.math.BigDecimal(v.toString()).stripTrailingZeros().toPlainString()
 
+    /**
+     * The QL of a window's data (ENGINE.md step 3: the windows the phone builds): [query]'s elements of [b], but with the
+     * box on each statement and none on `out geom`, so a relation's members come whole (with a global box, Overpass
+     * leaves out the geometry of the members beyond it).
+     */
+    fun windowQuery(b: BBox): String {
+        val box = "${num(b.south)},${num(b.west)},${num(b.north)},${num(b.east)}"
+        return "[out:json][timeout:240];(node($box)(if:count_tags()>0);way($box);relation[type=multipolygon]($box);" +
+            "relation[boundary~\"^(national_park|protected_area)$\"]($box););out geom;"
+    }
+
+    /**
+     * Overpass's JSON for a window's box ([windowQuery]), its bytes as they came, from the first host that answers
+     * whole, each tried in turn (a query that timed out part-way answers 200 with a remark, and is tried again elsewhere).
+     */
+    fun window(b: BBox): ByteArray {
+        var lastError: Exception? = null
+        for ((attempt, host) in hosts.withIndex()) {
+            try {
+                val bytes = http.post("$host/api/interpreter", mapOf("data" to windowQuery(b)), userAgent).use { it.readBytes() }
+                val tail = String(bytes, maxOf(0, bytes.size - 4096), minOf(bytes.size, 4096), Charsets.UTF_8)
+                if (tail.contains("\"remark\"") && tail.contains("runtime error", ignoreCase = true)) throw IOException("Overpass ran out of time or memory")
+                return bytes
+            } catch (e: IOException) {
+                lastError = e
+                log("retry after $host: ${e.message}")
+            }
+            pause(backoffSeconds * 1000 * (attempt + 1))
+        }
+        throw IOException("Overpass failed for the window $b: ${lastError?.message}", lastError)
+    }
+
     fun fetch(box: BBox): OverpassResult {
         val parts = ArrayList<OverpassResult>()
         gather(box, parts)

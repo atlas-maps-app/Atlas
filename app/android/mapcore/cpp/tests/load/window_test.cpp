@@ -17,6 +17,7 @@
 #include "tests/tiles/support.hpp"
 #include "tiles/Dump.hpp"
 #include "tiles/Grid.hpp"
+#include "tiles/Json.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Source.hpp"
 #include "tiles/Store.hpp"
@@ -251,6 +252,25 @@ TEST_CASE("load: a window anywhere: Paris, with its country's tradition (ATLAS_R
     ATLAS_REQUIRE(window->chunks().chunks().size() == 1);
     CHECK(window->chunks().chunks()[0].tile.packed() == tile.packed());
     CHECK(built->features > 1000);
+    // the manifest the app reads a render pack by: its box (the tile's), its origin (the frame's), profile, time zone
+    const std::span<const std::byte> bytes(built->pack);
+    const auto manifest_bytes =
+        (std::to_integer<std::uint32_t>(bytes[12]) << 24U) | (std::to_integer<std::uint32_t>(bytes[13]) << 16U) |
+        (std::to_integer<std::uint32_t>(bytes[14]) << 8U) | std::to_integer<std::uint32_t>(bytes[15]);
+    const auto manifest = tl::read_json(bytes.subspan(20, manifest_bytes));
+    ATLAS_REQUIRE(manifest.has_value());
+    const tl::Value m = manifest->root();
+    CHECK(m.find("layout").value_or(tl::Value()).string() == "render-tiles");
+    CHECK(m.find("profile").value_or(tl::Value()).string() == "region");
+    CHECK(m.find("tz").value_or(tl::Value()).string() == "Europe/Paris");
+    const tl::Value origin = m.find("origin").value_or(tl::Value());
+    CHECK(origin.find("lat").value_or(tl::Value()).real() == place.frame.lat0);
+    CHECK(origin.find("lon").value_or(tl::Value()).real() == place.frame.lon0);
+    const std::array<std::int32_t, 4> tb = tl::tile_box(tile);
+    const tl::Value box = m.find("bbox").value_or(tl::Value());
+    CHECK(box.find("south").value_or(tl::Value()).real() == static_cast<double>(tb[0]) / 1e7);
+    CHECK(box.find("east").value_or(tl::Value()).real() == static_cast<double>(tb[3]) / 1e7);
+    CHECK(m.find("config").value_or(tl::Value()).find("views").value_or(tl::Value()).size() == 0);
     MESSAGE("Paris's window ", place.name, ": ", mine.elements().size(), " elements, ", built->features, " features, ",
             built->pack.size(), " bytes; loaded at five tolerances in ", built->load_ms, " ms, cut in ", built->cut_ms,
             " ms, written in ", built->write_ms, " ms");

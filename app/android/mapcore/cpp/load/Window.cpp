@@ -222,9 +222,13 @@ std::expected<BuiltWindow, WindowError> build_window(const osm::Document& doc, c
                                       .scene = &scalars,
                                       .tradition = tradition.get()});
     if (!style) return std::unexpected(WindowError{"the engine's style file does not read"});
-    const std::string manifest =
-        std::format(R"({{"layout":"render-tiles","payload":{},"builder":"core window","window":{},"source":"{}"}})",
-                    tl::payload_version, quoted(place.name), data);
+    // the manifest the app reads a render pack by (PackList's readHead: its box, origin, profile, time zone, views)
+    const std::string manifest = std::format(
+        R"({{"layout":"render-tiles","payload":{},"profile":"region","bbox":{{"west":{},"south":{},"east":{},"north":{}}},)"
+        R"("origin":{{"lat":{},"lon":{}}},"tz":{},"config":{{"views":{{}}}},"builder":"core window","window":{},)"
+        R"("source":"{}"}})",
+        tl::payload_version, exact(degrees(tb[1])), exact(degrees(tb[0])), exact(degrees(tb[3])), exact(degrees(tb[2])),
+        exact(place.frame.lat0), exact(place.frame.lon0), quoted(place.zone), quoted(place.name), data);
     auto pack = tl::write_pack(tiles, {.levels = window_levels, .manifest = manifest, .head = *head, .style = *style});
     if (!pack) return std::unexpected(WindowError{"the pack does not write: " + tl::describe(pack.error())});
     out.pack = std::move(*pack);

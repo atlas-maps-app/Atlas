@@ -184,4 +184,17 @@ class PackListTest {
         assertEquals(CameraWriter.PROFILE_WORLD_BASE, PackList.profileOf("world-base"))
         assertEquals(CameraWriter.PROFILE_REGION, PackList.profileOf(null))
     }
+
+    @Test
+    fun aWindowsFileNamesItsWindow() {
+        assertEquals(app.atlas.mapcore.MapCore.Window(14, 8414, 5384), Windows.windowOf(java.io.File("14-8414-5384.atlas")))
+        assertEquals("window/14/8414/5384", Windows.windowOf(java.io.File("14-8414-5384.atlas"))?.id)
+        assertEquals(null, Windows.windowOf(java.io.File("14-8414-5384.atlas.part")))
+        assertEquals(null, Windows.windowOf(java.io.File("notes.txt")))
+        assertEquals(
+            app.atlas.mapcore.MapCore.Window(14, 8414, 5384),
+            app.atlas.mapcore.MapCore.Window.of((14L shl 48) or (8414L shl 24) or 5384L),
+        )
+    }
 }
+

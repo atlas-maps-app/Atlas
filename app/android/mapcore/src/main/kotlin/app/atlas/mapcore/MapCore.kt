@@ -219,6 +219,9 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
             /** A downloaded render pack (K20a). */
             const val RENDER = 1
+
+            /** A window the phone built (ENGINE.md step 3: [Window.build]); the core takes it into its frame cell's pack. */
+            const val WINDOW = 2
         }
     }
 
