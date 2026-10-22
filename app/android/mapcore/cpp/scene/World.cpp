@@ -265,6 +265,11 @@ std::vector<tiles::TileKey> World::wanted_windows() const {
     return wanted_;
 }
 
+std::size_t World::windows_ahead() const {
+    const std::scoped_lock lock(wanted_mutex_);
+    return ahead_;
+}
+
 std::vector<tiles::TileKey> World::windows_in_view() const {
     const std::scoped_lock lock(wanted_mutex_);
     return in_view_;
@@ -273,9 +278,15 @@ std::vector<tiles::TileKey> World::windows_in_view() const {
 void World::want_windows(const view::View& view, const style::CameraState& camera, const view::GroundFrame& frame,
                          double seconds) {
     if (wanted_at_ >= 0.0 && seconds - wanted_at_ < 0.5 && seconds >= wanted_at_) return;
+    const double since = wanted_at_ >= 0.0 ? seconds - wanted_at_ : -1.0;
     wanted_at_ = seconds;
+    const std::int32_t lat = tiles::grid_round(camera.latitude);
+    const std::int32_t lon = tiles::grid_round(camera.longitude);
+    const std::optional<std::array<std::int32_t, 2>> was = last_target_;
+    last_target_ = {lat, lon};
     std::vector<std::pair<double, tiles::TileKey>> found;
     std::vector<std::pair<double, tiles::TileKey>> drawn; // places only windows hold
+    std::vector<std::pair<double, tiles::TileKey>> ahead; // places the camera's motion is about to bring into view
     {
         const std::vector<std::shared_ptr<const tiles::StorePack>> open = store_.packs();
         std::vector<tiles::GridBox> held; // the bundled and render packs' boxes: their data's places
@@ -284,24 +295,65 @@ void World::want_windows(const view::View& view, const style::CameraState& camer
             if (const std::optional<tiles::GridBox> b = box_of(*p)) held.push_back(*b);
         }
         const Frustum frustum(view.camera(), 40.0, options_.far);
-        const tiles::TileKey centre =
-            tiles::tile_of(14, tiles::grid_round(camera.latitude), tiles::grid_round(camera.longitude));
+        const tiles::TileKey centre = tiles::tile_of(14, lat, lon);
         // the places within the finest level's reach: an L14 tile is 40,075 km · cos(lat) / 2^14 wide
         const double width = 40'075'016.686 * pymath::cos(pymath::radians(camera.latitude)) / 16384.0;
         const auto reach = static_cast<std::int64_t>(std::ceil(options_.fine_reach / std::max(width, 1.0))) + 1;
+        // Where the camera is heading: its target's motion since the last look, carried window_lead seconds on (in the
+        // frame's metres); none on a first look, after a pause, at rest, or for a jump of more than a few windows (a
+        // search's, not a pan's). A place is about to come into view where the frustum, moved by that much, sees it.
+        std::optional<std::array<double, 2>> lead;
+        tiles::TileKey heading = centre;
+        if (was && since > 0.0 && since <= 2.0) {
+            const auto point = [&frame](std::int32_t la, std::int32_t lo) {
+                return box_of({.south = la, .west = lo, .north = la, .east = lo}, 0, frame);
+            };
+            const Box now = point(lat, lon);
+            const Box then = point((*was)[0], (*was)[1]);
+            const double mx = now.x0 - then.x0;
+            const double mz = now.z0 - then.z0;
+            const double moved = pymath::hypot(mx, mz);
+            if (moved >= window_motion_min * since && moved <= width) {
+                // the lead at most two windows on: a fling's first look runs far ahead of where it stops
+                const double k = std::min(window_lead / since, 2.0 * width / moved);
+                lead = {{mx * k, mz * k}};
+                const auto on = [k](std::int32_t a, std::int32_t b, std::int64_t range) {
+                    const auto v = static_cast<std::int64_t>(std::llround(static_cast<double>(a) + (k * (a - b))));
+                    return static_cast<std::int32_t>(std::clamp<std::int64_t>(v, -range, range));
+                };
+                heading = tiles::tile_of(14, on(lat, (*was)[0], 850'000'000), on(lon, (*was)[1], 1'799'999'999));
+            }
+        }
         constexpr std::int64_t last = (std::int64_t{1} << 14U) - 1;
-        for (std::int64_t dy = -reach; dy <= reach; ++dy) {
-            for (std::int64_t dx = -reach; dx <= reach; ++dx) {
-                const std::int64_t x = static_cast<std::int64_t>(centre.x) + dx;
-                const std::int64_t y = static_cast<std::int64_t>(centre.y) + dy;
+        const std::int64_t x0 = std::min<std::int64_t>(centre.x, heading.x) - reach;
+        const std::int64_t x1 = std::max<std::int64_t>(centre.x, heading.x) + reach;
+        const std::int64_t y0 = std::min<std::int64_t>(centre.y, heading.y) - reach;
+        const std::int64_t y1 = std::max<std::int64_t>(centre.y, heading.y) + reach;
+        for (std::int64_t y = y0; y <= y1; ++y) {
+            for (std::int64_t x = x0; x <= x1; ++x) {
                 if (x < 0 || y < 0 || x > last || y > last) continue;
                 const tiles::TileKey key(14, static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
                 const std::array<std::int32_t, 4> b = tiles::tile_box(key);
                 const tiles::GridBox grid{.south = b[0], .west = b[1], .north = b[2], .east = b[3]};
                 const Box box = box_of(grid, 3000, frame); // 30 m up: what stands there
-                if (!frustum.sees(box)) continue;
                 const double d = frustum.distance(box);
-                if (d > options_.fine_reach) continue;
+                if (!frustum.sees(box) || d > options_.fine_reach) {
+                    if (!lead) continue;
+                    // seen once the camera has moved on: the box moved back by the lead, as the frustum sees it now
+                    Box shifted = box;
+                    shifted.x0 -= (*lead)[0];
+                    shifted.x1 -= (*lead)[0];
+                    shifted.z0 -= (*lead)[1];
+                    shifted.z1 -= (*lead)[1];
+                    const double then = frustum.distance(shifted);
+                    if (!frustum.sees(shifted) || then > options_.fine_reach || !store_.find(key).empty()) continue;
+                    const bool inside = std::ranges::any_of(held, [&grid](const tiles::GridBox& h) {
+                        return grid.south >= h.south && grid.north <= h.north && grid.west >= h.west &&
+                               grid.east <= h.east;
+                    });
+                    if (!inside) ahead.emplace_back(then, key);
+                    continue;
+                }
                 const std::vector<tiles::StoreHit> hits = store_.find(key);
                 if (!hits.empty()) {
                     if (std::ranges::all_of(
@@ -326,9 +378,13 @@ void World::want_windows(const view::View& view, const style::CameraState& camer
         return keys;
     };
     std::vector<tiles::TileKey> wanted = nearest(found);
+    const std::vector<tiles::TileKey> next = nearest(ahead);
+    const std::size_t taken = std::min(next.size(), window_ahead_max);
+    wanted.insert(wanted.end(), next.begin(), next.begin() + static_cast<std::ptrdiff_t>(taken));
     std::vector<tiles::TileKey> in_view = nearest(drawn);
     const std::scoped_lock lock(wanted_mutex_);
     wanted_ = std::move(wanted);
+    ahead_ = taken;
     in_view_ = std::move(in_view);
 }
 

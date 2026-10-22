@@ -27,6 +27,7 @@
 #include "view/Frames.hpp"
 #include "view/Ladder.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -39,6 +40,15 @@
 #include <vector>
 
 namespace atlas::scene {
+
+/// How far ahead the windows the core wants look while the camera pans (World::wanted_windows): the places its target's
+/// motion brings into view within this many seconds are asked for after those in view, so they are built before the
+/// camera reaches them.
+inline constexpr double window_lead = 3.0;
+/// The least motion of the camera's target that counts as panning, metres a second.
+inline constexpr double window_motion_min = 10.0;
+/// How many places ahead are asked for at once (each is a query of Overpass).
+inline constexpr std::size_t window_ahead_max = 4;
 
 /// The world's choices.
 struct WorldOptions {
@@ -96,13 +106,17 @@ public:
     [[nodiscard]] const tiles::StorePack* neighbour() const noexcept { return neighbour_.get(); }
     /// The L14 places in view the phone may build a window for (ENGINE.md step 3: the core asks, the app fetches):
     /// each seen by the frustum within the finest level's reach of the eye, where no pack of the store has a tile and
-    /// no bundled or render pack's box holds the place whole (an empty place of that pack's data), nearest first. Made
-    /// on the render thread at most every half second; read from any thread.
+    /// no bundled or render pack's box holds the place whole (an empty place of that pack's data), nearest first; then,
+    /// while the camera pans, the few places its motion brings into view within window_lead seconds (prefetched),
+    /// nearest to where the eye will be first. Made on the render thread at most every half second; read from any
+    /// thread.
     [[nodiscard]] std::vector<tiles::TileKey> wanted_windows() const;
     /// The L14 places in view drawn from windows, nearest first: each seen by the frustum within the finest level's
     /// reach of the eye, where only windows hold its tile (the app refreshes the ones whose data has aged: ENGINE.md
     /// step 3, a window built again after a week). Made with wanted_windows; read from any thread.
     [[nodiscard]] std::vector<tiles::TileKey> windows_in_view() const;
+    /// How many of wanted_windows' last places are the ones ahead of the camera's motion.
+    [[nodiscard]] std::size_t windows_ahead() const;
 
     // frame::FrameScene
     [[nodiscard]] const view::Ladder* ladder(const style::CameraState& camera) override;
@@ -196,8 +210,10 @@ private:
     std::shared_ptr<const tiles::StorePack> neighbour_;
     std::shared_ptr<const tiles::StorePack> last_neighbour_;
     mutable std::mutex wanted_mutex_;
-    std::vector<tiles::TileKey> wanted_;  ///< under wanted_mutex_
-    std::vector<tiles::TileKey> in_view_; ///< under wanted_mutex_
+    std::vector<tiles::TileKey> wanted_;                     ///< under wanted_mutex_
+    std::optional<std::array<std::int32_t, 2>> last_target_; ///< the camera's target at the last look (render thread)
+    std::vector<tiles::TileKey> in_view_;                    ///< under wanted_mutex_
+    std::size_t ahead_ = 0;                                  ///< under wanted_mutex_
     double wanted_at_ = -1.0;
     /// What the items were last placed for: the frame drawn, the coarser pack and the mask.
     std::optional<view::GroundFrame> placed_frame_;

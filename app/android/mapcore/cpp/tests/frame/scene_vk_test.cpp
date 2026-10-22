@@ -732,6 +732,42 @@ TEST_CASE("a frame cell's windows are drawn beside the active pack, where it has
     }
     CHECK(w.active() == nullptr);
     MESSAGE(wanted.size() << " windows wanted 3 km east, the nearest " << wanted.front().x << "/" << wanted.front().y);
+    // Panning east there at 200 m a second: the places in view come first, then the ones the motion brings into view
+    // (prefetched), each east of where the target stands; held still, the list is the places in view alone again.
+    style::CameraState pan = high;
+    const double per_second = 200.0 / (111'320.0 * atlas::pymath::cos(atlas::pymath::radians(pan.latitude)));
+    std::uint64_t n = 111;
+    for (; n <= 190; ++n) {
+        now = static_cast<double>(n) * 0.016;
+        pan.longitude += per_second * 0.016;
+        (*builder)->set_inputs({.camera = pan, .scene = &w});
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+    }
+    const std::vector<tiles::TileKey> moving = w.wanted_windows();
+    const std::size_t ahead = w.windows_ahead();
+    ATLAS_REQUIRE(ahead >= 1 && ahead <= scene::window_ahead_max && ahead < moving.size());
+    const auto first_ahead = moving.end() - static_cast<std::ptrdiff_t>(ahead);
+    double in_view_x = 0;
+    double ahead_x = 0;
+    for (auto k = moving.begin(); k != moving.end(); ++k) {
+        CHECK(w.store().find(*k).empty());
+        if (k < first_ahead) {
+            in_view_x += static_cast<double>(k->x) / static_cast<double>(moving.size() - ahead);
+        } else {
+            CHECK(std::find(moving.begin(), first_ahead, *k) == first_ahead); // not one in view
+            ahead_x += static_cast<double>(k->x) / static_cast<double>(ahead);
+        }
+    }
+    CHECK(ahead_x > in_view_x); // ahead of an eastward pan: east of what is in view
+    for (; n <= 300; ++n) {     // 1.8 s still: looks without motion
+        now = static_cast<double>(n) * 0.016;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+    }
+    CHECK(w.windows_ahead() == 0);
+    CHECK(!w.wanted_windows().empty());
+    MESSAGE((moving.size() - ahead) << " windows wanted in view while panning east, " << ahead << " ahead of it");
     (void)session->take_messages();
 }
 
