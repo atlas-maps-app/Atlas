@@ -25,6 +25,7 @@
 #include "gpu/PipelineCache.hpp"
 #include "gpu/Swapchain.hpp"
 #include "labels/Sprites.hpp"
+#include "load/Window.hpp"
 #include "standin/Session.hpp"
 #include "style/CameraState.hpp"
 #include "style/Theme.hpp"
@@ -42,6 +43,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -268,6 +270,11 @@ public:
             ask_frame();
             return said;
         });
+    }
+
+    /// The windows the map's world wants built, nearest first (scene::World::wanted_windows).
+    [[nodiscard]] std::vector<tiles::TileKey> wanted_windows() {
+        return on_session([this] { return map_->wanted_windows(); });
     }
 
     /// The moment's theme for the map from now on.
@@ -803,6 +810,59 @@ jstring native_packs(JNIEnv* env, jclass /*cls*/, jlong handle, jobjectArray ids
     return java(env, refused + core->packs(std::move(packs)));
 }
 
+/// The windows the map wants built, nearest first: each its tile's key packed as z << 48 | x << 24 | y.
+jlongArray native_wanted_windows(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    const std::vector<tiles::TileKey> keys = core != nullptr ? core->wanted_windows() : std::vector<tiles::TileKey>{};
+    std::vector<jlong> packed(keys.size());
+    for (std::size_t i = 0; i < keys.size(); ++i) packed[i] = static_cast<jlong>(keys[i].packed());
+    jlongArray out = env->NewLongArray(static_cast<jsize>(packed.size()));
+    if (out != nullptr && !packed.empty()) {
+        env->SetLongArrayRegion(out, 0, static_cast<jsize>(packed.size()), packed.data());
+    }
+    return out;
+}
+
+/// The box whose data window (z, x, y) needs, [south, west, north, east] degrees (load::window_box).
+jdoubleArray native_window_box(JNIEnv* env, jclass /*cls*/, jint z, jint x, jint y) {
+    const std::array<double, 4> box = load::window_box(
+        tiles::TileKey(static_cast<std::uint8_t>(z), static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y)));
+    jdoubleArray out = env->NewDoubleArray(4);
+    if (out != nullptr) env->SetDoubleArrayRegion(out, 0, 4, box.data());
+    return out;
+}
+
+/// Builds window (z, x, y) from Overpass's JSON for its box (a direct buffer) and writes its pack to `path`, by a file
+/// beside it renamed once whole: "" or why not. On the caller's thread, a background one (a few seconds, tens of MB).
+jstring native_build_window(JNIEnv* env, jclass /*cls*/, jint z, jint x, jint y, jobject json, jstring path) {
+    void* address = json == nullptr ? nullptr : env->GetDirectBufferAddress(json);
+    const jlong capacity = json == nullptr ? 0 : env->GetDirectBufferCapacity(json);
+    if (address == nullptr || capacity <= 0) return java(env, "the window's data must be a direct buffer");
+    if (std::cmp_not_equal(z, load::window_level) || x < 0 || y < 0 || x >= (1 << 14) || y >= (1 << 14)) {
+        return java(env, std::format("no window {}/{}/{}", z, x, y));
+    }
+    const tiles::TileKey key(static_cast<std::uint8_t>(z), static_cast<std::uint32_t>(x),
+                             static_cast<std::uint32_t>(y));
+    const auto built =
+        load::build_window(std::span(static_cast<const std::byte*>(address), static_cast<std::size_t>(capacity)), key,
+                           load::place_of(key));
+    if (!built) return java(env, built.error().what);
+    const std::string target = string_of(env, path);
+    const std::string part = target + ".part";
+    {
+        std::ofstream out(part, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(built->pack.data()), // NOLINT: the pack's bytes as chars
+                  static_cast<std::streamsize>(built->pack.size()));
+        if (!out.good()) return java(env, std::format("{} could not be written", part));
+    }
+    std::error_code e;
+    std::filesystem::rename(part, target, e);
+    if (e) return java(env, std::format("{} could not be renamed: {}", part, e.message()));
+    log::info("vk window {}/{}/{}: {} features, {} bytes; loaded in {:.0f} ms, cut in {:.0f} ms, written in {:.0f} ms",
+              z, x, y, built->features, built->pack.size(), built->load_ms, built->cut_ms, built->write_ms);
+    return java(env, "");
+}
+
 /// The moment's theme for the map (MK/state/ThemeBlock.kt's 256 bytes in a direct buffer); "" or why it was refused.
 jstring native_moment(JNIEnv* env, jclass /*cls*/, jlong handle, jobject theme) {
     Core* core = core_of(handle);
@@ -972,8 +1032,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 33>& methods() {
-    static const std::array<JNINativeMethod, 33> table{{
+const std::array<JNINativeMethod, 36>& methods() {
+    static const std::array<JNINativeMethod, 36> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1021,6 +1081,10 @@ const std::array<JNINativeMethod, 33>& methods() {
         method("labels", "(JLjava/nio/ByteBuffer;JF)Ljava/lang/String;", fn(&native_labels)),
         method("screen", "(JZZ)V", fn(&native_screen)),
         method("painter", "(JZ)V", fn(&native_painter)),
+        method("wantedWindows", "(J)[J", fn(&native_wanted_windows)),
+        method("windowBox", "(III)[D", fn(&native_window_box)),
+        method("buildWindow", "(IIILjava/nio/ByteBuffer;Ljava/lang/String;)Ljava/lang/String;",
+               fn(&native_build_window)),
     }};
     return table;
 }

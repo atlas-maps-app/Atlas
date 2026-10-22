@@ -31,6 +31,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -93,6 +94,11 @@ public:
     /// target within the cover's reach, else the nearest other cell's windows. Its tiles are drawn where neither the
     /// active nor the coarser pack has one (scene/Cover.hpp).
     [[nodiscard]] const tiles::StorePack* neighbour() const noexcept { return neighbour_.get(); }
+    /// The L14 places in view the phone may build a window for (ENGINE.md step 3: the core asks, the app fetches):
+    /// each seen by the frustum within the finest level's reach of the eye, where no pack of the store has a tile and
+    /// no bundled or render pack's box holds the place whole (an empty place of that pack's data), nearest first. Made
+    /// on the render thread at most every half second; read from any thread.
+    [[nodiscard]] std::vector<tiles::TileKey> wanted_windows() const;
 
     // frame::FrameScene
     [[nodiscard]] const view::Ladder* ladder(const style::CameraState& camera) override;
@@ -143,6 +149,10 @@ private:
     [[nodiscard]] std::string enclosing_pack();
     /// The neighbour for the frame (neighbour()), for the camera's target.
     void choose_neighbour(const style::CameraState& camera);
+    /// The windows wanted in `view` around the camera's target (wanted_windows), at most every half second; `frame`
+    /// the view's ground frame (the frame drawn, or without a pack one centred on the target, as the view then is).
+    void want_windows(const view::View& view, const style::CameraState& camera, const view::GroundFrame& frame,
+                      double seconds);
     /// A resident tile's items in the frame drawn (converted from their pack's frame) and masked where they are the
     /// coarser pack's inside the mask.
     void place_items(const ResidentTile& tile);
@@ -181,6 +191,9 @@ private:
     std::optional<tiles::GridBox> mask_;
     std::shared_ptr<const tiles::StorePack> neighbour_;
     std::shared_ptr<const tiles::StorePack> last_neighbour_;
+    mutable std::mutex wanted_mutex_;
+    std::vector<tiles::TileKey> wanted_; ///< under wanted_mutex_
+    double wanted_at_ = -1.0;
     /// What the items were last placed for: the frame drawn, the coarser pack and the mask.
     std::optional<view::GroundFrame> placed_frame_;
     std::string placed_coarser_;

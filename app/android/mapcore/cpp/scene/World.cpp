@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <format>
 
 namespace atlas::scene {
@@ -259,6 +260,59 @@ void World::choose_neighbour(const style::CameraState& camera) {
     }
 }
 
+std::vector<tiles::TileKey> World::wanted_windows() const {
+    const std::scoped_lock lock(wanted_mutex_);
+    return wanted_;
+}
+
+void World::want_windows(const view::View& view, const style::CameraState& camera, const view::GroundFrame& frame,
+                         double seconds) {
+    if (wanted_at_ >= 0.0 && seconds - wanted_at_ < 0.5 && seconds >= wanted_at_) return;
+    wanted_at_ = seconds;
+    std::vector<std::pair<double, tiles::TileKey>> found;
+    {
+        const std::vector<std::shared_ptr<const tiles::StorePack>> open = store_.packs();
+        std::vector<tiles::GridBox> held; // the bundled and render packs' boxes: their data's places
+        for (const std::shared_ptr<const tiles::StorePack>& p : open) {
+            if (p->kind == tiles::PackKind::window) continue;
+            if (const std::optional<tiles::GridBox> b = box_of(*p)) held.push_back(*b);
+        }
+        const Frustum frustum(view.camera(), 40.0, options_.far);
+        const tiles::TileKey centre =
+            tiles::tile_of(14, tiles::grid_round(camera.latitude), tiles::grid_round(camera.longitude));
+        // the places within the finest level's reach: an L14 tile is 40,075 km · cos(lat) / 2^14 wide
+        const double width = 40'075'016.686 * pymath::cos(pymath::radians(camera.latitude)) / 16384.0;
+        const auto reach = static_cast<std::int64_t>(std::ceil(options_.fine_reach / std::max(width, 1.0))) + 1;
+        constexpr std::int64_t last = (std::int64_t{1} << 14U) - 1;
+        for (std::int64_t dy = -reach; dy <= reach; ++dy) {
+            for (std::int64_t dx = -reach; dx <= reach; ++dx) {
+                const std::int64_t x = static_cast<std::int64_t>(centre.x) + dx;
+                const std::int64_t y = static_cast<std::int64_t>(centre.y) + dy;
+                if (x < 0 || y < 0 || x > last || y > last) continue;
+                const tiles::TileKey key(14, static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
+                const std::array<std::int32_t, 4> b = tiles::tile_box(key);
+                const tiles::GridBox grid{.south = b[0], .west = b[1], .north = b[2], .east = b[3]};
+                const Box box = box_of(grid, 3000, frame); // 30 m up: what stands there
+                if (!frustum.sees(box)) continue;
+                const double d = frustum.distance(box);
+                if (d > options_.fine_reach) continue;
+                if (!store_.find(key).empty()) continue;
+                const bool inside = std::ranges::any_of(held, [&grid](const tiles::GridBox& h) {
+                    return grid.south >= h.south && grid.north <= h.north && grid.west >= h.west && grid.east <= h.east;
+                });
+                if (!inside) found.emplace_back(d, key);
+            }
+        }
+    }
+    // stable: places at one distance keep the scan's order, on every libc++
+    std::ranges::stable_sort(found, [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::vector<tiles::TileKey> keys;
+    keys.reserve(found.size());
+    for (const auto& [d, key] : found) keys.push_back(key);
+    const std::scoped_lock lock(wanted_mutex_);
+    wanted_ = std::move(keys);
+}
+
 void World::place_items(const ResidentTile& tile) {
     const std::optional<view::GroundFrame>& drawn = frames_.current();
     const bool convert = drawn && *drawn != tile.frame;
@@ -356,6 +410,15 @@ void World::update(const frame::FrameState& state) {
         neighbour_.reset();
         take_packs();
         cover_.update(state.view ? *state.view : view::View({}, {}), frames_, {}, *residency_, seconds);
+        // without a pack the view looks at its target from a frame centred on it: the windows wanted there
+        if (state.view) {
+            const double lat0 = state.camera.latitude;
+            const tiles::Frame centred{.lat0 = lat0,
+                                       .lon0 = state.camera.longitude,
+                                       .kx = 111320.0 * pymath::cos(pymath::radians(lat0)),
+                                       .kz = 110540.0};
+            want_windows(*state.view, state.camera, view::frame_of(centred), seconds);
+        }
         if (sun_) sun_->prepare(state, nullptr, 0, cover_);
         residency_->want({});
         release_idle(seconds, state.number);
@@ -398,6 +461,7 @@ void World::update(const frame::FrameState& state) {
                                    ? neighbour_->pack.head()->tolerance_of(std::nullopt, dist).value_or(std::uint8_t{0})
                                    : std::uint8_t{0}};
     cover_.update(*state.view, frames_, in, *residency_, seconds);
+    want_windows(*state.view, state.camera, frames_.current().value_or(view::frame_of(head.frame)), seconds);
     // The sun of the pack drawn, of the coarser pack around it and of the neighbour beside it, each in its own lane.
     if (sun_) {
         sun_->prepare(state, active_, in.tolerance, cover_, coarser_, in.coarser_tolerance, neighbour_,

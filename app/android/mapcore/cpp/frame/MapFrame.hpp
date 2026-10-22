@@ -97,6 +97,8 @@ public:
     [[nodiscard]] std::string_view drawn_pack() const noexcept;
     /// Its world's `vk tiles <n> resident <MB> build <ms>` line (Appendix C).
     [[nodiscard]] std::string tiles_line() const;
+    /// The windows its world wants built, nearest first (scene::World::wanted_windows; none before it is made).
+    [[nodiscard]] std::vector<tiles::TileKey> wanted_windows() const;
     /// The world, while made (tests).
     [[nodiscard]] scene::World* world() noexcept { return world_.get(); }
     /// The frame builder, while made (tests: the last frame's state).

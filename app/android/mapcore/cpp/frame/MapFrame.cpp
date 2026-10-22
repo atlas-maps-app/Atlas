@@ -227,4 +227,8 @@ std::string MapFrame::tiles_line() const {
     return made() ? world_->tiles_line() : std::string("vk tiles 0 resident 0.0 build 0.0");
 }
 
+std::vector<tiles::TileKey> MapFrame::wanted_windows() const {
+    return world_ ? world_->wanted_windows() : std::vector<tiles::TileKey>{};
+}
+
 } // namespace atlas::frame

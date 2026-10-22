@@ -270,6 +270,34 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
      */
     fun painterOrder(on: Boolean) = core.call(Unit) { Native.painter(it, on) }
 
+    /** A window of the map the phone builds (ENGINE.md step 3): one L14 tile, by its zoom, column and row. */
+    data class Window(val z: Int, val x: Int, val y: Int) {
+        /** Its pack's id among the map's packs. */
+        val id: String get() = "window/$z/$x/$y"
+
+        /** The box whose data it needs: south, west, north, east, degrees (its tile's grown by the core's margin). */
+        fun box(): DoubleArray = Native.windowBox(z, x, y)
+
+        /**
+         * Builds it from Overpass's JSON for [box] ([json], a direct buffer) and writes its pack to [file], which the map
+         * then lists as a pack of kind window: "" or why not. Off the main thread: a few seconds and tens of MB.
+         */
+        fun build(json: java.nio.ByteBuffer, file: java.io.File): String = Native.buildWindow(z, x, y, json, file.path)
+
+        companion object {
+            /** The window of a key the core packed (`z shl 48 or x shl 24 or y`). */
+            fun of(packed: Long): Window =
+                Window((packed ushr 48).toInt(), ((packed ushr 24) and 0xFFFFFF).toInt(), (packed and 0xFFFFFF).toInt())
+        }
+    }
+
+    /**
+     * The windows the map wants built now, nearest first: L14 places in view without a pack's tile (the core asks, the
+     * app fetches their data). Empty before the map is made. Off the main thread.
+     */
+    fun wantedWindows(): List<Window> =
+        core.call(emptyList()) { h -> Native.wantedWindows(h).map { Window.of(it) } }
+
     /**
      * Closes the core: no call starts after this begins, the calls under way finish first, then the core is freed
      * (its last pipeline cache write among it). Under the lock of [shared], [facts] and [resetGuard], and the process's

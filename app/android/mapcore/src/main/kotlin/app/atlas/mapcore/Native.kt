@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 10
+    const val ABI = 11
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -213,6 +213,18 @@ object Native {
 
     /** The painter switch for the map ([on]: the renderer's painter's order for what stands up, else true depth). */
     @JvmStatic external fun painter(handle: Long, on: Boolean)
+
+    /** The windows the map wants built, nearest first, each its tile's key packed as `z shl 48 or x shl 24 or y`. */
+    @JvmStatic external fun wantedWindows(handle: Long): LongArray
+
+    /** The box whose data window ([z], [x], [y]) needs: south, west, north, east, degrees. */
+    @JvmStatic external fun windowBox(z: Int, x: Int, y: Int): DoubleArray
+
+    /**
+     * Builds window ([z], [x], [y]) from Overpass's JSON for its box ([json], direct) and writes its pack to [path]:
+     * "" or why not. On the caller's thread, a background one: a few seconds and tens of MB.
+     */
+    @JvmStatic external fun buildWindow(z: Int, x: Int, y: Int, json: ByteBuffer, path: String): String
 
     /**
      * The map's labels (`state.LabelBlock`'s block in a direct buffer; an empty block takes them away) at [revision],

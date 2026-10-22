@@ -679,6 +679,8 @@ TEST_CASE("a frame cell's windows are drawn beside the active pack, where it has
     }
     CHECK(own_tiles > 0);
     CHECK(window_tiles > 0);
+    // Every place the frustum sees within the finest level's reach has its tile here: no window is wanted.
+    CHECK(w.wanted_windows().empty());
     // The windows' own sun lane lights every tile of theirs the cover draws.
     REQUIRE(w.sun() != nullptr);
     w.sun()->wait_idle();
@@ -712,6 +714,24 @@ TEST_CASE("a frame cell's windows are drawn beside the active pack, where it has
     CHECK(w.active()->kind == tiles::PackKind::window);
     ATLAS_REQUIRE(w.neighbour() != nullptr);
     CHECK(w.neighbour()->id == "amsterdam");
+    // Away from every pack (3 km east) nothing is drawn, but the places in view are the windows wanted, nearest first,
+    // none where a pack has a tile.
+    style::CameraState high = c;
+    high.longitude += 0.045;
+    (*builder)->set_inputs({.camera = high, .scene = &w});
+    for (std::uint64_t n = 71; n <= 110; ++n) {
+        now = static_cast<double>(n) * 0.016;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+    }
+    const std::vector<tiles::TileKey> wanted = w.wanted_windows();
+    ATLAS_REQUIRE(!wanted.empty());
+    for (const tiles::TileKey& k : wanted) {
+        CHECK(k.z == 14);
+        CHECK(w.store().find(k).empty());
+    }
+    CHECK(w.active() == nullptr);
+    MESSAGE(wanted.size() << " windows wanted 3 km east, the nearest " << wanted.front().x << "/" << wanted.front().y);
     (void)session->take_messages();
 }
 

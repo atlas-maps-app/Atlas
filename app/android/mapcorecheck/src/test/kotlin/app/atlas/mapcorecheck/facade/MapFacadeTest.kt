@@ -1,5 +1,6 @@
 package app.atlas.mapcorecheck.facade
 
+import app.atlas.anchor.AnchorCases
 import app.atlas.mapcore.Native
 import app.atlas.mapcore.state.LabelBlock
 import app.atlas.mapcore.state.ThemeBlock
@@ -130,4 +131,47 @@ class MapFacadeTest {
             dir.deleteRecursively()
         }
     }
+
+    @Test
+    fun aWindowBuiltThroughTheFacadeJoinsTheMapsPacks() {
+        // the Westerkerk's L14 tile, its data the Westerkerk's raw.json (the renders' query of a larger box)
+        val raw = File(AnchorCases.westerkerk().dir, "raw.json")
+        assumeTrue("the Westerkerk's raw.json", raw.isFile)
+        val x = ((4.8840 + 180.0) / 360.0 * 16384).toInt()
+        val lat = Math.toRadians(52.3746)
+        val y = ((1.0 - Math.log(Math.tan(lat) + 1.0 / Math.cos(lat)) / Math.PI) / 2.0 * 16384).toInt()
+        val id = "window/14/$x/$y"
+        val box = Native.windowBox(14, x, y)
+        assertEquals(4, box.size)
+        assertTrue(box.joinToString(), box[0] < 52.3746 && 52.3746 < box[2] && box[1] < 4.8840 && 4.8840 < box[3])
+        val dir = Files.createTempDirectory("atlas-window-facade").toFile()
+        try {
+            val bytes = raw.readBytes()
+            val json = ByteBuffer.allocateDirect(bytes.size).put(bytes).flip() as ByteBuffer
+            val file = File(dir, "14-$x-$y.atlas")
+            assertEquals("", Native.buildWindow(14, x, y, json, file.path))
+            assertTrue(file.isFile && file.length() > 0)
+            assertTrue(!File(dir, "14-$x-$y.atlas.part").exists())
+            // a window of another level, or data that is no Overpass answer: refused, saying why
+            assertTrue(Native.buildWindow(13, x / 2, y / 2, json, File(dir, "w13").path).contains("no window"))
+            val junk = ByteBuffer.allocateDirect(4).put("nope".toByteArray()).flip() as ByteBuffer
+            assertTrue(Native.buildWindow(14, x, y, junk, File(dir, "junk.atlas").path).startsWith("the data does not read"))
+            // listed as a pack of kind window, it opens in the map's world as its frame cell's
+            val guard = dir.resolve("vk").path
+            val handle = Native.create(dir.path, guard, "jvm-test", "", 0, "", 0L)
+            assertNotEquals("create refused: ${Native.lastError()}", 0L, handle)
+            try {
+                assertEquals("", Native.map(handle, 1))
+                val said = Native.packs(handle, arrayOf(id), longArrayOf(1L), intArrayOf(2), arrayOf(file.path), intArrayOf(-1), LongArray(1), LongArray(1))
+                assertEquals("$id opened\n", said)
+                // no frame drawn yet: no window wanted
+                assertEquals(0, Native.wantedWindows(handle).size)
+            } finally {
+                Native.close(handle)
+            }
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
 }
+
