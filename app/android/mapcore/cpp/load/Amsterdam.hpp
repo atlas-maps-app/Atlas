@@ -44,6 +44,13 @@ struct Palette {
 /// Amsterdam's palette.
 [[nodiscard]] Palette amsterdam_palette() noexcept;
 
+/// guess_tags for one building or part (`h0` its height as loaded, None where nothing gave one): the generic values for
+/// its missing tags, recorded as guessed, from its own random stream (random.Random(id)).
+void guess_tags(Building& b, std::optional<double> h0, const Palette& palette);
+
+/// `_bb`: an outline's box, with Python's min and max.
+[[nodiscard]] Box box_of(std::span<const V2> poly) noexcept;
+
 /// `load(raw)`: the scene of a document in `frame`, with `palette` for the guessed colours. guess_tags's values come
 /// with each record (each building draws from its own random stream, seeded by its id, so the order is free).
 [[nodiscard]] std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const tiles::Frame& frame,

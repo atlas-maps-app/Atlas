@@ -10,6 +10,7 @@
 // It binds to the Kotlin object app.atlas.mapcorecheck.load.LoadHost by JNI's names; nothing of it is in the phone's
 // library.
 #include "load/Amsterdam.hpp"
+#include "load/Regions.hpp"
 #include "osm/Overpass.hpp"
 #include "text/Case.hpp"
 
@@ -31,7 +32,7 @@ namespace load = atlas::load;
 namespace osm = atlas::osm;
 
 /// The layout version of these entry points; LoadHost refuses another.
-constexpr jint test_load_abi = 1;
+constexpr jint test_load_abi = 2;
 
 std::string string_of(JNIEnv* env, jstring s) {
     const char* chars = env->GetStringUTFChars(s, nullptr);
@@ -116,10 +117,45 @@ std::string_view source_of(load::HeightSource s) {
     return "-";
 }
 
-void building(std::ofstream& out, std::string_view list, std::size_t i, const load::Building& b, bool part) {
+/// A building's line; for a region, without what generic.py's looks set or change (they join when they are ported).
+void building(std::ofstream& out, std::string_view list, std::size_t i, const load::Building& b, bool part,
+              bool region) {
     Line l(list, i);
     l.field("id").integer(b.id);
     l.field("src").raw(source_of(b.src));
+    if (region) {
+        l.field("min").real(b.min);
+        l.field("year").integer(b.year);
+        l.field("otype").raw(b.relation ? "relation" : "~");
+        l.field("parent_id");
+        if (b.parent_id) {
+            l.integer(*b.parent_id);
+        } else {
+            l.raw("~");
+        }
+        l.field("in_church").raw(b.in_church ? "1" : "~");
+        l.field("bb").real(b.bb.x0).raw(",").real(b.bb.x1).raw(",").real(b.bb.z0).raw(",").real(b.bb.z1);
+        l.field("places");
+        if (b.places.empty()) {
+            l.raw("~");
+        } else {
+            for (std::size_t k = 0; k < b.places.size(); ++k) {
+                if (k > 0) l.raw(",");
+                l.integer(b.places[k]);
+            }
+        }
+        l.field("hidden");
+        if (part) {
+            l.raw("~");
+        } else {
+            l.flag(b.hidden);
+        }
+        l.field("poly").points(b.poly);
+        l.field("tags").tags(b.tags);
+        out << l.str() << '\n';
+        return;
+    }
+
     l.field("h").real(b.h);
     l.field("min").real(b.min);
     l.field("year").integer(b.year);
@@ -163,11 +199,107 @@ void building(std::ofstream& out, std::string_view list, std::size_t i, const lo
     out << l.str() << '\n';
 }
 
-/// The scene's canonical lines, written to `out`; the number of lines.
-std::size_t write_scene(std::ofstream& out, const load::Scene& s) {
+/// An item's line (a crane, mast, tower or turbine).
+void item(std::ofstream& out, std::string_view list, std::size_t i, const load::Item& it) {
+    Line l(list, i);
+    l.field("id").integer(it.id);
+    l.field("x").real(it.x);
+    l.field("z").real(it.z);
+    l.field("h").real(it.h);
+    l.field("rotor").real(it.rotor);
+    l.field("poly");
+    if (it.poly) {
+        l.points(*it.poly);
+    } else {
+        l.raw("~");
+    }
+    l.field("tags").tags(it.tags);
+    out << l.str() << '\n';
+}
+
+/// The lists regions.py's load adds, after the living map's; the number of lines.
+std::size_t write_region(std::ofstream& out, const load::Scene& s) {
     std::size_t lines = 0;
-    for (std::size_t i = 0; i < s.buildings.size(); ++i, ++lines) building(out, "building", i, s.buildings[i], false);
-    for (std::size_t i = 0; i < s.parts.size(); ++i, ++lines) building(out, "part", i, s.parts[i], true);
+    for (std::size_t i = 0; i < s.land.size(); ++i, ++lines) {
+        const load::Land& a = s.land[i];
+        Line l("land", i);
+        l.field("kind").text(a.kind).field("id").integer(a.id).field("poly").points(a.poly).field("tags").tags(a.tags);
+        out << l.str() << '\n';
+    }
+    for (std::size_t i = 0; i < s.aero.size(); ++i, ++lines) {
+        const load::Aero& a = s.aero[i];
+        Line l("aero", i);
+        l.field("kind").text(a.kind).field("id").integer(a.id).field("pts").points(a.pts).field("tags").tags(a.tags);
+        out << l.str() << '\n';
+    }
+    for (std::size_t i = 0; i < s.big.size(); ++i, ++lines) {
+        const load::BigRoad& r = s.big[i];
+        Line l("big", i);
+        l.field("hw").text(r.hw).field("layer").real(r.layer).field("id").integer(r.id);
+        l.field("pts").points(r.pts).field("tags").tags(r.tags);
+        out << l.str() << '\n';
+    }
+    for (std::size_t i = 0; i < s.rail.size(); ++i, ++lines) {
+        const load::Railway& r = s.rail[i];
+        Line l("railway", i);
+        l.field("crane").flag(r.crane).field("pts").points(r.pts).field("tags").tags(r.tags);
+        out << l.str() << '\n';
+    }
+    for (std::size_t i = 0; i < s.power.size(); ++i, ++lines) {
+        const load::PowerLine& r = s.power[i];
+        Line l("power", i);
+        l.field("pts").points(r.pts).field("tags").tags(r.tags);
+        out << l.str() << '\n';
+    }
+    for (std::size_t i = 0; i < s.marine.size(); ++i, ++lines) {
+        const load::Marine& m = s.marine[i];
+        Line l("marine", i);
+        l.field("kind").text(m.kind).field("closed").flag(m.closed).field("pts").points(m.pts);
+        l.field("tags").tags(m.tags);
+        out << l.str() << '\n';
+    }
+    for (std::size_t i = 0; i < s.cranes.size(); ++i, ++lines) item(out, "crane", i, s.cranes[i]);
+    for (std::size_t i = 0; i < s.masts.size(); ++i, ++lines) item(out, "mast", i, s.masts[i]);
+    for (const auto& [list, gantries] : {std::pair{"gantry", &s.gantries}, std::pair{"conveyor", &s.conveyors}}) {
+        for (std::size_t i = 0; i < gantries->size(); ++i, ++lines) {
+            const load::Gantry& g = (*gantries)[i];
+            Line l(list, i);
+            l.field("id").integer(g.id).field("h").real(g.h).field("pts").points(g.pts).field("tags").tags(g.tags);
+            out << l.str() << '\n';
+        }
+    }
+    for (std::size_t i = 0; i < s.turbines.size(); ++i, ++lines) item(out, "turbine", i, s.turbines[i]);
+    for (std::size_t i = 0; i < s.mtowers.size(); ++i, ++lines) item(out, "mtower", i, s.mtowers[i]);
+    for (std::size_t i = 0; i < s.towers.size(); ++i, ++lines) {
+        const load::Tower& t = s.towers[i];
+        Line l("tower", i);
+        l.field("id").integer(t.id).field("x").real(t.at.x).field("z").real(t.at.z).field("h").real(t.h);
+        out << l.str() << '\n';
+    }
+    for (std::size_t i = 0; i < s.park.size(); ++i, ++lines) {
+        Line l("park", i);
+        l.field("ring").points(s.park[i].ring).field("tags").tags(s.park[i].tags);
+        out << l.str() << '\n';
+    }
+    for (std::size_t i = 0; i < s.water_holes.size(); ++i, ++lines) {
+        out << Line("hole", i).field("ring").points(s.water_holes[i]).str() << '\n';
+    }
+    for (std::size_t i = 0; i < s.natural_shore.size(); ++i) {
+        if (!s.natural_shore[i]) continue;
+        out << Line("shore", i).str() << '\n';
+        ++lines;
+    }
+    return lines;
+}
+
+/// The scene's canonical lines, written to `out` (a region's with its own lists); the number of lines.
+std::size_t write_scene(std::ofstream& out, const load::Scene& s, bool region = false) {
+    std::size_t lines = 0;
+    for (std::size_t i = 0; i < s.buildings.size(); ++i, ++lines) {
+        building(out, "building", i, s.buildings[i], false, region);
+    }
+    for (std::size_t i = 0; i < s.parts.size(); ++i, ++lines) building(out, "part", i, s.parts[i], true, region);
+
     for (std::size_t i = 0; i < s.water.size(); ++i, ++lines) {
         out << Line("water", i).field("ring").points(s.water[i]).str() << '\n';
     }
@@ -247,6 +379,7 @@ std::size_t write_scene(std::ofstream& out, const load::Scene& s) {
                    .str()
             << '\n';
     }
+    if (region) lines += write_region(out, s);
     return lines;
 }
 
@@ -285,6 +418,49 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_dump(JNIEnv*
     const std::string summary =
         std::format("lines={} buildings={} parts={} nodes={} read_ms={:.1f} load_ms={:.1f}", lines,
                     scene->buildings.size(), scene->parts.size(), scene->nodes.size(), ms(t0, t1), ms(t1, t2));
+    return env->NewStringUTF(summary.c_str());
+}
+
+/// A region's load (regions.py's, in the frame and box given: the port's after its configure) of the raw.json at `raw`,
+/// at `tolerance`, written as canonical lines to `out`: as dump, its buildings without what generic.py's looks set, and
+/// its own lists.
+JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_dumpRegion(
+    JNIEnv* env, jclass, jstring raw, jstring out, jstring name, jdouble lat0, jdouble lon0, jdouble kx, jdouble kz,
+    jdouble south, jdouble west, jdouble north, jdouble east, jstring tradition, jdouble tolerance) {
+    std::ifstream in(string_of(env, raw), std::ios::binary);
+    if (!in) return env->NewStringUTF("error=io at=raw");
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto doc = osm::read_overpass(std::as_bytes(std::span(text.data(), text.size())));
+    const auto t1 = std::chrono::steady_clock::now();
+    if (!doc) {
+        return env->NewStringUTF(
+            std::format("error={} at={}", osm::name_of(doc.error().fault), doc.error().at).c_str());
+    }
+    const std::string region = string_of(env, name);
+    const std::string trad = tradition != nullptr ? string_of(env, tradition) : std::string();
+    const load::RegionConfig config{
+        .name = region,
+        .frame = {.lat0 = lat0, .lon0 = lon0, .kx = kx, .kz = kz},
+        .bbox = {south, west, north, east},
+        .tradition = tradition != nullptr ? std::optional<std::string_view>(trad) : std::nullopt,
+        .palette = load::region_palette(region),
+    };
+    const auto scene = load::load_region(*doc, config, tolerance);
+    const auto t2 = std::chrono::steady_clock::now();
+    if (!scene) {
+        return env->NewStringUTF(
+            std::format("error={} at={}", load::name_of(scene.error().fault), scene.error().element).c_str());
+    }
+    std::ofstream file(string_of(env, out), std::ios::binary);
+    if (!file) return env->NewStringUTF("error=io at=out");
+    const std::size_t lines = write_scene(file, *scene, true);
+    file.close();
+    if (!file) return env->NewStringUTF("error=io at=write");
+    const auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+    const std::string summary = std::format(
+        "lines={} buildings={} parts={} land={} water={} read_ms={:.1f} load_ms={:.1f}", lines, scene->buildings.size(),
+        scene->parts.size(), scene->land.size(), scene->water.size(), ms(t0, t1), ms(t1, t2));
     return env->NewStringUTF(summary.c_str());
 }
 

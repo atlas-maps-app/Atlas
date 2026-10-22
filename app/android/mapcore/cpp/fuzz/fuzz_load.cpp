@@ -1,10 +1,12 @@
-// Fuzzes the living map's load (load/Amsterdam.hpp) with arbitrary documents: whatever the Overpass reader accepts, the
-// load must load or refuse without failing an invariant or reading out of bounds, and every scene it makes must hold
-// together: each outline has at least three points and a box around them, and each index (a place's building, a
-// building's places, a tree's node, a place among the nodes) points into its list.
-// Seeds: fuzz/corpus/fuzz_load (the unit test's document, with a record of each kind, and the reader's seed).
+// Fuzzes the living map's load (load/Amsterdam.hpp) and a region's (load/Regions.hpp, whole or simplified) with
+// arbitrary documents: whatever the Overpass reader accepts, a load must load or refuse without failing an invariant or
+// reading out of bounds, and every scene it makes must hold together (a region's: a shore flag per water ring): each
+// outline has at least three points and a box around them, and each index (a place's building, a building's places, a
+// tree's node, a place among the nodes) points into its list. Seeds: fuzz/corpus/fuzz_load (the unit test's document,
+// with a record of each kind, and the reader's seed).
 #include "base/assert.hpp"
 #include "load/Amsterdam.hpp"
+#include "load/Regions.hpp"
 #include "osm/Overpass.hpp"
 
 #include <cstddef>
@@ -28,6 +30,17 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     const std::span<const std::byte> bytes(reinterpret_cast<const std::byte*>(data), size); // NOLINT: libFuzzer's bytes
     const auto doc = atlas::osm::read_overpass(bytes);
     if (!doc) return 0;
+    // the living map's load, and a region's (in a box around the Westerkerk) on the same document
+    const atlas::load::RegionConfig region{.name = "fuzz",
+                                           .frame = atlas::load::westerkerk_frame(),
+                                           .bbox = {52.36, 4.87, 52.39, 4.92},
+                                           .tradition = std::nullopt,
+                                           .palette = atlas::load::amsterdam_palette()};
+    const auto regional = atlas::load::load_region(*doc, region, size % 2 == 0 ? 0.0 : 0.5);
+    if (regional) {
+        ATLAS_ASSERT(regional->natural_shore.size() == regional->water.size(), "a shore flag per water ring");
+        for (const atlas::load::Building& b : regional->buildings) check_building(b, regional->nodes.size());
+    }
     const auto scene =
         atlas::load::load_amsterdam(*doc, atlas::load::westerkerk_frame(), atlas::load::amsterdam_palette());
     if (!scene) return 0;

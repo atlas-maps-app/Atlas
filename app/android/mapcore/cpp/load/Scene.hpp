@@ -124,6 +124,10 @@ struct Building {
     Box bb;                            ///< `_bb`
     std::vector<std::uint32_t> places; ///< the places in it, as indices of the scene's nodes; no `places` when empty
     bool hidden = false;               ///< an outline its parts stand for (`hidden`, which only a building has)
+    // regions.py's load adds:
+    bool relation = false;                 ///< mapped as a multipolygon relation (`otype` 'relation'), else a way
+    std::optional<std::int64_t> parent_id; ///< a part: the id of the outline it stands in
+    bool in_church = false;                ///< a part standing in a church (`in_church`, only where true)
 };
 
 /// A road (`S['roads']`).
@@ -188,6 +192,85 @@ struct Tree {
     TreeGuessed guessed;
 };
 
+/// Land cover (`S['land']`, regions.py's): its ring, its kind (regions.py's LAND), tags and id.
+struct Land {
+    std::vector<V2> poly;
+    std::string_view kind;
+    Tags tags;
+    std::int64_t id = 0;
+};
+
+/// A runway, taxiway, taxilane, stand or stopway (`S['aero']`).
+struct Aero {
+    std::vector<V2> pts;
+    std::string_view kind;
+    Tags tags;
+    std::int64_t id = 0;
+};
+
+/// A motorway, trunk or primary road and their links (`S['big']`), above the ground.
+struct BigRoad {
+    std::vector<V2> pts;
+    Tags tags;
+    std::string_view hw;
+    double layer = 0.0;
+    std::int64_t id = 0;
+};
+
+/// A railway, or a crane's rail (`S['rail']`), above the ground.
+struct Railway {
+    std::vector<V2> pts;
+    Tags tags;
+    bool crane = false;
+};
+
+/// A power line (`S['power']`).
+struct PowerLine {
+    std::vector<V2> pts;
+    Tags tags;
+};
+
+/// A breakwater, groyne, pier or quay (`S['marine']`).
+struct Marine {
+    std::vector<V2> pts;
+    std::string_view kind;
+    Tags tags;
+    bool closed = false; ///< its way's first and last points the same
+};
+
+/// A gantry or a goods conveyor (`S['gantries']`, `S['conveyors']`).
+struct Gantry {
+    std::vector<V2> pts;
+    Tags tags;
+    std::int64_t id = 0;
+    std::optional<double> h;
+};
+
+/// A crane, a mast, a tower with a height or a wind turbine: where it stands, and what it is (`S['cranes']`,
+/// `S['masts']`, `S['mtowers']`, `S['turbines']`).
+struct Item {
+    double x = 0.0;
+    double z = 0.0;
+    Tags tags;
+    std::int64_t id = 0;
+    std::optional<double> h;
+    std::optional<double> rotor;         ///< a turbine's rotor:diameter
+    std::optional<std::vector<V2>> poly; ///< a crane mapped as a way: its points (x, z their mean)
+};
+
+/// A power tower or pole (`S['towers']`, by id): where it stands and its height.
+struct Tower {
+    std::int64_t id = 0;
+    V2 at;
+    std::optional<double> h;
+};
+
+/// A national park's (or the dunes' protected area's) ring (`S['park']`).
+struct ParkEdge {
+    std::vector<V2> ring;
+    Tags tags;
+};
+
 /// The scene, list for list as `S`.
 struct Scene {
     std::vector<Building> buildings;
@@ -200,6 +283,23 @@ struct Scene {
     std::vector<Node> nodes;
     std::vector<std::uint32_t> pois; ///< the places, as indices of the nodes
     std::vector<Label> labels;
+    // regions.py's load adds:
+    std::vector<Land> land; ///< sorted by LAND's draw order, then by area, largest first
+    std::vector<Aero> aero;
+    std::vector<BigRoad> big;
+    std::vector<Railway> rail;
+    std::vector<PowerLine> power;
+    std::vector<Marine> marine;
+    std::vector<Item> cranes;
+    std::vector<Item> masts;
+    std::vector<Gantry> gantries;
+    std::vector<Gantry> conveyors;
+    std::vector<Item> turbines;
+    std::vector<Item> mtowers;
+    std::vector<Tower> towers; ///< in the order their ids came
+    std::vector<ParkEdge> park;
+    std::vector<std::vector<V2>> water_holes; ///< islands: the inner rings of the water's relations
+    std::vector<bool> natural_shore;          ///< per ring of `water`: a natural shore (no quay wall)
 };
 
 /// Why a document cannot be loaded, and the element that showed it.

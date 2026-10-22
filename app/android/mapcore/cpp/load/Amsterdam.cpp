@@ -150,8 +150,10 @@ private:
     return low_int(std::max<std::int64_t>(1, *whole));
 }
 
-/// guess_tags for one building or part (`h0` its height as loaded, None where nothing gave one).
-void guess(Building& b, std::optional<double> h0, bool part, const Palette& palette) {
+} // namespace
+
+void guess_tags(Building& b, std::optional<double> h0, const Palette& palette) {
+    const bool part = b.tags.has("building:part");
     pymath::PyRandom rnd(b.id);
     // edges[0] of the sorted sides: the shortest
     const std::size_t n = b.poly.size();
@@ -223,8 +225,7 @@ void guess(Building& b, std::optional<double> h0, bool part, const Palette& pale
     if (load::truthy(b.mat) && !load::truthy(b.mat_draw)) b.mat_draw = b.mat;
 }
 
-/// `_bb`: the outline's box, with Python's min and max.
-[[nodiscard]] Box box_of(std::span<const V2> poly) noexcept {
+Box box_of(std::span<const V2> poly) noexcept {
     Box bb{.x0 = poly[0].x, .x1 = poly[0].x, .z0 = poly[0].z, .z1 = poly[0].z};
     for (const V2& p : poly.subspan(1)) {
         bb.x0 = pymath::min(bb.x0, p.x);
@@ -234,6 +235,8 @@ void guess(Building& b, std::optional<double> h0, bool part, const Palette& pale
     }
     return bb;
 }
+
+namespace {
 
 /// The places: each node with a place style gets it, and stands in the first building (not a part) of its 40 m cell
 /// whose box and outline hold it. amsterdam.py files every building in each cell its box reaches; a building that
@@ -381,7 +384,7 @@ std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const t
                 b.rmat = t.get("roof:material");
                 b.col = t.get("building:colour");
                 b.rcol = t.get("roof:colour");
-                guess(b, h, part, palette);
+                guess_tags(b, h, palette);
                 b.bb = box_of(b.poly);
                 (part ? s.parts : s.buildings).push_back(std::move(b));
             }

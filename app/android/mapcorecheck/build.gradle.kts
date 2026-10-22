@@ -279,6 +279,8 @@ tasks.test {
     // Stage P's parity (load/AmsterdamParityTest.kt): more raw.json files the living map's load is held to the port
     // over, a list split by the path separator (the renderer's data/regions on the Mac)
     providers.systemProperty("atlas.load.raws").orNull?.let { systemProperty("atlas.load.raws", it) }
+    // and the regions' element packs load/RegionsParityTest holds to the port's Regions.load (a list of .atlas files)
+    providers.systemProperty("atlas.load.packs").orNull?.let { systemProperty("atlas.load.packs", it) }
 
     // K4's likeness harness: the references are inputs (they live outside the build folder), the report goes to
     // atlas.likeness.report, and the harness's settings pass through.
