@@ -92,7 +92,7 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_osm_OsmHost_hash(JNIEnv* e
     std::array<std::size_t, 4> kinds{};
     for (const osm::Element& e : doc->elements()) {
         ++kinds[code_of(e.kind)];
-        c.text(e.type);
+        c.text(doc->text(e.type));
         c.u8((e.has_id ? 1U : 0U) | (e.has_at ? 2U : 0U) | (e.has_tags ? 4U : 0U) | (e.has_nodes ? 8U : 0U) |
              (e.has_geometry ? 16U : 0U) | (e.has_members ? 32U : 0U));
         if (e.has_id) c.i64(e.id);
@@ -101,25 +101,25 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_osm_OsmHost_hash(JNIEnv* e
             c.real(e.at.lon);
         }
         if (e.has_tags) {
-            c.u32(e.tags.size());
-            for (const osm::Tag& t : e.tags) {
+            c.u32(e.tags.count);
+            for (const osm::Tag t : doc->tags(e)) {
                 c.text(t.key);
                 c.text(t.value);
             }
         }
         if (e.has_nodes) {
-            c.u32(e.nodes.size());
-            for (const std::int64_t n : e.nodes) c.i64(n);
+            c.u32(e.nodes.count);
+            for (const std::int64_t n : doc->nodes(e)) c.i64(n);
         }
-        if (e.has_geometry) c.points(e.geometry);
+        if (e.has_geometry) c.points(doc->geometry(e));
         if (e.has_members) {
-            c.u32(e.members.size());
-            for (const osm::Member& m : e.members) {
+            c.u32(e.members.count);
+            for (const osm::Member& m : doc->members(e)) {
                 c.u8(code_of(m.kind));
                 c.i64(m.ref);
                 c.u8((m.has_role ? 1U : 0U) | (m.has_geometry ? 2U : 0U));
-                c.text(m.role);
-                c.points(m.geometry);
+                c.text(doc->text(m.role));
+                c.points(doc->geometry(m));
             }
         }
     }

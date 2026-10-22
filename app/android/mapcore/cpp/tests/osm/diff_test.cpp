@@ -170,19 +170,19 @@ std::string dump(const osm::Document& doc) {
     std::string out;
     const auto bits = [](double v) { return std::bit_cast<std::uint64_t>(v); };
     for (const osm::Element& e : doc.elements()) {
-        out += std::format("{} {} {} {} {:x} {:x} {}{}{}{}{}{}", static_cast<int>(e.kind), e.type, e.id,
+        out += std::format("{} {} {} {} {:x} {:x} {}{}{}{}{}{}", static_cast<int>(e.kind), doc.text(e.type), e.id,
                            e.has_id ? 1 : 0, bits(e.at.lat), bits(e.at.lon), e.has_at ? 1 : 0, e.has_tags ? 1 : 0,
                            e.has_nodes ? 1 : 0, e.has_geometry ? 1 : 0, e.has_members ? 1 : 0, '|');
-        for (const osm::Tag& t : e.tags) out += std::format("{}={};", t.key, t.value);
+        for (const osm::Tag t : doc.tags(e)) out += std::format("{}={};", t.key, t.value);
         out += '|';
-        for (const std::int64_t n : e.nodes) out += std::format("{},", n);
+        for (const std::int64_t n : doc.nodes(e)) out += std::format("{},", n);
         out += '|';
-        for (const osm::LatLon& p : e.geometry) out += std::format("{:x}/{:x},", bits(p.lat), bits(p.lon));
+        for (const osm::LatLon& p : doc.geometry(e)) out += std::format("{:x}/{:x},", bits(p.lat), bits(p.lon));
         out += '|';
-        for (const osm::Member& m : e.members) {
-            out += std::format("{} {} {} {}{}:", static_cast<int>(m.kind), m.ref, m.role, m.has_role ? 1 : 0,
+        for (const osm::Member& m : doc.members(e)) {
+            out += std::format("{} {} {} {}{}:", static_cast<int>(m.kind), m.ref, doc.text(m.role), m.has_role ? 1 : 0,
                                m.has_geometry ? 1 : 0);
-            for (const osm::LatLon& p : m.geometry) out += std::format("{:x}/{:x},", bits(p.lat), bits(p.lon));
+            for (const osm::LatLon& p : doc.geometry(m)) out += std::format("{:x}/{:x},", bits(p.lat), bits(p.lon));
             out += ';';
         }
         out += '\n';
@@ -388,7 +388,7 @@ TEST_CASE("osm: a diff in Overpass's XML gives each element's new form as Overpa
     const auto doc = osm::read_overpass(bytes_of(doc_text));
     ATLAS_REQUIRE(doc.has_value(), osm::name_of(doc.error().fault), " at ", doc.error().at);
     ATLAS_REQUIRE(doc->elements().size() == 4);
-    CHECK(doc->elements()[0].tags[0].value == "A \"quoted\" bench & <its> \\ back\nslash\ttab\rcafé ' 😀");
+    CHECK(doc->tags(doc->elements()[0])[0].value == "A \"quoted\" bench & <its> \\ back\nslash\ttab\rcafé ' 😀");
     CHECK(std::signbit(doc->elements()[0].at.lon));
     CHECK(doc->osm_base() == "2026-10-09T08:46:19Z");
 }
@@ -489,7 +489,7 @@ TEST_CASE("osm: the Westerkerk's answer merged with a diff of its edits is the e
         };
         if (e.kind == osm::Kind::node) {
             last_node = i;
-            if (tag_node == all.size() && e.tags.size() >= 2 && plain(e.tags.back().value)) {
+            if (tag_node == all.size() && e.tags.count >= 2 && plain(doc->tags(e).back().value)) {
                 tag_node = i;
             } else if (tag_node != all.size() && gone_node == all.size() && e.has_tags) {
                 gone_node = i;
@@ -500,8 +500,8 @@ TEST_CASE("osm: the Westerkerk's answer merged with a diff of its edits is the e
             }
         } else if (e.kind == osm::Kind::way) {
             last_way = i;
-            const bool street = std::ranges::any_of(e.tags, [](const osm::Tag& t) { return t.key == "highway"; });
-            if (moved_way == all.size() && street && e.geometry.size() >= 3) {
+            const bool street = std::ranges::any_of(doc->tags(e), [](const osm::Tag& t) { return t.key == "highway"; });
+            if (moved_way == all.size() && street && e.geometry.count >= 3) {
                 moved_way = i;
             } else if (moved_way != all.size() && same_way == all.size()) {
                 same_way = i;
@@ -510,8 +510,8 @@ TEST_CASE("osm: the Westerkerk's answer merged with a diff of its edits is the e
             }
         } else if (e.kind == osm::Kind::relation) {
             const bool way_member = std::ranges::any_of(
-                e.members, [](const osm::Member& m) { return m.has_geometry && m.geometry.size() >= 2; });
-            if (way_member && plain(e.tags.empty() ? "" : e.tags.back().value) && !e.tags.empty() &&
+                doc->members(e), [](const osm::Member& m) { return m.has_geometry && m.geometry.count >= 2; });
+            if (way_member && plain(e.tags.count == 0 ? "" : doc->tags(e).back().value) && e.tags.count != 0 &&
                 (edited_rel == all.size() || slice(i).size() < slice(edited_rel).size())) {
                 edited_rel = i;
             }
@@ -529,7 +529,7 @@ TEST_CASE("osm: the Westerkerk's answer merged with a diff of its edits is the e
     // the edited elements, as Overpass's JSON would print them
     std::string tagged(slice(tag_node));
     {
-        const osm::Tag& t = all[tag_node].tags.back();
+        const osm::Tag t = doc->tags(all[tag_node]).back();
         const std::string was = std::format(R"("{}": "{}")", t.key, t.value);
         const std::size_t at = tagged.rfind(was);
         ATLAS_REQUIRE(at != std::string::npos);
@@ -540,7 +540,7 @@ TEST_CASE("osm: the Westerkerk's answer merged with a diff of its edits is the e
     std::string edited(slice(edited_rel));
     {
         ATLAS_REQUIRE(move_point(edited, edited.find("\"geometry\": [")));
-        const osm::Tag& t = all[edited_rel].tags.back();
+        const osm::Tag t = doc->tags(all[edited_rel]).back();
         const std::string was = std::format(R"("{}": "{}")", t.key, t.value);
         const std::size_t at = edited.rfind(was);
         ATLAS_REQUIRE(at != std::string::npos);

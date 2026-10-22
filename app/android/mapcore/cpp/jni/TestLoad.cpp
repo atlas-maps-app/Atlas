@@ -125,7 +125,7 @@ public:
     }
     Line& tags(const load::Tags& t) {
         out_ += std::to_string(t.all().size());
-        for (const osm::Tag& tag : t.all()) {
+        for (const osm::Tag tag : t.all()) {
             out_ += '|';
             text(tag.key);
             out_ += '=';

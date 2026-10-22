@@ -179,19 +179,20 @@ public:
     }
 
     /// regions.py's `rings_of(e, role)`: a closed way, or a relation's outer (or inner) member ways joined.
-    [[nodiscard]] std::vector<std::vector<V2>> rings_of(const osm::Element& e, bool inner = false) {
+    [[nodiscard]] std::vector<std::vector<V2>> rings_of(const osm::Document& doc, const osm::Element& e,
+                                                        bool inner = false) {
         std::vector<std::vector<V2>> out;
-        if (e.kind == osm::Kind::way && !e.geometry.empty()) {
-            const auto g = e.geometry;
+        if (e.kind == osm::Kind::way && e.geometry.count != 0) {
+            const auto g = doc.geometry(e);
             if (g.size() > 3 && same(g.front(), g.back())) out.push_back(points(g, e.id));
             return out;
         }
         if (e.kind != osm::Kind::relation) return out;
         std::vector<std::span<const LL>> ways;
-        for (const osm::Member& m : e.members) {
-            const std::string_view role = m.has_role ? m.role : "outer";
+        for (const osm::Member& m : doc.members(e)) {
+            const std::string_view role = m.has_role ? doc.text(m.role) : "outer";
             const bool taken = inner ? role == "inner" : (role == "outer" || role.empty());
-            if (m.kind == osm::Kind::way && taken) ways.push_back(m.geometry);
+            if (m.kind == osm::Kind::way && taken) ways.push_back(doc.geometry(m));
         }
         for (const std::vector<LL>& r : join_rings(ways)) out.push_back(points(r, e.id));
         return out;
@@ -243,9 +244,9 @@ void relation_buildings(const osm::Document& doc, Scene& s, Frame& frame, const 
     std::vector<Building> parts;
     for (const osm::Element& e : doc.elements()) {
         if (e.kind != osm::Kind::relation) continue;
-        const Tags t(e.tags);
+        const Tags t(doc.tags(e));
         if (!(t.truthy("building") || t.truthy("building:part")) || t.is("building", "no")) continue;
-        for (std::vector<V2>& r : frame.rings_of(e)) {
+        for (std::vector<V2>& r : frame.rings_of(doc, e)) {
             if (dist(r.front(), r.back()) < 0.5) r.pop_back();
             if (signed_area(r) < 0) std::ranges::reverse(r);
             if (std::fabs(signed_area(r)) < 3 || have.contains({r1(r[0].x), r1(r[0].z)})) continue;
@@ -303,18 +304,18 @@ void closest_roofs(Scene& s) {
 void region_features(const osm::Document& doc, Scene& s, Frame& frame, std::string_view name,
                      std::vector<std::span<const LL>>& coast) {
     for (const osm::Element& e : doc.elements()) {
-        if (!e.has_tags || e.tags.empty()) continue;
-        const Tags t(e.tags);
+        if (!e.has_tags || e.tags.count == 0) continue;
+        const Tags t(doc.tags(e));
         const bool way = e.kind == osm::Kind::way;
         const bool node = e.kind == osm::Kind::node;
-        const bool geo = !e.geometry.empty();
+        const bool geo = e.geometry.count != 0;
         if (t.is("natural", "coastline") && way) {
-            if (e.has_geometry) coast.push_back(e.geometry);
+            if (e.has_geometry) coast.push_back(doc.geometry(e));
             continue;
         }
         if (t.is("boundary", "national_park") || (t.is("boundary", "protected_area") && name == "dunes")) {
             std::uint32_t part = 0;
-            for (std::vector<V2>& r : frame.rings_of(e)) {
+            for (std::vector<V2>& r : frame.rings_of(doc, e)) {
                 s.park.push_back(
                     {.ring = std::move(r), .tags = t, .from = {.kind = e.kind, .id = e.id, .part = part++}});
             }
@@ -322,7 +323,7 @@ void region_features(const osm::Document& doc, Scene& s, Frame& frame, std::stri
         }
         if (const auto k = land_kind(t); k && !node && !t.truthy("building")) {
             std::uint32_t part = 0;
-            for (std::vector<V2>& r : frame.rings_of(e)) {
+            for (std::vector<V2>& r : frame.rings_of(doc, e)) {
                 if (std::fabs(signed_area(r)) > 4) {
                     s.land.push_back({.poly = std::move(r),
                                       .kind = *k,
@@ -335,7 +336,7 @@ void region_features(const osm::Document& doc, Scene& s, Frame& frame, std::stri
             continue;
         }
         if (way && one_of(t.get("aeroway"), {"runway", "taxiway", "taxilane", "parking_position", "stopway"}) && geo) {
-            s.aero.push_back({.pts = frame.points(e.geometry, e.id),
+            s.aero.push_back({.pts = frame.points(doc.geometry(e), e.id),
                               .kind = *t.get("aeroway"),
                               .tags = t,
                               .id = e.id,
@@ -350,7 +351,7 @@ void region_features(const osm::Document& doc, Scene& s, Frame& frame, std::stri
                    {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary_link"}) &&
             geo) {
             if (underground()) continue;
-            s.big.push_back({.pts = frame.points(e.geometry, e.id),
+            s.big.push_back({.pts = frame.points(doc.geometry(e), e.id),
                              .tags = t,
                              .hw = *t.get("highway"),
                              .layer = num(t.get("layer")).value_or(0.0),
@@ -361,21 +362,22 @@ void region_features(const osm::Document& doc, Scene& s, Frame& frame, std::stri
         const bool crane = t.is("man_made", "crane_rail") || t.is("railway", "crane");
         if (way && (one_of(t.get("railway"), {"rail", "light_rail", "subway", "narrow_gauge"}) || crane) && geo) {
             if (underground()) continue;
-            s.rail.push_back({.pts = frame.points(e.geometry, e.id),
+            s.rail.push_back({.pts = frame.points(doc.geometry(e), e.id),
                               .tags = t,
                               .crane = crane,
                               .from = {.kind = e.kind, .id = e.id}});
             continue;
         }
         if (way && one_of(t.get("power"), {"line", "minor_line"}) && geo) {
-            s.power.push_back({.pts = frame.points(e.geometry, e.id), .tags = t, .from = {.kind = e.kind, .id = e.id}});
+            s.power.push_back(
+                {.pts = frame.points(doc.geometry(e), e.id), .tags = t, .from = {.kind = e.kind, .id = e.id}});
             continue;
         }
         if (one_of(t.get("man_made"), {"breakwater", "groyne", "pier", "quay"}) && way && geo) {
-            s.marine.push_back({.pts = frame.points(e.geometry, e.id),
+            s.marine.push_back({.pts = frame.points(doc.geometry(e), e.id),
                                 .kind = *t.get("man_made"),
                                 .tags = t,
-                                .closed = same(e.geometry.front(), e.geometry.back()),
+                                .closed = same(doc.geometry(e).front(), doc.geometry(e).back()),
                                 .from = {.kind = e.kind, .id = e.id}});
             continue;
         }
@@ -384,7 +386,7 @@ void region_features(const osm::Document& doc, Scene& s, Frame& frame, std::stri
                 const V2 p = frame.xz(e.at, e.id);
                 s.cranes.push_back({.x = p.x, .z = p.z, .tags = t, .id = e.id});
             } else if (!node && geo) {
-                std::vector<V2> pts = frame.points(e.geometry, e.id);
+                std::vector<V2> pts = frame.points(doc.geometry(e), e.id);
                 pymath::Summer sx;
                 pymath::Summer sz;
                 for (const V2& p : pts) {
@@ -407,7 +409,8 @@ void region_features(const osm::Document& doc, Scene& s, Frame& frame, std::stri
         if (one_of(t.get("man_made"), {"gantry", "goods_conveyor"}) && way && geo &&
             !one_of(t.get("location"), {"underground", "underwater"})) {
             (t.is("man_made", "gantry") ? s.gantries : s.conveyors)
-                .push_back({.pts = frame.points(e.geometry, e.id), .tags = t, .id = e.id, .h = num(t.get("height"))});
+                .push_back(
+                    {.pts = frame.points(doc.geometry(e), e.id), .tags = t, .id = e.id, .h = num(t.get("height"))});
             continue;
         }
         if (node && t.is("power", "generator") && t.is("generator:source", "wind")) {
@@ -620,13 +623,13 @@ void region_water(const osm::Document& doc, Scene& s, Frame& frame, const Region
     for (const std::vector<V2>& r : s.water) seen.emplace(r1(r[0].x), r1(r[0].z), r.size());
     std::vector<const osm::Element*> bays;
     for (const osm::Element& e : doc.elements()) {
-        const Tags t(e.tags);
+        const Tags t(doc.tags(e));
         const bool relation = e.kind == osm::Kind::relation;
         if (relation && (t.is("natural", "water") || one_of(t.get("waterway"), {"riverbank", "dock", "canal"}))) {
-            for (std::vector<V2>& r : frame.rings_of(e)) {
+            for (std::vector<V2>& r : frame.rings_of(doc, e)) {
                 if (!seen.contains({r1(r[0].x), r1(r[0].z), r.size()})) s.water.push_back(std::move(r));
             }
-            for (std::vector<V2>& r : frame.rings_of(e, true)) s.water_holes.push_back(std::move(r));
+            for (std::vector<V2>& r : frame.rings_of(doc, e, true)) s.water_holes.push_back(std::move(r));
         }
         if (one_of(t.get("natural"), {"bay", "strait"}) && (relation || e.kind == osm::Kind::way)) bays.push_back(&e);
     }
@@ -650,7 +653,7 @@ void region_water(const osm::Document& doc, Scene& s, Frame& frame, const Region
     }
     if (seas.empty()) {
         for (const osm::Element* e : bays) {
-            for (std::vector<V2>& r : frame.rings_of(*e)) {
+            for (std::vector<V2>& r : frame.rings_of(doc, *e)) {
                 if (std::fabs(signed_area(r)) > 2000) {
                     s.water.push_back(std::move(r)); // a harbour's edges are quays, drawn as such
                     s.natural_shore.push_back(false);

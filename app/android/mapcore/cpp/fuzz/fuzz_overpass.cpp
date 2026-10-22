@@ -35,22 +35,24 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         return 0;
     }
     for (const atlas::osm::Element& e : doc->elements()) {
-        check_text(e.type);
-        ATLAS_ASSERT(e.has_tags || e.tags.empty(), "tags it says it lacks");
-        ATLAS_ASSERT(e.has_nodes || e.nodes.empty(), "nodes it says it lacks");
-        ATLAS_ASSERT(e.has_geometry || e.geometry.empty(), "a geometry it says it lacks");
-        ATLAS_ASSERT(e.has_members || e.members.empty(), "members it says it lacks");
+        check_text(doc->text(e.type));
+        ATLAS_ASSERT(e.has_tags || doc->tags(e).empty(), "tags it says it lacks");
+        ATLAS_ASSERT(e.has_nodes || doc->nodes(e).empty(), "nodes it says it lacks");
+        ATLAS_ASSERT(e.has_geometry || doc->geometry(e).empty(), "a geometry it says it lacks");
+        ATLAS_ASSERT(e.has_members || doc->members(e).empty(), "members it says it lacks");
+        ATLAS_ASSERT(e.from < e.to && e.to <= size, "an element's bytes past the input");
         if (e.has_at) check_points(std::span(&e.at, 1));
-        for (const atlas::osm::Tag& t : e.tags) {
+        for (const atlas::osm::Tag t : doc->tags(e)) {
             check_text(t.key);
             check_text(t.value);
+            ATLAS_ASSERT(doc->tags(e).find(t.key).has_value(), "a tag its list does not find");
         }
-        check_points(e.geometry);
-        for (const atlas::osm::Member& m : e.members) {
-            check_text(m.role);
-            ATLAS_ASSERT(m.has_role || m.role.empty(), "a role it says it lacks");
-            ATLAS_ASSERT(m.has_geometry || m.geometry.empty(), "a member's geometry it says it lacks");
-            check_points(m.geometry);
+        check_points(doc->geometry(e));
+        for (const atlas::osm::Member& m : doc->members(e)) {
+            check_text(doc->text(m.role));
+            ATLAS_ASSERT(m.has_role || doc->text(m.role).empty(), "a role it says it lacks");
+            ATLAS_ASSERT(m.has_geometry || doc->geometry(m).empty(), "a member's geometry it says it lacks");
+            check_points(doc->geometry(m));
         }
     }
     return 0;

@@ -1473,7 +1473,7 @@ private:
         lf.decimal(c::h, f, it.h);
         lf.decimal(c::rotor, f, it.rotor);
         std::vector<std::pair<std::string_view, std::string_view>> all;
-        for (const osm::Tag& t : it.tags->all()) all.emplace_back(t.key, t.value);
+        for (const osm::Tag t : it.tags->all()) all.emplace_back(t.key, t.value);
         lf.tags(c::tags, f, all);
     }
 

@@ -53,20 +53,20 @@ namespace query_detail {
 
 } // namespace query_detail
 
-/// The elements of a region's data the renders' Overpass query returns for box `b` (they view `region`).
+/// The elements of a region's data the renders' Overpass query returns for box `b` (they share `region`'s values).
 [[nodiscard]] inline osm::Document query(const osm::Document& region, const std::array<double, 4>& b) {
     using namespace query_detail;
     return osm::select(region, [&](const osm::Element& e) {
         switch (e.kind) {
-        case osm::Kind::node: return e.has_at && e.has_tags && !e.tags.empty() && inside(b, e.at.lat, e.at.lon);
-        case osm::Kind::way: return meets(b, e.geometry);
+        case osm::Kind::node: return e.has_at && e.has_tags && e.tags.count != 0 && inside(b, e.at.lat, e.at.lon);
+        case osm::Kind::way: return meets(b, region.geometry(e));
         case osm::Kind::relation: {
-            const bool multipolygon = std::ranges::any_of(e.tags, [](const osm::Tag& t) {
+            const bool multipolygon = std::ranges::any_of(region.tags(e), [](const osm::Tag& t) {
                 return (t.key == "type" && t.value == "multipolygon") ||
                        (t.key == "boundary" && (t.value == "national_park" || t.value == "protected_area"));
             });
-            return multipolygon && std::ranges::any_of(e.members, [&](const osm::Member& m) {
-                       return m.kind == osm::Kind::way && meets(b, m.geometry);
+            return multipolygon && std::ranges::any_of(region.members(e), [&](const osm::Member& m) {
+                       return m.kind == osm::Kind::way && meets(b, region.geometry(m));
                    });
         }
         case osm::Kind::other: return false;

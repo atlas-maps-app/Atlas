@@ -132,7 +132,7 @@ TEST_CASE("load: the place styles of poi_style.py") {
         {"type": "node", "id": 4, "tags": {"healthcare": ""}},
         {"type": "node", "id": 5, "tags": {"leisure": "fitness_centre", "brand": "Gym"}}]})");
     ATLAS_REQUIRE(doc.has_value());
-    const auto style = [&](std::size_t i) { return load::place_style(load::Tags(doc->elements()[i].tags)); };
+    const auto style = [&](std::size_t i) { return load::place_style(load::Tags(doc->tags(doc->elements()[i]))); };
     const auto pub = style(0); // amenity wins over shop
     ATLAS_REQUIRE(pub.has_value());
     CHECK(pub->kind == "Brown café");

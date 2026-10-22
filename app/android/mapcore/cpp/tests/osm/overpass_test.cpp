@@ -19,6 +19,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
@@ -129,9 +130,11 @@ TEST_CASE("osm: Overpass's JSON is read as Python's json reads it") {
     CHECK(e[0].id == 42);
     CHECK(e[0].at.lat == 52.3740123);
     CHECK(e[0].at.lon == 4.884);
-    REQUIRE(e[0].tags.size() == 2);
-    CHECK(e[0].tags[0].key == "natural"); // in the document's order, as a dict keeps them
-    CHECK(e[0].tags[1].value == "12");
+    REQUIRE(r->tags(e[0]).size() == 2);
+    CHECK(r->tags(e[0])[0].key == "natural"); // in the document's order, as a dict keeps them
+    CHECK(r->tags(e[0])[1].value == "12");
+    CHECK(r->tags(e[0]).find("height") == "12");
+    CHECK(!r->tags(e[0]).find("heigh").has_value());
     // an integer coordinate is an int made a float: no -0; a decimal keeps its sign
     CHECK(e[1].at.lat == 52.0);
     CHECK(!std::signbit(e[1].at.lon));
@@ -139,33 +142,79 @@ TEST_CASE("osm: Overpass's JSON is read as Python's json reads it") {
     CHECK(std::signbit(e[2].at.lat));
     CHECK(e[2].at.lon == 1e-7);
     CHECK(e[2].has_tags); // `e.get('tags')` is {}: falsy, and present
-    CHECK(e[2].tags.empty());
+    CHECK(r->tags(e[2]).empty());
     const osm::Element& way = e[3];
     CHECK(way.kind == osm::Kind::way);
     CHECK(way.id == 900000000001);
-    CHECK(std::ranges::equal(way.nodes, std::vector<std::int64_t>{42, 43, 44, 42}));
-    REQUIRE(way.geometry.size() == 4);
-    CHECK(std::signbit(way.geometry[2].lat));
-    CHECK(way.geometry[3].lon == 4.884);
-    REQUIRE(way.tags.size() == 3);
-    CHECK(way.tags[1].value == "Caf\xC3\xA9 \"De Kat\"\\n");
-    CHECK(way.tags[2].value == "\xF0\x9F\x98\x80 / \t");
+    CHECK(std::ranges::equal(r->nodes(way), std::vector<std::int64_t>{42, 43, 44, 42}));
+    REQUIRE(r->geometry(way).size() == 4);
+    CHECK(std::signbit(r->geometry(way)[2].lat));
+    CHECK(r->geometry(way)[3].lon == 4.884);
+    REQUIRE(r->tags(way).size() == 3);
+    CHECK(r->tags(way)[1].value == "Caf\xC3\xA9 \"De Kat\"\\n");
+    CHECK(r->tags(way)[2].value == "\xF0\x9F\x98\x80 / \t");
+    CHECK(r->tags(way).find("note") == "\xF0\x9F\x98\x80 / \t");
     const osm::Element& rel = e[4];
     CHECK(rel.kind == osm::Kind::relation);
-    REQUIRE(rel.members.size() == 3);
-    CHECK(rel.members[0].role == "outer");
-    CHECK(rel.members[0].has_geometry);
-    CHECK(rel.members[0].geometry.size() == 3);
-    CHECK(rel.members[0].geometry[1].lon == 2.75);
-    CHECK(!rel.members[1].has_geometry);
-    CHECK(rel.members[2].kind == osm::Kind::node);
-    CHECK(rel.members[2].geometry.empty());
+    const std::span<const osm::Member> members = r->members(rel);
+    REQUIRE(members.size() == 3);
+    CHECK(r->text(members[0].role) == "outer");
+    CHECK(members[0].has_geometry);
+    CHECK(r->geometry(members[0]).size() == 3);
+    CHECK(r->geometry(members[0])[1].lon == 2.75);
+    CHECK(!members[1].has_geometry);
+    CHECK(members[2].kind == osm::Kind::node);
+    CHECK(r->geometry(members[2]).empty());
     CHECK(e[5].kind == osm::Kind::other);
-    CHECK(e[5].type == "area");
+    CHECK(r->text(e[5].type) == "area");
     CHECK(!e[5].has_tags); // "tags": null is None
     CHECK(e[6].id == std::numeric_limits<std::int64_t>::min());
     CHECK(e[6].at.lat == 100.0);
     CHECK(e[6].at.lon == 2.5);
+}
+
+TEST_CASE("osm: a document holds what its elements hold apart, each at its place, wherever it moves") {
+    const std::string text = R"({"elements": [
+    {"type": "node", "id": 1, "lat": 1, "lon": 2, "tags": {"n\u0061me": "caf\u00e9", "amenity": "cafe"}},
+    {"type": "way", "id": 2, "nodes": [1, 3], "geometry": [{"lat": 1, "lon": 2}, {"lat": 1.5, "lon": 2.5}],
+     "tags": {"highway": "footway", "note": "\"x\""}},
+    {"type": "relation", "id": 3, "tags": {"type": "multipolygon"}, "members": [
+        {"type": "way", "ref": 2, "role": "out\u0065r", "geometry": [{"lat": 1, "lon": 2}, {"lat": 1.5, "lon": 2.5}]}]}
+  ], "osm3s": {"timestamp_osm_base": "2026-10-22T18:00:00Z"}})";
+    auto r = read(text);
+    ATLAS_REQUIRE(r.has_value(), osm::name_of(r.error().fault), " at ", r.error().at);
+    // keys and values with escapes are decoded and found as any other
+    const osm::TagList tags = r->tags(r->elements()[0]);
+    CHECK(tags.find("name") == "caf\xC3\xA9");
+    CHECK(tags.find("amenity") == "cafe");
+    CHECK(!tags.find("nam").has_value());
+    std::optional<osm::Document> kept;
+    {
+        const osm::Document whole = std::move(*r);
+        // what was viewed before the move views the same after it
+        CHECK(tags.find("name") == "caf\xC3\xA9");
+        CHECK(whole.osm_base() == "2026-10-22T18:00:00Z");
+        kept = osm::select(whole, [](const osm::Element& e) { return e.kind != osm::Kind::node; });
+    }
+    // a selection shares its document's values: it reads alike once the document is gone
+    ATLAS_REQUIRE(kept->elements().size() == 2);
+    const osm::Element& way = kept->elements()[0];
+    CHECK(kept->tags(way).find("highway") == "footway");
+    CHECK(kept->tags(way).find("note") == "\"x\"");
+    CHECK(std::ranges::equal(kept->nodes(way), std::vector<std::int64_t>{1, 3}));
+    CHECK(kept->geometry(way)[1].lon == 2.5);
+    const std::span<const osm::Member> members = kept->members(kept->elements()[1]);
+    ATLAS_REQUIRE(members.size() == 1);
+    CHECK(kept->text(members[0].role) == "outer");
+    CHECK(kept->geometry(members[0]).size() == 2);
+    CHECK(kept->osm_base() == "2026-10-22T18:00:00Z");
+    CHECK(tags.find("amenity") == "cafe");
+    // each element's bytes are where it lies in the document
+    CHECK(std::string_view(text).substr(way.from, way.to - way.from).starts_with(R"({"type": "way")"));
+    // places, not views (ENGINE.md step 3's budget for a window's memory)
+    CHECK(sizeof(osm::Element) == 80);
+    CHECK(sizeof(osm::HeldTag) == 16);
+    CHECK(sizeof(osm::Member) == 32);
 }
 
 TEST_CASE("osm: what Overpass never writes and the port could not read alike is refused, named") {
@@ -227,7 +276,7 @@ TEST_CASE("osm: the renderer's regions' raw.json read whole (ATLAS_REGIONS_DIR)"
             nodes += e.kind == osm::Kind::node ? 1 : 0;
             ways += e.kind == osm::Kind::way ? 1 : 0;
             relations += e.kind == osm::Kind::relation ? 1 : 0;
-            points += e.geometry.size();
+            points += r->geometry(e).size();
             if (e.kind == osm::Kind::way) CHECK(e.has_geometry); // out geom
         }
         MESSAGE(std::string(region), ": ", text.size(), " bytes, ", nodes, " nodes, ", ways, " ways, ", relations,

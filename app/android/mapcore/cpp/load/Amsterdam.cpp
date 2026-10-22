@@ -110,14 +110,14 @@ public:
     }
 
     /// amsterdam.py's `rings(e)`: a way's geometry, or a relation's outer members' (those with points).
-    [[nodiscard]] std::vector<std::vector<V2>> rings(const osm::Element& e) {
+    [[nodiscard]] std::vector<std::vector<V2>> rings(const osm::Document& doc, const osm::Element& e) {
         std::vector<std::vector<V2>> out;
         if (e.kind == osm::Kind::way && e.has_geometry) {
-            out.push_back(points(e.geometry, e.id));
+            out.push_back(points(doc.geometry(e), e.id));
         } else if (e.kind == osm::Kind::relation) {
-            for (const osm::Member& m : e.members) {
-                if (m.has_role && m.role == "outer" && m.has_geometry && !m.geometry.empty()) {
-                    out.push_back(points(m.geometry, e.id));
+            for (const osm::Member& m : doc.members(e)) {
+                if (m.has_role && doc.text(m.role) == "outer" && m.has_geometry && m.geometry.count != 0) {
+                    out.push_back(points(doc.geometry(m), e.id));
                 }
             }
         }
@@ -371,12 +371,12 @@ std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const t
         std::size_t parts = 0;
         std::size_t nodes = 0;
         for (const osm::Element& e : doc.elements()) {
-            if (!e.has_tags || e.tags.empty()) continue;
+            if (!e.has_tags || e.tags.count == 0) continue;
             if (e.kind == osm::Kind::node) {
                 if (e.has_at) ++nodes;
                 continue;
             }
-            const Tags t(e.tags);
+            const Tags t(doc.tags(e));
             if (t.has("building:part")) {
                 ++parts;
             } else if (t.has("building") && !t.is("building", "no")) {
@@ -388,12 +388,12 @@ std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const t
         s.nodes.reserve(nodes);
     }
     for (const osm::Element& e : doc.elements()) {
-        if (!e.has_tags || e.tags.empty()) continue;
-        const Tags t(e.tags);
+        if (!e.has_tags || e.tags.count == 0) continue;
+        const Tags t(doc.tags(e));
         const bool node = e.kind == osm::Kind::node;
         if ((t.has("building") || t.has("building:part")) && !node && !t.is("building", "no")) {
             const bool part = t.has("building:part");
-            for (std::vector<V2>& r : at.rings(e)) {
+            for (std::vector<V2>& r : at.rings(doc, e)) {
                 if (!closed(r) || std::fabs(signed_area(r)) < 3) continue;
                 Building b;
                 b.poly = clean(std::move(r));
@@ -419,11 +419,11 @@ std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const t
             continue;
         }
         if ((t.is("natural", "water") || one_of(t.get("waterway"), {"canal", "riverbank", "dock"})) && !node) {
-            for (std::vector<V2>& r : at.rings(e)) {
+            for (std::vector<V2>& r : at.rings(doc, e)) {
                 if (closed(r)) s.water.push_back(clean(std::move(r)));
             }
             if (t.truthy("name") && t.is("waterway", "canal") && e.kind == osm::Kind::way && e.has_geometry) {
-                std::vector<V2> pts = at.points(e.geometry, e.id);
+                std::vector<V2> pts = at.points(doc.geometry(e), e.id);
                 if (!closed(pts)) s.labels.push_back({.pts = std::move(pts), .name = *t.get("name"), .kind = "canal"});
             }
             continue;
@@ -431,8 +431,8 @@ std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const t
         if (e.kind == osm::Kind::way && t.has("highway") && e.has_geometry) {
             const std::string_view hw = *t.get("highway");
             const auto* const cls = std::ranges::find(road_classes, hw, &RoadClass::hw);
-            if (cls == road_classes.end() || e.geometry.empty()) continue;
-            std::vector<V2> pts = at.points(e.geometry, e.id);
+            if (cls == road_classes.end() || e.geometry.count == 0) continue;
+            std::vector<V2> pts = at.points(doc.geometry(e), e.id);
             if (pts.front() == pts.back() && (t.is("area", "yes") || hw == "pedestrian")) {
                 std::vector<V2> poly = pts;
                 if (pts.size() > 3) {
@@ -458,7 +458,7 @@ std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const t
             continue;
         }
         if (e.kind == osm::Kind::way && t.is("railway", "tram") && e.has_geometry) {
-            s.rails.push_back(at.points(e.geometry, e.id));
+            s.rails.push_back(at.points(doc.geometry(e), e.id));
             s.rails_from.push_back({.kind = e.kind, .id = e.id});
             continue;
         }
@@ -473,7 +473,7 @@ std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const t
                 }
             }
             std::uint32_t part = 0;
-            for (std::vector<V2>& r : at.rings(e)) {
+            for (std::vector<V2>& r : at.rings(doc, e)) {
                 if (closed(r)) {
                     s.areas.push_back({.poly = clean(std::move(r)),
                                        .kind = kind,

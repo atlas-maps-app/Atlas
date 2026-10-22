@@ -29,15 +29,10 @@ class Tradition;
 class Tags {
 public:
     Tags() = default;
-    explicit Tags(std::span<const osm::Tag> tags) noexcept : tags_(tags) {}
+    explicit Tags(osm::TagList tags) noexcept : tags_(tags) {}
 
     /// `t.get(key)`.
-    [[nodiscard]] std::optional<std::string_view> get(std::string_view key) const noexcept {
-        for (const osm::Tag& t : tags_) {
-            if (t.key == key) return t.value;
-        }
-        return std::nullopt;
-    }
+    [[nodiscard]] std::optional<std::string_view> get(std::string_view key) const noexcept { return tags_.find(key); }
     /// `key in t`.
     [[nodiscard]] bool has(std::string_view key) const noexcept { return get(key).has_value(); }
     /// `t.get(key) == value`.
@@ -50,10 +45,10 @@ public:
         const auto v = get(key);
         return v.has_value() && !v->empty();
     }
-    [[nodiscard]] std::span<const osm::Tag> all() const noexcept { return tags_; }
+    [[nodiscard]] const osm::TagList& all() const noexcept { return tags_; }
 
 private:
-    std::span<const osm::Tag> tags_;
+    osm::TagList tags_;
 };
 
 /// Python's truth of an optional string: there, and not empty.
