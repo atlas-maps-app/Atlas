@@ -47,23 +47,31 @@ namespace tl = atlas::tiles;
 namespace load = atlas::load;
 
 // The heap's growth while counting: every allocation adds its size, every free takes its block's size away.
-std::atomic<bool> heap_counting{false};
-std::atomic<std::int64_t> heap_live{0};
-std::atomic<std::int64_t> heap_peak{0};
+struct Heap {
+    std::atomic<bool> counting{false};
+    std::atomic<std::int64_t> live{0};
+    std::atomic<std::int64_t> peak{0};
+};
+
+/// The process's counters, made on first use.
+Heap& heap() {
+    static Heap counters;
+    return counters;
+}
 
 void on_malloc(const volatile void* /*block*/, std::size_t size) {
-    if (!heap_counting.load(std::memory_order_relaxed)) return;
-    const std::int64_t now = heap_live.fetch_add(static_cast<std::int64_t>(size)) + static_cast<std::int64_t>(size);
-    std::int64_t was = heap_peak.load();
-    while (now > was && !heap_peak.compare_exchange_weak(was, now)) {
+    if (!heap().counting.load(std::memory_order_relaxed)) return;
+    const std::int64_t now = heap().live.fetch_add(static_cast<std::int64_t>(size)) + static_cast<std::int64_t>(size);
+    std::int64_t was = heap().peak.load();
+    while (now > was && !heap().peak.compare_exchange_weak(was, now)) {
     }
 }
 
 void on_free(const volatile void* block) {
-    if (block == nullptr || !heap_counting.load(std::memory_order_relaxed)) return;
+    if (block == nullptr || !heap().counting.load(std::memory_order_relaxed)) return;
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast): the hook's block, as the allocator's own query takes it
     const auto size = __sanitizer_get_allocated_size(const_cast<const void*>(block));
-    heap_live.fetch_sub(static_cast<std::int64_t>(size));
+    heap().live.fetch_sub(static_cast<std::int64_t>(size));
 }
 
 /// Whether the hooks are in, installed once for the process (each install adds a pair, and each pair counts).
@@ -76,12 +84,12 @@ bool hooked() {
 template <typename F>
 std::int64_t peak_growth(F&& f) {
     if (!hooked()) return -1;
-    heap_live = 0;
-    heap_peak = 0;
-    heap_counting = true;
+    heap().live = 0;
+    heap().peak = 0;
+    heap().counting = true;
     std::forward<F>(f)();
-    heap_counting = false;
-    return heap_peak.load();
+    heap().counting = false;
+    return heap().peak.load();
 }
 
 std::string read_text(const std::filesystem::path& path) {
@@ -206,10 +214,10 @@ TEST_CASE("load: where a dense window's memory goes, step by step (ATLAS_REGIONS
     std::int64_t before = 0;
     const std::int64_t peak = peak_growth([&] {
         const auto mark = [&](std::string name) {
-            steps.emplace_back(std::move(name), heap_live.load(), heap_peak.load());
-            heap_peak = heap_live.load();
+            steps.emplace_back(std::move(name), heap().live.load(), heap().peak.load());
+            heap().peak = heap().live.load();
         };
-        before = heap_live.load();
+        before = heap().live.load();
         const auto doc = osm::read_overpass(std::as_bytes(std::span(json.data(), json.size())));
         if (!doc) return;
         mark("the document read");
