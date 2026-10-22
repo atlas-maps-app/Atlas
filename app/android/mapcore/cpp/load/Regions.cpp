@@ -313,18 +313,33 @@ void region_features(const osm::Document& doc, Scene& s, Frame& frame, std::stri
             continue;
         }
         if (t.is("boundary", "national_park") || (t.is("boundary", "protected_area") && name == "dunes")) {
-            for (std::vector<V2>& r : frame.rings_of(e)) s.park.push_back({.ring = std::move(r), .tags = t});
+            std::uint32_t part = 0;
+            for (std::vector<V2>& r : frame.rings_of(e)) {
+                s.park.push_back(
+                    {.ring = std::move(r), .tags = t, .from = {.kind = e.kind, .id = e.id, .part = part++}});
+            }
             continue;
         }
         if (const auto k = land_kind(t); k && !node && !t.truthy("building")) {
+            std::uint32_t part = 0;
             for (std::vector<V2>& r : frame.rings_of(e)) {
-                if (std::fabs(signed_area(r)) > 4)
-                    s.land.push_back({.poly = std::move(r), .kind = *k, .tags = t, .id = e.id});
+                if (std::fabs(signed_area(r)) > 4) {
+                    s.land.push_back({.poly = std::move(r),
+                                      .kind = *k,
+                                      .tags = t,
+                                      .id = e.id,
+                                      .from = {.kind = e.kind, .id = e.id, .part = part}});
+                }
+                ++part;
             }
             continue;
         }
         if (way && one_of(t.get("aeroway"), {"runway", "taxiway", "taxilane", "parking_position", "stopway"}) && geo) {
-            s.aero.push_back({.pts = frame.points(e.geometry, e.id), .kind = *t.get("aeroway"), .tags = t, .id = e.id});
+            s.aero.push_back({.pts = frame.points(e.geometry, e.id),
+                              .kind = *t.get("aeroway"),
+                              .tags = t,
+                              .id = e.id,
+                              .from = {.kind = e.kind, .id = e.id}});
             continue;
         }
         const auto underground = [&] {
@@ -339,24 +354,29 @@ void region_features(const osm::Document& doc, Scene& s, Frame& frame, std::stri
                              .tags = t,
                              .hw = *t.get("highway"),
                              .layer = num(t.get("layer")).value_or(0.0),
-                             .id = e.id});
+                             .id = e.id,
+                             .from = {.kind = e.kind, .id = e.id}});
             continue;
         }
         const bool crane = t.is("man_made", "crane_rail") || t.is("railway", "crane");
         if (way && (one_of(t.get("railway"), {"rail", "light_rail", "subway", "narrow_gauge"}) || crane) && geo) {
             if (underground()) continue;
-            s.rail.push_back({.pts = frame.points(e.geometry, e.id), .tags = t, .crane = crane});
+            s.rail.push_back({.pts = frame.points(e.geometry, e.id),
+                              .tags = t,
+                              .crane = crane,
+                              .from = {.kind = e.kind, .id = e.id}});
             continue;
         }
         if (way && one_of(t.get("power"), {"line", "minor_line"}) && geo) {
-            s.power.push_back({.pts = frame.points(e.geometry, e.id), .tags = t});
+            s.power.push_back({.pts = frame.points(e.geometry, e.id), .tags = t, .from = {.kind = e.kind, .id = e.id}});
             continue;
         }
         if (one_of(t.get("man_made"), {"breakwater", "groyne", "pier", "quay"}) && way && geo) {
             s.marine.push_back({.pts = frame.points(e.geometry, e.id),
                                 .kind = *t.get("man_made"),
                                 .tags = t,
-                                .closed = same(e.geometry.front(), e.geometry.back())});
+                                .closed = same(e.geometry.front(), e.geometry.back()),
+                                .from = {.kind = e.kind, .id = e.id}});
             continue;
         }
         if (t.is("man_made", "crane")) {

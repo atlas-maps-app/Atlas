@@ -192,11 +192,21 @@ struct Road {
     bool wguess = false; ///< no width mapped
 };
 
+/// The OpenStreetMap element a record of the ground comes from, and its ring's place among the element's rings (a
+/// relation's outer rings, a way's one): what orders the ground across the windows the phone builds (ENGINE.md step 3:
+/// Overpass lists an answer by type, then id). The renders' dicts lack it, so the parity dumps leave it out.
+struct Origin {
+    osm::Kind kind = osm::Kind::way;
+    std::int64_t id = 0;
+    std::uint32_t part = 0;
+};
+
 /// A ground area (`S['areas']`): a park, a square, a pedestrian area...
 struct Area {
     std::vector<V2> poly;
     std::string_view kind;
     Tags tags;
+    Origin from;
 };
 
 /// A name along a way (`S['labels']`): a canal's or a street's.
@@ -248,6 +258,7 @@ struct Land {
     std::string_view kind;
     Tags tags;
     std::int64_t id = 0;
+    Origin from;
 };
 
 /// A runway, taxiway, taxilane, stand or stopway (`S['aero']`).
@@ -256,6 +267,7 @@ struct Aero {
     std::string_view kind;
     Tags tags;
     std::int64_t id = 0;
+    Origin from;
 };
 
 /// A motorway, trunk or primary road and their links (`S['big']`), above the ground.
@@ -265,6 +277,7 @@ struct BigRoad {
     std::string_view hw;
     double layer = 0.0;
     std::int64_t id = 0;
+    Origin from;
 };
 
 /// A railway, or a crane's rail (`S['rail']`), above the ground.
@@ -272,12 +285,14 @@ struct Railway {
     std::vector<V2> pts;
     Tags tags;
     bool crane = false;
+    Origin from;
 };
 
 /// A power line (`S['power']`).
 struct PowerLine {
     std::vector<V2> pts;
     Tags tags;
+    Origin from;
 };
 
 /// A breakwater, groyne, pier or quay (`S['marine']`).
@@ -286,6 +301,7 @@ struct Marine {
     std::string_view kind;
     Tags tags;
     bool closed = false; ///< its way's first and last points the same
+    Origin from;
 };
 
 /// A gantry or a goods conveyor (`S['gantries']`, `S['conveyors']`).
@@ -319,6 +335,7 @@ struct Tower {
 struct ParkEdge {
     std::vector<V2> ring;
     Tags tags;
+    Origin from;
 };
 
 /// The scene, list for list as `S`.
@@ -328,6 +345,7 @@ struct Scene {
     std::vector<std::vector<V2>> water;
     std::vector<Road> roads;
     std::vector<std::vector<V2>> rails;
+    std::vector<Origin> rails_from; ///< each tram rail's way (Origin)
     std::vector<Area> areas;
     std::vector<Tree> trees;
     std::vector<Node> nodes;

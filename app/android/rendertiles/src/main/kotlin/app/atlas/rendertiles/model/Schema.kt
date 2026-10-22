@@ -141,7 +141,9 @@ object Schema {
     val GROUND: List<Column> = listOf(
         c("source", Codec.U8, "0: S['areas']; 1: S['land']"),
         c("index", Codec.DELTA, "source order in its list (S['land'] as the loader sorted it: by LAND's draw order, then area, largest first)"),
-        c("id", Codec.NVARZ, "the OSM id (land cover has one, areas do not)"),
+        c("id", Codec.NVARZ, "the OSM id: land cover's; an area's too where its tile carries the ground's order across windows (the core's windows)"),
+        c("otype", Codec.STR, "relation for a multipolygon's ring, else null (a way): with id and part, the element a window's ground feature comes from"),
+        c("part", Codec.VARU, "the ring's place among its element's rings: the ground's order across windows (the core's windows; the packer writes none)"),
         c("ring", Codec.GEOM, "the ring, whole"),
         c("ring.keep", Codec.KEEP, "keep codes (simplify's; the renders simplify areas, never land cover, which a coarse level takes at its own tolerance)"),
         c("kind", Codec.STR, "the kind (park, square, residential, …)"),
@@ -187,7 +189,9 @@ object Schema {
     val LINE: List<Column> = listOf(
         c("source", Codec.U8, "0 S['rails'] (tram), 1 S['rail'], 2 S['big'], 3 S['aero'], 4 S['power'], 5 S['marine'], 6 S['park']"),
         c("index", Codec.DELTA, "source order in its list"),
-        c("id", Codec.NVARZ, "the OSM id where the scene has one"),
+        c("id", Codec.NVARZ, "the OSM id where the scene has one, or the tile carries the ground's order across windows (the core's windows)"),
+        c("otype", Codec.STR, "relation for a multipolygon's ring, else null (a way): with id and part, the element a window's line comes from"),
+        c("part", Codec.VARU, "the ring's place among its element's rings: the ground's order across windows (the core's windows; the packer writes none)"),
         c("line", Codec.GEOM, "the line, whole (a park's edge is its ring)"),
         c("kind", Codec.STR, "aeroway or man_made kind"),
         c("hw", Codec.STR, "a big road's class"),

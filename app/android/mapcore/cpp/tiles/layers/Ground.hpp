@@ -11,11 +11,13 @@
 
 namespace atlas::tiles::ground {
 
-inline constexpr std::array<ColumnSpec, 10> columns = {{
-    {"source", Codec::u8},       // 0: S['areas']; 1: S['land']
-    {"index", Codec::delta},     // source order in its list (S['land'] sorted by LAND's draw order, then area)
-    {"id", Codec::nvarz},        // the OSM id (land cover has one, areas do not)
-    {"ring", Codec::geom},       // the ring, whole
+inline constexpr std::array<ColumnSpec, 12> columns = {{
+    {"source", Codec::u8},   // 0: S['areas']; 1: S['land']
+    {"index", Codec::delta}, // source order in its list (S['land'] sorted by LAND's draw order, then area)
+    {"id", Codec::nvarz},    // the OSM id: land cover's; an area's too where its tile carries the order across windows
+    {"otype", Codec::str},   // relation for a multipolygon's ring, else null (a way): with id and part, its element
+    {"part", Codec::varu},   // the ring's place among its element's rings (load/Scene.hpp's Origin)
+    {"ring", Codec::geom},   // the ring, whole
     {"ring.keep", Codec::keep},  // keep codes (simplify's)
     {"kind", Codec::str},        // the kind (park, square, residential, ...)
     {"ground_key", Codec::varu}, // the slot in the renders' ground order (land cover's class is the frame's)
@@ -27,6 +29,8 @@ inline constexpr std::array<ColumnSpec, 10> columns = {{
 inline constexpr std::uint8_t source = slot_of(columns, "source");
 inline constexpr std::uint8_t index = slot_of(columns, "index");
 inline constexpr std::uint8_t id = slot_of(columns, "id");
+inline constexpr std::uint8_t otype = slot_of(columns, "otype");
+inline constexpr std::uint8_t part = slot_of(columns, "part");
 inline constexpr std::uint8_t ring = slot_of(columns, "ring");
 inline constexpr std::uint8_t ring_keep = slot_of(columns, "ring.keep");
 inline constexpr std::uint8_t kind = slot_of(columns, "kind");

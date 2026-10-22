@@ -413,7 +413,8 @@ std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const t
                     poly.push_back(pts.front());
                     poly = clean(std::move(poly));
                 }
-                s.areas.push_back({.poly = std::move(poly), .kind = "pedestrian", .tags = t});
+                s.areas.push_back(
+                    {.poly = std::move(poly), .kind = "pedestrian", .tags = t, .from = {.kind = e.kind, .id = e.id}});
             } else {
                 const bool named = t.truthy("name") &&
                                    one_of(hw, std::array<std::string_view, 5>{"residential", "tertiary", "pedestrian",
@@ -432,6 +433,7 @@ std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const t
         }
         if (e.kind == osm::Kind::way && t.is("railway", "tram") && e.has_geometry) {
             s.rails.push_back(at.points(e.geometry, e.id));
+            s.rails_from.push_back({.kind = e.kind, .id = e.id});
             continue;
         }
         if (!node && (one_of(t.get("leisure"), {"park", "garden", "playground"}) || t.is("landuse", "grass") ||
@@ -444,8 +446,15 @@ std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const t
                     break;
                 }
             }
+            std::uint32_t part = 0;
             for (std::vector<V2>& r : at.rings(e)) {
-                if (closed(r)) s.areas.push_back({.poly = clean(std::move(r)), .kind = kind, .tags = t});
+                if (closed(r)) {
+                    s.areas.push_back({.poly = clean(std::move(r)),
+                                       .kind = kind,
+                                       .tags = t,
+                                       .from = {.kind = e.kind, .id = e.id, .part = part}});
+                }
+                ++part;
             }
             continue;
         }

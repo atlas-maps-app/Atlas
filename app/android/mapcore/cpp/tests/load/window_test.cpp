@@ -60,6 +60,17 @@ std::vector<std::string> masked(const std::string& dump, int skip) {
             (line.find(skipped + " ") != std::string::npos || line.ends_with(skipped))) {
             continue;
         }
+        // a window's ground and lines carry their element (id, otype, part), the packer's do not
+        if (line.starts_with("ground ") || line.starts_with("line ")) {
+            for (const std::string_view f : {" id=", " otype=", " part="}) {
+                for (std::size_t at = line.find(f); at != std::string::npos; at = line.find(f, at)) {
+                    std::size_t end = at + f.size();
+                    if (end < line.size() && line[end] == '"') end = line.find('"', end + 1) + 1;
+                    while (end < line.size() && line[end] != ' ') ++end;
+                    line.erase(at, end - at);
+                }
+            }
+        }
         for (const std::string_view f : fields) {
             // a quay's ring is its index in S['water'], an integer; a ring of points starts with '['
             for (std::size_t at = line.find(f); at != std::string::npos; at = line.find(f, at)) {
@@ -169,6 +180,8 @@ TEST_CASE("load: the canal ring built window by window is the packer's, tile for
     double load_ms = 0;
     double cut_ms = 0;
     std::size_t elements = 0;
+    std::size_t identified = 0;
+    std::size_t unidentified = 0;
     for (const tl::ChunkRef& chunk : pack->chunks().chunks()) {
         if (chunk.tile.z != load::window_level) continue;
         ++windows;
@@ -191,6 +204,17 @@ TEST_CASE("load: the canal ring built window by window is the packer's, tile for
         std::vector<std::byte> scratch2;
         const auto ours = window->decode(window->chunks().chunks()[0], zstd, decoder2, arena2, raw2, scratch2);
         ATLAS_REQUIRE(ours.has_value(), tl::describe(ours.error()));
+        // every ground feature and line of a window carries its element's id
+        {
+            std::istringstream dumped(tl::canonical_dump(*ours));
+            std::string l;
+            while (std::getline(dumped, l)) {
+                if (l.starts_with("ground ") || l.starts_with("line ")) {
+                    ++identified;
+                    if (l.find(" id=") == std::string::npos) ++unidentified;
+                }
+            }
+        }
         const std::vector<std::string> a = masked(tl::canonical_dump(*ours), -1);
         const std::vector<std::string> b = masked(tl::canonical_dump(*theirs), 7); // the home view's variants
         lines += b.size();
@@ -212,6 +236,9 @@ TEST_CASE("load: the canal ring built window by window is the packer's, tile for
             " ms, cut in ", cut_ms, " ms");
     CHECK(windows > 0);
     CHECK(differing == 0);
+    MESSAGE(identified, " ground features and lines in the windows, ", unidentified, " without their element");
+    CHECK(identified > 0);
+    CHECK(unidentified == 0);
 }
 
 TEST_CASE("load: a window anywhere: Paris, with its country's tradition (ATLAS_REGIONS_DIR)") {

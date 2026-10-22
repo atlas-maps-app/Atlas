@@ -48,11 +48,13 @@ inline constexpr std::uint8_t marks_key = slot_of(columns, "marks_key");
 
 namespace atlas::tiles::line {
 
-inline constexpr std::array<ColumnSpec, 15> columns = {{
+inline constexpr std::array<ColumnSpec, 17> columns = {{
     {"source", Codec::u8},   // 0 S['rails'] (tram), 1 S['rail'], 2 S['big'], 3 S['aero'], 4 S['power'], 5 S['marine'],
                              // 6 S['park']
     {"index", Codec::delta}, // source order in its list
-    {"id", Codec::nvarz},    // the OSM id where the scene has one
+    {"id", Codec::nvarz},    // the OSM id where the scene has one, or its tile carries the order across windows
+    {"otype", Codec::str},   // relation for a multipolygon's ring, else null (a way): with id and part, its element
+    {"part", Codec::varu},   // the ring's place among its element's rings (load/Scene.hpp's Origin)
     {"line", Codec::geom},   // the line, whole (a park's edge is its ring)
     {"kind", Codec::str},    // aeroway or man_made kind
     {"hw", Codec::str},      // a big road's class
@@ -70,6 +72,8 @@ inline constexpr std::array<ColumnSpec, 15> columns = {{
 inline constexpr std::uint8_t source = slot_of(columns, "source");
 inline constexpr std::uint8_t index = slot_of(columns, "index");
 inline constexpr std::uint8_t id = slot_of(columns, "id");
+inline constexpr std::uint8_t otype = slot_of(columns, "otype");
+inline constexpr std::uint8_t part = slot_of(columns, "part");
 inline constexpr std::uint8_t line = slot_of(columns, "line");
 inline constexpr std::uint8_t kind = slot_of(columns, "kind");
 inline constexpr std::uint8_t hw = slot_of(columns, "hw");

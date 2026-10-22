@@ -664,6 +664,9 @@ struct CutPlan {
     bool facades = true;
     std::optional<tl::TileKey> only;
     bool details_refused = true;
+    /// Whether the ground's and the lines' features carry their element (id, otype, part: load/Scene.hpp's Origin), by
+    /// which the frame orders the ground across windows; the packer's tiles do not.
+    bool identity = false;
 };
 
 class Cutter {
@@ -1491,6 +1494,16 @@ private:
         tags(lf, f, r.tags);
     }
 
+    /// A feature's element, where the plan carries it (CutPlan::identity): its id, its type where a relation, its
+    /// ring's place among the element's.
+    void origin(tl::LayerFill& lf, std::uint32_t f, std::uint8_t id, std::uint8_t otype, std::uint8_t part,
+                const Origin& o) const {
+        if (!plan_.identity) return;
+        lf.nullable_integer(id, f, o.id);
+        if (o.kind == osm::Kind::relation) lf.string(otype, f, std::string_view("relation"));
+        if (o.part != 0) lf.integer(part, f, o.part);
+    }
+
     void rail(tl::LayerFill& lf, std::uint32_t f, const Pending& p) {
         namespace c = tl::line;
         const GridLine& g = rails_[p.index];
@@ -1498,6 +1511,7 @@ private:
         lf.integer(c::index, f, p.index);
         lf.ring(c::line, f, g.lat, g.lon);
         lf.integer(c::ground_key, f, ground_key(gk::marks, gk::marks_tram, p.index));
+        if (p.index < s_.rails_from.size()) origin(lf, f, c::id, c::otype, c::part, s_.rails_from[p.index]);
     }
 
     void line(tl::LayerFill& lf, std::uint32_t f, const Pending& p) {
@@ -1540,6 +1554,17 @@ private:
         case 6: t = &s_.park[rl.index].tags; break;
         default: break;
         }
+        const Origin* from = nullptr;
+        switch (rl.source) {
+        case 1: from = &s_.rail[rl.index].from; break;
+        case 2: from = &s_.big[rl.index].from; break;
+        case 3: from = &s_.aero[rl.index].from; break;
+        case 4: from = &s_.power[rl.index].from; break;
+        case 5: from = &s_.marine[rl.index].from; break;
+        case 6: from = &s_.park[rl.index].from; break;
+        default: break;
+        }
+        if (from != nullptr) origin(lf, f, c::id, c::otype, c::part, *from);
         if (rl.ground_key != 0) lf.integer(c::ground_key, f, rl.ground_key);
         if (t != nullptr) tags(lf, f, *t);
     }
@@ -1559,11 +1584,13 @@ private:
             const Land& a = s_.land[p.index];
             lf.string(c::kind, f, a.kind);
             lf.nullable_integer(c::id, f, a.id);
+            origin(lf, f, c::id, c::otype, c::part, a.from);
             lf.integer(c::ground_key, f, ground_key(gk::land, 0, p.index));
             tags(lf, f, a.tags);
             return;
         }
         const Area& a = s_.areas[p.index];
+        origin(lf, f, c::id, c::otype, c::part, a.from);
         lf.string(c::kind, f, a.kind);
         lf.integer(c::ground_key, f, ground_key(gk::area, 0, p.index));
         tags(lf, f, a.tags);
@@ -1769,7 +1796,12 @@ std::expected<std::vector<tiles::TileFill>, CutError> cut_window(const Scene& sc
         return std::unexpected(
             CutError{std::format("a window is a tile of L{}, not of L{}", window_levels[0], tile.z)});
     }
-    return cut_with({.levels = window_levels, .keep = true, .facades = false, .only = tile, .details_refused = false},
+    return cut_with({.levels = window_levels,
+                     .keep = true,
+                     .facades = false,
+                     .only = tile,
+                     .details_refused = false,
+                     .identity = true},
                     scene, frame, variants);
 }
 
