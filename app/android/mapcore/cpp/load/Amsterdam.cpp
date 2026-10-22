@@ -263,8 +263,10 @@ void place(Scene& s) {
     const std::vector<std::uint32_t> none;
     for (std::uint32_t k = 0; k < s.nodes.size(); ++k) {
         Node& n = s.nodes[k];
-        n.style = place_style(n.tags);
-        if (!n.style) continue;
+        std::optional<PlaceStyle> style = place_style(n.tags);
+        if (!style) continue;
+        n.style = static_cast<std::uint32_t>(s.styles.size());
+        s.styles.push_back(std::move(*style));
         const CellKey key{.gx = cell_of(n.x), .gz = cell_of(n.z)};
         const auto it = grid.find(key);
         const std::vector<std::uint32_t>& near = it != grid.end() ? it->second : none;

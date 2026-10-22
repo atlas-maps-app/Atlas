@@ -113,6 +113,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     for (const atlas::load::Node& n : scene->nodes) {
         ATLAS_ASSERT(!n.building || *n.building < scene->buildings.size(), "a place in a building past the list");
         ATLAS_ASSERT(!n.building || n.style.has_value(), "a building's node without a place style");
+        ATLAS_ASSERT(!n.style || *n.style < scene->styles.size(), "a place's style past the scene's styles");
     }
     for (const atlas::load::Tree& t : scene->trees) ATLAS_ASSERT(t.node < nodes, "a tree past the nodes");
     for (const std::uint32_t p : scene->pois) ATLAS_ASSERT(p < nodes, "a place past the nodes");

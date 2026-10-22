@@ -215,17 +215,17 @@ TEST_CASE("load: each kind of record, its values those amsterdam.py's load gives
     CHECK(same(bakery.x, 0x1.30767bc1bd1d4p+2));
     CHECK(same(bakery.z, -0x1.1afb7e90d1940p+2));
     ATLAS_REQUIRE(bakery.style.has_value());
-    CHECK(bakery.style->kind == "Bakery");
+    CHECK(s.styles.at(*bakery.style).kind == "Bakery");
     CHECK(bakery.building == 0U);
     const load::Node& cafe = s.nodes[1];
     ATLAS_REQUIRE(cafe.style.has_value());
-    CHECK(cafe.style->kind == "Café");
-    CHECK(cafe.style->bg == "#26282C");
+    CHECK(s.styles.at(*cafe.style).kind == "Café");
+    CHECK(s.styles.at(*cafe.style).bg == "#26282C");
     CHECK(!cafe.building.has_value());
     CHECK(!s.nodes[2].style.has_value());
     const load::Node& printing = s.nodes[3];
     ATLAS_REQUIRE(printing.style.has_value());
-    CHECK(printing.style->kind == "3d printing materials");
+    CHECK(s.styles.at(*printing.style).kind == "3d printing materials");
     CHECK(s.pois == std::vector<std::uint32_t>{0, 1, 3});
 
     const load::Tree& tree = s.trees[0];

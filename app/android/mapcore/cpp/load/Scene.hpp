@@ -233,7 +233,9 @@ struct Node {
     double z = 0.0;
     std::int64_t id = 0;
     Tags tags;
-    std::optional<PlaceStyle> style;       ///< `style`: only a place has one
+    /// `style`: only a place has one, an index of the scene's styles (held apart: a dense window's scene has 46,000
+    /// nodes, one in twenty of them a place)
+    std::optional<std::uint32_t> style;
     std::optional<std::uint32_t> building; ///< `_b`: the building a place stands in, an index of the scene's buildings
 };
 
@@ -349,6 +351,7 @@ struct Scene {
     std::vector<Area> areas;
     std::vector<Tree> trees;
     std::vector<Node> nodes;
+    std::vector<PlaceStyle> styles;  ///< the places' styles (Node::style)
     std::vector<std::uint32_t> pois; ///< the places, as indices of the nodes
     std::vector<Label> labels;
     // regions.py's load adds:

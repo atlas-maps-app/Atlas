@@ -444,7 +444,7 @@ std::size_t write_scene(std::ofstream& out, const load::Scene& s, bool region = 
         l.field("z").real(n.z);
         l.field("style");
         if (n.style) {
-            const load::PlaceStyle& st = *n.style;
+            const load::PlaceStyle& st = s.styles[*n.style];
             l.text(st.cat).raw(",").text(st.col).raw(",").text(st.glyph).raw(",").text(st.kind).raw(",");
             l.maybe(st.brand).raw(",").maybe(st.bg).raw(",").maybe(st.fg);
         } else {

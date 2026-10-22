@@ -947,7 +947,7 @@ private:
     /// The building whose facade carries the node's door or shopfront: a node with a house number or a place style
     /// other than a service, in the first facade building whose box and ring hold it.
     [[nodiscard]] std::optional<std::uint32_t> door_building(const Node& n) const {
-        const bool door = n.tags.truthy("addr:housenumber") || (n.style && n.style->cat != "service");
+        const bool door = n.tags.truthy("addr:housenumber") || (n.style && s_.styles[*n.style].cat != "service");
         if (!door) return std::nullopt;
         for (const auto& [i, bb] : facades_) {
             if (bb.x0 <= n.x && n.x <= bb.x1 && bb.z0 <= n.z && n.z <= bb.z1 &&
@@ -1441,7 +1441,7 @@ private:
         lf.point(c::pos, f, point({n.x, n.z}, [] { return std::string("a thing"); }));
         if (poi_[p.index]) lf.boolean(c::poi, f, true);
         if (n.style) {
-            const PlaceStyle& st = *n.style;
+            const PlaceStyle& st = s_.styles[*n.style];
             // the glyph is the app's icon: the renders never read it
             lf.string(tl::slot_of(c::columns, "style.cat"), f, st.cat);
             lf.string(tl::slot_of(c::columns, "style.col"), f, st.col);
