@@ -25,6 +25,7 @@
 #pragma once
 
 #include "text/Fonts.hpp"
+#include "text/Utf8.hpp"
 
 #include <cstdint>
 #include <expected>
@@ -134,8 +135,5 @@ struct CheckRun {
 /// Python's `str.upper()` (Java's `uppercase()`, Locale.ROOT) of UTF-8 text: full case mapping (ß → SS); invalid
 /// UTF-8 bytes become U+FFFD.
 [[nodiscard]] std::string upper(std::string_view utf8);
-
-/// The UTF-8 text's code points; invalid bytes become U+FFFD, as HarfBuzz reads them. Nothing on overlong input.
-[[nodiscard]] std::u32string code_points(std::string_view utf8);
 
 } // namespace atlas::text

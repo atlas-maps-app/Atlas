@@ -35,6 +35,10 @@ namespace atlas::load {
 /// Why a scene cannot be cut: what showed it, as the packer names it (`building 3 (123456): z = … is not on the grid`).
 struct CutError {
     std::string what;
+    /// What the scene holds that the tiles cannot carry yet (gantries and conveyors, a tradition's details), which a
+    /// region's cut refuses as the packer's build fails: a region the format carries once its columns come (the
+    /// packer's render_gap), not a failure.
+    bool uncarried = false;
 };
 
 /// The living map's render tiles at L14: the scene cut in `frame`, the tiles in the order a feature first reached

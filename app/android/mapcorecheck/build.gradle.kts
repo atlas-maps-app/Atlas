@@ -74,8 +74,9 @@ val hostBuildType: String = providers.gradleProperty("atlas.mapcore.buildType").
 }
 
 /**
- * Configures the core's CMake project for this machine (again when its settings change) and builds libatlasmap_host.
- * CMake and Ninja keep their own incremental state, so a build after no change is quick.
+ * Configures the core's CMake project for this machine (again when its settings change) and builds libatlasmap_host,
+ * and stage P's tool (atlas_stagep), which the packer cuts its tiles with. CMake and Ninja keep their own incremental
+ * state, so a build after no change is quick.
  */
 @DisableCachingByDefault(because = "CMake and Ninja keep their own incremental state")
 abstract class CoreHostBuild @Inject constructor(private val exec: ExecOperations) : DefaultTask() {
@@ -94,6 +95,7 @@ abstract class CoreHostBuild @Inject constructor(private val exec: ExecOperation
     @get:Input abstract val compilerEnv: MapProperty<String, String>
     @get:Input abstract val ccache: Property<Boolean>
     @get:OutputFile abstract val library: RegularFileProperty
+    @get:OutputFile abstract val tool: RegularFileProperty
 
     @TaskAction
     fun build() {
@@ -117,9 +119,10 @@ abstract class CoreHostBuild @Inject constructor(private val exec: ExecOperation
         }
         exec.exec {
             environment(env)
-            commandLine(cmake.get(), "--build", dir.path, "--target", "atlasmap")
+            commandLine(cmake.get(), "--build", dir.path, "--target", "atlasmap", "atlas_stagep")
         }
         check(library.get().asFile.isFile) { "the core's host build made no ${library.get().asFile}" }
+        check(tool.get().asFile.isFile) { "the core's host build made no ${tool.get().asFile}" }
     }
 }
 
@@ -137,6 +140,7 @@ val coreHost = tasks.register<CoreHostBuild>("coreHost") {
     compilerEnv.set(compilerEnvironment)
     ccache.set(hostCcache)
     library.set(layout.buildDirectory.file("core-host/libatlasmap_host.${if (isMac) "dylib" else "so"}"))
+    tool.set(layout.buildDirectory.file("core-host/atlas_stagep"))
     // slangc, pinned and checked (the core's CMake refuses another), when :mapcore is in the build
     if (rootProject.findProject(":mapcore") != null) dependsOn(":mapcore:fetchSlang")
 }
@@ -263,12 +267,17 @@ tasks.test {
     dependsOn(coreHost, bundledTiles)
     maxHeapSize = "2g"
     val library = coreHost.flatMap { it.library }
+    val stagep = coreHost.flatMap { it.tool }
     inputs.file(library).withPropertyName("coreHostLibrary").withPathSensitivity(PathSensitivity.NONE)
+    inputs.file(stagep).withPropertyName("coreStagePTool").withPathSensitivity(PathSensitivity.NONE)
     inputs.dir(bundledTilesDir).withPropertyName("bundledTiles").withPathSensitivity(PathSensitivity.RELATIVE)
     val tilesDir = bundledTilesDir.get().asFile.path
     val l0Out = layout.buildDirectory.dir("l0").get().asFile.path
     jvmArgumentProviders.add(CommandLineArgumentProvider {
-        listOf("-Datlas.mapcore.host=${library.get().asFile.absolutePath}", "-Datlas.tiles=$tilesDir", "-Datlas.l0.out=$l0Out")
+        listOf(
+            "-Datlas.mapcore.host=${library.get().asFile.absolutePath}", "-Datlas.stagep=${stagep.get().asFile.absolutePath}",
+            "-Datlas.tiles=$tilesDir", "-Datlas.l0.out=$l0Out",
+        )
     })
     environment(vulkanEnv)
     systemProperty("atlas.repo", repoDir.path)

@@ -71,10 +71,25 @@ object Format3Writer {
         return out.toByteArray()
     }
 
+    /**
+     * One tile to write: its key, its bytes ([encodeTile]), its features, its reach, and each of its layers' features
+     * in the tile's order (the manifest's counts). The packer's tiles give it ([encoded]), and so does the core's stage
+     * P for the tiles it cuts ([app.atlas.rendertiles.compile.CoreTiles]).
+     */
+    class Encoded(val level: Int, val x: Int, val y: Int, val raw: ByteArray, val featureCount: Int, val reach: Reach, val layerCounts: Map<String, Int>)
+
+    /** [tile] encoded, with its reach and its layers' counts. */
+    fun encoded(tile: RenderTile): Encoded =
+        Encoded(tile.level, tile.x, tile.y, encodeTile(tile), tile.featureCount, Reach.of(tile), tile.layers.entries.associate { (layer, f) -> layer.label to f.size })
+
     /** Writes [tiles] with [head] and [style] into [file] (through a temporary file beside it). */
-    fun write(tiles: List<RenderTile>, head: RenderHead, style: StyleTables, info: Info, file: File): Written {
+    fun write(tiles: List<RenderTile>, head: RenderHead, style: StyleTables, info: Info, file: File): Written =
+        writeEncoded(tiles.map(::encoded), head, style, info, file)
+
+    /** Writes tiles already encoded (the packer's, or the core's) with [head] and [style] into [file], as [write] does. */
+    fun writeEncoded(tiles: List<Encoded>, head: RenderHead, style: StyleTables, info: Info, file: File): Written {
         val levels = head.levels
-        val ordered = tiles.sortedWith(compareBy<RenderTile>({ levels.indexOf(it.level).also { i -> require(i >= 0) { "tile level ${it.level} is not one of ${levels.joinToString()}" } } }, { PackTiles.hilbert(it.level, it.x, it.y) }))
+        val ordered = tiles.sortedWith(compareBy<Encoded>({ levels.indexOf(it.level).also { i -> require(i >= 0) { "tile level ${it.level} is not one of ${levels.joinToString()}" } } }, { PackTiles.hilbert(it.level, it.x, it.y) }))
         for (i in 1 until ordered.size) {
             val a = ordered[i - 1]
             val b = ordered[i]
@@ -85,13 +100,13 @@ object Format3Writer {
         val stored = ArrayList<ByteArray>()
         val sha = MessageDigest.getInstance("SHA-256")
         for (t in ordered) {
-            val raw = encodeTile(t)
+            val raw = t.raw
             require(raw.size <= Format.MAX_TILE_BYTES) { "tile ${t.level}/${t.x}/${t.y} is ${raw.size} bytes, more than ${Format.MAX_TILE_BYTES}" }
             sha.reset()
             val h = sha.digest(raw)
             val z = Zstd.compress(raw, ZSTD_LEVEL)
             chunks += Chunk(t.level, t.x, t.y, z.size, raw.size, t.featureCount, h)
-            reach += Reach.of(t)
+            reach += t.reach
             stored += z
         }
         val table = ByteSink(chunks.size * 48 + 16)
@@ -129,7 +144,7 @@ object Format3Writer {
             Dir(Format.SECTION_STYLE, styleBytes.size.toLong(), styleRaw.size.toLong(), crc(styleBytes), Format.METHOD_ZSTD),
         )
         val counts = LinkedHashMap<String, Int>()
-        for (t in ordered) for ((layer, list) in t.layers) counts.merge(layer.label, list.size, Int::plus)
+        for (t in ordered) for ((label, n) in t.layerCounts) counts.merge(label, n, Int::plus)
         val manifest = PackManifest.build(
             info.id, info.name, info.bbox, info.origin, info.tz, info.tradition, info.dataTime, info.config, info.header, info.sources,
             version = Format.VERSION,

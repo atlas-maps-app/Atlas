@@ -1,7 +1,7 @@
 #include "load/Real.hpp"
 
 #include "base/pymath/PyMath.hpp"
-#include "text/Shaper.hpp"
+#include "text/Utf8.hpp"
 
 #include <algorithm>
 #include <array>

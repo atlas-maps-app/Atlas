@@ -44,6 +44,12 @@
       }
     },
     {
+      "name": "host-stagep",
+      "inherits": "host",
+      "displayName": "Host stage P: the packer's tool alone (atlas_stagep), with the shipped flags; no slangc, Vulkan or text stack",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "ATLAS_STAGE_P": "ON", "ATLAS_TESTS": "OFF" }
+    },
+    {
       "name": "android",
       "hidden": true,
       "generator": "Ninja",
@@ -78,6 +84,7 @@
     { "name": "host-release", "configurePreset": "host-release" },
     { "name": "host-fuzz", "configurePreset": "host-fuzz" },
     { "name": "host-tidy", "configurePreset": "host-tidy" },
+    { "name": "host-stagep", "configurePreset": "host-stagep", "targets": ["atlas_stagep"] },
     { "name": "android-arm64", "configurePreset": "android-arm64" },
     { "name": "android-x86_64", "configurePreset": "android-x86_64" }
   ],

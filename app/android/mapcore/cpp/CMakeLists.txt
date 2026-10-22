@@ -9,9 +9,13 @@
 # :mapcorecheck) into the host library only; tests/**/*.cpp into atlas_tests (a file ending in _vk_test.cpp uses
 # Vulkan-Hpp and gets its precompiled header; tests/planted/ is left out: CI adds one of its planted failures at a time
 # through ATLAS_EXTRA_TEST_SOURCES and requires the run to fail); bench/*_bench.cpp and fuzz/fuzz_*.cpp into their own
-# executables; shaders/**/*.slang (shaders/shared/ excepted) through cmake/Shaders.cmake.
+# executables; shaders/**/*.slang (shaders/shared/ excepted) through cmake/Shaders.cmake; stagep/ into the packer's tool
+# (atlas_stagep) on hosts. ATLAS_STAGE_P builds that tool alone: stage P needs no slangc, Vulkan or text stack.
 cmake_minimum_required(VERSION 3.28...4.1)
 project(atlasmap VERSION 0.1.0 DESCRIPTION "Atlas's map core" LANGUAGES C CXX)
+
+option(ATLAS_STAGE_P "Build stage P's tool alone (atlas_stagep, the packer's): no slangc, shaders, Vulkan or text stack"
+       OFF)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Toolchains)
@@ -62,11 +66,13 @@ set(ATLAS_HARFBUZZ_OPTIONS
     HB_NO_LAYOUT_COLLECT_GLYPHS HB_NO_LAYOUT_FEATURE_PARAMS HB_NO_LAYOUT_RARELY_USED HB_NO_LAYOUT_UNUSED HB_NO_MATH
     HB_NO_META HB_NO_MMAP HB_NO_NAME HB_NO_OPEN HB_NO_OT_FETCH HB_NO_OT_FONT_GLYPH_NAMES HB_NO_PAINT HB_NO_SETLOCALE
     HB_NO_STYLE HB_NO_SVG HB_NO_VERTICAL)
-add_library(atlas_harfbuzz STATIC third_party/harfbuzz/src/harfbuzz.cc)
-target_include_directories(atlas_harfbuzz SYSTEM PUBLIC third_party/harfbuzz/src)
-target_compile_definitions(atlas_harfbuzz PRIVATE ${ATLAS_HARFBUZZ_OPTIONS})
-target_compile_options(atlas_harfbuzz PRIVATE -w)
-target_link_libraries(atlas_harfbuzz PRIVATE atlas_options atlas_sanitizers)
+if(NOT ATLAS_STAGE_P)
+    add_library(atlas_harfbuzz STATIC third_party/harfbuzz/src/harfbuzz.cc)
+    target_include_directories(atlas_harfbuzz SYSTEM PUBLIC third_party/harfbuzz/src)
+    target_compile_definitions(atlas_harfbuzz PRIVATE ${ATLAS_HARFBUZZ_OPTIONS})
+    target_compile_options(atlas_harfbuzz PRIVATE -w)
+    target_link_libraries(atlas_harfbuzz PRIVATE atlas_options atlas_sanitizers)
+endif()
 
 # ---- The build's own tools: nocontract checks exact shader modules. Cross-compiling, it is built for the host.
 
@@ -80,7 +86,9 @@ if(NOT CMAKE_MATCH_1 STREQUAL ATLAS_SLANG_VERSION)
         "pinned to Slang ${ATLAS_SLANG_VERSION}: derive it from the new release with tools/nocontract/grammar.py.")
 endif()
 
-if(ATLAS_HOST)
+if(ATLAS_STAGE_P)
+    # stage P compiles no shader
+elseif(ATLAS_HOST)
     add_subdirectory(tools/nocontract)
     set(ATLAS_NOCONTRACT "$<TARGET_FILE:nocontract>")
     set(ATLAS_NOCONTRACT_DEPENDS nocontract)
@@ -107,12 +115,12 @@ endif()
 
 # The core's areas are its top-level directories (base, gpu, tiles, style, view, geometry for stage T, ...), except the
 # build's own (cmake, tools, and build/, where the presets put their build trees and which git ignores), the shaders
-# (cmake/Shaders.cmake), the per-target ones (platform, jni) and what surrounds the core (tests, fuzz, bench).
+# (cmake/Shaders.cmake), the per-target ones (platform, jni, stagep) and what surrounds the core (tests, fuzz, bench).
 file(GLOB _entries CONFIGURE_DEPENDS LIST_DIRECTORIES true RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/*")
 set(ATLAS_AREAS "")
 foreach(entry IN LISTS _entries)
     if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${entry}"
-       AND NOT entry MATCHES "^(cmake|third_party|tools|shaders|platform|jni|tests|fuzz|bench|build|\\..*)$")
+       AND NOT entry MATCHES "^(cmake|third_party|tools|shaders|platform|jni|stagep|tests|fuzz|bench|build|\\..*)$")
         list(APPEND ATLAS_AREAS "${entry}")
     endif()
 endforeach()
@@ -139,17 +147,30 @@ set(_jni_test_sources ${_jni_sources})
 list(FILTER _jni_sources EXCLUDE REGEX "/Test[^/]*\\.cpp$")
 list(FILTER _jni_test_sources INCLUDE REGEX "/Test[^/]*\\.cpp$")
 
-# What every target built from the core's code links: dialect, warnings, sanitizers, third-party headers, zstd, and
-# the generated headers (gen/spirv/*, gen/layouts.hpp) under the build directory.
+# Stage P (ENGINE.md step 3): OpenStreetMap's data into render tiles, for the phone's windows and the packer alike:
+# pymath, the Overpass reader, the loads and the cut, the tiles' reader and writer, the text's case and code points and
+# the roofs' shapes. Its objects are a library of their own (atlas_stage_p), in the core and in the packer's tool, which
+# links nothing else: no Vulkan, shaders or HarfBuzz.
+set(_stage_p_sources "")
+foreach(area IN ITEMS base/pymath osm load tiles)
+    file(GLOB_RECURSE _found CONFIGURE_DEPENDS "${area}/*.cpp" "${area}/*.c")
+    list(APPEND _stage_p_sources ${_found})
+endforeach()
+list(APPEND _stage_p_sources "${CMAKE_CURRENT_SOURCE_DIR}/text/Case.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/text/Utf8.cpp"
+     "${CMAKE_CURRENT_SOURCE_DIR}/geometry/RoofShapes.cpp")
+list(REMOVE_ITEM _core_sources ${_stage_p_sources})
+
+# What stage P's code links: dialect, warnings, sanitizers, zstd, and the generated headers under the build directory
+# (gen/data/*: the style file and the traditions).
 find_package(Threads REQUIRED)
-add_library(atlas_core_requirements INTERFACE)
-target_include_directories(atlas_core_requirements INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
-target_link_libraries(atlas_core_requirements INTERFACE
-    atlas_options atlas_warnings atlas_sanitizers atlas_third_party atlas_zstd atlas_harfbuzz Threads::Threads)
+add_library(atlas_stage_p_requirements INTERFACE)
+target_include_directories(atlas_stage_p_requirements INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
+target_link_libraries(atlas_stage_p_requirements INTERFACE
+    atlas_options atlas_warnings atlas_sanitizers atlas_zstd Threads::Threads)
 if(ATLAS_ANDROID)
-    target_link_libraries(atlas_core_requirements INTERFACE log android)
+    target_link_libraries(atlas_stage_p_requirements INTERFACE log android)
 else()
-    target_link_libraries(atlas_core_requirements INTERFACE ${CMAKE_DL_LIBS})
+    target_link_libraries(atlas_stage_p_requirements INTERFACE ${CMAKE_DL_LIBS})
 endif()
 
 # The data compiled into the core (cmake/Data.cmake): the engine's style file, which the packs it builds carry, and the
@@ -160,11 +181,31 @@ foreach(_tradition IN ITEMS fr_paris gb_terrace it_tuscan nl_amsterdam no_timber
     atlas_embed_data(tradition_${_tradition} "${CMAKE_CURRENT_SOURCE_DIR}/../../../../render/traditions/${_tradition}.json")
 endforeach()
 
+add_library(atlas_stage_p OBJECT ${_stage_p_sources})
+target_link_libraries(atlas_stage_p PUBLIC atlas_stage_p_requirements)
+atlas_tidy(atlas_stage_p)
+
+# The packer's tool (stagep/main.cpp): a region's or the living map's render tiles from Overpass's JSON, as the packer
+# writes them into its packs, so a pack's tiles and a window the phone builds come from the same code.
+if(ATLAS_HOST)
+    add_executable(atlas_stagep stagep/main.cpp $<TARGET_OBJECTS:atlas_stage_p>)
+    target_link_libraries(atlas_stagep PRIVATE atlas_stage_p_requirements)
+    atlas_tidy(atlas_stagep)
+endif()
+if(ATLAS_STAGE_P)
+    return()
+endif()
+
+# What every target built from the core's code links: stage P's, the third-party headers and HarfBuzz, and the
+# generated headers (gen/spirv/*, gen/layouts.hpp) under the build directory.
+add_library(atlas_core_requirements INTERFACE)
+target_link_libraries(atlas_core_requirements INTERFACE atlas_stage_p_requirements atlas_third_party atlas_harfbuzz)
+
 add_library(atlas_core OBJECT ${_core_sources})
 target_link_libraries(atlas_core PUBLIC atlas_core_requirements)
 atlas_add_shaders(atlas_core "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
 atlas_tidy(atlas_core)
-set(_core_objects $<TARGET_OBJECTS:atlas_core>)
+set(_core_objects $<TARGET_OBJECTS:atlas_core> $<TARGET_OBJECTS:atlas_stage_p>)
 
 # Compiles sources that include Vulkan-Hpp with base/vulkan.hpp as their precompiled header. Those units take a
 # gigabyte or more each, so Ninja compiles at most two at once (the owner's Mac is small on memory).

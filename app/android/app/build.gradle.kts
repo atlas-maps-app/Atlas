@@ -235,6 +235,15 @@ abstract class BundledTiles @Inject constructor(private val exec: ExecOperations
     @get:Nested
     abstract val launcher: Property<JavaLauncher>
 
+    /**
+     * The core's stage P tool (atlas_stagep, the host-stagep preset's), which then cuts the tiles (`packer render-tiles
+     * --core`: the same tiles, byte for byte); without it, the port's cut. From -Patlas.stagep or ATLAS_STAGEP.
+     */
+    @get:InputFile
+    @get:Optional
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val core: RegularFileProperty
+
     /** An asset root: the render packs land in its tiles/ folder. */
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
@@ -257,6 +266,7 @@ abstract class BundledTiles @Inject constructor(private val exec: ExecOperations
                     "--bundled", File(out, "tiles").absolutePath, "--repo", root.absolutePath, "--packs", File(root, "cache/packs/regions").absolutePath,
                     "--work", work.absolutePath, "--quiet",
                 )
+                core.orNull?.let { args("--core", it.asFile.absolutePath) }
             }
         } finally {
             work.deleteRecursively()
@@ -270,6 +280,7 @@ val generateBundledTiles = tasks.register<BundledTiles>("generateBundledTiles") 
     westerkerk.set(layout.projectDirectory.file("src/main/assets/packs/amsterdam.atlas"))
     repo.set(rootProject.layout.projectDirectory.dir("../.."))
     launcher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(17)) })
+    providers.gradleProperty("atlas.stagep").orElse(providers.environmentVariable("ATLAS_STAGEP")).orNull?.let { core.set(file(it)) }
     outputDir.set(layout.buildDirectory.dir("generated/tiles"))
 }
 androidComponents {

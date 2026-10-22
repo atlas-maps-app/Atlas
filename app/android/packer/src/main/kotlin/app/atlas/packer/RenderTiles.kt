@@ -45,15 +45,16 @@ import kotlin.system.exitProcess
  * named with SceneToTiles' own reason, so the region builds as soon as the format carries what it holds.
  */
 object RenderTiles {
-    const val USAGE = """packer render-tiles --bundled <out-dir> [--repo DIR] [--packs DIR] [--work DIR] [--quiet]
+    const val USAGE = """packer render-tiles --bundled <out-dir> [--repo DIR] [--packs DIR] [--work DIR] [--core FILE] [--quiet]
       The app's bundled render tiles: amsterdam.atlas (the Westerkerk's living map, from the app's bundled pack) and
       grachten.atlas (the canal ring, from packs-renders' grachten.atlas in --packs, by default <repo>/cache/packs/regions,
       downloaded from the release when it is not there and checked against its SHA-256), and bundled.json, their index.
       --repo is the repo root (default: the current directory); --work is where the engine unpacks the packs (default: a
-      temporary folder, deleted after). --quiet prints warnings only.
-  packer render-tiles --renders <region.atlas> <out.atlas> [--work DIR] [--quiet]
+      temporary folder, deleted after). --core names the core's stage P tool (atlas_stagep), which then loads and cuts
+      the tiles, the code the phone builds its windows with (the same tiles, byte for byte). --quiet prints warnings only.
+  packer render-tiles --renders <region.atlas> <out.atlas> [--work DIR] [--core FILE] [--quiet]
       One region's render pack from its element pack.
-  packer render-tiles --renders <packs.json> <out-dir> [--packs DIR] [--only a,b] [--work DIR] [--quiet]
+  packer render-tiles --renders <packs.json> <out-dir> [--packs DIR] [--only a,b] [--work DIR] [--core FILE] [--quiet]
       Every region of a release's list (packs-renders' packs.json): its element pack from --packs (default: the list's
       folder), downloaded from the list's URL when not there and used only when its size and SHA-256 are the list's; its
       render pack <id>.render.atlas in <out-dir>; and <out-dir>/packs.json, the list with each render pack beside its
@@ -137,11 +138,12 @@ object RenderTiles {
             } else positional += s
             i++
         }
-        val unknown = options.keys - setOf("--bundled", "--renders", "--repo", "--packs", "--work", "--only", "--quiet")
+        val unknown = options.keys - setOf("--bundled", "--renders", "--repo", "--packs", "--work", "--only", "--core", "--quiet")
         if (unknown.isNotEmpty()) throw UsageException("unknown option ${unknown.joinToString()}; usage: $USAGE")
         val quiet = "--quiet" in options
         val log: (String) -> Unit = if (quiet) { _ -> } else out
         val work = options["--work"]?.let(::File)
+        val core = options["--core"]?.let(::File)?.also { if (!it.canExecute()) throw UsageException("--core names no tool at $it") }
         when {
             "--bundled" in options && "--renders" !in options -> {
                 if (positional.size != 1) throw UsageException("render-tiles --bundled takes the output folder; usage: $USAGE")
@@ -149,7 +151,7 @@ object RenderTiles {
                 val repo = File(options["--repo"] ?: ".").absoluteFile
                 if (!File(repo, WESTERKERK).isFile) throw UsageException("$repo is not the repo root (no $WESTERKERK)")
                 val packs = options["--packs"]?.let(::File) ?: File(repo, "cache/packs/regions")
-                val made = bundled(repo, packs, File(positional[0]), work, log)
+                val made = bundled(repo, packs, File(positional[0]), work, core, log)
                 log("${made.size} render packs, ${made.sumOf { it.bytes }} bytes; engine ${EngineVersion.ID}, style ${StyleVersion.ID}")
             }
             "--renders" in options && "--bundled" !in options -> {
@@ -160,12 +162,12 @@ object RenderTiles {
                 if (src.name.endsWith(".json")) {
                     val only = options["--only"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()
                     val packs = options["--packs"]?.let(::File) ?: src.absoluteFile.parentFile
-                    val l = renders(src, File(positional[1]), packs, work, only, log = log)
+                    val l = renders(src, File(positional[1]), packs, work, only, core = core, log = log)
                     val built = l.outcomes.count { it.made != null }
                     log("${l.outcomes.size} regions: $built render packs, ${l.outcomes.size - built} without one; engine ${EngineVersion.ID}, style ${StyleVersion.ID}")
                 } else {
                     if ("--only" in options || "--packs" in options) throw UsageException("--only and --packs are for a list of regions; usage: $USAGE")
-                    val m = one(src, File(positional[1]), work, log)
+                    val m = one(src, File(positional[1]), work, core, log)
                     log("${m.file.path}: ${m.bytes} bytes, ${m.chunks} tiles, ${m.profile}")
                 }
             }
@@ -174,27 +176,30 @@ object RenderTiles {
         return 0
     }
 
-    /** The bundled set from the repo's Westerkerk pack and the canal ring's (fetched into [packs]), into [out] with its index. */
-    fun bundled(repo: File, packs: File, out: File, work: File? = null, log: (String) -> Unit = {}): List<Made> {
+    /**
+     * The bundled set from the repo's Westerkerk pack and the canal ring's (fetched into [packs]), into [out] with its
+     * index; with [core], their tiles cut by the core's stage P ([SceneToTiles.pack]).
+     */
+    fun bundled(repo: File, packs: File, out: File, work: File? = null, core: File? = null, log: (String) -> Unit = {}): List<Made> {
         out.mkdirs()
         out.listFiles { f -> f.name.endsWith(".atlas") || f.name == INDEX }?.forEach { it.delete() }
         val sources = listOf(File(repo, WESTERKERK), fetch(CANAL_RING, packs, log))
         val made = sources.map { src ->
             val id = PackReader.open(src).use { it.manifest.id }
-            one(src, File(out, "$id.atlas"), work, log)
+            one(src, File(out, "$id.atlas"), work, core, log)
         }
         File(out, INDEX).writeText(Manifest.pretty(index(made)) + "\n")
         return made
     }
 
-    /** One render pack of [pack] into [file]. */
-    fun one(pack: File, file: File, work: File? = null, log: (String) -> Unit = {}): Made {
+    /** One render pack of [pack] into [file]; with [core], its tiles cut by the core's stage P ([SceneToTiles.pack]). */
+    fun one(pack: File, file: File, work: File? = null, core: File? = null, log: (String) -> Unit = {}): Made {
         val dir = work ?: Files.createTempDirectory("atlas-rtiles").toFile()
         val minorBefore = PyCompat.minor
         // the port as the phone's renders ran it: CPython 3.9's last bits
         PyCompat.minor = 9
         try {
-            val p = SceneToTiles.pack(pack, file, dir, log = log)
+            val p = SceneToTiles.pack(pack, file, dir, core = core, log = log)
             return Made(
                 p.head.region, file, file.length(), sha256(file), pack, p.head.source, p.head.profile.label, p.head.levels.toList(),
                 p.written.chunks.size, p.head.engineVersion, p.head.styleVersion,
@@ -210,9 +215,10 @@ object RenderTiles {
      * (see [USAGE]). Each element pack comes from [packs], or from its URL into [packs], and is used only when its size
      * and SHA-256 are the list's. A region SceneToTiles refuses ([refusal]) gets no render pack and its reason as
      * `render_gap`; any other failure is thrown. With [only], the other regions' entries stay as they are. The list's
-     * `generated` becomes [now] when anything in it changed, else stays.
+     * `generated` becomes [now] when anything in it changed, else stays. With [core], the tiles are cut by the core's
+     * stage P ([SceneToTiles.pack]).
      */
-    fun renders(listFile: File, out: File, packs: File = listFile.absoluteFile.parentFile, work: File? = null, only: Set<String>? = null, now: Instant = Instant.now(), log: (String) -> Unit = {}): Listed {
+    fun renders(listFile: File, out: File, packs: File = listFile.absoluteFile.parentFile, work: File? = null, only: Set<String>? = null, now: Instant = Instant.now(), core: File? = null, log: (String) -> Unit = {}): Listed {
         val root = Json.parseToJsonElement(listFile.readText()) as? JsonObject ?: throw IOException("${listFile.name} is not a JSON object")
         val entries = (root["packs"] as? JsonArray ?: throw IOException("${listFile.name} lists no packs")).map {
             it as? JsonObject ?: throw IOException("${listFile.name} lists a pack that is not an object")
@@ -232,7 +238,7 @@ object RenderTiles {
         val outcomes = ArrayList<Outcome>()
         val written = entries.mapIndexed { i, e ->
             if (only != null && ids[i] !in only) return@mapIndexed e
-            val (o, elementUrl) = region(e, ids[i], out, packs, work, log)
+            val (o, elementUrl) = region(e, ids[i], out, packs, work, core, log)
             outcomes += o
             withRender(e, o, elementUrl)
         }
@@ -259,7 +265,7 @@ object RenderTiles {
     }
 
     /** [e]'s render pack built into [out] (its outcome) and its element pack's URL. */
-    private fun region(e: JsonObject, id: String, out: File, packs: File, work: File?, log: (String) -> Unit): Pair<Outcome, String?> {
+    private fun region(e: JsonObject, id: String, out: File, packs: File, work: File?, core: File?, log: (String) -> Unit): Pair<Outcome, String?> {
         val files = (e["files"] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
         val atlas = files.firstOrNull { it.str("kind") == "atlas" }
         val file = File(out, "$id${PackLibrary.RENDER_SUFFIX}")
@@ -277,7 +283,7 @@ object RenderTiles {
         val element = fetch(Source(id, url, sha, bytes, name), packs, log)
         file.delete()
         val made = try {
-            one(element, file, work, log)
+            one(element, file, work, core, log)
         } catch (x: Exception) {
             file.delete()
             val why = refusal(x) ?: throw IllegalStateException("$id: ${x.message ?: x}", x)
@@ -409,7 +415,7 @@ object RenderTiles {
 
     private fun JsonObject.str(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
 
-    private val VALUED = setOf("--repo", "--packs", "--work", "--only")
+    private val VALUED = setOf("--repo", "--packs", "--work", "--only", "--core")
 
     /** SceneToTiles' words when a scene holds what the format carries only from a later package. */
     private const val CANNOT_CARRY = "render tiles cannot carry"

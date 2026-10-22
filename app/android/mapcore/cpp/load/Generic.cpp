@@ -6,7 +6,7 @@
 #include "load/Amsterdam.hpp"
 #include "load/Real.hpp"
 #include "text/Case.hpp"
-#include "text/Shaper.hpp"
+#include "text/Utf8.hpp"
 
 #include <algorithm>
 #include <array>

@@ -141,16 +141,19 @@ if(NOT ATLAS_SLANGC)
         set(ATLAS_SLANGC "${ATLAS_TOOLS_DIR}/slang-${ATLAS_SLANG_VERSION}-${ATLAS_HOST_PLATFORM}/bin/slangc")
     endif()
 endif()
-if(NOT EXISTS "${ATLAS_SLANGC}")
-    message(FATAL_ERROR "slangc ${ATLAS_SLANG_VERSION} is not at ${ATLAS_SLANGC}. Fetch it with "
-        "'./gradlew :mapcore:fetchSlang' (from app/android), or set ATLAS_SLANGC.")
-endif()
-execute_process(COMMAND "${ATLAS_SLANGC}" -v OUTPUT_VARIABLE _slang_v ERROR_VARIABLE _slang_v RESULT_VARIABLE _slang_rc
-    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_STRIP_TRAILING_WHITESPACE)
-string(STRIP "${_slang_v}" _slang_v)
-if(NOT _slang_rc EQUAL 0 OR NOT _slang_v STREQUAL ATLAS_SLANG_VERSION)
-    message(FATAL_ERROR "${ATLAS_SLANGC} reports '${_slang_v}', but the core is pinned to Slang ${ATLAS_SLANG_VERSION}: "
-        "a compiler upgrade is a reviewed change of mapcore/tools.properties.")
+# Stage P's tool alone (ATLAS_STAGE_P) compiles no shader: it needs no slangc.
+if(NOT ATLAS_STAGE_P)
+    if(NOT EXISTS "${ATLAS_SLANGC}")
+        message(FATAL_ERROR "slangc ${ATLAS_SLANG_VERSION} is not at ${ATLAS_SLANGC}. Fetch it with "
+            "'./gradlew :mapcore:fetchSlang' (from app/android), or set ATLAS_SLANGC.")
+    endif()
+    execute_process(COMMAND "${ATLAS_SLANGC}" -v OUTPUT_VARIABLE _slang_v ERROR_VARIABLE _slang_v
+        RESULT_VARIABLE _slang_rc OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_STRIP_TRAILING_WHITESPACE)
+    string(STRIP "${_slang_v}" _slang_v)
+    if(NOT _slang_rc EQUAL 0 OR NOT _slang_v STREQUAL ATLAS_SLANG_VERSION)
+        message(FATAL_ERROR "${ATLAS_SLANGC} reports '${_slang_v}', but the core is pinned to Slang "
+            "${ATLAS_SLANG_VERSION}: a compiler upgrade is a reviewed change of mapcore/tools.properties.")
+    endif()
 endif()
 target_compile_definitions(atlas_options INTERFACE ATLAS_SLANG_VERSION="${ATLAS_SLANG_VERSION}")
 

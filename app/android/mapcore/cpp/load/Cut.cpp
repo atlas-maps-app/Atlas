@@ -5,7 +5,7 @@
 #include "load/Keep.hpp"
 #include "load/Real.hpp"
 #include "load/Tables.hpp"
-#include "text/Shaper.hpp"
+#include "text/Utf8.hpp"
 #include "tiles/Grid.hpp"
 #include "tiles/Schema.hpp"
 #include "tiles/layers/Buildings.hpp"
@@ -768,7 +768,7 @@ private:
     void unsupported() {
         if (!plan_.uncarried_refused) return;
         if (!s_.gantries.empty() || !s_.conveyors.empty()) {
-            fail("render tiles cannot carry gantries or conveyors yet");
+            fail("render tiles cannot carry gantries or conveyors yet", true);
             return;
         }
         for (const auto* list : {&s_.buildings, &s_.parts}) {
@@ -776,7 +776,8 @@ private:
                 if (b.lv_why || b.roof_why || b.look == LookPath::tradition || b.party) {
                     fail(std::format("building {}: a tradition's details (trad, party, lv_why, roof_why) have no "
                                      "column yet (ENGINE.md step 4)",
-                                     b.id));
+                                     b.id),
+                         true);
                     return;
                 }
             }
@@ -820,8 +821,9 @@ private:
         return g;
     }
 
-    void fail(std::string what) {
-        if (!error_) error_ = CutError{std::move(what)};
+    /// The cut's first failure: `uncarried` where the scene holds what the tiles cannot carry yet (unsupported()).
+    void fail(std::string what, bool uncarried = false) {
+        if (!error_) error_ = CutError{.what = std::move(what), .uncarried = uncarried};
     }
 
     void rings_of(const std::vector<Building>& list, std::vector<GridLine>& out, std::string_view label) {
@@ -1778,10 +1780,12 @@ struct BaseAttributes {
                                                         double tolerance, std::vector<VariantFeature>& out) {
     const int level = tiles::keep::level_of(tolerance);
     if (level <= 0) {
-        return std::unexpected(CutError{std::format("a variant at {} m, which is not on the keep ladder", tolerance)});
+        return std::unexpected(
+            CutError{.what = std::format("a variant at {} m, which is not on the keep ladder", tolerance)});
     }
     if (other.water != base.water) {
-        return std::unexpected(CutError{std::format("at {} m the water differs from tolerance 0's", tolerance)});
+        return std::unexpected(
+            CutError{.what = std::format("at {} m the water differs from tolerance 0's", tolerance)});
     }
     const std::vector<Edge> edges = water_edges(other);
     const EdgeGrid grid(edges);
@@ -1790,13 +1794,14 @@ struct BaseAttributes {
         const std::vector<std::optional<Attributes>>& attributes = base.attributes.at(part ? 1 : 0);
         const std::vector<Building>& theirs = part ? other.parts : other.buildings;
         if (ids.size() != theirs.size()) {
-            return std::unexpected(CutError{std::format("at {} m: {} {}, not {}", tolerance, theirs.size(),
-                                                        part ? "parts" : "buildings", ids.size())});
+            return std::unexpected(CutError{.what = std::format("at {} m: {} {}, not {}", tolerance, theirs.size(),
+                                                                part ? "parts" : "buildings", ids.size())});
         }
         for (std::uint32_t i = 0; i < ids.size(); ++i) {
             if (ids[i] != theirs[i].id) {
-                return std::unexpected(CutError{std::format("at {} m: {} {} is {}, not {}", tolerance,
-                                                            part ? "part" : "building", i, theirs[i].id, ids[i])});
+                return std::unexpected(
+                    CutError{.what = std::format("at {} m: {} {} is {}, not {}", tolerance, part ? "part" : "building",
+                                                 i, theirs[i].id, ids[i])});
             }
             const std::optional<Attributes>& mine = attributes[i];
             if (!mine) continue;
@@ -1819,7 +1824,8 @@ cut_with(const CutPlan& plan, const Scene& scene, const tiles::Frame& frame, std
         const BaseAttributes base = base_attributes(plan, scene, frame);
         for (const CutVariant& v : variants) {
             if (v.scene == nullptr) {
-                return std::unexpected(CutError{std::format("a variant at {} m without its scene", v.tolerance)});
+                return std::unexpected(
+                    CutError{.what = std::format("a variant at {} m without its scene", v.tolerance)});
             }
             if (auto done = variants_of(base, *v.scene, v.tolerance, found); !done) {
                 return std::unexpected(done.error());
@@ -1856,7 +1862,7 @@ std::expected<std::vector<tiles::TileFill>, CutError> cut_window(const Scene& sc
                                                                  const tiles::TileKey& tile) {
     if (tile.z != window_levels[0]) {
         return std::unexpected(
-            CutError{std::format("a window is a tile of L{}, not of L{}", window_levels[0], tile.z)});
+            CutError{.what = std::format("a window is a tile of L{}, not of L{}", window_levels[0], tile.z)});
     }
     return cut_with(window_plan(tile), scene, frame, variants);
 }
@@ -1878,7 +1884,7 @@ WindowCut::~WindowCut() = default;
 std::expected<void, CutError> WindowCut::base(const Scene& scene) {
     if (state_->tile.z != window_levels[0]) {
         return std::unexpected(
-            CutError{std::format("a window is a tile of L{}, not of L{}", window_levels[0], state_->tile.z)});
+            CutError{.what = std::format("a window is a tile of L{}, not of L{}", window_levels[0], state_->tile.z)});
     }
     state_->base = base_attributes(window_plan(state_->tile), scene, state_->frame);
     state_->variants.clear();
@@ -1886,21 +1892,21 @@ std::expected<void, CutError> WindowCut::base(const Scene& scene) {
 }
 
 std::expected<void, CutError> WindowCut::compare(const Scene& scene, double tolerance) {
-    if (!state_->base) return std::unexpected(CutError{"a variant compared before the base"});
+    if (!state_->base) return std::unexpected(CutError{.what = "a variant compared before the base"});
     return variants_of(*state_->base, scene, tolerance, state_->variants);
 }
 
 std::expected<std::vector<tiles::TileFill>, CutError> WindowCut::cut(const Scene& scene) {
-    if (!state_->base) return std::unexpected(CutError{"a window cut before its base"});
+    if (!state_->base) return std::unexpected(CutError{.what = "a window cut before its base"});
     // the scene at tolerance 0 again: the one the base was taken from
     const BaseAttributes& base = *state_->base;
     if (scene.water != base.water || scene.buildings.size() != base.ids[0].size() ||
         scene.parts.size() != base.ids[1].size()) {
-        return std::unexpected(CutError{"the window's scene is not the one its base was taken from"});
+        return std::unexpected(CutError{.what = "the window's scene is not the one its base was taken from"});
     }
     for (std::size_t i = 0; i < scene.buildings.size(); ++i) {
         if (scene.buildings[i].id != base.ids[0][i]) {
-            return std::unexpected(CutError{"the window's scene is not the one its base was taken from"});
+            return std::unexpected(CutError{.what = "the window's scene is not the one its base was taken from"});
         }
     }
     Cutter cutter(scene, state_->frame, window_plan(state_->tile));

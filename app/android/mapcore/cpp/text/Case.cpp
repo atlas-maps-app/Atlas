@@ -1,6 +1,6 @@
 #include "text/Case.hpp"
 
-#include "text/Shaper.hpp"
+#include "text/Utf8.hpp"
 
 #include <algorithm>
 #include <array>
