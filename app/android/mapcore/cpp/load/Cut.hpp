@@ -25,6 +25,7 @@
 #include "tiles/TileWriter.hpp"
 
 #include <expected>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -63,5 +64,32 @@ cut_region(const Scene& scene, const tiles::Frame& frame, std::span<const CutVar
                                                                                const tiles::Frame& frame,
                                                                                std::span<const CutVariant> variants,
                                                                                const tiles::TileKey& tile);
+
+/// cut_window in steps, so that a window's scenes at the live map's tolerances are never held together (ENGINE.md step
+/// 3's budget for a window's memory): `base` takes the attributes of the buildings and parts in the tile from the
+/// scene at tolerance 0, `compare` takes each other tolerance's scene as it comes and keeps a variant wherever a
+/// building's or part's attributes differ, and `cut` cuts the tile from the scene at tolerance 0, loaded again, with
+/// those variants. The tiles are cut_window's for the same scenes, byte for byte. The scenes' document must outlive
+/// it: the attributes view its strings.
+class WindowCut {
+public:
+    WindowCut(const tiles::Frame& frame, const tiles::TileKey& tile);
+    WindowCut(const WindowCut&) = delete;
+    WindowCut& operator=(const WindowCut&) = delete;
+    WindowCut(WindowCut&&) noexcept;
+    WindowCut& operator=(WindowCut&&) noexcept;
+    ~WindowCut();
+
+    /// Takes the base: the scene at tolerance 0.
+    [[nodiscard]] std::expected<void, CutError> base(const Scene& scene);
+    /// Compares the scene at `tolerance` (on the keep ladder) with the base.
+    [[nodiscard]] std::expected<void, CutError> compare(const Scene& scene, double tolerance);
+    /// The tile, cut from the scene at tolerance 0 (the base's own, loaded again) with the variants found.
+    [[nodiscard]] std::expected<std::vector<tiles::TileFill>, CutError> cut(const Scene& scene);
+
+private:
+    struct State;
+    std::unique_ptr<State> state_;
+};
 
 } // namespace atlas::load

@@ -155,29 +155,39 @@ std::expected<BuiltWindow, WindowError> build_window(const osm::Document& doc, c
                               .palette = region_palette(place.region)};
     BuiltWindow out;
     const auto t0 = clock::now();
-    auto base = load_region(doc, config);
-    if (!base) {
-        return std::unexpected(WindowError{std::format("the data does not load: {} at element {}",
-                                                       name_of(base.error().fault), base.error().element)});
+    // One scene at a time (ENGINE.md step 3's budget for a window's memory): the attributes of the scene at tolerance
+    // 0, then each tolerance of the live map's bands compared with them as its scene comes, then the scene at tolerance
+    // 0 again for the cut. The same tiles as cut_window over every scene at once.
+    WindowCut steps(place.frame, tile);
+    const auto loaded = [&](double tolerance) -> std::expected<Scene, WindowError> {
+        auto scene = load_region(doc, config, tolerance);
+        if (scene) return std::move(*scene);
+        if (tolerance == 0.0) {
+            return std::unexpected(WindowError{std::format("the data does not load: {} at element {}",
+                                                           name_of(scene.error().fault), scene.error().element)});
+        }
+        return std::unexpected(WindowError{std::format("the data does not load at {} m", tolerance)});
+    };
+    {
+        auto base = loaded(0.0);
+        if (!base) return std::unexpected(base.error());
+        if (auto taken = steps.base(*base); !taken) {
+            return std::unexpected(WindowError{"the scene does not cut: " + taken.error().what});
+        }
     }
-    // the variants: the window loaded at each tolerance of the live map's bands
-    std::vector<Scene> others;
-    std::vector<CutVariant> variants;
-    others.reserve(region_bands.size());
     for (const tl::HeadBand& b : region_bands) {
         if (b.tolerance == 0) continue;
         const double tolerance = tl::keep::tolerances.at(b.tolerance);
-        auto other = load_region(doc, config, tolerance);
-        if (!other) return std::unexpected(WindowError{std::format("the data does not load at {} m", tolerance)});
-        others.push_back(std::move(*other));
+        auto other = loaded(tolerance);
+        if (!other) return std::unexpected(other.error());
+        if (auto compared = steps.compare(*other, tolerance); !compared) {
+            return std::unexpected(WindowError{"the scene does not cut: " + compared.error().what});
+        }
     }
-    std::size_t k = 0;
-    for (const tl::HeadBand& b : region_bands) {
-        if (b.tolerance != 0)
-            variants.push_back({.tolerance = tl::keep::tolerances.at(b.tolerance), .scene = &others[k++]});
-    }
+    auto base = loaded(0.0);
+    if (!base) return std::unexpected(base.error());
     const auto t1 = clock::now();
-    const auto cut = cut_window(*base, place.frame, variants, tile);
+    const auto cut = steps.cut(*base);
     if (!cut) return std::unexpected(WindowError{"the scene does not cut: " + cut.error().what});
     const auto t2 = clock::now();
     std::vector<tl::PackTile> tiles;

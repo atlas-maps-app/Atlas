@@ -669,52 +669,53 @@ struct CutPlan {
     bool identity = false;
 };
 
+/// The building's or part's attributes in `scene`, `grid` its water edges'. They view the scene's document, its
+/// tradition and the core's own tables, never the scene itself, so they outlive it.
+[[nodiscard]] Attributes attributes_of(const Scene& scene, const Building& b, bool part, const EdgeGrid& grid) {
+    Attributes a;
+    a.h = b.h;
+    a.min = b.min;
+    a.roof_h = b.roof_h;
+    a.year = b.year;
+    a.levels = b.levels;
+    a.parent_id = b.parent_id;
+    a.roof = b.roof;
+    a.orient = b.orient;
+    a.wall_rgb = wall_rgb(b);
+    a.roof_rgb = roof_rgb(b);
+    a.mat_draw = b.mat_draw;
+    if (b.look != LookPath::none) {
+        a.rmat_draw = b.rmat_draw;
+        a.kind = b.kind;
+    }
+    a.relation = b.relation;
+    if (!part) a.hidden = b.hidden;
+    if (b.look == LookPath::generic || b.look == LookPath::tradition) a.no_win = b.no_win;
+    a.in_church = b.in_church;
+    for (const Guess g : b.guessed.keys()) a.guessed.push_back(key_of(g));
+    for (const std::uint32_t k : b.places) {
+        a.places.push_back(scene.nodes[k].id);
+        a.hours.push_back(scene.nodes[k].tags.get("opening_hours").value_or(""));
+    }
+    // the derived flags, with the renders' own tests (amsterdam.py's _draw_building)
+    namespace c = tl::building;
+    const auto btype = b.tags.get("building");
+    if (in(btype, churches) || b.tags.is("building:part", "church") || b.in_church) a.flags |= c::flag_church;
+    if (in(btype, warehouses)) a.flags |= c::flag_warehouse;
+    if (!b.places.empty() || in(btype, shop_floors)) a.flags |= c::flag_shop_floor;
+    if (b.tags.is("building", "construction")) a.flags |= c::flag_construction;
+    if (grid.near_water(b.poly, near_water_reach)) a.flags |= c::flag_near_water;
+    if (b.tags.is("building", "houseboat")) a.flags |= c::flag_houseboat;
+    if (b.year.value_or(0) >= 1960 && !in(btype, churches)) a.flags |= c::flag_modern;
+    if (b.col_draw && !b.col_draw->empty()) a.flags |= c::flag_wall_drawn;
+    a.tags = {b.tags.get("building"), b.tags.get("building:part"), b.tags.get("roof:direction")};
+    return a;
+}
+
 class Cutter {
 public:
     Cutter(const Scene& s, const tl::Frame& f, const CutPlan& plan)
         : s_(s), f_(f), plan_(plan), edges_(water_edges(s)), grid_(edges_) {}
-
-    /// The building's or part's attributes in `scene`, `grid` its water edges' (a variant's own scene and edges).
-    [[nodiscard]] Attributes attributes(const Scene& scene, const Building& b, bool part, const EdgeGrid& grid) const {
-        Attributes a;
-        a.h = b.h;
-        a.min = b.min;
-        a.roof_h = b.roof_h;
-        a.year = b.year;
-        a.levels = b.levels;
-        a.parent_id = b.parent_id;
-        a.roof = b.roof;
-        a.orient = b.orient;
-        a.wall_rgb = wall_rgb(b);
-        a.roof_rgb = roof_rgb(b);
-        a.mat_draw = b.mat_draw;
-        if (b.look != LookPath::none) {
-            a.rmat_draw = b.rmat_draw;
-            a.kind = b.kind;
-        }
-        a.relation = b.relation;
-        if (!part) a.hidden = b.hidden;
-        if (b.look == LookPath::generic || b.look == LookPath::tradition) a.no_win = b.no_win;
-        a.in_church = b.in_church;
-        for (const Guess g : b.guessed.keys()) a.guessed.push_back(key_of(g));
-        for (const std::uint32_t k : b.places) {
-            a.places.push_back(scene.nodes[k].id);
-            a.hours.push_back(scene.nodes[k].tags.get("opening_hours").value_or(""));
-        }
-        // the derived flags, with the renders' own tests (amsterdam.py's _draw_building)
-        namespace c = tl::building;
-        const auto btype = b.tags.get("building");
-        if (in(btype, churches) || b.tags.is("building:part", "church") || b.in_church) a.flags |= c::flag_church;
-        if (in(btype, warehouses)) a.flags |= c::flag_warehouse;
-        if (!b.places.empty() || in(btype, shop_floors)) a.flags |= c::flag_shop_floor;
-        if (b.tags.is("building", "construction")) a.flags |= c::flag_construction;
-        if (grid.near_water(b.poly, near_water_reach)) a.flags |= c::flag_near_water;
-        if (b.tags.is("building", "houseboat")) a.flags |= c::flag_houseboat;
-        if (b.year.value_or(0) >= 1960 && !in(btype, churches)) a.flags |= c::flag_modern;
-        if (b.col_draw && !b.col_draw->empty()) a.flags |= c::flag_wall_drawn;
-        a.tags = {b.tags.get("building"), b.tags.get("building:part"), b.tags.get("roof:direction")};
-        return a;
-    }
 
     [[nodiscard]] const EdgeGrid& grid() const noexcept { return grid_; }
 
@@ -1389,7 +1390,7 @@ private:
         } else {
             lf.ring(c::ring, f, ring.lat, ring.lon);
         }
-        write_attributes(lf, f, c::h, attributes(s_, b, part, grid_));
+        write_attributes(lf, f, c::h, attributes_of(s_, b, part, grid_));
     }
 
     void variant(tl::LayerFill& lf, std::uint32_t f, const Pending& p) {
@@ -1729,58 +1730,114 @@ std::expected<std::vector<tiles::TileFill>, CutError> cut_living(const Scene& sc
 
 namespace {
 
+/// What a variant is compared with: the ids of the base scene's buildings and parts (each tolerance's scene lists the
+/// same, in the same order), the attributes of those the cut keeps (a window's, in its tile), and the water.
+struct BaseAttributes {
+    std::array<std::vector<std::int64_t>, 2> ids;                     ///< buildings, parts
+    std::array<std::vector<std::optional<Attributes>>, 2> attributes; ///< buildings, parts: where kept
+    std::vector<std::vector<V2>> water;
+};
+
+/// Whether the cut by `plan` keeps building `b`: every one, or a window's whose reference point lies in its tile.
+[[nodiscard]] bool kept_by(const CutPlan& plan, const tiles::Frame& frame, const Building& b) {
+    if (!plan.only) return true;
+    const V2 c = geometry::centroid(b.poly);
+    const tiles::GridPoint ref = tiles::nearest_grid(frame, c.x, c.z);
+    return tiles::tile_of(plan.only->z, ref.lat, ref.lon).packed() == plan.only->packed();
+}
+
+/// The base scene's attributes, as each variant compares them.
+[[nodiscard]] BaseAttributes base_attributes(const CutPlan& plan, const Scene& scene, const tiles::Frame& frame) {
+    BaseAttributes base;
+    const std::vector<Edge> edges = water_edges(scene);
+    const EdgeGrid grid(edges);
+    for (const bool part : {false, true}) {
+        const std::vector<Building>& mine = part ? scene.parts : scene.buildings;
+        std::vector<std::int64_t>& ids = base.ids.at(part ? 1 : 0);
+        std::vector<std::optional<Attributes>>& attributes = base.attributes.at(part ? 1 : 0);
+        ids.reserve(mine.size());
+        attributes.reserve(mine.size());
+        for (const Building& b : mine) {
+            ids.push_back(b.id);
+            attributes.push_back(kept_by(plan, frame, b) ? std::optional(attributes_of(scene, b, part, grid))
+                                                         : std::nullopt);
+        }
+    }
+    base.water = scene.water;
+    return base;
+}
+
+/// The variants of `other`, the region loaded at `tolerance`: a building's or part's attributes there where they differ
+/// from the base's, appended to `out` (buildings, then parts, each in order).
+[[nodiscard]] std::expected<void, CutError> variants_of(const BaseAttributes& base, const Scene& other,
+                                                        double tolerance, std::vector<VariantFeature>& out) {
+    const int level = tiles::keep::level_of(tolerance);
+    if (level <= 0) {
+        return std::unexpected(CutError{std::format("a variant at {} m, which is not on the keep ladder", tolerance)});
+    }
+    if (other.water != base.water) {
+        return std::unexpected(CutError{std::format("at {} m the water differs from tolerance 0's", tolerance)});
+    }
+    const std::vector<Edge> edges = water_edges(other);
+    const EdgeGrid grid(edges);
+    for (const bool part : {false, true}) {
+        const std::vector<std::int64_t>& ids = base.ids.at(part ? 1 : 0);
+        const std::vector<std::optional<Attributes>>& attributes = base.attributes.at(part ? 1 : 0);
+        const std::vector<Building>& theirs = part ? other.parts : other.buildings;
+        if (ids.size() != theirs.size()) {
+            return std::unexpected(CutError{std::format("at {} m: {} {}, not {}", tolerance, theirs.size(),
+                                                        part ? "parts" : "buildings", ids.size())});
+        }
+        for (std::uint32_t i = 0; i < ids.size(); ++i) {
+            if (ids[i] != theirs[i].id) {
+                return std::unexpected(CutError{std::format("at {} m: {} {} is {}, not {}", tolerance,
+                                                            part ? "part" : "building", i, theirs[i].id, ids[i])});
+            }
+            const std::optional<Attributes>& mine = attributes[i];
+            if (!mine) continue;
+            Attributes b = attributes_of(other, theirs[i], part, grid);
+            if (!same(*mine, b)) {
+                out.push_back(
+                    {.part = part, .index = i, .level = static_cast<std::uint8_t>(level), .attributes = std::move(b)});
+            }
+        }
+    }
+    return {};
+}
+
 /// A region's cut by `plan`, with its variants: a building's or part's attributes at each variant's tolerance, carried
 /// where they differ from tolerance 0's (for a window, only of the features in its tile).
 std::expected<std::vector<tiles::TileFill>, CutError>
 cut_with(const CutPlan& plan, const Scene& scene, const tiles::Frame& frame, std::span<const CutVariant> variants) {
-    Cutter cutter(scene, frame, plan);
-    const auto kept = [&](const Building& b) {
-        if (!plan.only) return true;
-        const V2 c = geometry::centroid(b.poly);
-        const tiles::GridPoint ref = tiles::nearest_grid(frame, c.x, c.z);
-        return tiles::tile_of(plan.only->z, ref.lat, ref.lon).packed() == plan.only->packed();
-    };
-    for (const CutVariant& v : variants) {
-        const int level = tiles::keep::level_of(v.tolerance);
-        if (v.scene == nullptr || level <= 0) {
-            return std::unexpected(
-                CutError{std::format("a variant at {} m, which is not on the keep ladder", v.tolerance)});
-        }
-        const Scene& other = *v.scene;
-        if (other.water != scene.water) {
-            return std::unexpected(CutError{std::format("at {} m the water differs from tolerance 0's", v.tolerance)});
-        }
-        const std::vector<Edge> edges = water_edges(other);
-        const EdgeGrid grid(edges);
-        for (const bool part : {false, true}) {
-            const std::vector<Building>& mine = part ? scene.parts : scene.buildings;
-            const std::vector<Building>& theirs = part ? other.parts : other.buildings;
-            if (mine.size() != theirs.size()) {
-                return std::unexpected(CutError{std::format("at {} m: {} {}, not {}", v.tolerance, theirs.size(),
-                                                            part ? "parts" : "buildings", mine.size())});
+    std::vector<VariantFeature> found;
+    if (!variants.empty()) {
+        const BaseAttributes base = base_attributes(plan, scene, frame);
+        for (const CutVariant& v : variants) {
+            if (v.scene == nullptr) {
+                return std::unexpected(CutError{std::format("a variant at {} m without its scene", v.tolerance)});
             }
-            for (std::uint32_t i = 0; i < mine.size(); ++i) {
-                if (mine[i].id != theirs[i].id) {
-                    return std::unexpected(
-                        CutError{std::format("at {} m: {} {} is {}, not {}", v.tolerance, part ? "part" : "building", i,
-                                             theirs[i].id, mine[i].id)});
-                }
-                if (!kept(mine[i])) continue;
-                const Attributes a = cutter.attributes(scene, mine[i], part, cutter.grid());
-                Attributes b = cutter.attributes(other, theirs[i], part, grid);
-                if (!same(a, b)) {
-                    cutter.add_variant({.part = part,
-                                        .index = i,
-                                        .level = static_cast<std::uint8_t>(level),
-                                        .attributes = std::move(b)});
-                }
+            if (auto done = variants_of(base, *v.scene, v.tolerance, found); !done) {
+                return std::unexpected(done.error());
             }
         }
     }
+    Cutter cutter(scene, frame, plan);
+    for (VariantFeature& v : found) cutter.add_variant(std::move(v));
     return cutter.run();
 }
 
 constexpr std::array<std::uint8_t, 1> window_levels{14};
+
+/// A window's cut: L14 alone, the features in its tile, keep codes, no facades, a tradition's details left out, the
+/// ground's elements carried.
+[[nodiscard]] CutPlan window_plan(const tiles::TileKey& tile) {
+    return {.levels = window_levels,
+            .keep = true,
+            .facades = false,
+            .only = tile,
+            .details_refused = false,
+            .identity = true};
+}
 
 } // namespace
 
@@ -1796,13 +1853,55 @@ std::expected<std::vector<tiles::TileFill>, CutError> cut_window(const Scene& sc
         return std::unexpected(
             CutError{std::format("a window is a tile of L{}, not of L{}", window_levels[0], tile.z)});
     }
-    return cut_with({.levels = window_levels,
-                     .keep = true,
-                     .facades = false,
-                     .only = tile,
-                     .details_refused = false,
-                     .identity = true},
-                    scene, frame, variants);
+    return cut_with(window_plan(tile), scene, frame, variants);
+}
+
+struct WindowCut::State {
+    tiles::Frame frame;
+    tiles::TileKey tile;
+    std::optional<BaseAttributes> base;
+    std::vector<VariantFeature> variants;
+};
+
+WindowCut::WindowCut(const tiles::Frame& frame, const tiles::TileKey& tile)
+    : state_(std::make_unique<State>(State{.frame = frame, .tile = tile, .base = std::nullopt, .variants = {}})) {}
+
+WindowCut::WindowCut(WindowCut&&) noexcept = default;
+WindowCut& WindowCut::operator=(WindowCut&&) noexcept = default;
+WindowCut::~WindowCut() = default;
+
+std::expected<void, CutError> WindowCut::base(const Scene& scene) {
+    if (state_->tile.z != window_levels[0]) {
+        return std::unexpected(
+            CutError{std::format("a window is a tile of L{}, not of L{}", window_levels[0], state_->tile.z)});
+    }
+    state_->base = base_attributes(window_plan(state_->tile), scene, state_->frame);
+    state_->variants.clear();
+    return {};
+}
+
+std::expected<void, CutError> WindowCut::compare(const Scene& scene, double tolerance) {
+    if (!state_->base) return std::unexpected(CutError{"a variant compared before the base"});
+    return variants_of(*state_->base, scene, tolerance, state_->variants);
+}
+
+std::expected<std::vector<tiles::TileFill>, CutError> WindowCut::cut(const Scene& scene) {
+    if (!state_->base) return std::unexpected(CutError{"a window cut before its base"});
+    // the scene at tolerance 0 again: the one the base was taken from
+    const BaseAttributes& base = *state_->base;
+    if (scene.water != base.water || scene.buildings.size() != base.ids[0].size() ||
+        scene.parts.size() != base.ids[1].size()) {
+        return std::unexpected(CutError{"the window's scene is not the one its base was taken from"});
+    }
+    for (std::size_t i = 0; i < scene.buildings.size(); ++i) {
+        if (scene.buildings[i].id != base.ids[0][i]) {
+            return std::unexpected(CutError{"the window's scene is not the one its base was taken from"});
+        }
+    }
+    Cutter cutter(scene, state_->frame, window_plan(state_->tile));
+    for (VariantFeature& v : state_->variants) cutter.add_variant(std::move(v));
+    state_->variants.clear();
+    return cutter.run();
 }
 
 } // namespace atlas::load
