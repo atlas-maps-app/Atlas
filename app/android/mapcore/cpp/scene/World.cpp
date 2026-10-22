@@ -265,11 +265,17 @@ std::vector<tiles::TileKey> World::wanted_windows() const {
     return wanted_;
 }
 
+std::vector<tiles::TileKey> World::windows_in_view() const {
+    const std::scoped_lock lock(wanted_mutex_);
+    return in_view_;
+}
+
 void World::want_windows(const view::View& view, const style::CameraState& camera, const view::GroundFrame& frame,
                          double seconds) {
     if (wanted_at_ >= 0.0 && seconds - wanted_at_ < 0.5 && seconds >= wanted_at_) return;
     wanted_at_ = seconds;
     std::vector<std::pair<double, tiles::TileKey>> found;
+    std::vector<std::pair<double, tiles::TileKey>> drawn; // places only windows hold
     {
         const std::vector<std::shared_ptr<const tiles::StorePack>> open = store_.packs();
         std::vector<tiles::GridBox> held; // the bundled and render packs' boxes: their data's places
@@ -296,7 +302,14 @@ void World::want_windows(const view::View& view, const style::CameraState& camer
                 if (!frustum.sees(box)) continue;
                 const double d = frustum.distance(box);
                 if (d > options_.fine_reach) continue;
-                if (!store_.find(key).empty()) continue;
+                const std::vector<tiles::StoreHit> hits = store_.find(key);
+                if (!hits.empty()) {
+                    if (std::ranges::all_of(
+                            hits, [](const tiles::StoreHit& h) { return h.pack->kind == tiles::PackKind::window; })) {
+                        drawn.emplace_back(d, key);
+                    }
+                    continue;
+                }
                 const bool inside = std::ranges::any_of(held, [&grid](const tiles::GridBox& h) {
                     return grid.south >= h.south && grid.north <= h.north && grid.west >= h.west && grid.east <= h.east;
                 });
@@ -305,12 +318,18 @@ void World::want_windows(const view::View& view, const style::CameraState& camer
         }
     }
     // stable: places at one distance keep the scan's order, on every libc++
-    std::ranges::stable_sort(found, [](const auto& a, const auto& b) { return a.first < b.first; });
-    std::vector<tiles::TileKey> keys;
-    keys.reserve(found.size());
-    for (const auto& [d, key] : found) keys.push_back(key);
+    const auto nearest = [](std::vector<std::pair<double, tiles::TileKey>>& places) {
+        std::ranges::stable_sort(places, [](const auto& a, const auto& b) { return a.first < b.first; });
+        std::vector<tiles::TileKey> keys;
+        keys.reserve(places.size());
+        for (const auto& [d, key] : places) keys.push_back(key);
+        return keys;
+    };
+    std::vector<tiles::TileKey> wanted = nearest(found);
+    std::vector<tiles::TileKey> in_view = nearest(drawn);
     const std::scoped_lock lock(wanted_mutex_);
-    wanted_ = std::move(keys);
+    wanted_ = std::move(wanted);
+    in_view_ = std::move(in_view);
 }
 
 void World::place_items(const ResidentTile& tile) {

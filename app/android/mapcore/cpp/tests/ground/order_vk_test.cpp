@@ -2,6 +2,8 @@
 // window's tiles beside another pack's, every drawn fill and stroke takes its rank in its group by its element across
 // them (geometry::OrderKey, then its pack, then its scene's order), as one scene holding them all would order them;
 // a frame of one scene's tiles, or of packs without windows, keeps each element at its scene's order.
+#if !defined(__ANDROID__)
+
 #include "frame/FrameBuilder.hpp"
 #include "frame/PassRegistry.hpp"
 #include "gpu/Frames.hpp"
@@ -168,3 +170,5 @@ TEST_CASE("ground: a window's tiles beside another pack's are ordered by their e
     (*renderer)->drain();
     (void)session->take_messages();
 }
+
+#endif

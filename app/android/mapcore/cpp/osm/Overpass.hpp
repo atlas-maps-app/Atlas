@@ -7,8 +7,9 @@
 //     then a float (so "-0" is +0.0 and "-0.0" is -0.0);
 //   - the tags in their order, as a dict keeps them, and whether an element has any (`e.get('tags')`) or a geometry
 //     (`'geometry' in e`).
-// The reader takes what stage P reads (each element's type, id, position, tags, nodes, geometry and members) and steps
-// over the rest (bounds, centres, timestamps, versions, users, keys it does not know, whatever they hold). It reads
+// The reader takes what stage P reads (each element's type, id, position, tags, nodes, geometry and members), where
+// each element lies in the bytes and the data's date, and steps over the rest (bounds, centres, timestamps, versions,
+// users, keys it does not know, whatever they hold). It reads
 // strict JSON (RFC 8259, no NaN or Infinity, no control characters in strings, well-formed UTF-8) and refuses what
 // Overpass never writes and the port could not read alike: a key twice in one object, a null in a geometry, a lone
 // surrogate, a number where a string belongs or the other way round. A string without escapes is viewed in place, so
@@ -68,6 +69,8 @@ struct Element {
     bool has_nodes = false;
     bool has_geometry = false; ///< `'geometry' in e`
     bool has_members = false;
+    std::size_t from = 0; ///< where its object starts in the document's bytes (its `{`)
+    std::size_t to = 0;   ///< just past its object's `}`
 };
 
 /// Why a document cannot be read, and the byte where that was found.
@@ -97,12 +100,18 @@ inline constexpr std::size_t max_depth = 64;
 class Document {
 public:
     [[nodiscard]] std::span<const Element> elements() const noexcept { return elements_; }
+    /// The data's date, `osm3s.timestamp_osm_base` as Overpass writes it (empty where the document has none).
+    [[nodiscard]] std::string_view osm_base() const noexcept { return osm_base_; }
+    /// For the data a window keeps (osm/Diff.hpp), the date it was last fetched whole: `atlas.whole` (else empty).
+    [[nodiscard]] std::string_view whole() const noexcept { return whole_; }
 
 private:
     friend std::expected<Document, ReadError> read_overpass(std::span<const std::byte> json);
     friend Document select(const Document& from, const std::function<bool(const Element&)>& keep);
 
     std::vector<Element> elements_;
+    std::string_view osm_base_;
+    std::string_view whole_;
     std::vector<Tag> tags_;
     std::vector<std::int64_t> refs_;
     std::vector<LatLon> points_;

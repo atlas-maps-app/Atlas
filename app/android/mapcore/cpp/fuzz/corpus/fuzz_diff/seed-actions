@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="Overpass API 0.7.62.11 87bfad18">
+<note>The data included in this document is from www.openstreetmap.org. The data is made available under ODbL.</note>
+<meta osm_base="2026-10-16T08:46:19Z" areas="2026-10-16T08:00:00Z"/>
+
+<action type="modify">
+<old>
+  <node id="1" lat="52.3745000" lon="4.8838000">
+    <tag k="amenity" v="bench"/>
+  </node>
+</old>
+<new>
+  <node id="1" lat="52.3745100" lon="4.8838000">
+    <tag k="amenity" v="bench"/>
+    <tag k="name" v="A &quot;quoted&quot; bench &amp; &lt;its&gt; \ back&#x0a;slash&#x09;tab&#x0d;caf&#233; &#x1F600;"/>
+  </node>
+</new>
+</action>
+<action type="create">
+  <node id="2" lat="52.3745500" lon="4.8838500">
+    <tag k="natural" v="tree"/>
+  </node>
+</action>
+<action type="delete">
+<old>
+  <node id="4" lat="52.3746000" lon="4.8839000">
+    <tag k="natural" v="tree"/>
+  </node>
+</old>
+<new>
+  <node id="4" visible="false" version="3" timestamp="2026-10-12T10:00:00Z" changeset="1" uid="2" user="x"/>
+</new>
+</action>
+<action type="modify">
+<old>
+  <way id="5">
+    <nd ref="1" lat="52.3745000" lon="4.8838000"/>
+    <nd ref="4" lat="52.3746000" lon="4.8839000"/>
+    <tag k="highway" v="footway"/>
+  </way>
+</old>
+<new>
+  <way id="5">
+    <bounds minlat="52.3745100" minlon="4.8838000" maxlat="52.3745500" maxlon="4.8838500"/>
+    <nd ref="1" lat="52.3745100" lon="4.8838000"/>
+    <nd ref="2" lat="52.3745500" lon="4.8838500"/>
+    <tag k="highway" v="footway"/>
+  </way>
+</new>
+</action>
+<action type="create">
+  <relation id="10">
+    <bounds minlat="52.3745100" minlon="4.8838000" maxlat="52.3745500" maxlon="4.8838500"/>
+    <member type="node" ref="2" role="label" lat="52.3745500" lon="4.8838500"/>
+    <member type="way" ref="5" role="outer">
+      <nd lat="52.3745100" lon="4.8838000"/>
+      <nd lat="52.3745500" lon="4.8838500"/>
+    </member>
+    <member type="relation" ref="9" role=""/>
+    <tag k="type" v="multipolygon"/>
+  </relation>
+</action>
+<action type="delete">
+<old>
+  <relation id="9">
+    <member type="way" ref="5" role="outer">
+      <nd lat="52.3745000" lon="4.8838000"/>
+      <nd lat="52.3746000" lon="4.8839000"/>
+    </member>
+    <tag k="type" v="multipolygon"/>
+  </relation>
+</old>
+</action>
+
+</osm>

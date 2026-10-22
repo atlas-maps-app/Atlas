@@ -210,7 +210,8 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
      * state names the pack drawn by it), its [kind] (BUNDLED, RENDER, …: the order the core looks tiles up in), and a
      * file's [path], or an open descriptor's range ([fd], [offset], [length]: an APK asset stored uncompressed, which
      * the core maps where it lies; it keeps its own duplicate of the descriptor, so the caller closes its own after
-     * [packs] returns).
+     * [packs] returns). With a [path], [offset] and [length] are the file's time and size as the app listed it: a file
+     * built again at the same path (a window's) is new bytes, which the core opens anew.
      */
     class PackRef(val id: String, val number: Long, val kind: Int, val path: String = "", val fd: Int = -1, val offset: Long = 0, val length: Long = 0) {
         companion object {
@@ -287,6 +288,14 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
          */
         fun build(json: java.nio.ByteBuffer, file: java.io.File): String = Native.buildWindow(z, x, y, json, file.path)
 
+        /**
+         * Its kept data ([kept]: Overpass's JSON of its query, as fetched or merged before) brought up to the date of
+         * Overpass's diff of that query since the data's date ([diff]: its XML), both direct buffers: the merged JSON to
+         * build it from and keep, or null where nothing it holds changed. Throws IllegalStateException with why where
+         * the diff cannot be merged exactly (the window is then fetched whole). Off the main thread.
+         */
+        fun merge(kept: java.nio.ByteBuffer, diff: java.nio.ByteBuffer): ByteArray? = Native.mergeWindow(z, x, y, kept, diff)
+
         companion object {
             /** The window of a key the core packed (`z shl 48 or x shl 24 or y`). */
             fun of(packed: Long): Window =
@@ -300,6 +309,13 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
      */
     fun wantedWindows(): List<Window> =
         core.call(emptyList()) { h -> Native.wantedWindows(h).map { Window.of(it) } }
+
+    /**
+     * The places in view the map draws from windows, nearest first: the windows whose data the app refreshes once it
+     * has aged (ENGINE.md step 3: a window built again after a week). Empty before the map is made. Off the main thread.
+     */
+    fun windowsInView(): List<Window> =
+        core.call(emptyList()) { h -> Native.windowsInView(h).map { Window.of(it) } }
 
     /**
      * Closes the core: no call starts after this begins, the calls under way finish first, then the core is freed

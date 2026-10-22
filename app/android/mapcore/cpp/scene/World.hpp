@@ -99,6 +99,10 @@ public:
     /// no bundled or render pack's box holds the place whole (an empty place of that pack's data), nearest first. Made
     /// on the render thread at most every half second; read from any thread.
     [[nodiscard]] std::vector<tiles::TileKey> wanted_windows() const;
+    /// The L14 places in view drawn from windows, nearest first: each seen by the frustum within the finest level's
+    /// reach of the eye, where only windows hold its tile (the app refreshes the ones whose data has aged: ENGINE.md
+    /// step 3, a window built again after a week). Made with wanted_windows; read from any thread.
+    [[nodiscard]] std::vector<tiles::TileKey> windows_in_view() const;
 
     // frame::FrameScene
     [[nodiscard]] const view::Ladder* ladder(const style::CameraState& camera) override;
@@ -192,7 +196,8 @@ private:
     std::shared_ptr<const tiles::StorePack> neighbour_;
     std::shared_ptr<const tiles::StorePack> last_neighbour_;
     mutable std::mutex wanted_mutex_;
-    std::vector<tiles::TileKey> wanted_; ///< under wanted_mutex_
+    std::vector<tiles::TileKey> wanted_;  ///< under wanted_mutex_
+    std::vector<tiles::TileKey> in_view_; ///< under wanted_mutex_
     double wanted_at_ = -1.0;
     /// What the items were last placed for: the frame drawn, the coarser pack and the mask.
     std::optional<view::GroundFrame> placed_frame_;

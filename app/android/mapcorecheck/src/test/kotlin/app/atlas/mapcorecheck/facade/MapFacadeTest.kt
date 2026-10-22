@@ -8,6 +8,7 @@ import app.atlas.render.Amsterdam
 import app.atlas.render.Regions
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -164,8 +165,74 @@ class MapFacadeTest {
                 assertEquals("", Native.map(handle, 1))
                 val said = Native.packs(handle, arrayOf(id), longArrayOf(1L), intArrayOf(2), arrayOf(file.path), intArrayOf(-1), LongArray(1), LongArray(1))
                 assertEquals("$id opened\n", said)
-                // no frame drawn yet: no window wanted
+                // no frame drawn yet: no window wanted, none in view
                 assertEquals(0, Native.wantedWindows(handle).size)
+                assertEquals(0, Native.windowsInView(handle).size)
+            } finally {
+                Native.close(handle)
+            }
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun aWindowsKeptDataMergedWithOverpassChangesThroughTheFacadeIsTheFreshAnswer() {
+        // the Westerkerk's raw.json kept (Overpass's own answer, the repository's data/ams/raw.json), and a bench placed
+        // since: Overpass's diff of the query creates it
+        val raw = generateSequence(File("").absoluteFile) { it.parentFile }.take(6).map { File(it, "data/ams/raw.json") }.firstOrNull { it.isFile }
+        assumeTrue("the repository's data/ams/raw.json", raw != null)
+        val kept = raw!!.readText()
+        val bench = "{\n  \"type\": \"node\",\n  \"id\": 26973328,\n  \"lat\": 52.3745000,\n  \"lon\": 4.8838000,\n" +
+            "  \"tags\": {\n    \"amenity\": \"bench\",\n    \"name\": \"A \\\"bench\\\" & co\"\n  }\n}"
+        val second = kept.indexOf("{\n  \"type\": \"node\",\n  \"id\": 34044750,")
+        assumeTrue("the Westerkerk's raw.json as the tests know it", kept.contains("\"id\": 26973327,") && second > 0)
+        val fresh = kept.substring(0, second) + bench + ",\n" + kept.substring(second)
+        fun diff(actions: String) = (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<osm version=\"0.6\" generator=\"Overpass API 0.7.62.11 87bfad18\">\n" +
+                "<meta osm_base=\"2026-10-09T08:46:19Z\"/>\n\n$actions\n</osm>\n"
+            )
+        fun direct(s: String) = s.toByteArray().let { ByteBuffer.allocateDirect(it.size).put(it).flip() as ByteBuffer }
+        val created = diff(
+            "<action type=\"create\">\n  <node id=\"26973328\" lat=\"52.3745000\" lon=\"4.8838000\">\n" +
+                "    <tag k=\"amenity\" v=\"bench\"/>\n    <tag k=\"name\" v=\"A &quot;bench&quot; &amp; co\"/>\n  </node>\n</action>\n",
+        )
+        val x = ((4.8840 + 180.0) / 360.0 * 16384).toInt()
+        val lat = Math.toRadians(52.3746)
+        val y = ((1.0 - Math.log(Math.tan(lat) + 1.0 / Math.cos(lat)) / Math.PI) / 2.0 * 16384).toInt()
+        val merged = Native.mergeWindow(14, x, y, direct(kept), direct(created))
+        assertNotNull(merged)
+        val text = String(merged!!)
+        // element for element the fresh answer's bytes, with the diff's date and the date the data was fetched whole
+        assertEquals(fresh.substring(fresh.indexOf("\"elements\": [")), text.substring(text.indexOf("\"elements\": [")))
+        assertTrue(text.contains("\"timestamp_osm_base\": \"2026-10-09T08:46:19Z\""))
+        assertTrue(text.contains("\"whole\": \"2026-10-02T08:46:19Z\""))
+        // a diff that changes nothing: null; one that cannot be merged exactly: why
+        assertNull(Native.mergeWindow(14, x, y, direct(kept), direct(diff(""))))
+        val refused = runCatching { Native.mergeWindow(14, x, y, direct(kept), direct(diff("<node id=\"1\" lat=\"1\" lon=\"2\"/>"))) }
+        assertTrue(refused.exceptionOrNull()?.message.orEmpty(), refused.exceptionOrNull()?.message.orEmpty().startsWith("the diff is refused: unsupported"))
+        val remark = runCatching { Native.mergeWindow(14, x, y, direct(kept), direct(diff("<remark> runtime error: Query timed out </remark>"))) }
+        assertTrue(remark.exceptionOrNull()?.message.orEmpty().contains("runtime error: Query timed out"))
+        val unsorted = runCatching { Native.mergeWindow(14, x, y, direct("{\"osm3s\": {\"timestamp_osm_base\": \"2026-10-09T08:46:19Z\"}, \"elements\": [{\"type\": \"way\", \"id\": 1}, {\"type\": \"node\", \"id\": 1}]}"), direct(created)) }
+        assertTrue(unsorted.exceptionOrNull()?.message.orEmpty().startsWith("the merge is refused: kept"))
+        // the window built from the kept data, then built again from the merge at the same path: listed with the file's
+        // time and size, the core opens the new bytes anew, and keeps them while they stay
+        val dir = Files.createTempDirectory("atlas-window-merge").toFile()
+        try {
+            val file = File(dir, "14-$x-$y.atlas")
+            val id = "window/14/$x/$y"
+            assertEquals("", Native.buildWindow(14, x, y, direct(kept), file.path))
+            val handle = Native.create(dir.path, dir.resolve("vk").path, "jvm-test", "", 0, "", 0L)
+            assertNotEquals("create refused: ${Native.lastError()}", 0L, handle)
+            try {
+                assertEquals("", Native.map(handle, 1))
+                fun hand() = Native.packs(handle, arrayOf(id), longArrayOf(1L), intArrayOf(2), arrayOf(file.path), intArrayOf(-1), longArrayOf(file.lastModified()), longArrayOf(file.length()))
+                assertEquals("$id opened\n", hand())
+                assertEquals("$id kept\n", hand())
+                assertEquals("", Native.buildWindow(14, x, y, ByteBuffer.allocateDirect(merged.size).put(merged).flip() as ByteBuffer, file.path))
+                assertTrue(file.setLastModified(file.lastModified() + 7 * 24 * 3600 * 1000L))
+                assertEquals("$id opened\n", hand())
+                assertEquals("$id kept\n", hand())
             } finally {
                 Native.close(handle)
             }

@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 11
+    const val ABI = 12
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -225,6 +225,16 @@ object Native {
      * "" or why not. On the caller's thread, a background one: a few seconds and tens of MB.
      */
     @JvmStatic external fun buildWindow(z: Int, x: Int, y: Int, json: ByteBuffer, path: String): String
+
+    /** The places in view the map draws from windows, nearest first, each its tile's key packed as [wantedWindows]'. */
+    @JvmStatic external fun windowsInView(handle: Long): LongArray
+
+    /**
+     * Window ([z], [x], [y])'s kept data ([kept], Overpass's JSON of its query, direct) brought up to the date of
+     * Overpass's diff of the same query since then ([diff], its XML, direct): the merged JSON, or null where the diff
+     * changes nothing; an IllegalStateException says why where it cannot be merged exactly. On a background thread.
+     */
+    @JvmStatic external fun mergeWindow(z: Int, x: Int, y: Int, kept: ByteBuffer, diff: ByteBuffer): ByteArray?
 
     /**
      * The map's labels (`state.LabelBlock`'s block in a direct buffer; an empty block takes them away) at [revision],

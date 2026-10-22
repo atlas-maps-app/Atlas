@@ -40,6 +40,8 @@ struct PackRef {
     PackKind kind = PackKind::render;
     std::string path; ///< a file, or empty
     int fd = -1;      ///< an open file (with offset and length), or -1
+    /// With fd, its range. With a path, the file's time and size as the app listed it, which the file is not opened by:
+    /// a file built again at the same path (a window's) is then other bytes, which the map opens anew (MapFrame).
     std::uint64_t offset = 0;
     std::uint64_t length = 0;
     RangeSource::Fetch fetch; ///< a remote pack's ranges (with its size in `length`), or empty

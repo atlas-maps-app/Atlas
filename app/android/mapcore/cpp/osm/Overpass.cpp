@@ -47,6 +47,8 @@ struct RawElement {
     bool has_nodes = false;
     bool has_geometry = false;
     bool has_members = false;
+    std::size_t from = 0;
+    std::size_t to = 0;
 };
 
 /// A JSON number's parts, as written.
@@ -94,13 +96,18 @@ public:
     std::vector<Tag> tags;
     std::vector<std::int64_t> refs;
     std::vector<LatLon> points;
+    std::string_view head_base;  ///< `osm3s.timestamp_osm_base`
+    std::string_view head_whole; ///< `atlas.whole`
 
     [[nodiscard]] const std::optional<ReadError>& error() const noexcept { return error_; }
 
-    /// The document: an object whose `elements` is an array of elements; its other keys stepped over.
+    /// The document: an object whose `elements` is an array of elements, its date read from its head; its other keys
+    /// stepped over.
     bool document() {
         if (!expect('{')) return false;
         bool seen = false;
+        bool seen_osm3s = false;
+        bool seen_atlas = false;
         if (!peek('}')) {
             do {
                 std::string_view key;
@@ -109,6 +116,12 @@ public:
                     if (seen) return fail(Fault::duplicate);
                     seen = true;
                     if (!element_list()) return false;
+                } else if (key == "osm3s" || key == "atlas") {
+                    const bool osm3s = key == "osm3s";
+                    bool& once = osm3s ? seen_osm3s : seen_atlas;
+                    if (once) return fail(Fault::duplicate);
+                    once = true;
+                    if (!head(osm3s ? "timestamp_osm_base" : "whole", osm3s ? head_base : head_whole)) return false;
                 } else if (!skip(1)) {
                     return false;
                 }
@@ -518,9 +531,33 @@ private:
         return string(out);
     }
 
+    /// An object of the document's head (`osm3s`, `atlas`): its string `name` read into `out`, its other keys stepped
+    /// over; a value of another kind stepped over whole.
+    bool head(std::string_view name, std::string_view& out) {
+        space();
+        if (at_ == end_ || *at_ != '{') return skip(1);
+        ++at_;
+        bool seen = false;
+        if (!peek('}')) {
+            do {
+                std::string_view key;
+                if (!string(key) || !expect(':')) return false;
+                if (key == name) {
+                    if (seen) return fail(Fault::duplicate);
+                    seen = true;
+                    if (!typed_string(out)) return false;
+                } else if (!skip(2)) {
+                    return false;
+                }
+            } while (more('}'));
+        }
+        return expect('}');
+    }
+
     bool element() {
         if (!expect('{')) return false;
         RawElement e;
+        e.from = static_cast<std::size_t>(at_ - begin_) - 1;
         if (!peek('}')) {
             do {
                 std::string_view key;
@@ -560,6 +597,7 @@ private:
             } while (more('}'));
         }
         if (!expect('}')) return false;
+        e.to = static_cast<std::size_t>(at_ - begin_);
         if (!e.has_type) return fail(Fault::bad_type);
         elements.push_back(e);
         return true;
@@ -636,8 +674,12 @@ std::expected<Document, ReadError> read_overpass(std::span<const std::byte> json
                                  .has_tags = e.has_tags,
                                  .has_nodes = e.has_nodes,
                                  .has_geometry = e.has_geometry,
-                                 .has_members = e.has_members});
+                                 .has_members = e.has_members,
+                                 .from = e.from,
+                                 .to = e.to});
     }
+    doc.osm_base_ = p.head_base;
+    doc.whole_ = p.head_whole;
     return doc;
 }
 
@@ -646,6 +688,8 @@ Document select(const Document& from, const std::function<bool(const Element&)>&
     for (const Element& e : from.elements_) {
         if (keep(e)) out.elements_.push_back(e);
     }
+    out.osm_base_ = from.osm_base_;
+    out.whole_ = from.whole_;
     return out;
 }
 

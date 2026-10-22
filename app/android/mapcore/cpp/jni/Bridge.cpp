@@ -26,6 +26,7 @@
 #include "gpu/Swapchain.hpp"
 #include "labels/Sprites.hpp"
 #include "load/Window.hpp"
+#include "osm/Diff.hpp"
 #include "standin/Session.hpp"
 #include "style/CameraState.hpp"
 #include "style/Theme.hpp"
@@ -39,6 +40,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
@@ -275,6 +277,11 @@ public:
     /// The windows the map's world wants built, nearest first (scene::World::wanted_windows).
     [[nodiscard]] std::vector<tiles::TileKey> wanted_windows() {
         return on_session([this] { return map_->wanted_windows(); });
+    }
+
+    /// The places in view the map's world draws from windows, nearest first (scene::World::windows_in_view).
+    [[nodiscard]] std::vector<tiles::TileKey> windows_in_view() {
+        return on_session([this] { return map_->windows_in_view(); });
     }
 
     /// The moment's theme for the map from now on.
@@ -810,10 +817,8 @@ jstring native_packs(JNIEnv* env, jclass /*cls*/, jlong handle, jobjectArray ids
     return java(env, refused + core->packs(std::move(packs)));
 }
 
-/// The windows the map wants built, nearest first: each its tile's key packed as z << 48 | x << 24 | y.
-jlongArray native_wanted_windows(JNIEnv* env, jclass /*cls*/, jlong handle) {
-    Core* core = core_of(handle);
-    const std::vector<tiles::TileKey> keys = core != nullptr ? core->wanted_windows() : std::vector<tiles::TileKey>{};
+/// Tiles' keys for Kotlin, each packed as z << 48 | x << 24 | y.
+jlongArray packed_keys(JNIEnv* env, const std::vector<tiles::TileKey>& keys) {
     std::vector<jlong> packed(keys.size());
     for (std::size_t i = 0; i < keys.size(); ++i) packed[i] = static_cast<jlong>(keys[i].packed());
     jlongArray out = env->NewLongArray(static_cast<jsize>(packed.size()));
@@ -821,6 +826,18 @@ jlongArray native_wanted_windows(JNIEnv* env, jclass /*cls*/, jlong handle) {
         env->SetLongArrayRegion(out, 0, static_cast<jsize>(packed.size()), packed.data());
     }
     return out;
+}
+
+/// The windows the map wants built, nearest first, their keys packed.
+jlongArray native_wanted_windows(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    return packed_keys(env, core != nullptr ? core->wanted_windows() : std::vector<tiles::TileKey>{});
+}
+
+/// The places in view the map draws from windows, nearest first, their keys packed.
+jlongArray native_windows_in_view(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    return packed_keys(env, core != nullptr ? core->windows_in_view() : std::vector<tiles::TileKey>{});
 }
 
 /// The box whose data window (z, x, y) needs, [south, west, north, east] degrees (load::window_box).
@@ -861,6 +878,50 @@ jstring native_build_window(JNIEnv* env, jclass /*cls*/, jint z, jint x, jint y,
     log::info("vk window {}/{}/{}: {} features, {} bytes; loaded in {:.0f} ms, cut in {:.0f} ms, written in {:.0f} ms",
               z, x, y, built->features, built->pack.size(), built->load_ms, built->cut_ms, built->write_ms);
     return java(env, "");
+}
+
+/// Window (z, x, y)'s kept data (Overpass's JSON of its query, as fetched or as merged before; a direct buffer)
+/// brought up to the date of Overpass's diff of the same query since then (its XML, a direct buffer): the merged JSON,
+/// or null where the diff changes nothing the data holds. Where the diff or the data cannot be merged exactly, an
+/// IllegalStateException says why (the app then fetches the window whole). On the caller's thread, a background one.
+jbyteArray native_merge_window(JNIEnv* env, jclass /*cls*/, jint z, jint x, jint y, jobject kept, jobject diff) {
+    const auto direct = [env](jobject buffer) {
+        void* address = buffer == nullptr ? nullptr : env->GetDirectBufferAddress(buffer);
+        const jlong capacity = buffer == nullptr ? 0 : env->GetDirectBufferCapacity(buffer);
+        return address == nullptr || capacity <= 0
+                   ? std::span<const std::byte>()
+                   : std::span(static_cast<const std::byte*>(address), static_cast<std::size_t>(capacity));
+    };
+    const auto refuse = [env](const std::string& why) {
+        env->ThrowNew(env->FindClass("java/lang/IllegalStateException"), why.c_str());
+        return nullptr;
+    };
+    const std::span<const std::byte> data = direct(kept);
+    const std::span<const std::byte> changes = direct(diff);
+    if (data.empty() || changes.empty()) return refuse("the kept data and the diff must be direct buffers");
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto read = osm::read_diff(changes);
+    if (!read) {
+        return refuse(std::format("the diff is refused: {} at byte {}: {}", osm::name_of(read.error().fault),
+                                  read.error().at, read.error().what));
+    }
+    const auto merged = osm::merge_diff(data, *read);
+    if (!merged) {
+        return refuse(std::format("the merge is refused: {} at byte {}: {}", osm::name_of(merged.error().fault),
+                                  merged.error().at, merged.error().what));
+    }
+    log::info("vk window {}/{}/{}: a diff to {}, {} changes: {} kept, {} replaced, {} added, {} removed, {} absent; "
+              "merged in {:.0f} ms",
+              z, x, y, read->osm_base, read->changes.size(), merged->kept, merged->replaced, merged->added,
+              merged->removed, merged->absent,
+              std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+    if (!merged->changed()) return nullptr;
+    jbyteArray out = env->NewByteArray(static_cast<jsize>(merged->json.size()));
+    if (out != nullptr) {
+        env->SetByteArrayRegion(out, 0, static_cast<jsize>(merged->json.size()),
+                                reinterpret_cast<const jbyte*>(merged->json.data())); // NOLINT: chars as JNI's bytes
+    }
+    return out;
 }
 
 /// The moment's theme for the map (MK/state/ThemeBlock.kt's 256 bytes in a direct buffer); "" or why it was refused.
@@ -1032,8 +1093,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 36>& methods() {
-    static const std::array<JNINativeMethod, 36> table{{
+const std::array<JNINativeMethod, 38>& methods() {
+    static const std::array<JNINativeMethod, 38> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1085,6 +1146,8 @@ const std::array<JNINativeMethod, 36>& methods() {
         method("windowBox", "(III)[D", fn(&native_window_box)),
         method("buildWindow", "(IIILjava/nio/ByteBuffer;Ljava/lang/String;)Ljava/lang/String;",
                fn(&native_build_window)),
+        method("windowsInView", "(J)[J", fn(&native_windows_in_view)),
+        method("mergeWindow", "(IIILjava/nio/ByteBuffer;Ljava/nio/ByteBuffer;)[B", fn(&native_merge_window)),
     }};
     return table;
 }

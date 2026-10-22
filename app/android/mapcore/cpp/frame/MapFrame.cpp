@@ -231,4 +231,8 @@ std::vector<tiles::TileKey> MapFrame::wanted_windows() const {
     return world_ ? world_->wanted_windows() : std::vector<tiles::TileKey>{};
 }
 
+std::vector<tiles::TileKey> MapFrame::windows_in_view() const {
+    return world_ ? world_->windows_in_view() : std::vector<tiles::TileKey>{};
+}
+
 } // namespace atlas::frame

@@ -99,6 +99,8 @@ public:
     [[nodiscard]] std::string tiles_line() const;
     /// The windows its world wants built, nearest first (scene::World::wanted_windows; none before it is made).
     [[nodiscard]] std::vector<tiles::TileKey> wanted_windows() const;
+    /// The places in view its world draws from windows, nearest first (scene::World::windows_in_view).
+    [[nodiscard]] std::vector<tiles::TileKey> windows_in_view() const;
     /// The world, while made (tests).
     [[nodiscard]] scene::World* world() noexcept { return world_.get(); }
     /// The frame builder, while made (tests: the last frame's state).
