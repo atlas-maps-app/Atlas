@@ -78,7 +78,9 @@ static const uint TILE_WORDS = 20u;
 /// its ground range's first word in the ground heap, 9 its vertices' first word in it, 10 its fills', 11 its lines
 /// range's first word in the lines heap, 12 its polylines' first word in it, 13 the first word of its fills' visibility
 /// bits in `words`, 14 of its water pieces' at their level, 15 of its shadows', 16 its shadows' points' first word in
-/// its ground range, 17 its shadows' records', 18 how many shadows it draws from (0 where its region draws none).
+/// its ground range, 17 its shadows' records', 18 how many shadows it draws from (0 where its region draws none), 19
+/// the first word of its fills' ranks in `words` where the frame draws tiles of more than one scene (0: none, each fill
+/// at its scene's order).
 uint tile_word(uint t, uint k) {
     return words[push.at.x + t * TILE_WORDS + k];
 }
@@ -170,7 +172,9 @@ FillOut fill_vs(uint index : SV_VulkanVertexID, uint tile : SV_VulkanInstanceID)
     }
     float y = asfloat(ground_heap[r]);
     uint gs = ground_heap[r + 1u];
-    uint order = ground_heap[r + 2u];
+    // its order in its group: its scene's, or where the frame draws tiles of more than one scene its rank across them
+    uint ranks = tile_word(tile, 19u);
+    uint order = ranks != 0u ? words[ranks + f] : ground_heap[r + 2u];
     uint c = (push.mode.x & GROUND_NIGHT) != 0u ? ground_heap[r + 4u] : ground_heap[r + 3u];
     o.position = place(tile, float3(x, y, z), slot_of(gs & 0xFFFFu, gs >> 16u, order));
     float4 p = paint_of(c);

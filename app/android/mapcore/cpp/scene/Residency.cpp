@@ -204,6 +204,7 @@ std::shared_ptr<ResidentTile> Residency::build(const Job& job, tiles::Zstd& zstd
     out->key = job.request.key;
     out->handle = next_handle_.fetch_add(1, std::memory_order_relaxed);
     out->pack = job.pack;
+    out->kind = pack->kind;
     out->frame = view::frame_of(head.frame);
     out->origin = {head.frame.x(tile.header.west), 0.0, head.frame.z(tile.header.south)};
     out->level = job.request.level;

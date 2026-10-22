@@ -20,6 +20,7 @@
 #include <ctime>
 #include <format>
 #include <limits>
+#include <tuple>
 
 namespace atlas::passes {
 
@@ -324,6 +325,113 @@ double printed(double v, int decimals) {
 Ground::Ground() = default;
 Ground::~Ground() { Ground::release(); }
 
+std::uint32_t Ground::fill_order(const DrawnTile& t, std::uint32_t i) const noexcept {
+    return frame_.mixed ? frame_.fill_rank[t.decisions + i] : t.ground->fills[i].order;
+}
+
+std::uint32_t Ground::stroke_order(const DrawnTile& t, std::uint32_t i) const noexcept {
+    return frame_.mixed ? frame_.stroke_rank[t.strokes + i] : t.ground->strokes[i].order;
+}
+
+void Ground::rank_across_scenes() {
+    GroundFrame& f = frame_;
+    // the packs drawn, by their ids' order; a window's among them
+    std::vector<std::string_view> packs;
+    bool window = false;
+    for (const DrawnTile& t : f.tiles) {
+        window = window || t.tile->kind == tiles::PackKind::window;
+        if (std::ranges::find(packs, std::string_view(t.tile->pack)) == packs.end()) packs.emplace_back(t.tile->pack);
+    }
+    f.mixed = window && packs.size() > 1;
+    if (!f.mixed) {
+        ranks_.clear();
+        ranked_handles_.clear();
+        pack_ordinals_.clear();
+        return;
+    }
+    std::ranges::sort(packs);
+    pack_ordinals_.resize(f.tiles.size());
+    std::vector<std::uint32_t> handles;
+    handles.reserve(f.tiles.size());
+    for (std::size_t ti = 0; ti < f.tiles.size(); ++ti) {
+        const DrawnTile& t = f.tiles[ti];
+        pack_ordinals_[ti] =
+            static_cast<std::uint32_t>(std::ranges::lower_bound(packs, std::string_view(t.tile->pack)) - packs.begin());
+        handles.push_back(t.tile->handle);
+    }
+    std::ranges::sort(handles);
+    if (handles != ranked_handles_) {
+        // every element of the drawn tiles, drawn or not, so the ranks hold while the same tiles are drawn
+        ranked_handles_ = handles;
+        ranks_.clear();
+        struct Entry {
+            std::uint16_t group = 0;
+            geo::OrderKey key;
+            std::uint32_t pack = 0;
+            std::uint32_t order = 0;
+            std::uint32_t tile = 0;
+            std::uint32_t index = 0;
+            bool stroke = false;
+        };
+        std::vector<Entry> entries;
+        for (std::size_t ti = 0; ti < f.tiles.size(); ++ti) {
+            const DrawnTile& t = f.tiles[ti];
+            const geo::GroundTile& g = *t.ground;
+            ranks_.push_back({.handle = t.tile->handle,
+                              .fills = std::vector<std::uint32_t>(g.fills.size(), 0),
+                              .strokes = std::vector<std::uint32_t>(g.strokes.size(), 0)});
+            const auto tile = static_cast<std::uint32_t>(ti);
+            for (std::uint32_t i = 0; i < g.fills.size(); ++i) {
+                const geo::Fill& e = g.fills[i];
+                if (e.kind == geo::FillKind::water) continue;
+                entries.push_back({.group = e.group,
+                                   .key = e.key,
+                                   .pack = pack_ordinals_[ti],
+                                   .order = e.order,
+                                   .tile = tile,
+                                   .index = i,
+                                   .stroke = false});
+            }
+            for (std::uint32_t i = 0; i < g.strokes.size(); ++i) {
+                const geo::Stroke& e = g.strokes[i];
+                entries.push_back({.group = e.group,
+                                   .key = e.key,
+                                   .pack = pack_ordinals_[ti],
+                                   .order = e.order,
+                                   .tile = tile,
+                                   .index = i,
+                                   .stroke = true});
+            }
+        }
+        const auto place = [](const Entry& e) { return std::tie(e.group, e.key, e.pack, e.order); };
+        std::ranges::stable_sort(entries, [&](const Entry& a, const Entry& b) { return place(a) < place(b); });
+        // one rank per element of a group: its fills and strokes (a rail's ballast and rails) share it
+        std::uint32_t rank = 0;
+        for (std::size_t k = 0; k < entries.size(); ++k) {
+            const Entry& e = entries[k];
+            if (k > 0) {
+                const Entry& before = entries[k - 1];
+                if (before.group != e.group) {
+                    rank = 0;
+                } else if (place(before) != place(e)) {
+                    ++rank;
+                }
+            }
+            TileRanks& r = ranks_[e.tile];
+            (e.stroke ? r.strokes : r.fills)[e.index] = rank;
+        }
+    }
+    // each drawn tile's ranks where its fills and strokes lie in the frame's arrays
+    f.fill_rank.assign(f.drawn.size(), 0);
+    f.stroke_rank.assign(f.stroke_drawn.size(), 0);
+    for (const DrawnTile& t : f.tiles) {
+        const auto r = std::ranges::find(ranks_, t.tile->handle, &TileRanks::handle);
+        if (r == ranks_.end()) continue;
+        std::ranges::copy(r->fills, f.fill_rank.begin() + t.decisions);
+        std::ranges::copy(r->strokes, f.stroke_rank.begin() + t.strokes);
+    }
+}
+
 std::uint32_t Ground::slot(std::uint16_t group, std::uint32_t order, std::uint32_t sub) const noexcept {
     const std::int64_t s = frame_.base[group] + (static_cast<std::int64_t>(order) * frame_.stride[group]) + sub;
     return (frame_.tail[group] ? first_tail_slot() : first_ground_slot()) +
@@ -547,19 +655,30 @@ bool Ground::decide(const frame::FrameState& state) {
         f.shadows =
             f.shadows || std::ranges::find(t.decided->shadow_drawn, std::uint8_t{1}) != t.decided->shadow_drawn.end();
     }
-    // the land kinds in the order of their first drawn ring in S['land'] (draw_under's OrderedDict); the canopy
+    // the land kinds in the order of their first drawn ring in S['land'] (draw_under's OrderedDict), across the
+    // scenes drawn by their elements' order (regions.py's sort: the draw order, then the area, then data order); the
+    // canopy
+    rank_across_scenes();
     f.kind_rank.fill(-1);
-    std::array<std::uint32_t, geo::group::land_kinds> first_ring{};
-    first_ring.fill(std::numeric_limits<std::uint32_t>::max());
+    // a ring's place: its element's order key, its pack's ordinal, its scene's order
+    using RingPlace = std::tuple<geo::OrderKey, std::uint32_t, std::uint32_t>;
+    std::array<RingPlace, geo::group::land_kinds> first_ring{};
+    std::array<bool, geo::group::land_kinds> seen{};
     f.canopy = false;
-    for (const DrawnTile& t : f.tiles) {
+    for (std::size_t ti = 0; ti < f.tiles.size(); ++ti) {
+        const DrawnTile& t = f.tiles[ti];
         const geo::GroundTile& g = *t.ground;
         for (std::uint32_t i = 0; i < g.fills.size(); ++i) {
             if ((f.drawn[t.decisions + i] & drawn_bit::street) == 0) continue;
             const geo::Fill& fill = g.fills[i];
             if (fill.kind == geo::FillKind::land) {
                 const std::uint32_t k = fill.group - geo::group::land;
-                first_ring[k] = std::min(first_ring[k], fill.order);
+                const RingPlace place = f.mixed ? RingPlace{fill.key, pack_ordinals_[ti], fill.order}
+                                                : RingPlace{geo::OrderKey{}, 0U, fill.order};
+                if (!seen[k] || place < first_ring[k]) {
+                    first_ring[k] = place;
+                    seen[k] = true;
+                }
             }
             if (fill.kind == geo::FillKind::canopy) f.canopy = true;
         }
@@ -567,7 +686,7 @@ bool Ground::decide(const frame::FrameState& state) {
     std::array<std::uint32_t, geo::group::land_kinds> kinds{};
     std::uint32_t nk = 0;
     for (std::uint32_t k = 0; k < geo::group::land_kinds; ++k) {
-        if (first_ring[k] != std::numeric_limits<std::uint32_t>::max()) kinds[nk++] = k;
+        if (seen[k]) kinds[nk++] = k;
     }
     std::sort(kinds.begin(), kinds.begin() + nk,
               [&](std::uint32_t a, std::uint32_t b) { return first_ring[a] < first_ring[b]; });
@@ -652,11 +771,11 @@ void Ground::lay_out() {
             if ((f.drawn[t.decisions + i] & drawn_bit::street) == 0) continue;
             const geo::Fill& fill = g.fills[i];
             if (fill.kind == geo::FillKind::water) continue;
-            use(fill.group, fill.order);
+            use(fill.group, fill_order(t, i));
         }
         for (std::uint32_t i = 0; i < g.strokes.size(); ++i) {
             if (f.stroke_drawn[t.strokes + i] == 0) continue;
-            use(g.strokes[i].group, g.strokes[i].order);
+            use(g.strokes[i].group, stroke_order(t, i));
         }
     }
     use(geo::group::sky, 0);
@@ -925,6 +1044,11 @@ void Ground::write_words(const frame::FrameState& state) {
         v[w.tiles + (i * tile_words) + 13] = street;
         v[w.tiles + (i * tile_words) + 14] = level;
         v[w.tiles + (i * tile_words) + 15] = shadows;
+        // where the frame draws tiles of more than one scene, each fill's rank across them (else its heap order)
+        if (f.mixed) {
+            v[w.tiles + (i * tile_words) + 19] = static_cast<std::uint32_t>(v.size());
+            v.insert(v.end(), f.fill_rank.begin() + t.decisions, f.fill_rank.begin() + t.decisions + n);
+        }
     }
     // the lines' runs and segments
     write_lines(state, v, w.runs, w.instances);

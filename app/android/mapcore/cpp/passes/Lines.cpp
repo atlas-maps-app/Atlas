@@ -93,7 +93,8 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
         for (std::uint32_t i = 0; i < g.strokes.size(); ++i) {
             if (frame_.stroke_drawn[tile.strokes + i] == 0) continue;
             const geo::Stroke& s = g.strokes[i];
-            drawn.push_back({.marks = !over_phase(s), .slot = slot(s.group, s.order, s.sub), .tile = t, .stroke = i});
+            drawn.push_back(
+                {.marks = !over_phase(s), .slot = slot(s.group, stroke_order(tile, i), s.sub), .tile = t, .stroke = i});
         }
     }
     std::ranges::stable_sort(
@@ -176,7 +177,7 @@ void Ground::emit_lines(const frame::FrameState& state, twin::Stream& out, std::
                     {.points = std::span<const twin::Point>(points).subspan(start, e - start), .closed = false});
                 start = e;
             }
-            out.at(slot(s.group, s.order, s.sub), over_phase(s) ? above : out.root());
+            out.at(slot(s.group, stroke_order(t, i), s.sub), over_phase(s) ? above : out.root());
             twin::Style st;
             st.fill = twin::Paint{};
             const geo::Rgba c = frame_.night ? s.paint.night : s.paint.day;

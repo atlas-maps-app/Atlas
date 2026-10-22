@@ -148,7 +148,7 @@ void Ground::emit_fills(const frame::FrameState& state, twin::Stream& out, std::
             if (pr.ring(t, std::span(g.points).subspan(fill.first, fill.count), fill.y, points) < 3) {
                 continue;
             }
-            out.at(slot(fill.group, fill.order, fill.sub), above);
+            out.at(slot(fill.group, fill_order(t, i), fill.sub), above);
             twin::Style s;
             s.fill = twin::Paint::colour(paint_argb(fill.paint, night, th));
             out.path(s, points, true);

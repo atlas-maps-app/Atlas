@@ -137,6 +137,18 @@ enum class FillKind : std::uint8_t {
     water,  ///< a water ring's piece in this tile (S['water'] or an island of S['water_holes'])
 };
 
+/// An element's place in the renders' ground order across scenes (ENGINE.md step 3: the ground's order across windows):
+/// in its group, its list's own sort where the renders sort the list (the land's draw order, then its area, largest
+/// first; a big road's layer; a road's marks by its class), then its OpenStreetMap element (type << 62 | id << 18 |
+/// the ring's place among the element's), compared in that order. A tile that does not carry its elements (a pack of
+/// one scene) has them 0 where its columns lack them: the frame takes its scene's order there.
+struct OrderKey {
+    std::uint64_t sort = 0;
+    std::uint64_t sort2 = 0;
+    std::uint64_t element = 0;
+    friend constexpr auto operator<=>(const OrderKey&, const OrderKey&) = default;
+};
+
 /// One filled element of a tile.
 struct Fill {
     FillKind kind = FillKind::area;
@@ -172,6 +184,8 @@ struct Fill {
     double level = 0;
     /// Its index in the tile's GPU feature table (its visibility bit).
     std::uint32_t gpu = 0;
+    /// Its place in the ground's order across scenes.
+    OrderKey key;
 };
 
 /// A stroked element's width rule: a fixed width (CSS px), or regions.py's px(w) at the line's middle point.
@@ -225,6 +239,8 @@ struct Stroke {
     std::uint32_t line = 0;
     std::uint32_t line_count = 0;
     std::array<double, 4> near{0, -1, 0, 0};
+    /// Its place in the ground's order across scenes (its feature's).
+    OrderKey key;
 };
 
 /// One polyline of a stroke: [first, first + count) of the tile's points at height y; a dash is a polyline of two.

@@ -59,9 +59,11 @@ struct Style {
     /// Fault::bad_value at Site::style, named (`table.key`) in the error's column.
     [[nodiscard]] static Result<Style> of(const StyleTables& tables);
 
-    /// `land`: its kinds in the table's order (a land fill's kind is its place here) and their colours.
+    /// `land`: its kinds in the table's order (a land fill's kind is its place here), their colours and their draw
+    /// orders (regions.py sorts S['land'] by them, then by area, largest first).
     std::vector<std::string> land_kinds;
     std::vector<StyleRgb> land_colours;
+    std::vector<std::int64_t> land_orders;
     /// `area`, `surf`, `surf_colour`: a kind's, a surface's, a `surface:colour`'s colour, in the tables' order.
     std::vector<std::pair<std::string, StyleRgb>> areas;
     std::vector<std::pair<std::string, StyleRgb>> surfaces;

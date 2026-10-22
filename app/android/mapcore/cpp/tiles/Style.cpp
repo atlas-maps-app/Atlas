@@ -129,6 +129,7 @@ Result<Style> Style::of(const StyleTables& tables) {
     r.lists(r.table("land"), "land", 2, [&](std::string_view kind, const Value& entry) {
         s.land_kinds.emplace_back(kind);
         s.land_colours.push_back(r.colour_of(entry.child(0), "land", kind));
+        s.land_orders.push_back(entry.child(1).integer().value_or(0));
     });
     r.colours(r.table("area"), "area", s.areas);
     r.colours(r.table("surf"), "surf", s.surfaces);

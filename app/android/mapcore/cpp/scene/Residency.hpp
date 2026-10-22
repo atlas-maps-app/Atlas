@@ -69,8 +69,10 @@ struct ResidentTile {
     tiles::TileKey key;
     /// Its number while resident: the item table's tile column, the cover's reference.
     std::uint32_t handle = 0;
-    /// The pack it came from (the store's id) and its ground frame.
+    /// The pack it came from (the store's id), what kind of pack that is (a frame cell's windows among them: the
+    /// ground's order across scenes) and its ground frame.
     std::string pack;
+    tiles::PackKind kind = tiles::PackKind::render;
     view::GroundFrame frame;
     /// Its south-west corner at street level, in its pack frame's metres.
     view::Vec3 origin;

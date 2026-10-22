@@ -4,6 +4,7 @@
 #include "geometry/Ground.hpp"
 
 #include "base/pymath/PyMath.hpp"
+#include "geometry/RoofShapes.hpp"
 #include "geometry/Water.hpp"
 #include "sun/Hulls.hpp"
 #include "sun/Samples.hpp"
@@ -115,6 +116,27 @@ private:
     std::size_t cell_ = 0;
 };
 
+/// A feature's OpenStreetMap element as its order key holds it (OrderKey::element): type << 62 | id << 18 | part, the
+/// type a way unless the tile's `otype` says relation; ids past 2^44 and parts past 2^18 held at their largest.
+[[nodiscard]] std::uint64_t element_of(const tl::Layer& l, std::uint8_t id, std::uint8_t otype, std::uint8_t part,
+                                       std::uint32_t i) noexcept {
+    const std::int64_t v = id == 0xFF ? 0 : l.integer(id, i);
+    const bool relation = otype != 0xFF && l.string(otype, i).value_or("") == "relation";
+    const std::int64_t k = part == 0xFF ? 0 : l.integer(part, i);
+    const std::uint64_t ids = std::min<std::uint64_t>(static_cast<std::uint64_t>(std::max<std::int64_t>(v, 0)),
+                                                      (std::uint64_t{1} << 44U) - 1);
+    const std::uint64_t parts = std::min<std::uint64_t>(static_cast<std::uint64_t>(std::max<std::int64_t>(k, 0)),
+                                                        (std::uint64_t{1} << 18U) - 1);
+    return (std::uint64_t{relation ? 2U : 1U} << 62U) | (ids << 18U) | parts;
+}
+
+/// A double's bits in an order that compares as the double does (-0 as +0, as Python's sort takes them).
+[[nodiscard]] std::uint64_t orderable(double d) noexcept {
+    if (d == 0.0) d = 0.0;
+    const auto bits = std::bit_cast<std::uint64_t>(d);
+    return (bits >> 63U) != 0 ? ~bits : bits | (std::uint64_t{1} << 63U);
+}
+
 /// Builds one tile's ground.
 class Builder {
 public:
@@ -171,6 +193,7 @@ private:
             f.z0 = pm::min(f.z0, p.z);
             f.z1 = pm::max(f.z1, p.z);
         }
+        f.key = key_;
         out_.fills.push_back(f);
         return out_.fills.back();
     }
@@ -199,6 +222,7 @@ private:
             if (r.size() == 0) continue;
             const auto key = static_cast<std::uint64_t>(l->integer(tl::ground::ground_key, i));
             const std::string_view kind = l->string(tl::ground::kind, i).value_or("");
+            key_ = {.element = element_of(*l, tl::ground::id, l->schema->slot("otype"), l->schema->slot("part"), i)};
             if (l->integer(tl::ground::source, i) == tl::ground::source_land) {
                 // draw_under: every land ring whole, grouped by kind at 0.01; the canopy over forest, wood and scrub
                 const std::optional<std::uint16_t> k = style_.land_kind(kind);
@@ -206,6 +230,11 @@ private:
                 if (!k || *k >= group::land_kinds) continue;
                 const std::uint32_t first = ring(r, false);
                 const auto count = static_cast<std::uint32_t>(out_.points.size() - first);
+                // regions.py's sort of S['land']: by LAND's draw order, then by area, largest first
+                area_scratch_.clear();
+                for (const P2& p : points(first, count)) area_scratch_.emplace_back(p.x, p.z);
+                key_.sort = static_cast<std::uint64_t>(style_.land_orders[*k]);
+                key_.sort2 = ~std::bit_cast<std::uint64_t>(std::fabs(signed_area(area_scratch_)));
                 const Rgba c = rgba(style_.land_colours[*k]);
                 const auto order = static_cast<std::uint32_t>(tl::ground_key::order(key));
                 fill(FillKind::land, static_cast<std::uint16_t>(group::land + *k), order, cell, first, count, 0.01, 600,
@@ -245,6 +274,7 @@ private:
             const auto key = static_cast<std::uint64_t>(l->integer(tl::road::ground_key, i));
             const std::optional<std::uint16_t> g = group_of_key(key);
             if (!g) continue;
+            key_ = {.element = element_of(*l, tl::road::id, 0xFF, 0xFF, i)};
             const std::string_view hw = l->string(tl::road::hw, i).value_or("");
             // the colour: SURF's for the surface, else the theme's road; a mapped surface:colour, else a cycleway red
             Rgba c = theme_colour(ThemeColour::road);
@@ -273,6 +303,8 @@ private:
                  static_cast<std::uint32_t>(ribbon_.size()), y, 900, 0.2, paint);
             // a bridge's lines (by day without weather): the sides of ribbon(pts, w / 2 + 0.3) at 1.1, each a path
             if (bridge) {
+                // the road loop's marks: the roads class by class, data order within a class
+                key_.sort = *g - group::road;
                 const auto marks = static_cast<std::uint64_t>(l->integer(tl::road::marks_key, i));
                 if (marks != 0) bridge_lines_of(cell, marks, w, centre_);
             }
@@ -299,7 +331,8 @@ private:
                                     .first = p,
                                     .count = 1,
                                     .width = {.css = style_.bridge_lines_width},
-                                    .paint = {.day = rgba(style_.bridge_lines), .night = rgba(style_.bridge_lines)}});
+                                    .paint = {.day = rgba(style_.bridge_lines), .night = rgba(style_.bridge_lines)},
+                                    .key = key_});
         }
     }
 
@@ -319,6 +352,7 @@ private:
             const auto key = static_cast<std::uint64_t>(l->integer(tl::line::ground_key, i));
             const std::optional<std::uint16_t> g = group_of_key(key);
             const auto order = static_cast<std::uint32_t>(tl::ground_key::order(key));
+            key_ = {.element = element_of(*l, tl::line::id, tl::line::otype, tl::line::part, i)};
             centre_.clear();
             const std::uint32_t c0 = ring(r, false);
             const auto n = static_cast<std::uint32_t>(out_.points.size() - c0);
@@ -330,6 +364,8 @@ private:
                 break;
             case 2:
                 if (g) {
+                    // draw_over's big roads: sorted by their layer, data order within one
+                    key_.sort = orderable(l->decimal(tl::line::layer, i).value_or(0.0));
                     big(cell, *g, order, c0, n, l->string(tl::line::hw, i).value_or(""),
                         l->decimal(tl::line::layer, i).value_or(0.0), l->string(lanes_tag, i), l->string(width_tag, i));
                 }
@@ -363,7 +399,8 @@ private:
                                     .first = p,
                                     .count = 1,
                                     .width = {.css = style_.trams_width},
-                                    .paint = {.day = rgba(style_.trams.day), .night = rgba(style_.trams.night)}});
+                                    .paint = {.day = rgba(style_.trams.day), .night = rgba(style_.trams.night)},
+                                    .key = key_});
         }
     }
 
@@ -397,7 +434,8 @@ private:
                                 .width = {.css = style_.rails_width},
                                 .paint = {.day = rgba(style_.rails.day), .night = rgba(style_.rails.night)},
                                 .line = c0,
-                                .line_count = n});
+                                .line_count = n,
+                                .key = key_});
     }
 
     /// draw_over's big road: its asphalt, its edge lines and its lane lines.
@@ -437,7 +475,8 @@ private:
                                 .paint = line_paint,
                                 .fill = asphalt,
                                 .line = c0,
-                                .line_count = n});
+                                .line_count = n,
+                                .key = key_});
         if (lanes <= 1) return;
         // the lane lines: dashes (the style's, 3 on and 9 off) along offset(x0 + lw · i) for i in 1 to lanes - 1
         const double lw = (w - (motorway ? 3.0 : 1.0)) / static_cast<double>(lanes);
@@ -464,7 +503,8 @@ private:
                                 .paint = line_paint,
                                 .fill = asphalt,
                                 .line = c0,
-                                .line_count = n});
+                                .line_count = n,
+                                .key = key_});
     }
 
     /// draw_over's marine works: a closed way as it is, else its ribbon, at 0.3.
@@ -513,6 +553,8 @@ private:
     const tl::Style& style_;
     std::uint8_t level_;
     GroundTile& out_;
+    OrderKey key_;                 ///< the feature being built's: each of its fills and strokes takes it
+    std::vector<V2> area_scratch_; ///< a land ring in V2, for its area as the loader's sort takes it
     std::vector<std::uint32_t> kept_;
     std::vector<P2> centre_;
     std::vector<P2> ribbon_;

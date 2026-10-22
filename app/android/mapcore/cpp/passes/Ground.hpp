@@ -172,6 +172,12 @@ struct GroundFrame {
     std::vector<std::uint8_t> stroke_drawn; ///< per stroke of the drawn tiles (DrawnTile::strokes)
     std::vector<double> stroke_width;       ///< per stroke: its width this frame, CSS px (as printed at rest)
     std::vector<std::uint8_t> shadow_drawn; ///< per shadow of the drawn tiles (DrawnTile::shadows): drawn
+    /// Whether the drawn tiles come from more than one pack (another scene each: the windows the phone builds): the
+    /// ground is then ordered by its elements across them (geometry::OrderKey), each drawn fill and stroke at its rank
+    /// among its group's, as one scene holding them all would order them; else each at its own scene's order.
+    bool mixed = false;
+    std::vector<std::uint32_t> fill_rank;   ///< per fill of the drawn tiles, where mixed: its rank in its group
+    std::vector<std::uint32_t> stroke_rank; ///< per stroke of the drawn tiles, where mixed: its rank in its group
     /// The land kinds' ranks (-1: none drawn), by the kind's place in the pack's `land` table.
     std::array<std::int32_t, geometry::group::land_kinds> kind_rank{};
     /// Each group's slot base relative to the pass's first ground slot, or its first tail slot for a group of the
@@ -315,6 +321,10 @@ public:
     [[nodiscard]] double select_ms() const noexcept { return select_ms_; }
     /// The absolute painter slot of a group's element this frame (from update on).
     [[nodiscard]] std::uint32_t slot(std::uint16_t group, std::uint32_t order, std::uint32_t sub) const noexcept;
+    /// The order a drawn tile's fill `i` (stroke `i`) takes in its group this frame: its scene's, or where the frame
+    /// draws tiles of more than one scene, its rank across them (GroundFrame::mixed).
+    [[nodiscard]] std::uint32_t fill_order(const DrawnTile& t, std::uint32_t i) const noexcept;
+    [[nodiscard]] std::uint32_t stroke_order(const DrawnTile& t, std::uint32_t i) const noexcept;
 
     /// The tests' look at the soft shadows: from the next prepare on, their grid and blurred mask lie in memory the
     /// CPU reads, and each frame copies the resolved mask there too (SoftShadows::mask_copy).
@@ -358,6 +368,10 @@ private:
     [[nodiscard]] bool decide(const frame::FrameState& state);
     void decide_tile(const view::Camera& cam, const DrawnTile& t, TileDecisions& d);
     void lay_out();
+    /// Where the drawn tiles come from a window's pack and another (GroundFrame::mixed), every fill and stroke of them
+    /// ranked in its group by its element across them (geometry::OrderKey, then its pack, then its scene's order),
+    /// kept while the same tiles are drawn; each pack's ordinal among the drawn ones (`pack_ordinals_`).
+    void rank_across_scenes();
     [[nodiscard]] gpu::Result<void> make_pipelines(const frame::PassContext& context);
     [[nodiscard]] gpu::Result<void> make_fill_pipelines(const frame::PassContext& context, Pipelines& p) const;
     [[nodiscard]] gpu::Result<void> make_water_pipelines(const frame::PassContext& context, Pipelines& p) const;
@@ -399,6 +413,15 @@ private:
     void emit_shadows(const frame::FrameState& state, twin::Stream& out) const;
 
     GroundFrame frame_;
+    /// The ranks across scenes of a drawn tile's fills and strokes, by its handle (rank_across_scenes).
+    struct TileRanks {
+        std::uint32_t handle = 0;
+        std::vector<std::uint32_t> fills;
+        std::vector<std::uint32_t> strokes;
+    };
+    std::vector<TileRanks> ranks_;
+    std::vector<std::uint32_t> ranked_handles_; ///< the drawn tiles ranks_ was made for, sorted
+    std::vector<std::uint32_t> pack_ordinals_;  ///< per drawn tile: its pack's place among the drawn ones' ids, sorted
     bool keep_soft_ = false;
     bool drew_soft_ = false;
     double select_ms_ = 0;
