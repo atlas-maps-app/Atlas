@@ -9,8 +9,9 @@
 //   - water mapped as multipolygons and its islands, the sea closed from the coastline along the extract's edge (or a
 //     bay's ring where no coastline is), and which shores are natural (no quay wall);
 //   - the land cover in its drawing order, and each part's outline.
-// Not yet: generic.py's looks (each building's kind, materials, colours and tradition), the terrain and the water
-// levels from a survey, a theme park's coasters and woods (ENGINE.md step 3: they follow).
+//   - each building's generic look (load/Generic.hpp), where the region has no building tradition.
+// Not yet: a tradition's looks, the terrain and the water levels from a survey, a theme park's coasters and woods
+// (ENGINE.md step 3: they follow).
 //
 // As load_amsterdam, what the renders cannot load the core loads on: a coastline way without a geometry and a node
 // without a position are left out; a position off the Earth refuses the document.

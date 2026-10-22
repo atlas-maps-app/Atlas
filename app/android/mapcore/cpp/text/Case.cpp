@@ -69,19 +69,12 @@ constexpr char32_t capital_sigma = 0x03A3;
 constexpr char32_t small_sigma = 0x03C3;
 constexpr char32_t final_sigma = 0x03C2;
 
-} // namespace
-
-std::string capitalize(std::string_view utf8) {
-    const std::u32string cps = code_points(utf8);
-    std::string out;
-    out.reserve(utf8.size() + 2);
-    if (cps.empty()) return out;
-    append_utf8(out, mapped(title_runs, cps[0]));
-    // The rest is lowercased as a text of its own, which a sigma at its start cannot end.
-    for (std::size_t i = 1; i < cps.size(); ++i) {
+/// Java's toLowerCase(Locale.ROOT) of the code points `cps`, a text of their own (a sigma at its start cannot end it).
+void lower_into(std::string& out, std::span<const char32_t> cps) {
+    for (std::size_t i = 0; i < cps.size(); ++i) {
         const char32_t c = cps[i];
         if (c == capital_sigma) {
-            const bool ends = i >= 2 && cased(cps[i - 1]) && (i + 1 == cps.size() || !cased(cps[i + 1]));
+            const bool ends = i >= 1 && cased(cps[i - 1]) && (i + 1 == cps.size() || !cased(cps[i + 1]));
             append_utf8(out, ends ? final_sigma : small_sigma);
             continue;
         }
@@ -94,6 +87,26 @@ std::string capitalize(std::string_view utf8) {
         }
         append_utf8(out, mapped(lower_runs, c));
     }
+}
+
+} // namespace
+
+std::string capitalize(std::string_view utf8) {
+    const std::u32string cps = code_points(utf8);
+    std::string out;
+    out.reserve(utf8.size() + 2);
+    if (cps.empty()) return out;
+    append_utf8(out, mapped(title_runs, cps[0]));
+    // the rest is lowercased as a text of its own, which a sigma at its start cannot end
+    lower_into(out, std::span(cps).subspan(1));
+    return out;
+}
+
+std::string lowercase(std::string_view utf8) {
+    const std::u32string cps = code_points(utf8);
+    std::string out;
+    out.reserve(utf8.size() + 2);
+    lower_into(out, cps);
     return out;
 }
 

@@ -2,6 +2,7 @@
 
 #include "base/pymath/PyMath.hpp"
 #include "geometry/RoofShapes.hpp"
+#include "load/Generic.hpp"
 #include "load/Real.hpp"
 
 #include <algorithm>
@@ -735,6 +736,8 @@ std::expected<Scene, LoadError> load_region(const osm::Document& doc, const Regi
         return -std::fabs(signed_area(a.poly)) < -std::fabs(signed_area(b.poly));
     });
     outlines(s);
+    // each building's generic look from its own tags and the land use it stands in (a tradition's: not yet)
+    if (!region.tradition) apply_looks(s, region.name);
     if (frame.error()) return std::unexpected(*frame.error());
     return loaded;
 }

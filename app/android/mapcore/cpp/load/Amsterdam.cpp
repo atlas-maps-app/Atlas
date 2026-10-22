@@ -337,6 +337,8 @@ std::string_view key_of(Guess guess) noexcept {
     case Guess::building_material: return "building:material";
     case Guess::roof_colour: return "roof:colour";
     case Guess::roof_direction: return "roof:direction";
+    case Guess::roof_material: return "roof:material";
+    case Guess::roof_orientation: return "roof:orientation";
     }
     return "?";
 }

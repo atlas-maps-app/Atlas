@@ -19,4 +19,8 @@ namespace atlas::text {
 /// a word's end). Invalid UTF-8 bytes become U+FFFD.
 [[nodiscard]] std::string capitalize(std::string_view utf8);
 
+/// Kotlin's `s.lowercase()` (Java's toLowerCase(Locale.ROOT)) of UTF-8 text: each code point's lowercase, İ to i̇, Σ to
+/// ς at a word's end (by the code points beside it, as capitalize() decides it). Invalid UTF-8 bytes become U+FFFD.
+[[nodiscard]] std::string lowercase(std::string_view utf8);
+
 } // namespace atlas::text

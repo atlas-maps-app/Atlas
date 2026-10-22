@@ -2,6 +2,7 @@
 // its island, land cover in LAND's order, a big road in a tunnel left out, the closest roof shape, Douglas-Peucker's
 // simplify, and where ATLAS_REGIONS_DIR names the renderer's data/regions, the canal ring's raw.json loaded whole as
 // the packer loads it (its counts are RegionsParityTest's, which holds every record to the port's Regions.load).
+#include "load/Generic.hpp"
 #include "load/Regions.hpp"
 #include "osm/Overpass.hpp"
 #include "tests/base/require.hpp"
@@ -129,4 +130,16 @@ TEST_CASE("load: the canal ring's raw.json loaded as a region, as the packer loa
     CHECK(loaded->parts.size() == 696);
     CHECK(loaded->land.size() == 2384);
     CHECK(loaded->water.size() == 331);
+}
+
+TEST_CASE("load: generic.py's colours: a colour word or hex form read, a guessed colour varied per building") {
+    CHECK(load::colour_hex(" Light_Grey ") == "#D3D3D3");
+    CHECK(load::colour_hex("#abc") == "#AABBCC");
+    CHECK(load::colour_hex("#ABCDEF") == "#ABCDEF");
+    CHECK(load::colour_hex("red") == "#B03A2E");
+    CHECK(load::colour_hex("rood") == std::nullopt);
+    CHECK(load::colour_hex(std::nullopt) == std::nullopt);
+    // generic.py's own: jitter('#8E5A46', 123) and jitter('#9C988F', 130, 0.06)
+    CHECK(load::jitter("#8E5A46", 123) == "#875542");
+    CHECK(load::jitter("#9C988F", 130, 0.06) == "#9C988F");
 }

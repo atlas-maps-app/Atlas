@@ -69,6 +69,8 @@ enum class Guess : std::uint8_t {
     building_material,
     roof_colour,
     roof_direction,
+    roof_material,
+    roof_orientation,
 };
 
 /// The tag's key: `building:levels` for Guess::building_levels.
@@ -88,9 +90,17 @@ public:
         return false;
     }
     [[nodiscard]] std::span<const Guess> keys() const noexcept { return std::span(keys_).first(count_); }
+    /// `g.pop(key, None)`: the keys after it move up.
+    void remove(Guess guess) noexcept {
+        std::uint8_t k = 0;
+        for (std::uint8_t i = 0; i < count_; ++i) {
+            if (keys_[i] != guess) keys_[k++] = keys_[i];
+        }
+        count_ = k;
+    }
 
 private:
-    std::array<Guess, 8> keys_{};
+    std::array<Guess, 10> keys_{};
     std::uint8_t count_ = 0;
 };
 
@@ -128,6 +138,14 @@ struct Building {
     bool relation = false;                 ///< mapped as a multipolygon relation (`otype` 'relation'), else a way
     std::optional<std::int64_t> parent_id; ///< a part: the id of the outline it stands in
     bool in_church = false;                ///< a part standing in a church (`in_church`, only where true)
+    // generic.py's looks (load/Generic.hpp), where they were applied (`looked`):
+    bool looked = false;
+    std::optional<std::string_view> kind;      ///< the generic look's kind (home, office, ...)
+    std::optional<std::string_view> rmat_draw; ///< the roof material drawn
+    std::optional<std::string> col_draw;       ///< the wall colour drawn (#RRGGBB)
+    std::optional<std::string> rcol_draw;      ///< the roof colour drawn
+    bool no_win = false;                       ///< no window rows (halls, tanks, glass walls)
+    std::optional<std::string> look_why;       ///< why the look is what it is; None where nothing was guessed
 };
 
 /// A road (`S['roads']`).

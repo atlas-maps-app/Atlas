@@ -78,6 +78,7 @@ public:
         return *this;
     }
     Line& maybe(const std::optional<std::string_view>& s) { return s ? text(*s) : raw("-"); }
+    Line& maybe(const std::optional<std::string>& s) { return s ? text(*s) : raw("-"); }
     Line& points(std::span<const load::V2> p) {
         out_ += std::to_string(p.size());
         for (const load::V2& q : p) {
@@ -149,6 +150,39 @@ void building(std::ofstream& out, std::string_view list, std::size_t i, const lo
             l.raw("~");
         } else {
             l.flag(b.hidden);
+        }
+        // generic.py's looks, where the region has no tradition (with a tradition: not yet, and left out)
+        l.field("looks");
+        if (b.looked) {
+            l.raw("1");
+            l.field("h").real(b.h);
+            l.field("levels").integer(b.levels);
+            l.field("roof").maybe(b.roof);
+            l.field("roof_h").real(b.roof_h);
+            l.field("orient").maybe(b.orient);
+            l.field("mat").maybe(b.mat);
+            l.field("rmat").maybe(b.rmat);
+            l.field("col").maybe(b.col);
+            l.field("rcol").maybe(b.rcol);
+            l.field("mat_draw");
+            if (b.mat_draw) {
+                l.text(*b.mat_draw);
+            } else {
+                l.raw("~");
+            }
+            l.field("rmat_draw").maybe(b.rmat_draw);
+            l.field("kind").maybe(b.kind);
+            l.field("col_draw").maybe(b.col_draw);
+            l.field("rcol_draw").maybe(b.rcol_draw);
+            l.field("no_win").flag(b.no_win);
+            l.field("look_why").maybe(b.look_why);
+            l.field("guessed");
+            for (std::size_t k = 0; k < b.guessed.keys().size(); ++k) {
+                if (k > 0) l.raw(",");
+                l.raw(load::key_of(b.guessed.keys()[k]));
+            }
+        } else {
+            l.raw("~");
         }
         l.field("poly").points(b.poly);
         l.field("tags").tags(b.tags);
