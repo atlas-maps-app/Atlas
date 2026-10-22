@@ -33,6 +33,9 @@ namespace {
 /// A tile's words in the frame's tile table (ground.slang's TILE_WORDS).
 constexpr std::size_t tile_words = 20;
 
+/// The longest side of a window's tile, metres: an L14 tile at the equator (the Earth's 40,075 km over 2^14).
+constexpr double window_side = 2446.0;
+
 /// The CPU time this thread has run, milliseconds (what select costs on one core, whatever else the machine runs).
 [[nodiscard]] double thread_ms() noexcept {
     timespec t{};
@@ -335,14 +338,15 @@ std::uint32_t Ground::stroke_order(const DrawnTile& t, std::uint32_t i) const no
 
 void Ground::rank_across_scenes() {
     GroundFrame& f = frame_;
-    // the packs drawn, by their ids' order; a window's among them
+    // the packs drawn, by their ids' order, and the windows among their tiles: a render pack's tiles are one scene, a
+    // frame cell's pack holds a scene a window (each window one tile), so a frame of two windows is of two scenes
     std::vector<std::string_view> packs;
-    bool window = false;
+    std::size_t windows = 0;
     for (const DrawnTile& t : f.tiles) {
-        window = window || t.tile->kind == tiles::PackKind::window;
+        if (t.tile->kind == tiles::PackKind::window) ++windows;
         if (std::ranges::find(packs, std::string_view(t.tile->pack)) == packs.end()) packs.emplace_back(t.tile->pack);
     }
-    f.mixed = window && packs.size() > 1;
+    f.mixed = windows > 0 && (packs.size() > 1 || windows > 1);
     if (!f.mixed) {
         ranks_.clear();
         ranked_handles_.clear();
@@ -575,6 +579,15 @@ bool Ground::decide(const frame::FrameState& state) {
             }
             f.tiles.push_back({.tile = c.drawn, .pass = &p, .ground = g, .cells = cells, .place = c.place});
         }
+    }
+    // The plate under every window drawn: the renders' plate is GR about the frame's origin, which for a frame cell's
+    // windows is the cell's centre, kilometres off, and windows carry the city past the renders' radius; so where
+    // windows are drawn the plate reaches each of them whole (frames without windows keep the renders' plate).
+    for (const DrawnTile& t : f.tiles) {
+        if (t.tile->kind != tiles::PackKind::window) continue;
+        const double x = static_cast<double>(t.place.offset.x) + cam.eye().x; // the tile's south-west corner
+        const double z = static_cast<double>(t.place.offset.z) + cam.eye().z;
+        f.ground_r = pymath::max(f.ground_r, pymath::max(std::abs(x), std::abs(z)) + window_side);
     }
     std::uint32_t fills = 0;
     std::uint32_t strokes = 0;

@@ -156,6 +156,10 @@ public:
                                                   bool living);
     /// The ladder of a pack's `rhead` (its views, its frame, living for the living profile).
     [[nodiscard]] static std::optional<Ladder> of(const tiles::RenderHead& head);
+    /// The ladder of a pack without views (a frame cell's windows, which place no camera): place() takes the live view
+    /// as it is, in `frame`, with what regions.py's cfg_for gives a view that sets nothing but its camera (a region's:
+    /// no fin, the haze from the distance); nothing snaps.
+    [[nodiscard]] static Ladder bare(GroundFrame frame, bool living);
 
     [[nodiscard]] std::span<const Knot> knots() const noexcept { return knots_; }
     [[nodiscard]] const GroundFrame& frame() const noexcept { return frame_; }
@@ -163,7 +167,8 @@ public:
 
     /// The region view `v` matches (ViewLadder.snap), or null.
     [[nodiscard]] const Knot* snap(const LiveView& v) const noexcept;
-    /// The engine's camera for `v` (ViewLadder.place without a ground: the target at street level).
+    /// The engine's camera for `v` (ViewLadder.place without a ground: the target at street level); a bare ladder's,
+    /// the live view's.
     [[nodiscard]] Placed place(const LiveView& v) const;
     /// A region view's own camera with the frame size of the screen (ViewLadder.exact: regions.py's cfg_for).
     [[nodiscard]] Placed exact(const Knot& k, std::int32_t width_dp, std::int32_t height_dp) const;

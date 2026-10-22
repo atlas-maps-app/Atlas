@@ -172,9 +172,10 @@ struct GroundFrame {
     std::vector<std::uint8_t> stroke_drawn; ///< per stroke of the drawn tiles (DrawnTile::strokes)
     std::vector<double> stroke_width;       ///< per stroke: its width this frame, CSS px (as printed at rest)
     std::vector<std::uint8_t> shadow_drawn; ///< per shadow of the drawn tiles (DrawnTile::shadows): drawn
-    /// Whether the drawn tiles come from more than one pack (another scene each: the windows the phone builds): the
-    /// ground is then ordered by its elements across them (geometry::OrderKey), each drawn fill and stroke at its rank
-    /// among its group's, as one scene holding them all would order them; else each at its own scene's order.
+    /// Whether the drawn tiles come from more than one scene with a window among them (a window beside another pack's
+    /// tiles, or two windows: a frame cell's pack holds a scene a window): the ground is then ordered by its elements
+    /// across them (geometry::OrderKey), each drawn fill and stroke at its rank among its group's, as one scene holding
+    /// them all would order them; else each at its own scene's order.
     bool mixed = false;
     std::vector<std::uint32_t> fill_rank;   ///< per fill of the drawn tiles, where mixed: its rank in its group
     std::vector<std::uint32_t> stroke_rank; ///< per stroke of the drawn tiles, where mixed: its rank in its group
@@ -368,9 +369,10 @@ private:
     [[nodiscard]] bool decide(const frame::FrameState& state);
     void decide_tile(const view::Camera& cam, const DrawnTile& t, TileDecisions& d);
     void lay_out();
-    /// Where the drawn tiles come from a window's pack and another (GroundFrame::mixed), every fill and stroke of them
-    /// ranked in its group by its element across them (geometry::OrderKey, then its pack, then its scene's order),
-    /// kept while the same tiles are drawn; each pack's ordinal among the drawn ones (`pack_ordinals_`).
+    /// Where the drawn tiles come from more than one scene, a window among them (GroundFrame::mixed), every fill and
+    /// stroke of them ranked in its group by its element across them (geometry::OrderKey, then its pack, then its
+    /// scene's order), kept while the same tiles are drawn; each pack's ordinal among the drawn ones
+    /// (`pack_ordinals_`).
     void rank_across_scenes();
     [[nodiscard]] gpu::Result<void> make_pipelines(const frame::PassContext& context);
     [[nodiscard]] gpu::Result<void> make_fill_pipelines(const frame::PassContext& context, Pipelines& p) const;

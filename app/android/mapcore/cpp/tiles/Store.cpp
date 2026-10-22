@@ -94,6 +94,14 @@ Result<std::shared_ptr<const ByteSource>> shared_source(const PackRef& ref) {
 
 std::string Store::cell_id(TileKey cell) { return std::format("cells/{}/{}/{}", cell.z, cell.x, cell.y); }
 
+std::string Store::holder_of(std::string_view id) const {
+    const std::scoped_lock lock(cells_mutex_);
+    for (const Cell& c : cells_) {
+        if (std::ranges::any_of(c.windows, [&](const Window& w) { return w.id == id; })) return cell_id(c.key);
+    }
+    return std::string(id);
+}
+
 Result<Pack> Store::open_remote(const PackRef& ref) {
     auto state = std::make_shared<RemoteState>();
     const CacheKey head_key{.kind = CacheKind::pack_head, .source = ref.identity};

@@ -120,15 +120,16 @@ void World::choose(const style::CameraState& camera) {
         return false;
     };
     // The pack drawn stays while the store still holds it (a pack let go of, or added again, is another) and it still
-    // fits; else the first of the store's that does.
+    // fits; else the first of the store's that does. A window the app names is drawn with its frame cell's pack.
     const std::vector<std::shared_ptr<const tiles::StorePack>> open = store_.packs();
+    const std::string forced = forced_.empty() ? std::string() : store_.holder_of(forced_);
     std::shared_ptr<const tiles::StorePack> pick;
     if (active_ && std::ranges::find(open, active_) != open.end() &&
-        (forced_.empty() ? holds(*active_) : active_->id == forced_)) {
+        (forced.empty() ? holds(*active_) : active_->id == forced)) {
         pick = active_;
     } else {
         for (const std::shared_ptr<const tiles::StorePack>& p : open) {
-            if (!forced_.empty() ? p->id == forced_ && p->pack.is_render() && p->pack.head() != nullptr : holds(*p)) {
+            if (!forced.empty() ? p->id == forced && p->pack.is_render() && p->pack.head() != nullptr : holds(*p)) {
                 pick = p;
                 break;
             }
@@ -137,7 +138,13 @@ void World::choose(const style::CameraState& camera) {
     if (pick != active_) {
         active_ = pick;
         ladder_.reset();
-        if (active_) ladder_ = view::Ladder::of(*active_->pack.head());
+        if (active_) {
+            // a pack without views (a frame cell's windows) frames the live camera in its own frame
+            const tiles::RenderHead& head = *active_->pack.head();
+            ladder_ = head.views().empty() ? std::optional(view::Ladder::bare(view::frame_of(head.frame),
+                                                                              head.profile == tiles::Profile::living))
+                                           : view::Ladder::of(head);
+        }
     }
 }
 

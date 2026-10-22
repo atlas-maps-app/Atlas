@@ -308,6 +308,13 @@ std::optional<Ladder> Ladder::of(const tiles::RenderHead& head) {
     return of(head.views(), frame_of(head.frame), head.profile == tiles::Profile::living);
 }
 
+Ladder Ladder::bare(GroundFrame frame, bool living) {
+    Ladder l;
+    l.frame_ = frame;
+    l.living_ = living;
+    return l;
+}
+
 const Ladder::Knot* Ladder::snap(const LiveView& v) const noexcept {
     // ViewLadder.snap
     const double tx = frame_.x(v.latitude, v.longitude);
@@ -374,6 +381,27 @@ double Ladder::between(double dist, std::string_view key) const noexcept {
 }
 
 Placed Ladder::place(const LiveView& v) const {
+    if (knots_.empty()) {
+        // a pack without views: the live view in its frame, as cfg_for gives a view of nothing but its camera
+        Placed c;
+        const double dist = v.distance;
+        c.set("target", triple(frame_.x(v.latitude, v.longitude), 0.0, frame_.z(v.latitude, v.longitude)));
+        c.set("yaw", real(bearing_of(v.bearing)));
+        c.set("pitch", real(engine_pitch(v.pitch)));
+        c.set("dist", real(dist));
+        c.set("fov", real(field_of_view));
+        c.set("cy", real(v.cy_dp));
+        c.set("W", integer(v.width_dp));
+        c.set("H", integer(v.height_dp));
+        if (!living_) {
+            c.set("no_fin", boolean(true));
+            c.set("obj_split", integer(obj_split));
+            c.set("haze0", real(dist * 0.85));
+            c.set("haze1", real(dist * 2.2));
+        }
+        c.dist_ = dist;
+        return c;
+    }
     // ViewLadder.place
     if (const Knot* k = snap(v)) {
         Placed p = exact(*k, v.width_dp, v.height_dp);

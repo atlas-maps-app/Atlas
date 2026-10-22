@@ -83,6 +83,10 @@ public:
     /// The id of the pack holding the windows of the frame cell `cell` (an L10 tile): `cells/<z>/<x>/<y>`.
     [[nodiscard]] static std::string cell_id(TileKey cell);
 
+    /// The id of the open pack that holds pack `id`: a window's frame cell's pack, where the window joined it; else
+    /// `id` itself. The app names a window by its own id (MapCore.PackRef), which the store holds in its cell's pack.
+    [[nodiscard]] std::string holder_of(std::string_view id) const;
+
     /// Every open pack, in lookup order (by kind, then in the order added).
     [[nodiscard]] std::vector<std::shared_ptr<const StorePack>> packs() const;
 
@@ -132,7 +136,7 @@ private:
     ExpandedCache* cache_;
     mutable std::mutex mutex_;
     std::vector<std::shared_ptr<const StorePack>> packs_; ///< in lookup order
-    std::mutex cells_mutex_;                              ///< taken before mutex_, never after
+    mutable std::mutex cells_mutex_;                      ///< taken before mutex_, never after
     std::vector<Cell> cells_;
 };
 

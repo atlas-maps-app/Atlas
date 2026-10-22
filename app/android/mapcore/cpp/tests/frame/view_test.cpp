@@ -194,6 +194,46 @@ TEST_CASE("the frame drawn converts between frames and blends a change over 300 
     CHECK(start.scale == doctest::Approx(1.0)); // the old frame's own metres
 }
 
+TEST_CASE("a pack without views frames the live camera in its own frame, with a region's settings") {
+    // a frame cell's windows: their frame is the cell's, its origin the cell's centre, kilometres from the camera
+    const view::GroundFrame cell{.lat0 = 52.3745, .lon0 = 4.7461, .kx = 111320 * 0.6101, .kz = 110540};
+    const view::LiveView v{.latitude = 52.3749,
+                           .longitude = 4.8839,
+                           .distance = 1600,
+                           .bearing = 52,
+                           .pitch = 52,
+                           .width_dp = 412,
+                           .height_dp = 915,
+                           .cy_dp = 440};
+    const view::Ladder region = view::Ladder::bare(cell, false);
+    CHECK(region.knots().empty());
+    CHECK(region.snap(v) == nullptr);
+    const view::Placed p = region.place(v);
+    CHECK_FALSE(p.view().has_value());
+    CHECK(p.dist() == 1600);
+    const view::CameraSpec c = p.camera();
+    CHECK(c.target.x == cell.x(v.latitude, v.longitude)); // about 9.4 km east of the cell's centre
+    CHECK(c.target.x > 9000);
+    CHECK(c.target.z == cell.z(v.latitude, v.longitude));
+    CHECK(c.target.y == 0);
+    CHECK(c.dist == 1600);
+    CHECK(c.yaw == view::bearing_of(52));
+    CHECK(c.pitch == view::engine_pitch(52));
+    // regions.py's cfg_for for a view of nothing but its camera: no fin, the haze from the distance
+    CHECK(p.truthy("no_fin"));
+    CHECK(p.number("haze0") == 1600 * 0.85);
+    CHECK(p.number("haze1") == 1600 * 2.2);
+    const view::LayerSettings s = view::settings_of(p);
+    CHECK(s.no_fin);
+    CHECK(s.width == 412);
+    CHECK(s.height == 915);
+    // the living map's camera has no cfg_for
+    const view::Placed living = view::Ladder::bare(cell, true).place(v);
+    CHECK_FALSE(living.truthy("no_fin"));
+    CHECK_FALSE(living.number("haze0").has_value());
+    CHECK(living.camera().target.x == c.target.x);
+}
+
 TEST_CASE("ranks are the renders' stable sort by depth, kept by an insertion pass as the camera turns") {
     scene::ItemTable items;
     std::mt19937_64 rng = seeded(42);

@@ -85,7 +85,8 @@ public:
 
     /// The packs: add and remove them as the app lists them (MapCore.packs).
     [[nodiscard]] tiles::Store& store() noexcept { return store_; }
-    /// The pack the frame draws from now on (its store id), or the automatic choice (empty).
+    /// The pack the frame draws from now on (its store id, or a window's, whose frame cell's pack is drawn), or the
+    /// automatic choice (empty).
     void set_active(std::string id) { forced_ = std::move(id); }
     /// A coarser pack drawn around the active one (its store id: the canal ring around the Westerkerk; empty: none),
     /// and the box masking it (D3: the coarser pack's items whose reference points lie inside it are skipped, so a
