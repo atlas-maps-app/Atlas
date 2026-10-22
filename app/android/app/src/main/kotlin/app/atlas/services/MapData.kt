@@ -133,6 +133,13 @@ class MapData(private val services: Services) {
                 .distinctUntilChanged()
                 .collect { (haze, vignette, grain) -> MapEngine.screenEffects(haze, vignette, grain) }
         }
+        // true depth or the renderer's painter's order for what stands up, as the Look settings have it
+        services.scope.launch {
+            services.settings.data
+                .map { it[SettingsKeys.MAP_TRUE_DEPTH] ?: true }
+                .distinctUntilChanged()
+                .collect { trueDepth -> MapEngine.painterOrder(!trueDepth) }
+        }
     }
 
     private fun open(asset: String): InputStream = services.context.assets.open(asset)

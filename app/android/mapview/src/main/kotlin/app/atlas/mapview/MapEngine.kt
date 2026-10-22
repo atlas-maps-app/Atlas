@@ -84,10 +84,10 @@ object MapEngine {
     var host: VkHost = VkHost.SURFACE
 
     /**
-     * The painter switch (debug and bench builds: VK facts' "Buildings" button): what stands up is drawn in the
-     * renderer's painter's order (whole buildings by one point each, which makes some melt into each other) instead of
-     * the core's true depth, to compare the two. Each map binding hands it to the core; [painterOrder] hands it to the
-     * core at once.
+     * The painter switch (the app's Look settings' "True depth" chip, off; and VK facts' "Buildings" button in debug and
+     * bench builds): what stands up is drawn in the renderer's painter's order (whole buildings by one point each, which
+     * makes some melt into each other: a drawing's look) instead of the core's true depth. Each map binding hands it to
+     * the core; [painterOrder] hands it to the core at once.
      */
     @Volatile
     var painter: Boolean = false

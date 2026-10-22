@@ -80,6 +80,12 @@ object SettingsKeys {
     val MAP_HAZE = booleanPreferencesKey("map.haze")
     val MAP_VIGNETTE = booleanPreferencesKey("map.vignette")
     val MAP_GRAIN = booleanPreferencesKey("map.grain")
+
+    /**
+     * Whether what stands up is drawn at its true depth (on when unset, the engine's own) or in the renderer's painter's
+     * order (whole buildings by one point each, which melts some into each other: a drawing's look).
+     */
+    val MAP_TRUE_DEPTH = booleanPreferencesKey("map.trueDepth")
     val UNITS = stringPreferencesKey("units")
 
     /** The language for place names, null for local names. */
