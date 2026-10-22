@@ -144,6 +144,19 @@ jobs:
             sudo apt-get install -y -q libvulkan1 > /dev/null
             echo "ATLAS_VULKAN_LOADER=/usr/lib/x86_64-linux-gnu/libvulkan.so.1" >> "$GITHUB_ENV"
           fi
+      # The packer's tool (ENGINE.md step 3: the core's stage P, mapcore/cpp/stagep), which cuts the APK's bundled tiles
+      # (:app's generateBundledTiles reads ATLAS_STAGEP), so the APK's packs come from the code the phone builds its
+      # windows with. Built alone (the host-stagep preset: no slangc, Vulkan or HarfBuzz) with LLVM's clang and libc++
+      # (above) and the SDK's CMake and Ninja. The tiles are the port's cut's byte for byte: :mapcorecheck's bundled
+      # tiles stay the port's, the reference its StagePPackerTest and CutParityTest hold the core to, as do core.yml's.
+      - name: "The packer's tool: the core's stage P"
+        run: |
+          cmake_bin="$ANDROID_HOME/cmake/$(grep '^cmake.version=' mapcore/tools.properties | cut -d= -f2-)/bin"
+          cd mapcore/cpp
+          CC="$ATLAS_HOST_CC" CXX="$ATLAS_HOST_CXX" CXXFLAGS="$ATLAS_HOST_CXXFLAGS" LDFLAGS="$ATLAS_HOST_LDFLAGS" \
+            "$cmake_bin/cmake" --preset host-stagep -DCMAKE_MAKE_PROGRAM="$cmake_bin/ninja"
+          "$cmake_bin/cmake" --build --preset host-stagep
+          echo "ATLAS_STAGEP=$PWD/build/host-stagep/atlas_stagep" >> "$GITHUB_ENV"
       # pymath's parity sweep (:mapcorecheck's MT/numerics) runs 10^5 arguments a function here, and the tile reader's
       # differential check 1,500 damaged tiles; the sweeps job runs the plan's 10^7 and 60,000 nightly.
       - name: Test and build
