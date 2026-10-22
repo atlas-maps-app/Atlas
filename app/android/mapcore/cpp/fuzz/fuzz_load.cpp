@@ -4,9 +4,11 @@
 // outline has at least three points and a box around them, and each index (a place's building, a building's places, a
 // tree's node, a place among the nodes) points into its list. The region takes, by the input's size, a tradition with
 // every rule and detail generic.py reads (load/Generic.hpp's looks), or none; the living map Amsterdam's New looks or
-// none. Seeds: fuzz/corpus/fuzz_load (the unit test's document, with a record of each kind, and the reader's seed).
+// none. Each scene is cut into its render tiles too (load/Cut.hpp), which must cut or refuse. Seeds:
+// fuzz/corpus/fuzz_load (the unit test's document, with a record of each kind, and the reader's seed).
 #include "base/assert.hpp"
 #include "load/Amsterdam.hpp"
+#include "load/Cut.hpp"
 #include "load/Generic.hpp"
 #include "load/Regions.hpp"
 #include "load/Tradition.hpp"
@@ -78,12 +80,20 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     if (regional) {
         ATLAS_ASSERT(regional->natural_shore.size() == regional->water.size(), "a shore flag per water ring");
         for (const atlas::load::Building& b : regional->buildings) check_building(b, regional->nodes.size());
+        // the region's cut: its tiles at its two levels, or a refusal (a vertex off the grid, a tradition's details)
+        if (const auto tiles = atlas::load::cut_region(*regional, region.frame, {})) {
+            for (const atlas::tiles::TileFill& t : *tiles)
+                ATLAS_ASSERT(t.level() == 14 || t.level() == 12, "a tile's level");
+        }
     }
     const atlas::load::Looks looks{
         .region = "ams", .tradition = nullptr, .landuse = atlas::load::LandUseFrom::areas, .keep_homes = true};
     const auto scene = atlas::load::load_amsterdam(*doc, atlas::load::westerkerk_frame(),
                                                    atlas::load::amsterdam_palette(), size % 4 < 2 ? &looks : nullptr);
     if (!scene) return 0;
+    if (const auto tiles = atlas::load::cut_living(*scene, atlas::load::westerkerk_frame())) {
+        for (const atlas::tiles::TileFill& t : *tiles) ATLAS_ASSERT(t.level() == 14, "a living tile's level");
+    }
     const std::size_t nodes = scene->nodes.size();
     for (const atlas::load::Building& b : scene->buildings) check_building(b, nodes);
     for (const atlas::load::Building& b : scene->parts) {

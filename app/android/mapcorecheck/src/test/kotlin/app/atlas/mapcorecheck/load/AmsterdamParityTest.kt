@@ -21,7 +21,7 @@ import java.io.File
  */
 internal object LoadHost {
     /** The layout version of these entry points; a library of another is refused. */
-    const val ABI = 3
+    const val ABI = 4
 
     init {
         val path = System.getProperty("atlas.mapcore.host") ?: error("atlas.mapcore.host names no host build of the core")
@@ -47,6 +47,13 @@ internal object LoadHost {
         raw: String, out: String, name: String, lat0: Double, lon0: Double, kx: Double, kz: Double,
         south: Double, west: Double, north: Double, east: Double, tradition: ByteArray?, tolerance: Double,
     ): String
+
+    /**
+     * A region's tiles cut by the core from [raw] (its box from [regionJson], its frame and its variants' tolerances from the render
+     * pack [pack], loaded whole and at each of them), held to [pack]'s tiles byte for byte: `tiles=… cut=… wrong=… bytes=… variants=…`
+     * and, where a tile differs, ` first=<z/x/y> <the first line of their canonical dumps that does>`; or `error=…`.
+     */
+    @JvmStatic external fun cutRegion(raw: String, regionJson: String, pack: String, name: String): String
 
     /** The bytes of tradition [tid]'s file, as the port's [Generic.tradition] reads them; null for none. */
     fun traditionBytes(tid: String?): ByteArray? {

@@ -2,10 +2,13 @@
 // repository's data/ams/raw.json, which loads to the scene the bundled pack was made from: AmsterdamParityTest) loaded
 // and cut by the core, each tile written (tiles/TileWriter.hpp), and every tile of the bundled render pack
 // (ATLAS_TILES_DIR) must be the core's, byte for byte. A tile that differs is decoded on both sides, and the first line
-// of the canonical dumps that differs is named.
+// of the canonical dumps that differs is named. Where ATLAS_REGIONS_DIR names the renderer's data/regions, the canal
+// ring's raw.json is loaded as a region (whole, and at each tolerance its pack's views and bands load it at, for the
+// variants) and cut, and every tile of its render pack must be the core's too.
 #include "base/arena.hpp"
 #include "load/Amsterdam.hpp"
 #include "load/Cut.hpp"
+#include "load/Regions.hpp"
 #include "osm/Overpass.hpp"
 #include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
@@ -13,6 +16,7 @@
 #include "tiles/Chunks.hpp"
 #include "tiles/Directory.hpp"
 #include "tiles/Dump.hpp"
+#include "tiles/Json.hpp"
 #include "tiles/PackWriter.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Source.hpp"
@@ -21,10 +25,12 @@
 #include <doctest/doctest.h>
 
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -50,6 +56,53 @@ std::string first_difference(const std::string& core, const std::string& packer)
                    "\n  packer: " + (hb ? lb.substr(0, 400) : "(none)");
         }
     }
+}
+
+/// How many of the pack's tiles the core's `cut` matches byte for byte (each other one failed, the first few with the
+/// first line of the canonical dumps that differs), and the bytes the core wrote.
+struct Compared {
+    std::size_t tiles = 0;
+    std::size_t wrong = 0;
+    std::size_t bytes = 0;
+};
+
+Compared compare_with_pack(const std::string& path, const std::vector<tl::TileFill>& cut) {
+    Compared out;
+    std::unordered_map<std::uint64_t, const tl::TileFill*> mine;
+    for (const tl::TileFill& t : cut) mine[tl::TileKey(t.level(), t.x(), t.y()).packed()] = &t;
+    auto pack = atlas::test::open_pack(path);
+    ATLAS_REQUIRE_OR_RETURN(out, pack.has_value(), tl::describe(pack.error()));
+    tl::Zstd zstd;
+    tl::TileDecoder decoder;
+    atlas::Arena arena(8U << 20U, atlas::Growth::grows, "cut test");
+    std::vector<std::byte> raw;
+    std::vector<std::byte> scratch;
+    for (const tl::ChunkRef& chunk : pack->chunks().chunks()) {
+        ++out.tiles;
+        arena.reset();
+        auto theirs = pack->decode(chunk, zstd, decoder, arena, raw, scratch);
+        ATLAS_REQUIRE_OR_RETURN(out, theirs.has_value(), tl::describe(theirs.error()));
+        const auto it = mine.find(chunk.tile.packed());
+        if (it == mine.end()) {
+            ++out.wrong;
+            FAIL_CHECK("tile ", int{chunk.tile.z}, "/", chunk.tile.x, "/", chunk.tile.y, ": the core cut no such tile");
+            continue;
+        }
+        const auto written = tl::encode_tile(*it->second);
+        ATLAS_REQUIRE_OR_RETURN(out, written.has_value(), tl::describe(written.error()));
+        out.bytes += written->size();
+        if (*written == raw) continue;
+        if (out.wrong++ >= 4) continue;
+        const std::string packer = tl::canonical_dump(*theirs);
+        tl::TileDecoder again;
+        atlas::Arena arena2(8U << 20U, atlas::Growth::grows, "cut test, the core's tile");
+        const auto ours = again.decode(*written, arena2);
+        ATLAS_REQUIRE_OR_RETURN(out, ours.has_value(), tl::describe(ours.error()));
+        FAIL_CHECK("tile ", int{chunk.tile.z}, "/", chunk.tile.x, "/", chunk.tile.y, ": ", written->size(),
+                   " bytes for the packer's ", raw.size(), "; the dumps differ at ",
+                   first_difference(tl::canonical_dump(*ours), packer));
+    }
+    return out;
 }
 
 /// The Westerkerk's raw.json, its document and scene (they view the text), and the core's tiles of it.
@@ -195,4 +248,76 @@ TEST_CASE("load: the Westerkerk's pack written from its raw.json opens, checks a
     }
     MESSAGE("the Westerkerk's pack from its raw.json: ", bytes->size(), " bytes, ", ours.size(),
             " tiles (the packer's: ", pack->source().size(), " bytes)");
+}
+
+TEST_CASE("load: the canal ring's tiles cut from its raw.json are the packer's (ATLAS_REGIONS_DIR, ATLAS_TILES_DIR)") {
+    const std::string regions = atlas::test::environment("ATLAS_REGIONS_DIR");
+    const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
+    if (regions.empty() || dir.empty()) {
+        MESSAGE("ATLAS_REGIONS_DIR or ATLAS_TILES_DIR is not set: the canal ring is not cut here");
+        return;
+    }
+    const auto read_text = [](const std::filesystem::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    };
+    const std::string text = read_text(std::filesystem::path(regions) / "grachten" / "raw.json");
+    const std::string region_json = read_text(std::filesystem::path(regions) / "grachten" / "region.json");
+    ATLAS_REQUIRE(!text.empty() && !region_json.empty());
+    const auto doc = atlas::osm::read_overpass(std::as_bytes(std::span(text.data(), text.size())));
+    ATLAS_REQUIRE(doc.has_value());
+    const auto region = tl::read_json(std::as_bytes(std::span(region_json.data(), region_json.size())));
+    ATLAS_REQUIRE(region.has_value());
+    const tl::Value bbox = region->root().find("bbox").value_or(tl::Value());
+    ATLAS_REQUIRE(bbox.size() == 4);
+    auto pack = atlas::test::open_pack(dir + "/grachten.atlas");
+    ATLAS_REQUIRE(pack.has_value(), tl::describe(pack.error()));
+    ATLAS_REQUIRE(pack->head() != nullptr);
+    const tl::RenderHead& head = *pack->head();
+    const load::RegionConfig config{.name = "grachten",
+                                    .frame = head.frame,
+                                    .bbox = {bbox.child(0).number().value_or(0), bbox.child(1).number().value_or(0),
+                                             bbox.child(2).number().value_or(0), bbox.child(3).number().value_or(0)},
+                                    .tradition = nullptr,
+                                    .palette = load::region_palette("grachten")};
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto base = load::load_region(*doc, config);
+    ATLAS_REQUIRE(base.has_value());
+    // the variants: the region loaded at each tolerance its views and the live map's bands load it at
+    std::set<std::uint8_t> levels;
+    for (const tl::HeadView& v : head.views()) levels.insert(v.tolerance);
+    for (const tl::HeadBand& b : head.bands()) levels.insert(b.tolerance);
+    levels.erase(0);
+    std::vector<load::Scene> others;
+    others.reserve(levels.size());
+    for (const std::uint8_t l : levels) {
+        auto other = load::load_region(*doc, config, tl::keep::tolerances.at(l));
+        ATLAS_REQUIRE(other.has_value());
+        others.push_back(std::move(*other));
+    }
+    std::vector<load::CutVariant> variants;
+    variants.reserve(levels.size());
+    std::size_t k = 0;
+    for (const std::uint8_t l : levels)
+        variants.push_back({.tolerance = tl::keep::tolerances.at(l), .scene = &others[k++]});
+    const auto t1 = std::chrono::steady_clock::now();
+    const auto cut = load::cut_region(*base, head.frame, variants);
+    ATLAS_REQUIRE(cut.has_value(), cut.error().what);
+    const auto t2 = std::chrono::steady_clock::now();
+    const Compared c = compare_with_pack(dir + "/grachten.atlas", *cut);
+    // what the region's own parts made, so that a layer both sides leave empty cannot pass unnoticed
+    std::unordered_map<std::string_view, std::size_t> made;
+    for (const tl::TileFill& t : *cut) {
+        for (const tl::LayerFill& lf : t.layers()) made[lf.schema().label] += lf.count();
+    }
+    MESSAGE("features: ", made["variant"], " variants, ", made["item"], " items, ", made["line"], " lines, ",
+            made["ground"], " ground, ", made["water"], " water pieces, ", made["quay"], " quays");
+    CHECK(made["variant"] > 0);
+    CHECK(made["item"] > 0);
+    const auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+    MESSAGE("the canal ring: ", cut->size(), " tiles cut (", c.bytes, " bytes) for the pack's ", c.tiles, "; ", c.wrong,
+            " not the packer's; loaded at ", levels.size() + 1, " tolerances in ", ms(t0, t1), " ms, cut in ",
+            ms(t1, t2), " ms");
+    CHECK(cut->size() == c.tiles);
+    CHECK(c.wrong == 0);
 }

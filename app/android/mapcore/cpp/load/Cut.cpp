@@ -2,6 +2,7 @@
 
 #include "base/pymath/PyMath.hpp"
 #include "geometry/RoofShapes.hpp"
+#include "load/Keep.hpp"
 #include "load/Real.hpp"
 #include "text/Shaper.hpp"
 #include "tiles/Grid.hpp"
@@ -15,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -47,6 +49,7 @@ constexpr double road_top = 0.1;
 constexpr double bridge_top = 2.0;
 constexpr double tram_reach = 1.5; // two rails 0.72 m either side
 constexpr double area_top = 0.02;
+constexpr double land_top = 0.01;
 constexpr double tree_symbol = 3.0;
 constexpr double crown_reach = 0.8;
 
@@ -123,10 +126,11 @@ constexpr std::array<std::string_view, 12> road_order = {"path",        "footway
 
 [[nodiscard]] Box4 point_box(tl::GridPoint p) noexcept { return {p.lat, p.lon, p.lat, p.lon}; }
 
-/// A ring or line on the grid, and its box.
+/// A ring or line on the grid, its keep codes where it carries them, and its box.
 struct GridLine {
     std::vector<std::int32_t> lat;
     std::vector<std::int32_t> lon;
+    std::vector<std::uint8_t> keep;
 
     [[nodiscard]] Box4 box() const noexcept {
         Box4 b{std::numeric_limits<std::int32_t>::max(), std::numeric_limits<std::int32_t>::max(),
@@ -198,9 +202,10 @@ struct GridLine {
     return m != materials.end() ? m->col : clay;
 }
 
-/// surface_colour(b, None, 'wall'): the mapped colour, else the material's, else the clay (the living map's loader
-/// draws no colour of its own).
+/// surface_colour(b, None, 'wall'): the colour the looks drew, else the mapped colour, else the material's, else the
+/// clay.
 [[nodiscard]] std::uint32_t wall_rgb(const Building& b) {
+    if (b.col_draw && !b.col_draw->empty()) return colour(*b.col_draw);
     const std::string_view col = b.col.value_or("");
     if (col.starts_with('#')) return colour(col);
     const std::string_view mat = b.mat.value_or("");
@@ -208,8 +213,10 @@ struct GridLine {
     return clay_rgb;
 }
 
-/// surface_colour(b, None, 'roof'): the roof's colour or material, else the wall's.
+/// surface_colour(b, None, 'roof'): the roof colour the looks drew, else the roof's colour or material, else the
+/// wall's.
 [[nodiscard]] std::uint32_t roof_rgb(const Building& b) {
+    if (b.rcol_draw && !b.rcol_draw->empty()) return colour(*b.rcol_draw);
     const std::string_view rcol = b.rcol.value_or("");
     if (!rcol.empty()) return colour(rcol.starts_with('#') ? rcol : material_or_clay(rcol));
     const std::string_view rmat = b.rmat.value_or("");
@@ -219,24 +226,51 @@ struct GridLine {
 
 // ---------------------------------------------------------------- the quays
 
-/// One of water_edges' edges: its ring, its ends (the ring's vertices) and whether its normal into the water is the
-/// opposite of (ez, -ex) / L.
+/// One of water_edges' edges: its ring (a water ring, or an island), its ends (the ring's vertices) and whether its
+/// normal into the water is the opposite of (ez, -ex) / L.
 struct Edge {
     std::uint32_t ring = 0;
+    bool hole = false;
     V2 a;
     V2 b;
     bool flip = false;
 };
 
-/// water_edges(S) of a scene without islands or natural shores: every edge of a water ring at least 0.4 m long, its
-/// normal turned into the water.
+/// A ring's z range: pip crosses none of its edges at a z outside it, so a point there is outside, exactly.
+struct ZRange {
+    double z0 = 0.0;
+    double z1 = 0.0;
+};
+
+[[nodiscard]] ZRange z_range(std::span<const V2> r) noexcept {
+    ZRange out{.z0 = std::numeric_limits<double>::infinity(), .z1 = -std::numeric_limits<double>::infinity()};
+    for (const V2& p : r) {
+        out.z0 = std::min(out.z0, p.z);
+        out.z1 = std::max(out.z1, p.z);
+    }
+    return out;
+}
+
+/// pip(x, z, r): false outside the ring's z range (no edge's `(zi > z) != (zj > z)` holds there), else pip's own
+/// answer.
+[[nodiscard]] bool pip_in(double x, double z, std::span<const V2> r, const ZRange& zr) noexcept {
+    if (z < zr.z0 || z >= zr.z1) return false;
+    return geometry::pip(x, z, r);
+}
+
+/// water_edges(S): every edge at least 0.4 m long of each water ring and island, its normal turned into the water (out
+/// of an island). A region knows its shores (the living map does not): a natural shore's ring has no quay, nor does an
+/// edge with water on both sides; an island's edge whose land side lies in other water has none.
 [[nodiscard]] std::vector<Edge> water_edges(const Scene& s) {
     std::vector<Edge> out;
-    for (std::uint32_t k = 0; k < s.water.size(); ++k) {
-        const std::vector<V2>& r = s.water[k];
+    const bool region = !s.natural_shore.empty();
+    std::vector<ZRange> zr;
+    zr.reserve(s.water.size());
+    for (const std::vector<V2>& r : s.water) zr.push_back(z_range(r));
+    const auto edges_of = [&](const std::vector<V2>& r, std::uint32_t k, bool hole) {
         const std::size_t n = r.size();
-        if (n == 0) continue;
-        const std::size_t last = r[0].x == r[n - 1].x && r[0].z == r[n - 1].z ? n - 1 : n;
+        if (n == 0) return;
+        const std::size_t last = r[0] == r[n - 1] ? n - 1 : n;
         for (std::size_t i = 0; i < last; ++i) {
             const V2 a = r[i];
             const V2 b = r[(i + 1) % n];
@@ -244,13 +278,45 @@ struct Edge {
             const double ez = b.z - a.z;
             const double lg = pymath::hypot(ex, ez);
             if (lg < 0.4) continue;
-            const double nx = ez / lg;
-            const double nz = -ex / lg;
+            double nx = ez / lg;
+            double nz = -ex / lg;
             const double mx = (a.x + b.x) / 2;
             const double mz = (a.z + b.z) / 2;
-            out.push_back({.ring = k, .a = a, .b = b, .flip = !geometry::pip(mx + nx * 0.4, mz + nz * 0.4, r)});
+            // into the water: inside a river, outside an island
+            const bool flip = geometry::pip(mx + nx * 0.4, mz + nz * 0.4, r) == hole;
+            if (flip) {
+                nx = -nx;
+                nz = -nz;
+            }
+            const double px = mx - nx * 1.5;
+            const double pz = mz - nz * 1.5;
+            if (hole) {
+                if (!geometry::pip(px, pz, r)) {
+                    bool other = false;
+                    for (std::size_t o = 0; o < s.water.size() && !other; ++o) {
+                        other = !s.water[o].empty() && std::fabs(s.water[o][0].x - mx) < 4000 &&
+                                pip_in(px, pz, s.water[o], zr[o]);
+                    }
+                    if (other) continue;
+                }
+                out.push_back({.ring = k, .hole = true, .a = a, .b = b, .flip = flip});
+                continue;
+            }
+            if (region) {
+                bool other = false;
+                for (std::size_t o = 0; o < s.water.size() && !other; ++o) {
+                    other = o != k && pip_in(px, pz, s.water[o], zr[o]);
+                }
+                if (other) continue; // water on both sides: no wall
+            }
+            out.push_back({.ring = k, .a = a, .b = b, .flip = flip});
         }
+    };
+    for (std::uint32_t k = 0; k < s.water.size(); ++k) {
+        if (region && s.natural_shore[k]) continue; // beaches and lake shores: no quay wall
+        edges_of(s.water[k], k, false);
     }
+    for (std::uint32_t k = 0; k < s.water_holes.size(); ++k) edges_of(s.water_holes[k], k, true);
     return out;
 }
 
@@ -346,6 +412,7 @@ private:
 struct ClipPoint {
     std::int64_t lat = 0;
     std::int64_t lon = 0;
+    bool cut = false; ///< a crossing the cut made
 };
 
 enum class Side : std::uint8_t { west, east, south, north };
@@ -376,8 +443,8 @@ enum class Side : std::uint8_t { west, east, south, north };
 
 [[nodiscard]] ClipPoint cross(const ClipPoint& a, const ClipPoint& b, Side side, std::int64_t c) noexcept {
     if (side == Side::west || side == Side::east)
-        return {.lat = along(a.lat, b.lat, c - a.lon, b.lon - a.lon), .lon = c};
-    return {.lat = c, .lon = along(a.lon, b.lon, c - a.lat, b.lat - a.lat)};
+        return {.lat = along(a.lat, b.lat, c - a.lon, b.lon - a.lon), .lon = c, .cut = true};
+    return {.lat = c, .lon = along(a.lon, b.lon, c - a.lat, b.lat - a.lat), .cut = true};
 }
 
 [[nodiscard]] std::vector<ClipPoint> clip_side(const std::vector<ClipPoint>& pts, Side side, std::int64_t c) {
@@ -419,8 +486,15 @@ enum class Side : std::uint8_t { west, east, south, north };
     return out;
 }
 
-/// Clip.ring: the ring clipped to the box (inclusive), or nothing when nothing of it with an area is left.
-[[nodiscard]] std::optional<GridLine> clip_ring(const GridLine& ring, const Box4& box) {
+/// A ring clipped at a tile's edges: its vertices, and which are crossings the cut made.
+struct Piece {
+    GridLine g;
+    std::vector<bool> cut;
+};
+
+/// Clip.ring: the ring clipped to the box (inclusive), or nothing when nothing of it with an area is left. A crossing
+/// that meets a vertex (or the closing repeat) marks the vertex kept.
+[[nodiscard]] std::optional<Piece> clip_ring(const GridLine& ring, const Box4& box) {
     std::vector<ClipPoint> pts = points_of(ring);
     pts = clip_side(pts, Side::west, box[1]);
     pts = clip_side(pts, Side::east, box[3]);
@@ -429,16 +503,25 @@ enum class Side : std::uint8_t { west, east, south, north };
     std::vector<ClipPoint> out;
     out.reserve(pts.size());
     for (const ClipPoint& p : pts) {
-        if (out.empty() || out.back().lat != p.lat || out.back().lon != p.lon) out.push_back(p);
+        if (out.empty() || out.back().lat != p.lat || out.back().lon != p.lon) {
+            out.push_back(p);
+        } else if (p.cut) {
+            out.back().cut = true;
+        }
     }
-    while (out.size() > 1 && out.front().lat == out.back().lat && out.front().lon == out.back().lon) out.pop_back();
+    while (out.size() > 1 && out.front().lat == out.back().lat && out.front().lon == out.back().lon) {
+        const bool cut = out.back().cut;
+        out.pop_back();
+        if (cut) out.front().cut = true;
+    }
     if (out.size() < 3 || area2(out) == 0) return std::nullopt;
-    GridLine g;
+    Piece piece;
     for (const ClipPoint& p : out) {
-        g.lat.push_back(static_cast<std::int32_t>(p.lat));
-        g.lon.push_back(static_cast<std::int32_t>(p.lon));
+        piece.g.lat.push_back(static_cast<std::int32_t>(p.lat));
+        piece.g.lon.push_back(static_cast<std::int32_t>(p.lon));
+        piece.cut.push_back(p.cut);
     }
-    return g;
+    return piece;
 }
 
 [[nodiscard]] bool ring_inside(const GridLine& ring, const Box4& box) noexcept {
@@ -448,10 +531,86 @@ enum class Side : std::uint8_t { west, east, south, north };
     return true;
 }
 
+/// `pts` as simplify leaves it at ladder `level` (KeepCodes.simplify over its codes; 0: unchanged), with simplify's
+/// exceptions: a small ring, or a result of fewer than 3 points or 2 m² or less, stays whole.
+[[nodiscard]] std::vector<V2> generalised(std::span<const V2> pts, std::size_t level) {
+    if (level == 0 || pts.size() < tl::keep::min_points) return {pts.begin(), pts.end()};
+    const std::vector<std::uint8_t> codes = keep_codes(pts);
+    std::vector<V2> ring;
+    for (std::size_t i = 0; i < pts.size(); ++i) {
+        if (codes[i] >= level) ring.push_back(pts[i]);
+    }
+    if (ring.size() >= 3 && std::fabs(geometry::signed_area(ring)) > 2) return ring;
+    return {pts.begin(), pts.end()};
+}
+
+// ---------------------------------------------------------------- a building's attributes
+
+/// What a building or part carries besides its ring (Schema.BUILDING_ATTRIBUTES), as the packer derives it: what a
+/// variant compares and holds. A field the scene's dict lacks is empty.
+struct Attributes {
+    double h = 0.0;
+    double min = 0.0;
+    std::optional<double> roof_h;
+    std::optional<std::int64_t> year;
+    std::int64_t levels = 0;
+    std::optional<std::int64_t> parent_id;
+    std::optional<std::string_view> roof;
+    std::optional<std::string_view> orient;
+    std::uint32_t wall_rgb = 0;
+    std::uint32_t roof_rgb = 0;
+    std::optional<std::string_view> mat_draw;
+    std::optional<std::string_view> rmat_draw;
+    std::optional<std::string_view> kind;
+    bool relation = false;
+    std::optional<bool> hidden;
+    std::optional<bool> no_win;
+    bool in_church = false;
+    std::vector<std::string_view> guessed;
+    std::vector<std::int64_t> places;
+    std::vector<std::string_view> hours;
+    std::uint64_t flags = 0;
+    std::array<std::optional<std::string_view>, 3> tags; ///< tag:building, tag:building:part, tag:roof:direction
+};
+
+/// Two doubles alike as Kotlin's Double.equals: by their bits.
+[[nodiscard]] bool same(double a, double b) noexcept {
+    return std::bit_cast<std::uint64_t>(a) == std::bit_cast<std::uint64_t>(b);
+}
+
+/// Schema.canonical's equality of two attribute sets.
+[[nodiscard]] bool same(const Attributes& a, const Attributes& b) noexcept {
+    const auto same_opt = [](const std::optional<double>& x, const std::optional<double>& y) {
+        return x.has_value() == y.has_value() && (!x || same(*x, *y));
+    };
+    return same(a.h, b.h) && same(a.min, b.min) && same_opt(a.roof_h, b.roof_h) && a.year == b.year &&
+           a.levels == b.levels && a.parent_id == b.parent_id && a.roof == b.roof && a.orient == b.orient &&
+           a.wall_rgb == b.wall_rgb && a.roof_rgb == b.roof_rgb && a.mat_draw == b.mat_draw &&
+           a.rmat_draw == b.rmat_draw && a.kind == b.kind && a.relation == b.relation && a.hidden == b.hidden &&
+           a.no_win == b.no_win && a.in_church == b.in_church && a.guessed == b.guessed && a.places == b.places &&
+           a.hours == b.hours && a.flags == b.flags && a.tags == b.tags;
+}
+
 // ---------------------------------------------------------------- the cut
 
 /// Which list of the scene a feature comes from.
-enum class Source : std::uint8_t { building, part, quay, tree, thing, road, rail, area, canal, place, water };
+enum class Source : std::uint8_t {
+    building,
+    part,
+    variant,
+    quay,
+    tree,
+    thing,
+    item,
+    road,
+    rail,
+    line,
+    area,
+    land,
+    canal,
+    place,
+    water,
+};
 
 /// A feature before it is written: its layer, its record, its tile and cell, its box and top, and its order among its
 /// layer's features of its cell.
@@ -463,7 +622,7 @@ struct Pending {
     Box4 box{};
     std::int32_t top_cm = 0;
     std::int64_t order = 0;
-    std::uint32_t piece = 0; ///< the water's: its piece
+    std::uint32_t geom = 0; ///< an area's, a land cover's or the water's: its ring at the level (rings_)
 };
 
 /// UTF-16 units of UTF-8 text (Kotlin's String.length).
@@ -487,28 +646,142 @@ struct Pending {
     return static_cast<std::int64_t>(v);
 }
 
+// regions.py's draw_over: runways, taxiways and stands by this order (GroundKeys.AERO_ORDER)
+struct AeroOrder {
+    std::string_view kind;
+    int order;
+};
+constexpr std::array<AeroOrder, 5> aero_order = {{
+    {.kind = "parking_position", .order = 3},
+    {.kind = "taxilane", .order = 1},
+    {.kind = "taxiway", .order = 1},
+    {.kind = "stopway", .order = 0},
+    {.kind = "runway", .order = 2},
+}};
+
+/// One of regions.py's lines (rendertiles' LINE sources 1 to 6): which list, its index, its line on the grid, its key
+/// among the ground's (0: none), and how far and how high the renders draw it.
+struct RegionLine {
+    std::uint8_t source = 0;
+    std::uint32_t index = 0;
+    GridLine g;
+    std::int64_t ground_key = 0;
+};
+
+/// One of regions.py's items (rendertiles' ITEM sources 0 to 4).
+struct ItemFeature {
+    std::uint8_t source = 0;
+    std::uint32_t index = 0;
+    std::int64_t id = 0;
+    tl::GridPoint pos;
+    bool exact = true; ///< pos is the item's own point (else the nearest grid point, and x and z are kept)
+    double x = 0.0;
+    double z = 0.0;
+    std::optional<GridLine> poly;
+    std::optional<double> h;
+    std::optional<double> rotor;
+    const Tags* tags = nullptr;
+};
+
+/// A variant: a building's or part's attributes in the scene loaded at another level of the ladder.
+struct VariantFeature {
+    bool part = false;
+    std::uint32_t index = 0;
+    std::uint8_t level = 0;
+    Attributes attributes;
+};
+
+/// How a scene is cut: the levels, whether rings carry keep codes, whether facades (doors, shopfronts) are drawn.
+struct CutPlan {
+    std::span<const std::uint8_t> levels;
+    bool keep = false;
+    bool facades = true;
+};
+
 class Cutter {
 public:
-    Cutter(const Scene& s, const tl::Frame& f) : s_(s), f_(f), edges_(water_edges(s)), grid_(edges_) {}
+    Cutter(const Scene& s, const tl::Frame& f, const CutPlan& plan)
+        : s_(s), f_(f), plan_(plan), edges_(water_edges(s)), grid_(edges_) {}
 
-    [[nodiscard]] std::expected<std::vector<tl::TileFill>, CutError> run(std::uint8_t level) {
-        z_ = level;
+    /// The building's or part's attributes in `scene`, `grid` its water edges' (a variant's own scene and edges).
+    [[nodiscard]] Attributes attributes(const Scene& scene, const Building& b, bool part, const EdgeGrid& grid) const {
+        Attributes a;
+        a.h = b.h;
+        a.min = b.min;
+        a.roof_h = b.roof_h;
+        a.year = b.year;
+        a.levels = b.levels;
+        a.parent_id = b.parent_id;
+        a.roof = b.roof;
+        a.orient = b.orient;
+        a.wall_rgb = wall_rgb(b);
+        a.roof_rgb = roof_rgb(b);
+        a.mat_draw = b.mat_draw;
+        if (b.look != LookPath::none) {
+            a.rmat_draw = b.rmat_draw;
+            a.kind = b.kind;
+        }
+        a.relation = b.relation;
+        if (!part) a.hidden = b.hidden;
+        if (b.look == LookPath::generic || b.look == LookPath::tradition) a.no_win = b.no_win;
+        a.in_church = b.in_church;
+        for (const Guess g : b.guessed.keys()) a.guessed.push_back(key_of(g));
+        for (const std::uint32_t k : b.places) {
+            a.places.push_back(scene.nodes[k].id);
+            a.hours.push_back(scene.nodes[k].tags.get("opening_hours").value_or(""));
+        }
+        // the derived flags, with the renders' own tests (amsterdam.py's _draw_building)
+        namespace c = tl::building;
+        const auto btype = b.tags.get("building");
+        if (in(btype, churches) || b.tags.is("building:part", "church") || b.in_church) a.flags |= c::flag_church;
+        if (in(btype, warehouses)) a.flags |= c::flag_warehouse;
+        if (!b.places.empty() || in(btype, shop_floors)) a.flags |= c::flag_shop_floor;
+        if (b.tags.is("building", "construction")) a.flags |= c::flag_construction;
+        if (grid.near_water(b.poly, near_water_reach)) a.flags |= c::flag_near_water;
+        if (b.tags.is("building", "houseboat")) a.flags |= c::flag_houseboat;
+        if (b.year.value_or(0) >= 1960 && !in(btype, churches)) a.flags |= c::flag_modern;
+        if (b.col_draw && !b.col_draw->empty()) a.flags |= c::flag_wall_drawn;
+        a.tags = {b.tags.get("building"), b.tags.get("building:part"), b.tags.get("roof:direction")};
+        return a;
+    }
+
+    [[nodiscard]] const EdgeGrid& grid() const noexcept { return grid_; }
+
+    void add_variant(VariantFeature v) { variants_.push_back(std::move(v)); }
+
+    [[nodiscard]] std::expected<std::vector<tl::TileFill>, CutError> run() {
+        unsupported();
         rings_of(s_.buildings, buildings_, "building");
         rings_of(s_.parts, parts_, "part");
         for (std::uint32_t i = 0; i < s_.water.size(); ++i) {
             water_.push_back(grid_line(s_.water[i], [&] { return std::format("water {}", i); }));
         }
-        place_buildings(Source::building, s_.buildings, buildings_, tl::LayerId::building);
-        place_buildings(Source::part, s_.parts, parts_, tl::LayerId::part);
-        place_quays();
-        place_trees();
-        place_things();
-        place_roads();
-        place_rails();
-        place_areas();
-        place_labels();
-        place_water();
-        if (error_) return std::unexpected(*error_);
+        for (std::uint32_t i = 0; i < s_.water_holes.size(); ++i) {
+            holes_.push_back(grid_line(s_.water_holes[i], [&] { return std::format("island {}", i); }));
+        }
+        for (const std::uint8_t level : plan_.levels) {
+            z_ = level;
+            const bool full = level >= 14;
+            if (full) {
+                place_buildings(Source::building, s_.buildings, buildings_, tl::LayerId::building);
+                place_buildings(Source::part, s_.parts, parts_, tl::LayerId::part);
+                place_variants();
+                place_quays();
+                place_trees();
+                place_things();
+                place_items();
+                place_roads();
+                place_rails();
+                place_lines();
+            }
+            // a coarse level takes the ground at the ladder's far tolerance
+            const auto coarse = static_cast<std::size_t>(full ? 0 : tl::keep::level_of(4.0));
+            place_ground(coarse);
+            place_labels();
+            place_land(coarse);
+            place_water(coarse);
+            if (error_) return std::unexpected(*error_);
+        }
         std::vector<tl::TileFill> out;
         out.reserve(order_.size());
         for (const tl::TileKey& key : order_) out.push_back(write(key, tiles_[key.packed()]));
@@ -517,6 +790,21 @@ public:
     }
 
 private:
+    /// What a scene can hold that the tiles do not carry yet: the cut refuses it, as the packer's build fails.
+    void unsupported() {
+        if (!s_.gantries.empty() || !s_.conveyors.empty()) fail("render tiles cannot carry gantries or conveyors yet");
+        for (const auto* list : {&s_.buildings, &s_.parts}) {
+            for (const Building& b : *list) {
+                if (b.lv_why || b.roof_why || b.look == LookPath::tradition || b.party) {
+                    fail(std::format("building {}: a tradition's details (trad, party, lv_why, roof_why) have no "
+                                     "column yet (ENGINE.md step 4)",
+                                     b.id));
+                    return;
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------ the grid
 
     template <class What>
@@ -546,6 +834,13 @@ private:
         }
         return g;
     }
+    /// A ring on the grid with its keep codes, where the plan's rings carry them.
+    template <class What>
+    [[nodiscard]] GridLine keyed_ring(std::span<const V2> pts, What what) {
+        GridLine g = grid_line(pts, what);
+        if (plan_.keep) g.keep = keep_codes(pts);
+        return g;
+    }
 
     void fail(std::string what) {
         if (!error_) error_ = CutError{std::move(what)};
@@ -554,7 +849,7 @@ private:
     void rings_of(const std::vector<Building>& list, std::vector<GridLine>& out, std::string_view label) {
         out.reserve(list.size());
         for (std::uint32_t i = 0; i < list.size(); ++i) {
-            out.push_back(grid_line(list[i].poly, [&] { return std::format("{} {} ({})", label, i, list[i].id); }));
+            out.push_back(keyed_ring(list[i].poly, [&] { return std::format("{} {} ({})", label, i, list[i].id); }));
         }
     }
 
@@ -583,20 +878,40 @@ private:
 
     void place_buildings(Source source, const std::vector<Building>& list, const std::vector<GridLine>& rings,
                          tl::LayerId layer) {
+        auto& refs = source == Source::part ? part_refs_ : building_refs_;
+        refs.assign(list.size(), {});
         for (std::uint32_t i = 0; i < list.size(); ++i) {
             const Building& b = list[i];
             const V2 c = geometry::centroid(b.poly);
+            refs[i] = tl::nearest_grid(f_, c.x, c.z);
             put({.layer = layer,
                  .source = source,
                  .index = i,
                  .box = rings[i].box(),
                  .top_cm = cm_up(b.h + chimney),
                  .order = i},
-                tl::nearest_grid(f_, c.x, c.z));
+                refs[i]);
+        }
+    }
+
+    /// The variants, placed where their base feature is.
+    void place_variants() {
+        for (std::uint32_t k = 0; k < variants_.size(); ++k) {
+            const VariantFeature& v = variants_[k];
+            const auto layer = v.part ? tl::LayerId::part : tl::LayerId::building;
+            const tl::GridPoint ref = (v.part ? part_refs_ : building_refs_)[v.index];
+            put({.layer = tl::LayerId::variant,
+                 .source = Source::variant,
+                 .index = k,
+                 .box = point_box(ref),
+                 .top_cm = 0,
+                 .order = (std::int64_t{v.index} << 8U) | (static_cast<std::int64_t>(layer) << 40U) | v.level},
+                ref);
         }
     }
 
     void place_quays() {
+        quay_ends_.clear();
         for (std::uint32_t k = 0; k < edges_.size(); ++k) {
             const Edge& e = edges_[k];
             const auto what = [&] { return std::format("quay edge {}", k); };
@@ -635,6 +950,7 @@ private:
     /// The buildings facades are drawn on (`facade_details`' `blds`: shown, with a height, not a houseboat) and their
     /// boxes, x0, x1, z0, z1.
     void facade_buildings() {
+        facades_.clear();
         for (std::uint32_t i = 0; i < s_.buildings.size(); ++i) {
             const Building& b = s_.buildings[i];
             if (b.hidden || b.h == 0.0 || b.tags.is("building", "houseboat")) continue;
@@ -663,15 +979,17 @@ private:
         return std::nullopt;
     }
 
+    /// A street lamp, a bench, a rack or a basket, a bollard, a place; and where facades are drawn (the living map;
+    /// regions set no_facades), every door and shopfront on one.
     void place_things() {
-        facade_buildings();
+        if (plan_.facades) facade_buildings();
         poi_.assign(s_.nodes.size(), false);
         for (const std::uint32_t p : s_.pois) poi_[p] = true;
         doors_.assign(s_.nodes.size(), std::nullopt);
         for (std::uint32_t i = 0; i < s_.nodes.size(); ++i) {
             if (tree_nodes_[i]) continue;
             const Node& n = s_.nodes[i];
-            doors_[i] = door_building(n);
+            if (plan_.facades) doors_[i] = door_building(n);
             const bool thing = n.tags.is("highway", "street_lamp") || in(n.tags.get("amenity"), furniture) ||
                                in(n.tags.get("barrier"), bollards) || poi_[i] || doors_[i].has_value();
             if (!thing) continue;
@@ -683,6 +1001,70 @@ private:
                  .top_cm = cm_up(thing_reach),
                  .order = i},
                 p);
+        }
+    }
+
+    /// rendertiles' Drawn.item: (reach from its position, top) of an item of `source`.
+    [[nodiscard]] static std::pair<double, double> item_drawn(const ItemFeature& it) {
+        // Python's `x or default`: a height of 0 is not mapped either
+        const std::optional<double> h = it.h && *it.h != 0.0 ? it.h : std::nullopt;
+        switch (it.source) {
+        case 0: { // a crane: on a quay its boom out over the water, in a yard a portal within its outline
+            const double height = num(it.tags->get("height")).value_or(44.0);
+            return {it.poly ? 5.0 : 115.0, height + 20.0};
+        }
+        case 1: return {2.0, h.value_or(30.0) + 1.3}; // a mast, and a lighting mast's frame of floodlights
+        case 2: return {pymath::java::max(8.7, h.value_or(0.0) / 30), h.value_or(0.0)}; // a tower and its cab
+        case 3: return {0.0, h.value_or(0.0)}; // a pylon: the power lines draw their own towers
+        case 4: {                              // a turbine: its hub 2 m upwind, its blades
+            const double r = (it.rotor && *it.rotor != 0.0 ? *it.rotor : 100.0) / 2;
+            return {r + 3.0, h.value_or(100.0) + r};
+        }
+        default: return {0.0, h.value_or(0.0)};
+        }
+    }
+
+    void place_items() {
+        items_.clear();
+        const auto item = [&](std::uint8_t source, std::uint32_t i, double x, double z, std::int64_t id,
+                              std::optional<double> h, std::optional<double> rotor,
+                              const std::optional<std::vector<V2>>& poly, const Tags* tags) {
+            const auto what = [&] { return std::format("item {} of source {}", i, source); };
+            ItemFeature it{
+                .source = source, .index = i, .id = id, .x = x, .z = z, .h = h, .rotor = rotor, .tags = tags};
+            const auto qlat = tl::grid_lat(f_, z);
+            const auto qlon = tl::grid_lon(f_, x);
+            it.exact = qlat.has_value() && qlon.has_value();
+            it.pos = it.exact ? tl::GridPoint{*qlat, *qlon} : tl::nearest_grid(f_, x, z);
+            if (poly) it.poly = grid_line(*poly, what);
+            Box4 box = point_box(it.pos);
+            if (it.poly) {
+                const Box4 b = it.poly->box();
+                box = {std::min(box[0], b[0]), std::min(box[1], b[1]), std::max(box[2], b[2]), std::max(box[3], b[3])};
+            }
+            const auto [reach, top] = item_drawn(it);
+            items_.push_back(std::move(it));
+            const ItemFeature& placed = items_.back();
+            put({.layer = tl::LayerId::item,
+                 .source = Source::item,
+                 .index = static_cast<std::uint32_t>(items_.size() - 1),
+                 .box = widen(box, reach, f_),
+                 .top_cm = cm_up(top),
+                 .order = (std::int64_t{source} << 40U) | i},
+                placed.pos);
+        };
+        const std::array<std::pair<std::uint8_t, const std::vector<Item>*>, 4> lists{
+            {{0, &s_.cranes}, {1, &s_.masts}, {2, &s_.mtowers}, {4, &s_.turbines}}};
+        for (const auto& [source, list] : lists) {
+            for (std::uint32_t i = 0; i < list->size(); ++i) {
+                const Item& d = (*list)[i];
+                item(source, i, d.x, d.z, d.id, d.h, d.rotor, d.poly, &d.tags);
+            }
+        }
+        static const Tags none;
+        for (std::uint32_t i = 0; i < s_.towers.size(); ++i) {
+            const Tower& t = s_.towers[i];
+            item(3, i, t.at.x, t.at.z, t.id, t.h, std::nullopt, std::nullopt, &none);
         }
     }
 
@@ -701,6 +1083,7 @@ private:
                 marks_[order[r]] = ground_key(gk::marks, gk::marks_road, r);
             }
         }
+        lines_.clear();
         lines_.reserve(s_.roads.size());
         for (std::uint32_t i = 0; i < s_.roads.size(); ++i) {
             const Road& r = s_.roads[i];
@@ -711,6 +1094,7 @@ private:
     }
 
     void place_rails() {
+        rails_.clear();
         for (std::uint32_t i = 0; i < s_.rails.size(); ++i) {
             rails_.push_back(grid_line(s_.rails[i], [&] { return std::format("tram track {}", i); }));
             put_line({.layer = tl::LayerId::line, .source = Source::rail, .index = i, .order = i}, rails_.back(),
@@ -718,16 +1102,112 @@ private:
         }
     }
 
-    void place_areas() {
+    /// rendertiles' Drawn.line for a big road: its asphalt by lanes, the widest the renders draw where its width
+    /// cannot be read.
+    [[nodiscard]] static double big_pad(const BigRoad& r) {
+        constexpr double unknown = 30.0;
+        const double lanes_f = num(r.tags.get("lanes")).value_or(r.hw.ends_with("link") ? 1.0 : 2.0);
+        const auto lanes_l = pymath::checked::to_int(lanes_f); // PyMath.int: no value past the doubles' integers
+        if (!lanes_l) return unknown;
+        const auto lanes = static_cast<std::int32_t>(static_cast<std::uint32_t>(*lanes_l)); // Long.toInt()
+        const double w = num(r.tags.get("width")).value_or((lanes * 3.5) + (r.hw == "motorway" ? 3.0 : 1.0));
+        return std::isfinite(w) ? (w / 2) + 0.5 : unknown;
+    }
+
+    /// regions.py's lines: railways, big roads, runways and taxiways, power lines, marine works, a park's edge.
+    void place_lines() {
+        region_lines_.clear();
+        // the big roads in the stable order of their layer, the aeroways in AERO_ORDER's
+        std::vector<std::uint32_t> big(s_.big.size());
+        for (std::uint32_t i = 0; i < big.size(); ++i) big[i] = i;
+        std::ranges::stable_sort(
+            big, [&](std::uint32_t a, std::uint32_t b) { return s_.big[a].layer + 0.0 < s_.big[b].layer + 0.0; });
+        std::vector<std::int64_t> big_keys(s_.big.size());
+        for (std::size_t r = 0; r < big.size(); ++r) big_keys[big[r]] = ground_key(gk::over, 1, r);
+        std::vector<std::uint32_t> aero(s_.aero.size());
+        std::vector<int> aero_rank(s_.aero.size());
+        for (std::uint32_t i = 0; i < aero.size(); ++i) {
+            aero[i] = i;
+            const auto* o = std::ranges::find(aero_order, s_.aero[i].kind, &AeroOrder::kind);
+            if (o == aero_order.end()) {
+                fail(std::format("aeroway {} has no order", s_.aero[i].kind));
+                return;
+            }
+            aero_rank[i] = o->order;
+        }
+        std::ranges::stable_sort(aero, [&](std::uint32_t a, std::uint32_t b) { return aero_rank[a] < aero_rank[b]; });
+        std::vector<std::int64_t> aero_keys(s_.aero.size());
+        for (std::size_t r = 0; r < aero.size(); ++r) aero_keys[aero[r]] = ground_key(gk::over, 2, r);
+
+        const auto line = [&](std::uint8_t source, std::uint32_t i, std::span<const V2> pts, std::int64_t key,
+                              double pad, double top) {
+            RegionLine rl{.source = source,
+                          .index = i,
+                          .g = grid_line(pts, [&] { return std::format("line {} of source {}", i, source); }),
+                          .ground_key = key};
+            region_lines_.push_back(std::move(rl));
+            put_line({.layer = tl::LayerId::line,
+                      .source = Source::line,
+                      .index = static_cast<std::uint32_t>(region_lines_.size() - 1),
+                      .order = (std::int64_t{source} << 40U) | i},
+                     region_lines_.back().g, pad, top);
+        };
+        for (std::uint32_t i = 0; i < s_.rail.size(); ++i) {
+            line(1, i, s_.rail[i].pts, ground_key(gk::over, 0, i), 2.0, road_top); // the ballast 1.6 m either side
+        }
+        for (std::uint32_t i = 0; i < s_.big.size(); ++i) {
+            const BigRoad& r = s_.big[i];
+            line(2, i, r.pts, big_keys[i], big_pad(r), 0.07 + (pymath::java::max(0.0, r.layer) * 0.5));
+        }
+        for (std::uint32_t i = 0; i < s_.aero.size(); ++i) {
+            const Aero& a = s_.aero[i];
+            double w = 0.0;
+            if (a.kind == "runway") w = num(a.tags.get("width")).value_or(45.0);
+            if (a.kind == "taxiway") w = num(a.tags.get("width")).value_or(23.0);
+            if (a.kind == "taxilane" || a.kind == "stopway") w = num(a.tags.get("width")).value_or(15.0);
+            line(3, i, a.pts, aero_keys[i], std::isfinite(w) ? (w / 2) + 1.0 : 30.0, road_top);
+        }
+        // power lines: three conductors 6 m apart, towers 38 m high and their tops 2 m more
+        for (std::uint32_t i = 0; i < s_.power.size(); ++i) line(4, i, s_.power[i].pts, 0, 7.0, 40.0);
+        for (std::uint32_t i = 0; i < s_.marine.size(); ++i) {
+            const Marine& m = s_.marine[i];
+            line(5, i, m.pts, ground_key(gk::over, 3, i), m.closed ? 0.5 : 5.0, 0.3);
+        }
+        for (std::uint32_t i = 0; i < s_.park.size(); ++i) {
+            line(6, i, s_.park[i].ring, ground_key(gk::over, 5, i), 1.0, 0.15); // a dashed line on the ground
+        }
+    }
+
+    /// The areas at a level's tolerance (`coarse`, 0: as the scene holds them).
+    void place_ground(std::size_t coarse) {
         for (std::uint32_t i = 0; i < s_.areas.size(); ++i) {
-            areas_.push_back(grid_line(s_.areas[i].poly, [&] { return std::format("area {}", i); }));
-            const Box4 box = areas_.back().box();
+            const std::vector<V2> poly = generalised(s_.areas[i].poly, coarse);
+            rings_.push_back(keyed_ring(poly, [&] { return std::format("area {}", i); }));
+            const Box4 box = rings_.back().box();
             put({.layer = tl::LayerId::ground,
                  .source = Source::area,
                  .index = i,
                  .box = box,
                  .top_cm = cm_up(area_top),
-                 .order = i},
+                 .order = i,
+                 .geom = static_cast<std::uint32_t>(rings_.size() - 1)},
+                tl::centre_of(box));
+        }
+    }
+
+    /// Land cover (regions.py's S['land'], in its sorted order) at a level's tolerance.
+    void place_land(std::size_t coarse) {
+        for (std::uint32_t i = 0; i < s_.land.size(); ++i) {
+            const std::vector<V2> poly = generalised(s_.land[i].poly, coarse);
+            rings_.push_back(keyed_ring(poly, [&] { return std::format("land {}", i); }));
+            const Box4 box = rings_.back().box();
+            put({.layer = tl::LayerId::ground,
+                 .source = Source::land,
+                 .index = i,
+                 .box = box,
+                 .top_cm = cm_up(land_top),
+                 .order = (std::int64_t{1} << 40U) | i,
+                 .geom = static_cast<std::uint32_t>(rings_.size() - 1)},
                 tl::centre_of(box));
         }
     }
@@ -762,31 +1242,53 @@ private:
         }
     }
 
-    void place_water() {
-        for (std::uint32_t i = 0; i < water_.size(); ++i) {
-            const GridLine& ring = water_[i];
-            if (ring.lat.empty()) continue;
-            const Box4 box = ring.box();
-            const int turn = sign(area2(points_of(ring)));
-            const tl::TileKey t0 = tl::tile_of(z_, box[2], box[1]);
-            const tl::TileKey t1 = tl::tile_of(z_, box[0], box[3]);
-            for (std::uint32_t x = t0.x; x <= t1.x; ++x) {
-                for (std::uint32_t y = t0.y; y <= t1.y; ++y) {
-                    const tl::TileKey key(z_, x, y);
-                    const Box4 tb = tl::tile_box(key);
-                    std::optional<GridLine> piece = ring_inside(ring, tb) ? ring : clip_ring(ring, tb);
-                    if (!piece) continue;
-                    if (sign(area2(points_of(*piece))) != turn) continue; // a ring that crosses itself
-                    const Box4 pb = piece->box();
-                    const tl::GridPoint c = tl::centre_of(pb);
-                    pieces_.push_back(std::move(*piece));
-                    add(key, {.layer = tl::LayerId::water,
-                              .source = Source::water,
-                              .index = i,
-                              .cell = tl::cell_of(key, c.lat, c.lon),
-                              .box = pb,
-                              .order = i,
-                              .piece = static_cast<std::uint32_t>(pieces_.size() - 1)});
+    /// The water and its islands at a level's tolerance, one piece per ring and tile it reaches, each with its keep
+    /// codes from its own vertices (a crossing the cut made kept at every tolerance).
+    void place_water(std::size_t coarse) {
+        for (const bool hole : {false, true}) {
+            const std::vector<std::vector<V2>>& list = hole ? s_.water_holes : s_.water;
+            for (std::uint32_t i = 0; i < list.size(); ++i) {
+                const auto what = [&] { return std::format("{} {}", hole ? "island" : "water", i); };
+                const GridLine ring =
+                    coarse == 0 ? (hole ? holes_ : water_)[i] : grid_line(generalised(list[i], coarse), what);
+                if (ring.lat.empty()) continue;
+                const Box4 box = ring.box();
+                const int turn = sign(area2(points_of(ring)));
+                const tl::TileKey t0 = tl::tile_of(z_, box[2], box[1]);
+                const tl::TileKey t1 = tl::tile_of(z_, box[0], box[3]);
+                for (std::uint32_t x = t0.x; x <= t1.x; ++x) {
+                    for (std::uint32_t y = t0.y; y <= t1.y; ++y) {
+                        const tl::TileKey key(z_, x, y);
+                        const Box4 tb = tl::tile_box(key);
+                        std::optional<Piece> piece;
+                        if (ring_inside(ring, tb)) {
+                            piece = Piece{.g = ring, .cut = std::vector<bool>(ring.lat.size(), false)};
+                        } else {
+                            piece = clip_ring(ring, tb);
+                        }
+                        if (!piece) continue;
+                        if (sign(area2(points_of(piece->g))) != turn) continue; // a ring that crosses itself
+                        if (plan_.keep) {
+                            std::vector<V2> pts(piece->g.lat.size());
+                            for (std::size_t k = 0; k < pts.size(); ++k) {
+                                pts[k] = {f_.x(piece->g.lon[k]), f_.z(piece->g.lat[k])};
+                            }
+                            piece->g.keep = keep_codes(pts);
+                            for (std::size_t k = 0; k < pts.size(); ++k) {
+                                if (piece->cut[k]) piece->g.keep[k] = tl::keep::all;
+                            }
+                        }
+                        const Box4 pb = piece->g.box();
+                        const tl::GridPoint c = tl::centre_of(pb);
+                        rings_.push_back(std::move(piece->g));
+                        add(key, {.layer = tl::LayerId::water,
+                                  .source = Source::water,
+                                  .index = i | (hole ? hole_bit : 0U),
+                                  .cell = tl::cell_of(key, c.lat, c.lon),
+                                  .box = pb,
+                                  .order = (hole ? std::int64_t{1} << 40U : 0) | i,
+                                  .geom = static_cast<std::uint32_t>(rings_.size() - 1)});
+                    }
                 }
             }
         }
@@ -810,6 +1312,92 @@ private:
         }
     }
 
+    /// Each attribute's place within the attribute columns (building_attributes::columns).
+    struct AttributeSlots {
+        std::uint8_t h;
+        std::uint8_t min;
+        std::uint8_t roof_h;
+        std::uint8_t year;
+        std::uint8_t levels;
+        std::uint8_t parent_id;
+        std::uint8_t roof;
+        std::uint8_t orient;
+        std::uint8_t wall_rgb;
+        std::uint8_t roof_rgb;
+        std::uint8_t mat_draw;
+        std::uint8_t rmat_draw;
+        std::uint8_t kind;
+        std::uint8_t otype;
+        std::uint8_t hidden;
+        std::uint8_t no_win;
+        std::uint8_t in_church;
+        std::uint8_t guessed;
+        std::uint8_t places;
+        std::uint8_t place_hours;
+        std::uint8_t flags;
+        std::uint8_t tag_building;
+        std::uint8_t tag_building_part;
+        std::uint8_t tag_roof_direction;
+    };
+    static constexpr AttributeSlots attribute_slots{
+        .h = tl::slot_of(tl::building_attributes::columns, "h"),
+        .min = tl::slot_of(tl::building_attributes::columns, "min"),
+        .roof_h = tl::slot_of(tl::building_attributes::columns, "roof_h"),
+        .year = tl::slot_of(tl::building_attributes::columns, "year"),
+        .levels = tl::slot_of(tl::building_attributes::columns, "levels"),
+        .parent_id = tl::slot_of(tl::building_attributes::columns, "parent_id"),
+        .roof = tl::slot_of(tl::building_attributes::columns, "roof"),
+        .orient = tl::slot_of(tl::building_attributes::columns, "orient"),
+        .wall_rgb = tl::slot_of(tl::building_attributes::columns, "wall_rgb"),
+        .roof_rgb = tl::slot_of(tl::building_attributes::columns, "roof_rgb"),
+        .mat_draw = tl::slot_of(tl::building_attributes::columns, "mat_draw"),
+        .rmat_draw = tl::slot_of(tl::building_attributes::columns, "rmat_draw"),
+        .kind = tl::slot_of(tl::building_attributes::columns, "kind"),
+        .otype = tl::slot_of(tl::building_attributes::columns, "otype"),
+        .hidden = tl::slot_of(tl::building_attributes::columns, "hidden"),
+        .no_win = tl::slot_of(tl::building_attributes::columns, "no_win"),
+        .in_church = tl::slot_of(tl::building_attributes::columns, "in_church"),
+        .guessed = tl::slot_of(tl::building_attributes::columns, "guessed"),
+        .places = tl::slot_of(tl::building_attributes::columns, "places"),
+        .place_hours = tl::slot_of(tl::building_attributes::columns, "place_hours"),
+        .flags = tl::slot_of(tl::building_attributes::columns, "flags"),
+        .tag_building = tl::slot_of(tl::building_attributes::columns, "tag:building"),
+        .tag_building_part = tl::slot_of(tl::building_attributes::columns, "tag:building:part"),
+        .tag_roof_direction = tl::slot_of(tl::building_attributes::columns, "tag:roof:direction"),
+    };
+
+    /// The attribute columns of a building or variant, from `base` (the slot of the first, h).
+    static void write_attributes(tl::LayerFill& lf, std::uint32_t f, std::uint8_t base, const Attributes& a) {
+        constexpr const AttributeSlots& o = attribute_slots;
+        const auto slot = [&](std::uint8_t at) { return static_cast<std::uint8_t>(base + at); };
+        lf.decimal(slot(o.h), f, a.h);
+        lf.decimal(slot(o.min), f, a.min);
+        lf.decimal(slot(o.roof_h), f, a.roof_h);
+        lf.nullable_integer(slot(o.year), f, a.year);
+        lf.nullable_integer(slot(o.levels), f, a.levels);
+        lf.nullable_integer(slot(o.parent_id), f, a.parent_id);
+        lf.string(slot(o.roof), f, a.roof);
+        lf.string(slot(o.orient), f, a.orient);
+        lf.integer(slot(o.wall_rgb), f, a.wall_rgb);
+        lf.integer(slot(o.roof_rgb), f, a.roof_rgb);
+        lf.string(slot(o.mat_draw), f, a.mat_draw);
+        lf.string(slot(o.rmat_draw), f, a.rmat_draw);
+        lf.string(slot(o.kind), f, a.kind);
+        if (a.relation) lf.string(slot(o.otype), f, "relation");
+        if (a.hidden) lf.boolean(slot(o.hidden), f, a.hidden);
+        if (a.no_win) lf.boolean(slot(o.no_win), f, a.no_win);
+        if (a.in_church) lf.boolean(slot(o.in_church), f, true);
+        lf.string_list(slot(o.guessed), f, std::span<const std::string_view>(a.guessed));
+        if (!a.places.empty()) {
+            lf.ids(slot(o.places), f, a.places);
+            lf.string_list(slot(o.place_hours), f, std::span<const std::string_view>(a.hours));
+        }
+        lf.integer(slot(o.flags), f, static_cast<std::int64_t>(a.flags));
+        lf.string(slot(o.tag_building), f, a.tags[0]);
+        lf.string(slot(o.tag_building_part), f, a.tags[1]);
+        lf.string(slot(o.tag_roof_direction), f, a.tags[2]);
+    }
+
     void building(tl::LayerFill& lf, std::uint32_t f, const Pending& p) {
         namespace c = tl::building;
         const bool part = p.source == Source::part;
@@ -817,43 +1405,21 @@ private:
         const GridLine& ring = part ? parts_[p.index] : buildings_[p.index];
         lf.integer(c::index, f, p.index);
         lf.integer(c::id, f, b.id);
-        lf.ring(c::ring, f, ring.lat, ring.lon);
-        lf.decimal(c::h, f, b.h);
-        lf.decimal(c::min, f, b.min);
-        lf.decimal(c::roof_h, f, b.roof_h);
-        lf.nullable_integer(c::year, f, b.year);
-        lf.nullable_integer(c::levels, f, b.levels);
-        lf.string(c::roof, f, b.roof);
-        lf.string(c::orient, f, b.orient);
-        lf.string(c::mat_draw, f, b.mat_draw);
-        if (!part) lf.boolean(c::hidden, f, b.hidden);
-        std::vector<std::string_view> guessed;
-        for (const Guess g : b.guessed.keys()) guessed.push_back(key_of(g));
-        lf.string_list(tl::slot_of(c::columns, "guessed"), f, std::span<const std::string_view>(guessed));
-        if (!b.places.empty()) {
-            std::vector<std::int64_t> ids;
-            std::vector<std::string_view> hours;
-            for (const std::uint32_t k : b.places) {
-                ids.push_back(s_.nodes[k].id);
-                hours.push_back(s_.nodes[k].tags.get("opening_hours").value_or(""));
-            }
-            lf.ids(c::places, f, ids);
-            lf.string_list(c::place_hours, f, std::span<const std::string_view>(hours));
+        if (plan_.keep) {
+            lf.ring(c::ring, f, ring.lat, ring.lon, std::span<const std::uint8_t>(ring.keep));
+        } else {
+            lf.ring(c::ring, f, ring.lat, ring.lon);
         }
-        lf.integer(c::wall_rgb, f, wall_rgb(b));
-        lf.integer(c::roof_rgb, f, roof_rgb(b));
-        // the derived flags, with the renders' own tests (amsterdam.py's _draw_building)
-        const auto btype = b.tags.get("building");
-        std::uint64_t flags = 0;
-        if (in(btype, churches) || b.tags.is("building:part", "church")) flags |= c::flag_church;
-        if (in(btype, warehouses)) flags |= c::flag_warehouse;
-        if (!b.places.empty() || in(btype, shop_floors)) flags |= c::flag_shop_floor;
-        if (b.tags.is("building", "construction")) flags |= c::flag_construction;
-        if (grid_.near_water(b.poly, near_water_reach)) flags |= c::flag_near_water;
-        if (b.tags.is("building", "houseboat")) flags |= c::flag_houseboat;
-        if (b.year.value_or(0) >= 1960 && !in(btype, churches)) flags |= c::flag_modern;
-        lf.integer(c::flags, f, static_cast<std::int64_t>(flags));
-        tags(lf, f, b.tags);
+        write_attributes(lf, f, c::h, attributes(s_, b, part, grid_));
+    }
+
+    void variant(tl::LayerFill& lf, std::uint32_t f, const Pending& p) {
+        namespace c = tl::variant;
+        const VariantFeature& v = variants_[p.index];
+        lf.integer(c::layer, f, static_cast<std::int64_t>(v.part ? tl::LayerId::part : tl::LayerId::building));
+        lf.integer(c::index, f, v.index);
+        lf.integer(c::tolerance, f, v.level);
+        write_attributes(lf, f, static_cast<std::uint8_t>(c::tolerance + 1), v.attributes);
     }
 
     void quay(tl::LayerFill& lf, std::uint32_t f, const Pending& p) {
@@ -861,6 +1427,7 @@ private:
         const Edge& e = edges_[p.index];
         const auto& [a, b] = quay_ends_[p.index];
         lf.integer(c::index, f, p.index);
+        if (e.hole) lf.boolean(tl::slot_of(c::columns, "hole"), f, true);
         lf.integer(c::ring, f, e.ring);
         const std::array<std::int32_t, 2> lat{a.lat, b.lat};
         const std::array<std::int32_t, 2> lon{a.lon, b.lon};
@@ -911,6 +1478,25 @@ private:
         tags(lf, f, n.tags);
     }
 
+    void item(tl::LayerFill& lf, std::uint32_t f, const Pending& p) {
+        namespace c = tl::item;
+        const ItemFeature& it = items_[p.index];
+        lf.integer(c::source, f, it.source);
+        lf.integer(c::index, f, it.index);
+        lf.nullable_integer(c::id, f, it.id);
+        lf.point(c::pos, f, it.pos);
+        if (!it.exact) {
+            lf.decimal(c::x, f, it.x);
+            lf.decimal(c::z, f, it.z);
+        }
+        if (it.poly) lf.ring(c::poly, f, it.poly->lat, it.poly->lon);
+        lf.decimal(c::h, f, it.h);
+        lf.decimal(c::rotor, f, it.rotor);
+        std::vector<std::pair<std::string_view, std::string_view>> all;
+        for (const osm::Tag& t : it.tags->all()) all.emplace_back(t.key, t.value);
+        lf.tags(c::tags, f, all);
+    }
+
     void road(tl::LayerFill& lf, std::uint32_t f, const Pending& p) {
         namespace c = tl::road;
         const Road& r = s_.roads[p.index];
@@ -938,13 +1524,70 @@ private:
         lf.integer(c::ground_key, f, ground_key(gk::marks, gk::marks_tram, p.index));
     }
 
-    void area(tl::LayerFill& lf, std::uint32_t f, const Pending& p) {
+    void line(tl::LayerFill& lf, std::uint32_t f, const Pending& p) {
+        namespace c = tl::line;
+        const RegionLine& rl = region_lines_[p.index];
+        lf.integer(c::source, f, rl.source);
+        lf.integer(c::index, f, rl.index);
+        lf.ring(c::line, f, rl.g.lat, rl.g.lon);
+        const Tags* t = nullptr;
+        switch (rl.source) {
+        case 1: {
+            const Railway& r = s_.rail[rl.index];
+            lf.boolean(tl::slot_of(c::columns, "crane"), f, r.crane);
+            t = &r.tags;
+            break;
+        }
+        case 2: {
+            const BigRoad& r = s_.big[rl.index];
+            lf.nullable_integer(c::id, f, r.id);
+            lf.string(c::hw, f, r.hw);
+            lf.decimal(c::layer, f, r.layer);
+            t = &r.tags;
+            break;
+        }
+        case 3: {
+            const Aero& a = s_.aero[rl.index];
+            lf.nullable_integer(c::id, f, a.id);
+            lf.string(c::kind, f, a.kind);
+            t = &a.tags;
+            break;
+        }
+        case 4: t = &s_.power[rl.index].tags; break;
+        case 5: {
+            const Marine& m = s_.marine[rl.index];
+            lf.string(c::kind, f, m.kind);
+            lf.boolean(tl::slot_of(c::columns, "closed"), f, m.closed);
+            t = &m.tags;
+            break;
+        }
+        case 6: t = &s_.park[rl.index].tags; break;
+        default: break;
+        }
+        if (rl.ground_key != 0) lf.integer(c::ground_key, f, rl.ground_key);
+        if (t != nullptr) tags(lf, f, *t);
+    }
+
+    void ground(tl::LayerFill& lf, std::uint32_t f, const Pending& p) {
         namespace c = tl::ground;
-        const Area& a = s_.areas[p.index];
-        const GridLine& g = areas_[p.index];
-        lf.integer(c::source, f, 0);
+        const GridLine& g = rings_[p.geom];
+        const bool land = p.source == Source::land;
+        lf.integer(c::source, f, land ? 1 : 0);
         lf.integer(c::index, f, p.index);
-        lf.ring(c::ring, f, g.lat, g.lon);
+        if (plan_.keep) {
+            lf.ring(c::ring, f, g.lat, g.lon, std::span<const std::uint8_t>(g.keep));
+        } else {
+            lf.ring(c::ring, f, g.lat, g.lon);
+        }
+        if (land) {
+            const Land& a = s_.land[p.index];
+            lf.string(c::kind, f, a.kind);
+            lf.nullable_integer(c::id, f, a.id);
+            lf.integer(c::ground_key, f, ground_key(gk::land, 0, p.index));
+            tags(lf, f, a.tags);
+            return;
+        }
+        const Area& a = s_.areas[p.index];
         lf.string(c::kind, f, a.kind);
         lf.integer(c::ground_key, f, ground_key(gk::area, 0, p.index));
         tags(lf, f, a.tags);
@@ -980,10 +1623,18 @@ private:
 
     void water(tl::LayerFill& lf, std::uint32_t f, const Pending& p) {
         namespace c = tl::water;
-        const GridLine& g = pieces_[p.piece];
-        lf.integer(c::index, f, p.index);
-        lf.ring(c::ring, f, g.lat, g.lon);
-        lf.integer(c::ground_key, f, ground_key(gk::water, 0, p.index));
+        const GridLine& g = rings_[p.geom];
+        const bool hole = (p.index & hole_bit) != 0;
+        const std::uint32_t i = p.index & ~hole_bit;
+        lf.integer(c::index, f, i);
+        if (hole) lf.boolean(c::hole, f, true);
+        if (plan_.keep) {
+            lf.ring(c::ring, f, g.lat, g.lon, std::span<const std::uint8_t>(g.keep));
+        } else {
+            lf.ring(c::ring, f, g.lat, g.lon);
+        }
+        if (!hole && i < s_.natural_shore.size() && s_.natural_shore[i]) lf.boolean(c::shore, f, true);
+        lf.integer(c::ground_key, f, ground_key(gk::water, hole ? 1 : 0, i));
     }
 
     /// RenderTile.of and the writer's fill: the layers by id, each one's features by cell and order, and the cell
@@ -1013,12 +1664,16 @@ private:
             switch (p.source) {
             case Source::building:
             case Source::part: building(lf, f, p); break;
+            case Source::variant: variant(lf, f, p); break;
             case Source::quay: quay(lf, f, p); break;
             case Source::tree: tree(lf, f, p); break;
             case Source::thing: thing(lf, f, p); break;
+            case Source::item: item(lf, f, p); break;
             case Source::road: road(lf, f, p); break;
             case Source::rail: rail(lf, f, p); break;
-            case Source::area: area(lf, f, p); break;
+            case Source::line: line(lf, f, p); break;
+            case Source::area:
+            case Source::land: ground(lf, f, p); break;
             case Source::canal: canal(lf, f, p); break;
             case Source::place: place(lf, f, p); break;
             case Source::water: water(lf, f, p); break;
@@ -1027,18 +1682,26 @@ private:
         return tile;
     }
 
+    static constexpr std::uint32_t hole_bit = 1U << 31U;
+
     const Scene& s_;
     tl::Frame f_;
+    CutPlan plan_;
     std::vector<Edge> edges_;
     EdgeGrid grid_;
     std::uint8_t z_ = 14;
     std::vector<GridLine> buildings_;
     std::vector<GridLine> parts_;
+    std::vector<tl::GridPoint> building_refs_;
+    std::vector<tl::GridPoint> part_refs_;
+    std::vector<VariantFeature> variants_;
     std::vector<GridLine> water_;
+    std::vector<GridLine> holes_;
     std::vector<GridLine> lines_;
     std::vector<GridLine> rails_;
-    std::vector<GridLine> areas_;
-    std::vector<GridLine> pieces_;
+    std::vector<RegionLine> region_lines_;
+    std::vector<ItemFeature> items_;
+    std::vector<GridLine> rings_; ///< areas, land covers and the water's pieces, at their level
     std::vector<std::pair<tl::GridPoint, tl::GridPoint>> quay_ends_;
     std::vector<std::pair<tl::GridPoint, tl::GridPoint>> label_points_;
     std::vector<bool> tree_nodes_;
@@ -1051,11 +1714,56 @@ private:
     std::optional<CutError> error_;
 };
 
+constexpr std::array<std::uint8_t, 1> living_levels{14};
+constexpr std::array<std::uint8_t, 2> region_levels{14, 12};
+
 } // namespace
 
 std::expected<std::vector<tiles::TileFill>, CutError> cut_living(const Scene& scene, const tiles::Frame& frame) {
-    Cutter cutter(scene, frame);
-    return cutter.run(14);
+    Cutter cutter(scene, frame, {.levels = living_levels, .keep = false, .facades = true});
+    return cutter.run();
+}
+
+std::expected<std::vector<tiles::TileFill>, CutError> cut_region(const Scene& scene, const tiles::Frame& frame,
+                                                                 std::span<const CutVariant> variants) {
+    Cutter cutter(scene, frame, {.levels = region_levels, .keep = true, .facades = false});
+    for (const CutVariant& v : variants) {
+        const int level = tiles::keep::level_of(v.tolerance);
+        if (v.scene == nullptr || level <= 0) {
+            return std::unexpected(
+                CutError{std::format("a variant at {} m, which is not on the keep ladder", v.tolerance)});
+        }
+        const Scene& other = *v.scene;
+        if (other.water != scene.water) {
+            return std::unexpected(CutError{std::format("at {} m the water differs from tolerance 0's", v.tolerance)});
+        }
+        const std::vector<Edge> edges = water_edges(other);
+        const EdgeGrid grid(edges);
+        for (const bool part : {false, true}) {
+            const std::vector<Building>& mine = part ? scene.parts : scene.buildings;
+            const std::vector<Building>& theirs = part ? other.parts : other.buildings;
+            if (mine.size() != theirs.size()) {
+                return std::unexpected(CutError{std::format("at {} m: {} {}, not {}", v.tolerance, theirs.size(),
+                                                            part ? "parts" : "buildings", mine.size())});
+            }
+            for (std::uint32_t i = 0; i < mine.size(); ++i) {
+                if (mine[i].id != theirs[i].id) {
+                    return std::unexpected(
+                        CutError{std::format("at {} m: {} {} is {}, not {}", v.tolerance, part ? "part" : "building", i,
+                                             theirs[i].id, mine[i].id)});
+                }
+                const Attributes a = cutter.attributes(scene, mine[i], part, cutter.grid());
+                Attributes b = cutter.attributes(other, theirs[i], part, grid);
+                if (!same(a, b)) {
+                    cutter.add_variant({.part = part,
+                                        .index = i,
+                                        .level = static_cast<std::uint8_t>(level),
+                                        .attributes = std::move(b)});
+                }
+            }
+        }
+    }
+    return cutter.run();
 }
 
 } // namespace atlas::load

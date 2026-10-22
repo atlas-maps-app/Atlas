@@ -24,6 +24,7 @@
 #include "tiles/TileWriter.hpp"
 
 #include <expected>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -38,5 +39,18 @@ struct CutError {
 /// them.
 [[nodiscard]] std::expected<std::vector<tiles::TileFill>, CutError> cut_living(const Scene& scene,
                                                                                const tiles::Frame& frame);
+
+/// The same region loaded at another tolerance of the ladder (its views' and the live map's bands'): where a
+/// building's or part's attributes differ there, a variant feature carries them for that tolerance.
+struct CutVariant {
+    double tolerance = 0.0;
+    const Scene* scene = nullptr;
+};
+
+/// A region's render tiles at L14 and L12 (SceneToTiles for a region, its scene loaded whole at tolerance 0): rings
+/// with keep codes, the variants at `variants`' tolerances, and what regions.py adds to the living map's lists. L12
+/// holds the ground (the areas and the land cover) and the water at the ladder's 4 m, and the labels.
+[[nodiscard]] std::expected<std::vector<tiles::TileFill>, CutError>
+cut_region(const Scene& scene, const tiles::Frame& frame, std::span<const CutVariant> variants);
 
 } // namespace atlas::load
