@@ -4,6 +4,7 @@
 #include "base/pymath/PyMath.hpp"
 
 #include <algorithm>
+#include <array>
 
 namespace atlas::scene {
 
@@ -59,11 +60,19 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
         return;
     }
     pack_id_ = in.pack->id;
-    cover(*in.pack, view, frames, in, in.tolerance, std::nullopt, residency, seconds);
-    if (in.coarser != nullptr && in.coarser != in.pack && in.coarser->pack.is_render() &&
-        in.coarser->pack.head() != nullptr) {
+    cover(*in.pack, pack_id_, true, view, frames, in, in.tolerance, std::nullopt, {}, residency, seconds);
+    const bool coarser = in.coarser != nullptr && in.coarser != in.pack && in.coarser->pack.is_render() &&
+                         in.coarser->pack.head() != nullptr;
+    if (coarser) {
         coarser_id_ = in.coarser->id;
-        cover(*in.coarser, view, frames, in, in.coarser_tolerance, in.mask, residency, seconds);
+        cover(*in.coarser, coarser_id_, false, view, frames, in, in.coarser_tolerance, in.mask, {}, residency, seconds);
+    }
+    if (in.neighbour != nullptr && in.neighbour != in.pack && in.neighbour != in.coarser &&
+        in.neighbour->pack.is_render() && in.neighbour->pack.head() != nullptr) {
+        neighbour_id_ = in.neighbour->id;
+        const std::array<const tiles::StorePack*, 2> above = {in.pack, coarser ? in.coarser : nullptr};
+        cover(*in.neighbour, neighbour_id_, false, view, frames, in, in.neighbour_tolerance, std::nullopt, above,
+              residency, seconds);
     }
     std::erase_if(shown_, [](const Shown& s) { return !s.drawn; });
     // stable: tiles at one distance keep the cover's order, on every libc++
@@ -73,14 +82,13 @@ void Cover::update(const view::View& view, const view::Frames& frames, const Cov
     });
 }
 
-void Cover::cover(const tiles::StorePack& store_pack, const view::View& view, const view::Frames& frames,
-                  const CoverInputs& in, std::uint8_t tolerance, const std::optional<tiles::GridBox>& mask,
+void Cover::cover(const tiles::StorePack& store_pack, std::string_view id, bool active, const view::View& view,
+                  const view::Frames& frames, const CoverInputs& in, std::uint8_t tolerance,
+                  const std::optional<tiles::GridBox>& mask, std::span<const tiles::StorePack* const> above,
                   const Residency& residency, double seconds) {
     const tiles::Pack& pack = store_pack.pack;
     const tiles::RenderHead& head = *pack.head();
     if (head.levels.empty()) return;
-    const std::string_view id = mask ? std::string_view(coarser_id_) : std::string_view(pack_id_);
-    const bool active = !mask.has_value();
     // Boxes and cells in the frame drawn (their grid boxes are degrees): the camera's.
     const view::GroundFrame frame = frames.current().value_or(view::frame_of(head.frame));
     const Frustum frustum(view.camera(), in.margin_px, in.far);
@@ -109,8 +117,16 @@ void Cover::cover(const tiles::StorePack& store_pack, const view::View& view, co
         return true;
     };
 
+    // A tile where a pack above this one has a tile of its finest level is that pack's to draw.
+    auto taken = [&above](const tiles::TileKey& key) {
+        return std::ranges::any_of(above, [&key](const tiles::StorePack* p) {
+            return p != nullptr && p->pack.head() != nullptr && !p->pack.head()->levels.empty() &&
+                   p->pack.head()->levels[0] == key.z && p->pack.chunks().find(key) != nullptr;
+        });
+    };
+
     for (const tiles::ChunkRef& c : pack.chunks().level(fine)) {
-        if (masked(c.reach.box)) continue;
+        if (masked(c.reach.box) || taken(c.tile)) continue;
         const Box box = box_of(c.reach.box, c.reach.top_cm, frame);
         if (!frustum.sees(box)) continue;
         const double d = frustum.distance(box);

@@ -1,6 +1,8 @@
 // The world the map draws (scene/World.hpp).
 #include "scene/World.hpp"
 
+#include "base/pymath/PyMath.hpp"
+#include "tiles/Grid.hpp"
 #include "tiles/TileBox.hpp"
 
 #include <algorithm>
@@ -176,7 +178,7 @@ std::string World::enclosing_pack() {
     if (!inner) return enclosing_id_;
     double smallest = 0;
     for (const std::shared_ptr<const tiles::StorePack>& p : open) {
-        if (p == active_ || p->id == active_->id) continue;
+        if (p == active_ || p->id == active_->id || p->kind == tiles::PackKind::window) continue;
         const std::optional<tiles::GridBox> b = box_of(*p);
         if (!b || b->south > inner->south || b->west > inner->west || b->north < inner->north ||
             b->east < inner->east) {
@@ -209,6 +211,52 @@ void World::choose_coarser() {
     }
     // The active pack's box: its finest level's reach.
     mask_ = box_of(*active_);
+}
+
+void World::choose_neighbour(const style::CameraState& camera) {
+    neighbour_.reset();
+    if (!active_) return;
+    const tiles::GridPoint target{tiles::grid_round(camera.latitude), tiles::grid_round(camera.longitude)};
+    const std::vector<std::shared_ptr<const tiles::StorePack>> open = store_.packs();
+    auto usable = [&](const std::shared_ptr<const tiles::StorePack>& p) {
+        return p != active_ && p != coarser_ && p->pack.is_render() && p->pack.head() != nullptr;
+    };
+    if (active_->kind != tiles::PackKind::window) {
+        // around a render pack: the windows of the frame cell holding the target
+        const tiles::TileKey fine = tiles::tile_of(14, target.lat, target.lon);
+        const std::string cell =
+            tiles::Store::cell_id(tiles::TileKey(tiles::Store::cell_level, fine.x >> (14U - tiles::Store::cell_level),
+                                                 fine.y >> (14U - tiles::Store::cell_level)));
+        for (const std::shared_ptr<const tiles::StorePack>& p : open) {
+            if (p->id == cell && usable(p)) neighbour_ = p;
+        }
+        return;
+    }
+    // around a cell's windows: the render pack nearest the target within the cover's reach, else the nearest other
+    // cell's windows (their boxes' distance from the target, metres along the meridian and the parallel)
+    const double cos_lat = pymath::cos(pymath::radians(camera.latitude));
+    auto distance = [&](const tiles::GridBox& b) {
+        const double dlat =
+            std::max({0.0, static_cast<double>(b.south - target.lat), static_cast<double>(target.lat - b.north)});
+        const double dlon =
+            std::max({0.0, static_cast<double>(b.west - target.lon), static_cast<double>(target.lon - b.east)});
+        return pymath::hypot(dlat * 1e-7 * 110540.0, dlon * 1e-7 * 111320.0 * cos_lat);
+    };
+    double best = options_.far;
+    bool render = false;
+    for (const std::shared_ptr<const tiles::StorePack>& p : open) {
+        if (!usable(p)) continue;
+        const std::optional<tiles::GridBox> b = box_of(*p);
+        if (!b) continue;
+        const bool is_render = p->kind != tiles::PackKind::window;
+        const double d = distance(*b);
+        if (d > options_.far || (render && !is_render)) continue;
+        if ((is_render && !render) || d < best) {
+            neighbour_ = p;
+            best = d;
+            render = render || is_render;
+        }
+    }
 }
 
 void World::place_items(const ResidentTile& tile) {
@@ -282,10 +330,14 @@ void World::take_packs() {
     // longer holds (let go of, or added again) goes when the packs drawn change or a pack arrives.
     pack_stage_->want(active_);
     if (coarser_) pack_stage_->want(coarser_);
+    if (neighbour_) pack_stage_->want(neighbour_);
     pack_stage_->take(arrived_);
-    if (arrived_.empty() && active_ == last_active_ && coarser_ == last_coarser_) return;
+    if (arrived_.empty() && active_ == last_active_ && coarser_ == last_coarser_ && neighbour_ == last_neighbour_) {
+        return;
+    }
     last_active_ = active_;
     last_coarser_ = coarser_;
+    last_neighbour_ = neighbour_;
     for (std::shared_ptr<const ResidentPack>& b : arrived_) packs_.push_back(std::move(b));
     arrived_.clear();
     const std::vector<std::shared_ptr<const tiles::StorePack>> open = store_.packs();
@@ -301,6 +353,7 @@ void World::update(const frame::FrameState& state) {
     if (!active_ || !state.view) {
         // nothing drawn: no coarser pack, and nothing kept of the packs' stage T but what the drawn ones would need
         choose_coarser();
+        neighbour_.reset();
         take_packs();
         cover_.update(state.view ? *state.view : view::View({}, {}), frames_, {}, *residency_, seconds);
         if (sun_) sun_->prepare(state, nullptr, 0, cover_);
@@ -314,6 +367,7 @@ void World::update(const frame::FrameState& state) {
     // The items in the frame drawn, the coarser pack's masked: every resident tile's when the frame, the coarser pack
     // or the mask changed, else the tiles just taken.
     choose_coarser();
+    choose_neighbour(state.camera);
     take_packs();
     const std::string coarser_id = coarser_ ? coarser_->id : std::string();
     if (placed_frame_ != frames_.current() || placed_coarser_ != coarser_id || placed_mask_ != mask_) {
@@ -326,22 +380,29 @@ void World::update(const frame::FrameState& state) {
     }
     const std::optional<std::string_view> snapped = state.placed ? state.placed->view() : std::nullopt;
     const double dist = state.placed ? state.placed->dist() : state.camera.distance;
-    const CoverInputs in{.pack = active_.get(),
-                         .pinned = snapped.has_value(),
-                         .tolerance = head.tolerance_of(snapped, dist).value_or(0),
-                         .fine_reach = options_.fine_reach,
-                         .far = options_.far,
-                         .margin_px = 40.0,
-                         .fade_seconds = 0.18,
-                         .coarser = coarser_.get(),
-                         .coarser_tolerance =
-                             coarser_
+    const CoverInputs in{
+        .pack = active_.get(),
+        .pinned = snapped.has_value(),
+        .tolerance = head.tolerance_of(snapped, dist).value_or(0),
+        .fine_reach = options_.fine_reach,
+        .far = options_.far,
+        .margin_px = 40.0,
+        .fade_seconds = 0.18,
+        .coarser = coarser_.get(),
+        .coarser_tolerance = coarser_
                                  ? coarser_->pack.head()->tolerance_of(std::nullopt, dist).value_or(std::uint8_t{0})
                                  : std::uint8_t{0},
-                         .mask = mask_};
+        .mask = mask_,
+        .neighbour = neighbour_.get(),
+        .neighbour_tolerance = neighbour_
+                                   ? neighbour_->pack.head()->tolerance_of(std::nullopt, dist).value_or(std::uint8_t{0})
+                                   : std::uint8_t{0}};
     cover_.update(*state.view, frames_, in, *residency_, seconds);
-    // The sun of the pack drawn and of the coarser pack around it, each in its own lane.
-    if (sun_) sun_->prepare(state, active_, in.tolerance, cover_, coarser_, in.coarser_tolerance);
+    // The sun of the pack drawn, of the coarser pack around it and of the neighbour beside it, each in its own lane.
+    if (sun_) {
+        sun_->prepare(state, active_, in.tolerance, cover_, coarser_, in.coarser_tolerance, neighbour_,
+                      in.neighbour_tolerance);
+    }
     residency_->want(cover_.requests());
     for (const CoverTile& t : cover_.tiles()) {
         const std::uint32_t handle = t.drawn->handle;

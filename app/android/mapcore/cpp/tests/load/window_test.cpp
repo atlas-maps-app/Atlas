@@ -13,6 +13,7 @@
 #include "load/Window.hpp"
 #include "osm/Overpass.hpp"
 #include "tests/base/require.hpp"
+#include "tests/load/query.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Dump.hpp"
 #include "tiles/Grid.hpp"
@@ -37,70 +38,11 @@ namespace {
 namespace load = atlas::load;
 namespace osm = atlas::osm;
 namespace tl = atlas::tiles;
+using atlas::test::query;
 
 std::string read_text(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary);
     return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
-}
-
-/// Whether a point lies in a box [south, west, north, east].
-bool inside(const std::array<double, 4>& b, double lat, double lon) {
-    return lat >= b[0] && lat <= b[2] && lon >= b[1] && lon <= b[3];
-}
-
-/// Whether the segment (a, b) meets the box (Liang-Barsky).
-bool crosses(const std::array<double, 4>& b, const osm::LatLon& p, const osm::LatLon& q) {
-    double t0 = 0.0;
-    double t1 = 1.0;
-    const double dx = q.lon - p.lon;
-    const double dy = q.lat - p.lat;
-    const std::array<std::array<double, 2>, 4> sides = {
-        {{-dx, p.lon - b[1]}, {dx, b[3] - p.lon}, {-dy, p.lat - b[0]}, {dy, b[2] - p.lat}}};
-    for (const auto& [pk, qk] : sides) {
-        if (pk == 0.0) {
-            if (qk < 0.0) return false;
-            continue;
-        }
-        const double r = qk / pk;
-        if (pk < 0.0) {
-            t0 = std::max(t0, r);
-        } else {
-            t1 = std::min(t1, r);
-        }
-        if (t0 > t1) return false;
-    }
-    return true;
-}
-
-/// Whether a line meets the box: a point in it, or a segment across it.
-bool meets(const std::array<double, 4>& b, std::span<const osm::LatLon> line) {
-    for (std::size_t i = 0; i < line.size(); ++i) {
-        if (inside(b, line[i].lat, line[i].lon)) return true;
-        if (i > 0 && crosses(b, line[i - 1], line[i])) return true;
-    }
-    return false;
-}
-
-/// What the renders' query of Overpass returns for box `b` from a region's data: the tagged nodes in it, every way that
-/// meets it, the multipolygons and parks one of whose ways meets it (their members whole).
-osm::Document query(const osm::Document& region, const std::array<double, 4>& b) {
-    return osm::select(region, [&](const osm::Element& e) {
-        switch (e.kind) {
-        case osm::Kind::node: return e.has_at && e.has_tags && !e.tags.empty() && inside(b, e.at.lat, e.at.lon);
-        case osm::Kind::way: return meets(b, e.geometry);
-        case osm::Kind::relation: {
-            const bool multipolygon = std::ranges::any_of(e.tags, [](const osm::Tag& t) {
-                return (t.key == "type" && t.value == "multipolygon") ||
-                       (t.key == "boundary" && (t.value == "national_park" || t.value == "protected_area"));
-            });
-            return multipolygon && std::ranges::any_of(e.members, [&](const osm::Member& m) {
-                       return m.kind == osm::Kind::way && meets(b, m.geometry);
-                   });
-        }
-        case osm::Kind::other: return false;
-        }
-        return false;
-    });
 }
 
 /// A canonical dump without the places in the scene's lists (a feature's index, the ground's ranks, a tree's node, a

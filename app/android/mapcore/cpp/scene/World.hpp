@@ -88,6 +88,11 @@ public:
     /// The coarser pack drawn now (null: none) and its mask.
     [[nodiscard]] const tiles::StorePack* coarser() const noexcept { return coarser_.get(); }
     [[nodiscard]] const std::optional<tiles::GridBox>& mask() const noexcept { return mask_; }
+    /// The pack drawn beside the active one now (null: none): around a render pack, the windows of the frame cell
+    /// holding the camera's target (tiles::Store's cell packs); around a cell's windows, the render pack nearest the
+    /// target within the cover's reach, else the nearest other cell's windows. Its tiles are drawn where neither the
+    /// active nor the coarser pack has one (scene/Cover.hpp).
+    [[nodiscard]] const tiles::StorePack* neighbour() const noexcept { return neighbour_.get(); }
 
     // frame::FrameScene
     [[nodiscard]] const view::Ladder* ladder(const style::CameraState& camera) override;
@@ -133,8 +138,11 @@ private:
     void release_idle(double seconds, std::uint64_t frame);
     /// The coarser pack and its mask for the frame (set_coarser's, else the enclosing pack's when chosen, else none).
     void choose_coarser();
-    /// The smallest other render pack whose box holds the active one's (set_coarser_enclosing), or "".
+    /// The smallest other render pack whose box holds the active one's (set_coarser_enclosing), or "": a frame cell's
+    /// windows are never one.
     [[nodiscard]] std::string enclosing_pack();
+    /// The neighbour for the frame (neighbour()), for the camera's target.
+    void choose_neighbour(const style::CameraState& camera);
     /// A resident tile's items in the frame drawn (converted from their pack's frame) and masked where they are the
     /// coarser pack's inside the mask.
     void place_items(const ResidentTile& tile);
@@ -171,6 +179,8 @@ private:
     std::optional<tiles::GridBox> mask_wanted_;
     std::shared_ptr<const tiles::StorePack> coarser_;
     std::optional<tiles::GridBox> mask_;
+    std::shared_ptr<const tiles::StorePack> neighbour_;
+    std::shared_ptr<const tiles::StorePack> last_neighbour_;
     /// What the items were last placed for: the frame drawn, the coarser pack and the mask.
     std::optional<view::GroundFrame> placed_frame_;
     std::string placed_coarser_;

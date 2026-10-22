@@ -11,10 +11,15 @@
 #include "frame/Ranks.hpp"
 #include "frame/Selectors.hpp"
 #include "gpu/PipelineCache.hpp"
+#include "load/Window.hpp"
+#include "osm/Overpass.hpp"
 #include "scene/Heaps.hpp"
 #include "scene/World.hpp"
 #include "tests/building/fixture.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
+#include "tests/load/query.hpp"
+#include "tests/tiles/support.hpp"
+#include "tiles/Grid.hpp"
 #include "tiles/layers/Buildings.hpp"
 #include "view/Frames.hpp"
 #include "view/Ladder.hpp"
@@ -32,7 +37,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -578,6 +585,133 @@ TEST_CASE("a coarser pack is drawn around the active one, its items in the frame
     for (std::uint32_t row = 0; row < w.items()->rows(); ++row) {
         if (w.items()->alive(row)) CHECK((w.items()->flags()[row] & scene::item_flag::masked) == 0);
     }
+    (void)session->take_messages();
+}
+
+TEST_CASE("a frame cell's windows are drawn beside the active pack, where it has no tile, with their own sun") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    const std::string regions = environment("ATLAS_REGIONS_DIR");
+    const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
+    if (dir.empty() || regions.empty() || !std::filesystem::exists(westerkerk)) {
+        MESSAGE("ATLAS_TILES_DIR or ATLAS_REGIONS_DIR is not set: no windows are drawn here");
+        return;
+    }
+    // The nine windows of the canal ring around the Westerkerk's (its own tiles among them), built anywhere's way from
+    // the canal ring's raw.json and written to files.
+    std::ifstream in(std::filesystem::path(regions) / "grachten" / "raw.json", std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    ATLAS_REQUIRE(!text.empty());
+    const auto doc = osm::read_overpass(std::as_bytes(std::span(text.data(), text.size())));
+    ATLAS_REQUIRE(doc.has_value());
+    auto own = test::open_pack(westerkerk.string());
+    ATLAS_REQUIRE(own.has_value(), tiles::describe(own.error()));
+    const tiles::TileKey w0 = tiles::tile_of(14, 523'746'000, 48'840'000);
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-windows";
+    std::filesystem::create_directories(folder);
+    std::vector<std::pair<std::string, std::filesystem::path>> windows;
+    std::size_t taken = 0;
+    std::optional<tiles::TileKey> free_key; // a window where the Westerkerk has no tile, north-east, in the view
+    for (std::uint32_t dy = 0; dy < 3; ++dy) {
+        for (std::uint32_t dx = 0; dx < 3; ++dx) {
+            const tiles::TileKey k(14, w0.x - 1 + dx, w0.y - 1 + dy);
+            if (own->chunks().find(k) == nullptr && dx >= 1 && dy <= 1 && !free_key) free_key = k;
+            if (own->chunks().find(k) != nullptr) ++taken;
+            const auto built =
+                load::build_window(test::query(*doc, load::window_box(k)), tiles::Sha256Digest{}, k, load::place_of(k));
+            ATLAS_REQUIRE(built.has_value(), built.error().what);
+            const std::filesystem::path file = folder / (std::to_string(k.x) + "-" + std::to_string(k.y) + ".atlas");
+            std::ofstream out(file, std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char*>(built->pack.data()), // NOLINT: the pack's bytes as chars
+                      static_cast<std::streamsize>(built->pack.size()));
+            windows.emplace_back("window/" + load::place_of(k).name, file);
+        }
+    }
+    ATLAS_REQUIRE(taken > 0); // some of them where the Westerkerk has its tiles
+    ATLAS_REQUIRE(free_key.has_value());
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<BuildProbe>());
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    std::atomic<double> now{0};
+    auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                      {.workers = 3, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    auto added = w.store().add({.id = "amsterdam", .kind = tiles::PackKind::bundled, .path = westerkerk.string()});
+    ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+    for (const auto& [id, file] : windows) {
+        const auto joined = w.store().add({.id = id, .kind = tiles::PackKind::window, .path = file.string()});
+        ATLAS_REQUIRE(joined.has_value(), tiles::describe(joined.error()));
+    }
+    // The Westerkerk active (the first pack holding the target), the cell's windows its neighbour; no enclosing pack
+    // (a cell's windows never are one).
+    w.set_coarser_enclosing(true);
+    style::CameraState c = home();
+    c.distance = 1600.0;
+    c.flags = 0;
+    (*builder)->set_inputs({.camera = c, .scene = &w});
+    for (std::uint64_t n = 1; n <= 60; ++n) {
+        now = static_cast<double>(n) * 0.016;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+        w.residency().wait_idle();
+    }
+    ATLAS_REQUIRE(w.active() != nullptr);
+    CHECK(w.active()->id == "amsterdam");
+    CHECK(w.coarser() == nullptr);
+    ATLAS_REQUIRE(w.neighbour() != nullptr);
+    CHECK(w.neighbour()->kind == tiles::PackKind::window);
+    // Both packs' tiles are drawn, none of the windows' where the Westerkerk has a tile.
+    std::size_t own_tiles = 0;
+    std::size_t window_tiles = 0;
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        if (t.drawn->pack == "amsterdam") {
+            ++own_tiles;
+            continue;
+        }
+        CHECK(t.drawn->pack == w.neighbour()->id);
+        CHECK(own->chunks().find(t.drawn->key) == nullptr);
+        ++window_tiles;
+    }
+    CHECK(own_tiles > 0);
+    CHECK(window_tiles > 0);
+    // The windows' own sun lane lights every tile of theirs the cover draws.
+    REQUIRE(w.sun() != nullptr);
+    w.sun()->wait_idle();
+    ATLAS_REQUIRE((*builder)->derive(61, 0, nullptr));
+    w.update((*builder)->state());
+    std::size_t lit = 0;
+    std::size_t drawn = 0;
+    for (const scene::CoverTile& t : w.cover()->tiles()) {
+        if (t.drawn->pack == "amsterdam") continue;
+        ++drawn;
+        if (t.sun && t.sun_base != scene::no_sun) ++lit;
+    }
+    MESSAGE(own_tiles << " of the Westerkerk's tiles and " << window_tiles << " of the windows' drawn (" << taken
+                      << " windows where the Westerkerk has its tiles left out); " << lit << " of " << drawn
+                      << " lit by the windows' lane");
+    CHECK(lit == drawn);
+    // With the target among the windows, outside the Westerkerk's tiles, the cell's windows are the active pack and the
+    // Westerkerk their neighbour.
+    style::CameraState away = c;
+    const std::array<std::int32_t, 4> box = tiles::tile_box(*free_key);
+    away.latitude = (static_cast<double>(box[0]) + static_cast<double>(box[2])) / 2e7;
+    away.longitude = (static_cast<double>(box[1]) + static_cast<double>(box[3])) / 2e7;
+    (*builder)->set_inputs({.camera = away, .scene = &w});
+    for (std::uint64_t n = 62; n <= 70; ++n) {
+        now = static_cast<double>(n) * 0.016;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+        w.residency().wait_idle();
+    }
+    ATLAS_REQUIRE(w.active() != nullptr);
+    CHECK(w.active()->kind == tiles::PackKind::window);
+    ATLAS_REQUIRE(w.neighbour() != nullptr);
+    CHECK(w.neighbour()->id == "amsterdam");
     (void)session->take_messages();
 }
 

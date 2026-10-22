@@ -41,11 +41,14 @@ SunGlobals::SunGlobals(const gpu::Device& device, const tiles::Store& store, con
     if (!options_.cache_dir.empty()) {
         cache_ = std::make_unique<sun::DiskCache>(options_.cache_dir, options_.cache_budget);
     }
-    // The active pack's lane on the sun's threads; the coarser pack's, less urgent, on half as many.
+    // The active pack's lane on the sun's threads; the coarser pack's and the neighbour's, less urgent, on half as
+    // many.
     const unsigned threads = std::max(1U, options_.threads);
     lanes_[0].worker = std::make_unique<sun::Worker>(lanes_[0].bits, threads, cache_.get(), [this] { return now(); });
-    lanes_[1].worker = std::make_unique<sun::Worker>(lanes_[1].bits, std::max(1U, threads / 2), cache_.get(),
-                                                     [this] { return now(); });
+    for (std::size_t i = 1; i < lanes_.size(); ++i) {
+        lanes_[i].worker = std::make_unique<sun::Worker>(lanes_[i].bits, std::max(1U, threads / 2), cache_.get(),
+                                                         [this] { return now(); });
+    }
     thread_ = std::jthread([this](const std::stop_token& stop) { work(stop); });
 }
 
@@ -63,7 +66,8 @@ double SunGlobals::now() const {
 
 void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<const tiles::StorePack>& pack,
                          std::uint8_t level, Cover& cover, const std::shared_ptr<const tiles::StorePack>& coarser,
-                         std::uint8_t coarser_level) {
+                         std::uint8_t coarser_level, const std::shared_ptr<const tiles::StorePack>& neighbour,
+                         std::uint8_t neighbour_level) {
     // Old buffers go once the frames that read them have finished.
     std::erase_if(retired_, [&](const auto& r) { return state.number >= r.second + gpu::Frames::in_flight; });
     texels_.clear();
@@ -77,6 +81,7 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
     if (!state.view) return;
     prepare_lane(lanes_[0], state, pack, level, drawn);
     prepare_lane(lanes_[1], state, coarser, coarser_level, drawn);
+    prepare_lane(lanes_[2], state, neighbour, neighbour_level, drawn);
 
     // Every drawn tile's bits, its own pack's lane's: on the CPU, and its texels in the frame slot's half of the
     // buffer.
@@ -362,8 +367,10 @@ SunStats SunGlobals::stats() const {
         const std::scoped_lock lock(mutex_);
         s = stats_;
     }
-    s.runs = lanes_[0].worker->runs() + lanes_[1].worker->runs();
-    s.cached = lanes_[0].worker->cached() + lanes_[1].worker->cached();
+    for (const Lane& l : lanes_) {
+        s.runs += l.worker->runs();
+        s.cached += l.worker->cached();
+    }
     s.texels = last_texels_;
     return s;
 }
