@@ -69,6 +69,40 @@ internal object SceneLines {
     @Suppress("UNCHECKED_CAST")
     private fun rings(v: Any?): List<List<V2>> = (v as List<List<V2>>?) ?: emptyList()
 
+    /**
+     * What generic.py's looks set, each `~` where the dict lacks the key (TestLoad.cpp's `looks`): the kind, the roof
+     * material drawn, the drawn colours and window rows, why, why the levels and the roof are what they are, a
+     * tradition's details (each of its own values as 1 where given, else 0) and the party walls.
+     */
+    private fun looks(l: Line, b: Dict) {
+        fun opt(key: String, write: (Any?) -> Unit) {
+            l.field(key)
+            if (key in b) write(b[key]) else l.raw("~")
+        }
+        opt("kind") { l.text(it) }
+        opt("rmat_draw") { l.text(it) }
+        opt("col_draw") { l.text(it) }
+        opt("rcol_draw") { l.text(it) }
+        opt("no_win") { l.flag(it) }
+        opt("look_why") { l.text(it) }
+        opt("lv_why") { l.text(it) }
+        opt("roof_why") { l.text(it) }
+        opt("trad") {
+            @Suppress("UNCHECKED_CAST")
+            val d = it as Map<String, Any?>
+            fun given(k: String): String = if (d[k] != null) "1" else "0"
+            l.raw(given("win")).raw(",").text(d["shutter"]).raw(",").real(d["eaves"]).raw(",")
+            l.raw(given("boards")).raw(",").raw(given("band")).raw(",").flag(d["cornice"]).raw(",")
+            l.flag(d["hoist"]).raw(",").raw(given("chimney")).raw(",").flag(d["crenel"])
+        }
+        opt("party") {
+            @Suppress("UNCHECKED_CAST")
+            val edges = it as List<Pair<V2, V2>>
+            l.raw(edges.size.toString())
+            for ((a, c) in edges) l.raw(",").real(a.x).raw(",").real(a.y).raw(",").real(c.x).raw(",").real(c.y)
+        }
+    }
+
     /** The port's scene [S] as canonical lines, in TestLoad.cpp's order. */
     fun lines(S: Dict, region: Boolean = false): Sequence<String> = sequence {
         val buildings = dicts(S["buildings"])
@@ -81,72 +115,58 @@ internal object SceneLines {
                 val l = Line(list, i)
                 l.field("id").integer(b["id"])
                 l.field("src").raw((b["src"] as String?) ?: "-")
-                if (region) {
-                    // without what generic.py's looks set or change: they join when they are ported
-                    l.field("min").real(b["min"])
-                    l.field("year").integer(b["year"])
-                    l.field("otype").raw(if (b["otype"] == "relation") "relation" else "~")
-                    l.field("parent_id")
-                    if (b["parent_id"] != null) l.integer(b["parent_id"]) else l.raw("~")
-                    l.field("in_church").raw(if (b["in_church"] == true) "1" else "~")
+                fun guessed() {
+                    @Suppress("UNCHECKED_CAST")
+                    l.field("guessed").raw((b["guessed"] as Map<String, Any?>).keys.joinToString(","))
+                }
+                fun boxed() {
                     val bb = b["_bb"] as DoubleArray
                     l.field("bb").real(bb[0]).raw(",").real(bb[1]).raw(",").real(bb[2]).raw(",").real(bb[3])
                     l.field("places")
                     if ("places" in b) l.raw(dicts(b["places"]).joinToString(",") { nodeIndex.getValue(it).toString() }) else l.raw("~")
                     l.field("hidden")
                     if ("hidden" in b) l.flag(b["hidden"]) else l.raw("~")
-                    // generic.py's looks, where the region has no tradition (with a tradition: not yet, and left out)
-                    l.field("looks")
-                    if (S["tradition"] == null) {
-                        l.raw("1")
-                        l.field("h").real(b["h"])
-                        l.field("levels").integer(b["levels"])
-                        l.field("roof").text(b["roof"])
-                        l.field("roof_h").real(b["roof_h"])
-                        l.field("orient").text(b["orient"])
-                        l.field("mat").text(b["mat"])
-                        l.field("rmat").text(b["rmat"])
-                        l.field("col").text(b["col"])
-                        l.field("rcol").text(b["rcol"])
-                        l.field("mat_draw")
-                        if ("mat_draw" in b) l.text(b["mat_draw"]) else l.raw("~")
-                        l.field("rmat_draw").text(b["rmat_draw"])
-                        l.field("kind").text(b["kind"])
-                        l.field("col_draw").text(b["col_draw"])
-                        l.field("rcol_draw").text(b["rcol_draw"])
-                        l.field("no_win").flag(b["no_win"])
-                        l.field("look_why").text(b["look_why"])
-                        @Suppress("UNCHECKED_CAST")
-                        l.field("guessed").raw((b["guessed"] as Map<String, Any?>).keys.joinToString(","))
-                    } else {
-                        l.raw("~")
-                    }
-                    l.field("poly").points(b["poly"])
-                    l.field("tags").tags(b["tags"])
-                    yield(l.toString())
-                    continue
                 }
-                l.field("h").real(b["h"])
-                l.field("min").real(b["min"])
-                l.field("year").integer(b["year"])
-                l.field("roof").text(b["roof"])
-                l.field("roof_h").real(b["roof_h"])
-                l.field("orient").text(b["orient"])
-                l.field("mat").text(b["mat"])
-                l.field("rmat").text(b["rmat"])
-                l.field("col").text(b["col"])
-                l.field("rcol").text(b["rcol"])
-                l.field("mat_draw")
-                if ("mat_draw" in b) l.text(b["mat_draw"]) else l.raw("~")
-                l.field("levels").integer(b["levels"])
-                @Suppress("UNCHECKED_CAST")
-                l.field("guessed").raw((b["guessed"] as Map<String, Any?>).keys.joinToString(","))
-                val bb = b["_bb"] as DoubleArray
-                l.field("bb").real(bb[0]).raw(",").real(bb[1]).raw(",").real(bb[2]).raw(",").real(bb[3])
-                l.field("places")
-                if ("places" in b) l.raw(dicts(b["places"]).joinToString(",") { nodeIndex.getValue(it).toString() }) else l.raw("~")
-                l.field("hidden")
-                if ("hidden" in b) l.flag(b["hidden"]) else l.raw("~")
+                fun matDraw() {
+                    l.field("mat_draw")
+                    if ("mat_draw" in b) l.text(b["mat_draw"]) else l.raw("~")
+                }
+                if (region) {
+                    l.field("min").real(b["min"])
+                    l.field("year").integer(b["year"])
+                    l.field("otype").raw(if (b["otype"] == "relation") "relation" else "~")
+                    l.field("parent_id")
+                    if (b["parent_id"] != null) l.integer(b["parent_id"]) else l.raw("~")
+                    l.field("in_church").raw(if (b["in_church"] == true) "1" else "~")
+                    boxed()
+                    l.field("h").real(b["h"])
+                    l.field("levels").integer(b["levels"])
+                    l.field("roof").text(b["roof"])
+                    l.field("roof_h").real(b["roof_h"])
+                    l.field("orient").text(b["orient"])
+                    l.field("mat").text(b["mat"])
+                    l.field("rmat").text(b["rmat"])
+                    l.field("col").text(b["col"])
+                    l.field("rcol").text(b["rcol"])
+                    matDraw()
+                    guessed()
+                } else {
+                    l.field("h").real(b["h"])
+                    l.field("min").real(b["min"])
+                    l.field("year").integer(b["year"])
+                    l.field("roof").text(b["roof"])
+                    l.field("roof_h").real(b["roof_h"])
+                    l.field("orient").text(b["orient"])
+                    l.field("mat").text(b["mat"])
+                    l.field("rmat").text(b["rmat"])
+                    l.field("col").text(b["col"])
+                    l.field("rcol").text(b["rcol"])
+                    matDraw()
+                    l.field("levels").integer(b["levels"])
+                    guessed()
+                    boxed()
+                }
+                looks(l, b)
                 l.field("poly").points(b["poly"])
                 l.field("tags").tags(b["tags"])
                 yield(l.toString())
@@ -263,7 +283,10 @@ internal object SceneLines {
             var count = 0
             var differing = 0
             // what the derivations made, so that a field both sides leave empty cannot pass unnoticed
-            val made = linkedMapOf("hidden" to 0, "with places" to 0, "styled" to 0, "guessed colours" to 0, "trees" to 0, "labels" to 0)
+            val made = linkedMapOf(
+                "hidden" to 0, "with places" to 0, "styled" to 0, "guessed colours" to 0, "trees" to 0, "labels" to 0,
+                "looked" to 0, "by a tradition" to 0, "with party walls" to 0, "levels from neighbours" to 0, "roofs by a rule" to 0,
+            )
             out.bufferedReader().use { core ->
                 for (port in lines(S, region)) {
                     if (" hidden=1 " in port) made["hidden"] = made.getValue("hidden") + 1
@@ -272,6 +295,14 @@ internal object SceneLines {
                     if ("building:colour" in port.substringAfter(" guessed=").substringBefore(' ')) made["guessed colours"] = made.getValue("guessed colours") + 1
                     if (port.startsWith("tree ")) made["trees"] = made.getValue("trees") + 1
                     if (port.startsWith("label ")) made["labels"] = made.getValue("labels") + 1
+                    fun count(key: String, test: Boolean) {
+                        if (test) made[key] = made.getValue(key) + 1
+                    }
+                    count("looked", " kind=~ " !in port && (port.startsWith("building ") || port.startsWith("part ")))
+                    count("by a tradition", " trad=" in port && " trad=~ " !in port)
+                    count("with party walls", " party=" in port && port.substringAfter(" party=").substringBefore(' ').let { it != "~" && it != "0" })
+                    count("levels from neighbours", " lv_why='the%20buildings%20around%20it " in port)
+                    count("roofs by a rule", " roof_why='mansard " in port)
                     val mine = core.readLine()
                     if (mine == null) {
                         mismatches += "the core's scene ends before the port's line $count: ${port.take(200)}"

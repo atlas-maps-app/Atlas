@@ -2,16 +2,21 @@
 // arbitrary documents: whatever the Overpass reader accepts, a load must load or refuse without failing an invariant or
 // reading out of bounds, and every scene it makes must hold together (a region's: a shore flag per water ring): each
 // outline has at least three points and a box around them, and each index (a place's building, a building's places, a
-// tree's node, a place among the nodes) points into its list. Seeds: fuzz/corpus/fuzz_load (the unit test's document,
-// with a record of each kind, and the reader's seed).
+// tree's node, a place among the nodes) points into its list. The region takes, by the input's size, a tradition with
+// every rule and detail generic.py reads (load/Generic.hpp's looks), or none; the living map Amsterdam's New looks or
+// none. Seeds: fuzz/corpus/fuzz_load (the unit test's document, with a record of each kind, and the reader's seed).
 #include "base/assert.hpp"
 #include "load/Amsterdam.hpp"
+#include "load/Generic.hpp"
 #include "load/Regions.hpp"
+#include "load/Tradition.hpp"
 #include "osm/Overpass.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
+#include <string_view>
 
 namespace {
 
@@ -21,7 +26,40 @@ void check_building(const atlas::load::Building& b, std::size_t nodes) {
         ATLAS_ASSERT(b.bb.x0 <= p.x && p.x <= b.bb.x1 && b.bb.z0 <= p.z && p.z <= b.bb.z1, "a point outside its box");
     }
     for (const std::uint32_t i : b.places) ATLAS_ASSERT(i < nodes, "a place past the nodes");
-    ATLAS_ASSERT(b.guessed.keys().size() <= 8, "more guesses than keys");
+    ATLAS_ASSERT(b.guessed.keys().size() <= 10, "more guesses than keys");
+}
+
+// a tradition with every rule and detail generic.py reads
+constexpr std::string_view tradition =
+    R"({"name": "fuzz", "says": "a fuzzed house", "says_by": {"wood": "a wooden one"},
+ "floor_h": 3.1, "modern_from": 1960, "levels": {"default": 3, "house": 2}, "heights": {"tower": 30, "worship": 15.5},
+ "walls": {"home": {"before:1900": [["brick", "#6E3B2E", 2], ["plaster", "#E8E2D4", 1]], "after:1990": null,
+                    "default": [["wood", "#ECE8DE", 1]]},
+           "modern": [["glass", "#93ABBC", 1]], "industrial": [["metal", "#9AA1A7", 1]],
+           "default": [["limestone", "#DCD0B6", 1]]},
+ "roof": {"home": {"shapes": [["gabled", 3], ["hipped", 1], ["skillion", 1], ["flat", 1]], "material": "roof_tiles",
+                   "colours": ["#8C3B2A", "#3F4044"], "pitch": 0.8, "terrace_across": true},
+          "default": {"before:1800": {"shapes": [["mansard", 1]], "material": "slate", "colours": ["#535C66"]},
+                      "default": {"shapes": [["flat", 1]], "material": "metal", "colours": ["#737E88"]}}},
+ "rules": [{"when": {"kind": ["home"], "building": ["house", "yes"], "material": ["brick"],
+                     "year": {"from": 1600, "to": 1900, "unknown": true}, "levels": [1, 9], "area": [10, 100000],
+                     "narrow": 11, "min_h": 2},
+            "roof": {"shape": "gabled", "orient": "along", "pitch": 1.1, "roof_h_range": [3.0, 5.0],
+                     "material": "roof_tiles", "colours": ["#4A3E3A"]}},
+           {"when": {"kind": ["office"]}, "roof": {"shape": "mansard", "roof_h": 3.4}}],
+ "windows": {"bay": 2.9, "kinds": ["home", "default"], "materials": ["brick", "plaster"]},
+ "shutters": {"share": 0.5, "colours": ["#56705A"], "kinds": ["home"]}, "eaves": 0.35,
+ "boards": {"materials": ["wood"]}, "base_band": {"materials": ["brick"], "h": 3.3},
+ "chimneys": {"share": 0.6, "kind": "party"}, "cornice": {"before": 1800}, "hoist": true,
+ "towers_crenellated": true})";
+
+std::shared_ptr<const atlas::load::Tradition> fuzz_tradition() {
+    static const std::shared_ptr<const atlas::load::Tradition> t = [] {
+        const auto read = atlas::load::read_tradition(std::as_bytes(std::span(tradition.data(), tradition.size())));
+        ATLAS_ASSERT(read.has_value(), "the fuzz target's own tradition is refused");
+        return *read;
+    }();
+    return t;
 }
 
 } // namespace
@@ -34,15 +72,17 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     const atlas::load::RegionConfig region{.name = "fuzz",
                                            .frame = atlas::load::westerkerk_frame(),
                                            .bbox = {52.36, 4.87, 52.39, 4.92},
-                                           .tradition = std::nullopt,
+                                           .tradition = (size / 2) % 2 == 0 ? fuzz_tradition() : nullptr,
                                            .palette = atlas::load::amsterdam_palette()};
     const auto regional = atlas::load::load_region(*doc, region, size % 2 == 0 ? 0.0 : 0.5);
     if (regional) {
         ATLAS_ASSERT(regional->natural_shore.size() == regional->water.size(), "a shore flag per water ring");
         for (const atlas::load::Building& b : regional->buildings) check_building(b, regional->nodes.size());
     }
-    const auto scene =
-        atlas::load::load_amsterdam(*doc, atlas::load::westerkerk_frame(), atlas::load::amsterdam_palette());
+    const atlas::load::Looks looks{
+        .region = "ams", .tradition = nullptr, .landuse = atlas::load::LandUseFrom::areas, .keep_homes = true};
+    const auto scene = atlas::load::load_amsterdam(*doc, atlas::load::westerkerk_frame(),
+                                                   atlas::load::amsterdam_palette(), size % 4 < 2 ? &looks : nullptr);
     if (!scene) return 0;
     const std::size_t nodes = scene->nodes.size();
     for (const atlas::load::Building& b : scene->buildings) check_building(b, nodes);

@@ -10,7 +10,9 @@
 // It binds to the Kotlin object app.atlas.mapcorecheck.load.LoadHost by JNI's names; nothing of it is in the phone's
 // library.
 #include "load/Amsterdam.hpp"
+#include "load/Generic.hpp"
 #include "load/Regions.hpp"
+#include "load/Tradition.hpp"
 #include "osm/Overpass.hpp"
 #include "text/Case.hpp"
 
@@ -20,9 +22,11 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <expected>
 #include <format>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -32,13 +36,30 @@ namespace load = atlas::load;
 namespace osm = atlas::osm;
 
 /// The layout version of these entry points; LoadHost refuses another.
-constexpr jint test_load_abi = 2;
+constexpr jint test_load_abi = 3;
 
 std::string string_of(JNIEnv* env, jstring s) {
     const char* chars = env->GetStringUTFChars(s, nullptr);
     std::string out = chars != nullptr ? chars : "";
     env->ReleaseStringUTFChars(s, chars);
     return out;
+}
+
+/// The tradition a file's bytes hold (null for none), or `error=tradition at=<path> what=<why>`.
+std::expected<std::shared_ptr<const load::Tradition>, std::string> tradition_of(JNIEnv* env, jbyteArray bytes) {
+    if (bytes == nullptr) return nullptr;
+    const jsize n = env->GetArrayLength(bytes);
+    std::vector<std::byte> json(static_cast<std::size_t>(n));
+    if (n > 0) env->GetByteArrayRegion(bytes, 0, n, reinterpret_cast<jbyte*>(json.data())); // NOLINT: JNI's bytes
+    auto t = load::read_tradition(json);
+    if (!t) {
+        const load::TraditionError& e = t.error();
+        if (e.json)
+            return std::unexpected(
+                std::format("error=tradition at={} what={}", e.json->at, atlas::tiles::name_of(e.json->fault)));
+        return std::unexpected(std::format("error=tradition at={} what={}", e.at, e.what));
+    }
+    return *t;
 }
 
 /// One record's canonical line.
@@ -118,23 +139,73 @@ std::string_view source_of(load::HeightSource s) {
     return "-";
 }
 
-/// A building's line; for a region, without what generic.py's looks set or change (they join when they are ported).
+/// What generic.py's looks set, each `~` where the dict lacks the key: the kind, the roof material drawn, the drawn
+/// colours and window rows (a full look's), why, why the levels and the roof are what they are, a tradition's details
+/// (its windows, shutter, eaves, boards, band, cornice, hoist, chimney, crenellations: the tradition's own values as 1
+/// where given, else 0) and the party walls.
+void looks(Line& l, const load::Building& b) {
+    const bool looked = b.look != load::LookPath::none;
+    const bool full = b.look == load::LookPath::generic || b.look == load::LookPath::tradition;
+    const auto there = [&](bool is) {
+        if (!is) l.raw("~");
+        return is;
+    };
+    l.field("kind");
+    if (there(looked)) l.maybe(b.kind);
+    l.field("rmat_draw");
+    if (there(looked)) l.maybe(b.rmat_draw);
+    l.field("col_draw");
+    if (there(full)) l.maybe(b.col_draw);
+    l.field("rcol_draw");
+    if (there(full)) l.maybe(b.rcol_draw);
+    l.field("no_win");
+    if (there(full)) l.flag(b.no_win);
+    l.field("look_why");
+    if (there(looked)) l.maybe(b.look_why);
+    l.field("lv_why");
+    if (b.lv_why) {
+        l.text(*b.lv_why);
+    } else {
+        l.raw("~");
+    }
+    l.field("roof_why");
+    if (b.roof_why) {
+        l.text(*b.roof_why);
+    } else {
+        l.raw("~");
+    }
+    l.field("trad");
+    if (there(b.look == load::LookPath::tradition)) {
+        const load::TradDetails& d = b.trad;
+        l.flag(!d.win.is_null()).raw(",").maybe(d.shutter).raw(",").real(d.eaves).raw(",");
+        l.flag(!d.boards.is_null()).raw(",").flag(!d.band.is_null()).raw(",").flag(d.cornice).raw(",");
+        l.flag(d.hoist).raw(",").flag(!d.chimney.is_null()).raw(",").flag(d.crenel);
+    }
+    l.field("party");
+    if (!b.party) {
+        l.raw("~");
+    } else {
+        l.integer(static_cast<std::int64_t>(b.party->size()));
+        for (const auto& [a, c] : *b.party)
+            l.raw(",").real(a.x).raw(",").real(a.z).raw(",").real(c.x).raw(",").real(c.z);
+    }
+}
+
+/// A building's line: for a region, the fields its load sets first, then what the looks set or change; for the living
+/// map, its load's fields in amsterdam.py's order, then the looks.
 void building(std::ofstream& out, std::string_view list, std::size_t i, const load::Building& b, bool part,
               bool region) {
     Line l(list, i);
     l.field("id").integer(b.id);
     l.field("src").raw(source_of(b.src));
-    if (region) {
-        l.field("min").real(b.min);
-        l.field("year").integer(b.year);
-        l.field("otype").raw(b.relation ? "relation" : "~");
-        l.field("parent_id");
-        if (b.parent_id) {
-            l.integer(*b.parent_id);
-        } else {
-            l.raw("~");
+    const auto guessed = [&] {
+        l.field("guessed");
+        for (std::size_t k = 0; k < b.guessed.keys().size(); ++k) {
+            if (k > 0) l.raw(",");
+            l.raw(load::key_of(b.guessed.keys()[k]));
         }
-        l.field("in_church").raw(b.in_church ? "1" : "~");
+    };
+    const auto boxed = [&] {
         l.field("bb").real(b.bb.x0).raw(",").real(b.bb.x1).raw(",").real(b.bb.z0).raw(",").real(b.bb.z1);
         l.field("places");
         if (b.places.empty()) {
@@ -151,39 +222,39 @@ void building(std::ofstream& out, std::string_view list, std::size_t i, const lo
         } else {
             l.flag(b.hidden);
         }
-        // generic.py's looks, where the region has no tradition (with a tradition: not yet, and left out)
-        l.field("looks");
-        if (b.looked) {
-            l.raw("1");
-            l.field("h").real(b.h);
-            l.field("levels").integer(b.levels);
-            l.field("roof").maybe(b.roof);
-            l.field("roof_h").real(b.roof_h);
-            l.field("orient").maybe(b.orient);
-            l.field("mat").maybe(b.mat);
-            l.field("rmat").maybe(b.rmat);
-            l.field("col").maybe(b.col);
-            l.field("rcol").maybe(b.rcol);
-            l.field("mat_draw");
-            if (b.mat_draw) {
-                l.text(*b.mat_draw);
-            } else {
-                l.raw("~");
-            }
-            l.field("rmat_draw").maybe(b.rmat_draw);
-            l.field("kind").maybe(b.kind);
-            l.field("col_draw").maybe(b.col_draw);
-            l.field("rcol_draw").maybe(b.rcol_draw);
-            l.field("no_win").flag(b.no_win);
-            l.field("look_why").maybe(b.look_why);
-            l.field("guessed");
-            for (std::size_t k = 0; k < b.guessed.keys().size(); ++k) {
-                if (k > 0) l.raw(",");
-                l.raw(load::key_of(b.guessed.keys()[k]));
-            }
+    };
+    const auto mat_draw = [&] {
+        l.field("mat_draw");
+        if (b.mat_draw) {
+            l.text(*b.mat_draw);
         } else {
             l.raw("~");
         }
+    };
+    if (region) {
+        l.field("min").real(b.min);
+        l.field("year").integer(b.year);
+        l.field("otype").raw(b.relation ? "relation" : "~");
+        l.field("parent_id");
+        if (b.parent_id) {
+            l.integer(*b.parent_id);
+        } else {
+            l.raw("~");
+        }
+        l.field("in_church").raw(b.in_church ? "1" : "~");
+        boxed();
+        l.field("h").real(b.h);
+        l.field("levels").integer(b.levels);
+        l.field("roof").maybe(b.roof);
+        l.field("roof_h").real(b.roof_h);
+        l.field("orient").maybe(b.orient);
+        l.field("mat").maybe(b.mat);
+        l.field("rmat").maybe(b.rmat);
+        l.field("col").maybe(b.col);
+        l.field("rcol").maybe(b.rcol);
+        mat_draw();
+        guessed();
+        looks(l, b);
         l.field("poly").points(b.poly);
         l.field("tags").tags(b.tags);
         out << l.str() << '\n';
@@ -200,34 +271,11 @@ void building(std::ofstream& out, std::string_view list, std::size_t i, const lo
     l.field("rmat").maybe(b.rmat);
     l.field("col").maybe(b.col);
     l.field("rcol").maybe(b.rcol);
-    l.field("mat_draw");
-    if (b.mat_draw) {
-        l.text(*b.mat_draw);
-    } else {
-        l.raw("~");
-    }
+    mat_draw();
     l.field("levels").integer(b.levels);
-    l.field("guessed");
-    for (std::size_t k = 0; k < b.guessed.keys().size(); ++k) {
-        if (k > 0) l.raw(",");
-        l.raw(load::key_of(b.guessed.keys()[k]));
-    }
-    l.field("bb").real(b.bb.x0).raw(",").real(b.bb.x1).raw(",").real(b.bb.z0).raw(",").real(b.bb.z1);
-    l.field("places");
-    if (b.places.empty()) {
-        l.raw("~");
-    } else {
-        for (std::size_t k = 0; k < b.places.size(); ++k) {
-            if (k > 0) l.raw(",");
-            l.integer(b.places[k]);
-        }
-    }
-    l.field("hidden");
-    if (part) {
-        l.raw("~");
-    } else {
-        l.flag(b.hidden);
-    }
+    guessed();
+    boxed();
+    looks(l, b);
     l.field("poly").points(b.poly);
     l.field("tags").tags(b.tags);
     out << l.str() << '\n';
@@ -424,9 +472,13 @@ extern "C" {
 JNIEXPORT jint JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_abi(JNIEnv*, jclass) { return test_load_abi; }
 
 /// The living map's load of the raw.json at `raw`, in the Westerkerk's frame, written as canonical lines to `out`:
-/// `lines=<n> buildings=<n> parts=<n> nodes=<n> read_ms=<ms> load_ms=<ms>`, or `error=<fault> at=<where>`.
-JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_dump(JNIEnv* env, jclass, jstring raw,
-                                                                         jstring out) {
+/// `lines=<n> buildings=<n> parts=<n> nodes=<n> read_ms=<ms> load_ms=<ms>`, or `error=<fault> at=<where>`. `looks`:
+/// 0 none (as LiveEngine loads it), 1 Amsterdam's New looks (ATLAS_LOOKS), 2 its tradition and kit (ATLAS_KIT, the
+/// tradition's file in `tradition`), 3 generic.py's looks after the load as `region`'s, with `tradition` (none: null),
+/// the land use from the areas.
+JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_dump(JNIEnv* env, jclass, jstring raw, jstring out,
+                                                                         jint looks, jstring region,
+                                                                         jbyteArray tradition) {
     std::ifstream in(string_of(env, raw), std::ios::binary);
     if (!in) return env->NewStringUTF("error=io at=raw");
     const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -437,7 +489,14 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_dump(JNIEnv*
         return env->NewStringUTF(
             std::format("error={} at={}", osm::name_of(doc.error().fault), doc.error().at).c_str());
     }
-    const auto scene = load::load_amsterdam(*doc, load::westerkerk_frame(), load::amsterdam_palette());
+    auto trad = tradition_of(env, tradition);
+    if (!trad) return env->NewStringUTF(trad.error().c_str());
+    const std::string name = region != nullptr ? string_of(env, region) : std::string("ams");
+    const load::Looks how{
+        .region = name, .tradition = *trad, .landuse = load::LandUseFrom::areas, .keep_homes = looks == 1};
+    auto scene = load::load_amsterdam(*doc, load::westerkerk_frame(), load::amsterdam_palette(),
+                                      looks == 1 || looks == 2 ? &how : nullptr);
+    if (scene && looks == 3) load::apply_looks(*scene, how);
     const auto t2 = std::chrono::steady_clock::now();
     if (!scene) {
         return env->NewStringUTF(
@@ -455,12 +514,11 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_dump(JNIEnv*
     return env->NewStringUTF(summary.c_str());
 }
 
-/// A region's load (regions.py's, in the frame and box given: the port's after its configure) of the raw.json at `raw`,
-/// at `tolerance`, written as canonical lines to `out`: as dump, its buildings without what generic.py's looks set, and
-/// its own lists.
+/// A region's load (regions.py's, in the frame and box given: the port's after its configure, with its tradition's file
+/// or null) of the raw.json at `raw`, at `tolerance`, written as canonical lines to `out`: as dump, with its own lists.
 JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_dumpRegion(
     JNIEnv* env, jclass, jstring raw, jstring out, jstring name, jdouble lat0, jdouble lon0, jdouble kx, jdouble kz,
-    jdouble south, jdouble west, jdouble north, jdouble east, jstring tradition, jdouble tolerance) {
+    jdouble south, jdouble west, jdouble north, jdouble east, jbyteArray tradition, jdouble tolerance) {
     std::ifstream in(string_of(env, raw), std::ios::binary);
     if (!in) return env->NewStringUTF("error=io at=raw");
     const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -472,12 +530,13 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_dumpRegion(
             std::format("error={} at={}", osm::name_of(doc.error().fault), doc.error().at).c_str());
     }
     const std::string region = string_of(env, name);
-    const std::string trad = tradition != nullptr ? string_of(env, tradition) : std::string();
+    auto trad = tradition_of(env, tradition);
+    if (!trad) return env->NewStringUTF(trad.error().c_str());
     const load::RegionConfig config{
         .name = region,
         .frame = {.lat0 = lat0, .lon0 = lon0, .kx = kx, .kz = kz},
         .bbox = {south, west, north, east},
-        .tradition = tradition != nullptr ? std::optional<std::string_view>(trad) : std::nullopt,
+        .tradition = *trad,
         .palette = load::region_palette(region),
     };
     const auto scene = load::load_region(*doc, config, tolerance);

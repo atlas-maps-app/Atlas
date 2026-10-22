@@ -736,8 +736,8 @@ std::expected<Scene, LoadError> load_region(const osm::Document& doc, const Regi
         return -std::fabs(signed_area(a.poly)) < -std::fabs(signed_area(b.poly));
     });
     outlines(s);
-    // each building's generic look from its own tags and the land use it stands in (a tradition's: not yet)
-    if (!region.tradition) apply_looks(s, region.name);
+    // each building's look from its own tags, the land use it stands in and the region's tradition
+    apply_looks(s, {.region = region.name, .tradition = region.tradition, .landuse = LandUseFrom::land});
     if (frame.error()) return std::unexpected(*frame.error());
     return loaded;
 }

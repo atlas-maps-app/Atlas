@@ -1,5 +1,6 @@
 // The living map's load (ENGINE.md step 3, stage P): render/amsterdam.py's `load(raw_path)` as the port computes it
-// (R/Amsterdam.kt's load, the way LiveEngine loads the living map: from a raw.json, so neither the looks nor the kit),
+// (R/Amsterdam.kt's load, the way LiveEngine loads the living map: from a raw.json, so neither the looks nor the kit,
+// which a caller may ask for),
 // with guess_tags after it, the places' styles and buildings, and the outlines their parts stand for. Every record and
 // field is the port's, in its order and to the bit (:mapcorecheck's AmsterdamParityTest holds them over the regions'
 // raw.json).
@@ -15,6 +16,7 @@
 // writes one.
 #pragma once
 
+#include "load/Generic.hpp"
 #include "load/Scene.hpp"
 #include "osm/Overpass.hpp"
 #include "tiles/Sections.hpp"
@@ -52,8 +54,10 @@ void guess_tags(Building& b, std::optional<double> h0, const Palette& palette);
 [[nodiscard]] Box box_of(std::span<const V2> poly) noexcept;
 
 /// `load(raw)`: the scene of a document in `frame`, with `palette` for the guessed colours. guess_tags's values come
-/// with each record (each building draws from its own random stream, seeded by its id, so the order is free).
+/// with each record (each building draws from its own random stream, seeded by its id, so the order is free). With
+/// `looks`, generic.py's looks after guess_tags, as amsterdam.py applies them to its own data: Amsterdam's New looks
+/// (ATLAS_LOOKS: `keep_homes`) or its tradition and kit (ATLAS_KIT: nl_amsterdam), the land use from the areas.
 [[nodiscard]] std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const tiles::Frame& frame,
-                                                             const Palette& palette);
+                                                             const Palette& palette, const Looks* looks = nullptr);
 
 } // namespace atlas::load

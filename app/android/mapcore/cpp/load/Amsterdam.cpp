@@ -358,7 +358,7 @@ tiles::Frame westerkerk_frame() noexcept {
 Palette amsterdam_palette() noexcept { return {.brick_old = brick_old, .plaster = plaster, .brick_new = brick_new}; }
 
 std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const tiles::Frame& frame,
-                                               const Palette& palette) {
+                                               const Palette& palette, const Looks* looks) {
     Scene s;
     Positions at(frame);
     for (const osm::Element& e : doc.elements()) {
@@ -469,6 +469,7 @@ std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const t
         }
     }
     if (at.error()) return std::unexpected(*at.error());
+    if (looks != nullptr) apply_looks(s, *looks);
     place(s);
     hide(s);
     return s;

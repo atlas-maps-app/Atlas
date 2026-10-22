@@ -2,9 +2,14 @@ package app.atlas.mapcorecheck.load
 
 import app.atlas.anchor.AnchorCases
 import app.atlas.render.Amsterdam
+import app.atlas.render.Generic
 import app.atlas.render.PoiStyle
+import app.atlas.render.Real
 import app.atlas.render.Regions
+import app.atlas.render.RenderOptions
+import app.atlas.render.V2
 import app.atlas.render.live.LiveEngine
+import app.atlas.render.py.Dict
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -16,7 +21,7 @@ import java.io.File
  */
 internal object LoadHost {
     /** The layout version of these entry points; a library of another is refused. */
-    const val ABI = 2
+    const val ABI = 3
 
     init {
         val path = System.getProperty("atlas.mapcore.host") ?: error("atlas.mapcore.host names no host build of the core")
@@ -27,8 +32,12 @@ internal object LoadHost {
 
     @JvmStatic external fun abi(): Int
 
-    /** The living map's load of [raw] written to [out] as canonical lines: `lines=… buildings=… … load_ms=…`, or `error=…`. */
-    @JvmStatic external fun dump(raw: String, out: String): String
+    /**
+     * The living map's load of [raw] written to [out] as canonical lines: `lines=… buildings=… … load_ms=…`, or `error=…`. [looks]: 0
+     * none (as LiveEngine loads it), 1 Amsterdam's New looks (ATLAS_LOOKS), 2 its tradition and kit (ATLAS_KIT, with [tradition]'s file),
+     * 3 generic.py's looks after the load, as [region]'s with [tradition]'s file (or none), the land use from the areas.
+     */
+    @JvmStatic external fun dump(raw: String, out: String, looks: Int, region: String?, tradition: ByteArray?): String
 
     /**
      * A region's load of [raw] at [tolerance] in the frame and box given (the port's after its configure), written to [out] as canonical
@@ -36,8 +45,15 @@ internal object LoadHost {
      */
     @JvmStatic external fun dumpRegion(
         raw: String, out: String, name: String, lat0: Double, lon0: Double, kx: Double, kz: Double,
-        south: Double, west: Double, north: Double, east: Double, tradition: String?, tolerance: Double,
+        south: Double, west: Double, north: Double, east: Double, tradition: ByteArray?, tolerance: Double,
     ): String
+
+    /** The bytes of tradition [tid]'s file, as the port's [Generic.tradition] reads them; null for none. */
+    fun traditionBytes(tid: String?): ByteArray? {
+        if (tid.isNullOrEmpty()) return null
+        Generic.tradDir?.let { return File(it, "$tid.json").readBytes() }
+        return (Generic::class.java.getResourceAsStream("/traditions/$tid.json") ?: error("no tradition $tid")).use { it.readBytes() }
+    }
 
     /** The core's capitalize() of each UTF-8 text of [bytes] ([lengths] bytes each): each a u32 length and its bytes. */
     @JvmStatic external fun capitalize(bytes: ByteArray, lengths: IntArray): ByteArray
@@ -59,7 +75,34 @@ class AmsterdamParityTest {
         val westerkerk = AnchorCases.westerkerk()
         val t0 = System.nanoTime()
         val scene = LiveEngine.loadScene(westerkerk)
-        SceneLines.compare(westerkerk.id, File(westerkerk.dir, "raw.json"), scene.S, (System.nanoTime() - t0) / 1_000_000) { out -> LoadHost.dump(File(westerkerk.dir, "raw.json").path, out) }
+        SceneLines.compare(westerkerk.id, File(westerkerk.dir, "raw.json"), scene.S, (System.nanoTime() - t0) / 1_000_000) { out -> LoadHost.dump(File(westerkerk.dir, "raw.json").path, out, 0, null, null) }
+    }
+
+    /**
+     * The living map with generic.py's looks, as amsterdam.py gives its own data them: Amsterdam's New looks (ATLAS_LOOKS: the homes
+     * keep their brick and plaster, every other building its kind's look) and its tradition and kit (ATLAS_KIT: nl_amsterdam's walls,
+     * gables, cornices, hoist beams and chimneys), the land use from the areas.
+     */
+    @Test
+    fun theCoreGivesTheLivingMapItsLooksAsThePortDoes() {
+        val westerkerk = AnchorCases.westerkerk()
+        val raw = File(westerkerk.dir, "raw.json")
+        val before = Amsterdam.amsRaw
+        try {
+            Amsterdam.amsRaw = raw
+            for ((mode, name) in listOf(1 to "looks", 2 to "kit")) {
+                Regions.resetPlace()
+                val t0 = System.nanoTime()
+                val S = Amsterdam.load(null, RenderOptions(looks = mode == 1, kit = mode == 2))
+                val ms = (System.nanoTime() - t0) / 1_000_000
+                SceneLines.compare("${westerkerk.id}-$name", raw, S, ms) { out ->
+                    LoadHost.dump(raw.path, out, mode, null, if (mode == 2) LoadHost.traditionBytes("nl_amsterdam") else null)
+                }
+            }
+        } finally {
+            Amsterdam.amsRaw = before
+            Regions.resetPlace()
+        }
     }
 
     @Test
@@ -75,9 +118,50 @@ class AmsterdamParityTest {
             Regions.resetPlace()
             val t0 = System.nanoTime()
             val S = Amsterdam.load(raw)
-            SceneLines.compare(name, raw, S, (System.nanoTime() - t0) / 1_000_000) { out -> LoadHost.dump(raw.path, out) }
+            SceneLines.compare(name, raw, S, (System.nanoTime() - t0) / 1_000_000) { out -> LoadHost.dump(raw.path, out, 0, null, null) }
         }
         println("load: ${raws.size} other raw.json held to the port")
+    }
+
+    /**
+     * Each building tradition (render/traditions) and Paris's own looks over other data, as regions.py gives a region its looks after
+     * the load: the Westerkerk's and the canal ring's raw.json, and every raw.json `-Datlas.load.raws` names, each loaded as the living
+     * map, then given generic.py's looks as Paris's (without a tradition: its stone tones and mansards), Paris's, San Gimignano's,
+     * Bergen's, Notting Hill's and Amsterdam's tradition's, the land use from the areas, on both sides. The regions' own data only
+     * meets its own tradition (and San Gimignano's waits for the terrain): here every rule of every tradition meets every place.
+     */
+    @Test
+    @Suppress("UNCHECKED_CAST")
+    fun theCoreGivesOtherDataEachTraditionsLooksAsThePortDoes() {
+        val raws = ArrayList<Pair<String, File>>()
+        raws += "amsterdam" to File(AnchorCases.westerkerk().dir, "raw.json")
+        AnchorCases.grachten()?.let { raws += it.id to File(it.dir, "raw.json") }
+        System.getProperty("atlas.load.raws")?.split(File.pathSeparatorChar)?.filter { it.isNotBlank() }?.forEach {
+            val f = File(it)
+            assertTrue("atlas.load.raws names $it, which is not a file", f.isFile)
+            raws += (f.parentFile?.name ?: f.name) to f
+        }
+        val looks = listOf("paris" to null, "paris" to "fr_paris", "sangimignano" to "it_tuscan", "bergen" to "no_timber", "nottinghill" to "gb_terrace", "ams" to "nl_amsterdam")
+        for ((name, raw) in raws) {
+            for ((region, tid) in looks) {
+                Regions.resetPlace()
+                val t0 = System.nanoTime()
+                val S = Amsterdam.load(raw)
+                S["tradition"] = tid
+                val areas = (S["areas"] as List<Map<String, Any?>>).filter {
+                    val t = it["tags"] as Map<String, Any?>?
+                    t != null && t.isNotEmpty() && (t["landuse"] as? String)?.let { k -> k in Generic.LANDUSE_KIND } == true && (it["poly"] as List<*>).size > 2
+                }.map { (it["tags"] as Map<String, Any?>)["landuse"] as String to (it["poly"] as List<V2>) }
+                val landuseAt: (Dict) -> String? = { b ->
+                    val c = Real.centroid(b["poly"] as List<V2>)
+                    areas.firstOrNull { (_, poly) -> Real.pip(c.x, c.y, poly) }?.first
+                }
+                Generic.apply(S, region, landuseAt)
+                val ms = (System.nanoTime() - t0) / 1_000_000
+                SceneLines.compare("$name-${tid ?: region}", raw, S, ms) { out -> LoadHost.dump(raw.path, out, 3, region, LoadHost.traditionBytes(tid)) }
+            }
+        }
+        println("load: ${raws.size} raw.json given ${looks.size} looks each, held to the port")
     }
 
     /**

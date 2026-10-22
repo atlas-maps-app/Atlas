@@ -9,9 +9,9 @@
 //   - water mapped as multipolygons and its islands, the sea closed from the coastline along the extract's edge (or a
 //     bay's ring where no coastline is), and which shores are natural (no quay wall);
 //   - the land cover in its drawing order, and each part's outline.
-//   - each building's generic look (load/Generic.hpp), where the region has no building tradition.
-// Not yet: a tradition's looks, the terrain and the water levels from a survey, a theme park's coasters and woods
-// (ENGINE.md step 3: they follow).
+//   - each building's look (load/Generic.hpp): its tradition's where the region has one, else the generic look.
+// Not yet: the terrain and the water levels from a survey, a theme park's coasters and woods (ENGINE.md step 3: they
+// follow).
 //
 // As load_amsterdam, what the renders cannot load the core loads on: a coastline way without a geometry and a node
 // without a position are left out; a position off the Earth refuses the document.
@@ -19,11 +19,13 @@
 
 #include "load/Amsterdam.hpp"
 #include "load/Scene.hpp"
+#include "load/Tradition.hpp"
 #include "osm/Overpass.hpp"
 #include "tiles/Sections.hpp"
 
 #include <array>
 #include <expected>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -37,7 +39,8 @@ struct RegionConfig {
     std::string_view name;
     tiles::Frame frame;
     std::array<double, 4> bbox{}; ///< south, west, north, east (region.json's `bbox`)
-    std::optional<std::string_view> tradition;
+    /// region.json's `tradition`, read (render/traditions/<id>.json), or null for none.
+    std::shared_ptr<const Tradition> tradition;
     Palette palette;
 };
 

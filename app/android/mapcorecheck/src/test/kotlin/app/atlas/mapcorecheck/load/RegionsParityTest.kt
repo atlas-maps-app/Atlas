@@ -11,10 +11,10 @@ import java.io.File
 
 /**
  * Stage P held to the port (ENGINE.md step 3): a region's load in the core (`CP/load/Regions.hpp`) gives every record and
- * field the port's `Regions.load` gives, apart from what generic.py's looks set (the core does not derive them yet, and
- * the buildings' lines leave them out on both sides): the buildings and parts mapped as relations, land cover, runways,
- * big roads, railways, power lines and towers, marine works, cranes, masts, turbines, national parks, the water mapped
- * as relations and its islands, the sea from the coastline and the natural shores, in the port's order and to the bit.
+ * field the port's `Regions.load` gives: the buildings and parts mapped as relations with generic.py's looks (a region's
+ * tradition read from the same file as the port's, its details and party walls among them), land cover, runways, big
+ * roads, railways, power lines and towers, marine works, cranes, masts, turbines, national parks, the water mapped as
+ * relations and its islands, the sea from the coastline and the natural shores, in the port's order and to the bit.
  *
  * Each region is loaded as the packer loads it ([LiveEngine.loadScene]: whole, at tolerance 0): the canal ring from its
  * bundled pack, and the element packs `-Datlas.load.packs` names (a list split by the path separator: the regions'
@@ -33,7 +33,7 @@ class RegionsParityTest {
         val kx = Amsterdam.KX
         val kz = Amsterdam.KZ
         SceneLines.compare(name, raw, S, portMs, region = true) { out ->
-            LoadHost.dumpRegion(raw.path, out, S["region"] as String, lat0, lon0, kx, kz, bbox[0], bbox[1], bbox[2], bbox[3], R["tradition"] as String?, tolerance)
+            LoadHost.dumpRegion(raw.path, out, S["region"] as String, lat0, lon0, kx, kz, bbox[0], bbox[1], bbox[2], bbox[3], LoadHost.traditionBytes(S["tradition"] as String?), tolerance)
         }
     }
 

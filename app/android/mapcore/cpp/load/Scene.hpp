@@ -2,14 +2,17 @@
 // dict of amsterdam.py's load (and guess_tags, the places and `hidden` after it), field for field: a field Python
 // leaves None is an empty optional, a tag's value is the document's own string (an empty one is not None), and a field
 // the dict may not have at all says so. The records view the document they were loaded from (their tags, the tags'
-// strings), so the document must outlive the scene.
+// strings), so the document must outlive the scene; what a building tradition gave them views the tradition, which the
+// scene holds.
 #pragma once
 
 #include "geometry/RoofShapes.hpp"
 #include "osm/Overpass.hpp"
+#include "tiles/Values.hpp"
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -19,6 +22,8 @@
 namespace atlas::load {
 
 using geometry::V2;
+
+class Tradition;
 
 /// An element's tags as the loaders read them: a dict, looked up by key (a document holds each key once).
 class Tags {
@@ -104,6 +109,25 @@ private:
     std::uint8_t count_ = 0;
 };
 
+/// Which of generic.py's paths gave a building its look: none; Amsterdam's homes, which keep their guessed brick and
+/// plaster (`keep_homes`: a kind, a roof material and why); the generic look by kind and age; a tradition's.
+enum class LookPath : std::uint8_t { none, home, generic, tradition };
+
+/// A tradition's details for one building (generic.py's `trad`): the tradition's windows, timber boards, base band and
+/// chimneys where they apply (null where not: values of the tradition's file), a shutter colour, the eaves' overhang,
+/// a cornice, a hoist beam, crenellations.
+struct TradDetails {
+    tiles::Value win;
+    std::optional<std::string_view> shutter;
+    double eaves = 0.0;
+    tiles::Value boards;
+    tiles::Value band;
+    bool cornice = false;
+    bool hoist = false;
+    tiles::Value chimney;
+    bool crenel = false;
+};
+
 /// A box in the frame's metres, as `(min(xs), max(xs), min(zs), max(zs))`.
 struct Box {
     double x0 = 0.0;
@@ -138,14 +162,22 @@ struct Building {
     bool relation = false;                 ///< mapped as a multipolygon relation (`otype` 'relation'), else a way
     std::optional<std::int64_t> parent_id; ///< a part: the id of the outline it stands in
     bool in_church = false;                ///< a part standing in a church (`in_church`, only where true)
-    // generic.py's looks (load/Generic.hpp), where they were applied (`looked`):
-    bool looked = false;
+    // generic.py's looks (load/Generic.hpp): `look` says which of its paths set them, and so which keys the dict has
+    // (`kind`, `rmat_draw` and `look_why` on every path; `col_draw`, `rcol_draw` and `no_win` on a full look; `trad` on
+    // a tradition's)
+    LookPath look = LookPath::none;
     std::optional<std::string_view> kind;      ///< the generic look's kind (home, office, ...)
     std::optional<std::string_view> rmat_draw; ///< the roof material drawn
     std::optional<std::string> col_draw;       ///< the wall colour drawn (#RRGGBB)
     std::optional<std::string> rcol_draw;      ///< the roof colour drawn
     bool no_win = false;                       ///< no window rows (halls, tanks, glass walls)
     std::optional<std::string> look_why;       ///< why the look is what it is; None where nothing was guessed
+    std::optional<std::string_view> lv_why;    ///< why its levels are guessed as they are (`lv_why`), where they are
+    std::optional<std::string_view> roof_why;  ///< `mansard` where a tradition's rule gave it one
+    TradDetails trad;                          ///< a tradition's details (LookPath::tradition)
+    /// The walls it shares with a neighbour (`party`: a tradition's chimneys stand on them), each from a corner to the
+    /// next; only where the tradition's chimneys are party ones, and the building is not hidden.
+    std::optional<std::vector<std::array<V2, 2>>> party;
 };
 
 /// A road (`S['roads']`).
@@ -318,6 +350,9 @@ struct Scene {
     std::vector<ParkEdge> park;
     std::vector<std::vector<V2>> water_holes; ///< islands: the inner rings of the water's relations
     std::vector<bool> natural_shore;          ///< per ring of `water`: a natural shore (no quay wall)
+    /// The building tradition the looks came from (`S['tradition']`, read), or null. The buildings' tradition values
+    /// and strings view it.
+    std::shared_ptr<const Tradition> tradition;
 };
 
 /// Why a document cannot be loaded, and the element that showed it.

@@ -31,7 +31,7 @@ load::RegionConfig amsterdam_region() {
     return {.name = "test",
             .frame = load::westerkerk_frame(),
             .bbox = {52.36, 4.87, 52.39, 4.92},
-            .tradition = std::nullopt,
+            .tradition = nullptr,
             .palette = load::amsterdam_palette()};
 }
 
@@ -117,7 +117,7 @@ TEST_CASE("load: the canal ring's raw.json loaded as a region, as the packer loa
     const load::RegionConfig region{.name = "grachten",
                                     .frame = {.lat0 = lat0, .lon0 = 4.891, .kx = 0x1.097c73fb3b404p+16, .kz = 110540},
                                     .bbox = {52.36, 4.872, 52.393, 4.922},
-                                    .tradition = std::nullopt,
+                                    .tradition = nullptr,
                                     .palette = load::amsterdam_palette()};
     const auto t0 = std::chrono::steady_clock::now();
     const auto loaded = load::load_region(*doc, region);
