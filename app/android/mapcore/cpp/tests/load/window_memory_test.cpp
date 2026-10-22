@@ -66,11 +66,16 @@ void on_free(const volatile void* block) {
     heap_live.fetch_sub(static_cast<std::int64_t>(size));
 }
 
+/// Whether the hooks are in, installed once for the process (each install adds a pair, and each pair counts).
+bool hooked() {
+    static const bool in = __sanitizer_install_malloc_and_free_hooks(on_malloc, on_free) != 0;
+    return in;
+}
+
 /// The most the heap grew by at once while `f` ran.
 template <typename F>
 std::int64_t peak_growth(F&& f) {
-    static const bool hooked = __sanitizer_install_malloc_and_free_hooks(on_malloc, on_free) != 0;
-    if (!hooked) return -1;
+    if (!hooked()) return -1;
     heap_live = 0;
     heap_peak = 0;
     heap_counting = true;

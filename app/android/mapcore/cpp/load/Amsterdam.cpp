@@ -361,6 +361,30 @@ std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const t
                                                const Palette& palette, const Looks* looks) {
     Scene s;
     Positions at(frame);
+    // The largest lists' room up front, from the elements that fill them (a relation's other rings may add a few):
+    // grown by doubling, a dense window's scene held about a quarter more than its records (ENGINE.md step 3's budget
+    // for a window's memory).
+    {
+        std::size_t buildings = 0;
+        std::size_t parts = 0;
+        std::size_t nodes = 0;
+        for (const osm::Element& e : doc.elements()) {
+            if (!e.has_tags || e.tags.empty()) continue;
+            if (e.kind == osm::Kind::node) {
+                if (e.has_at) ++nodes;
+                continue;
+            }
+            const Tags t(e.tags);
+            if (t.has("building:part")) {
+                ++parts;
+            } else if (t.has("building") && !t.is("building", "no")) {
+                ++buildings;
+            }
+        }
+        s.buildings.reserve(buildings);
+        s.parts.reserve(parts);
+        s.nodes.reserve(nodes);
+    }
     for (const osm::Element& e : doc.elements()) {
         if (!e.has_tags || e.tags.empty()) continue;
         const Tags t(e.tags);

@@ -648,6 +648,10 @@ std::expected<Document, ReadError> read_overpass(std::span<const std::byte> json
     doc.tags_ = std::move(p.tags);
     doc.refs_ = std::move(p.refs);
     doc.points_ = std::move(p.points);
+    // grown by doubling as the document was read: no more room than they hold, before anything views them
+    doc.tags_.shrink_to_fit();
+    doc.refs_.shrink_to_fit();
+    doc.points_.shrink_to_fit();
     // the arrays are whole: the ranges become views
     const auto view = [](const auto& v, Range r) { return std::span(v).subspan(r.first, r.count); };
     doc.members_.reserve(members.size());
