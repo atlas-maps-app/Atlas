@@ -9,7 +9,8 @@
 //     looks, and its pack opens and says what it is;
 //   - a window leaves out what its tiles cannot carry yet (a sign gantry, a goods conveyor), which the packer's cut
 //     refuses;
-//   - a window that holds nothing to draw is a pack without a tile, whose manifest says so, and joins no frame cell.
+//   - a window that holds nothing to draw is a pack without a tile, whose manifest says so, and joins no frame cell;
+//   - a water ring that reaches too far (the fuzzer's) refuses a region's cut, and a window cuts its own tile of it.
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "load/Countries.hpp"
@@ -251,6 +252,37 @@ TEST_CASE("load: a window that holds nothing to draw is a pack without a tile, w
     CHECK(store.packs().empty());
     CHECK(store.find(k).empty());
     CHECK(store.holder_of(id) == id);
+}
+
+TEST_CASE("load: a water ring that reaches far: a region's cut refuses it, a window cuts its own tile") {
+    // A lake from the Westerkerk 260 km south, 70 km wide at its foot: about 8,000 tiles of L14, more than a ring may
+    // reach. The nightly fuzzer flung a vertex so (23 October): the region's cut made a piece of the ring for every
+    // tile until it ran out of memory.
+    const tl::TileKey k = tl::tile_of(14, 523'746'000, 48'840'000);
+    const std::string lake = R"({"version": 0.6, "osm3s": {"timestamp_osm_base": "2026-10-23T03:00:00Z"}, "elements": [
+{"type": "way", "id": 20, "tags": {"natural": "water"}, "geometry": [
+    {"lat": 52.3745, "lon": 4.8840}, {"lat": 50.0, "lon": 4.8840}, {"lat": 50.0, "lon": 5.8840},
+    {"lat": 52.3745, "lon": 4.8840}]}]})";
+    const auto bytes = std::as_bytes(std::span(lake.data(), lake.size()));
+    const load::WindowPlace place = load::place_of(k);
+    const auto built = load::build_window(bytes, k, place);
+    ATLAS_REQUIRE(built.has_value(), built.error().what);
+    CHECK(built->features == 1);
+    const auto doc = osm::read_overpass(bytes);
+    ATLAS_REQUIRE(doc.has_value());
+    const load::RegionConfig config{.name = place.region,
+                                    .frame = place.frame,
+                                    .bbox = load::window_box(k),
+                                    .tradition = nullptr,
+                                    .palette = load::region_palette(place.region)};
+    const auto scene = load::load_region(*doc, config);
+    ATLAS_REQUIRE(scene.has_value());
+    REQUIRE(scene->water.size() == 1);
+    const auto refused = load::cut_region(*scene, place.frame, {});
+    ATLAS_REQUIRE(!refused.has_value());
+    CHECK(refused.error().what.starts_with("water 0 reaches "));
+    CHECK(refused.error().what.ends_with(" tiles of L14, more than a ring may (4096)"));
+    CHECK(!refused.error().uncarried);
 }
 
 TEST_CASE("load: where a window is, by the port's Countries") {

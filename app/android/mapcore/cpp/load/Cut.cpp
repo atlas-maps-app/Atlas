@@ -57,6 +57,12 @@ constexpr double crown_reach = 0.8;
 /// The flags' near_water: a quay edge within 16 m.
 constexpr double near_water_reach = 16.0;
 
+/// The most tiles a water ring's box may reach at a level, in a region's or the living map's cut: a region's sea,
+/// closed along a box well beyond the region, reaches a few hundred of L14. A ring beyond it (a vertex flung across the
+/// world, as the fuzzer makes) refuses the cut, which would otherwise make a piece of it for every tile; a window looks
+/// at its own tile alone.
+constexpr std::uint64_t ring_reach_max = 4096;
+
 // amsterdam.py's CHURCHES, WAREHOUSES, SHOP_FLOORS, FURNITURE and BOLLARDS (SceneToTiles' copies, which
 // RenderTablesTest holds to the port's); MATERIAL, CLAY and ROAD_ORDER are load/Tables.hpp's
 constexpr std::array<std::string_view, 3> churches = {"church", "cathedral", "chapel"};
@@ -731,6 +737,9 @@ public:
         for (std::uint32_t i = 0; i < s_.water_holes.size(); ++i) {
             holes_.push_back(grid_line(s_.water_holes[i], [&] { return std::format("island {}", i); }));
         }
+        // refused already (what the tiles cannot carry yet, a vertex off the grid, which would be placed at latitude 0
+        // and longitude 0): nothing is placed
+        if (error_) return std::unexpected(*error_);
         for (const std::uint8_t level : plan_.levels) {
             z_ = level;
             const bool full = level >= 14;
@@ -1229,7 +1238,8 @@ private:
     }
 
     /// The water and its islands at a level's tolerance, one piece per ring and tile it reaches, each with its keep
-    /// codes from its own vertices (a crossing the cut made kept at every tolerance).
+    /// codes from its own vertices (a crossing the cut made kept at every tolerance). A window's cut looks at its own
+    /// tile alone; any other refuses a ring that reaches more than ring_reach_max tiles.
     void place_water(std::size_t coarse) {
         for (const bool hole : {false, true}) {
             const std::vector<std::vector<V2>>& list = hole ? s_.water_holes : s_.water;
@@ -1237,11 +1247,23 @@ private:
                 const auto what = [&] { return std::format("{} {}", hole ? "island" : "water", i); };
                 const GridLine ring =
                     coarse == 0 ? (hole ? holes_ : water_)[i] : grid_line(generalised(list[i], coarse), what);
+                if (error_) return; // a vertex off the grid: refused, and the ring is not where it stands
                 if (ring.lat.empty()) continue;
                 const Box4 box = ring.box();
                 const int turn = sign(area2(points_of(ring)));
-                const tl::TileKey t0 = tl::tile_of(z_, box[2], box[1]);
-                const tl::TileKey t1 = tl::tile_of(z_, box[0], box[3]);
+                tl::TileKey t0 = tl::tile_of(z_, box[2], box[1]);
+                tl::TileKey t1 = tl::tile_of(z_, box[0], box[3]);
+                if (plan_.only) {
+                    const tl::TileKey o = *plan_.only;
+                    if (o.z != z_ || o.x < t0.x || o.x > t1.x || o.y < t0.y || o.y > t1.y) continue;
+                    t0 = o;
+                    t1 = o;
+                } else if (const std::uint64_t reach = std::uint64_t{t1.x - t0.x + 1U} * (t1.y - t0.y + 1U);
+                           reach > ring_reach_max) {
+                    fail(std::format("{} reaches {} tiles of L{}, more than a ring may ({})", what(), reach, z_,
+                                     ring_reach_max));
+                    return;
+                }
                 for (std::uint32_t x = t0.x; x <= t1.x; ++x) {
                     for (std::uint32_t y = t0.y; y <= t1.y; ++y) {
                         const tl::TileKey key(z_, x, y);
