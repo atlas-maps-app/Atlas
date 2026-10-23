@@ -9,6 +9,7 @@
 #include "gen/data/tradition_no_timber.hpp"
 #include "load/Countries.hpp"
 #include "load/Cut.hpp"
+#include "load/PackHead.hpp"
 #include "load/PackStyle.hpp"
 #include "load/Regions.hpp"
 #include "tiles/Grid.hpp"
@@ -34,14 +35,6 @@ namespace tl = atlas::tiles;
 /// regions.py's metres per degree of latitude, and of longitude at the equator.
 constexpr double kz = 110540.0;
 constexpr double kx_equator = 111320.0;
-
-/// The live map's bands for a region (Lod.BANDS ending at Lod.UPTO, as a region's rhead holds them): the ladder index
-/// a camera at that distance loads at.
-constexpr std::array<tl::HeadBand, 5> region_bands = {{{.tolerance = 0, .up_to = 250.0},
-                                                       {.tolerance = 1, .up_to = 400.0},
-                                                       {.tolerance = 3, .up_to = 700.0},
-                                                       {.tolerance = 6, .up_to = 2000.0},
-                                                       {.tolerance = 8, .up_to = std::nullopt}}};
 
 constexpr std::array<std::uint8_t, 1> window_levels{window_level};
 
@@ -177,7 +170,7 @@ std::expected<BuiltWindow, WindowError> build_window(const osm::Document& doc, c
             return std::unexpected(WindowError{"the scene does not cut: " + taken.error().what});
         }
     }
-    for (const tl::HeadBand& b : region_bands) {
+    for (const tl::HeadBand& b : region_bands()) {
         if (b.tolerance == 0) continue;
         const double tolerance = tl::keep::tolerances.at(b.tolerance);
         auto other = loaded(tolerance);
@@ -214,7 +207,7 @@ std::expected<BuiltWindow, WindowError> build_window(const osm::Document& doc, c
                                        .style_version = style_version,
                                        .source = data,
                                        .views = {},
-                                       .bands = region_bands});
+                                       .bands = region_bands()});
     if (!head) return std::unexpected(WindowError{"the head does not encode: " + tl::describe(head.error())});
     // R, as the port's RegionConfig.forBox writes a built region's (without views: a window has none)
     const std::array<std::int32_t, 4> tb = tl::tile_box(tile);

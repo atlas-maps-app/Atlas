@@ -1,22 +1,27 @@
-// The packer's tool (ENGINE.md step 3: the packer runs the core's stage P): the render tiles of a region or of the
-// living map from Overpass's JSON, loaded and cut by the core as the phone builds a window, for `packer render-tiles`
-// to write into its pack beside the head and the style it writes (rendertiles' CoreTiles).
+// The packer's tool (ENGINE.md step 3: the packer runs the core's stage P): a region's or the living map's render
+// tiles from Overpass's JSON, loaded and cut by the core as the phone builds a window, and its pack's head and style,
+// for `packer render-tiles` to write into its pack (rendertiles' CoreTiles).
 //
 //   atlas_stagep tiles <raw.json> <job.json> <out>
 //
-// The job says what the packer knows of the region: its profile (`living` or `region`), its name (its palette and
-// rules), the levels its pack holds, its frame's four doubles (lat0, lon0, kx, kz) as their IEEE-754 bits in hex (the
-// port's own doubles: kx from CrMath.cos), the keep ladder's indices its variants load at (its views' and the live
-// map's bands'), and for a region its region.json (its box and its tradition, read as Python's json reads them).
+// The job says what the packer knows of the pack: its profile (`living` or `region`), its name (its palette and
+// rules), the levels it holds, its frame's four doubles (lat0, lon0, kx, kz) as their IEEE-754 bits in hex (the port's
+// own doubles: kx from CrMath.cos), the port's engine version, the element pack's SHA-256, and for a region its
+// region.json as the packer unpacked it into the region's folder (its box, tradition, time zone and views, read as
+// Python's json reads them). The core takes the rest from there (load/PackHead.hpp): the views and the tolerances the
+// variants load at (the views' and the live map's bands'), the head and the style.
 //
-// `out` gets, by a file beside it renamed once whole, every tile in the cut's order, little-endian: `ATSP` and the
-// format (1), the tiles' count, then per tile its level (u8), column and row (u32), its features (u32), its reach
-// (south, west, north, east and top in cm, i32), its layers that hold features (u16), each its label (u8 length, its
-// bytes) and its features (u32), and its encoded bytes (u32 length, the bytes). One line on stdout says what was cut
-// and how long it took. The exit code: 0 done; 2 a usage or input error; 3 a region the tiles cannot carry yet (its
-// gantries or conveyors, a tradition's details: the packer's render_gap, why on stderr); 1 any other failure.
+// `out` gets, by a file beside it renamed once whole, little-endian: `ATSP` and the format (2), the tiles' count, then
+// per tile in the cut's order its level (u8), column and row (u32), its features (u32), its reach (south, west, north,
+// east and top in cm, i32), its layers that hold features (u16), each its label (u8 length, its bytes) and its features
+// (u32), and its encoded bytes (u32 length, the bytes); then the head's bytes and the style's before compression, each
+// a u32 length and the bytes. One line on stdout says what was cut and how long it took. The exit code: 0 done; 2 a
+// usage or input error; 3 a region the tiles cannot carry yet (the packer's render_gap, why on stderr: a theme park's
+// coaster tracks or a park's or zoo's planted woods (R's park or zoo), a survey's heights (a dem.json in the region's
+// folder), gantries or conveyors, a tradition's details); 1 any other failure.
 #include "load/Amsterdam.hpp"
 #include "load/Cut.hpp"
+#include "load/PackHead.hpp"
 #include "load/Regions.hpp"
 #include "load/Scene.hpp"
 #include "load/Window.hpp"
@@ -24,6 +29,7 @@
 #include "tiles/Error.hpp"
 #include "tiles/Json.hpp"
 #include "tiles/Schema.hpp"
+#include "tiles/Sections.hpp"
 #include "tiles/Source.hpp"
 #include "tiles/TileWriter.hpp"
 #include "tiles/Values.hpp"
@@ -62,7 +68,7 @@ struct Failure {
 
 constexpr int usage_error = 2;
 constexpr int not_carried = 3;
-constexpr std::uint32_t format_version = 1;
+constexpr std::uint32_t format_version = 2;
 
 [[nodiscard]] Failure input(std::string why) { return {.code = usage_error, .why = std::move(why)}; }
 
@@ -94,6 +100,42 @@ constexpr std::uint32_t format_version = 1;
     return out;
 }
 
+/// Python's truth of a JSON value: false for null, false, 0, and an empty string, list or map.
+[[nodiscard]] bool truthy(const tl::Value& v) noexcept {
+    switch (v.type()) {
+    case tl::ValueType::null:
+    case tl::ValueType::boolean_false: return false;
+    case tl::ValueType::boolean_true: return true;
+    case tl::ValueType::int32:
+    case tl::ValueType::int64: return v.integer().value_or(0) != 0;
+    case tl::ValueType::real: return v.real().value_or(0.0) != 0.0;
+    case tl::ValueType::string: return !v.string().value_or("").empty();
+    case tl::ValueType::list:
+    case tl::ValueType::map: return v.size() > 0;
+    }
+    return false;
+}
+
+/// What a region holds that render tiles cannot carry yet, refused as the packer's SceneToTiles refuses its scene:
+/// the coaster tracks a theme park (R's park) loads and the woods it and a zoo (R's zoo) plant, and a survey's heights,
+/// which regions.py reads from a dem.json in the region's folder. Nothing where it holds none of them.
+[[nodiscard]] std::optional<Failure> uncarried(std::string_view name, const tl::Value& r,
+                                               const std::filesystem::path& folder) {
+    const auto has = [&](std::string_view key) {
+        const std::optional<tl::Value> v = r.find(key);
+        return v && truthy(*v);
+    };
+    std::vector<std::string_view> found;
+    if (has("park")) found.emplace_back("a theme park's coaster tracks");
+    if (has("park") || has("zoo")) found.emplace_back("a park's planted woods");
+    std::error_code e;
+    if (std::filesystem::exists(folder / "dem.json", e)) found.emplace_back("a survey's heights");
+    if (found.empty()) return std::nullopt;
+    std::string list;
+    for (const std::string_view f : found) list += (list.empty() ? "" : ", ") + std::string(f);
+    return Failure{.code = not_carried, .why = std::format("{}: render tiles cannot carry {} yet", name, list)};
+}
+
 /// Little-endian bytes, as the tiles file holds them.
 class Out {
 public:
@@ -115,9 +157,10 @@ private:
     std::string bytes_;
 };
 
-/// The tiles file of `tiles`, as the header says.
+/// The tiles file of `tiles` and the pack's `sections`, as the header says.
 [[nodiscard]] std::expected<std::string, Failure> tiles_file(const std::vector<tl::TileFill>& tiles,
-                                                             std::size_t& features, std::size_t& bytes) {
+                                                             const load::PackSections& sections, std::size_t& features,
+                                                             std::size_t& bytes) {
     Out out;
     out.text("ATSP");
     out.u32(format_version);
@@ -155,6 +198,10 @@ private:
         features += count;
         bytes += raw->size();
     }
+    out.u32(static_cast<std::uint32_t>(sections.head.size()));
+    out.raw(sections.head);
+    out.u32(static_cast<std::uint32_t>(sections.style.size()));
+    out.raw(sections.style);
     return out.bytes();
 }
 
@@ -197,7 +244,7 @@ private:
                               .palette = load::region_palette(name)};
 }
 
-/// The tiles of the job: read, loaded and cut. Returns the line it prints.
+/// The tiles of the job, read, loaded and cut, and the pack's head and style. Returns the line it prints.
 [[nodiscard]] std::expected<std::string, Failure> tiles(const std::string& raw_path, const std::string& job_path,
                                                         const std::string& out_path) {
     using clock = std::chrono::steady_clock;
@@ -226,16 +273,52 @@ private:
     }
     const tl::Frame frame{.lat0 = f[0], .lon0 = f[1], .kx = f[2], .kz = f[3]};
     const auto levels = ints(j.find("levels").value_or(tl::Value()), 0, 30);
-    const auto ladder =
-        ints(j.find("tolerances").value_or(tl::Value()), 1, static_cast<std::int64_t>(tl::keep::tolerances.size()) - 1);
-    if (!levels || !ladder) return std::unexpected(input("the job's levels or tolerances are not lists of their ints"));
+    if (!levels) return std::unexpected(input("the job's levels are not a list of ints"));
     const bool living = *profile == "living";
     if (*levels != (living ? std::vector<std::int64_t>{14} : std::vector<std::int64_t>{14, 12})) {
         return std::unexpected(
             input(std::format("the core cuts {} at {}, not the job's levels", living ? "the living map" : "a region",
                               living ? "L14" : "L14 and L12")));
     }
-    if (living && !ladder->empty()) return std::unexpected(input("the living map is loaded whole: no variants"));
+    const std::optional<std::string_view> engine_version = j.find("engine_version").value_or(tl::Value()).string();
+    const std::optional<std::string_view> source = j.find("source").value_or(tl::Value()).string();
+    if (!engine_version || engine_version->empty() || !source || source->empty()) {
+        return std::unexpected(input("the job names no engine version or no source"));
+    }
+
+    // a region's R, read before its data, so what its tiles cannot carry yet refuses it at once
+    std::unique_ptr<tl::MappedSource> region_file;
+    std::optional<tl::JsonValue> region_json;
+    std::optional<load::RegionConfig> config;
+    if (!living) {
+        const std::optional<std::string_view> region_path = j.find("region_json").value_or(tl::Value()).string();
+        if (!region_path) return std::unexpected(input("the job names no region.json for a region"));
+        auto opened = mapped(std::string(*region_path));
+        if (!opened) return std::unexpected(opened.error());
+        region_file = std::move(*opened);
+        auto read = tl::read_json(region_file->view(0, region_file->size()));
+        if (!read) return std::unexpected(input(std::format("{} is not JSON", *region_path)));
+        region_json = std::move(*read);
+        if (auto refused = uncarried(*name, region_json->root(), std::filesystem::path(*region_path).parent_path())) {
+            return std::unexpected(*refused);
+        }
+        auto made = region_of(*name, frame, region_json->root());
+        if (!made) return std::unexpected(made.error());
+        config = std::move(*made);
+    }
+    std::vector<std::uint8_t> level_list;
+    for (const std::int64_t z : *levels) level_list.push_back(static_cast<std::uint8_t>(z));
+    const load::PackFacts facts{.profile = living ? tl::Profile::living : tl::Profile::region,
+                                .region = *name,
+                                .levels = level_list,
+                                .frame = frame,
+                                .engine_version = *engine_version,
+                                .source = *source,
+                                .r = region_json ? region_json->root() : tl::Value(),
+                                .tradition = config ? config->tradition.get() : nullptr};
+    const auto views = load::pack_views(facts);
+    if (!views) return std::unexpected(input(views.error()));
+    const std::vector<std::uint8_t> ladder = living ? std::vector<std::uint8_t>() : load::variant_ladder(*views);
 
     auto data = mapped(raw_path);
     if (!data) return std::unexpected(data.error());
@@ -251,7 +334,6 @@ private:
                                           load::name_of(scene.error().fault), scene.error().element)};
     };
     std::expected<std::vector<tl::TileFill>, load::CutError> cut;
-    std::size_t variants = 0;
     clock::time_point t2;
     if (living) {
         const auto scene = load::load_amsterdam(*doc, frame, load::amsterdam_palette());
@@ -259,31 +341,21 @@ private:
         t2 = clock::now();
         cut = load::cut_living(*scene, frame);
     } else {
-        const std::optional<std::string_view> region_path = j.find("region_json").value_or(tl::Value()).string();
-        if (!region_path) return std::unexpected(input("the job names no region.json for a region"));
-        auto region_file = mapped(std::string(*region_path));
-        if (!region_file) return std::unexpected(region_file.error());
-        const auto region_json = tl::read_json((*region_file)->view(0, (*region_file)->size()));
-        if (!region_json) return std::unexpected(input(std::format("{} is not JSON", *region_path)));
-        const auto config = region_of(*name, frame, region_json->root());
-        if (!config) return std::unexpected(config.error());
         const auto base = load::load_region(*doc, *config);
         if (auto failed = loaded(base)) return std::unexpected(*failed);
         // the region at each tolerance its views and the live map's bands load it at, for the variants
         std::vector<load::Scene> others;
-        others.reserve(ladder->size());
-        for (const std::int64_t l : *ladder) {
-            auto other = load::load_region(*doc, *config, tl::keep::tolerances.at(static_cast<std::size_t>(l)));
+        others.reserve(ladder.size());
+        for (const std::uint8_t l : ladder) {
+            auto other = load::load_region(*doc, *config, tl::keep::tolerances.at(l));
             if (auto failed = loaded(other)) return std::unexpected(*failed);
             others.push_back(std::move(*other));
         }
         std::vector<load::CutVariant> cut_variants;
         cut_variants.reserve(others.size());
         for (std::size_t k = 0; k < others.size(); ++k) {
-            cut_variants.push_back(
-                {.tolerance = tl::keep::tolerances.at(static_cast<std::size_t>((*ladder)[k])), .scene = &others[k]});
+            cut_variants.push_back({.tolerance = tl::keep::tolerances.at(ladder[k]), .scene = &others[k]});
         }
-        variants = others.size();
         t2 = clock::now();
         cut = load::cut_region(*base, frame, cut_variants);
     }
@@ -291,15 +363,18 @@ private:
         return std::unexpected(Failure{.code = cut.error().uncarried ? not_carried : 1,
                                        .why = std::string(*name) + ": " + cut.error().what});
     }
+    const auto sections = load::pack_sections(facts, *views);
+    if (!sections) return std::unexpected(Failure{.why = std::string(*name) + ": " + sections.error()});
     const auto t3 = clock::now();
     std::size_t features = 0;
     std::size_t bytes = 0;
-    const auto file = tiles_file(*cut, features, bytes);
+    const auto file = tiles_file(*cut, *sections, features, bytes);
     if (!file) return std::unexpected(file.error());
     if (auto written = write_whole(out_path, *file); !written) return std::unexpected(written.error());
-    return std::format("{} ({}): {} tiles, {} features, {} bytes; read in {:.0f} ms, loaded in {:.0f} ms ({} variants' "
-                       "loads), cut in {:.0f} ms",
-                       *name, *profile, cut->size(), features, bytes, ms(t0, t1), ms(t1, t2), variants, ms(t2, t3));
+    return std::format("{} ({}): {} tiles, {} features, {} bytes, a head of {} views and a style of {} bytes; read in "
+                       "{:.0f} ms, loaded in {:.0f} ms ({} variants' loads), cut in {:.0f} ms",
+                       *name, *profile, cut->size(), features, bytes, views->size(), sections->style.size(), ms(t0, t1),
+                       ms(t1, t2), ladder.size(), ms(t2, t3));
 }
 
 } // namespace

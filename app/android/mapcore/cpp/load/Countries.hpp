@@ -20,7 +20,10 @@ namespace atlas::load {
 [[nodiscard]] std::string_view timezone_of(std::optional<std::string_view> code, double lat, double lon) noexcept;
 
 /// A zone's UTC offset at noon on 1 October 2026 in whole hours, rounded down as Python's `// 3600` rounds
-/// (regions.py's TZ_H); 0 for a zone the table lacks.
+/// (regions.py's TZ_H), or nothing for a zone the table lacks.
+[[nodiscard]] std::optional<std::int32_t> zone_hours(std::string_view zone) noexcept;
+
+/// zone_hours, 0 for a zone the table lacks.
 [[nodiscard]] std::int32_t tz_hours(std::string_view zone) noexcept;
 
 /// The building tradition the renders draw a country with (Countries.tradition: render/traditions/<name>.json), or

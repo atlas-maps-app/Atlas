@@ -275,7 +275,7 @@ std::string_view timezone_of(std::optional<std::string_view> code, double lat, d
     return "UTC";
 }
 
-std::int32_t tz_hours(std::string_view zone) noexcept {
+std::optional<std::int32_t> zone_hours(std::string_view zone) noexcept {
     for (const ZoneOffset& z : offsets) {
         if (z.zone == zone) {
             // Python's // rounds toward minus infinity
@@ -283,8 +283,10 @@ std::int32_t tz_hours(std::string_view zone) noexcept {
             return (z.seconds % 3600 != 0 && z.seconds < 0) ? q - 1 : q;
         }
     }
-    return 0;
+    return std::nullopt;
 }
+
+std::int32_t tz_hours(std::string_view zone) noexcept { return zone_hours(zone).value_or(0); }
 
 std::optional<std::string_view> tradition_of(std::optional<std::string_view> code) noexcept {
     if (!code) return std::nullopt;

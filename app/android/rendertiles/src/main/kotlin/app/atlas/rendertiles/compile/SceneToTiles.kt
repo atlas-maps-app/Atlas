@@ -762,9 +762,9 @@ class SceneToTiles(
          * it at, tiles at [levels] ([levelsOf] by default), the `rhead` and the `style`. The engine unpacks the region
          * under [work]. [log] hears each step.
          *
-         * With [core] (the core's `atlas_stagep`), the core's stage P loads and cuts the tiles, the phone's windows' code
-         * ([CoreTiles]: the same tiles, byte for byte); the port's scene, loaded whole, gives the head and the style and
-         * refuses what the tiles cannot carry yet, as it does without.
+         * With [core] (the core's `atlas_stagep`), the core's stage P makes the pack's content, the phone's windows' code
+         * ([CoreTiles]): it loads and cuts the tiles, writes the head and the style, and refuses what the tiles cannot
+         * carry yet, all as the port does (the same bytes), so the port's scene is not loaded at all.
          */
         fun pack(elementPack: File, out: File, work: File, levels: IntArray? = null, core: File? = null, log: (String) -> Unit = {}): Packed {
             val t0 = System.nanoTime()
@@ -779,19 +779,15 @@ class SceneToTiles(
                     val m = r.manifest
                     LiveEngine.open(r, source) to Format3Writer.Info(m.id, m.name, m.bbox, m.origin, m.timezone, m.tradition, m.dataTime, m.config, m.header, m.sources)
                 }
-                val base = LiveEngine.loadScene(region)
-                log("${region.id}: scene loaded whole in ${base.loadMillis} ms")
                 if (core != null) {
                     val lv = levels ?: levelsOf(region)
-                    // the port's scene refuses what the tiles cannot carry yet and gives the head its frame
-                    val stt = SceneToTiles(base, emptyList(), lv)
-                    val tiles = CoreTiles.tiles(core, region, lv, File(work, "stagep"), log)
-                    val head = Head.of(base, stt, source, lv)
-                    val style = Style.of(base)
-                    val written = Format3Writer.writeEncoded(tiles, head, style, info, out)
-                    log("${region.id}: ${tiles.size} tiles from the core's stage P, ${written.bytes} bytes in ${(System.nanoTime() - t0) / 1_000_000} ms")
-                    return Packed(written, emptyList(), head, style, emptyList())
+                    val made = CoreTiles.pack(core, region, lv, source, File(work, "stagep"), log)
+                    val written = Format3Writer.writeEncoded(made.tiles, made.head, made.style, info, out)
+                    log("${region.id}: ${made.tiles.size} tiles, the head and the style from the core's stage P, ${written.bytes} bytes in ${(System.nanoTime() - t0) / 1_000_000} ms")
+                    return Packed(written, emptyList(), made.head, made.style, emptyList())
                 }
+                val base = LiveEngine.loadScene(region)
+                log("${region.id}: scene loaded whole in ${base.loadMillis} ms")
                 val variants = ArrayList<Variant>()
                 for (t in variantTolerances(region)) {
                     val other = LiveEngine.loadScene(region, null, base.opts, t)
