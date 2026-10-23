@@ -45,6 +45,28 @@ jobs:
           fi
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" \
             "${native[@]}" > /dev/null
+      - name: "The packer's tool: the core's stage P"
+        # The APK's bundled tiles are cut by the core's stage P (mapcore/cpp/stagep), as android.yml's build job cuts
+        # them: built alone (the host-stagep preset: no slangc, Vulkan or HarfBuzz) with LLVM's clang and libc++ at
+        # core.yml's pin and the SDK's CMake and Ninja; :app's generateBundledTiles reads ATLAS_STAGEP. A tag from
+        # before the tool has no stagep folder, and its packer cuts them as it did.
+        run: |
+          [ -d mapcore/cpp/stagep ] || exit 0
+          LLVM=$(grep -m1 "^  LLVM: '" ../../.github/workflows/core.yml | cut -d"'" -f2) # NDK r30's major
+          [ -n "$LLVM" ] || { echo "::error::core.yml names no LLVM version"; exit 1; }
+          codename=$(lsb_release -cs)
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/keyrings/apt.llvm.org.asc > /dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.asc] http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$LLVM main" |
+            sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends clang-$LLVM lld-$LLVM libc++-$LLVM-dev libc++abi-$LLVM-dev
+          cmake_bin="$ANDROID_HOME/cmake/$(grep '^cmake.version=' mapcore/tools.properties | cut -d= -f2-)/bin"
+          cd mapcore/cpp
+          CC=clang-$LLVM CXX=clang++-$LLVM CXXFLAGS=-stdlib=libc++ LDFLAGS=-stdlib=libc++ \
+            "$cmake_bin/cmake" --preset host-stagep -DCMAKE_MAKE_PROGRAM="$cmake_bin/ninja"
+          "$cmake_bin/cmake" --build --preset host-stagep
+          echo "ATLAS_STAGEP=$PWD/build/host-stagep/atlas_stagep" >> "$GITHUB_ENV"
       - name: Release key
         env:
           KEYSTORE: ${{ secrets.ATLAS_KEYSTORE_BASE64 }}
