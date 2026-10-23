@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The nightly alpha's choice (.github/workflows/alpha.yml): the latest commit of the work branch whose push Core
-# (core.yml) and Android (android.yml) both built green, when the app (app/, and render/traditions, which the core
-# compiles in) changed between the last alpha and it. Writes `tag` and `sha` to $GITHUB_OUTPUT (stdout outside Actions)
+# The nightly alpha's choice (.github/workflows/alpha.yml): the latest commit of the work branch whose push Android
+# (android.yml) built green, and Core (core.yml) too unless that push left the core alone (Core then runs nothing for
+# it), when the app (app/, and render/traditions, which the core compiles in) changed between the last alpha and it. Writes `tag` and `sha` to $GITHUB_OUTPUT (stdout outside Actions)
 # and the release notes (the commits since the last alpha, each by its first sentence, ENGINE.md's own left out) to
 # $NOTES. With nothing to release it says why and writes neither. Reads GitHub's runs with gh; changes nothing.
 set -euo pipefail
@@ -24,17 +24,21 @@ fi
 last_tag="v0.1.0-alpha.$last"
 last_sha=$(git rev-list -n 1 "$last_tag")
 
-# the conclusion of the latest completed push run of workflow $1 on commit $2 ("" where none has completed: a commit
-# pushed under a later one has no runs of its own)
+# the conclusion of the latest completed push run of workflow $1 on commit $2: "none" where the commit has no run of it
+# (a commit pushed under a later one has none, nor one whose push changed nothing of the workflow's paths), "" where
+# none has completed yet
 conclusion() {
   gh run list --repo "$repo" --workflow "$1" --branch "$branch" --commit "$2" --event push --limit 10 \
-    --json status,conclusion --jq '[.[] | select(.status == "completed")][0].conclusion // ""'
+    --json status,conclusion \
+    --jq 'if length == 0 then "none" else ([.[] | select(.status == "completed")][0].conclusion // "") end'
 }
 
+# green: Android built and tested the commit's push; Core did too, or had nothing to run for it (its push paths are the
+# core's alone, so a push that leaves the core alone starts no Core run)
 green=""
 for sha in $(git rev-list --max-count=100 "$head" "^$last_sha"); do
   [ "$(conclusion android.yml "$sha")" = success ] || continue
-  [ "$(conclusion core.yml "$sha")" = success ] || continue
+  case "$(conclusion core.yml "$sha")" in success | none) ;; *) continue ;; esac
   green=$sha
   break
 done
