@@ -50,8 +50,10 @@ class PlantedTest {
         assertTrue("the unplanted stub fails: $badControls", badControls.isEmpty())
         val wrong = plants.filter { !it.ok }.map { "${it.plant.name} gave ${it.result.outcome}, must ${it.plant.expect}" }
         assertTrue("planted failures not judged as they must be: $wrong", wrong.isEmpty())
+        // every kind is judged where the set is the whole tier; a shard holds the plants whose base falls in it (the
+        // nightly's second, the board's shift and drops alone), and the smoke tier on every push judges all three
         val kinds = plants.filter { it.plant.expect == "FAIL" }.map { it.plant.kind }.toSet()
-        for (k in listOf("paint", "shift", "drops")) assertTrue("the plant '$k' was judged", k in kinds)
+        if (set.shard == null) for (k in listOf("paint", "shift", "drops")) assertTrue("the plant '$k' was judged", k in kinds)
     }
 
     /** The plants that need an engine wait for the package that brings it; each names one, so none is forgotten. */

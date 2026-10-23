@@ -176,6 +176,8 @@ class RefSetReader(val dir: File) {
     val entries: Map<String, RefEntry> = manifest["entries"]?.jsonObject?.mapValues { (k, v) -> RefEntry(this, k, v.jsonObject) } ?: emptyMap()
     val planted: Map<String, PlantEntry> = manifest["planted"]?.jsonObject?.mapValues { (k, v) -> PlantEntry(this, k, v.jsonObject) } ?: emptyMap()
     val ladder: JsonObject get() = manifest["ladder"]?.jsonObject ?: JsonObject(emptyMap())
+    /** The shard of the tier the set holds (`k/n`: CI's nightly full tier runs in two), or null for the whole tier. */
+    val shard: String? get() = manifest.strOrNull("shard")
 
     companion object {
         /**

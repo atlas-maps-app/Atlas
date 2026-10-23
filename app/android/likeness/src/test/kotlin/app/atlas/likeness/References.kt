@@ -564,6 +564,7 @@ object References {
         }
         RefSet.write(set.manifestFile, linkedMapOf(
             "format" to 1, "key" to set.key, "engine" to EngineVersion.ID, "style" to Likeness.style, "cases" to cases.hash,
+            "shard" to Likeness.shard?.let { (k, n) -> "$k/$n" },
             "oracle" to "the port's layers drawn by SvgCanvas (Android's Skia in Robolectric) at each case's density: canvas.scale(d), no view-box fit, cropped; structural without filters and without generator-only elements",
             "arch" to System.getProperty("os.arch"), "entries" to entries, "planted" to planted, "ladder" to ladder, "timing" to timing,
         ))
