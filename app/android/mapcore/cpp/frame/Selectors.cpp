@@ -37,4 +37,12 @@ void Selectors::set(std::uint16_t kind, double near, double middle, double far) 
     table_[kind] = {f32(near), f32(middle), f32(far), 0.0F};
 }
 
+void Selectors::set_details(std::uint16_t kind, std::span<const double> thresholds) noexcept {
+    if (kind >= max_kinds) return;
+    ATLAS_ASSERT(thresholds.size() <= max_details, "more detail thresholds than a rank entry's detail bits");
+    const std::size_t n = std::min(thresholds.size(), max_details);
+    for (std::size_t i = 0; i < n; ++i) details_[kind][i] = thresholds[i];
+    details_count_[kind] = static_cast<std::uint8_t>(n);
+}
+
 } // namespace atlas::frame

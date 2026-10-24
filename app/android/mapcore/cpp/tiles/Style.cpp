@@ -177,6 +177,17 @@ Result<Style> Style::of(const StyleTables& tables) {
     s.deck = r.colour(boats, "houseboats", "deck");
     s.edges.cabin = r.colour(boats, "houseboats", "cabin_edge");
     s.edges.cabin_width = static_cast<float>(r.number(boats, "houseboats", "cabin_edge_width"));
+    const auto windows = r.table("windows");
+    WindowsStyle& ws = s.windows;
+    ws.glass = {r.colour(windows, "windows", "glass_top"), r.colour(windows, "windows", "glass_bottom")};
+    ws.glass_overcast = {r.colour(windows, "windows", "glass_overcast_top"),
+                         r.colour(windows, "windows", "glass_overcast_bottom")};
+    ws.lit_glass = {r.colour(windows, "windows", "lit_top"), r.colour(windows, "windows", "lit_bottom")};
+    ws.dark = r.day_night(windows, "windows", "dark_day", "dark_night");
+    ws.lit = r.colour(windows, "windows", "lit");
+    ws.warehouse = r.day_night(windows, "windows", "warehouse_day", "warehouse_night");
+    ws.frame = r.day_night(windows, "windows", "frame_day", "frame_night");
+    ws.frame_width = static_cast<float>(r.number(windows, "windows", "frame_width"));
     const auto names = r.table("canal_names");
     s.canal_names.fill = r.colour(names, "canal_names", "fill");
     s.canal_names.opacity = r.number(names, "canal_names", "opacity");

@@ -64,17 +64,19 @@ inline float true_depth(FrameCamera cam, float r) {
     return (cam.flags.x & CAMERA_DEPTH24) != 0u ? 0.5f + 0.5f * r : r;
 }
 
-/// A rank table entry (set 0, binding 1; CP/frame/Ranks.cpp): an item's first painter slot (bits 0-23) and the detail
-/// band the render thread chose for it (bits 30-31), from the ranks' depth in double against its kind's thresholds in
-/// double, as the port compares them. A shader takes an item's band from here and never recomputes it from a float
-/// depth, which can fall on the other side of a threshold. RANK_NONE: the item is not drawn this frame.
+/// A rank table entry (set 0, binding 1; CP/frame/Ranks.cpp): an item's first painter slot (bits 0-19) and the detail
+/// the render thread chose for it (bits 20-31): bit i set where its depth lies nearer than its kind's i-th detail
+/// threshold (CP/frame/Selectors.hpp's details: the renders' `d < 460`, `d < win_d`, ...), compared in double as the
+/// port compares them. A shader takes an item's detail from here and never recomputes it from a float depth, which
+/// can fall on the other side of a threshold. RANK_NONE: the item is not drawn this frame (no drawn item's first slot
+/// is the last, so no entry is it).
 static const uint RANK_NONE = 0xFFFFFFFFu;
-static const uint RANK_SLOT_BITS = 0x00FFFFFFu;
-static const uint RANK_BAND_SHIFT = 30u;
+static const uint RANK_SLOT_BITS = 0x000FFFFFu;
+static const uint RANK_DETAIL_SHIFT = 20u;
 
-/// The entry of an item drawn from painter slot `slot` (below PAINTER_SLOTS) in detail band `band` (0 to 3).
-inline uint rank_entry(uint slot, uint band) {
-    return slot | (band << RANK_BAND_SHIFT);
+/// The entry of an item drawn from painter slot `slot` (below PAINTER_SLOTS - 1) with detail `detail` (12 bits).
+inline uint rank_entry(uint slot, uint detail) {
+    return slot | (detail << RANK_DETAIL_SHIFT);
 }
 
 /// An entry's first painter slot.
@@ -82,7 +84,7 @@ inline uint rank_slot(uint entry) {
     return entry & RANK_SLOT_BITS;
 }
 
-/// An entry's detail band.
-inline uint rank_band(uint entry) {
-    return entry >> RANK_BAND_SHIFT;
+/// An entry's detail: bit i where its item lies nearer than its kind's i-th detail threshold.
+inline uint rank_detail(uint entry) {
+    return entry >> RANK_DETAIL_SHIFT;
 }

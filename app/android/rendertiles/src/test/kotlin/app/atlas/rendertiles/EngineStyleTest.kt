@@ -107,6 +107,29 @@ class EngineStyleTest {
                 """V3(-uz, 0.0, ux), ${value("canal_names.size")}, "${value("canal_names.fill")}", ${value("canal_names.opacity")}, """ +
                     """${value("canal_names.weight")}, ${value("canal_names.spacing")})""",
             ),
+            Triple(
+                listOf("windows.glass_top", "windows.glass_bottom", "windows.glass_overcast_top", "windows.glass_overcast_bottom"), amsterdam,
+                """if (truthy(th["sky_k"])) "${value("windows.glass_overcast_top")}" to "${value("windows.glass_overcast_bottom")}" """ +
+                    """else "${value("windows.glass_top")}" to "${value("windows.glass_bottom")}"""",
+            ),
+            Triple(
+                listOf("windows.lit_top", "windows.lit_bottom"), amsterdam,
+                """id=\"glassLit\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\"><stop offset=\"0\" stop-color=\"${value("windows.lit_top")}\"/>""" +
+                    """<stop offset=\"1\" stop-color=\"${value("windows.lit_bottom")}\"/>""",
+            ),
+            Triple(
+                listOf("windows.dark_day", "windows.dark_night", "windows.lit"), amsterdam,
+                """gd = if (!night) "${value("windows.dark_day")}" else "${value("windows.dark_night")}"; gl = "${value("windows.lit")}"""",
+            ),
+            Triple(
+                listOf("windows.warehouse_day", "windows.warehouse_night"), amsterdam,
+                """gd = if (!night) "${value("windows.warehouse_day")}" else "${value("windows.warehouse_night")}"; gl = gd""",
+            ),
+            Triple(
+                listOf("windows.frame_day", "windows.frame_night"), amsterdam,
+                """var fr = if (!night) "${value("windows.frame_day")}" else "${value("windows.frame_night")}"""",
+            ),
+            Triple(listOf("windows.frame_width"), amsterdam, """pmax(dd, 1.0)) else ${value("windows.frame_width")}"""),
         )
         for ((paths, file, text) in literals) {
             if (paths.any { it in DIFFERENCES || it.substringBefore('.') in DIFFERENCES }) continue

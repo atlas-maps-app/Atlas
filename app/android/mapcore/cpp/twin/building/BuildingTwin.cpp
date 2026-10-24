@@ -186,13 +186,7 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
                 if (amount > 0.0F && (f.flags & shaders::BUILDING_FACE_DAY) == 0U) ++sunlit_;
                 const std::uint32_t argb =
                     argb_of(shaders::building_colour(light_of(p.face, true), light_of(p.face, false), amount));
-                if (items_[p.item] == none) {
-                    // an area by its id, as the likeness harness keys the port's owners (AnchorCompiler.osmOwner)
-                    const std::uint8_t owner = b.owners[p.item];
-                    items_[p.item] = out_.item(
-                        {.owner = Owner::area, .id = b.ids[p.item], .kind = (owner & 1U) != 0 ? "part" : "building"});
-                }
-                out_.at(s.slot, group_, items_[p.item]);
+                out_.at(s.slot, group_, item_of(b, p.item));
                 points_.clear();
                 if (ring < b.rings.size()) {
                     const passes::BuildingRing& r = b.rings[ring];
@@ -217,6 +211,115 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
     emit_list(List::edged, b.prims_at, b.edged_first);
     emit_list(List::cells, b.cells_at, b.cells_first);
     emit_list(List::plain, b.prims_at + (b.edged * shaders::BUILDING_PRIM_VECTORS), b.plain_first);
+    windows(b, rows, words, place, cells, sun);
+}
+
+std::int32_t BuildingTwin::item_of(const passes::BuildingTile& b, std::uint32_t item) {
+    if (items_[item] == none) {
+        // an area by its id, as the likeness harness keys the port's owners (AnchorCompiler.osmOwner)
+        const std::uint8_t owner = b.owners[item];
+        items_[item] =
+            out_.item({.owner = Owner::area, .id = b.ids[item], .kind = (owner & 1U) != 0 ? "part" : "building"});
+    }
+    return items_[item];
+}
+
+void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::uint32_t> rows,
+                           std::span<const std::byte> words, const shaders::TilePlace& place, std::uint64_t cells,
+                           const SunTexels& sun) {
+    if (b.window_walls == 0) return;
+    const shaders::FrameCamera& cam = block_.camera;
+    const std::uint32_t theme_flags = block_.theme.flags.x;
+    const bool night = (theme_flags & shaders::THEME_NIGHT) != 0U;
+    const shaders::FrameWindows& paints = block_.windows;
+    const float width = shaders::building_window_frame_width(paints);
+    const hlsl::float3 frame = shaders::building_window_frame(paints, theme_flags);
+    const auto lit_at = [&](std::uint32_t sample) {
+        return !night && sun.has && sample / 64 < sun.now.size() && ((sun.now[sample / 64] >> (sample % 64)) & 1U) != 0;
+    };
+    runs_.clear();
+    passes::building_runs(cells, b.windows_first, runs_);
+    for (const passes::BuildingRun& run : runs_) {
+        for (std::uint32_t i = run.first; i < run.end; ++i) {
+            const shaders::BuildingWindowWall w = shaders::building_window_wall(word4(words, b.windows_at + i));
+            const std::size_t at = b.prims_at + (std::size_t{w.wall} * shaders::BUILDING_PRIM_VECTORS);
+            const shaders::BuildingPrim wall = shaders::building_prim(word4(words, at), word4(words, at + 1),
+                                                                      word4(words, at + 2), word4(words, at + 3));
+            const shaders::BuildingFace f = shaders::building_face(word4(words, b.faces_at + (wall.face * 2)),
+                                                                   word4(words, b.faces_at + (wall.face * 2) + 1));
+            if (wall.item >= rows.size()) continue;
+            const std::uint32_t row = rows[wall.item];
+            const std::uint32_t rank = row < ranks_.size() ? ranks_[row] : shaders::RANK_NONE;
+            if (!shaders::building_windows_drawn(theme_flags, place, w, f, rank)) continue;
+            // the wall's windows, each as the frame draws it, by their sample's bit dark or lit
+            windows_[0].clear();
+            windows_[1].clear();
+            for (std::uint32_t r = shaders::building_windows_first_row(theme_flags, w); r < w.levels; ++r) {
+                for (std::uint32_t c = 0; c < w.cols; ++c) {
+                    const shaders::BuildingWindowShape s = shaders::building_window_shape(
+                        cam, place, shaders::building_window_prim(wall, f.normal, w, r, c));
+                    if (s.count == 0) continue;
+                    const bool lit = lit_at(sun.windows_from + w.first + (r * w.cols) + c);
+                    windows_[lit ? 1 : 0].push_back(s);
+                }
+            }
+            const bool near = (shaders::rank_detail(rank) & shaders::BUILDING_DETAIL_NEAR) != 0U;
+            const std::uint32_t slot = shaders::rank_slot(rank) + (near ? w.near_slot : w.far_slot);
+            const hlsl::float4 plane = shaders::building_window_plane(cam, place, f);
+            for (const bool lit : {false, true}) {
+                const std::vector<shaders::BuildingWindowShape>& drawn = windows_[lit ? 1 : 0];
+                if (drawn.empty()) continue;
+                // one path, a closed subpath a window, and its box from top to bottom (the gradient's)
+                points_.clear();
+                subpaths_.clear();
+                float top = 0.0F;
+                float bottom = 0.0F;
+                for (const shaders::BuildingWindowShape& s : drawn) {
+                    for (std::uint32_t k = 0; k < s.count; ++k) {
+                        const hlsl::float2 v = shaders::building_window_corner(s, k);
+                        top = points_.empty() || v.y < top ? v.y : top;
+                        bottom = points_.empty() || v.y > bottom ? v.y : bottom;
+                        points_.push_back({.x = v.x, .y = v.y});
+                    }
+                }
+                std::size_t first = 0;
+                for (const shaders::BuildingWindowShape& s : drawn) {
+                    subpaths_.push_back(
+                        {.points = std::span<const Point>(points_).subspan(first, s.count), .closed = true});
+                    first += s.count;
+                }
+                const shaders::BuildingGlass glass =
+                    shaders::building_glass(paints, theme_flags, w.style, w.flags, lit);
+                Style style{};
+                if (glass.gradient) {
+                    // the lit glass's gradient but where a Paris front's lit panes take the dark ones'
+                    const bool lit_gradient = lit && (w.style != shaders::BUILDING_WINDOW_PARIS || night);
+                    style.fill = Paint::gradient(lit_gradient ? gradients_.lit : gradients_.glass);
+                } else {
+                    style.fill = Paint::colour(argb_of(glass.top));
+                }
+                style.join = Join::round;
+                style.stroke = Paint::colour(argb_of(frame));
+                style.stroke_width = width;
+                out_.at(slot + (lit ? 1U : 0U), group_, item_of(b, wall.item));
+                out_.path(style, subpaths_);
+                if (lit) ++sunlit_;
+                if (depths_ != nullptr) {
+                    ElementDepth d{.edged = true, .tile = tile_};
+                    d.windows.push_back({.windows = drawn,
+                                         .slot = slot + (lit ? 1U : 0U),
+                                         .plane = plane,
+                                         .half = 0.5F * width,
+                                         .frame = frame,
+                                         .glass = glass,
+                                         .top = top,
+                                         .bottom = bottom});
+                    depths_->push_back(std::move(d));
+                }
+                ++elements_;
+            }
+        }
+    }
 }
 
 } // namespace atlas::twin

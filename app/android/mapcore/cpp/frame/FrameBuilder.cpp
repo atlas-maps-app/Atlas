@@ -15,6 +15,7 @@
 #include "view/Snap.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <cstring>
 #include <format>
@@ -81,6 +82,17 @@ using clock = std::chrono::steady_clock;
             .roof_night = unit(e.roof.night),
             .cabin = unit(e.cabin),
             .widths = {e.roof_slope, e.roof_top, e.cabin_width, e.wall}};
+}
+
+/// The windows' colours and their frames' width in `pack`'s style (none without a pack: nothing draws them).
+[[nodiscard]] shaders::FrameWindows windows_of(const scene::ResidentPack* pack) noexcept {
+    const tiles::Style* style = pack != nullptr && pack->source ? pack->source->pack.style() : nullptr;
+    if (style == nullptr) return {};
+    const tiles::WindowsStyle& w = style->windows;
+    return {.glass = {w.glass[0], w.glass[1], w.glass_overcast[0], w.glass_overcast[1]},
+            .lit = {w.lit_glass[0], w.lit_glass[1], w.lit, std::bit_cast<std::uint32_t>(w.frame_width)},
+            .dark = {w.dark.day, w.dark.night, w.warehouse.day, w.warehouse.night},
+            .frame = {w.frame.day, w.frame.night, 0U, 0U}};
 }
 
 } // namespace
@@ -386,6 +398,7 @@ void FrameBuilder::stage_f() {
     state_.coarser_pack = ours ? scene->coarser_pack() : nullptr;
     // the strokes of the active pack's style (a coarser pack around it is made with the same style file)
     state_.block.strokes = strokes_of(state_.active_pack);
+    state_.block.windows = windows_of(state_.active_pack);
     // Set 1's globals that no pass owns: each provider brings its bindings up to date (frame/Globals.hpp), and says
     // which effects its resources allow (FRAME_FIELDS: in full mode alone).
     if (scene != nullptr) {

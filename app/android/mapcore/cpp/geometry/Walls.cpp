@@ -60,6 +60,9 @@ struct Slots {
     std::uint8_t tag_building;
     std::uint8_t tag_part;
     std::uint8_t tag_direction;
+    std::uint8_t levels;
+    std::uint8_t mat_draw;
+    std::uint8_t no_win;
 };
 
 template <class Columns>
@@ -76,7 +79,10 @@ consteval Slots slots_in(const Columns& c) {
             tl::slot_of(c, "flags"),
             tl::slot_of(c, "tag:building"),
             tl::slot_of(c, "tag:building:part"),
-            tl::slot_of(c, "tag:roof:direction")};
+            tl::slot_of(c, "tag:roof:direction"),
+            tl::slot_of(c, "levels"),
+            tl::slot_of(c, "mat_draw"),
+            tl::slot_of(c, "no_win")};
 }
 
 constexpr Slots record_slots = slots_in(tl::building::columns);
@@ -99,6 +105,11 @@ constexpr Slots variant_slots = slots_in(tl::variant::columns);
     v.direction = l.string(s.tag_direction, i);
     v.hidden = l.boolean(s.hidden, i).value_or(false);
     v.flags = static_cast<std::uint64_t>(l.integer(s.flags, i));
+    const std::optional<std::int64_t> levels = l.nullable_integer(s.levels, i);
+    v.has_levels = levels.has_value();
+    v.levels = levels.value_or(0);
+    v.mat_draw = l.string(s.mat_draw, i);
+    v.no_win = l.boolean(s.no_win, i).value_or(false);
     return v;
 }
 
@@ -123,20 +134,28 @@ void ring_at(const tl::RingView& ring, std::uint8_t level, const tl::Frame& fram
 
 constexpr std::array<std::string_view, 5> pitched = {"gabled", "pyramidal", "hipped", "skillion", "mansard"};
 
+/// The wall materials of a Paris stone front (WIN_STYLE's tall French windows).
+constexpr std::array<std::string_view, 4> paris_fronts = {"limestone", "plaster", "stone", "sandstone"};
+
 template <std::size_t N>
 [[nodiscard]] bool in_set(const std::optional<std::string_view>& v,
                           const std::array<std::string_view, N>& set) noexcept {
     return v.has_value() && std::ranges::find(set, *v) != set.end();
 }
 
-/// One building's primitives as they were made, before the tile's layout by cells.
+/// One building's primitives and windowed walls as they were made, before the tile's layout by cells.
 struct Made {
     std::uint8_t cell = 0;
     std::size_t edged_first = 0;
     std::size_t edged_end = 0;
     std::size_t plain_first = 0;
     std::size_t plain_end = 0;
+    std::size_t windows_first = 0;
+    std::size_t windows_end = 0;
 };
+
+/// A count kept within a record's 16 bits.
+[[nodiscard]] std::uint16_t u16(int v) noexcept { return static_cast<std::uint16_t>(std::clamp(v, 0, 0xFFFF)); }
 
 } // namespace
 
@@ -264,12 +283,30 @@ std::uint16_t Builder::slot(std::uint32_t value) noexcept {
     return static_cast<std::uint16_t>(value);
 }
 
+int window_cols(double elen, WindowStyle style) noexcept {
+    const double bay = style == WindowStyle::paris ? 2.9 : (style == WindowStyle::modern ? 3.4 : 2.1);
+    return std::max(1, kt_int(elen / bay));
+}
+
 void walls(Builder& b, const Building& bl, std::uint16_t variant) {
-    // render/amsterdam.py's _draw_building: per footprint edge of 0.3 m or more, its cells and the skillion's wall
+    // render/amsterdam.py's _draw_building: per footprint edge of 0.3 m or more, its cells, the skillion's wall and the
+    // wall's windows
     const std::span<const V2> poly = bl.poly;
     const std::size_t n = poly.size();
     const double y0 = bl.y0;
     const double wall_top = bl.wall_top;
+    // K8's windowed walls (sun/Samples.cpp): not a part (but a church's), not a houseboat, not no_win, with levels
+    const std::uint64_t flags = bl.v.flags;
+    const bool church = (flags & tl::building::flag_church) != 0;
+    const bool modern = (flags & tl::building::flag_modern) != 0;
+    const bool windowed = (!bl.v.part_tag || church) && !is(bl.v.btype, "houseboat") && !bl.v.no_win && bl.v.has_levels;
+    const WindowStyle style = b.paris && !modern && in_set(bl.v.mat_draw, paris_fronts)
+                                  ? WindowStyle::paris
+                                  : (modern ? WindowStyle::modern : WindowStyle::plain);
+    const auto window_flags =
+        static_cast<std::uint8_t>(((flags & tl::building::flag_shop_floor) != 0 ? window_flag::shop_floor : 0U) |
+                                  ((flags & tl::building::flag_warehouse) != 0 ? window_flag::warehouse : 0U) |
+                                  (church ? window_flag::church : 0U));
     for (std::size_t i = 0; i < n; ++i) {
         const V2 a = poly[i];
         const V2 bb = poly[(i + 1) % n];
@@ -287,6 +324,7 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
                                            .facing = true});
         // K8's samples of the edge: the wall as one cell, then its ncol × nrow cells when they are not one
         const std::uint32_t one = b.sample++;
+        const auto wall = static_cast<std::uint32_t>(b.out.edged.size()); // its one-cell primitive, in either variant
         const int ncol = std::max(1, kt_int(elen / 9));
         const int nrow = std::max(1, std::min(3, kt_int((wall_top - y0) / 7)));
         const auto cell = [&](int r, int nr, int c, int nc) {
@@ -323,6 +361,26 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
                 b.edged(q, PrimKind::skillion_wall, static_cast<std::uint16_t>(variant | prim_flag::any), face,
                         b.sample++, Builder::slot(b.near_slot++), Builder::slot(b.far_slot++),
                         {.edge = edge, .part = 0});
+            }
+        }
+        // its windows: a row per level (the shop floor's too), bays by its length; their slots after its cells, in
+        // both variants (a view's win_d can reach past the cells' 460 m)
+        if (windowed && elen > 2.2) {
+            const int lv = static_cast<int>(bl.v.levels); // Kotlin's Long.toInt()
+            const int cols = window_cols(elen, style);
+            if (lv > 0) {
+                b.out.window_walls.push_back({.wall = wall,
+                                              .first = b.windows,
+                                              .levels = u16(lv),
+                                              .cols = u16(cols),
+                                              .near_slot = Builder::slot(b.near_slot),
+                                              .far_slot = Builder::slot(b.far_slot),
+                                              .cell = b.cell,
+                                              .style = style,
+                                              .flags = window_flags});
+                b.windows += static_cast<std::uint32_t>(lv) * static_cast<std::uint32_t>(cols);
+                b.near_slot += window_slots;
+                b.far_slot += window_slots;
             }
         }
     }
@@ -363,6 +421,7 @@ TileBuildings build_buildings(const BuildingInput& in) {
     }
     TileBuildings made; // the primitives in the samples' order, laid out by cells below
     Builder b(made);
+    b.paris = in.region.paris;
     std::vector<Made> spans;
     std::vector<std::uint32_t> kept;
     Building bl;
@@ -380,7 +439,10 @@ TileBuildings build_buildings(const BuildingInput& in) {
             if (bl.v.hidden && source == Source::building) continue;
             if (!bl.v.has_h || bl.poly.empty()) continue;
             bl.source = source;
-            Made m{.cell = cell_of[i], .edged_first = made.edged.size(), .plain_first = made.plain.size()};
+            Made m{.cell = cell_of[i],
+                   .edged_first = made.edged.size(),
+                   .plain_first = made.plain.size(),
+                   .windows_first = made.window_walls.size()};
             b.cell = m.cell;
             b.item = static_cast<std::uint32_t>(made.items.size());
             b.near_slot = 0;
@@ -459,6 +521,7 @@ TileBuildings build_buildings(const BuildingInput& in) {
             item.spec.owner = scene::owner_key(owner_area, static_cast<std::uint64_t>(item.id));
             m.edged_end = made.edged.size();
             m.plain_end = made.plain.size();
+            m.windows_end = made.window_walls.size();
             // the sphere about the sort point that holds every corner it draws
             double r2 = 0.0;
             const auto reach = [&](const Prim& p) {
@@ -477,31 +540,46 @@ TileBuildings build_buildings(const BuildingInput& in) {
         }
     }
     out.samples = b.sample;
+    out.windows = b.windows;
     out.faces = std::move(made.faces);
     out.items = std::move(made.items);
-    // the primitives by cell: each cell's buildings, then its parts, in the layers' order (the layers are sorted so)
+    // the primitives by cell: each cell's buildings, then its parts, in the layers' order (the layers are sorted so);
+    // the windowed walls with them, each naming its wall's new place
     std::vector<std::size_t> order(spans.size());
     for (std::size_t k = 0; k < order.size(); ++k) order[k] = k;
     std::ranges::stable_sort(order, [&](std::size_t a, std::size_t c) { return spans[a].cell < spans[c].cell; });
     out.edged_first.assign(cells + 1, 0);
     out.plain_first.assign(cells + 1, 0);
+    out.window_walls_first.assign(cells + 1, 0);
     out.edged.reserve(made.edged.size());
     out.plain.reserve(made.plain.size());
-    std::vector<std::uint32_t> moved(made.plain.size(), 0); // a plain primitive's new place
+    out.window_walls.reserve(made.window_walls.size());
+    std::vector<std::uint32_t> moved(made.plain.size(), 0);       // a plain primitive's new place
+    std::vector<std::uint32_t> edged_moved(made.edged.size(), 0); // an edged one's
     for (const std::size_t k : order) {
         const Made& m = spans[k];
-        for (std::size_t e = m.edged_first; e < m.edged_end; ++e) out.edged.push_back(made.edged[e]);
+        for (std::size_t e = m.edged_first; e < m.edged_end; ++e) {
+            edged_moved[e] = static_cast<std::uint32_t>(out.edged.size());
+            out.edged.push_back(made.edged[e]);
+        }
         for (std::size_t p = m.plain_first; p < m.plain_end; ++p) {
             moved[p] = static_cast<std::uint32_t>(out.plain.size());
             out.plain.push_back(made.plain[p]);
         }
+        for (std::size_t w = m.windows_first; w < m.windows_end; ++w) {
+            WindowWall ww = made.window_walls[w];
+            ww.wall = edged_moved[ww.wall];
+            out.window_walls.push_back(ww);
+        }
         out.edged_first[std::size_t{m.cell} + 1] = static_cast<std::uint32_t>(out.edged.size());
         out.plain_first[std::size_t{m.cell} + 1] = static_cast<std::uint32_t>(out.plain.size());
+        out.window_walls_first[std::size_t{m.cell} + 1] = static_cast<std::uint32_t>(out.window_walls.size());
     }
     // cells with nothing take the end of the cell before them
     for (std::size_t c = 1; c <= cells; ++c) {
         out.edged_first[c] = std::max(out.edged_first[c], out.edged_first[c - 1]);
         out.plain_first[c] = std::max(out.plain_first[c], out.plain_first[c - 1]);
+        out.window_walls_first[c] = std::max(out.window_walls_first[c], out.window_walls_first[c - 1]);
     }
     out.polygons = std::move(made.polygons);
     for (Polygon& p : out.polygons) {

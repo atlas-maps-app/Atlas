@@ -7,8 +7,8 @@
 // A primitive is one polygon the port fills with face() (geometry/Walls.hpp): a wall's cell, the wall up to a skillion
 // slope, a houseboat's wall, a roof's face, or one triangle of an n-gon. Per frame the vertex stage decides it as the
 // port does at that camera:
-//   - its building's item is drawn (the rank table's entry), in the variant of its detail band (cells nearer than
-//     460 m: band 0, the band the ranks chose in double), and a houseboat as a boat only with weather;
+//   - its building's item is drawn (the rank table's entry), in the variant of its detail (cells nearer than 460 m:
+//     the detail's near bit, which the ranks chose in double), and a houseboat as a boat only with weather;
 //   - its face turns to the eye: vdot(n, C - p) > 0 at the port's test point (a deck is drawn from either side);
 //   - its corners are clipped at the near plane as City.Camera.poly clips them (t = (near - a.z) / (b.z - a.z)),
 //     projected as Camera.pc projects them, kept only if their box reaches within 300 px of the frame
@@ -31,7 +31,7 @@
 #pragma once
 
 // The primitive's flags (geometry/Walls.hpp's prim_flag).
-static const uint BUILDING_NEAR = 1u;     // drawn when its building is in detail band 0 (nearer than 460 m)
+static const uint BUILDING_NEAR = 1u;     // drawn when its building is nearer than 460 m (BUILDING_DETAIL_NEAR)
 static const uint BUILDING_FAR = 2u;      // drawn in the bands beyond
 static const uint BUILDING_WEATHER = 4u;  // drawn only when the moment has weather (a houseboat as a boat)
 static const uint BUILDING_DRY = 8u;      // drawn only without weather (a houseboat as a building)
@@ -93,6 +93,15 @@ struct BuildingPush {
     uint4 sun; // x: the tile's first sun texel (BUILDING_NO_BITS: none yet); y: its fade weight's bits; z: its edged
                // list's first primitive (a near cell's wall); w: the draw's list is near cells (1) or primitives (0)
 };
+
+/// The buildings' detail bits (painter.slang's rank_detail; Buildings::select's detail thresholds, in this order):
+/// nearer than the cells' 460 m (their near variant), than the view's win_d (windows), than 520 m (a church's own
+/// windows), than 160 m (deep windows: a reveal, the glass set back, a sill), than 140 m (sash bars).
+static const uint BUILDING_DETAIL_NEAR = 1u;
+static const uint BUILDING_DETAIL_WINDOWS = 2u;
+static const uint BUILDING_DETAIL_CHURCH = 4u;
+static const uint BUILDING_DETAIL_DEEP = 8u;
+static const uint BUILDING_DETAIL_SASH = 16u;
 
 /// A primitive as the walls heap holds it.
 struct BuildingPrim {
@@ -320,7 +329,7 @@ inline BuildingShape building_shape(FrameCamera cam, uint theme_flags, TilePlace
     if (rank == RANK_NONE) {
         return s;
     }
-    bool near = rank_band(rank) == 0u;
+    bool near = (rank_detail(rank) & BUILDING_DETAIL_NEAR) != 0u;
     if ((p.flags & (near ? BUILDING_NEAR : BUILDING_FAR)) == 0u) {
         return s;
     }
@@ -733,15 +742,15 @@ inline float2 building_unit(float2 v) {
     return u;
 }
 
-/// Point v (0 to 15) of the outline of shape s dilated by r CSS px with round joins: the Minkowski sum of its polygon and
-/// a disc, which is what a same-colour stroke of width 2r with round joins adds to a fill. The polygon's distinct
-/// corners share the 16 points (16 / count each, the rest repeating the last); a corner turning by phi from its incoming
-/// edge's outward normal to its outgoing edge's takes its points at phi (2k + 1) / (2 per) along the arc, at the radius
-/// 2r / (1 + cos(phi / (2 per))), which puts the chords between them, and the straight parts along the edges, within
-/// r tan²(phi / (4 per)) of the true outline on either side (0.016 px at S1 for a needle's corner, 0.004 px for a right
-/// angle, at 4 a corner). A polygon that snapping made flat (collinear corners) is the segment between its two farthest
-/// corners, its outline a capsule.
-inline float2 building_outline(BuildingShape s, uint v, float r) {
+/// Point v (0 to points - 1) of the outline of shape s dilated by r CSS px with round joins: the Minkowski sum of its
+/// polygon and a disc, which is what a same-colour stroke of width 2r with round joins adds to a fill. The polygon's
+/// distinct corners share the points (points / count each, the rest repeating the last); a corner turning by phi from
+/// its incoming edge's outward normal to its outgoing edge's takes its points at phi (2k + 1) / (2 per) along the arc,
+/// at the radius 2r / (1 + cos(phi / (2 per))), which puts the chords between them, and the straight parts along the
+/// edges, within r tan²(phi / (4 per)) of the true outline on either side (for a cell's 0.15 px at S1 0.016 px at a
+/// needle's corner, 0.004 px at a right angle, 4 points a corner). A polygon that snapping made flat (collinear
+/// corners) is the segment between its two farthest corners, its outline a capsule.
+inline float2 building_outline_points(BuildingShape s, uint v, float r, uint points) {
     // the distinct corners, in order
     float2 zero = {0.0f, 0.0f};
     float2 u[5] = {zero, zero, zero, zero, zero};
@@ -787,7 +796,7 @@ inline float2 building_outline(BuildingShape s, uint v, float r) {
         u[1] = b0;
         m = 2u;
     }
-    uint per = BUILDING_EDGED_VERTICES / m;
+    uint per = points / m;
     uint j = v / per;
     uint k = v - j * per;
     if (j >= m) {
@@ -827,6 +836,12 @@ inline float2 building_outline(BuildingShape s, uint v, float r) {
     float2 d = building_turn(n_in, step * (float(k) + 0.5f));
     float2 o = {at.x + rr * d.x, at.y + rr * d.y};
     return o;
+}
+
+/// Point v (0 to 15) of an edged shape's outline dilated by r (building_outline_points' of 16 points: the vertex stage's
+/// 16 a primitive).
+inline float2 building_outline(BuildingShape s, uint v, float r) {
+    return building_outline_points(s, v, r, BUILDING_EDGED_VERTICES);
 }
 
 /// How lit a face draws (0 unlit, 1 lit): by its sample's sun bit, cross-faded while its tile's bits change (K8's

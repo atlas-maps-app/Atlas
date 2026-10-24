@@ -35,6 +35,7 @@ inline float building_atan2(float y, float x) {
 }
 
 #include "building/building.slangh"
+#include "building/windows.slangh"
 #include "fx/strokes.slang"
 
 [[vk::binding(0, 0)]] ConstantBuffer<FrameBlock> frame;
@@ -46,6 +47,13 @@ inline float building_atan2(float y, float x) {
 [[vk::binding(0, 2)]] StructuredBuffer<uint4> stroke_jobs;
 [[vk::binding(1, 2)]] StructuredBuffer<uint4> stroke_records;
 [[vk::binding(2, 2)]] RWStructuredBuffer<uint4> stroke_records_out;
+// The windows' set (passes/Windows.cpp), set 2 of their own pipelines: this frame slot's jobs, its windows' records and
+// its windowed walls' records, as the compute stage writes them and as the vertex stages read them (one buffer each).
+[[vk::binding(3, 2)]] StructuredBuffer<uint4> window_jobs;
+[[vk::binding(4, 2)]] RWStructuredBuffer<uint4> window_records_out;
+[[vk::binding(5, 2)]] StructuredBuffer<uint4> window_records;
+[[vk::binding(6, 2)]] RWStructuredBuffer<uint4> window_walls_out;
+[[vk::binding(7, 2)]] StructuredBuffer<uint4> window_walls;
 [[vk::push_constant]] ConstantBuffer<BuildingPush> push;
 
 struct BuildingOut {
@@ -230,9 +238,186 @@ StrokeVertex roof_strokes_vs(uint vertex : SV_VulkanVertexID) {
     return o;
 }
 
+/// A window job (Buildings::update): a tile's push constants (4 uint4: its place; at x its windowed walls, y its faces, z
+/// its edged primitives, w its rows; sun x its first sun texel, y its fade weight's bits, z its window group's first
+/// sample, w 0), then its run (its first windowed wall in the tile's list, how many,
+/// at most 64, its first wall record, 0) and each of its walls' first window record, four a uint4.
+static const uint WINDOW_JOB_VECTORS = 21u;
+
+/// Each windowed wall of a job's run, decided once for the frame: each of its windows into its record (at the job's
+/// records, in the wall's order), and the wall into its own (its plane, its dark and lit windows' boxes).
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
+    uint job = group.y * STROKE_JOB_ROW + group.x;
+    if (job >= push.at.x) {
+        return;
+    }
+    uint at = job * WINDOW_JOB_VECTORS;
+    uint4 span = window_jobs[at + 4u];
+    if (thread.x >= span.y) {
+        return;
+    }
+    BuildingPush p;
+    p.place.offset = asfloat(window_jobs[at]);
+    p.place.scale = asfloat(window_jobs[at + 1u]);
+    p.at = window_jobs[at + 2u];
+    p.sun = window_jobs[at + 3u];
+    BuildingWindowWall w = building_window_wall(walls_heap[p.at.x + span.x + thread.x]);
+    BuildingPrim wall = prim_at(p.at.z + w.wall * BUILDING_PRIM_VECTORS);
+    uint fa = p.at.y + wall.face * BUILDING_FACE_VECTORS;
+    BuildingFace f = building_face(walls_heap[fa], walls_heap[fa + 1u]);
+    uint4 rows = walls_heap[p.at.w + wall.item / 4u];
+    uint rank = rank_table[rows[wall.item % 4u]];
+    uint theme_flags = frame.theme.flags.x;
+    bool drawn = building_windows_drawn(theme_flags, p.place, w, f, rank);
+    uint first_row = building_windows_first_row(theme_flags, w);
+    bool near = rank != RANK_NONE && (rank_detail(rank) & BUILDING_DETAIL_NEAR) != 0u;
+    uint slot = (rank != RANK_NONE ? rank_slot(rank) : 0u) + (near ? w.near_slot : w.far_slot);
+    bool sun = p.sun.x != BUILDING_NO_BITS && (theme_flags & THEME_NIGHT) == 0u;
+    float infinity = asfloat(0x7F800000u);
+    float2 dark = {infinity, -infinity};
+    float2 lit = {infinity, -infinity};
+    uint wall_record = span.z + thread.x;
+    uint count = w.levels * w.cols;
+    uint4 firsts = window_jobs[at + 5u + thread.x / 4u];
+    uint first = firsts[thread.x % 4u];
+    for (uint k = 0u; k < count; ++k) {
+        uint r = k / w.cols;
+        uint c = k - r * w.cols;
+        BuildingWindowShape s = building_window_nothing();
+        bool on = false;
+        if (drawn && r >= first_row) {
+            s = building_window_shape(frame.camera, p.place, building_window_prim(wall, f.normal, w, r, c));
+            if (sun) {
+                uint sample = p.sun.z + w.first + k;
+                uint2 texel = sun_bits[p.sun.x + sample / 32u];
+                on = ((texel.x >> (sample & 31u)) & 1u) != 0u;
+            }
+            for (uint i = 0u; i < s.count; ++i) {
+                float y = building_window_corner(s, i).y;
+                if (on) {
+                    lit.x = min(lit.x, y);
+                    lit.y = max(lit.y, y);
+                } else {
+                    dark.x = min(dark.x, y);
+                    dark.y = max(dark.y, y);
+                }
+            }
+        }
+        BuildingWindowRecord record = building_window_record(s, on, w, wall_record, slot + (on ? 1u : 0u));
+        uint out_at = (first + k) * BUILDING_WINDOW_RECORD_VECTORS;
+        window_records_out[out_at] = record.v0;
+        window_records_out[out_at + 1u] = record.v1;
+        window_records_out[out_at + 2u] = record.v2;
+        window_records_out[out_at + 3u] = record.v3;
+    }
+    float4 plane = building_window_plane(frame.camera, p.place, f);
+    uint4 plane_words = {asuint(plane.x), asuint(plane.y), asuint(plane.z), asuint(plane.w)};
+    uint4 boxes = {asuint(dark.x), asuint(dark.y), asuint(lit.x), asuint(lit.y)};
+    window_walls_out[wall_record * BUILDING_WALL_RECORD_VECTORS] = plane_words;
+    window_walls_out[wall_record * BUILDING_WALL_RECORD_VECTORS + 1u] = boxes;
+}
+
+/// The window record `index` of the frame's.
+BuildingWindowRecord window_record_at(uint index) {
+    uint at = index * BUILDING_WINDOW_RECORD_VECTORS;
+    BuildingWindowRecord r;
+    r.v0 = window_records[at];
+    r.v1 = window_records[at + 1u];
+    r.v2 = window_records[at + 2u];
+    r.v3 = window_records[at + 3u];
+    return r;
+}
+
+/// A window's shape on its wall's plane with its lead and painter slot (the depth building_depth gives its points).
+BuildingShape window_shape_of(BuildingWindowRecord r, BuildingWindowShape s, float lead) {
+    uint at = r.v0.y * BUILDING_WALL_RECORD_VECTORS;
+    BuildingWallRecord wall = building_wall_record_of(window_walls[at], window_walls[at + 1u]);
+    BuildingShape shape = building_window_as_shape(s, wall.plane, lead);
+    shape.slot = r.v0.z;
+    shape.depth = painter_depth(frame.camera, r.v0.z);
+    return shape;
+}
+
+/// Vertex `vertex` of the windows' frames: record vertex / 60's band between its outline dilated by the frames' half
+/// width (round joins) and its glass, in the frames' colour, on its wall's plane a lead over the glass.
+[shader("vertex")]
+BuildingOut window_frames_vs(uint vertex : SV_VulkanVertexID) {
+    uint index = vertex / BUILDING_WINDOW_FRAME_VERTICES;
+    BuildingWindowRecord r = window_record_at(index);
+    BuildingOut o;
+    BuildingWindowShape s = building_window_of(r);
+    if (s.count == 0u) {
+        o.position = NOWHERE;
+        o.colour = float3(0.0f);
+        return o;
+    }
+    BuildingShape shape = window_shape_of(r, s, BUILDING_WINDOW_LEAD);
+    float half = 0.5f * building_window_frame_width(frame.windows);
+    float2 css = building_window_frame_point(shape, s, vertex - index * BUILDING_WINDOW_FRAME_VERTICES, half);
+    float depth = building_depth(frame.camera, shape, building_plane_recip(frame.camera, shape, css));
+    o.position = clip_of(frame.camera, css, 1.0f, depth);
+    o.colour = building_window_frame(frame.windows, frame.theme.flags.x);
+    return o;
+}
+
+struct GlassOut {
+    float4 position : SV_Position;
+    /// rgb: the glass's colour at its box's top; a: the top (CSS y); and at its bottom (a flat glass: both the top's)
+    nointerpolation float4 top : GLASS_TOP;
+    nointerpolation float4 bottom : GLASS_BOTTOM;
+};
+
+/// Vertex `vertex` of the windows' glass: record vertex / 5's window eroded by the frames' half width (a fan from its
+/// first corner, the last repeated), on its wall's plane a lead over the wall's cells, with its glass's paint.
+[shader("vertex")]
+GlassOut window_glass_vs(uint vertex : SV_VulkanVertexID) {
+    uint index = vertex / BUILDING_WINDOW_GLASS_VERTICES;
+    BuildingWindowRecord r = window_record_at(index);
+    GlassOut o;
+    BuildingWindowShape s = building_window_of(r);
+    float half = 0.5f * building_window_frame_width(frame.windows);
+    if (s.count == 0u || !building_glass_drawn(s, half)) {
+        o.position = NOWHERE;
+        o.top = float4(0.0f);
+        o.bottom = float4(0.0f);
+        return o;
+    }
+    uint v = vertex - index * BUILDING_WINDOW_GLASS_VERTICES;
+    float2 css = building_glass_corner(s, v < s.count ? v : s.count - 1u, half);
+    BuildingShape shape = window_shape_of(r, s, BUILDING_GLASS_LEAD);
+    float depth = building_depth(frame.camera, shape, building_plane_recip(frame.camera, shape, css));
+    o.position = clip_of(frame.camera, css, 1.0f, depth);
+    bool lit = (r.v0.x & BUILDING_WINDOW_LIT) != 0u;
+    uint style = (r.v0.x >> BUILDING_WINDOW_RECORD_STYLE_SHIFT) & 3u;
+    uint flags = (r.v0.x & BUILDING_WINDOW_RECORD_WAREHOUSE) != 0u ? BUILDING_WINDOW_WAREHOUSE : 0u;
+    BuildingGlass g = building_glass(frame.windows, frame.theme.flags.x, style, flags, lit);
+    uint at = r.v0.y * BUILDING_WALL_RECORD_VECTORS;
+    BuildingWallRecord wall = building_wall_record_of(window_walls[at], window_walls[at + 1u]);
+    float2 box = lit ? wall.lit : wall.dark;
+    o.top = float4(g.top, box.x);
+    o.bottom = g.gradient ? float4(g.bottom, box.y) : float4(g.top, box.x);
+    return o;
+}
+
 struct BuildingTarget {
     [[vk::location(0)]] float4 colour : SV_Target0;
 };
+
+/// A window's glass: its gradient at the pixel's centre over its path's box (or its flat colour), with mat's grain.
+[shader("fragment")]
+BuildingTarget window_glass_fs(GlassOut v) {
+    BuildingTarget o;
+    BuildingGlass g;
+    g.top = v.top.xyz;
+    g.bottom = v.bottom.xyz;
+    g.gradient = v.bottom.w > v.top.w;
+    float y = css_of_output(frame.camera, v.position.xy).y;
+    float3 c = mat_colour(frame.camera, building_glass_at(g, v.top.w, v.bottom.w, y), v.position.xy, mat_on(frame));
+    o.colour = float4(c, 1.0f);
+    return o;
+}
 
 [shader("fragment")]
 BuildingTarget building_fs(BuildingOut v) {

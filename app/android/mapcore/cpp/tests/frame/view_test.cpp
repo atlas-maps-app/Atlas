@@ -258,6 +258,9 @@ TEST_CASE("ranks are the renders' stable sort by depth, kept by an insertion pas
     frame::Selectors selectors;
     const std::uint16_t kind = selectors.kind("building");
     selectors.set(kind, 300.0, 600.0, 1200.0);
+    // the detail, in its own order (not ascending)
+    const std::array<double, 3> details{600.0, 300.0, 1200.0};
+    selectors.set_details(kind, details);
     frame::Ranks ranks;
     std::uint64_t moves = 0;
     std::size_t full_sorts = 0;
@@ -278,15 +281,18 @@ TEST_CASE("ranks are the renders' stable sort by depth, kept by an insertion pas
         std::ranges::stable_sort(
             want, [&](std::uint32_t a, std::uint32_t b) { return -ranks.depth()[a] < -ranks.depth()[b]; });
         CHECK(std::ranges::equal(want, ranks.order()));
-        // Slots: the ground's first, then each item's, by its detail band; the rank table holds both.
+        // Slots: the ground's first, then each item's, by its band; the rank table holds them and its detail.
         std::uint32_t at = 100;
         for (const std::uint32_t row : ranks.order()) {
-            const std::size_t band = selectors.band(kind, ranks.depth()[row]);
+            const double d = ranks.depth()[row];
+            const std::size_t band = selectors.band(kind, d);
+            const std::uint32_t detail = (d < 600.0 ? 1U : 0U) | (d < 300.0 ? 2U : 0U) | (d < 1200.0 ? 4U : 0U);
             CHECK(ranks.first_slot()[row] == at);
             CHECK(ranks.band()[row] == band);
-            CHECK(ranks.table()[row] == shaders::rank_entry(at, static_cast<std::uint32_t>(band)));
+            CHECK(selectors.detail(kind, d) == detail);
+            CHECK(ranks.table()[row] == shaders::rank_entry(at, detail));
             CHECK(shaders::rank_slot(ranks.table()[row]) == at);
-            CHECK(shaders::rank_band(ranks.table()[row]) == band);
+            CHECK(shaders::rank_detail(ranks.table()[row]) == detail);
             at += items.slots(row, band);
         }
         CHECK(ranks.slots() == at);
@@ -332,7 +338,7 @@ TEST_CASE("ranks are the renders' stable sort by depth, kept by an insertion pas
     MESSAGE("a 1.4 m pan: " << ranks.moves() << " moves over " << common << " items drawn in both frames");
 }
 
-TEST_CASE("an item's detail band is the ranks' choice in double, which a float depth or threshold can miss") {
+TEST_CASE("an item's band and detail are the ranks' choice in double, which a float depth or threshold can miss") {
     // The camera looks north from 1,000 m south of the origin at street level: an item on the axis at z has depth
     // 1,000 − z. Two items lie just short of their kind's first threshold, where a float would put them past it: one
     // within a float step of 460 m (its depth rounds to 460.0f), one between win_d-like 412.3456789 m and that
@@ -342,6 +348,10 @@ TEST_CASE("an item's detail band is the ranks' choice in double, which a float d
     const std::uint16_t windows = selectors.kind("windows");
     selectors.set(walls, 460.0);
     selectors.set(windows, 412.3456789);
+    const std::array<double, 1> wall_detail{460.0};
+    const std::array<double, 1> window_detail{412.3456789};
+    selectors.set_details(walls, wall_detail);
+    selectors.set_details(windows, window_detail);
     scene::ItemTable items;
     auto add = [&items](double z, std::uint16_t kind) {
         return items.add({.x = 0,
@@ -380,7 +390,7 @@ TEST_CASE("an item's detail band is the ranks' choice in double, which a float d
         const hlsl::float4 t = selectors.table()[kind];
         CHECK((static_cast<float>(depth) >= t.x || depth >= static_cast<double>(t.x)));
         CHECK(ranks.band()[row] == 0);
-        CHECK(shaders::rank_band(ranks.table()[row]) == 0);
+        CHECK(shaders::rank_detail(ranks.table()[row]) == 1U);
     }
     // The wall, at 460 m less a hair, is the farther: first in painter's order, its band-0 slots before the window's.
     CHECK(ranks.order().front() == wall);

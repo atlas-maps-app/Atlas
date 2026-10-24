@@ -30,6 +30,13 @@ static_assert(geometry::prim_flag::near == shaders::BUILDING_NEAR &&
                   geometry::prim_flag::stroke_cabin == shaders::BUILDING_STROKE_CABIN &&
                   geometry::prim_flag::outline == shaders::BUILDING_OUTLINE,
               "geometry/Walls.hpp's prim_flag and building.slangh's flags");
+static_assert(geometry::window_flag::shop_floor == shaders::BUILDING_WINDOW_SHOP_FLOOR &&
+                  geometry::window_flag::warehouse == shaders::BUILDING_WINDOW_WAREHOUSE &&
+                  geometry::window_flag::church == shaders::BUILDING_WINDOW_CHURCH &&
+                  static_cast<std::uint32_t>(geometry::WindowStyle::plain) == shaders::BUILDING_WINDOW_PLAIN &&
+                  static_cast<std::uint32_t>(geometry::WindowStyle::modern) == shaders::BUILDING_WINDOW_MODERN &&
+                  static_cast<std::uint32_t>(geometry::WindowStyle::paris) == shaders::BUILDING_WINDOW_PARIS,
+              "geometry/Walls.hpp's windows and windows.slangh's");
 
 /// Two runs this close (primitives of cells not drawn between them) are drawn as one.
 constexpr std::uint32_t run_gap = 512;
@@ -46,6 +53,8 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     edged.reserve(g.edged.size());
     std::vector<std::uint16_t> wall_near; // per edged record: its near slot as the heap holds it
     std::vector<std::array<std::uint32_t, 2>> cells;
+    // per primitive of stage T's edged list, its place in the heap's (the near cells leave it), for the windowed walls
+    std::vector<std::uint32_t> heap_of(g.edged.size(), 0);
     layout.edged_first.assign(grid + 1, 0);
     layout.cells_first.assign(grid + 1, 0);
     for (std::size_t c = 0; c < grid; ++c) {
@@ -58,6 +67,7 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
                                    (q.flags & gm::prim_flag::far) == 0;
             if (!near_cell) {
                 if (q.kind == gm::PrimKind::cell && (q.flags & gm::prim_flag::near) == 0) wall = edged.size();
+                heap_of[i] = static_cast<std::uint32_t>(edged.size());
                 edged.push_back(&q);
                 wall_near.push_back(q.near_slot);
                 continue;
@@ -77,20 +87,26 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     layout.edged_first[grid] = static_cast<std::uint32_t>(edged.size());
     layout.cells_first[grid] = static_cast<std::uint32_t>(cells.size());
     layout.plain_first = g.plain_first;
+    layout.windows_first = g.window_walls_first;
     const auto e = static_cast<std::uint32_t>(edged.size());
     const auto p = static_cast<std::uint32_t>(g.plain.size());
     const auto n = static_cast<std::uint32_t>(cells.size());
+    const auto ww = static_cast<std::uint32_t>(g.window_walls.size());
     const auto f = static_cast<std::uint32_t>(g.faces.size());
     const auto k = static_cast<std::uint32_t>(g.items.size());
     ATLAS_ASSERT(k <= 0x1'0000U, "a tile with more buildings than the primitives' 16 bits of item hold");
+    ATLAS_ASSERT(e <= shaders::BUILDING_WINDOW_WALL_BITS, "a tile with more walls than a windowed wall's 24 bits hold");
     layout.edged = e;
     layout.plain = p;
     layout.cells = n;
+    layout.window_walls = ww;
+    layout.windows = g.windows;
     layout.faces = f;
     layout.items = k;
     layout.prims_at = 0;
     layout.cells_at = (e + p) * shaders::BUILDING_PRIM_VECTORS;
-    layout.faces_at = layout.cells_at + ((n + 1) / 2);
+    layout.windows_at = layout.cells_at + ((n + 1) / 2);
+    layout.faces_at = layout.windows_at + ww;
     layout.colours_at = layout.faces_at + (f * shaders::BUILDING_FACE_VECTORS);
     layout.rows_at = layout.colours_at + f; // two slots of two words a face: f uint4
     layout.vectors = layout.rows_at + ((k + 3) / 4);
@@ -115,6 +131,20 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
         const std::size_t at = std::size_t{2} * (i % 2);
         w[at] = cells[i][0];
         w[at + 1] = cells[i][1];
+    }
+    // the windowed walls (windows.slangh's BuildingWindowWall), each naming its wall in the heap's edged list, and its
+    // windows' place among the tile's by cell and its item (the CPU keeps them for the frame's jobs)
+    layout.window_at.assign(std::size_t{ww} + 1, 0);
+    layout.window_items.assign(ww, 0);
+    for (std::uint32_t i = 0; i < ww; ++i) {
+        const gm::WindowWall& w = g.window_walls[i];
+        layout.window_at[i + 1] = layout.window_at[i] + (std::uint32_t{w.levels} * w.cols);
+        layout.window_items[i] = static_cast<std::uint16_t>(g.edged[w.wall].item); // below the 0x10000 items asserted
+        out[layout.windows_at + i] = {
+            heap_of[w.wall] | (static_cast<std::uint32_t>(w.style) << shaders::BUILDING_WINDOW_STYLE_SHIFT) |
+                (std::uint32_t{w.flags} << shaders::BUILDING_WINDOW_FLAGS_SHIFT),
+            w.first, std::uint32_t{w.levels} | (std::uint32_t{w.cols} << 16U),
+            std::uint32_t{w.near_slot} | (std::uint32_t{w.far_slot} << 16U)};
     }
     // the n-gons whole, for the twin: their rings in the triangles' floats
     layout.rings.clear();

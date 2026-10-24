@@ -194,6 +194,14 @@ struct Shape {
     /// shape by its face plane's cancellation at its outline's points (a face seen almost edge-on: its normal almost
     /// across the ray, so dot(n, ray) is a small difference of large terms).
     double slack = 0;
+    /// A window's frame: the band between its polygon grown by `stroke` and its glass's polygon, which it leaves out.
+    std::vector<Pt> hole;
+    /// A window's glass: its paint and its path's box (CSS px), whose colour each pixel takes at its centre
+    /// (window_glass_fs); `colour` is then its top's.
+    bool glass = false;
+    shaders::BuildingGlass paint{};
+    float top = 0.0F;
+    float bottom = 0.0F;
 };
 
 /// Whether a polygon's distinct corners turn both ways (concave, or crossed).
@@ -274,14 +282,101 @@ using Vertex = std::array<double, 3>;
     return base * worst;
 }
 
+/// A colour of 0 to 1 channels as its levels, 0xRRGGBB (a UNORM8 attachment's rounding).
+[[nodiscard]] std::uint32_t levels_of(hlsl::float3 c) noexcept {
+    const auto level = [](float v) {
+        return static_cast<std::uint32_t>(std::clamp(std::lround(static_cast<double>(v) * 255.0), 0L, 255L));
+    };
+    return (level(c.x) << 16U) | (level(c.y) << 8U) | level(c.z);
+}
+
+/// A wall's windows' path as the frame draws it (shaders/building/draw.slang's window_glass_vs and window_frames_vs):
+/// each window its glass, the window eroded by the frames' half width, on its wall's plane a lead over the cells, its
+/// colour its paint's at each pixel's centre; then its frame, the band between its outline grown by the half width with
+/// round joins (the true Minkowski sum) and its glass, in the frames' colour a lead over the glass; at the path's
+/// painter slot under the switch (the frame the later).
+void add_windows(std::vector<Shape>& out, const twin::WindowsDepth& wd, double density, const shaders::FrameCamera& cam,
+                 std::uint32_t tile) {
+    namespace sh = atlas::shaders;
+    for (const sh::BuildingWindowShape& s : wd.windows) {
+        const auto depth_of = [&](float lead) {
+            twin::ElementDepth d{.edged = true, .tile = tile};
+            d.shape = sh::building_window_as_shape(s, wd.plane, lead);
+            d.shape.slot = wd.slot;
+            d.shape.depth = sh::painter_depth(cam, wd.slot);
+            return d;
+        };
+        Shape frame;
+        for (std::uint32_t k = 0; k < s.count; ++k) {
+            const hlsl::float2 v = sh::building_window_corner(s, k);
+            frame.poly.push_back({static_cast<double>(v.x) * density, static_cast<double>(v.y) * density});
+        }
+        frame.stroke = static_cast<double>(wd.half) * density;
+        frame.colour = levels_of(wd.frame);
+        frame.sliver = turns_both_ways(frame.poly);
+        frame.depth = depth_of(sh::BUILDING_WINDOW_LEAD);
+        // the frame's triangles as window_frames_vs draws them (its band's, or its whole outline's fan), each point at
+        // its wall's plane's reciprocal depth within the window's span: where that plane is ill-conditioned (a wall
+        // seen edge-on) the clamped depths are not affine, so only the vertex stage's own triangles give its depths
+        for (std::uint32_t v = 0; v < sh::BUILDING_WINDOW_FRAME_VERTICES; v += 3) {
+            std::array<Vertex, 3> tri{};
+            for (std::uint32_t k = 0; k < 3; ++k) {
+                const hlsl::float2 c = sh::building_window_frame_point(frame.depth.shape, s, v + k, wd.half);
+                const float r = sh::building_plane_recip(cam, frame.depth.shape, c);
+                tri[k] = {static_cast<double>(c.x), static_cast<double>(c.y), static_cast<double>(r)};
+            }
+            frame.triangles.push_back(tri);
+        }
+        frame.slack = slack_of(cam, frame.depth, frame.triangles);
+        if (!sh::building_glass_drawn(s, wd.half)) {
+            out.push_back(std::move(frame));
+            continue;
+        }
+        Shape glass;
+        glass.depth = depth_of(sh::BUILDING_GLASS_LEAD);
+        std::vector<Vertex> fan;
+        for (std::uint32_t v = 0; v < sh::BUILDING_WINDOW_GLASS_VERTICES; ++v) {
+            const hlsl::float2 c = sh::building_glass_corner(s, v < s.count ? v : s.count - 1, wd.half);
+            if (v < s.count)
+                glass.poly.push_back({static_cast<double>(c.x) * density, static_cast<double>(c.y) * density});
+            const float r = sh::building_plane_recip(cam, glass.depth.shape, c);
+            fan.push_back({static_cast<double>(c.x), static_cast<double>(c.y), static_cast<double>(r)});
+        }
+        for (std::size_t k = 0; k + 2 < fan.size(); ++k) glass.triangles.push_back({fan[0], fan[k + 1], fan[k + 2]});
+        glass.slack = slack_of(cam, glass.depth, glass.triangles);
+        glass.glass = true;
+        glass.paint = wd.glass;
+        glass.top = wd.top;
+        glass.bottom = wd.bottom;
+        glass.colour = levels_of(wd.glass.top);
+        frame.hole = glass.poly;
+        out.push_back(std::move(glass));
+        out.push_back(std::move(frame));
+    }
+}
+
+/// The colour a sample of pixel (x, y) takes from shape `sh`: its colour, or a window's glass's at the pixel's centre
+/// (its CSS point as window_glass_fs finds it, css_of_output's).
+[[nodiscard]] std::uint32_t colour_at(const Shape& sh, std::int64_t x, std::int64_t y,
+                                      const shaders::FrameCamera& cam) noexcept {
+    if (!sh.glass) return sh.colour;
+    const hlsl::float2 centre = {static_cast<float>(x) + 0.5F, static_cast<float>(y) + 0.5F};
+    const float css = shaders::css_of_output(cam, centre).y;
+    return levels_of(atlas::shaders::building_glass_at(sh.paint, sh.top, sh.bottom, css));
+}
+
 /// The document's shapes, each with its depth from `depths` (the pass's, in the stream's order) at frame camera `cam`,
-/// a wall's stroke `wall` CSS px wide (the frame's strokes').
+/// a wall's stroke `wall` CSS px wide (the frame's strokes'); a wall's windows' path its windows' frames and glass.
 [[nodiscard]] std::vector<Shape> shapes_of(const twin::Document& doc, double density,
                                            std::span<const twin::ElementDepth> depths, const shaders::FrameCamera& cam,
                                            float wall) {
     std::vector<Shape> out;
     for (const twin::Element* e : doc.order(twin::Layer::objects)) {
         if (e->kind != twin::Op::path || e->points.size() < 3) continue;
+        if (e->sequence < depths.size() && !depths[e->sequence].windows.empty()) {
+            add_windows(out, depths[e->sequence].windows.front(), density, cam, depths[e->sequence].tile);
+            continue;
+        }
         Shape sh;
         for (const twin::Point& p : e->points) {
             sh.poly.push_back({static_cast<double>(p.x) * density, static_cast<double>(p.y) * density});
@@ -393,6 +488,8 @@ struct Raster {
                     const double d = signed_distance(p, sh.poly);
                     const bool in = slivers && !sh.sliver ? std::abs(d) <= 0.25 : d <= reach;
                     if (!in) continue;
+                    // a window's frame leaves its glass out (shrunk as the frame grows)
+                    if (!slivers && sh.hole.size() >= 3 && signed_distance(p, sh.hole) < -grow) continue;
                     const std::size_t i =
                         (((static_cast<std::size_t>(y) * w) + static_cast<std::size_t>(x)) * samples.size()) + s;
                     if (painter || slivers) {
@@ -582,7 +679,11 @@ struct Stroked {
     out.blends.assign(n, 0);
     out.tie.assign(n, 0);
     for (std::size_t i = 0; i < n; ++i) {
-        const std::uint32_t c = r.shape[i] == uncovered ? clear : shapes[static_cast<std::size_t>(r.shape[i])].colour;
+        const std::size_t pixel = i / samples.size();
+        const auto row = static_cast<std::int64_t>(pixel / w);
+        const auto column = static_cast<std::int64_t>(pixel % w);
+        const std::uint32_t c =
+            r.shape[i] == uncovered ? clear : colour_at(shapes[static_cast<std::size_t>(r.shape[i])], column, row, cam);
         out.colour[i] = {static_cast<std::uint8_t>((c >> 16U) & 0xFFU), static_cast<std::uint8_t>((c >> 8U) & 0xFFU),
                          static_cast<std::uint8_t>(c & 0xFFU)};
     }
@@ -833,10 +934,13 @@ struct Compared {
     }
     for (std::size_t i = 0; i < std::size_t{w} * h; ++i) {
         bool covered = false;
+        bool gradient = false; // a sample takes a window's glass's gradient, which the GPU evaluates in its own float
         std::uint32_t blends = 0; // the most strokes a sample of the pixel took, in any of the three rasters
         for (std::size_t s = 0; s < n; ++s) {
             const std::size_t k = (i * n) + s;
             covered = covered || exact[k] != uncovered || grown[k] != uncovered;
+            gradient = gradient || (exact[k] != uncovered && shapes[static_cast<std::size_t>(exact[k])].glass &&
+                                    shapes[static_cast<std::size_t>(exact[k])].paint.gradient);
             blends = std::max({blends, std::uint32_t{exact_stroked.blends[k]}, std::uint32_t{grown_stroked.blends[k]},
                                std::uint32_t{shrunk_stroked.blends[k]}});
         }
@@ -845,8 +949,9 @@ struct Compared {
         if (blends > 0) ++c.stroked;
         const std::array<std::uint32_t, 3> have{got.rgba[i * 4], got.rgba[(i * 4) + 1], got.rgba[(i * 4) + 2]};
         // a pixel a stroke reaches within a level a blend (the attachment's 8 bits after each, lavapipe blending them
-        // in fixed point; and one more where the composite averages samples), the rest exactly
-        const std::uint32_t levels = blends + (blends > 0 && n > 1 ? 1U : 0U);
+        // in fixed point; and one more where the composite averages samples), one a window's glass's gradient takes
+        // within a level (the GPU's float, which may fuse its multiply-adds, against the model's), the rest exactly
+        const std::uint32_t levels = blends + (blends > 0 && n > 1 ? 1U : 0U) + (gradient ? 1U : 0U);
         const auto same = [&](const std::array<std::uint32_t, 3>& v) {
             for (std::size_t k = 0; k < 3; ++k) {
                 if ((v[k] > have[k] ? v[k] - have[k] : have[k] - v[k]) > levels) return false;

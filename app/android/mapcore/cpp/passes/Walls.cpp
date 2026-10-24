@@ -3,6 +3,7 @@
 #include "passes/Walls.hpp"
 
 #include "base/assert.hpp"
+#include "base/log.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
 #include "frame/Ranks.hpp"
@@ -34,19 +35,26 @@ using Words = std::array<std::uint32_t, 4>;
 void Buildings::kinds(frame::Selectors& selectors) { kind_ = selectors.kind("building"); }
 
 void Buildings::select(const frame::FrameState& state, frame::Selectors& selectors) {
-    (void)state;
-    // _draw_building: a wall's ncol × nrow cells where d < 460 (band 0), one cell beyond
+    // _draw_building: a wall's ncol × nrow cells where d < 460 (band 0, its slots), one cell beyond
     selectors.set(kind_, geometry::cells_reach);
+    // the detail, in building.slangh's BUILDING_DETAIL_ order: the cells' near variant; the windows where d < the
+    // view's win_d (cfg's, 390 m where it names none); a church's own windows where d < 520 (with weather: no others
+    // then); deep windows where d < 160, sash bars where d < 140
+    const double win_d =
+        state.placed ? state.placed->number("win_d").value_or(geometry::windows_reach) : geometry::windows_reach;
+    const std::array<double, 5> details{geometry::cells_reach, win_d, geometry::church_windows_reach,
+                                        geometry::deep_windows_reach, geometry::sash_reach};
+    selectors.set_details(kind_, details);
 }
 
 gpu::Result<void> Buildings::build(scene::TileBuild& b) const {
     const tiles::Style& style = b.style();
-    const geometry::TileBuildings g =
-        geometry::build_buildings({.tile = &b.tile(),
-                                   .head = &b.head(),
-                                   .level = b.level(),
-                                   .region = {.water_y = style.water_y, .hull = style.hull, .deck = style.deck},
-                                   .kind = kind_});
+    const geometry::TileBuildings g = geometry::build_buildings(
+        {.tile = &b.tile(),
+         .head = &b.head(),
+         .level = b.level(),
+         .region = {.water_y = style.water_y, .hull = style.hull, .deck = style.deck, .paris = style.paris},
+         .kind = kind_});
     if (g.items.empty()) return {};
     auto layout = std::make_shared<BuildingTile>();
     const std::vector<Words> words = heap_words(g, b.origin().x, b.origin().z, *layout);
@@ -63,11 +71,13 @@ gpu::Result<void> Buildings::build(scene::TileBuild& b) const {
         layout->owners.push_back(
             static_cast<std::uint8_t>((item.relation ? 2U : 0U) | (item.source == geometry::Source::part ? 1U : 0U)));
     }
-    const std::size_t bytes =
-        sizeof(BuildingTile) +
-        ((layout->edged_first.size() + layout->cells_first.size() + layout->plain_first.size()) * 4) +
-        (layout->ids.size() * 9) + (layout->lights.size() * sizeof(BuildingLight)) +
-        (layout->rings.size() * sizeof(BuildingRing)) + (layout->ring_points.size() * sizeof(float));
+    const std::size_t bytes = sizeof(BuildingTile) +
+                              ((layout->edged_first.size() + layout->cells_first.size() + layout->plain_first.size() +
+                                layout->windows_first.size() + layout->window_at.size()) *
+                               4) +
+                              (layout->ids.size() * 9) + (layout->lights.size() * sizeof(BuildingLight)) +
+                              (layout->rings.size() * sizeof(BuildingRing)) +
+                              (layout->ring_points.size() * sizeof(float));
     b.keep(std::shared_ptr<const BuildingTile>(std::move(layout)), bytes);
     return {};
 }
@@ -113,9 +123,15 @@ void Buildings::update(const frame::FrameState& state) {
     runs_.clear();
     drawn_handles_.clear();
     stroke_counts_ = {};
+    window_counts_ = {};
     if (strokes_ != nullptr) {
         strokes_->jobs_now = 0;
         strokes_->records_now = 0;
+    }
+    if (windows_ != nullptr) {
+        windows_->jobs_now = 0;
+        windows_->walls_now = 0;
+        windows_->records_now = 0;
     }
     if (state.cover == nullptr || state.ranks == nullptr || state.heaps == nullptr) return;
     // the tiles' PassTile of this pass: the one at its place among the passes that built them (FrameState::cover)
@@ -154,6 +170,12 @@ void Buildings::update(const frame::FrameState& state) {
         d.edged_at = base + b->prims_at;
         d.cells_at = base + b->cells_at;
         d.plain_at = base + b->prims_at + (b->edged * shaders::BUILDING_PRIM_VECTORS);
+        d.windows_at = base + b->windows_at;
+        d.windows_from = t.sun && t.sun->now ? t.sun->now->windows_from : 0U;
+        d.tile = b;
+        if (const std::uint32_t first = first_item(tile, kind_); first < tile.rows.size()) {
+            d.rows = std::span(tile.rows).subspan(first, std::min<std::size_t>(b->items, tile.rows.size() - first));
+        }
         d.runs_first = static_cast<std::uint32_t>(runs_.size());
         building_runs(t.cells, b->edged_first, runs_);
         d.edged_runs = static_cast<std::uint32_t>(runs_.size()) - d.runs_first;
@@ -161,12 +183,16 @@ void Buildings::update(const frame::FrameState& state) {
         d.cell_runs = static_cast<std::uint32_t>(runs_.size()) - d.runs_first - d.edged_runs;
         building_runs(t.cells, b->plain_first, runs_);
         d.plain_runs = static_cast<std::uint32_t>(runs_.size()) - d.runs_first - d.edged_runs - d.cell_runs;
+        building_runs(t.cells, b->windows_first, runs_);
+        d.window_runs =
+            static_cast<std::uint32_t>(runs_.size()) - d.runs_first - d.edged_runs - d.cell_runs - d.plain_runs;
         d.distance = t.distance;
-        if (d.edged_runs + d.cell_runs + d.plain_runs > 0) draws_.push_back(d);
+        if (d.edged_runs + d.cell_runs + d.plain_runs + d.window_runs > 0) draws_.push_back(d);
     }
     // the nearest tiles first, so early depth testing rejects what they hide in the tiles behind
     std::ranges::stable_sort(draws_, {}, &TileDraw::distance);
     if (strokes_ != nullptr) write_jobs(slot);
+    if (windows_ != nullptr) write_window_jobs(slot, state.ranks->table());
     // the tiles no longer drawn are forgotten once many are kept (their rows written again if they come back: the
     // same; their colours lit again)
     if (rows_written_.size() > 4096) {
@@ -223,11 +249,20 @@ gpu::Result<void> Buildings::prepare(const frame::PassContext& context) {
         index.flush();
         edged_index_ = std::move(index);
     }
-    return prepare_roofs(context);
+    ATLAS_GPU_CHECK(prepare_roofs(context));
+    // the windows, but in the owner mode; where the device cannot make them, the walls are drawn without them
+    if (!context.owners) {
+        if (auto made = prepare_windows(context); !made) {
+            log::warn("vk buildings: the windows: {}; the walls are drawn without them", made.error().text());
+            windows_.reset();
+        }
+    }
+    return {};
 }
 
 void Buildings::release() noexcept {
     strokes_.reset();
+    windows_.reset();
     walls_.clear();
     roofs_.clear();
     draw_module_.clear();
@@ -242,8 +277,12 @@ void Buildings::record(const frame::Recording& recording, std::uint32_t phase) {
     case draw_phase:
         record_walls(recording);
         record_roofs(recording);
+        record_windows(recording);
         break;
-    case decide_phase: record_decide(recording); break;
+    case decide_phase:
+        record_decide(recording);
+        record_window_decide(recording);
+        break;
     case strokes_phase: record_strokes(recording); break;
     default: break;
     }
@@ -294,6 +333,20 @@ void Buildings::emit(const frame::FrameState& state, twin::Stream& out, std::uin
     const bool wx = (state.block.theme.flags.x & shaders::THEME_WEATHER) != 0U;
     const std::int32_t objects =
         out.group({.node = {.filter = wx ? out.filter("mat") : twin::none}, .parent = out.root()});
+    // the glass's gradients, by day with weather (amsterdam.py's defs: `glass` by the sky's cover, then `glassLit`)
+    twin::WindowGradients gradients;
+    if (wx && (state.block.theme.flags.x & shaders::THEME_NIGHT) == 0U) {
+        const shaders::FrameWindows& w = state.block.windows;
+        const bool overcast = (state.block.theme.flags.x & shaders::THEME_OVERCAST) != 0U;
+        const std::array<float, 2> offsets{0.0F, 1.0F};
+        const std::array<std::uint32_t, 2> glass{0xFF00'0000U | (overcast ? w.glass.z : w.glass.x),
+                                                 0xFF00'0000U | (overcast ? w.glass.w : w.glass.y)};
+        const std::array<std::uint32_t, 2> lit{0xFF00'0000U | w.lit.x, 0xFF00'0000U | w.lit.y};
+        gradients.glass = out.gradient(
+            {.id = "glass", .coords = {0.0F, 0.0F, 0.0F, 1.0F, 0.0F}, .offsets = offsets, .colours = glass});
+        gradients.lit = out.gradient(
+            {.id = "glassLit", .coords = {0.0F, 0.0F, 0.0F, 1.0F, 0.0F}, .offsets = offsets, .colours = lit});
+    }
     const std::span<const scene::CoverTile> tiles = state.cover->tiles();
     for (std::size_t i = 0; i < tiles.size(); ++i) {
         const scene::CoverTile& t = tiles[i];
@@ -306,9 +359,13 @@ void Buildings::emit(const frame::FrameState& state, twin::Stream& out, std::uin
         const std::span<const std::uint32_t> rows(t.drawn->rows);
         twin::SunTexels sun;
         if (t.sun_base != scene::no_sun && t.sun && t.sun->now && t.sun->before) {
-            sun = {.now = t.sun->now->words, .before = t.sun->before->words, .weight = t.sun_weight, .has = true};
+            sun = {.now = t.sun->now->words,
+                   .before = t.sun->before->words,
+                   .weight = t.sun_weight,
+                   .has = true,
+                   .windows_from = t.sun->now->windows_from};
         }
-        twin::BuildingTwin twin(state.block, state.ranks->table(), out, objects);
+        twin::BuildingTwin twin(state.block, state.ranks->table(), gradients, out, objects);
         twin.record_depths(&depths_, static_cast<std::uint32_t>(i));
         twin.tile(*b, rows.subspan(std::min<std::size_t>(first, rows.size())), w.bytes(), t.place, t.cells, sun);
         emitted_.elements += twin.elements();

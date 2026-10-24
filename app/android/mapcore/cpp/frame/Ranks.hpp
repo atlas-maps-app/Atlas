@@ -57,8 +57,8 @@ public:
     /// Each row's detail band (0 to 3; 0 for a row not drawn): Selectors::band of its kind at its depth, in double as
     /// the port compares, the one choice every pass and shader takes (never recomputed from a float depth).
     [[nodiscard]] std::span<const std::uint8_t> band() const noexcept { return band_; }
-    /// The rank table set 0 holds (painter.slang's rank entries): per row its first slot and its band, RANK_NONE for
-    /// a row not drawn.
+    /// The rank table set 0 holds (painter.slang's rank entries): per row its first slot and its detail
+    /// (Selectors::detail of its kind at its depth), RANK_NONE for a row not drawn.
     [[nodiscard]] std::span<const std::uint32_t> table() const noexcept { return table_; }
     /// The frame's slots: the ground's and every drawn item's.
     [[nodiscard]] std::uint32_t slots() const noexcept { return slots_; }

@@ -7,8 +7,11 @@
 // wall 0.3 px in the same colour, a roof .25 or .45 px in the roofs' edge colour, a cabin roof .4 px #2A2C30: the
 // frame block's strokes, its pack's style; the roofs' strokes draw those), with the objects group's round joins, at its
 // painter slot, in its building's item (its OSM owner, an area). Its colours are the faces' light as the pass's CPU
-// writes it (light.slang's light() and tohex in binary64, the port's bits), lit by its sample's sun bit. Plain data in,
-// no Vulkan: the pass's emit and the tests call it alike.
+// writes it (light.slang's light() and tohex in binary64, the port's bits), lit by its sample's sun bit. Each windowed
+// wall the frame draws is two more (shaders/building/windows.slangh): its dark windows' path, then its lit ones', each
+// window a closed subpath of its corners, filled with its glass (the gradients `glass` and `glassLit` the pass defines
+// by day with weather, else a flat colour) and stroked in the frames' colour and width, at the windows' slots. Plain
+// data in, no Vulkan: the pass's emit and the tests call it alike.
 #pragma once
 
 #include "frame/FrameBlock.hpp"
@@ -16,6 +19,7 @@
 #include "twin/building/BuildingShader.hpp"
 #include "twin/building/BuildingTile.hpp"
 
+#include <array>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -29,29 +33,51 @@ struct SunTexels {
     std::span<const std::uint64_t> before;
     float weight = 1.0F;
     bool has = false;
+    std::uint32_t windows_from = 0; ///< where the tile's window group of samples begins
+};
+
+/// A wall's windows of one path (its dark ones, or its lit ones) as the frame draws them, for the tests' raster: each
+/// window's shape, the path's painter slot, its wall's plane (in camera coordinates), its frame's half width (CSS px)
+/// and colour, its glass's paint and its path's box from top to bottom (the gradient's).
+struct WindowsDepth {
+    std::vector<shaders::BuildingWindowShape> windows;
+    std::uint32_t slot = 0; ///< the path's painter slot
+    hlsl::float4 plane{};
+    float half = 0.0F;
+    hlsl::float3 frame{};
+    shaders::BuildingGlass glass{};
+    float top = 0.0F;
+    float bottom = 0.0F;
 };
 
 /// How the vertex stage gives an element its depth (the tests' depth raster; L1 reads none of it): the shape it draws
 /// (its corners and their reciprocal depths, its face's plane, its span and lead), and whether its depth is its face
 /// plane's (an edged outline: building_plane_recip) or its corners' over its fan (a plain polygon:
 /// building_plain_vertex); an n-gon's, each of its triangles the frame draws, over its own corners (`shape` is the
-/// first of them); and the cover tile it was drawn for (its place in the cover's list: the order the roofs' thin edges
-/// are drawn in follows the tiles').
+/// first of them); a wall's windows' path, its windows; and the cover tile it was drawn for (its place in the cover's
+/// list: the order the roofs' thin edges are drawn in follows the tiles').
 struct ElementDepth {
     shaders::BuildingShape shape{};
     bool edged = false;
     std::vector<shaders::BuildingShape> triangles;
     std::uint32_t tile = 0;
+    std::vector<WindowsDepth> windows; ///< one: the element is a wall's windows' path
+};
+
+/// The glass's gradients the frame defines (by day with weather): the stream's `glass` and `glassLit`, or none.
+struct WindowGradients {
+    std::int32_t glass = none;
+    std::int32_t lit = none;
 };
 
 /// Emits the buildings of the tiles a frame draws.
 class BuildingTwin {
 public:
-    /// For the frame whose block is `block` and rank table `ranks` (one entry per item row), into `out`, in its group
-    /// `group` (the objects group).
-    BuildingTwin(const shaders::FrameBlock& block, std::span<const std::uint32_t> ranks, Stream& out,
-                 std::int32_t group) noexcept
-        : block_(block), ranks_(ranks), out_(out), group_(group) {}
+    /// For the frame whose block is `block` and rank table `ranks` (one entry per item row) and its glass's gradients,
+    /// into `out`, in its group `group` (the objects group).
+    BuildingTwin(const shaders::FrameBlock& block, std::span<const std::uint32_t> ranks, WindowGradients gradients,
+                 Stream& out, std::int32_t group) noexcept
+        : block_(block), ranks_(ranks), gradients_(gradients), out_(out), group_(group) {}
 
     /// The primitives the frame draws of a tile over its visible cells `cells`: its buildings' `b`, its items' rows in
     /// the item table `rows` (its first item's on), the words of its range of the walls heap, its place and sun bits.
@@ -68,9 +94,17 @@ public:
         tile_ = tile;
     }
 
+    /// The paths of the tile's windowed walls the frame draws over its visible cells (the rest as `tile`'s).
+    void windows(const passes::BuildingTile& b, std::span<const std::uint32_t> rows, std::span<const std::byte> words,
+                 const shaders::TilePlace& place, std::uint64_t cells, const SunTexels& sun);
+
 private:
+    /// The stream's item of a tile's item `item`, defined the first time.
+    [[nodiscard]] std::int32_t item_of(const passes::BuildingTile& b, std::uint32_t item);
+
     const shaders::FrameBlock& block_;
     std::span<const std::uint32_t> ranks_;
+    WindowGradients gradients_;
     Stream& out_;
     std::int32_t group_;
     std::size_t elements_ = 0;
@@ -80,7 +114,9 @@ private:
     std::vector<std::uint8_t> ring_done_; // each of a tile's n-gons, once emitted
     std::vector<std::uint32_t> colours_;  // the tile's faces' colours at the frame's moment, lit and unlit
     std::vector<Point> points_;
-    std::vector<shaders::BuildingShape> triangles_; // an n-gon's drawn triangles
+    std::vector<Subpath> subpaths_;
+    std::vector<shaders::BuildingShape> triangles_;                    // an n-gon's drawn triangles
+    std::array<std::vector<shaders::BuildingWindowShape>, 2> windows_; // a wall's dark and lit windows
     std::vector<ElementDepth>* depths_ = nullptr;
     std::uint32_t tile_ = 0;
 };

@@ -54,6 +54,20 @@ struct EdgesStyle {
     float cabin_width = 0.0F;
 };
 
+/// The windows (`windows`): by day with weather the glass's gradients from a wall's windows' top to their bottom (the
+/// glass by a clear and by an overcast sky, the glass the sun is on), without weather and at night their flat glass, a
+/// warehouse's shutters by day and at night, the frames by day and at night and their width (CSS px).
+struct WindowsStyle {
+    std::array<StyleRgb, 2> glass{};
+    std::array<StyleRgb, 2> glass_overcast{};
+    std::array<StyleRgb, 2> lit_glass{};
+    DayNight dark;
+    StyleRgb lit = 0;
+    DayNight warehouse;
+    DayNight frame;
+    float frame_width = 0.0F;
+};
+
 struct Style {
     /// Reads `tables`: every value below, each of its kind; a missing or mistyped one is Fault::missing or
     /// Fault::bad_value at Site::style, named (`table.key`) in the error's column.
@@ -91,6 +105,7 @@ struct Style {
     StyleRgb bridge_lines = 0;
     double bridge_lines_width = 0.0;
     EdgesStyle edges;
+    WindowsStyle windows;
     /// `houseboats`: the hull's and the deck's colours (the cabin roof's edge is in `edges`).
     StyleRgb hull = 0;
     StyleRgb deck = 0;

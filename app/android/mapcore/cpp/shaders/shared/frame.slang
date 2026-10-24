@@ -6,7 +6,7 @@
 // storage buffers at the same frame's offsets.
 //
 // Shared with the C++ twin (after base/hlsl.hpp, by CP/frame/FrameBlock.hpp): four-lane vectors of 32-bit values only,
-// so std140, std430 and C++ lay it out the same way: 768 bytes.
+// so std140, std430 and C++ lay it out the same way: 832 bytes.
 #pragma once
 
 #include "camera.slang"
@@ -32,12 +32,23 @@ struct FrameStrokes {
     float4 widths;
 };
 
+/// The windows in the style of the frame's active pack (tiles/Style.hpp's WindowsStyle, the style file's `windows`),
+/// each colour 0xRRGGBB (sRGB): the glass's gradients by day with weather (top, then bottom), its flat glass without
+/// weather and at night, a warehouse's shutters, the frames, and the frames' width (CSS px, a float's bits).
+struct FrameWindows {
+    uint4 glass; // x, y: the glass under a clear sky; z, w: under an overcast one
+    uint4 lit;   // x, y: the glass the sun is on; z: the lit glass without weather; w: the frames' width
+    uint4 dark;  // x: the glass without weather by day, y: at night; z: a warehouse's shutters by day, w: at night
+    uint4 frame; // x: the frames by day, y: at night; z, w: 0
+};
+
 struct FrameBlock {
     FrameCamera camera;
     Theme theme;
     FrameLayers layers;
     uint4 info; // x: the FRAME_ bits; y: the frame's painter slots (the ground's and the items'); z: its items; w: 0
     FrameStrokes strokes;
+    FrameWindows windows;
 };
 
 /// Set 0's bindings: the block, the rank table, the selector table.

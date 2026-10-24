@@ -1,0 +1,580 @@
+// A wall's windows (ENGINE.md step 4, the facades; render/amsterdam.py's _draw_building, its window rows; CP/geometry/
+// Walls.hpp's WindowWall), shared by the GPU (shaders/building/draw.slang's windows_cs, window_frames_vs,
+// window_glass_vs) and the twin (CP/twin/building/BuildingShader.hpp compiles it as C++ after building.slangh). Not a
+// module: draw.slang includes it after building.slangh.
+//
+// A windowed wall's record (a uint4 of the walls heap: BuildingWindowWall) names its wall's one-cell primitive, its
+// rows (building:levels) and bays, its style and flags, its first window among the tile's (which is its first sample
+// in the tile's window group of sun samples: K8's order, the same) and its slots. Its window k = r · cols + c is cut
+// from the wall as the port cuts it (building_window_prim):
+//   fh = (top - y0) / max(1, levels); ya = y0 + r·fh + fh·(r ? 0.22 : 0.3), yb = ya + fh·(r ? (modern ? 0.62 : 0.58)
+//   : 0.5) (Paris: ya = y0 + r·fh + 0.13·fh, yb = ya + 0.73·fh); u0 = (c + (modern ? 0.1 : paris ? 0.31 : 0.28)) /
+//   cols, u1 = (c + (modern ? 0.9 : paris ? 0.69 : 0.72)) / cols; its corners quad_at(a, b, ya, yb, u0, u1, 0.04, n),
+//   in float.
+// Per frame each window is decided once (windows_cs; the twin alike), as the port decides it: its wall's windows are
+// drawn where its building's item is drawn in a band with windows (the view's win_d) and its wall turns to the eye,
+// but not a church's with weather nearer than 520 m (which takes church windows) nor, with weather, a shop floor's
+// first row; the window's corners are clipped at the near plane and projected as Camera.poly does, kept where their
+// box reaches within 300 px of the frame and their area is over 0.25 px² (`if sp and area(sp) > 0.25`), and snapped
+// at rest; it is lit where the sun is up and its sample's bit is set, else dark.
+//
+// The port paints each wall's dark windows as one path, then its lit ones (fill gd or gl, stroke fr 0.7 px, the objects
+// group's round joins): every window's fill, then every window's stroke over the fills. The frame draws each window as
+// that path paints it, in two opaque parts on its wall's plane: its glass, the window eroded by the stroke's half width
+// (what the stroke leaves of the fill), a lead over the wall's cells; and its frame, the band between its outline
+// dilated by the half width (round joins: building_outline) and its glass, in the stroke's colour, a lead over the
+// glass, so where two windows' frames reach each other's glass (a wall seen at a slant) the frame covers it, as the
+// path's strokes cover its fills. The band shares the glass's corners, so the two fit without a crack. Under MSAA each
+// sample takes what SVG's fill and stroke leave on it. The glass's paint: by day with weather the gradients the port
+// defines (`glass`, by the sky's cover; `glassLit`), each over its path's box from top to bottom (objectBoundingBox):
+// the wall's dark windows' box, or its lit ones'; else its flat colours.
+#pragma once
+
+// A windowed wall's record (a uint4): x its wall's one-cell primitive in the tile's edged list (bits 0-23), its style
+// (24-25) and flags (26-28); y its first window among the tile's (its first sample in the window group); z its rows
+// (bits 0-15) and bays (16-31); w its dark windows' painter slot within the item, near (bits 0-15) and far (16-31), the
+// lit ones' the next.
+static const uint BUILDING_WINDOW_WALL_BITS = 0x00FFFFFFu;
+static const uint BUILDING_WINDOW_STYLE_SHIFT = 24u;
+static const uint BUILDING_WINDOW_FLAGS_SHIFT = 26u;
+// Its style (geometry/Walls.hpp's WindowStyle) and flags (window_flag).
+static const uint BUILDING_WINDOW_PLAIN = 0u;
+static const uint BUILDING_WINDOW_MODERN = 1u;
+static const uint BUILDING_WINDOW_PARIS = 2u;
+static const uint BUILDING_WINDOW_SHOP_FLOOR = 1u;
+static const uint BUILDING_WINDOW_WAREHOUSE = 2u;
+static const uint BUILDING_WINDOW_CHURCH = 4u;
+
+// The port's constants: the windows' least area (CSS px², exclusive), how far they stand out from their wall (m).
+static const float BUILDING_WINDOW_MIN_AREA = 0.25f;
+static const float BUILDING_WINDOW_OUT = 0.04f;
+
+// The windows' leads on their wall's plane (relative to its reciprocal depth, as the cells' and the roofs'): the glass
+// one step past the cells' most (15 steps of 2^-16), the frames one more over the glass.
+static const float BUILDING_GLASS_LEAD = 2.44140625e-4f;
+static const float BUILDING_WINDOW_LEAD = 2.593994140625e-4f;
+
+// The points of a frame's outline (8 a corner of a window's 4: a cell's 16 would put the chords of a slanted window's
+// sharp corner 0.025 px inside the frames' round joins at S1, these within 0.007 px), and the vertices each window
+// draws: its frame (36 triangles at most: building_window_frame_point) and its glass (as a plain polygon's, through the
+// roofs' fans).
+static const uint BUILDING_WINDOW_OUTLINE_POINTS = 32u;
+static const uint BUILDING_WINDOW_FRAME_VERTICES = 108u;
+static const uint BUILDING_WINDOW_GLASS_VERTICES = 5u;
+
+struct BuildingWindowWall {
+    uint wall;  // its wall's one-cell primitive in the tile's edged list
+    uint style; // BUILDING_WINDOW_PLAIN, _MODERN, _PARIS
+    uint flags; // BUILDING_WINDOW_SHOP_FLOOR, _WAREHOUSE, _CHURCH
+    uint first; // its first window among the tile's (its first sample in the tile's window group)
+    uint levels;
+    uint cols;
+    uint near_slot;
+    uint far_slot;
+};
+
+inline BuildingWindowWall building_window_wall(uint4 v) {
+    BuildingWindowWall w;
+    w.wall = v.x & BUILDING_WINDOW_WALL_BITS;
+    w.style = (v.x >> BUILDING_WINDOW_STYLE_SHIFT) & 3u;
+    w.flags = (v.x >> BUILDING_WINDOW_FLAGS_SHIFT) & 7u;
+    w.first = v.y;
+    w.levels = v.z & 0xFFFFu;
+    w.cols = v.z >> 16u;
+    w.near_slot = v.w & 0xFFFFu;
+    w.far_slot = v.w >> 16u;
+    return w;
+}
+
+/// Window r, c of windowed wall `w`, cut from its wall's one-cell primitive `wall` (corners (a, y0), (b, y0), (b, top),
+/// (a, top)) as the port cuts it and stood out along its face's normal `n` (quad_at's corners, in float).
+inline BuildingPrim building_window_prim(BuildingPrim wall, float3 n, BuildingWindowWall w, uint r, uint c) {
+    float y0 = wall.c0.y;
+    float top = wall.c3.y;
+    float lv = float(w.levels);
+    float fh = (top - y0) / (lv > 1.0f ? lv : 1.0f);
+    bool modern = w.style == BUILDING_WINDOW_MODERN;
+    bool paris = w.style == BUILDING_WINDOW_PARIS;
+    float row = y0 + float(r) * fh;
+    float ya = row + fh * (r != 0u ? 0.22f : 0.3f);
+    float yb = ya + fh * (r != 0u ? (modern ? 0.62f : 0.58f) : 0.5f);
+    if (paris) {
+        ya = row + fh * 0.13f;
+        yb = ya + fh * 0.73f;
+    }
+    float cols = float(w.cols);
+    float u0 = (float(c) + (modern ? 0.1f : (paris ? 0.31f : 0.28f))) / cols;
+    float u1 = (float(c) + (modern ? 0.9f : (paris ? 0.69f : 0.72f))) / cols;
+    float ex = wall.c1.x - wall.c0.x;
+    float ez = wall.c1.z - wall.c0.z;
+    float ax = (wall.c0.x + ex * u0) + n.x * BUILDING_WINDOW_OUT;
+    float az = (wall.c0.z + ez * u0) + n.z * BUILDING_WINDOW_OUT;
+    float bx = (wall.c0.x + ex * u1) + n.x * BUILDING_WINDOW_OUT;
+    float bz = (wall.c0.z + ez * u1) + n.z * BUILDING_WINDOW_OUT;
+    BuildingPrim p = wall;
+    float3 c0 = {ax, ya, az};
+    float3 c1 = {bx, ya, bz};
+    float3 c2 = {bx, yb, bz};
+    float3 c3 = {ax, yb, az};
+    p.c0 = c0;
+    p.c1 = c1;
+    p.c2 = c2;
+    p.c3 = c3;
+    p.flags = 0u;
+    p.lead = 0u;
+    return p;
+}
+
+/// Whether wall `w`'s windows are drawn at the frame (its face `f` and its item's rank entry `rank`): its item drawn
+/// nearer than win_d, not a church's with weather nearer than 520 m, its wall turned to the eye. Not yet where the
+/// port draws them deep (with weather nearer than 160 m: a reveal, the glass set back, a sill, the frames' width by the
+/// distance), which come next.
+inline bool building_windows_drawn(uint theme_flags, TilePlace place, BuildingWindowWall w, BuildingFace f, uint rank) {
+    if (rank == RANK_NONE) {
+        return false;
+    }
+    uint detail = rank_detail(rank);
+    if ((detail & BUILDING_DETAIL_WINDOWS) == 0u) {
+        return false;
+    }
+    bool weather = (theme_flags & THEME_WEATHER) != 0u;
+    if ((w.flags & BUILDING_WINDOW_CHURCH) != 0u && weather && (detail & BUILDING_DETAIL_CHURCH) != 0u) {
+        return false;
+    }
+    if (weather && (detail & BUILDING_DETAIL_DEEP) != 0u) {
+        return false;
+    }
+    float3 t = eye_relative(place, f.test);
+    float toward = -(((f.normal.x * t.x) + (f.normal.y * t.y)) + (f.normal.z * t.z));
+    return toward > 0.0f;
+}
+
+/// The first row of wall `w`'s windows the frame draws: the shop floor's is left out with weather.
+inline uint building_windows_first_row(uint theme_flags, BuildingWindowWall w) {
+    bool weather = (theme_flags & THEME_WEATHER) != 0u;
+    return (weather && (w.flags & BUILDING_WINDOW_SHOP_FLOOR) != 0u) ? 1u : 0u;
+}
+
+/// A window as the frame draws it: nothing (count 0), or its corners (CSS px, snapped at rest), in the port's order,
+/// and the span its outline's reciprocal depths keep within (its corners', widened as an edged shape's).
+struct BuildingWindowShape {
+    uint count;
+    float2 p0;
+    float2 p1;
+    float2 p2;
+    float2 p3;
+    float2 p4;
+    float lo;
+    float hi;
+};
+
+inline BuildingWindowShape building_window_nothing() {
+    BuildingWindowShape s;
+    float2 zero = {0.0f, 0.0f};
+    s.count = 0u;
+    s.p0 = zero;
+    s.p1 = zero;
+    s.p2 = zero;
+    s.p3 = zero;
+    s.p4 = zero;
+    s.lo = 0.0f;
+    s.hi = 0.0f;
+    return s;
+}
+
+/// Corner i of a window's shape.
+inline float2 building_window_corner(BuildingWindowShape s, uint i) {
+    if (i == 0u) {
+        return s.p0;
+    }
+    if (i == 1u) {
+        return s.p1;
+    }
+    if (i == 2u) {
+        return s.p2;
+    }
+    if (i == 3u) {
+        return s.p3;
+    }
+    return s.p4;
+}
+
+/// The window `win` (building_window_prim's) as the frame draws it at its camera: Camera.poly's corners, clipped at
+/// the near plane, its box against the frame and the margin, its area (unsnapped) over the windows' least, snapped at
+/// rest.
+inline BuildingWindowShape building_window_shape(FrameCamera cam, TilePlace place, BuildingPrim win) {
+    BuildingWindowShape s = building_window_nothing();
+    float near_z = cam.frame.w;
+    float3 origin = {0.0f, 0.0f, 0.0f};
+    float3 c[5] = {origin, origin, origin, origin, origin};
+    uint m = 0u;
+    for (uint i = 0u; i < 4u; ++i) {
+        float3 a = camera_of(cam, eye_relative(place, building_prim_corner(win, i)));
+        float3 b = camera_of(cam, eye_relative(place, building_prim_corner(win, (i + 1u) % 4u)));
+        bool ai = a.z >= near_z;
+        bool bi = b.z >= near_z;
+        if (ai) {
+            c[m] = a;
+            m = m + 1u;
+        }
+        if (ai != bi) {
+            float t = (near_z - a.z) / (b.z - a.z);
+            float3 q = {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, near_z};
+            c[m] = q;
+            m = m + 1u;
+        }
+    }
+    if (m < 3u) {
+        return s;
+    }
+    float2 zero = {0.0f, 0.0f};
+    float2 q[5] = {zero, zero, zero, zero, zero};
+    float min_x = 0.0f;
+    float max_x = 0.0f;
+    float min_y = 0.0f;
+    float max_y = 0.0f;
+    for (uint i = 0u; i < m; ++i) {
+        q[i] = css_of(cam, c[i]);
+        if (i == 0u) {
+            min_x = q[i].x;
+            max_x = q[i].x;
+            min_y = q[i].y;
+            max_y = q[i].y;
+        } else {
+            min_x = q[i].x < min_x ? q[i].x : min_x;
+            max_x = q[i].x > max_x ? q[i].x : max_x;
+            min_y = q[i].y < min_y ? q[i].y : min_y;
+            max_y = q[i].y > max_y ? q[i].y : max_y;
+        }
+    }
+    if (max_x < -BUILDING_MARGIN || min_x > cam.frame.x + BUILDING_MARGIN || max_y < -BUILDING_MARGIN ||
+        min_y > cam.frame.y + BUILDING_MARGIN) {
+        return s;
+    }
+    float twice = 0.0f;
+    for (uint i = 0u; i < m; ++i) {
+        float2 a = q[i];
+        float2 b = q[(i + 1u) % m];
+        twice = twice + (a.x * b.y - b.x * a.y);
+    }
+    if (!(abs(twice) / 2.0f > BUILDING_WINDOW_MIN_AREA)) {
+        return s;
+    }
+    bool rest = camera_rests(cam);
+    float lo = 0.0f;
+    float hi = 0.0f;
+    for (uint i = 0u; i < m; ++i) {
+        float2 v = q[i];
+        if (rest) {
+            float2 snapped = {snap_tenth(v.x), snap_tenth(v.y)};
+            v = snapped;
+        }
+        if (i == 0u) {
+            s.p0 = v;
+        } else if (i == 1u) {
+            s.p1 = v;
+        } else if (i == 2u) {
+            s.p2 = v;
+        } else if (i == 3u) {
+            s.p3 = v;
+        } else {
+            s.p4 = v;
+        }
+        float recip = near_z / c[i].z;
+        lo = i == 0u || recip < lo ? recip : lo;
+        hi = i == 0u || recip > hi ? recip : hi;
+    }
+    s.count = m;
+    s.lo = lo - lo * BUILDING_PLANE_SPAN;
+    s.hi = hi + hi * BUILDING_PLANE_SPAN;
+    return s;
+}
+
+/// Wall `f`'s plane in camera coordinates (as building_shape's: its normal turned with the tile's place, through its
+/// test point).
+inline float4 building_window_plane(FrameCamera cam, TilePlace place, BuildingFace f) {
+    float3 nrm = {f.normal.x / place.scale.x, f.normal.y, f.normal.z};
+    float3 on_face = eye_relative(place, f.test);
+    float3 nk = camera_of(cam, nrm);
+    float4 plane = {nk.x, nk.y, nk.z, ((nrm.x * on_face.x) + (nrm.y * on_face.y)) + (nrm.z * on_face.z)};
+    return plane;
+}
+
+/// A window's shape as an edged building shape on its wall's plane (building_outline's and building_plane_recip's).
+inline BuildingShape building_window_as_shape(BuildingWindowShape w, float4 plane, float lead) {
+    BuildingShape s = building_nothing();
+    s.count = w.count;
+    s.p0 = w.p0;
+    s.p1 = w.p1;
+    s.p2 = w.p2;
+    s.p3 = w.p3;
+    s.p4 = w.p4;
+    s.plane = plane;
+    s.lo = w.lo;
+    s.hi = w.hi;
+    s.lead = lead;
+    return s;
+}
+
+/// Corner i of a window's shape as its glass turns there: its two edges' inward normals and 1 + n_a · n_b (0.25 or
+/// less: a corner too sharp to erode).
+struct BuildingGlassTurn {
+    float2 n_in;
+    float2 n_out;
+    float k;
+};
+
+/// Corner i's turn, with the shoelace sum's sign `sign` (the shape's orientation).
+inline BuildingGlassTurn building_glass_turn(BuildingWindowShape s, uint i, float sign) {
+    uint n = s.count;
+    float2 at = building_window_corner(s, i);
+    float2 d_in = building_unit(at - building_window_corner(s, (i + n - 1u) % n));
+    float2 d_out = building_unit(building_window_corner(s, (i + 1u) % n) - at);
+    // the inward normals (building_outline's outward ones turned back)
+    float2 a = {-sign * d_in.y, sign * d_in.x};
+    float2 b = {-sign * d_out.y, sign * d_out.x};
+    BuildingGlassTurn t;
+    t.n_in = a;
+    t.n_out = b;
+    t.k = 1.0f + (a.x * b.x + a.y * b.y);
+    return t;
+}
+
+/// The sign of a window shape's shoelace sum.
+inline float building_window_sign(BuildingWindowShape s) {
+    float twice = 0.0f;
+    for (uint k = 0u; k < s.count; ++k) {
+        float2 a = building_window_corner(s, k);
+        float2 b = building_window_corner(s, (k + 1u) % s.count);
+        twice = twice + (a.x * b.y - b.x * a.y);
+    }
+    return twice > 0.0f ? 1.0f : -1.0f;
+}
+
+/// Corner i of the glass a window's stroke of half width `r` (CSS px) leaves: the window's polygon eroded by r, each
+/// corner moved in along its two edges' inward normals (r (n_a + n_b) / (1 + n_a · n_b)); a corner too sharp to erode
+/// stays (building_glass_drawn draws no glass then).
+inline float2 building_glass_corner(BuildingWindowShape s, uint i, float r) {
+    BuildingGlassTurn t = building_glass_turn(s, i, building_window_sign(s));
+    float2 at = building_window_corner(s, i);
+    if (!(t.k > 0.25f)) {
+        return at;
+    }
+    float2 moved = {at.x + r * (t.n_in.x + t.n_out.x) / t.k, at.y + r * (t.n_in.y + t.n_out.y) / t.k};
+    return moved;
+}
+
+/// Whether the glass of `s` eroded by r is a polygon: its corners distinct, none too sharp, and each of its edges
+/// keeping its edge's direction (a window no wider than the stroke somewhere, or one snapping squeezed, is its frame's
+/// alone).
+inline bool building_glass_drawn(BuildingWindowShape s, float r) {
+    if (s.count < 3u) {
+        return false;
+    }
+    float sign = building_window_sign(s);
+    for (uint i = 0u; i < s.count; ++i) {
+        uint j = (i + 1u) % s.count;
+        float2 e = building_window_corner(s, j) - building_window_corner(s, i);
+        if (e.x == 0.0f && e.y == 0.0f) {
+            return false;
+        }
+        if (!(building_glass_turn(s, i, sign).k > 0.25f)) {
+            return false;
+        }
+        float2 g = building_glass_corner(s, j, r) - building_glass_corner(s, i, r);
+        if (!((e.x * g.x + e.y * g.y) > 0.0f)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// Vertex v (0 to 107: 36 triangles) of a window's frame, the band its stroke of half width r paints: between its
+/// outline `outline` dilated by r (building_outline_points' 32, a corner's 32 / count of them from its incoming edge's
+/// side round to its outgoing edge's) and its glass (building_glass_corner), corner by corner a fan from the glass's
+/// corner over the outline's points about it, then the quad along the edge to the next corner; the triangles past a
+/// window's last repeat its last point (no area). A window without glass: its whole dilated outline, a fan of 30
+/// triangles from its first point.
+inline float2 building_window_frame_point(BuildingShape outline, BuildingWindowShape s, uint v, float r) {
+    uint t = v / 3u;
+    uint k = v - t * 3u;
+    uint points = BUILDING_WINDOW_OUTLINE_POINTS;
+    if (!building_glass_drawn(s, r)) {
+        uint p = t + 2u < points ? (k == 0u ? 0u : t + k) : points - 1u;
+        return building_outline_points(outline, p, r, points);
+    }
+    uint m = s.count;
+    uint per = points / m;
+    uint each = per + 1u; // a corner's triangles: per - 1 of its fan, 2 of its edge's quad
+    uint j = t / each;
+    if (j >= m) {
+        return building_glass_corner(s, m - 1u, r);
+    }
+    uint q = t - j * each;
+    uint next = (j + 1u) % m;
+    if (k == 0u) {
+        return building_glass_corner(s, j, r);
+    }
+    if (q + 1u < per) {
+        return building_outline_points(outline, j * per + q + k - 1u, r, points);
+    }
+    if (q + 1u == per) {
+        return building_outline_points(outline, k == 1u ? j * per + per - 1u : next * per, r, points);
+    }
+    if (k == 1u) {
+        return building_outline_points(outline, next * per, r, points);
+    }
+    return building_glass_corner(s, next, r);
+}
+
+/// A colour 0xRRGGBB as the shaders take it: sRGB 0 to 1 at 8-bit levels.
+inline float3 building_rgb(uint c) {
+    float3 v = {float((c >> 16u) & 0xFFu), float((c >> 8u) & 0xFFu), float(c & 0xFFu)};
+    return v / 255.0f;
+}
+
+/// A window's glass at the frame: a flat colour (top = bottom) or the gradient from its path's box's top to its
+/// bottom (the port's url(#glass) and url(#glassLit)).
+struct BuildingGlass {
+    float3 top;
+    float3 bottom;
+    bool gradient;
+};
+
+/// The glass of a window, lit or not, of a wall with flags `flags` and style `style`, at the moment (amsterdam.py:
+/// gd, gl = (url(#glass), url(#glassLit)) by day with weather, else (dark by day or at night, lit); a warehouse's
+/// shutters with weather; a Paris stone front's lit panes as its dark ones by day).
+inline BuildingGlass building_glass(FrameWindows w, uint theme_flags, uint style, uint flags, bool lit) {
+    bool weather = (theme_flags & THEME_WEATHER) != 0u;
+    bool night = (theme_flags & THEME_NIGHT) != 0u;
+    bool overcast = (theme_flags & THEME_OVERCAST) != 0u;
+    BuildingGlass dark;
+    BuildingGlass bright;
+    if (weather && !night) {
+        dark.top = building_rgb(overcast ? w.glass.z : w.glass.x);
+        dark.bottom = building_rgb(overcast ? w.glass.w : w.glass.y);
+        dark.gradient = true;
+        bright.top = building_rgb(w.lit.x);
+        bright.bottom = building_rgb(w.lit.y);
+        bright.gradient = true;
+    } else {
+        dark.top = building_rgb(night ? w.dark.y : w.dark.x);
+        dark.bottom = dark.top;
+        dark.gradient = false;
+        bright.top = building_rgb(w.lit.z);
+        bright.bottom = bright.top;
+        bright.gradient = false;
+    }
+    if ((flags & BUILDING_WINDOW_WAREHOUSE) != 0u && weather) {
+        dark.top = building_rgb(night ? w.dark.w : w.dark.z);
+        dark.bottom = dark.top;
+        dark.gradient = false;
+        bright = dark;
+    }
+    if (style == BUILDING_WINDOW_PARIS && !night) {
+        bright = dark;
+    }
+    if (lit) {
+        return bright;
+    }
+    return dark;
+}
+
+/// The windows' frames' colour at the moment.
+inline float3 building_window_frame(FrameWindows w, uint theme_flags) {
+    return building_rgb((theme_flags & THEME_NIGHT) != 0u ? w.frame.y : w.frame.x);
+}
+
+/// The windows' frames' width (CSS px).
+inline float building_window_frame_width(FrameWindows w) {
+    return asfloat(w.lit.w);
+}
+
+// A window's record, which windows_cs writes for each window of the frame's jobs and the windows' vertex stages read
+// (4 uint4): v0 its header (corners, bits 0-2; lit, bit 3; its wall's warehouse flag, bit 4; its style, bits 5-6), its
+// wall's record among the frame's walls, its painter slot, its span's low end; v1 its span's high end and its first
+// three corners' x, y (CSS px) but the last; then the rest of its five corners. A header 0: the window is not drawn.
+static const uint BUILDING_WINDOW_RECORD_VECTORS = 4u;
+static const uint BUILDING_WINDOW_LIT = 8u;
+static const uint BUILDING_WINDOW_RECORD_WAREHOUSE = 16u;
+static const uint BUILDING_WINDOW_RECORD_STYLE_SHIFT = 5u;
+
+struct BuildingWindowRecord {
+    uint4 v0;
+    uint4 v1;
+    uint4 v2;
+    uint4 v3;
+};
+
+/// The record of window shape `s` (lit or not) of wall `w`, the frame's wall record `wall`, at painter slot `slot`.
+inline BuildingWindowRecord building_window_record(BuildingWindowShape s, bool lit, BuildingWindowWall w, uint wall,
+                                                   uint slot) {
+    BuildingWindowRecord r;
+    uint header = 0u;
+    if (s.count != 0u) {
+        header = s.count | (lit ? BUILDING_WINDOW_LIT : 0u) |
+                 ((w.flags & BUILDING_WINDOW_WAREHOUSE) != 0u ? BUILDING_WINDOW_RECORD_WAREHOUSE : 0u) |
+                 (w.style << BUILDING_WINDOW_RECORD_STYLE_SHIFT);
+    }
+    uint4 v0 = {header, wall, slot, asuint(s.lo)};
+    uint4 v1 = {asuint(s.hi), asuint(s.p0.x), asuint(s.p0.y), asuint(s.p1.x)};
+    uint4 v2 = {asuint(s.p1.y), asuint(s.p2.x), asuint(s.p2.y), asuint(s.p3.x)};
+    uint4 v3 = {asuint(s.p3.y), asuint(s.p4.x), asuint(s.p4.y), 0u};
+    r.v0 = v0;
+    r.v1 = v1;
+    r.v2 = v2;
+    r.v3 = v3;
+    return r;
+}
+
+/// A record's shape.
+inline BuildingWindowShape building_window_of(BuildingWindowRecord r) {
+    BuildingWindowShape s = building_window_nothing();
+    s.count = r.v0.x & 7u;
+    s.lo = asfloat(r.v0.w);
+    s.hi = asfloat(r.v1.x);
+    float2 p0 = {asfloat(r.v1.y), asfloat(r.v1.z)};
+    float2 p1 = {asfloat(r.v1.w), asfloat(r.v2.x)};
+    float2 p2 = {asfloat(r.v2.y), asfloat(r.v2.z)};
+    float2 p3 = {asfloat(r.v2.w), asfloat(r.v3.x)};
+    float2 p4 = {asfloat(r.v3.y), asfloat(r.v3.z)};
+    s.p0 = p0;
+    s.p1 = p1;
+    s.p2 = p2;
+    s.p3 = p3;
+    s.p4 = p4;
+    return s;
+}
+
+// A windowed wall's record for the frame, which windows_cs writes once a windowed wall of the frame's jobs (2 uint4):
+// its plane in camera coordinates; the box of its dark windows' corners from top (y0) to bottom (y1), then its lit
+// ones' (CSS px; top below bottom where it has none).
+static const uint BUILDING_WALL_RECORD_VECTORS = 2u;
+
+struct BuildingWallRecord {
+    float4 plane;
+    float2 dark;
+    float2 lit;
+};
+
+inline BuildingWallRecord building_wall_record_of(uint4 a, uint4 b) {
+    BuildingWallRecord w;
+    float4 plane = {asfloat(a.x), asfloat(a.y), asfloat(a.z), asfloat(a.w)};
+    float2 dark = {asfloat(b.x), asfloat(b.y)};
+    float2 lit = {asfloat(b.z), asfloat(b.w)};
+    w.plane = plane;
+    w.dark = dark;
+    w.lit = lit;
+    return w;
+}
+
+/// The glass's colour at CSS height `y` over a path's box from `top` to `bottom` (objectBoundingBox from 0 to 1,
+/// padded): its top's above the box, its bottom's below.
+inline float3 building_glass_at(BuildingGlass g, float top, float bottom, float y) {
+    if (!g.gradient || !(bottom > top)) {
+        return g.top;
+    }
+    float t = (y - top) / (bottom - top);
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    return g.top + (g.bottom - g.top) * t;
+}

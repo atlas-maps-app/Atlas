@@ -102,15 +102,50 @@ Checked check_tile(const gm::TileBuildings& g, const atlas::sun::SunTile& st) {
     };
     for (const gm::Prim& p : g.edged) check(p);
     for (const gm::Prim& p : g.plain) check(p);
-    // cell c's primitives are [first[c], first[c + 1])
+    // the windows: the tile's window group of K8's samples, wall by wall, window by window (its record, edge and place
+    // on the wall), each windowed wall naming its wall's one-cell primitive, its slots within its item's
+    CHECK(g.windows == s.size() - s.windows_first);
+    std::uint32_t windows = 0;
+    for (const gm::WindowWall& w : g.window_walls) {
+        REQUIRE(w.wall < g.edged.size());
+        const gm::Prim& wall = g.edged[w.wall];
+        CHECK(wall.kind == gm::PrimKind::cell);
+        CHECK((wall.flags & gm::prim_flag::far) != 0);
+        CHECK(wall.cell == w.cell);
+        const gm::BuildingItem& item = g.items[wall.item];
+        CHECK(w.near_slot + gm::window_slots <= item.near_slots);
+        CHECK(w.far_slot + gm::window_slots <= item.far_slots);
+        const std::uint32_t count = std::uint32_t{w.levels} * w.cols;
+        windows += count;
+        for (std::uint32_t k = 0; k < count; ++k) {
+            const std::uint32_t i = s.windows_first + w.first + k;
+            const bool same = i < s.size() && s.kind[i] == atlas::sun::Kind::window &&
+                              s.source[i] == static_cast<atlas::sun::Source>(item.source) &&
+                              s.owner[i] == item.record && s.edge[i] == wall.edge && s.part[i] == k;
+            if (!same) {
+                if (c.wrong == 0) {
+                    c.first_wrong = "window " + std::to_string(k) + " of record " + std::to_string(item.record) +
+                                    " edge " + std::to_string(wall.edge) + " sample " + std::to_string(i);
+                }
+                ++c.wrong;
+            }
+        }
+    }
+    CHECK(windows == g.windows);
+    // cell c's primitives are [first[c], first[c + 1]), and its windowed walls alike
     const std::size_t cells = std::size_t{g.cells_per_side} * g.cells_per_side;
     REQUIRE(g.edged_first.size() == cells + 1);
     REQUIRE(g.plain_first.size() == cells + 1);
+    REQUIRE(g.window_walls_first.size() == cells + 1);
     CHECK(g.edged_first[cells] == g.edged.size());
     CHECK(g.plain_first[cells] == g.plain.size());
+    CHECK(g.window_walls_first[cells] == g.window_walls.size());
     for (std::size_t k = 0; k < cells; ++k) {
         for (std::uint32_t i = g.edged_first[k]; i < g.edged_first[k + 1]; ++i) CHECK(g.edged[i].cell == k);
         for (std::uint32_t i = g.plain_first[k]; i < g.plain_first[k + 1]; ++i) CHECK(g.plain[i].cell == k);
+        for (std::uint32_t i = g.window_walls_first[k]; i < g.window_walls_first[k + 1]; ++i) {
+            CHECK(g.window_walls[i].cell == k);
+        }
     }
     // an n-gon's triangles are its polygon's
     for (std::size_t k = 0; k < g.polygons.size(); ++k) {
@@ -280,6 +315,8 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
         std::map<int, std::size_t> level_bytes; // the densest tile's bytes at each level
         std::size_t wrong = 0;
         std::size_t tiles = 0;
+        std::size_t windows = 0;
+        std::size_t walls = 0;
         double ms = 0;
         for (const std::uint8_t level : levels) {
             for (const tl::ChunkRef& chunk : pack->chunks().level(head->levels[0])) {
@@ -287,12 +324,12 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
                 auto tile = pack->decode(chunk, zstd, decoder, arena, raw, scratch);
                 ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
                 const auto t0 = std::chrono::steady_clock::now();
-                const gm::TileBuildings g =
-                    gm::build_buildings({.tile = &*tile,
-                                         .head = head,
-                                         .level = level,
-                                         .region = {.water_y = style.water_y, .hull = style.hull, .deck = style.deck},
-                                         .kind = 0});
+                const gm::TileBuildings g = gm::build_buildings(
+                    {.tile = &*tile,
+                     .head = head,
+                     .level = level,
+                     .region = {.water_y = style.water_y, .hull = style.hull, .deck = style.deck, .paris = style.paris},
+                     .kind = 0});
                 ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
                 const atlas::sun::SunTile st = atlas::sun::make_tile(*tile, *head, region, level, {});
                 const Checked c = check_tile(g, st);
@@ -311,13 +348,15 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
                 CHECK_MESSAGE(c.wrong == 0, name, " level ", int{level}, ": ", c.first_wrong);
                 prims += c.prims;
                 sampled += c.sampled;
+                windows += g.windows;
+                walls += g.window_walls.size();
                 wrong += c.wrong;
                 ++tiles;
             }
         }
         MESSAGE(std::string(name), ": ", tiles, " tiles over ", levels.size(), " levels, ", prims, " primitives, ",
-                sampled, " with a sun sample, ", wrong, " not K8's; stage T ", ms / static_cast<double>(tiles),
-                " ms a tile");
+                sampled, " with a sun sample, ", windows, " windows on ", walls, " walls, ", wrong,
+                " not K8's; stage T ", ms / static_cast<double>(tiles), " ms a tile");
         MESSAGE(std::string(name), ": a tile's range of the walls heap ",
                 static_cast<double>(all_bytes) / static_cast<double>(tiles) / (1 << 20), " MB on average, the densest ",
                 static_cast<double>(most_bytes) / (1 << 20), " MB: ", densest);
@@ -326,10 +365,11 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
             per_level += std::format(" {}: {:.2f}", lv, static_cast<double>(b) / (1 << 20));
         MESSAGE(std::string(name), ": the densest tile's MB by level:", per_level);
         // the heaps' share of the buildings (D2 put a dense tile at about 1.5-2.5 MB): a tile 2 MB at most on average,
-        // and the canal ring's centre (14/8414/5384, some 6,800 buildings) within 13 MB at its finest level, 9 MB at
-        // the Main board's (level 7), which the frame's test holds within the heaps' budget (scene/Heaps.hpp)
+        // and the canal ring's centre (14/8414/5384, some 6,800 buildings) within 14 MB at its finest level (13.4 with
+        // its 40,000 windowed walls, 16 bytes each), 10 MB at the Main board's (level 7), which the frame's test holds
+        // within the heaps' budget (scene/Heaps.hpp)
         CHECK(all_bytes <= tiles * (std::size_t{2} << 20U));
-        CHECK(most_bytes <= std::size_t{13} << 20U);
+        CHECK(most_bytes <= std::size_t{14} << 20U);
         CHECK(wrong == 0);
         CHECK(prims > 0);
     }

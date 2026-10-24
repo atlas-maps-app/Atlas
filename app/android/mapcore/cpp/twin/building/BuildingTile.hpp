@@ -5,6 +5,8 @@
 //     a houseboat's walls) then the plain ones (roof faces, n-gons' triangles);
 //   - the near cells, two words each (two a uint4): the wall's primitive in the edged list, and its place on the wall
 //     with the wall's columns and rows (building_cell_prim cuts the cell from its wall);
+//   - the windowed walls, a uint4 each (shaders/building/windows.slangh's BuildingWindowWall: its wall's primitive in
+//     the edged list with its style and flags, its first window, its rows and bays, its slots), by cell;
 //   - each face's geometry, 2 uint4 (its normal and area as floats, its test point and flags);
 //   - each frame slot's colours, 2 words a face (lit, unlit, 0xBBGGRR), which the CPU's light writes per tile and
 //     moment (its inputs stay on the CPU: BuildingTile::lights);
@@ -46,22 +48,31 @@ struct BuildingLight {
 /// (uint4 indexes from the range's start), its counts, each cell's primitives and near cells, its faces' light inputs,
 /// its n-gons, and its items' owners.
 struct BuildingTile {
-    std::uint32_t edged = 0; ///< primitives drawn with their edge, from `prims_at`
-    std::uint32_t plain = 0; ///< then the plain ones
-    std::uint32_t cells = 0; ///< near cells, from `cells_at`
+    std::uint32_t edged = 0;        ///< primitives drawn with their edge, from `prims_at`
+    std::uint32_t plain = 0;        ///< then the plain ones
+    std::uint32_t cells = 0;        ///< near cells, from `cells_at`
+    std::uint32_t window_walls = 0; ///< windowed walls, from `windows_at`
+    std::uint32_t windows = 0;      ///< their windows (the tile's window group of sun samples)
     std::uint32_t faces = 0;
     std::uint32_t items = 0;
     std::uint32_t prims_at = 0;   ///< the primitives, 4 uint4 each: the edged ones, then the plain
     std::uint32_t cells_at = 0;   ///< the near cells, two words each
+    std::uint32_t windows_at = 0; ///< the windowed walls, a uint4 each
     std::uint32_t faces_at = 0;   ///< each face's geometry, 2 uint4
     std::uint32_t colours_at = 0; ///< each frame slot's colours: slot s from word colours_at · 4 + s · 2 · faces
     std::uint32_t rows_at = 0;    ///< the items' rows, four a uint4
     std::uint32_t vectors = 0;    ///< the range's size in uint4
     std::uint8_t cells_per_side = 0;
-    /// The tile's cell c's edged primitives: [edged_first[c], edged_first[c + 1]); its near cells and plain ones alike.
+    /// The tile's cell c's edged primitives: [edged_first[c], edged_first[c + 1]); its near cells, plain ones and
+    /// windowed walls alike.
     std::vector<std::uint32_t> edged_first;
     std::vector<std::uint32_t> cells_first;
     std::vector<std::uint32_t> plain_first;
+    std::vector<std::uint32_t> windows_first;
+    /// Each windowed wall's first window among the tile's by cell (its windows: [window_at[i], window_at[i + 1])).
+    std::vector<std::uint32_t> window_at;
+    /// Each windowed wall's item (its wall's), so the frame's jobs take only the walls whose windows it draws.
+    std::vector<std::uint16_t> window_items;
     /// Each face's light inputs (the CPU's light, per tile and moment, and the twin's).
     std::vector<BuildingLight> lights;
     /// The n-gons, in their triangles' order, and their rings' points relative to the tile's corner (x, y, z each, the
