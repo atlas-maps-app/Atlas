@@ -63,6 +63,7 @@ struct Slots {
     std::uint8_t levels;
     std::uint8_t mat_draw;
     std::uint8_t no_win;
+    std::uint8_t year;
 };
 
 template <class Columns>
@@ -82,7 +83,8 @@ consteval Slots slots_in(const Columns& c) {
             tl::slot_of(c, "tag:roof:direction"),
             tl::slot_of(c, "levels"),
             tl::slot_of(c, "mat_draw"),
-            tl::slot_of(c, "no_win")};
+            tl::slot_of(c, "no_win"),
+            tl::slot_of(c, "year")};
 }
 
 constexpr Slots record_slots = slots_in(tl::building::columns);
@@ -110,6 +112,7 @@ constexpr Slots variant_slots = slots_in(tl::variant::columns);
     v.levels = levels.value_or(0);
     v.mat_draw = l.string(s.mat_draw, i);
     v.no_win = l.boolean(s.no_win, i).value_or(false);
+    v.year = l.nullable_integer(s.year, i).value_or(0); // amsterdam.py: yr = b['year'] or 0
     return v;
 }
 
@@ -289,8 +292,8 @@ int window_cols(double elen, WindowStyle style) noexcept {
 }
 
 void walls(Builder& b, const Building& bl, std::uint16_t variant) {
-    // render/amsterdam.py's _draw_building: per footprint edge of 0.3 m or more, its cells, the skillion's wall and the
-    // wall's windows
+    // render/amsterdam.py's _draw_building: per footprint edge of 0.3 m or more, its cells, the skillion's wall, the
+    // wall's shop glazing and its windows; after them the building's plinth and cornice
     const std::span<const V2> poly = bl.poly;
     const std::size_t n = poly.size();
     const double y0 = bl.y0;
@@ -307,6 +310,17 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
         static_cast<std::uint8_t>(((flags & tl::building::flag_shop_floor) != 0 ? window_flag::shop_floor : 0U) |
                                   ((flags & tl::building::flag_warehouse) != 0 ? window_flag::warehouse : 0U) |
                                   (church ? window_flag::church : 0U));
+    // its flat detail with weather (`if wx and lens is None and not part and d < 760`; a houseboat is drawn as a boat
+    // with weather): a plinth where it stands on the street (y0 <= 0.5); a cornice on an old house's or under a mansard
+    // (`(yr and yr < 1800) or roof == 'mansard'`, a tradition's later) where its walls stand over 5 m; a shop floor's
+    // glazing on its walls over 2.4 m on the street
+    const bool facades = (!bl.v.part_tag || church) && (flags & tl::building::flag_houseboat) == 0;
+    const bool plinth = facades && y0 <= 0.5;
+    const bool cornice =
+        facades && ((bl.v.year != 0 && bl.v.year < 1800) || is(bl.roof, "mansard")) && wall_top - y0 > 5;
+    const bool shop = facades && (flags & tl::building::flag_shop_floor) != 0 && y0 <= 0.5;
+    const auto facade_flags =
+        static_cast<std::uint8_t>((plinth ? window_flag::plinth : 0U) | (cornice ? window_flag::cornice : 0U));
     for (std::size_t i = 0; i < n; ++i) {
         const V2 a = poly[i];
         const V2 bb = poly[(i + 1) % n];
@@ -363,26 +377,36 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
                         {.edge = edge, .part = 0});
             }
         }
-        // its windows: a row per level (the shop floor's too), bays by its length; their slots after its cells, in
-        // both variants (a view's win_d can reach past the cells' 460 m)
-        if (windowed && elen > 2.2) {
-            const int lv = static_cast<int>(bl.v.levels); // Kotlin's Long.toInt()
-            const int cols = window_cols(elen, style);
-            if (lv > 0) {
-                b.out.window_walls.push_back({.wall = wall,
-                                              .first = b.windows,
-                                              .levels = u16(lv),
-                                              .cols = u16(cols),
-                                              .near_slot = Builder::slot(b.near_slot),
-                                              .far_slot = Builder::slot(b.far_slot),
-                                              .cell = b.cell,
-                                              .style = style,
-                                              .flags = window_flags});
-                b.windows += static_cast<std::uint32_t>(lv) * static_cast<std::uint32_t>(cols);
-                b.near_slot += window_slots;
-                b.far_slot += window_slots;
-            }
+        // its facade: its shop glazing (its own path, after its cells), then its windows (a row per level, the shop
+        // floor's too, bays by its length), their slots after its cells in both variants (a view's win_d can reach
+        // past the cells' 460 m); its plinth and cornice, whose slots follow all its building's walls
+        const int lv = static_cast<int>(bl.v.levels); // Kotlin's Long.toInt()
+        const bool windows = windowed && elen > 2.2 && lv > 0;
+        const bool glazing = shop && elen > 2.4;
+        if (windows || glazing || facade_flags != 0) {
+            const int cols = windows ? window_cols(elen, style) : 0;
+            b.out.window_walls.push_back({.wall = wall,
+                                          .first = b.windows,
+                                          .levels = u16(windows ? lv : 0),
+                                          .cols = u16(cols),
+                                          .near_slot = Builder::slot(b.near_slot),
+                                          .far_slot = Builder::slot(b.far_slot),
+                                          .cell = b.cell,
+                                          .style = style,
+                                          .flags = static_cast<std::uint8_t>(window_flags | facade_flags |
+                                                                             (glazing ? window_flag::glazing : 0U))});
+            const std::uint32_t taken = (glazing ? 1U : 0U) + (windows ? window_slots : 0U);
+            if (windows) b.windows += static_cast<std::uint32_t>(lv) * static_cast<std::uint32_t>(cols);
+            b.near_slot += taken;
+            b.far_slot += taken;
         }
+    }
+    // the plinth's path, then the cornice's, after the walls (before the roof)
+    b.facade = no_facade;
+    if (facade_flags != 0) {
+        b.facade = std::uint32_t{Builder::slot(b.near_slot)} | (std::uint32_t{Builder::slot(b.far_slot)} << 16U);
+        b.near_slot += 2;
+        b.far_slot += 2;
     }
 }
 
@@ -536,6 +560,7 @@ TileBuildings build_buildings(const BuildingInput& in) {
             for (std::size_t k = m.plain_first; k < m.plain_end; ++k) reach(made.plain[k]);
             item.spec.radius = static_cast<float>(std::sqrt(r2) * 1.0001 + 0.01);
             made.items.push_back(item);
+            made.item_facades.push_back(b.facade);
             spans.push_back(m);
         }
     }
@@ -543,6 +568,7 @@ TileBuildings build_buildings(const BuildingInput& in) {
     out.windows = b.windows;
     out.faces = std::move(made.faces);
     out.items = std::move(made.items);
+    out.item_facades = std::move(made.item_facades);
     // the primitives by cell: each cell's buildings, then its parts, in the layers' order (the layers are sorted so);
     // the windowed walls with them, each naming its wall's new place
     std::vector<std::size_t> order(spans.size());

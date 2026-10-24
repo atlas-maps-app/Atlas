@@ -11,6 +11,7 @@
 //   - each frame slot's colours, 2 words a face (lit, unlit, 0xBBGGRR), which the CPU's light writes per tile and
 //     moment (its inputs stay on the CPU: BuildingTile::lights);
 //   - each frame slot's reveals' colours, a word a windowed wall (its face's colour times 0.55, unlit), lit alike;
+//   - each item's plinth's and cornice's painter slots (geometry::TileBuildings::item_facades), a word each;
 //   - the items' rows in the item table, one word each, written once the tile is taken.
 // Plain data: no Vulkan, so the twin and its tests read it as the GPU does.
 #pragma once
@@ -62,6 +63,7 @@ struct BuildingTile {
     std::uint32_t faces_at = 0;   ///< each face's geometry, 2 uint4
     std::uint32_t colours_at = 0; ///< each frame slot's colours: slot s from word colours_at · 4 + s · 2 · faces
     std::uint32_t reveals_at = 0; ///< each frame slot's reveals' colours: slot s from word reveals_at · 4 + s · walls
+    std::uint32_t facades_at = 0; ///< each item's plinth's and cornice's slots, four a uint4
     std::uint32_t rows_at = 0;    ///< the items' rows, four a uint4
     std::uint32_t vectors = 0;    ///< the range's size in uint4
     std::uint8_t cells_per_side = 0;
@@ -77,6 +79,10 @@ struct BuildingTile {
     std::vector<std::uint16_t> window_items;
     /// Each windowed wall's face (its wall's), whose light inputs its reveals' colour comes from.
     std::vector<std::uint32_t> window_faces;
+    /// Each windowed wall's flags (geometry::window_flag), so the frame's jobs know its flat detail.
+    std::vector<std::uint8_t> window_flags;
+    /// Each item's plinth's and cornice's slots (geometry::TileBuildings::item_facades).
+    std::vector<std::uint32_t> item_facades;
     /// Each face's light inputs (the CPU's light, per tile and moment, and the twin's).
     std::vector<BuildingLight> lights;
     /// The n-gons, in their triangles' order, and their rings' points relative to the tile's corner (x, y, z each, the

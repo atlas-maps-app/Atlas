@@ -12,7 +12,8 @@
 // windows' reveals; its dark windows' path, then its lit ones', each window a closed subpath of its corners, filled
 // with its glass (the gradients `glass` and `glassLit` the pass defines by day with weather, else a flat colour) and
 // stroked in the frames' colour and width (wider deep); its sash bars, two open subpaths a window stroked in the
-// frames' colour; its deep windows' sills. Plain data in, no Vulkan: the pass's emit and the tests call it alike.
+// frames' colour; its deep windows' sills; before them its shop glazing, a path of its own; and each building's plinths
+// and cornices, a path each after its walls. Plain data in, no Vulkan: the pass's emit and the tests call it alike.
 #pragma once
 
 #include "frame/FrameBlock.hpp"
@@ -142,6 +143,8 @@ private:
     std::vector<shaders::BuildingWindowShape> sill_shapes_;            // and sills
     std::vector<shaders::BuildingSash> sashes_;                        // its windows' sash bars
     std::vector<std::uint32_t> reveals_; // the tile's windowed walls' reveals' colours at the frame's moment
+    std::vector<PartsDepth> plinths_;    // a building's plinths and cornices, a wall's each, until its walls are done
+    std::vector<PartsDepth> cornices_;
     std::vector<ElementDepth>* depths_ = nullptr;
     std::uint32_t tile_ = 0;
 };

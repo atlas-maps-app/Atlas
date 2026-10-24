@@ -67,6 +67,10 @@ struct WindowsStyle {
     DayNight frame;
     float frame_width = 0.0F;
     DayNight sill;
+    DayNight shop_frame;
+    float shop_frame_width = 0.0F;
+    DayNight plinth;
+    DayNight cornice;
 };
 
 struct Style {

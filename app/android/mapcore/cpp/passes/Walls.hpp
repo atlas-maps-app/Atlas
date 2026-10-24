@@ -101,13 +101,15 @@ public:
     [[nodiscard]] StrokeCounts stroke_counts() const noexcept { return stroke_counts_; }
     /// Whether the roofs' thin edges are drawn (the pass made their pipelines: not in the owner mode).
     [[nodiscard]] bool strokes() const noexcept { return strokes_ != nullptr; }
-    /// What the last frame's windows were: their jobs, the windowed walls and the windows they decided, and the
-    /// windows of the walls nearer than 160 m (their reveals, sills and sash bars).
+    /// What the last frame's windows were: their jobs, the facade walls and the windows they decided (a shop's
+    /// glazing among them), the windows of the walls nearer than 160 m (their reveals, sills and sash bars), and the
+    /// facades with a plinth or a cornice.
     struct WindowCounts {
         std::uint32_t jobs = 0;
         std::uint32_t walls = 0;
         std::uint32_t windows = 0;
         std::uint32_t nears = 0;
+        std::uint32_t facades = 0;
     };
     [[nodiscard]] WindowCounts window_counts() const noexcept { return window_counts_; }
     /// Whether the windows are drawn (the pass made their pipelines: not in the owner mode).
@@ -169,6 +171,7 @@ private:
         const BuildingTile* tile = nullptr;  ///< its layout (the windowed walls' windows, for the jobs)
         std::span<const std::uint32_t> rows; ///< its items' rows (their ranks say whose windows the frame draws)
         std::uint32_t reveals = 0;           ///< the walls heap's word of its reveals' colours in this frame slot
+        std::uint32_t facades = 0;           ///< the walls heap's uint4 of its items' plinths' and cornices' slots
         double distance = 0;                 ///< the tile's distance from the eye (the draws go nearest first)
     };
 
@@ -265,12 +268,14 @@ struct Buildings::Windows {
     std::array<gpu::Buffer, 2> records;
     std::array<gpu::Buffer, 2> walls;
     std::array<gpu::Buffer, 2> nears;
+    std::array<gpu::Buffer, 2> facades;
     /// The draws' layout (the frame's sets, then set 2), the compute stage's, its pipeline, and the near windows'
-    /// parts', the glass's and the frames' pipelines.
+    /// parts', the facades', the glass's and the frames' pipelines.
     vk::raii::PipelineLayout layout{nullptr};
     vk::raii::PipelineLayout compute_layout{nullptr};
     vk::raii::Pipeline decide{nullptr};
     vk::raii::Pipeline near{nullptr};
+    vk::raii::Pipeline facades_pipeline{nullptr};
     vk::raii::Pipeline glass{nullptr};
     vk::raii::Pipeline frames{nullptr};
     // the render thread's, per frame: the jobs' words, the frame slot they went to, and what they hold
@@ -280,6 +285,7 @@ struct Buildings::Windows {
     std::uint32_t walls_now = 0;
     std::uint32_t records_now = 0;
     std::uint32_t nears_now = 0;
+    std::uint32_t facades_now = 0;
 };
 
 } // namespace atlas::passes

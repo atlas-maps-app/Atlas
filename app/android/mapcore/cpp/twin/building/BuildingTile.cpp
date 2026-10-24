@@ -35,6 +35,10 @@ static_assert(geometry::prim_flag::near == shaders::BUILDING_NEAR &&
 static_assert(geometry::window_flag::shop_floor == shaders::BUILDING_WINDOW_SHOP_FLOOR &&
                   geometry::window_flag::warehouse == shaders::BUILDING_WINDOW_WAREHOUSE &&
                   geometry::window_flag::church == shaders::BUILDING_WINDOW_CHURCH &&
+                  geometry::window_flag::plinth == shaders::BUILDING_WINDOW_PLINTH &&
+                  geometry::window_flag::cornice == shaders::BUILDING_WINDOW_CORNICE &&
+                  geometry::window_flag::glazing == shaders::BUILDING_WINDOW_GLAZING &&
+                  geometry::no_facade == shaders::BUILDING_NO_FACADE &&
                   static_cast<std::uint32_t>(geometry::WindowStyle::plain) == shaders::BUILDING_WINDOW_PLAIN &&
                   static_cast<std::uint32_t>(geometry::WindowStyle::modern) == shaders::BUILDING_WINDOW_MODERN &&
                   static_cast<std::uint32_t>(geometry::WindowStyle::paris) == shaders::BUILDING_WINDOW_PARIS &&
@@ -111,8 +115,9 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     layout.windows_at = layout.cells_at + ((n + 1) / 2);
     layout.faces_at = layout.windows_at + ww;
     layout.colours_at = layout.faces_at + (f * shaders::BUILDING_FACE_VECTORS);
-    layout.reveals_at = layout.colours_at + f;               // two slots of two words a face: f uint4
-    layout.rows_at = layout.reveals_at + ((2 * ww) + 3) / 4; // two slots of a word a windowed wall
+    layout.reveals_at = layout.colours_at + f;                  // two slots of two words a face: f uint4
+    layout.facades_at = layout.reveals_at + ((2 * ww) + 3) / 4; // two slots of a word a windowed wall
+    layout.rows_at = layout.facades_at + ((k + 3) / 4);         // a word an item
     layout.vectors = layout.rows_at + ((k + 3) / 4);
     std::vector<Words> out(layout.vectors, Words{0, 0, 0, 0});
     const auto local = [&](const gm::V3& v) {
@@ -141,17 +146,23 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     layout.window_at.assign(std::size_t{ww} + 1, 0);
     layout.window_items.assign(ww, 0);
     layout.window_faces.assign(ww, 0);
+    layout.window_flags.assign(ww, 0);
     for (std::uint32_t i = 0; i < ww; ++i) {
         const gm::WindowWall& w = g.window_walls[i];
         layout.window_at[i + 1] = layout.window_at[i] + (std::uint32_t{w.levels} * w.cols);
         layout.window_items[i] = static_cast<std::uint16_t>(g.edged[w.wall].item); // below the 0x10000 items asserted
         layout.window_faces[i] = g.edged[w.wall].face;
+        layout.window_flags[i] = w.flags;
         out[layout.windows_at + i] = {
             heap_of[w.wall] | (static_cast<std::uint32_t>(w.style) << shaders::BUILDING_WINDOW_STYLE_SHIFT) |
                 (std::uint32_t{w.flags} << shaders::BUILDING_WINDOW_FLAGS_SHIFT),
             w.first, std::uint32_t{w.levels} | (std::uint32_t{w.cols} << 16U),
             std::uint32_t{w.near_slot} | (std::uint32_t{w.far_slot} << 16U)};
     }
+    // each item's plinth's and cornice's slots (the CPU keeps them for the twin)
+    layout.item_facades = g.item_facades;
+    layout.item_facades.resize(k, geometry::no_facade);
+    for (std::uint32_t i = 0; i < k; ++i) out[layout.facades_at + (i / 4)][i % 4] = layout.item_facades[i];
     // the n-gons whole, for the twin: their rings in the triangles' floats
     layout.rings.clear();
     layout.ring_points.clear();

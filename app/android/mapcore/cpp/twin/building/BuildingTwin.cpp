@@ -242,6 +242,53 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
     // the walls' reveals' colours at the frame's moment, as the pass's CPU writes them
     reveals_.assign(b.window_walls, 0U);
     passes::building_reveals(block_.theme, b.lights, b.window_faces, reveals_);
+    const hlsl::float3 shop_frame = shaders::building_shop_frame(paints, theme_flags);
+    const float shop_width = shaders::building_shop_frame_width(paints);
+    // a building's plinths' path, then its cornices', at its slots after its walls, once its walls are done (they
+    // follow each other in the list)
+    constexpr std::uint32_t no_item = 0xFFFF'FFFFU;
+    std::uint32_t facade_item = no_item;
+    std::uint32_t facade_slot = 0;
+    const auto flush_facades = [&]() {
+        const auto emit = [&](std::vector<PartsDepth>& parts, std::uint32_t slot, hlsl::float3 colour) {
+            if (parts.empty()) return;
+            points_.clear();
+            subpaths_.clear();
+            for (const PartsDepth& pd : parts) {
+                const shaders::BuildingWindowShape& sh = pd.shapes.front();
+                for (std::uint32_t k = 0; k < sh.count; ++k) {
+                    const hlsl::float2 v = shaders::building_window_corner(sh, k);
+                    points_.push_back({.x = v.x, .y = v.y});
+                }
+            }
+            std::size_t first = 0;
+            for (const PartsDepth& pd : parts) {
+                const std::uint32_t count = pd.shapes.front().count;
+                subpaths_.push_back({.points = std::span<const Point>(points_).subspan(first, count), .closed = true});
+                first += count;
+            }
+            Style style{};
+            style.fill = Paint::colour(argb_of(colour));
+            style.join = Join::round;
+            out_.at(slot, group_, item_of(b, facade_item));
+            out_.path(style, subpaths_);
+            if (depths_ != nullptr) {
+                ElementDepth d{.edged = true, .tile = tile_};
+                for (PartsDepth& pd : parts) pd.slot = slot;
+                d.parts = parts;
+                depths_->push_back(std::move(d));
+            }
+            ++elements_;
+            parts.clear();
+        };
+        if (facade_item != no_item) {
+            emit(plinths_, facade_slot, shaders::building_plinth_colour(paints, theme_flags));
+            emit(cornices_, facade_slot + 1, shaders::building_cornice_colour(paints, theme_flags));
+        }
+        plinths_.clear();
+        cornices_.clear();
+        facade_item = no_item;
+    };
     runs_.clear();
     passes::building_runs(cells, b.windows_first, runs_);
     for (const passes::BuildingRun& run : runs_) {
@@ -253,9 +300,102 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
             const shaders::BuildingFace f = shaders::building_face(word4(words, b.faces_at + (wall.face * 2)),
                                                                    word4(words, b.faces_at + (wall.face * 2) + 1));
             if (wall.item >= rows.size()) continue;
+            if (wall.item != facade_item) flush_facades();
             const std::uint32_t row = rows[wall.item];
             const std::uint32_t rank = row < ranks_.size() ? ranks_[row] : shaders::RANK_NONE;
-            if (!shaders::building_windows_drawn(theme_flags, place, w, f, rank)) continue;
+            const bool windows_drawn = shaders::building_windows_drawn(theme_flags, place, w, f, rank);
+            const bool facades = shaders::building_facades_drawn(theme_flags, place, f, rank);
+            if (!windows_drawn && !facades) continue;
+            const std::uint32_t detail = shaders::rank_detail(rank);
+            const bool near_band = (detail & shaders::BUILDING_DETAIL_NEAR) != 0U;
+            // the wall's first slot (its shop glazing's where it has one), then its windows'
+            const std::uint32_t first_slot = shaders::rank_slot(rank) + (near_band ? w.near_slot : w.far_slot);
+            const std::uint32_t window_slot =
+                first_slot + ((w.flags & shaders::BUILDING_WINDOW_GLAZING) != 0U ? 1U : 0U);
+            const hlsl::float4 wall_plane = shaders::building_window_plane(cam, place, f);
+            if (facades) {
+                // its shop glazing by day (its own path, after its cells), its plinth and cornice for its building's
+                if ((w.flags & shaders::BUILDING_WINDOW_GLAZING) != 0U && !night) {
+                    const shaders::BuildingWindowShape g = shaders::building_window_over(
+                        shaders::building_window_cut(cam, place, shaders::building_glazing(wall, f.normal)),
+                        shaders::BUILDING_GLAZING_AREA);
+                    if (g.count != 0) {
+                        points_.clear();
+                        subpaths_.clear();
+                        float top = 0.0F;
+                        float bottom = 0.0F;
+                        for (std::uint32_t k = 0; k < g.count; ++k) {
+                            const hlsl::float2 v = shaders::building_window_corner(g, k);
+                            top = k == 0 || v.y < top ? v.y : top;
+                            bottom = k == 0 || v.y > bottom ? v.y : bottom;
+                            points_.push_back({.x = v.x, .y = v.y});
+                        }
+                        subpaths_.push_back({.points = points_, .closed = true});
+                        const shaders::BuildingGlass glass =
+                            shaders::building_glass(paints, theme_flags, shaders::BUILDING_WINDOW_PLAIN, 0U, false);
+                        Style style{};
+                        style.fill =
+                            glass.gradient ? Paint::gradient(gradients_.glass) : Paint::colour(argb_of(glass.top));
+                        style.join = Join::round;
+                        style.stroke = Paint::colour(argb_of(shop_frame));
+                        style.stroke_width = shop_width;
+                        out_.at(first_slot, group_, item_of(b, wall.item));
+                        out_.path(style, subpaths_);
+                        if (depths_ != nullptr) {
+                            ElementDepth d{.edged = true, .tile = tile_};
+                            d.windows.push_back({.windows = {g},
+                                                 .slot = first_slot,
+                                                 .plane = wall_plane,
+                                                 .half = 0.5F * shop_width,
+                                                 .frame = shop_frame,
+                                                 .glass = glass,
+                                                 .top = top,
+                                                 .bottom = bottom});
+                            depths_->push_back(std::move(d));
+                        }
+                        ++elements_;
+                    }
+                }
+                const std::uint32_t slots =
+                    wall.item < b.item_facades.size() ? b.item_facades[wall.item] : shaders::BUILDING_NO_FACADE;
+                if (slots != shaders::BUILDING_NO_FACADE) {
+                    facade_item = wall.item;
+                    facade_slot = shaders::rank_slot(rank) + (near_band ? (slots & 0xFFFFU) : (slots >> 16U));
+                    if ((w.flags & shaders::BUILDING_WINDOW_PLINTH) != 0U) {
+                        const bool low = (detail & shaders::BUILDING_DETAIL_LOW_PLINTH) != 0U;
+                        const shaders::BuildingWindowShape pl = shaders::building_window_on_plane(
+                            cam, wall_plane,
+                            shaders::building_window_over(shaders::building_window_cut_in(
+                                                              cam, place, shaders::building_plinth(wall, f.normal, low),
+                                                              shaders::BUILDING_FACADE_MARGIN),
+                                                          shaders::BUILDING_FACADE_AREA));
+                        if (pl.count != 0) {
+                            plinths_.push_back({.shapes = {pl},
+                                                .slot = 0,
+                                                .plane = wall_plane,
+                                                .lead = shaders::BUILDING_SILL_LEAD,
+                                                .colour = shaders::building_plinth_colour(paints, theme_flags)});
+                        }
+                    }
+                    if ((w.flags & shaders::BUILDING_WINDOW_CORNICE) != 0U &&
+                        (detail & shaders::BUILDING_DETAIL_CORNICES) != 0U) {
+                        const shaders::BuildingWindowShape co = shaders::building_window_on_plane(
+                            cam, wall_plane,
+                            shaders::building_window_over(
+                                shaders::building_window_cut_in(cam, place, shaders::building_cornice(wall, f.normal),
+                                                                shaders::BUILDING_FACADE_MARGIN),
+                                shaders::BUILDING_FACADE_AREA));
+                        if (co.count != 0) {
+                            cornices_.push_back({.shapes = {co},
+                                                 .slot = 0,
+                                                 .plane = wall_plane,
+                                                 .lead = shaders::BUILDING_SILL_LEAD,
+                                                 .colour = shaders::building_cornice_colour(paints, theme_flags)});
+                        }
+                    }
+                }
+            }
+            if (!windows_drawn) continue;
             const bool deep = shaders::building_windows_deep(theme_flags, rank);
             const bool sashed = shaders::building_windows_sashed(rank);
             const passes::WindowWidths widths = passes::window_widths(
@@ -263,7 +403,7 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
                 distances_.focal, frame_width);
             const float width = shaders::building_tenths(widths.frame);
             const float sash_width = shaders::building_tenths(widths.sash);
-            const hlsl::float4 plane = shaders::building_window_plane(cam, place, f);
+            const hlsl::float4 plane = wall_plane;
             // the wall's windows, each as the frame draws it (windows_cs's): by their sample's bit dark or lit, and
             // close up their reveals, sash bars and sills
             windows_[0].clear();
@@ -306,8 +446,7 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
                     }
                 }
             }
-            const bool near = (shaders::rank_detail(rank) & shaders::BUILDING_DETAIL_NEAR) != 0U;
-            const std::uint32_t slot = shaders::rank_slot(rank) + (near ? w.near_slot : w.far_slot);
+            const std::uint32_t slot = window_slot;
             const std::int32_t item = item_of(b, wall.item);
             // a part filled in one colour: each shape a closed subpath (the reveals, the sills)
             const auto fill = [&](std::span<const shaders::BuildingWindowShape> shapes, std::uint32_t part,
@@ -436,6 +575,7 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
             }
             fill(sill_shapes_, shaders::BUILDING_WINDOW_SILLS, sill_colour, shaders::BUILDING_SILL_LEAD);
         }
+        flush_facades();
     }
 }
 

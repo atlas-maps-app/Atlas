@@ -39,11 +39,14 @@ void Buildings::select(const frame::FrameState& state, frame::Selectors& selecto
     selectors.set(kind_, geometry::cells_reach);
     // the detail, in building.slangh's BUILDING_DETAIL_ order: the cells' near variant; the windows where d < the
     // view's win_d (cfg's, 390 m where it names none); a church's own windows where d < 520 (with weather: no others
-    // then); deep windows where d < 160, sash bars where d < 140
+    // then); deep windows where d < 160, sash bars where d < 140; the facades' flat detail where d < 760, the low
+    // plinth where d < 300, cornices where d < 520
     const double win_d =
         state.placed ? state.placed->number("win_d").value_or(geometry::windows_reach) : geometry::windows_reach;
-    const std::array<double, 5> details{geometry::cells_reach, win_d, geometry::church_windows_reach,
-                                        geometry::deep_windows_reach, geometry::sash_reach};
+    const std::array<double, 8> details{geometry::cells_reach,          win_d,
+                                        geometry::church_windows_reach, geometry::deep_windows_reach,
+                                        geometry::sash_reach,           geometry::facades_reach,
+                                        geometry::low_plinth_reach,     geometry::cornices_reach};
     selectors.set_details(kind_, details);
 }
 
@@ -140,6 +143,7 @@ void Buildings::update(const frame::FrameState& state) {
         windows_->walls_now = 0;
         windows_->records_now = 0;
         windows_->nears_now = 0;
+        windows_->facades_now = 0;
     }
     if (state.cover == nullptr || state.ranks == nullptr || state.heaps == nullptr) return;
     // the tiles' PassTile of this pass: the one at its place among the passes that built them (FrameState::cover)
@@ -185,6 +189,7 @@ void Buildings::update(const frame::FrameState& state) {
             d.rows = std::span(tile.rows).subspan(first, std::min<std::size_t>(b->items, tile.rows.size() - first));
         }
         d.reveals = ((base + b->reveals_at) * 4) + (slot * b->window_walls);
+        d.facades = base + b->facades_at;
         d.runs_first = static_cast<std::uint32_t>(runs_.size());
         building_runs(t.cells, b->edged_first, runs_);
         d.edged_runs = static_cast<std::uint32_t>(runs_.size()) - d.runs_first;

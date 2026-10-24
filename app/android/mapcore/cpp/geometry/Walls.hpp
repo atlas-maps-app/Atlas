@@ -47,6 +47,12 @@ inline constexpr double church_windows_reach = 520.0;
 inline constexpr double deep_windows_reach = 160.0;
 inline constexpr double sash_reach = 140.0;
 
+/// The renders' distances for a facade's flat detail (with weather): its plinth, cornice and shop glazing (`d < 760`),
+/// the plinth's low variant (`0.6 if d < 300 else 0.9`) and the cornice (`d < 520`).
+inline constexpr double facades_reach = 760.0;
+inline constexpr double low_plinth_reach = 300.0;
+inline constexpr double cornices_reach = 520.0;
+
 /// A building's (or part's) owner kind in scene::owner_key: an area (AnchorItems' OwnerType.AREA).
 inline constexpr std::uint8_t owner_area = 4;
 
@@ -133,29 +139,39 @@ struct Prim {
 /// ones, or the tall French windows of a Paris stone front (WIN_STYLE == 'paris').
 enum class WindowStyle : std::uint8_t { plain = 0, modern = 1, paris = 2 };
 
-/// A windowed wall's flags: what the frame decides by its moment and distance.
+/// A facade wall's flags: what the frame decides by its moment and distance. The last three are its flat detail with
+/// weather within 760 m (_draw_building's, not a part's): a dark plinth along its foot (its walls on the street), a
+/// white cornice along its top (an old house's, under a mansard; a wall over 5 m, within 520 m), its shop glazing (a
+/// shop floor's wall over 2.4 m).
 namespace window_flag {
 inline constexpr std::uint8_t shop_floor = 1; ///< shops, cafés or hotels: no windows on the ground floor with weather
 inline constexpr std::uint8_t warehouse = 2;  ///< green warehouse shutters, not glass, with weather
 inline constexpr std::uint8_t church = 4;     ///< church windows instead with weather within 520 m (later)
+inline constexpr std::uint8_t plinth = 8;
+inline constexpr std::uint8_t cornice = 16;
+inline constexpr std::uint8_t glazing = 32;
 } // namespace window_flag
 
-/// A wall's windows (render/amsterdam.py's _draw_building: a row per level, bays by the wall's length), drawn within
-/// the view's win_d: window k = r · cols + c is the glass of its row r and bay c, lit or dark by its own sun sample.
-/// The rows are every level's, the shop floor's too, as K8's samples are; the frame leaves the shop floor's out. The
-/// tile's windows are its window group of sun samples, one each in the same order (sun/Samples.hpp: the records, their
-/// edges, the rows, the bays), so a window's place among the tile's is its sample's in the group.
+/// A wall's facade: its windows (render/amsterdam.py's _draw_building: a row per level, bays by the wall's length),
+/// drawn within the view's win_d, and its flat detail (window_flag's last three). Window k = r · cols + c is the glass
+/// of its row r and bay c, lit or dark by its own sun sample. The rows are every level's, the shop floor's too, as K8's
+/// samples are; the frame leaves the shop floor's out. The tile's windows are its window group of sun samples, one each
+/// in the same order (sun/Samples.hpp: the records, their edges, the rows, the bays), so a window's place among the
+/// tile's is its sample's in the group. A wall with flat detail and no windows has no rows.
 struct WindowWall {
     std::uint32_t wall = 0;      ///< its wall's one-cell primitive in the edged list (its corners, face and item)
     std::uint32_t first = 0;     ///< its windows among the tile's: [first, first + levels · cols)
     std::uint16_t levels = 0;    ///< its rows (building:levels, mapped or guessed)
     std::uint16_t cols = 0;      ///< its bays
-    std::uint16_t near_slot = 0; ///< its first painter slot within the item (its reveals'), near and far (its dark
-    std::uint16_t far_slot = 0;  ///< windows', lit ones', sash bars' and sills' the next: window_slots)
+    std::uint16_t near_slot = 0; ///< its first painter slot within the item, near and far: its shop glazing's, then
+    std::uint16_t far_slot = 0;  ///< its windows' (window_slots); a slot only for what it has
     std::uint8_t cell = 0;       ///< its building's cell in the tile
     WindowStyle style = WindowStyle::plain;
     std::uint8_t flags = 0; ///< window_flag
 };
+
+/// A building without a plinth or a cornice (TileBuildings::item_facades).
+inline constexpr std::uint32_t no_facade = 0xFFFF'FFFFU;
 
 /// The painter slots a wall's windows take within its item, in each variant, as the port paints its windows' paths:
 /// the deep windows' reveals, the dark windows, the lit ones, the sash bars, the deep windows' sills.
@@ -207,6 +223,9 @@ struct TileBuildings {
     std::vector<WindowWall> window_walls;
     std::vector<std::uint32_t> window_walls_first;
     std::uint32_t windows = 0;
+    /// Each item's plinth's and cornice's painter slots (the plinth's near | far << 16, the cornice's the next), after
+    /// all its walls; no_facade where it has neither.
+    std::vector<std::uint32_t> item_facades;
     /// The tile's sun samples the buildings take (K8's count before the tile's trees, quays and windows).
     std::uint32_t samples = 0;
 };
@@ -257,6 +276,7 @@ struct Values {
     std::int64_t levels = 0;
     std::optional<std::string_view> mat_draw; ///< the wall material drawn (a Paris stone front's French windows)
     bool no_win = false;                      ///< no window rows (halls, tanks, glass walls)
+    std::int64_t year = 0;                    ///< the year start_date begins with (0: none)
 };
 
 /// One building as _draw_building draws it: its values, its footprint at the level, and what the walls and the roof
@@ -314,6 +334,7 @@ public:
     std::uint32_t boat_slot = 0;
     std::uint32_t windows = 0; ///< the next window, in the order of the tile's window group of sun samples
     bool paris = false;        ///< the region's WIN_STYLE is Paris's
+    std::uint32_t facade = 0;  ///< the current building's plinth's and cornice's slots (TileBuildings::item_facades)
 
 private:
     std::vector<std::uint32_t> triangles_;

@@ -134,6 +134,19 @@ class EngineStyleTest {
                 listOf("windows.sill_day", "windows.sill_night"), amsterdam,
                 """hzc(th, if (!night) "${value("windows.sill_day")}" else "${value("windows.sill_night")}")""",
             ),
+            Triple(
+                listOf("windows.shop_frame_day", "windows.shop_frame_night"), amsterdam,
+                """hzc(th, if (!night) "${value("windows.shop_frame_day")}" else "${value("windows.shop_frame_night")}")""",
+            ),
+            Triple(listOf("windows.shop_frame_width"), amsterdam, """stroke-width=\"${css("windows.shop_frame_width")}\"%s/>", P(gq)"""),
+            Triple(
+                listOf("windows.plinth_day", "windows.plinth_night"), amsterdam,
+                """hzc(th, if (!night) "${value("windows.plinth_day")}" else "${value("windows.plinth_night")}")""",
+            ),
+            Triple(
+                listOf("windows.cornice_day", "windows.cornice_night"), amsterdam,
+                """hzc(th, if (!night) "${value("windows.cornice_day")}" else "${value("windows.cornice_night")}")""",
+            ),
         )
         for ((paths, file, text) in literals) {
             if (paths.any { it in DIFFERENCES || it.substringBefore('.') in DIFFERENCES }) continue

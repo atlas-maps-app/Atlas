@@ -48,8 +48,8 @@ inline float building_atan2(float y, float x) {
 [[vk::binding(1, 2)]] StructuredBuffer<uint4> stroke_records;
 [[vk::binding(2, 2)]] RWStructuredBuffer<uint4> stroke_records_out;
 // The windows' set (passes/Windows.cpp), set 2 of their own pipelines: this frame slot's jobs, its windows' records, its
-// windowed walls' records and its near windows' records, as the compute stage writes them and as the vertex stages read
-// them (one buffer each).
+// facade walls' records, its near windows' records and its facades' records, as the compute stage writes them and as
+// the vertex stages read them (one buffer each).
 [[vk::binding(3, 2)]] StructuredBuffer<uint4> window_jobs;
 [[vk::binding(4, 2)]] RWStructuredBuffer<uint4> window_records_out;
 [[vk::binding(5, 2)]] StructuredBuffer<uint4> window_records;
@@ -57,6 +57,8 @@ inline float building_atan2(float y, float x) {
 [[vk::binding(7, 2)]] StructuredBuffer<uint4> window_walls;
 [[vk::binding(8, 2)]] RWStructuredBuffer<uint4> window_nears_out;
 [[vk::binding(9, 2)]] StructuredBuffer<uint4> window_nears;
+[[vk::binding(10, 2)]] RWStructuredBuffer<uint4> window_facades_out;
+[[vk::binding(11, 2)]] StructuredBuffer<uint4> window_facades;
 [[vk::push_constant]] ConstantBuffer<BuildingPush> push;
 
 struct BuildingOut {
@@ -241,16 +243,18 @@ StrokeVertex roof_strokes_vs(uint vertex : SV_VulkanVertexID) {
     return o;
 }
 
-/// A window job (Buildings::update): a tile's push constants (4 uint4: its place; at x its windowed walls, y its faces, z
+/// A window job (Buildings::update): a tile's push constants (4 uint4: its place; at x its facade walls, y its faces, z
 /// its edged primitives, w its rows; sun x its first sun texel, y its fade weight's bits, z its window group's first
-/// sample, w its reveals' colours' first word this frame slot), then its run (its first windowed wall in the tile's
-/// list, how many, at most 64, its first wall record, 0), each of its walls' first window record, its first near record
-/// (WINDOW_NO_NEAR: its item lies 160 m or more away), and its windows' widths (passes::window_widths: the frames' in
-/// tenths of a CSS px, bits 0-15, the sash bars', 16-31), four a uint4.
-static const uint WINDOW_JOB_VECTORS = 53u;
+/// sample, w its reveals' colours' first word this frame slot), then its run (its first facade wall in the tile's list,
+/// how many, at most 64, its first wall record, its items' facade slots), each of its walls' first window record
+/// (building_window_records of them: its windows', then its shop glazing's), its first near record (WINDOW_NO_NEAR: its
+/// item lies 160 m or more away), its windows' widths (passes::window_widths: the frames' in tenths of a CSS px, bits
+/// 0-15, the sash bars', 16-31), and its facade record (WINDOW_NO_NEAR: none), four a uint4.
+static const uint WINDOW_JOB_VECTORS = 69u;
 static const uint WINDOW_JOB_RECORDS = 5u;
 static const uint WINDOW_JOB_NEARS = 21u;
 static const uint WINDOW_JOB_WIDTHS = 37u;
+static const uint WINDOW_JOB_FACADES = 53u;
 static const uint WINDOW_NO_NEAR = 0xFFFFFFFFu;
 
 /// Word `i` (a wall's) of a job's list starting at vector `list`.
@@ -259,9 +263,10 @@ uint window_job_word(uint at, uint list, uint i) {
     return v[i % 4u];
 }
 
-/// Each windowed wall of a job's run, decided once for the frame: each of its windows into its record (at the job's
-/// records, in the wall's order) and, nearer than 160 m, into its near record (its reveal, sill and sash bars), and the
-/// wall into its own (its plane, its dark and lit windows' boxes, its widths, its reveals' colour).
+/// Each facade wall of a job's run, decided once for the frame: each of its windows into its record (at the job's
+/// records, in the wall's order) and, nearer than 160 m, into its near record (its reveal, sill and sash bars); its
+/// shop glazing into the record after them; its plinth and cornice into its facade record; and the wall into its own
+/// (its plane, its dark and lit windows' boxes, its widths, its reveals' colour).
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
@@ -289,16 +294,21 @@ void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     bool drawn = building_windows_drawn(theme_flags, p.place, w, f, rank);
     bool deep = building_windows_deep(theme_flags, rank);
     bool sashed = building_windows_sashed(rank);
+    bool facades = building_facades_drawn(theme_flags, p.place, f, rank);
+    uint detail = rank != RANK_NONE ? rank_detail(rank) : 0u;
     uint first_row = building_windows_first_row(theme_flags, w);
-    bool near = rank != RANK_NONE && (rank_detail(rank) & BUILDING_DETAIL_NEAR) != 0u;
-    uint slot = (rank != RANK_NONE ? rank_slot(rank) : 0u) + (near ? w.near_slot : w.far_slot);
+    bool near = (detail & BUILDING_DETAIL_NEAR) != 0u;
+    uint item_slot = rank != RANK_NONE ? rank_slot(rank) : 0u;
+    // the wall's first slot (its shop glazing's where it has one), then its windows'
+    uint first_slot = item_slot + (near ? w.near_slot : w.far_slot);
+    uint slot = first_slot + ((w.flags & BUILDING_WINDOW_GLAZING) != 0u ? 1u : 0u);
     bool sun = p.sun.x != BUILDING_NO_BITS && (theme_flags & THEME_NIGHT) == 0u;
     float4 plane = building_window_plane(frame.camera, p.place, f);
     float infinity = asfloat(0x7F800000u);
     float2 dark = {infinity, -infinity};
     float2 lit = {infinity, -infinity};
     uint wall_record = span.z + thread.x;
-    uint count = w.levels * w.cols;
+    uint count = (detail & BUILDING_DETAIL_WINDOWS) != 0u ? w.levels * w.cols : 0u;
     uint first = window_job_word(at, WINDOW_JOB_RECORDS, thread.x);
     uint near_first = window_job_word(at, WINDOW_JOB_NEARS, thread.x);
     uint widths = window_job_word(at, WINDOW_JOB_WIDTHS, thread.x);
@@ -354,7 +364,7 @@ void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
             }
         }
         BuildingWindowRecord record =
-            building_window_record(s, on, building_glass_drawn(s, frame_half), w, wall_record,
+            building_window_record(s, on, building_glass_drawn(s, frame_half), false, w, wall_record,
                                    slot + (on ? BUILDING_WINDOW_LIT_SLOT : BUILDING_WINDOW_DARK));
         uint out_at = (first + k) * BUILDING_WINDOW_RECORD_VECTORS;
         window_records_out[out_at] = record.v0;
@@ -375,6 +385,55 @@ void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
             window_nears_out[near_at + 8u] = n.v8;
             window_nears_out[near_at + 9u] = n.v9;
         }
+    }
+    // its shop glazing (by day: the open shops at night come with the night), a window record after its windows'
+    if (building_window_records(w, rank) > count) {
+        BuildingWindowShape g = building_window_nothing();
+        if (facades && (theme_flags & THEME_NIGHT) == 0u) {
+            g = building_window_over(
+                building_window_cut(frame.camera, p.place, building_glazing(wall, f.normal)), BUILDING_GLAZING_AREA);
+        }
+        float shop_half = 0.5f * building_shop_frame_width(frame.windows);
+        BuildingWindowRecord record =
+            building_window_record(g, false, building_glass_drawn(g, shop_half), true, w, wall_record, first_slot);
+        uint out_at = (first + count) * BUILDING_WINDOW_RECORD_VECTORS;
+        window_records_out[out_at] = record.v0;
+        window_records_out[out_at + 1u] = record.v1;
+        window_records_out[out_at + 2u] = record.v2;
+        window_records_out[out_at + 3u] = record.v3;
+    }
+    // its plinth (low nearer than 300 m) and cornice (nearer than 520 m), at its building's slots after its walls
+    uint facade_first = window_job_word(at, WINDOW_JOB_FACADES, thread.x);
+    if (facade_first != WINDOW_NO_NEAR) {
+        BuildingWindowShape plinth = building_window_nothing();
+        BuildingWindowShape cornice = building_window_nothing();
+        if (facades && (w.flags & BUILDING_WINDOW_PLINTH) != 0u) {
+            bool low = (detail & BUILDING_DETAIL_LOW_PLINTH) != 0u;
+            plinth = building_window_on_plane(
+                frame.camera, plane,
+                building_window_over(building_window_cut_in(frame.camera, p.place, building_plinth(wall, f.normal, low),
+                                                            BUILDING_FACADE_MARGIN),
+                                     BUILDING_FACADE_AREA));
+        }
+        if (facades && (w.flags & BUILDING_WINDOW_CORNICE) != 0u && (detail & BUILDING_DETAIL_CORNICES) != 0u) {
+            cornice = building_window_on_plane(
+                frame.camera, plane,
+                building_window_over(building_window_cut_in(frame.camera, p.place, building_cornice(wall, f.normal),
+                                                            BUILDING_FACADE_MARGIN),
+                                     BUILDING_FACADE_AREA));
+        }
+        uint4 slots4 = walls_heap[span.w + wall.item / 4u];
+        uint slots = slots4[wall.item % 4u];
+        uint facade_slot = item_slot + (near ? (slots & 0xFFFFu) : (slots >> 16u));
+        BuildingFacadeRecord fr = building_facade_record(plinth, cornice, wall_record, facade_slot);
+        uint fat = facade_first * BUILDING_FACADE_RECORD_VECTORS;
+        window_facades_out[fat] = fr.v0;
+        window_facades_out[fat + 1u] = fr.v1;
+        window_facades_out[fat + 2u] = fr.v2;
+        window_facades_out[fat + 3u] = fr.v3;
+        window_facades_out[fat + 4u] = fr.v4;
+        window_facades_out[fat + 5u] = fr.v5;
+        window_facades_out[fat + 6u] = fr.v6;
     }
     uint4 plane_words = {asuint(plane.x), asuint(plane.y), asuint(plane.z), asuint(plane.w)};
     uint4 boxes = {asuint(dark.x), asuint(dark.y), asuint(lit.x), asuint(lit.y)};
@@ -441,12 +500,14 @@ FrameOut window_frames_vs(uint vertex : SV_VulkanVertexID) {
     }
     BuildingWallRecord wall = window_wall_at(r.v0.y);
     BuildingShape shape = window_shape_on(wall, s, BUILDING_WINDOW_LEAD, r.v0.z);
-    float half = wall.frame_half;
+    bool shop = (r.v0.x & BUILDING_WINDOW_RECORD_SHOP) != 0u;
+    float half = shop ? 0.5f * building_shop_frame_width(frame.windows) : wall.frame_half;
     bool glass = (r.v0.x & BUILDING_WINDOW_RECORD_GLASS) != 0u;
     float2 css = building_window_frame_point(s, vertex - index * BUILDING_WINDOW_FRAME_VERTICES, half, glass);
     float depth = building_depth(frame.camera, shape, building_plane_recip(frame.camera, shape, css));
     o.position = clip_of(frame.camera, css, 1.0f, depth);
-    o.colour = building_window_frame(frame.windows, frame.theme.flags.x);
+    o.colour = shop ? building_shop_frame(frame.windows, frame.theme.flags.x)
+                    : building_window_frame(frame.windows, frame.theme.flags.x);
     o.a = float4(s.p0, s.p1);
     o.b = float4(s.p2, s.p3);
     o.c = float4(s.p4, float(s.count), half);
@@ -479,7 +540,8 @@ GlassOut window_glass_vs(uint vertex : SV_VulkanVertexID) {
         return o;
     }
     BuildingWallRecord wall = window_wall_at(r.v0.y);
-    float half = wall.frame_half;
+    bool shop = (r.v0.x & BUILDING_WINDOW_RECORD_SHOP) != 0u;
+    float half = shop ? 0.5f * building_shop_frame_width(frame.windows) : wall.frame_half;
     uint v = vertex - index * BUILDING_WINDOW_GLASS_VERTICES;
     float2 css = building_glass_corner(s, v < s.count ? v : s.count - 1u, half);
     BuildingShape shape = window_shape_on(wall, s, BUILDING_GLASS_LEAD, r.v0.z);
@@ -490,6 +552,16 @@ GlassOut window_glass_vs(uint vertex : SV_VulkanVertexID) {
     uint flags = (r.v0.x & BUILDING_WINDOW_RECORD_WAREHOUSE) != 0u ? BUILDING_WINDOW_WAREHOUSE : 0u;
     BuildingGlass g = building_glass(frame.windows, frame.theme.flags.x, style, flags, lit);
     float2 box = lit ? wall.lit : wall.dark;
+    if (shop) {
+        // a shop's glazing is a path of its own: its gradient spans its own box
+        box.x = s.p0.y;
+        box.y = s.p0.y;
+        for (uint i = 1u; i < s.count; ++i) {
+            float y = building_window_corner(s, i).y;
+            box.x = min(box.x, y);
+            box.y = max(box.y, y);
+        }
+    }
     o.top = float4(g.top, box.x);
     o.bottom = g.gradient ? float4(g.bottom, box.y) : float4(g.top, box.x);
     return o;
@@ -556,6 +628,45 @@ BuildingOut window_near_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanIns
     float2 css = building_near_point(r, v, wall.sash_half);
     float depth = building_depth(frame.camera, shape, building_plane_recip(frame.camera, shape, css));
     o.position = clip_of(frame.camera, css, 1.0f, depth);
+    return o;
+}
+
+/// The facade record `index` of the frame's.
+BuildingFacadeRecord window_facade_at(uint index) {
+    uint at = index * BUILDING_FACADE_RECORD_VECTORS;
+    BuildingFacadeRecord r;
+    r.v0 = window_facades[at];
+    r.v1 = window_facades[at + 1u];
+    r.v2 = window_facades[at + 2u];
+    r.v3 = window_facades[at + 3u];
+    r.v4 = window_facades[at + 4u];
+    r.v5 = window_facades[at + 5u];
+    r.v6 = window_facades[at + 6u];
+    return r;
+}
+
+/// Vertex `v` (0 to 17) of facade record `index`'s plinth (its first 9: a fan of 3 triangles) and cornice (the rest),
+/// each in its colour on its wall's plane at the sills' lead, at its building's slot after its walls (the cornice's
+/// the next); an instance a record.
+[shader("vertex")]
+BuildingOut window_facade_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanInstanceID) {
+    BuildingFacadeRecord r = window_facade_at(index);
+    BuildingOut o;
+    o.colour = float3(0.0f);
+    uint part = v < 9u ? 0u : 1u;
+    BuildingWindowShape s = building_facade_part(r, part);
+    if (s.count == 0u) {
+        o.position = NOWHERE;
+        return o;
+    }
+    BuildingWallRecord wall = window_wall_at(r.v0.y);
+    BuildingShape shape = window_shape_on(wall, s, BUILDING_SILL_LEAD, r.v0.z + part);
+    float2 css = building_facade_point(r, v);
+    float depth = building_depth(frame.camera, shape, building_plane_recip(frame.camera, shape, css));
+    o.position = clip_of(frame.camera, css, 1.0f, depth);
+    uint theme_flags = frame.theme.flags.x;
+    o.colour = part == 0u ? building_plinth_colour(frame.windows, theme_flags)
+                          : building_cornice_colour(frame.windows, theme_flags);
     return o;
 }
 

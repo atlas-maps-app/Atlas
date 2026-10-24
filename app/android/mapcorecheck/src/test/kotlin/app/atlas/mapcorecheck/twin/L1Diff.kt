@@ -42,8 +42,9 @@ import app.atlas.render.py.PyFmt
  * A pair out of its place is reordered when no element of another key it passes, among the anchors, overlaps it in the
  * view (painting it earlier or later changes no pixel; elements of one key are interchangeable), and out of order when
  * one does. What is left over is missing (the port's) or extra (the twin's), by key; where asked (what stands up), a
- * sliver the twin draws alone (a face under [SLIVER] or thinner than [THIN]) is counted apart. The port's are missing,
- * as anything of the port's the twin does not draw yet.
+ * sliver the twin draws alone (a face under [SLIVER] or thinner than [THIN]) is counted apart, and so are the sliver
+ * subpaths of a path that joins many faces (a building's plinths, a wall's windows) which one side alone draws, the
+ * rest of the path matching. The port's are missing, as anything of the port's the twin does not draw yet.
  */
 object L1Diff {
     /** How far two outlines may lie apart and still be one, in CSS px: two print steps. */
@@ -908,8 +909,21 @@ object L1Diff {
             }
             if (best < 0) continue
             takenP[i] = true; takenT[best] = true
-            r.differs++
             val t = ts[best]
+            // a joined path (a building's plinths, a wall's windows) is the same but for its sliver subpaths, faces at
+            // the renders' floor or seen edge-on that one side alone draws (as a sliver element, counted apart)
+            if (slivers) {
+                val aside = IntArray(1)
+                val w = withoutSlivers(p, t, aside)
+                if (w >= 0) {
+                    if (w == 0) r.exact++ else r.oneStep++
+                    r.slivers += aside[0]
+                    if (r.firstSlivers.size < 5) r.firstSlivers += "${t.e.where} ${shortKey(t.e.key)}: ${aside[0]} sliver subpaths of a path"
+                    place(i, best, p)
+                    continue
+                }
+            }
+            r.differs++
             if (r.firstDiffering.size < 5) r.firstDiffering += "${t.e.where}: port ${p.vertices.joinToString(" ") { p1(it) }} [${p.shape}], " +
                 "twin ${t.vertices.joinToString(" ") { p1(it) }} [${t.shape}]"
         }
@@ -936,6 +950,53 @@ object L1Diff {
         r.twin = ts.size - hiddenT
         r.matched = r.exact + r.oneStep + r.differs + r.inPieces
         return r
+    }
+
+    /** Whether subpath [k] of fill [s] is a sliver: a closed ring of three points or more under [SLIVER] or thinner than [THIN]. */
+    private fun sliverSub(s: Seen, k: Int): Boolean {
+        val ring = s.rings[k]
+        if (!s.closed[k] || ring.size < 6) return false
+        var twice = 0.0
+        var perimeter = 0.0
+        val n = ring.size / 2
+        for (i in 0 until n) {
+            val j = (i + 1) % n
+            twice += ring[2 * i] * ring[2 * j + 1] - ring[2 * j] * ring[2 * i + 1]
+            perimeter += Math.hypot(ring[2 * j] - ring[2 * i], ring[2 * j + 1] - ring[2 * i + 1])
+        }
+        val area = Math.abs(twice) / 2
+        return area < SLIVER || 2 * area < THIN * perimeter
+    }
+
+    /**
+     * How paths [p] and [t] compare (0: the same prints, 1: within a print step) with each one's sliver subpaths set
+     * aside, as a set; -1 where none is set aside or the rest differ. [aside]`[0]` gets how many were.
+     */
+    private fun withoutSlivers(p: Seen, t: Seen, aside: IntArray): Int {
+        if (p.e.kind != "path" || !p.e.fills || !t.e.fills) return -1
+        val pk = p.ends.indices.filter { !sliverSub(p, it) }
+        val tk = t.ends.indices.filter { !sliverSub(t, it) }
+        val dropped = (p.ends.size - pk.size) + (t.ends.size - tk.size)
+        if (dropped == 0 || pk.size != tk.size || pk.isEmpty()) return -1
+        val bySub = HashMap<String, ArrayDeque<Int>>()
+        for (k in tk) bySub.getOrPut(subKey(t, k)) { ArrayDeque() }.addLast(k)
+        val used = HashSet<Int>()
+        val open = ArrayList<Int>()
+        for (k in pk) {
+            val m = bySub[subKey(p, k)]?.removeFirstOrNull()
+            if (m != null) used += m else open += k
+        }
+        var w = 0
+        for (k in open) {
+            val size = p.to(k) - p.from(k)
+            val m = tk.firstOrNull { c ->
+                c !in used && t.closed[c] == p.closed[k] && t.to(c) - t.from(c) == size && worst(p.tenths, p.from(k), t.tenths, t.from(c), size) <= 1
+            } ?: return -1
+            used += m
+            w = 1
+        }
+        aside[0] = dropped
+        return w
     }
 
     /** Whether [s] is a fill of closed rings, each of three points or more, smaller than [SLIVER] or thinner than [THIN]. */

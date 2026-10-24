@@ -11,6 +11,7 @@
 #include <doctest/doctest.h>
 
 #include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <fcntl.h>
 #include <filesystem>
@@ -270,10 +271,13 @@ TEST_CASE("tiles: a remote pack is read by ranges, its head and chunks cached, a
     }
     remote.online = true;
     {
-        // a damaged cached chunk is noticed, deleted and fetched again
+        // a damaged cached chunk is noticed, deleted and fetched again: the chunk's entry is the larger (3 KB), the
+        // head's (its style tables growing with every look the core draws) the smaller
         std::string chunk_file;
+        std::uintmax_t largest = 0;
         for (const auto& e : fs::directory_iterator(dir.file("rtiles"))) {
-            if (e.file_size() < 2000) continue; // the head's entry is the smaller one; the chunk's holds 3 KB
+            if (e.file_size() <= largest) continue;
+            largest = e.file_size();
             chunk_file = e.path().string();
         }
         ATLAS_REQUIRE(!chunk_file.empty());

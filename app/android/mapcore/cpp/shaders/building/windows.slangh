@@ -41,10 +41,12 @@
 // the wall's dark windows' box, or its lit ones'; else its flat colours.
 #pragma once
 
-// A windowed wall's record (a uint4): x its wall's one-cell primitive in the tile's edged list (bits 0-23), its style
-// (24-25) and flags (26-28); y its first window among the tile's (its first sample in the window group); z its rows
-// (bits 0-15) and bays (16-31); w its first painter slot within the item (its reveals'), near (bits 0-15) and far
-// (16-31), its dark windows' the next, then its lit ones', its sash bars' and its sills'.
+// A facade wall's record (a uint4): x its wall's one-cell primitive in the tile's edged list (bits 0-23), its style
+// (24-25) and flags (26-31); y its first window among the tile's (its first sample in the window group); z its rows
+// (bits 0-15) and bays (16-31), none where it has no windows; w its first painter slot within the item, near (bits
+// 0-15) and far (16-31): its shop glazing's where it has one, then its windows': its reveals', its dark windows', its
+// lit ones', its sash bars' and its sills'. Its building's plinth's and cornice's slots follow all its walls (each
+// item's word in the tile's facades: BUILDING_NO_FACADE where it has neither).
 static const uint BUILDING_WINDOW_WALL_BITS = 0x00FFFFFFu;
 static const uint BUILDING_WINDOW_STYLE_SHIFT = 24u;
 static const uint BUILDING_WINDOW_FLAGS_SHIFT = 26u;
@@ -55,6 +57,10 @@ static const uint BUILDING_WINDOW_PARIS = 2u;
 static const uint BUILDING_WINDOW_SHOP_FLOOR = 1u;
 static const uint BUILDING_WINDOW_WAREHOUSE = 2u;
 static const uint BUILDING_WINDOW_CHURCH = 4u;
+static const uint BUILDING_WINDOW_PLINTH = 8u;
+static const uint BUILDING_WINDOW_CORNICE = 16u;
+static const uint BUILDING_WINDOW_GLAZING = 32u;
+static const uint BUILDING_NO_FACADE = 0xFFFFFFFFu;
 // A windowed wall's painter slots within the item, from its first (geometry/Walls.hpp's window_slots): its reveals,
 // dark windows, lit ones, sash bars and sills.
 static const uint BUILDING_WINDOW_REVEALS = 0u;
@@ -77,10 +83,27 @@ static const float BUILDING_SILL_OUT = 0.07f;
 static const float BUILDING_SASH_AREA = 30.0f;
 static const float BUILDING_SASH_OUT = 0.01f;
 static const float BUILDING_SASH_CROSS = 0.42f;
+// A facade's flat detail (_draw_building's, with weather): the plinth's height near and far and how far it stands out,
+// the cornice's depth down from the wall's top and how far it stands out, their margin (CSS px) and least area; the
+// shop glazing's heights from the wall's foot, its span along the wall, how far it stands out and its least area.
+static const float BUILDING_PLINTH_LOW = 0.6f;
+static const float BUILDING_PLINTH_HIGH = 0.9f;
+static const float BUILDING_PLINTH_OUT = 0.02f;
+static const float BUILDING_CORNICE_DEPTH = 0.42f;
+static const float BUILDING_CORNICE_OUT = 0.05f;
+static const float BUILDING_FACADE_MARGIN = 200.0f;
+static const float BUILDING_FACADE_AREA = 0.15f;
+static const float BUILDING_GLAZING_FROM = 0.65f;
+static const float BUILDING_GLAZING_TO = 2.95f;
+static const float BUILDING_GLAZING_U0 = 0.05f;
+static const float BUILDING_GLAZING_U1 = 0.95f;
+static const float BUILDING_GLAZING_OUT = 0.03f;
+static const float BUILDING_GLAZING_AREA = 0.4f;
 
 // The windows' leads on their wall's plane (relative to its reciprocal depth, as the cells' and the roofs'), in the
 // paths' order from one step past the cells' most (15 steps of 2^-16): the reveals, the glass, the frames, the sash
-// bars, the sills.
+// bars, the sills; a shop's glazing takes the windows' glass's and frames', a plinth and a cornice the sills' (none of
+// them meets another on its wall).
 static const float BUILDING_REVEAL_LEAD = 2.44140625e-4f;
 static const float BUILDING_GLASS_LEAD = 2.593994140625e-4f;
 static const float BUILDING_WINDOW_LEAD = 2.74658203125e-4f;
@@ -88,11 +111,13 @@ static const float BUILDING_SASH_LEAD = 2.899169921875e-4f;
 static const float BUILDING_SILL_LEAD = 3.0517578125e-4f;
 
 // The vertices each window draws: its frame (10 triangles at most, a polygon holding its band, which the fragments trim
-// to the band: building_window_frame_point) and its glass (as a plain polygon's, through the roofs' fans); and each
-// near window's reveal, sill (a fan of 3 triangles each) and sash bars (two quads).
+// to the band: building_window_frame_point) and its glass (as a plain polygon's, through the roofs' fans); each near
+// window's reveal, sill (a fan of 3 triangles each) and sash bars (two quads); each facade's plinth and cornice (a fan
+// each).
 static const uint BUILDING_WINDOW_FRAME_VERTICES = 30u;
 static const uint BUILDING_WINDOW_GLASS_VERTICES = 5u;
 static const uint BUILDING_WINDOW_NEAR_VERTICES = 30u;
+static const uint BUILDING_FACADE_VERTICES = 18u;
 
 struct BuildingWindowWall {
     uint wall;  // its wall's one-cell primitive in the tile's edged list
@@ -109,7 +134,7 @@ inline BuildingWindowWall building_window_wall(uint4 v) {
     BuildingWindowWall w;
     w.wall = v.x & BUILDING_WINDOW_WALL_BITS;
     w.style = (v.x >> BUILDING_WINDOW_STYLE_SHIFT) & 3u;
-    w.flags = (v.x >> BUILDING_WINDOW_FLAGS_SHIFT) & 7u;
+    w.flags = (v.x >> BUILDING_WINDOW_FLAGS_SHIFT) & 0x3Fu;
     w.first = v.y;
     w.levels = v.z & 0xFFFFu;
     w.cols = v.z >> 16u;
@@ -170,6 +195,37 @@ inline BuildingPrim building_window_quad(BuildingPrim wall, float3 n, BuildingWi
     return p;
 }
 
+/// A facade's plinth on wall `wall`, low nearer than 300 m: quad_at(a, b, y0, y0 + (0.6 if d < 300 else 0.9), 0, 1,
+/// 0.02, n).
+inline BuildingPrim building_plinth(BuildingPrim wall, float3 n, bool low) {
+    BuildingWindowBox b;
+    b.ya = wall.c0.y;
+    b.yb = wall.c0.y + (low ? BUILDING_PLINTH_LOW : BUILDING_PLINTH_HIGH);
+    b.u0 = 0.0f;
+    b.u1 = 1.0f;
+    return building_window_quad(wall, n, b, BUILDING_PLINTH_OUT);
+}
+
+/// A facade's cornice on wall `wall`: quad_at(a, b, wall_top - 0.42, wall_top, 0, 1, 0.05, n).
+inline BuildingPrim building_cornice(BuildingPrim wall, float3 n) {
+    BuildingWindowBox b;
+    b.ya = wall.c3.y - BUILDING_CORNICE_DEPTH;
+    b.yb = wall.c3.y;
+    b.u0 = 0.0f;
+    b.u1 = 1.0f;
+    return building_window_quad(wall, n, b, BUILDING_CORNICE_OUT);
+}
+
+/// A shop floor's glazing on wall `wall`: quad_at(a, b, y0 + 0.65, y0 + 2.95, 0.05, 0.95, 0.03, n).
+inline BuildingPrim building_glazing(BuildingPrim wall, float3 n) {
+    BuildingWindowBox b;
+    b.ya = wall.c0.y + BUILDING_GLAZING_FROM;
+    b.yb = wall.c0.y + BUILDING_GLAZING_TO;
+    b.u0 = BUILDING_GLAZING_U0;
+    b.u1 = BUILDING_GLAZING_U1;
+    return building_window_quad(wall, n, b, BUILDING_GLAZING_OUT);
+}
+
 /// Window r, c of windowed wall `w` (building_window_box's), stood out along `n` as the port draws it.
 inline BuildingPrim building_window_prim(BuildingPrim wall, float3 n, BuildingWindowWall w, uint r, uint c) {
     return building_window_quad(wall, n, building_window_box(wall, w, r, c), BUILDING_WINDOW_OUT);
@@ -188,6 +244,14 @@ inline BuildingPrim building_window_sill(BuildingPrim wall, float3 n, BuildingWi
     return building_window_quad(wall, n, s, BUILDING_SILL_OUT);
 }
 
+/// Whether a wall's face `f` turns to the eye (the port's `vdot(nrm, vsub(cam.C, centre)) > 0`, which every part of a
+/// wall is drawn behind).
+inline bool building_wall_turned(TilePlace place, BuildingFace f) {
+    float3 t = eye_relative(place, f.test);
+    float toward = -(((f.normal.x * t.x) + (f.normal.y * t.y)) + (f.normal.z * t.z));
+    return toward > 0.0f;
+}
+
 /// Whether wall `w`'s windows are drawn at the frame (its face `f` and its item's rank entry `rank`): its item drawn
 /// nearer than win_d, not a church's with weather nearer than 520 m, its wall turned to the eye.
 inline bool building_windows_drawn(uint theme_flags, TilePlace place, BuildingWindowWall w, BuildingFace f, uint rank) {
@@ -202,9 +266,29 @@ inline bool building_windows_drawn(uint theme_flags, TilePlace place, BuildingWi
     if ((w.flags & BUILDING_WINDOW_CHURCH) != 0u && weather && (detail & BUILDING_DETAIL_CHURCH) != 0u) {
         return false;
     }
-    float3 t = eye_relative(place, f.test);
-    float toward = -(((f.normal.x * t.x) + (f.normal.y * t.y)) + (f.normal.z * t.z));
-    return toward > 0.0f;
+    return building_wall_turned(place, f);
+}
+
+/// How many window records the frame gives wall `w` (its item's rank entry `rank`): its windows where its item is
+/// nearer than win_d, and its shop glazing's where it has one and its item is nearer than 760 m (the CPU's jobs give
+/// as many; windows_cs writes each, drawn or not).
+inline uint building_window_records(BuildingWindowWall w, uint rank) {
+    if (rank == RANK_NONE) {
+        return 0u;
+    }
+    uint detail = rank_detail(rank);
+    uint n = (detail & BUILDING_DETAIL_WINDOWS) != 0u ? w.levels * w.cols : 0u;
+    if ((w.flags & BUILDING_WINDOW_GLAZING) != 0u && (detail & BUILDING_DETAIL_FACADES) != 0u) {
+        n = n + 1u;
+    }
+    return n;
+}
+
+/// Whether wall `w`'s flat detail is drawn at the frame: with weather, its item nearer than 760 m, its wall turned to
+/// the eye.
+inline bool building_facades_drawn(uint theme_flags, TilePlace place, BuildingFace f, uint rank) {
+    return rank != RANK_NONE && (theme_flags & THEME_WEATHER) != 0u &&
+           (rank_detail(rank) & BUILDING_DETAIL_FACADES) != 0u && building_wall_turned(place, f);
 }
 
 /// Whether a wall's windows are deep at the frame (its item's rank entry `rank`): with weather nearer than 160 m.
@@ -271,10 +355,10 @@ inline float2 building_window_corner(BuildingWindowShape s, uint i) {
     return s.p4;
 }
 
-/// Quad `win` (building_window_quad's) as Camera.poly gives it at the frame's camera: its corners clipped at the near
-/// plane, nothing where fewer than three are left or their box lies beyond the frame and the margin, with its area
-/// (unsnapped), snapped at rest.
-inline BuildingWindowShape building_window_cut(FrameCamera cam, TilePlace place, BuildingPrim win) {
+/// Quad `win` (building_window_quad's) as Camera.poly gives it at the frame's camera with margin `margin` (CSS px): its
+/// corners clipped at the near plane, nothing where fewer than three are left or their box lies beyond the frame and
+/// the margin, with its area (unsnapped), snapped at rest.
+inline BuildingWindowShape building_window_cut_in(FrameCamera cam, TilePlace place, BuildingPrim win, float margin) {
     BuildingWindowShape s = building_window_nothing();
     float near_z = cam.frame.w;
     float3 origin = {0.0f, 0.0f, 0.0f};
@@ -319,8 +403,7 @@ inline BuildingWindowShape building_window_cut(FrameCamera cam, TilePlace place,
             max_y = q[i].y > max_y ? q[i].y : max_y;
         }
     }
-    if (max_x < -BUILDING_MARGIN || min_x > cam.frame.x + BUILDING_MARGIN || max_y < -BUILDING_MARGIN ||
-        min_y > cam.frame.y + BUILDING_MARGIN) {
+    if (max_x < -margin || min_x > cam.frame.x + margin || max_y < -margin || min_y > cam.frame.y + margin) {
         return s;
     }
     float twice = 0.0f;
@@ -358,6 +441,11 @@ inline BuildingWindowShape building_window_cut(FrameCamera cam, TilePlace place,
     s.hi = hi + hi * BUILDING_PLANE_SPAN;
     s.area = abs(twice) / 2.0f;
     return s;
+}
+
+/// Quad `win` as Camera.poly gives it with the windows' margin of 300 px (building_window_cut_in's).
+inline BuildingWindowShape building_window_cut(FrameCamera cam, TilePlace place, BuildingPrim win) {
+    return building_window_cut_in(cam, place, win, BUILDING_MARGIN);
 }
 
 /// `s` where its area is over `least` (CSS px², the port's `area(sp) > least`), else nothing.
@@ -753,6 +841,24 @@ inline float3 building_window_sill_colour(FrameWindows w, uint theme_flags) {
     return building_rgb((theme_flags & THEME_NIGHT) != 0u ? w.frame.w : w.frame.z);
 }
 
+/// A shop's glazing's frame's colour at the moment, and its width (CSS px).
+inline float3 building_shop_frame(FrameWindows w, uint theme_flags) {
+    return building_rgb((theme_flags & THEME_NIGHT) != 0u ? w.shop.y : w.shop.x);
+}
+
+inline float building_shop_frame_width(FrameWindows w) {
+    return asfloat(w.shop.z);
+}
+
+/// The plinths' colour at the moment, and the cornices'.
+inline float3 building_plinth_colour(FrameWindows w, uint theme_flags) {
+    return building_rgb((theme_flags & THEME_NIGHT) != 0u ? w.facades.y : w.facades.x);
+}
+
+inline float3 building_cornice_colour(FrameWindows w, uint theme_flags) {
+    return building_rgb((theme_flags & THEME_NIGHT) != 0u ? w.facades.w : w.facades.z);
+}
+
 /// The windows' frames' width (CSS px), but where they are deep (the wall record's).
 inline float building_window_frame_width(FrameWindows w) {
     return asfloat(w.lit.w);
@@ -765,14 +871,16 @@ inline float building_tenths(uint tenths) {
 
 // A window's record, which windows_cs writes for each window of the frame's jobs and the windows' vertex stages read
 // (4 uint4): v0 its header (corners, bits 0-2; lit, bit 3; its wall's warehouse flag, bit 4; its style, bits 5-6; its
-// glass drawn, bit 7: building_glass_drawn at its wall's frames' half width), its wall's record among the frame's walls,
-// its painter slot, its span's low end; v1 its span's high end and its first three corners' x, y (CSS px) but the
-// last; then the rest of its five corners. A header 0: the window is not drawn.
+// glass drawn, bit 7: building_glass_drawn at its frame's half width; a shop's glazing, bit 8: its frame the shops'
+// colour and width, its glass's gradient over its own box), its wall's record among the frame's walls, its painter
+// slot, its span's low end; v1 its span's high end and its first three corners' x, y (CSS px) but the last; then the
+// rest of its five corners. A header 0: the window is not drawn.
 static const uint BUILDING_WINDOW_RECORD_VECTORS = 4u;
 static const uint BUILDING_WINDOW_LIT = 8u;
 static const uint BUILDING_WINDOW_RECORD_WAREHOUSE = 16u;
 static const uint BUILDING_WINDOW_RECORD_STYLE_SHIFT = 5u;
 static const uint BUILDING_WINDOW_RECORD_GLASS = 128u;
+static const uint BUILDING_WINDOW_RECORD_SHOP = 256u;
 
 struct BuildingWindowRecord {
     uint4 v0;
@@ -781,16 +889,17 @@ struct BuildingWindowRecord {
     uint4 v3;
 };
 
-/// The record of window shape `s` (lit or not, with glass or not) of wall `w`, the frame's wall record `wall`, at
-/// painter slot `slot`.
-inline BuildingWindowRecord building_window_record(BuildingWindowShape s, bool lit, bool glass, BuildingWindowWall w,
-                                                   uint wall, uint slot) {
+/// The record of window shape `s` (lit or not, with glass or not, a shop's glazing or not) of wall `w`, the frame's
+/// wall record `wall`, at painter slot `slot`.
+inline BuildingWindowRecord building_window_record(BuildingWindowShape s, bool lit, bool glass, bool shop,
+                                                   BuildingWindowWall w, uint wall, uint slot) {
     BuildingWindowRecord r;
     uint header = 0u;
     if (s.count != 0u) {
         header = s.count | (lit ? BUILDING_WINDOW_LIT : 0u) |
-                 ((w.flags & BUILDING_WINDOW_WAREHOUSE) != 0u ? BUILDING_WINDOW_RECORD_WAREHOUSE : 0u) |
-                 (w.style << BUILDING_WINDOW_RECORD_STYLE_SHIFT) | (glass ? BUILDING_WINDOW_RECORD_GLASS : 0u);
+                 ((w.flags & BUILDING_WINDOW_WAREHOUSE) != 0u && !shop ? BUILDING_WINDOW_RECORD_WAREHOUSE : 0u) |
+                 ((shop ? BUILDING_WINDOW_PLAIN : w.style) << BUILDING_WINDOW_RECORD_STYLE_SHIFT) |
+                 (glass ? BUILDING_WINDOW_RECORD_GLASS : 0u) | (shop ? BUILDING_WINDOW_RECORD_SHOP : 0u);
     }
     uint4 v0 = {header, wall, slot, asuint(s.lo)};
     uint4 v1 = {asuint(s.hi), asuint(s.p0.x), asuint(s.p0.y), asuint(s.p1.x)};
@@ -954,6 +1063,64 @@ inline BuildingWindowShape building_near_shape_of(BuildingNearRecord r, uint v, 
         return building_near_sill(r);
     }
     return building_near_reveal(r);
+}
+
+// A facade's record (a facade wall of the frame's jobs with a plinth or a cornice whose item is nearer than 760 m),
+// which windows_cs writes and window_facade_vs reads (7 uint4): v0 its header (its plinth's corners, bits 0-2; its
+// cornice's, 3-5), its wall's record among the frame's walls, its building's plinth's painter slot (its cornice's the
+// next); then its plinth (its span's ends, its five corners) and its cornice alike. A header 0: neither is drawn.
+static const uint BUILDING_FACADE_RECORD_VECTORS = 7u;
+
+struct BuildingFacadeRecord {
+    uint4 v0;
+    uint4 v1;
+    uint4 v2;
+    uint4 v3;
+    uint4 v4;
+    uint4 v5;
+    uint4 v6;
+};
+
+/// The record of a facade's plinth `plinth` and cornice `cornice`, the frame's wall record `wall`, its building's
+/// plinth's slot `slot`.
+inline BuildingFacadeRecord building_facade_record(BuildingWindowShape plinth, BuildingWindowShape cornice, uint wall,
+                                                   uint slot) {
+    BuildingFacadeRecord r;
+    uint4 v0 = {plinth.count | (cornice.count << 3u), wall, slot, 0u};
+    uint4 v1 = {asuint(plinth.lo), asuint(plinth.hi), asuint(plinth.p0.x), asuint(plinth.p0.y)};
+    uint4 v2 = {asuint(plinth.p1.x), asuint(plinth.p1.y), asuint(plinth.p2.x), asuint(plinth.p2.y)};
+    uint4 v3 = {asuint(plinth.p3.x), asuint(plinth.p3.y), asuint(plinth.p4.x), asuint(plinth.p4.y)};
+    uint4 v4 = {asuint(cornice.lo), asuint(cornice.hi), asuint(cornice.p0.x), asuint(cornice.p0.y)};
+    uint4 v5 = {asuint(cornice.p1.x), asuint(cornice.p1.y), asuint(cornice.p2.x), asuint(cornice.p2.y)};
+    uint4 v6 = {asuint(cornice.p3.x), asuint(cornice.p3.y), asuint(cornice.p4.x), asuint(cornice.p4.y)};
+    r.v0 = v0;
+    r.v1 = v1;
+    r.v2 = v2;
+    r.v3 = v3;
+    r.v4 = v4;
+    r.v5 = v5;
+    r.v6 = v6;
+    return r;
+}
+
+/// A facade record's plinth (part 0) or cornice (part 1).
+inline BuildingWindowShape building_facade_part(BuildingFacadeRecord r, uint part) {
+    if (part == 0u) {
+        return building_near_shape(r.v0.x & 7u, r.v1, r.v2, r.v3);
+    }
+    return building_near_shape((r.v0.x >> 3u) & 7u, r.v4, r.v5, r.v6);
+}
+
+/// Point v (0 to 17: the plinth's fan of 3 triangles, then the cornice's) of a facade record: the fan's corner (0, t +
+/// 1, t + 2) of its triangle t, the points past its last repeating it.
+inline float2 building_facade_point(BuildingFacadeRecord r, uint v) {
+    uint part = v < 9u ? 0u : 1u;
+    BuildingWindowShape s = building_facade_part(r, part);
+    uint i = v - part * 9u;
+    uint t = i / 3u;
+    uint k = i - t * 3u;
+    uint corner = k == 0u ? 0u : t + k;
+    return building_window_corner(s, corner < s.count ? corner : s.count - 1u);
 }
 
 // A windowed wall's record for the frame, which windows_cs writes once a windowed wall of the frame's jobs (3 uint4):

@@ -411,7 +411,9 @@ void add_parts(std::vector<Shape>& out, const twin::PartsDepth& pd, double densi
             continue;
         }
         if (e->sequence < depths.size() && !depths[e->sequence].parts.empty()) {
-            add_parts(out, depths[e->sequence].parts.front(), density, cam, depths[e->sequence].tile);
+            for (const twin::PartsDepth& pd : depths[e->sequence].parts) {
+                add_parts(out, pd, density, cam, depths[e->sequence].tile);
+            }
             continue;
         }
         if (e->points.size() < 3) continue;

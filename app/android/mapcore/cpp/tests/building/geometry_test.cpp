@@ -113,8 +113,20 @@ Checked check_tile(const gm::TileBuildings& g, const atlas::sun::SunTile& st) {
         CHECK((wall.flags & gm::prim_flag::far) != 0);
         CHECK(wall.cell == w.cell);
         const gm::BuildingItem& item = g.items[wall.item];
-        CHECK(w.near_slot + gm::window_slots <= item.near_slots);
-        CHECK(w.far_slot + gm::window_slots <= item.far_slots);
+        // its slots: its shop glazing's, then its windows', and its building's plinth's and cornice's after its walls
+        const std::uint32_t taken =
+            ((w.flags & gm::window_flag::glazing) != 0 ? 1U : 0U) + (w.levels > 0 ? gm::window_slots : 0U);
+        CHECK(w.near_slot + taken <= item.near_slots);
+        CHECK(w.far_slot + taken <= item.far_slots);
+        CHECK((w.levels > 0) == (w.cols > 0));
+        if ((w.flags & (gm::window_flag::plinth | gm::window_flag::cornice)) != 0) {
+            REQUIRE(wall.item < g.item_facades.size());
+            const std::uint32_t slots = g.item_facades[wall.item];
+            REQUIRE(slots != gm::no_facade);
+            CHECK(w.near_slot + taken <= (slots & 0xFFFFU));
+            CHECK((slots & 0xFFFFU) + 2 <= item.near_slots);
+            CHECK((slots >> 16U) + 2 <= item.far_slots);
+        }
         const std::uint32_t count = std::uint32_t{w.levels} * w.cols;
         windows += count;
         for (std::uint32_t k = 0; k < count; ++k) {
@@ -365,11 +377,12 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
             per_level += std::format(" {}: {:.2f}", lv, static_cast<double>(b) / (1 << 20));
         MESSAGE(std::string(name), ": the densest tile's MB by level:", per_level);
         // the heaps' share of the buildings (D2 put a dense tile at about 1.5-2.5 MB): a tile 2 MB at most on average,
-        // and the canal ring's centre (14/8414/5384, some 6,800 buildings) within 14 MB at its finest level (13.4 with
-        // its 40,000 windowed walls, 16 bytes each), 10 MB at the Main board's (level 7), which the frame's test holds
-        // within the heaps' budget (scene/Heaps.hpp)
+        // and the canal ring's centre (14/8414/5384, some 6,800 buildings) within 15 MB at its finest level (14.0 with
+        // the facades of its walls, a plinth on nearly every one: 24 bytes a facade wall, its record and its reveals'
+        // colours; 13.4 with its 40,000 windowed walls alone), 10 MB at the Main board's (level 7), which the frame's
+        // test holds within the heaps' budget (scene/Heaps.hpp)
         CHECK(all_bytes <= tiles * (std::size_t{2} << 20U));
-        CHECK(most_bytes <= std::size_t{14} << 20U);
+        CHECK(most_bytes <= std::size_t{15} << 20U);
         CHECK(wrong == 0);
         CHECK(prims > 0);
     }
