@@ -662,8 +662,8 @@ struct VariantFeature {
 };
 
 /// How a scene is cut: the levels, whether rings carry keep codes, whether facades (doors, shopfronts) are drawn, the
-/// one tile kept (a window's; none: every tile), and whether what the tiles cannot carry yet (gantries and conveyors,
-/// a tradition's details) refuses the cut (the packer's) or is left out (a window's).
+/// one tile kept (a window's; none: every tile), and whether what the tiles cannot carry yet (a tradition's details)
+/// refuses the cut (the packer's) or is left out (a window's).
 struct CutPlan {
     std::span<const std::uint8_t> levels;
     bool keep = false;
@@ -731,12 +731,8 @@ public:
         unsupported();
         rings_of(s_.buildings, buildings_, "building");
         rings_of(s_.parts, parts_, "part");
-        for (std::uint32_t i = 0; i < s_.water.size(); ++i) {
-            water_.push_back(grid_line(s_.water[i], [&] { return std::format("water {}", i); }));
-        }
-        for (std::uint32_t i = 0; i < s_.water_holes.size(); ++i) {
-            holes_.push_back(grid_line(s_.water_holes[i], [&] { return std::format("island {}", i); }));
-        }
+        for (const std::vector<V2>& r : s_.water) water_.push_back(water_line(r));
+        for (const std::vector<V2>& r : s_.water_holes) holes_.push_back(water_line(r));
         // refused already (what the tiles cannot carry yet, a vertex off the grid, which would be placed at latitude 0
         // and longitude 0): nothing is placed
         if (error_) return std::unexpected(*error_);
@@ -771,15 +767,11 @@ public:
     }
 
 private:
-    /// What a scene can hold that the tiles do not carry yet: gantries and conveyors (step 4's things) and a
-    /// tradition's details (step 4's facades). The packer's cut refuses it, as the packer's build fails; a window's
-    /// leaves it out, so a window near a sign gantry over a motorway or a port's conveyor still builds.
+    /// What a scene can hold that the tiles do not carry yet: a tradition's details (step 4's facades). The packer's
+    /// cut refuses it, as the packer's build fails; a window's leaves it out, so a window of a place with a tradition
+    /// still builds.
     void unsupported() {
         if (!plan_.uncarried_refused) return;
-        if (!s_.gantries.empty() || !s_.conveyors.empty()) {
-            fail("render tiles cannot carry gantries or conveyors yet", true);
-            return;
-        }
         for (const auto* list : {&s_.buildings, &s_.parts}) {
             for (const Building& b : *list) {
                 if (b.lv_why || b.roof_why || b.look == LookPath::tradition || b.party) {
@@ -819,6 +811,21 @@ private:
         for (const V2& p : pts) {
             g.lat.push_back(lat(p.z, what));
             g.lon.push_back(lon(p.x, what));
+        }
+        return g;
+    }
+    /// A water ring on the grid (SceneToTiles' waterGeom): its mapped vertices exactly, and each coordinate that lies
+    /// on no grid point at its nearest one. Only the sea regions.py closes from a coastline has such points
+    /// (sea_from_coast computes them along a box 0.06° to 0.1° beyond the region, from the coastline's ends), so its
+    /// box's edges move by at most half a grid step (6 mm) there.
+    [[nodiscard]] GridLine water_line(std::span<const V2> pts) const {
+        GridLine g;
+        g.lat.reserve(pts.size());
+        g.lon.reserve(pts.size());
+        for (const V2& p : pts) {
+            const tl::GridPoint near = tl::nearest_grid(f_, p.x, p.z);
+            g.lat.push_back(tl::grid_lat(f_, p.z).value_or(near.lat));
+            g.lon.push_back(tl::grid_lon(f_, p.x).value_or(near.lon));
         }
         return g;
     }
@@ -1171,6 +1178,16 @@ private:
         for (std::uint32_t i = 0; i < s_.park.size(); ++i) {
             line(6, i, s_.park[i].ring, ground_key(gk::over, 5, i), 1.0, 0.15); // a dashed line on the ground
         }
+        // gantries over a road (legs 0.35 m about its ends, its beam 0.45 m either side, 7 m unless mapped) and goods
+        // conveyors (legs 1.3 m and the gallery 1.4 m either side, 0.4 m past the ends, 6 m unless mapped); Python's
+        // `x or default`: a height of 0 is not mapped either
+        const auto height = [](const Gantry& g, double otherwise) { return g.h && *g.h != 0.0 ? *g.h : otherwise; };
+        for (std::uint32_t i = 0; i < s_.gantries.size(); ++i) {
+            line(7, i, s_.gantries[i].pts, 0, 1.0, height(s_.gantries[i], 7.0));
+        }
+        for (std::uint32_t i = 0; i < s_.conveyors.size(); ++i) {
+            line(8, i, s_.conveyors[i].pts, 0, 2.0, height(s_.conveyors[i], 6.0));
+        }
     }
 
     /// The areas at a level's tolerance (`coarse`, 0: as the scene holds them).
@@ -1246,8 +1263,7 @@ private:
             for (std::uint32_t i = 0; i < list.size(); ++i) {
                 const auto what = [&] { return std::format("{} {}", hole ? "island" : "water", i); };
                 const GridLine ring =
-                    coarse == 0 ? (hole ? holes_ : water_)[i] : grid_line(generalised(list[i], coarse), what);
-                if (error_) return; // a vertex off the grid: refused, and the ring is not where it stands
+                    coarse == 0 ? (hole ? holes_ : water_)[i] : water_line(generalised(list[i], coarse));
                 if (ring.lat.empty()) continue;
                 const Box4 box = ring.box();
                 const int turn = sign(area2(points_of(ring)));
@@ -1582,6 +1598,14 @@ private:
             break;
         }
         case 6: t = &s_.park[rl.index].tags; break;
+        case 7:
+        case 8: {
+            const Gantry& g = (rl.source == 7 ? s_.gantries : s_.conveyors)[rl.index];
+            lf.nullable_integer(c::id, f, g.id);
+            lf.decimal(c::h, f, g.h);
+            t = &g.tags;
+            break;
+        }
         default: break;
         }
         const Origin* from = nullptr;

@@ -187,7 +187,7 @@ object Schema {
     ) + tags(Layer.ROAD)
 
     val LINE: List<Column> = listOf(
-        c("source", Codec.U8, "0 S['rails'] (tram), 1 S['rail'], 2 S['big'], 3 S['aero'], 4 S['power'], 5 S['marine'], 6 S['park']"),
+        c("source", Codec.U8, "0 S['rails'] (tram), 1 S['rail'], 2 S['big'], 3 S['aero'], 4 S['power'], 5 S['marine'], 6 S['park'], 7 S['gantries'], 8 S['conveyors']"),
         c("index", Codec.DELTA, "source order in its list"),
         c("id", Codec.NVARZ, "the OSM id where the scene has one, or the tile carries the ground's order across windows (the core's windows)"),
         c("otype", Codec.STR, "relation for a multipolygon's ring, else null (a way): with id and part, the element a window's line comes from"),
@@ -198,7 +198,7 @@ object Schema {
         c("layer", Codec.CENTI, "a big road's layer (0 where none is mapped): it is drawn 0.5 m higher per layer"),
         c("crane", Codec.BOOL, "a crane rail"),
         c("closed", Codec.BOOL, "a marine work mapped as a closed way"),
-        c("h", Codec.CENTI, "height, metres"),
+        c("h", Codec.CENTI, "a gantry's or a conveyor's height, metres (null where none is mapped)"),
         c("ground_key", Codec.VARU, "the slot in the renders' ground order"),
     ) + tags(Layer.LINE)
 

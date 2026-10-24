@@ -18,7 +18,7 @@
 // a u32 length and the bytes. One line on stdout says what was cut and how long it took. The exit code: 0 done; 2 a
 // usage or input error; 3 a region the tiles cannot carry yet (the packer's render_gap, why on stderr: a theme park's
 // coaster tracks or a park's or zoo's planted woods (R's park or zoo), a survey's heights (a dem.json in the region's
-// folder), gantries or conveyors, a tradition's details); 1 any other failure.
+// folder), a tradition's details); 1 any other failure.
 #include "load/Amsterdam.hpp"
 #include "load/Cut.hpp"
 #include "load/PackHead.hpp"

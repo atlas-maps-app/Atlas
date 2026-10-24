@@ -57,6 +57,39 @@ class StagePPackerTest {
         }
     }
 
+    /**
+     * The port's and Schiphol's packs with their height survey left out (SceneToTiles.withoutSurvey: the tiles cannot
+     * carry a survey yet), cut by the core's stage P, are the packer's own cut of them byte for byte: what they hold
+     * that the bundled packs do not (gantries and conveyors, cranes, turbines, masts, runways, the sea) included. On the
+     * Mac, where their element packs are (CI has the canal ring's alone).
+     */
+    @Test
+    fun theRegionsWithoutTheirSurveyCutByTheCoresStagePAreThePackersOwn() {
+        assumeTrue("the core's stage P tool (-Datlas.stagep)", tool != null && tool.canExecute())
+        val root = repo ?: error("atlas.repo names no repository")
+        val work = Files.createTempDirectory("atlas-stagep-survey").toFile()
+        try {
+            for (id in listOf("port", "schiphol")) {
+                val element = File(root, "cache/packs/regions/$id.atlas")
+                if (!element.isFile) {
+                    println("stagep: no element pack ${element.path}: $id is not compared here")
+                    continue
+                }
+                val mine = File(work, "$id-core.atlas")
+                val theirs = File(work, "$id-packer.atlas")
+                val t0 = System.nanoTime()
+                val c = SceneToTiles.pack(element, mine, File(work, "core-$id"), core = tool, survey = false) { println("stagep $it") }
+                val t1 = System.nanoTime()
+                val p = SceneToTiles.pack(element, theirs, File(work, "packer-$id"), survey = false) { println("packer $it") }
+                val t2 = System.nanoTime()
+                println("stagep $id without its survey: ${c.written.chunks.size} tiles, ${c.written.bytes} bytes in ${(t1 - t0) / 1_000_000} ms; the packer's ${p.written.chunks.size} tiles in ${(t2 - t1) / 1_000_000} ms")
+                assertEquals("$id: the pack cut by the core's stage P is not the packer's: ${difference(mine.readBytes(), theirs.readBytes())}", "the same", difference(mine.readBytes(), theirs.readBytes()))
+            }
+        } finally {
+            work.deleteRecursively()
+        }
+    }
+
     @Test
     fun theToolsRefusalsAndItsTilesFile() {
         assumeTrue("the core's stage P tool (-Datlas.stagep)", tool != null && tool.canExecute())

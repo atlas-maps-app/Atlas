@@ -6,7 +6,9 @@ import app.atlas.render.PyRe
 import app.atlas.render.Real
 import app.atlas.render.V2
 import app.atlas.render.V3
+import app.atlas.render.data.Dem
 import app.atlas.render.data.PackReader
+import app.atlas.render.data.RegionData
 import app.atlas.render.live.LiveEngine
 import app.atlas.render.live.LiveRegion
 import app.atlas.render.live.LiveScene
@@ -100,8 +102,7 @@ class SceneToTiles(
         val later = mapOf(
             "coasters" to "a theme park's coaster tracks (K15)", "woods" to "a park's planted woods (K15)", "dem" to "a survey's heights (K28)",
             "_terrain" to "a region drawn on its terrain (K28)", "_flat" to "the relief (K28)", "_lines" to "lines draped on terrain (K28)",
-            "_grid" to "a terrain grid (K28)", "gantries" to "gantries (K15)", "conveyors" to "conveyors (K15)",
-            "_coaster_items" to "a theme park's coaster tracks (K15)",
+            "_grid" to "a terrain grid (K28)", "_coaster_items" to "a theme park's coaster tracks (K15)",
         )
         val found = later.filterKeys { k -> truthy(S[k]) }
         if (found.isNotEmpty()) throw UnsupportedOperationException("${region.id}: render tiles cannot carry ${found.values.joinToString()} yet")
@@ -125,6 +126,22 @@ class SceneToTiles(
     }
 
     private fun point(x: Double, z: Double, what: () -> String) = GridPoint(lat(z, what), lon(x, what))
+
+    /**
+     * A water ring on the grid: its mapped vertices exactly, and each coordinate that lies on no grid point at its
+     * nearest one. Only the sea regions.py closes from a coastline has such points (sea_from_coast computes them along
+     * a box 0.06° to 0.1° beyond the region, from the coastline's ends), so its box's edges move by at most half a grid
+     * step (6 mm) there.
+     */
+    private fun waterGeom(pts: List<V2>): Geom {
+        val a = IntArray(pts.size)
+        val o = IntArray(pts.size)
+        for (i in pts.indices) {
+            a[i] = Grid.latOf(pts[i].y, lat0, kz) ?: Grid.round(lat0 - pts[i].y / kz)
+            o[i] = Grid.lonOf(pts[i].x, lon0, kx) ?: Grid.round(lon0 + pts[i].x / kx)
+        }
+        return Geom(a, o, null)
+    }
 
     /** [box] widened by [metres] on every side, outward on the grid (a box of what is drawn, [Drawn]). */
     private fun widen(box: IntArray, metres: Double): IntArray {
@@ -391,7 +408,7 @@ class SceneToTiles(
         for ((hole, list) in listOf(false to water, true to holes)) {
             for ((i, r) in list.withIndex()) {
                 val what = { "${if (hole) "island" else "water"} $i" }
-                val ring = geom(generalised(r, coarse), what)
+                val ring = waterGeom(generalised(r, coarse))
                 val base = LinkedHashMap<String, Any?>()
                 base["index"] = i
                 if (hole) base["hole"] = true
@@ -509,6 +526,8 @@ class SceneToTiles(
             Triple(4, "power", { _: Int -> null }),
             Triple(5, "marine", { i: Int -> GroundKeys.marine(i) }),
             Triple(6, "park", { i: Int -> GroundKeys.park(i) }),
+            Triple(7, "gantries", { _: Int -> null }),
+            Triple(8, "conveyors", { _: Int -> null }),
         )
         for ((source, key, groundKey) in sources) {
             for ((i, d) in dicts(key).withIndex()) {
@@ -765,8 +784,11 @@ class SceneToTiles(
          * With [core] (the core's `atlas_stagep`), the core's stage P makes the pack's content, the phone's windows' code
          * ([CoreTiles]): it loads and cuts the tiles, writes the head and the style, and refuses what the tiles cannot
          * carry yet, all as the port does (the same bytes), so the port's scene is not loaded at all.
+         *
+         * Without [survey], the region's height survey is left out ([withoutSurvey]): a test pack of a region the tiles
+         * cannot carry with it (the port's, Schiphol's), drawn as the port draws the region without it.
          */
-        fun pack(elementPack: File, out: File, work: File, levels: IntArray? = null, core: File? = null, log: (String) -> Unit = {}): Packed {
+        fun pack(elementPack: File, out: File, work: File, levels: IntArray? = null, core: File? = null, survey: Boolean = true, log: (String) -> Unit = {}): Packed {
             val t0 = System.nanoTime()
             val source = sha256(elementPack)
             val before = LiveEngine.workDir
@@ -777,7 +799,8 @@ class SceneToTiles(
             try {
                 val (region, info) = PackReader.open(elementPack).use { r ->
                     val m = r.manifest
-                    LiveEngine.open(r, source) to Format3Writer.Info(m.id, m.name, m.bbox, m.origin, m.timezone, m.tradition, m.dataTime, m.config, m.header, m.sources)
+                    val opened = if (survey) LiveEngine.open(r, source) else LiveEngine.open(withoutSurvey(r), "$source without its survey")
+                    opened to Format3Writer.Info(m.id, m.name, m.bbox, m.origin, m.timezone, m.tradition, m.dataTime, m.config, m.header, m.sources)
                 }
                 if (core != null) {
                     val lv = levels ?: levelsOf(region)
@@ -807,6 +830,15 @@ class SceneToTiles(
                 LiveEngine.workDir = before
                 PyCompat.minor = minorBefore
             }
+        }
+
+        /**
+         * [data] with its height survey left out (no `dem.json` or `dem5.json` is unpacked): the port loads it as a region
+         * without one, with the generic water levels and no tides or relief (ENGINE.md step 6's terrain brings them), and
+         * the tiles carry it. For the tests' packs of the regions that have one (the port, Schiphol), never published.
+         */
+        fun withoutSurvey(data: RegionData): RegionData = object : RegionData by data {
+            override fun dem(name: String): Dem? = null
         }
 
         /**

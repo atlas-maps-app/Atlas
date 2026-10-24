@@ -456,7 +456,9 @@ private:
                               l->boolean(closed, i).value_or(false));
                 }
                 break;
-            default: break; // aeroways and a park's edge (no bundled pack holds them), power lines (K15)
+            default:
+                break; // aeroways and a park's edge (no bundled pack holds them); power lines, gantries and
+                       // conveyors stand up (the region items)
             }
         }
     }

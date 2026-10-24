@@ -7,16 +7,19 @@ import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.mapcorecheck.frame.FrameHost
 import app.atlas.mapview.svg.SvgParser
 import app.atlas.render.Amsterdam
+import app.atlas.render.data.PackReader
 import app.atlas.render.live.EngineVersion
 import app.atlas.render.live.LiveCamera
 import app.atlas.render.live.LiveEngine
 import app.atlas.render.live.LiveRegion
 import app.atlas.render.live.LiveView
 import app.atlas.render.live.Moment
+import app.atlas.rendertiles.compile.SceneToTiles
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.nio.ByteBuffer
+import java.nio.file.Files
 import java.util.Random
 import kotlin.concurrent.withLock
 
@@ -28,7 +31,11 @@ import kotlin.concurrent.withLock
  * apart, and none passes an element it overlaps out of the port's order; the port's elements the twin does not draw
  * yet (the features of the packages to come) are listed by key, with counts, and those outside the view are counted.
  *
- * Cases: the Westerkerk home and the Main board at S1 (sunny and wet), and the smoke tier's eight sweep cameras.
+ * Cases: the Westerkerk home and the Main board at S1 (sunny and wet), and the smoke tier's eight sweep cameras; on the
+ * Mac, where their element packs are (CI has the canal ring's alone), the port's and Schiphol's close views by day and
+ * at night and their overviews by day, both sides without the regions' height survey, which the tiles cannot carry yet
+ * (SceneToTiles.withoutSurvey: the port draws them with the generic water levels, no tides and no relief), from render
+ * packs the core's stage P cuts here.
  */
 class L1Test {
     private val tiles = File(System.getProperty("atlas.tiles") ?: error("atlas.tiles names no folder of bundled packs"))
@@ -41,22 +48,59 @@ class L1Test {
      */
     private val known: Map<String, Set<String>> = mapOf()
 
-    private class Case(val name: String, val pack: String, val file: File, val region: () -> LiveRegion?, val view: (LiveRegion) -> LiveView, val moment: String)
+    /**
+     * Matches out of the port's order that are known, named in ENGINE.md: by case and layer, `<key> passes <key>` as
+     * L1Diff counts them. Schiphol's close view: regions.py draws each land kind as one path, in the order of its first
+     * ring drawn, and draws every ring that reaches within 600 px of the frame, while the cover draws the tiles within
+     * 40 px; a grass ring 40 to 600 px beyond the frame, in a tile the cover leaves out, puts the port's grass before its
+     * park (the cover at the renders' 900 px matches it, at two to three times the tiles drawn).
+     */
+    private val knownOrder: Map<String, Set<String>> = mapOf(
+        "schiphol_close sunny S1 ground" to setOf("path; fill #ffb2ca90 1.000; stroke none passes path; fill #ffb8cc96 1.000; stroke none"),
+        "schiphol_close night S1 ground" to setOf("path; fill #ff24281d 1.000; stroke none passes path; fill #ff25291e 1.000; stroke none"),
+    )
+
+    private class Case(val name: String, val pack: String, val file: () -> File, val region: () -> LiveRegion?, val view: (LiveRegion) -> LiveView, val moment: String)
+
+    /** The regions beyond the bundled packs, their views and moments. */
+    private val regions = listOf(
+        "port" to listOf("port_close" to "sunny", "port_close" to "night", "port" to "sunny"),
+        "schiphol" to listOf("schiphol_close" to "sunny", "schiphol_close" to "night", "schiphol" to "sunny"),
+    )
+    private val work: File by lazy { Files.createTempDirectory("atlas-l1-regions").toFile().also { d -> Runtime.getRuntime().addShutdownHook(Thread { d.deleteRecursively() }) } }
+    private val made = HashMap<String, Pair<File, LiveRegion>>()
+
+    /** Region [id]'s render pack, cut by the core's stage P (or the packer, as the same bytes) without its survey, and its region for the port, alike. */
+    @Synchronized
+    private fun surveyless(id: String, element: File): Pair<File, LiveRegion> = made.getOrPut(id) {
+        AnchorCases.setUp()
+        val tool = System.getProperty("atlas.stagep")?.let(::File)?.takeIf { it.canExecute() }
+        val pack = File(work, "$id.atlas")
+        SceneToTiles.pack(element, pack, File(work, "engine-$id"), core = tool, survey = false) { println("L1 $id: $it") }
+        pack to PackReader.open(element).use { LiveEngine.open(SceneToTiles.withoutSurvey(it), "${element.length()} without its survey") }
+    }
 
     private fun cases(): List<Case> {
         val w = File(tiles, "amsterdam.atlas")
         val g = File(tiles, "grachten.atlas")
         val out = arrayListOf(
-            Case("home sunny S1", "bundled", w, { AnchorCases.westerkerk() }, { r -> AnchorCases.homeView(r, 916) }, "sunny"),
-            Case("home wet S1", "bundled", w, { AnchorCases.westerkerk() }, { r -> AnchorCases.homeView(r, 916) }, "wet"),
+            Case("home sunny S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> AnchorCases.homeView(r, 916) }, "sunny"),
+            Case("home wet S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> AnchorCases.homeView(r, 916) }, "wet"),
         )
         if (g.isFile) {
-            out += Case("board sunny S1", "grachten", g, { AnchorCases.grachten() }, { r -> knot(r, "grachten_home", 916) }, "sunny")
+            out += Case("board sunny S1", "grachten", { g }, { AnchorCases.grachten() }, { r -> knot(r, "grachten_home", 916) }, "sunny")
         }
         for (k in 0 until 4) {
             val own = if (k % 2 == 0) "sunny" else "night"
-            out += Case("sweep $k $own S1", "bundled", w, { AnchorCases.westerkerk() }, { r -> sweep(24, r.bbox!!, 916, 9)[k] }, own)
-            if (g.isFile) out += Case("canal sweep $k $own S1", "grachten", g, { AnchorCases.grachten() }, { r -> sweep(12, r.bbox!!, 916, 9)[k] }, own)
+            out += Case("sweep $k $own S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> sweep(24, r.bbox!!, 916, 9)[k] }, own)
+            if (g.isFile) out += Case("canal sweep $k $own S1", "grachten", { g }, { AnchorCases.grachten() }, { r -> sweep(12, r.bbox!!, 916, 9)[k] }, own)
+        }
+        for ((id, views) in regions) {
+            val element = File(AnchorCases.repo, "cache/packs/regions/$id.atlas")
+            if (!element.isFile) continue
+            for ((view, moment) in views) {
+                out += Case("$view $moment S1", id, { surveyless(id, element).first }, { surveyless(id, element).second }, { r -> knot(r, view, 916) }, moment)
+            }
         }
         return out
     }
@@ -112,7 +156,7 @@ class L1Test {
         for (case in cases()) {
             val region = case.region() ?: continue
             val (docs, theme) = port(case, region)
-            val bytes = FrameHost.twin(arrayOf("${case.pack}=${case.file.path}"), case.pack, camera(case.view(region)), theme, false)
+            val bytes = FrameHost.twin(arrayOf("${case.pack}=${case.file().path}"), case.pack, camera(case.view(region)), theme, false)
                 ?: throw AssertionError("${case.name}: the twin failed: ${FrameHost.lastError()}")
             val twin = TwinCodec.decode(bytes)
             println("L1 ${case.name}: ${FrameHost.lastNotes()}")
@@ -140,7 +184,9 @@ class L1Test {
                 val extra = r.extra.filterKeys { it !in allowed }
                 if (extra.isNotEmpty()) failed += "${case.name} $name: elements the twin draws that the port does not: $extra"
                 if (r.differs > 0) failed += "${case.name} $name: matched elements whose vertices differ: ${r.firstDiffering}"
-                if (r.outOfOrder > 0) failed += "${case.name} $name: elements out of the port's order: ${r.firstOutOfOrder}"
+                val order = knownOrder["${case.name} $name"].orEmpty()
+                for (k in r.outOfOrderByKeys.keys.filter { it in order }) println("  known out of order: $k (ENGINE.md, the cover's margin)")
+                if (r.outOfOrderByKeys.keys.any { it !in order }) failed += "${case.name} $name: elements out of the port's order: ${r.firstOutOfOrder}"
                 if (r.slivers > maxOf(4, r.twin / 500)) failed += "${case.name} $name: ${r.slivers} slivers, over two in a thousand: ${r.firstSlivers}"
                 matched += r.matched
             }
@@ -156,7 +202,7 @@ class L1Test {
         val region = AnchorCases.westerkerk()
         val case = cases().first()
         val (_, theme) = port(case, region)
-        val bytes = FrameHost.twin(arrayOf("bundled=${case.file.path}"), "bundled", camera(case.view(region)), theme, false)
+        val bytes = FrameHost.twin(arrayOf("bundled=${case.file().path}"), "bundled", camera(case.view(region)), theme, false)
             ?: throw AssertionError("the twin failed: ${FrameHost.lastError()}")
         val doc = TwinCodec.decode(bytes)
         // the frame's root clip and group, then the composite's haze at least

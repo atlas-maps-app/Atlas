@@ -11,8 +11,8 @@
 //     region it builds: the building tradition, the time zone; Amsterdam's palette;
 //   - its tile: the features whose reference point lies in it (a building on its edge is built once, by the window of
 //     its reference point) and the water clipped at its edges, with keep codes and the variants of the live map's
-//     bands; what the tiles have no columns for yet is left out (cut_window): gantries and conveyors until step 4's
-//     things, a tradition's details until its facades;
+//     bands; what the tiles have no columns for yet is left out (cut_window): a tradition's details until its
+//     facades;
 //   - its pack: that tile, a head (profile region, level 14, the frame, the window's name, the core's stage P version,
 //     the style version, its data's SHA-256, no views, the live map's bands) and its style (load/PackStyle.hpp).
 // A window builds within about 50 MB on a mid-range phone in a few seconds (ENGINE.md's budget), on a worker.
@@ -43,8 +43,8 @@ inline constexpr std::uint8_t frame_cell_level = 10;
 inline constexpr double window_margin = 200.0;
 
 /// The engine version a window's head names: the core's stage P, bumped when a window's tiles change for the same
-/// data (the port's packs name EngineVersion.ID there).
-inline constexpr std::string_view stage_p_version = "core-p1";
+/// data (the port's packs name EngineVersion.ID there): core-p2 carries gantries and conveyors, which core-p1 left out.
+inline constexpr std::string_view stage_p_version = "core-p2";
 
 /// The version of a window built now: `<stage P's> <the style's>`, its manifest's engine_version and style_version. A
 /// window of another version is built again from the data it keeps before it is drawn (the app's Windows), so a frame

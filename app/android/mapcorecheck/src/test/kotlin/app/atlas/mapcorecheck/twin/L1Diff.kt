@@ -114,6 +114,8 @@ object L1Diff {
         val piecesByKey = LinkedHashMap<String, Int>()
         val firstDiffering = ArrayList<String>()
         val firstOutOfOrder = ArrayList<String>()
+        /** The matches out of order by their keys: `<key> passes <key>`, each with its count. */
+        val outOfOrderByKeys = LinkedHashMap<String, Int>()
         /** The first extra elements, and the missing ones but circles: where they are, and their vertices. */
         val firstExtra = ArrayList<String>()
         val firstMissing = ArrayList<String>()
@@ -827,6 +829,7 @@ object L1Diff {
                 val o = ps[anchorP[k]]
                 if (o.e.key == p.e.key || !overlap(p, o)) continue
                 r.outOfOrder++
+                r.outOfOrderByKeys.merge("${shortKey(p.e.key)} passes ${shortKey(o.e.key)}", 1, Int::plus)
                 if (r.firstOutOfOrder.size < 5) r.firstOutOfOrder += "${p.e.where} ${shortKey(p.e.key)} passes ${o.e.where} ${shortKey(o.e.key)}"
                 return
             }

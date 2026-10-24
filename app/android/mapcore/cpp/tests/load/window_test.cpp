@@ -7,8 +7,10 @@
 //     the variants of the region's home view, which a window has no views for, are left out;
 //   - a window in Paris, anywhere's place (its country's tradition, its frame cell's frame) builds, with fr_paris's
 //     looks, and its pack opens and says what it is;
-//   - a window leaves out what its tiles cannot carry yet (a sign gantry, a goods conveyor), which the packer's cut
-//     refuses;
+//   - a window carries a sign gantry and a goods conveyor, each a line of its own (sources 7 and 8, with their ids and
+//     heights), as a region's cut does;
+//   - a window by the sea builds: the sea regions.py closes from a coastline, whose points along its box are computed,
+//     lies on the grid at their nearest grid points;
 //   - a window that holds nothing to draw is a pack without a tile, whose manifest says so, and joins no frame cell;
 //   - a water ring that reaches too far (the fuzzer's) refuses a region's cut, and a window cuts its own tile of it.
 #include "base/arena.hpp"
@@ -28,6 +30,7 @@
 #include "tiles/Payload.hpp"
 #include "tiles/Source.hpp"
 #include "tiles/Store.hpp"
+#include "tiles/layers/Lines.hpp"
 
 #include <doctest/doctest.h>
 
@@ -41,6 +44,7 @@
 #include <format>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <span>
 #include <sstream>
 #include <string>
@@ -122,14 +126,14 @@ std::vector<std::string> masked(const std::string& dump, int skip) {
 
 } // namespace
 
-TEST_CASE("load: a window leaves out what its tiles cannot carry yet, which the packer's cut refuses") {
-    // a house by the Westerkerk, a sign gantry over the road beside it and a goods conveyor: the tiles have no columns
-    // for gantries and conveyors until step 4's things
+TEST_CASE("load: a window carries gantries and conveyors, each a line of its own, as a region's cut does") {
+    // a house by the Westerkerk, a sign gantry over the road beside it and a goods conveyor (until 24 October the tiles
+    // had no column for them: a window left them out and a region's cut refused them)
     const tl::TileKey k = tl::tile_of(14, 523'746'000, 48'840'000);
     const std::string house = R"({"type": "way", "id": 10, "tags": {"building": "house"}, "geometry": [
     {"lat": 52.3745, "lon": 4.8840}, {"lat": 52.3745, "lon": 4.8842}, {"lat": 52.3747, "lon": 4.8842},
     {"lat": 52.3747, "lon": 4.8840}, {"lat": 52.3745, "lon": 4.8840}]})";
-    const std::string uncarried = R"({"type": "way", "id": 11, "tags": {"man_made": "gantry", "height": "7"},
+    const std::string carried = R"({"type": "way", "id": 11, "tags": {"man_made": "gantry", "height": "7.5"},
     "geometry": [{"lat": 52.3744, "lon": 4.8835}, {"lat": 52.3744, "lon": 4.8838}]},
 {"type": "way", "id": 12, "tags": {"man_made": "goods_conveyor"},
     "geometry": [{"lat": 52.3748, "lon": 4.8835}, {"lat": 52.3749, "lon": 4.8845}]})";
@@ -137,49 +141,125 @@ TEST_CASE("load: a window leaves out what its tiles cannot carry yet, which the 
         return R"({"version": 0.6, "osm3s": {"timestamp_osm_base": "2026-10-22T18:00:00Z"}, "elements": [
 )" + elements + "]}";
     };
-    const std::string with = answer(house + ",\n" + uncarried);
+    const std::string with = answer(house + ",\n" + carried);
     const std::string without = answer(house);
     const auto bytes = [](const std::string& s) { return std::as_bytes(std::span(s.data(), s.size())); };
     const load::WindowPlace place = load::place_of(k);
-    // a window's one tile, as its canonical dump (or why it is not there)
-    const auto tile_of = [](const std::vector<std::byte>& pack) -> std::string {
+    // a window's one tile's lines: each one's source, id and height (nan for none)
+    struct Line {
+        std::int64_t source = 0;
+        std::int64_t id = 0;
+        double h = 0;
+    };
+    const auto lines_of = [](const std::vector<std::byte>& pack) -> std::vector<Line> {
         auto opened = tl::Pack::open(std::make_unique<tl::MemorySource>(pack));
-        if (!opened) return "the pack does not open: " + tl::describe(opened.error());
-        if (opened->chunks().chunks().size() != 1) return "not one tile";
+        if (!opened || opened->chunks().chunks().size() != 1) return {};
         tl::Zstd zstd;
         tl::TileDecoder decoder;
-        atlas::Arena arena(1U << 20U, atlas::Growth::grows, "window test, a tile without what it cannot carry");
+        atlas::Arena arena(1U << 20U, atlas::Growth::grows, "window test, a tile's lines");
         std::vector<std::byte> raw;
         std::vector<std::byte> scratch;
         const auto tile = opened->decode(opened->chunks().chunks()[0], zstd, decoder, arena, raw, scratch);
-        if (!tile) return "the tile does not decode: " + tl::describe(tile.error());
-        return tl::canonical_dump(*tile);
+        if (!tile) return {};
+        std::vector<Line> out;
+        if (const tl::Layer* l = tile->layer(tl::LayerId::line)) {
+            for (std::uint32_t i = 0; i < l->count; ++i) {
+                out.push_back({.source = l->integer(tl::line::source, i),
+                               .id = l->integer(tl::line::id, i),
+                               .h = l->decimal(tl::line::h, i).value_or(std::numeric_limits<double>::quiet_NaN())});
+            }
+        }
+        return out;
     };
     const auto built = load::build_window(bytes(with), k, place);
     ATLAS_REQUIRE(built.has_value(), built.error().what);
     const auto plain = load::build_window(bytes(without), k, place);
     ATLAS_REQUIRE(plain.has_value(), plain.error().what);
-    // the window builds the tile it builds without them
-    CHECK(built->features > 0);
-    CHECK(built->features == plain->features);
-    const std::string tile = tile_of(built->pack);
-    CHECK(tile.starts_with("tile "));
-    CHECK(tile == tile_of(plain->pack));
-    // the packer's cut of the same scene refuses them, named, as the packer's build fails
+    // the window's tile holds them beside the house: the gantry a line of source 7 with its height, the conveyor one of
+    // source 8 without
+    CHECK(built->features == plain->features + 2);
+    CHECK(lines_of(plain->pack).empty());
+    const std::vector<Line> lines = lines_of(built->pack);
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[0].source == 7);
+    CHECK(lines[0].id == 11);
+    CHECK(lines[0].h == 7.5);
+    CHECK(lines[1].source == 8);
+    CHECK(lines[1].id == 12);
+    CHECK(std::isnan(lines[1].h));
+    // a region's cut of the same scene carries them too (without the place's tradition, whose details a region's cut
+    // refuses still)
     const auto doc = osm::read_overpass(bytes(with));
     ATLAS_REQUIRE(doc.has_value());
     const load::RegionConfig config{.name = place.region,
                                     .frame = place.frame,
                                     .bbox = load::window_box(k),
-                                    .tradition = place.tradition ? load::tradition_named(*place.tradition) : nullptr,
+                                    .tradition = nullptr,
                                     .palette = load::region_palette(place.region)};
     const auto scene = load::load_region(*doc, config);
     ATLAS_REQUIRE(scene.has_value());
     CHECK(scene->gantries.size() == 1);
     CHECK(scene->conveyors.size() == 1);
-    const auto refused = load::cut_region(*scene, place.frame, {});
-    ATLAS_REQUIRE(!refused.has_value());
-    CHECK(refused.error().what == "render tiles cannot carry gantries or conveyors yet");
+    const auto cut = load::cut_region(*scene, place.frame, {});
+    ATLAS_REQUIRE(cut.has_value(), cut.error().what);
+    std::size_t region_lines = 0;
+    for (const tl::TileFill& t : *cut) {
+        if (t.level() != 14) continue;
+        for (const tl::LayerFill& lf : t.layers()) {
+            if (lf.schema().label == std::string_view("line")) region_lines += lf.count();
+        }
+    }
+    CHECK(region_lines == 2);
+}
+
+TEST_CASE("load: a window by the sea builds, the sea's computed points at their nearest grid points") {
+    // a coastline through the Westerkerk's window (land on its left, the sea to the north-east): regions.py closes the
+    // sea along a box 0.06° and 0.1° beyond the window's, through points it computes, which lie on no grid point; until
+    // 24 October such a window was refused ("water 0: z = ... is not on the grid of the frame"), and so was a region
+    // with a coast
+    const tl::TileKey k = tl::tile_of(14, 523'746'000, 48'840'000);
+    const std::string data = R"({"version": 0.6, "osm3s": {"timestamp_osm_base": "2026-10-22T18:00:00Z"}, "elements": [
+{"type": "way", "id": 20, "tags": {"natural": "coastline"}, "geometry": [
+    {"lat": 52.3700, "lon": 4.8700}, {"lat": 52.3750, "lon": 4.8850}, {"lat": 52.3800, "lon": 4.9000}]},
+{"type": "way", "id": 10, "tags": {"building": "house"}, "geometry": [
+    {"lat": 52.3735, "lon": 4.8840}, {"lat": 52.3735, "lon": 4.8842}, {"lat": 52.3737, "lon": 4.8842},
+    {"lat": 52.3737, "lon": 4.8840}, {"lat": 52.3735, "lon": 4.8840}]}]})";
+    const auto bytes = std::as_bytes(std::span(data.data(), data.size()));
+    const load::WindowPlace place = load::place_of(k);
+    const auto doc = osm::read_overpass(bytes);
+    ATLAS_REQUIRE(doc.has_value());
+    const load::RegionConfig config{.name = place.region,
+                                    .frame = place.frame,
+                                    .bbox = load::window_box(k),
+                                    .tradition = nullptr,
+                                    .palette = load::region_palette(place.region)};
+    const auto scene = load::load_region(*doc, config);
+    ATLAS_REQUIRE(scene.has_value());
+    REQUIRE(scene->water.size() == 1); // the sea, closed from the coastline
+    // its box's points lie on no grid point
+    std::size_t off_grid = 0;
+    for (const auto& p : scene->water[0]) {
+        if (!tl::grid_lat(place.frame, p.z) || !tl::grid_lon(place.frame, p.x)) ++off_grid;
+    }
+    CHECK(off_grid > 0);
+    // a region's cut and the window build, the sea in the window's tile
+    const auto cut = load::cut_region(*scene, place.frame, {});
+    ATLAS_REQUIRE(cut.has_value(), cut.error().what);
+    const auto built = load::build_window(bytes, k, place);
+    ATLAS_REQUIRE(built.has_value(), built.error().what);
+    auto opened = tl::Pack::open(std::make_unique<tl::MemorySource>(built->pack));
+    ATLAS_REQUIRE(opened.has_value());
+    REQUIRE(opened->chunks().chunks().size() == 1);
+    tl::Zstd zstd;
+    tl::TileDecoder decoder;
+    atlas::Arena arena(1U << 20U, atlas::Growth::grows, "window test, a window by the sea");
+    std::vector<std::byte> raw;
+    std::vector<std::byte> scratch;
+    const auto tile = opened->decode(opened->chunks().chunks()[0], zstd, decoder, arena, raw, scratch);
+    ATLAS_REQUIRE(tile.has_value());
+    const tl::Layer* water = tile->layer(tl::LayerId::water);
+    REQUIRE(water != nullptr);
+    CHECK(water->count > 0);
 }
 
 TEST_CASE("load: a window that holds nothing to draw is a pack without a tile, which says so and joins no cell") {

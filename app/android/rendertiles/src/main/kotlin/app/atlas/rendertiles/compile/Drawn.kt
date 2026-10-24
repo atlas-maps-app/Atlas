@@ -76,16 +76,22 @@ object Drawn {
         5 -> (if (d["closed"] == true) 0.5 else 5.0) to 0.3
         // a park's edge: a dashed line on the ground
         6 -> 1.0 to 0.15
+        // a gantry over a road: its legs 0.35 m about its ends and its beam 0.45 m either side, 7 m high unless mapped
+        7 -> 1.0 to (height(d) ?: 7.0)
+        // a goods conveyor: its legs 1.3 m and its gallery 1.4 m either side, 0.4 m past its ends, 6 m unless mapped
+        8 -> 2.0 to (height(d) ?: 6.0)
         else -> 0.0 to 0.0
     }
+
+    /** A record's height where one is mapped, as Python's `x or default` reads it: a height of 0 is not mapped either. */
+    private fun height(d: Map<String, Any?>): Double? = (d["h"] as Number?)?.toDouble()?.takeIf { it != 0.0 }
 
     /** A big road or runway whose width cannot be read: the widest the renders draw one. */
     private const val BIG_UNKNOWN = 30.0
 
     /** (reach from its position, top) of an item of `source` [source] ([app.atlas.rendertiles.model.Schema.ITEM]) and record [d]. */
     fun item(source: Int, d: Map<String, Any?>): Pair<Double, Double> {
-        // Python's `x or default`: a height of 0 is not mapped either
-        val h = (d["h"] as Number?)?.toDouble()?.takeIf { it != 0.0 }
+        val h = height(d)
         return when (source) {
             // a crane: on a quay, the ship-to-shore shape, its boom out over the water (at most 112 m) and 22 m back, its
             // A-frame 20 m above its height (44 m unless mapped); in a yard, a portal within its outline, 26 m unless mapped

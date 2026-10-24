@@ -87,7 +87,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
                 ATLAS_ASSERT(t.level() == 14 || t.level() == 12, "a tile's level");
         }
         // a window's cut (the Westerkerk's L14 tile): that tile alone, or none, and what the tiles cannot carry yet
-        // (gantries and conveyors, a tradition's details) left out, never refused
+        // (a tradition's details) left out, never refused
         const atlas::tiles::TileKey window = atlas::tiles::tile_of(14, 523'746'000, 48'840'000);
         if (const auto tiles = atlas::load::cut_window(*regional, region.frame, {}, window)) {
             ATLAS_ASSERT(tiles->size() <= 1, "a window's tiles");

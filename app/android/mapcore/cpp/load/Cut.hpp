@@ -35,9 +35,9 @@ namespace atlas::load {
 /// Why a scene cannot be cut: what showed it, as the packer names it (`building 3 (123456): z = … is not on the grid`).
 struct CutError {
     std::string what;
-    /// What the scene holds that the tiles cannot carry yet (gantries and conveyors, a tradition's details), which a
-    /// region's cut refuses as the packer's build fails: a region the format carries once its columns come (the
-    /// packer's render_gap), not a failure.
+    /// What the scene holds that the tiles cannot carry yet (a tradition's details), which a region's cut refuses as
+    /// the packer's build fails: a region the format carries once its columns come (the packer's render_gap), not a
+    /// failure.
     bool uncarried = false;
 };
 
@@ -61,9 +61,9 @@ cut_region(const Scene& scene, const tiles::Frame& frame, std::span<const CutVar
 
 /// One window of the map the phone builds (load/Window.hpp): a region's cut at L14 alone, of the features whose
 /// reference point lies in `tile` and the water clipped to its edges, with keep codes and the variants of the features
-/// in it. What the tiles have no columns for yet is left out where the packer's cut refuses it: gantries and conveyors
-/// until step 4's things, a tradition's details (trad, party, lv_why, roof_why) until step 4's facades; the looks the
-/// details lead to (the levels, the roofs, the colours) are carried.
+/// in it. What the tiles have no columns for yet is left out where the packer's cut refuses it: a tradition's details
+/// (trad, party, lv_why, roof_why) until step 4's facades; the looks the details lead to (the levels, the roofs, the
+/// colours) are carried.
 [[nodiscard]] std::expected<std::vector<tiles::TileFill>, CutError> cut_window(const Scene& scene,
                                                                                const tiles::Frame& frame,
                                                                                std::span<const CutVariant> variants,
