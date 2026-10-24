@@ -73,6 +73,11 @@ struct BuildingTile {
     std::vector<std::uint32_t> cells_first;
     std::vector<std::uint32_t> plain_first;
     std::vector<std::uint32_t> windows_first;
+    /// The items whose walls have near cells in cell c, ascending: [near_items_first[c], near_items_first[c + 1]) of
+    /// near_items. A near cell draws only for an item nearer than the cells' reach, so the frame draws a cell's near
+    /// cells only where one of these is (Buildings::update).
+    std::vector<std::uint32_t> near_items_first;
+    std::vector<std::uint16_t> near_items;
     /// Each windowed wall's first window among the tile's by cell (its windows: [window_at[i], window_at[i + 1])).
     std::vector<std::uint32_t> window_at;
     /// Each windowed wall's item (its wall's), so the frame's jobs take only the walls whose windows it draws.

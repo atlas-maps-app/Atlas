@@ -64,9 +64,12 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     std::vector<std::uint32_t> heap_of(g.edged.size(), 0);
     layout.edged_first.assign(grid + 1, 0);
     layout.cells_first.assign(grid + 1, 0);
+    layout.near_items_first.assign(grid + 1, 0);
+    layout.near_items.clear();
     for (std::size_t c = 0; c < grid; ++c) {
         layout.edged_first[c] = static_cast<std::uint32_t>(edged.size());
         layout.cells_first[c] = static_cast<std::uint32_t>(cells.size());
+        layout.near_items_first[c] = static_cast<std::uint32_t>(layout.near_items.size());
         std::size_t wall = SIZE_MAX; // the edged record of the last wall drawn only far
         for (std::uint32_t i = g.edged_first[c]; i < g.edged_first[c + 1]; ++i) {
             const gm::Prim& q = g.edged[i];
@@ -89,10 +92,17 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
             ATLAS_ASSERT(q.near_slot == wall_near[wall] + q.part, "a wall's cells' slots not in a run");
             cells.push_back({static_cast<std::uint32_t>(wall),
                              std::uint32_t{q.part} | (std::uint32_t{q.ncol} << 16U) | (std::uint32_t{q.nrow} << 24U)});
+            layout.near_items.push_back(static_cast<std::uint16_t>(q.item)); // below the 0x10000 items asserted
         }
+        // the cell's items with near cells, once each
+        const auto from = layout.near_items.begin() + layout.near_items_first[c];
+        std::ranges::sort(from, layout.near_items.end());
+        const auto repeated = std::ranges::unique(from, layout.near_items.end());
+        layout.near_items.erase(repeated.begin(), repeated.end());
     }
     layout.edged_first[grid] = static_cast<std::uint32_t>(edged.size());
     layout.cells_first[grid] = static_cast<std::uint32_t>(cells.size());
+    layout.near_items_first[grid] = static_cast<std::uint32_t>(layout.near_items.size());
     layout.plain_first = g.plain_first;
     layout.windows_first = g.window_walls_first;
     const auto e = static_cast<std::uint32_t>(edged.size());

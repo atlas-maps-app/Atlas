@@ -11,6 +11,8 @@
 //     frame's moment, lit and unlit, on the CPU in binary64 (the port's bits on every device) into this frame slot's
 //     colours whenever that slot's are of another moment; and its draws over its visible cells, with its sun bits'
 //     first texel in set 1's sun_bits and their fade (scene::CoverTile's, K8's bits: no bits yet, every face unlit).
+//     Its near cells are drawn only in the cells where one of their buildings lies nearer than the cells' reach (its
+//     rank's near bit; BuildingTile::near_items): anywhere else they would draw nothing.
 //   - The objects phase draws the walls and the near cells (shaders/building/draw.slang's walls_vs, 16 points of each
 //     one's dilated outline through a static index buffer's fans) and the roofs (roofs_vs, 5 points each), tile by
 //     tile from the nearest, at their true depth, so early depth testing shades each visible sample about once; the
@@ -226,6 +228,8 @@ private:
     std::vector<Run> runs_;
     std::unordered_set<std::uint32_t> rows_written_;
     std::vector<std::uint32_t> drawn_handles_;
+    /// The tiles (their handles) with a building nearer than the cells' reach this frame: no other's near cells draw.
+    std::vector<std::uint32_t> near_tiles_;
     /// The moments the CPU's light has seen (a moment: the frame block's theme), and each tile's moment in each of the
     /// two frame slots' colours.
     std::array<std::byte, sizeof(shaders::Theme)> theme_{};

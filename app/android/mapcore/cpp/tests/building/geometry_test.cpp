@@ -17,10 +17,12 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <format>
 #include <map>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -217,6 +219,33 @@ Checked check_tile(const gm::TileBuildings& g, const atlas::sun::SunTile& st) {
     return c;
 }
 
+/// The cells whose near_items are not the items of their near cells (each once, ascending), as the frame takes them to
+/// draw a cell's near cells only where one of their buildings is near.
+std::size_t near_items_wrong(const gm::TileBuildings& g, const atlas::passes::BuildingTile& layout) {
+    const std::size_t grid = !g.edged_first.empty() ? g.edged_first.size() - 1 : 0;
+    if (layout.near_items_first.size() != grid + 1 || layout.near_items_first[grid] != layout.near_items.size()) {
+        return grid + 1;
+    }
+    std::size_t wrong = 0;
+    std::vector<std::uint16_t> want;
+    for (std::size_t c = 0; c < grid; ++c) {
+        want.clear();
+        for (std::uint32_t i = g.edged_first[c]; i < g.edged_first[c + 1]; ++i) {
+            const gm::Prim& q = g.edged[i];
+            const bool near_cell = q.kind == gm::PrimKind::cell && (q.flags & gm::prim_flag::near) != 0 &&
+                                   (q.flags & gm::prim_flag::far) == 0;
+            if (near_cell) want.push_back(static_cast<std::uint16_t>(q.item));
+        }
+        std::ranges::sort(want);
+        want.erase(std::ranges::unique(want).begin(), want.end());
+        const std::span<const std::uint16_t> got =
+            std::span(layout.near_items)
+                .subspan(layout.near_items_first[c], layout.near_items_first[c + 1] - layout.near_items_first[c]);
+        if (!std::ranges::equal(got, want)) ++wrong;
+    }
+    return wrong;
+}
+
 } // namespace
 
 TEST_CASE("buildings: stage T of a synthetic tile, every roof shape and a houseboat, held to K8's samples") {
@@ -348,6 +377,7 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
                 // the tile's range of the walls heap: its primitives, near cells, faces, colours and rows
                 atlas::passes::BuildingTile layout;
                 const std::size_t bytes = atlas::passes::heap_words(g, 0.0, 0.0, layout).size() * 16;
+                CHECK(near_items_wrong(g, layout) == 0);
                 if (bytes > most_bytes) {
                     most_bytes = bytes;
                     densest = std::format("{}/{}/{} at level {} ({} buildings, {} edged primitives, {} near cells, {} "

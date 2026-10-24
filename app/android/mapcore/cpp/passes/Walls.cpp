@@ -30,6 +30,32 @@ using Words = std::array<std::uint32_t, 4>;
 
 [[nodiscard]] std::uint32_t bits(float v) noexcept { return std::bit_cast<std::uint32_t>(v); }
 
+/// Whether rank table entry `rank` draws its building's near variant (the cells' reach: building.slangh's
+/// BUILDING_DETAIL_NEAR, which building_shape tests).
+[[nodiscard]] bool near_rank(std::uint32_t rank) noexcept {
+    return rank != shaders::RANK_NONE && (shaders::rank_detail(rank) & shaders::BUILDING_DETAIL_NEAR) != 0U;
+}
+
+/// The cells of `cells` whose near cells can draw this frame: those with an item (BuildingTile::near_items) whose rank
+/// entry, through the tile's item rows `rows` and the frame's rank table `ranks`, draws the near variant. An item the
+/// frame cannot look up counts as near, so its cell's near cells are drawn as before.
+[[nodiscard]] std::uint64_t near_cells(const BuildingTile& b, std::uint64_t cells, std::span<const std::uint32_t> rows,
+                                       std::span<const std::uint32_t> ranks) noexcept {
+    std::uint64_t out = 0;
+    const std::size_t n = !b.near_items_first.empty() ? b.near_items_first.size() - 1 : 0;
+    for (std::size_t c = 0; c < n && c < 64; ++c) {
+        if (((cells >> c) & 1U) == 0) continue;
+        for (std::uint32_t i = b.near_items_first[c]; i < b.near_items_first[c + 1]; ++i) {
+            const std::uint16_t item = b.near_items[i];
+            if (item >= rows.size() || rows[item] >= ranks.size() || near_rank(ranks[rows[item]])) {
+                out |= std::uint64_t{1} << c;
+                break;
+            }
+        }
+    }
+    return out;
+}
+
 } // namespace
 
 void Buildings::kinds(frame::Selectors& selectors) { kind_ = selectors.kind("building"); }
@@ -74,13 +100,13 @@ gpu::Result<void> Buildings::build(scene::TileBuild& b) const {
         layout->owners.push_back(
             static_cast<std::uint8_t>((item.relation ? 2U : 0U) | (item.source == geometry::Source::part ? 1U : 0U)));
     }
-    const std::size_t bytes = sizeof(BuildingTile) +
-                              ((layout->edged_first.size() + layout->cells_first.size() + layout->plain_first.size() +
-                                layout->windows_first.size() + layout->window_at.size()) *
-                               4) +
-                              (layout->ids.size() * 9) + (layout->lights.size() * sizeof(BuildingLight)) +
-                              (layout->rings.size() * sizeof(BuildingRing)) +
-                              (layout->ring_points.size() * sizeof(float));
+    const std::size_t bytes =
+        sizeof(BuildingTile) +
+        ((layout->edged_first.size() + layout->cells_first.size() + layout->plain_first.size() +
+          layout->windows_first.size() + layout->window_at.size() + layout->near_items_first.size()) *
+         4) +
+        (layout->near_items.size() * 2) + (layout->ids.size() * 9) + (layout->lights.size() * sizeof(BuildingLight)) +
+        (layout->rings.size() * sizeof(BuildingRing)) + (layout->ring_points.size() * sizeof(float));
     b.keep(std::shared_ptr<const BuildingTile>(std::move(layout)), bytes);
     return {};
 }
@@ -155,6 +181,22 @@ void Buildings::update(const frame::FrameState& state) {
         ++moment_;
     }
     const std::uint32_t slot = state.slot % 2;
+    // The tiles with a building nearer than the cells' reach (its rank draws the near variant): only theirs can draw
+    // their near cells. The ranks' order is far to near, so those buildings are among its last rows.
+    near_tiles_.clear();
+    if (state.items != nullptr) {
+        const std::span<const std::uint32_t> order = state.ranks->order();
+        const std::span<const double> depth = state.ranks->depth();
+        const std::span<const std::uint32_t> table = state.ranks->table();
+        const std::span<const std::uint16_t> kinds = state.items->kind();
+        const std::span<const std::uint32_t> tiles = state.items->tile();
+        for (std::size_t k = order.size(); k > 0; --k) {
+            const std::uint32_t row = order[k - 1];
+            if (depth[row] >= geometry::cells_reach) break; // so is every row before it: no near variant there
+            if (kinds[row] != kind_ || !near_rank(table[row])) continue;
+            if (std::ranges::find(near_tiles_, tiles[row]) == near_tiles_.end()) near_tiles_.push_back(tiles[row]);
+        }
+    }
     for (const scene::CoverTile& t : state.cover->tiles()) {
         if (t.drawn == nullptr || me >= t.drawn->passes.size()) continue;
         const scene::ResidentTile& tile = *t.drawn;
@@ -193,7 +235,9 @@ void Buildings::update(const frame::FrameState& state) {
         d.runs_first = static_cast<std::uint32_t>(runs_.size());
         building_runs(t.cells, b->edged_first, runs_);
         d.edged_runs = static_cast<std::uint32_t>(runs_.size()) - d.runs_first;
-        building_runs(t.cells, b->cells_first, runs_);
+        // its near cells only in the cells where one of their buildings is near: elsewhere they draw nothing
+        const bool near_tile = std::ranges::find(near_tiles_, tile.handle) != near_tiles_.end();
+        building_runs(near_tile ? near_cells(*b, t.cells, d.rows, state.ranks->table()) : 0U, b->cells_first, runs_);
         d.cell_runs = static_cast<std::uint32_t>(runs_.size()) - d.runs_first - d.edged_runs;
         building_runs(t.cells, b->plain_first, runs_);
         d.plain_runs = static_cast<std::uint32_t>(runs_.size()) - d.runs_first - d.edged_runs - d.cell_runs;
