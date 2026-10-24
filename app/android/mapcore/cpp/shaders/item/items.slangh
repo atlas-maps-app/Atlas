@@ -1,0 +1,786 @@
+// A region's items (ENGINE.md step 4, "Trees and things"; render/regions.py's draw_items; CP/geometry/Items.hpp),
+// shared by the GPU (shaders/item/draw.slang's items_cs and its stages) and the twin (CP/twin/item/ItemShader.hpp
+// compiles it as C++ after tree.slangh, whose coverage tests and prints it uses). Not a module.
+//
+// An item in the points heap is ITEM_VECTORS uint4: its foot tile-local (a segment's first end) and its kind and flags,
+// a segment's second end, its height and a kind's own value (a turbine's rotor's radius, a conveyor's gaps between its
+// legs), and a power line's conductors' heights at a quarter, a half and three quarters of its length (stage T's, in
+// double). Per frame the render thread decides in double what the item's depth d decides (passes::item_choice: drawn
+// or not, s = focal / d, the widths and radii as the port prints them, a power line's fade), the moment's colours (the
+// box faces' by their normals, the port's light in binary64) and the parts' order where draw_items sorts them, and
+// writes a job a drawn item; items_cs writes its records as draw_items draws it, every printed value snapped at rest:
+//   - a tower: its bands (the shaft, and a cab's base, glass, gallery and antenna), each a quad facing the camera
+//     (along its right vector, at the band's radius) as Camera.poly cuts it at the near plane and keeps it within 200 px
+//     of the frame, filled with its gradient across its box: mix(col, shadow, .35), col at .35 (.65 where the sun lies
+//     on the camera's right) and mix(col, shadow, .5);
+//   - a mast: its shaft and a lighting mast's frame of floodlights as boxes facing the camera, each face toward the eye
+//     as Camera.poly keeps it within 200 px and from 0.05 px² of area, filled and stroked .25 in its colour lit by its
+//     normal; at night a lighting mast's glow and its core;
+//   - a gantry's segment: its legs at its way's ends and its beam; a conveyor's: its legs every Lg / gaps and its
+//     gallery; boxes along the segment, in draw_items' order of their middles' depths (the render thread's);
+//   - a turbine: its tower (the trapezoid from its foot's ± 2.2 s to its top's ± 1.2 s, where both project), its three
+//     blades turned to the hour's wind (one path: filled, stroked .4), its hub, at night its red light (.9);
+//   - a power line's segment: its tower at its first end (to H + 2, where both ends project), its three conductors
+//     sagging between its ends (one path at .8, each conductor where all five of its points project), all at the
+//     segment's fade from 1,200 to 2,000 m.
+// What stands up is drawn at true depth: every corner of a face, a segment's ends and a circle's centre at their own
+// reciprocal depth (a face is planar, so the rasteriser's interpolation is exact over it), a small lead where parts of
+// one item lie on one plane and the port draws one over the other (a blade's stroke over its fill, the hub over the
+// blades, a glow's core over it, a tower's band over the one below) and where a box's faces meet (each its face's
+// place in the box, so a later face's stroke covers an earlier one's edge as the port draws it); under the painter
+// switch each element draws at its slot. A face's stroke in its own
+// colour is the face grown by its half width (its edges' round-capped segments, sample by sample). The conductors'
+// path is one layer at .8: each segment leaves the samples its path's earlier segments cover.
+#pragma once
+
+/// An item's kinds (geometry::RegionItemKind).
+static const uint ITEM_TOWER = 0u;
+static const uint ITEM_TURBINE = 1u;
+static const uint ITEM_CRANE = 2u;
+static const uint ITEM_MAST = 3u;
+static const uint ITEM_GANTRY = 4u;
+static const uint ITEM_CONVEYOR = 5u;
+static const uint ITEM_POWER = 6u;
+
+/// An item's uint4 in the points heap.
+static const uint ITEM_VECTORS = 3u;
+
+/// An item's flags (its first uint4's w, above its kind's byte).
+static const uint ITEM_CAB = 256u;       // a tower's glazed cab
+static const uint ITEM_LIGHTING = 512u;  // a mast's frame of floodlights
+static const uint ITEM_LEGS_A = 1024u;   // a gantry's legs at its segment's first end
+static const uint ITEM_LEGS_B = 2048u;   // and at its second
+
+/// A job's flags: its kind in bits 0 to 3.
+static const uint ITEM_JOB_KIND = 15u;
+static const uint ITEM_JOB_NIGHT = 16u;
+static const uint ITEM_JOB_HIGH = 32u; // the towers' gradients' middle stop at .65: the sun on the camera's right
+static const uint ITEM_JOB_FADE = 64u; // a power line's segment fading: its tower drawn translucent, at its fade
+static const uint ITEM_JOB_VECTORS = 5u;
+
+/// The moment's table (passes::item_tones: each colour by day or at night as the port picks it, 0xBBGGRR): the towers'
+/// gradients' three stops for the shaft, the glass, the gallery and the antenna; a turbine's tower, blades, their
+/// stroke, hub and night light; a power line's tower and conductors; a mast's glow's core, its glow's three stops'
+/// colours and opacities; the turbine's light's, the conductors' opacity and width, the blades' stroke's width; each
+/// blade's cos and sin of its angle and of it plus 0.06; the wind's (fx, fz). Floats as their bits.
+static const uint ITEM_TONE_TOWER = 0u;
+static const uint ITEM_TONE_TURBINE = 12u;
+static const uint ITEM_TONE_POWER = 17u;
+static const uint ITEM_TONE_CORE = 19u;
+static const uint ITEM_TONE_GLOW = 20u;
+static const uint ITEM_TONE_GLOW_OPACITY = 23u;
+static const uint ITEM_TONE_LIGHT_OPACITY = 26u;
+static const uint ITEM_TONE_CONDUCTOR_OPACITY = 27u;
+static const uint ITEM_TONE_CONDUCTOR_WIDTH = 28u;
+static const uint ITEM_TONE_BLADE_WIDTH = 29u;
+static const uint ITEM_TONE_BLADES = 30u;
+static const uint ITEM_TONE_WIND = 42u;
+static const uint ITEM_TONES = 44u;
+
+/// A job's own words (the frame's extra list, at the job's `extra`): its boxes' colours by their faces' normals (+u, -u,
+/// +v, -v, up; their first colour then their second), then its parts in draw_items' order.
+static const uint ITEM_EXTRA_COLOURS = 10u;
+
+/// A record's kind (its first word's low byte) and flags.
+static const uint ITEM_NONE = 0u;
+static const uint ITEM_FACE = 1u;
+static const uint ITEM_SEGMENT = 2u;
+static const uint ITEM_CIRCLE = 3u;
+static const uint ITEM_GLOW = 4u;
+static const uint ITEM_RECORD_KIND = 0xFFu;
+static const uint ITEM_ROUND_START = 256u; // tree.slangh's TREE_ROUND_START and TREE_ROUND_END
+static const uint ITEM_ROUND_END = 512u;
+static const uint ITEM_ROUND = 768u;
+static const uint ITEM_STROKED = 1024u;   // a face stroked in its own colour: its half width in a.w
+static const uint ITEM_GRADIENT = 2048u;  // a face filled with a gradient across its box: its stops' colours a.y, a.w, e.w
+static const uint ITEM_HIGH = 4096u;      // its middle stop at .65 (.35 otherwise)
+static const uint ITEM_COUNT_SHIFT = 16u; // a face's corners, 3 to 5
+static const uint ITEM_BACK_SHIFT = 24u;  // a translucent segment's look back: its path's segments before it
+
+/// A record: a = (kind and flags, colour 0xBBGGRR, opacity's bits, a segment's half width, a face's stroke's half
+/// width, a circle's radius, or a gradient's middle stop's colour), b, c = its points 0 to 3 (CSS px), d = its point 4
+/// and the depths of points 0 and 1, e = the depths of points 2 to 4 and a gradient's last stop's colour.
+struct ItemRecord {
+    uint4 a;
+    uint4 b;
+    uint4 c;
+    uint4 d;
+    uint4 e;
+};
+static const uint ITEM_RECORD_VECTORS = 5u;
+
+/// The vertices a record draws: a face its fan's three triangles and its five edges' quads; the others two triangles.
+static const uint ITEM_FACE_VERTICES = 39u;
+static const uint ITEM_PART_VERTICES = 6u;
+
+/// The lead of an item's part over the parts it lies on, relative to its reciprocal depth: 2^-16 (tree.slangh's).
+static const float ITEM_LEAD = 1.52587890625e-5f;
+
+/// The records a job reserves among the faces, the opaque parts and the translucent ones.
+inline uint item_face_count(uint kind, uint gaps) {
+    if (kind == ITEM_TOWER) {
+        return 5u;
+    }
+    if (kind == ITEM_TURBINE) {
+        return 4u; // the tower, the three blades
+    }
+    if (kind == ITEM_MAST) {
+        return 10u;
+    }
+    if (kind == ITEM_GANTRY) {
+        return 15u;
+    }
+    if (kind == ITEM_CONVEYOR) {
+        return 5u * (gaps + 2u);
+    }
+    return 0u;
+}
+
+inline uint item_part_count(uint kind) {
+    if (kind == ITEM_TURBINE) {
+        return 10u; // the blades' nine edges, the hub
+    }
+    if (kind == ITEM_MAST) {
+        return 1u; // the glow's core
+    }
+    if (kind == ITEM_POWER) {
+        return 1u; // the tower
+    }
+    return 0u;
+}
+
+inline uint item_side_count(uint kind) {
+    if (kind == ITEM_TURBINE) {
+        return 1u; // the night light
+    }
+    if (kind == ITEM_MAST) {
+        return 1u; // the glow
+    }
+    if (kind == ITEM_POWER) {
+        return 13u; // the tower while fading, the conductors' twelve segments
+    }
+    return 0u;
+}
+
+/// An item's words.
+struct ItemWords {
+    float3 foot; // tile-local metres
+    uint kind;
+    uint flags;
+    float2 end; // a segment's second end, tile-local x and z
+    float h;
+    float extra; // a turbine's rotor's radius; a conveyor's gaps between its legs
+    float3 sag;  // a power line's conductors' heights at f = .25, .5, .75
+};
+
+inline ItemWords item_words(uint4 a, uint4 b, uint4 c) {
+    ItemWords w;
+    float3 foot = {asfloat(a.x), asfloat(a.y), asfloat(a.z)};
+    w.foot = foot;
+    w.kind = a.w & 0xFFu;
+    w.flags = a.w & 0xFFFFFF00u;
+    float2 end = {asfloat(b.x), asfloat(b.y)};
+    w.end = end;
+    w.h = asfloat(b.z);
+    w.extra = asfloat(b.w);
+    float3 sag = {asfloat(c.x), asfloat(c.y), asfloat(c.z)};
+    w.sag = sag;
+    return w;
+}
+
+/// A job: its tile's place, its item's words in the points heap, its flags, its first painter slot, its first records
+/// among the faces, the opaque parts and the translucent ones, the values the render thread decided (passes::item_choice)
+/// and its own words in the frame's extra list.
+struct ItemJob {
+    TilePlace place;
+    uint item;
+    uint flags;
+    uint slot;
+    uint faces;
+    uint parts;
+    uint sides;
+    float a;
+    float b;
+    float c;
+    float d;
+    uint extra;
+};
+
+inline ItemJob item_job(uint4 w0, uint4 w1, uint4 w2, uint4 w3, uint4 w4) {
+    ItemJob j;
+    float4 offset = {asfloat(w0.x), asfloat(w0.y), asfloat(w0.z), asfloat(w0.w)};
+    float4 scale = {asfloat(w1.x), asfloat(w1.y), asfloat(w1.z), asfloat(w1.w)};
+    j.place.offset = offset;
+    j.place.scale = scale;
+    j.item = w2.x;
+    j.flags = w2.y;
+    j.slot = w2.z;
+    j.faces = w2.w;
+    j.parts = w3.x;
+    j.sides = w3.y;
+    j.extra = w3.z;
+    j.a = asfloat(w4.x);
+    j.b = asfloat(w4.y);
+    j.c = asfloat(w4.z);
+    j.d = asfloat(w4.w);
+    return j;
+}
+
+/// A tile-local point's eye-relative frame metres, and frame metres' camera coordinates.
+inline float3 item_eye(TilePlace place, float3 local) {
+    return eye_relative(place, local);
+}
+
+/// The depth of a part in painter slot `slot`: at true depth its reciprocal depth near / kz (at most 1), `lead` leads
+/// nearer; under the painter switch its slot's.
+inline float item_depth(FrameCamera c, float kz, uint slot, uint lead) {
+    if ((c.flags.x & CAMERA_PAINTER) != 0u) {
+        return painter_depth(c, slot);
+    }
+    float r = (c.frame.w / kz) * (1.0f + ITEM_LEAD * float(lead));
+    return true_depth(c, r < 1.0f ? r : 1.0f);
+}
+
+/// A polygon as Camera.poly gives it: its corners cut at the near plane (each edge's crossing at t = (near - a.z) /
+/// (b.z - a.z)), projected (unsnapped), each with its camera depth; up to five, count 0 where fewer than three are
+/// left or where it lies wholly beyond the frame and the margin.
+struct ItemPoly {
+    float2 p0;
+    float2 p1;
+    float2 p2;
+    float2 p3;
+    float2 p4;
+    float z0;
+    float z1;
+    float z2;
+    float z3;
+    float z4;
+    uint count;
+};
+
+inline ItemPoly item_poly_none() {
+    ItemPoly f;
+    f.p0 = float2(0.0f);
+    f.p1 = float2(0.0f);
+    f.p2 = float2(0.0f);
+    f.p3 = float2(0.0f);
+    f.p4 = float2(0.0f);
+    f.z0 = 0.0f;
+    f.z1 = 0.0f;
+    f.z2 = 0.0f;
+    f.z3 = 0.0f;
+    f.z4 = 0.0f;
+    f.count = 0u;
+    return f;
+}
+
+inline float2 item_poly_point(ItemPoly f, uint i) {
+    if (i == 0u) {
+        return f.p0;
+    }
+    if (i == 1u) {
+        return f.p1;
+    }
+    if (i == 2u) {
+        return f.p2;
+    }
+    if (i == 3u) {
+        return f.p3;
+    }
+    return f.p4;
+}
+
+inline float item_poly_z(ItemPoly f, uint i) {
+    if (i == 0u) {
+        return f.z0;
+    }
+    if (i == 1u) {
+        return f.z1;
+    }
+    if (i == 2u) {
+        return f.z2;
+    }
+    if (i == 3u) {
+        return f.z3;
+    }
+    return f.z4;
+}
+
+/// Polygon `f` with camera coordinates `k` added at its end, projected (no more than five).
+inline ItemPoly item_poly_add(FrameCamera c, ItemPoly f, float3 k) {
+    ItemPoly o = f;
+    float2 p = css_of(c, k);
+    if (o.count == 0u) {
+        o.p0 = p;
+        o.z0 = k.z;
+    } else if (o.count == 1u) {
+        o.p1 = p;
+        o.z1 = k.z;
+    } else if (o.count == 2u) {
+        o.p2 = p;
+        o.z2 = k.z;
+    } else if (o.count == 3u) {
+        o.p3 = p;
+        o.z3 = k.z;
+    } else if (o.count == 4u) {
+        o.p4 = p;
+        o.z4 = k.z;
+    }
+    if (o.count < 5u) {
+        o.count = o.count + 1u;
+    }
+    return o;
+}
+
+/// Camera.poly of the quad k0 k1 k2 k3 (camera coordinates), kept within `margin` px of the frame.
+inline ItemPoly item_poly(FrameCamera c, float3 k0, float3 k1, float3 k2, float3 k3, float margin) {
+    float near = c.frame.w;
+    ItemPoly f = item_poly_none();
+    for (uint i = 0u; i < 4u; ++i) {
+        float3 a = k3;
+        float3 b = k0;
+        if (i == 0u) {
+            a = k0;
+            b = k1;
+        } else if (i == 1u) {
+            a = k1;
+            b = k2;
+        } else if (i == 2u) {
+            a = k2;
+            b = k3;
+        }
+        bool ai = a.z >= near;
+        bool bi = b.z >= near;
+        if (ai) {
+            f = item_poly_add(c, f, a);
+        }
+        if (ai != bi) {
+            float t = (near - a.z) / (b.z - a.z);
+            float3 k = {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, near};
+            f = item_poly_add(c, f, k);
+        }
+    }
+    if (f.count < 3u) {
+        return item_poly_none();
+    }
+    float x0 = f.p0.x;
+    float x1 = f.p0.x;
+    float y0 = f.p0.y;
+    float y1 = f.p0.y;
+    for (uint i = 1u; i < f.count; ++i) {
+        float2 p = item_poly_point(f, i);
+        x0 = min(x0, p.x);
+        x1 = max(x1, p.x);
+        y0 = min(y0, p.y);
+        y1 = max(y1, p.y);
+    }
+    if (x1 < -margin || x0 > c.frame.x + margin || y1 < -margin || y0 > c.frame.y + margin) {
+        return item_poly_none();
+    }
+    return f;
+}
+
+/// city.py's area: half the absolute sum of x0 · y1 - x1 · y0 over the polygon's edges, in their order.
+inline float item_area(ItemPoly f) {
+    float twice = 0.0f;
+    for (uint i = 0u; i < f.count; ++i) {
+        float2 p = item_poly_point(f, i);
+        float2 q = item_poly_point(f, (i + 1u) % f.count);
+        twice = twice + (p.x * q.y - q.x * p.y);
+    }
+    return abs(twice) / 2.0f;
+}
+
+// ---- records
+
+inline ItemRecord item_nothing() {
+    ItemRecord r;
+    r.a = uint4(0u);
+    r.b = uint4(0u);
+    r.c = uint4(0u);
+    r.d = uint4(0u);
+    r.e = uint4(0u);
+    return r;
+}
+
+/// A face: polygon `f`'s corners as printed, each at its depth in slot `slot` with lead `lead`; filled in `colour`, and
+/// stroked in it `half` either side where `half` is over 0.
+inline ItemRecord item_face(FrameCamera c, ItemPoly f, uint slot, uint lead, uint colour, float half) {
+    ItemRecord r;
+    uint flags = ITEM_FACE | (f.count << ITEM_COUNT_SHIFT) | (half > 0.0f ? ITEM_STROKED : 0u);
+    uint4 a = {flags, colour, asuint(1.0f), asuint(half)};
+    float2 p0 = tree_printed(c, f.p0);
+    float2 p1 = tree_printed(c, f.p1);
+    float2 p2 = tree_printed(c, f.p2);
+    float2 p3 = tree_printed(c, f.count > 3u ? f.p3 : f.p2);
+    float2 p4 = tree_printed(c, f.count > 4u ? f.p4 : (f.count > 3u ? f.p3 : f.p2));
+    uint4 b = {asuint(p0.x), asuint(p0.y), asuint(p1.x), asuint(p1.y)};
+    uint4 cc = {asuint(p2.x), asuint(p2.y), asuint(p3.x), asuint(p3.y)};
+    float z3 = f.count > 3u ? f.z3 : f.z2;
+    float z4 = f.count > 4u ? f.z4 : z3;
+    uint4 d = {asuint(p4.x), asuint(p4.y), asuint(item_depth(c, f.z0, slot, lead)),
+               asuint(item_depth(c, f.z1, slot, lead))};
+    uint4 e = {asuint(item_depth(c, f.z2, slot, lead)), asuint(item_depth(c, z3, slot, lead)),
+               asuint(item_depth(c, z4, slot, lead)), 0u};
+    r.a = a;
+    r.b = b;
+    r.c = cc;
+    r.d = d;
+    r.e = e;
+    return r;
+}
+
+/// A tower's band: a face filled with the gradient across its box from `first` to `middle` (at .35, or .65 where
+/// `high`) to `last`, `lead` leads over the bands below it (they lie on one plane).
+inline ItemRecord item_band(FrameCamera c, ItemPoly f, uint slot, uint lead, uint first, uint middle, uint last,
+                            bool high) {
+    ItemRecord r = item_face(c, f, slot, lead, first, 0.0f);
+    r.a.x = r.a.x | ITEM_GRADIENT | (high ? ITEM_HIGH : 0u);
+    r.a.w = middle;
+    r.e.w = last;
+    return r;
+}
+
+/// A segment from p0 to p1 (as printed) at depths d0 and d1, `half` its half width, its ends round where `caps` says,
+/// at `opacity`; a translucent one leaves the samples its path's `back` segments before it cover.
+inline ItemRecord item_segment(float2 p0, float2 p1, float d0, float d1, float half, uint caps, uint colour,
+                               float opacity, uint back) {
+    ItemRecord r = item_nothing();
+    uint4 a = {ITEM_SEGMENT | caps | (back << ITEM_BACK_SHIFT), colour, asuint(opacity), asuint(half)};
+    uint4 b = {asuint(p0.x), asuint(p0.y), asuint(p1.x), asuint(p1.y)};
+    uint4 d = {0u, 0u, asuint(d0), asuint(d1)};
+    r.a = a;
+    r.b = b;
+    r.d = d;
+    return r;
+}
+
+/// A circle about `at` (as printed) of `radius` at depth `depth`, at `opacity`.
+inline ItemRecord item_circle(float2 at, float radius, uint colour, float opacity, float depth) {
+    ItemRecord r = item_nothing();
+    uint4 a = {ITEM_CIRCLE, colour, asuint(opacity), asuint(radius)};
+    uint4 b = {asuint(at.x), asuint(at.y), 0u, 0u};
+    uint4 d = {0u, 0u, asuint(depth), 0u};
+    r.a = a;
+    r.b = b;
+    r.d = d;
+    return r;
+}
+
+/// A lighting mast's glow at night: a circle of `radius` filled with its radial gradient (the tones' three stops).
+inline ItemRecord item_glow(float2 at, float radius, float depth) {
+    ItemRecord r = item_circle(at, radius, 0u, 1.0f, depth);
+    r.a.x = ITEM_GLOW;
+    return r;
+}
+
+inline uint item_count(ItemRecord r) {
+    return (r.a.x >> ITEM_COUNT_SHIFT) & 7u;
+}
+
+inline float2 item_point(ItemRecord r, uint i) {
+    uint4 v = r.b;
+    if (i >= 4u) {
+        float2 p4 = {asfloat(r.d.x), asfloat(r.d.y)};
+        return p4;
+    }
+    if (i >= 2u) {
+        v = r.c;
+    }
+    bool odd = (i & 1u) != 0u;
+    float2 p = {asfloat(odd ? v.z : v.x), asfloat(odd ? v.w : v.y)};
+    return p;
+}
+
+inline float item_corner_depth(ItemRecord r, uint i) {
+    if (i == 0u) {
+        return asfloat(r.d.z);
+    }
+    if (i == 1u) {
+        return asfloat(r.d.w);
+    }
+    if (i == 2u) {
+        return asfloat(r.e.x);
+    }
+    if (i == 3u) {
+        return asfloat(r.e.y);
+    }
+    return asfloat(r.e.z);
+}
+
+/// The box corner i (0 to 3) about a segment from a to b, `e` beyond it every way, and the depth there: linear along
+/// the segment from d0 at a to d1 at b, carried past its ends.
+struct ItemCorner {
+    float2 p;
+    float depth;
+};
+
+inline ItemCorner item_segment_corner(float2 a, float2 b, float d0, float d1, float e, uint i) {
+    float2 d = b - a;
+    float len = sqrt(d.x * d.x + d.y * d.y);
+    float2 u = {1.0f, 0.0f};
+    if (len > 0.0f) {
+        u = d / len;
+    }
+    float2 v = {-u.y * e, u.x * e};
+    bool at_end = i == 1u || i == 2u;
+    float2 from = at_end ? b + u * e : a - u * e;
+    ItemCorner k;
+    k.p = i >= 2u ? from + v : from - v;
+    float slope = len > 0.0f ? (d1 - d0) / len : 0.0f;
+    k.depth = at_end ? d1 + slope * e : d0 - slope * e;
+    return k;
+}
+
+/// A gradient face's colour at CSS abscissa `x` across its box from x0 to x1 (objectBoundingBox from 0 to 1, padded):
+/// its stops at 0, at .35 or .65, and at 1, each channel interpolated in 0 to 1.
+inline float3 item_gradient_at(float3 first, float3 middle, float3 last, bool high, float x0, float x1, float x) {
+    if (!(x1 > x0)) {
+        return first;
+    }
+    float t = (x - x0) / (x1 - x0);
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    float m = high ? 0.65f : 0.35f;
+    if (t <= m) {
+        return first + (middle - first) * (t / m);
+    }
+    return middle + (last - middle) * ((t - m) / (1.0f - m));
+}
+
+/// A glow's colour and opacity at distance t (0 to 1 of its radius): its three stops at 0, .35 and 1, each channel and
+/// the opacity interpolated apart.
+inline float4 item_glow_at(float3 c0, float3 c1, float3 c2, float o0, float o1, float o2, float t) {
+    float u = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    if (u <= 0.35f) {
+        float k = u / 0.35f;
+        float3 c = c0 + (c1 - c0) * k;
+        float4 g = {c.x, c.y, c.z, o0 + (o1 - o0) * k};
+        return g;
+    }
+    float k = (u - 0.35f) / 0.65f;
+    float3 c = c1 + (c2 - c1) * k;
+    float4 g = {c.x, c.y, c.z, o1 + (o2 - o1) * k};
+    return g;
+}
+
+// ---- the parts' geometry, frame metres relative to the eye
+
+/// A tower's band from y0 to y1 at radius `r` about its foot `foot` (eye-relative), facing the camera: draw_items'
+/// band, (x ∓ sx · r, y, z ∓ sz · r) with (sx, sz) the camera's right vector's x and z.
+inline ItemPoly item_band_poly(FrameCamera c, float3 foot, float y0, float y1, float r) {
+    float sx = c.right.x;
+    float sz = c.right.z;
+    float3 q0 = {foot.x - sx * r, foot.y + y0, foot.z - sz * r};
+    float3 q1 = {foot.x + sx * r, foot.y + y0, foot.z + sz * r};
+    float3 q2 = {foot.x + sx * r, foot.y + y1, foot.z + sz * r};
+    float3 q3 = {foot.x - sx * r, foot.y + y1, foot.z - sz * r};
+    return item_poly(c, camera_of(c, q0), camera_of(c, q1), camera_of(c, q2), camera_of(c, q3), 200.0f);
+}
+
+/// A box (draw_items' box): its centre c0 (eye-relative x and z, its ground's height in y), its axes u and v (unit, x
+/// and z), its half sizes hu and hv, from y0 to y1 above its ground.
+struct ItemBox {
+    float3 c0;
+    float2 u;
+    float2 v;
+    float hu;
+    float hv;
+    float y0;
+    float y1;
+};
+
+/// The box's corner P8(su, sv, y): (cx + ux · su · hu + vx · sv · hv, y, cz + uz · su · hu + vz · sv · hv).
+inline float3 item_box_corner(ItemBox b, float su, float sv, float y) {
+    float3 p = {(b.c0.x + (b.u.x * su) * b.hu) + (b.v.x * sv) * b.hv, b.c0.y + y,
+                (b.c0.z + (b.u.y * su) * b.hu) + (b.v.y * sv) * b.hv};
+    return p;
+}
+
+/// Face `face` of the box (its normal +u, -u, +v, -v, then the top): its normal.
+inline float3 item_box_normal(ItemBox b, uint face) {
+    float3 n = {0.0f, 1.0f, 0.0f};
+    if (face == 0u) {
+        float3 m = {b.u.x, 0.0f, b.u.y};
+        n = m;
+    } else if (face == 1u) {
+        float3 m = {-b.u.x, 0.0f, -b.u.y};
+        n = m;
+    } else if (face == 2u) {
+        float3 m = {b.v.x, 0.0f, b.v.y};
+        n = m;
+    } else if (face == 3u) {
+        float3 m = {-b.v.x, 0.0f, -b.v.y};
+        n = m;
+    }
+    return n;
+}
+
+/// The box's face `face` as box() draws it: its corners in the port's order, nothing where it faces away from the eye
+/// (vdot(n3, C - m) <= 0, m its corners' mean) or Camera.poly drops it (200 px) or its area is under 0.05 px².
+inline ItemPoly item_box_face(FrameCamera c, ItemBox b, uint face) {
+    float3 q0;
+    float3 q1;
+    float3 q2;
+    float3 q3;
+    if (face == 0u) {
+        q0 = item_box_corner(b, 1.0f, -1.0f, b.y0);
+        q1 = item_box_corner(b, 1.0f, 1.0f, b.y0);
+        q2 = item_box_corner(b, 1.0f, 1.0f, b.y1);
+        q3 = item_box_corner(b, 1.0f, -1.0f, b.y1);
+    } else if (face == 1u) {
+        q0 = item_box_corner(b, -1.0f, 1.0f, b.y0);
+        q1 = item_box_corner(b, -1.0f, -1.0f, b.y0);
+        q2 = item_box_corner(b, -1.0f, -1.0f, b.y1);
+        q3 = item_box_corner(b, -1.0f, 1.0f, b.y1);
+    } else if (face == 2u) {
+        q0 = item_box_corner(b, 1.0f, 1.0f, b.y0);
+        q1 = item_box_corner(b, -1.0f, 1.0f, b.y0);
+        q2 = item_box_corner(b, -1.0f, 1.0f, b.y1);
+        q3 = item_box_corner(b, 1.0f, 1.0f, b.y1);
+    } else if (face == 3u) {
+        q0 = item_box_corner(b, -1.0f, -1.0f, b.y0);
+        q1 = item_box_corner(b, 1.0f, -1.0f, b.y0);
+        q2 = item_box_corner(b, 1.0f, -1.0f, b.y1);
+        q3 = item_box_corner(b, -1.0f, -1.0f, b.y1);
+    } else {
+        q0 = item_box_corner(b, -1.0f, -1.0f, b.y1);
+        q1 = item_box_corner(b, 1.0f, -1.0f, b.y1);
+        q2 = item_box_corner(b, 1.0f, 1.0f, b.y1);
+        q3 = item_box_corner(b, -1.0f, 1.0f, b.y1);
+    }
+    // m = (sum / 4) of each coordinate, the eye at the origin: vdot(n3, (0, 0, 0) - m)
+    float3 m = {(((q0.x + q1.x) + q2.x) + q3.x) / 4.0f, (((q0.y + q1.y) + q2.y) + q3.y) / 4.0f,
+                (((q0.z + q1.z) + q2.z) + q3.z) / 4.0f};
+    float3 n = item_box_normal(b, face);
+    float toward = ((n.x * (0.0f - m.x)) + (n.y * (0.0f - m.y))) + (n.z * (0.0f - m.z));
+    if (toward <= 0.0f) {
+        return item_poly_none();
+    }
+    ItemPoly f = item_poly(c, camera_of(c, q0), camera_of(c, q1), camera_of(c, q2), camera_of(c, q3), 200.0f);
+    if (f.count == 0u || item_area(f) < 0.05f) {
+        return item_poly_none();
+    }
+    return f;
+}
+
+/// A segment's direction (draw_items' u = (b - a) / Lg, v = (-u.z, u.x)) and length, eye-relative.
+struct ItemAxis {
+    float2 u;
+    float2 v;
+    float length;
+};
+
+inline ItemAxis item_axis(float3 a, float3 b) {
+    ItemAxis x;
+    float dx = b.x - a.x;
+    float dz = b.z - a.z;
+    x.length = sqrt(dx * dx + dz * dz);
+    float l = x.length > 0.0f ? x.length : 1.0f;
+    float2 u = {dx / l, dz / l};
+    float2 v = {-u.y, u.x};
+    x.u = u;
+    x.v = v;
+    return x;
+}
+
+/// Part `k` of a gantry's segment (its legs at a and b where it has them, then its beam) or a conveyor's (its legs
+/// every 1 / gaps of it, then its gallery), as a box; `count` its parts.
+inline uint item_part_total(uint kind, uint flags, uint gaps) {
+    if (kind == ITEM_GANTRY) {
+        return 1u + ((flags & ITEM_LEGS_A) != 0u ? 1u : 0u) + ((flags & ITEM_LEGS_B) != 0u ? 1u : 0u);
+    }
+    if (kind == ITEM_CONVEYOR) {
+        return gaps + 2u;
+    }
+    if (kind == ITEM_MAST) {
+        return (flags & ITEM_LIGHTING) != 0u ? 2u : 1u;
+    }
+    return 0u;
+}
+
+/// A gantry's, a conveyor's or a mast's part `k` (in draw_items' list order) as a box, its colour the second where
+/// `second`; eye-relative a and b, the item's height h, a mast's axes facing the camera.
+struct ItemPart {
+    ItemBox box;
+    bool second;
+};
+
+inline ItemPart item_part(FrameCamera c, uint kind, uint flags, uint gaps, float3 a, float3 b, float h, uint k) {
+    ItemPart p;
+    p.second = false;
+    if (kind == ITEM_MAST) {
+        // u = (cam.r[0], cam.r[2]), v = (-u[1], u[0]); the shaft box(c0, u, v, 0.45, 0.45, 0, H), then a lighting
+        // mast's frame box(c0, u, v, 1.7, 0.6, H, H + 1.3) in its own colour
+        float2 u = {c.right.x, c.right.z};
+        float2 v = {-u.y, u.x};
+        p.box.c0 = a;
+        p.box.u = u;
+        p.box.v = v;
+        p.box.hu = k == 0u ? 0.45f : 1.7f;
+        p.box.hv = k == 0u ? 0.45f : 0.6f;
+        p.box.y0 = k == 0u ? 0.0f : h;
+        p.box.y1 = k == 0u ? h : h + 1.3f;
+        p.second = k != 0u;
+        return p;
+    }
+    ItemAxis x = item_axis(a, b);
+    p.box.u = x.u;
+    p.box.v = x.v;
+    float3 mid = {(a.x + b.x) / 2.0f, a.y, (a.z + b.z) / 2.0f};
+    if (kind == ITEM_GANTRY) {
+        // its legs at a (its way's first segment) and b (its last): box(e_, u, v, 0.35, 0.35, 0, H); then its beam
+        // box(mid, u, v, Lg / 2, 0.45, H - 0.9, H)
+        uint legs = ((flags & ITEM_LEGS_A) != 0u ? 1u : 0u) + ((flags & ITEM_LEGS_B) != 0u ? 1u : 0u);
+        if (k < legs) {
+            bool at_a = k == 0u && (flags & ITEM_LEGS_A) != 0u;
+            p.box.c0 = at_a ? a : b;
+            p.box.hu = 0.35f;
+            p.box.hv = 0.35f;
+            p.box.y0 = 0.0f;
+            p.box.y1 = h;
+            return p;
+        }
+        p.box.c0 = mid;
+        p.box.hu = x.length / 2.0f;
+        p.box.hv = 0.45f;
+        p.box.y0 = h - 0.9f;
+        p.box.y1 = h;
+        return p;
+    }
+    // a conveyor: its legs k = 0 to gaps, f = k / gaps, lp = a + (b - a) · f: box(lp, u, v, 0.4, 1.3, 0, H - 2.2); then
+    // its gallery box(mid, u, v, Lg / 2, 1.4, H - 2.2, H) in its own colour
+    if (k <= gaps) {
+        float f = float(k) / float(gaps);
+        float3 lp = {a.x + (b.x - a.x) * f, a.y, a.z + (b.z - a.z) * f};
+        p.box.c0 = lp;
+        p.box.hu = 0.4f;
+        p.box.hv = 1.3f;
+        p.box.y0 = 0.0f;
+        p.box.y1 = h - 2.2f;
+        return p;
+    }
+    p.box.c0 = mid;
+    p.box.hu = x.length / 2.0f;
+    p.box.hv = 1.4f;
+    p.box.y0 = h - 2.2f;
+    p.box.y1 = h;
+    p.second = true;
+    return p;
+}
+
+/// A power line's conductor's point f (0 to 4: f = 0, .25, .5, .75, 1) at offset `off` (-6, 0, 6) from its line:
+/// (a + d · f + n, y_f, ...), n = (-dz / Lg · off, dx / Lg · off), y_f its height there (stage T's sag; H at its ends).
+inline float3 item_conductor(float3 a, float3 b, float h, float3 sag, float off, uint f) {
+    float dx = b.x - a.x;
+    float dz = b.z - a.z;
+    float lg = sqrt(dx * dx + dz * dz);
+    if (!(lg > 0.0f)) {
+        lg = 1.0f;
+    }
+    float nx = -dz / lg * off;
+    float nz = dx / lg * off;
+    float t = float(f) * 0.25f;
+    float y = f == 1u ? sag.x : (f == 2u ? sag.y : (f == 3u ? sag.z : h));
+    float3 p = {a.x + dx * t + nx, a.y + y, a.z + dz * t + nz};
+    return p;
+}

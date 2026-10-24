@@ -203,6 +203,56 @@ class EngineStyleTest {
                 """val col = if (!night) "${value("things.railing_day")}" else "${value("things.railing_night")}"""",
             ),
             Triple(listOf("trees.crown"), amsterdam, """hx(if (truthy(th["wx"])) "#4F6E37" else "${value("trees.crown")}")"""),
+            Triple(listOf("items.shaft"), regions, """val shaft = tohex(Amsterdam.light(th, hx("${value("items.shaft")}"), V3(0.0, 0.0, 1.0), !night))"""),
+            Triple(
+                listOf("items.glass_day", "items.glass_night"), regions,
+                """parts.add(band(H - 11, H - 4.5, rs * 2.6, if (!night) "${value("items.glass_day")}" else "${value("items.glass_night")}"))""",
+            ),
+            Triple(
+                listOf("items.gallery"), regions,
+                """parts.add(band(H - 4.5, H - 3.2, rs * 2.7, tohex(Amsterdam.light(th, hx("${value("items.gallery")}"), V3(0.0, 1.0, 0.0), !night))))""",
+            ),
+            Triple(listOf("items.antenna"), regions, """parts.add(band(H - 3.2, H, 0.5, "${value("items.antenna")}"))"""),
+            Triple(listOf("items.shadow_night"), regions, """val sh = if (!night) th["shadow"] as String else "${value("items.shadow_night")}""""),
+            Triple(
+                listOf("items.steel_day", "items.steel_night"), regions,
+                """val steel = if (!night) hx("${value("items.steel_day")}") else hx("${value("items.steel_night")}")""",
+            ),
+            Triple(
+                listOf("items.floodlights_day", "items.floodlights_night"), regions,
+                """g += box(V2(x, z), u, v, 1.7, 0.6, H, H + 1.3, if (!night) hx("${value("items.floodlights_day")}") else hx("${value("items.floodlights_night")}"))""",
+            ),
+            Triple(
+                listOf("items.conveyor_day", "items.conveyor_night"), regions,
+                """box(mid, u, v, Lg / 2, 1.4, H - 2.2, H, if (!night) hx("${value("items.conveyor_day")}") else hx("${value("items.conveyor_night")}"))""",
+            ),
+            Triple(
+                listOf("items.glow_inner", "items.glow_inner_opacity", "items.glow_middle", "items.glow_middle_opacity", "items.glow_outer_opacity"), regions,
+                """<stop offset=\"0\" stop-color=\"${value("items.glow_inner")}\" stop-opacity=\"${css("items.glow_inner_opacity")}\"/>""" +
+                    """<stop offset=\".35\" stop-color=\"${value("items.glow_middle")}\" stop-opacity=\"${css("items.glow_middle_opacity")}\"/>""" +
+                    """<stop offset=\"1\" stop-color=\"${value("items.glow_middle")}\" stop-opacity=\"${value("items.glow_outer_opacity")}\"/>""",
+            ),
+            Triple(
+                listOf("items.glow_core"), regions,
+                """fill=\"url(#mastglow)\"/><circle cx=\"%.1f\" cy=\"%.1f\" r=\"%.1f\" fill=\"${value("items.glow_core")}\"/>"""",
+            ),
+            Triple(listOf("items.turbine_day", "items.turbine_night"), regions, """if (!night) "${value("items.turbine_day")}" else "${value("items.turbine_night")}"))"""),
+            Triple(
+                listOf("items.blades_day", "items.blades_night", "items.blade_edge_day", "items.blade_edge_night", "items.blade_edge_width"), regions,
+                """stroke-width=\"${css("items.blade_edge_width")}\"/>", blades.toString(), if (!night) "${value("items.blades_day")}" else "${value("items.blades_night")}", """ +
+                    """if (!night) "${value("items.blade_edge_day")}" else "${value("items.blade_edge_night")}"))""",
+            ),
+            Triple(listOf("items.hub_day", "items.hub_night"), regions, """pmax(0.8, 2.2 * s), if (!night) "${value("items.hub_day")}" else "${value("items.hub_night")}"))"""),
+            Triple(
+                listOf("items.turbine_light", "items.turbine_light_opacity"), regions,
+                """fill=\"${value("items.turbine_light")}\" opacity=\"${css("items.turbine_light_opacity")}\"/>", ph[0], ph[1] - pmax(1.0, 3 * s)""",
+            ),
+            Triple(listOf("items.pylon_day", "items.pylon_night"), regions, """if (!night) "${value("items.pylon_day")}" else "${value("items.pylon_night")}", pmax(0.5, 1.4 * s))"""),
+            Triple(
+                listOf("items.conductor_width", "items.conductor_opacity", "items.conductor_day", "items.conductor_night"), regions,
+                """stroke-width=\"${css("items.conductor_width")}\" opacity=\"${css("items.conductor_opacity")}\"/>", segs.toString(), """ +
+                    """if (!night) "${value("items.conductor_day")}" else "${value("items.conductor_night")}")""",
+            ),
             Triple(
                 listOf("trees.trunk_day", "trees.trunk_night"), amsterdam,
                 """if (!night) "${value("trees.trunk_day")}" else "${value("trees.trunk_night")}", pmax(0.6, 0.3 * cam.focal / dd)""",

@@ -72,7 +72,7 @@ std::vector<std::byte> pack_of(char which) {
     for (const TileKey& t : tiles) {
         ChunkBytes c;
         c.tile = t;
-        c.raw.assign(3000 + t.x % 7, static_cast<std::byte>(which));
+        c.raw.assign(16000 + t.x % 7, static_cast<std::byte>(which));
         c.raw[0] = static_cast<std::byte>(t.x & 0xFFU);
         c.count = 1;
         c.reach = reach_of_test(t, which);
@@ -271,8 +271,9 @@ TEST_CASE("tiles: a remote pack is read by ranges, its head and chunks cached, a
     }
     remote.online = true;
     {
-        // a damaged cached chunk is noticed, deleted and fetched again: the chunk's entry is the larger (3 KB), the
-        // head's (its style tables growing with every look the core draws) the smaller
+        // a damaged cached chunk is noticed, deleted and fetched again: the chunk's entry is the larger (16 KB), the
+        // head's (its style tables growing with every look the core draws: past 3 KB with the region items' table on
+        // 25 October 2026) the smaller
         std::string chunk_file;
         std::uintmax_t largest = 0;
         for (const auto& e : fs::directory_iterator(dir.file("rtiles"))) {

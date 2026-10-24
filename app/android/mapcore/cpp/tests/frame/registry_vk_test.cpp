@@ -122,12 +122,12 @@ TEST_CASE("the frame records its passes' phases by slot, then order, then the re
     auto report = (*renderer)->draw(0);
     ATLAS_REQUIRE(report.has_value(), report.error().text());
     (*renderer)->drain();
-    // The kinds as the builder is made, their rows in the registry's order (the registered buildings' row 0, the
-    // trees' 1 and the things' 2 first); each frame the selections, the ground slots (a's 3 from slot 0, then b's 5
-    // from 3), then the updates, each in the registry's order; then the phases in D5.12's order, the translucent ones
-    // by order (b's 1 before a's 5 and b's 5, which tie and keep the registry's order).
-    const std::vector<std::string> want{"a kind 3",
-                                        "b kind 4",
+    // The kinds as the builder is made, their rows in the registry's order (the registered buildings' row 0, the trees'
+    // 1, the things' 2 and the region items' 3 first); each frame the selections, the ground slots (a's 3 from slot 0,
+    // then b's 5 from 3), then the updates, each in the registry's order; then the phases in D5.12's order, the
+    // translucent ones by order (b's 1 before a's 5 and b's 5, which tie and keep the registry's order).
+    const std::vector<std::string> want{"a kind 4",
+                                        "b kind 5",
                                         "a select",
                                         "b select",
                                         "a ground",

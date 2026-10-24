@@ -199,6 +199,51 @@
         "railing_night": "#0A0B0E"
     },
 
+    // regions.py's draw_items: a tower's shaft (lit as a face toward the south), its cab's glass by day and at night,
+    // its gallery (lit as a face up) and its antenna, the shadow its gradients mix toward at night (by day the
+    // moment's); the steel of masts, gantries and conveyors (lit by each face's normal), a lighting mast's frame of
+    // floodlights and a conveyor's gallery by day and at night; a lighting mast's glow at night, its stops' colours and
+    // opacities, and its core; a turbine's tower, blades and their edges by day and at night, the edges' width, its hub,
+    // its light at night and its opacity; a power line's towers and conductors by day and at night, the conductors'
+    // width and opacity
+    "items": {
+        "shaft": "#C9C6BE",
+        "glass_day": "#7F98AA",
+        "glass_night": "#1A2230",
+        "gallery": "#E2E0DA",
+        "antenna": "#8C9096",
+        "shadow_night": "#05060A",
+        "steel_day": "#7D8993",
+        "steel_night": "#1A1E24",
+        "floodlights_day": "#5E646B",
+        "floodlights_night": "#15181E",
+        "conveyor_day": "#B4B1A9",
+        "conveyor_night": "#1C1E22",
+        "glow_inner": "#FFE9C2",
+        "glow_inner_opacity": 0.75,
+        "glow_middle": "#FFD9A0",
+        "glow_middle_opacity": 0.22,
+        "glow_outer_opacity": 0,
+        "glow_core": "#FFF4DC",
+        "turbine_day": "#E9ECEE",
+        "turbine_night": "#3A3F4C",
+        "blades_day": "#F2F4F5",
+        "blades_night": "#454B58",
+        "blade_edge_day": "#C9CDD1",
+        "blade_edge_night": "#2A2E38",
+        "blade_edge_width": 0.4,
+        "hub_day": "#DADDE0",
+        "hub_night": "#3A3F4C",
+        "turbine_light": "#FF3B30",
+        "turbine_light_opacity": 0.9,
+        "pylon_day": "#6E747C",
+        "pylon_night": "#1A1E26",
+        "conductor_day": "#4A4F57",
+        "conductor_night": "#1A1E26",
+        "conductor_width": 0.45,
+        "conductor_opacity": 0.8
+    },
+
     // closeup.py's FORMS: a crown's form by the first word of its genus (or species, or taxon), lowercased; any other
     // is an ovoid, a needleleaved tree a cone
     "tree_forms": {

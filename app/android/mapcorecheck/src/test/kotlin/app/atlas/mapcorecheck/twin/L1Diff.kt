@@ -748,17 +748,26 @@ object L1Diff {
         return out
     }
 
-    /** The largest difference of [n] tenths from [a]'s [ai] and [b]'s [bi], capped at 2. */
+    /**
+     * The largest difference of [n] tenths from [a]'s [ai] and [b]'s [bi], capped at 2: 1 where none lies more than a
+     * print step apart, or, for a coordinate far beyond the frame, more than a float keeps there (2^-20 of its magnitude:
+     * where the near plane cuts a face, its crossing projects up to a million px off the frame, and the GPU's float
+     * holds it to a few tenths there, which moves an edge in view by a millionth of a pixel).
+     */
     private fun worst(a: LongArray, ai: Int, b: LongArray, bi: Int, n: Int): Int {
         var w = 0
         for (k in 0 until n) {
             val d = a[ai + k] - b[bi + k]
             if (d == 0L) continue
-            if (d > 1 || d < -1) return 2
+            val step = maxOf(1L, (Math.abs(a[ai + k]) + (1L shl 20) - 1) shr 20)
+            if (d > step || d < -step) return 2
             w = 1
         }
         return w
     }
+
+    /** How far a matched element's box may lie from the port's: 0.2 px, or a float's precision far beyond the frame (worst). */
+    private fun boxSlack(v: Double): Double = maxOf(0.2, Math.abs(v) / (1 shl 20))
 
     /** A subpath's closing and printed coordinates. */
     private fun subKey(s: Seen, k: Int): String = "${s.closed[k]} " + s.tenths.copyOfRange(s.from(k), s.to(k)).joinToString(" ")
@@ -860,7 +869,7 @@ object L1Diff {
             for (j in list) {
                 if (takenT[j]) continue
                 val t = ts[j]
-                if ((0 until 4).any { Math.abs(t.box[it] - p.box[it]) > 0.2 }) continue
+                if ((0 until 4).any { Math.abs(t.box[it] - p.box[it]) > boxSlack(p.box[it]) }) continue
                 val flag = BooleanArray(1)
                 val w = compare(p, t, flag)
                 if (w < bestW) { best = j; bestW = w; bestReordered = flag[0] }

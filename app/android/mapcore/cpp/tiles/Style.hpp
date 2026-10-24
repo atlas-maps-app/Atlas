@@ -115,6 +115,40 @@ struct ThingsStyle {
     DayNight railing;
 };
 
+/// A region's items (`items`): a tower's shaft, its cab's glass by day and at night, its gallery and its antenna, the
+/// night's shadow its gradients mix toward; the steel of masts, gantries and conveyors, a lighting mast's floodlights
+/// and a conveyor's gallery by day and at night; a lighting mast's glow at night, its stops' colours and opacities,
+/// and its core; a turbine's tower, blades and their edges by day and at night, the edges' width (CSS px), its hub, its
+/// night light and its opacity; a power line's towers and conductors by day and at night, the conductors' width and
+/// opacity.
+struct ItemsStyle {
+    StyleRgb shaft = 0;
+    DayNight glass;
+    StyleRgb gallery = 0;
+    StyleRgb antenna = 0;
+    StyleRgb shadow_night = 0;
+    DayNight steel;
+    DayNight floodlights;
+    DayNight conveyor;
+    StyleRgb glow_inner = 0;
+    float glow_inner_opacity = 0.0F;
+    StyleRgb glow_middle = 0;
+    float glow_middle_opacity = 0.0F;
+    float glow_outer_opacity = 0.0F;
+    StyleRgb glow_core = 0;
+    DayNight turbine;
+    DayNight blades;
+    DayNight blade_edge;
+    float blade_edge_width = 0.0F;
+    DayNight hub;
+    StyleRgb turbine_light = 0;
+    float turbine_light_opacity = 0.0F;
+    DayNight pylon;
+    DayNight conductor;
+    float conductor_width = 0.0F;
+    float conductor_opacity = 0.0F;
+};
+
 struct Style {
     /// Reads `tables`: every value below, each of its kind; a missing or mistyped one is Fault::missing or
     /// Fault::bad_value at Site::style, named (`table.key`) in the error's column.
@@ -159,6 +193,7 @@ struct Style {
     WindowsStyle windows;
     TreesStyle trees;
     ThingsStyle things;
+    ItemsStyle items;
     /// `houseboats`: the hull's and the deck's colours (the cabin roof's edge is in `edges`).
     StyleRgb hull = 0;
     StyleRgb deck = 0;
