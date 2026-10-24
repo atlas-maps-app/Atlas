@@ -36,8 +36,8 @@ namespace atlas::sun {
 inline constexpr double bucket_degrees = 0.5;
 
 /// The layout of a tile's samples and bits, kept with every bucket on disk: a change to the samples' order or to what
-/// they are bumps it, and older files are never read.
-inline constexpr std::uint16_t sample_format = 1;
+/// they are bumps it, and older files are never read. 2: a file keeps where the tile's crowns begin.
+inline constexpr std::uint16_t sample_format = 2;
 
 /// A sun bucket: the sun one set of bits is for.
 struct Bucket {

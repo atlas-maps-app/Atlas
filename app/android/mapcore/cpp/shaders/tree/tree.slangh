@@ -1,0 +1,402 @@
+// The trees (ENGINE.md step 4, "Trees and things"; render/closeup.py's tree_close with weather, amsterdam.py's
+// draw_tree3d without; CP/geometry/Trees.hpp), shared by the GPU (shaders/tree/draw.slang's trees_cs, trees_vs,
+// trees_fs) and the twin (CP/twin/tree/TreeShader.hpp compiles it as C++ after frame/FrameBlock.hpp). Not a module:
+// draw.slang includes it after shared/frame.slang and shared/painter.slang.
+//
+// A tree in the points heap (stage T, passes/Trees.cpp's tree_words) is TREE_VECTORS uint4: its header (its trunk
+// tile-local at its ground, the height of its trunk's top and of its crown's centre above it, its height, its crown's
+// radius, its flags), its 36 clumps (each its centre from the trunk and above the ground, its radius in metres, its
+// sign the under tone's), then the generic tree's 9 blobs alike. Per frame the render thread decides in double what
+// depends on the item's depth d as the ranks have it (passes::tree_job: a small crown, its one circle or two and their
+// radius, nb, the trunk's sunlit side by day where s > 4, the limbs where s > 2.5, the widths), and writes a job a
+// drawn tree. trees_cs decides the rest once a tree, as tree_close does at the camera:
+//   - its trunk's foot and top (a small crown's point at 0.65 of its height) projected, or nothing where either lies
+//     nearer than the near plane (`if not (c0 and c1): return []`);
+//   - its first nb clumps at the camera, each kept where its depth is 1 m or more (the port's skip; the others stay
+//     where they are: CP/geometry/Trees.hpp), its radius br · (1.25 if nb < 12) · focal / dd;
+//   - the limbs to the five lowest kept clumps (by height, in their order where two are as high);
+//   - the clumps by depth, far to near (a stable sort), in three slices, each slice's circles in four tones: the under
+//     tone or the side's (nrm.y < -0.45, from stage T), the lit tone where lam = nrm · L > -0.2 (0.35 of the clump's
+//     radius toward the sun, 0.72 of its radius), the highlight where lam > 0.35 and the crown's sun bit is set (0.55
+//     toward it, 0.36 of it); lam is -1 at night.
+// Every value the port prints is snapped to its tenth at rest (camera.slang's snap_tenth), from the unrounded value
+// the port prints: c0[0] - w0, p[0] - rr * 0.2, rr * 0.72.
+//
+// It writes the tree's parts as records (TREE_RECORD_VECTORS uint4: a circle, a quad, a capsule; their colour and
+// depth), drawn by one opaque pipeline in the objects slot and its trunk's sunlit side (opacity .55) translucent. At
+// true depth every part of a tree lies on one plane facing the eye, at its crown's centre's depth (a small crown's
+// point's), the tree's k-th painter slot a lead of k · 2^-16 of it nearer, so its own parts keep the port's order and
+// the tree occludes and is occluded by where it stands; under the painter switch each draws at its slot's depth. The
+// slots: the trunk 0, its sunlit side 1, the limbs 2, the crown's slice s and tone g 3 + 4s + g; a small crown's
+// circles 0 and 1; the generic tree's trunk 0, its blobs 1 and their lit side 2.
+//
+// The generic tree (without weather): its trunk the stroke from its foot to 0.55 of its height (round caps,
+// max(0.6, 0.3 · focal / d) px), its 9 blobs (5 from 400 m) kept where their depth is over 1 m, by depth far to near,
+// each in the dark tone and, by day where its point toward the sun projects, 0.3 of the way to it in the lit tone at
+// 0.78 of its radius.
+#pragma once
+
+/// A tree's uint4 in the points heap: its header, its clumps, its blobs.
+static const uint TREE_HEADER_VECTORS = 2u;
+static const uint TREE_CLUMPS = 36u;
+static const uint TREE_BLOBS = 9u;
+static const uint TREE_VECTORS = 47u;
+
+/// A tree's header flags: its leaves stay green (autumn's tint 0: an evergreen or needleleaved tree).
+static const uint TREE_EVERGREEN = 1u;
+
+/// A job's flags (passes::tree_job's choices, in double), its nb in bits 8 to 15.
+static const uint TREE_JOB_SMALL = 1u;     // a few pixels across: one crown (r · focal / max(d, 1) < 6.5)
+static const uint TREE_JOB_ONE = 2u;       // in one circle (rr < 4.2)
+static const uint TREE_JOB_SIDE = 4u;      // its trunk's sunlit side (by day, s > 4)
+static const uint TREE_JOB_LIMBS = 8u;     // its limbs (s > 2.5)
+static const uint TREE_JOB_RIGHT = 16u;    // the sunlit side on the trunk's right (sx = 1)
+static const uint TREE_JOB_GENERIC = 32u;  // without weather: the generic tree
+static const uint TREE_JOB_NIGHT = 64u;    // the moment is night
+static const uint TREE_JOB_NB_SHIFT = 8u;
+static const uint TREE_JOB_VECTORS = 5u;
+
+/// No sun bits for the tile yet.
+static const uint TREE_NO_BITS = 0xFFFFFFFFu;
+
+/// The tones' table (passes::tree_tones, per moment): the bark, the trunk's sunlit side, then each tint's (deciduous,
+/// then evergreen: TREE_TINT_TONES apart) small crown's two colours and their mix, the crown's under and side tones
+/// and its lit and highlight tones unlit and lit; the generic tree's dark tone, its lit tone unlit and lit, its trunk;
+/// then the sunlit side's opacity (its float's bits).
+static const uint TREE_TONE_BARK = 0u;
+static const uint TREE_TONE_SIDE = 1u;
+static const uint TREE_TONE_TINTS = 2u;
+static const uint TREE_TINT_TONES = 9u;
+static const uint TREE_TONE_SMALL_SHADE = 0u; // within a tint's
+static const uint TREE_TONE_SMALL_LIT = 1u;
+static const uint TREE_TONE_SMALL_MIX = 2u;
+static const uint TREE_TONE_UNDER = 3u;
+static const uint TREE_TONE_FLANK = 4u;
+static const uint TREE_TONE_LIT = 5u;       // unlit, then lit
+static const uint TREE_TONE_HIGHLIGHT = 7u; // unlit, then lit
+static const uint TREE_TONE_GENERIC_DARK = 20u;
+static const uint TREE_TONE_GENERIC_MID = 21u; // unlit, then lit
+static const uint TREE_TONE_GENERIC_TRUNK = 23u;
+static const uint TREE_TONE_SIDE_OPACITY = 24u;
+static const uint TREE_TONES = 25u;
+
+/// A record's kind.
+static const uint TREE_NONE = 0u;
+static const uint TREE_CIRCLE = 1u;
+static const uint TREE_QUAD = 2u;
+static const uint TREE_CAPSULE = 3u;
+static const uint TREE_RECORD_VECTORS = 3u;
+/// The vertices a record draws: two triangles.
+static const uint TREE_RECORD_VERTICES = 6u;
+
+/// The records a job reserves: a small crown's two; tree_close's trunk, five limbs and three circles a clump; the
+/// generic tree's trunk and two circles a blob. Its sunlit side's in the translucent list.
+inline uint tree_record_count(uint flags) {
+    uint nb = (flags >> TREE_JOB_NB_SHIFT) & 0xFFu;
+    if ((flags & TREE_JOB_GENERIC) != 0u) {
+        return 1u + 2u * nb;
+    }
+    if ((flags & TREE_JOB_SMALL) != 0u) {
+        return 2u;
+    }
+    return 6u + 3u * nb;
+}
+
+/// The lead of a tree's k-th slot over its plane, relative to its reciprocal depth (painter.slang's true depth): 2^-16.
+static const float TREE_LEAD = 1.52587890625e-5f;
+
+// The port's constants: a clump kept from 1 m (the generic tree's blob beyond 1 m), the trunk's foot and the lit tones'
+// offsets.
+static const float TREE_CLUMP_NEAR = 1.0f;
+
+/// A tree's header.
+struct TreeHeader {
+    float3 trunk;    // its trunk's foot, tile-local metres (its ground's height in y)
+    float top;       // its trunk's top above its ground: cb + (h - cb) · 0.3
+    float cy;        // its crown's centre above its ground: cb + (h - cb) · 0.5
+    float h;
+    float r;         // its crown's radius
+    uint flags;
+};
+
+inline TreeHeader tree_header(uint4 a, uint4 b) {
+    TreeHeader t;
+    float3 trunk = {asfloat(a.x), asfloat(a.y), asfloat(a.z)};
+    t.trunk = trunk;
+    t.flags = a.w;
+    t.top = asfloat(b.x);
+    t.cy = asfloat(b.y);
+    t.h = asfloat(b.z);
+    t.r = asfloat(b.w);
+    return t;
+}
+
+/// A clump (or a blob): its centre from the trunk (dx, dz) and above its ground (y), its radius (metres), and whether
+/// it faces down (the sign of its radius's float).
+struct TreeClump {
+    float dx;
+    float y;
+    float dz;
+    float br;
+    bool under;
+};
+
+inline TreeClump tree_clump(uint4 v) {
+    TreeClump c;
+    c.dx = asfloat(v.x);
+    c.y = asfloat(v.y);
+    c.dz = asfloat(v.z);
+    c.br = asfloat(v.w & 0x7FFFFFFFu);
+    c.under = (v.w & 0x80000000u) != 0u;
+    return c;
+}
+
+/// A job: what the render thread decided for one drawn tree.
+struct TreeJob {
+    TilePlace place;
+    uint tree;      // its header's uint4 in the points heap
+    uint flags;     // TREE_JOB_
+    uint slot;      // its item's first painter slot
+    uint first;     // its first record
+    float w0;       // its trunk's half widths at its foot and top (CSS px); a small crown's radius in w0
+    float w1;
+    float limb;     // its limbs' width, as printed
+    uint highlight; // its sunlit side's record among the translucent ones
+    uint sun;       // its tile's first sun texel (TREE_NO_BITS: none yet)
+    uint weight;    // its tile's fade weight's bits
+    uint sample;    // its crown's sun sample in the tile
+    uint tint;      // its tint's first tone (TREE_TONE_TINTS + its tint · TREE_TINT_TONES)
+};
+
+inline TreeJob tree_job(uint4 a, uint4 b, uint4 c, uint4 d, uint4 e) {
+    TreeJob j;
+    float4 offset = {asfloat(a.x), asfloat(a.y), asfloat(a.z), asfloat(a.w)};
+    float4 scale = {asfloat(b.x), asfloat(b.y), asfloat(b.z), asfloat(b.w)};
+    j.place.offset = offset;
+    j.place.scale = scale;
+    j.tree = c.x;
+    j.flags = c.y;
+    j.slot = c.z;
+    j.first = c.w;
+    j.w0 = asfloat(d.x);
+    j.w1 = asfloat(d.y);
+    j.limb = asfloat(d.z);
+    j.highlight = d.w;
+    j.sun = e.x;
+    j.weight = e.y;
+    j.sample = e.z;
+    j.tint = e.w;
+    return j;
+}
+
+/// A point of the tree, tile-local: (dx, y, dz) from its trunk's foot.
+inline float3 tree_local(TreeHeader t, float dx, float y, float dz) {
+    float3 p = {t.trunk.x + dx, t.trunk.y + y, t.trunk.z + dz};
+    return p;
+}
+
+/// The camera coordinates of a tile-local point.
+inline float3 tree_camera(FrameCamera c, TilePlace place, float3 local) {
+    return camera_of(c, eye_relative(place, local));
+}
+
+/// Whether the port's proj gives a point for camera coordinates k (`if c[2] < s.near: return None`).
+inline bool tree_ahead(FrameCamera c, float3 k) {
+    return !(k.z < c.frame.w);
+}
+
+/// A value the port prints at '%.1f', snapped at rest.
+inline float tree_print(FrameCamera c, float v) {
+    return camera_rests(c) ? snap_tenth(v) : v;
+}
+
+/// The depth of a tree's part in its k-th slot: at true depth on its plane at eye depth kz (at least the near plane),
+/// k leads nearer; under the painter switch its slot's.
+inline float tree_depth(FrameCamera c, float kz, uint slot, uint k) {
+    if ((c.flags.x & CAMERA_PAINTER) != 0u) {
+        return painter_depth(c, slot + k);
+    }
+    float r = (c.frame.w / kz) * (1.0f + TREE_LEAD * float(k));
+    return true_depth(c, r < 1.0f ? r : 1.0f);
+}
+
+/// A record: a = (kind, colour 0xBBGGRR, eye depth's bits, depth's bits), b and c its geometry: a circle's centre and
+/// radius (CSS px); a quad's corners in order; a capsule's two ends and half width.
+struct TreeRecord {
+    uint4 a;
+    uint4 b;
+    uint4 c;
+};
+
+inline TreeRecord tree_nothing() {
+    TreeRecord r;
+    r.a = uint4(0u);
+    r.b = uint4(0u);
+    r.c = uint4(0u);
+    return r;
+}
+
+inline TreeRecord tree_circle(float2 at, float radius, uint colour, float kz, float depth) {
+    TreeRecord r;
+    uint4 a = {TREE_CIRCLE, colour, asuint(kz), asuint(depth)};
+    uint4 b = {asuint(at.x), asuint(at.y), asuint(radius), 0u};
+    r.a = a;
+    r.b = b;
+    r.c = uint4(0u);
+    return r;
+}
+
+inline TreeRecord tree_quad(float2 p0, float2 p1, float2 p2, float2 p3, uint colour, float kz, float depth) {
+    TreeRecord r;
+    uint4 a = {TREE_QUAD, colour, asuint(kz), asuint(depth)};
+    uint4 b = {asuint(p0.x), asuint(p0.y), asuint(p1.x), asuint(p1.y)};
+    uint4 c = {asuint(p2.x), asuint(p2.y), asuint(p3.x), asuint(p3.y)};
+    r.a = a;
+    r.b = b;
+    r.c = c;
+    return r;
+}
+
+inline TreeRecord tree_capsule(float2 p0, float2 p1, float half, uint colour, float kz, float depth) {
+    TreeRecord r;
+    uint4 a = {TREE_CAPSULE, colour, asuint(kz), asuint(depth)};
+    uint4 b = {asuint(p0.x), asuint(p0.y), asuint(p1.x), asuint(p1.y)};
+    uint4 c = {asuint(half), 0u, 0u, 0u};
+    r.a = a;
+    r.b = b;
+    r.c = c;
+    return r;
+}
+
+/// The trunk of tree_close: its foot c0 and top c1 (unsnapped CSS px) and their half widths w0 and w1, the quad the
+/// port prints (c0 - w0, c0 + w0, c1 + w1, c1 - w1), snapped at rest.
+inline float2 tree_trunk_corner(FrameCamera c, float2 c0, float2 c1, float w0, float w1, uint i) {
+    float2 p = {c0.x - w0, c0.y};
+    if (i == 1u) {
+        float2 q = {c0.x + w0, c0.y};
+        p = q;
+    } else if (i == 2u) {
+        float2 q = {c1.x + w1, c1.y};
+        p = q;
+    } else if (i == 3u) {
+        float2 q = {c1.x - w1, c1.y};
+        p = q;
+    }
+    float2 s = {tree_print(c, p.x), tree_print(c, p.y)};
+    return s;
+}
+
+/// The trunk's sunlit side: (c0 + sx · w0 · 0.15, c0 + sx · w0, c1 + sx · w1, c1 + sx · w1 · 0.15), snapped at
+/// rest.
+inline float2 tree_side_corner(FrameCamera c, float2 c0, float2 c1, float w0, float w1, float sx, uint i) {
+    float2 p = {c0.x + sx * w0 * 0.15f, c0.y};
+    if (i == 1u) {
+        float2 q = {c0.x + sx * w0, c0.y};
+        p = q;
+    } else if (i == 2u) {
+        float2 q = {c1.x + sx * w1, c1.y};
+        p = q;
+    } else if (i == 3u) {
+        float2 q = {c1.x + sx * w1 * 0.15f, c1.y};
+        p = q;
+    }
+    float2 s = {tree_print(c, p.x), tree_print(c, p.y)};
+    return s;
+}
+
+/// A CSS point as printed: each coordinate snapped at rest.
+inline float2 tree_printed(FrameCamera c, float2 p) {
+    float2 s = {tree_print(c, p.x), tree_print(c, p.y)};
+    return s;
+}
+
+/// A clump at the camera: its camera coordinates, and whether it is kept (its depth 1 m or more; a generic blob's
+/// over 1 m).
+struct TreeSeen {
+    float3 k;
+    bool kept;
+};
+
+inline TreeSeen tree_seen(FrameCamera c, TilePlace place, TreeHeader t, TreeClump q, bool generic) {
+    TreeSeen s;
+    s.k = tree_camera(c, place, tree_local(t, q.dx, q.y, q.dz));
+    s.kept = generic ? s.k.z > TREE_CLUMP_NEAR : !(s.k.z < TREE_CLUMP_NEAR);
+    return s;
+}
+
+/// A kept clump's lam: its normal (dx, (y - cy) · 1.4, dz), normalised, against the sun vector `l`; -1 at night.
+inline float tree_lam(TreeHeader t, TreeClump q, float3 l, bool night) {
+    if (night) {
+        return -1.0f;
+    }
+    float ny = (q.y - t.cy) * 1.4f;
+    float n = sqrt(((q.dx * q.dx) + (ny * ny)) + (q.dz * q.dz));
+    return (((q.dx / n) * l.x) + ((ny / n) * l.y)) + ((q.dz / n) * l.z);
+}
+
+/// A clump's point moved toward the sun by `k` of its radius `br` (the lit tones'), at the camera.
+inline float3 tree_toward(FrameCamera c, TilePlace place, TreeHeader t, TreeClump q, float br, float3 l, float k) {
+    float3 p = tree_local(t, q.dx, q.y, q.dz);
+    float3 m = {p.x + l.x * br * k, p.y + l.y * br * k, p.z + l.z * br * k};
+    return tree_camera(c, place, m);
+}
+
+/// Whether a sample at CSS point `s` lies in a circle, and within `half` of a segment (a round-capped stroke).
+inline bool tree_circle_covers(float2 s, float2 at, float radius) {
+    float dx = s.x - at.x;
+    float dy = s.y - at.y;
+    return (dx * dx) + (dy * dy) <= radius * radius;
+}
+
+inline bool tree_capsule_covers(float2 s, float2 a, float2 b, float half) {
+    float2 e = b - a;
+    float2 d = s - a;
+    float ee = e.x * e.x + e.y * e.y;
+    float t = ee > 0.0f ? (d.x * e.x + d.y * e.y) / ee : 0.0f;
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    float2 g = d - e * t;
+    return g.x * g.x + g.y * g.y <= half * half;
+}
+
+/// How lit the crown draws (0 unlit, 1 lit): its sample's sun bit, cross-faded while its tile's bits change (K8's
+/// lit_amount); unlit at night and before its tile's first bits.
+inline float tree_sun_amount(uint sample, uint2 texel, bool has, float weight, bool night) {
+    if (night || !has) {
+        return 0.0f;
+    }
+    uint now = (texel.x >> (sample & 31u)) & 1u;
+    uint before = (texel.y >> (sample & 31u)) & 1u;
+    if (before == now) {
+        return float(now);
+    }
+    return now != 0u ? weight : 1.0f - weight;
+}
+
+/// Whether the crown counts as lit for its highlight tone: its sample's newest bit.
+inline bool tree_sunlit(uint sample, uint2 texel, bool has, bool night) {
+    return !night && has && ((texel.x >> (sample & 31u)) & 1u) != 0u;
+}
+
+/// A tone mixed from its unlit and lit colours (0xBBGGRR) by `amount`, rounded to 8-bit levels.
+inline uint tree_mix(uint unlit, uint lit, float amount) {
+    if (amount <= 0.0f) {
+        return unlit;
+    }
+    if (amount >= 1.0f) {
+        return lit;
+    }
+    uint out = 0u;
+    for (uint i = 0u; i < 3u; ++i) {
+        float u = float((unlit >> (8u * i)) & 0xFFu);
+        float l = float((lit >> (8u * i)) & 0xFFu);
+        float v = u + (l - u) * amount;
+        out |= uint(v + 0.5f) << (8u * i);
+    }
+    return out;
+}
+
+/// A colour 0xBBGGRR as the shaders draw it (0 to 1).
+inline float3 tree_rgb(uint c) {
+    float3 v = {float(c & 0xFFu), float((c >> 8u) & 0xFFu), float((c >> 16u) & 0xFFu)};
+    return v / 255.0f;
+}

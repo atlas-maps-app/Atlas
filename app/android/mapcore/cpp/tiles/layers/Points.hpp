@@ -37,6 +37,10 @@ inline constexpr std::uint8_t h = slot_of(columns, "h");
 inline constexpr std::uint8_t crown = slot_of(columns, "crown");
 inline constexpr std::uint8_t gy = slot_of(columns, "gy");
 inline constexpr std::uint8_t tag_leaf_type = slot_of(columns, "tag:leaf_type");
+inline constexpr std::uint8_t tag_leaf_cycle = slot_of(columns, "tag:leaf_cycle");
+inline constexpr std::uint8_t tag_genus = slot_of(columns, "tag:genus");
+inline constexpr std::uint8_t tag_species = slot_of(columns, "tag:species");
+inline constexpr std::uint8_t tag_taxon = slot_of(columns, "tag:taxon");
 
 } // namespace atlas::tiles::tree
 

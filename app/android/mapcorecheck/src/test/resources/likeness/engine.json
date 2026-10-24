@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "7",
+  "version": "8",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -156,6 +156,21 @@
           "board grey": "54d0949376c1f4b761f3321ef0f3f3d03b54c4990ed1bcee1bc623a03983c3c7",
           "board wet": "fbf41996bedced44519dabcbd8f5a26fa06cbf3d29139e8b00d26cbc74844050",
           "board night": "a1b7495f0ac207b7f1e75ad96ff0021d5920a995a69ec81b0c74394c69902cf0"
+        }
+      }
+    },
+    "8": {
+      "note": "Step 4: the trees with their clumps (tree_close with weather: the trunk, its sunlit side, the limbs, the crown's clumps in their tones; the generic tree without), each tree on one plane at its crown's depth",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "57d90b40fecc8347034a9311523023e38b4470e400a3e56f66ff5d1fe027f8e6",
+          "home grey": "e1cebbbd7b6599fbc5b362299f78852e421ef027f4450ad818a7111a2e8c8fbb",
+          "home wet": "55ad8b5d778e00a66fb51a6534f66e3df7f29c5585e805ee5c98d604a24ad10e",
+          "home night": "795981b497bf346bbed527f19df5104e0b780258e91f1e8f18059b848e8c18ae",
+          "board sunny": "5e9259039fc5f56714609bce4ca256de90d31bfbf53c3b07fbe99549b1c52014",
+          "board grey": "5108baa5baacec18c4ea5345ed8e147d3418458fe3cb2a642fe1bd0cb9922af6",
+          "board wet": "a1e2862793b705d6baaaea7b69919c8f12a033ff8cf4ba569b1143aa5f37c93b",
+          "board night": "34d6d136b48120225dc11fe8fcc162f6172d972109f4c4b69934da9d3f519972"
         }
       }
     }

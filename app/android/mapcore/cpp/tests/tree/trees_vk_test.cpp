@@ -1,0 +1,600 @@
+// The trees pass on the host's Vulkan (ENGINE.md step 4, "Trees and things"; lavapipe): the Westerkerk home and the
+// Main board from the bundled packs (ATLAS_TILES_DIR), drawn through the frame builder and the world with the trees
+// pass alone beside the composite, at rest and moving, at 1x and 4x, at true depth and under the painter switch,
+// against an exact CPU raster of the records the pass's twin says trees_cs writes: each circle's and round-capped
+// limb's samples as trees_fs keeps them (tree.slangh's own tests, in float, at the samples' CSS points), each quad's
+// by its edges, a sample within 0.02 px of a shape's boundary counted apart (the GPU's float may fuse its
+// multiply-adds, its rasteriser rounds); each sample ending with the record of the greatest depth (the first drawn
+// where two tie, as GREATER keeps it), then the trunks' sunlit sides blended over it in the GPU's order where their
+// depth passes (within a level: lavapipe blends in fixed point); the samples averaged as the composite averages them.
+// The twin's elements are held to the port's by L1; here its records are the GPU's.
+#if !defined(__ANDROID__)
+
+#include "base/arena.hpp"
+#include "base/pymath/PyMath.hpp"
+#include "frame/FrameBuilder.hpp"
+#include "frame/PassRegistry.hpp"
+#include "gpu/Frames.hpp"
+#include "gpu/Offscreen.hpp"
+#include "gpu/PipelineCache.hpp"
+#include "passes/Composite.hpp"
+#include "passes/Trees.hpp"
+#include "scene/SunGlobals.hpp"
+#include "scene/World.hpp"
+#include "style/Theme.hpp"
+#include "sun/Buckets.hpp"
+#include "tests/gpu/gpu_fixture.hpp"
+#include "tiles/Container.hpp"
+#include "tiles/Payload.hpp"
+#include "tiles/Source.hpp"
+#include "tiles/layers/Points.hpp"
+#include "twin/Twin.hpp"
+#include "twin/tree/TreeTwin.hpp"
+#include "view/Ladder.hpp"
+
+#include <doctest/doctest.h>
+
+#include <algorithm>
+#include <array>
+#include <bit>
+#include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <format>
+#include <memory>
+#include <ranges>
+#include <span>
+#include <string>
+#include <vector>
+
+using namespace atlas;
+
+namespace {
+
+[[nodiscard]] std::string environment(const char* name) {
+    const char* v = std::getenv(name); // NOLINT(concurrency-mt-unsafe): read before threads start
+    return v == nullptr ? std::string() : std::string(v);
+}
+
+/// amsterdam.py's sunny moment of 1 October 2026, 16:00 (tests/building/buildings_vk_test.cpp's).
+[[nodiscard]] style::ThemeBlock sunny() {
+    namespace flag = style::theme_flag;
+    style::ThemeBlock b{};
+    b.version = 1;
+    b.flags = flag::weather | flag::shadow_blur | flag::cloud_shadows | flag::water_gradient | flag::wet_set;
+    b.year = 2026;
+    b.month = 10;
+    b.day = 1;
+    b.hour = 16;
+    b.minute = 0;
+    b.moment = style::MomentName::sunny;
+    b.weather_code = 2;
+    b.sky_top = {.r = 0x7F, .g = 0xA6, .b = 0xDA, .a = 255};
+    b.sky_horizon = {.r = 0xDC, .g = 0xE7, .b = 0xF2, .a = 255};
+    b.haze = {.r = 0xDF, .g = 0xE6, .b = 0xEE, .a = 255};
+    b.sun = {.r = 0xFF, .g = 0xEB, .b = 0xCB, .a = 255};
+    b.ambient = {.r = 0x93, .g = 0xA6, .b = 0xCC, .a = 255};
+    b.ground = {.r = 0xD6, .g = 0xCF, .b = 0xC2, .a = 255};
+    b.road = {.r = 0xC9, .g = 0xC1, .b = 0xB4, .a = 255};
+    b.water = {.r = 0x4F, .g = 0x75, .b = 0x90, .a = 255};
+    b.water_top = {.r = 0xA6, .g = 0xBF, .b = 0xD4, .a = 255};
+    b.water_bottom = {.r = 0x2D, .g = 0x50, .b = 0x6C, .a = 255};
+    b.shadow = {.r = 0x27, .g = 0x30, .b = 0x5A, .a = 255};
+    b.haze_max = 0.22 * 0.85;
+    b.sun_k = 1.0;
+    b.amb_k = 0.6;
+    b.sky_k = 1.0;
+    b.shadow_opacity = 0.32;
+    b.shadow_blur = 0.6;
+    b.cloud_shadows = 0.42;
+    b.sun_vector = {sun::bundled_sun.x, sun::bundled_sun.y, sun::bundled_sun.z};
+    b.sun_azimuth = 213.5;
+    b.sun_elevation = 16.1;
+    b.cloud = 0.42;
+    b.cloud_low = 0.1;
+    b.wind = 14.0;
+    b.gust = 27.0;
+    b.wind_direction = 225.0;
+    b.temperature = 14.2;
+    b.pressure = 1012.5;
+    b.visibility = 24000.0;
+    b.humidity = 72.0;
+    return b;
+}
+
+/// The sunny moment without weather (the generic tree's).
+[[nodiscard]] style::ThemeBlock dry() {
+    style::ThemeBlock b = sunny();
+    b.flags &= ~(style::theme_flag::weather | style::theme_flag::water_gradient);
+    return b;
+}
+
+/// A camera of the map (buildings_vk_test.cpp's).
+[[nodiscard]] style::CameraState camera(double lat, double lon, double bearing, double pitch, double distance,
+                                        std::uint32_t w, std::uint32_t h, double d) {
+    style::CameraState c{};
+    c.version = style::camera_state_version;
+    c.latitude = lat;
+    c.longitude = lon;
+    c.bearing = bearing;
+    c.pitch = pitch;
+    c.distance = distance;
+    c.density = d;
+    c.width_px = w;
+    c.height_px = h;
+    c.width_dp = static_cast<std::uint32_t>(std::lround(w / d));
+    c.height_dp = static_cast<std::uint32_t>(std::lround(h / d));
+    c.principal_x = c.width_dp / 2.0;
+    c.principal_y = c.height_dp * 0.48;
+    c.flags = style::camera_flag::engine_mode;
+    return c;
+}
+
+/// The Westerkerk home (amsterdam.py's main camera).
+[[nodiscard]] style::CameraState home(std::uint32_t w, std::uint32_t h, double d) {
+    const double kx = 111320 * pymath::cos(pymath::radians(52.3746));
+    return camera(52.3746 - (-30.0) / 110540.0, 4.8840 + (-10.0) / kx, 52.0, 52.0, 430.0, w, h, d);
+}
+
+/// The camera state that snaps onto the grachten pack's view `name`; nothing without the pack.
+[[nodiscard]] std::optional<style::CameraState> region_view(const std::string& dir, std::string_view name,
+                                                            std::uint32_t w, std::uint32_t h, double d) {
+    auto source = tiles::MappedSource::open(dir + "/grachten.atlas");
+    if (!source) return std::nullopt;
+    auto pack = tiles::Pack::open(std::move(*source));
+    if (!pack || pack->head() == nullptr) return std::nullopt;
+    const auto ladder = view::Ladder::of(*pack->head());
+    if (!ladder) return std::nullopt;
+    for (const view::Ladder::Knot& k : ladder->knots()) {
+        if (k.name != name) continue;
+        const view::GroundFrame& f = ladder->frame();
+        const double lat = f.lat0 - (k.target[2] / f.kz);
+        const double lon = f.lon0 + (k.target[0] / f.kx);
+        style::CameraState c = camera(lat, lon, view::bearing_of(k.yaw), 90.0 - k.pitch, k.dist, w, h, d);
+        c.principal_y = std::isnan(k.cy) ? c.height_dp / 2.0 : k.cy;
+        return c;
+    }
+    return std::nullopt;
+}
+
+struct PackFile {
+    std::string id;
+    std::string path;
+};
+
+struct Scene {
+    std::unique_ptr<gpu::Offscreen> output;
+    std::unique_ptr<frame::FrameBuilder> builder;
+    std::unique_ptr<scene::World> world;
+    std::unique_ptr<gpu::Renderer> renderer;
+    passes::Trees* trees = nullptr;
+    double now = 0;
+    bool settled = false;
+    bool lit = false;
+};
+
+[[nodiscard]] std::optional<Scene> make_scene(const test::Session& session, const gpu::PipelineCache& cache,
+                                              const gpu::Configuration& config, std::uint32_t w, std::uint32_t h,
+                                              std::span<const PackFile> packs, std::uint32_t clear) {
+    const gpu::Device& device = *session.device;
+    Scene s;
+    auto output = gpu::Offscreen::create(device, {.width = w, .height = h}, 2);
+    ATLAS_REQUIRE_OR_RETURN(std::nullopt, output.has_value(), output.error().text());
+    s.output = std::move(*output);
+    // the registry's composite, and the trees pass of its own (the test reads its twin)
+    constexpr std::array<std::string_view, 1> composite{"composite"};
+    std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes(composite);
+    auto owned = std::make_unique<passes::Trees>();
+    s.trees = owned.get();
+    passes.push_back(std::move(owned));
+    const std::array<float, 4> c{static_cast<float>((clear >> 16U) & 0xFFU) / 255.0F,
+                                 static_cast<float>((clear >> 8U) & 0xFFU) / 255.0F,
+                                 static_cast<float>(clear & 0xFFU) / 255.0F, 1.0F};
+    auto builder =
+        frame::FrameBuilder::create(device, cache, std::move(passes), {.overdraw = false, .clear = c, .steps = 0});
+    ATLAS_REQUIRE_OR_RETURN(std::nullopt, builder.has_value(), builder.error().text());
+    s.builder = std::move(*builder);
+    auto world = scene::World::create(device, s.builder->passes(), {.workers = 3, .clock = {}});
+    ATLAS_REQUIRE_OR_RETURN(std::nullopt, world.has_value(), world.error().text());
+    s.world = std::move(*world);
+    for (const PackFile& pack : packs) {
+        auto added = s.world->store().add({.id = pack.id, .kind = tiles::PackKind::bundled, .path = pack.path});
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, added.has_value(), tiles::describe(added.error()));
+    }
+    auto renderer = gpu::Renderer::create(device, *s.output, *s.builder, config);
+    ATLAS_REQUIRE_OR_RETURN(std::nullopt, renderer.has_value(), renderer.error().text());
+    s.renderer = std::move(*renderer);
+    return s;
+}
+
+/// Draws `cam` until the world has built every tile the cover wants, their fades and sun bits' fades over; the last
+/// frame's pixels.
+[[nodiscard]] std::optional<gpu::Pixels> draw(Scene& s, const style::CameraState& cam, const style::ThemeBlock& th) {
+    int waited = 0;
+    for (int n = 0; n < 81; ++n) {
+        s.now += 0.25;
+        s.builder->set_inputs(
+            {.camera = cam, .theme = th, .seconds = s.now, .mode = frame::Mode::structural, .scene = s.world.get()});
+        auto report = s.renderer->draw(0);
+        if (!report) {
+            FAIL("a frame failed: " << report.error().text());
+            return std::nullopt;
+        }
+        s.renderer->drain();
+        if (s.settled && s.lit) break; // this frame drawn with every tile taken and lit
+        s.world->residency().wait_idle();
+        const scene::Cover& cover = *s.world->cover();
+        s.settled = n > 4 && cover.missing() == 0 && !cover.tiles().empty() &&
+                    std::ranges::all_of(cover.tiles(), [](const scene::CoverTile& t) { return t.fade >= 1.0F; });
+        s.lit = std::ranges::all_of(cover.tiles(), [](const scene::CoverTile& t) {
+            return t.sun_base != scene::no_sun && t.sun.has_value() && t.sun_weight >= 1.0F;
+        });
+        if (s.settled && !s.lit && ++waited > 20) {
+            MESSAGE("drawn without every tile's sun bits (the sun's worker gave none)");
+            s.lit = true; // draw once more as it is
+        }
+        if (s.settled && s.world->sun() != nullptr) s.world->sun()->wait_idle();
+    }
+    auto pixels = s.output->read(s.output->latest());
+    if (!pixels) {
+        FAIL("the frame could not be read: " << pixels.error().text());
+        return std::nullopt;
+    }
+    return std::move(*pixels);
+}
+
+[[nodiscard]] std::vector<hlsl::float2> sample_positions(vk::SampleCountFlagBits samples) {
+    switch (samples) {
+        using F = hlsl::float2;
+    case vk::SampleCountFlagBits::e4:
+        return {F{0.375F, 0.125F}, F{0.875F, 0.375F}, F{0.125F, 0.625F}, F{0.625F, 0.875F}};
+    case vk::SampleCountFlagBits::e2: return {F{0.75F, 0.75F}, F{0.25F, 0.25F}};
+    default: return {F{0.5F, 0.5F}};
+    }
+}
+
+/// Whether pixel (x, y) of a w × h frame lies on the composite's seam (buildings_vk_test.cpp's on_seam).
+[[nodiscard]] bool on_seam(std::size_t x, std::size_t y, std::size_t w, std::size_t h) noexcept {
+    const std::uint64_t above = std::uint64_t{y} * w;
+    const std::uint64_t below = above + w;
+    const std::uint64_t left = std::uint64_t{x} * h;
+    const std::uint64_t right = left + h;
+    return above < right && below > left;
+}
+
+/// Where a sample lies against a record: inside it or not, and whether within the tolerance of its boundary.
+struct Hit {
+    bool inside = false;
+    bool near = false;
+};
+
+/// A point in double.
+struct Pt {
+    double x;
+    double y;
+};
+
+[[nodiscard]] Hit quad_hit(const shaders::TreeRecord& r, hlsl::float2 sample, double tolerance) {
+    const auto f = [](std::uint32_t v) { return static_cast<double>(std::bit_cast<float>(v)); };
+    const std::array<Pt, 4> q{Pt{.x = f(r.b.x), .y = f(r.b.y)}, Pt{.x = f(r.b.z), .y = f(r.b.w)},
+                              Pt{.x = f(r.c.x), .y = f(r.c.y)}, Pt{.x = f(r.c.z), .y = f(r.c.w)}};
+    const Pt s{.x = static_cast<double>(sample.x), .y = static_cast<double>(sample.y)};
+    // the two triangles the vertex stage draws (0 1 2, 0 2 3), each tested by its edges in double
+    const auto in_triangle = [&](Pt a, Pt b, Pt c, double& nearest) {
+        const double area = ((b.x - a.x) * (c.y - a.y)) - ((b.y - a.y) * (c.x - a.x));
+        if (area == 0) return false;
+        bool inside = true;
+        const std::array<Pt, 3> t{a, b, c};
+        for (std::size_t i = 0; i < 3; ++i) {
+            const Pt p = t[i];
+            const Pt e = t[(i + 1) % 3];
+            const double ex = e.x - p.x;
+            const double ey = e.y - p.y;
+            const double len = std::sqrt((ex * ex) + (ey * ey));
+            const double cross = (ex * (s.y - p.y)) - (ey * (s.x - p.x));
+            const double d = (area > 0 ? cross : -cross) / (len > 0 ? len : 1);
+            nearest = std::min(nearest, std::abs(d));
+            if (d < 0) inside = false;
+        }
+        return inside;
+    };
+    double nearest = 1e300;
+    const bool inside = in_triangle(q[0], q[1], q[2], nearest) || in_triangle(q[0], q[2], q[3], nearest);
+    return {.inside = inside, .near = nearest <= tolerance};
+}
+
+/// What a frame's comparison with the exact raster found.
+struct Compared {
+    std::size_t pixels = 0;   ///< pixels some record covers in the reference
+    std::size_t agree = 0;    ///< pixels equal to the reference
+    std::size_t boundary = 0; ///< pixels that differ, a sample within 0.02 px of a shape's boundary
+    std::size_t seam = 0;     ///< pixels that differ on the composite's seam
+    std::size_t wrong = 0;
+    std::string first;
+};
+
+[[nodiscard]] Compared compare(const gpu::Pixels& got, std::span<const shaders::TreeRecord> records,
+                               std::span<const shaders::TreeRecord> sides, const shaders::FrameBlock& block,
+                               const gpu::Configuration& config, std::uint32_t clear, float opacity) {
+    const shaders::FrameCamera& cam = block.camera;
+    const std::vector<hlsl::float2> samples = sample_positions(config.samples());
+    const std::uint32_t w = got.width;
+    const std::uint32_t h = got.height;
+    const std::size_t n = samples.size();
+    constexpr double tolerance = 0.02;
+    // each sample's colour (0 to 1), whether a record covers it, whether it lies on a shape's boundary, its blends
+    std::vector<hlsl::float3> colour(std::size_t{w} * h * n);
+    std::vector<std::uint8_t> covered(colour.size(), 0);
+    std::vector<std::uint8_t> edge(colour.size(), 0);
+    std::vector<std::uint8_t> blended(colour.size(), 0);
+    std::vector<float> depth(colour.size(), 0.0F);
+    const hlsl::float3 background{static_cast<float>((clear >> 16U) & 0xFFU) / 255.0F,
+                                  static_cast<float>((clear >> 8U) & 0xFFU) / 255.0F,
+                                  static_cast<float>(clear & 0xFFU) / 255.0F};
+    std::ranges::fill(colour, background);
+    // a record's box of device pixels (its corners, a CSS px and more beyond a circle or a limb)
+    const auto box = [&](const shaders::TreeRecord& r) {
+        std::array<float, 4> b{1e30F, 1e30F, -1e30F, -1e30F};
+        const auto add = [&](float x, float y, float e) {
+            b[0] = std::min(b[0], x - e);
+            b[1] = std::min(b[1], y - e);
+            b[2] = std::max(b[2], x + e);
+            b[3] = std::max(b[3], y + e);
+        };
+        const auto f = [](std::uint32_t v) { return std::bit_cast<float>(v); };
+        if (r.a.x == shaders::TREE_CIRCLE) {
+            add(f(r.b.x), f(r.b.y), f(r.b.z) + 1.0F);
+        } else if (r.a.x == shaders::TREE_CAPSULE) {
+            add(f(r.b.x), f(r.b.y), f(r.c.x) + 1.0F);
+            add(f(r.b.z), f(r.b.w), f(r.c.x) + 1.0F);
+        } else {
+            add(f(r.b.x), f(r.b.y), 0.0F);
+            add(f(r.b.z), f(r.b.w), 0.0F);
+            add(f(r.c.x), f(r.c.y), 0.0F);
+            add(f(r.c.z), f(r.c.w), 0.0F);
+        }
+        const float d = cam.frame.z;
+        return std::array<std::int64_t, 4>{
+            std::max<std::int64_t>(0, static_cast<std::int64_t>(std::floor(b[0] * d)) - 1),
+            std::max<std::int64_t>(0, static_cast<std::int64_t>(std::floor(b[1] * d)) - 1),
+            std::min<std::int64_t>(w - 1, static_cast<std::int64_t>(std::ceil(b[2] * d)) + 1),
+            std::min<std::int64_t>(h - 1, static_cast<std::int64_t>(std::ceil(b[3] * d)) + 1)};
+    };
+    const auto each = [&](const shaders::TreeRecord& r, auto&& at) {
+        if (r.a.x == shaders::TREE_NONE) return;
+        const std::array<std::int64_t, 4> b = box(r);
+        for (std::int64_t y = b[1]; y <= b[3]; ++y) {
+            for (std::int64_t x = b[0]; x <= b[2]; ++x) {
+                for (std::size_t q = 0; q < n; ++q) {
+                    const hlsl::float2 px{static_cast<float>(x) + samples[q].x, static_cast<float>(y) + samples[q].y};
+                    const hlsl::float2 s = shaders::css_of_output(cam, px);
+                    Hit hit;
+                    const hlsl::float2 a{std::bit_cast<float>(r.b.x), std::bit_cast<float>(r.b.y)};
+                    const double tol = tolerance / static_cast<double>(cam.frame.z);
+                    if (r.a.x == shaders::TREE_CIRCLE) {
+                        hit.inside = shaders::tree_circle_covers(s, a, std::bit_cast<float>(r.b.z));
+                        // within the tolerance of its boundary the GPU's float (which may fuse its multiply-adds)
+                        // may decide otherwise
+                        const double d = pymath::hypot(static_cast<double>(s.x) - static_cast<double>(a.x),
+                                                       static_cast<double>(s.y) - static_cast<double>(a.y));
+                        hit.near = std::abs(d - static_cast<double>(std::bit_cast<float>(r.b.z))) <= tol;
+                    } else if (r.a.x == shaders::TREE_CAPSULE) {
+                        const hlsl::float2 e{std::bit_cast<float>(r.b.z), std::bit_cast<float>(r.b.w)};
+                        hit.inside = shaders::tree_capsule_covers(s, a, e, std::bit_cast<float>(r.c.x));
+                        const auto ax = static_cast<double>(a.x);
+                        const auto ay = static_cast<double>(a.y);
+                        const double ex = static_cast<double>(e.x) - ax;
+                        const double ey = static_cast<double>(e.y) - ay;
+                        const double dx = static_cast<double>(s.x) - ax;
+                        const double dy = static_cast<double>(s.y) - ay;
+                        const double ee = (ex * ex) + (ey * ey);
+                        const double t = ee > 0 ? std::clamp(((dx * ex) + (dy * ey)) / ee, 0.0, 1.0) : 0.0;
+                        const double d = pymath::hypot(dx - (ex * t), dy - (ey * t));
+                        hit.near = std::abs(d - static_cast<double>(std::bit_cast<float>(r.c.x))) <= tol;
+                    } else {
+                        hit = quad_hit(r, s, tol);
+                    }
+                    at((((static_cast<std::size_t>(y) * w) + static_cast<std::size_t>(x)) * n) + q, hit);
+                }
+            }
+        }
+    };
+    for (const shaders::TreeRecord& r : records) {
+        const auto d = std::bit_cast<float>(r.a.w);
+        each(r, [&](std::size_t k, Hit hit) {
+            if (hit.near) edge[k] = 1;
+            if (!hit.inside || !(d > depth[k])) return;
+            depth[k] = d;
+            colour[k] = shaders::tree_rgb(r.a.y);
+            covered[k] = 1;
+        });
+    }
+    // the sunlit sides, in the GPU's order (far to near: the twin keeps them the other way round)
+    for (const shaders::TreeRecord& r : std::views::reverse(sides)) {
+        const auto d = std::bit_cast<float>(r.a.w);
+        const hlsl::float3 c = shaders::tree_rgb(r.a.y);
+        each(r, [&](std::size_t k, Hit hit) {
+            if (hit.near) edge[k] = 1;
+            if (!hit.inside || !(d > depth[k])) return;
+            const hlsl::float3 under = colour[k];
+            const hlsl::float3 over = (c * opacity) + (under * (1.0F - opacity));
+            colour[k] = {std::round(over.x * 255.0F) / 255.0F, std::round(over.y * 255.0F) / 255.0F,
+                         std::round(over.z * 255.0F) / 255.0F};
+            covered[k] = 1;
+            ++blended[k];
+        });
+    }
+    Compared c;
+    for (std::size_t i = 0; i < std::size_t{w} * h; ++i) {
+        bool any = false;
+        bool near_edge = false;
+        std::uint32_t blends = 0;
+        for (std::size_t q = 0; q < n; ++q) {
+            any = any || covered[(i * n) + q] != 0 || edge[(i * n) + q] != 0;
+            near_edge = near_edge || edge[(i * n) + q] != 0;
+            blends = std::max<std::uint32_t>(blends, blended[(i * n) + q]);
+        }
+        if (!any) continue;
+        ++c.pixels;
+        // the composite's mean of the samples' levels, rounded half to even
+        shaders::FrameLayers stubbed{};
+        stubbed.steps = {0U, 255U, 0U, 0U};
+        const hlsl::float3 p =
+            passes::composite_pixel(stubbed, std::span(colour.data() + (i * n), n), {0.5F, 0.5F}, {1.0F, 1.0F});
+        const std::array<std::uint32_t, 3> want{static_cast<std::uint32_t>(p.x), static_cast<std::uint32_t>(p.y),
+                                                static_cast<std::uint32_t>(p.z)};
+        const std::array<std::uint32_t, 3> have{got.rgba[i * 4], got.rgba[(i * 4) + 1], got.rgba[(i * 4) + 2]};
+        const std::uint32_t levels = blends + (blends > 0 && n > 1 ? 1U : 0U);
+        bool same = true;
+        for (std::size_t k = 0; k < 3; ++k) {
+            if ((want[k] > have[k] ? want[k] - have[k] : have[k] - want[k]) > levels) same = false;
+        }
+        if (same) {
+            ++c.agree;
+        } else if (near_edge) {
+            ++c.boundary;
+        } else if (config.target == gpu::CompositeTarget::resolve && on_seam(i % w, i / w, w, h)) {
+            ++c.seam;
+        } else {
+            if (c.wrong == 0) {
+                c.first =
+                    std::format("pixel ({}, {}): {:02x}{:02x}{:02x} where the exact raster has {:02x}{:02x}{:02x}",
+                                i % w, i / w, have[0], have[1], have[2], want[0], want[1], want[2]);
+            }
+            ++c.wrong;
+        }
+    }
+    return c;
+}
+
+/// Draws `cam` at 1x and 4x, at rest and moving, at true depth and (with `painter`) under the painter switch, at
+/// moment `th`, and holds every pixel to the exact raster of the twin's records; the twin emits at least `least`
+/// elements.
+void check_frames(const style::CameraState& cam, const std::string& view, std::span<const PackFile> packs,
+                  const style::ThemeBlock& th, std::size_t least) {
+    auto session = test::open_session();
+    if (!session) return;
+    const gpu::Device& device = *session->device;
+    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    constexpr std::uint32_t clear = 0x808080;
+    for (const gpu::Configuration config : {gpu::Configuration{.config = gpu::FrameConfig::x1,
+                                                               .route = gpu::Route::renderpass,
+                                                               .form = gpu::FrameForm::composite,
+                                                               .target = gpu::CompositeTarget::direct},
+                                            gpu::Configuration{.config = gpu::FrameConfig::c,
+                                                               .route = gpu::Route::renderpass,
+                                                               .form = gpu::FrameForm::composite,
+                                                               .target = gpu::CompositeTarget::resolve}}) {
+        if (!device.facts().supports(config.config)) continue;
+        for (const bool painter : {false, true}) {
+            for (const bool rest : {true, false}) {
+                style::CameraState c = cam;
+                c.flags = rest ? (c.flags | style::camera_flag::rest) : (c.flags & ~style::camera_flag::rest);
+                auto made = make_scene(*session, *cache, config, c.width_px, c.height_px, packs, clear);
+                ATLAS_REQUIRE(made.has_value());
+                Scene& s = *made;
+                s.builder->set_painter(painter);
+                const auto pixels = draw(s, c, th);
+                ATLAS_REQUIRE(pixels.has_value());
+                CHECK_MESSAGE(s.settled, view << ": the world did not settle");
+                twin::Stream stream;
+                std::vector<shaders::TreeRecord> records;
+                std::vector<shaders::TreeRecord> sides;
+                s.trees->emit_records(s.builder->state(), stream, &records, &sides);
+                const twin::Decoded decoded = twin::decode(stream.bytes());
+                ATLAS_REQUIRE(decoded.error.empty(), decoded.error);
+                const passes::Trees::Counts counts = s.trees->counts();
+                const tiles::Style* style = s.builder->state().active_pack->source->pack.style();
+                const Compared r = compare(*pixels, records, sides, s.builder->state().block, config, clear,
+                                           style->trees.bark_lit_opacity);
+                const std::string name = std::format("{} {} {}{}", view, gpu::name_of(config),
+                                                     rest ? "at rest" : "moving", painter ? " (painter's order)" : "");
+                MESSAGE(name << ": " << stream.elements() << " elements of " << counts.jobs << " trees, "
+                             << counts.records << " records and " << counts.sides << " sunlit sides; " << r.pixels
+                             << " pixels of trees, " << r.agree << " the exact raster's, " << r.boundary
+                             << " within 0.02 px of a shape's boundary, " << r.seam << " on the composite's seam, "
+                             << r.wrong << " otherwise; " << frame::text_of(s.builder->total()));
+                CHECK(stream.elements() >= least);
+                CHECK(records.size() == counts.records);
+                CHECK(sides.size() == counts.sides);
+                CHECK_MESSAGE(r.wrong == 0, name << ": " << r.first);
+                CHECK(static_cast<double>(r.boundary) <= 0.01 * static_cast<double>(r.pixels));
+                for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, name << ": " << m);
+                if (const std::string out = environment("ATLAS_TREES_PPM"); !out.empty()) {
+                    CHECK(gpu::write_ppm(*pixels, std::format("{}/{}.ppm", out, name)));
+                }
+                s.renderer.reset();
+            }
+        }
+    }
+}
+
+} // namespace
+
+TEST_CASE("trees: the Westerkerk home drawn on the host's Vulkan, pixel for pixel the exact shapes of its twin") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the Westerkerk home is not drawn here");
+        return;
+    }
+    std::vector<PackFile> packs;
+    for (const char* name : {"amsterdam", "grachten"}) {
+        const std::filesystem::path path = std::filesystem::path(dir) / (std::string(name) + ".atlas");
+        if (std::filesystem::exists(path)) packs.push_back({.id = name, .path = path.string()});
+    }
+    check_frames(home(1080, 2400, 1080.0 / 412.0), "home", packs, sunny(), 50);
+    check_frames(home(1080, 2400, 1080.0 / 412.0), "home without weather", packs, dry(), 50);
+}
+
+TEST_CASE("trees: the Main board drawn on the host's Vulkan, pixel for pixel the exact shapes of its twin") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the Main board is not drawn here");
+        return;
+    }
+    const auto cam = region_view(dir, "grachten_home", 1080, 2400, 1080.0 / 412.0);
+    ATLAS_REQUIRE(cam.has_value(), "the grachten pack has no grachten_home view");
+    const std::array<PackFile, 1> packs{PackFile{.id = "grachten", .path = dir + "/grachten.atlas"}};
+    check_frames(*cam, "board", packs, sunny(), 200);
+}
+
+TEST_CASE("trees: close up, every clump of a tree drawn as its twin decides it") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    if (dir.empty()) return;
+    const std::filesystem::path path = std::filesystem::path(dir) / "amsterdam.atlas";
+    if (!std::filesystem::exists(path)) return;
+    // the bundled pack's first tree, looked at from 45 m and from 25 m: tree_close's 26 and 36 clumps, its limbs and
+    // its trunk's sunlit side, and its neighbours'
+    auto source = tiles::MappedSource::open(path.string());
+    ATLAS_REQUIRE(source.has_value());
+    auto pack = tiles::Pack::open(std::move(*source));
+    ATLAS_REQUIRE(pack.has_value() && pack->head() != nullptr);
+    const auto ladder = view::Ladder::of(*pack->head());
+    ATLAS_REQUIRE(ladder.has_value());
+    std::optional<std::pair<double, double>> tree; // its x and z, frame metres
+    tiles::Zstd zstd;
+    tiles::TileDecoder decoder;
+    std::vector<std::byte> raw;
+    std::vector<std::byte> scratch;
+    Arena arena(4U << 20U, Growth::grows, "trees close");
+    for (const tiles::ChunkRef& chunk : pack->chunks().level(pack->head()->levels[0])) {
+        arena.reset();
+        auto tile = pack->decode(chunk, zstd, decoder, arena, raw, scratch);
+        ATLAS_REQUIRE(tile.has_value());
+        const tiles::Layer* layer = tile->layer(tiles::LayerId::tree);
+        if (layer == nullptr || layer->count == 0) continue;
+        const tiles::GridPoint p = layer->point(tiles::tree::pos, 0);
+        tree = std::pair{pack->head()->frame.x(p.lon), pack->head()->frame.z(p.lat)};
+        break;
+    }
+    ATLAS_REQUIRE(tree.has_value(), "the bundled pack has no tree");
+    const view::GroundFrame& f = ladder->frame();
+    const double lat = f.lat0 - (tree->second / f.kz);
+    const double lon = f.lon0 + (tree->first / f.kx);
+    const std::array<PackFile, 1> packs{PackFile{.id = "amsterdam", .path = path.string()}};
+    check_frames(camera(lat, lon, 30.0, 60.0, 45.0, 1080, 2400, 1080.0 / 412.0), "close", packs, sunny(), 20);
+    check_frames(camera(lat, lon, 200.0, 50.0, 25.0, 1080, 2400, 1080.0 / 412.0), "closer", packs, sunny(), 20);
+}
+
+#endif

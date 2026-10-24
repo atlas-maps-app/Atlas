@@ -1,6 +1,7 @@
 #include "tiles/Style.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <format>
 
@@ -122,6 +123,20 @@ std::optional<StyleRgb> style_rgb(std::string_view text) noexcept {
     return out;
 }
 
+std::optional<TreeForm> tree_form_named(std::string_view name) noexcept {
+    static constexpr std::array<std::pair<std::string_view, TreeForm>, 7> names{{{"ovoid", TreeForm::ovoid},
+                                                                                 {"vase", TreeForm::vase},
+                                                                                 {"broad", TreeForm::broad},
+                                                                                 {"dome", TreeForm::dome},
+                                                                                 {"column", TreeForm::column},
+                                                                                 {"weep", TreeForm::weep},
+                                                                                 {"cone", TreeForm::cone}}};
+    for (const auto& [n, form] : names) {
+        if (n == name) return form;
+    }
+    return std::nullopt;
+}
+
 Result<Style> Style::of(const StyleTables& tables) {
     Style s;
     StyleReader r(tables);
@@ -193,6 +208,26 @@ Result<Style> Style::of(const StyleTables& tables) {
     ws.shop_frame_width = static_cast<float>(r.number(windows, "windows", "shop_frame_width"));
     ws.plinth = r.day_night(windows, "windows", "plinth_day", "plinth_night");
     ws.cornice = r.day_night(windows, "windows", "cornice_day", "cornice_night");
+    const auto trees = r.table("trees");
+    TreesStyle& ts = s.trees;
+    ts.leaf = r.colour(trees, "trees", "leaf");
+    ts.autumn = r.colour(trees, "trees", "autumn");
+    ts.bark = r.day_night(trees, "trees", "bark_day", "bark_night");
+    ts.bark_lit = r.colour(trees, "trees", "bark_lit");
+    ts.bark_lit_opacity = static_cast<float>(r.number(trees, "trees", "bark_lit_opacity"));
+    ts.crown = r.colour(trees, "trees", "crown");
+    ts.trunk = r.day_night(trees, "trees", "trunk_day", "trunk_night");
+    if (const auto forms = r.table("tree_forms")) {
+        for (std::size_t i = 0; i < forms->size(); ++i) {
+            const std::optional<std::string_view> name = forms->child(i).string();
+            const std::optional<TreeForm> form = name ? tree_form_named(*name) : std::nullopt;
+            if (!form || *form == TreeForm::cone) {
+                r.fail(Fault::bad_value, "tree_forms", forms->key(i));
+                break;
+            }
+            ts.forms.emplace_back(std::string(forms->key(i)), *form);
+        }
+    }
     const auto names = r.table("canal_names");
     s.canal_names.fill = r.colour(names, "canal_names", "fill");
     s.canal_names.opacity = r.number(names, "canal_names", "opacity");

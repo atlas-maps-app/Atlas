@@ -32,6 +32,7 @@ struct TileBits {
     std::vector<std::uint64_t> words;
     std::uint32_t count = 0;        ///< the tile's samples
     std::uint32_t windows_from = 0; ///< where its window group begins
+    std::uint32_t crowns_from = 0;  ///< where its trees' crowns begin (tree i's sample is crowns_from + i)
     bool windows = false;           ///< whether the window group was tested (else its bits are 0)
     std::uint64_t bucket = 0;       ///< the bucket's key
     Sun sun;                        ///< the bucket's sun

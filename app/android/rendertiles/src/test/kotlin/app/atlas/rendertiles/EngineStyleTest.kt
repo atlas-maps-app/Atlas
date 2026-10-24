@@ -1,6 +1,7 @@
 package app.atlas.rendertiles
 
 import app.atlas.render.Amsterdam
+import app.atlas.render.Closeup
 import app.atlas.render.Regions
 import app.atlas.rendertiles.compile.EngineStyle
 import app.atlas.rendertiles.compile.Style
@@ -37,6 +38,7 @@ class EngineStyleTest {
             "area" to port("AREA"),
             "surf" to Amsterdam.SURF,
             "surf_colour" to port("SURF_COLOUR"),
+            "tree_forms" to Closeup.FORMS,
         )
         for ((name, theirs) in tables) {
             if (name in DIFFERENCES) continue
@@ -51,6 +53,7 @@ class EngineStyleTest {
         assumeTrue(src.isDirectory)
         val amsterdam = File(src, "Amsterdam.kt").readText()
         val regions = File(src, "Regions.kt").readText()
+        val closeup = File(src, "Closeup.kt").readText()
         // the values, the port's file and the source text that types them there
         val literals = listOf(
             Triple(listOf("ground.area_other"), amsterdam, """AREA[a["kind"]] ?: "${value("ground.area_other")}""""),
@@ -146,6 +149,23 @@ class EngineStyleTest {
             Triple(
                 listOf("windows.cornice_day", "windows.cornice_night"), amsterdam,
                 """hzc(th, if (!night) "${value("windows.cornice_day")}" else "${value("windows.cornice_night")}")""",
+            ),
+            Triple(
+                listOf("trees.leaf", "trees.autumn"), closeup,
+                """City.mix(City.hx("${value("trees.leaf")}"), City.hx("${value("trees.autumn")}"), tint)""",
+            ),
+            Triple(
+                listOf("trees.bark_day", "trees.bark_night"), closeup,
+                """val bark = if (!night) "${value("trees.bark_day")}" else "${value("trees.bark_night")}"""",
+            ),
+            Triple(
+                listOf("trees.bark_lit", "trees.bark_lit_opacity"), closeup,
+                """fill=\"${value("trees.bark_lit")}\" opacity=\"${css("trees.bark_lit_opacity")}\"""",
+            ),
+            Triple(listOf("trees.crown"), amsterdam, """hx(if (truthy(th["wx"])) "#4F6E37" else "${value("trees.crown")}")"""),
+            Triple(
+                listOf("trees.trunk_day", "trees.trunk_night"), amsterdam,
+                """if (!night) "${value("trees.trunk_day")}" else "${value("trees.trunk_night")}", pmax(0.6, 0.3 * cam.focal / dd)""",
             ),
         )
         for ((paths, file, text) in literals) {

@@ -8,10 +8,11 @@
 // stage T, its stage F and the vertex stage's maths compiled as C++ are held, bit for bit, to the host build's on each
 // phone and on the emulator.
 //
-// The frame's passes are the ground, the buildings and the composite. The canal names are shaped under the platform's
-// kerning rule (text::platform_rounding, which VK facts measures with Android's Paint), so they are left out: VK
-// facts' text.glyphs line holds their shaping to Android's. The check makes no noise fields, so the composite emits no
-// grain. The host build computes the same (tests/frame/twin_check_test.cpp), and twin_check_expected is its hash.
+// The frame's passes are the ground, the buildings, the trees and the composite. The canal names are shaped under the
+// platform's kerning rule (text::platform_rounding, which VK facts measures with Android's Paint), so they are left
+// out: VK facts' text.glyphs line holds their shaping to Android's. The check makes no noise fields, so the composite
+// emits no grain. The host build computes the same (tests/frame/twin_check_test.cpp), and twin_check_expected is its
+// hash.
 #pragma once
 
 #include "gpu/Device.hpp"
@@ -29,7 +30,7 @@
 namespace atlas::frame {
 
 /// The passes the check's frame has (frame/PassRegistry.cpp's names).
-inline constexpr std::array<std::string_view, 3> twin_check_passes{"composite", "ground", "buildings"};
+inline constexpr std::array<std::string_view, 4> twin_check_passes{"composite", "ground", "buildings", "trees"};
 
 /// The check's camera: the engine references' home on S1 at rest, as the app writes it (no engine mode; the world's
 /// choice of pack).
@@ -56,7 +57,7 @@ struct TwinCheck {
                                                 tiles::PackRef westerkerk);
 
 /// The host build's hash of the twin's check.
-inline constexpr std::uint64_t twin_check_expected = 0xFF1B'0106'CD00'7096ULL;
+inline constexpr std::uint64_t twin_check_expected = 0xAFF6'CC9B'5B98'AF01ULL;
 
 /// `twin <hash> ok`, or `twin <hash> FAIL expected <hash>`, or `twin unavailable: <why>`.
 [[nodiscard]] std::string twin_line(const gpu::Device& device, const gpu::PipelineCache& cache,

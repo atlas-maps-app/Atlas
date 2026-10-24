@@ -150,6 +150,37 @@
         "cornice_night": "#3A3C44"
     },
 
+    // the trees: closeup.py's tree_close with weather, the leaf's colour and its autumn's (mixed by the date's tint),
+    // the bark by day and at night, the trunk's sunlit side and its opacity; amsterdam.py's generic tree without
+    // weather, its crown and its trunk by day and at night
+    "trees": {
+        "leaf": "#4E6B35",
+        "autumn": "#9C8A36",
+        "bark_day": "#4B4038",
+        "bark_night": "#0B0D10",
+        "bark_lit": "#8A7B6C",
+        "bark_lit_opacity": 0.55,
+        "crown": "#6E9450",
+        "trunk_day": "#4A3A2E",
+        "trunk_night": "#0C100E"
+    },
+
+    // closeup.py's FORMS: a crown's form by the first word of its genus (or species, or taxon), lowercased; any other
+    // is an ovoid, a needleleaved tree a cone
+    "tree_forms": {
+        "ulmus": "vase",
+        "tilia": "ovoid",
+        "platanus": "broad",
+        "quercus": "broad",
+        "aesculus": "dome",
+        "acer": "dome",
+        "populus": "column",
+        "salix": "weep",
+        "fraxinus": "ovoid",
+        "betula": "ovoid",
+        "robinia": "broad"
+    },
+
     // amsterdam.py's canal names on the water (ground_text): their fill and its opacity, the face's weight, and the
     // letters' size and spacing in metres on the water
     "canal_names": {

@@ -215,6 +215,7 @@ void run(const Scene& scene, const Bucket& bucket, std::span<const TileJob> jobs
         b.words.assign((std::size_t{s.size()} + 63) / 64, 0);
         b.count = s.size();
         b.windows_from = s.windows_first;
+        b.crowns_from = s.crowns_first;
         b.windows = jobs[j].windows;
         b.bucket = bucket.key;
         b.sun = bucket.sun;
@@ -272,7 +273,7 @@ std::optional<TileBits> DiskCache::load(const tiles::Sha256Digest& chunk, std::u
     const std::string data = all.str();
     const std::string head = head_of(chunk, level, bucket.sun);
     const std::size_t words = (std::size_t{count} + 63) / 64;
-    const std::size_t want = head.size() + 1 + 4 + 4 + (8 * words);
+    const std::size_t want = head.size() + 1 + 4 + 4 + 4 + (8 * words);
     if (data.size() != want || !data.starts_with(head)) return std::nullopt;
     TileBits b;
     std::size_t at = head.size();
@@ -282,6 +283,8 @@ std::optional<TileBits> DiskCache::load(const tiles::Sha256Digest& chunk, std::u
     b.count = count;
     at += 4;
     b.windows_from = static_cast<std::uint32_t>(get(data, at, 4));
+    at += 4;
+    b.crowns_from = static_cast<std::uint32_t>(get(data, at, 4));
     at += 4;
     if (windows && !b.windows) return std::nullopt;
     b.words.resize(words);
@@ -297,6 +300,7 @@ bool DiskCache::store(const tiles::Sha256Digest& chunk, std::uint8_t level, cons
     data.push_back(static_cast<char>(bits.windows ? 1 : 0));
     put_u32(data, bits.count);
     put_u32(data, bits.windows_from);
+    put_u32(data, bits.crowns_from);
     for (const std::uint64_t w : bits.words) put_u64(data, w);
     const std::string p = path(chunk, level, bucket);
     const std::lock_guard lock(mutex_);

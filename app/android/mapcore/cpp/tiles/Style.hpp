@@ -73,6 +73,28 @@ struct WindowsStyle {
     DayNight cornice;
 };
 
+/// A tree's crown form (closeup.py's FORMS and tree_form): the ovoid where its genus has no other, a needleleaved
+/// tree's cone.
+enum class TreeForm : std::uint8_t { ovoid = 0, vase = 1, broad = 2, dome = 3, column = 4, weep = 5, cone = 6 };
+
+/// The form named `name` ("vase", "ovoid", ...; "cone" too), or nothing.
+[[nodiscard]] std::optional<TreeForm> tree_form_named(std::string_view name) noexcept;
+
+/// The trees (`trees`): closeup.py's tree_close with weather, the leaf's colour and its autumn's (mixed by the date's
+/// tint), the bark by day and at night, the trunk's sunlit side and its opacity; amsterdam.py's generic tree without
+/// weather, its crown and its trunk by day and at night. `tree_forms`: closeup.py's FORMS, a genus's crown form, in
+/// the table's order.
+struct TreesStyle {
+    StyleRgb leaf = 0;
+    StyleRgb autumn = 0;
+    DayNight bark;
+    StyleRgb bark_lit = 0;
+    float bark_lit_opacity = 0.0F;
+    StyleRgb crown = 0;
+    DayNight trunk;
+    std::vector<std::pair<std::string, TreeForm>> forms;
+};
+
 struct Style {
     /// Reads `tables`: every value below, each of its kind; a missing or mistyped one is Fault::missing or
     /// Fault::bad_value at Site::style, named (`table.key`) in the error's column.
@@ -111,6 +133,7 @@ struct Style {
     double bridge_lines_width = 0.0;
     EdgesStyle edges;
     WindowsStyle windows;
+    TreesStyle trees;
     /// `houseboats`: the hull's and the deck's colours (the cabin roof's edge is in `edges`).
     StyleRgb hull = 0;
     StyleRgb deck = 0;
