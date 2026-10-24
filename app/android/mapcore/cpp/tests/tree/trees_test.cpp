@@ -6,6 +6,7 @@
 // thresholds, the moment's colours, every bundled tile's things. That the clumps and the furniture are the port's, the
 // twins' elements against the port's SVG say (L1).
 #include "base/arena.hpp"
+#include "base/pymath/PyMath.hpp"
 #include "geometry/Things.hpp"
 #include "geometry/Trees.hpp"
 #include "passes/Things.hpp"
@@ -18,8 +19,10 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <bit>
+#include <cmath>
 #include <format>
 #include <string>
 #include <vector>
@@ -190,21 +193,21 @@ TEST_CASE("things: the gather's kinds, the render thread's choices and the momen
     CHECK(gm::thing_kind("footway", "cafe", "block") == ThingKind::bollard);
     CHECK(!gm::thing_kind(std::nullopt, "cafe", "gate").has_value());
     // street furniture under 1.6 px of focal length over its depth is left out
-    CHECK(!thing_choice(ThingKind::bench, 500, 700, false).drawn);
-    CHECK(thing_choice(ThingKind::bench, 400, 700, false).drawn);
+    CHECK(!thing_choice(ThingKind::bench, 0, 500, 700, false, true).drawn);
+    CHECK(thing_choice(ThingKind::bench, 0, 400, 700, false, true).drawn);
     // a lamp at s = 7: its mast '%.2f' % 0.91, hw 1.4, hh 3.5, its glint by day '%.2f' % 0.35
-    const auto lamp = thing_choice(ThingKind::lamp, 100, 700, false);
+    const auto lamp = thing_choice(ThingKind::lamp, 0, 100, 700, false, true);
     CHECK((lamp.flags & sh::THING_JOB_KIND) == sh::THING_LAMP);
     CHECK((lamp.flags & sh::THING_JOB_GLINT) != 0U);
     CHECK(lamp.a == static_cast<float>(0.91));
     CHECK(lamp.b == static_cast<float>(0.2 * 7));
     CHECK(lamp.c == static_cast<float>(0.5 * 7));
     CHECK(lamp.d == static_cast<float>(0.35));
-    CHECK((thing_choice(ThingKind::lamp, 100, 700, true).flags & sh::THING_JOB_GLINT) == 0U);
+    CHECK((thing_choice(ThingKind::lamp, 0, 100, 700, true, true).flags & sh::THING_JOB_GLINT) == 0U);
     // s = 1.2 is no glint (s > 1.2), s = 1 no bollard head (s > 1)
-    CHECK((thing_choice(ThingKind::lamp, 700 / 1.2, 700, false).flags & sh::THING_JOB_GLINT) == 0U);
-    CHECK((thing_choice(ThingKind::bollard, 400, 700, false).flags & sh::THING_JOB_HEAD) != 0U);
-    const auto bollard = thing_choice(ThingKind::bollard, 100, 700, false);
+    CHECK((thing_choice(ThingKind::lamp, 0, 700 / 1.2, 700, false, true).flags & sh::THING_JOB_GLINT) == 0U);
+    CHECK((thing_choice(ThingKind::bollard, 0, 400, 700, false, true).flags & sh::THING_JOB_HEAD) != 0U);
+    const auto bollard = thing_choice(ThingKind::bollard, 0, 100, 700, false, true);
     CHECK(bollard.a == static_cast<float>(1.4));
     CHECK(bollard.b == static_cast<float>(0.03 * 7));
     CHECK(bollard.c == static_cast<float>(0.35));
@@ -218,6 +221,15 @@ TEST_CASE("things: the gather's kinds, the render thread's choices and the momen
     CHECK(night[sh::THING_TONE_MAST] == 0x221A16U);    // #161A22
     CHECK(std::bit_cast<float>(day[sh::THING_TONE_RACK_WIDTH]) == 0.9F);
     CHECK(sh::thing_record_count(sh::THING_RACK) == 24);
+    // a railing's piece: with weather and within 220 m, '%.2f' % max(0.4, 0.045 * s), its two rails and posts + 1
+    const auto railing = thing_choice(ThingKind::railing, 6, 100, 700, false, true);
+    CHECK(railing.drawn);
+    CHECK(railing.a == static_cast<float>(0.4));
+    CHECK(sh::thing_record_count(railing.flags) == 2 + 7);
+    CHECK(thing_choice(ThingKind::railing, 6, 35, 700, false, true).a == static_cast<float>(0.9));
+    CHECK(!thing_choice(ThingKind::railing, 6, 230, 700, false, true).drawn);
+    CHECK(!thing_choice(ThingKind::railing, 6, 100, 700, false, false).drawn);
+    CHECK(thing_choice(ThingKind::railing, 6, 600, 7000, false, true).drawn == false);
     CHECK(sh::thing_side_count(lamp.flags) == 1);
 }
 
@@ -234,7 +246,7 @@ TEST_CASE("things: stage T of every bundled tile") {
         std::vector<std::byte> raw;
         std::vector<std::byte> scratch;
         atlas::Arena arena(4U << 20U, atlas::Growth::grows, "things test");
-        std::array<std::size_t, 5> kinds{};
+        std::array<std::size_t, 6> kinds{};
         for (const tl::ChunkRef& chunk : pack->chunks().level(head->levels[0])) {
             arena.reset();
             auto tile = pack->decode(chunk, zstd, decoder, arena, raw, scratch);
@@ -244,15 +256,25 @@ TEST_CASE("things: stage T of every bundled tile") {
             for (std::size_t i = 0; i < g.things.size(); ++i) {
                 const gm::Thing& t = g.things[i];
                 const atlas::scene::ItemSpec& item = g.items[i];
-                CHECK(item.order == atlas::scene::order_of(gm::nodes_list, t.node));
                 CHECK(item.slots[0] == gm::thing_slots[static_cast<std::size_t>(t.kind)]);
-                CHECK(item.y == 1.0);
                 ++kinds[static_cast<std::size_t>(t.kind)];
+                if (t.kind == gm::ThingKind::railing) {
+                    // a piece of at most 2 m, its posts' gaps max(1, int(len / 0.32)), its item at its middle
+                    const double len = atlas::pymath::hypot(t.bx - t.x, t.bz - t.z);
+                    CHECK(len <= 2.0 + 1e-9);
+                    CHECK(t.posts == static_cast<std::uint32_t>(std::max(1.0, std::trunc(len / 0.32))));
+                    CHECK(item.y == gm::railing_foot + 0.5);
+                    CHECK(item.min_depth == 0.8F);
+                    CHECK((item.flags & atlas::scene::item_flag::radius) == 0);
+                    continue;
+                }
+                CHECK(item.order == atlas::scene::order_of(gm::nodes_list, t.node));
+                CHECK(item.y == 1.0);
             }
             const std::vector<atlas::hlsl::uint4> words = atlas::passes::thing_words(g, 0.0, 0.0, 0.0);
-            CHECK(words.size() == g.things.size());
+            CHECK(words.size() == g.things.size() * sh::THING_VECTORS);
         }
-        MESSAGE(std::format("{}: {} lamps, {} benches, {} baskets, {} bollards, {} racks", name, kinds[0], kinds[1],
-                            kinds[2], kinds[3], kinds[4]));
+        MESSAGE(std::format("{}: {} lamps, {} benches, {} baskets, {} bollards, {} racks, {} railings' pieces", name,
+                            kinds[0], kinds[1], kinds[2], kinds[3], kinds[4], kinds[5]));
     }
 }

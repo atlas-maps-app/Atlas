@@ -168,7 +168,7 @@
     // amsterdam.py's street furniture: a street lamp's mast, lantern and cap by day and at night, its lantern's glint
     // by day and its opacity; a bench's seat and back and a waste basket (at night 0.3 of their colour, their legs 0.8
     // of it); a bollard by day and at night, its head by day and its opacity; a bicycle rack by day and at night, and
-    // its width
+    // its width; a bridge's railing (with weather) by day and at night
     "things": {
         "mast_day": "#2A2E33",
         "mast_night": "#161A22",
@@ -187,7 +187,9 @@
         "bollard_head_opacity": 0.6,
         "rack_day": "#6B7282",
         "rack_night": "#2A2E3A",
-        "rack_width": 0.9
+        "rack_width": 0.9,
+        "railing_day": "#26292C",
+        "railing_night": "#0A0B0E"
     },
 
     // closeup.py's FORMS: a crown's form by the first word of its genus (or species, or taxon), lowercased; any other

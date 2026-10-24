@@ -413,6 +413,35 @@ void thing_rack(FrameCamera c, ThingJob j, float3 foot, float kz) {
     }
 }
 
+/// railing: a piece's two rails (at 1 m, then 0.12 m over its foot) and its posts between them, each where both of its
+/// ends project, round-capped.
+void thing_railing(FrameCamera c, ThingJob j, float3 a, float3 b, float kz) {
+    float half = 0.5f * j.a;
+    uint colour = tree_tones[THING_TONE_RAILING];
+    float depth = tree_depth(c, kz, j.slot, 0u);
+    for (uint r = 0u; r < 2u; ++r) {
+        float y = r == 0u ? 1.0f : 0.12f;
+        float3 k0 = tree_camera(c, j.place, thing_point(a, 0.0f, y, 0.0f));
+        float3 k1 = tree_camera(c, j.place, thing_point(b, 0.0f, y, 0.0f));
+        if (tree_ahead(c, k0) && tree_ahead(c, k1)) {
+            put(j.first + r, tree_segment(tree_printed(c, css_of(c, k0)), tree_printed(c, css_of(c, k1)), half,
+                                          TREE_ROUND, colour, 1.0f, depth));
+        }
+    }
+    uint m = (j.flags >> THING_JOB_POSTS_SHIFT) & 0xFFu;
+    for (uint i = 0u; i <= m; ++i) {
+        // f = j / m; px, pz = pa[0] + (pb[0] - pa[0]) * f, pa[1] + (pb[1] - pa[1]) * f
+        float f = float(i) / float(m);
+        float3 p = {a.x + (b.x - a.x) * f, a.y, a.z + (b.z - a.z) * f};
+        float3 k0 = tree_camera(c, j.place, thing_point(p, 0.0f, 0.12f, 0.0f));
+        float3 k1 = tree_camera(c, j.place, thing_point(p, 0.0f, 1.0f, 0.0f));
+        if (tree_ahead(c, k0) && tree_ahead(c, k1)) {
+            put(j.first + 2u + i, tree_segment(tree_printed(c, css_of(c, k0)), tree_printed(c, css_of(c, k1)), half,
+                                               TREE_ROUND, colour, 1.0f, depth));
+        }
+    }
+}
+
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void things_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
@@ -434,6 +463,13 @@ void things_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     FrameCamera c = frame.camera;
     float3 foot = thing_foot(points_heap[j.thing]);
     uint kind = j.flags & THING_JOB_KIND;
+    if (kind == THING_RAILING) {
+        // its plane at its middle, 0.5 m over its foot (the gather's point)
+        float3 end = thing_end(points_heap[j.thing + 1u], foot);
+        float3 mid = {(foot.x + end.x) * 0.5f, foot.y + 0.5f, (foot.z + end.z) * 0.5f};
+        thing_railing(c, j, foot, end, max(tree_camera(c, j.place, mid).z, c.frame.w));
+        return;
+    }
     float kz = max(tree_camera(c, j.place, thing_point(foot, 0.0f, thing_middle(kind), 0.0f)).z, c.frame.w);
     if (kind == THING_LAMP) {
         thing_lamp(c, j, foot, kz);

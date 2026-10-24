@@ -35,21 +35,25 @@ struct TreeRecord;
 
 namespace atlas::passes {
 
-/// A tile's things as the pass keeps them (PassTile::cpu): each thing's kind and OSM node.
+/// A tile's things as the pass keeps them (PassTile::cpu): each thing's kind, OSM node (a railing's: its road's way)
+/// and a railing's piece's posts' gaps.
 struct ThingTile {
     std::uint32_t things = 0;
     std::vector<geometry::ThingKind> kinds;
     std::vector<std::int64_t> ids;
+    std::vector<std::uint8_t> posts;
 };
 
-/// The points heap's words of a tile's things (one uint4 each: its foot tile-local, its kind).
+/// The points heap's words of a tile's things (things.slangh's THING_VECTORS each: its foot tile-local, its kind; a
+/// railing's piece's second end).
 [[nodiscard]] std::vector<hlsl::uint4> thing_words(const geometry::TileThings& things, double origin_x, double origin_y,
                                                    double origin_z);
 
 /// What the render thread decides for a drawn thing of `kind` from its item's depth `depth` and the camera's focal
-/// length, in double as the port compares: whether it is drawn at all (furniture_px), its job's flags (things.slangh's
-/// THING_JOB_) and values: a lamp's mast width (as printed), hw, hh and glint width (as printed); a bollard's post
-/// width (as printed), its head's offset and radius (as printed).
+/// length, in double as the port compares: whether it is drawn at all (furniture_px; a railing with weather and
+/// within 220 m), its job's flags (things.slangh's THING_JOB_; a railing's piece's `posts`) and values: a lamp's mast
+/// width (as printed), hw, hh and glint width (as printed); a bollard's post width (as printed), its head's offset and
+/// radius (as printed); a railing's width (as printed).
 struct ThingChoice {
     bool drawn = false;
     std::uint32_t flags = 0;
@@ -58,11 +62,13 @@ struct ThingChoice {
     float c = 0;
     float d = 0;
 };
-[[nodiscard]] ThingChoice thing_choice(geometry::ThingKind kind, double depth, double focal, bool night);
+[[nodiscard]] ThingChoice thing_choice(geometry::ThingKind kind, std::uint32_t posts, double depth, double focal,
+                                       bool night, bool weather);
 
 /// The moment's colours (things.slangh's table, 0xBBGGRR; then the glint's and the head's opacities and the racks'
-/// width, their floats' bits): the port's by day or at night, a box's at night 0.3 of its colour, its leg 0.8 of it.
-[[nodiscard]] std::array<std::uint32_t, 16> thing_tones(bool night, const tiles::ThingsStyle& style);
+/// width, their floats' bits; then the railings'): the port's by day or at night, a box's at night 0.3 of its colour,
+/// its leg 0.8 of it.
+[[nodiscard]] std::array<std::uint32_t, 17> thing_tones(bool night, const tiles::ThingsStyle& style);
 
 /// The first of a tile's items that are things.
 [[nodiscard]] std::uint32_t first_thing(const scene::ResidentTile& tile, std::uint16_t kind) noexcept;

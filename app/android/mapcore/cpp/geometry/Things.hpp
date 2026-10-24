@@ -1,9 +1,11 @@
 // Stage T of the street furniture (ENGINE.md step 4, "Trees and things"): a render tile's street lamps, benches,
 // bicycle racks, waste baskets and bollards, the S['nodes'] amsterdam.py's gather takes besides the trees
 // (highway=street_lamp, else an amenity of FURNITURE, else a barrier of BOLLARDS), each an item as the gather makes it:
-// its place in S['nodes'], sorted by the depth of (x, 1, z), from 2 m, the radius cut at it. What each draws
-// (draw_lamp, draw_bench, draw_box, draw_bollard, draw_rack) the frame decides at its camera
-// (shaders/tree/things.slangh).
+// its place in S['nodes'], sorted by the depth of (x, 1, z), from 2 m, the radius cut at it; and the bridges' railings
+// (amsterdam.py's railing, with weather): each side of a bridge road's ribbon(pts, w / 2 + 0.15) cut into pieces of
+// 2 m along each of its segments, each piece an item at the depth of its middle 0.5 m over the railing's foot, from
+// 0.8 m, no radius cut (drawn with its road). What each draws (draw_lamp, draw_bench, draw_box, draw_bollard,
+// draw_rack, railing) the frame decides at its camera (shaders/tree/things.slangh).
 #pragma once
 
 #include "scene/ItemTable.hpp"
@@ -19,21 +21,32 @@
 namespace atlas::geometry {
 
 /// What a thing is: the gather's kinds.
-enum class ThingKind : std::uint8_t { lamp = 0, bench = 1, basket = 2, bollard = 3, rack = 4 };
+enum class ThingKind : std::uint8_t { lamp = 0, bench = 1, basket = 2, bollard = 3, rack = 4, railing = 5 };
 
 /// The painter slots a thing of each kind takes (the most it draws): a lamp's wet streak, mast, lantern, cap, glint
 /// and night halo; a bench's two boxes, each its leg and its top; a basket's leg and top; a bollard's post and head;
-/// a rack's arcs.
-inline constexpr std::array<std::uint32_t, 5> thing_slots{6, 4, 2, 2, 1};
+/// a rack's arcs; a railing's piece.
+inline constexpr std::array<std::uint32_t, 6> thing_slots{6, 4, 2, 2, 1, 1};
 
-/// One thing.
+/// The railings' items' list in the renders' gather order (scene::order_of). The renders gather them in their road
+/// loop, before the buildings; here they come after every other list, which only two items exactly as deep would
+/// show.
+inline constexpr std::uint32_t railings_list = 5;
+
+/// A bridge's railing's foot over the street (amsterdam.py: the road's 0.05 + 0.4 on a bridge, and 0.02).
+inline constexpr double railing_foot = 0.47;
+
+/// One thing: a piece of street furniture, or a railing's piece.
 struct Thing {
-    std::int64_t id = 0;    ///< its OSM node
-    std::uint32_t node = 0; ///< its place in S['nodes']
-    double x = 0;           ///< where it stands (frame metres)
+    std::int64_t id = 0;    ///< its OSM node (a railing's: its road's way)
+    std::uint32_t node = 0; ///< its place in S['nodes'] (a railing's: its road's in S['roads'])
+    double x = 0;           ///< where it stands (frame metres; a railing's piece: its first end)
     double z = 0;
-    double gy = 0; ///< the ground under it (terrain towns; 0 elsewhere)
+    double gy = 0; ///< the ground under it (terrain towns; 0 elsewhere; a railing's piece: its foot, railing_foot)
     ThingKind kind = ThingKind::lamp;
+    double bx = 0; ///< a railing's piece: its second end
+    double bz = 0;
+    std::uint32_t posts = 0; ///< a railing's piece: its posts' gaps, max(1, int((k2 - k) / 0.32))
 };
 
 /// A tile's things, in the tile's order, and their items.

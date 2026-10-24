@@ -2,7 +2,8 @@
 // draw_bollard and draw_rack; CP/geometry/Things.hpp), shared by the GPU (shaders/tree/draw.slang's things_cs) and the
 // twin (CP/twin/tree/TreeShader.hpp compiles it as C++ after tree.slangh, whose records it writes). Not a module.
 //
-// A thing in the points heap is one uint4: its foot tile-local (its ground's height in y) and its kind. Per frame the
+// A thing in the points heap is two uint4: its foot tile-local (its ground's height in y) and its kind (a railing's
+// piece: its first end, its foot's height, its kind and its posts' gaps), then a railing's second end. Per frame the
 // render thread decides in double what the item's depth decides (passes::thing_choice: s = focal / d, the widths, the
 // lamp's glint by day where s > 1.2, the bollard's head by day where s > 1) and the moment's colours, and writes a job a
 // drawn thing; things_cs writes its records as the port draws it, every printed value snapped at rest:
@@ -14,7 +15,10 @@
 //     project), and its top as face() draws it (Camera.poly's cut at the near plane, kept within 300 px of the frame,
 //     from 0.12 px² of area);
 //   - a bollard: its post to 0.85 m (round caps), by day its head (translucent);
-//   - a rack: three arcs a metre apart, nine points each, where all nine project (butt caps, round joins).
+//   - a rack: three arcs a metre apart, nine points each, where all nine project (butt caps, round joins);
+//   - a railing's piece (with weather, from 0.8 m to 220 m): its two rails at 1 m and 0.12 m over its foot from end to
+//     end, and its posts between them every (k2 - k) / posts of its length, each where both of its ends project
+//     (round caps).
 // A thing's parts lie on one plane facing the eye at its middle's depth, its k-th slot a lead of k · 2^-16 nearer (the
 // trees' tree_depth), so they keep the port's order; under the painter switch each part draws at its slot.
 #pragma once
@@ -25,12 +29,17 @@ static const uint THING_BENCH = 1u;
 static const uint THING_BASKET = 2u;
 static const uint THING_BOLLARD = 3u;
 static const uint THING_RACK = 4u;
+static const uint THING_RAILING = 5u;
+
+/// A thing's uint4 in the points heap.
+static const uint THING_VECTORS = 2u;
 
 /// A job's flags: its kind in bits 0 to 3.
 static const uint THING_JOB_KIND = 15u;
 static const uint THING_JOB_NIGHT = 16u;
 static const uint THING_JOB_GLINT = 32u; // a lamp's glint (by day, s > 1.2)
 static const uint THING_JOB_HEAD = 64u;  // a bollard's head (by day, s > 1)
+static const uint THING_JOB_POSTS_SHIFT = 8u; // a railing's piece's posts' gaps, bits 8 to 15
 static const uint THING_JOB_VECTORS = 5u;
 
 /// The colours' table (passes::thing_tones, per moment: each colour by day or at night as the port picks it, 0xBBGGRR),
@@ -48,11 +57,12 @@ static const uint THING_TONE_RACK = 12u;
 static const uint THING_TONE_GLINT_OPACITY = 13u;
 static const uint THING_TONE_HEAD_OPACITY = 14u;
 static const uint THING_TONE_RACK_WIDTH = 15u;
-static const uint THING_TONES = 16u;
+static const uint THING_TONE_RAILING = 16u;
+static const uint THING_TONES = 17u;
 
 /// The records a job reserves: a lamp's mast, lantern and cap; a bench's two boxes (each a leg and a top of up to two
-/// quads); a basket's box; a bollard's post; a rack's three arcs of eight segments. And its translucent ones: a lamp's
-/// glint, a bollard's head.
+/// quads); a basket's box; a bollard's post; a rack's three arcs of eight segments; a railing's piece's two rails and
+/// its posts. And its translucent ones: a lamp's glint, a bollard's head.
 inline uint thing_record_count(uint flags) {
     uint kind = flags & THING_JOB_KIND;
     if (kind == THING_LAMP) {
@@ -67,6 +77,9 @@ inline uint thing_record_count(uint flags) {
     if (kind == THING_BOLLARD) {
         return 1u;
     }
+    if (kind == THING_RAILING) {
+        return 3u + ((flags >> THING_JOB_POSTS_SHIFT) & 0xFFu);
+    }
     return 24u;
 }
 
@@ -74,9 +87,15 @@ inline uint thing_side_count(uint flags) {
     return (flags & (THING_JOB_GLINT | THING_JOB_HEAD)) != 0u ? 1u : 0u;
 }
 
-/// A thing as the points heap holds it: its foot, tile-local.
+/// A thing as the points heap holds it: its foot, tile-local (a railing's piece: its first end at its foot's height).
 inline float3 thing_foot(uint4 v) {
     float3 p = {asfloat(v.x), asfloat(v.y), asfloat(v.z)};
+    return p;
+}
+
+/// A railing's piece's second end at its foot's height, from its second uint4 and its foot.
+inline float3 thing_end(uint4 v, float3 foot) {
+    float3 p = {asfloat(v.x), foot.y, asfloat(v.y)};
     return p;
 }
 
@@ -88,7 +107,7 @@ struct ThingJob {
     uint slot;   // its item's first painter slot
     uint first;  // its first record
     float a;     // a lamp's mast's width, a bollard's post's (as printed)
-    float b;     // a lamp's hw, a bollard's head's offset (0.03 s)
+    float b;     // a lamp's hw, a bollard's head's offset (0.03 s); a railing's width (as printed) in a
     float c;     // a lamp's hh, a bollard's head's radius (as printed)
     float d;     // a lamp's glint's width (as printed)
     uint side;   // its translucent record

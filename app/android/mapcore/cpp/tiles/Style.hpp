@@ -97,7 +97,7 @@ struct TreesStyle {
 
 /// The street furniture (`things`): a street lamp's mast, lantern and cap by day and at night, its lantern's glint
 /// and its opacity; a bench's seat and back and a waste basket; a bollard by day and at night, its head and its
-/// opacity; a bicycle rack by day and at night, and its width (CSS px).
+/// opacity; a bicycle rack by day and at night, and its width (CSS px); a bridge's railing by day and at night.
 struct ThingsStyle {
     DayNight mast;
     DayNight lantern;
@@ -112,6 +112,7 @@ struct ThingsStyle {
     float bollard_head_opacity = 0.0F;
     DayNight rack;
     float rack_width = 0.0F;
+    DayNight railing;
 };
 
 struct Style {

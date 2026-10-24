@@ -30,6 +30,7 @@
 #include "tiles/Container.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Source.hpp"
+#include "tiles/layers/Lines.hpp"
 #include "tiles/layers/Points.hpp"
 #include "twin/Twin.hpp"
 #include "twin/tree/TreeTwin.hpp"
@@ -626,6 +627,48 @@ TEST_CASE("trees: close up, every clump of a tree drawn as its twin decides it")
     const std::array<PackFile, 1> packs{PackFile{.id = "amsterdam", .path = path.string()}};
     check_frames(camera(lat, lon, 30.0, 60.0, 45.0, 1080, 2400, 1080.0 / 412.0), "close", packs, sunny(), 20);
     check_frames(camera(lat, lon, 200.0, 50.0, 25.0, 1080, 2400, 1080.0 / 412.0), "closer", packs, sunny(), 20);
+}
+
+TEST_CASE("things: a bridge's railings close up, drawn as their twin decides them") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    if (dir.empty()) return;
+    const std::filesystem::path path = std::filesystem::path(dir) / "amsterdam.atlas";
+    if (!std::filesystem::exists(path)) return;
+    // the bundled pack's first bridge, looked at from 40 m: its railings' rails and posts, with weather and without
+    auto source = tiles::MappedSource::open(path.string());
+    ATLAS_REQUIRE(source.has_value());
+    auto pack = tiles::Pack::open(std::move(*source));
+    ATLAS_REQUIRE(pack.has_value() && pack->head() != nullptr);
+    const auto ladder = view::Ladder::of(*pack->head());
+    ATLAS_REQUIRE(ladder.has_value());
+    std::optional<std::pair<double, double>> bridge; // a point of it, frame metres
+    tiles::Zstd zstd;
+    tiles::TileDecoder decoder;
+    std::vector<std::byte> raw;
+    std::vector<std::byte> scratch;
+    Arena arena(4U << 20U, Growth::grows, "railings close");
+    for (const tiles::ChunkRef& chunk : pack->chunks().level(pack->head()->levels[0])) {
+        arena.reset();
+        auto tile = pack->decode(chunk, zstd, decoder, arena, raw, scratch);
+        ATLAS_REQUIRE(tile.has_value());
+        const tiles::Layer* roads = tile->layer(tiles::LayerId::road);
+        if (roads == nullptr) continue;
+        for (std::uint32_t i = 0; i < roads->count && !bridge; ++i) {
+            if (!roads->boolean(tiles::road::bridge, i).value_or(false)) continue;
+            const tiles::RingView r = roads->ring(tiles::road::line, i);
+            if (r.size() < 2) continue;
+            bridge = std::pair{pack->head()->frame.x(r.lon[0]), pack->head()->frame.z(r.lat[0])};
+        }
+        if (bridge) break;
+    }
+    ATLAS_REQUIRE(bridge.has_value(), "the bundled pack has no bridge");
+    const view::GroundFrame& f = ladder->frame();
+    const double lat = f.lat0 - (bridge->second / f.kz);
+    const double lon = f.lon0 + (bridge->first / f.kx);
+    const std::array<PackFile, 1> packs{PackFile{.id = "amsterdam", .path = path.string()}};
+    check_frames(camera(lat, lon, 120.0, 60.0, 40.0, 1080, 2400, 1080.0 / 412.0), "bridge", packs, sunny(), 10);
+    check_frames(camera(lat, lon, 300.0, 65.0, 30.0, 1080, 2400, 1080.0 / 412.0), "bridge without weather", packs,
+                 dry(), 1);
 }
 
 #endif

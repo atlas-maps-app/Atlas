@@ -62,22 +62,34 @@ constexpr double furniture_px = 1.6;
 std::vector<hlsl::uint4> thing_words(const geometry::TileThings& things, double origin_x, double origin_y,
                                      double origin_z) {
     std::vector<hlsl::uint4> out;
-    out.reserve(things.things.size());
+    out.reserve(things.things.size() * shaders::THING_VECTORS);
     for (const geometry::Thing& t : things.things) {
         out.push_back(hlsl::uint4{f32_bits(t.x - origin_x), f32_bits(t.gy - origin_y), f32_bits(t.z - origin_z),
-                                  static_cast<std::uint32_t>(t.kind)});
+                                  static_cast<std::uint32_t>(t.kind) | (t.posts << shaders::THING_JOB_POSTS_SHIFT)});
+        out.push_back(hlsl::uint4{f32_bits(t.bx - origin_x), f32_bits(t.bz - origin_z), 0U, 0U});
     }
     return out;
 }
 
-ThingChoice thing_choice(geometry::ThingKind kind, double depth, double focal, bool night) {
+ThingChoice thing_choice(geometry::ThingKind kind, std::uint32_t posts, double depth, double focal, bool night,
+                         bool weather) {
     ThingChoice c;
+    const auto printed = [](double v) { return static_cast<float>(pymath::round(v, 2)); };
+    if (kind == geometry::ThingKind::railing) {
+        // railing (with weather): `if c[2] < 0.8 or c[2] > 220: continue` (its item from 0.8 m), its stroke-width
+        // '%.2f' % max(0.4, 0.045 * s)
+        if (!weather || depth > 220) return c;
+        c.drawn = true;
+        c.flags = static_cast<std::uint32_t>(kind) | (posts << shaders::THING_JOB_POSTS_SHIFT) |
+                  (night ? shaders::THING_JOB_NIGHT : 0U);
+        c.a = printed(pymath::max(0.4, 0.045 * focal / depth));
+        return c;
+    }
     // if k != 'tree' and cam.focal / c[2] < cfg.get('furniture_px', 1.6): continue
     if (focal / depth < furniture_px) return c;
     c.drawn = true;
     c.flags = static_cast<std::uint32_t>(kind) | (night ? shaders::THING_JOB_NIGHT : 0U);
     const double s = focal / depth;
-    const auto printed = [](double v) { return static_cast<float>(pymath::round(v, 2)); };
     switch (kind) {
     case geometry::ThingKind::lamp:
         // draw_lamp: the mast '%.2f' % max(0.5, 0.13 * s); hw, hh = max(0.6, 0.2 * s), max(0.9, 0.5 * s); by day where
@@ -105,9 +117,9 @@ ThingChoice thing_choice(geometry::ThingKind kind, double depth, double focal, b
     return c;
 }
 
-std::array<std::uint32_t, 16> thing_tones(bool night, const tiles::ThingsStyle& style) {
-    static_assert(shaders::THING_TONES == 16);
-    std::array<std::uint32_t, 16> out{};
+std::array<std::uint32_t, 17> thing_tones(bool night, const tiles::ThingsStyle& style) {
+    static_assert(shaders::THING_TONES == 17);
+    std::array<std::uint32_t, 17> out{};
     const auto pick = [night](const tiles::DayNight& c) { return bgr(night ? c.night : c.day); };
     out[shaders::THING_TONE_MAST] = pick(style.mast);
     out[shaders::THING_TONE_LANTERN] = pick(style.lantern);
@@ -132,6 +144,7 @@ std::array<std::uint32_t, 16> thing_tones(bool night, const tiles::ThingsStyle& 
     out[shaders::THING_TONE_GLINT_OPACITY] = bits(style.glint_opacity);
     out[shaders::THING_TONE_HEAD_OPACITY] = bits(style.bollard_head_opacity);
     out[shaders::THING_TONE_RACK_WIDTH] = bits(style.rack_width);
+    out[shaders::THING_TONE_RAILING] = pick(style.railing);
     return out;
 }
 
@@ -251,12 +264,14 @@ gpu::Result<void> Things::build(scene::TileBuild& b) const {
     layout->things = static_cast<std::uint32_t>(g.things.size());
     layout->kinds.reserve(g.things.size());
     layout->ids.reserve(g.things.size());
+    layout->posts.reserve(g.things.size());
     for (const geometry::Thing& t : g.things) {
         layout->kinds.push_back(t.kind);
         layout->ids.push_back(t.id);
+        layout->posts.push_back(static_cast<std::uint8_t>(t.posts));
     }
     for (const scene::ItemSpec& item : g.items) b.add_item(item);
-    const std::size_t bytes = sizeof(ThingTile) + (g.things.size() * (1 + sizeof(std::int64_t)));
+    const std::size_t bytes = sizeof(ThingTile) + (g.things.size() * (2 + sizeof(std::int64_t)));
     b.keep(std::shared_ptr<const ThingTile>(std::move(layout)), bytes);
     return {};
 }
@@ -301,6 +316,7 @@ void Things::update(const frame::FrameState& state) {
     if (drawn_.empty()) return;
     const std::uint32_t me = index();
     const bool night = (state.block.theme.flags.x & shaders::THEME_NIGHT) != 0U;
+    const bool weather = (state.block.theme.flags.x & shaders::THEME_WEATHER) != 0U;
     const double focal = state.view->camera().focal();
     const std::span<const scene::CoverTile> tiles = state.cover->tiles();
     words_.clear();
@@ -310,7 +326,8 @@ void Things::update(const frame::FrameState& state) {
         const scene::CoverTile& t = tiles[d.cover];
         const scene::PassTile& mine = t.drawn->passes[me];
         const ThingTile& things = *mine.cpu_as<ThingTile>();
-        const ThingChoice choice = thing_choice(things.kinds[d.thing], d.depth, focal, night);
+        const ThingChoice choice =
+            thing_choice(things.kinds[d.thing], things.posts[d.thing], d.depth, focal, night, weather);
         if (!choice.drawn) continue;
         const std::uint32_t n = shaders::thing_record_count(choice.flags);
         if (records + n > max_records) continue;
@@ -323,7 +340,7 @@ void Things::update(const frame::FrameState& state) {
                                        bits(t.place.scale.y),
                                        bits(t.place.scale.z),
                                        bits(t.place.scale.w),
-                                       (mine.ranges[0].offset / 16) + d.thing,
+                                       (mine.ranges[0].offset / 16) + (d.thing * shaders::THING_VECTORS),
                                        choice.flags,
                                        shaders::rank_slot(d.rank),
                                        records,
@@ -346,7 +363,7 @@ void Things::update(const frame::FrameState& state) {
     }
     const auto jobs = static_cast<std::uint32_t>(words_.size() / (std::size_t{4} * shaders::THING_JOB_VECTORS));
     if (jobs == 0) return;
-    const std::array<std::uint32_t, 16> tones = thing_tones(night, style->things);
+    const std::array<std::uint32_t, 17> tones = thing_tones(night, style->things);
     // into this frame slot's buffers (its previous frame has finished: its buffers and set are free)
     const std::uint32_t slot = state.slot % 2;
     using B = vk::BufferUsageFlagBits;

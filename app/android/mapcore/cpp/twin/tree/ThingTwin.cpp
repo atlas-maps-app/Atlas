@@ -23,6 +23,7 @@ ThingTwin::ThingTwin(const frame::FrameState& state, const tiles::Style& style, 
     : out_(out), camera_(state.block.camera),
       tones_(passes::thing_tones((state.block.theme.flags.x & shaders::THEME_NIGHT) != 0U, style.things)),
       night_((state.block.theme.flags.x & shaders::THEME_NIGHT) != 0U),
+      weather_((state.block.theme.flags.x & shaders::THEME_WEATHER) != 0U),
       focal_(state.view ? state.view->camera().focal() : 0.0) {
     // the objects group: the port's `<g stroke-linejoin="round">`, with its `mat` filter where the moment has weather
     const bool wx = (state.block.theme.flags.x & shaders::THEME_WEATHER) != 0U;
@@ -40,11 +41,12 @@ void ThingTwin::put(std::uint32_t k, const shaders::TreeRecord& r) {
 
 void ThingTwin::thing(const scene::CoverTile& tile, const passes::ThingTile& things, std::span<const std::byte> heap,
                       std::uint32_t thing, std::uint32_t rank, double depth) {
-    const std::size_t at = std::size_t{thing} * sizeof(hlsl::uint4);
-    if (at + sizeof(hlsl::uint4) > heap.size()) return;
-    hlsl::uint4 word{};
-    std::memcpy(&word, heap.data() + at, sizeof word);
-    const passes::ThingChoice choice = passes::thing_choice(things.kinds[thing], depth, focal_, night_);
+    const std::size_t at = std::size_t{thing} * shaders::THING_VECTORS * sizeof(hlsl::uint4);
+    if (at + (shaders::THING_VECTORS * sizeof(hlsl::uint4)) > heap.size()) return;
+    std::array<hlsl::uint4, shaders::THING_VECTORS> words{};
+    std::memcpy(words.data(), heap.data() + at, sizeof words);
+    const passes::ThingChoice choice =
+        passes::thing_choice(things.kinds[thing], things.posts[thing], depth, focal_, night_, weather_);
     if (!choice.drawn) return;
     shaders::ThingJob j{};
     j.place = tile.place;
@@ -54,13 +56,23 @@ void ThingTwin::thing(const scene::CoverTile& tile, const passes::ThingTile& thi
     j.b = choice.b;
     j.c = choice.c;
     j.d = choice.d;
-    const std::int32_t item =
-        out_.item({.owner = Owner::node, .id = things.ids[thing], .kind = std::string_view("thing")});
+    const bool railing_piece = things.kinds[thing] == geometry::ThingKind::railing;
+    const std::int32_t item = out_.item({.owner = railing_piece ? Owner::way : Owner::node,
+                                         .id = things.ids[thing],
+                                         .kind = std::string_view(railing_piece ? "railing" : "thing")});
     thing_records_.assign(shaders::thing_record_count(j.flags), shaders::tree_nothing());
     side_record_ = shaders::tree_nothing();
     const shaders::FrameCamera& c = camera_;
-    const hlsl::float3 foot = shaders::thing_foot(word);
+    const hlsl::float3 foot = shaders::thing_foot(words[0]);
     const std::uint32_t kind = j.flags & shaders::THING_JOB_KIND;
+    if (kind == shaders::THING_RAILING) {
+        // its plane at its middle, 0.5 m over its foot (the gather's point)
+        const hlsl::float3 end = shaders::thing_end(words[1], foot);
+        const hlsl::float3 mid{(foot.x + end.x) * 0.5F, foot.y + 0.5F, (foot.z + end.z) * 0.5F};
+        railing(j, foot, end, std::max(shaders::tree_camera(c, j.place, mid).z, c.frame.w), item);
+        if (records_ != nullptr) records_->insert(records_->end(), thing_records_.begin(), thing_records_.end());
+        return;
+    }
     const float kz = std::max(
         shaders::tree_camera(c, j.place, shaders::thing_point(foot, 0.0F, shaders::thing_middle(kind), 0.0F)).z,
         c.frame.w);
@@ -223,6 +235,42 @@ void ThingTwin::rack(const shaders::ThingJob& j, hlsl::float3 foot, float kz, st
     if (subpaths.empty()) return;
     out_.at(j.slot, objects_, item);
     out_.path({.fill = {}, .stroke = paint(colour), .stroke_width = width, .cap = Cap::butt, .join = Join::round},
+              subpaths);
+}
+
+void ThingTwin::railing(const shaders::ThingJob& j, hlsl::float3 a, hlsl::float3 b, float kz, std::int32_t item) {
+    const shaders::FrameCamera& c = camera_;
+    const float half = 0.5F * j.a;
+    const std::uint32_t colour = tones_[shaders::THING_TONE_RAILING];
+    const float depth = shaders::tree_depth(c, kz, j.slot, 0U);
+    const std::uint32_t m = (j.flags >> shaders::THING_JOB_POSTS_SHIFT) & 0xFFU;
+    std::vector<std::array<Point, 2>> segs;
+    const auto segment = [&](std::uint32_t at, hlsl::float3 p, hlsl::float3 q) {
+        const hlsl::float3 k0 = shaders::tree_camera(c, j.place, p);
+        const hlsl::float3 k1 = shaders::tree_camera(c, j.place, q);
+        if (!shaders::tree_ahead(c, k0) || !shaders::tree_ahead(c, k1)) return;
+        const hlsl::float2 p0 = shaders::tree_printed(c, shaders::css_of(c, k0));
+        const hlsl::float2 p1 = shaders::tree_printed(c, shaders::css_of(c, k1));
+        put(at, shaders::tree_segment(p0, p1, half, shaders::TREE_ROUND, colour, 1.0F, depth));
+        segs.push_back({point(p0), point(p1)});
+    };
+    // for yy in (y0 + 1.0, y0 + 0.12): the rail from pa to pb
+    for (std::uint32_t r = 0; r < 2; ++r) {
+        const float y = r == 0 ? 1.0F : 0.12F;
+        segment(r, shaders::thing_point(a, 0.0F, y, 0.0F), shaders::thing_point(b, 0.0F, y, 0.0F));
+    }
+    // the posts: for j in range(m + 1), f = j / m, from y0 + 0.12 to y0 + 1.0
+    for (std::uint32_t i = 0; i <= m; ++i) {
+        const float f = static_cast<float>(i) / static_cast<float>(m);
+        const hlsl::float3 p{a.x + (b.x - a.x) * f, a.y, a.z + (b.z - a.z) * f};
+        segment(2 + i, shaders::thing_point(p, 0.0F, 0.12F, 0.0F), shaders::thing_point(p, 0.0F, 1.0F, 0.0F));
+    }
+    if (segs.empty()) return;
+    std::vector<Subpath> subpaths;
+    subpaths.reserve(segs.size());
+    for (const std::array<Point, 2>& s : segs) subpaths.push_back({.points = s, .closed = false});
+    out_.at(j.slot, objects_, item);
+    out_.path({.fill = {}, .stroke = paint(colour), .stroke_width = j.a, .cap = Cap::round, .join = Join::round},
               subpaths);
 }
 

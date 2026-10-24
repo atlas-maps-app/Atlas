@@ -8,6 +8,7 @@
 namespace atlas::shaders {
 
 #include "shaders/tree/tree.slangh"
+// after tree.slangh, whose records and helpers it uses
 #include "shaders/tree/things.slangh"
 
 static_assert(sizeof(TreeRecord) == 48, "tree.slangh's records: three four-lane vectors");

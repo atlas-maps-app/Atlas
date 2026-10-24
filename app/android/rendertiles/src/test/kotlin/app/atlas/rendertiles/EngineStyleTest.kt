@@ -194,6 +194,10 @@ class EngineStyleTest {
                 """stroke-width=\"${css("things.rack_width")}\" fill=\"none\"/>", segs.joinToString(""), """ +
                     """if (th["night"] != true) "${value("things.rack_day")}" else "${value("things.rack_night")}")""",
             ),
+            Triple(
+                listOf("things.railing_day", "things.railing_night"), amsterdam,
+                """val col = if (!night) "${value("things.railing_day")}" else "${value("things.railing_night")}"""",
+            ),
             Triple(listOf("trees.crown"), amsterdam, """hx(if (truthy(th["wx"])) "#4F6E37" else "${value("trees.crown")}")"""),
             Triple(
                 listOf("trees.trunk_day", "trees.trunk_night"), amsterdam,

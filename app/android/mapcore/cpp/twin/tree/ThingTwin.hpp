@@ -8,7 +8,9 @@
 //   - a box: its leg, an open subpath stroked 1 px (slot k), its top as face() prints it, a closed path (k + 1): a
 //     bench's seat (0, 1) and back (2, 3), a basket (0, 1);
 //   - a bollard: its post (0), by day its head, a circle at its opacity (1);
-//   - a rack: one path of its arcs' open subpaths (0), butt-capped, round-joined.
+//   - a rack: one path of its arcs' open subpaths (0), butt-capped, round-joined;
+//   - a railing's piece: one path of its rails' and posts' open subpaths (0), round-capped, in its road's item (a
+//     way).
 // Each of its records (the GPU's, in their order) can be kept for the tests.
 #pragma once
 
@@ -57,14 +59,16 @@ private:
              std::uint32_t leg, std::uint32_t k, float kz, std::uint32_t at, std::int32_t item);
     void bollard(const shaders::ThingJob& j, hlsl::float3 foot, float kz, std::int32_t item);
     void rack(const shaders::ThingJob& j, hlsl::float3 foot, float kz, std::int32_t item);
+    void railing(const shaders::ThingJob& j, hlsl::float3 a, hlsl::float3 b, float kz, std::int32_t item);
     /// Record `k` of the thing's.
     void put(std::uint32_t k, const shaders::TreeRecord& r);
     [[nodiscard]] static Paint paint(std::uint32_t bgr) noexcept;
 
     Stream& out_;
     shaders::FrameCamera camera_;
-    std::array<std::uint32_t, 16> tones_{};
+    std::array<std::uint32_t, 17> tones_{};
     bool night_ = false;
+    bool weather_ = false;
     double focal_ = 0;
     std::int32_t objects_ = none;
     std::vector<shaders::TreeRecord>* records_ = nullptr;

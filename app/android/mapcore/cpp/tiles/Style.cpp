@@ -243,6 +243,7 @@ Result<Style> Style::of(const StyleTables& tables) {
     th.bollard_head_opacity = static_cast<float>(r.number(things, "things", "bollard_head_opacity"));
     th.rack = r.day_night(things, "things", "rack_day", "rack_night");
     th.rack_width = static_cast<float>(r.number(things, "things", "rack_width"));
+    th.railing = r.day_night(things, "things", "railing_day", "railing_night");
     const auto names = r.table("canal_names");
     s.canal_names.fill = r.colour(names, "canal_names", "fill");
     s.canal_names.opacity = r.number(names, "canal_names", "opacity");
