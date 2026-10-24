@@ -1,0 +1,90 @@
+// A sett road's courses as one layer (ENGINE.md step 4, "Trees and things"; amsterdam.py's road loop draws them as one
+// path at opacity .6: inside it the lines blend over each other, the path over the ground at .6), shared by the GPU
+// (shaders/ground/ground.slang's stroke_vs and stroke_fs) and the tests (CP/twin/ground/LineShader.hpp). Not a module:
+// it needs, before it, lines.slangh, a SettRun and `SettLine sett_line(SettRun r, uint i)`, line i of the run.
+//
+// The GPU blends a run's lines in their order (the primitives' order), each with its paint (alpha op) scaled by its
+// share s = a · before / (1 - op + op · before), a its own coverage and before the product of (1 - a_i) over the lines
+// before it at the pixel: after the run's lines the pixel is dst + op · (1 - prod(1 - a)) · (c - dst), the path's layer
+// over it at op, exactly; the roads' layers, of one colour, commute. A line finds `before` over the earlier lines that
+// can cover a pixel it covers: those within a tolerance of it in the world, two reaches of its coverage (its half width
+// and a pixel each side) times the most metres a device pixel spans about it, the ground's stretch at its ends. Stage
+// T keeps each line's reach at five tolerances (SETTS_LEVELS: the earlier lines within 0.5, 1, 2, 4 and 8 m of it, six
+// bits each), the vertex stage picks one, and beyond 8 m (where a pixel spans over 2 m and the lines' layer is all but
+// whole) the last.
+#pragma once
+
+/// The most lines a line looks back at (its reach's six bits), and the tolerances of its reaches (metres).
+static const uint SETTS_BACK = 63u;
+static const uint SETTS_LEVELS = 5u;
+static const float SETTS_TOLERANCES[5] = {0.5f, 1.0f, 2.0f, 4.0f, 8.0f};
+
+/// The world tolerance (metres) a line's look back needs: two reaches of its coverage, hw + 1 device px each, times
+/// the most metres a device pixel spans about it, given where a metre along the ground from its end goes on the
+/// screen in two directions (`su`, `sn`, device px), with a tenth to spare.
+inline float sett_tolerance(float2 su, float2 sn, float hw) {
+    // the screen's map of the ground there is [su sn]; a device pixel spans at most 1 / its least singular value
+    float s = dot(su, su) + dot(sn, sn);
+    float d = su.x * sn.y - su.y * sn.x;
+    float q = s * s - 4.0f * d * d;
+    float least = (s - sqrt(max(q, 0.0f))) * 0.5f;
+    if (!(least > 1e-12f)) return 1e9f;
+    return 2.2f * (hw + 1.0f) / sqrt(least);
+}
+
+/// A line's reach (stage T's six bits a level) at tolerance `tolerance`: the first level's that holds it, else the
+/// last's.
+inline uint sett_reach(uint reaches, float tolerance) {
+    for (uint l = 0u; l + 1u < SETTS_LEVELS; ++l) {
+        if (tolerance <= SETTS_TOLERANCES[l]) return (reaches >> (6u * l)) & 63u;
+    }
+    return (reaches >> (6u * (SETTS_LEVELS - 1u))) & 63u;
+}
+
+/// Line e's coverage of the pixel in the line stage's mode, a hairline's or the exact area (butt caps, no joins):
+/// `pixel` the pixel's corner on the view's device grid, `centre` its centre.
+inline float sett_cover(SettLine e, float hw, uint mode, float2 pixel, float2 centre) {
+    if (!e.drawn) return 0.0f;
+    Seg g = seg_make(e.a, e.b, e.a, e.b, 0u, hw, 0u);
+    if (mode == LINE_HAIR) return hair_coverage(g, pixel, 2.0f * hw);
+    return g.len < 1e-9f ? 0.0f : seg_coverage(g, centre);
+}
+
+/// The product of (1 - a_i) over the run's `reach` lines before line j at the pixel.
+inline float sett_before(SettRun r, uint j, uint reach, float hw, uint mode, float2 pixel, float2 centre) {
+    float before = 1.0f;
+    for (uint k = 1u; k <= reach && k <= j; ++k) {
+        float a = sett_cover(sett_line(r, j - k), hw, mode, pixel, centre);
+        if (a > 0.0f) before = before * (1.0f - min(a, 1.0f));
+    }
+    return before;
+}
+
+/// The samples the run's `reach` lines before line j cover (a wide line's samples mode: bit i the i-th of the n at
+/// s0 ... s3, device px).
+inline uint sett_before_mask(SettRun r, uint j, uint reach, float hw, float2 s0, float2 s1, float2 s2, float2 s3,
+                             uint n) {
+    uint covered = 0u;
+    for (uint k = 1u; k <= reach && k <= j; ++k) {
+        SettLine e = sett_line(r, j - k);
+        uint mask = 0u;
+        if (e.drawn) {
+            Seg g = seg_make(e.a, e.b, e.a, e.b, 0u, hw, 0u);
+            if (g.len >= 1e-9f) {
+                if (n > 0u && seg_inside(g, s0)) mask = mask | 1u;
+                if (n > 1u && seg_inside(g, s1)) mask = mask | 2u;
+                if (n > 2u && seg_inside(g, s2)) mask = mask | 4u;
+                if (n > 3u && seg_inside(g, s3)) mask = mask | 8u;
+            }
+        }
+        covered = covered | mask;
+    }
+    return covered;
+}
+
+/// A line's share of its paint (alpha op, the path's opacity): its own coverage `own` taken into the layer over
+/// `before`.
+inline float sett_share(float own, float before, float op) {
+    float d = 1.0f - op + op * before;
+    return d > 0.0f ? own * before / d : 0.0f;
+}

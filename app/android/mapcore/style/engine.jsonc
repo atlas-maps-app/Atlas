@@ -100,6 +100,13 @@
         "lines_width": 1.2
     },
 
+    // amsterdam.py's courses across a sett road (by day, not at eye level): their colour, width and the path's opacity
+    "setts": {
+        "marks": "#7E7264",
+        "marks_width": 0.4,
+        "marks_opacity": 0.6
+    },
+
     "buildings": {
         // draw_building's `edge`: the roofs' thin edges, by day and at night
         "roof_edge_day": "#6F695F",

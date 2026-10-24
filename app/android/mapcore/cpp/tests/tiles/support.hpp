@@ -680,6 +680,8 @@ using Field = std::pair<std::string_view, ValueBytes>;
                            {"quay", v::list({v::real(3.0), v::text("#B4AEA4")})}})},
         {"trams", v::map({{"day", v::text("#6E6A66")}, {"night", v::text("#2A2E3A")}, {"width", v::real(0.9)}})},
         {"bridges", v::map({{"lines", v::text("#5A4E44")}, {"lines_width", v::real(1.2)}})},
+        {"setts",
+         v::map({{"marks", v::text("#7E7264")}, {"marks_width", v::real(0.4)}, {"marks_opacity", v::real(0.6)}})},
         {"buildings", v::map({{"roof_edge_day", v::text("#6F695F")},
                               {"roof_edge_night", v::text("#2E3446")},
                               {"roof_edge_slope", v::real(0.25)},

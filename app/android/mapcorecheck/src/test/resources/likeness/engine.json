@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "9",
+  "version": "10",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -180,6 +180,21 @@
         "lavapipe-macos": {
           "home sunny": "ae47b3d796b7c718d55e400ef4f5adba92a8b97e93679e95ba897741d7591a08",
           "home grey": "655f2162ae42541575b44c4feca68b7cbb1bd4a98182619bf7fd902a21d72534",
+          "home wet": "e8f7e26865af23913586667953eb86b6b5dcde694b6c6363b4109c2eb2740469",
+          "home night": "4dd778d1508c4f8672b89e9aeb92e7753436d2612a95031f5c1dfc36bfbfa3ef",
+          "board sunny": "5e9259039fc5f56714609bce4ca256de90d31bfbf53c3b07fbe99549b1c52014",
+          "board grey": "5108baa5baacec18c4ea5345ed8e147d3418458fe3cb2a642fe1bd0cb9922af6",
+          "board wet": "a1e2862793b705d6baaaea7b69919c8f12a033ff8cf4ba569b1143aa5f37c93b",
+          "board night": "34d6d136b48120225dc11fe8fcc162f6172d972109f4c4b69934da9d3f519972"
+        }
+      }
+    },
+    "10": {
+      "note": "Step 4: the sett roads' courses (by day, not at eye level, within 500 m of a road's first point: a line across the road every 0.6 m, each road's lines one layer at .6)",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "7fc1fcb35c765879a4de7468daa9cc83d344d18ba187efeefaefc8bd84d903ba",
+          "home grey": "1d4c39f44f91def7ce9cad3aeabe9aceab650531ed7ea6b15448399cc1141069",
           "home wet": "e8f7e26865af23913586667953eb86b6b5dcde694b6c6363b4109c2eb2740469",
           "home night": "4dd778d1508c4f8672b89e9aeb92e7753436d2612a95031f5c1dfc36bfbfa3ef",
           "board sunny": "5e9259039fc5f56714609bce4ca256de90d31bfbf53c3b07fbe99549b1c52014",

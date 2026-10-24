@@ -450,7 +450,7 @@ gpu::Result<void> Ground::build(scene::TileBuild& b) const {
     std::uint32_t words = 0;
     for (std::size_t i = 0; i < ground->polylines.size(); ++i) {
         ground->polyline_words[i] = words;
-        words += 2 * ground->polylines[i].count;
+        words += geo::polyline_words_of(ground->polylines[i]);
     }
     ground->layout = {.vertices = gpu.vertices,
                       .above = gpu.above,
@@ -712,6 +712,20 @@ bool Ground::decide(const frame::FrameState& state) {
         {{.x = -gr, .z = -gr}, {.x = gr, .z = -gr}, {.x = gr, .z = gr}, {.x = -gr, .z = gr}}};
     const ProjectedPoly p = project_poly(cam, rect, 0.0, 900, cam_, sp_);
     f.plate = p.points >= 3 && p.inside && (std::abs(p.sum) / 2) > 0.2;
+    if (only_setts_) {
+        // the tests' look at the sett roads' courses: nothing else
+        std::ranges::fill(f.drawn, std::uint8_t{0});
+        std::ranges::fill(f.shadow_drawn, std::uint8_t{0});
+        f.plate = false;
+        f.water = false;
+        f.canopy = false;
+        f.shadows = false;
+        for (const DrawnTile& t : f.tiles) {
+            for (std::uint32_t i = 0; i < t.ground->strokes.size(); ++i) {
+                if (t.ground->strokes[i].kind != geo::StrokeKind::setts) f.stroke_drawn[t.strokes + i] = 0;
+            }
+        }
+    }
     return true;
 }
 
@@ -1118,7 +1132,7 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
         record_water_opaque(r);
         record_fills(r, false);
         record_plate(r);
-        record_sky(r);
+        if (!only_setts_) record_sky(r);
         break;
     case phase_canopy: record_canopy(r); break;
     case phase_water_tint: record_water_tint(r); break;

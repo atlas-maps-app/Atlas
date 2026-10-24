@@ -151,6 +151,10 @@ struct Style {
     double trams_width = 0.0;
     StyleRgb bridge_lines = 0;
     double bridge_lines_width = 0.0;
+    /// `setts`: the courses across a sett road, their width and the path's opacity.
+    StyleRgb sett_marks = 0;
+    double sett_marks_width = 0.0;
+    double sett_marks_opacity = 0.0;
     EdgesStyle edges;
     WindowsStyle windows;
     TreesStyle trees;

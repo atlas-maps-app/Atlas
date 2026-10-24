@@ -130,6 +130,26 @@ private:
     return (std::uint64_t{relation ? 2U : 1U} << 62U) | (ids << 18U) | parts;
 }
 
+/// The distance between segments ab and cd in the plane, 0 where they cross (a sett line's reach back).
+[[nodiscard]] double segment_distance(P2 a, P2 b, P2 c, P2 d) noexcept {
+    auto side = [](P2 o, P2 p, P2 q) { return ((p.x - o.x) * (q.z - o.z)) - ((p.z - o.z) * (q.x - o.x)); };
+    const double d1 = side(c, d, a);
+    const double d2 = side(c, d, b);
+    const double d3 = side(a, b, c);
+    const double d4 = side(a, b, d);
+    if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return 0.0;
+    auto to = [](P2 p, P2 s, P2 e) {
+        const double ex = e.x - s.x;
+        const double ez = e.z - s.z;
+        const double l2 = (ex * ex) + (ez * ez);
+        const double t = l2 > 0 ? pm::max(0.0, pm::min(1.0, (((p.x - s.x) * ex) + ((p.z - s.z) * ez)) / l2)) : 0.0;
+        const double dx = p.x - (s.x + (t * ex));
+        const double dz = p.z - (s.z + (t * ez));
+        return std::sqrt((dx * dx) + (dz * dz));
+    };
+    return pm::min(pm::min(to(a, c, d), to(b, c, d)), pm::min(to(c, a, b), to(d, a, b)));
+}
+
 /// A double's bits in an order that compares as the double does (-0 as +0, as Python's sort takes them).
 [[nodiscard]] std::uint64_t orderable(double d) noexcept {
     if (d == 0.0) d = 0.0;
@@ -301,12 +321,14 @@ private:
             const Paint paint{.day = c, .night = c.a == 0 ? c : darken(c, 0.2)};
             fill(FillKind::road, *g, static_cast<std::uint32_t>(tl::ground_key::order(key)), cell, first,
                  static_cast<std::uint32_t>(ribbon_.size()), y, 900, 0.2, paint);
-            // a bridge's lines (by day without weather): the sides of ribbon(pts, w / 2 + 0.3) at 1.1, each a path
-            if (bridge) {
-                // the road loop's marks: the roads class by class, data order within a class
+            // the road loop's marks, the roads class by class, data order within a class: a bridge's lines (by day
+            // without weather: the sides of ribbon(pts, w / 2 + 0.3) at 1.1, each a path), then a sett road's courses
+            const bool sett = sf && *sf == "sett";
+            if (bridge || sett) {
                 key_.sort = *g - group::road;
                 const auto marks = static_cast<std::uint64_t>(l->integer(tl::road::marks_key, i));
-                if (marks != 0) bridge_lines_of(cell, marks, w, centre_);
+                if (marks != 0 && bridge) bridge_lines_of(cell, marks, w, centre_);
+                if (marks != 0 && sett) setts_of(cell, marks, w, y, centre_);
             }
         }
     }
@@ -334,6 +356,64 @@ private:
                                     .paint = {.day = rgba(style_.bridge_lines), .night = rgba(style_.bridge_lines)},
                                     .key = key_});
         }
+    }
+
+    /// A sett road's courses (amsterdam.py's road loop): along each segment of its centreline, k = 0, 0.6, ... while
+    /// k < Lg (k summed as the port sums it), a line across its width at y + 0.01; one path, its lines one polyline of
+    /// pairs, and each line's reach back.
+    void setts_of(std::uint8_t cell, std::uint64_t marks, double w, double y, std::span<const P2> centre) {
+        side_.clear();
+        for (std::size_t i = 0; i + 1 < centre.size(); ++i) {
+            const P2 a = centre[i];
+            const P2 b = centre[i + 1];
+            const double lg = pm::dist(std::array<double, 2>{a.x, a.z}, std::array<double, 2>{b.x, b.z});
+            // ux, uz = (b[0] - a[0]) / (Lg or 1), ...
+            const double l1 = lg == 0.0 ? 1.0 : lg;
+            const double ux = (b.x - a.x) / l1;
+            const double uz = (b.z - a.z) / l1;
+            double k = 0.0;
+            while (k < lg) {
+                const double cx = a.x + (ux * k);
+                const double cz = a.z + (uz * k);
+                // (cx_ + uz * r['w'] / 2, y + 0.01, cz_ - ux * r['w'] / 2), then the other side
+                side_.push_back({.x = cx + (uz * w / 2), .z = cz - (ux * w / 2)});
+                side_.push_back({.x = cx - (uz * w / 2), .z = cz + (ux * w / 2)});
+                k += setts_step;
+            }
+        }
+        if (side_.empty()) return;
+        const auto lines = static_cast<std::uint32_t>(side_.size() / 2);
+        const auto reach = static_cast<std::uint32_t>(out_.reaches.size());
+        // each line's reaches: the farthest earlier line within each tolerance of it, six bits a level
+        for (std::size_t j = 0; j < lines; ++j) {
+            std::array<std::uint32_t, setts_tolerances.size()> back{};
+            for (std::uint32_t t = 1; t <= std::min<std::size_t>(j, setts_back); ++t) {
+                const std::size_t k = j - t;
+                const double d = segment_distance(side_[2 * j], side_[(2 * j) + 1], side_[2 * k], side_[(2 * k) + 1]);
+                for (std::size_t l = 0; l < back.size(); ++l) {
+                    if (d <= setts_tolerances.at(l)) back.at(l) = t;
+                }
+            }
+            std::uint32_t word = 0;
+            for (std::size_t l = 0; l < back.size(); ++l) word |= back.at(l) << (6 * l);
+            out_.reaches.push_back(word);
+        }
+        const std::uint32_t first = put(side_);
+        out_.polylines.push_back({.first = first, .count = 2 * lines, .y = y + 0.01, .pairs = true, .reach = reach});
+        const auto p = static_cast<std::uint32_t>(out_.polylines.size() - 1);
+        Rgba paint = rgba(style_.sett_marks);
+        paint.a = static_cast<std::uint8_t>(std::lround(style_.sett_marks_opacity * 255.0));
+        out_.strokes.push_back({.kind = StrokeKind::setts,
+                                .group = group::marks + 0,
+                                .sub = 1,
+                                .cell = cell,
+                                .order = static_cast<std::uint32_t>(tl::ground_key::order(marks)),
+                                .first = p,
+                                .count = 1,
+                                .width = {.css = style_.sett_marks_width},
+                                .paint = {.day = paint, .night = paint},
+                                .from = centre.front(),
+                                .key = key_});
     }
 
     // ---- the line layer: tram tracks (S['rails']), and draw_over's rail, big roads and marine works
@@ -589,8 +669,8 @@ Rgba darken(Rgba c, double k) noexcept {
 std::size_t GroundTile::bytes() const noexcept {
     return sizeof(GroundTile) + (points.capacity() * sizeof(P2)) + (fills.capacity() * sizeof(Fill)) +
            (strokes.capacity() * sizeof(Stroke)) + (polylines.capacity() * sizeof(Polyline)) +
-           (polyline_words.capacity() * sizeof(std::uint32_t)) + (shadows.capacity() * sizeof(Shadow)) +
-           (shadow_points.capacity() * sizeof(P2)) + casters_bytes;
+           (polyline_words.capacity() * sizeof(std::uint32_t)) + (reaches.capacity() * sizeof(std::uint32_t)) +
+           (shadows.capacity() * sizeof(Shadow)) + (shadow_points.capacity() * sizeof(P2)) + casters_bytes;
 }
 
 void build_shadows(const sun::TileCasters& casters, GroundTile& out) {
@@ -759,18 +839,22 @@ GroundGpu pack(const GroundTile& g) {
     auto& l = out.lines;
     std::vector<std::uint32_t> first(g.polylines.size());
     std::uint32_t points = 0;
+    std::uint32_t words = 0;
     for (std::size_t p = 0; p < g.polylines.size(); ++p) {
-        first[p] = points * 2;
+        first[p] = words;
         points += g.polylines[p].count;
+        words += polyline_words_of(g.polylines[p]);
     }
     out.points = {.first = 0, .count = points};
-    l.reserve((std::size_t{points} * 2) + (g.polylines.size() * 4));
+    l.reserve(std::size_t{words} + (g.polylines.size() * 4));
     for (const Polyline& pl : g.polylines) {
         for (std::uint32_t k = 0; k < pl.count; ++k) {
             const P2& p = g.points[pl.first + k];
             l.push_back(bits(static_cast<float>(p.x - g.origin.x)));
             l.push_back(bits(static_cast<float>(p.z - g.origin.z)));
         }
+        // a pair polyline's lines' reaches
+        if (pl.pairs) l.insert(l.end(), g.reaches.begin() + pl.reach, g.reaches.begin() + pl.reach + (pl.count / 2));
     }
     out.lines_at = {.first = static_cast<std::uint32_t>(l.size()),
                     .count = static_cast<std::uint32_t>(g.polylines.size())};

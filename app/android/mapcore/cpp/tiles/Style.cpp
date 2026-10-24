@@ -182,6 +182,10 @@ Result<Style> Style::of(const StyleTables& tables) {
     const auto bridges = r.table("bridges");
     s.bridge_lines = r.colour(bridges, "bridges", "lines");
     s.bridge_lines_width = r.number(bridges, "bridges", "lines_width");
+    const auto setts = r.table("setts");
+    s.sett_marks = r.colour(setts, "setts", "marks");
+    s.sett_marks_width = r.number(setts, "setts", "marks_width");
+    s.sett_marks_opacity = r.number(setts, "setts", "marks_opacity");
     const auto buildings = r.table("buildings");
     s.edges.roof = r.day_night(buildings, "buildings", "roof_edge_day", "roof_edge_night");
     s.edges.roof_slope = static_cast<float>(r.number(buildings, "buildings", "roof_edge_slope"));

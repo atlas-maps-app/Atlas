@@ -1,0 +1,206 @@
+// The ground's lines' coverage (passes/Lines.cpp), shared by the GPU (shaders/ground/ground.slang's stroke_vs and
+// stroke_fs) and the tests (CP/twin/ground/LineShader.hpp compiles it as C++ after frame/FrameBlock.hpp): a segment's
+// shape as RefRaster's SegGeom has it (anchor/src/testFixtures/.../RefRaster.kt, Strokes.kt) and its coverage of a
+// pixel, as Skia's anti-aliased hairline, G1's exact area or the samples inside it. Not a module: ground.slang includes
+// it.
+#pragma once
+
+/// The lines' flags (a run's word 7).
+static const uint LINE_CAP_SQUARE = 1u; // its free ends' caps (butt without)
+static const uint LINE_CAP_ROUND = 2u;
+static const uint LINE_JOIN_ROUND = 4u; // its joins (miter, limit 4, without)
+static const uint LINE_JOIN_BEVEL = 8u;
+static const uint LINE_PAIRS = 16u; // its points pairs, each pair a line of its own (a sett road's courses)
+static const uint LINE_LAYER = 32u; // its paint's alpha the path's opacity, its lines one layer (ground/setts.slangh)
+
+/// The line stage's modes (StrokeOut.info.x's low bits), by the device width: a hairline, the exact area, the samples.
+static const uint LINE_HAIR = 0u;
+static const uint LINE_AREA = 1u;
+static const uint LINE_SAMPLES = 2u;
+static const uint LINE_HAS_PREV = 4u;
+static const uint LINE_HAS_NEXT = 8u;
+
+/// Strokes.boxCdf: the share of a unit pixel box centred at the origin on the near side of the line n·o = t.
+inline float box_cdf(float t, float nx, float ny) {
+    float a = abs(nx) * 0.5f;
+    float b = abs(ny) * 0.5f;
+    if (b > a) {
+        float q = a;
+        a = b;
+        b = q;
+    }
+    if (t <= -(a + b)) return 0.0f;
+    if (t >= a + b) return 1.0f;
+    if (b < 1e-9f) return saturate(0.5f + t / (2.0f * a));
+    if (t < -(a - b)) {
+        float w = t + a + b;
+        return w * w / (8.0f * a * b);
+    }
+    if (t <= a - b) return 0.5f + t / (2.0f * a);
+    float w = a + b - t;
+    return 1.0f - w * w / (8.0f * a * b);
+}
+
+/// Strokes.radial: the overlap of d - hw ... d + hw with -0.5 ... 0.5.
+inline float radial(float d, float hw) {
+    return max(0.0f, min(d + hw, 0.5f) - max(d - hw, -0.5f));
+}
+
+/// A segment's shape (RefRaster's SegGeom): its ends, direction, trims and join.
+struct Seg {
+    float2 a;
+    float2 b;
+    float len;
+    float2 u;
+    float2 n;
+    bool prev;
+    bool next;
+    float2 sa; // the bisector with the predecessor
+    float2 v;  // the successor's direction
+    float2 sb; // the bisector with the successor
+    float2 oi;
+    float2 oo;
+    float2 o;
+    float ol;
+    bool bevel;
+    bool round_join;
+    uint cap;
+    float hw;
+};
+
+/// The shape of the segment from a to b (device px), its run's point before a and after b (`p`, `n`: where `info`, the
+/// line stage's LINE_HAS_ bits, has them), half its width and its run's LINE_ flags.
+inline Seg seg_make(float2 a, float2 b, float2 p, float2 n, uint info, float hw, uint flags) {
+    Seg g;
+    g.a = a;
+    g.b = b;
+    g.hw = hw;
+    g.prev = (info & LINE_HAS_PREV) != 0u;
+    g.next = (info & LINE_HAS_NEXT) != 0u;
+    g.cap = (flags & LINE_CAP_ROUND) != 0u ? 1u : ((flags & LINE_CAP_SQUARE) != 0u ? 2u : 0u);
+    g.round_join = (flags & LINE_JOIN_ROUND) != 0u;
+    float2 d = g.b - g.a;
+    g.len = length(d);
+    g.u = float2(0.0f);
+    if (!(g.len < 1e-9f)) g.u = d / g.len;
+    float2 normal = {-g.u.y, g.u.x};
+    g.n = normal;
+    g.sa = float2(0.0f);
+    g.v = float2(0.0f);
+    g.sb = float2(0.0f);
+    if (g.prev) {
+        float2 e = g.a - p;
+        float l = length(e);
+        if (l > 1e-9f) g.sa = e / l + g.u;
+        if (length(g.sa) < 1e-6f) g.sa = g.n;
+    }
+    if (g.next) {
+        float2 e = n - g.b;
+        float l = length(e);
+        if (l > 1e-9f) g.v = e / l;
+        g.sb = g.u + g.v;
+        if (length(g.sb) < 1e-6f) g.sb = g.n;
+    }
+    float turn = g.u.x * g.v.y - g.u.y * g.v.x;
+    float sgn = turn > 0.0f ? -1.0f : 1.0f;
+    float2 oi = {-g.u.y * sgn, g.u.x * sgn};
+    float2 oo = {-g.v.y * sgn, g.v.x * sgn};
+    g.oi = oi;
+    g.oo = oo;
+    g.o = g.oi + g.oo;
+    g.ol = length(g.o);
+    float half = sqrt(max(0.0f, (1.0f + dot(g.u, g.v)) * 0.5f));
+    bool bevel_join = (flags & LINE_JOIN_BEVEL) != 0u;
+    g.bevel = bevel_join || (!g.round_join && (half == 0.0f || 1.0f / half > 4.0f));
+    return g;
+}
+
+/// SegGeom.coverage: G1's exact-area coverage of the pixel centred at c (device px).
+inline float seg_coverage(Seg g, float2 c) {
+    float2 q = c - g.a;
+    float al = dot(q, g.u);
+    float pe = dot(q, g.n);
+    if (g.prev && (al < 0.0f || dot(q, g.sa) < 0.0f)) return 0.0f;
+    float2 r = c - g.b;
+    if (g.next && al > g.len) {
+        if (dot(r, g.v) >= 0.0f) return 0.0f;
+        if (g.round_join) return radial(length(r), g.hw);
+        if (g.bevel) return g.ol < 1e-9f ? 0.0f : saturate(0.5f + g.hw * abs(dot(g.oi, g.o)) / g.ol - dot(r, g.o) / g.ol);
+        return saturate(0.5f + g.hw - dot(r, g.oi)) * saturate(0.5f + g.hw - dot(r, g.oo));
+    }
+    if (g.next && dot(r, g.sb) >= 0.0f) return 0.0f;
+    if (!g.prev && g.cap == 1u && al < 0.0f) return radial(length(q), g.hw);
+    if (!g.next && g.cap == 1u && al > g.len) return radial(length(r), g.hw);
+    if (abs(pe) > g.hw + 1.0f) return 0.0f;
+    float strip = box_cdf(g.hw - pe, g.n.x, g.n.y) - box_cdf(-g.hw - pe, g.n.x, g.n.y);
+    float ext_a = (!g.prev && g.cap == 2u) ? g.hw : 0.0f;
+    float ext_b = (!g.next && g.cap == 2u) ? g.hw : 0.0f;
+    float lo = (!g.prev && g.cap != 1u) ? -ext_a : -1e9f;
+    float hi = (!g.next && g.cap != 1u) ? g.len + ext_b : 1e9f;
+    return strip * (box_cdf(hi - al, g.u.x, g.u.y) - box_cdf(lo - al, g.u.x, g.u.y));
+}
+
+/// SegGeom.inside: whether the point x (device px) lies in the segment's shape.
+inline bool seg_inside(Seg g, float2 x) {
+    float2 q = x - g.a;
+    float al = dot(q, g.u);
+    float pe = dot(q, g.n);
+    if (g.prev && (al < 0.0f || dot(q, g.sa) < 0.0f)) return false;
+    float2 r = x - g.b;
+    if (g.next && al > g.len) {
+        if (dot(r, g.v) >= 0.0f) return false;
+        if (g.round_join) return length(r) <= g.hw;
+        if (g.bevel) return g.ol >= 1e-9f && dot(r, g.o) <= g.hw * abs(dot(g.oi, g.o));
+        return dot(r, g.oi) <= g.hw && dot(r, g.oo) <= g.hw;
+    }
+    if (g.next && dot(r, g.sb) >= 0.0f) return false;
+    if (!g.prev && g.cap == 1u && al < 0.0f) return length(q) <= g.hw;
+    if (!g.next && g.cap == 1u && al > g.len) return length(r) <= g.hw;
+    float ext_a = (!g.prev && g.cap == 2u) ? g.hw : 0.0f;
+    float ext_b = (!g.next && g.cap == 2u) ? g.hw : 0.0f;
+    float lo = (!g.prev && g.cap != 1u) ? -ext_a : -1e9f;
+    float hi = (!g.next && g.cap != 1u) ? g.len + ext_b : 1e9f;
+    return abs(pe) <= g.hw && al >= lo && al <= hi;
+}
+
+/// Strokes.hairline's coverage of the pixel at integer (px, py) (device px of the view): Skia's anti-aliased hairline,
+/// the segment alone, a capped free end half a pixel longer.
+inline float hair_coverage(Seg g, float2 pixel, float width) {
+    bool x_major = abs(g.b.x - g.a.x) >= abs(g.b.y - g.a.y);
+    float lo = x_major ? g.a.x : g.a.y;
+    float hi = x_major ? g.b.x : g.b.y;
+    float m0 = x_major ? g.a.y : g.a.x;
+    float m1 = x_major ? g.b.y : g.b.x;
+    bool ext_lo = !g.prev && g.cap != 0u;
+    bool ext_hi = !g.next && g.cap != 0u;
+    if (lo > hi) {
+        float t = lo;
+        lo = hi;
+        hi = t;
+        t = m0;
+        m0 = m1;
+        m1 = t;
+        bool e = ext_lo;
+        ext_lo = ext_hi;
+        ext_hi = e;
+    }
+    float len = hi - lo;
+    float slope = len > 1e-12f ? (m1 - m0) / len : 0.0f;
+    float l0 = lo - (ext_lo ? 0.5f : 0.0f);
+    float h0 = hi + (ext_hi ? 0.5f : 0.0f);
+    float u = x_major ? pixel.x : pixel.y;
+    float v = x_major ? pixel.y : pixel.x;
+    float c = u + 0.5f;
+    float span = min(c + 0.5f, h0) - max(c - 0.5f, l0);
+    if (span <= 0.0f) return 0.0f;
+    float m = m0 + slope * (min(max(c, lo), hi) - lo);
+    return max(0.0f, 1.0f - abs(v + 0.5f - m)) * span * width;
+}
+
+/// A line of a pair run (a sett road's course): its ends in device px, and whether it is drawn (both ends ahead of the
+/// near plane).
+struct SettLine {
+    float2 a;
+    float2 b;
+    bool drawn;
+};

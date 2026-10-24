@@ -334,6 +334,9 @@ public:
     [[nodiscard]] const SoftShadows* soft_shadows() const noexcept;
     /// Whether the last frame drew its shadows soft (the moment blurs them).
     [[nodiscard]] bool drew_soft() const noexcept { return drew_soft_; }
+    /// The tests' look at a sett road's courses: from the next frame on, the pass draws them alone over the frame's
+    /// clear colour (no sky, plate, fills, other lines, water or shadows), each road's lines one layer.
+    void draw_only_setts(bool only) noexcept { only_setts_ = only; }
 
     /// The phases' ids.
     enum PhaseId : std::uint8_t {
@@ -426,6 +429,7 @@ private:
     std::vector<std::uint32_t> pack_ordinals_;  ///< per drawn tile: its pack's place among the drawn ones' ids, sorted
     bool keep_soft_ = false;
     bool drew_soft_ = false;
+    bool only_setts_ = false;
     double select_ms_ = 0;
     /// The tiles' decisions, kept while the camera rests (their grounds held), reused as scratch while it moves.
     std::vector<std::unique_ptr<TileDecisions>> decisions_;

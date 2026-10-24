@@ -13,7 +13,8 @@
 //   - screen_vs with sky_fs, gradient_fs and flat_fs: one triangle over the frame at a painter slot's depth: the sky
 //     (render's #sky: sky_top to sky_hor between two rows), the water's surface (#wgrad, or th['water'] without
 //     weather), the water's tint, and the stencil's unions composited at their opacity (the shadows, the canopy).
-//   - stroke_vs and stroke_fs: the ground's lines (passes/Lines.cpp).
+//   - stroke_vs and stroke_fs: the ground's lines (passes/Lines.cpp; their coverage in ground/lines.slangh), a sett
+//     road's courses each line's share of the path's layer (ground/setts.slangh).
 //   - shadow_vs: the ground shadows (passes/Shadows.cpp), moved by the moment's sun: a prism's footprint hull swept
 //     along its offset (each hull point twice, before and after its turn), a raised outline or a crown disc moved by
 //     it, their union set in the stencil and composited by flat_fs.
@@ -38,6 +39,7 @@
 #if defined(ATLAS_GROUND_MAT)
 #define ATLAS_FX_FUNCTIONS
 #include "fx/mat.slang"
+#include "ground/lines.slangh"
 #endif
 
 [[vk::binding(0, 0)]] ConstantBuffer<FrameBlock> frame;
@@ -686,33 +688,31 @@ ColourOut soft_fs(ScreenOut v) {
 /// A run's record in `words`: 8 words.
 static const uint RUN_WORDS = 8u;
 
-/// The lines' flags (a run's word 7).
-static const uint LINE_CAP_SQUARE = 1u; // its free ends' caps (butt without)
-static const uint LINE_CAP_ROUND = 2u;
-static const uint LINE_JOIN_ROUND = 4u; // its joins (miter, limit 4, without)
-static const uint LINE_JOIN_BEVEL = 8u;
-
-/// The line stage's modes (StrokeOut.info.x's low bits), by the device width: a hairline, the exact area, the samples.
-static const uint LINE_HAIR = 0u;
-static const uint LINE_AREA = 1u;
-static const uint LINE_SAMPLES = 2u;
-static const uint LINE_HAS_PREV = 4u;
-static const uint LINE_HAS_NEXT = 8u;
-
 struct StrokeOut {
     float4 position : SV_Position;
     nointerpolation float4 colour : COLOR0; // the paint, premultiplied
     nointerpolation float4 ab : TEXCOORD0;  // its ends a and b, device px of the view
     nointerpolation float4 pn : TEXCOORD1;  // the point before a and the point after b (where LINE_HAS_PREV, _NEXT)
     nointerpolation uint4 info : TEXCOORD2; // x: mode and LINE_HAS_ bits; y: the half width (device px) as bits; z: the
-                                            // run's LINE_ flags; w: 0
+                                            // run's LINE_ flags, and from bit 16 a layer run's line's reach (how many
+                                            // lines before it it looks back at); w: its instance word (run << 14 | segment)
 };
+
+/// A run's point k in its tile's metres, at height y.
+float3 run_local(uint first, uint k, float y) {
+    float x = asfloat(lines_heap[first + 2u * k]);
+    float z = asfloat(lines_heap[first + 2u * k + 1u]);
+    return float3(x, y, z);
+}
+
+/// A tile-local point's camera coordinates.
+float3 local_camera(uint tile, float3 p) {
+    return camera_of(frame.camera, eye_relative(place_of(tile), p));
+}
 
 /// A run's point k, projected: its camera coordinates.
 float3 run_point(uint tile, uint first, uint k, float y) {
-    float x = asfloat(lines_heap[first + 2u * k]);
-    float z = asfloat(lines_heap[first + 2u * k + 1u]);
-    return camera_of(frame.camera, eye_relative(place_of(tile), float3(x, y, z)));
+    return local_camera(tile, run_local(first, k, y));
 }
 
 /// A point's device px in the view (unturned): its CSS point (snapped at rest) times the density.
@@ -742,8 +742,11 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     o.ab = float4(0.0f, 0.0f, 0.0f, 0.0f);
     o.pn = float4(0.0f, 0.0f, 0.0f, 0.0f);
     o.info = uint4(0u, 0u, 0u, 0u);
-    float3 ka = run_point(tile, first, seg, y);
-    float3 kb = run_point(tile, first, seg + 1u, y);
+    // a pair run's segment k is its line k, the points 2k and 2k + 1, without neighbours
+    bool pairs = (flags & LINE_PAIRS) != 0u;
+    uint ia = pairs ? 2u * seg : seg;
+    float3 ka = run_point(tile, first, ia, y);
+    float3 kb = run_point(tile, first, ia + 1u, y);
     // a segment with an end behind the near plane is no part of a run
     if (ka.z < frame.camera.frame.w || kb.z < frame.camera.frame.w) {
         o.position = FOLDED;
@@ -754,14 +757,14 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     uint info = 0u;
     float2 p = a;
     float2 n = b;
-    if (seg > 0u) {
+    if (!pairs && seg > 0u) {
         float3 kp = run_point(tile, first, seg - 1u, y);
         if (kp.z >= frame.camera.frame.w) {
             p = device_of(kp);
             info |= LINE_HAS_PREV;
         }
     }
-    if (seg + 2u < count) {
+    if (!pairs && seg + 2u < count) {
         float3 kn = run_point(tile, first, seg + 2u, y);
         if (kn.z >= frame.camera.frame.w) {
             n = device_of(kn);
@@ -788,180 +791,77 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     o.colour = float4(paint.rgb * paint.a, paint.a);
     o.ab = float4(a, b);
     o.pn = float4(p, n);
-    o.info = uint4(info, asuint(hw), flags, 0u);
+    // a sett road's line: the earlier lines it looks back at, its reaches' level for the ground's stretch at its ends
+    uint back = 0u;
+    if ((flags & LINE_LAYER) != 0u) {
+        back = sett_reach(lines_heap[first + 2u * count + seg], sett_tolerance_at(tile, first, ia, y, hw));
+    }
+    o.info = uint4(info, asuint(hw), flags | (back << 16u), word);
     return o;
 }
 
-/// Strokes.boxCdf: the share of a unit pixel box centred at the origin on the near side of the line n·o = t.
-float box_cdf(float t, float nx, float ny) {
-    float a = abs(nx) * 0.5f;
-    float b = abs(ny) * 0.5f;
-    if (b > a) {
-        float q = a;
-        a = b;
-        b = q;
-    }
-    if (t <= -(a + b)) return 0.0f;
-    if (t >= a + b) return 1.0f;
-    if (b < 1e-9f) return saturate(0.5f + t / (2.0f * a));
-    if (t < -(a - b)) {
-        float w = t + a + b;
-        return w * w / (8.0f * a * b);
-    }
-    if (t <= a - b) return 0.5f + t / (2.0f * a);
-    float w = a + b - t;
-    return 1.0f - w * w / (8.0f * a * b);
+/// A fragment's segment: its ends and neighbours as the vertex stage found them.
+Seg seg_of(StrokeOut s) {
+    return seg_make(s.ab.xy, s.ab.zw, s.pn.xy, s.pn.zw, s.info.x, asfloat(s.info.y), s.info.z);
 }
 
-/// Strokes.radial: the overlap of d - hw ... d + hw with -0.5 ... 0.5.
-float radial(float d, float hw) {
-    return max(0.0f, min(d + hw, 0.5f) - max(d - hw, -0.5f));
-}
-
-/// A segment's shape (RefRaster's SegGeom): its ends, direction, trims and join.
-struct Seg {
-    float2 a;
-    float2 b;
-    float len;
-    float2 u;
-    float2 n;
-    bool prev;
-    bool next;
-    float2 sa; // the bisector with the predecessor
-    float2 v;  // the successor's direction
-    float2 sb; // the bisector with the successor
-    float2 oi;
-    float2 oo;
-    float2 o;
-    float ol;
-    bool bevel;
-    bool round_join;
-    uint cap;
-    float hw;
+/// A pair run (a sett road's courses) as setts.slangh reads it: its tile, its points' first word, their count and their
+/// height.
+struct SettRun {
+    uint tile;
+    uint first;
+    uint count;
+    float y;
 };
 
-Seg seg_of(StrokeOut s) {
-    Seg g;
-    g.a = s.ab.xy;
-    g.b = s.ab.zw;
-    g.hw = asfloat(s.info.y);
-    g.prev = (s.info.x & LINE_HAS_PREV) != 0u;
-    g.next = (s.info.x & LINE_HAS_NEXT) != 0u;
-    uint flags = s.info.z;
-    g.cap = (flags & LINE_CAP_ROUND) != 0u ? 1u : ((flags & LINE_CAP_SQUARE) != 0u ? 2u : 0u);
-    g.round_join = (flags & LINE_JOIN_ROUND) != 0u;
-    float2 d = g.b - g.a;
-    g.len = length(d);
-    g.u = g.len < 1e-9f ? float2(0.0f, 0.0f) : d / g.len;
-    g.n = float2(-g.u.y, g.u.x);
-    g.sa = float2(0.0f, 0.0f);
-    g.v = float2(0.0f, 0.0f);
-    g.sb = float2(0.0f, 0.0f);
-    if (g.prev) {
-        float2 e = g.a - s.pn.xy;
-        float l = length(e);
-        if (l > 1e-9f) g.sa = e / l + g.u;
-        if (length(g.sa) < 1e-6f) g.sa = g.n;
-    }
-    if (g.next) {
-        float2 e = s.pn.zw - g.b;
-        float l = length(e);
-        if (l > 1e-9f) g.v = e / l;
-        g.sb = g.u + g.v;
-        if (length(g.sb) < 1e-6f) g.sb = g.n;
-    }
-    float turn = g.u.x * g.v.y - g.u.y * g.v.x;
-    float sgn = turn > 0.0f ? -1.0f : 1.0f;
-    g.oi = float2(-g.u.y * sgn, g.u.x * sgn);
-    g.oo = float2(-g.v.y * sgn, g.v.x * sgn);
-    g.o = g.oi + g.oo;
-    g.ol = length(g.o);
-    float half = sqrt(max(0.0f, (1.0f + dot(g.u, g.v)) * 0.5f));
-    bool bevel_join = (flags & LINE_JOIN_BEVEL) != 0u;
-    g.bevel = bevel_join || (!g.round_join && (half == 0.0f || 1.0f / half > 4.0f));
-    return g;
+/// Line i of a pair run: its ends projected as the vertex stage projects them.
+SettLine sett_line(SettRun r, uint i) {
+    float3 ka = run_point(r.tile, r.first, 2u * i, r.y);
+    float3 kb = run_point(r.tile, r.first, 2u * i + 1u, r.y);
+    SettLine e;
+    e.drawn = ka.z >= frame.camera.frame.w && kb.z >= frame.camera.frame.w;
+    e.a = device_of(ka);
+    e.b = device_of(kb);
+    return e;
 }
 
-/// SegGeom.coverage: G1's exact-area coverage of the pixel centred at c (device px).
-float seg_coverage(Seg g, float2 c) {
-    float2 q = c - g.a;
-    float al = dot(q, g.u);
-    float pe = dot(q, g.n);
-    if (g.prev && (al < 0.0f || dot(q, g.sa) < 0.0f)) return 0.0f;
-    float2 r = c - g.b;
-    if (g.next && al > g.len) {
-        if (dot(r, g.v) >= 0.0f) return 0.0f;
-        if (g.round_join) return radial(length(r), g.hw);
-        if (g.bevel) return g.ol < 1e-9f ? 0.0f : saturate(0.5f + g.hw * abs(dot(g.oi, g.o)) / g.ol - dot(r, g.o) / g.ol);
-        return saturate(0.5f + g.hw - dot(r, g.oi)) * saturate(0.5f + g.hw - dot(r, g.oo));
+#include "ground/setts.slangh"
+
+/// The tolerance line k of a pair run (its points 2k and 2k + 1 from `ia`) looks back over: setts.slangh's
+/// sett_tolerance at each of its ends, the larger, from where a metre along it and across it goes on the screen
+/// (unsnapped).
+float sett_tolerance_at(uint tile, uint first, uint ia, float y, float hw) {
+    float3 pa = run_local(first, ia, y);
+    float3 pb = run_local(first, ia + 1u, y);
+    float2 d = pb.xz - pa.xz;
+    float l = length(d);
+    if (!(l > 1e-6f)) return 1e9f;
+    float3 u = float3(d.x / l, 0.0f, d.y / l);
+    float3 n = float3(-u.z, 0.0f, u.x);
+    float tolerance = 0.0f;
+    for (uint e = 0u; e < 2u; ++e) {
+        float3 p = e == 0u ? pa : pb;
+        float3 k0 = local_camera(tile, p);
+        float3 ku = local_camera(tile, p + u);
+        float3 kn = local_camera(tile, p + n);
+        if (k0.z < frame.camera.frame.w || ku.z < frame.camera.frame.w || kn.z < frame.camera.frame.w) return 1e9f;
+        float2 s0 = css_of(frame.camera, k0) * frame.camera.frame.z;
+        float2 su = css_of(frame.camera, ku) * frame.camera.frame.z - s0;
+        float2 sn = css_of(frame.camera, kn) * frame.camera.frame.z - s0;
+        tolerance = max(tolerance, sett_tolerance(su, sn, hw));
     }
-    if (g.next && dot(r, g.sb) >= 0.0f) return 0.0f;
-    if (!g.prev && g.cap == 1u && al < 0.0f) return radial(length(q), g.hw);
-    if (!g.next && g.cap == 1u && al > g.len) return radial(length(r), g.hw);
-    if (abs(pe) > g.hw + 1.0f) return 0.0f;
-    float strip = box_cdf(g.hw - pe, g.n.x, g.n.y) - box_cdf(-g.hw - pe, g.n.x, g.n.y);
-    float ext_a = (!g.prev && g.cap == 2u) ? g.hw : 0.0f;
-    float ext_b = (!g.next && g.cap == 2u) ? g.hw : 0.0f;
-    float lo = (!g.prev && g.cap != 1u) ? -ext_a : -1e9f;
-    float hi = (!g.next && g.cap != 1u) ? g.len + ext_b : 1e9f;
-    return strip * (box_cdf(hi - al, g.u.x, g.u.y) - box_cdf(lo - al, g.u.x, g.u.y));
+    return tolerance;
 }
 
-/// SegGeom.inside: whether the point x (device px) lies in the segment's shape.
-bool seg_inside(Seg g, float2 x) {
-    float2 q = x - g.a;
-    float al = dot(q, g.u);
-    float pe = dot(q, g.n);
-    if (g.prev && (al < 0.0f || dot(q, g.sa) < 0.0f)) return false;
-    float2 r = x - g.b;
-    if (g.next && al > g.len) {
-        if (dot(r, g.v) >= 0.0f) return false;
-        if (g.round_join) return length(r) <= g.hw;
-        if (g.bevel) return g.ol >= 1e-9f && dot(r, g.o) <= g.hw * abs(dot(g.oi, g.o));
-        return dot(r, g.oi) <= g.hw && dot(r, g.oo) <= g.hw;
-    }
-    if (g.next && dot(r, g.sb) >= 0.0f) return false;
-    if (!g.prev && g.cap == 1u && al < 0.0f) return length(q) <= g.hw;
-    if (!g.next && g.cap == 1u && al > g.len) return length(r) <= g.hw;
-    float ext_a = (!g.prev && g.cap == 2u) ? g.hw : 0.0f;
-    float ext_b = (!g.next && g.cap == 2u) ? g.hw : 0.0f;
-    float lo = (!g.prev && g.cap != 1u) ? -ext_a : -1e9f;
-    float hi = (!g.next && g.cap != 1u) ? g.len + ext_b : 1e9f;
-    return abs(pe) <= g.hw && al >= lo && al <= hi;
-}
-
-/// Strokes.hairline's coverage of the pixel at integer (px, py) (device px of the view): Skia's anti-aliased hairline,
-/// the segment alone, a capped free end half a pixel longer.
-float hair_coverage(Seg g, float2 pixel, float width) {
-    bool x_major = abs(g.b.x - g.a.x) >= abs(g.b.y - g.a.y);
-    float lo = x_major ? g.a.x : g.a.y;
-    float hi = x_major ? g.b.x : g.b.y;
-    float m0 = x_major ? g.a.y : g.a.x;
-    float m1 = x_major ? g.b.y : g.b.x;
-    bool ext_lo = !g.prev && g.cap != 0u;
-    bool ext_hi = !g.next && g.cap != 0u;
-    if (lo > hi) {
-        float t = lo;
-        lo = hi;
-        hi = t;
-        t = m0;
-        m0 = m1;
-        m1 = t;
-        bool e = ext_lo;
-        ext_lo = ext_hi;
-        ext_hi = e;
-    }
-    float len = hi - lo;
-    float slope = len > 1e-12f ? (m1 - m0) / len : 0.0f;
-    float l0 = lo - (ext_lo ? 0.5f : 0.0f);
-    float h0 = hi + (ext_hi ? 0.5f : 0.0f);
-    float u = x_major ? pixel.x : pixel.y;
-    float v = x_major ? pixel.y : pixel.x;
-    float c = u + 0.5f;
-    float span = min(c + 0.5f, h0) - max(c - 0.5f, l0);
-    if (span <= 0.0f) return 0.0f;
-    float m = m0 + slope * (min(max(c, lo), hi) - lo);
-    return max(0.0f, 1.0f - abs(v + 0.5f - m)) * span * width;
+/// The run of a fragment's instance word (StrokeOut.info.w) as a SettRun.
+SettRun sett_run_of(uint word) {
+    uint run = push.at.w + (word >> 14u) * RUN_WORDS;
+    SettRun r;
+    r.tile = words[run];
+    r.first = words[run + 1u];
+    r.count = words[run + 2u];
+    r.y = asfloat(words[run + 3u]);
+    return r;
 }
 
 /// The view's device point of an output position (a pixel's corner or a sample).
@@ -989,13 +889,26 @@ StrokeOutput stroke_fs(StrokeOut s) {
     uint n = push.mode.w;
     StrokeOutput o;
     uint mode = s.info.x & 3u;
+    // a sett road's courses: one layer at the paint's alpha (ground/setts.slangh), each line's share of it
+    bool layer = (s.info.z & LINE_LAYER) != 0u;
+    SettRun run = {0u, 0u, 0u, 0.0f};
+    uint line = s.info.w & 0x3FFFu;
+    if (layer) run = sett_run_of(s.info.w);
+    uint reach = (s.info.z >> 16u) & 63u;
     if (mode == LINE_SAMPLES) {
         uint mask = 0u;
+        float2 points[4] = {float2(0.0f, 0.0f), float2(0.0f, 0.0f), float2(0.0f, 0.0f), float2(0.0f, 0.0f)};
+        for (uint i = 0u; i < n; ++i) {
+            float2 at = n == 4u ? samples4[i] : (n == 2u ? samples2[i] : float2(0.5f, 0.5f));
+            points[i] = device_at(corner + at);
+        }
         if (g.len >= 1e-9f) {
             for (uint i = 0u; i < n; ++i) {
-                float2 at = n == 4u ? samples4[i] : (n == 2u ? samples2[i] : float2(0.5f, 0.5f));
-                if (seg_inside(g, device_at(corner + at))) mask |= 1u << i;
+                if (seg_inside(g, points[i])) mask |= 1u << i;
             }
+        }
+        if (layer && mask != 0u) {
+            mask &= ~sett_before_mask(run, line, reach, g.hw, points[0], points[1], points[2], points[3], n);
         }
         if (mask == 0u) discard;
         o.colour = s.colour;
@@ -1011,7 +924,9 @@ StrokeOutput stroke_fs(StrokeOut s) {
         cov = g.len < 1e-9f ? 0.0f : seg_coverage(g, centre);
     }
     if (cov <= 0.0f) discard;
-    o.colour = s.colour * min(cov, 1.0f);
+    float k = min(cov, 1.0f);
+    if (layer) k = sett_share(k, sett_before(run, line, reach, g.hw, mode, floor(centre), centre), s.colour.a);
+    o.colour = s.colour * k;
     o.coverage = 0xFFFFFFFFu;
     return o;
 }

@@ -203,6 +203,8 @@ enum class StrokeKind : std::uint8_t {
     tram,   ///< groundMarks: a tram line's rails (ribbon(rl, 0.72)'s sides at 0.08), stroke .9
     bridge, ///< the road loop: a bridge's lines (ribbon(pts, w / 2 + 0.3)'s sides at 1.1), stroke 1.2, by day without
             ///< weather
+    setts,  ///< the road loop: a sett road's courses across it every 0.6 m at y + 0.01, stroke .4 at opacity .6, by day
+            ///< not at eye level, its first point within 500 m
 };
 
 /// A tile cell's box over its fills (metres, at their heights) and the widest of their margins: the frame tests a
@@ -239,16 +241,38 @@ struct Stroke {
     std::uint32_t line = 0;
     std::uint32_t line_count = 0;
     std::array<double, 4> near{0, -1, 0, 0};
+    /// A sett road's first point: its courses are drawn while its depth at the ground is under setts_depth.
+    P2 from;
     /// Its place in the ground's order across scenes (its feature's).
     OrderKey key;
 };
 
 /// One polyline of a stroke: [first, first + count) of the tile's points at height y; a dash is a polyline of two.
+/// A sett road's courses are one polyline of pairs, a line each (its two ends), with each line's reaches back: how many
+/// lines before it lie within each of setts_tolerances of it (six bits a level), the lines the line stage looks back
+/// at (shaders/ground/setts.slangh), [reach, reach + count / 2) of the tile's reaches, after its points in the lines
+/// heap.
 struct Polyline {
     std::uint32_t first = 0;
     std::uint32_t count = 0;
     double y = 0;
+    bool pairs = false;
+    std::uint32_t reach = 0;
 };
+
+/// The words a polyline takes in the lines heap: its points' two each, then a pair polyline's reaches.
+[[nodiscard]] constexpr std::uint32_t polyline_words_of(const Polyline& p) noexcept {
+    return (2 * p.count) + (p.pairs ? p.count / 2 : 0);
+}
+
+/// A sett road's courses (amsterdam.py's road loop): every setts_step metres along each segment, from its start.
+inline constexpr double setts_step = 0.6;
+/// The most lines a line looks back at (its reaches' six bits), and the world distances of its reaches (metres).
+inline constexpr std::uint32_t setts_back = 63;
+inline constexpr std::array<double, 5> setts_tolerances{0.5, 1.0, 2.0, 4.0, 8.0};
+/// The depth of a sett road's first point under which its courses are drawn: min(500, cfg.get('sett_d', 500)), which no
+/// view sets.
+inline constexpr double setts_depth = 500.0;
 
 /// How the sun moves a ground shadow's polygon by its offset −L.xz / L.y · h (render/amsterdam.py:742–771).
 enum class ShadowMove : std::uint8_t {
@@ -356,6 +380,8 @@ struct GroundTile {
     GroundLayout layout;
     /// Each polyline's first point's word in the lines range (pack's layout: the polylines' points in order).
     std::vector<std::uint32_t> polyline_words;
+    /// The pair polylines' lines' reaches (Polyline::reach).
+    std::vector<std::uint32_t> reaches;
     /// The ground shadows' casters (sun::solids_of: the solids the sun's march reads, then the trees), for the twin's
     /// shadows (sun::shadows_of: the port's own hulls for the frame's sun), and the region's no_shadows.
     std::shared_ptr<const sun::TileCasters> casters;
@@ -396,7 +422,7 @@ void build_shadows(const sun::TileCasters& casters, GroundTile& out);
 [[nodiscard]] tiles::Result<std::uint64_t> ground_check(const tiles::Pack& pack);
 
 /// The host build's hash of the ground's check.
-inline constexpr std::uint64_t ground_check_expected = 0x64B6'5C2F'CC20'964FULL;
+inline constexpr std::uint64_t ground_check_expected = 0xE891'6967'DF16'6E8AULL;
 
 /// `ground <hash> ok`, or `ground <hash> FAIL expected <hash>`, or `ground unavailable: <why>`, for the bundled pack in
 /// `pack`.

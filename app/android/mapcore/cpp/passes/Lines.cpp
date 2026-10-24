@@ -1,8 +1,10 @@
 // The ground's lines (passes/Ground.hpp; plan-vector D10 "Roads: thin edges by exact area", "Region overlays", "Tram
 // tracks", "Bridges ... lines without [weather]"; D5.12's thin strokes and lines): draw_over's rails (two at .7), a big
 // road's edge lines and lane lines (px(0.18) wide where that is over 0.3, render/regions.py:551), the tram tracks (.9,
-// amsterdam.py:715) and a bridge's lines (1.2, by day without weather, amsterdam.py:691), each the port's path: its
-// polylines' runs of points ahead of the near plane (line_d), butt caps, miter joins.
+// amsterdam.py:715), a bridge's lines (1.2, by day without weather, amsterdam.py:691) and a sett road's courses (.4 at
+// opacity .6, by day not at eye level, amsterdam.py:702), each the port's path: its polylines' runs of points ahead of
+// the near plane (line_d), butt caps, miter joins; a sett road's lines each where both its ends are, the path one layer
+// (shaders/ground/setts.slangh).
 //
 // Each frame (on the render thread): every stroke of the visible cells is decided as the port decides it (draw_over's
 // radius cut in engine mode, a big road's lines only with its asphalt and over 0.3 px, a bridge's only by day without
@@ -17,6 +19,7 @@
 #include "gen/layouts.hpp"
 #include "passes/Ground.hpp"
 #include "scene/Residency.hpp"
+#include "twin/ground/LineShader.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -25,6 +28,8 @@ namespace atlas::passes {
 
 namespace geo = atlas::geometry;
 namespace pm = atlas::pymath;
+
+static_assert(geo::setts_back == shaders::SETTS_BACK, "stage T's reach and the line stage's look back alike");
 
 namespace {
 
@@ -48,6 +53,11 @@ void Ground::decide_strokes(const view::Camera& cam, const DrawnTile& t, TileDec
         const geo::Stroke& s = g.strokes[i];
         if ((t.cells & (std::uint64_t{1} << s.cell)) == 0) continue;
         if (s.kind == geo::StrokeKind::bridge && (f.weather || f.night)) continue;
+        // a sett road's courses: `not night and not eye and cam.depth((pts[0][0], 0, pts[0][1])) < min(500, sett_d)`
+        if (s.kind == geo::StrokeKind::setts && (f.night || (f.weather && cam.spec().pitch < 10) ||
+                                                 !(cam.depth({s.from.x, 0.0, s.from.z}) < geo::setts_depth))) {
+            continue;
+        }
         // draw_over's radius cut, in engine mode
         if (f.engine && s.line_count > 0 && !near_line(f, std::span(g.points).subspan(s.line, s.line_count), s.near)) {
             continue;
@@ -111,7 +121,9 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
         const auto width = static_cast<float>(frame_.stroke_width[tile.strokes + d.stroke]);
         for (std::uint32_t p = s.first; p < s.first + s.count; ++p) {
             const geo::Polyline& pl = g.polylines[p];
-            if (pl.count < 2 || pl.count > 0x4000) continue;
+            // its segments: a polyline's between its points, a pair polyline's lines
+            const std::uint32_t n = pl.pairs ? pl.count / 2 : (pl.count < 2 ? 0 : pl.count - 1);
+            if (n == 0 || n > 0x4000) continue;
             words.push_back(d.tile);
             words.push_back(base + g.polyline_words[p]);
             words.push_back(pl.count);
@@ -119,8 +131,10 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
             words.push_back(std::bit_cast<std::uint32_t>(width));
             words.push_back(rgba_of(s.paint, frame_.night));
             words.push_back(d.slot);
-            words.push_back(0); // butt caps, miter joins (limit 4): the SVG's defaults
-            for (std::uint32_t k = 0; k + 1 < pl.count; ++k) segments[d.marks ? 1U : 0U].push_back((run << 14U) | k);
+            // butt caps, miter joins (limit 4): the SVG's defaults; a sett road's courses: lines of their own, the
+            // path's opacity a layer (the paint's alpha)
+            words.push_back(pl.pairs ? shaders::LINE_PAIRS | shaders::LINE_LAYER : 0U);
+            for (std::uint32_t k = 0; k < n; ++k) segments[d.marks ? 1U : 0U].push_back((run << 14U) | k);
             ++run;
         }
     }
@@ -162,8 +176,13 @@ void Ground::emit_lines(const frame::FrameState& state, twin::Stream& out, std::
             ends.clear();
             for (std::uint32_t p = s.first; p < s.first + s.count; ++p) {
                 const geo::Polyline& pl = g.polylines[p];
-                // draw_over's line_d runs; the tram tracks' and the bridges' points joined
-                if (s.kind == geo::StrokeKind::tram || s.kind == geo::StrokeKind::bridge) {
+                // draw_over's line_d runs; the tram tracks' and the bridges' points joined; a sett road's lines each
+                // where both its ends project
+                if (pl.pairs) {
+                    for (std::uint32_t k = 0; k + 1 < pl.count; k += 2) {
+                        placer.runs(t, std::span(g.points).subspan(pl.first + k, 2), pl.y, points, ends);
+                    }
+                } else if (s.kind == geo::StrokeKind::tram || s.kind == geo::StrokeKind::bridge) {
                     placer.joined(t, std::span(g.points).subspan(pl.first, pl.count), pl.y, points, ends);
                 } else {
                     placer.runs(t, std::span(g.points).subspan(pl.first, pl.count), pl.y, points, ends);
@@ -184,7 +203,10 @@ void Ground::emit_lines(const frame::FrameState& state, twin::Stream& out, std::
             st.stroke =
                 twin::Paint::colour(0xFF00'0000U | (std::uint32_t{c.r} << 16U) | (std::uint32_t{c.g} << 8U) | c.b);
             st.stroke_width = static_cast<float>(frame_.stroke_width[t.strokes + i]);
-            out.path(st, subpaths);
+            // a sett road's courses: the path at its opacity (the paint's alpha)
+            twin::Node node;
+            if (s.kind == geo::StrokeKind::setts) node.opacity = static_cast<float>(c.a) / 255.0F;
+            out.path(st, subpaths, node);
         }
     }
 }

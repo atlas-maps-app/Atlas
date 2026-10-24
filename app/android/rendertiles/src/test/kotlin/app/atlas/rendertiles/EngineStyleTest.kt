@@ -93,6 +93,10 @@ class EngineStyleTest {
                 """stroke=\"${value("bridges.lines")}\" stroke-width=\"${css("bridges.lines_width")}\" fill=\"none\"/>"""",
             ),
             Triple(
+                listOf("setts.marks", "setts.marks_width", "setts.marks_opacity"), amsterdam,
+                """stroke=\"${value("setts.marks")}\" stroke-width=\"${css("setts.marks_width")}\" opacity=\"${css("setts.marks_opacity")}\" fill=\"none\"/>"""",
+            ),
+            Triple(
                 listOf("buildings.roof_edge_day", "buildings.roof_edge_night"), amsterdam,
                 """val edge = if (!night) "${value("buildings.roof_edge_day")}" else "${value("buildings.roof_edge_night")}"""",
             ),
