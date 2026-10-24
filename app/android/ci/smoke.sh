@@ -682,10 +682,12 @@ pills_phase
 first_frame() { since_marker "$1" | grep -m1 -o 'vk first frame -*[0-9]* [a-z]*' | awk '{print $4, $5}'; }
 
 # K11's lines: the home drawn by the core with its first complete frame within the emulator's limits (`vk first frame
-# <ms> first|warm`: 25 s from a cleared state, 20 s warm; §3's 3 s and 1.5 s were set when the core drew the ground
-# alone: the full map is ten tiles here, the Westerkerk's three and the canal ring's seven around it, 32 MB, each built
-# in 1 to 2.5 s on the emulator's two cores, under lavapipe's 250 to 400 ms frames; the phone's first picture is
-# measured on the phone, ENGINE.md step 1), no frame from 2 s after a swipe (CI's `vk frame` lines), the Java
+# <ms> first|warm`: 25 s, cleared or warm; §3's 3 s and 1.5 s were set when the core drew the ground alone: the full map
+# is ten tiles here, the Westerkerk's three and the canal ring's seven around it, 32 MB, each built in 1 to 2.5 s on the
+# emulator's two cores, under lavapipe's 250 to 400 ms frames; both runs are warm since the pipeline cache outlives the
+# facts' phase, and with step 4's features they took 18 to 22 s by 24 October, two seconds apart from run to run for
+# the same work, so the warm limit is the cleared one's; ENGINE.md's gain 7, stage T kept on disk, is what makes a warm
+# start quick, and the phone's first picture is measured on the phone, ENGINE.md step 1), no frame from 2 s after a swipe (CI's `vk frame` lines), the Java
 # heap at the canal ring at most 96 MB, the transitional rule's switch from the core's tiles to a place without them and
 # back with no blank frame (its `vk transition core>canvas` and `canvas>core` lines, each written as the picture it
 # fades to is ready, the outgoing one held until then, and `vk transitional`), and T2's honest state under atlas.vk.off.
@@ -695,7 +697,7 @@ map_phase() {
     vk_launch "$run" --es atlas.screen home --ez atlas.ci true --ez atlas.vk.ci true
     wait_line "$run" 60 "vk first frame" || echo "MAP FAILED: no 'vk first frame' within 60 s ($run)"
     line=$(first_frame "$run"); ms=${line% *}; kind=${line#* }
-    limit=$([ "$kind" = warm ] && echo 20000 || echo 25000)
+    limit=25000
     echo "map: $run first frame ${line:-none} (limit ${limit} ms)"
     if ! [[ $ms =~ ^[0-9]+$ ]] || [ "$ms" -gt "$limit" ]; then echo "MAP FAILED: the core's first frame ($run): ${line:-none}"; FAIL=1; fi
     [ "$run" = mapwarm ] && [ "$kind" != warm ] && { echo "MAP FAILED: the second launch was not warm (${line:-none})"; FAIL=1; }
