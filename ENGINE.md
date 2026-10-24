@@ -118,7 +118,7 @@ Atlas draws its map with its own engine. This is the one document about it: what
 **Always:**
 6. **CI:**
    - `core.yml`: host builds and tests on x86_64 and arm64 under the validation layer, sanitizers, fuzzing, clang-tidy and the rule table.
-   - `android.yml`: the APK, every module's tests, and the emulator run of every screen through `ci/smoke.sh`.
+   - `android.yml`: the APK, every module's tests, and the emulator run of every screen through `ci/smoke.sh`, whose hash lines must read the host build's hashes as `ci/hashes.env` holds them (kept outside the workflows: the nightly alpha's token may not tag a commit whose workflow files differ from the default branch's). Its nightly has a concurrency group of its own, so a push while it runs leaves it to finish.
 7. **The user's phone at each alpha:**
    - VK facts;
    - VK bench, with presented frames at p50 ≤ 16.7 ms and p95 ≤ 20 ms on the paths;

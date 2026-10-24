@@ -51,8 +51,10 @@ on:
         type: string
         default: ''
 
+# A push cancels the runs of its branch still going for an older push; the nightly has a group of its own, so a push
+# while it runs leaves it to finish (its full likeness tier and history run only then).
 concurrency:
-  group: android-${{ github.ref }}
+  group: android-${{ github.ref }}${{ github.event_name == 'schedule' && '-nightly' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -281,12 +283,11 @@ jobs:
           build=$(sed -n 's/^emulator\.linux-x86_64\.file=emulator-linux_x64-\([0-9]*\)\.zip$/\1/p' app/android/mapcore/tools.properties)
           [ -n "$build" ] || { echo "::error::tools.properties names no emulator build"; exit 1; }
           echo "build=$build" >> "$GITHUB_OUTPUT"
+      # The hashes the emulator must reproduce (the host build's numerics, sun bits, ground and twin check) are
+      # app/android/ci/hashes.env's, which smoke.sh reads: outside the workflows, so a change of the engine's that moves
+      # one edits no workflow file (the nightly alpha's token may not tag a commit whose workflow files differ from the
+      # default branch's).
       - uses: reactivecircus/android-emulator-runner@v2
-        env:
-          ATLAS_PYMATH_HASH: 77476b808456a6f0 # K3b: the host build's and the port's numerics hash; smoke.sh fails on any other
-          ATLAS_SUN_HASH: 6a47c776c64ed9ae # K8: the host build's sun bits of the bundled Westerkerk; smoke.sh fails on any other
-          ATLAS_GROUND_HASH: 64b65c2fcc20964f # K9: the host build's ground (stage T) of the bundled Westerkerk; smoke.sh fails on any other
-          ATLAS_TWIN_HASH: ff1b0106cd007096 # the host build's twin check of the bundled Westerkerk (frame/TwinCheck.hpp); smoke.sh fails on any other
         with:
           emulator-build: ${{ steps.emulator.outputs.build }}
           api-level: 35

@@ -60,12 +60,17 @@
 # warning; a background step the bench ended before is skipped, saying so.
 # Environment: ATLAS_SCREENS (the debug loop's screens, default: all), ATLAS_MAP_WAIT (seconds to wait for the home's map),
 # ATLAS_IDLE (seconds the home is watched at rest, default 20), ATLAS_BENCH=0 (skip the bench phase), ATLAS_PROFILE=0
-# (skip simpleperf), ATLAS_PYMATH_HASH (the numerics hash the host build and the port compute; android.yml sets it),
-# ATLAS_SUN_HASH (the sun bits' hash the host build computes; android.yml sets it), ATLAS_GROUND_HASH (the ground's
-# stage T hash the host build computes; android.yml sets it), ATLAS_TWIN_HASH (the twin check's hash the host build
-# computes; android.yml sets it).
+# (skip simpleperf), ATLAS_PYMATH_HASH (the numerics hash the host build and the port compute), ATLAS_SUN_HASH (the sun
+# bits' hash the host build computes), ATLAS_GROUND_HASH (the ground's stage T hash the host build computes),
+# ATLAS_TWIN_HASH (the twin check's hash the host build computes): each as ci/hashes.env holds it, unless the
+# environment sets another.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
+# The hashes the emulator must reproduce, each the host build's: ci/hashes.env's (outside the workflows, so a change of
+# the engine's that moves one edits no workflow file), where the environment sets none.
+for key in ATLAS_PYMATH_HASH ATLAS_SUN_HASH ATLAS_GROUND_HASH ATLAS_TWIN_HASH; do
+  [ -n "${!key:-}" ] || export "$key=$(sed -n "s/^$key=\([0-9a-f]\{16\}\)\$/\1/p" "$HERE/hashes.env")"
+done
 APK=$(ls "$1"/*.apk | head -1); OUT=$2; mkdir -p "$OUT"
 BENCH_APK=""
 [ -n "${3:-}" ] && BENCH_APK=$(ls "$3"/*.apk 2>/dev/null | head -1)
@@ -391,20 +396,20 @@ vk_phase() {
   fi
   grep -q -E '^colour\.stage: (rgb10a2|bgr10a2|off|none) \(' "$OUT/vkfacts.txt" || { echo "VK FACTS FAILED: no 'colour.stage:' line"; FAIL=1; }
   # The core's numerics on Bionic (K3b's acceptance, L0 d): VK facts logs `pymath <hash> ok`, and the hash must be
-  # the one the host build and the port compute (ATLAS_PYMATH_HASH, from android.yml).
+  # the one the host build and the port compute (ATLAS_PYMATH_HASH, from ci/hashes.env).
   since_marker vkfacts | grep -o 'AtlasMap: pymath .*' | sed 's/AtlasMap: //' | tr -d '\r' | head -1 > "$OUT/pymath.txt"
   echo "pymath: $(cat "$OUT/pymath.txt")"
   if [ -z "${ATLAS_PYMATH_HASH:-}" ]; then
-    echo "PYMATH FAILED: ATLAS_PYMATH_HASH is not set (android.yml's emulator job sets the expected hash)"; FAIL=1
+    echo "PYMATH FAILED: ATLAS_PYMATH_HASH is not set (ci/hashes.env holds the expected hash)"; FAIL=1
   elif ! grep -qx "pymath $ATLAS_PYMATH_HASH ok" "$OUT/pymath.txt"; then
     echo "PYMATH FAILED: the emulator's numerics read '$(cat "$OUT/pymath.txt")', not 'pymath $ATLAS_PYMATH_HASH ok'"; FAIL=1
   fi
   # The core's sun bits on Bionic (K8's acceptance): VK facts logs `sun <hash> ok` over the bundled Westerkerk's every
-  # sample and ground shadow at its sunny moment, and the hash must be the host build's (ATLAS_SUN_HASH, from android.yml).
+  # sample and ground shadow at its sunny moment, and the hash must be the host build's (ATLAS_SUN_HASH, from ci/hashes.env).
   since_marker vkfacts | grep -o 'AtlasMap: sun .*' | sed 's/AtlasMap: //' | tr -d '\r' | head -1 > "$OUT/sun.txt"
   echo "sun: $(cat "$OUT/sun.txt")"
   if [ -z "${ATLAS_SUN_HASH:-}" ]; then
-    echo "SUN FAILED: ATLAS_SUN_HASH is not set (android.yml's emulator job sets the expected hash)"; FAIL=1
+    echo "SUN FAILED: ATLAS_SUN_HASH is not set (ci/hashes.env holds the expected hash)"; FAIL=1
   elif ! grep -qx "sun $ATLAS_SUN_HASH ok" "$OUT/sun.txt"; then
     echo "SUN FAILED: the emulator's sun bits read '$(cat "$OUT/sun.txt")', not 'sun $ATLAS_SUN_HASH ok'"; FAIL=1
   fi
@@ -416,21 +421,21 @@ vk_phase() {
     echo "FIELDS FAILED: the emulator's noise fields read '$(cat "$OUT/fields.txt")', not 'fields 1080x2400 cpu <ms> gpu off hash <h> ok'"; FAIL=1
   fi
   # The ground's stage T on Bionic (K9's, D16's L0 c): VK facts logs `ground <hash> ok` over the bundled Westerkerk's
-  # every tile built and packed for the GPU, and the hash must be the host build's (ATLAS_GROUND_HASH, from android.yml).
+  # every tile built and packed for the GPU, and the hash must be the host build's (ATLAS_GROUND_HASH, from ci/hashes.env).
   since_marker vkfacts | grep -o 'AtlasMap: ground .*' | sed 's/AtlasMap: //' | tr -d '\r' | head -1 > "$OUT/ground.txt"
   echo "ground: $(cat "$OUT/ground.txt")"
   if [ -z "${ATLAS_GROUND_HASH:-}" ]; then
-    echo "GROUND FAILED: ATLAS_GROUND_HASH is not set (android.yml's emulator job sets the expected hash)"; FAIL=1
+    echo "GROUND FAILED: ATLAS_GROUND_HASH is not set (ci/hashes.env holds the expected hash)"; FAIL=1
   elif ! grep -qx "ground $ATLAS_GROUND_HASH ok" "$OUT/ground.txt"; then
     echo "GROUND FAILED: the emulator's ground reads '$(cat "$OUT/ground.txt")', not 'ground $ATLAS_GROUND_HASH ok'"; FAIL=1
   fi
   # The core's twin on Bionic (ENGINE.md's checks: VK facts' hash lines): VK facts logs `twin <hash> ok`, the app's frame
   # over the bundled Westerkerk at the engine references' home emitted without drawing (frame/TwinCheck.hpp), and the
-  # hash must be the host build's (ATLAS_TWIN_HASH, from android.yml).
+  # hash must be the host build's (ATLAS_TWIN_HASH, from ci/hashes.env).
   since_marker vkfacts | grep -o 'AtlasMap: twin .*' | sed 's/AtlasMap: //' | tr -d '\r' | head -1 > "$OUT/twin.txt"
   echo "twin: $(cat "$OUT/twin.txt")"
   if [ -z "${ATLAS_TWIN_HASH:-}" ]; then
-    echo "TWIN FAILED: ATLAS_TWIN_HASH is not set (android.yml's emulator job sets the expected hash)"; FAIL=1
+    echo "TWIN FAILED: ATLAS_TWIN_HASH is not set (ci/hashes.env holds the expected hash)"; FAIL=1
   elif ! grep -qx "twin $ATLAS_TWIN_HASH ok" "$OUT/twin.txt"; then
     echo "TWIN FAILED: the emulator's twin reads '$(cat "$OUT/twin.txt")', not 'twin $ATLAS_TWIN_HASH ok'"; FAIL=1
   fi

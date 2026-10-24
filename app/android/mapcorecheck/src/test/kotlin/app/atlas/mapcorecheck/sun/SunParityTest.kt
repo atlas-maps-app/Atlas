@@ -297,14 +297,14 @@ class SunParityTest {
         val got = Regex("0x([0-9A-Fa-f']+)ULL").findAll(sun).map { it.groupValues[1].replace("'", "").lowercase() }.toList()
         println("sun bundled: the port's sunny sun ${want.joinToString(" ")}")
         assertEquals("CP/sun/Buckets.hpp's bundled_sun must be the Westerkerk's sunny sun as the port computes it", want, got)
-        // the host build's bundled check: the hash android.yml pins for the emulator, ATLAS_SUN_HASH
+        // the host build's bundled check: the hash ci/hashes.env pins for the emulator, ATLAS_SUN_HASH
         val out = SunHost.bundled(westerkerkPack.path).lines()
         println("sun bundled: ${out.joinToString("; ")}")
         val hash = out[1].removePrefix("hash ")
         assertEquals("the host build's bundled line (bundled_check_expected must be its hash, 0x%sULL)".format(hash.uppercase()), "sun $hash ok", out[0])
-        val workflow = File(System.getProperty("atlas.repo"), ".github/workflows/android.yml").readText()
-        val pinned = Regex("ATLAS_SUN_HASH: ([0-9a-f]{16})").find(workflow)?.groupValues?.get(1)
-        assertEquals("android.yml's ATLAS_SUN_HASH must be the host build's bundled hash", hash, pinned)
+        val hashes = File(System.getProperty("atlas.repo"), "app/android/ci/hashes.env").readText()
+        val pinned = Regex("^ATLAS_SUN_HASH=([0-9a-f]{16})$", RegexOption.MULTILINE).find(hashes)?.groupValues?.get(1)
+        assertEquals("ci/hashes.env's ATLAS_SUN_HASH must be the host build's bundled hash", hash, pinned)
     }
 
     @Test

@@ -162,7 +162,7 @@ inline constexpr Sun bundled_sun{.x = std::bit_cast<double>(0xBFE3'702C'8755'BB0
 /// Bionic: every sample of its one tile level at ladder level 0 (the living map's), windows included, tested for
 /// bundled_sun on up to four threads, and every ground shadow, hashed with SHA-256 (its first 8 bytes) after the march
 /// check's value. The host build computes the same (MT/sun/SunParityTest.kt, whose parity test holds the host's bits to
-/// the port's), and `bundled_check_expected` and android.yml's ATLAS_SUN_HASH are its hash.
+/// the port's), and `bundled_check_expected` and ci/hashes.env's ATLAS_SUN_HASH are its hash.
 [[nodiscard]] tiles::Result<std::uint64_t> bundled_check(const tiles::Pack& pack);
 
 /// The host build's hash of the bundled check.

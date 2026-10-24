@@ -1,6 +1,6 @@
 // The twin's check (frame/TwinCheck.hpp) on the host's Vulkan: the bundled Westerkerk (ATLAS_TILES_DIR, as the scene's
 // tests take it) at the engine references' home, settled without drawing, emits a picture (its tiles drawn, its
-// buildings lit by the sun), the same stream twice, and hashes to twin_check_expected, which android.yml's
+// buildings lit by the sun), the same stream twice, and hashes to twin_check_expected, which ci/hashes.env's
 // ATLAS_TWIN_HASH holds the emulator to.
 #include "frame/TwinCheck.hpp"
 #include "gpu/PipelineCache.hpp"
