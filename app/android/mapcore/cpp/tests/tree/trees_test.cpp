@@ -1,10 +1,14 @@
-// The trees' stage T (ENGINE.md step 4, "Trees and things"; geometry/Trees.hpp) and the render thread's choices
-// (passes/Trees.hpp): closeup.py's tree_form over a tree's tags, autumn's tint by the date, tree_choice's thresholds as
-// the port compares them, and every bundled tile's trees: one for each row of its tree layer, its item in S['nodes']'s
-// order at (x, 1, z), its clumps' and blobs' radii in the port's ranges, and the points heap's bytes they take. That
-// the clumps are the port's, the twin's circles against the port's SVG say (L1).
+// The trees' and the street furniture's stage T (ENGINE.md step 4, "Trees and things"; geometry/Trees.hpp,
+// geometry/Things.hpp) and the render thread's choices (passes/Trees.hpp, passes/Things.hpp): closeup.py's tree_form
+// over a tree's tags, autumn's tint by the date, tree_choice's thresholds as the port compares them, and every bundled
+// tile's trees: one for each row of its tree layer, its item in S['nodes']'s order at (x, 1, z), its clumps' and blobs'
+// radii in the port's ranges, and the points heap's bytes they take; the gather's kinds of furniture, thing_choice's
+// thresholds, the moment's colours, every bundled tile's things. That the clumps and the furniture are the port's, the
+// twins' elements against the port's SVG say (L1).
 #include "base/arena.hpp"
+#include "geometry/Things.hpp"
 #include "geometry/Trees.hpp"
+#include "passes/Things.hpp"
 #include "passes/Trees.hpp"
 #include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
@@ -14,6 +18,8 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
+#include <bit>
 #include <format>
 #include <string>
 #include <vector>
@@ -171,5 +177,82 @@ TEST_CASE("trees: stage T of every bundled tile") {
                             name, trees, forms[0], forms[1], forms[2], forms[3], forms[4], forms[5], forms[6],
                             evergreen, static_cast<double>(most) / (1 << 20)));
         CHECK(most <= std::size_t{2} << 20U);
+    }
+}
+
+TEST_CASE("things: the gather's kinds, the render thread's choices and the moment's colours") {
+    using atlas::passes::thing_choice;
+    using gm::ThingKind;
+    CHECK(gm::thing_kind("street_lamp", "bench", std::nullopt) == ThingKind::lamp);
+    CHECK(gm::thing_kind(std::nullopt, "bench", "bollard") == ThingKind::bench);
+    CHECK(gm::thing_kind(std::nullopt, "bicycle_parking", std::nullopt) == ThingKind::rack);
+    CHECK(gm::thing_kind(std::nullopt, "waste_basket", std::nullopt) == ThingKind::basket);
+    CHECK(gm::thing_kind("footway", "cafe", "block") == ThingKind::bollard);
+    CHECK(!gm::thing_kind(std::nullopt, "cafe", "gate").has_value());
+    // street furniture under 1.6 px of focal length over its depth is left out
+    CHECK(!thing_choice(ThingKind::bench, 500, 700, false).drawn);
+    CHECK(thing_choice(ThingKind::bench, 400, 700, false).drawn);
+    // a lamp at s = 7: its mast '%.2f' % 0.91, hw 1.4, hh 3.5, its glint by day '%.2f' % 0.35
+    const auto lamp = thing_choice(ThingKind::lamp, 100, 700, false);
+    CHECK((lamp.flags & sh::THING_JOB_KIND) == sh::THING_LAMP);
+    CHECK((lamp.flags & sh::THING_JOB_GLINT) != 0U);
+    CHECK(lamp.a == static_cast<float>(0.91));
+    CHECK(lamp.b == static_cast<float>(0.2 * 7));
+    CHECK(lamp.c == static_cast<float>(0.5 * 7));
+    CHECK(lamp.d == static_cast<float>(0.35));
+    CHECK((thing_choice(ThingKind::lamp, 100, 700, true).flags & sh::THING_JOB_GLINT) == 0U);
+    // s = 1.2 is no glint (s > 1.2), s = 1 no bollard head (s > 1)
+    CHECK((thing_choice(ThingKind::lamp, 700 / 1.2, 700, false).flags & sh::THING_JOB_GLINT) == 0U);
+    CHECK((thing_choice(ThingKind::bollard, 400, 700, false).flags & sh::THING_JOB_HEAD) != 0U);
+    const auto bollard = thing_choice(ThingKind::bollard, 100, 700, false);
+    CHECK(bollard.a == static_cast<float>(1.4));
+    CHECK(bollard.b == static_cast<float>(0.03 * 7));
+    CHECK(bollard.c == static_cast<float>(0.35));
+    // a box at night: 0.3 of its colour, its leg 0.8 of that, each through tohex
+    const tl::Style style = test_style();
+    const auto day = atlas::passes::thing_tones(false, style.things);
+    const auto night = atlas::passes::thing_tones(true, style.things);
+    CHECK(day[sh::THING_TONE_BENCH] == 0x4C6A8AU);     // #8A6A4C as 0xBBGGRR
+    CHECK(day[sh::THING_TONE_BENCH + 1] == 0x3D556EU); // tohex(mulc((138, 106, 76), 0.8)): #6E553D
+    CHECK(night[sh::THING_TONE_BENCH] == 0x172029U);   // tohex((41.4, 31.8, 22.8)): #292017
+    CHECK(night[sh::THING_TONE_MAST] == 0x221A16U);    // #161A22
+    CHECK(std::bit_cast<float>(day[sh::THING_TONE_RACK_WIDTH]) == 0.9F);
+    CHECK(sh::thing_record_count(sh::THING_RACK) == 24);
+    CHECK(sh::thing_side_count(lamp.flags) == 1);
+}
+
+TEST_CASE("things: stage T of every bundled tile") {
+    const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
+    if (dir.empty()) return;
+    for (const char* name : {"amsterdam", "grachten"}) {
+        auto pack = atlas::test::open_pack(dir + "/" + name + ".atlas");
+        ATLAS_REQUIRE(pack.has_value(), tl::describe(pack.error()));
+        const tl::RenderHead* head = pack->head();
+        ATLAS_REQUIRE(head != nullptr);
+        tl::Zstd zstd;
+        tl::TileDecoder decoder;
+        std::vector<std::byte> raw;
+        std::vector<std::byte> scratch;
+        atlas::Arena arena(4U << 20U, atlas::Growth::grows, "things test");
+        std::array<std::size_t, 5> kinds{};
+        for (const tl::ChunkRef& chunk : pack->chunks().level(head->levels[0])) {
+            arena.reset();
+            auto tile = pack->decode(chunk, zstd, decoder, arena, raw, scratch);
+            ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+            const gm::TileThings g = gm::build_things({.tile = &*tile, .head = head, .kind = 9});
+            CHECK(g.things.size() == g.items.size());
+            for (std::size_t i = 0; i < g.things.size(); ++i) {
+                const gm::Thing& t = g.things[i];
+                const atlas::scene::ItemSpec& item = g.items[i];
+                CHECK(item.order == atlas::scene::order_of(gm::nodes_list, t.node));
+                CHECK(item.slots[0] == gm::thing_slots[static_cast<std::size_t>(t.kind)]);
+                CHECK(item.y == 1.0);
+                ++kinds[static_cast<std::size_t>(t.kind)];
+            }
+            const std::vector<atlas::hlsl::uint4> words = atlas::passes::thing_words(g, 0.0, 0.0, 0.0);
+            CHECK(words.size() == g.things.size());
+        }
+        MESSAGE(std::format("{}: {} lamps, {} benches, {} baskets, {} bollards, {} racks", name, kinds[0], kinds[1],
+                            kinds[2], kinds[3], kinds[4]));
     }
 }

@@ -77,6 +77,10 @@ inline constexpr std::uint8_t poi = slot_of(columns, "poi");
 inline constexpr std::uint8_t door = slot_of(columns, "door");
 inline constexpr std::uint8_t door_number = slot_of(columns, "door_number");
 inline constexpr std::uint8_t building = slot_of(columns, "building");
+inline constexpr std::uint8_t gy = slot_of(columns, "gy");
+inline constexpr std::uint8_t tag_highway = slot_of(columns, "tag:highway");
+inline constexpr std::uint8_t tag_amenity = slot_of(columns, "tag:amenity");
+inline constexpr std::uint8_t tag_barrier = slot_of(columns, "tag:barrier");
 
 } // namespace atlas::tiles::thing
 

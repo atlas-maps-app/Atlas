@@ -110,18 +110,19 @@ void TreeTwin::small_tree(const shaders::TreeJob& j, const shaders::TreeHeader& 
     out_.at(j.slot, objects_, item);
     if ((j.flags & shaders::TREE_JOB_ONE) != 0U) {
         const std::uint32_t tone = tones_[j.tint + shaders::TREE_TONE_SMALL_MIX];
-        put(0, shaders::tree_circle(at, shaders::tree_print(c, rr), tone, kz, shaders::tree_depth(c, kz, j.slot, 0U)));
+        put(0,
+            shaders::tree_circle(at, shaders::tree_print(c, rr), tone, 1.0F, shaders::tree_depth(c, kz, j.slot, 0U)));
         out_.circle({.fill = paint(tone)}, at.x, at.y, shaders::tree_print(c, rr));
         return;
     }
     const std::uint32_t shade = tones_[j.tint + shaders::TREE_TONE_SMALL_SHADE];
     // the GPU's records nearest first: the second circle, then the first
-    put(1, shaders::tree_circle(at, shaders::tree_print(c, rr), shade, kz, shaders::tree_depth(c, kz, j.slot, 0U)));
+    put(1, shaders::tree_circle(at, shaders::tree_print(c, rr), shade, 1.0F, shaders::tree_depth(c, kz, j.slot, 0U)));
     out_.circle({.fill = paint(shade)}, at.x, at.y, shaders::tree_print(c, rr));
     const hlsl::float2 q = {shaders::tree_print(c, p.x - rr * 0.2F), shaders::tree_print(c, p.y - rr * 0.25F)};
     const std::uint32_t lit = tones_[j.tint + shaders::TREE_TONE_SMALL_LIT];
     put(0,
-        shaders::tree_circle(q, shaders::tree_print(c, rr * 0.62F), lit, kz, shaders::tree_depth(c, kz, j.slot, 1U)));
+        shaders::tree_circle(q, shaders::tree_print(c, rr * 0.62F), lit, 1.0F, shaders::tree_depth(c, kz, j.slot, 1U)));
     out_.at(j.slot + 1, objects_, item);
     out_.circle({.fill = paint(lit)}, q.x, q.y, shaders::tree_print(c, rr * 0.62F));
 }
@@ -148,7 +149,7 @@ void TreeTwin::close_tree(const shaders::TreeJob& j, const shaders::TreeHeader& 
         q[i] = shaders::tree_trunk_corner(c, c0, c1, j.w0, j.w1, i);
         pts[i] = point(q[i]);
     }
-    put(limbs_at + 5, shaders::tree_quad(q[0], q[1], q[2], q[3], bark, kz, shaders::tree_depth(c, kz, j.slot, 0U)));
+    put(limbs_at + 5, shaders::tree_quad(q[0], q[1], q[2], q[3], bark, 1.0F, shaders::tree_depth(c, kz, j.slot, 0U)));
     out_.at(j.slot, objects_, item);
     out_.path({.fill = paint(bark)}, pts, true);
     // its sunlit side
@@ -159,11 +160,12 @@ void TreeTwin::close_tree(const shaders::TreeJob& j, const shaders::TreeHeader& 
             pts[i] = point(q[i]);
         }
         const std::uint32_t side = tones_[shaders::TREE_TONE_SIDE];
-        side_record_ = shaders::tree_quad(q[0], q[1], q[2], q[3], side, kz, shaders::tree_depth(c, kz, j.slot, 1U));
+        const auto opacity = std::bit_cast<float>(tones_[shaders::TREE_TONE_SIDE_OPACITY]);
+        side_record_ =
+            shaders::tree_quad(q[0], q[1], q[2], q[3], side, opacity, shaders::tree_depth(c, kz, j.slot, 1U));
         side_kept_ = true;
         out_.at(j.slot + 1, objects_, item);
-        out_.path({.fill = paint(side)}, pts, true,
-                  {.opacity = std::bit_cast<float>(tones_[shaders::TREE_TONE_SIDE_OPACITY])});
+        out_.path({.fill = paint(side)}, pts, true, {.opacity = opacity});
     }
     // the clumps kept at the camera
     struct Kept {
@@ -188,8 +190,8 @@ void TreeTwin::close_tree(const shaders::TreeJob& j, const shaders::TreeHeader& 
         for (std::uint32_t l = 0; l < 5 && l < by_y.size(); ++l) {
             const shaders::TreeSeen s = shaders::tree_seen(c, j.place, t, clump(kept[by_y[l]].i), false);
             const hlsl::float2 end = shaders::tree_printed(c, shaders::css_of(c, s.k));
-            put(limbs_at + l,
-                shaders::tree_capsule(top, end, 0.5F * j.limb, bark, kz, shaders::tree_depth(c, kz, j.slot, 2U)));
+            put(limbs_at + l, shaders::tree_segment(top, end, 0.5F * j.limb, shaders::TREE_ROUND, bark, 1.0F,
+                                                    shaders::tree_depth(c, kz, j.slot, 2U)));
             limbs.push_back({point(top), point(end)});
         }
         std::vector<Subpath> subpaths;
@@ -223,7 +225,7 @@ void TreeTwin::close_tree(const shaders::TreeJob& j, const shaders::TreeHeader& 
         const std::uint32_t g = qc.under ? 0U : 1U;
         const std::uint32_t tone = tones_[j.tint + (qc.under ? shaders::TREE_TONE_UNDER : shaders::TREE_TONE_FLANK)];
         const hlsl::float2 centre = shaders::tree_printed(c, shaders::css_of(c, s.k));
-        put(at + 2, shaders::tree_circle(centre, shaders::tree_print(c, rr), tone, kz,
+        put(at + 2, shaders::tree_circle(centre, shaders::tree_print(c, rr), tone, 1.0F,
                                          shaders::tree_depth(c, kz, j.slot, 3U + (4U * slice) + g)));
         circles[p][0] = {.at = point(centre), .r = shaders::tree_print(c, rr), .tone = tone, .drawn = true};
         const float lam = shaders::tree_lam(t, qc, l, night);
@@ -231,7 +233,7 @@ void TreeTwin::close_tree(const shaders::TreeJob& j, const shaders::TreeHeader& 
             const hlsl::float3 m = shaders::tree_toward(c, j.place, t, qc, br, l, 0.35F);
             if (shaders::tree_ahead(c, m)) {
                 const hlsl::float2 o = shaders::tree_printed(c, shaders::css_of(c, m));
-                put(at + 1, shaders::tree_circle(o, shaders::tree_print(c, rr * 0.72F), lit_tone, kz,
+                put(at + 1, shaders::tree_circle(o, shaders::tree_print(c, rr * 0.72F), lit_tone, 1.0F,
                                                  shaders::tree_depth(c, kz, j.slot, 3U + (4U * slice) + 2U)));
                 circles[p][1] = {
                     .at = point(o), .r = shaders::tree_print(c, rr * 0.72F), .tone = lit_tone, .drawn = true};
@@ -241,7 +243,7 @@ void TreeTwin::close_tree(const shaders::TreeJob& j, const shaders::TreeHeader& 
             const hlsl::float3 m = shaders::tree_toward(c, j.place, t, qc, br, l, 0.55F);
             if (shaders::tree_ahead(c, m)) {
                 const hlsl::float2 o = shaders::tree_printed(c, shaders::css_of(c, m));
-                put(at, shaders::tree_circle(o, shaders::tree_print(c, rr * 0.36F), high_tone, kz,
+                put(at, shaders::tree_circle(o, shaders::tree_print(c, rr * 0.36F), high_tone, 1.0F,
                                              shaders::tree_depth(c, kz, j.slot, 3U + (4U * slice) + 3U)));
                 circles[p][2] = {
                     .at = point(o), .r = shaders::tree_print(c, rr * 0.36F), .tone = high_tone, .drawn = true};
@@ -280,7 +282,8 @@ void TreeTwin::generic_tree(const shaders::TreeJob& j, const shaders::TreeHeader
     const std::uint32_t trunk = tones_[shaders::TREE_TONE_GENERIC_TRUNK];
     const std::uint32_t nb = (j.flags >> shaders::TREE_JOB_NB_SHIFT) & 0xFFU;
     // the GPU's records nearest first: the blobs, then the trunk
-    put(2 * nb, shaders::tree_capsule(p0, p1, 0.5F * j.w0, trunk, kz, shaders::tree_depth(c, kz, j.slot, 0U)));
+    put(2 * nb, shaders::tree_segment(p0, p1, 0.5F * j.w0, shaders::TREE_ROUND, trunk, 1.0F,
+                                      shaders::tree_depth(c, kz, j.slot, 0U)));
     const std::array<Point, 2> line{point(p0), point(p1)};
     out_.at(j.slot, objects_, item);
     // the port's path has no fill: SVG's black, which a line paints nothing with
@@ -318,8 +321,8 @@ void TreeTwin::generic_tree(const shaders::TreeJob& j, const shaders::TreeHeader
         const float rr = q.br * c.forward.w / s.k.z;
         const hlsl::float2 centre = shaders::tree_printed(c, at);
         const std::uint32_t pair = 2 * (static_cast<std::uint32_t>(kept.size()) - 1 - p);
-        put(pair + 1,
-            shaders::tree_circle(centre, shaders::tree_print(c, rr), dark, kz, shaders::tree_depth(c, kz, j.slot, 1U)));
+        put(pair + 1, shaders::tree_circle(centre, shaders::tree_print(c, rr), dark, 1.0F,
+                                           shaders::tree_depth(c, kz, j.slot, 1U)));
         under.push_back({.at = point(centre), .r = shaders::tree_print(c, rr), .tone = dark, .drawn = true});
         if (!night) {
             const hlsl::float3 m = shaders::tree_toward(c, j.place, t, q, q.br, l, 1.0F);
@@ -327,7 +330,7 @@ void TreeTwin::generic_tree(const shaders::TreeJob& j, const shaders::TreeHeader
                 const hlsl::float2 sx = shaders::css_of(c, m);
                 const hlsl::float2 o = {at.x + (sx.x - at.x) * 0.3F, at.y + (sx.y - at.y) * 0.3F};
                 const hlsl::float2 printed = shaders::tree_printed(c, o);
-                put(pair, shaders::tree_circle(printed, shaders::tree_print(c, rr * 0.78F), mid, kz,
+                put(pair, shaders::tree_circle(printed, shaders::tree_print(c, rr * 0.78F), mid, 1.0F,
                                                shaders::tree_depth(c, kz, j.slot, 2U)));
                 top.push_back(
                     {.at = point(printed), .r = shaders::tree_print(c, rr * 0.78F), .tone = mid, .drawn = true});

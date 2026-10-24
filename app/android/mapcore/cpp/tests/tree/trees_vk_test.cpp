@@ -1,13 +1,15 @@
-// The trees pass on the host's Vulkan (ENGINE.md step 4, "Trees and things"; lavapipe): the Westerkerk home and the
-// Main board from the bundled packs (ATLAS_TILES_DIR), drawn through the frame builder and the world with the trees
-// pass alone beside the composite, at rest and moving, at 1x and 4x, at true depth and under the painter switch,
-// against an exact CPU raster of the records the pass's twin says trees_cs writes: each circle's and round-capped
-// limb's samples as trees_fs keeps them (tree.slangh's own tests, in float, at the samples' CSS points), each quad's
-// by its edges, a sample within 0.02 px of a shape's boundary counted apart (the GPU's float may fuse its
-// multiply-adds, its rasteriser rounds); each sample ending with the record of the greatest depth (the first drawn
-// where two tie, as GREATER keeps it), then the trunks' sunlit sides blended over it in the GPU's order where their
-// depth passes (within a level: lavapipe blends in fixed point); the samples averaged as the composite averages them.
-// The twin's elements are held to the port's by L1; here its records are the GPU's.
+// The trees' and the street furniture's passes on the host's Vulkan (ENGINE.md step 4, "Trees and things"; lavapipe):
+// the Westerkerk home and the Main board from the bundled packs (ATLAS_TILES_DIR), and two close-ups of a bundled tree,
+// drawn through the frame builder and the world with those two passes alone beside the composite, at rest and moving,
+// at 1x and 4x, at true depth and under the painter switch, against an exact CPU raster of the records their twins say
+// trees_cs and things_cs write: each circle's and segment's samples as trees_fs keeps them (tree.slangh's own tests, in
+// float, at the samples' CSS points: a segment's ends round or butt), each quad's by its edges, a sample within 0.02 px
+// of a shape's boundary counted apart (the GPU's float may fuse its multiply-adds, its rasteriser rounds); each sample
+// ending with the record of the greatest depth (the first drawn where two tie, as GREATER keeps it), then the
+// translucent records (the trunks' sunlit sides, the lamps' glints, the bollards' heads) blended over it in the GPU's
+// order at each one's opacity where its depth passes (within a level: lavapipe blends in fixed point); the samples
+// averaged as the composite averages them. The twins' elements are held to the port's by L1; here their records are
+// the GPU's.
 #if !defined(__ANDROID__)
 
 #include "base/arena.hpp"
@@ -18,6 +20,7 @@
 #include "gpu/Offscreen.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "passes/Composite.hpp"
+#include "passes/Things.hpp"
 #include "passes/Trees.hpp"
 #include "scene/SunGlobals.hpp"
 #include "scene/World.hpp"
@@ -168,6 +171,7 @@ struct Scene {
     std::unique_ptr<scene::World> world;
     std::unique_ptr<gpu::Renderer> renderer;
     passes::Trees* trees = nullptr;
+    passes::Things* things = nullptr;
     double now = 0;
     bool settled = false;
     bool lit = false;
@@ -181,12 +185,16 @@ struct Scene {
     auto output = gpu::Offscreen::create(device, {.width = w, .height = h}, 2);
     ATLAS_REQUIRE_OR_RETURN(std::nullopt, output.has_value(), output.error().text());
     s.output = std::move(*output);
-    // the registry's composite, and the trees pass of its own (the test reads its twin)
+    // the registry's composite, and the trees' and the street furniture's passes of their own (the test reads their
+    // twins), in the registry's order
     constexpr std::array<std::string_view, 1> composite{"composite"};
     std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes(composite);
-    auto owned = std::make_unique<passes::Trees>();
-    s.trees = owned.get();
-    passes.push_back(std::move(owned));
+    auto trees = std::make_unique<passes::Trees>();
+    s.trees = trees.get();
+    passes.push_back(std::move(trees));
+    auto things = std::make_unique<passes::Things>();
+    s.things = things.get();
+    passes.push_back(std::move(things));
     const std::array<float, 4> c{static_cast<float>((clear >> 16U) & 0xFFU) / 255.0F,
                                  static_cast<float>((clear >> 8U) & 0xFFU) / 255.0F,
                                  static_cast<float>(clear & 0xFFU) / 255.0F, 1.0F};
@@ -313,9 +321,11 @@ struct Compared {
     std::string first;
 };
 
+/// The GPU's frame `got` against the exact raster of the opaque `records` and then the `translucent` ones, each in the
+/// GPU's order.
 [[nodiscard]] Compared compare(const gpu::Pixels& got, std::span<const shaders::TreeRecord> records,
-                               std::span<const shaders::TreeRecord> sides, const shaders::FrameBlock& block,
-                               const gpu::Configuration& config, std::uint32_t clear, float opacity) {
+                               std::span<const shaders::TreeRecord> translucent, const shaders::FrameBlock& block,
+                               const gpu::Configuration& config, std::uint32_t clear) {
     const shaders::FrameCamera& cam = block.camera;
     const std::vector<hlsl::float2> samples = sample_positions(config.samples());
     const std::uint32_t w = got.width;
@@ -342,9 +352,10 @@ struct Compared {
             b[3] = std::max(b[3], y + e);
         };
         const auto f = [](std::uint32_t v) { return std::bit_cast<float>(v); };
-        if (r.a.x == shaders::TREE_CIRCLE) {
+        const std::uint32_t kind = r.a.x & shaders::TREE_KIND;
+        if (kind == shaders::TREE_CIRCLE) {
             add(f(r.b.x), f(r.b.y), f(r.b.z) + 1.0F);
-        } else if (r.a.x == shaders::TREE_CAPSULE) {
+        } else if (kind == shaders::TREE_SEGMENT) {
             add(f(r.b.x), f(r.b.y), f(r.c.x) + 1.0F);
             add(f(r.b.z), f(r.b.w), f(r.c.x) + 1.0F);
         } else {
@@ -361,7 +372,8 @@ struct Compared {
             std::min<std::int64_t>(h - 1, static_cast<std::int64_t>(std::ceil(b[3] * d)) + 1)};
     };
     const auto each = [&](const shaders::TreeRecord& r, auto&& at) {
-        if (r.a.x == shaders::TREE_NONE) return;
+        const std::uint32_t kind = r.a.x & shaders::TREE_KIND;
+        if (kind == shaders::TREE_NONE) return;
         const std::array<std::int64_t, 4> b = box(r);
         for (std::int64_t y = b[1]; y <= b[3]; ++y) {
             for (std::int64_t x = b[0]; x <= b[2]; ++x) {
@@ -371,16 +383,16 @@ struct Compared {
                     Hit hit;
                     const hlsl::float2 a{std::bit_cast<float>(r.b.x), std::bit_cast<float>(r.b.y)};
                     const double tol = tolerance / static_cast<double>(cam.frame.z);
-                    if (r.a.x == shaders::TREE_CIRCLE) {
+                    if (kind == shaders::TREE_CIRCLE) {
                         hit.inside = shaders::tree_circle_covers(s, a, std::bit_cast<float>(r.b.z));
                         // within the tolerance of its boundary the GPU's float (which may fuse its multiply-adds)
                         // may decide otherwise
                         const double d = pymath::hypot(static_cast<double>(s.x) - static_cast<double>(a.x),
                                                        static_cast<double>(s.y) - static_cast<double>(a.y));
                         hit.near = std::abs(d - static_cast<double>(std::bit_cast<float>(r.b.z))) <= tol;
-                    } else if (r.a.x == shaders::TREE_CAPSULE) {
+                    } else if (kind == shaders::TREE_SEGMENT) {
                         const hlsl::float2 e{std::bit_cast<float>(r.b.z), std::bit_cast<float>(r.b.w)};
-                        hit.inside = shaders::tree_capsule_covers(s, a, e, std::bit_cast<float>(r.c.x));
+                        hit.inside = shaders::tree_segment_covers(s, a, e, std::bit_cast<float>(r.c.x), r.a.x);
                         const auto ax = static_cast<double>(a.x);
                         const auto ay = static_cast<double>(a.y);
                         const double ex = static_cast<double>(e.x) - ax;
@@ -388,9 +400,18 @@ struct Compared {
                         const double dx = static_cast<double>(s.x) - ax;
                         const double dy = static_cast<double>(s.y) - ay;
                         const double ee = (ex * ex) + (ey * ey);
-                        const double t = ee > 0 ? std::clamp(((dx * ex) + (dy * ey)) / ee, 0.0, 1.0) : 0.0;
+                        const double along = ee > 0 ? ((dx * ex) + (dy * ey)) / ee : 0.0;
+                        const double t = std::clamp(along, 0.0, 1.0);
                         const double d = pymath::hypot(dx - (ex * t), dy - (ey * t));
                         hit.near = std::abs(d - static_cast<double>(std::bit_cast<float>(r.c.x))) <= tol;
+                        // a butt end: the line across the segment's end
+                        const double len = std::sqrt(ee);
+                        const bool butt_start = (r.a.x & shaders::TREE_ROUND_START) == 0U;
+                        const bool butt_end = (r.a.x & shaders::TREE_ROUND_END) == 0U;
+                        if (len > 0 && ((butt_start && std::abs(along) * len <= tol) ||
+                                        (butt_end && std::abs(along - 1.0) * len <= tol))) {
+                            hit.near = true;
+                        }
                     } else {
                         hit = quad_hit(r, s, tol);
                     }
@@ -409,9 +430,10 @@ struct Compared {
             covered[k] = 1;
         });
     }
-    // the sunlit sides, in the GPU's order (far to near: the twin keeps them the other way round)
-    for (const shaders::TreeRecord& r : std::views::reverse(sides)) {
+    // the translucent ones: the trees' sunlit sides, then the furniture's glints and heads
+    for (const shaders::TreeRecord& r : translucent) {
         const auto d = std::bit_cast<float>(r.a.w);
+        const auto opacity = std::bit_cast<float>(r.a.z);
         const hlsl::float3 c = shaders::tree_rgb(r.a.y);
         each(r, [&](std::size_t k, Hit hit) {
             if (hit.near) edge[k] = 1;
@@ -501,23 +523,32 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
                 twin::Stream stream;
                 std::vector<shaders::TreeRecord> records;
                 std::vector<shaders::TreeRecord> sides;
+                std::vector<shaders::TreeRecord> glints;
                 s.trees->emit_records(s.builder->state(), stream, &records, &sides);
+                const std::size_t tree_records = records.size();
+                s.things->emit_records(s.builder->state(), stream, &records, &glints);
                 const twin::Decoded decoded = twin::decode(stream.bytes());
                 ATLAS_REQUIRE(decoded.error.empty(), decoded.error);
                 const passes::Trees::Counts counts = s.trees->counts();
-                const tiles::Style* style = s.builder->state().active_pack->source->pack.style();
-                const Compared r = compare(*pixels, records, sides, s.builder->state().block, config, clear,
-                                           style->trees.bark_lit_opacity);
+                const passes::Things::Counts thing_counts = s.things->counts();
+                // the translucent lists as the GPU draws them, each far to near (the twins keep them nearest first)
+                std::vector<shaders::TreeRecord> translucent(sides.rbegin(), sides.rend());
+                translucent.insert(translucent.end(), glints.rbegin(), glints.rend());
+                const Compared r = compare(*pixels, records, translucent, s.builder->state().block, config, clear);
                 const std::string name = std::format("{} {} {}{}", view, gpu::name_of(config),
                                                      rest ? "at rest" : "moving", painter ? " (painter's order)" : "");
                 MESSAGE(name << ": " << stream.elements() << " elements of " << counts.jobs << " trees, "
-                             << counts.records << " records and " << counts.sides << " sunlit sides; " << r.pixels
-                             << " pixels of trees, " << r.agree << " the exact raster's, " << r.boundary
+                             << counts.records << " records and " << counts.sides << " sunlit sides, "
+                             << thing_counts.jobs << " things, " << thing_counts.records << " records and "
+                             << thing_counts.sides << " translucent ones; " << r.pixels
+                             << " pixels of trees and things, " << r.agree << " the exact raster's, " << r.boundary
                              << " within 0.02 px of a shape's boundary, " << r.seam << " on the composite's seam, "
                              << r.wrong << " otherwise; " << frame::text_of(s.builder->total()));
                 CHECK(stream.elements() >= least);
-                CHECK(records.size() == counts.records);
+                CHECK(tree_records == counts.records);
+                CHECK(records.size() - tree_records == thing_counts.records);
                 CHECK(sides.size() == counts.sides);
+                CHECK(glints.size() == thing_counts.sides);
                 CHECK_MESSAGE(r.wrong == 0, name << ": " << r.first);
                 CHECK(static_cast<double>(r.boundary) <= 0.01 * static_cast<double>(r.pixels));
                 for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, name << ": " << m);

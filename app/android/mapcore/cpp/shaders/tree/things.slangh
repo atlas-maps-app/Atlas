@@ -1,0 +1,306 @@
+// The street furniture (ENGINE.md step 4, "Trees and things"; render/amsterdam.py's draw_lamp, draw_bench, draw_box,
+// draw_bollard and draw_rack; CP/geometry/Things.hpp), shared by the GPU (shaders/tree/draw.slang's things_cs) and the
+// twin (CP/twin/tree/TreeShader.hpp compiles it as C++ after tree.slangh, whose records it writes). Not a module.
+//
+// A thing in the points heap is one uint4: its foot tile-local (its ground's height in y) and its kind. Per frame the
+// render thread decides in double what the item's depth decides (passes::thing_choice: s = focal / d, the widths, the
+// lamp's glint by day where s > 1.2, the bollard's head by day where s > 1) and the moment's colours, and writes a job a
+// drawn thing; things_cs writes its records as the port draws it, every printed value snapped at rest:
+//   - a lamp: its mast from its foot to 4.2 m (round caps), its lantern (the quad from p1 ± hw down to p1 ± 0.7 hw at
+//     hh) and its cap (the triangle from p1 ± 1.2 hw up to 0.6 hh), by day its glint (0.4 hw left of p1, from 0.2 hh down
+//     0.6 hh, translucent; nothing where its mast's top or foot lies nearer than the near plane; its wet streak and its
+//     night halo come with the night);
+//   - a box (a bench's seat and back, a basket): its leg, the 1 px stroke from its foot to its height (where both
+//     project), and its top as face() draws it (Camera.poly's cut at the near plane, kept within 300 px of the frame,
+//     from 0.12 px² of area);
+//   - a bollard: its post to 0.85 m (round caps), by day its head (translucent);
+//   - a rack: three arcs a metre apart, nine points each, where all nine project (butt caps, round joins).
+// A thing's parts lie on one plane facing the eye at its middle's depth, its k-th slot a lead of k · 2^-16 nearer (the
+// trees' tree_depth), so they keep the port's order; under the painter switch each part draws at its slot.
+#pragma once
+
+/// A thing's kinds (geometry::ThingKind).
+static const uint THING_LAMP = 0u;
+static const uint THING_BENCH = 1u;
+static const uint THING_BASKET = 2u;
+static const uint THING_BOLLARD = 3u;
+static const uint THING_RACK = 4u;
+
+/// A job's flags: its kind in bits 0 to 3.
+static const uint THING_JOB_KIND = 15u;
+static const uint THING_JOB_NIGHT = 16u;
+static const uint THING_JOB_GLINT = 32u; // a lamp's glint (by day, s > 1.2)
+static const uint THING_JOB_HEAD = 64u;  // a bollard's head (by day, s > 1)
+static const uint THING_JOB_VECTORS = 5u;
+
+/// The colours' table (passes::thing_tones, per moment: each colour by day or at night as the port picks it, 0xBBGGRR),
+/// then the glint's and the head's opacities and the racks' width (their floats' bits).
+static const uint THING_TONE_MAST = 0u;
+static const uint THING_TONE_LANTERN = 1u;
+static const uint THING_TONE_CAP = 2u;
+static const uint THING_TONE_GLINT = 3u;
+static const uint THING_TONE_BENCH = 4u; // a box's top, then its leg: the seat, the back, the basket
+static const uint THING_TONE_BACK = 6u;
+static const uint THING_TONE_BASKET = 8u;
+static const uint THING_TONE_BOLLARD = 10u;
+static const uint THING_TONE_HEAD = 11u;
+static const uint THING_TONE_RACK = 12u;
+static const uint THING_TONE_GLINT_OPACITY = 13u;
+static const uint THING_TONE_HEAD_OPACITY = 14u;
+static const uint THING_TONE_RACK_WIDTH = 15u;
+static const uint THING_TONES = 16u;
+
+/// The records a job reserves: a lamp's mast, lantern and cap; a bench's two boxes (each a leg and a top of up to two
+/// quads); a basket's box; a bollard's post; a rack's three arcs of eight segments. And its translucent ones: a lamp's
+/// glint, a bollard's head.
+inline uint thing_record_count(uint flags) {
+    uint kind = flags & THING_JOB_KIND;
+    if (kind == THING_LAMP) {
+        return 3u;
+    }
+    if (kind == THING_BENCH) {
+        return 6u;
+    }
+    if (kind == THING_BASKET) {
+        return 3u;
+    }
+    if (kind == THING_BOLLARD) {
+        return 1u;
+    }
+    return 24u;
+}
+
+inline uint thing_side_count(uint flags) {
+    return (flags & (THING_JOB_GLINT | THING_JOB_HEAD)) != 0u ? 1u : 0u;
+}
+
+/// A thing as the points heap holds it: its foot, tile-local.
+inline float3 thing_foot(uint4 v) {
+    float3 p = {asfloat(v.x), asfloat(v.y), asfloat(v.z)};
+    return p;
+}
+
+/// A job: what the render thread decided for one drawn thing.
+struct ThingJob {
+    TilePlace place;
+    uint thing;  // its uint4 in the points heap
+    uint flags;  // THING_JOB_
+    uint slot;   // its item's first painter slot
+    uint first;  // its first record
+    float a;     // a lamp's mast's width, a bollard's post's (as printed)
+    float b;     // a lamp's hw, a bollard's head's offset (0.03 s)
+    float c;     // a lamp's hh, a bollard's head's radius (as printed)
+    float d;     // a lamp's glint's width (as printed)
+    uint side;   // its translucent record
+};
+
+inline ThingJob thing_job(uint4 a, uint4 b, uint4 c, uint4 d, uint4 e) {
+    ThingJob j;
+    float4 offset = {asfloat(a.x), asfloat(a.y), asfloat(a.z), asfloat(a.w)};
+    float4 scale = {asfloat(b.x), asfloat(b.y), asfloat(b.z), asfloat(b.w)};
+    j.place.offset = offset;
+    j.place.scale = scale;
+    j.thing = c.x;
+    j.flags = c.y;
+    j.slot = c.z;
+    j.first = c.w;
+    j.a = asfloat(d.x);
+    j.b = asfloat(d.y);
+    j.c = asfloat(d.z);
+    j.d = asfloat(d.w);
+    j.side = e.x;
+    return j;
+}
+
+/// The height of a thing's plane's point above its foot: a lamp's mast's middle, a box's or a post's, a rack's arcs'.
+inline float thing_middle(uint kind) {
+    if (kind == THING_LAMP) {
+        return 2.1f;
+    }
+    if (kind == THING_BENCH) {
+        return 0.45f;
+    }
+    if (kind == THING_BASKET) {
+        return 0.475f;
+    }
+    if (kind == THING_BOLLARD) {
+        return 0.425f;
+    }
+    return 0.4f;
+}
+
+/// A point of the thing, tile-local: (dx, y, dz) from its foot.
+inline float3 thing_point(float3 foot, float dx, float y, float dz) {
+    float3 p = {foot.x + dx, foot.y + y, foot.z + dz};
+    return p;
+}
+
+/// A box's top as face() draws it: its corners at the camera, cut at the near plane as Camera.poly cuts them (each
+/// edge's crossing at t = (near - a.z) / (b.z - a.z)), projected, kept where they reach within 300 px of the frame and
+/// their area is 0.12 px² or more; up to five corners (unsnapped), count 0 where it draws nothing.
+struct ThingFace {
+    float2 p0;
+    float2 p1;
+    float2 p2;
+    float2 p3;
+    float2 p4;
+    uint count;
+};
+
+inline ThingFace thing_face_none() {
+    ThingFace f;
+    f.p0 = float2(0.0f);
+    f.p1 = float2(0.0f);
+    f.p2 = float2(0.0f);
+    f.p3 = float2(0.0f);
+    f.p4 = float2(0.0f);
+    f.count = 0u;
+    return f;
+}
+
+/// Corner i of a face.
+inline float2 thing_face_corner(ThingFace f, uint i) {
+    if (i == 0u) {
+        return f.p0;
+    }
+    if (i == 1u) {
+        return f.p1;
+    }
+    if (i == 2u) {
+        return f.p2;
+    }
+    if (i == 3u) {
+        return f.p3;
+    }
+    return f.p4;
+}
+
+/// Face `f` with corner `p` added at its end (no more than five).
+inline ThingFace thing_face_add(ThingFace f, float2 p) {
+    ThingFace o = f;
+    if (o.count == 0u) {
+        o.p0 = p;
+    } else if (o.count == 1u) {
+        o.p1 = p;
+    } else if (o.count == 2u) {
+        o.p2 = p;
+    } else if (o.count == 3u) {
+        o.p3 = p;
+    } else if (o.count == 4u) {
+        o.p4 = p;
+    }
+    if (o.count < 5u) {
+        o.count = o.count + 1u;
+    }
+    return o;
+}
+
+/// Camera coordinates `a` cut toward `b` at the near plane (Camera.poly's crossing), projected.
+inline float2 thing_crossing(FrameCamera c, float3 a, float3 b) {
+    float near = c.frame.w;
+    float t = (near - a.z) / (b.z - a.z);
+    float3 k = {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, near};
+    return css_of(c, k);
+}
+
+inline ThingFace thing_face(FrameCamera c, TilePlace place, float3 q0, float3 q1, float3 q2, float3 q3) {
+    float3 k0 = tree_camera(c, place, q0);
+    float3 k1 = tree_camera(c, place, q1);
+    float3 k2 = tree_camera(c, place, q2);
+    float3 k3 = tree_camera(c, place, q3);
+    float near = c.frame.w;
+    ThingFace f = thing_face_none();
+    for (uint i = 0u; i < 4u; ++i) {
+        float3 a = k3;
+        float3 b = k0;
+        if (i == 0u) {
+            a = k0;
+            b = k1;
+        } else if (i == 1u) {
+            a = k1;
+            b = k2;
+        } else if (i == 2u) {
+            a = k2;
+            b = k3;
+        }
+        bool ai = a.z >= near;
+        bool bi = b.z >= near;
+        if (ai) {
+            f = thing_face_add(f, css_of(c, a));
+        }
+        if (ai != bi) {
+            f = thing_face_add(f, thing_crossing(c, a, b));
+        }
+    }
+    if (f.count < 3u) {
+        return thing_face_none();
+    }
+    // within 300 px of the frame, and 0.12 px² of area or more (face's margin and floor)
+    float x0 = f.p0.x;
+    float x1 = f.p0.x;
+    float y0 = f.p0.y;
+    float y1 = f.p0.y;
+    float twice = 0.0f;
+    for (uint i = 0u; i < f.count; ++i) {
+        float2 p = thing_face_corner(f, i);
+        float2 q = thing_face_corner(f, (i + 1u) % f.count);
+        x0 = min(x0, p.x);
+        x1 = max(x1, p.x);
+        y0 = min(y0, p.y);
+        y1 = max(y1, p.y);
+        twice = twice + (p.x * q.y - q.x * p.y);
+    }
+    float margin = 300.0f;
+    if (x1 < -margin || x0 > c.frame.x + margin || y1 < -margin || y0 > c.frame.y + margin) {
+        return thing_face_none();
+    }
+    if (abs(twice) / 2.0f < 0.12f) {
+        return thing_face_none();
+    }
+    return f;
+}
+
+/// A rack's arc's point i (0 to 8) from the arc's foot: (0.35 cos(i π / 8), 0.8 sin(i π / 8)), the port's doubles
+/// rounded to float.
+inline float2 thing_arc(uint i) {
+    float2 p = {0.35f, 0.0f};
+    if (i == 1u) {
+        float2 q = {0.3233578363789503f, 0.30614674589207186f};
+        p = q;
+    } else if (i == 2u) {
+        float2 q = {0.24748737341529164f, 0.565685424949238f};
+        p = q;
+    } else if (i == 3u) {
+        float2 q = {0.13393920132778142f, 0.7391036260090295f};
+        p = q;
+    } else if (i == 4u) {
+        float2 q = {2.143131898507868e-17f, 0.8f};
+        p = q;
+    } else if (i == 5u) {
+        float2 q = {-0.1339392013277814f, 0.7391036260090295f};
+        p = q;
+    } else if (i == 6u) {
+        float2 q = {-0.2474873734152916f, 0.5656854249492381f};
+        p = q;
+    } else if (i == 7u) {
+        float2 q = {-0.3233578363789503f, 0.3061467458920719f};
+        p = q;
+    } else if (i == 8u) {
+        float2 q = {-0.35f, 9.797174393178826e-17f};
+        p = q;
+    }
+    return p;
+}
+
+/// A rack's arc's segment j (0 to 7)'s caps: round where another segment joins it (the objects group's round joins),
+/// butt at the arc's two feet.
+inline uint thing_arc_caps(uint j) {
+    uint caps = 0u;
+    if (j > 0u) {
+        caps |= TREE_ROUND_START;
+    }
+    if (j < 7u) {
+        caps |= TREE_ROUND_END;
+    }
+    return caps;
+}

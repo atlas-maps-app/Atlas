@@ -162,6 +162,38 @@ class EngineStyleTest {
                 listOf("trees.bark_lit", "trees.bark_lit_opacity"), closeup,
                 """fill=\"${value("trees.bark_lit")}\" opacity=\"${css("trees.bark_lit_opacity")}\"""",
             ),
+            Triple(
+                listOf("things.mast_day", "things.mast_night"), amsterdam,
+                """if (!night) "${value("things.mast_day")}" else "${value("things.mast_night")}", pmax(0.5, 0.13 * s)""",
+            ),
+            Triple(
+                listOf("things.lantern_day", "things.lantern_night"), amsterdam,
+                """val lamp = if (night) "${value("things.lantern_night")}" else "${value("things.lantern_day")}"""",
+            ),
+            Triple(
+                listOf("things.cap_day", "things.cap_night"), amsterdam,
+                """if (!night) "${value("things.cap_day")}" else "${value("things.cap_night")}"))""",
+            ),
+            Triple(
+                listOf("things.glint", "things.glint_opacity"), amsterdam,
+                """stroke=\"${value("things.glint")}\" stroke-width=\"%.2f\" opacity=\"${css("things.glint_opacity")}\"""",
+            ),
+            Triple(listOf("things.bench"), amsterdam, """val c = "${value("things.bench")}""""),
+            Triple(listOf("things.bench_back"), amsterdam, """1.8, 0.08, 0.9, "${value("things.bench_back")}")"""),
+            Triple(listOf("things.basket"), amsterdam, """0.42, 0.42, 0.95, "${value("things.basket")}")"""),
+            Triple(
+                listOf("things.bollard_day", "things.bollard_night"), amsterdam,
+                """val col = if (!night) "${value("things.bollard_day")}" else "${value("things.bollard_night")}"""",
+            ),
+            Triple(
+                listOf("things.bollard_head", "things.bollard_head_opacity"), amsterdam,
+                """fill=\"${value("things.bollard_head")}\" opacity=\"${css("things.bollard_head_opacity")}\"""",
+            ),
+            Triple(
+                listOf("things.rack_width", "things.rack_day", "things.rack_night"), amsterdam,
+                """stroke-width=\"${css("things.rack_width")}\" fill=\"none\"/>", segs.joinToString(""), """ +
+                    """if (th["night"] != true) "${value("things.rack_day")}" else "${value("things.rack_night")}")""",
+            ),
             Triple(listOf("trees.crown"), amsterdam, """hx(if (truthy(th["wx"])) "#4F6E37" else "${value("trees.crown")}")"""),
             Triple(
                 listOf("trees.trunk_day", "trees.trunk_night"), amsterdam,

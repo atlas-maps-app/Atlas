@@ -80,11 +80,16 @@ static const uint TREE_TONE_GENERIC_TRUNK = 23u;
 static const uint TREE_TONE_SIDE_OPACITY = 24u;
 static const uint TREE_TONES = 25u;
 
-/// A record's kind.
+/// A record's kind (its first word's low byte), and a segment's caps (its round ends; a butt end where the flag is
+/// clear).
 static const uint TREE_NONE = 0u;
 static const uint TREE_CIRCLE = 1u;
 static const uint TREE_QUAD = 2u;
-static const uint TREE_CAPSULE = 3u;
+static const uint TREE_SEGMENT = 3u;
+static const uint TREE_KIND = 0xFFu;
+static const uint TREE_ROUND_START = 256u;
+static const uint TREE_ROUND_END = 512u;
+static const uint TREE_ROUND = 768u;
 static const uint TREE_RECORD_VECTORS = 3u;
 /// The vertices a record draws: two triangles.
 static const uint TREE_RECORD_VERTICES = 6u;
@@ -220,8 +225,9 @@ inline float tree_depth(FrameCamera c, float kz, uint slot, uint k) {
     return true_depth(c, r < 1.0f ? r : 1.0f);
 }
 
-/// A record: a = (kind, colour 0xBBGGRR, eye depth's bits, depth's bits), b and c its geometry: a circle's centre and
-/// radius (CSS px); a quad's corners in order; a capsule's two ends and half width.
+/// A record: a = (kind and caps, colour 0xBBGGRR, opacity's bits, depth's bits), b and c its geometry: a circle's
+/// centre and radius (CSS px); a quad's corners in order; a segment's two ends and half width. An opaque record's
+/// opacity is 1; a translucent one's draws in the translucent lists.
 struct TreeRecord {
     uint4 a;
     uint4 b;
@@ -236,9 +242,9 @@ inline TreeRecord tree_nothing() {
     return r;
 }
 
-inline TreeRecord tree_circle(float2 at, float radius, uint colour, float kz, float depth) {
+inline TreeRecord tree_circle(float2 at, float radius, uint colour, float opacity, float depth) {
     TreeRecord r;
-    uint4 a = {TREE_CIRCLE, colour, asuint(kz), asuint(depth)};
+    uint4 a = {TREE_CIRCLE, colour, asuint(opacity), asuint(depth)};
     uint4 b = {asuint(at.x), asuint(at.y), asuint(radius), 0u};
     r.a = a;
     r.b = b;
@@ -246,9 +252,9 @@ inline TreeRecord tree_circle(float2 at, float radius, uint colour, float kz, fl
     return r;
 }
 
-inline TreeRecord tree_quad(float2 p0, float2 p1, float2 p2, float2 p3, uint colour, float kz, float depth) {
+inline TreeRecord tree_quad(float2 p0, float2 p1, float2 p2, float2 p3, uint colour, float opacity, float depth) {
     TreeRecord r;
-    uint4 a = {TREE_QUAD, colour, asuint(kz), asuint(depth)};
+    uint4 a = {TREE_QUAD, colour, asuint(opacity), asuint(depth)};
     uint4 b = {asuint(p0.x), asuint(p0.y), asuint(p1.x), asuint(p1.y)};
     uint4 c = {asuint(p2.x), asuint(p2.y), asuint(p3.x), asuint(p3.y)};
     r.a = a;
@@ -257,9 +263,11 @@ inline TreeRecord tree_quad(float2 p0, float2 p1, float2 p2, float2 p3, uint col
     return r;
 }
 
-inline TreeRecord tree_capsule(float2 p0, float2 p1, float half, uint colour, float kz, float depth) {
+/// A stroke's segment from p0 to p1, `half` its half width, its ends round where `caps` says (TREE_ROUND_START,
+/// TREE_ROUND_END).
+inline TreeRecord tree_segment(float2 p0, float2 p1, float half, uint caps, uint colour, float opacity, float depth) {
     TreeRecord r;
-    uint4 a = {TREE_CAPSULE, colour, asuint(kz), asuint(depth)};
+    uint4 a = {TREE_SEGMENT | caps, colour, asuint(opacity), asuint(depth)};
     uint4 b = {asuint(p0.x), asuint(p0.y), asuint(p1.x), asuint(p1.y)};
     uint4 c = {asuint(half), 0u, 0u, 0u};
     r.a = a;
@@ -341,18 +349,23 @@ inline float3 tree_toward(FrameCamera c, TilePlace place, TreeHeader t, TreeClum
     return tree_camera(c, place, m);
 }
 
-/// Whether a sample at CSS point `s` lies in a circle, and within `half` of a segment (a round-capped stroke).
+/// Whether a sample at CSS point `s` lies in a circle, and within `half` of a segment (a stroke, its ends round or butt
+/// as `caps` says).
 inline bool tree_circle_covers(float2 s, float2 at, float radius) {
     float dx = s.x - at.x;
     float dy = s.y - at.y;
     return (dx * dx) + (dy * dy) <= radius * radius;
 }
 
-inline bool tree_capsule_covers(float2 s, float2 a, float2 b, float half) {
+inline bool tree_segment_covers(float2 s, float2 a, float2 b, float half, uint caps) {
     float2 e = b - a;
     float2 d = s - a;
     float ee = e.x * e.x + e.y * e.y;
     float t = ee > 0.0f ? (d.x * e.x + d.y * e.y) / ee : 0.0f;
+    // past a butt end nothing; past a round one the end's disc
+    if ((t < 0.0f && (caps & TREE_ROUND_START) == 0u) || (t > 1.0f && (caps & TREE_ROUND_END) == 0u)) {
+        return false;
+    }
     t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
     float2 g = d - e * t;
     return g.x * g.x + g.y * g.y <= half * half;

@@ -228,6 +228,21 @@ Result<Style> Style::of(const StyleTables& tables) {
             ts.forms.emplace_back(std::string(forms->key(i)), *form);
         }
     }
+    const auto things = r.table("things");
+    ThingsStyle& th = s.things;
+    th.mast = r.day_night(things, "things", "mast_day", "mast_night");
+    th.lantern = r.day_night(things, "things", "lantern_day", "lantern_night");
+    th.cap = r.day_night(things, "things", "cap_day", "cap_night");
+    th.glint = r.colour(things, "things", "glint");
+    th.glint_opacity = static_cast<float>(r.number(things, "things", "glint_opacity"));
+    th.bench = r.colour(things, "things", "bench");
+    th.bench_back = r.colour(things, "things", "bench_back");
+    th.basket = r.colour(things, "things", "basket");
+    th.bollard = r.day_night(things, "things", "bollard_day", "bollard_night");
+    th.bollard_head = r.colour(things, "things", "bollard_head");
+    th.bollard_head_opacity = static_cast<float>(r.number(things, "things", "bollard_head_opacity"));
+    th.rack = r.day_night(things, "things", "rack_day", "rack_night");
+    th.rack_width = static_cast<float>(r.number(things, "things", "rack_width"));
     const auto names = r.table("canal_names");
     s.canal_names.fill = r.colour(names, "canal_names", "fill");
     s.canal_names.opacity = r.number(names, "canal_names", "opacity");

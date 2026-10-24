@@ -95,6 +95,25 @@ struct TreesStyle {
     std::vector<std::pair<std::string, TreeForm>> forms;
 };
 
+/// The street furniture (`things`): a street lamp's mast, lantern and cap by day and at night, its lantern's glint
+/// and its opacity; a bench's seat and back and a waste basket; a bollard by day and at night, its head and its
+/// opacity; a bicycle rack by day and at night, and its width (CSS px).
+struct ThingsStyle {
+    DayNight mast;
+    DayNight lantern;
+    DayNight cap;
+    StyleRgb glint = 0;
+    float glint_opacity = 0.0F;
+    StyleRgb bench = 0;
+    StyleRgb bench_back = 0;
+    StyleRgb basket = 0;
+    DayNight bollard;
+    StyleRgb bollard_head = 0;
+    float bollard_head_opacity = 0.0F;
+    DayNight rack;
+    float rack_width = 0.0F;
+};
+
 struct Style {
     /// Reads `tables`: every value below, each of its kind; a missing or mistyped one is Fault::missing or
     /// Fault::bad_value at Site::style, named (`table.key`) in the error's column.
@@ -134,6 +153,7 @@ struct Style {
     EdgesStyle edges;
     WindowsStyle windows;
     TreesStyle trees;
+    ThingsStyle things;
     /// `houseboats`: the hull's and the deck's colours (the cabin roof's edge is in `edges`).
     StyleRgb hull = 0;
     StyleRgb deck = 0;
