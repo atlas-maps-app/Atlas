@@ -59,6 +59,16 @@ inline float building_atan2(float y, float x) {
 [[vk::binding(9, 2)]] StructuredBuffer<uint4> window_nears;
 [[vk::binding(10, 2)]] RWStructuredBuffer<uint4> window_facades_out;
 [[vk::binding(11, 2)]] StructuredBuffer<uint4> window_facades;
+// The kept primitives' set (passes/Kept.cpp), set 2 of the walls' and roofs' kept pipelines and of the cull's compute
+// stages: this frame slot's jobs (the header, then each job: a tile's push constants and a run of at most 64 of one
+// list's primitives), each job's candidates (their count, their mask and their first place in their list), the kept
+// primitives in their lists' order (a job and a lane each), as the compute stage writes them and as the vertex stage
+// reads them, and the lists' chunks' indirect draws.
+[[vk::binding(12, 2)]] StructuredBuffer<uint4> kept_jobs;
+[[vk::binding(13, 2)]] RWStructuredBuffer<uint4> kept_counts;
+[[vk::binding(14, 2)]] RWStructuredBuffer<uint> kept_out;
+[[vk::binding(15, 2)]] StructuredBuffer<uint> kept;
+[[vk::binding(16, 2)]] RWStructuredBuffer<uint> kept_draws;
 [[vk::push_constant]] ConstantBuffer<BuildingPush> push;
 
 struct BuildingOut {
@@ -78,55 +88,64 @@ BuildingPrim prim_at(uint at) {
     return building_prim(walls_heap[at], walls_heap[at + 1u], walls_heap[at + 2u], walls_heap[at + 3u]);
 }
 
-/// The primitive at record `index` of the list a draw's push constants `p` name (a tile's), as the frame draws it.
-Drawn drawn_at(BuildingPush p, uint index) {
-    Drawn d;
+/// The primitive at record `index` of the list a draw's push constants `p` name (a tile's), its face and its item's rank
+/// table entry, as the walls heap and the frame's rank table hold them.
+struct Fetched {
+    BuildingPrim prim;
+    BuildingFace face;
+    uint rank;
+};
+
+Fetched fetched_at(BuildingPush p, uint index) {
+    Fetched f;
     if (p.sun.w != 0u) {
         // a near cell: its record's two words (its wall in the edged list, its place), cut from its wall
         uint4 pair = walls_heap[p.at.x + index / 2u];
         bool odd = (index & 1u) != 0u;
         uint wall = odd ? pair.z : pair.x;
         uint code = odd ? pair.w : pair.y;
-        d.prim = building_cell_prim(prim_at(p.sun.z + wall * BUILDING_PRIM_VECTORS), code);
+        f.prim = building_cell_prim(prim_at(p.sun.z + wall * BUILDING_PRIM_VECTORS), code);
     } else {
-        d.prim = prim_at(p.at.x + index * BUILDING_PRIM_VECTORS);
+        f.prim = prim_at(p.at.x + index * BUILDING_PRIM_VECTORS);
     }
-    uint fa = p.at.y + d.prim.face * BUILDING_FACE_VECTORS;
-    d.face = building_face(walls_heap[fa], walls_heap[fa + 1u]);
-    uint4 rows = walls_heap[p.at.w + d.prim.item / 4u];
-    uint rank = rank_table[rows[d.prim.item % 4u]];
-    d.shape = building_shape(frame.camera, frame.theme.flags.x, p.place, d.prim, d.face, rank);
+    uint fa = p.at.y + f.prim.face * BUILDING_FACE_VECTORS;
+    f.face = building_face(walls_heap[fa], walls_heap[fa + 1u]);
+    uint4 rows = walls_heap[p.at.w + f.prim.item / 4u];
+    f.rank = rank_table[rows[f.prim.item % 4u]];
+    return f;
+}
+
+/// The primitive at record `index` of the list a draw's push constants `p` name (a tile's), as the frame draws it.
+Drawn drawn_at(BuildingPush p, uint index) {
+    Fetched f = fetched_at(p, index);
+    Drawn d;
+    d.prim = f.prim;
+    d.face = f.face;
+    d.shape = building_shape(frame.camera, frame.theme.flags.x, p.place, d.prim, d.face, f.rank);
     return d;
 }
 
-/// The primitive at record `index` of this draw's list.
-Drawn drawn_of(uint index) {
-    BuildingPush p = push;
-    return drawn_at(p, index);
-}
-
-/// The face's colour at the frame: its light, lit by its sample's sun bit.
-float3 colour_of(Drawn d) {
-    uint word = push.at.z + d.prim.face * 2u; // even, so both words lie in one uint4
+/// The face's colour at the frame: its light, lit by its sample's sun bit, through the push constants `p` of its tile.
+float3 colour_at(BuildingPush p, Drawn d) {
+    uint word = p.at.z + d.prim.face * 2u; // even, so both words lie in one uint4
     uint4 pair = walls_heap[word / 4u];
     uint lit = pair[word % 4u];
     uint unlit = pair[(word % 4u) + 1u];
-    uint has = push.sun.x != BUILDING_NO_BITS ? 1u : 0u;
+    uint has = p.sun.x != BUILDING_NO_BITS ? 1u : 0u;
     uint2 texel = {0u, 0u};
     if (has != 0u && d.prim.sample != BUILDING_NO_SAMPLE) {
-        texel = sun_bits[push.sun.x + d.prim.sample / 32u];
+        texel = sun_bits[p.sun.x + d.prim.sample / 32u];
     }
-    float amount = building_sun_amount(d.face.flags, d.prim.sample, texel, has, asfloat(push.sun.y));
+    float amount = building_sun_amount(d.face.flags, d.prim.sample, texel, has, asfloat(p.sun.y));
     return building_colour(lit, unlit, amount);
 }
 
 /// Where a primitive that draws nothing puts its points: beyond the depth range, so its triangles are clipped away.
 static const float4 NOWHERE = {0.0f, 0.0f, 2.0f, 1.0f};
 
-[shader("vertex")]
-BuildingOut walls_vs(uint vertex : SV_VulkanVertexID) {
-    uint index = vertex / BUILDING_EDGED_VERTICES;
-    Drawn d = drawn_of(index);
+/// Point `corner` (0 to 15) of the outline of the edged primitive at record `index` of the list `p` names.
+BuildingOut wall_vertex(BuildingPush p, uint index, uint corner) {
+    Drawn d = drawn_at(p, index);
     BuildingOut o;
     if (d.shape.count == 0u) {
         o.position = NOWHERE;
@@ -134,28 +153,77 @@ BuildingOut walls_vs(uint vertex : SV_VulkanVertexID) {
         return o;
     }
     // the outline of the wall's same-colour stroke, half its width out (the style's)
-    float2 css = building_outline(d.shape, vertex - index * BUILDING_EDGED_VERTICES, 0.5f * frame.strokes.widths.w);
+    float2 css = building_outline(d.shape, corner, 0.5f * frame.strokes.widths.w);
     float depth = building_depth(frame.camera, d.shape, building_plane_recip(frame.camera, d.shape, css));
     o.position = clip_of(frame.camera, css, 1.0f, depth);
-    o.colour = colour_of(d);
+    o.colour = colour_at(p, d);
     return o;
 }
 
-[shader("vertex")]
-BuildingOut roofs_vs(uint vertex : SV_VulkanVertexID) {
-    uint index = vertex / BUILDING_PLAIN_VERTICES;
-    Drawn d = drawn_of(index);
+/// Point `corner` (0 to 4) of the fan of the plain primitive at record `index` of the list `p` names.
+BuildingOut roof_vertex(BuildingPush p, uint index, uint corner) {
+    Drawn d = drawn_at(p, index);
     BuildingOut o;
     if (d.shape.count == 0u) {
         o.position = NOWHERE;
         o.colour = float3(0.0f);
         return o;
     }
-    float3 point = building_plain_vertex(d.shape, vertex - index * BUILDING_PLAIN_VERTICES);
+    float3 point = building_plain_vertex(d.shape, corner);
     float2 css = {point.x, point.y};
     o.position = clip_of(frame.camera, css, 1.0f, building_depth(frame.camera, d.shape, point.z));
-    o.colour = colour_of(d);
+    o.colour = colour_at(p, d);
     return o;
+}
+
+[shader("vertex")]
+BuildingOut walls_vs(uint vertex : SV_VulkanVertexID) {
+    uint index = vertex / BUILDING_EDGED_VERTICES;
+    BuildingPush p = push;
+    return wall_vertex(p, index, vertex - index * BUILDING_EDGED_VERTICES);
+}
+
+[shader("vertex")]
+BuildingOut roofs_vs(uint vertex : SV_VulkanVertexID) {
+    uint index = vertex / BUILDING_PLAIN_VERTICES;
+    BuildingPush p = push;
+    return roof_vertex(p, index, vertex - index * BUILDING_PLAIN_VERTICES);
+}
+
+/// A kept primitive (passes/Kept.cpp): its job's push constants (its tile's, as that list's draws had them) and its
+/// record in its list, from its place `slot` among its list's kept primitives (a job and a lane: job << 6 | lane).
+struct KeptPrim {
+    BuildingPush push;
+    uint index;
+};
+
+KeptPrim kept_at(uint slot) {
+    uint k = kept[slot];
+    uint at = BUILDING_KEPT_HEADER + (k >> 6u) * BUILDING_KEPT_JOB_VECTORS;
+    KeptPrim o;
+    o.push.place.offset = asfloat(kept_jobs[at]);
+    o.push.place.scale = asfloat(kept_jobs[at + 1u]);
+    o.push.at = kept_jobs[at + 2u];
+    o.push.sun = kept_jobs[at + 3u];
+    o.index = kept_jobs[at + 4u].x + (k & 63u);
+    return o;
+}
+
+/// The kept walls and near cells: a kept draw's vertex is point vertex % 16 of the kept primitive at vertex / 16 (its
+/// chunk's vertex offset is the chunk's first kept place, times 16), decided as walls_vs decides it.
+[shader("vertex")]
+BuildingOut walls_kept_vs(uint vertex : SV_VulkanVertexID) {
+    uint slot = vertex / BUILDING_EDGED_VERTICES;
+    KeptPrim k = kept_at(slot);
+    return wall_vertex(k.push, k.index, vertex - slot * BUILDING_EDGED_VERTICES);
+}
+
+/// The kept roofs' faces and n-gons' triangles, as roofs_vs decides them.
+[shader("vertex")]
+BuildingOut roofs_kept_vs(uint vertex : SV_VulkanVertexID) {
+    uint slot = vertex / BUILDING_PLAIN_VERTICES;
+    KeptPrim k = kept_at(slot);
+    return roof_vertex(k.push, k.index, vertex - slot * BUILDING_PLAIN_VERTICES);
 }
 
 /// A stroke job (Buildings::update): a tile's push constants as its plain list's draws have them (4 uint4), then
@@ -190,6 +258,120 @@ void roof_strokes_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) 
     stroke_records_out[out_at + 1u] = r.v1;
     stroke_records_out[out_at + 2u] = r.v2;
     stroke_records_out[out_at + 3u] = r.v3;
+}
+
+groupshared uint kept_mask[2];
+groupshared uint kept_sums[64];
+groupshared uint kept_total;
+
+/// The kept primitives' cull (passes/Kept.cpp): each primitive of a job's run that may draw (building_may_draw) is a
+/// candidate, into its job's count and mask (bit i: the run's primitive i), which kept_scan_cs and kept_scatter_cs read.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void kept_cull_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
+    uint job = group.y * STROKE_JOB_ROW + group.x;
+    if (job >= kept_jobs[0].w) {
+        return; // the whole workgroup
+    }
+    if (thread.x < 2u) {
+        kept_mask[thread.x] = 0u;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    uint at = BUILDING_KEPT_HEADER + job * BUILDING_KEPT_JOB_VECTORS;
+    uint4 span = kept_jobs[at + 4u];
+    if (thread.x < span.y) {
+        BuildingPush p;
+        p.place.offset = asfloat(kept_jobs[at]);
+        p.place.scale = asfloat(kept_jobs[at + 1u]);
+        p.at = kept_jobs[at + 2u];
+        p.sun = kept_jobs[at + 3u];
+        Fetched f = fetched_at(p, span.x + thread.x);
+        if (building_may_draw(frame.theme.flags.x, p.place, f.prim, f.face, f.rank)) {
+            InterlockedOr(kept_mask[thread.x >> 5u], 1u << (thread.x & 31u));
+        }
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (thread.x == 0u) {
+        uint lo = kept_mask[0];
+        uint hi = kept_mask[1];
+        kept_counts[job] = uint4(countbits(lo) + countbits(hi), lo, hi, 0u);
+    }
+}
+
+/// The kept primitives' scan: workgroup l takes list l's jobs in their order and gives each its first place among the
+/// list's kept primitives (kept_counts' w: the candidates of the list's jobs before it), then each of the list's chunks
+/// its indirect draw: as many of the static index buffer's primitives as the chunk keeps, from its first place on.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void kept_scan_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
+    uint list = group.x;
+    uint first = kept_jobs[0][list];
+    uint count = kept_jobs[1][list];
+    uint base = kept_jobs[2][list];
+    uint draw = kept_jobs[3][list];
+    // the list's places: up to the next list's first (the total after the last)
+    uint end = list + 1u < BUILDING_KEPT_LISTS ? kept_jobs[2][list + 1u] : kept_jobs[2].w;
+    uint chunk = list + 1u == BUILDING_KEPT_LISTS ? BUILDING_KEPT_PLAIN_CHUNK : BUILDING_KEPT_EDGED_CHUNK;
+    uint vertices = list + 1u == BUILDING_KEPT_LISTS ? BUILDING_PLAIN_VERTICES : BUILDING_EDGED_VERTICES;
+    uint indices = (vertices - 2u) * 3u;
+    // each thread a block of the list's jobs, in order
+    uint block = (count + 63u) / 64u;
+    uint from = first + min(count, thread.x * block);
+    uint to = first + min(count, (thread.x + 1u) * block);
+    uint sum = 0u;
+    for (uint j = from; j < to; ++j) {
+        sum += kept_counts[j].x;
+    }
+    kept_sums[thread.x] = sum;
+    GroupMemoryBarrierWithGroupSync();
+    if (thread.x == 0u) {
+        uint run = 0u;
+        for (uint i = 0u; i < 64u; ++i) {
+            uint s = kept_sums[i];
+            kept_sums[i] = run;
+            run += s;
+        }
+        kept_total = run;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    uint offset = kept_sums[thread.x];
+    for (uint j = from; j < to; ++j) {
+        uint4 c = kept_counts[j];
+        kept_counts[j] = uint4(c.x, c.y, c.z, offset);
+        offset += c.x;
+    }
+    uint total = kept_total;
+    uint chunks = (end - base + chunk - 1u) / chunk;
+    for (uint k = thread.x; k < chunks; k += 64u) {
+        uint n = total > k * chunk ? min(chunk, total - k * chunk) : 0u;
+        uint w = (draw + k) * BUILDING_KEPT_DRAW_WORDS;
+        kept_draws[w] = n * indices;                         // indexCount
+        kept_draws[w + 1u] = 1u;                             // instanceCount
+        kept_draws[w + 2u] = 0u;                             // firstIndex
+        kept_draws[w + 3u] = (base + k * chunk) * vertices;  // vertexOffset
+        kept_draws[w + 4u] = 0u;                             // firstInstance
+    }
+}
+
+/// The kept primitives' scatter: each candidate of a job's run into its place among its list's kept primitives (its
+/// job's first place, then the candidates before it in the job), as its job and lane (job << 6 | lane).
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void kept_scatter_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
+    uint job = group.y * STROKE_JOB_ROW + group.x;
+    if (job >= kept_jobs[0].w) {
+        return;
+    }
+    uint4 c = kept_counts[job];
+    uint lane = thread.x;
+    uint word = lane < 32u ? c.y : c.z;
+    uint bit = lane & 31u;
+    if (((word >> bit) & 1u) == 0u) {
+        return;
+    }
+    uint below = countbits(word & ((1u << bit) - 1u)) + (lane < 32u ? 0u : countbits(c.y));
+    uint list = kept_jobs[BUILDING_KEPT_HEADER + job * BUILDING_KEPT_JOB_VECTORS + 4u].z;
+    kept_out[kept_jobs[2][list] + c.w + below] = (job << 6u) | lane;
 }
 
 /// Vertex `vertex` of the records' strokes: record vertex / 30's segment along its shape's edge (vertex % 30) / 6, if

@@ -20,6 +20,7 @@
 #include "gpu/Offscreen.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "jni/TestFrame.hpp"
+#include "passes/Walls.hpp"
 #include "scene/World.hpp"
 #include "style/CameraState.hpp"
 #include "style/Theme.hpp"
@@ -418,6 +419,16 @@ Result draw(const Request& r) {
         }
     }
     out.counters.push_back(std::format("total {}", frame::text_of(builder.total())));
+    // What the GPU's cull kept of the walls', near cells' and roofs' triangles submitted (passes/Kept.cpp), the frame
+    // done: "kept buildings walls <kept> of <submitted> near cells ... roofs ...".
+    for (const std::unique_ptr<frame::Pass>& p : builder.passes()) {
+        if (p->name() != "buildings") continue;
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): "buildings" is passes::Buildings
+        const passes::Buildings::KeptCounts k = static_cast<const passes::Buildings&>(*p).kept_counts();
+        out.counters.push_back(std::format("kept buildings walls {} of {} near cells {} of {} roofs {} of {}",
+                                           k.kept[0], k.submitted[0], k.kept[1], k.submitted[1], k.kept[2],
+                                           k.submitted[2]));
+    }
     out.notes = std::format("{} frames to settle; {} tiles drawn, {} resident, {} failed and waiting, {} items",
                             frames + 1, w.cover()->tiles().size(), w.residency().stats().resident,
                             w.residency().stats().waiting, w.items()->live());

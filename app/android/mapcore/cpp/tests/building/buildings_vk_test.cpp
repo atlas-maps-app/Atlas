@@ -1180,6 +1180,15 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
                          << static_cast<double>(heap.used[walls]) / (1 << 20) << " MB of the heaps' "
                          << static_cast<double>(heap.total_used()) / (1 << 20) << " MB; "
                          << frame::text_of(s.builder->total()));
+            // what the GPU's cull kept of the walls', near cells' and roofs' triangles (passes/Kept.cpp), the frame
+            // done
+            const passes::Buildings::KeptCounts kept = s.buildings->kept_counts();
+            MESSAGE(name << ": kept walls " << kept.kept[0] << " of " << kept.submitted[0] << ", near cells "
+                         << kept.kept[1] << " of " << kept.submitted[1] << ", roofs " << kept.kept[2] << " of "
+                         << kept.submitted[2] << " triangles");
+            CHECK(kept.kept[0] <= kept.submitted[0]);
+            CHECK(kept.kept[1] <= kept.submitted[1]);
+            CHECK(kept.kept[2] <= kept.submitted[2]);
             CHECK(stream.elements() >= least);
             // the roofs' thin edges drawn: a record a plain primitive of the drawn runs
             CHECK(s.buildings->strokes());

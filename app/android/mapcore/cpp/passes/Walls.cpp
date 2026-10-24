@@ -171,6 +171,7 @@ void Buildings::update(const frame::FrameState& state) {
         windows_->nears_now = 0;
         windows_->facades_now = 0;
     }
+    if (kept_ != nullptr) kept_->jobs_now = 0;
     if (state.cover == nullptr || state.ranks == nullptr || state.heaps == nullptr) return;
     // the tiles' PassTile of this pass: the one at its place among the passes that built them (FrameState::cover)
     const std::uint32_t me = index();
@@ -251,6 +252,7 @@ void Buildings::update(const frame::FrameState& state) {
     std::ranges::stable_sort(draws_, {}, &TileDraw::distance);
     if (strokes_ != nullptr) write_jobs(slot);
     if (windows_ != nullptr) write_window_jobs(slot, state);
+    if (kept_ != nullptr) write_kept_jobs(slot);
     // the tiles no longer drawn are forgotten once many are kept (their rows written again if they come back: the
     // same; their colours lit again)
     if (rows_written_.size() > 4096) {
@@ -263,31 +265,37 @@ void Buildings::update(const frame::FrameState& state) {
     }
 }
 
+gpu::GraphicsDesc building_desc(const frame::PassContext& context, vk::ShaderModule module, std::string_view name,
+                                const char* vertex, vk::PipelineLayout layout) {
+    gpu::GraphicsDesc desc{.label = {.name = name, .module = "building_draw", .configuration = context.configuration},
+                           .module = module,
+                           .vertex = vertex,
+                           .fragment = "building_fs",
+                           .layout = layout,
+                           .target = context.pass.scene_target(),
+                           .depth_test = true,
+                           .depth_write = true,
+                           .depth_op = vk::CompareOp::eGreater,
+                           .stencil_test = true,
+                           .stencil = {.failOp = vk::StencilOp::eKeep,
+                                       .passOp = vk::StencilOp::eReplace,
+                                       .depthFailOp = vk::StencilOp::eKeep,
+                                       .compareOp = vk::CompareOp::eAlways,
+                                       .compareMask = 0,
+                                       .writeMask = shaders::OBJECTS_BIT,
+                                       .reference = shaders::OBJECTS_BIT}};
+    if (desc.target.colour_count == 2) desc.blends[1] = gpu::Blend::untouched();
+    return desc;
+}
+
 gpu::Result<void> Buildings::prepare(const frame::PassContext& context) {
     release();
     frame_layout_ = context.layout.pipeline_layout();
     ATLAS_GPU_LET(module, frame::make_module(context, "building_draw", spirv::building_draw));
     draw_module_ = std::move(module);
-    gpu::GraphicsDesc desc{
-        .label = {.name = "walls", .module = "building_draw", .configuration = context.configuration},
-        .module = *draw_module_,
-        .vertex = "walls_vs",
-        .fragment = "building_fs",
-        .layout = frame_layout_,
-        .target = context.pass.scene_target(),
-        .depth_test = true,
-        .depth_write = true,
-        .depth_op = vk::CompareOp::eGreater,
-        .stencil_test = true,
-        .stencil = {.failOp = vk::StencilOp::eKeep,
-                    .passOp = vk::StencilOp::eReplace,
-                    .depthFailOp = vk::StencilOp::eKeep,
-                    .compareOp = vk::CompareOp::eAlways,
-                    .compareMask = 0,
-                    .writeMask = shaders::OBJECTS_BIT,
-                    .reference = shaders::OBJECTS_BIT}};
-    if (desc.target.colour_count == 2) desc.blends[1] = gpu::Blend::untouched();
-    ATLAS_GPU_LET(walls, frame::make_pipeline(context, desc, frame::Overdraw::opaque));
+    ATLAS_GPU_LET(walls, frame::make_pipeline(context,
+                                              building_desc(context, *draw_module_, "walls", "walls_vs", frame_layout_),
+                                              frame::Overdraw::opaque));
     walls_ = std::move(walls);
     // the outlines' fans: 14 triangles over each primitive's 16 points
     if (!edged_index_) {
@@ -315,12 +323,19 @@ gpu::Result<void> Buildings::prepare(const frame::PassContext& context) {
             windows_.reset();
         }
     }
+    // the kept walls, near cells and roofs; where the device cannot make them, they are drawn as their runs
+    if (auto made = prepare_kept(context); !made) {
+        log::warn("vk buildings: the kept primitives: {}; the walls and roofs are drawn as their runs",
+                  made.error().text());
+        kept_.reset();
+    }
     return {};
 }
 
 void Buildings::release() noexcept {
     strokes_.reset();
     windows_.reset();
+    kept_.reset();
     walls_.clear();
     roofs_.clear();
     draw_module_.clear();
@@ -340,6 +355,7 @@ void Buildings::record(const frame::Recording& recording, std::uint32_t phase) {
         record_roofs(recording);
         break;
     case decide_phase:
+        record_kept_cull(recording);
         record_decide(recording);
         record_window_decide(recording);
         break;
@@ -350,6 +366,12 @@ void Buildings::record(const frame::Recording& recording, std::uint32_t phase) {
 
 void Buildings::record_walls(const frame::Recording& recording) {
     if (draws_.empty()) return;
+    if (drawn_kept()) {
+        // the walls, then the near cells, those the cull kept (passes/Kept.cpp)
+        record_kept(recording, 0);
+        record_kept(recording, 1);
+        return;
+    }
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *walls_);
     cmd.bindIndexBuffer(edged_index_.handle(), 0, vk::IndexType::eUint16);

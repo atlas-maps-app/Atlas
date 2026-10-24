@@ -85,6 +85,21 @@ static const uint BUILDING_PRIM_VECTORS = 4u;
 static const uint BUILDING_FACE_VECTORS = 2u;
 static const uint BUILDING_LIGHT_WORDS = 8u;
 
+// The kept primitives' jobs (passes/Kept.cpp): a header of 4 uint4 (in x, y and z each list's first job, its jobs, its
+// first place among the kept primitives and its first chunk's draw; in w the totals), then each job's 5 uint4 (its
+// tile's push constants as that list's draws have them, then its run: its first primitive in the list, how many, at
+// most 64, and its list). The lists, in the frame's order: the walls (the edged list), the near cells, the roofs (the
+// plain list), each drawn in chunks of the static index buffers' primitives, an indirect draw (5 words) a chunk.
+static const uint BUILDING_KEPT_HEADER = 4u;
+static const uint BUILDING_KEPT_JOB_VECTORS = 5u;
+static const uint BUILDING_KEPT_LISTS = 3u;
+static const uint BUILDING_KEPT_EDGED_CHUNK = 4096u;
+static const uint BUILDING_KEPT_PLAIN_CHUNK = 13107u;
+static const uint BUILDING_KEPT_DRAW_WORDS = 5u;
+// A face the cull leaves out as turned away is one building_shape turns away whatever either stage's float arithmetic
+// rounds or fuses: its facing lies below minus this share (2^-16) of its terms' magnitudes.
+static const float BUILDING_FACING_SLACK = 1.52587890625e-5f;
+
 /// A draw's push constants: the tile's place and where its records lie (64 bytes of the frame's 128).
 struct BuildingPush {
     TilePlace place;
@@ -458,6 +473,41 @@ inline BuildingShape building_shape(FrameCamera cam, uint theme_flags, TilePlace
     s.slot = rank_slot(rank) + (near ? p.near_slot : p.far_slot);
     s.depth = painter_depth(cam, s.slot);
     return s;
+}
+
+/// Whether primitive `p` of face `f`, for its item's rank table entry `rank` and the moment's theme flags `theme_flags`,
+/// may draw at the frame placed by `place`: building_shape's own first tests (its rank, its detail variant, the
+/// moment's weather) and its facing test with a margin (BUILDING_FACING_SLACK), so that false means building_shape
+/// draws nothing, whatever either stage's float arithmetic does. The cull (passes/Kept.cpp) leaves such a primitive
+/// out; whatever it keeps, the vertex stage decides as before.
+inline bool building_may_draw(uint theme_flags, TilePlace place, BuildingPrim p, BuildingFace f, uint rank) {
+    if (rank == RANK_NONE) {
+        return false;
+    }
+    bool near = (rank_detail(rank) & BUILDING_DETAIL_NEAR) != 0u;
+    if ((p.flags & (near ? BUILDING_NEAR : BUILDING_FAR)) == 0u) {
+        return false;
+    }
+    bool weather = (theme_flags & THEME_WEATHER) != 0u;
+    if ((p.flags & BUILDING_WEATHER) != 0u && !weather) {
+        return false;
+    }
+    if ((p.flags & BUILDING_DRY) != 0u && weather) {
+        return false;
+    }
+    if ((f.flags & BUILDING_FACE_BOTH) == 0u) {
+        // building_shape's toward = -(n · t), t = eye_relative(place, f.test); every term's magnitude bounds what a
+        // stage's rounding or fusing can move it by
+        float3 t = eye_relative(place, f.test);
+        float toward = -(((f.normal.x * t.x) + (f.normal.y * t.y)) + (f.normal.z * t.z));
+        float3 m = {abs(f.test.x * place.scale.x) + abs(place.offset.x), abs(f.test.y) + abs(place.offset.y),
+                    abs(f.test.z) + abs(place.offset.z)};
+        float reach = ((abs(f.normal.x) * m.x) + (abs(f.normal.y) * m.y)) + (abs(f.normal.z) * m.z);
+        if (toward < -(reach * BUILDING_FACING_SLACK)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 /// The depth a reciprocal depth `recip` of shape `s` draws at: its true depth with the shape's lead, or its painter

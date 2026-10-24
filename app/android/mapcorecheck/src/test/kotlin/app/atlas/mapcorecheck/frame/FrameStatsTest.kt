@@ -29,7 +29,10 @@ import java.util.Random
  * world's tiles, and the bound held nothing). The buildings (every face and near cell with its exact
  * edge, at true depth) are over §3's triangles where the city is dense: 2.06M at the Main board and 2.66M at the canal
  * ring's first sweep camera when they were registered (ENGINE.md, step 1), measured on the phone by VK bench, and held
- * here to 2.8M, so they only come down (step 2's refinements). The roofs' thin edges are counted apart: ten triangles
+ * here to 2.8M, so they only come down (step 2's refinements). Since 24 October the GPU culls them before they are drawn
+ * (CP/passes/Kept.cpp, ENGINE.md's gains 1a and 1b): the triangles it keeps count, read back once the frame is done
+ * (258k at the Main board of the 1.18M submitted, 151k at the canal ring's first sweep camera, in these engine-mode
+ * frames). The roofs' thin edges are counted apart: ten triangles
  * a plain primitive of the drawn runs (a segment of two along each of its shape's five edges, most of them drawing
  * nothing), 1.15M at the Main board when they came, held to 2M. The windows are counted apart too: 13 triangles a
  * window of the walls within their reach, drawn or not (the glass's fan of three, the frame's ring of 10), and 10 a
@@ -112,7 +115,12 @@ class FrameStatsTest {
             val kind = { k: String -> lines.firstOrNull { it.startsWith("kind buildings $k ") }?.let { counts(it).getValue("triangles") } ?: 0L }
             val strokes = kind("roof strokes")
             val windows = kind("window glass") + kind("window frames") + kind("window parts")
-            val buildings = pass - strokes - windows
+            // Where the GPU culls the walls, near cells and roofs (CP/passes/Kept.cpp), the triangles it kept of them
+            // count, not the ones submitted: "kept buildings walls <kept> of <submitted> near cells … roofs …".
+            val kept = lines.firstOrNull { it.startsWith("kept buildings ") }?.split(' ')
+            val culled = if (kept == null) 0L else listOf(3 to 5, 8 to 10, 12 to 14).sumOf { (k, s) -> kept[s].toLong() - kept[k].toLong() }
+            val buildings = pass - strokes - windows - culled
+            println("  the buildings' triangles drawn: $buildings (${pass - strokes - windows} submitted)")
             val fse = lines.first { it.startsWith("fse ") }.split(' ')
             val opaque = fse[2].toDouble()
             assertTrue("${case.name}: ${total["draws"]} draws, over 300", total.getValue("draws") <= 300)

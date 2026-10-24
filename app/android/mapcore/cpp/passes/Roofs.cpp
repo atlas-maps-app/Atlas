@@ -40,26 +40,9 @@ constexpr std::uint32_t job_row = 65535;
 } // namespace
 
 gpu::Result<void> Buildings::prepare_roofs(const frame::PassContext& context) {
-    gpu::GraphicsDesc desc{
-        .label = {.name = "roofs", .module = "building_draw", .configuration = context.configuration},
-        .module = *draw_module_,
-        .vertex = "roofs_vs",
-        .fragment = "building_fs",
-        .layout = frame_layout_,
-        .target = context.pass.scene_target(),
-        .depth_test = true,
-        .depth_write = true,
-        .depth_op = vk::CompareOp::eGreater,
-        .stencil_test = true,
-        .stencil = {.failOp = vk::StencilOp::eKeep,
-                    .passOp = vk::StencilOp::eReplace,
-                    .depthFailOp = vk::StencilOp::eKeep,
-                    .compareOp = vk::CompareOp::eAlways,
-                    .compareMask = 0,
-                    .writeMask = shaders::OBJECTS_BIT,
-                    .reference = shaders::OBJECTS_BIT}};
-    if (desc.target.colour_count == 2) desc.blends[1] = gpu::Blend::untouched();
-    ATLAS_GPU_LET(roofs, frame::make_pipeline(context, desc, frame::Overdraw::opaque));
+    ATLAS_GPU_LET(roofs, frame::make_pipeline(context,
+                                              building_desc(context, *draw_module_, "roofs", "roofs_vs", frame_layout_),
+                                              frame::Overdraw::opaque));
     roofs_ = std::move(roofs);
     // the polygons' fans: 3 triangles over each primitive's 5 points
     if (!plain_index_) {
@@ -127,6 +110,11 @@ gpu::Result<void> Buildings::prepare_strokes(const frame::PassContext& context) 
 
 void Buildings::record_roofs(const frame::Recording& recording) {
     if (draws_.empty()) return;
+    if (drawn_kept()) {
+        // those the cull kept (passes/Kept.cpp)
+        record_kept(recording, 2);
+        return;
+    }
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *roofs_);
     cmd.bindIndexBuffer(plain_index_.handle(), 0, vk::IndexType::eUint16);

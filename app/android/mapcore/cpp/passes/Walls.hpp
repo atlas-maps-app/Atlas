@@ -47,6 +47,7 @@
 #include "frame/Pass.hpp"
 #include "geometry/Walls.hpp"
 #include "gpu/Memory.hpp"
+#include "gpu/Pipelines.hpp"
 #include "passes/ObjectStrokes.hpp"
 #include "scene/Heaps.hpp"
 #include "twin/building/BuildingTile.hpp"
@@ -57,6 +58,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -71,6 +73,12 @@ namespace atlas::passes {
 
 /// The first of a tile's items that are the buildings pass's (its items are consecutive, in its builder's order).
 [[nodiscard]] std::uint32_t first_item(const scene::ResidentTile& tile, std::uint16_t kind) noexcept;
+
+/// The pipeline of the walls' and roofs' opaque fills (building_fs), named `name`, with vertex stage `vertex` of
+/// `module` and layout `layout`: at their true depth, writing it and the objects bit (the walls', the roofs' and their
+/// kept forms').
+[[nodiscard]] gpu::GraphicsDesc building_desc(const frame::PassContext& context, vk::ShaderModule module,
+                                              std::string_view name, const char* vertex, vk::PipelineLayout layout);
 
 /// The buildings pass.
 class Buildings final : public frame::Pass {
@@ -114,6 +122,14 @@ public:
         std::uint32_t facades = 0;
     };
     [[nodiscard]] WindowCounts window_counts() const noexcept { return window_counts_; }
+    /// The triangles the last frame submitted for its walls, near cells and roofs, and the ones the GPU's cull kept of
+    /// them (read back from that frame's indirect draws, so only once it has finished); none kept where the device
+    /// draws them as their runs (no kept pipelines), every one submitted.
+    struct KeptCounts {
+        std::array<std::uint64_t, 3> submitted{};
+        std::array<std::uint64_t, 3> kept{};
+    };
+    [[nodiscard]] KeptCounts kept_counts() const;
     /// Whether the windows are drawn (the pass made their pipelines: not in the owner mode).
     [[nodiscard]] bool windows() const noexcept { return windows_ != nullptr; }
     /// The most windows a frame decides (64 bytes a record, 160 more nearer than 160 m): the jobs beyond are left out,
@@ -181,12 +197,24 @@ private:
     struct Strokes;
     /// The windows' (below; made in passes/Windows.cpp).
     struct Windows;
+    /// The kept primitives' (below; made in passes/Kept.cpp).
+    struct Kept;
 
     [[nodiscard]] gpu::Result<void> prepare_roofs(const frame::PassContext& context);
     [[nodiscard]] gpu::Result<void> prepare_strokes(const frame::PassContext& context);
     [[nodiscard]] gpu::Result<void> prepare_windows(const frame::PassContext& context);
+    [[nodiscard]] gpu::Result<void> prepare_kept(const frame::PassContext& context);
     void record_walls(const frame::Recording& recording);
     void record_roofs(const frame::Recording& recording);
+    /// This frame slot's kept primitives' jobs, from the draws (stage F): every run of the walls, the near cells and
+    /// the roofs, in the order their draws go, in jobs of at most 64.
+    void write_kept_jobs(std::uint32_t slot);
+    /// The cull, the scan and the scatter (the decide phase), and list `list`'s kept draws (0 the walls, 1 the near
+    /// cells, 2 the roofs).
+    void record_kept_cull(const frame::Recording& recording);
+    void record_kept(const frame::Recording& recording, std::uint32_t list);
+    /// Whether this frame draws its walls, near cells and roofs kept.
+    [[nodiscard]] bool drawn_kept() const noexcept;
     /// This frame slot's stroke jobs, from the draws (stage F).
     void write_jobs(std::uint32_t slot);
     /// This frame slot's window jobs, from the draws (stage F): the walls of the items whose windows the frame's ranks
@@ -222,6 +250,7 @@ private:
     std::unique_ptr<Windows> windows_;
     WindowCounts window_counts_;
     bool windows_capped_ = false; ///< a frame's windows passed max_windows (logged once)
+    std::unique_ptr<Kept> kept_;
 
     // the render thread's, per frame
     std::vector<TileDraw> draws_;
@@ -290,6 +319,37 @@ struct Buildings::Windows {
     std::uint32_t records_now = 0;
     std::uint32_t nears_now = 0;
     std::uint32_t facades_now = 0;
+};
+
+struct Buildings::Kept {
+    const gpu::Device* device = nullptr;
+    /// Set 2 of the kept pipelines and of the cull's compute stages: the jobs (the CPU's), their candidates' counts and
+    /// places, the kept primitives (as the scatter writes them and the vertex stage reads them) and the lists' chunks'
+    /// indirect draws; a set and a buffer of each a frame slot (the draws' read back, for the counts).
+    vk::raii::DescriptorSetLayout set_layout{nullptr};
+    vk::raii::DescriptorPool pool{nullptr};
+    std::array<vk::raii::DescriptorSet, 2> sets{vk::raii::DescriptorSet{nullptr}, vk::raii::DescriptorSet{nullptr}};
+    std::array<gpu::Buffer, 2> jobs;
+    std::array<gpu::Buffer, 2> counts;
+    std::array<gpu::Buffer, 2> kept;
+    std::array<gpu::Buffer, 2> draws;
+    /// The kept draws' layout (the frame's sets, then set 2), the compute stages', their pipelines and the kept walls'
+    /// and roofs' pipelines.
+    vk::raii::PipelineLayout layout{nullptr};
+    vk::raii::PipelineLayout compute_layout{nullptr};
+    vk::raii::Pipeline cull{nullptr};
+    vk::raii::Pipeline scan{nullptr};
+    vk::raii::Pipeline scatter{nullptr};
+    vk::raii::Pipeline walls{nullptr};
+    vk::raii::Pipeline roofs{nullptr};
+    // the render thread's, per frame: the jobs' words, the frame slot they went to, their count, and each list's first
+    // chunk draw, chunk draws and primitives submitted
+    std::vector<std::uint32_t> words;
+    std::uint32_t slot = 0;
+    std::uint32_t jobs_now = 0;
+    std::array<std::uint32_t, 3> first_draw{};
+    std::array<std::uint32_t, 3> chunks{};
+    std::array<std::uint32_t, 3> submitted{};
 };
 
 } // namespace atlas::passes
