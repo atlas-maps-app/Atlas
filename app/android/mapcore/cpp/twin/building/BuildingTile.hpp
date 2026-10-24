@@ -10,6 +10,7 @@
 //   - each face's geometry, 2 uint4 (its normal and area as floats, its test point and flags);
 //   - each frame slot's colours, 2 words a face (lit, unlit, 0xBBGGRR), which the CPU's light writes per tile and
 //     moment (its inputs stay on the CPU: BuildingTile::lights);
+//   - each frame slot's reveals' colours, a word a windowed wall (its face's colour times 0.55, unlit), lit alike;
 //   - the items' rows in the item table, one word each, written once the tile is taken.
 // Plain data: no Vulkan, so the twin and its tests read it as the GPU does.
 #pragma once
@@ -60,6 +61,7 @@ struct BuildingTile {
     std::uint32_t windows_at = 0; ///< the windowed walls, a uint4 each
     std::uint32_t faces_at = 0;   ///< each face's geometry, 2 uint4
     std::uint32_t colours_at = 0; ///< each frame slot's colours: slot s from word colours_at · 4 + s · 2 · faces
+    std::uint32_t reveals_at = 0; ///< each frame slot's reveals' colours: slot s from word reveals_at · 4 + s · walls
     std::uint32_t rows_at = 0;    ///< the items' rows, four a uint4
     std::uint32_t vectors = 0;    ///< the range's size in uint4
     std::uint8_t cells_per_side = 0;
@@ -73,6 +75,8 @@ struct BuildingTile {
     std::vector<std::uint32_t> window_at;
     /// Each windowed wall's item (its wall's), so the frame's jobs take only the walls whose windows it draws.
     std::vector<std::uint16_t> window_items;
+    /// Each windowed wall's face (its wall's), whose light inputs its reveals' colour comes from.
+    std::vector<std::uint32_t> window_faces;
     /// Each face's light inputs (the CPU's light, per tile and moment, and the twin's).
     std::vector<BuildingLight> lights;
     /// The n-gons, in their triangles' order, and their rings' points relative to the tile's corner (x, y, z each, the
@@ -87,6 +91,26 @@ struct BuildingTile {
 /// Every face's colours at the theme `theme`, lit and unlit (0xBBGGRR: light.slang's light() and tohex in binary64, the
 /// port's bits), two words a face, into `out` (2 · lights.size() words).
 void building_colours(const shaders::Theme& theme, std::span<const BuildingLight> lights, std::span<std::uint32_t> out);
+/// Each windowed wall's reveals' colour at the theme `theme` (0xBBGGRR: its face's colour times 0.55, unlit,
+/// light.slang's light() in binary64 as the port's), a word a wall of `faces` (BuildingTile::window_faces), into `out`.
+void building_reveals(const shaders::Theme& theme, std::span<const BuildingLight> lights,
+                      std::span<const std::uint32_t> faces, std::span<std::uint32_t> out);
+
+/// The sash bars' least width (CSS px).
+inline constexpr double sash_least = 0.7;
+
+/// A wall's windows' frames' width and their sash bars' (0: none), in tenths of a CSS px as the port prints them.
+struct WindowWidths {
+    std::uint16_t frame = 0;
+    std::uint16_t sash = 0;
+};
+
+/// The widths of the windows of an item drawn with detail `detail` (its rank's) at depth `depth` (Ranks::depth, the
+/// port's d) by a camera of focal length `focal` (CSS px, in double), with weather or not, the frames' own width being
+/// `frame_width` (the style's): deep, the frames max(frame_width, 0.07 · focal / max(d, 1)), else frame_width; nearer
+/// than 140 m the sash bars max(0.7, 0.045 · focal / max(d, 1)) deep, else max(0.7, 9 / max(d, 1)); each to a tenth.
+[[nodiscard]] WindowWidths window_widths(std::uint32_t detail, bool weather, double depth, double focal,
+                                         double frame_width);
 
 /// The uint4 words of a tile's buildings (BuildingTile's layout, `layout` filled), from stage T's geometry: the
 /// primitives' corners relative to the tile's south-west corner (`origin_x`, `origin_z`, frame metres) as floats.

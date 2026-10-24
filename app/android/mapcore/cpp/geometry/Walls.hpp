@@ -150,15 +150,16 @@ struct WindowWall {
     std::uint32_t first = 0;     ///< its windows among the tile's: [first, first + levels · cols)
     std::uint16_t levels = 0;    ///< its rows (building:levels, mapped or guessed)
     std::uint16_t cols = 0;      ///< its bays
-    std::uint16_t near_slot = 0; ///< the painter slot of its dark windows within the item, near and far (the lit ones'
-    std::uint16_t far_slot = 0;  ///< the next)
+    std::uint16_t near_slot = 0; ///< its first painter slot within the item (its reveals'), near and far (its dark
+    std::uint16_t far_slot = 0;  ///< windows', lit ones', sash bars' and sills' the next: window_slots)
     std::uint8_t cell = 0;       ///< its building's cell in the tile
     WindowStyle style = WindowStyle::plain;
     std::uint8_t flags = 0; ///< window_flag
 };
 
-/// The painter slots a wall's windows take within its item, in each variant: the dark windows' path, the lit ones'.
-inline constexpr std::uint32_t window_slots = 2;
+/// The painter slots a wall's windows take within its item, in each variant, as the port paints its windows' paths:
+/// the deep windows' reveals, the dark windows, the lit ones, the sash bars, the deep windows' sills.
+inline constexpr std::uint32_t window_slots = 5;
 
 /// An n-gon the port fills as one path (a flat top, a skillion roof, a mansard's top, a deck, a cabin roof).
 struct Polygon {

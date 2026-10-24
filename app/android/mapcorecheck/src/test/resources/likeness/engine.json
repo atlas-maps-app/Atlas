@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "5",
+  "version": "6",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -122,6 +122,21 @@
           "home grey": "af147a42ea4aa53ffabe3535a437f27eaf22e4ca7ec979128cb639464c8219ce",
           "home wet": "9464c9d8fdfcf3a6d68ccfb48ab5f42d0fffb07cb9556c8234493e03354aa3d7",
           "home night": "74513d9cdefa300b7a17d5773159190dafc6d4b24ee826d59e345527ecea963b",
+          "board sunny": "49abc51b842ec13900f9b5ad5df2d575e6db6f28c15adcf585794e83bc96e751",
+          "board grey": "54d0949376c1f4b761f3321ef0f3f3d03b54c4990ed1bcee1bc623a03983c3c7",
+          "board wet": "fbf41996bedced44519dabcbd8f5a26fa06cbf3d29139e8b00d26cbc74844050",
+          "board night": "a1b7495f0ac207b7f1e75ad96ff0021d5920a995a69ec81b0c74394c69902cf0"
+        }
+      }
+    },
+    "6": {
+      "note": "Step 4: the deep windows and the sash bars (reveals, set-back glass, sills, wider frames); every frame's round joins exact (its ring holds the band, its fragments keep the samples within half its width); the windows drawn before their walls",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "027e6109192de6582a21b75e2e9eba7c74efd8b616d211476c1cd6a1fd7b4d15",
+          "home grey": "3feba6d79cdc26bb868bdfe8b1e8d471f6d3a8295c0dc370214ce487cbb07e60",
+          "home wet": "73abf656499c5519504d29997c4f784cf7e9b23cad3a5d9d5207dbeb0e8df396",
+          "home night": "74c558f13b07b9c06cc678e538b0c5f1aefa0b96e2e0db5976c099f9f21fd542",
           "board sunny": "49abc51b842ec13900f9b5ad5df2d575e6db6f28c15adcf585794e83bc96e751",
           "board grey": "54d0949376c1f4b761f3321ef0f3f3d03b54c4990ed1bcee1bc623a03983c3c7",
           "board wet": "fbf41996bedced44519dabcbd8f5a26fa06cbf3d29139e8b00d26cbc74844050",

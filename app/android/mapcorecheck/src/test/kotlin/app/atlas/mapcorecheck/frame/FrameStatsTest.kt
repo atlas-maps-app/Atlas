@@ -31,10 +31,11 @@ import java.util.Random
  * ring's first sweep camera when they were registered (ENGINE.md, step 1), measured on the phone by VK bench, and held
  * here to 2.8M, so they only come down (step 2's refinements). The roofs' thin edges are counted apart: ten triangles
  * a plain primitive of the drawn runs (a segment of two along each of its shape's five edges, most of them drawing
- * nothing), 1.15M at the Main board when they came, held to 2M. The windows are counted apart too: 39 triangles a
- * window of the walls within their reach, drawn or not (the glass's fan of three, the frame's band of 36), 446k at the
- * smoke sweep's third camera when they came (none at the Main board, beyond their reach), held to 600k. And the
- * likeness harness's candidate (CP/jni/TestCases.cpp) is that frame: it fills the pixels and the owner map.
+ * nothing), 1.15M at the Main board when they came, held to 2M. The windows are counted apart too: 13 triangles a
+ * window of the walls within their reach, drawn or not (the glass's fan of three, the frame's ring of 10), and 10 a
+ * near window's parts (its reveal, sill and sash bars), 446k at the smoke sweep's third camera when they came (their
+ * frames 36 triangles then; none at the Main board, beyond their reach), held to 600k. And the likeness harness's
+ * candidate (CP/jni/TestCases.cpp) is that frame: it fills the pixels and the owner map.
  */
 class FrameStatsTest {
     private val tiles = File(System.getProperty("atlas.tiles") ?: error("atlas.tiles names no folder of bundled packs"))
@@ -110,7 +111,7 @@ class FrameStatsTest {
             val pass = lines.firstOrNull { it.startsWith("pass buildings ") }?.let { counts(it).getValue("triangles") } ?: 0L
             val kind = { k: String -> lines.firstOrNull { it.startsWith("kind buildings $k ") }?.let { counts(it).getValue("triangles") } ?: 0L }
             val strokes = kind("roof strokes")
-            val windows = kind("window glass") + kind("window frames")
+            val windows = kind("window glass") + kind("window frames") + kind("window parts")
             val buildings = pass - strokes - windows
             val fse = lines.first { it.startsWith("fse ") }.split(' ')
             val opaque = fse[2].toDouble()

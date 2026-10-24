@@ -1,12 +1,12 @@
 // A wall's windows (ENGINE.md step 4, the facades; render/amsterdam.py's _draw_building, its window rows; CP/geometry/
-// Walls.hpp's WindowWall), shared by the GPU (shaders/building/draw.slang's windows_cs, window_frames_vs,
-// window_glass_vs) and the twin (CP/twin/building/BuildingShader.hpp compiles it as C++ after building.slangh). Not a
-// module: draw.slang includes it after building.slangh.
+// Walls.hpp's WindowWall), shared by the GPU (shaders/building/draw.slang's windows_cs, window_near_vs,
+// window_glass_vs, window_frames_vs) and the twin (CP/twin/building/BuildingShader.hpp compiles it as C++ after
+// building.slangh). Not a module: draw.slang includes it after building.slangh.
 //
 // A windowed wall's record (a uint4 of the walls heap: BuildingWindowWall) names its wall's one-cell primitive, its
 // rows (building:levels) and bays, its style and flags, its first window among the tile's (which is its first sample
 // in the tile's window group of sun samples: K8's order, the same) and its slots. Its window k = r · cols + c is cut
-// from the wall as the port cuts it (building_window_prim):
+// from the wall as the port cuts it (building_window_box, building_window_quad):
 //   fh = (top - y0) / max(1, levels); ya = y0 + r·fh + fh·(r ? 0.22 : 0.3), yb = ya + fh·(r ? (modern ? 0.62 : 0.58)
 //   : 0.5) (Paris: ya = y0 + r·fh + 0.13·fh, yb = ya + 0.73·fh); u0 = (c + (modern ? 0.1 : paris ? 0.31 : 0.28)) /
 //   cols, u1 = (c + (modern ? 0.9 : paris ? 0.69 : 0.72)) / cols; its corners quad_at(a, b, ya, yb, u0, u1, 0.04, n),
@@ -18,13 +18,24 @@
 // box reaches within 300 px of the frame and their area is over 0.25 px² (`if sp and area(sp) > 0.25`), and snapped
 // at rest; it is lit where the sun is up and its sample's bit is set, else dark.
 //
-// The port paints each wall's dark windows as one path, then its lit ones (fill gd or gl, stroke fr 0.7 px, the objects
-// group's round joins): every window's fill, then every window's stroke over the fills. The frame draws each window as
-// that path paints it, in two opaque parts on its wall's plane: its glass, the window eroded by the stroke's half width
-// (what the stroke leaves of the fill), a lead over the wall's cells; and its frame, the band between its outline
-// dilated by the half width (round joins: building_outline) and its glass, in the stroke's colour, a lead over the
-// glass, so where two windows' frames reach each other's glass (a wall seen at a slant) the frame covers it, as the
-// path's strokes cover its fills. The band shares the glass's corners, so the two fit without a crack. Under MSAA each
+// Close up the port draws more (`deep = wx and d < 160`, its item's depth d): with weather nearer than 160 m a window
+// whose shape covers over 70 px² is a hole in the wall, its reveal (that shape, in the wall's colour times 0.55,
+// unlit), its glass set back 0.16 m behind the wall and its sill (0.11 m under the window and 0.07 m wider either side,
+// 0.07 m out from the wall); every window of such a wall has its frame the wider (0.07 · focal / d, at least 0.7 px).
+// Nearer than 140 m, with weather or without, a window whose glass covers over 30 px² has its sash bars: from its
+// bottom's middle to its top's and across at 0.42 of its height, 0.01 m out from its glass, their width 0.045 · focal
+// / d deep, else 9 / d (at least 0.7 px), butt-capped. The widths come from the CPU (passes::window_widths: the item's
+// depth in double, printed to a tenth as the port prints them).
+//
+// The port paints each wall's windows as five paths: its reveals, its dark windows (fill gd, stroke fr), its lit ones
+// (fill gl), its sash bars (stroke fr, no fill) and its sills, the dark and lit paths every window's fill, then every
+// window's stroke over the fills (the objects group's round joins). The frame draws each part opaque on its wall's
+// plane with a lead of its own over the wall's cells, in the paths' order: the reveal, then the glass, the window
+// eroded by the stroke's half width (what the stroke leaves of the fill); its frame, the band between its outline
+// dilated by the half width and its glass, in the stroke's colour, so where two windows' frames reach each other's
+// glass (a wall seen at a slant) the frame covers it, as the path's strokes cover its fills; the sash bars; the sill.
+// The frame's band shares the glass's corners, so the two fit without a crack, and its fragments keep the samples
+// within the half width of the window (building_window_covers), the round joins exactly at any width. Under MSAA each
 // sample takes what SVG's fill and stroke leave on it. The glass's paint: by day with weather the gradients the port
 // defines (`glass`, by the sky's cover; `glassLit`), each over its path's box from top to bottom (objectBoundingBox):
 // the wall's dark windows' box, or its lit ones'; else its flat colours.
@@ -32,8 +43,8 @@
 
 // A windowed wall's record (a uint4): x its wall's one-cell primitive in the tile's edged list (bits 0-23), its style
 // (24-25) and flags (26-28); y its first window among the tile's (its first sample in the window group); z its rows
-// (bits 0-15) and bays (16-31); w its dark windows' painter slot within the item, near (bits 0-15) and far (16-31), the
-// lit ones' the next.
+// (bits 0-15) and bays (16-31); w its first painter slot within the item (its reveals'), near (bits 0-15) and far
+// (16-31), its dark windows' the next, then its lit ones', its sash bars' and its sills'.
 static const uint BUILDING_WINDOW_WALL_BITS = 0x00FFFFFFu;
 static const uint BUILDING_WINDOW_STYLE_SHIFT = 24u;
 static const uint BUILDING_WINDOW_FLAGS_SHIFT = 26u;
@@ -44,23 +55,44 @@ static const uint BUILDING_WINDOW_PARIS = 2u;
 static const uint BUILDING_WINDOW_SHOP_FLOOR = 1u;
 static const uint BUILDING_WINDOW_WAREHOUSE = 2u;
 static const uint BUILDING_WINDOW_CHURCH = 4u;
+// A windowed wall's painter slots within the item, from its first (geometry/Walls.hpp's window_slots): its reveals,
+// dark windows, lit ones, sash bars and sills.
+static const uint BUILDING_WINDOW_REVEALS = 0u;
+static const uint BUILDING_WINDOW_DARK = 1u;
+static const uint BUILDING_WINDOW_LIT_SLOT = 2u;
+static const uint BUILDING_WINDOW_SASHES = 3u;
+static const uint BUILDING_WINDOW_SILLS = 4u;
 
-// The port's constants: the windows' least area (CSS px², exclusive), how far they stand out from their wall (m).
+// The port's constants: the windows' least area (CSS px², exclusive), how far they stand out from their wall (m); a
+// deep window's least area for its reveal, its glass's set-back, its sill's drop under the window, its width beyond it
+// either side and how far it stands out (m); the sash bars' least area, how far they stand out from the glass (m), and
+// the height their cross bar lies at (a fraction of the window's).
 static const float BUILDING_WINDOW_MIN_AREA = 0.25f;
 static const float BUILDING_WINDOW_OUT = 0.04f;
+static const float BUILDING_DEEP_AREA = 70.0f;
+static const float BUILDING_GLASS_BACK = -0.16f;
+static const float BUILDING_SILL_DROP = 0.11f;
+static const float BUILDING_SILL_WIDEN = 0.07f;
+static const float BUILDING_SILL_OUT = 0.07f;
+static const float BUILDING_SASH_AREA = 30.0f;
+static const float BUILDING_SASH_OUT = 0.01f;
+static const float BUILDING_SASH_CROSS = 0.42f;
 
-// The windows' leads on their wall's plane (relative to its reciprocal depth, as the cells' and the roofs'): the glass
-// one step past the cells' most (15 steps of 2^-16), the frames one more over the glass.
-static const float BUILDING_GLASS_LEAD = 2.44140625e-4f;
-static const float BUILDING_WINDOW_LEAD = 2.593994140625e-4f;
+// The windows' leads on their wall's plane (relative to its reciprocal depth, as the cells' and the roofs'), in the
+// paths' order from one step past the cells' most (15 steps of 2^-16): the reveals, the glass, the frames, the sash
+// bars, the sills.
+static const float BUILDING_REVEAL_LEAD = 2.44140625e-4f;
+static const float BUILDING_GLASS_LEAD = 2.593994140625e-4f;
+static const float BUILDING_WINDOW_LEAD = 2.74658203125e-4f;
+static const float BUILDING_SASH_LEAD = 2.899169921875e-4f;
+static const float BUILDING_SILL_LEAD = 3.0517578125e-4f;
 
-// The points of a frame's outline (8 a corner of a window's 4: a cell's 16 would put the chords of a slanted window's
-// sharp corner 0.025 px inside the frames' round joins at S1, these within 0.007 px), and the vertices each window
-// draws: its frame (36 triangles at most: building_window_frame_point) and its glass (as a plain polygon's, through the
-// roofs' fans).
-static const uint BUILDING_WINDOW_OUTLINE_POINTS = 32u;
-static const uint BUILDING_WINDOW_FRAME_VERTICES = 108u;
+// The vertices each window draws: its frame (10 triangles at most, a polygon holding its band, which the fragments trim
+// to the band: building_window_frame_point) and its glass (as a plain polygon's, through the roofs' fans); and each
+// near window's reveal, sill (a fan of 3 triangles each) and sash bars (two quads).
+static const uint BUILDING_WINDOW_FRAME_VERTICES = 30u;
 static const uint BUILDING_WINDOW_GLASS_VERTICES = 5u;
+static const uint BUILDING_WINDOW_NEAR_VERTICES = 30u;
 
 struct BuildingWindowWall {
     uint wall;  // its wall's one-cell primitive in the tile's edged list
@@ -86,9 +118,16 @@ inline BuildingWindowWall building_window_wall(uint4 v) {
     return w;
 }
 
-/// Window r, c of windowed wall `w`, cut from its wall's one-cell primitive `wall` (corners (a, y0), (b, y0), (b, top),
-/// (a, top)) as the port cuts it and stood out along its face's normal `n` (quad_at's corners, in float).
-inline BuildingPrim building_window_prim(BuildingPrim wall, float3 n, BuildingWindowWall w, uint r, uint c) {
+/// Where window r, c of windowed wall `w` lies on its wall's one-cell primitive `wall` (corners (a, y0), (b, y0), (b,
+/// top), (a, top)): its heights ya to yb and its span u0 to u1 along the wall, as the port cuts it.
+struct BuildingWindowBox {
+    float ya;
+    float yb;
+    float u0;
+    float u1;
+};
+
+inline BuildingWindowBox building_window_box(BuildingPrim wall, BuildingWindowWall w, uint r, uint c) {
     float y0 = wall.c0.y;
     float top = wall.c3.y;
     float lv = float(w.levels);
@@ -96,26 +135,32 @@ inline BuildingPrim building_window_prim(BuildingPrim wall, float3 n, BuildingWi
     bool modern = w.style == BUILDING_WINDOW_MODERN;
     bool paris = w.style == BUILDING_WINDOW_PARIS;
     float row = y0 + float(r) * fh;
-    float ya = row + fh * (r != 0u ? 0.22f : 0.3f);
-    float yb = ya + fh * (r != 0u ? (modern ? 0.62f : 0.58f) : 0.5f);
+    BuildingWindowBox b;
+    b.ya = row + fh * (r != 0u ? 0.22f : 0.3f);
+    b.yb = b.ya + fh * (r != 0u ? (modern ? 0.62f : 0.58f) : 0.5f);
     if (paris) {
-        ya = row + fh * 0.13f;
-        yb = ya + fh * 0.73f;
+        b.ya = row + fh * 0.13f;
+        b.yb = b.ya + fh * 0.73f;
     }
     float cols = float(w.cols);
-    float u0 = (float(c) + (modern ? 0.1f : (paris ? 0.31f : 0.28f))) / cols;
-    float u1 = (float(c) + (modern ? 0.9f : (paris ? 0.69f : 0.72f))) / cols;
+    b.u0 = (float(c) + (modern ? 0.1f : (paris ? 0.31f : 0.28f))) / cols;
+    b.u1 = (float(c) + (modern ? 0.9f : (paris ? 0.69f : 0.72f))) / cols;
+    return b;
+}
+
+/// The quad of box `b` on wall `wall` stood out `out` metres along its face's normal `n` (quad_at's corners, in float).
+inline BuildingPrim building_window_quad(BuildingPrim wall, float3 n, BuildingWindowBox b, float out) {
     float ex = wall.c1.x - wall.c0.x;
     float ez = wall.c1.z - wall.c0.z;
-    float ax = (wall.c0.x + ex * u0) + n.x * BUILDING_WINDOW_OUT;
-    float az = (wall.c0.z + ez * u0) + n.z * BUILDING_WINDOW_OUT;
-    float bx = (wall.c0.x + ex * u1) + n.x * BUILDING_WINDOW_OUT;
-    float bz = (wall.c0.z + ez * u1) + n.z * BUILDING_WINDOW_OUT;
+    float ax = (wall.c0.x + ex * b.u0) + n.x * out;
+    float az = (wall.c0.z + ez * b.u0) + n.z * out;
+    float bx = (wall.c0.x + ex * b.u1) + n.x * out;
+    float bz = (wall.c0.z + ez * b.u1) + n.z * out;
     BuildingPrim p = wall;
-    float3 c0 = {ax, ya, az};
-    float3 c1 = {bx, ya, bz};
-    float3 c2 = {bx, yb, bz};
-    float3 c3 = {ax, yb, az};
+    float3 c0 = {ax, b.ya, az};
+    float3 c1 = {bx, b.ya, bz};
+    float3 c2 = {bx, b.yb, bz};
+    float3 c3 = {ax, b.yb, az};
     p.c0 = c0;
     p.c1 = c1;
     p.c2 = c2;
@@ -125,10 +170,26 @@ inline BuildingPrim building_window_prim(BuildingPrim wall, float3 n, BuildingWi
     return p;
 }
 
+/// Window r, c of windowed wall `w` (building_window_box's), stood out along `n` as the port draws it.
+inline BuildingPrim building_window_prim(BuildingPrim wall, float3 n, BuildingWindowWall w, uint r, uint c) {
+    return building_window_quad(wall, n, building_window_box(wall, w, r, c), BUILDING_WINDOW_OUT);
+}
+
+/// The sill of a deep window of box `b`: quad_at(a, b, ya - 0.11, ya, u0 - du, u1 + du, 0.07, n), du = 0.07 / elen.
+inline BuildingPrim building_window_sill(BuildingPrim wall, float3 n, BuildingWindowBox b) {
+    float ex = wall.c1.x - wall.c0.x;
+    float ez = wall.c1.z - wall.c0.z;
+    float du = BUILDING_SILL_WIDEN / sqrt(ex * ex + ez * ez);
+    BuildingWindowBox s;
+    s.ya = b.ya - BUILDING_SILL_DROP;
+    s.yb = b.ya;
+    s.u0 = b.u0 - du;
+    s.u1 = b.u1 + du;
+    return building_window_quad(wall, n, s, BUILDING_SILL_OUT);
+}
+
 /// Whether wall `w`'s windows are drawn at the frame (its face `f` and its item's rank entry `rank`): its item drawn
-/// nearer than win_d, not a church's with weather nearer than 520 m, its wall turned to the eye. Not yet where the
-/// port draws them deep (with weather nearer than 160 m: a reveal, the glass set back, a sill, the frames' width by the
-/// distance), which come next.
+/// nearer than win_d, not a church's with weather nearer than 520 m, its wall turned to the eye.
 inline bool building_windows_drawn(uint theme_flags, TilePlace place, BuildingWindowWall w, BuildingFace f, uint rank) {
     if (rank == RANK_NONE) {
         return false;
@@ -141,12 +202,20 @@ inline bool building_windows_drawn(uint theme_flags, TilePlace place, BuildingWi
     if ((w.flags & BUILDING_WINDOW_CHURCH) != 0u && weather && (detail & BUILDING_DETAIL_CHURCH) != 0u) {
         return false;
     }
-    if (weather && (detail & BUILDING_DETAIL_DEEP) != 0u) {
-        return false;
-    }
     float3 t = eye_relative(place, f.test);
     float toward = -(((f.normal.x * t.x) + (f.normal.y * t.y)) + (f.normal.z * t.z));
     return toward > 0.0f;
+}
+
+/// Whether a wall's windows are deep at the frame (its item's rank entry `rank`): with weather nearer than 160 m.
+inline bool building_windows_deep(uint theme_flags, uint rank) {
+    return rank != RANK_NONE && (theme_flags & THEME_WEATHER) != 0u &&
+           (rank_detail(rank) & BUILDING_DETAIL_DEEP) != 0u;
+}
+
+/// Whether a wall's windows may have sash bars at the frame: its item nearer than 140 m.
+inline bool building_windows_sashed(uint rank) {
+    return rank != RANK_NONE && (rank_detail(rank) & BUILDING_DETAIL_SASH) != 0u;
 }
 
 /// The first row of wall `w`'s windows the frame draws: the shop floor's is left out with weather.
@@ -155,8 +224,9 @@ inline uint building_windows_first_row(uint theme_flags, BuildingWindowWall w) {
     return (weather && (w.flags & BUILDING_WINDOW_SHOP_FLOOR) != 0u) ? 1u : 0u;
 }
 
-/// A window as the frame draws it: nothing (count 0), or its corners (CSS px, snapped at rest), in the port's order,
-/// and the span its outline's reciprocal depths keep within (its corners', widened as an edged shape's).
+/// A window (or one of its parts) as the frame draws it: nothing (count 0), or its corners (CSS px, snapped at rest),
+/// in the port's order, the span its outline's reciprocal depths keep within (its corners', widened as an edged
+/// shape's), and its area (CSS px², of its corners before the snap, as the port measures Camera.poly's).
 struct BuildingWindowShape {
     uint count;
     float2 p0;
@@ -166,6 +236,7 @@ struct BuildingWindowShape {
     float2 p4;
     float lo;
     float hi;
+    float area;
 };
 
 inline BuildingWindowShape building_window_nothing() {
@@ -179,6 +250,7 @@ inline BuildingWindowShape building_window_nothing() {
     s.p4 = zero;
     s.lo = 0.0f;
     s.hi = 0.0f;
+    s.area = 0.0f;
     return s;
 }
 
@@ -199,10 +271,10 @@ inline float2 building_window_corner(BuildingWindowShape s, uint i) {
     return s.p4;
 }
 
-/// The window `win` (building_window_prim's) as the frame draws it at its camera: Camera.poly's corners, clipped at
-/// the near plane, its box against the frame and the margin, its area (unsnapped) over the windows' least, snapped at
-/// rest.
-inline BuildingWindowShape building_window_shape(FrameCamera cam, TilePlace place, BuildingPrim win) {
+/// Quad `win` (building_window_quad's) as Camera.poly gives it at the frame's camera: its corners clipped at the near
+/// plane, nothing where fewer than three are left or their box lies beyond the frame and the margin, with its area
+/// (unsnapped), snapped at rest.
+inline BuildingWindowShape building_window_cut(FrameCamera cam, TilePlace place, BuildingPrim win) {
     BuildingWindowShape s = building_window_nothing();
     float near_z = cam.frame.w;
     float3 origin = {0.0f, 0.0f, 0.0f};
@@ -257,9 +329,6 @@ inline BuildingWindowShape building_window_shape(FrameCamera cam, TilePlace plac
         float2 b = q[(i + 1u) % m];
         twice = twice + (a.x * b.y - b.x * a.y);
     }
-    if (!(abs(twice) / 2.0f > BUILDING_WINDOW_MIN_AREA)) {
-        return s;
-    }
     bool rest = camera_rests(cam);
     float lo = 0.0f;
     float hi = 0.0f;
@@ -287,7 +356,22 @@ inline BuildingWindowShape building_window_shape(FrameCamera cam, TilePlace plac
     s.count = m;
     s.lo = lo - lo * BUILDING_PLANE_SPAN;
     s.hi = hi + hi * BUILDING_PLANE_SPAN;
+    s.area = abs(twice) / 2.0f;
     return s;
+}
+
+/// `s` where its area is over `least` (CSS px², the port's `area(sp) > least`), else nothing.
+inline BuildingWindowShape building_window_over(BuildingWindowShape s, float least) {
+    if (s.count == 0u || !(s.area > least)) {
+        return building_window_nothing();
+    }
+    return s;
+}
+
+/// The window `win` (building_window_prim's) as the frame draws it at its camera: Camera.poly's corners, its area
+/// (unsnapped) over the windows' least, snapped at rest.
+inline BuildingWindowShape building_window_shape(FrameCamera cam, TilePlace place, BuildingPrim win) {
+    return building_window_over(building_window_cut(cam, place, win), BUILDING_WINDOW_MIN_AREA);
 }
 
 /// Wall `f`'s plane in camera coordinates (as building_shape's: its normal turned with the tile's place, through its
@@ -298,6 +382,34 @@ inline float4 building_window_plane(FrameCamera cam, TilePlace place, BuildingFa
     float3 nk = camera_of(cam, nrm);
     float4 plane = {nk.x, nk.y, nk.z, ((nrm.x * on_face.x) + (nrm.y * on_face.y)) + (nrm.z * on_face.z)};
     return plane;
+}
+
+/// The reciprocal depth of plane `plane` at CSS point `css` (building_plane_recip's, unclamped).
+inline float building_window_plane_recip(FrameCamera cam, float4 plane, float2 css) {
+    float3 ray = {(css.x - cam.right.w) / cam.forward.w, (cam.up.w - css.y) / cam.forward.w, 1.0f};
+    float along = ((plane.x * ray.x) + (plane.y * ray.y)) + (plane.z * ray.z);
+    return cam.frame.w * along / plane.w;
+}
+
+/// Shape `s` of a part off its wall's plane (a deep window's set-back glass, its reveal and sill, its sash bars) with
+/// its span widened to hold its wall's plane's reciprocal depths at its corners: it draws on that plane, which its own
+/// corners lie behind or before.
+inline BuildingWindowShape building_window_on_plane(FrameCamera cam, float4 plane, BuildingWindowShape s) {
+    if (s.count == 0u) {
+        return s;
+    }
+    float lo = s.lo;
+    float hi = s.hi;
+    for (uint i = 0u; i < s.count; ++i) {
+        float r = building_window_plane_recip(cam, plane, building_window_corner(s, i));
+        float r_lo = r - r * BUILDING_PLANE_SPAN;
+        float r_hi = r + r * BUILDING_PLANE_SPAN;
+        lo = r_lo < lo ? r_lo : lo;
+        hi = r_hi > hi ? r_hi : hi;
+    }
+    s.lo = lo;
+    s.hi = hi;
+    return s;
 }
 
 /// A window's shape as an edged building shape on its wall's plane (building_outline's and building_plane_recip's).
@@ -313,6 +425,114 @@ inline BuildingShape building_window_as_shape(BuildingWindowShape w, float4 plan
     s.lo = w.lo;
     s.hi = w.hi;
     s.lead = lead;
+    return s;
+}
+
+/// A window's sash bars as the port draws them: nothing, or the two segments m1 to m2 (its bottom's middle to its
+/// top's) and h1 to h2 (across at 0.42 of its height), CSS px snapped at rest, with the span of their reciprocal
+/// depths (widened as a shape's).
+struct BuildingSash {
+    bool drawn;
+    float2 m1;
+    float2 m2;
+    float2 h1;
+    float2 h2;
+    float lo;
+    float hi;
+};
+
+inline BuildingSash building_sash_nothing() {
+    BuildingSash s;
+    float2 zero = {0.0f, 0.0f};
+    s.drawn = false;
+    s.m1 = zero;
+    s.m2 = zero;
+    s.h1 = zero;
+    s.h2 = zero;
+    s.lo = 0.0f;
+    s.hi = 0.0f;
+    return s;
+}
+
+/// The sash bars of a window's quad `q4` (building_window_quad's at the glass's offset + 0.01): each point projected as
+/// Camera.proj does (none behind the near plane: then no bars).
+inline BuildingSash building_sash(FrameCamera cam, TilePlace place, BuildingPrim q4) {
+    BuildingSash s = building_sash_nothing();
+    float near_z = cam.frame.w;
+    float3 bottom = (q4.c0 + q4.c1) / 2.0f;
+    float3 top = (q4.c2 + q4.c3) / 2.0f;
+    float3 left = q4.c0 + (q4.c3 - q4.c0) * BUILDING_SASH_CROSS;
+    float3 right = q4.c1 + (q4.c2 - q4.c1) * BUILDING_SASH_CROSS;
+    float3 k0 = camera_of(cam, eye_relative(place, bottom));
+    float3 k1 = camera_of(cam, eye_relative(place, top));
+    float3 k2 = camera_of(cam, eye_relative(place, left));
+    float3 k3 = camera_of(cam, eye_relative(place, right));
+    if (k0.z < near_z || k1.z < near_z || k2.z < near_z || k3.z < near_z) {
+        return s;
+    }
+    bool rest = camera_rests(cam);
+    float2 p[4] = {css_of(cam, k0), css_of(cam, k1), css_of(cam, k2), css_of(cam, k3)};
+    float lo = 0.0f;
+    float hi = 0.0f;
+    float z[4] = {k0.z, k1.z, k2.z, k3.z};
+    for (uint i = 0u; i < 4u; ++i) {
+        if (rest) {
+            float2 snapped = {snap_tenth(p[i].x), snap_tenth(p[i].y)};
+            p[i] = snapped;
+        }
+        float recip = near_z / z[i];
+        lo = i == 0u || recip < lo ? recip : lo;
+        hi = i == 0u || recip > hi ? recip : hi;
+    }
+    s.drawn = true;
+    s.m1 = p[0];
+    s.m2 = p[1];
+    s.h1 = p[2];
+    s.h2 = p[3];
+    s.lo = lo - lo * BUILDING_PLANE_SPAN;
+    s.hi = hi + hi * BUILDING_PLANE_SPAN;
+    return s;
+}
+
+/// Bar i (0: m1 to m2, 1: h1 to h2) of sash `s` stroked `half` CSS px either side, butt-capped: a quad (no area where
+/// its ends meet), with the sash's span.
+inline BuildingWindowShape building_sash_bar(BuildingSash s, uint i, float half) {
+    BuildingWindowShape b = building_window_nothing();
+    if (!s.drawn) {
+        return b;
+    }
+    float2 a = i == 0u ? s.m1 : s.h1;
+    float2 e = (i == 0u ? s.m2 : s.h2) - a;
+    float len = sqrt(e.x * e.x + e.y * e.y);
+    if (!(len > 0.0f)) {
+        return b;
+    }
+    float2 n = {-e.y * half / len, e.x * half / len};
+    b.count = 4u;
+    b.p0 = a + n;
+    b.p1 = a + e + n;
+    b.p2 = a + e - n;
+    b.p3 = a - n;
+    b.p4 = b.p3;
+    b.lo = s.lo;
+    b.hi = s.hi;
+    b.area = 2.0f * half * len;
+    return b;
+}
+
+/// Sash `s` with its span widened to its wall's plane's at its points (building_window_on_plane's).
+inline BuildingSash building_sash_on_plane(FrameCamera cam, float4 plane, BuildingSash s) {
+    if (!s.drawn) {
+        return s;
+    }
+    float2 p[4] = {s.m1, s.m2, s.h1, s.h2};
+    for (uint i = 0u; i < 4u; ++i) {
+        float r = building_window_plane_recip(cam, plane, p[i]);
+        float r_lo = r - r * BUILDING_PLANE_SPAN;
+        float r_hi = r + r * BUILDING_PLANE_SPAN;
+        s.lo = r_lo < s.lo ? r_lo : s.lo;
+        s.hi = r_hi > s.hi ? r_hi : s.hi;
+    }
     return s;
 }
 
@@ -389,42 +609,85 @@ inline bool building_glass_drawn(BuildingWindowShape s, float r) {
     return true;
 }
 
-/// Vertex v (0 to 107: 36 triangles) of a window's frame, the band its stroke of half width r paints: between its
-/// outline `outline` dilated by r (building_outline_points' 32, a corner's 32 / count of them from its incoming edge's
-/// side round to its outgoing edge's) and its glass (building_glass_corner), corner by corner a fan from the glass's
-/// corner over the outline's points about it, then the quad along the edge to the next corner; the triangles past a
-/// window's last repeat its last point (no area). A window without glass: its whole dilated outline, a fan of 30
-/// triangles from its first point.
-inline float2 building_window_frame_point(BuildingShape outline, BuildingWindowShape s, uint v, float r) {
+/// Corner i of window `s`'s outline mitred out by r (CSS px): the glass's corner (building_glass_corner) mirrored about
+/// the window's, r out along both its edges, which holds the round join's arc there. For a corner of a window with
+/// glass (1 + n_a · n_b over 0.25) it lies within 2.9 r of the window's.
+inline float2 building_frame_corner(BuildingWindowShape s, uint i, float r) {
+    BuildingGlassTurn t = building_glass_turn(s, i, building_window_sign(s));
+    float2 at = building_window_corner(s, i);
+    float2 moved = {at.x - r * (t.n_in.x + t.n_out.x) / t.k, at.y - r * (t.n_in.y + t.n_out.y) / t.k};
+    return moved;
+}
+
+/// Vertex v (0 to 29: 10 triangles) of a window's frame, a polygon holding the band its stroke of half width r paints,
+/// whose fragments keep the samples the stroke covers (building_window_covers): with glass (`glass`, building_glass_drawn
+/// as windows_cs decided it), the band between the window mitred out by r (building_frame_corner) and its glass, edge by
+/// edge a quad (glass j, out j, out j + 1; glass j, out j + 1, glass j + 1), the triangles past a window's last
+/// repeating its glass's last corner (no area); without, the window's box grown by r, two triangles. Its inner edges
+/// are the glass's own, so the two fit without a crack.
+inline float2 building_window_frame_point(BuildingWindowShape s, uint v, float r, bool glass) {
     uint t = v / 3u;
     uint k = v - t * 3u;
-    uint points = BUILDING_WINDOW_OUTLINE_POINTS;
-    if (!building_glass_drawn(s, r)) {
-        uint p = t + 2u < points ? (k == 0u ? 0u : t + k) : points - 1u;
-        return building_outline_points(outline, p, r, points);
+    if (!glass) {
+        float2 lo = s.p0;
+        float2 hi = s.p0;
+        for (uint i = 1u; i < s.count; ++i) {
+            float2 c = building_window_corner(s, i);
+            lo.x = c.x < lo.x ? c.x : lo.x;
+            lo.y = c.y < lo.y ? c.y : lo.y;
+            hi.x = c.x > hi.x ? c.x : hi.x;
+            hi.y = c.y > hi.y ? c.y : hi.y;
+        }
+        float2 a = {lo.x - r, lo.y - r};
+        float2 c = {hi.x + r, hi.y + r};
+        float2 b = {c.x, a.y};
+        float2 d = {a.x, c.y};
+        if (t >= 2u || k == 0u) {
+            return a;
+        }
+        if (t == 0u) {
+            return k == 1u ? b : c;
+        }
+        return k == 1u ? c : d;
     }
     uint m = s.count;
-    uint per = points / m;
-    uint each = per + 1u; // a corner's triangles: per - 1 of its fan, 2 of its edge's quad
-    uint j = t / each;
+    uint j = t / 2u;
     if (j >= m) {
         return building_glass_corner(s, m - 1u, r);
     }
-    uint q = t - j * each;
     uint next = (j + 1u) % m;
     if (k == 0u) {
         return building_glass_corner(s, j, r);
     }
-    if (q + 1u < per) {
-        return building_outline_points(outline, j * per + q + k - 1u, r, points);
+    if ((t & 1u) == 0u) {
+        return building_frame_corner(s, k == 1u ? j : next, r);
     }
-    if (q + 1u == per) {
-        return building_outline_points(outline, k == 1u ? j * per + per - 1u : next * per, r, points);
+    return k == 1u ? building_frame_corner(s, next, r) : building_glass_corner(s, next, r);
+}
+
+/// Whether a window's stroke of half width `r` with its fill under it covers CSS point `p`: the point lies within the
+/// window `s` or within r of its outline (SVG's round-joined stroke of a closed path), the frame's and the twin's.
+inline bool building_window_covers(BuildingWindowShape s, float2 p, float r) {
+    float nearest = -1.0f;
+    float sign = building_window_sign(s);
+    bool inside = s.count >= 3u;
+    for (uint i = 0u; i < s.count; ++i) {
+        float2 a = building_window_corner(s, i);
+        float2 b = building_window_corner(s, (i + 1u) % s.count);
+        float2 e = b - a;
+        float2 d = p - a;
+        float ee = e.x * e.x + e.y * e.y;
+        float t = ee > 0.0f ? (d.x * e.x + d.y * e.y) / ee : 0.0f;
+        t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+        float2 g = d - e * t;
+        float dd = g.x * g.x + g.y * g.y;
+        nearest = nearest < 0.0f || dd < nearest ? dd : nearest;
+        // inside: left of every edge for a positive sum, right for a negative one
+        if (sign * (e.x * d.y - e.y * d.x) < 0.0f) {
+            inside = false;
+        }
     }
-    if (k == 1u) {
-        return building_outline_points(outline, next * per, r, points);
-    }
-    return building_glass_corner(s, next, r);
+    return inside || (nearest >= 0.0f && nearest <= r * r);
 }
 
 /// A colour 0xRRGGBB as the shaders take it: sRGB 0 to 1 at 8-bit levels.
@@ -480,24 +743,36 @@ inline BuildingGlass building_glass(FrameWindows w, uint theme_flags, uint style
     return dark;
 }
 
-/// The windows' frames' colour at the moment.
+/// The windows' frames' colour at the moment (their sash bars' too).
 inline float3 building_window_frame(FrameWindows w, uint theme_flags) {
     return building_rgb((theme_flags & THEME_NIGHT) != 0u ? w.frame.y : w.frame.x);
 }
 
-/// The windows' frames' width (CSS px).
+/// The deep windows' sills' colour at the moment.
+inline float3 building_window_sill_colour(FrameWindows w, uint theme_flags) {
+    return building_rgb((theme_flags & THEME_NIGHT) != 0u ? w.frame.w : w.frame.z);
+}
+
+/// The windows' frames' width (CSS px), but where they are deep (the wall record's).
 inline float building_window_frame_width(FrameWindows w) {
     return asfloat(w.lit.w);
 }
 
+/// A width in tenths of a CSS px (passes::window_widths', as the port prints it), as the frame draws it.
+inline float building_tenths(uint tenths) {
+    return float(tenths) / 10.0f;
+}
+
 // A window's record, which windows_cs writes for each window of the frame's jobs and the windows' vertex stages read
-// (4 uint4): v0 its header (corners, bits 0-2; lit, bit 3; its wall's warehouse flag, bit 4; its style, bits 5-6), its
-// wall's record among the frame's walls, its painter slot, its span's low end; v1 its span's high end and its first
-// three corners' x, y (CSS px) but the last; then the rest of its five corners. A header 0: the window is not drawn.
+// (4 uint4): v0 its header (corners, bits 0-2; lit, bit 3; its wall's warehouse flag, bit 4; its style, bits 5-6; its
+// glass drawn, bit 7: building_glass_drawn at its wall's frames' half width), its wall's record among the frame's walls,
+// its painter slot, its span's low end; v1 its span's high end and its first three corners' x, y (CSS px) but the
+// last; then the rest of its five corners. A header 0: the window is not drawn.
 static const uint BUILDING_WINDOW_RECORD_VECTORS = 4u;
 static const uint BUILDING_WINDOW_LIT = 8u;
 static const uint BUILDING_WINDOW_RECORD_WAREHOUSE = 16u;
 static const uint BUILDING_WINDOW_RECORD_STYLE_SHIFT = 5u;
+static const uint BUILDING_WINDOW_RECORD_GLASS = 128u;
 
 struct BuildingWindowRecord {
     uint4 v0;
@@ -506,15 +781,16 @@ struct BuildingWindowRecord {
     uint4 v3;
 };
 
-/// The record of window shape `s` (lit or not) of wall `w`, the frame's wall record `wall`, at painter slot `slot`.
-inline BuildingWindowRecord building_window_record(BuildingWindowShape s, bool lit, BuildingWindowWall w, uint wall,
-                                                   uint slot) {
+/// The record of window shape `s` (lit or not, with glass or not) of wall `w`, the frame's wall record `wall`, at
+/// painter slot `slot`.
+inline BuildingWindowRecord building_window_record(BuildingWindowShape s, bool lit, bool glass, BuildingWindowWall w,
+                                                   uint wall, uint slot) {
     BuildingWindowRecord r;
     uint header = 0u;
     if (s.count != 0u) {
         header = s.count | (lit ? BUILDING_WINDOW_LIT : 0u) |
                  ((w.flags & BUILDING_WINDOW_WAREHOUSE) != 0u ? BUILDING_WINDOW_RECORD_WAREHOUSE : 0u) |
-                 (w.style << BUILDING_WINDOW_RECORD_STYLE_SHIFT);
+                 (w.style << BUILDING_WINDOW_RECORD_STYLE_SHIFT) | (glass ? BUILDING_WINDOW_RECORD_GLASS : 0u);
     }
     uint4 v0 = {header, wall, slot, asuint(s.lo)};
     uint4 v1 = {asuint(s.hi), asuint(s.p0.x), asuint(s.p0.y), asuint(s.p1.x)};
@@ -546,18 +822,156 @@ inline BuildingWindowShape building_window_of(BuildingWindowRecord r) {
     return s;
 }
 
-// A windowed wall's record for the frame, which windows_cs writes once a windowed wall of the frame's jobs (2 uint4):
+// A near window's record (a window of a wall whose item is nearer than 160 m), which windows_cs writes beside its
+// window's and window_near_vs reads (10 uint4): v0 its header (its reveal's corners, bits 0-2; its sill's, 3-5; its sash
+// bars, bit 6), its wall's record among the frame's walls, its wall's first painter slot (its reveals'); then its
+// reveal (its span's ends, its five corners), its sill alike, and its sash bars (their span's ends, m1, m2, h1, h2). A
+// header 0: nothing of it is drawn.
+static const uint BUILDING_NEAR_RECORD_VECTORS = 10u;
+static const uint BUILDING_NEAR_SILL_SHIFT = 3u;
+static const uint BUILDING_NEAR_SASH = 64u;
+
+struct BuildingNearRecord {
+    uint4 v0;
+    uint4 v1;
+    uint4 v2;
+    uint4 v3;
+    uint4 v4;
+    uint4 v5;
+    uint4 v6;
+    uint4 v7;
+    uint4 v8;
+    uint4 v9;
+};
+
+/// The record of a near window's reveal `reveal`, sill `sill` and sash bars `sash`, the frame's wall record `wall`, its
+/// wall's first slot `slot`.
+inline BuildingNearRecord building_near_record(BuildingWindowShape reveal, BuildingWindowShape sill, BuildingSash sash,
+                                               uint wall, uint slot) {
+    BuildingNearRecord r;
+    uint header = reveal.count | (sill.count << BUILDING_NEAR_SILL_SHIFT) | (sash.drawn ? BUILDING_NEAR_SASH : 0u);
+    uint4 v0 = {header, wall, slot, 0u};
+    uint4 v1 = {asuint(reveal.lo), asuint(reveal.hi), asuint(reveal.p0.x), asuint(reveal.p0.y)};
+    uint4 v2 = {asuint(reveal.p1.x), asuint(reveal.p1.y), asuint(reveal.p2.x), asuint(reveal.p2.y)};
+    uint4 v3 = {asuint(reveal.p3.x), asuint(reveal.p3.y), asuint(reveal.p4.x), asuint(reveal.p4.y)};
+    uint4 v4 = {asuint(sill.lo), asuint(sill.hi), asuint(sill.p0.x), asuint(sill.p0.y)};
+    uint4 v5 = {asuint(sill.p1.x), asuint(sill.p1.y), asuint(sill.p2.x), asuint(sill.p2.y)};
+    uint4 v6 = {asuint(sill.p3.x), asuint(sill.p3.y), asuint(sill.p4.x), asuint(sill.p4.y)};
+    uint4 v7 = {asuint(sash.lo), asuint(sash.hi), asuint(sash.m1.x), asuint(sash.m1.y)};
+    uint4 v8 = {asuint(sash.m2.x), asuint(sash.m2.y), asuint(sash.h1.x), asuint(sash.h1.y)};
+    uint4 v9 = {asuint(sash.h2.x), asuint(sash.h2.y), 0u, 0u};
+    r.v0 = v0;
+    r.v1 = v1;
+    r.v2 = v2;
+    r.v3 = v3;
+    r.v4 = v4;
+    r.v5 = v5;
+    r.v6 = v6;
+    r.v7 = v7;
+    r.v8 = v8;
+    r.v9 = v9;
+    return r;
+}
+
+/// A near record's shape from its vectors a, b, c (the reveal's or the sill's) with `count` corners.
+inline BuildingWindowShape building_near_shape(uint count, uint4 a, uint4 b, uint4 c) {
+    BuildingWindowShape s = building_window_nothing();
+    s.count = count;
+    s.lo = asfloat(a.x);
+    s.hi = asfloat(a.y);
+    float2 p0 = {asfloat(a.z), asfloat(a.w)};
+    float2 p1 = {asfloat(b.x), asfloat(b.y)};
+    float2 p2 = {asfloat(b.z), asfloat(b.w)};
+    float2 p3 = {asfloat(c.x), asfloat(c.y)};
+    float2 p4 = {asfloat(c.z), asfloat(c.w)};
+    s.p0 = p0;
+    s.p1 = p1;
+    s.p2 = p2;
+    s.p3 = p3;
+    s.p4 = p4;
+    return s;
+}
+
+inline BuildingWindowShape building_near_reveal(BuildingNearRecord r) {
+    return building_near_shape(r.v0.x & 7u, r.v1, r.v2, r.v3);
+}
+
+inline BuildingWindowShape building_near_sill(BuildingNearRecord r) {
+    return building_near_shape((r.v0.x >> BUILDING_NEAR_SILL_SHIFT) & 7u, r.v4, r.v5, r.v6);
+}
+
+inline BuildingSash building_near_sash(BuildingNearRecord r) {
+    BuildingSash s = building_sash_nothing();
+    s.drawn = (r.v0.x & BUILDING_NEAR_SASH) != 0u;
+    s.lo = asfloat(r.v7.x);
+    s.hi = asfloat(r.v7.y);
+    float2 m1 = {asfloat(r.v7.z), asfloat(r.v7.w)};
+    float2 m2 = {asfloat(r.v8.x), asfloat(r.v8.y)};
+    float2 h1 = {asfloat(r.v8.z), asfloat(r.v8.w)};
+    float2 h2 = {asfloat(r.v9.x), asfloat(r.v9.y)};
+    s.m1 = m1;
+    s.m2 = m2;
+    s.h1 = h1;
+    s.h2 = h2;
+    return s;
+}
+
+/// Which part vertex v (0 to 29) of a near window draws: 0 its reveal (v 0 to 8, a fan of 3 triangles), 1 its sill (9
+/// to 17), 2 its sash bars (18 to 29: two quads, each two triangles).
+inline uint building_near_part(uint v) {
+    return v < 9u ? 0u : (v < 18u ? 1u : 2u);
+}
+
+/// Point v of a near window's part (building_near_part's): the fan's corner (0, t + 1, t + 2) of its triangle t, the
+/// points past its last repeating it; a bar's corner (0, 1, 2), (0, 2, 3).
+inline float2 building_near_point(BuildingNearRecord r, uint v, float sash_half) {
+    uint part = building_near_part(v);
+    if (part == 2u) {
+        uint i = v - 18u;
+        uint bar = i / 6u;
+        uint k = i - bar * 6u;
+        uint corner = k == 0u || k == 3u ? 0u : (k == 1u ? 1u : (k == 2u || k == 4u ? 2u : 3u));
+        return building_window_corner(building_sash_bar(building_near_sash(r), bar, sash_half), corner);
+    }
+    BuildingWindowShape s = building_near_reveal(r);
+    if (part == 1u) {
+        s = building_near_sill(r);
+    }
+    uint i = v - part * 9u;
+    uint t = i / 3u;
+    uint k = i - t * 3u;
+    uint corner = k == 0u ? 0u : t + k;
+    return building_window_corner(s, corner < s.count ? corner : s.count - 1u);
+}
+
+/// The shape vertex v of a near window draws on (its reveal, its sill, or its bar), for its depth.
+inline BuildingWindowShape building_near_shape_of(BuildingNearRecord r, uint v, float sash_half) {
+    uint part = building_near_part(v);
+    if (part == 2u) {
+        return building_sash_bar(building_near_sash(r), (v - 18u) / 6u, sash_half);
+    }
+    if (part == 1u) {
+        return building_near_sill(r);
+    }
+    return building_near_reveal(r);
+}
+
+// A windowed wall's record for the frame, which windows_cs writes once a windowed wall of the frame's jobs (3 uint4):
 // its plane in camera coordinates; the box of its dark windows' corners from top (y0) to bottom (y1), then its lit
-// ones' (CSS px; top below bottom where it has none).
-static const uint BUILDING_WALL_RECORD_VECTORS = 2u;
+// ones' (CSS px; top below bottom where it has none); its frames' half width and its sash bars' (CSS px), and its
+// reveals' colour (0xBBGGRR, the wall's colour times 0.55 unlit at the moment).
+static const uint BUILDING_WALL_RECORD_VECTORS = 3u;
 
 struct BuildingWallRecord {
     float4 plane;
     float2 dark;
     float2 lit;
+    float frame_half;
+    float sash_half;
+    uint reveal;
 };
 
-inline BuildingWallRecord building_wall_record_of(uint4 a, uint4 b) {
+inline BuildingWallRecord building_wall_record_of(uint4 a, uint4 b, uint4 c) {
     BuildingWallRecord w;
     float4 plane = {asfloat(a.x), asfloat(a.y), asfloat(a.z), asfloat(a.w)};
     float2 dark = {asfloat(b.x), asfloat(b.y)};
@@ -565,7 +979,16 @@ inline BuildingWallRecord building_wall_record_of(uint4 a, uint4 b) {
     w.plane = plane;
     w.dark = dark;
     w.lit = lit;
+    w.frame_half = asfloat(c.x);
+    w.sash_half = asfloat(c.y);
+    w.reveal = c.z;
     return w;
+}
+
+/// A colour 0xBBGGRR (the CPU's light's words) as the shaders take it.
+inline float3 building_bgr(uint c) {
+    float3 v = {float(c & 0xFFu), float((c >> 8u) & 0xFFu), float((c >> 16u) & 0xFFu)};
+    return v / 255.0f;
 }
 
 /// The glass's colour at CSS height `y` over a path's box from `top` to `bottom` (objectBoundingBox from 0 to 1,

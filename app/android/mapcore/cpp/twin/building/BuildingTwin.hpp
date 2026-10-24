@@ -8,10 +8,11 @@
 // frame block's strokes, its pack's style; the roofs' strokes draw those), with the objects group's round joins, at its
 // painter slot, in its building's item (its OSM owner, an area). Its colours are the faces' light as the pass's CPU
 // writes it (light.slang's light() and tohex in binary64, the port's bits), lit by its sample's sun bit. Each windowed
-// wall the frame draws is two more (shaders/building/windows.slangh): its dark windows' path, then its lit ones', each
-// window a closed subpath of its corners, filled with its glass (the gradients `glass` and `glassLit` the pass defines
-// by day with weather, else a flat colour) and stroked in the frames' colour and width, at the windows' slots. Plain
-// data in, no Vulkan: the pass's emit and the tests call it alike.
+// wall the frame draws is up to five more (shaders/building/windows.slangh), at the windows' slots: close up its deep
+// windows' reveals; its dark windows' path, then its lit ones', each window a closed subpath of its corners, filled
+// with its glass (the gradients `glass` and `glassLit` the pass defines by day with weather, else a flat colour) and
+// stroked in the frames' colour and width (wider deep); its sash bars, two open subpaths a window stroked in the
+// frames' colour; its deep windows' sills. Plain data in, no Vulkan: the pass's emit and the tests call it alike.
 #pragma once
 
 #include "frame/FrameBlock.hpp"
@@ -50,6 +51,17 @@ struct WindowsDepth {
     float bottom = 0.0F;
 };
 
+/// A wall's windows' part of one path (its deep windows' reveals or sills, or its sash bars as their quads) as the
+/// frame draws it, for the tests' raster: each shape, filled in one colour on its wall's plane at a lead, at the path's
+/// slot.
+struct PartsDepth {
+    std::vector<shaders::BuildingWindowShape> shapes;
+    std::uint32_t slot = 0;
+    hlsl::float4 plane{};
+    float lead = 0.0F;
+    hlsl::float3 colour{};
+};
+
 /// How the vertex stage gives an element its depth (the tests' depth raster; L1 reads none of it): the shape it draws
 /// (its corners and their reciprocal depths, its face's plane, its span and lead), and whether its depth is its face
 /// plane's (an edged outline: building_plane_recip) or its corners' over its fan (a plain polygon:
@@ -62,6 +74,7 @@ struct ElementDepth {
     std::vector<shaders::BuildingShape> triangles;
     std::uint32_t tile = 0;
     std::vector<WindowsDepth> windows; ///< one: the element is a wall's windows' path
+    std::vector<PartsDepth> parts;     ///< one: the element is a wall's reveals', sash bars' or sills' path
 };
 
 /// The glass's gradients the frame defines (by day with weather): the stream's `glass` and `glassLit`, or none.
@@ -70,14 +83,21 @@ struct WindowGradients {
     std::int32_t lit = none;
 };
 
+/// What the windows' widths are worked out from (passes::window_widths): each item row's depth (Ranks::depth, the
+/// port's d) and the camera's focal length (CSS px), in double.
+struct WindowDistances {
+    std::span<const double> depth;
+    double focal = 0.0;
+};
+
 /// Emits the buildings of the tiles a frame draws.
 class BuildingTwin {
 public:
-    /// For the frame whose block is `block` and rank table `ranks` (one entry per item row) and its glass's gradients,
-    /// into `out`, in its group `group` (the objects group).
-    BuildingTwin(const shaders::FrameBlock& block, std::span<const std::uint32_t> ranks, WindowGradients gradients,
-                 Stream& out, std::int32_t group) noexcept
-        : block_(block), ranks_(ranks), gradients_(gradients), out_(out), group_(group) {}
+    /// For the frame whose block is `block`, rank table `ranks` (one entry per item row) and items' distances
+    /// `distances`, and its glass's gradients, into `out`, in its group `group` (the objects group).
+    BuildingTwin(const shaders::FrameBlock& block, std::span<const std::uint32_t> ranks, WindowDistances distances,
+                 WindowGradients gradients, Stream& out, std::int32_t group) noexcept
+        : block_(block), ranks_(ranks), distances_(distances), gradients_(gradients), out_(out), group_(group) {}
 
     /// The primitives the frame draws of a tile over its visible cells `cells`: its buildings' `b`, its items' rows in
     /// the item table `rows` (its first item's on), the words of its range of the walls heap, its place and sun bits.
@@ -104,6 +124,7 @@ private:
 
     const shaders::FrameBlock& block_;
     std::span<const std::uint32_t> ranks_;
+    WindowDistances distances_;
     WindowGradients gradients_;
     Stream& out_;
     std::int32_t group_;
@@ -117,6 +138,10 @@ private:
     std::vector<Subpath> subpaths_;
     std::vector<shaders::BuildingShape> triangles_;                    // an n-gon's drawn triangles
     std::array<std::vector<shaders::BuildingWindowShape>, 2> windows_; // a wall's dark and lit windows
+    std::vector<shaders::BuildingWindowShape> reveal_shapes_;          // its deep windows' reveals
+    std::vector<shaders::BuildingWindowShape> sill_shapes_;            // and sills
+    std::vector<shaders::BuildingSash> sashes_;                        // its windows' sash bars
+    std::vector<std::uint32_t> reveals_; // the tile's windowed walls' reveals' colours at the frame's moment
     std::vector<ElementDepth>* depths_ = nullptr;
     std::uint32_t tile_ = 0;
 };

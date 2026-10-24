@@ -315,13 +315,14 @@ void add_windows(std::vector<Shape>& out, const twin::WindowsDepth& wd, double d
         frame.colour = levels_of(wd.frame);
         frame.sliver = turns_both_ways(frame.poly);
         frame.depth = depth_of(sh::BUILDING_WINDOW_LEAD);
-        // the frame's triangles as window_frames_vs draws them (its band's, or its whole outline's fan), each point at
+        // the frame's triangles as window_frames_vs draws them (its band's, or its box's), each point at
         // its wall's plane's reciprocal depth within the window's span: where that plane is ill-conditioned (a wall
         // seen edge-on) the clamped depths are not affine, so only the vertex stage's own triangles give its depths
         for (std::uint32_t v = 0; v < sh::BUILDING_WINDOW_FRAME_VERTICES; v += 3) {
             std::array<Vertex, 3> tri{};
             for (std::uint32_t k = 0; k < 3; ++k) {
-                const hlsl::float2 c = sh::building_window_frame_point(frame.depth.shape, s, v + k, wd.half);
+                const hlsl::float2 c =
+                    sh::building_window_frame_point(s, v + k, wd.half, sh::building_glass_drawn(s, wd.half));
                 const float r = sh::building_plane_recip(cam, frame.depth.shape, c);
                 tri[k] = {static_cast<double>(c.x), static_cast<double>(c.y), static_cast<double>(r)};
             }
@@ -355,6 +356,37 @@ void add_windows(std::vector<Shape>& out, const twin::WindowsDepth& wd, double d
     }
 }
 
+/// A wall's windows' part as the frame draws it (shaders/building/draw.slang's window_near_vs): each shape (a deep
+/// window's reveal or sill, or a sash bar's quad) filled in the part's colour on its wall's plane at its lead, a fan
+/// from its first corner (the points past its last repeating it), each point its wall's plane's within the shape's
+/// span; at the path's painter slot under the switch.
+void add_parts(std::vector<Shape>& out, const twin::PartsDepth& pd, double density, const shaders::FrameCamera& cam,
+               std::uint32_t tile) {
+    namespace sh = atlas::shaders;
+    for (const sh::BuildingWindowShape& s : pd.shapes) {
+        Shape part;
+        for (std::uint32_t k = 0; k < s.count; ++k) {
+            const hlsl::float2 v = sh::building_window_corner(s, k);
+            part.poly.push_back({static_cast<double>(v.x) * density, static_cast<double>(v.y) * density});
+        }
+        part.colour = levels_of(pd.colour);
+        part.sliver = turns_both_ways(part.poly);
+        part.depth = {.edged = true, .tile = tile};
+        part.depth.shape = sh::building_window_as_shape(s, pd.plane, pd.lead);
+        part.depth.shape.slot = pd.slot;
+        part.depth.shape.depth = sh::painter_depth(cam, pd.slot);
+        std::vector<Vertex> fan;
+        for (std::uint32_t v = 0; v < sh::BUILDING_WINDOW_GLASS_VERTICES; ++v) {
+            const hlsl::float2 c = sh::building_window_corner(s, v < s.count ? v : s.count - 1);
+            const float r = sh::building_plane_recip(cam, part.depth.shape, c);
+            fan.push_back({static_cast<double>(c.x), static_cast<double>(c.y), static_cast<double>(r)});
+        }
+        for (std::size_t k = 0; k + 2 < fan.size(); ++k) part.triangles.push_back({fan[0], fan[k + 1], fan[k + 2]});
+        part.slack = slack_of(cam, part.depth, part.triangles);
+        out.push_back(std::move(part));
+    }
+}
+
 /// The colour a sample of pixel (x, y) takes from shape `sh`: its colour, or a window's glass's at the pixel's centre
 /// (its CSS point as window_glass_fs finds it, css_of_output's).
 [[nodiscard]] std::uint32_t colour_at(const Shape& sh, std::int64_t x, std::int64_t y,
@@ -366,17 +398,23 @@ void add_windows(std::vector<Shape>& out, const twin::WindowsDepth& wd, double d
 }
 
 /// The document's shapes, each with its depth from `depths` (the pass's, in the stream's order) at frame camera `cam`,
-/// a wall's stroke `wall` CSS px wide (the frame's strokes'); a wall's windows' path its windows' frames and glass.
+/// a wall's stroke `wall` CSS px wide (the frame's strokes'); a wall's windows' path its windows' frames and glass, its
+/// reveals', sash bars' and sills' paths their shapes.
 [[nodiscard]] std::vector<Shape> shapes_of(const twin::Document& doc, double density,
                                            std::span<const twin::ElementDepth> depths, const shaders::FrameCamera& cam,
                                            float wall) {
     std::vector<Shape> out;
     for (const twin::Element* e : doc.order(twin::Layer::objects)) {
-        if (e->kind != twin::Op::path || e->points.size() < 3) continue;
+        if (e->kind != twin::Op::path) continue;
         if (e->sequence < depths.size() && !depths[e->sequence].windows.empty()) {
             add_windows(out, depths[e->sequence].windows.front(), density, cam, depths[e->sequence].tile);
             continue;
         }
+        if (e->sequence < depths.size() && !depths[e->sequence].parts.empty()) {
+            add_parts(out, depths[e->sequence].parts.front(), density, cam, depths[e->sequence].tile);
+            continue;
+        }
+        if (e->points.size() < 3) continue;
         Shape sh;
         for (const twin::Point& p : e->points) {
             sh.poly.push_back({static_cast<double>(p.x) * density, static_cast<double>(p.y) * density});

@@ -12,6 +12,7 @@
 #include "frame/FrameBlock.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/PassRegistry.hpp"
+#include "frame/Ranks.hpp"
 #include "fx/FieldCache.hpp"
 #include "gpu/Device.hpp"
 #include "gpu/Frames.hpp"
@@ -420,6 +421,10 @@ Result draw(const Request& r) {
     out.notes = std::format("{} frames to settle; {} tiles drawn, {} resident, {} failed and waiting, {} items",
                             frames + 1, w.cover()->tiles().size(), w.residency().stats().resident,
                             w.residency().stats().waiting, w.items()->live());
+    // the painter slots the frame gave out (of painter.slang's PAINTER_SLOTS) and its stage F's CPU time
+    out.notes +=
+        std::format("; {} painter slots; stage F {:.2f} ms",
+                    builder.state().ranks != nullptr ? builder.state().ranks->slots() : 0U, builder.stage_f_ms());
     {
         // What the heaps hold: their use of their capacity, and the use by kind, in MiB.
         const scene::HeapStats heaps = w.heaps()->stats();

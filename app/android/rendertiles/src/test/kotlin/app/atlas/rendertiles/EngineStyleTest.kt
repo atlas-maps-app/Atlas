@@ -130,6 +130,10 @@ class EngineStyleTest {
                 """var fr = if (!night) "${value("windows.frame_day")}" else "${value("windows.frame_night")}"""",
             ),
             Triple(listOf("windows.frame_width"), amsterdam, """pmax(dd, 1.0)) else ${value("windows.frame_width")}"""),
+            Triple(
+                listOf("windows.sill_day", "windows.sill_night"), amsterdam,
+                """hzc(th, if (!night) "${value("windows.sill_day")}" else "${value("windows.sill_night")}")""",
+            ),
         )
         for ((paths, file, text) in literals) {
             if (paths.any { it in DIFFERENCES || it.substringBefore('.') in DIFFERENCES }) continue

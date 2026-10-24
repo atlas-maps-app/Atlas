@@ -92,7 +92,7 @@ using clock = std::chrono::steady_clock;
     return {.glass = {w.glass[0], w.glass[1], w.glass_overcast[0], w.glass_overcast[1]},
             .lit = {w.lit_glass[0], w.lit_glass[1], w.lit, std::bit_cast<std::uint32_t>(w.frame_width)},
             .dark = {w.dark.day, w.dark.night, w.warehouse.day, w.warehouse.night},
-            .frame = {w.frame.day, w.frame.night, 0U, 0U}};
+            .frame = {w.frame.day, w.frame.night, w.sill.day, w.sill.night}};
 }
 
 } // namespace

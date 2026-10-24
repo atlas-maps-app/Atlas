@@ -47,13 +47,16 @@ inline float building_atan2(float y, float x) {
 [[vk::binding(0, 2)]] StructuredBuffer<uint4> stroke_jobs;
 [[vk::binding(1, 2)]] StructuredBuffer<uint4> stroke_records;
 [[vk::binding(2, 2)]] RWStructuredBuffer<uint4> stroke_records_out;
-// The windows' set (passes/Windows.cpp), set 2 of their own pipelines: this frame slot's jobs, its windows' records and
-// its windowed walls' records, as the compute stage writes them and as the vertex stages read them (one buffer each).
+// The windows' set (passes/Windows.cpp), set 2 of their own pipelines: this frame slot's jobs, its windows' records, its
+// windowed walls' records and its near windows' records, as the compute stage writes them and as the vertex stages read
+// them (one buffer each).
 [[vk::binding(3, 2)]] StructuredBuffer<uint4> window_jobs;
 [[vk::binding(4, 2)]] RWStructuredBuffer<uint4> window_records_out;
 [[vk::binding(5, 2)]] StructuredBuffer<uint4> window_records;
 [[vk::binding(6, 2)]] RWStructuredBuffer<uint4> window_walls_out;
 [[vk::binding(7, 2)]] StructuredBuffer<uint4> window_walls;
+[[vk::binding(8, 2)]] RWStructuredBuffer<uint4> window_nears_out;
+[[vk::binding(9, 2)]] StructuredBuffer<uint4> window_nears;
 [[vk::push_constant]] ConstantBuffer<BuildingPush> push;
 
 struct BuildingOut {
@@ -240,12 +243,25 @@ StrokeVertex roof_strokes_vs(uint vertex : SV_VulkanVertexID) {
 
 /// A window job (Buildings::update): a tile's push constants (4 uint4: its place; at x its windowed walls, y its faces, z
 /// its edged primitives, w its rows; sun x its first sun texel, y its fade weight's bits, z its window group's first
-/// sample, w 0), then its run (its first windowed wall in the tile's list, how many,
-/// at most 64, its first wall record, 0) and each of its walls' first window record, four a uint4.
-static const uint WINDOW_JOB_VECTORS = 21u;
+/// sample, w its reveals' colours' first word this frame slot), then its run (its first windowed wall in the tile's
+/// list, how many, at most 64, its first wall record, 0), each of its walls' first window record, its first near record
+/// (WINDOW_NO_NEAR: its item lies 160 m or more away), and its windows' widths (passes::window_widths: the frames' in
+/// tenths of a CSS px, bits 0-15, the sash bars', 16-31), four a uint4.
+static const uint WINDOW_JOB_VECTORS = 53u;
+static const uint WINDOW_JOB_RECORDS = 5u;
+static const uint WINDOW_JOB_NEARS = 21u;
+static const uint WINDOW_JOB_WIDTHS = 37u;
+static const uint WINDOW_NO_NEAR = 0xFFFFFFFFu;
+
+/// Word `i` (a wall's) of a job's list starting at vector `list`.
+uint window_job_word(uint at, uint list, uint i) {
+    uint4 v = window_jobs[at + list + i / 4u];
+    return v[i % 4u];
+}
 
 /// Each windowed wall of a job's run, decided once for the frame: each of its windows into its record (at the job's
-/// records, in the wall's order), and the wall into its own (its plane, its dark and lit windows' boxes).
+/// records, in the wall's order) and, nearer than 160 m, into its near record (its reveal, sill and sash bars), and the
+/// wall into its own (its plane, its dark and lit windows' boxes, its widths, its reveals' colour).
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
@@ -271,24 +287,56 @@ void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     uint rank = rank_table[rows[wall.item % 4u]];
     uint theme_flags = frame.theme.flags.x;
     bool drawn = building_windows_drawn(theme_flags, p.place, w, f, rank);
+    bool deep = building_windows_deep(theme_flags, rank);
+    bool sashed = building_windows_sashed(rank);
     uint first_row = building_windows_first_row(theme_flags, w);
     bool near = rank != RANK_NONE && (rank_detail(rank) & BUILDING_DETAIL_NEAR) != 0u;
     uint slot = (rank != RANK_NONE ? rank_slot(rank) : 0u) + (near ? w.near_slot : w.far_slot);
     bool sun = p.sun.x != BUILDING_NO_BITS && (theme_flags & THEME_NIGHT) == 0u;
+    float4 plane = building_window_plane(frame.camera, p.place, f);
     float infinity = asfloat(0x7F800000u);
     float2 dark = {infinity, -infinity};
     float2 lit = {infinity, -infinity};
     uint wall_record = span.z + thread.x;
     uint count = w.levels * w.cols;
-    uint4 firsts = window_jobs[at + 5u + thread.x / 4u];
-    uint first = firsts[thread.x % 4u];
+    uint first = window_job_word(at, WINDOW_JOB_RECORDS, thread.x);
+    uint near_first = window_job_word(at, WINDOW_JOB_NEARS, thread.x);
+    uint widths = window_job_word(at, WINDOW_JOB_WIDTHS, thread.x);
+    float frame_half = 0.5f * building_tenths(widths & 0xFFFFu);
+    float sash_half = 0.5f * building_tenths(widths >> 16u);
     for (uint k = 0u; k < count; ++k) {
         uint r = k / w.cols;
         uint c = k - r * w.cols;
         BuildingWindowShape s = building_window_nothing();
+        BuildingWindowShape reveal = building_window_nothing();
+        BuildingWindowShape sill = building_window_nothing();
+        BuildingSash bars = building_sash_nothing();
         bool on = false;
         if (drawn && r >= first_row) {
-            s = building_window_shape(frame.camera, p.place, building_window_prim(wall, f.normal, w, r, c));
+            // amsterdam.py: sp = cam.poly(quad_at(..., 0.04, nrm)); deep and area(sp) > 70: the reveal sp, then sp
+            // set back (rec -0.16) and the sill; the glass where area(sp) > 0.25; the sash bars at rec + 0.01 where
+            // dd < 140 and area(sp) > 30
+            BuildingWindowBox box = building_window_box(wall, w, r, c);
+            BuildingWindowShape sp = building_window_cut(
+                frame.camera, p.place, building_window_quad(wall, f.normal, box, BUILDING_WINDOW_OUT));
+            float rec = BUILDING_WINDOW_OUT;
+            if (deep && sp.count != 0u && sp.area > BUILDING_DEEP_AREA) {
+                reveal = building_window_on_plane(frame.camera, plane, sp);
+                rec = BUILDING_GLASS_BACK;
+                sp = building_window_on_plane(
+                    frame.camera, plane,
+                    building_window_cut(frame.camera, p.place, building_window_quad(wall, f.normal, box, rec)));
+                sill = building_window_on_plane(
+                    frame.camera, plane,
+                    building_window_cut(frame.camera, p.place, building_window_sill(wall, f.normal, box)));
+            }
+            s = building_window_over(sp, BUILDING_WINDOW_MIN_AREA);
+            if (sashed && sp.count != 0u && sp.area > BUILDING_SASH_AREA) {
+                bars = building_sash_on_plane(
+                    frame.camera, plane,
+                    building_sash(frame.camera, p.place,
+                                  building_window_quad(wall, f.normal, box, rec + BUILDING_SASH_OUT)));
+            }
             if (sun) {
                 uint sample = p.sun.z + w.first + k;
                 uint2 texel = sun_bits[p.sun.x + sample / 32u];
@@ -305,18 +353,37 @@ void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
                 }
             }
         }
-        BuildingWindowRecord record = building_window_record(s, on, w, wall_record, slot + (on ? 1u : 0u));
+        BuildingWindowRecord record =
+            building_window_record(s, on, building_glass_drawn(s, frame_half), w, wall_record,
+                                   slot + (on ? BUILDING_WINDOW_LIT_SLOT : BUILDING_WINDOW_DARK));
         uint out_at = (first + k) * BUILDING_WINDOW_RECORD_VECTORS;
         window_records_out[out_at] = record.v0;
         window_records_out[out_at + 1u] = record.v1;
         window_records_out[out_at + 2u] = record.v2;
         window_records_out[out_at + 3u] = record.v3;
+        if (near_first != WINDOW_NO_NEAR) {
+            BuildingNearRecord n = building_near_record(reveal, sill, bars, wall_record, slot);
+            uint near_at = (near_first + k) * BUILDING_NEAR_RECORD_VECTORS;
+            window_nears_out[near_at] = n.v0;
+            window_nears_out[near_at + 1u] = n.v1;
+            window_nears_out[near_at + 2u] = n.v2;
+            window_nears_out[near_at + 3u] = n.v3;
+            window_nears_out[near_at + 4u] = n.v4;
+            window_nears_out[near_at + 5u] = n.v5;
+            window_nears_out[near_at + 6u] = n.v6;
+            window_nears_out[near_at + 7u] = n.v7;
+            window_nears_out[near_at + 8u] = n.v8;
+            window_nears_out[near_at + 9u] = n.v9;
+        }
     }
-    float4 plane = building_window_plane(frame.camera, p.place, f);
     uint4 plane_words = {asuint(plane.x), asuint(plane.y), asuint(plane.z), asuint(plane.w)};
     uint4 boxes = {asuint(dark.x), asuint(dark.y), asuint(lit.x), asuint(lit.y)};
+    uint reveal_word = p.sun.w + span.x + thread.x;
+    uint4 reveals = walls_heap[reveal_word / 4u];
+    uint4 more = {asuint(frame_half), asuint(sash_half), reveals[reveal_word % 4u], 0u};
     window_walls_out[wall_record * BUILDING_WALL_RECORD_VECTORS] = plane_words;
     window_walls_out[wall_record * BUILDING_WALL_RECORD_VECTORS + 1u] = boxes;
+    window_walls_out[wall_record * BUILDING_WALL_RECORD_VECTORS + 2u] = more;
 }
 
 /// The window record `index` of the frame's.
@@ -330,35 +397,59 @@ BuildingWindowRecord window_record_at(uint index) {
     return r;
 }
 
-/// A window's shape on its wall's plane with its lead and painter slot (the depth building_depth gives its points).
-BuildingShape window_shape_of(BuildingWindowRecord r, BuildingWindowShape s, float lead) {
-    uint at = r.v0.y * BUILDING_WALL_RECORD_VECTORS;
-    BuildingWallRecord wall = building_wall_record_of(window_walls[at], window_walls[at + 1u]);
+/// The frame's wall record `index`.
+BuildingWallRecord window_wall_at(uint index) {
+    uint at = index * BUILDING_WALL_RECORD_VECTORS;
+    return building_wall_record_of(window_walls[at], window_walls[at + 1u], window_walls[at + 2u]);
+}
+
+/// A window's (or a part's) shape on its wall's plane with its lead and painter slot (the depth building_depth gives
+/// its points).
+BuildingShape window_shape_on(BuildingWallRecord wall, BuildingWindowShape s, float lead, uint slot) {
     BuildingShape shape = building_window_as_shape(s, wall.plane, lead);
-    shape.slot = r.v0.z;
-    shape.depth = painter_depth(frame.camera, r.v0.z);
+    shape.slot = slot;
+    shape.depth = painter_depth(frame.camera, slot);
     return shape;
 }
 
-/// Vertex `vertex` of the windows' frames: record vertex / 60's band between its outline dilated by the frames' half
-/// width (round joins) and its glass, in the frames' colour, on its wall's plane a lead over the glass.
+/// The frames' fragments: the frame's colour, and the window's shape and its frame's half width (CSS px), with which
+/// window_frames_fs keeps the samples the stroke covers.
+struct FrameOut {
+    float4 position : SV_Position;
+    nointerpolation float3 colour : COLOUR;
+    nointerpolation float4 a : WINDOW_A; // its corners 0 and 1
+    nointerpolation float4 b : WINDOW_B; // 2 and 3
+    nointerpolation float4 c : WINDOW_C; // 4, then its corners' count and the half width
+};
+
+/// Vertex `vertex` of the windows' frames: record vertex / 30's polygon holding the band its wall's frames' half width
+/// paints about it (round joins: the fragments keep the samples within it), in the frames' colour, on its wall's plane
+/// a lead over the glass.
 [shader("vertex")]
-BuildingOut window_frames_vs(uint vertex : SV_VulkanVertexID) {
+FrameOut window_frames_vs(uint vertex : SV_VulkanVertexID) {
     uint index = vertex / BUILDING_WINDOW_FRAME_VERTICES;
     BuildingWindowRecord r = window_record_at(index);
-    BuildingOut o;
+    FrameOut o;
     BuildingWindowShape s = building_window_of(r);
+    o.a = float4(0.0f);
+    o.b = float4(0.0f);
+    o.c = float4(0.0f);
     if (s.count == 0u) {
         o.position = NOWHERE;
         o.colour = float3(0.0f);
         return o;
     }
-    BuildingShape shape = window_shape_of(r, s, BUILDING_WINDOW_LEAD);
-    float half = 0.5f * building_window_frame_width(frame.windows);
-    float2 css = building_window_frame_point(shape, s, vertex - index * BUILDING_WINDOW_FRAME_VERTICES, half);
+    BuildingWallRecord wall = window_wall_at(r.v0.y);
+    BuildingShape shape = window_shape_on(wall, s, BUILDING_WINDOW_LEAD, r.v0.z);
+    float half = wall.frame_half;
+    bool glass = (r.v0.x & BUILDING_WINDOW_RECORD_GLASS) != 0u;
+    float2 css = building_window_frame_point(s, vertex - index * BUILDING_WINDOW_FRAME_VERTICES, half, glass);
     float depth = building_depth(frame.camera, shape, building_plane_recip(frame.camera, shape, css));
     o.position = clip_of(frame.camera, css, 1.0f, depth);
     o.colour = building_window_frame(frame.windows, frame.theme.flags.x);
+    o.a = float4(s.p0, s.p1);
+    o.b = float4(s.p2, s.p3);
+    o.c = float4(s.p4, float(s.count), half);
     return o;
 }
 
@@ -369,35 +460,102 @@ struct GlassOut {
     nointerpolation float4 bottom : GLASS_BOTTOM;
 };
 
-/// Vertex `vertex` of the windows' glass: record vertex / 5's window eroded by the frames' half width (a fan from its
-/// first corner, the last repeated), on its wall's plane a lead over the wall's cells, with its glass's paint.
+/// Vertex `vertex` of the windows' glass: record vertex / 5's window eroded by its wall's frames' half width (a fan from
+/// its first corner, the last repeated), on its wall's plane a lead over the wall's cells, with its glass's paint.
 [shader("vertex")]
 GlassOut window_glass_vs(uint vertex : SV_VulkanVertexID) {
     uint index = vertex / BUILDING_WINDOW_GLASS_VERTICES;
     BuildingWindowRecord r = window_record_at(index);
     GlassOut o;
     BuildingWindowShape s = building_window_of(r);
-    float half = 0.5f * building_window_frame_width(frame.windows);
-    if (s.count == 0u || !building_glass_drawn(s, half)) {
+    o.top = float4(0.0f);
+    o.bottom = float4(0.0f);
+    if (s.count == 0u) {
         o.position = NOWHERE;
-        o.top = float4(0.0f);
-        o.bottom = float4(0.0f);
         return o;
     }
+    if ((r.v0.x & BUILDING_WINDOW_RECORD_GLASS) == 0u) {
+        o.position = NOWHERE;
+        return o;
+    }
+    BuildingWallRecord wall = window_wall_at(r.v0.y);
+    float half = wall.frame_half;
     uint v = vertex - index * BUILDING_WINDOW_GLASS_VERTICES;
     float2 css = building_glass_corner(s, v < s.count ? v : s.count - 1u, half);
-    BuildingShape shape = window_shape_of(r, s, BUILDING_GLASS_LEAD);
+    BuildingShape shape = window_shape_on(wall, s, BUILDING_GLASS_LEAD, r.v0.z);
     float depth = building_depth(frame.camera, shape, building_plane_recip(frame.camera, shape, css));
     o.position = clip_of(frame.camera, css, 1.0f, depth);
     bool lit = (r.v0.x & BUILDING_WINDOW_LIT) != 0u;
     uint style = (r.v0.x >> BUILDING_WINDOW_RECORD_STYLE_SHIFT) & 3u;
     uint flags = (r.v0.x & BUILDING_WINDOW_RECORD_WAREHOUSE) != 0u ? BUILDING_WINDOW_WAREHOUSE : 0u;
     BuildingGlass g = building_glass(frame.windows, frame.theme.flags.x, style, flags, lit);
-    uint at = r.v0.y * BUILDING_WALL_RECORD_VECTORS;
-    BuildingWallRecord wall = building_wall_record_of(window_walls[at], window_walls[at + 1u]);
     float2 box = lit ? wall.lit : wall.dark;
     o.top = float4(g.top, box.x);
     o.bottom = g.gradient ? float4(g.bottom, box.y) : float4(g.top, box.x);
+    return o;
+}
+
+/// The near window record `index` of the frame's.
+BuildingNearRecord window_near_at(uint index) {
+    uint at = index * BUILDING_NEAR_RECORD_VECTORS;
+    BuildingNearRecord r;
+    r.v0 = window_nears[at];
+    r.v1 = window_nears[at + 1u];
+    r.v2 = window_nears[at + 2u];
+    r.v3 = window_nears[at + 3u];
+    r.v4 = window_nears[at + 4u];
+    r.v5 = window_nears[at + 5u];
+    r.v6 = window_nears[at + 6u];
+    r.v7 = window_nears[at + 7u];
+    r.v8 = window_nears[at + 8u];
+    r.v9 = window_nears[at + 9u];
+    return r;
+}
+
+/// Vertex `v` (0 to 29, building_near_part's) of near record `index`'s parts: its reveal (in its wall's reveals'
+/// colour), sill (the sills') or sash bars (the frames'), each on its wall's plane at its lead and painter slot; an
+/// instance a record, so a draw takes a part's vertices alone (record_windows draws the sills and bars first, the
+/// reveals last).
+[shader("vertex")]
+BuildingOut window_near_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanInstanceID) {
+    BuildingNearRecord r = window_near_at(index);
+    BuildingOut o;
+    o.colour = float3(0.0f);
+    uint part = building_near_part(v);
+    uint header = r.v0.x;
+    bool drawn = (header & BUILDING_NEAR_SASH) != 0u;
+    if (part == 0u) {
+        drawn = (header & 7u) != 0u;
+    } else if (part == 1u) {
+        drawn = ((header >> BUILDING_NEAR_SILL_SHIFT) & 7u) != 0u;
+    }
+    if (!drawn) {
+        o.position = NOWHERE;
+        return o;
+    }
+    BuildingWallRecord wall = window_wall_at(r.v0.y);
+    BuildingWindowShape s = building_near_shape_of(r, v, wall.sash_half);
+    if (s.count == 0u) {
+        o.position = NOWHERE;
+        return o;
+    }
+    uint theme_flags = frame.theme.flags.x;
+    float lead = BUILDING_SASH_LEAD;
+    uint slot = r.v0.z + BUILDING_WINDOW_SASHES;
+    o.colour = building_window_frame(frame.windows, theme_flags);
+    if (part == 0u) {
+        lead = BUILDING_REVEAL_LEAD;
+        slot = r.v0.z + BUILDING_WINDOW_REVEALS;
+        o.colour = building_bgr(wall.reveal);
+    } else if (part == 1u) {
+        lead = BUILDING_SILL_LEAD;
+        slot = r.v0.z + BUILDING_WINDOW_SILLS;
+        o.colour = building_window_sill_colour(frame.windows, theme_flags);
+    }
+    BuildingShape shape = window_shape_on(wall, s, lead, slot);
+    float2 css = building_near_point(r, v, wall.sash_half);
+    float depth = building_depth(frame.camera, shape, building_plane_recip(frame.camera, shape, css));
+    o.position = clip_of(frame.camera, css, 1.0f, depth);
     return o;
 }
 
@@ -425,5 +583,45 @@ BuildingTarget building_fs(BuildingOut v) {
     // mat's grain on the walls and roofs, where the frame's fields are bound and the moment has weather
     float3 c = mat_colour(frame.camera, v.colour, v.position.xy, mat_on(frame));
     o.colour = float4(c, 1.0f);
+    return o;
+}
+
+/// Vulkan's standard sample positions in a pixel (D7): 4x, then 2x.
+static const float2 window_samples4[4] = {float2(0.375f, 0.125f), float2(0.875f, 0.375f), float2(0.125f, 0.625f),
+                                          float2(0.625f, 0.875f)};
+static const float2 window_samples2[2] = {float2(0.75f, 0.75f), float2(0.25f, 0.25f)};
+
+struct FrameTarget {
+    [[vk::location(0)]] float4 colour : SV_Target0;
+    uint coverage : SV_Coverage;
+};
+
+/// A window's frame: its colour with mat's grain on the samples its stroke covers (building_window_covers: SVG's round
+/// joins at any width; the polygon the vertex stage draws covers more), push.at.x samples a pixel (record_windows').
+[shader("fragment")]
+FrameTarget window_frames_fs(FrameOut v) {
+    BuildingWindowShape s = building_window_nothing();
+    s.count = uint(v.c.z);
+    s.p0 = v.a.xy;
+    s.p1 = v.a.zw;
+    s.p2 = v.b.xy;
+    s.p3 = v.b.zw;
+    s.p4 = v.c.xy;
+    float half = v.c.w;
+    float2 corner = floor(v.position.xy);
+    uint n = push.at.x;
+    uint mask = 0u;
+    for (uint i = 0u; i < n; ++i) {
+        float2 at = n == 4u ? window_samples4[i] : (n == 2u ? window_samples2[i] : float2(0.5f, 0.5f));
+        if (building_window_covers(s, css_of_output(frame.camera, corner + at), half)) {
+            mask |= 1u << i;
+        }
+    }
+    if (mask == 0u) {
+        discard;
+    }
+    FrameTarget o;
+    o.colour = float4(mat_colour(frame.camera, v.colour, v.position.xy, mat_on(frame)), 1.0f);
+    o.coverage = mask;
     return o;
 }

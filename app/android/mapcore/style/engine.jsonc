@@ -121,7 +121,8 @@
 
     // draw_building's windows: by day with weather the glass's gradients from the top of a wall's windows to their
     // bottom (`glass` by the sky's cover, `glassLit` where the sun is on them), without weather and at night their flat
-    // glass, a warehouse's shutters (with weather), and the frames, by day and at night, with their width
+    // glass, a warehouse's shutters (with weather), and the frames, by day and at night, with their width; the deep
+    // windows' sills, by day and at night
     "windows": {
         "glass_top": "#B7CBE0",
         "glass_bottom": "#3E4C5E",
@@ -136,7 +137,9 @@
         "warehouse_night": "#0E1612",
         "frame_day": "#F2EEE6",
         "frame_night": "#3A3F4E",
-        "frame_width": 0.7
+        "frame_width": 0.7,
+        "sill_day": "#DAD5CA",
+        "sill_night": "#2E323E"
     },
 
     // amsterdam.py's canal names on the water (ground_text): their fill and its opacity, the face's weight, and the

@@ -2,10 +2,12 @@
 #include "twin/building/BuildingTile.hpp"
 
 #include "base/assert.hpp"
+#include "base/pymath/PyMath.hpp"
 #include "twin/building/BuildingShader.hpp"
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstdint>
 
 namespace atlas::passes {
@@ -35,7 +37,8 @@ static_assert(geometry::window_flag::shop_floor == shaders::BUILDING_WINDOW_SHOP
                   geometry::window_flag::church == shaders::BUILDING_WINDOW_CHURCH &&
                   static_cast<std::uint32_t>(geometry::WindowStyle::plain) == shaders::BUILDING_WINDOW_PLAIN &&
                   static_cast<std::uint32_t>(geometry::WindowStyle::modern) == shaders::BUILDING_WINDOW_MODERN &&
-                  static_cast<std::uint32_t>(geometry::WindowStyle::paris) == shaders::BUILDING_WINDOW_PARIS,
+                  static_cast<std::uint32_t>(geometry::WindowStyle::paris) == shaders::BUILDING_WINDOW_PARIS &&
+                  geometry::window_slots == shaders::BUILDING_WINDOW_SILLS + 1,
               "geometry/Walls.hpp's windows and windows.slangh's");
 
 /// Two runs this close (primitives of cells not drawn between them) are drawn as one.
@@ -108,7 +111,8 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     layout.windows_at = layout.cells_at + ((n + 1) / 2);
     layout.faces_at = layout.windows_at + ww;
     layout.colours_at = layout.faces_at + (f * shaders::BUILDING_FACE_VECTORS);
-    layout.rows_at = layout.colours_at + f; // two slots of two words a face: f uint4
+    layout.reveals_at = layout.colours_at + f;               // two slots of two words a face: f uint4
+    layout.rows_at = layout.reveals_at + ((2 * ww) + 3) / 4; // two slots of a word a windowed wall
     layout.vectors = layout.rows_at + ((k + 3) / 4);
     std::vector<Words> out(layout.vectors, Words{0, 0, 0, 0});
     const auto local = [&](const gm::V3& v) {
@@ -136,10 +140,12 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     // windows' place among the tile's by cell and its item (the CPU keeps them for the frame's jobs)
     layout.window_at.assign(std::size_t{ww} + 1, 0);
     layout.window_items.assign(ww, 0);
+    layout.window_faces.assign(ww, 0);
     for (std::uint32_t i = 0; i < ww; ++i) {
         const gm::WindowWall& w = g.window_walls[i];
         layout.window_at[i + 1] = layout.window_at[i] + (std::uint32_t{w.levels} * w.cols);
         layout.window_items[i] = static_cast<std::uint16_t>(g.edged[w.wall].item); // below the 0x10000 items asserted
+        layout.window_faces[i] = g.edged[w.wall].face;
         out[layout.windows_at + i] = {
             heap_of[w.wall] | (static_cast<std::uint32_t>(w.style) << shaders::BUILDING_WINDOW_STYLE_SHIFT) |
                 (std::uint32_t{w.flags} << shaders::BUILDING_WINDOW_FLAGS_SHIFT),
@@ -193,6 +199,34 @@ void building_colours(const shaders::Theme& theme, std::span<const BuildingLight
         out[2 * i] = lit.x | (lit.y << 8U) | (lit.z << 16U);
         out[(2 * i) + 1] = unlit.x | (unlit.y << 8U) | (unlit.z << 16U);
     }
+}
+
+void building_reveals(const shaders::Theme& theme, std::span<const BuildingLight> lights,
+                      std::span<const std::uint32_t> faces, std::span<std::uint32_t> out) {
+    for (std::size_t i = 0; i < faces.size() && i < out.size(); ++i) {
+        if (faces[i] >= lights.size()) continue;
+        const BuildingLight& l = lights[faces[i]];
+        // amsterdam.py: tohex(light(th, mulc(base, 0.55), nrm, False))
+        const shaders::double3 rgb{static_cast<double>((l.base >> 16U) & 0xFFU) * 0.55,
+                                   static_cast<double>((l.base >> 8U) & 0xFFU) * 0.55,
+                                   static_cast<double>(l.base & 0xFFU) * 0.55};
+        const shaders::double3 n{l.normal[0], l.normal[1], l.normal[2]};
+        const hlsl::uint3 c = shaders::light_bytes(theme, rgb, n, false);
+        out[i] = c.x | (c.y << 8U) | (c.z << 16U);
+    }
+}
+
+WindowWidths window_widths(std::uint32_t detail, bool weather, double depth, double focal, double frame_width) {
+    // amsterdam.py: fw = max(0.7, 0.07 * cam.focal / max(d, 1)) if deep else 0.7, and the sash bars' max(0.7, 0.045 *
+    // cam.focal / max(d, 1)) if deep else max(0.7, 9 / max(d, 1)), each printed '%.1f'
+    const auto tenths = [](double v) { return static_cast<std::uint16_t>(std::llround(pymath::round(v, 1) * 10.0)); };
+    const bool deep = weather && (detail & shaders::BUILDING_DETAIL_DEEP) != 0U;
+    const double d = pymath::max(depth, 1.0);
+    WindowWidths w{.frame = tenths(deep ? pymath::max(frame_width, 0.07 * focal / d) : frame_width), .sash = 0};
+    if ((detail & shaders::BUILDING_DETAIL_SASH) != 0U) {
+        w.sash = tenths(deep ? pymath::max(sash_least, 0.045 * focal / d) : pymath::max(sash_least, 9.0 / d));
+    }
+    return w;
 }
 
 void building_runs(std::uint64_t cells, std::span<const std::uint32_t> first, std::vector<BuildingRun>& out) {

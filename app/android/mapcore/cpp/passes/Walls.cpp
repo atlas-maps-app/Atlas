@@ -109,6 +109,13 @@ void Buildings::light(scene::Heaps& heaps, const shaders::Theme& theme, std::uin
     building_colours(theme, b.lights, colours_);
     heaps.write(mine.ranges[0], std::as_bytes(std::span(colours_)),
                 (b.colours_at * 16) + (slot * b.faces * 2 * static_cast<std::uint32_t>(sizeof(std::uint32_t))));
+    // and its windowed walls' reveals' colours
+    if (b.window_walls > 0) {
+        colours_.assign(b.window_walls, 0U);
+        building_reveals(theme, b.lights, b.window_faces, colours_);
+        heaps.write(mine.ranges[0], std::as_bytes(std::span(colours_)),
+                    (b.reveals_at * 16) + (slot * b.window_walls * static_cast<std::uint32_t>(sizeof(std::uint32_t))));
+    }
     heaps.flush();
     lit[slot] = moment_;
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
@@ -132,6 +139,7 @@ void Buildings::update(const frame::FrameState& state) {
         windows_->jobs_now = 0;
         windows_->walls_now = 0;
         windows_->records_now = 0;
+        windows_->nears_now = 0;
     }
     if (state.cover == nullptr || state.ranks == nullptr || state.heaps == nullptr) return;
     // the tiles' PassTile of this pass: the one at its place among the passes that built them (FrameState::cover)
@@ -176,6 +184,7 @@ void Buildings::update(const frame::FrameState& state) {
         if (const std::uint32_t first = first_item(tile, kind_); first < tile.rows.size()) {
             d.rows = std::span(tile.rows).subspan(first, std::min<std::size_t>(b->items, tile.rows.size() - first));
         }
+        d.reveals = ((base + b->reveals_at) * 4) + (slot * b->window_walls);
         d.runs_first = static_cast<std::uint32_t>(runs_.size());
         building_runs(t.cells, b->edged_first, runs_);
         d.edged_runs = static_cast<std::uint32_t>(runs_.size()) - d.runs_first;
@@ -192,7 +201,7 @@ void Buildings::update(const frame::FrameState& state) {
     // the nearest tiles first, so early depth testing rejects what they hide in the tiles behind
     std::ranges::stable_sort(draws_, {}, &TileDraw::distance);
     if (strokes_ != nullptr) write_jobs(slot);
-    if (windows_ != nullptr) write_window_jobs(slot, state.ranks->table());
+    if (windows_ != nullptr) write_window_jobs(slot, state);
     // the tiles no longer drawn are forgotten once many are kept (their rows written again if they come back: the
     // same; their colours lit again)
     if (rows_written_.size() > 4096) {
@@ -275,9 +284,11 @@ void Buildings::release() noexcept {
 void Buildings::record(const frame::Recording& recording, std::uint32_t phase) {
     switch (phase) {
     case draw_phase:
+        // the windows before their walls: nearer on the wall's plane, they hide what early depth testing then rejects
+        // of the walls (under the painter switch their slots' depths lie past the walls' alike)
+        record_windows(recording);
         record_walls(recording);
         record_roofs(recording);
-        record_windows(recording);
         break;
     case decide_phase:
         record_decide(recording);
@@ -365,7 +376,10 @@ void Buildings::emit(const frame::FrameState& state, twin::Stream& out, std::uin
                    .has = true,
                    .windows_from = t.sun->now->windows_from};
         }
-        twin::BuildingTwin twin(state.block, state.ranks->table(), gradients, out, objects);
+        twin::BuildingTwin twin(
+            state.block, state.ranks->table(),
+            {.depth = state.ranks->depth(), .focal = state.view ? state.view->camera().focal() : 0.0}, gradients, out,
+            objects);
         twin.record_depths(&depths_, static_cast<std::uint32_t>(i));
         twin.tile(*b, rows.subspan(std::min<std::size_t>(first, rows.size())), w.bytes(), t.place, t.cells, sun);
         emitted_.elements += twin.elements();

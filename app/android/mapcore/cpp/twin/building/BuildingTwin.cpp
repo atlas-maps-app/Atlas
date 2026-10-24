@@ -231,12 +231,17 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
     const shaders::FrameCamera& cam = block_.camera;
     const std::uint32_t theme_flags = block_.theme.flags.x;
     const bool night = (theme_flags & shaders::THEME_NIGHT) != 0U;
+    const bool weather = (theme_flags & shaders::THEME_WEATHER) != 0U;
     const shaders::FrameWindows& paints = block_.windows;
-    const float width = shaders::building_window_frame_width(paints);
+    const auto frame_width = static_cast<double>(shaders::building_window_frame_width(paints));
     const hlsl::float3 frame = shaders::building_window_frame(paints, theme_flags);
+    const hlsl::float3 sill_colour = shaders::building_window_sill_colour(paints, theme_flags);
     const auto lit_at = [&](std::uint32_t sample) {
         return !night && sun.has && sample / 64 < sun.now.size() && ((sun.now[sample / 64] >> (sample % 64)) & 1U) != 0;
     };
+    // the walls' reveals' colours at the frame's moment, as the pass's CPU writes them
+    reveals_.assign(b.window_walls, 0U);
+    passes::building_reveals(block_.theme, b.lights, b.window_faces, reveals_);
     runs_.clear();
     passes::building_runs(cells, b.windows_first, runs_);
     for (const passes::BuildingRun& run : runs_) {
@@ -251,24 +256,99 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
             const std::uint32_t row = rows[wall.item];
             const std::uint32_t rank = row < ranks_.size() ? ranks_[row] : shaders::RANK_NONE;
             if (!shaders::building_windows_drawn(theme_flags, place, w, f, rank)) continue;
-            // the wall's windows, each as the frame draws it, by their sample's bit dark or lit
+            const bool deep = shaders::building_windows_deep(theme_flags, rank);
+            const bool sashed = shaders::building_windows_sashed(rank);
+            const passes::WindowWidths widths = passes::window_widths(
+                shaders::rank_detail(rank), weather, row < distances_.depth.size() ? distances_.depth[row] : 0.0,
+                distances_.focal, frame_width);
+            const float width = shaders::building_tenths(widths.frame);
+            const float sash_width = shaders::building_tenths(widths.sash);
+            const hlsl::float4 plane = shaders::building_window_plane(cam, place, f);
+            // the wall's windows, each as the frame draws it (windows_cs's): by their sample's bit dark or lit, and
+            // close up their reveals, sash bars and sills
             windows_[0].clear();
             windows_[1].clear();
+            reveal_shapes_.clear();
+            sill_shapes_.clear();
+            sashes_.clear();
             for (std::uint32_t r = shaders::building_windows_first_row(theme_flags, w); r < w.levels; ++r) {
                 for (std::uint32_t c = 0; c < w.cols; ++c) {
-                    const shaders::BuildingWindowShape s = shaders::building_window_shape(
-                        cam, place, shaders::building_window_prim(wall, f.normal, w, r, c));
-                    if (s.count == 0) continue;
-                    const bool lit = lit_at(sun.windows_from + w.first + (r * w.cols) + c);
-                    windows_[lit ? 1 : 0].push_back(s);
+                    const shaders::BuildingWindowBox box = shaders::building_window_box(wall, w, r, c);
+                    shaders::BuildingWindowShape sp = shaders::building_window_cut(
+                        cam, place, shaders::building_window_quad(wall, f.normal, box, shaders::BUILDING_WINDOW_OUT));
+                    float rec = shaders::BUILDING_WINDOW_OUT;
+                    if (deep && sp.count != 0 && sp.area > shaders::BUILDING_DEEP_AREA) {
+                        reveal_shapes_.push_back(shaders::building_window_on_plane(cam, plane, sp));
+                        rec = shaders::BUILDING_GLASS_BACK;
+                        sp = shaders::building_window_on_plane(
+                            cam, plane,
+                            shaders::building_window_cut(cam, place,
+                                                         shaders::building_window_quad(wall, f.normal, box, rec)));
+                        const shaders::BuildingWindowShape sill = shaders::building_window_on_plane(
+                            cam, plane,
+                            shaders::building_window_cut(cam, place,
+                                                         shaders::building_window_sill(wall, f.normal, box)));
+                        if (sill.count != 0) sill_shapes_.push_back(sill);
+                    }
+                    const shaders::BuildingWindowShape s =
+                        shaders::building_window_over(sp, shaders::BUILDING_WINDOW_MIN_AREA);
+                    if (s.count != 0) {
+                        const bool lit = lit_at(sun.windows_from + w.first + (r * w.cols) + c);
+                        windows_[lit ? 1 : 0].push_back(s);
+                    }
+                    if (sashed && sp.count != 0 && sp.area > shaders::BUILDING_SASH_AREA) {
+                        const shaders::BuildingSash bars = shaders::building_sash_on_plane(
+                            cam, plane,
+                            shaders::building_sash(
+                                cam, place,
+                                shaders::building_window_quad(wall, f.normal, box, rec + shaders::BUILDING_SASH_OUT)));
+                        if (bars.drawn) sashes_.push_back(bars);
+                    }
                 }
             }
             const bool near = (shaders::rank_detail(rank) & shaders::BUILDING_DETAIL_NEAR) != 0U;
             const std::uint32_t slot = shaders::rank_slot(rank) + (near ? w.near_slot : w.far_slot);
-            const hlsl::float4 plane = shaders::building_window_plane(cam, place, f);
+            const std::int32_t item = item_of(b, wall.item);
+            // a part filled in one colour: each shape a closed subpath (the reveals, the sills)
+            const auto fill = [&](std::span<const shaders::BuildingWindowShape> shapes, std::uint32_t part,
+                                  hlsl::float3 colour, float lead) {
+                if (shapes.empty()) return;
+                points_.clear();
+                subpaths_.clear();
+                for (const shaders::BuildingWindowShape& sh : shapes) {
+                    for (std::uint32_t k = 0; k < sh.count; ++k) {
+                        const hlsl::float2 v = shaders::building_window_corner(sh, k);
+                        points_.push_back({.x = v.x, .y = v.y});
+                    }
+                }
+                std::size_t first = 0;
+                for (const shaders::BuildingWindowShape& sh : shapes) {
+                    subpaths_.push_back(
+                        {.points = std::span<const Point>(points_).subspan(first, sh.count), .closed = true});
+                    first += sh.count;
+                }
+                Style style{};
+                style.fill = Paint::colour(argb_of(colour));
+                style.join = Join::round;
+                out_.at(slot + part, group_, item);
+                out_.path(style, subpaths_);
+                if (depths_ != nullptr) {
+                    ElementDepth d{.edged = true, .tile = tile_};
+                    d.parts.push_back({.shapes = {shapes.begin(), shapes.end()},
+                                       .slot = slot + part,
+                                       .plane = plane,
+                                       .lead = lead,
+                                       .colour = colour});
+                    depths_->push_back(std::move(d));
+                }
+                ++elements_;
+            };
+            fill(reveal_shapes_, shaders::BUILDING_WINDOW_REVEALS, shaders::building_bgr(reveals_[i]),
+                 shaders::BUILDING_REVEAL_LEAD);
             for (const bool lit : {false, true}) {
                 const std::vector<shaders::BuildingWindowShape>& drawn = windows_[lit ? 1 : 0];
                 if (drawn.empty()) continue;
+                const std::uint32_t part = lit ? shaders::BUILDING_WINDOW_LIT_SLOT : shaders::BUILDING_WINDOW_DARK;
                 // one path, a closed subpath a window, and its box from top to bottom (the gradient's)
                 points_.clear();
                 subpaths_.clear();
@@ -301,13 +381,13 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
                 style.join = Join::round;
                 style.stroke = Paint::colour(argb_of(frame));
                 style.stroke_width = width;
-                out_.at(slot + (lit ? 1U : 0U), group_, item_of(b, wall.item));
+                out_.at(slot + part, group_, item);
                 out_.path(style, subpaths_);
                 if (lit) ++sunlit_;
                 if (depths_ != nullptr) {
                     ElementDepth d{.edged = true, .tile = tile_};
                     d.windows.push_back({.windows = drawn,
-                                         .slot = slot + (lit ? 1U : 0U),
+                                         .slot = slot + part,
                                          .plane = plane,
                                          .half = 0.5F * width,
                                          .frame = frame,
@@ -318,6 +398,43 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
                 }
                 ++elements_;
             }
+            if (!sashes_.empty()) {
+                // two open subpaths a window, each a bar: M m1 L m2 M h1 L h2, stroked in the frames' colour
+                points_.clear();
+                subpaths_.clear();
+                for (const shaders::BuildingSash& bars : sashes_) {
+                    for (const hlsl::float2 v : {bars.m1, bars.m2, bars.h1, bars.h2})
+                        points_.push_back({.x = v.x, .y = v.y});
+                }
+                for (std::size_t k = 0; k < points_.size(); k += 2) {
+                    subpaths_.push_back({.points = std::span<const Point>(points_).subspan(k, 2), .closed = false});
+                }
+                Style style{};
+                style.join = Join::round;
+                style.stroke = Paint::colour(argb_of(frame));
+                style.stroke_width = sash_width;
+                out_.at(slot + shaders::BUILDING_WINDOW_SASHES, group_, item);
+                out_.path(style, subpaths_);
+                if (depths_ != nullptr) {
+                    ElementDepth d{.edged = true, .tile = tile_};
+                    PartsDepth bars{.shapes = {},
+                                    .slot = slot + shaders::BUILDING_WINDOW_SASHES,
+                                    .plane = plane,
+                                    .lead = shaders::BUILDING_SASH_LEAD,
+                                    .colour = frame};
+                    for (const shaders::BuildingSash& sash : sashes_) {
+                        for (std::uint32_t k = 0; k < 2; ++k) {
+                            const shaders::BuildingWindowShape bar =
+                                shaders::building_sash_bar(sash, k, sash_width / 2);
+                            if (bar.count != 0) bars.shapes.push_back(bar);
+                        }
+                    }
+                    d.parts.push_back(std::move(bars));
+                    depths_->push_back(std::move(d));
+                }
+                ++elements_;
+            }
+            fill(sill_shapes_, shaders::BUILDING_WINDOW_SILLS, sill_colour, shaders::BUILDING_SILL_LEAD);
         }
     }
 }

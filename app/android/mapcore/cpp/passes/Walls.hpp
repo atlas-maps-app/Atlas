@@ -101,16 +101,19 @@ public:
     [[nodiscard]] StrokeCounts stroke_counts() const noexcept { return stroke_counts_; }
     /// Whether the roofs' thin edges are drawn (the pass made their pipelines: not in the owner mode).
     [[nodiscard]] bool strokes() const noexcept { return strokes_ != nullptr; }
-    /// What the last frame's windows were: their jobs, the windowed walls and the windows they decided.
+    /// What the last frame's windows were: their jobs, the windowed walls and the windows they decided, and the
+    /// windows of the walls nearer than 160 m (their reveals, sills and sash bars).
     struct WindowCounts {
         std::uint32_t jobs = 0;
         std::uint32_t walls = 0;
         std::uint32_t windows = 0;
+        std::uint32_t nears = 0;
     };
     [[nodiscard]] WindowCounts window_counts() const noexcept { return window_counts_; }
     /// Whether the windows are drawn (the pass made their pipelines: not in the owner mode).
     [[nodiscard]] bool windows() const noexcept { return windows_ != nullptr; }
-    /// The most windows a frame decides (64 bytes a record): the jobs beyond are left out, once logged.
+    /// The most windows a frame decides (64 bytes a record, 160 more nearer than 160 m): the jobs beyond are left out,
+    /// once logged.
     static constexpr std::uint32_t max_windows = 1U << 20U;
 
     /// The item kind the pass's items take (its Selectors row, from kinds()).
@@ -165,6 +168,7 @@ private:
         std::uint32_t windows_from = 0; ///< its window group's first sun sample
         const BuildingTile* tile = nullptr;  ///< its layout (the windowed walls' windows, for the jobs)
         std::span<const std::uint32_t> rows; ///< its items' rows (their ranks say whose windows the frame draws)
+        std::uint32_t reveals = 0;           ///< the walls heap's word of its reveals' colours in this frame slot
         double distance = 0;                 ///< the tile's distance from the eye (the draws go nearest first)
     };
 
@@ -180,9 +184,9 @@ private:
     void record_roofs(const frame::Recording& recording);
     /// This frame slot's stroke jobs, from the draws (stage F).
     void write_jobs(std::uint32_t slot);
-    /// This frame slot's window jobs, from the draws (stage F): the walls of the items whose windows `ranks` (the
-    /// frame's rank table) draws.
-    void write_window_jobs(std::uint32_t slot, std::span<const std::uint32_t> ranks);
+    /// This frame slot's window jobs, from the draws (stage F): the walls of the items whose windows the frame's ranks
+    /// draw, with their windows' widths.
+    void write_window_jobs(std::uint32_t slot, const frame::FrameState& state);
     void record_decide(const frame::Recording& recording);
     void record_window_decide(const frame::Recording& recording);
     void record_strokes(const frame::Recording& recording);
@@ -260,19 +264,22 @@ struct Buildings::Windows {
     std::array<gpu::Buffer, 2> jobs;
     std::array<gpu::Buffer, 2> records;
     std::array<gpu::Buffer, 2> walls;
-    /// The draws' layout (the frame's sets, then set 2), the compute stage's, its pipeline, and the frames' and the
-    /// glass's pipelines.
+    std::array<gpu::Buffer, 2> nears;
+    /// The draws' layout (the frame's sets, then set 2), the compute stage's, its pipeline, and the near windows'
+    /// parts', the glass's and the frames' pipelines.
     vk::raii::PipelineLayout layout{nullptr};
     vk::raii::PipelineLayout compute_layout{nullptr};
     vk::raii::Pipeline decide{nullptr};
-    vk::raii::Pipeline frames{nullptr};
+    vk::raii::Pipeline near{nullptr};
     vk::raii::Pipeline glass{nullptr};
+    vk::raii::Pipeline frames{nullptr};
     // the render thread's, per frame: the jobs' words, the frame slot they went to, and what they hold
     std::vector<std::uint32_t> words;
     std::uint32_t slot = 0;
     std::uint32_t jobs_now = 0;
     std::uint32_t walls_now = 0;
     std::uint32_t records_now = 0;
+    std::uint32_t nears_now = 0;
 };
 
 } // namespace atlas::passes

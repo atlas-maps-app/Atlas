@@ -188,6 +188,7 @@ Result<Style> Style::of(const StyleTables& tables) {
     ws.warehouse = r.day_night(windows, "windows", "warehouse_day", "warehouse_night");
     ws.frame = r.day_night(windows, "windows", "frame_day", "frame_night");
     ws.frame_width = static_cast<float>(r.number(windows, "windows", "frame_width"));
+    ws.sill = r.day_night(windows, "windows", "sill_day", "sill_night");
     const auto names = r.table("canal_names");
     s.canal_names.fill = r.colour(names, "canal_names", "fill");
     s.canal_names.opacity = r.number(names, "canal_names", "opacity");
