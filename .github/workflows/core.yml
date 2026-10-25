@@ -164,8 +164,9 @@ jobs:
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     # The nightly fuzz runs every target for up to 30 minutes, at most 120 minutes in all (see its step); tidy over every
     # file (a header changed, ~380 of them) takes some 45 minutes on its own; a host build and its two test runs took up
-    # to 45 minutes on x86_64 by 24 October (the GPU cases of step 4 under ASan and TSan, and the runners' own pace).
-    timeout-minutes: ${{ (matrix.task == 'fuzz' && github.event_name == 'schedule') && 150 || (matrix.task == 'tidy' && 80 || 60) }}
+    # to some 62 minutes on x86_64 by 25 October (host-debug: the build 11, the tests 43 with step 4's GPU cases under
+    # ASan, 35 the day before, the run without Vulkan 7; the runners' own pace).
+    timeout-minutes: ${{ (matrix.task == 'fuzz' && github.event_name == 'schedule') && 150 || 80 }}
     # A newer push cancels this ref's older core jobs; the image job (below) is never cancelled by one.
     concurrency:
       group: core-${{ github.ref }}-${{ github.event_name }}-${{ matrix.task }}-${{ matrix.arch }}
