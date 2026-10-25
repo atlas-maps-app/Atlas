@@ -256,6 +256,12 @@ class QueryParserTest {
     }
 
     @Test
+    fun anIdTooLargeForOpenStreetMapIsNoId() {
+        // OsmId.parse threw on it, which ended the Query screen as the digits were typed
+        assertTrue(find<Query.Id>(parse("id:n99999999999999999999").query).isEmpty())
+    }
+
+    @Test
     fun roundTheClockIsNotMidnight() {
         for ((text, lang) in listOf("pharmacy 24h" to "en", "apotheek 24 uur" to "nl", "pharmacie 24h/24" to "fr", "pharmacie 24 heures" to "fr", "pharmacy 24/7" to "en")) {
             val p = parse(text, lang)

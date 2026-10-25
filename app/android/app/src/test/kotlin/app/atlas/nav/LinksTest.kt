@@ -72,4 +72,13 @@ class LinksTest {
     fun shortOsmDomainElementLinks() {
         assertEquals(Dest.Place(osmId = "n240316872"), Links.forUri("https://osm.org/node/240316872")!!.last())
     }
+
+    @Test
+    fun anOsmLinkWhoseNumberIsTooLargeForAnIdOpensNoPlace() {
+        // OsmId.parse threw on it out of MainActivity's intent handling: Atlas closed as the link opened it
+        assertNull(Links.forUri("https://www.openstreetmap.org/node/99999999999999999999"))
+        assertEquals(listOf<Dest>(Dest.Home(52.3745, 4.8838, 17.0)), Links.forUri("https://www.openstreetmap.org/node/99999999999999999999#map=17/52.3745/4.8838"))
+        val shared = "See https://osm.org/way/123456789012345678901234567890"
+        assertEquals(Dest.Search(shared), Links.forText(shared)!!.last())
+    }
 }

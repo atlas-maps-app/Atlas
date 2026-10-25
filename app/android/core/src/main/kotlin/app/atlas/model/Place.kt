@@ -11,11 +11,13 @@ data class OsmId(val type: OsmType, val id: Long) {
     val url: String get() = "https://www.openstreetmap.org/${type.name.lowercase()}/$id"
 
     companion object {
-        /** Accepts "n123", "node/123", "node 123" and the osm.org URL forms. */
+        /** Accepts "n123", "node/123", "node 123" and the osm.org URL forms; null for a number too large to be an id. */
         fun parse(s: String): OsmId? {
             val m = Regex("""(?i)\b(n|w|r|node|way|relation)[/ ]?(\d+)\b""").find(s) ?: return null
+            // A link, a typed query or a review's metadata can carry any digits; past a Long they name no element.
+            val id = m.groupValues[2].toLongOrNull() ?: return null
             val t = when (m.groupValues[1].lowercase().first()) { 'n' -> OsmType.NODE; 'w' -> OsmType.WAY; else -> OsmType.RELATION }
-            return OsmId(t, m.groupValues[2].toLong())
+            return OsmId(t, id)
         }
     }
 }

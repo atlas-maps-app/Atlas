@@ -81,6 +81,8 @@ class SearchEngineTest {
         assertEquals(westerkerk, kerk.hit.place.id)
         assertEquals(OsmId(OsmType.RELATION, 5), SearchEngine.osmRef("relation/5"))
         assertEquals(null, SearchEngine.osmRef("n26973327 cafe"))
+        // a link whose number is too large for an id is no id (it threw, and the search box said so)
+        assertEquals(null, SearchEngine.osmRef("https://www.openstreetmap.org/node/99999999999999999999"))
     }
 
     @Test
