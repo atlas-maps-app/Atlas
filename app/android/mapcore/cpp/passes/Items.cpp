@@ -115,9 +115,16 @@ std::vector<hlsl::uint4> item_words(const geometry::TileRegionItems& items, doub
         if (it.lighting) flags |= shaders::ITEM_LIGHTING;
         if (it.legs_a) flags |= shaders::ITEM_LEGS_A;
         if (it.legs_b) flags |= shaders::ITEM_LEGS_B;
+        if (it.yard) flags |= shaders::ITEM_YARD;
         const double extra = it.kind == geometry::RegionItemKind::turbine ? it.rotor : static_cast<double>(it.gaps);
         out.push_back(
             hlsl::uint4{f32_bits(it.x - origin_x), f32_bits(0.0 - origin_y), f32_bits(it.z - origin_z), flags});
+        if (it.kind == geometry::RegionItemKind::crane) {
+            // its half sizes, its height; its axes
+            out.push_back(hlsl::uint4{f32_bits(it.hu), f32_bits(it.hv), f32_bits(it.h), 0U});
+            out.push_back(hlsl::uint4{f32_bits(it.ux), f32_bits(it.uz), f32_bits(it.vx), f32_bits(it.vz)});
+            continue;
+        }
         out.push_back(
             hlsl::uint4{f32_bits(it.bx - origin_x), f32_bits(it.bz - origin_z), f32_bits(it.h), f32_bits(extra)});
         out.push_back(hlsl::uint4{f32_bits(it.sag[0]), f32_bits(it.sag[1]), f32_bits(it.sag[2]), 0U});
@@ -140,7 +147,13 @@ ItemChoice item_choice(const geometry::RegionItem& item, double depth, double fo
         c.c = printed(pymath::max(0.8, 2.2 * s), 1);
         c.d = printed(pymath::max(0.8, 1.2 * s), 1);
         break;
-    case geometry::RegionItemKind::crane: break; // with its form from stage P
+    case geometry::RegionItemKind::crane:
+        // `if cam.focal / c[2] < 0.6: continue` (too far to show as more than a speck); its stays '%.2f' % max(0.5,
+        // 0.35 * cam.focal / c[2])
+        if (focal / depth < 0.6) return c;
+        c.drawn = true;
+        c.a = printed(pymath::max(0.5, 0.35 * focal / depth), 2);
+        break;
     case geometry::RegionItemKind::mast:
         // `if c[2] < 5 or cam.focal / c[2] < 0.25: continue`; the glow '%.1f' % max(2.0, 9.0 * cam.focal / c[2]), its
         // core '%.1f' % max(0.6, 1.2 * cam.focal / c[2])
@@ -171,10 +184,9 @@ ItemChoice item_choice(const geometry::RegionItem& item, double depth, double fo
     return c;
 }
 
-std::array<std::uint32_t, 44> item_tones(const style::ThemeBlock& theme, const shaders::Theme& th,
-                                         const tiles::ItemsStyle& style) {
-    static_assert(shaders::ITEM_TONES == 44);
-    std::array<std::uint32_t, 44> out{};
+ItemTones item_tones(const style::ThemeBlock& theme, const shaders::Theme& th, const tiles::ItemsStyle& style) {
+    static_assert(shaders::ITEM_TONES == item_tone_count);
+    ItemTones out{};
     const bool night = night_of(theme);
     const auto pick = [night](const tiles::DayNight& c) { return bgr(night ? c.night : c.day); };
     // the towers: shaft = tohex(light(th, hx('#C9C6BE'), (0, 0, 1), not night)), the glass, the gallery lit as a face
@@ -223,6 +235,8 @@ std::array<std::uint32_t, 44> item_tones(const style::ThemeBlock& theme, const s
     const double wd = pymath::radians(theme.wind_direction);
     out[shaders::ITEM_TONE_WIND] = f32_bits(pymath::sin(wd));
     out[shaders::ITEM_TONE_WIND + 1] = f32_bits(-pymath::cos(wd));
+    // a crane's stays: tohex(steel)
+    out[shaders::ITEM_TONE_STEEL] = pick(style.steel);
     return out;
 }
 
@@ -236,11 +250,15 @@ void item_extra(const geometry::RegionItem& item, const view::Camera& camera, co
                 const shaders::Theme& th, const tiles::ItemsStyle& style, double ax, double az, double bx, double bz,
                 std::vector<std::uint32_t>& out) {
     const bool night = night_of(theme);
-    // the axes: a mast's u = (cam.r[0], cam.r[2]); a segment's u = ((b - a) / Lg), Lg = math.dist(a, b); v = (-u[1],
-    // u[0])
+    const bool crane = item.kind == geometry::RegionItemKind::crane;
+    // the axes: a crane's (stage P's); a mast's u = (cam.r[0], cam.r[2]); a segment's u = ((b - a) / Lg), Lg =
+    // math.dist(a, b); v = (-u[1], u[0])
     double ux = 0;
     double uz = 0;
-    if (item.kind == geometry::RegionItemKind::mast) {
+    if (crane) {
+        ux = item.ux;
+        uz = item.uz;
+    } else if (item.kind == geometry::RegionItemKind::mast) {
         ux = camera.right().x;
         uz = camera.right().z;
     } else {
@@ -250,8 +268,8 @@ void item_extra(const geometry::RegionItem& item, const view::Camera& camera, co
         ux = (bx - ax) / lg;
         uz = (bz - az) / lg;
     }
-    const double vx = -uz;
-    const double vz = ux;
+    const double vx = crane ? item.vx : -uz;
+    const double vz = crane ? item.vz : ux;
     // box's colours: tohex(light(th, col, n3, (not night) and vdot(n3, L) > 0)) for its faces' normals in their order
     const std::array<shaders::double3, 5> normals{{{.x = ux, .y = 0.0, .z = uz},
                                                    {.x = -ux, .y = 0.0, .z = -uz},
@@ -260,15 +278,18 @@ void item_extra(const geometry::RegionItem& item, const view::Camera& camera, co
                                                    {.x = 0.0, .y = 1.0, .z = 0.0}}};
     const auto pick = [night](const tiles::DayNight& c) { return night ? c.night : c.day; };
     const std::uint32_t steel = pick(style.steel);
-    const std::uint32_t second =
-        item.kind == geometry::RegionItemKind::mast ? pick(style.floodlights) : pick(style.conveyor);
+    const std::uint32_t second = crane                                         ? pick(style.machinery)
+                                 : item.kind == geometry::RegionItemKind::mast ? pick(style.floodlights)
+                                                                               : pick(style.conveyor);
     const std::array<double, 3>& l = theme.sun_vector;
     for (const shaders::double3& n : normals) {
         const bool lit = !night && ((n.x * l[0]) + (n.y * l[1]) + (n.z * l[2])) > 0;
         out.push_back(lit_bgr(th, hx(steel), n, lit));
         out.push_back(lit_bgr(th, hx(second), n, lit));
     }
-    if (item.kind != geometry::RegionItemKind::gantry && item.kind != geometry::RegionItemKind::conveyor) return;
+    if (!crane && item.kind != geometry::RegionItemKind::gantry && item.kind != geometry::RegionItemKind::conveyor) {
+        return;
+    }
     // the parts: sorted(parts, key=lambda p_: -cam.depth((p_[0], H / 2, p_[1]))), stable
     struct Part {
         double x;
@@ -277,7 +298,45 @@ void item_extra(const geometry::RegionItem& item, const view::Camera& camera, co
     std::vector<Part> parts;
     const double mx = (ax + bx) / 2;
     const double mz = (az + bz) / 2;
-    if (item.kind == geometry::RegionItemKind::gantry) {
+    // a crane's part about its foot: (x + u[0] du + v[0] dv, z + u[1] du + v[1] dv)
+    const auto along = [&](double du, double dv) {
+        return Part{.x = ax + (ux * du) + (vx * dv), .z = az + (uz * du) + (vz * dv)};
+    };
+    if (crane && item.yard) {
+        // its legs, (x + ux su (hu - 0.6) + v[0] sv (hv - 0.6), ...); its girders, (x + v[0] sv (hv - 0.6), ...); its
+        // end beams, (x + ux su (hu - 0.6), ...); its trolley at (x, z)
+        for (const double su : {-1.0, 1.0}) {
+            for (const double sv : {-1.0, 1.0}) {
+                parts.push_back({ax + (ux * su * (item.hu - 0.6)) + (vx * sv * (item.hv - 0.6)),
+                                 az + (uz * su * (item.hu - 0.6)) + (vz * sv * (item.hv - 0.6))});
+            }
+        }
+        for (const double sv : {-1.0, 1.0})
+            parts.push_back({ax + (vx * sv * (item.hv - 0.6)), az + (vz * sv * (item.hv - 0.6))});
+        for (const double su : {-1.0, 1.0})
+            parts.push_back({ax + (ux * su * (item.hu - 0.6)), az + (uz * su * (item.hu - 0.6))});
+        parts.push_back({ax, az});
+    } else if (crane) {
+        // its legs, (x + w[0] sw g + q[0] sq sp_, ...); its sills, (x + q[0] sq sp_, ...) twice; its boom at mid =
+        // (back
+        // * -1 + out_) / 2, its machinery house at -14, its A-frame (x + w[0] 3 + q[0] sq sp_ 0.6, ...)
+        constexpr double g = 9.0;
+        constexpr double sp = 8.0;
+        for (const double sw : {-1.0, 1.0}) {
+            for (const double sq : {-1.0, 1.0}) parts.push_back(along(sw * g, sq * sp));
+        }
+        for (const double sq : {-1.0, 1.0}) {
+            parts.push_back({ax + (vx * sq * sp), az + (vz * sq * sp)});
+            parts.push_back({ax + (vx * sq * sp), az + (vz * sq * sp)});
+        }
+        const double reach = item.hu + 52.0; // out_
+        const double mid = ((22.0 * -1) + reach) / 2;
+        parts.push_back({ax + (ux * mid), az + (uz * mid)});
+        parts.push_back({ax - (ux * 14), az - (uz * 14)});
+        for (const double sq : {-1.0, 1.0}) {
+            parts.push_back({ax + (ux * 3) + (vx * sq * sp * 0.6), az + (uz * 3) + (vz * sq * sp * 0.6)});
+        }
+    } else if (item.kind == geometry::RegionItemKind::gantry) {
         if (item.legs_a) parts.push_back({ax, az});
         if (item.legs_b) parts.push_back({bx, bz});
         parts.push_back({mx, mz});
@@ -552,7 +611,7 @@ void Items::update(const frame::FrameState& state) {
     const auto jobs = static_cast<std::uint32_t>(words_.size() / (std::size_t{4} * shaders::ITEM_JOB_VECTORS));
     if (jobs == 0) return;
     if (extra_words_.empty()) extra_words_.push_back(0U);
-    const std::array<std::uint32_t, 44> tones = item_tones(state.theme, state.block.theme, style->items);
+    const ItemTones tones = item_tones(state.theme, state.block.theme, style->items);
     // into this frame slot's buffers (its previous frame has finished: its buffers and set are free)
     const std::uint32_t slot = state.slot % 2;
     using B = vk::BufferUsageFlagBits;
@@ -679,7 +738,7 @@ void Items::emit_records(const frame::FrameState& state, twin::Stream& out, std:
     out.layer(twin::Layer::objects); // the port's objects image (`o`)
     const view::Camera& camera = state.view->camera();
     const bool high = item_high(state.theme, camera);
-    const std::array<std::uint32_t, 44> tones = item_tones(state.theme, state.block.theme, style->items);
+    const ItemTones tones = item_tones(state.theme, state.block.theme, style->items);
     twin::ItemTwin twin(state, tones, out);
     twin.keep_records(faces, parts, sides);
     const std::uint32_t me = index();

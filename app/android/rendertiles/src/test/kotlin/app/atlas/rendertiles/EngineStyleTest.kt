@@ -219,6 +219,14 @@ class EngineStyleTest {
                 """val steel = if (!night) hx("${value("items.steel_day")}") else hx("${value("items.steel_night")}")""",
             ),
             Triple(
+                listOf("items.machinery_day", "items.machinery_night"), regions,
+                """parts.add(Part(mh.x, mh.y, box(mh, w, q, 6.0, 4.5, H + 2.4, H + 7.0, if (!night) hx("${value("items.machinery_day")}") else hx("${value("items.machinery_night")}"))))""",
+            ),
+            Triple(
+                listOf("items.machinery_day", "items.machinery_night"), regions,
+                """parts.add(Part(x, z, box(V2(x, z), u, v, 2.2, pmin(hv, 3.0), H, H + 2.6, if (!night) hx("${value("items.machinery_day")}") else hx("${value("items.machinery_night")}"))))""",
+            ),
+            Triple(
                 listOf("items.floodlights_day", "items.floodlights_night"), regions,
                 """g += box(V2(x, z), u, v, 1.7, 0.6, H, H + 1.3, if (!night) hx("${value("items.floodlights_day")}") else hx("${value("items.floodlights_night")}"))""",
             ),

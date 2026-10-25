@@ -3,9 +3,9 @@
 // compiles it as C++ after tree.slangh, whose coverage tests and prints it uses). Not a module.
 //
 // An item in the points heap is ITEM_VECTORS uint4: its foot tile-local (a segment's first end) and its kind and flags,
-// a segment's second end, its height and a kind's own value (a turbine's rotor's radius, a conveyor's gaps between its
-// legs), and a power line's conductors' heights at a quarter, a half and three quarters of its length (stage T's, in
-// double). Per frame the render thread decides in double what the item's depth d decides (passes::item_choice: drawn
+// a segment's second end (a crane's half sizes), its height and a kind's own value (a turbine's rotor's radius, a
+// conveyor's gaps between its legs), and a power line's conductors' heights at a quarter, a half and three quarters of
+// its length (stage T's, in double) or a crane's axes. Per frame the render thread decides in double what the item's depth d decides (passes::item_choice: drawn
 // or not, s = focal / d, the widths and radii as the port prints them, a power line's fade), the moment's colours (the
 // box faces' by their normals, the port's light in binary64) and the parts' order where draw_items sorts them, and
 // writes a job a drawn item; items_cs writes its records as draw_items draws it, every printed value snapped at rest:
@@ -13,6 +13,10 @@
 //     (along its right vector, at the band's radius) as Camera.poly cuts it at the near plane and keeps it within 200 px
 //     of the frame, filled with its gradient across its box: mix(col, shadow, .35), col at .35 (.65 where the sun lies
 //     on the camera's right) and mix(col, shadow, .5);
+//   - a crane: on a quay its portal's legs and sills, its boom out over the water, its machinery house and its
+//     A-frame, and its stays from the A-frame's top to the boom's tip and tail (butt-ended, in the steel unlit); in a
+//     yard its legs, girders, end beams and trolley; boxes along its axes, in draw_items' order of their middles'
+//     depths (the render thread's);
 //   - a mast: its shaft and a lighting mast's frame of floodlights as boxes facing the camera, each face toward the eye
 //     as Camera.poly keeps it within 200 px and from 0.05 px² of area, filled and stroked .25 in its colour lit by its
 //     normal; at night a lighting mast's glow and its core;
@@ -26,7 +30,8 @@
 // What stands up is drawn at true depth: every corner of a face, a segment's ends and a circle's centre at their own
 // reciprocal depth (a face is planar, so the rasteriser's interpolation is exact over it), a small lead where parts of
 // one item lie on one plane and the port draws one over the other (a blade's stroke over its fill, the hub over the
-// blades, a glow's core over it, a tower's band over the one below) and where a box's faces meet (each its face's
+// blades, a glow's core over it, a tower's band over the one below, a crane's stays over its boom where they meet it)
+// and where a box's faces meet (each its face's
 // place in the box, so a later face's stroke covers an earlier one's edge as the port draws it); under the painter
 // switch each element draws at its slot. A face's stroke in its own
 // colour is the face grown by its half width (its edges' round-capped segments, sample by sample). The conductors'
@@ -50,6 +55,7 @@ static const uint ITEM_CAB = 256u;       // a tower's glazed cab
 static const uint ITEM_LIGHTING = 512u;  // a mast's frame of floodlights
 static const uint ITEM_LEGS_A = 1024u;   // a gantry's legs at its segment's first end
 static const uint ITEM_LEGS_B = 2048u;   // and at its second
+static const uint ITEM_YARD = 4096u;     // a crane in a yard (a portal gantry); else on a quay (ship-to-shore)
 
 /// A job's flags: its kind in bits 0 to 3.
 static const uint ITEM_JOB_KIND = 15u;
@@ -62,7 +68,8 @@ static const uint ITEM_JOB_VECTORS = 5u;
 /// gradients' three stops for the shaft, the glass, the gallery and the antenna; a turbine's tower, blades, their
 /// stroke, hub and night light; a power line's tower and conductors; a mast's glow's core, its glow's three stops'
 /// colours and opacities; the turbine's light's, the conductors' opacity and width, the blades' stroke's width; each
-/// blade's cos and sin of its angle and of it plus 0.06; the wind's (fx, fz). Floats as their bits.
+/// blade's cos and sin of its angle and of it plus 0.06; the wind's (fx, fz); the steel unlit (a crane's stays).
+/// Floats as their bits.
 static const uint ITEM_TONE_TOWER = 0u;
 static const uint ITEM_TONE_TURBINE = 12u;
 static const uint ITEM_TONE_POWER = 17u;
@@ -75,10 +82,12 @@ static const uint ITEM_TONE_CONDUCTOR_WIDTH = 28u;
 static const uint ITEM_TONE_BLADE_WIDTH = 29u;
 static const uint ITEM_TONE_BLADES = 30u;
 static const uint ITEM_TONE_WIND = 42u;
-static const uint ITEM_TONES = 44u;
+static const uint ITEM_TONE_STEEL = 44u;
+static const uint ITEM_TONES = 45u;
 
 /// A job's own words (the frame's extra list, at the job's `extra`): its boxes' colours by their faces' normals (+u, -u,
-/// +v, -v, up; their first colour then their second), then its parts in draw_items' order.
+/// +v, -v, up; their first colour then their second: the steel, and a mast's floodlights, a crane's machinery or a
+/// conveyor's gallery), then its parts in draw_items' order.
 static const uint ITEM_EXTRA_COLOURS = 10u;
 
 /// A record's kind (its first word's low byte) and flags.
@@ -124,6 +133,9 @@ inline uint item_face_count(uint kind, uint gaps) {
     if (kind == ITEM_TURBINE) {
         return 4u; // the tower, the three blades
     }
+    if (kind == ITEM_CRANE) {
+        return 60u; // a ship-to-shore crane's twelve boxes (a yard gantry's nine)
+    }
     if (kind == ITEM_MAST) {
         return 10u;
     }
@@ -139,6 +151,9 @@ inline uint item_face_count(uint kind, uint gaps) {
 inline uint item_part_count(uint kind) {
     if (kind == ITEM_TURBINE) {
         return 10u; // the blades' nine edges, the hub
+    }
+    if (kind == ITEM_CRANE) {
+        return 2u; // a ship-to-shore crane's stays
     }
     if (kind == ITEM_MAST) {
         return 1u; // the glow's core
@@ -167,10 +182,12 @@ struct ItemWords {
     float3 foot; // tile-local metres
     uint kind;
     uint flags;
-    float2 end; // a segment's second end, tile-local x and z
+    float2 end; // a segment's second end, tile-local x and z; a crane's half sizes hu and hv
     float h;
     float extra; // a turbine's rotor's radius; a conveyor's gaps between its legs
     float3 sag;  // a power line's conductors' heights at f = .25, .5, .75
+    float2 u;    // a crane's axes (unit, x and z): on a quay w toward the water and q across it; in a yard u and v
+    float2 v;
 };
 
 inline ItemWords item_words(uint4 a, uint4 b, uint4 c) {
@@ -185,6 +202,10 @@ inline ItemWords item_words(uint4 a, uint4 b, uint4 c) {
     w.extra = asfloat(b.w);
     float3 sag = {asfloat(c.x), asfloat(c.y), asfloat(c.z)};
     w.sag = sag;
+    float2 u = {asfloat(c.x), asfloat(c.y)};
+    float2 v = {asfloat(c.z), asfloat(c.w)};
+    w.u = u;
+    w.v = v;
     return w;
 }
 
@@ -683,9 +704,13 @@ inline ItemAxis item_axis(float3 a, float3 b) {
     return x;
 }
 
-/// Part `k` of a gantry's segment (its legs at a and b where it has them, then its beam) or a conveyor's (its legs
-/// every 1 / gaps of it, then its gallery), as a box; `count` its parts.
+/// The boxes of a crane (on a quay its four legs, four sills, boom, machinery house and two A-frame legs; in a yard
+/// its four legs, two girders, two end beams and trolley), a gantry's segment (its legs at a and b where it has them,
+/// then its beam), a conveyor's (its legs every 1 / gaps of it, then its gallery) or a mast.
 inline uint item_part_total(uint kind, uint flags, uint gaps) {
+    if (kind == ITEM_CRANE) {
+        return (flags & ITEM_YARD) != 0u ? 9u : 12u;
+    }
     if (kind == ITEM_GANTRY) {
         return 1u + ((flags & ITEM_LEGS_A) != 0u ? 1u : 0u) + ((flags & ITEM_LEGS_B) != 0u ? 1u : 0u);
     }
@@ -698,16 +723,124 @@ inline uint item_part_total(uint kind, uint flags, uint gaps) {
     return 0u;
 }
 
-/// A gantry's, a conveyor's or a mast's part `k` (in draw_items' list order) as a box, its colour the second where
-/// `second`; eye-relative a and b, the item's height h, a mast's axes facing the camera.
+/// A crane's, a gantry's, a conveyor's or a mast's part `k` (in draw_items' list order) as a box, its colour the second
+/// where `second`; eye-relative a and b, the item's words w (its height, flags, a conveyor's gaps, a crane's axes and
+/// half sizes), a mast's axes facing the camera.
 struct ItemPart {
     ItemBox box;
     bool second;
 };
 
-inline ItemPart item_part(FrameCamera c, uint kind, uint flags, uint gaps, float3 a, float3 b, float h, uint k) {
+/// The point a + u · du + v · dv, as draw_items' (x + u[0] · du + v[0] · dv, z + u[1] · du + v[1] · dv).
+inline float3 item_along(float3 a, float2 u, float2 v, float du, float dv) {
+    float3 p = {(a.x + u.x * du) + v.x * dv, a.y, (a.z + u.y * du) + v.y * dv};
+    return p;
+}
+
+/// A crane's part `k` about its foot `a`. On a quay, w its boom's way and q across it (g = 9, sp_ = 8, out_ = dw +
+/// 52): its legs box(x + w sw g + q sq sp_, w, q, 0.8, 0.8, 0, H) for sw, sq in (-1, 1); its sills box(x + q sq sp_, w,
+/// q, g, 0.6, y - 1, y) for sq in (-1, 1), y in (9, H - 3); its boom box(x + w (out_ - 22) / 2, w, q, (out_ + 22) / 2,
+/// 2, H - 1, H + 2.4); its machinery house box(x - w 14, w, q, 6, 4.5, H + 2.4, H + 7) in its own colour; its A-frame
+/// box(x + w 3 + q sq sp_ 0.6, w, q, 0.7, 0.7, H + 2.4, H + 20) for sq in (-1, 1). In a yard: its legs box(x + u su (hu
+/// - 0.6) + v sv (hv - 0.6), u, v, 0.6, 0.6, 0, H) for su, sv in (-1, 1); its girders box(x + v sv (hv - 0.6), u, v,
+/// hu, 0.6, H - 2, H) and end beams box(x + u su (hu - 0.6), u, v, 0.6, hv, H - 2, H); its trolley box(x, u, v, 2.2,
+/// min(hv, 3), H, H + 2.6) in its own colour.
+inline ItemPart item_crane_part(ItemWords w, float3 a, uint k) {
     ItemPart p;
     p.second = false;
+    p.box.u = w.u;
+    p.box.v = w.v;
+    float h = w.h;
+    float s0 = (k & 2u) != 0u ? 1.0f : -1.0f; // the first loop's sign, then the second's
+    float s1 = (k & 1u) != 0u ? 1.0f : -1.0f;
+    if ((w.flags & ITEM_YARD) != 0u) {
+        float hu = w.end.x;
+        float hv = w.end.y;
+        if (k < 4u) {
+            p.box.c0 = item_along(a, w.u, w.v, s0 * (hu - 0.6f), s1 * (hv - 0.6f));
+            p.box.hu = 0.6f;
+            p.box.hv = 0.6f;
+            p.box.y0 = 0.0f;
+            p.box.y1 = h;
+        } else if (k < 8u) {
+            bool girder = k < 6u;
+            p.box.c0 = girder ? item_along(a, w.u, w.v, 0.0f, s1 * (hv - 0.6f))
+                              : item_along(a, w.u, w.v, s1 * (hu - 0.6f), 0.0f);
+            p.box.hu = girder ? hu : 0.6f;
+            p.box.hv = girder ? 0.6f : hv;
+            p.box.y0 = h - 2.0f;
+            p.box.y1 = h;
+        } else {
+            p.box.c0 = a;
+            p.box.hu = 2.2f;
+            p.box.hv = min(hv, 3.0f);
+            p.box.y0 = h;
+            p.box.y1 = h + 2.6f;
+            p.second = true;
+        }
+        return p;
+    }
+    float out_ = w.end.x + 52.0f;
+    if (k < 4u) {
+        p.box.c0 = item_along(a, w.u, w.v, s0 * 9.0f, s1 * 8.0f);
+        p.box.hu = 0.8f;
+        p.box.hv = 0.8f;
+        p.box.y0 = 0.0f;
+        p.box.y1 = h;
+    } else if (k < 8u) {
+        float y = (k & 1u) != 0u ? h - 3.0f : 9.0f;
+        p.box.c0 = item_along(a, w.u, w.v, 0.0f, s0 * 8.0f);
+        p.box.hu = 9.0f;
+        p.box.hv = 0.6f;
+        p.box.y0 = y - 1.0f;
+        p.box.y1 = y;
+    } else if (k == 8u) {
+        p.box.c0 = item_along(a, w.u, w.v, (-22.0f + out_) / 2.0f, 0.0f);
+        p.box.hu = (out_ + 22.0f) / 2.0f;
+        p.box.hv = 2.0f;
+        p.box.y0 = h - 1.0f;
+        p.box.y1 = h + 2.4f;
+    } else if (k == 9u) {
+        p.box.c0 = item_along(a, w.u, w.v, -14.0f, 0.0f);
+        p.box.hu = 6.0f;
+        p.box.hv = 4.5f;
+        p.box.y0 = h + 2.4f;
+        p.box.y1 = h + 7.0f;
+        p.second = true;
+    } else {
+        p.box.c0 = item_along(a, w.u, w.v, 3.0f, (k == 10u ? -1.0f : 1.0f) * 8.0f * 0.6f);
+        p.box.hu = 0.7f;
+        p.box.hv = 0.7f;
+        p.box.y0 = h + 2.4f;
+        p.box.y1 = h + 20.0f;
+    }
+    return p;
+}
+
+/// A ship-to-shore crane's stays' ends about its foot: the A-frame's top (x + w 3, H + 20), then the boom's tip (x + w
+/// out_, H + 2.4) and its tail (x - w 22, H + 2.4).
+inline float3 item_stay_point(ItemWords w, float3 foot, uint e) {
+    float3 p = item_along(foot, w.u, w.v, 3.0f, 0.0f);
+    p.y = foot.y + (w.h + 20.0f);
+    if (e == 1u) {
+        p = item_along(foot, w.u, w.v, w.end.x + 52.0f, 0.0f);
+        p.y = foot.y + (w.h + 2.4f);
+    } else if (e == 2u) {
+        p = item_along(foot, w.u, w.v, -22.0f, 0.0f);
+        p.y = foot.y + (w.h + 2.4f);
+    }
+    return p;
+}
+
+inline ItemPart item_part(FrameCamera c, ItemWords w, uint kind, float3 a, float3 b, uint k) {
+    ItemPart p;
+    p.second = false;
+    uint flags = w.flags;
+    uint gaps = uint(w.extra);
+    float h = w.h;
+    if (kind == ITEM_CRANE) {
+        return item_crane_part(w, a, k);
+    }
     if (kind == ITEM_MAST) {
         // u = (cam.r[0], cam.r[2]), v = (-u[1], u[0]); the shaft box(c0, u, v, 0.45, 0.45, 0, H), then a lighting
         // mast's frame box(c0, u, v, 1.7, 0.6, H, H + 1.3) in its own colour

@@ -1,17 +1,18 @@
 // A region's items' pass on the host's Vulkan (ENGINE.md step 4, "Trees and things"; lavapipe): a window built from
-// Overpass's JSON with a tower and its cab, a turbine, a lighting mast, a gantry, a goods conveyor and a power line, by
-// day and at night, near and where the power line fades, and the canal ring's towers and masts (ATLAS_TILES_DIR),
-// drawn through the frame builder and the world with that pass alone beside the composite, at rest and moving, at 1x
-// and 4x, at true depth and under the painter switch, against an exact CPU raster of the records the twin says
-// items_cs writes: each face's fan by its edges and its stroke's edges sample by sample (items.slangh's own tests, in
-// float, at the samples' CSS points), each segment's and circle's samples; each sample's depth as the rasteriser
-// interpolates the vertex stage's corners over the triangle it lies in (item_segment_corner's quads for the strokes and
-// segments); each sample ending with the record of the greatest depth (the first drawn where two tie, as GREATER keeps
-// it), a sample where two of different colours lie within the rasteriser's rounding of each other counted apart, and a
-// sample within 0.02 px of a shape's boundary; then the translucent records (the conductors leaving the samples their
-// path's earlier segments cover, a glow at its gradient, a light) blended over it in the GPU's order at each one's
-// opacity where its depth passes (within a level a blend: lavapipe blends in fixed point); the samples averaged as the
-// composite averages them. The twin's elements are held to the port's by L1; here its records are the GPU's.
+// Overpass's JSON with a tower and its cab, a turbine, a crane on a quay and one in a yard, a lighting mast, a gantry,
+// a goods conveyor and a power line, by day and at night, near and where the power line fades, and the canal ring's
+// towers and masts (ATLAS_TILES_DIR), drawn through the frame builder and the world with that pass alone beside the
+// composite, at rest and moving, at 1x and 4x, at true depth and under the painter switch, against an exact CPU raster
+// of the records the twin says items_cs writes: each face's fan by its edges and its stroke's edges sample by sample
+// (items.slangh's own tests, in float, at the samples' CSS points), each segment's and circle's samples; each sample's
+// depth as the rasteriser interpolates the vertex stage's corners over the triangle it lies in (item_segment_corner's
+// quads for the strokes and segments); each sample ending with the record of the greatest depth (the first drawn where
+// two tie, as GREATER keeps it), a sample where two of different colours lie within the rasteriser's rounding of each
+// other counted apart, and a sample within 0.02 px of a shape's boundary; then the translucent records (the conductors
+// leaving the samples their path's earlier segments cover, a glow at its gradient, a light) blended over it in the
+// GPU's order at each one's opacity where its depth passes (within a level a blend: lavapipe blends in fixed point);
+// the samples averaged as the composite averages them. The twin's elements are held to the port's by L1; here its
+// records are the GPU's.
 #if !defined(__ANDROID__)
 
 #include "base/arena.hpp"
@@ -528,8 +529,7 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
                 ATLAS_REQUIRE(state.active_pack != nullptr && state.active_pack->source);
                 const tiles::Style* style = state.active_pack->source->pack.style();
                 ATLAS_REQUIRE(style != nullptr);
-                const std::array<std::uint32_t, 44> tones =
-                    passes::item_tones(state.theme, state.block.theme, style->items);
+                const passes::ItemTones tones = passes::item_tones(state.theme, state.block.theme, style->items);
                 const Compared r = compare(*pixels, faces, parts, sides, tones, state.block, config, clear);
                 const std::string name = std::format("{} {} {}{}", view, gpu::name_of(config),
                                                      rest ? "at rest" : "moving", painter ? " (painter's order)" : "");
@@ -552,8 +552,9 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
     }
 }
 
-/// A window about the Westerkerk with a region's items: a tower and its cab, a turbine, a lighting mast, a gantry over
-/// a road, a goods conveyor and a power line; its pack written to the tests' scratch folder.
+/// A window about the Westerkerk with a region's items: a tower and its cab, a turbine, a crane on a quay (a bay's
+/// edge: a window's water has natural shores) and one in a yard (its outline), a lighting mast, a gantry over a road, a
+/// goods conveyor and a power line; its pack written to the tests' scratch folder.
 [[nodiscard]] std::string items_window() {
     const tiles::TileKey k = tiles::tile_of(14, 523'746'000, 48'840'000);
     const std::string data = R"({"version": 0.6, "osm3s": {"timestamp_osm_base": "2026-10-22T18:00:00Z"}, "elements": [
@@ -567,7 +568,14 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
 {"type": "way", "id": 202, "tags": {"man_made": "goods_conveyor"},
     "geometry": [{"lat": 52.3735, "lon": 4.8826}, {"lat": 52.3744, "lon": 4.8860}]},
 {"type": "way", "id": 203, "tags": {"power": "line"},
-    "geometry": [{"lat": 52.3731, "lon": 4.8815}, {"lat": 52.3733, "lon": 4.8850}, {"lat": 52.3736, "lon": 4.8885}]}
+    "geometry": [{"lat": 52.3731, "lon": 4.8815}, {"lat": 52.3733, "lon": 4.8850}, {"lat": 52.3736, "lon": 4.8885}]},
+{"type": "way", "id": 204, "tags": {"natural": "bay"},
+    "geometry": [{"lat": 52.37555, "lon": 4.8832}, {"lat": 52.37555, "lon": 4.8852}, {"lat": 52.3762, "lon": 4.8852},
+                 {"lat": 52.3762, "lon": 4.8832}, {"lat": 52.37555, "lon": 4.8832}]},
+{"type": "node", "id": 104, "lat": 52.3754, "lon": 4.8840, "tags": {"man_made": "crane"}},
+{"type": "way", "id": 205, "tags": {"man_made": "crane"},
+    "geometry": [{"lat": 52.3740, "lon": 4.8843}, {"lat": 52.3740, "lon": 4.88459}, {"lat": 52.37411, "lon": 4.88459},
+                 {"lat": 52.37411, "lon": 4.8843}, {"lat": 52.3740, "lon": 4.8843}]}
 ]})";
     const auto built = load::build_window(std::as_bytes(std::span(data.data(), data.size())), k, load::place_of(k));
     ATLAS_REQUIRE_OR_RETURN(std::string(), built.has_value(), built.error().what);
@@ -592,8 +600,8 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
 
 } // namespace
 
-TEST_CASE("items: a window's tower, turbine, mast, gantry, conveyor and power line on the host's Vulkan, pixel for "
-          "pixel the exact shapes of their twin") {
+TEST_CASE("items: a window's tower, turbine, cranes, mast, gantry, conveyor and power line on the host's Vulkan, "
+          "pixel for pixel the exact shapes of their twin") {
     const std::string path = items_window();
     ATLAS_REQUIRE(!path.empty());
     const std::array<PackFile, 1> packs{

@@ -737,6 +737,7 @@ using Field = std::pair<std::string_view, ValueBytes>;
                           {"glass_night", v::text("#1A2230")},     {"gallery", v::text("#E2E0DA")},
                           {"antenna", v::text("#8C9096")},         {"shadow_night", v::text("#05060A")},
                           {"steel_day", v::text("#7D8993")},       {"steel_night", v::text("#1A1E24")},
+                          {"machinery_day", v::text("#C9CCCF")},   {"machinery_night", v::text("#20242A")},
                           {"floodlights_day", v::text("#5E646B")}, {"floodlights_night", v::text("#15181E")},
                           {"conveyor_day", v::text("#B4B1A9")},    {"conveyor_night", v::text("#1C1E22")},
                           {"glow_inner", v::text("#FFE9C2")},      {"glow_inner_opacity", v::real(0.75)},

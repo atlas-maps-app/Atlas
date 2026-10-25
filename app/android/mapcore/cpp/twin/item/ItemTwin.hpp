@@ -3,8 +3,9 @@
 // item as items_cs does, with the shader's own text (twin/item/ItemShader.hpp's items.slangh) over the points heap's
 // words, and emits in the port's order, each in the item's item (its OSM node or way):
 //   - a tower: each band a closed path filled with its gradient (`tw<id % 100000>_<int(y0)>`, across its box);
-//   - a mast, a gantry's or a conveyor's segment: each box's faces toward the eye, closed paths filled and stroked .25
-//     in their colour, in draw_items' order; at night a lighting mast's glow (url(#mastglow)) and its core, circles;
+//   - a crane, a mast, a gantry's or a conveyor's segment: each box's faces toward the eye, closed paths filled and
+//     stroked .25 in their colour, in draw_items' order; a ship-to-shore crane's stays, one path of open subpaths
+//     stroked in the steel; at night a lighting mast's glow (url(#mastglow)) and its core, circles;
 //   - a turbine: its tower, a closed path; its blades, one path of closed subpaths filled and stroked .4; its hub, a
 //     circle; at night its light, a circle at .9;
 //   - a power line's segment: its tower, an open subpath stroked (its fill SVG's black); its conductors, one path of
@@ -59,6 +60,8 @@ private:
                hlsl::float3 foot, std::int32_t item);
     void boxes(const shaders::ItemJob& j, const shaders::ItemWords& w, hlsl::float3 a, hlsl::float3 b,
                std::uint32_t kind, std::span<const std::uint32_t> extra, std::int32_t item);
+    void crane(const shaders::ItemJob& j, const shaders::ItemWords& w, hlsl::float3 foot,
+               std::span<const std::uint32_t> extra, std::int32_t item);
     void mast(const shaders::ItemJob& j, const shaders::ItemWords& w, hlsl::float3 foot,
               std::span<const std::uint32_t> extra, std::int32_t item);
     void turbine(const shaders::ItemJob& j, const shaders::ItemWords& w, hlsl::float3 foot, std::int32_t item);

@@ -116,11 +116,11 @@ struct ThingsStyle {
 };
 
 /// A region's items (`items`): a tower's shaft, its cab's glass by day and at night, its gallery and its antenna, the
-/// night's shadow its gradients mix toward; the steel of masts, gantries and conveyors, a lighting mast's floodlights
-/// and a conveyor's gallery by day and at night; a lighting mast's glow at night, its stops' colours and opacities,
-/// and its core; a turbine's tower, blades and their edges by day and at night, the edges' width (CSS px), its hub, its
-/// night light and its opacity; a power line's towers and conductors by day and at night, the conductors' width and
-/// opacity.
+/// night's shadow its gradients mix toward; the steel of cranes, masts, gantries and conveyors, a crane's machinery, a
+/// lighting mast's floodlights and a conveyor's gallery by day and at night; a lighting mast's glow at night, its
+/// stops' colours and opacities, and its core; a turbine's tower, blades and their edges by day and at night, the
+/// edges' width (CSS px), its hub, its night light and its opacity; a power line's towers and conductors by day and at
+/// night, the conductors' width and opacity.
 struct ItemsStyle {
     StyleRgb shaft = 0;
     DayNight glass;
@@ -128,6 +128,7 @@ struct ItemsStyle {
     StyleRgb antenna = 0;
     StyleRgb shadow_night = 0;
     DayNight steel;
+    DayNight machinery;
     DayNight floodlights;
     DayNight conveyor;
     StyleRgb glow_inner = 0;

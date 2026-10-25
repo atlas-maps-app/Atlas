@@ -30,6 +30,7 @@ constexpr Paint black = Paint::colour(0xFF00'0000U);
     switch (kind) {
     case shaders::ITEM_TOWER: return "tower";
     case shaders::ITEM_TURBINE: return "turbine";
+    case shaders::ITEM_CRANE: return "crane";
     case shaders::ITEM_MAST: return "mast";
     case shaders::ITEM_GANTRY: return "gantry";
     case shaders::ITEM_CONVEYOR: return "conveyor";
@@ -87,9 +88,10 @@ void ItemTwin::item(const scene::CoverTile& tile, const passes::ItemTile& items,
     j.c = choice.c;
     j.d = choice.d;
     const std::uint32_t kind = j.flags & shaders::ITEM_JOB_KIND;
-    const bool line = kind == shaders::ITEM_GANTRY || kind == shaders::ITEM_CONVEYOR || kind == shaders::ITEM_POWER;
+    const bool way =
+        it.way || kind == shaders::ITEM_GANTRY || kind == shaders::ITEM_CONVEYOR || kind == shaders::ITEM_POWER;
     const std::int32_t owner =
-        out_.item({.owner = line ? Owner::way : Owner::node, .id = it.id, .kind = kind_name(kind)});
+        out_.item({.owner = way ? Owner::way : Owner::node, .id = it.id, .kind = kind_name(kind)});
     face_records_.assign(shaders::item_face_count(kind, static_cast<std::uint32_t>(w.extra)), shaders::item_nothing());
     part_records_.assign(shaders::item_part_count(kind), shaders::item_nothing());
     side_records_.assign(shaders::item_side_count(kind), shaders::item_nothing());
@@ -97,6 +99,7 @@ void ItemTwin::item(const scene::CoverTile& tile, const passes::ItemTile& items,
     const hlsl::float3 end = shaders::item_eye(j.place, hlsl::float3{w.end.x, w.foot.y, w.end.y});
     switch (kind) {
     case shaders::ITEM_TOWER: tower(j, w, it, foot, owner); break;
+    case shaders::ITEM_CRANE: crane(j, w, foot, extra, owner); break;
     case shaders::ITEM_MAST: mast(j, w, foot, extra, owner); break;
     case shaders::ITEM_GANTRY:
     case shaders::ITEM_CONVEYOR: boxes(j, w, foot, end, kind, extra, owner); break;
@@ -181,7 +184,7 @@ void ItemTwin::boxes(const shaders::ItemJob& j, const shaders::ItemWords& w, hls
                                 : shaders::ITEM_EXTRA_COLOURS + s < extra.size()
                                     ? extra[shaders::ITEM_EXTRA_COLOURS + s]
                                     : s;
-        const shaders::ItemPart p = shaders::item_part(c, kind, w.flags, gaps, a, b, w.h, k);
+        const shaders::ItemPart p = shaders::item_part(c, w, kind, a, b, k);
         for (std::uint32_t face = 0; face < 5; ++face) {
             const shaders::ItemPoly f = shaders::item_box_face(c, p.box, face);
             if (f.count == 0) continue;
@@ -193,6 +196,33 @@ void ItemTwin::boxes(const shaders::ItemJob& j, const shaders::ItemWords& w, hls
             face_path(r, slot, true, objects_, item);
         }
     }
+}
+
+void ItemTwin::crane(const shaders::ItemJob& j, const shaders::ItemWords& w, hlsl::float3 foot,
+                     std::span<const std::uint32_t> extra, std::int32_t item) {
+    boxes(j, w, foot, foot, shaders::ITEM_CRANE, extra, item);
+    if ((w.flags & shaders::ITEM_YARD) != 0U) return;
+    // its stays: one path of open subpaths, M top L e for e in (tip, tail) where both project
+    const shaders::FrameCamera& c = camera_;
+    const hlsl::float3 top = shaders::camera_of(c, shaders::item_stay_point(w, foot, 0));
+    if (!shaders::tree_ahead(c, top)) return;
+    const hlsl::float2 p0 = shaders::tree_printed(c, shaders::css_of(c, top));
+    std::array<std::array<Point, 2>, 2> stays{};
+    std::vector<Subpath> subpaths;
+    for (std::uint32_t e = 1; e < 3; ++e) {
+        const hlsl::float3 k = shaders::camera_of(c, shaders::item_stay_point(w, foot, e));
+        if (!shaders::tree_ahead(c, k)) continue;
+        const hlsl::float2 p1 = shaders::tree_printed(c, shaders::css_of(c, k));
+        part_records_[e - 1] = shaders::item_segment(p0, p1, shaders::item_depth(c, top.z, j.slot + 60, 1U),
+                                                     shaders::item_depth(c, k.z, j.slot + 60, 1U), j.a * 0.5F, 0U,
+                                                     tones_[shaders::ITEM_TONE_STEEL], 1.0F, 0U);
+        stays[e - 1] = {point(p0), point(p1)};
+        subpaths.push_back({.points = stays[e - 1], .closed = false});
+    }
+    if (subpaths.empty()) return;
+    out_.at(j.slot + 60, objects_, item);
+    out_.path({.fill = {}, .stroke = paint(tones_[shaders::ITEM_TONE_STEEL]), .stroke_width = j.a, .join = Join::round},
+              subpaths);
 }
 
 void ItemTwin::mast(const shaders::ItemJob& j, const shaders::ItemWords& w, hlsl::float3 foot,

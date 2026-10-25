@@ -1,10 +1,10 @@
 // Stage T of a region's items (ENGINE.md step 4, "Trees and things"; render/regions.py's draw_items): a render tile's
-// towers with a height (S['mtowers']), wind turbines, masts, gantries and goods conveyors (each segment of their way)
-// and power lines (each segment), each an item as draw_items makes it, in its order: the towers, the turbines, (the
-// cranes, to come with their form from stage P), the masts, the gantries' segments then the conveyors', (the coasters,
-// to come with Efteling), the power lines' segments. Each its point (the depth draw_items sorts it by), from 5 m, the
-// radius cut where draw_items applies it at one point (a segment's, at either end, the pass decides). What each draws
-// the frame decides at its camera (shaders/item/items.slangh).
+// towers with a height (S['mtowers']), wind turbines, cranes (with the form stage P derived from the whole scene),
+// masts, gantries and goods conveyors (each segment of their way) and power lines (each segment), each an item as
+// draw_items makes it, in its order: the towers, the turbines, the cranes, the masts, the gantries' segments then the
+// conveyors', (the coasters, to come with Efteling), the power lines' segments. Each its point (the depth draw_items
+// sorts it by), from 5 m, the radius cut where draw_items applies it at one point (a segment's, at either end, the pass
+// decides). What each draws the frame decides at its camera (shaders/item/items.slangh).
 #pragma once
 
 #include "scene/ItemTable.hpp"
@@ -38,18 +38,19 @@ inline constexpr std::array<std::uint32_t, 7> region_item_group{0, 1, 2, 3, 4, 5
 /// A power line's towers: 38 m, their tops 2 m more (draw_items' `H = 38.0`).
 inline constexpr double power_height = 38.0;
 
-/// One region item: a tower, a turbine, a mast, or a segment of a gantry, a conveyor or a power line.
+/// One region item: a tower, a turbine, a crane, a mast, or a segment of a gantry, a conveyor or a power line.
 struct RegionItem {
     RegionItemKind kind = RegionItemKind::tower;
-    std::int64_t id = 0;       ///< its OSM element: a node, or a gantry's, conveyor's or power line's way
+    std::int64_t id = 0;       ///< its OSM node, or its way: a crane's outline, a gantry, a conveyor, a power line
     std::uint32_t index = 0;   ///< its place in its list (S['mtowers'], S['turbines'], S['masts'], ...)
     std::uint32_t segment = 0; ///< a line's segment: from its point `segment` to the next
     double x = 0;              ///< where it stands, frame metres (a segment's first end)
     double z = 0;
     double bx = 0; ///< a segment's second end
     double bz = 0;
-    /// Its height: a tower's; a turbine's (100 m unless mapped); a mast's (30 m with floodlights, 25 m else); a
-    /// gantry's (7 m) or a conveyor's (6 m) unless mapped; a power line's 38 m.
+    /// Its height: a tower's; a turbine's (100 m unless mapped); a crane's (44 m on a quay, 26 m in a yard unless
+    /// mapped); a mast's (30 m with floodlights, 25 m else); a gantry's (7 m) or a conveyor's (6 m) unless mapped; a
+    /// power line's 38 m.
     double h = 0;
     double rotor = 0;       ///< a turbine's rotor's radius (a 100 m rotor unless mapped)
     std::uint32_t gaps = 0; ///< a conveyor's segment's gaps between its legs: max(1, int(Lg / 22))
@@ -57,6 +58,16 @@ struct RegionItem {
     bool lighting = false;  ///< a mast's frame of floodlights (tower:type=lighting)
     bool legs_a = false;    ///< a gantry's legs at its segment's first end (its way's first segment)
     bool legs_b = false;    ///< and at its second (its way's last)
+    bool way = false;       ///< a crane mapped as a way (its outline)
+    bool yard = false;      ///< a crane in a yard, a portal gantry; else a ship-to-shore crane on a quay
+    /// A crane's axes (frame metres, unit): a ship-to-shore crane's boom toward the water w and q = (-w[1], w[0]); a
+    /// yard gantry's u and v.
+    double ux = 0;
+    double uz = 0;
+    double vx = 0;
+    double vz = 0;
+    double hu = 0; ///< a ship-to-shore crane's distance to its quay edge; a yard gantry's half length along u
+    double hv = 0; ///< a yard gantry's half width along v
     /// A power line's segment: its conductors' heights at a quarter, a half and three quarters of its length
     /// (H - 4 sin(pi f) min(1, Lg / 300), in double as the port computes them).
     std::array<double, 3> sag{};
@@ -79,8 +90,9 @@ struct RegionItemInput {
 [[nodiscard]] TileRegionItems build_region_items(const RegionItemInput& in);
 
 /// The painter slots item `item` takes (the most elements it draws, each its own): a tower's five bands; a turbine's
-/// tower, blades, their stroke, hub and night light; a mast's two boxes' five faces each and its two night circles; a
-/// gantry's three boxes'; a conveyor's legs' and gallery's; a power line's tower and conductors.
+/// tower, blades, their stroke, hub and night light; a ship-to-shore crane's twelve boxes' five faces each and its
+/// stays, a yard gantry's nine boxes'; a mast's two boxes' and its two night circles; a gantry's three boxes'; a
+/// conveyor's legs' and gallery's; a power line's tower and conductors.
 [[nodiscard]] std::uint32_t region_item_slots(const RegionItem& item) noexcept;
 
 } // namespace atlas::geometry

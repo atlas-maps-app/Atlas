@@ -1,6 +1,6 @@
 // A region's items (ENGINE.md step 4, "Trees and things"; render/regions.py's draw_items): one pass draws every tower
-// with a height, wind turbine, mast, gantry, goods conveyor and power line of a region as the port does, in the objects
-// slot at true depth (shaders/item/: items_cs writes their records; items_faces_vs and _fs draw the faces,
+// with a height, wind turbine, crane, mast, gantry, goods conveyor and power line of a region as the port does, in the
+// objects slot at true depth (shaders/item/: items_cs writes their records; items_faces_vs and _fs draw the faces,
 // items_parts_vs and _fs the opaque parts, items_sides_vs and _fs the translucent ones, far to near).
 //   - Stage T (build, on a worker): geometry/Items.hpp's items of the tile, ITEM_VECTORS uint4 each in the points heap;
 //     an item each, of the kind "region item" (its kind's painter slots); the pass keeps each item as stage T made it.
@@ -53,8 +53,8 @@ struct ItemTile {
 /// What the render thread decides for a drawn item from its item's depth `depth` and the camera's focal length, in
 /// double as the port compares: whether it is drawn (a crane's, a mast's and a segment's least sizes, a power line's
 /// fade above 0), its job's flags (items.slangh's ITEM_JOB_) and values: a turbine's s, its light's offset, its hub's
-/// and its light's radii (as printed); a mast's glow's and its core's radii (as printed); a power line's tower's width
-/// (as printed) and its fade (as printed, where under 1).
+/// and its light's radii (as printed); a crane's stays' width (as printed); a mast's glow's and its core's radii (as
+/// printed); a power line's tower's width (as printed) and its fade (as printed, where under 1).
 struct ItemChoice {
     bool drawn = false;
     std::uint32_t flags = 0;
@@ -65,19 +65,21 @@ struct ItemChoice {
 };
 [[nodiscard]] ItemChoice item_choice(const geometry::RegionItem& item, double depth, double focal, bool night);
 
-/// The moment's tones (items.slangh's table): the port's colours by day or at night, the towers' gradients' stops mixed
-/// toward the moment's shadow, the turbines' blades' angles and the hour's wind.
-[[nodiscard]] std::array<std::uint32_t, 44> item_tones(const style::ThemeBlock& theme, const shaders::Theme& th,
-                                                       const tiles::ItemsStyle& style);
+/// The moment's tones (items.slangh's table, ITEM_TONES words): the port's colours by day or at night, the towers'
+/// gradients' stops mixed toward the moment's shadow, the turbines' blades' angles and the hour's wind.
+inline constexpr std::size_t item_tone_count = 45;
+using ItemTones = std::array<std::uint32_t, item_tone_count>;
+[[nodiscard]] ItemTones item_tones(const style::ThemeBlock& theme, const shaders::Theme& th,
+                                   const tiles::ItemsStyle& style);
 
 /// Whether the towers' gradients' middle stop lies at .65: the sun on the camera's right (L[0] · sx + L[2] · sz > 0).
 [[nodiscard]] bool item_high(const style::ThemeBlock& theme, const view::Camera& camera) noexcept;
 
-/// A job's own words (items.slangh's ITEM_EXTRA_COLOURS, then its parts in draw_items' order): a mast's, a gantry's or
-/// a conveyor's boxes' colours by their faces' normals (light(th, col, n3, not night and vdot(n3, L) > 0), the steel
-/// first, a mast's floodlights or a conveyor's gallery second), and a gantry's or a conveyor's parts sorted by their
-/// middles' depths at H / 2, far first (a stable sort), in double. `a` and `b` are the segment's ends in the drawn
-/// frame.
+/// A job's own words (items.slangh's ITEM_EXTRA_COLOURS, then its parts in draw_items' order): a crane's, a mast's, a
+/// gantry's or a conveyor's boxes' colours by their faces' normals (light(th, col, n3, not night and vdot(n3, L) > 0),
+/// the steel first, a crane's machinery, a mast's floodlights or a conveyor's gallery second), and a crane's, a
+/// gantry's or a conveyor's parts sorted by their middles' depths at H / 2, far first (a stable sort), in double. `a`
+/// and `b` are a crane's foot or a segment's ends in the drawn frame.
 void item_extra(const geometry::RegionItem& item, const view::Camera& camera, const style::ThemeBlock& theme,
                 const shaders::Theme& th, const tiles::ItemsStyle& style, double ax, double az, double bx, double bz,
                 std::vector<std::uint32_t>& out);

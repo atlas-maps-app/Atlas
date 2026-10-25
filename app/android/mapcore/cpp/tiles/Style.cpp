@@ -257,6 +257,7 @@ Result<Style> Style::of(const StyleTables& tables) {
     it.antenna = r.colour(items, "items", "antenna");
     it.shadow_night = r.colour(items, "items", "shadow_night");
     it.steel = r.day_night(items, "items", "steel_day", "steel_night");
+    it.machinery = r.day_night(items, "items", "machinery_day", "machinery_night");
     it.floodlights = r.day_night(items, "items", "floodlights_day", "floodlights_night");
     it.conveyor = r.day_night(items, "items", "conveyor_day", "conveyor_night");
     it.glow_inner = r.colour(items, "items", "glow_inner");

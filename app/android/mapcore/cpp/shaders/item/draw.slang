@@ -1,9 +1,9 @@
 // The region items' pipelines (ENGINE.md step 4, "Trees and things"; CP/passes/Items.cpp; shaders/item/items.slangh):
 // before the main pass items_cs decides each drawn item once, a thread a job, from its words in the points heap (set
 // 1, binding 0), the frame's tones and the job's own words (set 2), into its records: the faces (its towers' bands,
-// its boxes' faces, a turbine's tower and blades), the opaque parts (a turbine's blades' strokes and hub, a mast's
-// glow's core, a power line's tower) and the translucent ones (a turbine's night light, a mast's glow, a power line's
-// conductors and its tower while it fades). items_faces_vs draws each face as its fan and, stroked, its edges' quads,
+// its boxes' faces, a turbine's tower and blades), the opaque parts (a turbine's blades' strokes and hub, a crane's
+// stays, a mast's glow's core, a power line's tower) and the translucent ones (a turbine's night light, a mast's glow, a
+// power line's conductors and its tower while it fades). items_faces_vs draws each face as its fan and, stroked, its edges' quads,
 // whose fragments items_faces_fs keeps where they lie within the stroke, sample by sample; items_parts_vs draws a
 // segment or a circle as a box about it whose fragments items_parts_fs keeps where they lie in it; items_sides_fs blends
 // the translucent ones, premultiplied, a conductor's segment leaving the samples its path's earlier segments cover. Every
@@ -120,14 +120,14 @@ void tower(FrameCamera c, ItemJob j, ItemWords w, float3 foot) {
     }
 }
 
-/// A mast's, a gantry's or a conveyor's boxes, in draw_items' order (a mast's as listed, the others' from the job's
-/// own words), each visible face filled and stroked .25 in its colour by its normal.
+/// A crane's, a mast's, a gantry's or a conveyor's boxes, in draw_items' order (a mast's as listed, the others' from
+/// the job's own words), each visible face filled and stroked .25 in its colour by its normal.
 void boxes(FrameCamera c, ItemJob j, ItemWords w, float3 a, float3 b, uint kind) {
     uint gaps = uint(w.extra);
     uint n = item_part_total(kind, w.flags, gaps);
     for (uint s = 0u; s < n; ++s) {
         uint k = kind == ITEM_MAST ? s : item_extra[j.extra + ITEM_EXTRA_COLOURS + s];
-        ItemPart p = item_part(c, kind, w.flags, gaps, a, b, w.h, k);
+        ItemPart p = item_part(c, w, kind, a, b, k);
         for (uint face = 0u; face < 5u; ++face) {
             ItemPoly f = item_box_face(c, p.box, face);
             if (f.count == 0u) {
@@ -156,6 +156,30 @@ void mast(FrameCamera c, ItemJob j, ItemWords w, float3 foot) {
     put(item_sides_out, j.sides, item_glow(at, j.a, item_depth(c, hp.k.z, j.slot + 10u, 0u)));
     put(item_parts_out, j.parts,
         item_circle(at, j.b, item_tones[ITEM_TONE_CORE], 1.0f, item_depth(c, hp.k.z, j.slot + 11u, 1u)));
+}
+
+void crane(FrameCamera c, ItemJob j, ItemWords w, float3 foot) {
+    boxes(c, j, w, foot, foot, ITEM_CRANE);
+    if ((w.flags & ITEM_YARD) != 0u) {
+        return;
+    }
+    // on a quay its stays, one path after its boxes: M top L e for e in (tip, tail) where both project, butt-ended,
+    // '%.2f' % max(0.5, 0.35 · focal / d) wide in the steel unlit, over the boom where they meet it
+    ItemSeen top = seen(c, item_stay_point(w, foot, 0u));
+    if (!top.ahead) {
+        return;
+    }
+    float2 p0 = tree_printed(c, css_of(c, top.k));
+    for (uint e = 1u; e < 3u; ++e) {
+        ItemSeen q = seen(c, item_stay_point(w, foot, e));
+        if (!q.ahead) {
+            continue;
+        }
+        put(item_parts_out, j.parts + e - 1u,
+            item_segment(p0, tree_printed(c, css_of(c, q.k)), item_depth(c, top.k.z, j.slot + 60u, 1u),
+                         item_depth(c, q.k.z, j.slot + 60u, 1u), j.a * 0.5f, 0u, item_tones[ITEM_TONE_STEEL], 1.0f,
+                         0u));
+    }
 }
 
 void turbine(FrameCamera c, ItemJob j, ItemWords w, float3 foot) {
@@ -321,6 +345,8 @@ void items_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     float3 end = item_eye(j.place, end_local);
     if (kind == ITEM_TOWER) {
         tower(c, j, w, foot);
+    } else if (kind == ITEM_CRANE) {
+        crane(c, j, w, foot);
     } else if (kind == ITEM_MAST) {
         mast(c, j, w, foot);
     } else if (kind == ITEM_GANTRY || kind == ITEM_CONVEYOR) {

@@ -1,6 +1,7 @@
 #include "geometry/Items.hpp"
 
 #include "base/pymath/PyMath.hpp"
+#include "load/Real.hpp"
 #include "tiles/layers/Lines.hpp"
 #include "tiles/layers/Points.hpp"
 
@@ -18,6 +19,7 @@ namespace tl = atlas::tiles;
 
 /// The item layer's sources (rendertiles' Schema.ITEM): S['cranes'] 0, S['masts'] 1, S['mtowers'] 2, S['towers'] 3
 /// (pylons: their lines draw their towers), S['turbines'] 4.
+constexpr std::int64_t source_crane = 0;
 constexpr std::int64_t source_mast = 1;
 constexpr std::int64_t source_tower = 2;
 constexpr std::int64_t source_turbine = 4;
@@ -33,6 +35,9 @@ constexpr std::uint8_t owner_way = 2;
 
 /// draw_items' `c[2] < 5: continue`.
 constexpr float least_depth = 5.0F;
+
+/// A crane's form in the item layer's `crane` column: 2 a yard gantry (1 a ship-to-shore crane).
+constexpr std::int64_t crane_yard = 2;
 
 /// Python's `x or default` for a height: none or 0 is not mapped.
 [[nodiscard]] double or_default(std::optional<double> v, double otherwise) noexcept {
@@ -53,7 +58,9 @@ constexpr float least_depth = 5.0F;
 void points(const tl::Layer& layer, const tl::Frame& frame, std::uint16_t kind, TileRegionItems& out) {
     for (std::uint32_t i = 0; i < layer.count; ++i) {
         const std::int64_t source = layer.integer(tl::item::source, i);
-        if (source != source_tower && source != source_turbine && source != source_mast) continue;
+        if (source != source_tower && source != source_turbine && source != source_mast && source != source_crane) {
+            continue;
+        }
         RegionItem it;
         const tl::GridPoint p = layer.point(tl::item::pos, i);
         it.x = layer.decimal(tl::item::x, i).value_or(frame.x(p.lon));
@@ -65,7 +72,27 @@ void points(const tl::Layer& layer, const tl::Frame& frame, std::uint16_t kind, 
         double y = 0;     // the depth's point, draw_items' cam.cam((x, y, z))
         double reach = 0; // what it draws about its axis
         double up = 0;    // and above or below that point
-        if (source == source_tower) {
+        std::uint8_t owner = owner_node;
+        if (source == source_crane) {
+            // the form stage P derived (draw_items' to_water, its yard's axes); H = num(t.get('height'), 44.0) on a
+            // quay, 26.0 in a yard; c = cam.cam((x, 15.0, z)). On a quay its boom reaches from 22 m behind its axis to
+            // dw + 52 m toward the water, its legs 8.8 m either side, its A-frame to H + 20; in a yard it spans hu by
+            // hv, its trolley to H + 2.6
+            it.kind = RegionItemKind::crane;
+            it.yard = layer.integer(tl::item::crane, i) == crane_yard;
+            it.way = layer.ring(tl::item::poly, i).size() > 0;
+            it.ux = layer.decimal(tl::item::ux, i).value_or(1.0);
+            it.uz = layer.decimal(tl::item::uz, i).value_or(0.0);
+            it.vx = layer.decimal(tl::item::vx, i).value_or(0.0);
+            it.vz = layer.decimal(tl::item::vz, i).value_or(1.0);
+            it.hu = layer.decimal(tl::item::hu, i).value_or(0.0);
+            it.hv = layer.decimal(tl::item::hv, i).value_or(0.0);
+            it.h = load::num(tag("height")).value_or(it.yard ? 26.0 : 44.0);
+            y = 15.0;
+            reach = it.yard ? pymath::hypot(it.hu, it.hv) : pymath::hypot(pymath::max(22.0, it.hu + 52.0), 8.8);
+            up = pymath::max(15.0, std::abs(it.h + (it.yard ? 2.6 : 20.0) - 15.0));
+            if (it.way) owner = owner_way;
+        } else if (source == source_tower) {
             // tw['h']: towers are mapped with a height; `cab = t.get('aeroway') == 'tower' or t.get('tower:type') in
             // ('observation', 'control')`; rs = 3.2 if cab else max(1.2, H / 30), the cab's widest band 2.7 rs
             it.kind = RegionItemKind::tower;
@@ -106,7 +133,7 @@ void points(const tl::Layer& layer, const tl::Frame& frame, std::uint16_t kind, 
                              .min_depth = least_depth,
                              .radius = sphere(reach, up),
                              .tile = 0,
-                             .owner = scene::owner_key(owner_node, static_cast<std::uint64_t>(it.id))});
+                             .owner = scene::owner_key(owner, static_cast<std::uint64_t>(it.id))});
         const std::uint32_t slots = region_item_slots(it);
         out.specs.back().slots = {slots, slots, slots, slots};
         out.items.push_back(it);
@@ -201,7 +228,7 @@ std::uint32_t region_item_slots(const RegionItem& item) noexcept {
     switch (item.kind) {
     case RegionItemKind::tower:
     case RegionItemKind::turbine: return 5;
-    case RegionItemKind::crane: return 0;
+    case RegionItemKind::crane: return item.yard ? 45 : 61;
     case RegionItemKind::mast: return 12;
     case RegionItemKind::gantry: return 15;
     case RegionItemKind::conveyor: return 5 * (item.gaps + 2);
