@@ -731,7 +731,7 @@ class SceneToTiles(
             item(3, i, linkedMapOf("x" to pos.x, "z" to pos.y, "id" to e.key, "h" to h)) { "pylon $i" }
         }
         // the trees a park or a zoo plants in its woods, planted once for the region
-        for ((i, t) in PlantedWoods.of(S, lat0, lon0, kx, kz).withIndex()) item(5, i, t) { "wood tree $i" }
+        for ((i, t) in PlantedWoods.of(S, region).withIndex()) item(5, i, t) { "wood tree $i" }
         return out
     }
 

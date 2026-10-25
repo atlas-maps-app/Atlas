@@ -5,10 +5,12 @@
 #include "scene/Cover.hpp"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstring>
 #include <format>
+#include <optional>
 #include <string>
 
 namespace atlas::twin {
@@ -32,6 +34,8 @@ constexpr Paint black = Paint::colour(0xFF00'0000U);
     case shaders::ITEM_TURBINE: return "turbine";
     case shaders::ITEM_CRANE: return "crane";
     case shaders::ITEM_MAST: return "mast";
+    case shaders::ITEM_COASTER: return "coaster";
+    case shaders::ITEM_WOOD: return "wood";
     case shaders::ITEM_GANTRY: return "gantry";
     case shaders::ITEM_CONVEYOR: return "conveyor";
     default: return "power";
@@ -71,7 +75,7 @@ void ItemTwin::face_path(const shaders::ItemRecord& r, std::uint32_t slot, bool 
 }
 
 void ItemTwin::item(const scene::CoverTile& tile, const passes::ItemTile& items, std::span<const std::byte> heap,
-                    std::uint32_t item, std::uint32_t rank, const passes::ItemChoice& choice,
+                    std::uint32_t base, std::uint32_t item, std::uint32_t rank, const passes::ItemChoice& choice,
                     std::span<const std::uint32_t> extra) {
     const std::size_t at = std::size_t{item} * shaders::ITEM_VECTORS * sizeof(hlsl::uint4);
     if (at + (shaders::ITEM_VECTORS * sizeof(hlsl::uint4)) > heap.size() || item >= items.items.size()) return;
@@ -105,6 +109,8 @@ void ItemTwin::item(const scene::CoverTile& tile, const passes::ItemTile& items,
     case shaders::ITEM_CONVEYOR: boxes(j, w, foot, end, kind, extra, owner); break;
     case shaders::ITEM_TURBINE: turbine(j, w, foot, owner); break;
     case shaders::ITEM_POWER: power(j, w, foot, end, owner); break;
+    case shaders::ITEM_COASTER: coaster(j, w, foot, end, heap, base, extra, owner); break;
+    case shaders::ITEM_WOOD: wood(j, w, foot, std::span<const hlsl::uint4>(words).subspan(3, 4), owner); break;
     default: break;
     }
     if (faces_ != nullptr) faces_->insert(faces_->end(), face_records_.begin(), face_records_.end());
@@ -351,6 +357,140 @@ void ItemTwin::turbine(const shaders::ItemJob& j, const shaders::ItemWords& w, h
         out_.at(j.slot + 4, objects_, item);
         out_.circle({.fill = paint(tones_[shaders::ITEM_TONE_TURBINE + 4])}, light.x, light.y, j.d,
                     {.opacity = opacity});
+    }
+}
+
+void ItemTwin::coaster(const shaders::ItemJob& j, const shaders::ItemWords& w, hlsl::float3 foot, hlsl::float3 end,
+                       std::span<const std::byte> heap, std::uint32_t base, std::span<const std::uint32_t> extra,
+                       std::int32_t item) {
+    const shaders::FrameCamera& c = camera_;
+    const std::uint32_t kind =
+        (w.flags & shaders::ITEM_WOODEN) != 0U ? 1U : ((w.flags & shaders::ITEM_MONO) != 0U ? 2U : 0U);
+    const std::uint32_t lit = tones_[shaders::ITEM_TONE_COASTER + (2 * kind)];
+    const std::uint32_t dark = tones_[shaders::ITEM_TONE_COASTER + (2 * kind) + 1];
+    const float s = j.a;
+    const hlsl::float3 ka = shaders::camera_of(c, hlsl::float3{foot.x, foot.y + w.h, foot.z});
+    const hlsl::float3 kb = shaders::camera_of(c, hlsl::float3{end.x, end.y + w.extra, end.z});
+    if (!shaders::tree_ahead(c, ka) || !shaders::tree_ahead(c, kb)) return;
+    const hlsl::float2 qa = shaders::css_of(c, ka);
+    const hlsl::float2 qb = shaders::css_of(c, kb);
+    const hlsl::float2 pb = shaders::tree_printed(c, qb);
+    if ((j.flags & shaders::ITEM_JOB_POST) != 0U) {
+        const hlsl::float3 kg = shaders::camera_of(c, end);
+        if (shaders::tree_ahead(c, kg)) {
+            const hlsl::float2 g0 = shaders::tree_printed(c, shaders::css_of(c, kg));
+            part_records_[0] =
+                shaders::item_segment(g0, pb, shaders::item_depth(c, kg.z, j.slot, 0U),
+                                      shaders::item_depth(c, kb.z, j.slot, 0U), j.c * 0.5F, 0U, dark, 1.0F, 0U);
+            const std::array<Point, 2> post{point(g0), point(pb)};
+            out_.at(j.slot, objects_, item);
+            out_.path({.fill = black, .stroke = paint(dark), .stroke_width = j.c, .join = Join::round}, post, false);
+            const std::size_t at = extra.empty() ? 0 : (std::size_t{extra[0]} - base) * sizeof(hlsl::uint4);
+            if ((j.flags & shaders::ITEM_JOB_BRACES) != 0U && !extra.empty() && extra[0] >= base &&
+                at + (3 * sizeof(hlsl::uint4)) <= heap.size()) {
+                // the post before: its foot q0 and its top q1; M q0 L pb M q1 L g0, at .85
+                std::array<hlsl::uint4, 3> pw{};
+                std::memcpy(pw.data(), heap.data() + at, sizeof pw);
+                const shaders::ItemWords prev = shaders::item_words(pw[0], pw[1], pw[2]);
+                const hlsl::float3 pe = shaders::item_eye(j.place, hlsl::float3{prev.end.x, prev.foot.y, prev.end.y});
+                const hlsl::float3 k0 = shaders::camera_of(c, pe);
+                const hlsl::float3 k1 = shaders::camera_of(c, hlsl::float3{pe.x, pe.y + prev.extra, pe.z});
+                if (shaders::tree_ahead(c, k0) && shaders::tree_ahead(c, k1)) {
+                    const float half = j.d * 0.5F;
+                    const hlsl::float2 q0 = shaders::tree_printed(c, shaders::css_of(c, k0));
+                    const hlsl::float2 q1 = shaders::tree_printed(c, shaders::css_of(c, k1));
+                    side_records_[0] =
+                        shaders::item_segment(q0, pb, shaders::item_depth(c, k0.z, j.slot + 1, 0U),
+                                              shaders::item_depth(c, kb.z, j.slot + 1, 0U), half, 0U, dark, 0.85F, 0U);
+                    side_records_[1] =
+                        shaders::item_segment(q1, g0, shaders::item_depth(c, k1.z, j.slot + 1, 0U),
+                                              shaders::item_depth(c, kg.z, j.slot + 1, 0U), half, 0U, dark, 0.85F, 1U);
+                    const std::array<Point, 2> first{point(q0), point(pb)};
+                    const std::array<Point, 2> second{point(q1), point(g0)};
+                    const std::array<Subpath, 2> braces{Subpath{.points = first, .closed = false},
+                                                        Subpath{.points = second, .closed = false}};
+                    out_.at(j.slot + 1, objects_, item);
+                    out_.path({.fill = black, .stroke = paint(dark), .stroke_width = j.d, .join = Join::round}, braces,
+                              {.opacity = 0.85F});
+                }
+            }
+        }
+    }
+    // the track: a dark underside 0.35 s px down, the lit top over it
+    const hlsl::float2 ua = shaders::tree_printed(c, hlsl::float2{qa.x, qa.y + (0.35F * s)});
+    const hlsl::float2 ub = shaders::tree_printed(c, hlsl::float2{qb.x, qb.y + (0.35F * s)});
+    part_records_[1] = shaders::item_segment(ua, ub, shaders::item_depth(c, ka.z, j.slot + 2, 0U),
+                                             shaders::item_depth(c, kb.z, j.slot + 2, 0U), j.b * 0.5F,
+                                             shaders::ITEM_ROUND, dark, 1.0F, 0U);
+    const std::array<Point, 2> under{point(ua), point(ub)};
+    out_.at(j.slot + 2, objects_, item);
+    out_.path({.fill = black, .stroke = paint(dark), .stroke_width = j.b, .cap = Cap::round, .join = Join::round},
+              under, false);
+    const float top = extra.size() > 1 ? std::bit_cast<float>(extra[1]) : 0.0F;
+    const hlsl::float2 pa = shaders::tree_printed(c, qa);
+    part_records_[2] = shaders::item_segment(pa, pb, shaders::item_depth(c, ka.z, j.slot + 3, 1U),
+                                             shaders::item_depth(c, kb.z, j.slot + 3, 1U), top * 0.5F,
+                                             shaders::ITEM_ROUND, lit, 1.0F, 0U);
+    const std::array<Point, 2> line{point(pa), point(pb)};
+    out_.at(j.slot + 3, objects_, item);
+    out_.path({.fill = black, .stroke = paint(lit), .stroke_width = top, .cap = Cap::round, .join = Join::round}, line,
+              false);
+}
+
+void ItemTwin::wood(const shaders::ItemJob& j, const shaders::ItemWords& w, hlsl::float3 foot,
+                    std::span<const hlsl::uint4> draws, std::int32_t item) {
+    const shaders::FrameCamera& c = camera_;
+    const float r = w.end.x / 2.0F;
+    const float h = w.h;
+    const float s = j.a;
+    const std::uint32_t greens = shaders::ITEM_TONE_WOODS + (3 * static_cast<std::uint32_t>(w.extra));
+    const float kz = shaders::camera_of(c, hlsl::float3{foot.x, foot.y + (h * 0.7F), foot.z}).z;
+    const bool sun = (j.flags & shaders::ITEM_JOB_SUN) != 0U;
+    const hlsl::float3 l{tone(shaders::ITEM_TONE_SUN), tone(shaders::ITEM_TONE_SUN + 1),
+                         tone(shaders::ITEM_TONE_SUN + 2)};
+    const auto draw = [&](std::uint32_t i) { return shaders::item_draw(draws[0], draws[1], draws[2], draws[3], i); };
+    struct Circle {
+        hlsl::float2 p;
+        float r;
+    };
+    std::array<std::optional<Circle>, 9> circles{};
+    for (std::uint32_t k = 0; k < 4; ++k) {
+        const hlsl::float3 clump{foot.x + draw(4 * k), foot.y + ((h * 0.7F) + draw((4 * k) + 1)),
+                                 foot.z + draw((4 * k) + 2)};
+        const hlsl::float3 kp = shaders::camera_of(c, clump);
+        if (!shaders::tree_ahead(c, kp)) continue;
+        const float rr = draw((4 * k) + 3) * s;
+        const hlsl::float2 pp = shaders::css_of(c, kp);
+        const Circle under{.p = shaders::tree_printed(c, pp), .r = shaders::tree_print(c, rr)};
+        circles.at(k) = under;
+        part_records_[k] =
+            shaders::item_circle(under.p, under.r, tones_[greens], 1.0F, shaders::item_depth(c, kz, j.slot + k, 0U));
+        if (!sun) continue;
+        const hlsl::float3 kq = shaders::camera_of(
+            c, hlsl::float3{clump.x + (l.x * r * 0.3F), clump.y + (l.y * r * 0.3F), clump.z + (l.z * r * 0.3F)});
+        if (!shaders::tree_ahead(c, kq)) continue;
+        const hlsl::float2 qq = shaders::css_of(c, kq);
+        const Circle lit{.p = shaders::tree_printed(c, qq), .r = shaders::tree_print(c, rr * 0.74F)};
+        circles.at(4 + k) = lit;
+        part_records_[4 + k] = shaders::item_circle(lit.p, lit.r, tones_[greens + 1], 1.0F,
+                                                    shaders::item_depth(c, kz, j.slot + 4 + k, 1U));
+        if (k == 0) {
+            const hlsl::float2 gl{qq.x + ((qq.x - pp.x) * 0.5F), qq.y + ((qq.y - pp.y) * 0.5F)};
+            const Circle glint{.p = shaders::tree_printed(c, gl), .r = shaders::tree_print(c, rr * 0.36F)};
+            circles.at(8) = glint;
+            part_records_[8] = shaders::item_circle(glint.p, glint.r, tones_[greens + 2], 1.0F,
+                                                    shaders::item_depth(c, kz, j.slot + 8, 2U));
+        }
+    }
+    // the port's order: every clump, then every top, then the glint, each layer a group of its own (<g fill="...">)
+    std::array<std::int32_t, 3> layers{none, none, none};
+    for (std::uint32_t k = 0; k < circles.size(); ++k) {
+        const std::optional<Circle>& cc = circles.at(k);
+        if (!cc) continue;
+        const std::uint32_t layer = k < 4 ? 0U : (k < 8 ? 1U : 2U);
+        if (layers.at(layer) == none) layers.at(layer) = out_.group({.node = {}, .parent = objects_});
+        out_.at(j.slot + k, layers.at(layer), item);
+        out_.circle({.fill = paint(tones_[greens + layer])}, cc->p.x, cc->p.y, cc->r);
     }
 }
 

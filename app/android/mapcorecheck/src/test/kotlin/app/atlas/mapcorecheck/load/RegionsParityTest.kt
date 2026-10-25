@@ -3,7 +3,8 @@ package app.atlas.mapcorecheck.load
 import app.atlas.anchor.AnchorCases
 import app.atlas.render.Amsterdam
 import app.atlas.render.Regions
-import app.atlas.render.py.truthy
+import app.atlas.render.live.LiveRegion
+import app.atlas.rendertiles.compile.PlantedWoods
 import app.atlas.render.data.PackReader
 import app.atlas.render.live.LiveEngine
 import app.atlas.render.py.Dict
@@ -17,8 +18,8 @@ import java.io.File
  * tradition read from the same file as the port's, its details and party walls among them), land cover, runways, big
  * roads, railways, power lines and towers, marine works, cranes, masts, turbines, national parks, the water mapped as
  * relations and its islands, the sea from the coastline and the natural shores, a theme park's coaster tracks (their
- * rides' profiles as the element pack holds them) and a park's or a zoo's woods (as the engine plants them, once for the region:
- * rendertiles' PlantedWoods, the port's own planting about the frame's origin), in the port's order and to the bit.
+ * rides' profiles as the element pack holds them) and a park's or a zoo's woods (planted once for the region, as the
+ * port plants them in a region loaded whole: rendertiles' PlantedWoods), in the port's order and to the bit.
  *
  * Each region is loaded as the packer loads it ([LiveEngine.loadScene]: whole, at tolerance 0): the canal ring from its
  * bundled pack, and the element packs `-Datlas.load.packs` names (a list split by the path separator: the regions'
@@ -27,7 +28,7 @@ import java.io.File
  */
 class RegionsParityTest {
     /** Holds the core's load of [raw] to [S], the scene of region [name] the port loaded, in the frame the port set. */
-    private fun compare(name: String, raw: File, S: Dict, portMs: Long, tolerance: Double) {
+    private fun compare(name: String, raw: File, S: Dict, portMs: Long, tolerance: Double, region: LiveRegion) {
         @Suppress("UNCHECKED_CAST")
         val R = S["R"] as Map<String, Any?>
         @Suppress("UNCHECKED_CAST")
@@ -39,7 +40,7 @@ class RegionsParityTest {
         // a theme park's rides' profiles, the folder the port read them from (unpacked from the element pack); a park's
         // or a zoo's woods
         val rides = (R["park"] as String?)?.takeIf { it.isNotEmpty() }?.let { File(File(Regions.parkRoot, it), "pf").path }
-        val woods = truthy(R["park"]) || truthy(R["zoo"])
+        val woods = if (PlantedWoods.plants(S)) PlantedWoods.anchor(region) else null
         SceneLines.compare(name, raw, S, portMs, region = true) { out ->
             LoadHost.dumpRegion(raw.path, out, S["region"] as String, lat0, lon0, kx, kz, bbox[0], bbox[1], bbox[2], bbox[3], LoadHost.traditionBytes(S["tradition"] as String?), rides, woods, tolerance)
         }
@@ -56,7 +57,7 @@ class RegionsParityTest {
         val scene = LiveEngine.loadScene(grachten)
         val ms = (System.nanoTime() - t0) / 1_000_000
         scene.state.restore()
-        compare(grachten.id, File(grachten.dir, "raw.json"), scene.S, ms, 0.0)
+        compare(grachten.id, File(grachten.dir, "raw.json"), scene.S, ms, 0.0, grachten)
     }
 
     @Test
@@ -73,7 +74,7 @@ class RegionsParityTest {
             val scene = LiveEngine.loadScene(region)
             val ms = (System.nanoTime() - t0) / 1_000_000
             scene.state.restore()
-            compare(region.id, File(region.dir, "raw.json"), scene.S, ms, 0.0)
+            compare(region.id, File(region.dir, "raw.json"), scene.S, ms, 0.0, region)
         }
     }
 }

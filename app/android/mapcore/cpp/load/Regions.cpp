@@ -770,7 +770,7 @@ std::expected<Scene, LoadError> load_region(const osm::Document& doc, const Regi
     }
     // a park's or a zoo's woods: generic trees inside the mapped outlines, off everything mapped in them, planted once
     // for the region
-    if (region.woods) s.woods = plant_woods(s, 0.0, 0.0, woods_radius(region.frame, region.bbox));
+    if (region.woods) s.woods = plant_woods(s, region.woods->cx, region.woods->cz, region.woods->reach);
     return loaded;
 }
 

@@ -6,10 +6,10 @@
 // smaller land in the wood: lawns, playgrounds, squares), their sizes and ids from one random stream seeded 7.
 //
 // The renders plant a region's woods about the view they draw: its target, out to its radius, each wood's lattice from
-// its box's corner or the view's square's edge, whichever is further in. The engine plants them once for the region,
-// anchored to its frame (woods_radius): about the frame's origin, out to the region's box's farthest corner, so every
-// wood is planted whole on its own lattice and every view of the region and every tile has the same trees. Every value
-// is the port's double, by its own arithmetic.
+// its box's corner or the view's square's edge, whichever is further in. The engine plants them once for the region, as
+// the port loads a region whole (LiveEngine's wholeCamera): about the centre of the region's box, out to its
+// half-diagonal, so every wood in it is planted whole on its own lattice and every view and every tile has the same
+// trees. Every value is the port's double, by its own arithmetic.
 #pragma once
 
 #include "load/Scene.hpp"
@@ -20,9 +20,13 @@
 
 namespace atlas::load {
 
-/// The radius the engine plants a region's woods out to about its frame's origin: the farthest of its box's corners
-/// (south, west, north, east) and 40 m, rounded up to a whole number of 2 m, the planting grid's cells.
-[[nodiscard]] double woods_radius(const tiles::Frame& frame, const std::array<double, 4>& bbox) noexcept;
+/// Where a region's woods are planted about: the centre of its box (frame metres) and its half-diagonal, as the packer
+/// computes them (rendertiles' PlantedWoods: LiveEngine's wholeCamera, Kotlin's hypot).
+struct WoodsAnchor {
+    double cx = 0.0;
+    double cz = 0.0;
+    double reach = 0.0;
+};
 
 /// woods.plant(S, cx, cz, rad): the trees planted in the scene's woods within `rad` of (cx, cz), in its order.
 [[nodiscard]] std::vector<WoodTree> plant_woods(const Scene& s, double cx, double cz, double rad);

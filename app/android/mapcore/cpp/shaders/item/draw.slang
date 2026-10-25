@@ -182,6 +182,110 @@ void crane(FrameCamera c, ItemJob j, ItemWords w, float3 foot) {
     }
 }
 
+/// A coaster's piece (coasters.draw): its post from the ground up to its second end where the render thread's walk put
+/// one, '%.2f' % max(0.5, 0.5 or 0.7 s) wide; a wooden coaster's braces back to the post before (M q0 L pb M q1 L g0,
+/// one path at .85), max(0.25, 0.3 s); its dark underside 0.35 s px below it, max(1.1, 1.7 s), and its lit top over it,
+/// 0.72 of that, both round-capped; every end at its own depth, the top over the underside.
+void coaster(FrameCamera c, ItemJob j, ItemWords w, float3 foot, float3 end) {
+    uint kind = (w.flags & ITEM_WOODEN) != 0u ? 1u : ((w.flags & ITEM_MONO) != 0u ? 2u : 0u);
+    uint lit = item_tones[ITEM_TONE_COASTER + 2u * kind];
+    uint dark = item_tones[ITEM_TONE_COASTER + 2u * kind + 1u];
+    float s = j.a;
+    float3 pa3 = {foot.x, foot.y + w.h, foot.z};
+    float3 pb3 = {end.x, end.y + w.extra, end.z};
+    ItemSeen a = seen(c, pa3);
+    ItemSeen b = seen(c, pb3);
+    if (!a.ahead || !b.ahead) {
+        return;
+    }
+    float2 qa = css_of(c, a.k);
+    float2 qb = css_of(c, b.k);
+    float2 pb = tree_printed(c, qb);
+    if ((j.flags & ITEM_JOB_POST) != 0u) {
+        ItemSeen g = seen(c, end);
+        if (g.ahead) {
+            float2 g0 = tree_printed(c, css_of(c, g.k));
+            put(item_parts_out, j.parts,
+                item_segment(g0, pb, item_depth(c, g.k.z, j.slot, 0u), item_depth(c, b.k.z, j.slot, 0u), j.c * 0.5f, 0u,
+                             dark, 1.0f, 0u));
+            if ((j.flags & ITEM_JOB_BRACES) != 0u) {
+                // the post before: its foot q0 and its top q1, as this frame projects them
+                uint prev = item_extra[j.extra];
+                ItemWords pw = item_words(points_heap[prev], points_heap[prev + 1u], points_heap[prev + 2u]);
+                float3 local = {pw.end.x, pw.foot.y, pw.end.y};
+                float3 pe = item_eye(j.place, local);
+                float3 pt = {pe.x, pe.y + pw.extra, pe.z};
+                ItemSeen q0 = seen(c, pe);
+                ItemSeen q1 = seen(c, pt);
+                if (q0.ahead && q1.ahead) {
+                    float half = j.d * 0.5f;
+                    put(item_sides_out, j.sides,
+                        item_segment(tree_printed(c, css_of(c, q0.k)), pb, item_depth(c, q0.k.z, j.slot + 1u, 0u),
+                                     item_depth(c, b.k.z, j.slot + 1u, 0u), half, 0u, dark, 0.85f, 0u));
+                    put(item_sides_out, j.sides + 1u,
+                        item_segment(tree_printed(c, css_of(c, q1.k)), g0, item_depth(c, q1.k.z, j.slot + 1u, 0u),
+                                     item_depth(c, g.k.z, j.slot + 1u, 0u), half, 0u, dark, 0.85f, 1u));
+                }
+            }
+        }
+    }
+    // the track: a dark underside 0.35 s px down, the lit top over it
+    float2 ua = {qa.x, qa.y + 0.35f * s};
+    float2 ub = {qb.x, qb.y + 0.35f * s};
+    put(item_parts_out, j.parts + 1u,
+        item_segment(tree_printed(c, ua), tree_printed(c, ub), item_depth(c, a.k.z, j.slot + 2u, 0u),
+                     item_depth(c, b.k.z, j.slot + 2u, 0u), j.b * 0.5f, ITEM_ROUND, dark, 1.0f, 0u));
+    float top = asfloat(item_extra[j.extra + 1u]);
+    put(item_parts_out, j.parts + 2u,
+        item_segment(tree_printed(c, qa), pb, item_depth(c, a.k.z, j.slot + 3u, 1u), item_depth(c, b.k.z, j.slot + 3u, 1u),
+                     top * 0.5f, ITEM_ROUND, lit, 1.0f, 0u));
+}
+
+/// A wood's tree (woods.draw): four clumps about its crown's centre (stage T's from random.Random(id): each its offset
+/// and its radius over s), each a dark circle; by sun a mid one 0.3 r toward it, 0.74 the size, and over the first a
+/// high glint, 0.36; all on one plane at the tree's depth, each layer leading the one below.
+void wood(FrameCamera c, ItemJob j, ItemWords w, float3 foot, uint4 d0, uint4 d1, uint4 d2, uint4 d3) {
+    float r = w.end.x / 2.0f;
+    float h = w.h;
+    float s = j.a;
+    uint tone = ITEM_TONE_WOODS + 3u * uint(w.extra);
+    float3 centre = {foot.x, foot.y + h * 0.7f, foot.z};
+    float kz = camera_of(c, centre).z;
+    bool sun = (j.flags & ITEM_JOB_SUN) != 0u;
+    float3 l = {tone_float(ITEM_TONE_SUN), tone_float(ITEM_TONE_SUN + 1u), tone_float(ITEM_TONE_SUN + 2u)};
+    for (uint k = 0u; k < 4u; ++k) {
+        float3 clump = {foot.x + item_draw(d0, d1, d2, d3, 4u * k),
+                        foot.y + ((h * 0.7f) + item_draw(d0, d1, d2, d3, 4u * k + 1u)),
+                        foot.z + item_draw(d0, d1, d2, d3, 4u * k + 2u)};
+        ItemSeen p = seen(c, clump);
+        if (!p.ahead) {
+            continue;
+        }
+        float rr = item_draw(d0, d1, d2, d3, 4u * k + 3u) * s;
+        float2 pp = css_of(c, p.k);
+        put(item_parts_out, j.parts + k,
+            item_circle(tree_printed(c, pp), tree_print(c, rr), item_tones[tone], 1.0f, item_depth(c, kz, j.slot + k, 0u)));
+        if (!sun) {
+            continue;
+        }
+        float3 lift = {clump.x + l.x * r * 0.3f, clump.y + l.y * r * 0.3f, clump.z + l.z * r * 0.3f};
+        ItemSeen q = seen(c, lift);
+        if (!q.ahead) {
+            continue;
+        }
+        float2 qq = css_of(c, q.k);
+        put(item_parts_out, j.parts + 4u + k,
+            item_circle(tree_printed(c, qq), tree_print(c, rr * 0.74f), item_tones[tone + 1u], 1.0f,
+                        item_depth(c, kz, j.slot + 4u + k, 1u)));
+        if (k == 0u) {
+            float2 gl = {qq.x + (qq.x - pp.x) * 0.5f, qq.y + (qq.y - pp.y) * 0.5f};
+            put(item_parts_out, j.parts + 8u,
+                item_circle(tree_printed(c, gl), tree_print(c, rr * 0.36f), item_tones[tone + 2u], 1.0f,
+                            item_depth(c, kz, j.slot + 8u, 2u)));
+        }
+    }
+}
+
 void turbine(FrameCamera c, ItemJob j, ItemWords w, float3 foot) {
     float h = w.h;
     float rr = w.extra;
@@ -355,6 +459,11 @@ void items_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
         turbine(c, j, w, foot);
     } else if (kind == ITEM_POWER) {
         power(c, j, w, foot, end);
+    } else if (kind == ITEM_COASTER) {
+        coaster(c, j, w, foot, end);
+    } else if (kind == ITEM_WOOD) {
+        wood(c, j, w, foot, points_heap[j.item + 3u], points_heap[j.item + 4u], points_heap[j.item + 5u],
+             points_heap[j.item + 6u]);
     }
 }
 

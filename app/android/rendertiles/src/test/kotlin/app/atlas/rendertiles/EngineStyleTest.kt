@@ -54,6 +54,8 @@ class EngineStyleTest {
         val amsterdam = File(src, "Amsterdam.kt").readText()
         val regions = File(src, "Regions.kt").readText()
         val closeup = File(src, "Closeup.kt").readText()
+        val coasters = File(src, "Coasters.kt").readText()
+        val woods = File(src, "Woods.kt").readText()
         // the values, the port's file and the source text that types them there
         val literals = listOf(
             Triple(listOf("ground.area_other"), amsterdam, """AREA[a["kind"]] ?: "${value("ground.area_other")}""""),
@@ -260,6 +262,20 @@ class EngineStyleTest {
                 listOf("items.conductor_width", "items.conductor_opacity", "items.conductor_day", "items.conductor_night"), regions,
                 """stroke-width=\"${css("items.conductor_width")}\" opacity=\"${css("items.conductor_opacity")}\"/>", segs.toString(), """ +
                     """if (!night) "${value("items.conductor_day")}" else "${value("items.conductor_night")}")""",
+            ),
+            Triple(
+                listOf("items.coaster_steel_top_day", "items.coaster_steel_side_day", "items.coaster_wood_top_day", "items.coaster_wood_side_day", "items.coaster_mono_top_day", "items.coaster_mono_side_day"), coasters,
+                """val COL: Map<String, Pair<String, String>> = mapOf("steel" to ("${value("items.coaster_steel_top_day")}" to "${value("items.coaster_steel_side_day")}"), """ +
+                    """"wood" to ("${value("items.coaster_wood_top_day")}" to "${value("items.coaster_wood_side_day")}"), "mono" to ("${value("items.coaster_mono_top_day")}" to "${value("items.coaster_mono_side_day")}"))""",
+            ),
+            Triple(
+                listOf("items.coaster_steel_top_night", "items.coaster_steel_side_night", "items.coaster_wood_top_night", "items.coaster_wood_side_night", "items.coaster_mono_top_night", "items.coaster_mono_side_night"), coasters,
+                """val NIGHT: Map<String, Pair<String, String>> = mapOf("steel" to ("${value("items.coaster_steel_top_night")}" to "${value("items.coaster_steel_side_night")}"), """ +
+                    """"wood" to ("${value("items.coaster_wood_top_night")}" to "${value("items.coaster_wood_side_night")}"), "mono" to ("${value("items.coaster_mono_top_night")}" to "${value("items.coaster_mono_side_night")}"))""",
+            ),
+            Triple(
+                listOf("items.woods_green_1", "items.woods_green_2", "items.woods_green_3", "items.woods_green_4", "items.woods_green_5"), woods,
+                """for (c0 in listOf("${value("items.woods_green_1")}", "${value("items.woods_green_2")}", "${value("items.woods_green_3")}", "${value("items.woods_green_4")}", "${value("items.woods_green_5")}"))""",
             ),
             Triple(
                 listOf("trees.trunk_day", "trees.trunk_night"), amsterdam,

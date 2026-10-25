@@ -567,11 +567,12 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_dump(JNIEnv*
 }
 
 /// A region's load (regions.py's, in the frame and box given: the port's after its configure, with its tradition's file
-/// or null, a theme park's rides' profiles from the folder `rides` or null, its woods planted where `woods`) of the
-/// raw.json at `raw`, at `tolerance`, written as canonical lines to `out`: as dump, with its own lists.
+/// or null, a theme park's rides' profiles from the folder `rides` or null, its woods planted about `woods` (its
+/// anchor's three doubles) or null) of the raw.json at `raw`, at `tolerance`, written as canonical lines to `out`: as
+/// dump, with its own lists.
 JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_dumpRegion(
     JNIEnv* env, jclass, jstring raw, jstring out, jstring name, jdouble lat0, jdouble lon0, jdouble kx, jdouble kz,
-    jdouble south, jdouble west, jdouble north, jdouble east, jbyteArray tradition, jstring rides, jboolean woods,
+    jdouble south, jdouble west, jdouble north, jdouble east, jbyteArray tradition, jstring rides, jdoubleArray woods,
     jdouble tolerance) {
     std::ifstream in(string_of(env, raw), std::ios::binary);
     if (!in) return env->NewStringUTF("error=io at=raw");
@@ -592,15 +593,20 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_dumpRegion(
         if (!read) return env->NewStringUTF(std::format("error=rides at={}", read.error()).c_str());
         profiles = std::move(*read);
     }
-    const load::RegionConfig config{
+    load::RegionConfig config{
         .name = region,
         .frame = {.lat0 = lat0, .lon0 = lon0, .kx = kx, .kz = kz},
         .bbox = {south, west, north, east},
         .tradition = *trad,
         .palette = load::region_palette(region),
         .park = profiles ? &*profiles : nullptr,
-        .woods = woods == JNI_TRUE,
+        .woods = std::nullopt,
     };
+    if (woods != nullptr && env->GetArrayLength(woods) == 3) {
+        std::array<jdouble, 3> a{};
+        env->GetDoubleArrayRegion(woods, 0, 3, a.data());
+        config.woods = load::WoodsAnchor{.cx = a[0], .cz = a[1], .reach = a[2]};
+    }
     const auto scene = load::load_region(*doc, config, tolerance);
     const auto t2 = std::chrono::steady_clock::now();
     if (!scene) {

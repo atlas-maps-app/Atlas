@@ -7,7 +7,10 @@
 // elements against the port's SVG say (L1).
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
+#include "base/pymath/PyRandom.hpp"
 #include "geometry/Items.hpp"
+#include "load/Cut.hpp"
+#include "load/Regions.hpp"
 #include "load/Window.hpp"
 #include "passes/Items.hpp"
 #include "tests/base/require.hpp"
@@ -15,6 +18,7 @@
 #include "tiles/Grid.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Source.hpp"
+#include "tiles/TileWriter.hpp"
 #include "twin/item/ItemShader.hpp"
 
 #include <doctest/doctest.h>
@@ -63,7 +67,147 @@ namespace sh = atlas::shaders;
     return gm::build_region_items({.tile = &*tile, .head = pack->head(), .kind = 7});
 }
 
+/// A park's items: its document loaded as a theme park's region (its rides `rides`, its woods planted), cut, each tile
+/// decoded and gathered; with the scene they came from.
+struct ParkItems {
+    atlas::load::Scene scene;
+    gm::TileRegionItems items;
+};
+
+[[nodiscard]] ParkItems park_items(const std::string& elements, const atlas::load::RideProfiles& rides) {
+    const std::string data = R"({"version": 0.6, "elements": [
+)" + elements + "]}";
+    const auto doc = atlas::osm::read_overpass(std::as_bytes(std::span(data.data(), data.size())));
+    ATLAS_REQUIRE_OR_RETURN(ParkItems{}, doc.has_value());
+    const atlas::load::RegionConfig region{.name = "test",
+                                           .frame = atlas::load::westerkerk_frame(),
+                                           .bbox = {52.368, 4.878, 52.376, 4.890},
+                                           .tradition = nullptr,
+                                           .palette = atlas::load::amsterdam_palette(),
+                                           .park = &rides,
+                                           .woods = atlas::load::WoodsAnchor{.cx = 0.0, .cz = 0.0, .reach = 800.0}};
+    auto scene = atlas::load::load_region(*doc, region);
+    ATLAS_REQUIRE_OR_RETURN(ParkItems{}, scene.has_value());
+    const auto cut = atlas::load::cut_region(*scene, region.frame, {});
+    ATLAS_REQUIRE_OR_RETURN(ParkItems{}, cut.has_value(), cut.error().what);
+    tl::RenderHead head;
+    head.frame = region.frame;
+    ParkItems out{.scene = std::move(*scene), .items = {}};
+    tl::TileDecoder decoder;
+    atlas::Arena arena(4U << 20U, atlas::Growth::grows, "items test, a park");
+    for (const tl::TileFill& t : *cut) {
+        if (t.level() != 14) continue;
+        const auto raw = tl::encode_tile(t);
+        ATLAS_REQUIRE_OR_RETURN(ParkItems{}, raw.has_value());
+        arena.reset();
+        const auto tile = decoder.decode(*raw, arena);
+        ATLAS_REQUIRE_OR_RETURN(ParkItems{}, tile.has_value());
+        gm::TileRegionItems g = gm::build_region_items({.tile = &*tile, .head = &head, .kind = 7});
+        for (gm::CoasterTrackSpan& span : g.tracks) {
+            span.first += static_cast<std::uint32_t>(out.items.items.size());
+            out.items.tracks.push_back(std::move(span));
+        }
+        for (gm::RegionItem& it : g.items) {
+            if (it.kind == gm::RegionItemKind::coaster)
+                it.track += static_cast<std::uint32_t>(out.items.tracks.size() - g.tracks.size());
+        }
+        out.items.items.insert(out.items.items.end(), g.items.begin(), g.items.end());
+        out.items.specs.insert(out.items.specs.end(), g.specs.begin(), g.specs.end());
+    }
+    return out;
+}
+
 } // namespace
+
+TEST_CASE("items: a theme park's coaster tracks in 3 m pieces and its woods' trees, as coasters.py and woods.py draw "
+          "them") {
+    const std::string elements = R"({"type": "node", "id": 1, "lat": 52.37025, "lon": 4.88025,
+    "tags": {"attraction": "roller_coaster", "name": "Big One"}},
+{"type": "way", "id": 10, "tags": {"roller_coaster": "track", "roller_coaster:track": "lift_hill"}, "geometry": [
+  {"lat": 52.3700, "lon": 4.8800}, {"lat": 52.3700, "lon": 4.8805}, {"lat": 52.3705, "lon": 4.8805}]},
+{"type": "way", "id": 11, "tags": {"roller_coaster": "track", "layer": "2"}, "geometry": [
+  {"lat": 52.3705, "lon": 4.8805}, {"lat": 52.37052, "lon": 4.88025}, {"lat": 52.3705, "lon": 4.8800},
+  {"lat": 52.3702, "lon": 4.8799}, {"lat": 52.3700, "lon": 4.8800}]},
+{"type": "way", "id": 12, "tags": {"railway": "monorail"}, "geometry": [
+  {"lat": 52.3710, "lon": 4.8810}, {"lat": 52.3712, "lon": 4.8815}]},
+{"type": "way", "id": 20, "tags": {"landuse": "forest"}, "geometry": [
+  {"lat": 52.3720, "lon": 4.8800}, {"lat": 52.3720, "lon": 4.8812}, {"lat": 52.3728, "lon": 4.8812},
+  {"lat": 52.3728, "lon": 4.8800}, {"lat": 52.3720, "lon": 4.8800}]})";
+    atlas::load::RideProfiles rides;
+    rides.heights = {{"Big One", 30.0}};
+    const ParkItems park = park_items(elements, rides);
+    const gm::TileRegionItems& g = park.items;
+    REQUIRE(g.items.size() == g.specs.size());
+    // each track's pieces as subdivide makes them: every edge in max(1, int(Lg / 3)) pieces, end to end, the heights
+    // between its points' heights; the radius cut at every fourth of its points and its last
+    REQUIRE(g.tracks.size() == park.scene.coasters.size());
+    for (const gm::CoasterTrackSpan& span : g.tracks) {
+        REQUIRE(span.count > 0);
+        const gm::RegionItem& first = g.items[span.first];
+        const atlas::load::CoasterTrack* tr = nullptr;
+        for (const atlas::load::CoasterTrack& t : park.scene.coasters) {
+            if (std::abs(t.pts.front().x - first.x) < 1e-9 && std::abs(t.pts.front().z - first.z) < 1e-9) tr = &t;
+        }
+        ATLAS_REQUIRE(tr != nullptr);
+        std::size_t pieces = 0;
+        for (std::size_t k = 1; k < tr->pts.size(); ++k) {
+            pieces += static_cast<std::size_t>(std::max<std::int64_t>(
+                1, atlas::pymath::to_int(atlas::geometry::dist(tr->pts[k - 1], tr->pts[k]) / gm::coaster_step)));
+        }
+        CHECK(span.count == pieces);
+        CHECK(span.cut.size() == ((tr->pts.size() + 3) / 4) + 1);
+        CHECK(span.kind == (tr->kind == "mono" ? 2 : (tr->kind == "wood" ? 1 : 0)));
+        CHECK(first.ya == tr->ys.front());
+        const gm::RegionItem& last = g.items[span.first + span.count - 1];
+        CHECK(last.bx == tr->pts.back().x);
+        CHECK(last.bz == tr->pts.back().z);
+        CHECK(last.yb == tr->ys.back());
+        for (std::uint32_t k = span.first; k < span.first + span.count; ++k) {
+            const gm::RegionItem& it = g.items[k];
+            const atlas::scene::ItemSpec& sp = g.specs[k];
+            CHECK(it.kind == gm::RegionItemKind::coaster);
+            CHECK(sp.y == (it.ya + it.yb) / 2); // c = cam.cam(((a + b) / 2, (ya + yb) / 2))
+            CHECK(sp.min_depth == 3.0F);
+            CHECK(sp.flags == 0);
+            CHECK(sp.slots[0] == 4);
+            if (k > span.first) {
+                CHECK(it.x == g.items[k - 1].bx);
+                CHECK(it.ya == g.items[k - 1].yb);
+            }
+        }
+    }
+    // the woods' trees: planted once for the region, each with random.Random(id)'s first draws, from 4 m at (x, 0.7 h,
+    // z), after every coaster's piece in their group
+    std::size_t trees = 0;
+    for (std::size_t k = 0; k < g.items.size(); ++k) {
+        const gm::RegionItem& it = g.items[k];
+        if (it.kind != gm::RegionItemKind::wood) continue;
+        ++trees;
+        const atlas::scene::ItemSpec& sp = g.specs[k];
+        CHECK(sp.y == it.h * 0.7);
+        CHECK(sp.min_depth == 4.0F);
+        CHECK((sp.flags & atlas::scene::item_flag::radius) != 0);
+        CHECK(((sp.order & ((std::uint64_t{1} << 37U) - 1)) >> 16U) >= gm::wood_index_base);
+        // its clumps as woods.draw draws them from random.Random(id)
+        atlas::pymath::PyRandom rnd(it.id);
+        const double r = it.crown / 2;
+        for (std::size_t q = 0; q < 4; ++q) {
+            const double ang = rnd.uniform(0.0, 2 * atlas::pymath::pi);
+            const double rad = r * 0.42 * atlas::pymath::sqrt(rnd.random());
+            const double dy = rnd.uniform(-0.25, 0.25) * r;
+            const double rr = r * rnd.uniform(0.5, 0.66);
+            CHECK(it.clumps.at(4 * q) == static_cast<float>(rad * atlas::pymath::cos(ang)));
+            CHECK(it.clumps.at((4 * q) + 1) == static_cast<float>(dy));
+            CHECK(it.clumps.at((4 * q) + 2) == static_cast<float>(rad * atlas::pymath::sin(ang)));
+            CHECK(it.clumps.at((4 * q) + 3) == static_cast<float>(rr));
+            CHECK(atlas::pymath::hypot(rad, dy) < 2.2); // never behind the near plane where the tree is drawn
+        }
+        CHECK(it.crown >= 6.0);
+        CHECK(it.crown <= 9.0);
+    }
+    CHECK(trees == park.scene.woods.size());
+    CHECK(trees > 50); // a 130 by 90 m wood, one about every 8.5 m
+}
 
 TEST_CASE("items: a window's tower, turbine, cranes, masts, gantry, conveyor and power line, as draw_items gathers "
           "them") {

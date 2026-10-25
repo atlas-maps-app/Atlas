@@ -42,6 +42,12 @@ object Regions {
     /** `data/park`: a theme park's ride profiles (the JSON files in `<park>/pf`). */
     var parkRoot: File = File("data/park")
 
+    /**
+     * A test's planting of a park's or a zoo's woods in place of woods.py's about the view loaded (null: the renders'
+     * own): the engine plants them once for the region (rendertiles' PlantedWoods), which L1 gives the port to draw.
+     */
+    var woodsPlanting: ((Dict) -> List<Dict>)? = null
+
     /** `cache/render`: where the street renderer wrote its cameras (`<name>_cfg.json`), read by [cfgFor] for street-level views. */
     var streetCfgDir: File = File("cache/render")
 
@@ -550,12 +556,12 @@ object Regions {
             }
             S["coasters"] = Coasters.load(raw, Amsterdam::XZ, buildings + parts, hts, kinds)
             val cv = cfgFor(view); val tg = cv["target"] as List<Any?>
-            S["woods"] = Woods.plant(S, d(tg[0]), d(tg[2]), d(cv["radius"])) // its woods: generic trees inside the mapped outlines, off everything mapped in them
+            S["woods"] = woodsPlanting?.invoke(S) ?: Woods.plant(S, d(tg[0]), d(tg[2]), d(cv["radius"])) // its woods: generic trees inside the mapped outlines, off everything mapped in them
         }
         if (truthy(R["zoo"])) {
             // a zoo: its planted woods and shrubberies, the same generic trees inside the mapped outlines (the mapped trees stay as they are)
             val cv = cfgFor(view); val tg = cv["target"] as List<Any?>
-            S["woods"] = Woods.plant(S, d(tg[0]), d(tg[2]), d(cv["radius"]))
+            S["woods"] = woodsPlanting?.invoke(S) ?: Woods.plant(S, d(tg[0]), d(tg[2]), d(cv["radius"]))
         }
         S["over"] = { cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, defs: MutableList<String> -> drawOver(S, cam, th, far, defs, light) } as Amsterdam.SceneLayer
         S["items"] = { cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, defs: MutableList<String> -> drawItems(S, cam, th, far, defs) } as Amsterdam.SceneItems

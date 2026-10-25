@@ -48,8 +48,8 @@ struct RegionConfig {
     /// A theme park's rides' profiles (region.json's `park`: data/park/<park>/pf), whose coaster tracks it loads; null
     /// for a region that is no theme park.
     const RideProfiles* park = nullptr;
-    /// Whether it plants its woods: a theme park or a zoo (region.json's `park` or `zoo`).
-    bool woods = false;
+    /// Where a theme park or a zoo (region.json's `park` or `zoo`) plants its woods about; none for another region.
+    std::optional<WoodsAnchor> woods;
 };
 
 /// regions.py's PALETTE for a region (Paris, Schiphol, the port), else Amsterdam's.

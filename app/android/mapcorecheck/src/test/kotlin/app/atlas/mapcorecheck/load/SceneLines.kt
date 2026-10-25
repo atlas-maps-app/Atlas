@@ -1,11 +1,9 @@
 package app.atlas.mapcorecheck.load
 
-import app.atlas.render.Amsterdam
 import app.atlas.render.Coasters
 import app.atlas.render.PoiStyle
 import app.atlas.render.V2
 import app.atlas.render.py.Dict
-import app.atlas.rendertiles.compile.PlantedWoods
 import org.junit.Assert.assertTrue
 import java.io.File
 import java.util.IdentityHashMap
@@ -277,8 +275,8 @@ internal object SceneLines {
                     .field("pts").points(tr.pts).field("ys").reals(tr.ys).toString(),
             )
         }
-        // a park's or a zoo's woods as the engine plants them, once for the region (the port's own woods are the view's)
-        for ((i, t) in PlantedWoods.of(S, Amsterdam.LAT0, Amsterdam.LON0, Amsterdam.KX, Amsterdam.KZ).withIndex()) {
+        // a park's or a zoo's woods: the scene is loaded whole, so its own are the engine's (planted once for the region)
+        for ((i, t) in dicts(S["woods"]).withIndex()) {
             yield(
                 Line("wood", i).field("x").real(t["x"]).field("z").real(t["z"]).field("h").real(t["h"]).field("crown").real(t["crown"])
                     .field("id").integer(t["id"]).toString(),

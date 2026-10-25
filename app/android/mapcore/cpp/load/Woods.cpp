@@ -111,17 +111,6 @@ private:
 
 } // namespace
 
-double woods_radius(const tiles::Frame& frame, const std::array<double, 4>& bbox) noexcept {
-    double far = 0.0;
-    for (const double lat : {bbox[0], bbox[2]}) {
-        for (const double lon : {bbox[1], bbox[3]}) {
-            const V2 p = load::xz(frame, lat, lon);
-            far = std::max(far, pm::hypot(p.x, p.z));
-        }
-    }
-    return 2.0 * std::ceil((far + 40.0) / 2.0);
-}
-
 std::vector<WoodTree> plant_woods(const Scene& s, double cx, double cz, double rad) {
     constexpr double spacing = 8.5;
     Grid g(cx - rad, cx + rad, cz - rad, cz + rad);

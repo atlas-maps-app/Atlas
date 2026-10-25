@@ -1,15 +1,19 @@
 #include "geometry/Items.hpp"
 
 #include "base/pymath/PyMath.hpp"
+#include "base/pymath/PyRandom.hpp"
 #include "load/Real.hpp"
 #include "tiles/layers/Lines.hpp"
 #include "tiles/layers/Points.hpp"
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <optional>
+#include <span>
 #include <string_view>
+#include <vector>
 
 namespace atlas::geometry {
 
@@ -18,23 +22,27 @@ namespace {
 namespace tl = atlas::tiles;
 
 /// The item layer's sources (rendertiles' Schema.ITEM): S['cranes'] 0, S['masts'] 1, S['mtowers'] 2, S['towers'] 3
-/// (pylons: their lines draw their towers), S['turbines'] 4.
+/// (pylons: their lines draw their towers), S['turbines'] 4, the woods' trees 5.
 constexpr std::int64_t source_crane = 0;
 constexpr std::int64_t source_mast = 1;
 constexpr std::int64_t source_tower = 2;
 constexpr std::int64_t source_turbine = 4;
+constexpr std::int64_t source_wood = 5;
 
-/// The line layer's sources: S['power'] 4, S['gantries'] 7, S['conveyors'] 8.
+/// The line layer's sources: S['power'] 4, S['gantries'] 7, S['conveyors'] 8, S['coasters'] 9.
 constexpr std::int64_t line_power = 4;
 constexpr std::int64_t line_gantry = 7;
 constexpr std::int64_t line_conveyor = 8;
+constexpr std::int64_t line_coaster = 9;
 
 /// An owner's kinds in scene::owner_key (AnchorItems' OwnerType).
 constexpr std::uint8_t owner_node = 1;
 constexpr std::uint8_t owner_way = 2;
 
-/// draw_items' `c[2] < 5: continue`.
+/// draw_items' `c[2] < 5: continue`; coasters.draw's `c[2] < 3` and woods.draw's `c[2] < 4`.
 constexpr float least_depth = 5.0F;
+constexpr float coaster_depth = 3.0F;
+constexpr float wood_depth = 4.0F;
 
 /// A crane's form in the item layer's `crane` column: 2 a yard gantry (1 a ship-to-shore crane).
 constexpr std::int64_t crane_yard = 2;
@@ -58,7 +66,8 @@ constexpr std::int64_t crane_yard = 2;
 void points(const tl::Layer& layer, const tl::Frame& frame, std::uint16_t kind, TileRegionItems& out) {
     for (std::uint32_t i = 0; i < layer.count; ++i) {
         const std::int64_t source = layer.integer(tl::item::source, i);
-        if (source != source_tower && source != source_turbine && source != source_mast && source != source_crane) {
+        if (source != source_tower && source != source_turbine && source != source_mast && source != source_crane &&
+            source != source_wood) {
             continue;
         }
         RegionItem it;
@@ -73,7 +82,32 @@ void points(const tl::Layer& layer, const tl::Frame& frame, std::uint16_t kind, 
         double reach = 0; // what it draws about its axis
         double up = 0;    // and above or below that point
         std::uint8_t owner = owner_node;
-        if (source == source_crane) {
+        std::uint32_t place = it.index; // its place in its group
+        if (source == source_wood) {
+            // woods.draw: c = cam.cam((x, h * 0.7, z)), from 4 m; r = crown / 2: its clumps within 0.42 r of its axis
+            // and up to 0.66 r across, their lit tops 0.3 r toward the sun, a glint beyond; random.Random(id)'s draws
+            it.kind = RegionItemKind::wood;
+            it.h = h.value_or(0.0);
+            it.crown = layer.decimal(tl::item::crown, i).value_or(0.0);
+            // ang = rnd.uniform(0, 2 * math.pi); rad = r * 0.42 * math.sqrt(rnd.random()); by = h * 0.7 +
+            // rnd.uniform(-0.25, 0.25) * r; rr = r * rnd.uniform(0.5, 0.66) * s
+            pymath::PyRandom rnd(it.id);
+            const double r = it.crown / 2;
+            for (std::size_t k = 0; k < 4; ++k) {
+                const double ang = rnd.uniform(0.0, 2 * pymath::pi);
+                const double rad = r * 0.42 * pymath::sqrt(rnd.random());
+                const double dy = rnd.uniform(-0.25, 0.25) * r;
+                const double rr = r * rnd.uniform(0.5, 0.66);
+                it.clumps.at(4 * k) = static_cast<float>(rad * pymath::cos(ang));
+                it.clumps.at((4 * k) + 1) = static_cast<float>(dy);
+                it.clumps.at((4 * k) + 2) = static_cast<float>(rad * pymath::sin(ang));
+                it.clumps.at((4 * k) + 3) = static_cast<float>(rr);
+            }
+            y = it.h * 0.7;
+            reach = 1.5 * (it.crown / 2);
+            up = 1.3 * (it.crown / 2);
+            place = wood_index_base + it.index;
+        } else if (source == source_crane) {
             // the form stage P derived (draw_items' to_water, its yard's axes); H = num(t.get('height'), 44.0) on a
             // quay, 26.0 in a yard; c = cam.cam((x, 15.0, z)). On a quay its boom reaches from 22 m behind its axis to
             // dw + 52 m toward the water, its legs 8.8 m either side, its A-frame to H + 20; in a yard it spans hu by
@@ -126,11 +160,11 @@ void points(const tl::Layer& layer, const tl::Frame& frame, std::uint16_t kind, 
                              .offset = 0.0,
                              .cut_x = it.x,
                              .cut_z = it.z,
-                             .order = order(it.kind, it.index, 0),
+                             .order = order(it.kind, place, 0),
                              .kind = kind,
                              .flags = scene::item_flag::radius,
                              .slots = {},
-                             .min_depth = least_depth,
+                             .min_depth = it.kind == RegionItemKind::wood ? wood_depth : least_depth,
                              .radius = sphere(reach, up),
                              .tile = 0,
                              .owner = scene::owner_key(owner, static_cast<std::uint64_t>(it.id))});
@@ -140,10 +174,86 @@ void points(const tl::Layer& layer, const tl::Frame& frame, std::uint16_t kind, 
     }
 }
 
+/// A coaster track's pieces: coasters.draw's subdivide(tr['pts'], tr['ys'], 3.0), each piece an item at its middle (its
+/// heights' mean), from 3 m; the track's points its radius cut tests.
+void coaster(const tl::Layer& layer, const tl::Frame& frame, std::uint16_t kind, std::uint32_t i,
+             TileRegionItems& out) {
+    const tl::RingView r = layer.ring(tl::line::line, i);
+    const std::span<const std::int64_t> bits = layer.ids(tl::line::ys, i);
+    if (r.size() < 2 || bits.size() != r.size()) return;
+    std::vector<std::array<double, 2>> pts;
+    std::vector<double> ys;
+    for (std::size_t k = 0; k < r.size(); ++k) {
+        pts.push_back({frame.x(r.lon[k]), frame.z(r.lat[k])});
+        ys.push_back(std::bit_cast<double>(bits[k]));
+    }
+    const std::string_view name = layer.string(tl::line::kind, i).value_or("steel");
+    const std::uint8_t ck = name == "wood" ? 1 : (name == "mono" ? 2 : 0);
+    const auto index = static_cast<std::uint32_t>(layer.integer(tl::line::index, i));
+    CoasterTrackSpan span{.first = static_cast<std::uint32_t>(out.items.size()), .count = 0, .kind = ck, .cut = {}};
+    for (std::size_t k = 0; k < pts.size(); k += 4) span.cut.push_back(pts[k]); // tr['pts'][::4] + [tr['pts'][-1]]
+    span.cut.push_back(pts.back());
+    std::vector<std::array<double, 2>> p{pts[0]};
+    std::vector<double> y{ys[0]};
+    for (std::size_t k = 1; k < pts.size(); ++k) {
+        const std::array<double, 2>& a = pts[k - 1];
+        const std::array<double, 2>& b = pts[k];
+        const std::int64_t n = std::max<std::int64_t>(1, pymath::to_int(pymath::dist(a, b) / coaster_step));
+        for (std::int64_t q = 1; q <= n; ++q) {
+            const double f = static_cast<double>(q) / static_cast<double>(n);
+            p.push_back({a[0] + ((b[0] - a[0]) * f), a[1] + ((b[1] - a[1]) * f)});
+            y.push_back(ys[k - 1] + ((ys[k] - ys[k - 1]) * f));
+        }
+    }
+    const auto track = static_cast<std::uint32_t>(out.tracks.size());
+    for (std::size_t k = 1; k < p.size(); ++k) {
+        RegionItem it;
+        it.kind = RegionItemKind::coaster;
+        it.index = index;
+        it.segment = static_cast<std::uint32_t>(k - 1);
+        it.x = p[k - 1][0];
+        it.z = p[k - 1][1];
+        it.bx = p[k][0];
+        it.bz = p[k][1];
+        it.ya = y[k - 1];
+        it.yb = y[k];
+        it.h = std::max(it.ya, it.yb);
+        it.track = track;
+        it.coaster = ck;
+        // m = ((a[0] + b[0]) / 2, (ya + yb) / 2, (a[1] + b[1]) / 2); its post down to the ground, a brace back to the
+        // post before
+        const double mx = (it.x + it.bx) / 2;
+        const double mz = (it.z + it.bz) / 2;
+        out.specs.push_back({.x = mx,
+                             .y = (it.ya + it.yb) / 2,
+                             .z = mz,
+                             .offset = 0.0,
+                             .cut_x = mx,
+                             .cut_z = mz,
+                             .order = order(it.kind, index, it.segment),
+                             .kind = kind,
+                             .flags = 0,
+                             .slots = {},
+                             .min_depth = coaster_depth,
+                             .radius = sphere((pymath::dist(p[k - 1], p[k]) / 2) + 12.0, it.h + 2.0),
+                             .tile = 0,
+                             .owner = scene::owner_key(owner_way, 0)});
+        const std::uint32_t slots = region_item_slots(it);
+        out.specs.back().slots = {slots, slots, slots, slots};
+        out.items.push_back(it);
+    }
+    span.count = static_cast<std::uint32_t>(out.items.size()) - span.first;
+    out.tracks.push_back(std::move(span));
+}
+
 void lines(const tl::Layer& layer, const tl::Frame& frame, std::uint16_t kind, TileRegionItems& out) {
     std::vector<std::array<double, 2>> pts;
     for (std::uint32_t i = 0; i < layer.count; ++i) {
         const std::int64_t source = layer.integer(tl::line::source, i);
+        if (source == line_coaster) {
+            coaster(layer, frame, kind, i, out);
+            continue;
+        }
         if (source != line_power && source != line_gantry && source != line_conveyor) continue;
         const tl::RingView r = layer.ring(tl::line::line, i);
         if (r.size() < 2) continue;
@@ -233,6 +343,8 @@ std::uint32_t region_item_slots(const RegionItem& item) noexcept {
     case RegionItemKind::gantry: return 15;
     case RegionItemKind::conveyor: return 5 * (item.gaps + 2);
     case RegionItemKind::power: return 2;
+    case RegionItemKind::coaster: return 4;
+    case RegionItemKind::wood: return 9;
     }
     return 0;
 }

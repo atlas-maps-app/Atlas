@@ -46,9 +46,11 @@ static const uint ITEM_MAST = 3u;
 static const uint ITEM_GANTRY = 4u;
 static const uint ITEM_CONVEYOR = 5u;
 static const uint ITEM_POWER = 6u;
+static const uint ITEM_COASTER = 7u; // a 3 m piece of a coaster track
+static const uint ITEM_WOOD = 8u;    // a tree a park or a zoo plants in its woods
 
-/// An item's uint4 in the points heap.
-static const uint ITEM_VECTORS = 3u;
+/// An item's uint4 in the points heap: three, then a wood's tree's four clumps (geometry::RegionItem::clumps).
+static const uint ITEM_VECTORS = 7u;
 
 /// An item's flags (its first uint4's w, above its kind's byte).
 static const uint ITEM_CAB = 256u;       // a tower's glazed cab
@@ -56,19 +58,25 @@ static const uint ITEM_LIGHTING = 512u;  // a mast's frame of floodlights
 static const uint ITEM_LEGS_A = 1024u;   // a gantry's legs at its segment's first end
 static const uint ITEM_LEGS_B = 2048u;   // and at its second
 static const uint ITEM_YARD = 4096u;     // a crane in a yard (a portal gantry); else on a quay (ship-to-shore)
+static const uint ITEM_WOODEN = 8192u;   // a wooden coaster's piece (its posts every 2.6 m, braced)
+static const uint ITEM_MONO = 16384u;    // a monorail's
 
 /// A job's flags: its kind in bits 0 to 3.
 static const uint ITEM_JOB_KIND = 15u;
 static const uint ITEM_JOB_NIGHT = 16u;
 static const uint ITEM_JOB_HIGH = 32u; // the towers' gradients' middle stop at .65: the sun on the camera's right
 static const uint ITEM_JOB_FADE = 64u; // a power line's segment fading: its tower drawn translucent, at its fade
+static const uint ITEM_JOB_POST = 128u;   // a coaster's piece with a post at its second end
+static const uint ITEM_JOB_BRACES = 256u; // and braces back to the post before it (a wooden coaster's)
+static const uint ITEM_JOB_SUN = 512u;    // the sun lights the woods' clumps' tops (by day, L[1] > 0.05)
 static const uint ITEM_JOB_VECTORS = 5u;
 
 /// The moment's table (passes::item_tones: each colour by day or at night as the port picks it, 0xBBGGRR): the towers'
 /// gradients' three stops for the shaft, the glass, the gallery and the antenna; a turbine's tower, blades, their
 /// stroke, hub and night light; a power line's tower and conductors; a mast's glow's core, its glow's three stops'
 /// colours and opacities; the turbine's light's, the conductors' opacity and width, the blades' stroke's width; each
-/// blade's cos and sin of its angle and of it plus 0.06; the wind's (fx, fz); the steel unlit (a crane's stays).
+/// blade's cos and sin of its angle and of it plus 0.06; the wind's (fx, fz); the steel unlit (a crane's stays); a
+/// coaster's lit top and dark side by its kind; the woods' five greens' dark, mid and high tones; the sun's vector.
 /// Floats as their bits.
 static const uint ITEM_TONE_TOWER = 0u;
 static const uint ITEM_TONE_TURBINE = 12u;
@@ -83,7 +91,10 @@ static const uint ITEM_TONE_BLADE_WIDTH = 29u;
 static const uint ITEM_TONE_BLADES = 30u;
 static const uint ITEM_TONE_WIND = 42u;
 static const uint ITEM_TONE_STEEL = 44u;
-static const uint ITEM_TONES = 45u;
+static const uint ITEM_TONE_COASTER = 45u; // steel, wood, mono: each its lit top and its dark side
+static const uint ITEM_TONE_WOODS = 51u;   // the five generic greens: each its dark, its mid and its high tone
+static const uint ITEM_TONE_SUN = 66u;     // the sun's vector L, three floats
+static const uint ITEM_TONES = 69u;
 
 /// A job's own words (the frame's extra list, at the job's `extra`): its boxes' colours by their faces' normals (+u, -u,
 /// +v, -v, up; their first colour then their second: the steel, and a mast's floodlights, a crane's machinery or a
@@ -155,6 +166,12 @@ inline uint item_part_count(uint kind) {
     if (kind == ITEM_CRANE) {
         return 2u; // a ship-to-shore crane's stays
     }
+    if (kind == ITEM_COASTER) {
+        return 3u; // its post, its underside, its top
+    }
+    if (kind == ITEM_WOOD) {
+        return 9u; // its four clumps, their four lit tops, a glint
+    }
     if (kind == ITEM_MAST) {
         return 1u; // the glow's core
     }
@@ -173,6 +190,9 @@ inline uint item_side_count(uint kind) {
     }
     if (kind == ITEM_POWER) {
         return 13u; // the tower while fading, the conductors' twelve segments
+    }
+    if (kind == ITEM_COASTER) {
+        return 2u; // a wooden coaster's braces, one path at .85
     }
     return 0u;
 }
@@ -207,6 +227,13 @@ inline ItemWords item_words(uint4 a, uint4 b, uint4 c) {
     w.u = u;
     w.v = v;
     return w;
+}
+
+/// A wood's tree's clump value `i` (0 to 15: each clump's dx, dy, dz and radius over s) of its words' last four.
+inline float item_draw(uint4 d0, uint4 d1, uint4 d2, uint4 d3, uint i) {
+    uint4 v = i < 4u ? d0 : (i < 8u ? d1 : (i < 12u ? d2 : d3));
+    uint k = i & 3u;
+    return asfloat(k == 0u ? v.x : (k == 1u ? v.y : (k == 2u ? v.z : v.w)));
 }
 
 /// A job: its tile's place, its item's words in the points heap, its flags, its first painter slot, its first records

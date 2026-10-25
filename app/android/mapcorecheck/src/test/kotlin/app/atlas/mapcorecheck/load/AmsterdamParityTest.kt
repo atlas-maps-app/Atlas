@@ -41,12 +41,12 @@ internal object LoadHost {
 
     /**
      * A region's load of [raw] at [tolerance] in the frame and box given (the port's after its configure), a theme park's rides'
-     * profiles from the folder [rides] (null for none), its woods planted where [woods], written to [out] as canonical lines:
-     * `lines=… buildings=… land=… load_ms=…`, or `error=…`.
+     * profiles from the folder [rides] (null for none), its woods planted about [woods] (their anchor: x, z, reach; null for
+     * none), written to [out] as canonical lines: `lines=… buildings=… land=… load_ms=…`, or `error=…`.
      */
     @JvmStatic external fun dumpRegion(
         raw: String, out: String, name: String, lat0: Double, lon0: Double, kx: Double, kz: Double,
-        south: Double, west: Double, north: Double, east: Double, tradition: ByteArray?, rides: String?, woods: Boolean,
+        south: Double, west: Double, north: Double, east: Double, tradition: ByteArray?, rides: String?, woods: DoubleArray?,
         tolerance: Double,
     ): String
 

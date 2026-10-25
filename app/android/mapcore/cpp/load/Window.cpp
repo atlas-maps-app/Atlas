@@ -147,7 +147,9 @@ std::expected<BuiltWindow, WindowError> build_window(const osm::Document& doc, c
                               .frame = place.frame,
                               .bbox = box,
                               .tradition = tradition,
-                              .palette = region_palette(place.region)};
+                              .palette = region_palette(place.region),
+                              .park = place.park,
+                              .woods = place.woods};
     BuiltWindow out;
     const auto t0 = clock::now();
     // One scene at a time (ENGINE.md step 3's budget for a window's memory): the attributes of the scene at tolerance

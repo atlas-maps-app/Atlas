@@ -244,7 +244,26 @@
         "conductor_day": "#4A4F57",
         "conductor_night": "#1A1E26",
         "conductor_width": 0.45,
-        "conductor_opacity": 0.8
+        "conductor_opacity": 0.8,
+        // coasters.py's COL and NIGHT: a steel, a wooden and a monorail's track's top (lit as a face up) and its side
+        // (unlit, as a face south) by day and at night; woods.py's five generic greens, so a wood is not one colour
+        "coaster_steel_top_day": "#E6E3DC",
+        "coaster_steel_side_day": "#5F656D",
+        "coaster_steel_top_night": "#2A2E36",
+        "coaster_steel_side_night": "#1A1D22",
+        "coaster_wood_top_day": "#B9925E",
+        "coaster_wood_side_day": "#8A6640",
+        "coaster_wood_top_night": "#2E261C",
+        "coaster_wood_side_night": "#1E1912",
+        "coaster_mono_top_day": "#D6D2C8",
+        "coaster_mono_side_day": "#8C877C",
+        "coaster_mono_top_night": "#2A2A2A",
+        "coaster_mono_side_night": "#1A1A1A",
+        "woods_green_1": "#3F5E34",
+        "woods_green_2": "#4A6538",
+        "woods_green_3": "#435F3C",
+        "woods_green_4": "#526A3A",
+        "woods_green_5": "#4B5F33"
     },
 
     // closeup.py's FORMS: a crown's form by the first word of its genus (or species, or taxon), lowercased; any other

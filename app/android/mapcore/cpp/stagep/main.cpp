@@ -8,9 +8,11 @@
 // rules), the levels it holds, its frame's four doubles (lat0, lon0, kx, kz) as their IEEE-754 bits in hex (the port's
 // own doubles: kx from CrMath.cos), the port's engine version, the element pack's SHA-256, and for a region its
 // region.json as the packer unpacked it into the region's folder (its box, tradition, time zone and views, read as
-// Python's json reads them) and the folder of the parks' ride profiles (`park_root`: a theme park's, R's park, are in
-// <park_root>/<park>/pf). The core takes the rest from there (load/PackHead.hpp): the views and the tolerances the
-// variants load at (the views' and the live map's bands'), the head and the style.
+// Python's json reads them), the folder of the parks' ride profiles (`park_root`: a theme park's, R's park, are in
+// <park_root>/<park>/pf) and where a park or a zoo plants its woods about (`woods`: the centre of the region's box and
+// its half-diagonal, three doubles' bits, as the packer's PlantedWoods computes them). The core takes the rest from
+// there (load/PackHead.hpp): the views and the tolerances the variants load at (the views' and the live map's bands'),
+// the head and the style.
 //
 // `out` gets, by a file beside it renamed once whole, little-endian: `ATSP` and the format (2), the tiles' count, then
 // per tile in the cut's order its level (u8), column and row (u32), its features (u32), its reach (south, west, north,
@@ -302,7 +304,18 @@ private:
         // a theme park's rides' profiles, whose coaster tracks it loads; a park's or a zoo's woods
         const std::optional<tl::Value> zoo = region_json->root().find("zoo");
         const std::optional<tl::Value> park = region_json->root().find("park");
-        config->woods = (park && truthy(*park)) || (zoo && truthy(*zoo));
+        if ((park && truthy(*park)) || (zoo && truthy(*zoo))) {
+            // the woods' anchor the packer computed (its whole camera): three doubles' bits, as the frame's
+            const std::optional<tl::Value> anchor = j.find("woods");
+            if (!anchor || anchor->size() != 3) return std::unexpected(input("the job names no woods' anchor"));
+            std::array<double, 3> a{};
+            for (std::size_t k = 0; k < 3; ++k) {
+                const std::optional<double> v = from_bits(anchor->child(k).string().value_or(""));
+                if (!v) return std::unexpected(input("the job's woods' anchor holds something other than a double"));
+                a.at(k) = *v;
+            }
+            config->woods = load::WoodsAnchor{.cx = a[0], .cz = a[1], .reach = a[2]};
+        }
         if (park && truthy(*park)) {
             const std::optional<std::string_view> park_name = park->string();
             const std::optional<std::string_view> root = j.find("park_root").value_or(tl::Value()).string();

@@ -141,6 +141,7 @@ class StagePPackerTest {
                         put("source", "00ff")
                         put("region_json", File(folder, "region.json").path)
                         if (parkRoot != null) put("park_root", parkRoot.path)
+                        putJsonArray("woods") { for (d in listOf(0.0, 0.0, 500.0)) add(JsonPrimitive("%016x".format(d.toRawBits()))) }
                     }.toString(),
                 )
                 val p = ProcessBuilder(tool!!.path, "tiles", File(folder, "raw.json").path, job.path, File(dir, "$name.tiles").path).redirectErrorStream(true).start()

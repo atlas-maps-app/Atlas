@@ -120,7 +120,8 @@ struct ThingsStyle {
 /// lighting mast's floodlights and a conveyor's gallery by day and at night; a lighting mast's glow at night, its
 /// stops' colours and opacities, and its core; a turbine's tower, blades and their edges by day and at night, the
 /// edges' width (CSS px), its hub, its night light and its opacity; a power line's towers and conductors by day and at
-/// night, the conductors' width and opacity.
+/// night, the conductors' width and opacity; a coaster's track's top and side by its kind by day and at night; the
+/// woods' five greens.
 struct ItemsStyle {
     StyleRgb shaft = 0;
     DayNight glass;
@@ -148,6 +149,11 @@ struct ItemsStyle {
     DayNight conductor;
     float conductor_width = 0.0F;
     float conductor_opacity = 0.0F;
+    /// A coaster's track's top and side by its kind (steel, wood, mono), by day and at night.
+    std::array<DayNight, 3> coaster_top{};
+    std::array<DayNight, 3> coaster_side{};
+    /// The woods' five generic greens.
+    std::array<StyleRgb, 5> woods_greens{};
 };
 
 struct Style {

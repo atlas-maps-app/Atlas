@@ -9,7 +9,10 @@
 //   - a turbine: its tower, a closed path; its blades, one path of closed subpaths filled and stroked .4; its hub, a
 //     circle; at night its light, a circle at .9;
 //   - a power line's segment: its tower, an open subpath stroked (its fill SVG's black); its conductors, one path of
-//     open subpaths at .8; both in a group at the segment's fade where it fades.
+//     open subpaths at .8; both in a group at the segment's fade where it fades;
+//   - a coaster's piece: its post, an open subpath stroked; a wooden coaster's braces, one path of two at .85; its
+//     underside and its top, round-capped;
+//   - a wood's tree: its clumps, circles in its dark tone, by sun their tops in its mid tone and a glint in its high.
 // Each of its records (the GPU's, in their order) can be kept for the tests.
 #pragma once
 
@@ -40,10 +43,10 @@ public:
     ItemTwin(const frame::FrameState& state, std::span<const std::uint32_t> tones, Stream& out);
 
     /// Emits item `item` of cover tile `tile` (its items `items`, their words `heap`: the tile's range of the points
-    /// heap), drawn with rank entry `rank` and choice `choice`, its own words `extra`; items go in the jobs' order, the
-    /// nearest first.
+    /// heap, which starts at its uint4 `base`), drawn with rank entry `rank` and choice `choice`, its own words
+    /// `extra`; items go in the jobs' order, the nearest first.
     void item(const scene::CoverTile& tile, const passes::ItemTile& items, std::span<const std::byte> heap,
-              std::uint32_t item, std::uint32_t rank, const passes::ItemChoice& choice,
+              std::uint32_t base, std::uint32_t item, std::uint32_t rank, const passes::ItemChoice& choice,
               std::span<const std::uint32_t> extra);
 
     /// Keeps the records the GPU writes for each item from here on, in its order: its faces, its opaque parts and its
@@ -65,6 +68,11 @@ private:
     void mast(const shaders::ItemJob& j, const shaders::ItemWords& w, hlsl::float3 foot,
               std::span<const std::uint32_t> extra, std::int32_t item);
     void turbine(const shaders::ItemJob& j, const shaders::ItemWords& w, hlsl::float3 foot, std::int32_t item);
+    void coaster(const shaders::ItemJob& j, const shaders::ItemWords& w, hlsl::float3 foot, hlsl::float3 end,
+                 std::span<const std::byte> heap, std::uint32_t base, std::span<const std::uint32_t> extra,
+                 std::int32_t item);
+    void wood(const shaders::ItemJob& j, const shaders::ItemWords& w, hlsl::float3 foot,
+              std::span<const hlsl::uint4> draws, std::int32_t item);
     void power(const shaders::ItemJob& j, const shaders::ItemWords& w, hlsl::float3 a, hlsl::float3 b,
                std::int32_t item);
     /// A face's path, as printed, filled (and stroked .25 where `stroked`) in `colour`.

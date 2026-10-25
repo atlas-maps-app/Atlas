@@ -43,6 +43,7 @@ namespace atlas::passes {
 /// A tile's region items as the pass keeps them (PassTile::cpu): each as stage T made it, in double.
 struct ItemTile {
     std::vector<geometry::RegionItem> items;
+    std::vector<geometry::CoasterTrackSpan> tracks; ///< its coaster tracks' pieces among the items
 };
 
 /// The points heap's words of a tile's items (items.slangh's ITEM_VECTORS each: its foot tile-local and its kind and
@@ -62,12 +63,13 @@ struct ItemChoice {
     float b = 0;
     float c = 0;
     float d = 0;
+    float e = 0; ///< a coaster's top's width (as printed)
 };
 [[nodiscard]] ItemChoice item_choice(const geometry::RegionItem& item, double depth, double focal, bool night);
 
 /// The moment's tones (items.slangh's table, ITEM_TONES words): the port's colours by day or at night, the towers'
 /// gradients' stops mixed toward the moment's shadow, the turbines' blades' angles and the hour's wind.
-inline constexpr std::size_t item_tone_count = 45;
+inline constexpr std::size_t item_tone_count = 69;
 using ItemTones = std::array<std::uint32_t, item_tone_count>;
 [[nodiscard]] ItemTones item_tones(const style::ThemeBlock& theme, const shaders::Theme& th,
                                    const tiles::ItemsStyle& style);
@@ -142,6 +144,8 @@ private:
         double az = 0;
         double bx = 0;
         double bz = 0;
+        /// A wooden coaster's piece with braces: the tile's item whose post they lead back to.
+        std::uint32_t prev_post = 0;
     };
     /// The items the ranks draw this frame and the port draws, the nearest first.
     void drawn(const frame::FrameState& state, std::vector<Drawn>& out) const;

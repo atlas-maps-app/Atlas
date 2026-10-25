@@ -18,7 +18,9 @@
 // A window builds within about 50 MB on a mid-range phone in a few seconds (ENGINE.md's budget), on a worker.
 #pragma once
 
+#include "load/Coasters.hpp"
 #include "load/Tradition.hpp"
+#include "load/Woods.hpp"
 #include "osm/Overpass.hpp"
 #include "tiles/Checksums.hpp"
 #include "tiles/Chunks.hpp"
@@ -71,6 +73,10 @@ struct WindowPlace {
     std::optional<std::string_view> tradition; ///< render/traditions/<name>.json, compiled into the core
     std::string_view zone = "UTC";
     std::int32_t tz_h = 0;
+    /// A theme park's rides (its coaster tracks load) and whether it plants its woods, as a region with a park or a zoo
+    /// does: a test's window of a park; the phone's windows have neither.
+    const RideProfiles* park = nullptr;
+    std::optional<WoodsAnchor> woods;
 };
 
 /// The place of window `tile` anywhere: frame_of's frame, its country at its centre, that country's tradition and

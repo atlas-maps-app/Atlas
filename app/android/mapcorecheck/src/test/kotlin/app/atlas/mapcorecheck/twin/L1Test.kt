@@ -7,6 +7,7 @@ import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.mapcorecheck.frame.FrameHost
 import app.atlas.mapview.svg.SvgParser
 import app.atlas.render.Amsterdam
+import app.atlas.render.Regions
 import app.atlas.render.data.PackReader
 import app.atlas.render.live.EngineVersion
 import app.atlas.render.live.LiveCamera
@@ -14,6 +15,7 @@ import app.atlas.render.live.LiveEngine
 import app.atlas.render.live.LiveRegion
 import app.atlas.render.live.LiveView
 import app.atlas.render.live.Moment
+import app.atlas.render.py.Dict
 import app.atlas.rendertiles.compile.SceneToTiles
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -66,9 +68,15 @@ class L1Test {
     private val regions = listOf(
         "port" to listOf("port_close" to "sunny", "port_close" to "night", "port" to "sunny"),
         "schiphol" to listOf("schiphol_close" to "sunny", "schiphol_close" to "night", "schiphol" to "sunny"),
+        "efteling" to listOf("efteling" to "sunny", "efteling" to "night", "efteling_joris" to "sunny"),
+        "artis" to listOf("artis" to "sunny", "artis_gorilla" to "sunny", "artis_gorilla" to "night"),
     )
+
+    /** The regions whose survey the tiles cannot carry yet: drawn without it, by both sides. */
+    private val surveyed = setOf("port", "schiphol")
     private val work: File by lazy { Files.createTempDirectory("atlas-l1-regions").toFile().also { d -> Runtime.getRuntime().addShutdownHook(Thread { d.deleteRecursively() }) } }
     private val made = HashMap<String, Pair<File, LiveRegion>>()
+    private val wholeWoods = HashMap<String, List<Dict>>()
 
     /** Region [id]'s render pack, cut by the core's stage P (or the packer, as the same bytes) without its survey, and its region for the port, alike. */
     @Synchronized
@@ -76,8 +84,12 @@ class L1Test {
         AnchorCases.setUp()
         val tool = System.getProperty("atlas.stagep")?.let(::File)?.takeIf { it.canExecute() }
         val pack = File(work, "$id.atlas")
-        SceneToTiles.pack(element, pack, File(work, "engine-$id"), core = tool, survey = false) { println("L1 $id: $it") }
-        pack to PackReader.open(element).use { LiveEngine.open(SceneToTiles.withoutSurvey(it), "${element.length()} without its survey") }
+        // without its survey where the tiles cannot carry it; a park's or a zoo's from its pack itself (its rides' profiles)
+        val survey = id !in surveyed
+        SceneToTiles.pack(element, pack, File(work, "engine-$id"), core = tool, survey = survey) { println("L1 $id: $it") }
+        pack to PackReader.open(element).use {
+            if (survey) LiveEngine.open(it, "${element.length()}") else LiveEngine.open(SceneToTiles.withoutSurvey(it), "${element.length()} without its survey")
+        }
     }
 
     private fun cases(): List<Case> {
@@ -138,6 +150,14 @@ class L1Test {
 
     /** The port's render of [case] (its layers parsed) and the theme block of the moment it drew. */
     private fun port(case: Case, region: LiveRegion): Pair<List<List<app.atlas.mapview.svg.SvgDocument>>, ByteBuffer> = LiveEngine.lock.withLock {
+        // a park's or a zoo's woods as the engine plants them, once for the region: the whole region's, which its pack
+        // carries (the renders plant about each view, in the scene loaded for it)
+        val woods = wholeWoods.getOrPut(region.id) {
+            Regions.woodsPlanting = null
+            @Suppress("UNCHECKED_CAST")
+            (LiveEngine.loadScene(region).S["woods"] as List<Dict>?) ?: emptyList()
+        }
+        Regions.woodsPlanting = { _ -> woods }
         val r = LiveEngine.render(region, case.view(region), Moment.Named(case.moment)) ?: error("${case.name}: the render was cancelled")
         val th = Amsterdam.THEMES.getValue(r.themeKey)
         val (az, el, sun) = Amsterdam.sunOf(th)

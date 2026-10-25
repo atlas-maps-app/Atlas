@@ -277,6 +277,15 @@ Result<Style> Style::of(const StyleTables& tables) {
     it.conductor = r.day_night(items, "items", "conductor_day", "conductor_night");
     it.conductor_width = number("conductor_width");
     it.conductor_opacity = number("conductor_opacity");
+    constexpr std::array<std::string_view, 3> coaster_kinds{"steel", "wood", "mono"};
+    for (std::size_t k = 0; k < coaster_kinds.size(); ++k) {
+        const std::string c = std::format("coaster_{}_", coaster_kinds.at(k));
+        it.coaster_top.at(k) = r.day_night(items, "items", c + "top_day", c + "top_night");
+        it.coaster_side.at(k) = r.day_night(items, "items", c + "side_day", c + "side_night");
+    }
+    for (std::size_t k = 0; k < it.woods_greens.size(); ++k) {
+        it.woods_greens.at(k) = r.colour(items, "items", std::format("woods_green_{}", k + 1));
+    }
     const auto names = r.table("canal_names");
     s.canal_names.fill = r.colour(names, "canal_names", "fill");
     s.canal_names.opacity = r.number(names, "canal_names", "opacity");

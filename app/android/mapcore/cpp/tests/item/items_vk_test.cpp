@@ -23,6 +23,7 @@
 #include "gpu/Frames.hpp"
 #include "gpu/Offscreen.hpp"
 #include "gpu/PipelineCache.hpp"
+#include "load/Amsterdam.hpp"
 #include "load/Window.hpp"
 #include "passes/Composite.hpp"
 #include "passes/Items.hpp"
@@ -588,6 +589,50 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
     return file.string();
 }
 
+/// A window about the Westerkerk as a theme park's (a test's: its rides' profiles and its woods): a steel coaster's
+/// loop (a lift hill, a run at layer 2 and a brake run meeting it), a wooden coaster's run, a monorail, and a wood of
+/// about a hundred trees; its pack written to the tests' scratch folder.
+[[nodiscard]] std::string park_window() {
+    const tiles::TileKey k = tiles::tile_of(14, 523'746'000, 48'840'000);
+    const std::string data = R"({"version": 0.6, "osm3s": {"timestamp_osm_base": "2026-10-22T18:00:00Z"}, "elements": [
+{"type": "node", "id": 1, "lat": 52.37455, "lon": 4.88385, "tags": {"attraction": "roller_coaster", "name": "Big One"}},
+{"type": "node", "id": 2, "lat": 52.37405, "lon": 4.88445, "tags": {"attraction": "roller_coaster", "name": "Woodie"}},
+{"type": "way", "id": 10, "tags": {"roller_coaster": "track", "roller_coaster:track": "lift_hill"}, "geometry": [
+  {"lat": 52.3744, "lon": 4.8836}, {"lat": 52.3744, "lon": 4.8841}, {"lat": 52.3747, "lon": 4.8841}]},
+{"type": "way", "id": 11, "tags": {"roller_coaster": "track", "layer": "2"}, "geometry": [
+  {"lat": 52.3747, "lon": 4.8841}, {"lat": 52.37472, "lon": 4.88385}, {"lat": 52.3747, "lon": 4.8836}]},
+{"type": "way", "id": 12, "tags": {"roller_coaster": "track", "roller_coaster:track": "brake_run"}, "geometry": [
+  {"lat": 52.3747, "lon": 4.8836}, {"lat": 52.3744, "lon": 4.8836}]},
+{"type": "way", "id": 13, "tags": {"roller_coaster": "track", "layer": "1"}, "geometry": [
+  {"lat": 52.3740, "lon": 4.8842}, {"lat": 52.3741, "lon": 4.8847}, {"lat": 52.3740, "lon": 4.8852}]},
+{"type": "way", "id": 14, "tags": {"railway": "monorail"}, "geometry": [
+  {"lat": 52.3738, "lon": 4.8830}, {"lat": 52.3739, "lon": 4.8838}]},
+{"type": "way", "id": 20, "tags": {"landuse": "forest"}, "geometry": [
+  {"lat": 52.3748, "lon": 4.8843}, {"lat": 52.3748, "lon": 4.8852}, {"lat": 52.3753, "lon": 4.8852},
+  {"lat": 52.3753, "lon": 4.8843}, {"lat": 52.3748, "lon": 4.8843}]}
+]})";
+    static const load::RideProfiles rides = [] {
+        load::RideProfiles r;
+        r.heights = {{"Big One", 30.0}, {"Woodie", 20.0}};
+        r.wooden = {{"Woodie", true}};
+        return r;
+    }();
+    load::WindowPlace place = load::place_of(k);
+    place.park = &rides;
+    // the woods about the window's tile, out to 1.2 km
+    const load::V2 centre = load::xz(place.frame, 52.3745, 4.8842);
+    place.woods = load::WoodsAnchor{.cx = centre.x, .cz = centre.z, .reach = 1200.0};
+    const auto built = load::build_window(std::as_bytes(std::span(data.data(), data.size())), k, place);
+    ATLAS_REQUIRE_OR_RETURN(std::string(), built.has_value(), built.error().what);
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "items-park";
+    std::filesystem::create_directories(folder);
+    const std::filesystem::path file = folder / "park.atlas";
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(built->pack.data()), // NOLINT: the pack's bytes as chars
+              static_cast<std::streamsize>(built->pack.size()));
+    return file.string();
+}
+
 /// A camera of the map at S1/2 (540 × 1200 px, 412 × 916 dp), looking at (lat, lon).
 [[nodiscard]] style::CameraState camera(double lat, double lon, double bearing, double pitch, double distance) {
     style::CameraState c = test::s1_camera(lat, lon, bearing, pitch, distance);
@@ -614,6 +659,20 @@ TEST_CASE("items: a window's tower, turbine, cranes, mast, gantry, conveyor and 
     check_frames(camera(52.3744, 4.8840, 200.0, 50.0, 380.0), "the window's items at night", packs, test::night(), 30);
     // far: the power line fading (1,200 to 2,000 m), its tower translucent
     check_frames(camera(52.3744, 4.8840, 120.0, 30.0, 1600.0), "the window's items far off", packs, test::sunny(), 3);
+}
+
+TEST_CASE("items: a park's coaster tracks and woods' trees on the host's Vulkan, pixel for pixel the exact shapes of "
+          "their twin") {
+    const std::string path = park_window();
+    ATLAS_REQUIRE(!path.empty());
+    const std::array<PackFile, 1> packs{
+        PackFile{.id = "window/" + load::place_of(tiles::tile_of(14, 523'746'000, 48'840'000)).name,
+                 .kind = tiles::PackKind::window,
+                 .path = path}};
+    // close by day: the tracks' posts and braces, the woods' clumps with their lit tops and glints
+    check_frames(camera(52.3745, 4.8842, 30.0, 50.0, 260.0), "the park by day", packs, test::sunny(), 30);
+    // at night: no lit tops
+    check_frames(camera(52.3745, 4.8842, 200.0, 45.0, 240.0), "the park at night", packs, test::night(), 30);
 }
 
 TEST_CASE("items: the canal ring's towers and masts on the host's Vulkan, pixel for pixel the exact shapes of their "

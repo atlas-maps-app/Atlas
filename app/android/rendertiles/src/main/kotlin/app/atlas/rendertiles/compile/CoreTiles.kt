@@ -62,6 +62,10 @@ object CoreTiles {
             // a theme park's rides' profiles, which LiveEngine unpacks from the element pack beside the region's own
             // folder (<work>/park/<park>/pf beside <work>/regions/<id>), where the port's load reads them
             if (!living) put("park_root", File(region.dir.parentFile.parentFile, "park").absolutePath)
+            // where a park or a zoo plants its woods about (PlantedWoods.anchor): three doubles' bits
+            if (!living && region.bbox != null) {
+                putJsonArray("woods") { for (d in PlantedWoods.anchor(region)) add(JsonPrimitive("%016x".format(d.toRawBits()))) }
+            }
         }.toString()
     }
 

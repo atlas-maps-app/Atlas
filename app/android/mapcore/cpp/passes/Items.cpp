@@ -21,7 +21,9 @@
 #include <algorithm>
 #include <bit>
 #include <cstring>
+#include <limits>
 #include <numeric>
+#include <optional>
 
 namespace atlas::passes {
 
@@ -80,6 +82,17 @@ constexpr double power_far = 2000.0;
     return {.x = a.x + ((b.x - a.x) * t), .y = a.y + ((b.y - a.y) * t), .z = a.z + ((b.z - a.z) * t)};
 }
 
+/// city.py's mulc: each channel times `s`.
+[[nodiscard]] shaders::double3 mulc(shaders::double3 a, double s) noexcept {
+    return {.x = a.x * s, .y = a.y * s, .z = a.z * s};
+}
+
+/// city.py's vnorm: each lane over sqrt(vdot(a, a)), summed left to right.
+[[nodiscard]] shaders::double3 vnorm(double x, double y, double z) noexcept {
+    const double l = pymath::sqrt((x * x) + (y * y) + (z * z));
+    return {.x = x / l, .y = y / l, .z = z / l};
+}
+
 /// A value as the port prints it: Python's round(v, places).
 [[nodiscard]] float printed(double v, int places) { return static_cast<float>(pymath::round(v, places)); }
 
@@ -116,6 +129,8 @@ std::vector<hlsl::uint4> item_words(const geometry::TileRegionItems& items, doub
         if (it.legs_a) flags |= shaders::ITEM_LEGS_A;
         if (it.legs_b) flags |= shaders::ITEM_LEGS_B;
         if (it.yard) flags |= shaders::ITEM_YARD;
+        if (it.coaster == 1) flags |= shaders::ITEM_WOODEN;
+        if (it.coaster == 2) flags |= shaders::ITEM_MONO;
         const double extra = it.kind == geometry::RegionItemKind::turbine ? it.rotor : static_cast<double>(it.gaps);
         out.push_back(
             hlsl::uint4{f32_bits(it.x - origin_x), f32_bits(0.0 - origin_y), f32_bits(it.z - origin_z), flags});
@@ -123,11 +138,25 @@ std::vector<hlsl::uint4> item_words(const geometry::TileRegionItems& items, doub
             // its half sizes, its height; its axes
             out.push_back(hlsl::uint4{f32_bits(it.hu), f32_bits(it.hv), f32_bits(it.h), 0U});
             out.push_back(hlsl::uint4{f32_bits(it.ux), f32_bits(it.uz), f32_bits(it.vx), f32_bits(it.vz)});
-            continue;
+        } else if (it.kind == geometry::RegionItemKind::coaster) {
+            // its second end, its heights at its ends
+            out.push_back(
+                hlsl::uint4{f32_bits(it.bx - origin_x), f32_bits(it.bz - origin_z), f32_bits(it.ya), f32_bits(it.yb)});
+            out.push_back(hlsl::uint4{0U, 0U, 0U, 0U});
+        } else if (it.kind == geometry::RegionItemKind::wood) {
+            // its crown, its height and its tone (id % 5); its draws after
+            out.push_back(hlsl::uint4{f32_bits(it.crown), 0U, f32_bits(it.h),
+                                      f32_bits(static_cast<double>(pymath::mod(it.id, std::int64_t{5})))});
+            out.push_back(hlsl::uint4{0U, 0U, 0U, 0U});
+        } else {
+            out.push_back(
+                hlsl::uint4{f32_bits(it.bx - origin_x), f32_bits(it.bz - origin_z), f32_bits(it.h), f32_bits(extra)});
+            out.push_back(hlsl::uint4{f32_bits(it.sag[0]), f32_bits(it.sag[1]), f32_bits(it.sag[2]), 0U});
         }
-        out.push_back(
-            hlsl::uint4{f32_bits(it.bx - origin_x), f32_bits(it.bz - origin_z), f32_bits(it.h), f32_bits(extra)});
-        out.push_back(hlsl::uint4{f32_bits(it.sag[0]), f32_bits(it.sag[1]), f32_bits(it.sag[2]), 0U});
+        for (std::size_t q = 0; q < it.clumps.size(); q += 4) {
+            out.push_back(hlsl::uint4{bits(it.clumps.at(q)), bits(it.clumps.at(q + 1)), bits(it.clumps.at(q + 2)),
+                                      bits(it.clumps.at(q + 3))});
+        }
     }
     return out;
 }
@@ -166,6 +195,23 @@ ItemChoice item_choice(const geometry::RegionItem& item, double depth, double fo
     case geometry::RegionItemKind::conveyor:
         // `if c[2] < 5 or cam.focal / c[2] < 0.3: continue`
         c.drawn = !(focal / depth < 0.3);
+        break;
+    case geometry::RegionItemKind::coaster: {
+        // s = cam.focal / c[2]; w = max(1.1, 1.7 * s), the top w * 0.72; a post '%.2f' % max(0.5, (0.5 if wood else
+        // 0.7) * s); braces max(0.25, 0.3 * s) (whether it has them, the render thread's walk along its track says)
+        c.drawn = true;
+        const double w = pymath::max(1.1, 1.7 * s);
+        c.a = static_cast<float>(s);
+        c.b = printed(w, 2);
+        c.c = printed(pymath::max(0.5, (item.coaster == 1 ? 0.5 : 0.7) * s), 2);
+        c.d = printed(pymath::max(0.25, 0.3 * s), 2);
+        c.e = printed(w * 0.72, 2);
+        break;
+    }
+    case geometry::RegionItemKind::wood:
+        // s = cam.focal / c[2] (whether its crown's centre lies in the picture, the render thread says)
+        c.drawn = true;
+        c.a = static_cast<float>(s);
         break;
     case geometry::RegionItemKind::power: {
         // fade = 1.0 if c[2] <= POWER_NEAR else (POWER_FAR - c[2]) / (POWER_FAR - POWER_NEAR); `if fade <= 0:
@@ -237,6 +283,25 @@ ItemTones item_tones(const style::ThemeBlock& theme, const shaders::Theme& th, c
     out[shaders::ITEM_TONE_WIND + 1] = f32_bits(-pymath::cos(wd));
     // a crane's stays: tohex(steel)
     out[shaders::ITEM_TONE_STEEL] = pick(style.steel);
+    // a coaster's track: lit = tohex(light(th, hx(top), (0, 1, 0), not night)), dark = tohex(light(th, hx(side), (0, 0,
+    // 1), False)), by its kind (COL by day, NIGHT at night)
+    const auto day_or_night = [night](const tiles::DayNight& c) { return night ? c.night : c.day; };
+    for (std::size_t k = 0; k < style.coaster_top.size(); ++k) {
+        const std::size_t at = shaders::ITEM_TONE_COASTER + (2 * k);
+        out.at(at) = lit_bgr(th, hx(day_or_night(style.coaster_top.at(k))), {.x = 0.0, .y = 1.0, .z = 0.0}, !night);
+        out.at(at + 1) = lit_bgr(th, hx(day_or_night(style.coaster_side.at(k))), {.x = 0.0, .y = 0.0, .z = 1.0}, false);
+    }
+    // the woods' greens: tohex(light(th, mulc(base, 0.6), (0, 1, 0), False)), tohex(light(th, base, vnorm((L[0], 0.8,
+    // L[2])), not night)), tohex(light(th, mulc(base, 1.12), vnorm((L[0], 0.6, L[2])), not night))
+    const std::array<double, 3>& l = theme.sun_vector;
+    for (std::size_t k = 0; k < style.woods_greens.size(); ++k) {
+        const shaders::double3 base = hx(style.woods_greens.at(k));
+        const std::size_t at = shaders::ITEM_TONE_WOODS + (3 * k);
+        out.at(at) = lit_bgr(th, mulc(base, 0.6), {.x = 0.0, .y = 1.0, .z = 0.0}, false);
+        out.at(at + 1) = lit_bgr(th, base, vnorm(l[0], 0.8, l[2]), !night);
+        out.at(at + 2) = lit_bgr(th, mulc(base, 1.12), vnorm(l[0], 0.6, l[2]), !night);
+    }
+    for (std::size_t k = 0; k < 3; ++k) out.at(shaders::ITEM_TONE_SUN + k) = f32_bits(l.at(k));
     return out;
 }
 
@@ -483,6 +548,7 @@ gpu::Result<void> Items::build(scene::TileBuild& b) const {
     b.out().ranges[0] = range;
     auto layout = std::make_shared<ItemTile>();
     layout->items = g.items;
+    layout->tracks = g.tracks;
     for (const scene::ItemSpec& item : g.specs) b.add_item(item);
     const std::size_t bytes = sizeof(ItemTile) + (g.items.size() * sizeof(geometry::RegionItem));
     b.keep(std::shared_ptr<const ItemTile>(std::move(layout)), bytes);
@@ -498,7 +564,10 @@ void Items::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
     const std::span<const scene::CoverTile> tiles = state.cover->tiles();
     const RadiusCut cut = radius_cut(state);
     const bool night = night_of(state.theme);
-    const double focal = state.view->camera().focal();
+    const view::Camera& camera = state.view->camera();
+    const double focal = camera.focal();
+    // woods.draw's sun: by day, the sun above the horizon (L[1] > 0.05)
+    const bool sun = !night && state.theme.sun_vector[1] > 0.05;
     for (std::size_t c = 0; c < tiles.size(); ++c) {
         const scene::CoverTile& t = tiles[c];
         if (t.drawn == nullptr || me >= t.drawn->passes.size()) continue;
@@ -510,19 +579,74 @@ void Items::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
         for (std::size_t e = 0; e < c && !seen; ++e) seen = tiles[e].drawn == t.drawn;
         if (seen) continue;
         const bool convert = state.ground_frame && *state.ground_frame != t.drawn->frame;
+        const auto drawn_point = [&](double x, double z) {
+            const view::Vec3 p{x, 0.0, z};
+            return convert ? view::convert(t.drawn->frame, *state.ground_frame, p) : p;
+        };
         const std::uint32_t first = first_region_item(*t.drawn, kind_);
         const std::span<const std::uint32_t> rows(t.drawn->rows);
+        // coasters.draw's walk along each track: its radius cut at every fourth of its points and its last; the pieces
+        // it draws (nearer than 3 m, an end nearer than the near plane, or both ends 40 px beyond the picture, not),
+        // and a post where the length drawn since the last reaches the gap and the piece's end stands over 2.2 m (a
+        // wooden coaster's braced back to the post before)
+        std::uint32_t walk_track = std::numeric_limits<std::uint32_t>::max();
+        bool walk_far = false;
+        double acc = 0.0;
+        std::optional<std::uint32_t> last_post;
+        const auto in_picture = [&](const view::Vec2& q, double margin) {
+            return -margin < q.x && q.x < camera.width() + margin && -margin < q.y && q.y < camera.height() + margin;
+        };
         for (std::uint32_t i = 0; i < items->items.size() && first + i < rows.size(); ++i) {
+            const geometry::RegionItem& it = items->items[i];
+            std::uint32_t walked = 0;
+            std::uint32_t prev_post = 0;
+            if (it.kind == geometry::RegionItemKind::coaster) {
+                if (it.track != walk_track) {
+                    walk_track = it.track;
+                    acc = 0.0;
+                    last_post.reset();
+                    walk_far = false;
+                    if (cut.on && it.track < items->tracks.size()) {
+                        walk_far =
+                            std::ranges::all_of(items->tracks[it.track].cut, [&](const std::array<double, 2>& p) {
+                                const view::Vec3 q = drawn_point(p[0], p[1]);
+                                return view::java_hypot(q.x - cut.x, q.z - cut.z) > cut.radius;
+                            });
+                    }
+                }
+                if (walk_far) continue;
+                const view::Vec3 ga = drawn_point(it.x, it.z);
+                const view::Vec3 gb = drawn_point(it.bx, it.bz);
+                const view::Vec3 m{(ga.x + gb.x) / 2, (it.ya + it.yb) / 2, (ga.z + gb.z) / 2};
+                if (camera.cam(m).z < 3) continue;
+                const std::optional<view::Vec2> pa = camera.proj({ga.x, it.ya, ga.z});
+                const std::optional<view::Vec2> pb = camera.proj({gb.x, it.yb, gb.z});
+                if (!pa || !pb || (!in_picture(*pa, 40) && !in_picture(*pb, 40))) continue;
+                const std::array<double, 2> a2{it.x, it.z};
+                const std::array<double, 2> b2{it.bx, it.bz};
+                acc += pymath::dist(a2, b2);
+                if (acc >= (it.coaster == 1 ? 2.6 : 7.5) && it.yb > 2.2) {
+                    acc = 0.0;
+                    if (camera.proj({gb.x, 0.0, gb.z})) {
+                        walked = shaders::ITEM_JOB_POST;
+                        if (it.coaster == 1 && last_post) {
+                            walked |= shaders::ITEM_JOB_BRACES;
+                            prev_post = *last_post;
+                        }
+                        last_post = i;
+                    }
+                }
+            }
             const std::uint32_t row = rows[first + i];
             const std::uint32_t rank = row < table.size() ? table[row] : shaders::RANK_NONE;
             if (rank == shaders::RANK_NONE) continue;
-            const geometry::RegionItem& it = items->items[i];
             Drawn d{.cover = static_cast<std::uint32_t>(c), .item = i, .rank = rank, .depth = depth[row]};
-            view::Vec3 a{it.x, 0.0, it.z};
-            view::Vec3 b{it.bx, 0.0, it.bz};
-            if (convert) {
-                a = view::convert(t.drawn->frame, *state.ground_frame, a);
-                b = view::convert(t.drawn->frame, *state.ground_frame, b);
+            const view::Vec3 a = drawn_point(it.x, it.z);
+            const view::Vec3 b = drawn_point(it.bx, it.bz);
+            // a wood's tree: `if not q0 or not (-30 < q0[0] < cam.W + 30 and -30 < q0[1] < cam.H + 30): continue`
+            if (it.kind == geometry::RegionItemKind::wood) {
+                const std::optional<view::Vec2> q0 = camera.proj({a.x, it.h * 0.7, a.z});
+                if (!q0 || !in_picture(*q0, 30)) continue;
             }
             d.ax = a.x;
             d.az = a.z;
@@ -538,6 +662,9 @@ void Items::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
             }
             d.choice = item_choice(it, d.depth, focal, night);
             if (!d.choice.drawn) continue;
+            d.choice.flags |= walked;
+            if (it.kind == geometry::RegionItemKind::wood && sun) d.choice.flags |= shaders::ITEM_JOB_SUN;
+            d.prev_post = prev_post;
             out.push_back(d);
         }
     }
@@ -574,7 +701,15 @@ void Items::update(const frame::FrameState& state) {
         const std::uint32_t ns = shaders::item_side_count(kind);
         if (faces + nf > max_records || parts + np > max_records || sides + ns > max_records) continue;
         const auto extra = static_cast<std::uint32_t>(extra_words_.size());
-        item_extra(it, camera, state.theme, state.block.theme, style->items, d.ax, d.az, d.bx, d.bz, extra_words_);
+        if (it.kind == geometry::RegionItemKind::coaster) {
+            // the post its braces lead back to (its item's words), its top's width
+            const bool braces = (d.choice.flags & shaders::ITEM_JOB_BRACES) != 0;
+            extra_words_.push_back(braces ? (mine.ranges[0].offset / 16) + (d.prev_post * shaders::ITEM_VECTORS)
+                                          : std::numeric_limits<std::uint32_t>::max());
+            extra_words_.push_back(bits(d.choice.e));
+        } else if (it.kind != geometry::RegionItemKind::wood) {
+            item_extra(it, camera, state.theme, state.block.theme, style->items, d.ax, d.az, d.bx, d.bz, extra_words_);
+        }
         const std::uint32_t flags = d.choice.flags | (high ? shaders::ITEM_JOB_HIGH : 0U);
         const std::uint32_t words[] = {bits(t.place.offset.x),
                                        bits(t.place.offset.y),
@@ -749,11 +884,19 @@ void Items::emit_records(const frame::FrameState& state, twin::Stream& out, std:
         const scene::PassTile& mine = t.drawn->passes[me];
         const ItemTile& list = *mine.cpu_as<ItemTile>();
         extra.clear();
-        item_extra(list.items[d.item], camera, state.theme, state.block.theme, style->items, d.ax, d.az, d.bx, d.bz,
-                   extra);
+        const geometry::RegionItem& it = list.items[d.item];
+        if (it.kind == geometry::RegionItemKind::coaster) {
+            const bool braces = (d.choice.flags & shaders::ITEM_JOB_BRACES) != 0;
+            extra.push_back(braces ? (mine.ranges[0].offset / 16) + (d.prev_post * shaders::ITEM_VECTORS)
+                                   : std::numeric_limits<std::uint32_t>::max());
+            extra.push_back(bits(d.choice.e));
+        } else if (it.kind != geometry::RegionItemKind::wood) {
+            item_extra(it, camera, state.theme, state.block.theme, style->items, d.ax, d.az, d.bx, d.bz, extra);
+        }
         ItemChoice choice = d.choice;
         if (high) choice.flags |= shaders::ITEM_JOB_HIGH;
-        twin.item(t, list, state.heaps->writer(mine.ranges[0]).bytes(), d.item, d.rank, choice, extra);
+        twin.item(t, list, state.heaps->writer(mine.ranges[0]).bytes(), mine.ranges[0].offset / 16, d.item, d.rank,
+                  choice, extra);
     }
 }
 
