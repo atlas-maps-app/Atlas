@@ -276,6 +276,19 @@ struct Stroke {
     OrderKey key;
 };
 
+/// A water edge that carries a quay wall (the tile's quay layer, a row each: water_edges(S), each edge in the tile of
+/// its midpoint): its ends, its normal into the water (the wall's), its water's level and its place in water_edges; a
+/// row without two vertices has none (`drawn` false).
+struct QuayEdge {
+    P2 a;
+    P2 b;
+    double nx = 0;
+    double nz = 0;
+    double wy = 0;
+    std::uint32_t index = 0;
+    bool drawn = false;
+};
+
 /// A runway the frame lays designators on: its pavement (its index in the tile's fills: the runway's line is the
 /// pavement's), its ref (draw_over's `t.get('ref') or ''`) and its marks' paint.
 struct RunwayRef {
@@ -465,6 +478,13 @@ struct GroundTile {
     std::array<double, 4> shadow_at{0, -1, 0, 0}; ///< x0, x1, z0, z1 of every Shadow::at (empty while x1 < x0)
     /// The runways whose designators the frame lays on the ground (draw_over's runway_ends: passes/Ground.cpp).
     std::vector<RunwayRef> runways;
+    /// Its quay layer's edges, row by row (the sun's quay pieces name them by row: sun::QuayPiece::record), and their
+    /// look in its pack's style: the region's QUAY_COL, TONE, the waterline's band and the coping.
+    std::vector<QuayEdge> quays;
+    tiles::StyleRgb quay_colour = 0;
+    tiles::StyleRgb quay_coping = 0;
+    tiles::DayNight quay_waterline;
+    bool tone = false;
     /// draw_over's park shadows: the coaster tracks' (their polylines' points' heights in `heights`), and the woods'
     /// trees', whose shadows are the last of `shadows`, after the casters'.
     std::vector<ShadowTrack> tracks;

@@ -190,6 +190,9 @@ Result<Style> Style::of(const StyleTables& tables) {
                             .width = r.number_of(entry.child(0), "marine", kind),
                             .colour = r.colour_of(entry.child(1), "marine", kind)});
     });
+    const auto quays = r.table("quays");
+    s.quay_waterline = r.day_night(quays, "quays", "waterline_day", "waterline_night");
+    s.quay_coping = r.colour(quays, "quays", "coping");
     const auto parks = r.table("park_edges");
     s.park_edges = r.day_night(parks, "park_edges", "day", "night");
     s.park_edges_width = r.number(parks, "park_edges", "width");
@@ -321,6 +324,10 @@ Result<Style> Style::of(const StyleTables& tables) {
     // the port's state after the region's load
     const auto state = r.table("state");
     s.water_y = r.number(state, "state", "water_y");
+    s.quay_colour = r.colour(state, "state", "quay_col");
+    if (const auto course = r.at(state, "state", "quay_course"); course && !course->is_null()) {
+        s.quay_course = r.number_of(course, "state", "quay_course");
+    }
     if (const auto tone = r.at(state, "state", "tone")) {
         if (const auto b = tone->boolean()) {
             s.tone = *b;

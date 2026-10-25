@@ -887,7 +887,7 @@ private:
 /// One quay edge's samples: its pieces outside bridge decks, each at half the water's depth, and a tall wall's
 /// bands where the region draws them.
 void quay_samples(TileSamples& out, const Region& region, std::uint32_t record, const V2& a, const V2& b, double nx,
-                  double nz, double wy, std::span<const Deck> decks) {
+                  double nz, double wy, std::span<const Deck> decks, std::vector<QuayPiece>& drawn) {
     struct Piece {
         V2 a;
         V2 b;
@@ -924,12 +924,15 @@ void quay_samples(TileSamples& out, const Region& region, std::uint32_t record, 
     for (const Piece& p : pieces) {
         const double px = (p.a.x + p.b.x) / 2;
         const double pz = (p.a.z + p.b.z) / 2;
+        drawn.push_back({.record = record, .ax = p.a.x, .az = p.a.z, .bx = p.b.x, .bz = p.b.z, .sample = out.size()});
         out.add(Kind::quay, Source::quay, record, 0, part++, px + (nx * .3), wy / 2, pz + (nz * .3), face, no_solid);
         const bool bands = region.tone && wy < -2;
         if (!bands) continue;
         // a tall quay wall in sun: in pieces of about 5 m, three bands high
         const double pel = dist(p.a, p.b);
         const int k = static_cast<int>(std::max<std::int64_t>(1, pm::ceil_int(pel / 5.0)));
+        drawn.back().bands = out.size();
+        drawn.back().columns = static_cast<std::uint32_t>(k);
         constexpr int nb = 3;
         for (int j = 0; j < k; ++j) {
             const V2 pa{p.a.x + (((p.b.x - p.a.x) * j) / k), p.a.z + (((p.b.z - p.a.z) * j) / k)};
@@ -1152,6 +1155,7 @@ SunTile make_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const 
     }
     st.samples.crowns_end = st.samples.size();
     // the quay walls: every water edge with a wall, in pieces outside the bridges' decks
+    std::vector<QuayPiece> pieces;
     if (const tl::Layer* quays = tile.layer(tl::LayerId::quay)) {
         for (std::uint32_t i = 0; i < quays->count; ++i) {
             const tl::RingView e = quays->ring(tl::quay::edge, i);
@@ -1168,9 +1172,10 @@ SunTile make_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const 
                 nz = -nz;
             }
             const double wy = quays->decimal(tl::quay::level, i).value_or(region.water_y);
-            quay_samples(st.samples, region, i, a, b, nx, nz, wy, decks);
+            quay_samples(st.samples, region, i, a, b, nx, nz, wy, decks, pieces);
         }
     }
+    if (!pieces.empty()) st.quays = std::make_shared<const std::vector<QuayPiece>>(std::move(pieces));
     st.samples.windows_first = st.samples.size();
     append(st.samples, windows);
     return st;

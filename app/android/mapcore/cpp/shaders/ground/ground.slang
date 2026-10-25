@@ -961,3 +961,128 @@ StrokeOutput stroke_fs(StrokeOut s) {
     o.coverage = 0xFFFFFFFFu;
     return o;
 }
+
+// ---------------------------------------------------------------- the quay walls (passes/Quays.cpp)
+//
+// A quay wall's face is an instance of 16 words (passes/Ground.hpp's quay records): its tile, its painter slot, its
+// colour (RGBA8, opaque: lit and unlit mixed on the render thread by its sample's bit and the tile's fade), its flags
+// and its four corners in its tile's metres. The vertex stage clips them at the near plane as Camera.poly does and
+// projects them (snapped at rest), and draws the box of the polygon grown by its stroke's half width and a pixel; the
+// fragment keeps the samples inside the polygon or within the half width of it (a fill with its own colour's stroke,
+// round-joined: the polygon dilated), opaque at the slot's painter depth.
+
+/// A quay face's record in `words`: 16 words.
+static const uint QUAY_WORDS = 16u;
+/// Its flags: edged by its own .3 stroke.
+static const uint QUAY_STROKE = 1u;
+
+struct QuayOut {
+    float4 position : SV_Position;
+    nointerpolation float4 colour : COLOR0;
+    nointerpolation float4 p01 : TEXCOORD0; // the polygon's points 0 and 1, device px of the view
+    nointerpolation float4 p23 : TEXCOORD1; // points 2 and 3
+    nointerpolation float4 p4 : TEXCOORD2;  // point 4, the half width (device px) and the point count
+};
+
+/// Corner i of a quay face's record from word `at`, in its tile's metres.
+float3 quay_corner(uint at, uint i) {
+    return float3(asfloat(words[at + 4u + 3u * i]), asfloat(words[at + 5u + 3u * i]), asfloat(words[at + 6u + 3u * i]));
+}
+
+[shader("vertex")]
+QuayOut quay_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInstanceID) {
+    uint at = push.mode.z + instance * QUAY_WORDS;
+    uint tile = words[at];
+    uint slot = words[at + 1u];
+    uint colour = words[at + 2u];
+    uint flags = words[at + 3u];
+    QuayOut o;
+    o.colour = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    o.p01 = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    o.p23 = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    o.p4 = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    // Camera.poly's near clip: each corner ahead of the near plane, and where an edge crosses it
+    float near = frame.camera.frame.w;
+    float2 p[5] = {float2(0.0f, 0.0f), float2(0.0f, 0.0f), float2(0.0f, 0.0f), float2(0.0f, 0.0f), float2(0.0f, 0.0f)};
+    uint n = 0u;
+    for (uint i = 0u; i < 4u; ++i) {
+        float3 a = local_camera(tile, quay_corner(at, i));
+        float3 b = local_camera(tile, quay_corner(at, (i + 1u) % 4u));
+        bool ai = a.z >= near;
+        bool bi = b.z >= near;
+        if (ai && n < 5u) {
+            p[n] = device_of(a);
+            n = n + 1u;
+        }
+        if (ai != bi && n < 5u) {
+            float t = (near - a.z) / (b.z - a.z);
+            float3 c = float3(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, near);
+            p[n] = device_of(c);
+            n = n + 1u;
+        }
+    }
+    if (n < 3u) {
+        o.position = FOLDED;
+        return o;
+    }
+    float density = frame.camera.frame.z;
+    float hw = (flags & QUAY_STROKE) != 0u ? 0.15f * density : 0.0f;
+    float2 lo = p[0];
+    float2 hi = p[0];
+    for (uint i = 1u; i < n; ++i) {
+        lo = min(lo, p[i]);
+        hi = max(hi, p[i]);
+    }
+    lo = lo - (hw + 1.0f);
+    hi = hi + (hw + 1.0f);
+    float2 c = quad_corners[vertex];
+    float2 device = float2(c.x < 0.0f ? lo.x : hi.x, c.y < 0.0f ? lo.y : hi.y);
+    o.position = clip_of(frame.camera, device / density, 1.0f, painter_depth(frame.camera, slot));
+    o.colour = unpack(colour);
+    o.p01 = float4(p[0], p[1]);
+    o.p23 = float4(p[2], n > 3u ? p[3] : p[2]);
+    o.p4 = float4(n > 4u ? p[4] : p[n - 1u], hw, float(n));
+    return o;
+}
+
+/// Whether device point x lies in a convex polygon of m points (either way round) or within hw of it.
+bool in_quay(float2 pts[5], uint m, float hw, float2 x) {
+    float twice = 0.0f;
+    for (uint i = 0u; i < m; ++i) {
+        float2 a = pts[i];
+        float2 b = pts[(i + 1u) % m];
+        twice = twice + (a.x * b.y - b.x * a.y);
+    }
+    float sgn = twice >= 0.0f ? 1.0f : -1.0f;
+    bool inside = true;
+    float nearest = 1e30f;
+    for (uint i = 0u; i < m; ++i) {
+        float2 a = pts[i];
+        float2 e = pts[(i + 1u) % m] - a;
+        float2 q = x - a;
+        if (sgn * (e.x * q.y - e.y * q.x) < 0.0f) inside = false;
+        float l2 = dot(e, e);
+        float t = l2 > 0.0f ? clamp(dot(q, e) / l2, 0.0f, 1.0f) : 0.0f;
+        nearest = min(nearest, length(q - e * t));
+    }
+    return inside || (hw > 0.0f && nearest <= hw);
+}
+
+/// A quay face's pixel: its colour on the samples inside it (push.mode.w samples a pixel).
+[shader("fragment")]
+StrokeOutput quay_fs(QuayOut q) {
+    float2 pts[5] = {q.p01.xy, q.p01.zw, q.p23.xy, q.p23.zw, q.p4.xy};
+    uint m = uint(q.p4.w);
+    float2 corner = floor(q.position.xy);
+    uint n = push.mode.w;
+    uint mask = 0u;
+    for (uint i = 0u; i < n; ++i) {
+        float2 at = n == 4u ? samples4[i] : (n == 2u ? samples2[i] : float2(0.5f, 0.5f));
+        if (in_quay(pts, m, q.p4.z, device_at(corner + at))) mask |= 1u << i;
+    }
+    if (mask == 0u) discard;
+    StrokeOutput o;
+    o.colour = q.colour;
+    o.coverage = mask;
+    return o;
+}

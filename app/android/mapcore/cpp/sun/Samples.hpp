@@ -20,6 +20,7 @@
 // ground (`_gy`), which no render tile carries.
 #pragma once
 
+#include "sun/BitTiles.hpp"
 #include "sun/Grid.hpp"
 #include "sun/Shadows.hpp"
 #include "tiles/Container.hpp"
@@ -178,6 +179,8 @@ struct SunTile {
     TileSolids solids;
     TileTrees trees;
     TileSamples samples;
+    /// Its quay walls' pieces with their samples (null: none), which its published bits carry.
+    std::shared_ptr<const std::vector<QuayPiece>> quays;
 };
 
 /// The sample points, solids and trees of `tile` at ladder `level` (0 to 13): the rings simplified at it, each

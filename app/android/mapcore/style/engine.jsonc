@@ -113,6 +113,14 @@
         "opacity": 0.85
     },
 
+    // amsterdam.py's quay walls (their brick is the region's QUAY_COL, the style's state): the dark band at the
+    // waterline by day and at night, and the coping stone along the top (lit as the wall)
+    "quays": {
+        "waterline_day": "#2C2A22",
+        "waterline_night": "#06070A",
+        "coping": "#B8B0A2"
+    },
+
     // amsterdam.py's tram tracks: by day, at night, and their width
     "trams": {
         "day": "#6E6A66",

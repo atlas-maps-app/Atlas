@@ -297,6 +297,49 @@ void TwinPlacer::runs(const DrawnTile& t, std::span<const geo::P2> line, double 
     if (run > 1) ends.push_back(static_cast<std::uint32_t>(points.size()));
 }
 
+std::size_t TwinPlacer::poly(const DrawnTile& t, std::span<const view::Vec3> q, std::vector<twin::Point>& out) {
+    if (q.empty()) return 0;
+    cs_.clear();
+    if (exact(t)) {
+        // render/city.py:45 Camera.poly in double
+        const double near = cam_.near();
+        const view::Vec3 first = cam_.cam(q[0]);
+        view::Vec3 a = first;
+        for (std::size_t i = 1; i < q.size(); ++i) {
+            const view::Vec3 b = cam_.cam(q[i]);
+            ProjectedPoly::clip_edge(a, b, near, cs_);
+            a = b;
+        }
+        ProjectedPoly::clip_edge(a, first, near, cs_);
+        if (cs_.size() < 3) return 0;
+        for (const view::Vec3& k : cs_) out.push_back(point(cam_.pc(k)));
+        return cs_.size();
+    }
+    // the vertex stage's float camera, clipped as Camera.poly clips
+    const float near = projector_.camera().frame.w;
+    std::vector<hlsl::float3> ks;
+    auto k_of = [&](const view::Vec3& p) {
+        const hlsl::float3 local = {static_cast<float>(p.x - t.ground->origin.x), static_cast<float>(p.y),
+                                    static_cast<float>(p.z - t.ground->origin.z)};
+        return projector_.camera_of(t.place, local);
+    };
+    for (std::size_t i = 0; i < q.size(); ++i) {
+        const hlsl::float3 a = k_of(q[i]);
+        const hlsl::float3 b = k_of(q[(i + 1) % q.size()]);
+        const bool ai = a.z >= near;
+        const bool bi = b.z >= near;
+        if (ai) ks.push_back(a);
+        if (ai != bi) {
+            const float u = (near - a.z) / (b.z - a.z);
+            const hlsl::float3 c = {a.x + ((b.x - a.x) * u), a.y + ((b.y - a.y) * u), near};
+            ks.push_back(c);
+        }
+    }
+    if (ks.size() < 3) return 0;
+    for (const hlsl::float3& k : ks) out.push_back(projector_.css(k));
+    return ks.size();
+}
+
 std::optional<twin::Point> TwinPlacer::at(const DrawnTile& t, geo::P2 p, double y) const {
     if (exact(t)) {
         const view::Vec3 k = cam_.cam({p.x, y, p.z});
@@ -595,7 +638,14 @@ bool Ground::decide(const frame::FrameState& state) {
                 it->cells |= cells;
                 continue;
             }
-            f.tiles.push_back({.tile = c.drawn, .pass = &p, .ground = g, .cells = cells, .place = c.place});
+            f.tiles.push_back({.tile = c.drawn,
+                               .pass = &p,
+                               .ground = g,
+                               .cells = cells,
+                               .place = c.place,
+                               .sun = c.sun,
+                               .sun_base = c.sun_base,
+                               .sun_weight = c.sun_weight});
         }
     }
     // The plate under every window drawn: the renders' plate is GR about the frame's origin, which for a frame cell's
@@ -630,12 +680,20 @@ bool Ground::decide(const frame::FrameState& state) {
         }
         return nullptr;
     };
-    bool same = keep && last_tiles_.size() == f.tiles.size();
+    bool same = keep && last_tiles_.size() == f.tiles.size() && last_suns_.size() == f.tiles.size();
+    const auto sun_of = [](const DrawnTile& t) -> const void* {
+        return t.sun && t.sun->now != nullptr ? t.sun->now.get() : nullptr;
+    };
     for (std::size_t i = 0; same && i < f.tiles.size(); ++i) {
-        same = last_tiles_[i].first == f.tiles[i].ground && last_tiles_[i].second == f.tiles[i].cells;
+        same = last_tiles_[i].first == f.tiles[i].ground && last_tiles_[i].second == f.tiles[i].cells &&
+               last_suns_[i] == sun_of(f.tiles[i]);
     }
     last_tiles_.clear();
-    for (const DrawnTile& t : f.tiles) last_tiles_.emplace_back(t.ground, t.cells);
+    last_suns_.clear();
+    for (const DrawnTile& t : f.tiles) {
+        last_tiles_.emplace_back(t.ground, t.cells);
+        last_suns_.push_back(sun_of(t));
+    }
     if (same) {
         // the same camera over the same tiles: every decision and slot as the last frame's
         for (DrawnTile& t : f.tiles) t.decided = find(t);
@@ -691,6 +749,7 @@ bool Ground::decide(const frame::FrameState& state) {
         f.woods = f.woods || std::ranges::find(bits.subspan(casters), std::uint8_t{1}) != bits.subspan(casters).end();
     }
     decide_tracks(cam);
+    decide_quays(cam, state);
     // the land kinds in the order of their first drawn ring in S['land'] (draw_under's OrderedDict), across the
     // scenes drawn by their elements' order (regions.py's sort: the draw order, then the area, then data order); the
     // canopy
@@ -745,6 +804,7 @@ bool Ground::decide(const frame::FrameState& state) {
         f.shadows = false;
         f.woods = false;
         f.track_shadows.clear();
+        f.quays.clear();
         for (const DrawnTile& t : f.tiles) {
             for (std::uint32_t i = 0; i < t.ground->strokes.size(); ++i) {
                 if (t.ground->strokes[i].kind != geo::StrokeKind::setts) f.stroke_drawn[t.strokes + i] = 0;
@@ -884,6 +944,13 @@ void Ground::lay_out() {
     cursor = 0;
     f.tail[geo::group::shadow] = f.used[geo::group::shadow];
     place(geo::group::shadow);
+    // then the quay walls (render's quay_svg, after the shadows), an element a slot
+    if (!f.quays.empty()) {
+        use(geo::group::quay, 0);
+        use(geo::group::quay, static_cast<std::uint32_t>(f.quays.size() - 1));
+        f.tail[geo::group::quay] = true;
+        place(geo::group::quay);
+    }
     f.slots = static_cast<std::uint32_t>(head);
     f.tail_slots = static_cast<std::uint32_t>(std::min<std::int64_t>(cursor, (shaders::PAINTER_SLOTS / 2) - head));
 }
@@ -1021,6 +1088,11 @@ gpu::Result<void> Ground::make_fill_pipelines(const frame::PassContext& context,
                   .reference = ground_stencil::canopy};
     ATLAS_GPU_LET(c, frame::make_pipeline(context, co, frame::Overdraw::translucent));
     p.canopy_composite = std::move(c);
+    // the quay walls' faces: opaque at their painter depth, their samples their own (the polygon dilated by its stroke)
+    gpu::GraphicsDesc quay = ground_desc(context, p, "ground quays", "quay_vs", "quay_fs");
+    opaque_depth(quay);
+    ATLAS_GPU_LET(q, frame::make_pipeline(context, quay, frame::Overdraw::opaque));
+    p.quay = std::move(q);
     return {};
 }
 
@@ -1113,6 +1185,7 @@ void Ground::write_words(const frame::FrameState& state) {
     }
     // the lines' runs and segments
     write_lines(state, v, w.runs, w.instances);
+    write_quays(v);
     // into this frame slot's buffer (a frame slot's previous frame has finished: its buffer and set are free)
     const std::uint32_t slot = state.slot & 1U;
     Pipelines& p = *pipelines_;
@@ -1195,7 +1268,9 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
                            {});
     switch (phase) {
     case phase_opaque:
-        // top first: what lies above the water, the water, the land, the plate, the sky
+        // top first: the quay walls (the tail's, over the shadows), what lies above the water, the water, the land, the
+        // plate, the sky
+        record_quays(r);
         record_fills(r, true);
         record_water_opaque(r);
         record_fills(r, false);
@@ -1284,6 +1359,7 @@ void Ground::emit(const frame::FrameState& state, twin::Stream& out, std::uint32
     emit_lines(state, out, above);
     emit_park_shadows(state, out, above);
     emit_shadows(state, out);
+    emit_quays(state, out);
 }
 
 } // namespace atlas::passes

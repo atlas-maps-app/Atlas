@@ -32,6 +32,7 @@
 #include "geometry/Ground.hpp"
 #include "gpu/Memory.hpp"
 #include "style/Theme.hpp"
+#include "sun/BitTiles.hpp"
 #include "twin/Emit.hpp"
 #include "twin/Twin.hpp"
 #include "view/Camera.hpp"
@@ -140,6 +141,35 @@ struct DrawnTile {
     std::uint32_t decisions = 0; ///< the first of its fills' bytes in GroundFrame::drawn
     std::uint32_t strokes = 0;   ///< the first of its strokes' in GroundFrame::stroke_drawn
     std::uint32_t shadows = 0;   ///< the first of its shadows' in GroundFrame::shadow_drawn
+    /// Its sun bits this frame (the cover's: K8's, on the CPU, with its quay walls' pieces), and where its texels begin
+    /// in set 1's sun_bits with their fade's weight (scene::no_sun: none yet).
+    std::optional<sun::TileView> sun;
+    std::uint32_t sun_base = 0xFFFF'FFFFU;
+    float sun_weight = 1.0F;
+};
+
+/// One element of the quay walls (water_layer's quay walls, in water_edges' order, a piece's in turn), each its own
+/// path: a piece's wall (its own .3 stroke edging it), a tall wall's lit or unlit bands (TONE: each band of each of its
+/// columns its sample lights or not, one path of them), the dark band at its waterline, its coping; its drawn tile, its
+/// edge there, its piece and samples (the sun's), its colour as drawn now.
+struct QuayFace {
+    enum class Kind : std::uint8_t { wall, lit_bands, dark_bands, waterline, coping };
+    Kind kind = Kind::wall;
+    std::uint32_t tile = 0;
+    std::uint32_t edge = 0;
+    double ax = 0;
+    double az = 0;
+    double bx = 0;
+    double bz = 0;
+    std::uint32_t bands = 0; ///< a bands' path's first sample, `columns` × 3 of them
+    std::uint32_t columns = 0;
+    std::uint32_t colour = 0; ///< 0xRRGGBB, as the twin draws it (its sample's bit now)
+    /// Its light lit and unlit (0xRRGGBB; a waterline's alike), and its sample's place where its light follows one (a
+    /// wall's, a coping's), for the GPU's fade between a tile's bits.
+    std::uint32_t lit = 0;
+    std::uint32_t unlit = 0;
+    std::uint32_t sample = 0;
+    bool sampled = false;
 };
 
 /// A fill's decision byte: drawn (at the street's height for the water), drawn at its water level.
@@ -217,6 +247,8 @@ struct GroundFrame {
     std::array<double, 3> light{};
     bool woods = false;
     std::vector<TrackShadow> track_shadows;
+    /// The quay walls' elements this frame (with weather alone).
+    std::vector<QuayFace> quays;
     /// Whether this frame's decisions are the last frame's, kept: the camera rests as it did, over the same tiles.
     bool kept = false;
     /// render's #sky and #wgrad rows (y1 and y2 as the SVG prints them), the horizon's row.
@@ -280,6 +312,9 @@ public:
                 std::vector<std::uint32_t>& ends);
     /// Tile `t`'s point p at height y, as the vertex stage places it (none behind the near plane).
     [[nodiscard]] std::optional<twin::Point> at(const DrawnTile& t, geometry::P2 p, double y) const;
+    /// Camera.poly of tile `t`'s face of corners `q` (no margin test): appends its CSS points, returns how many (0
+    /// below 3).
+    std::size_t poly(const DrawnTile& t, std::span<const view::Vec3> q, std::vector<twin::Point>& out);
 
 private:
     [[nodiscard]] bool exact(const DrawnTile& t) const noexcept;
@@ -358,6 +393,9 @@ public:
     /// The tests' look at a sett road's courses: from the next frame on, the pass draws them alone over the frame's
     /// clear colour (no sky, plate, fills, other lines, water or shadows), each road's lines one layer.
     void draw_only_setts(bool only) noexcept { only_setts_ = only; }
+    /// The tests' look at the shadows: from the next frame on, no quay walls (their light changes with the sun's, as
+    /// the shadows do).
+    void draw_quays(bool draw) noexcept { no_quays_ = !draw; }
 
     /// The phases' ids.
     enum PhaseId : std::uint8_t {
@@ -442,6 +480,15 @@ private:
     /// The woods' shadows' union at their slot, composited at shadow_op, within the over lines' draw.
     void record_woods(const frame::Recording& r);
     void emit_park_shadows(const frame::FrameState& state, twin::Stream& out, std::int32_t above) const;
+    // Quays.cpp
+    /// water_layer's quay walls at the frame: each piece facing the camera within the radius cut, its wall lit by its
+    /// sample, its bands, its waterline and its coping, as face() keeps them (frame_.quays).
+    void decide_quays(const view::Camera& cam, const frame::FrameState& state);
+    void emit_quays(const frame::FrameState& state, twin::Stream& out) const;
+    /// The quay walls' faces' records into the frame's words (each band of a bands' path its own), their colours lit
+    /// and unlit mixed by their samples' bits and the tiles' fades.
+    void write_quays(std::vector<std::uint32_t>& words);
+    void record_quays(const frame::Recording& r);
     [[nodiscard]] gpu::Result<void> make_soft_shadows(const frame::PassContext& context, Pipelines& p) const;
     /// Whether this frame draws its shadows soft: some are drawn, the frame is in full mode, the moment blurs them,
     /// and prepare made the soft shadows' objects.
@@ -463,13 +510,16 @@ private:
     bool keep_soft_ = false;
     bool drew_soft_ = false;
     bool only_setts_ = false;
+    bool no_quays_ = false;
     double select_ms_ = 0;
     /// The tiles' decisions, kept while the camera rests (their grounds held), reused as scratch while it moves.
     std::vector<std::unique_ptr<TileDecisions>> decisions_;
     DecisionKey key_;
     bool keep_ = false; ///< decisions_ hold the decisions at rest for key_
-    /// The last frame's tiles, in order: their grounds and cells.
+    /// The last frame's tiles, in order: their grounds and cells, and their sun bits (the quay walls' pieces and light
+    /// come with them).
     std::vector<std::pair<const void*, std::uint64_t>> last_tiles_;
+    std::vector<const void*> last_suns_;
     std::unique_ptr<Pipelines> pipelines_;
     std::unique_ptr<Words> words_;
     // scratch, reused frame to frame
@@ -509,6 +559,8 @@ struct Ground::Pipelines {
     vk::raii::Pipeline sky{nullptr};
     // Lines.cpp
     vk::raii::Pipeline line{nullptr};
+    // Quays.cpp
+    vk::raii::Pipeline quay{nullptr};
     // Shadows.cpp
     vk::raii::Pipeline shadow_union{nullptr};
     vk::raii::Pipeline shadow_composite{nullptr};
@@ -568,7 +620,9 @@ struct Ground::Words {
     std::array<std::uint32_t, 2> instances{}; ///< the over and marks phases' segments: first word and count, packed
     std::array<std::uint32_t, 2> instance_count{};
     std::uint32_t woods_split = 0; ///< the over phase's segments before the woods' shadows' slot
-    std::uint32_t slot = 0;        ///< the frame slot whose buffer holds them
+    std::uint32_t quays = 0;       ///< the quay walls' faces' records (QUAY_WORDS each), and how many
+    std::uint32_t quay_count = 0;
+    std::uint32_t slot = 0; ///< the frame slot whose buffer holds them
     bool ready = false;
 };
 

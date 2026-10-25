@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "11",
+  "version": "12",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -211,6 +211,21 @@
           "home sunny": "7fc1fcb35c765879a4de7468daa9cc83d344d18ba187efeefaefc8bd84d903ba",
           "home grey": "1d4c39f44f91def7ce9cad3aeabe9aceab650531ed7ea6b15448399cc1141069",
           "home wet": "e8f7e26865af23913586667953eb86b6b5dcde694b6c6363b4109c2eb2740469",
+          "home night": "4dd778d1508c4f8672b89e9aeb92e7753436d2612a95031f5c1dfc36bfbfa3ef",
+          "board sunny": "509adad42f1ddb755a203121fa3b5bd671785a314c3844fd5611cfc9fb26c83f",
+          "board grey": "5a68af408a5167ca161cdebddefee5eed7d49c3c57a8a6a4ab6371c845231625",
+          "board wet": "d9ff7d0c4474be823ad4c7f0a71820b8730e006ce5b11ed8a403503bb691d96c",
+          "board night": "ea565139b164da739b85e818b3deacbd811891814e5ff4ab6cd8b0c8e565e93e"
+        }
+      }
+    },
+    "12": {
+      "note": "Step 4, the water: the quay walls (water_layer's), in the pieces the sun's scene splits them into outside the bridges' decks, lit by their samples, with their bands, waterlines and copings, drawn after the ground's shadows",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "89995dec24ca8e2459c04cd32f6000e401604432a9cae886d33bb7f5265b4272",
+          "home grey": "e0362479ccdfc5bd98fbf3d73615ab6fc6de04789df49054aa7f1bcd6c12b8cb",
+          "home wet": "0130a9fbf902e7211b2efe69b0c38f59dca768705d94636c07b3a8a60b493e02",
           "home night": "4dd778d1508c4f8672b89e9aeb92e7753436d2612a95031f5c1dfc36bfbfa3ef",
           "board sunny": "509adad42f1ddb755a203121fa3b5bd671785a314c3844fd5611cfc9fb26c83f",
           "board grey": "5a68af408a5167ca161cdebddefee5eed7d49c3c57a8a6a4ab6371c845231625",

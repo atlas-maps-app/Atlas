@@ -689,6 +689,9 @@ using Field = std::pair<std::string_view, ValueBytes>;
                            {"groyne", v::list({v::real(4.0), v::text("#8E8A84")})},
                            {"pier", v::list({v::real(5.0), v::text("#A89A86")})},
                            {"quay", v::list({v::real(3.0), v::text("#B4AEA4")})}})},
+        {"quays", v::map({{"waterline_day", v::text("#2C2A22")},
+                          {"waterline_night", v::text("#06070A")},
+                          {"coping", v::text("#B8B0A2")}})},
         {"park_edges", v::map({{"day", v::text("#2F6B3E")},
                                {"night", v::text("#4C8A5A")},
                                {"width", v::real(2.2)},
@@ -819,7 +822,11 @@ using Field = std::pair<std::string_view, ValueBytes>;
                                 {"weight", v::integer(700)},
                                 {"size", v::real(3.2)},
                                 {"spacing", v::real(0.3)}})},
-        {"state", v::map({{"water_y", v::real(-1.5)}, {"tone", v::boolean(false)}, {"win_style", v::null()}})},
+        {"state", v::map({{"water_y", v::real(-1.5)},
+                          {"quay_col", v::text("#6E5546")},
+                          {"quay_course", v::real(0.0625)},
+                          {"tone", v::boolean(false)},
+                          {"win_style", v::null()}})},
         {"scene", v::map({})},
     };
 }

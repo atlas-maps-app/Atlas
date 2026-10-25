@@ -197,6 +197,9 @@ struct Style {
     double lead_in_width = 0.0;
     /// `marine`, in the table's order.
     std::vector<MarineStyle> marine;
+    /// `quays`: a quay wall's band at the waterline, by day and at night, and its coping stone.
+    DayNight quay_waterline;
+    StyleRgb quay_coping = 0;
     /// `park_edges`: a national park's edge, its width, its dashes and gaps (CSS px) and the path's opacity.
     DayNight park_edges;
     double park_edges_width = 0.0;
@@ -220,8 +223,11 @@ struct Style {
     StyleRgb hull = 0;
     StyleRgb deck = 0;
     CanalNamesStyle canal_names;
-    /// `state`: WATER_Y, the water's level below the street (metres); TONE; WIN_STYLE == "paris".
+    /// `state`: WATER_Y, the water's level below the street (metres); QUAY_COL, the quay walls' colour, and
+    /// QUAY_COURSE, their courses' height up close (none: no courses); TONE; WIN_STYLE == "paris".
     double water_y = 0.0;
+    StyleRgb quay_colour = 0;
+    std::optional<double> quay_course;
     bool tone = false;
     bool paris = false;
     /// `scene`'s `no_shadows` (Python's truth; false where the scene does not set it).

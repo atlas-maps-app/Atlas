@@ -110,6 +110,11 @@ class EngineStyleTest {
                     (value("park_edges.dash") as List<*>).joinToString(" ") { (it as Double).toInt().toString() } +
                     """\" opacity=\"${css("park_edges.opacity")}\"/>", dd, if (!night) "${value("park_edges.day")}" else "${value("park_edges.night")}")""",
             ),
+            Triple(
+                listOf("quays.waterline_day", "quays.waterline_night"), amsterdam,
+                """WY + 0.35, a[1])), if (!night) "${value("quays.waterline_day")}" else "${value("quays.waterline_night")}")""",
+            ),
+            Triple(listOf("quays.coping"), amsterdam, """tohex(light(th, hx("${value("quays.coping")}"), n3, lit))"""),
             Triple(listOf("marine"), regions, marine(0, "to %s")),
             Triple(listOf("marine"), regions, marine(1, "to \"%s\"")),
             Triple(

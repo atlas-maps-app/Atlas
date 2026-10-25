@@ -183,6 +183,7 @@ public:
         roads();
         lines();
         water();
+        quays();
     }
 
 private:
@@ -788,6 +789,36 @@ private:
         }
     }
 
+    // ---- the quay layer: water_edges' edges that carry a wall, as the sun's make_tile reads them
+    void quays() {
+        const tl::Layer* l = tile_.layer(tl::LayerId::quay);
+        if (l == nullptr) return;
+        const tl::Frame& f = head_.frame;
+        for (std::uint32_t i = 0; i < l->count; ++i) {
+            QuayEdge& q = out_.quays.emplace_back();
+            q.index = static_cast<std::uint32_t>(l->integer(tl::quay::index, i));
+            const tl::RingView e = l->ring(tl::quay::edge, i);
+            if (e.size() < 2) continue;
+            q.a = {.x = f.x(e.lon[0]), .z = f.z(e.lat[0])};
+            q.b = {.x = f.x(e.lon[1]), .z = f.z(e.lat[1])};
+            const double ex = q.b.x - q.a.x;
+            const double ez = q.b.z - q.a.z;
+            const double lg = pm::hypot(ex, ez);
+            q.nx = ez / lg;
+            q.nz = -ex / lg;
+            if (l->boolean(tl::quay::flip, i).value_or(false)) {
+                q.nx = -q.nx;
+                q.nz = -q.nz;
+            }
+            q.wy = l->decimal(tl::quay::level, i).value_or(style_.water_y);
+            q.drawn = true;
+        }
+        out_.quay_colour = style_.quay_colour;
+        out_.quay_coping = style_.quay_coping;
+        out_.quay_waterline = style_.quay_waterline;
+        out_.tone = style_.tone;
+    }
+
     const tl::Tile& tile_;
     const tl::RenderHead& head_;
     const tl::Style& style_;
@@ -831,8 +862,9 @@ std::size_t GroundTile::bytes() const noexcept {
            (strokes.capacity() * sizeof(Stroke)) + (polylines.capacity() * sizeof(Polyline)) +
            (polyline_words.capacity() * sizeof(std::uint32_t)) + (reaches.capacity() * sizeof(std::uint32_t)) +
            (shadows.capacity() * sizeof(Shadow)) + (shadow_points.capacity() * sizeof(P2)) + casters_bytes +
-           (runways.capacity() * sizeof(RunwayRef)) + (tracks.capacity() * sizeof(ShadowTrack)) +
-           (heights.capacity() * sizeof(double)) + (woods.capacity() * sizeof(ShadowTree));
+           (runways.capacity() * sizeof(RunwayRef)) + (quays.capacity() * sizeof(QuayEdge)) +
+           (tracks.capacity() * sizeof(ShadowTrack)) + (heights.capacity() * sizeof(double)) +
+           (woods.capacity() * sizeof(ShadowTree));
 }
 
 void build_shadows(const sun::TileCasters& casters, GroundTile& out) {

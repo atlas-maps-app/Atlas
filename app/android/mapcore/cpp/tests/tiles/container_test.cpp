@@ -518,11 +518,17 @@ TEST_CASE("tiles: a style's values, typed; one missing or of another kind is the
                         {"sand", v::list({v::text("#E4D6B3"), v::integer(4)})}}));
     set("area", v::map({{"park", v::text("#A9C38A")}}));
     set("surf_colour", v::map({{"red", v::text("#C0665A")}}));
-    set("state", v::map({{"water_y", v::real(-0.4)}, {"tone", v::boolean(true)}, {"win_style", v::text("paris")}}));
+    set("state", v::map({{"water_y", v::real(-0.4)},
+                         {"quay_col", v::text("#8C8A85")},
+                         {"quay_course", v::null()},
+                         {"tone", v::boolean(true)},
+                         {"win_style", v::text("paris")}}));
     set("scene", v::map({{"no_shadows", v::integer(1)}}));
     const auto style = typed(tables);
     ATLAS_REQUIRE(style);
     CHECK(style->land_kind("sand") == std::uint16_t{1});
+    CHECK(style->quay_colour == 0x8C8A85U); // the port's and Schiphol's QUAY_COL, without courses
+    CHECK(!style->quay_course);
     CHECK(!style->land_kind("forest"));
     CHECK(style->land_colours == std::vector<StyleRgb>{0xB2CA90, 0xE4D6B3});
     CHECK(style->area_colour("park") == 0xA9C38AU);

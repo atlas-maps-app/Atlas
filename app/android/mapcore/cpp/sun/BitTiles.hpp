@@ -27,6 +27,20 @@ namespace atlas::sun {
 /// How long a swap of a tile's bits cross-fades its faces, seconds.
 inline constexpr double fade_seconds = 0.3;
 
+/// A quay wall's piece as the renders draw it (water_layer's pieces: its edge outside every bridge's deck of the sun's
+/// scene, each tile's at its level, as make_tile splits it), with its samples: its own (Kind::quay) and a tall wall's
+/// in sun (TONE: `columns` pieces along it, three bands high, from `bands`; none where `columns` is 0).
+struct QuayPiece {
+    std::uint32_t record = 0; ///< its edge's place in the tile's quay layer
+    double ax = 0.0;
+    double az = 0.0;
+    double bx = 0.0;
+    double bz = 0.0;
+    std::uint32_t sample = 0;
+    std::uint32_t bands = 0;
+    std::uint32_t columns = 0;
+};
+
 /// The bits of one tile for one bucket: sample i's bit is bit i % 64 of words[i / 64].
 struct TileBits {
     std::vector<std::uint64_t> words;
@@ -36,6 +50,8 @@ struct TileBits {
     bool windows = false;           ///< whether the window group was tested (else its bits are 0)
     std::uint64_t bucket = 0;       ///< the bucket's key
     Sun sun;                        ///< the bucket's sun
+    /// Its tile's quay walls' pieces, as its samples have them (null: none).
+    std::shared_ptr<const std::vector<QuayPiece>> quays;
 
     [[nodiscard]] bool bit(std::uint32_t i) const noexcept { return ((words[i / 64] >> (i % 64)) & 1U) != 0; }
 };
