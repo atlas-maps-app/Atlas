@@ -562,13 +562,19 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
   - ripple and glints (the soft shadows landed in step 2);
   - cloud shadows, rain and the golden wash;
   - clouds and the sun's glow when the sky shows.
+  - The order within them (25 October): the ripple and the glints at map pitches first, as their fields are the CPU's already (fx/Fields.hpp); then the GPU's turbulence with its byte check, which the crowns' per-tree fields, the glints at eye level, the reflections' trees' leaf filter and the canopy take. No Android device has `VK_KHR_shader_fma` (0 of 8,613 reports in the survey), so the check decides per device whether the GPU's own fma gives the CPU's bytes. In the app the trees' leaf and foliage filters come only with a lens (draw_tree3d draws every tree with weather close up, under `#crown`).
+  - Done: **the ripple** (`passes/Ripple.cpp`, `shaders/ground/ripple.slang`, `fx/Ripple.hpp`), as water_layer's `ripple` filters the reflections' group (`<g filter="url(#ripple)" opacity=".92">`, .95 at night) and SvgFilterRaster runs it: the group held in linear RGB, displaced by the ripple's field (seed 11, .012 × .26, 2 octaves) by '%.1f' of 0.8 + wind · 0.17, blurred by WebKit's boxes for .1 and .45 times the filter scale, written back as sRGB.
+    - Each frame with reflections where the fields are bound in full mode, before the main pass: the reflections are drawn as the group's layer holds them (each its own colour at its own opacity, in the renders' order, at its slot's depth so a path's faces blend once) into 4x samples of the view's upright device px and resolved; ripple_displace_cs moves each pixel by the field, its 256 offsets a table the CPU makes with an exact fma, so no device's own fma decides a pixel; the blur runs vImage's three square boxes where WebKit's two sizes are equal (as at the likeness's density), else WebKit's separable passes; in the main pass one triangle over the frame writes the result back as sRGB at the group's opacity inside the water's clip.
+    - Named differences: the layer's edges (4x samples against the port's coverage of each path), the composite's rounding, and the reflections' trees' own `leaf` filter (still to come, with the GPU's turbulence). Structural mode and the owner mode draw the reflections unrippled, as before.
+    - The ripple stays fixed to the screen while the camera moves, as each render has it; "Textures while moving" below decides that later. It costs five passes over the frame each frame with reflections; VK bench will show whether the water's box should bound them.
+    - Held: `ripple_vk_test` (the home by day: the pass's result is the CPU's chain over its own layer word for word, 1,128,521 pixels; at 3 px a dp, where WebKit's separable passes run, 1,444,346; over the bare water the frame is the result composited over wgrad under the tint within 2.5 levels, the frame's three 8-bit stores); L1 unchanged (the twin named `#ripple` already). The engine's references are at version 17: the home's sunny, grey and wet frames and the Main board's wet and night ones show the ripple; the others are unchanged.
 - **Textures while moving:** a switch between "fixed to the screen" and "fixed to the surfaces", for the user to judge on the phone. The lean:
   - paper grain on the screen;
   - `mat` and ripple on their surfaces, rescaled with the zoom so their density on screen stays the same;
   - cloud shadows moving with the ground.
 - **Night:** lamp pools, lit streets, wet cores, the glows of open places, lit shops and windows, and the city glow.
 - **The renderer's other ten regions** get their render packs as their features land, each with its own profile.
-- Tag an alpha after the water and another after the night. By then the Westerkerk home is within about 2.5 levels of its render, apart from the renderer's named issues.
+- Tag an alpha after the water and another after the night. The water's is the nightly alpha of 26 October (the user, 25 October: no hand tag). By then the Westerkerk home is within about 2.5 levels of its render, apart from the renderer's named issues.
 
 ### 5. The world
 - **Levels:**
