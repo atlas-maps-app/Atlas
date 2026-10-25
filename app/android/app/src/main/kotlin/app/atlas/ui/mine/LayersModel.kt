@@ -6,7 +6,9 @@ import app.atlas.mapview.MapLayer
 import app.atlas.mapview.Theme
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
+import java.time.ZonedDateTime
 import kotlin.math.roundToInt
 
 /** What the map look screen works with: the layers and their symbols, the time of light, and how much the streets are mapped. */
@@ -41,8 +43,12 @@ object LayersModel {
     /** The set to save when [layer] is switched [on]: the 3D buildings have a setting of their own, so they are not in it. */
     fun toggled(current: Set<MapLayer>, layer: MapLayer, on: Boolean): Set<MapLayer> = (if (on) current + layer else current - layer) - MapLayer.BUILDINGS_3D
 
-    /** The instant at [minutes] after local midnight of [date] in [zone]. */
-    fun at(date: LocalDate, minutes: Int, zone: ZoneId): Instant = date.atStartOfDay(zone).plusMinutes(minutes.toLong()).toInstant()
+    /**
+     * The instant at the clock time [minutes] (0..1439, the minute of the day as [minuteOf] reads it and [clock] writes
+     * it) on [date] in [zone]: also on a day the clocks change, where midnight plus that many minutes was an hour off
+     * after the change. A time the clocks skip moves past the gap; a time they show twice is the first.
+     */
+    fun at(date: LocalDate, minutes: Int, zone: ZoneId): Instant = ZonedDateTime.of(date, LocalTime.of(minutes / 60, minutes % 60), zone).toInstant()
 
     /** The minute of the day (0..1439) of [now] in [zone]. */
     fun minuteOf(now: Instant, zone: ZoneId): Int = now.atZone(zone).let { it.hour * 60 + it.minute }

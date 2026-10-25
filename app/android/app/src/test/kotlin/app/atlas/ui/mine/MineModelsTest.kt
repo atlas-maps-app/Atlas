@@ -1,6 +1,7 @@
 package app.atlas.ui.mine
 
 import app.atlas.geo.LatLon
+import app.atlas.geo.Sun
 import app.atlas.model.Mode
 import app.atlas.model.OsmId
 import app.atlas.model.OsmType
@@ -314,6 +315,22 @@ class PowerModelTest {
         val dull = PowerModel.wattHours(PowerModel.solarCurve(W, zone, day, grey))
         assertTrue("$dull < $wh", dull < wh * 0.4)
         assertTrue(PowerModel.wattHours(PowerModel.solarCurve(W, zone, LocalDate.of(2026, 12, 21), null)) < wh / 3)
+    }
+
+    @Test
+    fun theCurveAndTheCloudsGoByTheClockOnTheDaysTheClocksChange() {
+        val zone = ZoneId.of("Europe/Amsterdam")
+        // The quarters were midnight plus q quarters: after the change the curve peaked an hour from solar noon by the clock.
+        for (day in listOf(LocalDate.of(2026, 10, 25), LocalDate.of(2026, 3, 29), LocalDate.of(2026, 10, 26))) {
+            val curve = PowerModel.solarCurve(W, zone, day, null)
+            val peak = curve.indices.maxByOrNull { curve[it] }!! * 15 + 7
+            val noon = Sun.times(day, W, zone).solarNoon.let { it.hour * 60 + it.minute }
+            assertTrue("$day: peak at minute $peak, solar noon at $noon", kotlin.math.abs(peak - noon) <= 10)
+        }
+        // After nine o'clock: 10:00 on 25 October 2026 (09:00 UTC), not nine hours after midnight (09:00).
+        val day = LocalDate.of(2026, 10, 25)
+        val grey = forecast(from = Instant.parse("2026-10-24T22:00:00Z")) { t -> hour(t, cloud = 90.0) }
+        assertEquals(Instant.parse("2026-10-25T09:00:00Z"), PowerModel.cloudsAt(grey, zone, day))
     }
 
     @Test

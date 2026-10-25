@@ -110,11 +110,15 @@ object PowerModel {
         return sites.minByOrNull { Geo.distance(centre, it.location) }?.let { p -> PowerSpot(p, PowerSpot.Kind.OUTLET, p.name() ?: "", p.tags["power_supply"] ?: "", Geo.distance(centre, p.location)) }
     }
 
-    /** Hourly watts of a panel of [panelW] today at [at]: the sun's height, thinned by the forecast's cloud, 80 % of it reaching the battery. */
+    /**
+     * The watts of a panel of [panelW] at [at] in each quarter hour of [date] by the clock: the sun's height, thinned by
+     * the forecast's cloud, 80 % of it reaching the battery.
+     */
     fun solarCurve(at: LatLon, zone: ZoneId, date: java.time.LocalDate, forecast: Forecast?, panelW: Double = 100.0): DoubleArray {
         val clouds = forecast?.hours?.associateBy { it.time.atZone(zone).let { z -> z.toLocalDate() to z.hour } }
         return DoubleArray(24 * 4) { q ->
-            val t = date.atStartOfDay(zone).plusMinutes(q * 15L + 7).toInstant()
+            // the quarter's middle by the clock: on a day the clocks change, midnight plus q quarters was an hour off
+            val t = date.atTime(q / 4, (q % 4) * 15 + 7).atZone(zone).toInstant()
             val alt = Sun.position(t, at).altitudeDeg
             if (alt <= 0) 0.0 else {
                 val z = t.atZone(zone)
@@ -128,9 +132,11 @@ object PowerModel {
     /** Watt-hours of the day from a curve of quarter hours. */
     fun wattHours(curve: DoubleArray): Double = curve.sum() * 0.25
 
-    /** The first daylight hour that the forecast covers with at least [cover] % cloud, as an instant; null when none. */
-    fun cloudsAt(forecast: Forecast?, zone: ZoneId, date: java.time.LocalDate, cover: Double = 70.0): Instant? =
-        forecast?.hours?.firstOrNull { it.isDay && it.cloudCover >= cover && it.time.atZone(zone).toLocalDate() == date && it.time.isAfter(date.atStartOfDay(zone).plusHours(9).toInstant()) }?.time
+    /** The first daylight hour after nine o'clock that the forecast covers with at least [cover] % cloud, as an instant; null when none. */
+    fun cloudsAt(forecast: Forecast?, zone: ZoneId, date: java.time.LocalDate, cover: Double = 70.0): Instant? {
+        val nine = date.atTime(9, 0).atZone(zone).toInstant() // by the clock, also on a day the clocks change
+        return forecast?.hours?.firstOrNull { it.isDay && it.cloudCover >= cover && it.time.atZone(zone).toLocalDate() == date && it.time.isAfter(nine) }?.time
+    }
 
     /** Phone charges and laptop charges in a bank of [mAh] at 3.7 V: Wh over a typical phone's 15 Wh and laptop's 50 Wh, less 25 % lost converting. */
     fun bankWorth(mAh: Int, phoneWh: Double = 17.0, laptopWh: Double = 50.0): Pair<Double, Double> {
