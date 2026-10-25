@@ -55,7 +55,7 @@
 # apart off the diagonal or not run, VK bench's still pills failing ci/pillcheck.py with the core's glass or passing it
 # with their tint alone, (once the map's core draws the home) the home's frosted pills failing
 # it or further than MAD 2 from HWUI's on the TextureView, the core's first map frame above §3's emulator limits (3 s
-# first, 1.5 s warm), a map frame from 2 s after a swipe, a Java heap above 96 MB at the canal ring, a transitional
+# first, 1.5 s warm), a map frame from 4 s after a swipe, a Java heap above 96 MB at the canal ring, a transitional
 # switch without its lines, or no honest state under atlas.vk.off. A frame that never comes is "NO FRAME", a
 # warning; a background step the bench ended before is skipped, saying so.
 # Environment: ATLAS_SCREENS (the debug loop's screens, default: all), ATLAS_MAP_WAIT (seconds to wait for the home's map),
@@ -687,7 +687,8 @@ first_frame() { since_marker "$1" | grep -m1 -o 'vk first frame -*[0-9]* [a-z]*'
 # emulator's two cores, under lavapipe's 250 to 400 ms frames; both runs are warm since the pipeline cache outlives the
 # facts' phase, and with step 4's features they took 18 to 22 s by 24 October, two seconds apart from run to run for
 # the same work, so the warm limit is the cleared one's; ENGINE.md's gain 7, stage T kept on disk, is what makes a warm
-# start quick, and the phone's first picture is measured on the phone, ENGINE.md step 1), no frame from 2 s after a swipe (CI's `vk frame` lines), the Java
+# start quick, and the phone's first picture is measured on the phone, ENGINE.md step 1), no frame from 4 s after a swipe (CI's `vk frame` lines:
+# the swipe's fling and the emulator's frames of a second or more took its last frame past 2 s on 25 October), the Java
 # heap at the canal ring at most 96 MB, the transitional rule's switch from the core's tiles to a place without them and
 # back with no blank frame (its `vk transition core>canvas` and `canvas>core` lines, each written as the picture it
 # fades to is ready, the outgoing one held until then, and `vk transitional`), and T2's honest state under atlas.vk.off.
@@ -706,19 +707,20 @@ map_phase() {
     # is a warm one.
     [ "$run" = mapfirst ] && { adb shell input keyevent KEYCODE_HOME; sleep 3; }
   done
-  # A swipe on the warm home, then rest: frames while it moves, none from 2 s after.
+  # A swipe on the warm home, then rest: frames while it moves, none from 4 s after (a map that does not rest draws on
+  # through the 6 s that follow).
   sleep 3
   adb shell log -t AtlasMap "vk swipe: start"
   adb shell input swipe 540 1500 540 900 300
   adb shell log -t AtlasMap "vk swipe: done"
-  sleep 2
-  adb shell log -t AtlasMap "vk swipe: 2 s after"
+  sleep 4
+  adb shell log -t AtlasMap "vk swipe: 4 s after"
   sleep 6
-  before=$(since_marker mapwarm | sed -n '/AtlasMap: vk swipe: start$/,/AtlasMap: vk swipe: 2 s after$/p' | grep -c 'AtlasMap: vk frame ')
-  after=$(since_marker mapwarm | sed -n '/AtlasMap: vk swipe: 2 s after$/,$p' | grep -c 'AtlasMap: vk frame ')
-  echo "map: the swipe drew $before frames, $after from 2 s after it"
+  before=$(since_marker mapwarm | sed -n '/AtlasMap: vk swipe: start$/,/AtlasMap: vk swipe: 4 s after$/p' | grep -c 'AtlasMap: vk frame ')
+  after=$(since_marker mapwarm | sed -n '/AtlasMap: vk swipe: 4 s after$/,$p' | grep -c 'AtlasMap: vk frame ')
+  echo "map: the swipe drew $before frames, $after from 4 s after it"
   [ "$before" -gt 0 ] || { echo "MAP FAILED: the swipe drew no frame (the map did not move)"; FAIL=1; }
-  [ "$after" -eq 0 ] || { echo "MAP FAILED: $after frames from 2 s after the swipe (the map does not rest)"; FAIL=1; }
+  [ "$after" -eq 0 ] || { echo "MAP FAILED: $after frames from 4 s after the swipe (the map does not rest)"; FAIL=1; }
   # The Java heap at the canal ring, after the swipe (dumpsys' Dalvik heap in use); the native heap and graphics reported.
   PEAK_ALLOC=0; PEAK_NATIVE=0; PEAK_GFX=0; mem_poll; heap=$((PEAK_ALLOC / 1024))
   echo "map: Java heap at the canal ring ${heap} MB (native heap $((PEAK_NATIVE / 1024)) MB, graphics $((PEAK_GFX / 1024)) MB)"
