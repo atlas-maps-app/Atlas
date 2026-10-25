@@ -8,10 +8,11 @@ import org.junit.Test
  * within ±10 % of what they measured when the format was settled, so a change that makes tiles fatter, or drops what
  * they hold, shows.
  *
- * The gates are 2 MB for the canal ring (L14 and L12) and 161 KB for the Westerkerk (the plan's 150 KB left out the
+ * The gates are 2 MB for the canal ring (L14 and L12) and 162 KB for the Westerkerk (the plan's 150 KB left out the
  * 8,039 address points the living map's doors and numbers are drawn from: about 44 KB of the pack, 7 KB more with the
- * building each door is on; and 1 KB more for the style file every pack carries, which grows with each look the core
- * draws: step 4's windows, sills, shop glazing, plinths and cornices took the pack past 160 KB).
+ * building each door is on; and 2 KB more for the style file every pack carries, which grows with each look the core
+ * draws: step 4's windows, sills, shop glazing, plinths and cornices took the pack past 160 KB, its runways',
+ * taxiways' and park edges' tables past 161 KB).
  */
 class RenderTilesSizeTest {
     private class Pin(val name: String, val ceiling: Long, val bytesPerFeature: Double)
@@ -39,6 +40,6 @@ class RenderTilesSizeTest {
 
     companion object {
         /** The Westerkerk's gate. */
-        const val WESTERKERK_CEILING = 161_000L
+        const val WESTERKERK_CEILING = 162_000L
     }
 }
