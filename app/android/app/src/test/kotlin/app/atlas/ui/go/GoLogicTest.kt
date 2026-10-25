@@ -293,4 +293,17 @@ class GoLogicTest {
         assertEquals(listOf(WayKind.FASTEST, WayKind.QUIET, WayKind.FLAT), RouteViewModel.waysFor(Mode.BIKE))
         assertTrue(RouteViewModel.waysFor(Mode.BOAT).isEmpty())
     }
+
+    @Test
+    fun aRadarLabelStaysOnTheRadarHoweverWideItIs() {
+        // right of a ping in the left half, left of one in the right half, 18 out
+        assertEquals(118f, pingLabelLeft(100f, 190f, 1f, 120f, 380f), 0f)
+        assertEquals(162f, pingLabelLeft(300f, 190f, 1f, 120f, 380f), 0f)
+        // pushed back onto the radar at its edges
+        assertEquals(260f, pingLabelLeft(300f, 350f, 1f, 120f, 380f), 0f)
+        assertEquals(0f, pingLabelLeft(200f, 190f, 1f, 300f, 380f), 0f)
+        // wider than the radar (a long name at a large font scale): its left edge, where the clamp's range was empty and threw
+        assertEquals(0f, pingLabelLeft(100f, 190f, 1f, 424f, 380f), 0f)
+        assertEquals(0f, pingLabelLeft(300f, 190f, 2.6f, 1100f, 988f), 0f)
+    }
 }

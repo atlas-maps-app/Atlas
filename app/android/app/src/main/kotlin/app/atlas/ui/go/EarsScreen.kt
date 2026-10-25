@@ -45,6 +45,8 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -217,6 +219,14 @@ internal fun radarOffset(n: Nearby, heading: Double?, centre: Offset, k: Float, 
     return Offset(centre.x + d * sin(a).toFloat(), centre.y - d * cos(a).toFloat())
 }
 
+/**
+ * Where a ping's label of [labelWidth] starts on a radar [width] wide: right of the ping in the left half, left of it in
+ * the right half, 18 out on the board's grid scaled by [k], kept on the radar; a label as wide as the radar starts at
+ * its left edge.
+ */
+internal fun pingLabelLeft(pingX: Float, centreX: Float, k: Float, labelWidth: Float, width: Float): Float =
+    (if (pingX < centreX) pingX + 18f * k else pingX - 18f * k - labelWidth).coerceIn(0f, (width - labelWidth).coerceAtLeast(0f))
+
 private fun DrawScope.drawPing(
     n: Nearby, view: EarsView, c: Offset, k: Float, range: Double, measurer: androidx.compose.ui.text.TextMeasurer, style: TextStyle, units: Units, beacon: Boolean,
     taken: MutableList<androidx.compose.ui.geometry.Rect>,
@@ -227,10 +237,13 @@ private fun DrawScope.drawPing(
     drawCircle(colour, 14f * k, p, alpha = 0.6f, style = Stroke(2f * k))
     drawCircle(colour, 7f * k, p)
     val text = "${n.label} · ${GoFormat.distance(n.distance, units)}"
-    val layout = measurer.measure(text, style.copy(color = colour))
-    // The label on the side with room: right of the ping in the left half, left of it in the right half, 18 out, on
-    // a baseline 4 below the ping's centre, as the board sets its text.
-    val x = (if (p.x < c.x) p.x + 18f * k else p.x - 18f * k - layout.size.width).coerceIn(0f, size.width - layout.size.width)
+    // One line no wider than the radar: a long name in large type ends in an ellipsis (wider than the radar, it left the
+    // label no room, and placing it threw).
+    val layout = measurer.measure(
+        text, style.copy(color = colour), overflow = TextOverflow.Ellipsis, maxLines = 1, constraints = Constraints(maxWidth = size.width.toInt()),
+    )
+    // The label on the side with room, on a baseline 4 below the ping's centre, as the board sets its text.
+    val x = pingLabelLeft(p.x, c.x, k, layout.size.width.toFloat(), size.width)
     val top = p.y + 4f * k - layout.firstBaseline
     val box = androidx.compose.ui.geometry.Rect(x, top, x + layout.size.width, top + layout.size.height)
     if (taken.any { it.overlaps(box) }) return
