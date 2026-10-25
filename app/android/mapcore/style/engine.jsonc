@@ -180,12 +180,17 @@
         "wall_edge": 0.3
     },
 
-    // draw_houseboat: the hull's and the deck's colours, and the cabin roof's edge
+    // draw_houseboat: the hull's and the deck's colours, the cabin roof's edge, and the cabin's windows: their glass at
+    // night (by day the windows' `glass` gradient), their frames by day and at night, with their width
     "houseboats": {
         "hull": "#23272B",
         "deck": "#6E5E4C",
         "cabin_edge": "#2A2C30",
-        "cabin_edge_width": 0.4
+        "cabin_edge_width": 0.4,
+        "cabin_glass_night": "#10141E",
+        "cabin_frame_day": "#E8E4DA",
+        "cabin_frame_night": "#2A2E38",
+        "cabin_frame_width": 0.5
     },
 
     // draw_building's windows: by day with weather the glass's gradients from the top of a wall's windows to their

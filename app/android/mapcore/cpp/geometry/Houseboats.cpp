@@ -3,6 +3,7 @@
 
 #include "base/pymath/PyMath.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <vector>
@@ -13,9 +14,11 @@ namespace pm = atlas::pymath;
 
 namespace {
 
-/// draw_houseboat's walls(pp, y0, y1, base): per side of 0.2 m or more, the wall from y0 to y1, its corners as the port
-/// lists them (never through quadAt), lit by its sample 0.2 m out from its middle.
-void boat_walls(Builder& b, std::span<const V2> pp, double y0, double y1, std::uint32_t base, PrimKind kind) {
+/// draw_houseboat's walls(pp, y0, y1, base, win): per side of 0.2 m or more, the wall from y0 to y1, its corners as the
+/// port lists them (never through quadAt), lit by its sample 0.2 m out from its middle; with `win` (the cabin's) and
+/// over 1.6 m long, its row of k = max(1, int(elen / 1.7)) panes, one path right after the wall (the frame decides the
+/// distance and the panes).
+void boat_walls(Builder& b, std::span<const V2> pp, double y0, double y1, std::uint32_t base, PrimKind kind, bool win) {
     const std::size_t m = pp.size();
     for (std::size_t i = 0; i < m; ++i) {
         const V2 a = pp[i];
@@ -32,8 +35,21 @@ void boat_walls(Builder& b, std::span<const V2> pp, double y0, double y1, std::u
                                            .facing = true});
         const std::array<V3, 4> q{V3{a.x, y0, a.z}, V3{c.x, y0, c.z}, V3{c.x, y1, c.z}, V3{a.x, y1, a.z}};
         const std::uint16_t slot = Builder::slot(b.boat_slot++);
+        const auto wall = static_cast<std::uint32_t>(b.out.edged.size());
         b.edged(q, kind, static_cast<std::uint16_t>(prim_flag::weather | prim_flag::any), face, b.sample++, slot, slot,
                 {.edge = static_cast<std::uint32_t>(i), .part = 0});
+        if (win && elen > 1.6) {
+            const std::uint16_t panes = Builder::slot(b.boat_slot++);
+            b.out.window_walls.push_back({.wall = wall,
+                                          .first = 0,
+                                          .levels = 1,
+                                          .cols = static_cast<std::uint16_t>(std::max(1, kt_int(elen / 1.7))),
+                                          .near_slot = panes,
+                                          .far_slot = panes,
+                                          .cell = b.cell,
+                                          .style = WindowStyle::cabin,
+                                          .flags = 0});
+        }
     }
 }
 
@@ -67,9 +83,9 @@ void houseboat(Builder& b, const Building& bl, const BuildingRegion& region) {
         cab.emplace_back(ce.x + ((p.x - ce.x) * 0.84), ce.z + ((p.z - ce.z) * 0.8));
         roof.emplace_back(ce.x + ((p.x - ce.x) * 0.88), ce.z + ((p.z - ce.z) * 0.86));
     }
-    boat_walls(b, poly, lo, deck, region.hull, PrimKind::hull_wall);
+    boat_walls(b, poly, lo, deck, region.hull, PrimKind::hull_wall, false);
     day_top(b, poly, deck, region.deck, PrimKind::deck);
-    boat_walls(b, cab, deck, top, bl.v.wall_rgb, PrimKind::cabin_wall);
+    boat_walls(b, cab, deck, top, bl.v.wall_rgb, PrimKind::cabin_wall, true);
     day_top(b, roof, top, bl.v.roof_rgb, PrimKind::cabin_roof);
 }
 

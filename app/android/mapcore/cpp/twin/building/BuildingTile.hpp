@@ -6,7 +6,8 @@
 //   - the near cells, two words each (two a uint4): the wall's primitive in the edged list, and its place on the wall
 //     with the wall's columns and rows (building_cell_prim cuts the cell from its wall);
 //   - the windowed walls, a uint4 each (shaders/building/windows.slangh's BuildingWindowWall: its wall's primitive in
-//     the edged list with its style and flags, its first window, its rows and bays, its slots), by cell;
+//     the edged list with its style and flags, its first window, its rows and bays, its slots), by cell (a houseboat
+//     cabin's walls among them);
 //   - each face's geometry, 2 uint4 (its normal and area as floats, its test point and flags);
 //   - each frame slot's colours, 2 words a face (lit, unlit, 0xBBGGRR), which the CPU's light writes per tile and
 //     moment (its inputs stay on the CPU: BuildingTile::lights);
@@ -84,8 +85,10 @@ struct BuildingTile {
     std::vector<std::uint16_t> window_items;
     /// Each windowed wall's face (its wall's), whose light inputs its reveals' colour comes from.
     std::vector<std::uint32_t> window_faces;
-    /// Each windowed wall's flags (geometry::window_flag), so the frame's jobs know its flat detail.
+    /// Each windowed wall's flags (geometry::window_flag), so the frame's jobs know its flat detail, and its style
+    /// (geometry::WindowStyle: a houseboat cabin's windows have a reach of their own).
     std::vector<std::uint8_t> window_flags;
+    std::vector<geometry::WindowStyle> window_styles;
     /// Each item's plinth's and cornice's slots (geometry::TileBuildings::item_facades).
     std::vector<std::uint32_t> item_facades;
     /// Each face's light inputs (the CPU's light, per tile and moment, and the twin's).

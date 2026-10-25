@@ -6,7 +6,7 @@
 // storage buffers at the same frame's offsets.
 //
 // Shared with the C++ twin (after base/hlsl.hpp, by CP/frame/FrameBlock.hpp): four-lane vectors of 32-bit values only,
-// so std140, std430 and C++ lay it out the same way: 832 bytes.
+// so std140, std430 and C++ lay it out the same way: 880 bytes.
 #pragma once
 
 #include "camera.slang"
@@ -32,10 +32,11 @@ struct FrameStrokes {
     float4 widths;
 };
 
-/// The windows in the style of the frame's active pack (tiles/Style.hpp's WindowsStyle, the style file's `windows`),
-/// each colour 0xRRGGBB (sRGB): the glass's gradients by day with weather (top, then bottom), its flat glass without
-/// weather and at night, a warehouse's shutters, the frames, the frames' width (CSS px, a float's bits) and the deep
-/// windows' sills; a shop's glazing's frame and its width; the facades' plinths and cornices.
+/// The windows in the style of the frame's active pack (tiles/Style.hpp's WindowsStyle, the style file's `windows` and
+/// `houseboats`), each colour 0xRRGGBB (sRGB): the glass's gradients by day with weather (top, then bottom), its flat
+/// glass without weather and at night, a warehouse's shutters, the frames, the frames' width (CSS px, a float's bits)
+/// and the deep windows' sills; a shop's glazing's frame and its width; the facades' plinths and cornices; a houseboat
+/// cabin's windows' frames, their glass at night and the frames' width.
 struct FrameWindows {
     uint4 glass;   // x, y: the glass under a clear sky; z, w: under an overcast one
     uint4 lit;     // x, y: the glass the sun is on; z: the lit glass without weather; w: the frames' width
@@ -43,6 +44,7 @@ struct FrameWindows {
     uint4 frame;   // x: the frames by day, y: at night; z: the sills by day, w: at night
     uint4 shop;    // x: a shop's glazing's frame by day, y: at night; z: its width; w: 0
     uint4 facades; // x: the plinths by day, y: at night; z: the cornices by day, w: at night
+    uint4 cabin;   // x: a cabin's windows' frames by day, y: at night; z: their glass at night; w: the frames' width
 };
 
 struct FrameBlock {

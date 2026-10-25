@@ -93,6 +93,11 @@ struct WindowsStyle {
     float shop_frame_width = 0.0F;
     DayNight plinth;
     DayNight cornice;
+    /// A houseboat cabin's windows (`houseboats`): their glass at night (by day the glass's gradient), their frames by
+    /// day and at night, and the frames' width.
+    StyleRgb cabin_glass_night = 0;
+    DayNight cabin_frame;
+    float cabin_frame_width = 0.0F;
 };
 
 /// A tree's crown form (closeup.py's FORMS and tree_form): the ovoid where its genus has no other, a needleleaved

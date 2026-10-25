@@ -39,10 +39,18 @@
 // sample takes what SVG's fill and stroke leave on it. The glass's paint: by day with weather the gradients the port
 // defines (`glass`, by the sky's cover; `glassLit`), each over its path's box from top to bottom (objectBoundingBox):
 // the wall's dark windows' box, or its lit ones'; else its flat colours.
+//
+// A houseboat's cabin (draw_houseboat's walls(cab, deck, top, ..., win=True), the boat drawn with weather) has a row
+// of panes on each wall over 1.6 m long: k = max(1, int(elen / 1.7)) panes from 0.35 m to 1.0 m above the deck, pane j
+// from (j + 0.22) / k to (j + 0.78) / k along the wall, 0.03 m out from it, drawn where its item is nearer than 520 m
+// and the wall turns to the eye, each kept within 200 px of the frame where its area is over 0.2 px²: one path at the
+// slot after its wall's, the glass's gradient by day (its own colour at night) and its frames .5 px wide in its own
+// colours (the style file's `houseboats`). Its windowed wall's style is BUILDING_WINDOW_CABIN, with one row, its panes
+// as its bays; they have no sun samples (never lit), so its first window names none.
 #pragma once
 
-// A facade wall's record (a uint4): x its wall's one-cell primitive in the tile's edged list (bits 0-23), its style
-// (24-25) and flags (26-31); y its first window among the tile's (its first sample in the window group); z its rows
+// A facade wall's record (a uint4): x its wall's one-cell primitive in the tile's edged list (a cabin's wall, for a
+// houseboat's cabin: bits 0-23), its style (24-25) and flags (26-31); y its first window among the tile's (its first sample in the window group); z its rows
 // (bits 0-15) and bays (16-31), none where it has no windows; w its first painter slot within the item, near (bits
 // 0-15) and far (16-31): its shop glazing's where it has one, then its windows': its reveals', its dark windows', its
 // lit ones', its sash bars' and its sills'. Its building's plinth's and cornice's slots follow all its walls (each
@@ -54,6 +62,7 @@ static const uint BUILDING_WINDOW_FLAGS_SHIFT = 26u;
 static const uint BUILDING_WINDOW_PLAIN = 0u;
 static const uint BUILDING_WINDOW_MODERN = 1u;
 static const uint BUILDING_WINDOW_PARIS = 2u;
+static const uint BUILDING_WINDOW_CABIN = 3u;
 static const uint BUILDING_WINDOW_SHOP_FLOOR = 1u;
 static const uint BUILDING_WINDOW_WAREHOUSE = 2u;
 static const uint BUILDING_WINDOW_CHURCH = 4u;
@@ -99,6 +108,15 @@ static const float BUILDING_GLAZING_U0 = 0.05f;
 static const float BUILDING_GLAZING_U1 = 0.95f;
 static const float BUILDING_GLAZING_OUT = 0.03f;
 static const float BUILDING_GLAZING_AREA = 0.4f;
+// A houseboat cabin's panes: their heights above the deck, their span along the wall from the start of each of its k
+// shares, how far they stand out (m), their margin (CSS px) and least area (CSS px², exclusive).
+static const float BUILDING_CABIN_FROM = 0.35f;
+static const float BUILDING_CABIN_TO = 1.0f;
+static const float BUILDING_CABIN_U0 = 0.22f;
+static const float BUILDING_CABIN_U1 = 0.78f;
+static const float BUILDING_CABIN_OUT = 0.03f;
+static const float BUILDING_CABIN_MARGIN = 200.0f;
+static const float BUILDING_CABIN_AREA = 0.2f;
 
 // The windows' leads on their wall's plane (relative to its reciprocal depth, as the cells' and the roofs'), in the
 // paths' order from one step past the cells' most (15 steps of 2^-16): the reveals, the glass, the frames, the sash
@@ -120,10 +138,10 @@ static const uint BUILDING_WINDOW_NEAR_VERTICES = 30u;
 static const uint BUILDING_FACADE_VERTICES = 18u;
 
 struct BuildingWindowWall {
-    uint wall;  // its wall's one-cell primitive in the tile's edged list
-    uint style; // BUILDING_WINDOW_PLAIN, _MODERN, _PARIS
+    uint wall;  // its wall's one-cell primitive in the tile's edged list (a houseboat cabin's wall)
+    uint style; // BUILDING_WINDOW_PLAIN, _MODERN, _PARIS, _CABIN
     uint flags; // BUILDING_WINDOW_SHOP_FLOOR, _WAREHOUSE, _CHURCH
-    uint first; // its first window among the tile's (its first sample in the tile's window group)
+    uint first; // its first window among the tile's (its first sample in the tile's window group; a cabin's none)
     uint levels;
     uint cols;
     uint near_slot;
@@ -253,31 +271,45 @@ inline bool building_wall_turned(TilePlace place, BuildingFace f) {
 }
 
 /// Whether wall `w`'s windows are drawn at the frame (its face `f` and its item's rank entry `rank`): its item drawn
-/// nearer than win_d, not a church's with weather nearer than 520 m, its wall turned to the eye.
+/// nearer than win_d, not a church's with weather nearer than 520 m, its wall turned to the eye; a houseboat cabin's
+/// with weather (the boat's), its item nearer than 520 m, its wall turned to the eye.
 inline bool building_windows_drawn(uint theme_flags, TilePlace place, BuildingWindowWall w, BuildingFace f, uint rank) {
     if (rank == RANK_NONE) {
         return false;
     }
     uint detail = rank_detail(rank);
+    bool weather = (theme_flags & THEME_WEATHER) != 0u;
+    if (w.style == BUILDING_WINDOW_CABIN) {
+        if (!weather || (detail & BUILDING_DETAIL_CHURCH) == 0u) {
+            return false;
+        }
+        return building_wall_turned(place, f);
+    }
     if ((detail & BUILDING_DETAIL_WINDOWS) == 0u) {
         return false;
     }
-    bool weather = (theme_flags & THEME_WEATHER) != 0u;
     if ((w.flags & BUILDING_WINDOW_CHURCH) != 0u && weather && (detail & BUILDING_DETAIL_CHURCH) != 0u) {
         return false;
     }
     return building_wall_turned(place, f);
 }
 
-/// How many window records the frame gives wall `w` (its item's rank entry `rank`): its windows where its item is
-/// nearer than win_d, and its shop glazing's where it has one and its item is nearer than 760 m (the CPU's jobs give
-/// as many; windows_cs writes each, drawn or not).
+/// How many windows of wall `w` the frame decides (its item's detail bits `detail`): all where its item is nearer than
+/// win_d, a houseboat cabin's where it is nearer than 520 m.
+inline uint building_window_count(BuildingWindowWall w, uint detail) {
+    uint reach = w.style == BUILDING_WINDOW_CABIN ? BUILDING_DETAIL_CHURCH : BUILDING_DETAIL_WINDOWS;
+    return (detail & reach) != 0u ? w.levels * w.cols : 0u;
+}
+
+/// How many window records the frame gives wall `w` (its item's rank entry `rank`): its windows
+/// (building_window_count's), and its shop glazing's where it has one and its item is nearer than 760 m (the CPU's jobs
+/// give as many; windows_cs writes each, drawn or not).
 inline uint building_window_records(BuildingWindowWall w, uint rank) {
     if (rank == RANK_NONE) {
         return 0u;
     }
     uint detail = rank_detail(rank);
-    uint n = (detail & BUILDING_DETAIL_WINDOWS) != 0u ? w.levels * w.cols : 0u;
+    uint n = building_window_count(w, detail);
     if ((w.flags & BUILDING_WINDOW_GLAZING) != 0u && (detail & BUILDING_DETAIL_FACADES) != 0u) {
         n = n + 1u;
     }
@@ -454,6 +486,22 @@ inline BuildingWindowShape building_window_over(BuildingWindowShape s, float lea
         return building_window_nothing();
     }
     return s;
+}
+
+/// Pane c of houseboat cabin wall `w` (its wall's primitive `wall`, its face's normal `n`) as the frame draws it at its
+/// camera: quad_at(a, b, y0 + 0.35, y0 + 1.0, (c + 0.22) / k, (c + 0.78) / k, 0.03, n) as Camera.poly gives it with a
+/// margin of 200 px, its area (unsnapped) over 0.2 px², snapped at rest.
+inline BuildingWindowShape building_cabin_window(FrameCamera cam, TilePlace place, BuildingPrim wall, float3 n,
+                                                 BuildingWindowWall w, uint c) {
+    float k = float(w.cols);
+    BuildingWindowBox b;
+    b.ya = wall.c0.y + BUILDING_CABIN_FROM;
+    b.yb = wall.c0.y + BUILDING_CABIN_TO;
+    b.u0 = (float(c) + BUILDING_CABIN_U0) / k;
+    b.u1 = (float(c) + BUILDING_CABIN_U1) / k;
+    BuildingWindowShape s =
+        building_window_cut_in(cam, place, building_window_quad(wall, n, b, BUILDING_CABIN_OUT), BUILDING_CABIN_MARGIN);
+    return building_window_over(s, BUILDING_CABIN_AREA);
 }
 
 /// The window `win` (building_window_prim's) as the frame draws it at its camera: Camera.poly's corners, its area
@@ -794,7 +842,7 @@ struct BuildingGlass {
 
 /// The glass of a window, lit or not, of a wall with flags `flags` and style `style`, at the moment (amsterdam.py:
 /// gd, gl = (url(#glass), url(#glassLit)) by day with weather, else (dark by day or at night, lit); a warehouse's
-/// shutters with weather; a Paris stone front's lit panes as its dark ones by day).
+/// shutters with weather; a Paris stone front's lit panes as its dark ones by day; a houseboat cabin's own at night).
 inline BuildingGlass building_glass(FrameWindows w, uint theme_flags, uint style, uint flags, bool lit) {
     bool weather = (theme_flags & THEME_WEATHER) != 0u;
     bool night = (theme_flags & THEME_NIGHT) != 0u;
@@ -825,6 +873,11 @@ inline BuildingGlass building_glass(FrameWindows w, uint theme_flags, uint style
     if (style == BUILDING_WINDOW_PARIS && !night) {
         bright = dark;
     }
+    if (style == BUILDING_WINDOW_CABIN && night) {
+        dark.top = building_rgb(w.cabin.z);
+        dark.bottom = dark.top;
+        dark.gradient = false;
+    }
     if (lit) {
         return bright;
     }
@@ -834,6 +887,15 @@ inline BuildingGlass building_glass(FrameWindows w, uint theme_flags, uint style
 /// The windows' frames' colour at the moment (their sash bars' too).
 inline float3 building_window_frame(FrameWindows w, uint theme_flags) {
     return building_rgb((theme_flags & THEME_NIGHT) != 0u ? w.frame.y : w.frame.x);
+}
+
+/// A houseboat cabin's windows' frames' colour at the moment, and their width (CSS px).
+inline float3 building_cabin_frame(FrameWindows w, uint theme_flags) {
+    return building_rgb((theme_flags & THEME_NIGHT) != 0u ? w.cabin.y : w.cabin.x);
+}
+
+inline float building_cabin_frame_width(FrameWindows w) {
+    return asfloat(w.cabin.w);
 }
 
 /// The deep windows' sills' colour at the moment.

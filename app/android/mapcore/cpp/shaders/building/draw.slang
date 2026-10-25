@@ -448,7 +448,8 @@ uint window_job_word(uint at, uint list, uint i) {
 /// Each facade wall of a job's run, decided once for the frame: each of its windows into its record (at the job's
 /// records, in the wall's order) and, nearer than 160 m, into its near record (its reveal, sill and sash bars); its
 /// shop glazing into the record after them; its plinth and cornice into its facade record; and the wall into its own
-/// (its plane, its dark and lit windows' boxes, its widths, its reveals' colour).
+/// (its plane, its dark and lit windows' boxes, its widths, its reveals' colour). A houseboat cabin's wall's panes are
+/// its windows, never lit, at its one slot.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
@@ -479,6 +480,7 @@ void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     bool facades = building_facades_drawn(theme_flags, p.place, f, rank);
     uint detail = rank != RANK_NONE ? rank_detail(rank) : 0u;
     uint first_row = building_windows_first_row(theme_flags, w);
+    bool cabin = w.style == BUILDING_WINDOW_CABIN;
     bool near = (detail & BUILDING_DETAIL_NEAR) != 0u;
     uint item_slot = rank != RANK_NONE ? rank_slot(rank) : 0u;
     // the wall's first slot (its shop glazing's where it has one), then its windows'
@@ -490,11 +492,12 @@ void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     float2 dark = {infinity, -infinity};
     float2 lit = {infinity, -infinity};
     uint wall_record = span.z + thread.x;
-    uint count = (detail & BUILDING_DETAIL_WINDOWS) != 0u ? w.levels * w.cols : 0u;
+    uint count = building_window_count(w, detail);
     uint first = window_job_word(at, WINDOW_JOB_RECORDS, thread.x);
     uint near_first = window_job_word(at, WINDOW_JOB_NEARS, thread.x);
     uint widths = window_job_word(at, WINDOW_JOB_WIDTHS, thread.x);
-    float frame_half = 0.5f * building_tenths(widths & 0xFFFFu);
+    // a houseboat cabin's frames' width is its own
+    float frame_half = 0.5f * (cabin ? building_cabin_frame_width(frame.windows) : building_tenths(widths & 0xFFFFu));
     float sash_half = 0.5f * building_tenths(widths >> 16u);
     for (uint k = 0u; k < count; ++k) {
         uint r = k / w.cols;
@@ -504,7 +507,10 @@ void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
         BuildingWindowShape sill = building_window_nothing();
         BuildingSash bars = building_sash_nothing();
         bool on = false;
-        if (drawn && r >= first_row) {
+        if (drawn && cabin) {
+            // draw_houseboat: sp = cam.poly(quad_at(a, c, y0 + 0.35, y0 + 1.0, u0, u1, 0.03, nrm), margin=200)
+            s = building_cabin_window(frame.camera, p.place, wall, f.normal, w, c);
+        } else if (drawn && r >= first_row) {
             // amsterdam.py: sp = cam.poly(quad_at(..., 0.04, nrm)); deep and area(sp) > 70: the reveal sp, then sp
             // set back (rec -0.16) and the sill; the glass where area(sp) > 0.25; the sash bars at rec + 0.01 where
             // dd < 140 and area(sp) > 30
@@ -534,20 +540,21 @@ void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
                 uint2 texel = sun_bits[p.sun.x + sample / 32u];
                 on = ((texel.x >> (sample & 31u)) & 1u) != 0u;
             }
-            for (uint i = 0u; i < s.count; ++i) {
-                float y = building_window_corner(s, i).y;
-                if (on) {
-                    lit.x = min(lit.x, y);
-                    lit.y = max(lit.y, y);
-                } else {
-                    dark.x = min(dark.x, y);
-                    dark.y = max(dark.y, y);
-                }
+        }
+        for (uint i = 0u; i < s.count; ++i) {
+            float y = building_window_corner(s, i).y;
+            if (on) {
+                lit.x = min(lit.x, y);
+                lit.y = max(lit.y, y);
+            } else {
+                dark.x = min(dark.x, y);
+                dark.y = max(dark.y, y);
             }
         }
-        BuildingWindowRecord record =
-            building_window_record(s, on, building_glass_drawn(s, frame_half), false, w, wall_record,
-                                   slot + (on ? BUILDING_WINDOW_LIT_SLOT : BUILDING_WINDOW_DARK));
+        // a cabin's panes are one path, at its slot
+        uint glass_slot = cabin ? slot : slot + (on ? BUILDING_WINDOW_LIT_SLOT : BUILDING_WINDOW_DARK);
+        BuildingWindowRecord record = building_window_record(s, on, building_glass_drawn(s, frame_half), false, w,
+                                                             wall_record, glass_slot);
         uint out_at = (first + k) * BUILDING_WINDOW_RECORD_VECTORS;
         window_records_out[out_at] = record.v0;
         window_records_out[out_at + 1u] = record.v1;
@@ -664,8 +671,8 @@ struct FrameOut {
 };
 
 /// Vertex `vertex` of the windows' frames: record vertex / 30's polygon holding the band its wall's frames' half width
-/// paints about it (round joins: the fragments keep the samples within it), in the frames' colour, on its wall's plane
-/// a lead over the glass.
+/// paints about it (round joins: the fragments keep the samples within it), in the frames' colour (a shop's glazing's
+/// or a houseboat cabin's own), on its wall's plane a lead over the glass.
 [shader("vertex")]
 FrameOut window_frames_vs(uint vertex : SV_VulkanVertexID) {
     uint index = vertex / BUILDING_WINDOW_FRAME_VERTICES;
@@ -688,8 +695,10 @@ FrameOut window_frames_vs(uint vertex : SV_VulkanVertexID) {
     float2 css = building_window_frame_point(s, vertex - index * BUILDING_WINDOW_FRAME_VERTICES, half, glass);
     float depth = building_depth(frame.camera, shape, building_plane_recip(frame.camera, shape, css));
     o.position = clip_of(frame.camera, css, 1.0f, depth);
-    o.colour = shop ? building_shop_frame(frame.windows, frame.theme.flags.x)
-                    : building_window_frame(frame.windows, frame.theme.flags.x);
+    bool cabin = ((r.v0.x >> BUILDING_WINDOW_RECORD_STYLE_SHIFT) & 3u) == BUILDING_WINDOW_CABIN;
+    o.colour = shop    ? building_shop_frame(frame.windows, frame.theme.flags.x)
+               : cabin ? building_cabin_frame(frame.windows, frame.theme.flags.x)
+                       : building_window_frame(frame.windows, frame.theme.flags.x);
     o.a = float4(s.p0, s.p1);
     o.b = float4(s.p2, s.p3);
     o.c = float4(s.p4, float(s.count), half);

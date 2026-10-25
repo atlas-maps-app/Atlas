@@ -105,12 +105,24 @@ Checked check_tile(const gm::TileBuildings& g, const atlas::sun::SunTile& st) {
     for (const gm::Prim& p : g.edged) check(p);
     for (const gm::Prim& p : g.plain) check(p);
     // the windows: the tile's window group of K8's samples, wall by wall, window by window (its record, edge and place
-    // on the wall), each windowed wall naming its wall's one-cell primitive, its slots within its item's
+    // on the wall), each windowed wall naming its wall's one-cell primitive, its slots within its item's; a houseboat
+    // cabin's wall its row of panes, without samples, at the boat's slot after its wall's
     CHECK(g.windows == s.size() - s.windows_first);
     std::uint32_t windows = 0;
     for (const gm::WindowWall& w : g.window_walls) {
         REQUIRE(w.wall < g.edged.size());
         const gm::Prim& wall = g.edged[w.wall];
+        if (w.style == gm::WindowStyle::cabin) {
+            CHECK(wall.kind == gm::PrimKind::cabin_wall);
+            CHECK(wall.cell == w.cell);
+            CHECK(w.levels == 1);
+            CHECK(w.cols >= 1);
+            CHECK(w.flags == 0);
+            CHECK(w.near_slot == w.far_slot);
+            CHECK(w.near_slot == wall.near_slot + 1);
+            CHECK(w.near_slot < g.items[wall.item].boat_slots);
+            continue;
+        }
         CHECK(wall.kind == gm::PrimKind::cell);
         CHECK((wall.flags & gm::prim_flag::far) != 0);
         CHECK(wall.cell == w.cell);

@@ -168,6 +168,11 @@ class EngineStyleTest {
                 """" stroke=\"${value("houseboats.cabin_edge")}\" stroke-width=\"${css("houseboats.cabin_edge_width")}\""""",
             ),
             Triple(
+                listOf("houseboats.cabin_glass_night", "houseboats.cabin_frame_day", "houseboats.cabin_frame_night", "houseboats.cabin_frame_width"), amsterdam,
+                """stroke-width=\"${css("houseboats.cabin_frame_width")}\"/>", wq.joinToString(""), if (!night) "url(#glass)" else "${value("houseboats.cabin_glass_night")}", """ +
+                    """if (!night) "${value("houseboats.cabin_frame_day")}" else "${value("houseboats.cabin_frame_night")}")""",
+            ),
+            Triple(
                 listOf("canal_names"), amsterdam,
                 """V3(-uz, 0.0, ux), ${value("canal_names.size")}, "${value("canal_names.fill")}", ${value("canal_names.opacity")}, """ +
                     """${value("canal_names.weight")}, ${value("canal_names.spacing")})""",

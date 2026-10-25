@@ -39,7 +39,7 @@ inline constexpr double cells_reach = 460.0;
 inline constexpr double windows_reach = 390.0;
 
 /// The renders' distance for a church's own windows (`if church and d < 520`, with weather), which take its others'
-/// place.
+/// place, and for a houseboat cabin's (draw_houseboat's `d < 520`).
 inline constexpr double church_windows_reach = 520.0;
 
 /// The renders' distances for deep windows (`deep = ... d < 160`: a reveal, the glass set back, a sill) and for sash
@@ -136,8 +136,9 @@ struct Prim {
 };
 
 /// How a wall's windows are laid out (_draw_building's window rows): the plain sash windows, a modern building's wide
-/// ones, or the tall French windows of a Paris stone front (WIN_STYLE == 'paris').
-enum class WindowStyle : std::uint8_t { plain = 0, modern = 1, paris = 2 };
+/// ones, or the tall French windows of a Paris stone front (WIN_STYLE == 'paris'); or a houseboat cabin's row of panes
+/// (draw_houseboat's walls(cab, ..., win=True)).
+enum class WindowStyle : std::uint8_t { plain = 0, modern = 1, paris = 2, cabin = 3 };
 
 /// A facade wall's flags: what the frame decides by its moment and distance. The last three are its flat detail with
 /// weather within 760 m (_draw_building's, not a part's): a dark plinth along its foot (its walls on the street), a
@@ -157,14 +158,17 @@ inline constexpr std::uint8_t glazing = 32;
 /// of its row r and bay c, lit or dark by its own sun sample. The rows are every level's, the shop floor's too, as K8's
 /// samples are; the frame leaves the shop floor's out. The tile's windows are its window group of sun samples, one each
 /// in the same order (sun/Samples.hpp: the records, their edges, the rows, the bays), so a window's place among the
-/// tile's is its sample's in the group. A wall with flat detail and no windows has no rows.
+/// tile's is its sample's in the group. A wall with flat detail and no windows has no rows. A houseboat cabin's wall
+/// (WindowStyle::cabin, drawn with the boat) has one row of panes, never lit: they have no samples and are not among
+/// the tile's windows.
 struct WindowWall {
     std::uint32_t wall = 0;      ///< its wall's one-cell primitive in the edged list (its corners, face and item)
-    std::uint32_t first = 0;     ///< its windows among the tile's: [first, first + levels · cols)
+    std::uint32_t first = 0;     ///< its windows among the tile's: [first, first + levels · cols) (a cabin's: none)
     std::uint16_t levels = 0;    ///< its rows (building:levels, mapped or guessed)
     std::uint16_t cols = 0;      ///< its bays
     std::uint16_t near_slot = 0; ///< its first painter slot within the item, near and far: its shop glazing's, then
-    std::uint16_t far_slot = 0;  ///< its windows' (window_slots); a slot only for what it has
+    std::uint16_t far_slot = 0;  ///< its windows' (window_slots); a slot only for what it has (a cabin's: one, its
+                                 ///< boat slot)
     std::uint8_t cell = 0;       ///< its building's cell in the tile
     WindowStyle style = WindowStyle::plain;
     std::uint8_t flags = 0; ///< window_flag

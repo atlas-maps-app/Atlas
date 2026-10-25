@@ -159,12 +159,18 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
             const std::uint32_t rank = row < ranks.size() ? ranks[row] : shaders::RANK_NONE;
             return rank != shaders::RANK_NONE ? shaders::rank_detail(rank) : 0U;
         };
+        // building_window_count: a wall's windows where its item is nearer than win_d, a houseboat cabin's (drawn with
+        // weather, as the boat) nearer than 520 m
+        const auto count_of = [&](std::uint32_t wall, std::uint32_t detail) {
+            const bool cabin = b.window_styles[wall] == geometry::WindowStyle::cabin;
+            if (cabin && !weather) return 0U;
+            const std::uint32_t reach = cabin ? shaders::BUILDING_DETAIL_CHURCH : shaders::BUILDING_DETAIL_WINDOWS;
+            return (detail & reach) != 0U ? b.window_at[wall + 1] - b.window_at[wall] : 0U;
+        };
         const auto decided = [&](std::uint32_t wall) {
             const std::uint32_t detail = detail_of(wall);
-            const bool windows = b.window_at[wall + 1] > b.window_at[wall];
-            return (windows && (detail & shaders::BUILDING_DETAIL_WINDOWS) != 0U) ||
-                   (weather && (detail & shaders::BUILDING_DETAIL_FACADES) != 0U &&
-                    (b.window_flags[wall] & detailed) != 0U);
+            return count_of(wall, detail) > 0 || (weather && (detail & shaders::BUILDING_DETAIL_FACADES) != 0U &&
+                                                  (b.window_flags[wall] & detailed) != 0U);
         };
         shaders::BuildingPush push{};
         std::memcpy(&push, d.push.data(), sizeof push);
@@ -202,16 +208,15 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
                     const std::uint32_t row = row_of(wall);
                     const std::uint32_t detail = detail_of(wall);
                     const std::uint8_t flags = b.window_flags[wall];
-                    // building_window_records: its windows within win_d, its shop glazing within 760 m
-                    const std::uint32_t windows = (detail & shaders::BUILDING_DETAIL_WINDOWS) != 0U
-                                                      ? b.window_at[wall + 1] - b.window_at[wall]
-                                                      : 0U;
+                    // building_window_records: its windows within their reach, its shop glazing within 760 m
+                    const std::uint32_t windows = count_of(wall, detail);
                     const bool glazing = (flags & geometry::window_flag::glazing) != 0U &&
                                          (detail & shaders::BUILDING_DETAIL_FACADES) != 0U;
                     w[at + job_records + k] = records;
                     records += windows + (glazing ? 1U : 0U);
                     w[at + job_nears + k] = no_near;
-                    if ((detail & shaders::BUILDING_DETAIL_DEEP) != 0U && windows > 0) {
+                    if ((detail & shaders::BUILDING_DETAIL_DEEP) != 0U && windows > 0 &&
+                        b.window_styles[wall] != geometry::WindowStyle::cabin) {
                         w[at + job_nears + k] = nears;
                         nears += windows;
                     }

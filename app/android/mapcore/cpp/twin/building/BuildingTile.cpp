@@ -42,6 +42,7 @@ static_assert(geometry::window_flag::shop_floor == shaders::BUILDING_WINDOW_SHOP
                   static_cast<std::uint32_t>(geometry::WindowStyle::plain) == shaders::BUILDING_WINDOW_PLAIN &&
                   static_cast<std::uint32_t>(geometry::WindowStyle::modern) == shaders::BUILDING_WINDOW_MODERN &&
                   static_cast<std::uint32_t>(geometry::WindowStyle::paris) == shaders::BUILDING_WINDOW_PARIS &&
+                  static_cast<std::uint32_t>(geometry::WindowStyle::cabin) == shaders::BUILDING_WINDOW_CABIN &&
                   geometry::window_slots == shaders::BUILDING_WINDOW_SILLS + 1,
               "geometry/Walls.hpp's windows and windows.slangh's");
 
@@ -157,12 +158,14 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     layout.window_items.assign(ww, 0);
     layout.window_faces.assign(ww, 0);
     layout.window_flags.assign(ww, 0);
+    layout.window_styles.assign(ww, gm::WindowStyle::plain);
     for (std::uint32_t i = 0; i < ww; ++i) {
         const gm::WindowWall& w = g.window_walls[i];
         layout.window_at[i + 1] = layout.window_at[i] + (std::uint32_t{w.levels} * w.cols);
         layout.window_items[i] = static_cast<std::uint16_t>(g.edged[w.wall].item); // below the 0x10000 items asserted
         layout.window_faces[i] = g.edged[w.wall].face;
         layout.window_flags[i] = w.flags;
+        layout.window_styles[i] = w.style;
         out[layout.windows_at + i] = {
             heap_of[w.wall] | (static_cast<std::uint32_t>(w.style) << shaders::BUILDING_WINDOW_STYLE_SHIFT) |
                 (std::uint32_t{w.flags} << shaders::BUILDING_WINDOW_FLAGS_SHIFT),

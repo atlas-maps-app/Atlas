@@ -95,7 +95,9 @@ using clock = std::chrono::steady_clock;
             .dark = {w.dark.day, w.dark.night, w.warehouse.day, w.warehouse.night},
             .frame = {w.frame.day, w.frame.night, w.sill.day, w.sill.night},
             .shop = {w.shop_frame.day, w.shop_frame.night, std::bit_cast<std::uint32_t>(w.shop_frame_width), 0U},
-            .facades = {w.plinth.day, w.plinth.night, w.cornice.day, w.cornice.night}};
+            .facades = {w.plinth.day, w.plinth.night, w.cornice.day, w.cornice.night},
+            .cabin = {w.cabin_frame.day, w.cabin_frame.night, w.cabin_glass_night,
+                      std::bit_cast<std::uint32_t>(w.cabin_frame_width)}};
 }
 
 } // namespace

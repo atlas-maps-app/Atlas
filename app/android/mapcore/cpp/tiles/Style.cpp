@@ -273,6 +273,9 @@ Result<Style> Style::of(const StyleTables& tables) {
     ws.shop_frame_width = static_cast<float>(r.number(windows, "windows", "shop_frame_width"));
     ws.plinth = r.day_night(windows, "windows", "plinth_day", "plinth_night");
     ws.cornice = r.day_night(windows, "windows", "cornice_day", "cornice_night");
+    ws.cabin_glass_night = r.colour(boats, "houseboats", "cabin_glass_night");
+    ws.cabin_frame = r.day_night(boats, "houseboats", "cabin_frame_day", "cabin_frame_night");
+    ws.cabin_frame_width = static_cast<float>(r.number(boats, "houseboats", "cabin_frame_width"));
     const auto trees = r.table("trees");
     TreesStyle& ts = s.trees;
     ts.leaf = r.colour(trees, "trees", "leaf");

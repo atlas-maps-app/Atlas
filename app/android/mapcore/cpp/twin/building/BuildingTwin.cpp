@@ -244,6 +244,8 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
     passes::building_reveals(block_.theme, b.lights, b.window_faces, reveals_);
     const hlsl::float3 shop_frame = shaders::building_shop_frame(paints, theme_flags);
     const float shop_width = shaders::building_shop_frame_width(paints);
+    const hlsl::float3 cabin_frame = shaders::building_cabin_frame(paints, theme_flags);
+    const float cabin_width = shaders::building_cabin_frame_width(paints);
     // a building's plinths' path, then its cornices', at its slots after its walls, once its walls are done (they
     // follow each other in the list)
     constexpr std::uint32_t no_item = 0xFFFF'FFFFU;
@@ -396,12 +398,15 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
                 }
             }
             if (!windows_drawn) continue;
-            const bool deep = shaders::building_windows_deep(theme_flags, rank);
-            const bool sashed = shaders::building_windows_sashed(rank);
+            // a houseboat cabin's panes: one path at its slot, in its own frames
+            const bool cabin = w.style == shaders::BUILDING_WINDOW_CABIN;
+            const bool deep = !cabin && shaders::building_windows_deep(theme_flags, rank);
+            const bool sashed = !cabin && shaders::building_windows_sashed(rank);
             const passes::WindowWidths widths = passes::window_widths(
                 shaders::rank_detail(rank), weather, row < distances_.depth.size() ? distances_.depth[row] : 0.0,
                 distances_.focal, frame_width);
-            const float width = shaders::building_tenths(widths.frame);
+            const float width = cabin ? cabin_width : shaders::building_tenths(widths.frame);
+            const hlsl::float3 panes_frame = cabin ? cabin_frame : frame;
             const float sash_width = shaders::building_tenths(widths.sash);
             const hlsl::float4 plane = wall_plane;
             // the wall's windows, each as the frame draws it (windows_cs's): by their sample's bit dark or lit, and
@@ -413,6 +418,12 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
             sashes_.clear();
             for (std::uint32_t r = shaders::building_windows_first_row(theme_flags, w); r < w.levels; ++r) {
                 for (std::uint32_t c = 0; c < w.cols; ++c) {
+                    if (cabin) {
+                        const shaders::BuildingWindowShape s =
+                            shaders::building_cabin_window(cam, place, wall, f.normal, w, c);
+                        if (s.count != 0) windows_[0].push_back(s);
+                        continue;
+                    }
                     const shaders::BuildingWindowBox box = shaders::building_window_box(wall, w, r, c);
                     shaders::BuildingWindowShape sp = shaders::building_window_cut(
                         cam, place, shaders::building_window_quad(wall, f.normal, box, shaders::BUILDING_WINDOW_OUT));
@@ -487,7 +498,8 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
             for (const bool lit : {false, true}) {
                 const std::vector<shaders::BuildingWindowShape>& drawn = windows_[lit ? 1 : 0];
                 if (drawn.empty()) continue;
-                const std::uint32_t part = lit ? shaders::BUILDING_WINDOW_LIT_SLOT : shaders::BUILDING_WINDOW_DARK;
+                const std::uint32_t glass_slot =
+                    cabin ? slot : slot + (lit ? shaders::BUILDING_WINDOW_LIT_SLOT : shaders::BUILDING_WINDOW_DARK);
                 // one path, a closed subpath a window, and its box from top to bottom (the gradient's)
                 points_.clear();
                 subpaths_.clear();
@@ -518,18 +530,18 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
                     style.fill = Paint::colour(argb_of(glass.top));
                 }
                 style.join = Join::round;
-                style.stroke = Paint::colour(argb_of(frame));
+                style.stroke = Paint::colour(argb_of(panes_frame));
                 style.stroke_width = width;
-                out_.at(slot + part, group_, item);
+                out_.at(glass_slot, group_, item);
                 out_.path(style, subpaths_);
                 if (lit) ++sunlit_;
                 if (depths_ != nullptr) {
                     ElementDepth d{.edged = true, .tile = tile_};
                     d.windows.push_back({.windows = drawn,
-                                         .slot = slot + part,
+                                         .slot = glass_slot,
                                          .plane = plane,
                                          .half = 0.5F * width,
-                                         .frame = frame,
+                                         .frame = panes_frame,
                                          .glass = glass,
                                          .top = top,
                                          .bottom = bottom});
