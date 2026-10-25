@@ -60,6 +60,10 @@
 /// row (shadow_blur.slang's last pass).
 [[vk::binding(1, 3)]] StructuredBuffer<uint> shadow_blurred;
 [[vk::binding(2, 3)]] RWStructuredBuffer<uint> shadow_words;
+/// The rippled reflections (ripple.slang's two buffers, the frame's upright device px a word each: premultiplied linear
+/// RGB, a r g b): the blur's last pass leaves the result in one of them (ripple_fs's push.mode.z).
+[[vk::binding(3, 3)]] StructuredBuffer<uint> ripple_a;
+[[vk::binding(4, 3)]] StructuredBuffer<uint> ripple_b;
 
 /// A draw's own values: where its tables lie in `words`, its mode and its colours.
 struct GroundPush {
@@ -77,6 +81,7 @@ struct GroundPush {
 static const uint GROUND_NIGHT = 1u;       // the night colours
 static const uint GROUND_WATER_LEVEL = 2u; // water_vs: the pieces at their water level (wclip), else at the street (w0)
 static const uint GROUND_VISIBLE_ALL = 4u; // every fill drawn (the frame's decisions not applied)
+static const uint GROUND_LAYER = 8u;       // into the reflections' layer (Ripple.cpp): the upright view, its own colours
 
 /// A tile's record in the tile table: 20 words.
 static const uint TILE_WORDS = 20u;
@@ -902,6 +907,9 @@ SettRun sett_run_of(uint word) {
 
 /// The view's device point of an output position (a pixel's corner or a sample).
 float2 device_at(float2 output) {
+    if ((push.mode.x & GROUND_LAYER) != 0u) {
+        return output; // the reflections' layer is the upright view
+    }
     return css_of_output(frame.camera, output) * frame.camera.frame.z;
 }
 
@@ -995,6 +1003,17 @@ float3 quay_corner(uint at, uint i) {
     return float3(asfloat(words[at + 4u + 3u * i]), asfloat(words[at + 5u + 3u * i]), asfloat(words[at + 6u + 3u * i]));
 }
 
+/// The clip coordinates of CSS point `css` at depth `depth`: the frame's (clip_of), or in the reflections' layer
+/// (GROUND_LAYER) the upright view's, the output's turn left out.
+float4 ground_clip(float2 css, float depth) {
+    if ((push.mode.x & GROUND_LAYER) != 0u) {
+        FrameCamera c = frame.camera;
+        float2 n = {(css.x * c.frame.z) * c.device.x - 1.0f, (css.y * c.frame.z) * c.device.y - 1.0f};
+        return float4(n.x, n.y, depth, 1.0f);
+    }
+    return clip_of(frame.camera, css, 1.0f, depth);
+}
+
 /// The face of the record at word `at` (a quay wall's, a reflection's), its box's corner `vertex` at its slot's depth.
 QuayOut face_vs(uint at, uint vertex) {
     uint tile = words[at];
@@ -1043,7 +1062,7 @@ QuayOut face_vs(uint at, uint vertex) {
     hi = hi + (hw + 1.0f);
     float2 c = quad_corners[vertex];
     float2 device = float2(c.x < 0.0f ? lo.x : hi.x, c.y < 0.0f ? lo.y : hi.y);
-    o.position = clip_of(frame.camera, device / density, 1.0f, painter_depth(frame.camera, slot));
+    o.position = ground_clip(device / density, painter_depth(frame.camera, slot));
     o.colour = unpack(colour);
     o.p01 = float4(p[0], p[1]);
     o.p23 = float4(p[2], n > 3u ? p[3] : p[2]);
@@ -1144,7 +1163,7 @@ QuayOut reflection_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_Vulkan
     float2 k = quad_corners[vertex];
     float2 device = c + float2(k.x < 0.0f ? -(r.x + 1.0f) : r.x + 1.0f, k.y < 0.0f ? -(r.y + 1.0f) : r.y + 1.0f);
     QuayOut o;
-    o.position = clip_of(frame.camera, device / density, 1.0f, painter_depth(frame.camera, words[at + 1u]));
+    o.position = ground_clip(device / density, painter_depth(frame.camera, words[at + 1u]));
     o.colour = float4(unpack(words[at + 2u]).rgb, ellipse ? 2.0f : 1.0f);
     o.p01 = float4(c, r.x, ellipse ? r.y : 0.0f);
     o.p23 = float4(0.0f, 0.0f, 0.0f, 0.0f);
@@ -1153,7 +1172,8 @@ QuayOut reflection_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_Vulkan
     return o;
 }
 
-/// A reflection's pixel: on the samples inside it, its colour composited as the group composites it over the water.
+/// A reflection's pixel: on the samples inside it, its colour composited as the group composites it over the water;
+/// into the reflections' layer (GROUND_LAYER), its own colour at its own opacity, as the group's layer holds it.
 [shader("fragment")]
 StrokeOutput reflection_fs(QuayOut q) {
     float2 pts[5] = {q.p01.xy, q.p01.zw, q.p23.xy, q.p23.zw, q.p4.xy};
@@ -1177,8 +1197,6 @@ StrokeOutput reflection_fs(QuayOut q) {
         if (inside) mask |= 1u << i;
     }
     if (mask == 0u) discard;
-    float2 css = css_of_output(frame.camera, q.position.xy);
-    float3 water = gradient_at(css.y).rgb;
     float3 colour = q.colour.rgb;
     float a = q.colour.a > 0.5f ? 1.0f : push.rows.w;
     if (ellipse) {
@@ -1188,10 +1206,32 @@ StrokeOutput reflection_fs(QuayOut q) {
         colour = g.rgb;
         a = g.a * asfloat(q.extra.x);
     }
-    float3 rgb = lerp(water, colour, push.rows.z);
     StrokeOutput o;
-    o.colour = float4(rgb * a, a);
     o.coverage = mask;
+    if ((push.mode.x & GROUND_LAYER) != 0u) {
+        o.colour = float4(colour * a, a);
+        return o;
+    }
+    float2 css = css_of_output(frame.camera, q.position.xy);
+    float3 water = gradient_at(css.y).rgb;
+    float3 rgb = lerp(water, colour, push.rows.z);
+    o.colour = float4(rgb * a, a);
+    return o;
+}
+
+/// The rippled reflections inside the water's clip at their group's first slot (screen_vs; passes/Ripple.cpp): the
+/// filter's result at the pixel (push.mode.z: 0 ripple_a, 1 ripple_b; push.colour.x the upright view's width) written
+/// back as premultiplied sRGB, at the group's opacity (push.rows.z), premultiplied.
+[shader("fragment")]
+ColourOut ripple_fs(ScreenOut v) {
+    int2 p = fx_pixel(frame.camera, v.position.xy);
+    uint at = uint(p.y) * push.colour.x + uint(p.x);
+    uint linear = push.mode.z == 0u ? ripple_a[at] : ripple_b[at];
+    uint s = fx_to_srgb_premultiplied(linear);
+    float4 c = {float((s >> 16u) & 0xFFu), float((s >> 8u) & 0xFFu), float(s & 0xFFu), float(s >> 24u)};
+    float a = push.rows.z;
+    ColourOut o;
+    o.colour = (c * (1.0f / 255.0f)) * a;
     return o;
 }
 

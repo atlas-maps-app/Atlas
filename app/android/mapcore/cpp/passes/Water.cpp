@@ -222,6 +222,13 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
     mirrored.stencil = inside;
     ATLAS_GPU_LET(rf, frame::make_pipeline(context, mirrored, frame::Overdraw::translucent));
     p.reflection = std::move(rf);
+    // the rippled reflections inside the clip (Ripple.cpp): the filter's result at the group's opacity, at its slot
+    gpu::GraphicsDesc rippled = ground_desc(context, p, "ground water ripple", "screen_vs", "ripple_fs");
+    translucent(rippled);
+    rippled.stencil_test = true;
+    rippled.stencil = inside;
+    ATLAS_GPU_LET(rc, frame::make_pipeline(context, rippled, frame::Overdraw::translucent));
+    p.ripple_composite = std::move(rc);
     // the sun's glitter (Glitter.cpp): screened over the water, each sample once by the first glint to reach it
     // (inside the clip, its w0 bit still set: then cleared), per sample where the device can
     gpu::GraphicsDesc glitter = ground_desc(context, p, "ground water glitter", "glitter_vs", "glitter_fs");

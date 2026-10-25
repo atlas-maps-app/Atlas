@@ -62,12 +62,15 @@ inline void write_ppm(const gpu::Pixels& px, const std::filesystem::path& path) 
 
 /// Draws `camera` with `theme` through the registry's passes and the ground over the bundled packs in `dir`, `pack`
 /// the active one, `frames` frames 50 ms apart, in `mode`; `before` sees the pass before the frame builder prepares
-/// it, `after` sees it and the last frame's state before the world goes.
+/// it, `after` sees it and the last frame's state before the world goes. `globals` (may be null) provides some of set
+/// 1's bindings to the world (the noise fields), and `settle` (may be empty) runs after each frame (their worker's
+/// wait).
 inline std::optional<GroundDraw>
 draw_ground(const Session& session, const style::CameraState& camera, const style::ThemeBlock& theme,
             const std::string& dir, const std::string& pack,
             const std::function<void(passes::Ground&, const frame::FrameState&)>& after = {}, int frames = 40,
-            const std::function<void(passes::Ground&)>& before = {}, frame::Mode mode = frame::Mode::structural) {
+            const std::function<void(passes::Ground&)>& before = {}, frame::Mode mode = frame::Mode::structural,
+            const std::shared_ptr<frame::GlobalProvider>& globals = nullptr, const std::function<void()>& settle = {}) {
     const gpu::Device& device = *session.device;
     auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
     if (!cache) return std::nullopt;
@@ -83,6 +86,7 @@ draw_ground(const Session& session, const style::CameraState& camera, const styl
     auto world = scene::World::create(device, (*builder)->passes(),
                                       {.workers = 3, .sun = {.enabled = false}, .clock = [&now] { return now; }});
     if (!world) return std::nullopt;
+    if (globals && !(*world)->add_globals(globals)) return std::nullopt;
     for (const char* name : {"amsterdam", "grachten"}) {
         const std::filesystem::path path = std::filesystem::path(dir) / (std::string(name) + ".atlas");
         if (!std::filesystem::exists(path)) continue;
@@ -115,6 +119,7 @@ draw_ground(const Session& session, const style::CameraState& camera, const styl
         }
         if (g->decided().kept) ++kept;
         (*world)->residency().wait_idle();
+        if (settle) settle();
     }
     (*renderer)->drain();
     auto packed = (*output)->read_packed((*output)->latest());

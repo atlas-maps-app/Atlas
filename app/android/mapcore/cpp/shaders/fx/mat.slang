@@ -47,6 +47,42 @@ uint fx_table_u16(uint at, uint index) {
     return (word >> ((b & 2u) * 8u)) & 0xFFFFu;
 }
 
+/// vImage's premultiply of an unpremultiplied pixel (a r g b, a byte each): (c · a + 127) / 255 (CP/fx/ByteTables.hpp).
+uint fx_premultiply(uint p) {
+    uint a = p >> 24u;
+    if (a == 255u) {
+        return p;
+    }
+    if (a == 0u) {
+        return 0u;
+    }
+    uint r = (((p >> 16u) & 0xFFu) * a + 127u) / 255u;
+    uint g = (((p >> 8u) & 0xFFu) * a + 127u) / 255u;
+    uint b = ((p & 0xFFu) * a + 127u) / 255u;
+    return (a << 24u) | (r << 16u) | (g << 8u) | b;
+}
+
+/// A premultiplied pixel (a r g b) by its exact unpremultiplied colour in the colour space of the table at byte `table`
+/// (FX_TABLE_TO_LINEAR or FX_TABLE_TO_SRGB), unpremultiplied: Core Graphics' conversion (bytes::unpremultiply_exact).
+uint fx_unpremultiply_exact(uint p, uint table) {
+    uint a = p >> 24u;
+    if (a == 0u) {
+        return 0u;
+    }
+    uint row = table + (a << 8u);
+    return (a << 24u) | (fx_table_byte(row + ((p >> 16u) & 0xFFu)) << 16u) |
+           (fx_table_byte(row + ((p >> 8u) & 0xFFu)) << 8u) | fx_table_byte(row + (p & 0xFFu));
+}
+
+/// A premultiplied sRGB pixel as a filter holds it in linear RGB, premultiplied (bytes::srgb_to_linear_premultiplied),
+/// and a filter's premultiplied linear result written back as premultiplied sRGB.
+uint fx_to_linear_premultiplied(uint p) {
+    return fx_premultiply(fx_unpremultiply_exact(p, FX_TABLE_TO_LINEAR));
+}
+uint fx_to_srgb_premultiplied(uint p) {
+    return fx_premultiply(fx_unpremultiply_exact(p, FX_TABLE_TO_SRGB));
+}
+
 /// Whether `mat` runs this frame: the fields are bound in full mode (FRAME_FIELDS) and the moment has weather (the
 /// renders give the objects group and the ground's mat groups the filter only then: render/amsterdam.py:965, th['wx']).
 /// The `on` the mat groups' fragment stages give mat_colour, and the composite's rule at the silhouettes.

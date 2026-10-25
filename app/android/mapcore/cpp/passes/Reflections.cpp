@@ -501,6 +501,10 @@ void Ground::write_reflections(std::vector<std::uint32_t>& words) {
 void Ground::record_reflections(const frame::Recording& r) {
     const Words& w = *words_;
     if (w.reflection_count == 0 || !*pipelines_->reflection) return;
+    if (drew_ripple_) {
+        record_ripple(r);
+        return;
+    }
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     const tiles::ReflectionsStyle& rs = frame_.tiles[frame_.reflections.front().tile].ground->reflection_style;
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->reflection);

@@ -93,6 +93,7 @@ namespace ground_flag {
 inline constexpr std::uint32_t night = 1;       ///< the night colours
 inline constexpr std::uint32_t water_level = 2; ///< water_vs: the pieces at their level (wclip)
 inline constexpr std::uint32_t visible_all = 4; ///< every fill drawn
+inline constexpr std::uint32_t layer = 8;       ///< into the reflections' layer (Ripple.cpp): upright, own colours
 } // namespace ground_flag
 
 /// A water piece seen from the frame's camera at one height: at rest Camera.poly's point count, shoelace sum and box
@@ -444,6 +445,7 @@ enum class Box : std::uint8_t { outside, unknown, inside };
 [[nodiscard]] Box cell_test(const view::Camera& cam, const geometry::CellBox& c);
 
 struct SoftShadows; // below
+struct RippleLayer; // below
 
 class Ground final : public frame::Pass {
 public:
@@ -496,6 +498,16 @@ public:
     /// The tests' look at the sun's glitter and the drizzle's rings: from the next frame on, none.
     void draw_glitter(bool draw) noexcept { no_glitter_ = !draw; }
     void draw_rings(bool draw) noexcept { no_rings_ = !draw; }
+    /// The tests' look at the reflections' ripple: from the next frame on, the reflections drawn without it (as where
+    /// the fields are not bound).
+    void draw_ripple(bool draw) noexcept { no_ripple_ = !draw; }
+    /// The tests' look at the ripple: from the next prepare on, its buffers lie in memory the CPU reads, and each
+    /// frame copies its resolved layer there too (RippleLayer::layer_copy).
+    void keep_ripple(bool keep) noexcept { keep_ripple_ = keep; }
+    /// The ripple's objects (null where prepare made none).
+    [[nodiscard]] const RippleLayer* ripple_layer() const noexcept;
+    /// Whether the last frame drew its reflections rippled.
+    [[nodiscard]] bool drew_ripple() const noexcept { return drew_ripple_; }
 
     /// The phases' ids.
     enum PhaseId : std::uint8_t {
@@ -510,6 +522,7 @@ public:
         phase_water_reflections = 8,
         phase_water_glitter = 9,
         phase_water_rings = 10,
+        phase_ripple = 11,
     };
 
     /// The pipelines, their layout and the pass's descriptor sets (Ground.cpp).
@@ -518,8 +531,9 @@ public:
     struct Words;
 
 private:
-    static constexpr std::array<frame::Phase, 11> phase_list{{
+    static constexpr std::array<frame::Phase, 12> phase_list{{
         {.slot = frame::Slot::offscreen, .order = 0, .id = phase_shadow_mask},
+        {.slot = frame::Slot::offscreen, .order = 1, .id = phase_ripple},
         {.slot = frame::Slot::ground, .order = 0, .id = phase_opaque},
         {.slot = frame::Slot::translucent, .order = ground_order::canopy, .id = phase_canopy},
         {.slot = frame::Slot::translucent, .order = ground_order::water_reflections, .id = phase_water_reflections},
@@ -609,6 +623,17 @@ private:
     void record_reflections(const frame::Recording& r);
     /// The reflections' group (`<g filter="url(#ripple)" opacity=".92">`) in the water's clip group `water`.
     void emit_reflections(const frame::FrameState& state, twin::Stream& out, std::int32_t water) const;
+    // Ripple.cpp
+    [[nodiscard]] gpu::Result<void> make_ripple(const frame::PassContext& context, Pipelines& p) const;
+    /// Whether this frame draws the reflections rippled: some are drawn, the fields are bound in full mode
+    /// (FRAME_FIELDS), the ripple is wanted, and prepare made its objects.
+    [[nodiscard]] bool rippled(const frame::FrameState& state) const noexcept;
+    /// The displacement's 256 offsets at the frame (fx::ripple_displacement through an exact fma) into its words.
+    void write_ripple(std::vector<std::uint32_t>& words, const frame::FrameState& state);
+    /// Before the main pass: the reflections into the layer, then the filter's stages over it.
+    void record_ripple_layer(const frame::Recording& r);
+    /// The rippled reflections composited inside the water's clip at the group's opacity.
+    void record_ripple(const frame::Recording& r);
     // Glitter.cpp
     /// water_layer's sun glitter at the frame: by day under a clear sky, 260 glints about the point of the water that
     /// mirrors the sun to the eye, where it projects within reach of the picture (frame_.glints).
@@ -652,6 +677,9 @@ private:
     bool no_reflections_ = false;
     bool no_glitter_ = false;
     bool no_rings_ = false;
+    bool no_ripple_ = false;
+    bool keep_ripple_ = false;
+    bool drew_ripple_ = false;
     double select_ms_ = 0;
     /// The tiles' decisions, kept while the camera rests (their grounds held), reused as scratch while it moves.
     std::vector<std::unique_ptr<TileDecisions>> decisions_;
@@ -709,6 +737,10 @@ struct Ground::Pipelines {
     bool glitter_per_sample = false;
     // Rings.cpp
     vk::raii::Pipeline rings{nullptr};
+    // Ripple.cpp: the composite of the rippled reflections; the layer, its buffers and stages (null where the pass
+    // draws none: the owner mode, or where the device could not make them)
+    vk::raii::Pipeline ripple_composite{nullptr};
+    std::unique_ptr<RippleLayer> ripple;
     // Shadows.cpp
     vk::raii::Pipeline shadow_union{nullptr};
     vk::raii::Pipeline shadow_composite{nullptr};
@@ -747,6 +779,35 @@ struct SoftShadows {
     vk::raii::Pipeline blur{nullptr};
 };
 
+/// The ripple's images, buffers and stages, made for an output (Ripple.cpp; shaders/ground/ripple.slang): the
+/// reflections drawn into 4x samples (their slots' depths beside them), resolved into the layer, the view's upright
+/// device px; the filter's two buffers, a word a pixel, which its stages write back and forth.
+struct RippleLayer {
+    vk::Extent2D extent{}; ///< the view's upright device px
+    bool kept = false;     ///< the tests' look: the buffers readable, the layer copied each frame
+    gpu::Image samples;    ///< the reflections' 4x samples (RGBA8, transient)
+    gpu::Image depth;      ///< their slots' depths (the main pass's depth format, transient)
+    gpu::Image layer;      ///< their resolve (RGBA8): the group's layer, premultiplied sRGB
+    vk::raii::ImageView samples_view{nullptr};
+    vk::raii::ImageView depth_view{nullptr};
+    vk::raii::ImageView layer_view{nullptr};
+    vk::raii::RenderPass pass{nullptr};
+    vk::raii::Framebuffer framebuffer{nullptr};
+    std::array<gpu::Buffer, 2> buffers; ///< a and b: premultiplied linear RGB, a r g b
+    gpu::Buffer layer_copy;             ///< the kept layer, a row of extent.width texels after another (RGBA8)
+    vk::raii::DescriptorSetLayout set_layout{nullptr};
+    vk::raii::DescriptorPool pool{nullptr};
+    /// [0] reads a and writes b, [1] reads b and writes a (both read the layer)
+    std::array<vk::raii::DescriptorSet, 2> sets{vk::raii::DescriptorSet{nullptr}, vk::raii::DescriptorSet{nullptr}};
+    vk::raii::PipelineLayout compute_layout{nullptr};
+    vk::raii::ShaderModule module{nullptr};
+    vk::raii::Pipeline displace{nullptr};
+    vk::raii::Pipeline square{nullptr};
+    vk::raii::Pipeline line{nullptr};
+    vk::raii::Pipeline draw{nullptr}; ///< the reflections into the samples
+    std::uint32_t result = 0;         ///< the buffer the last frame's blur left its result in (0 a, 1 b)
+};
+
 /// A pipeline of the ground's module named `name`, with its entry points, opaque on the scene's colour (Ground.cpp).
 [[nodiscard]] gpu::GraphicsDesc ground_desc(const frame::PassContext& context, const Ground::Pipelines& p,
                                             std::string_view name, const char* vertex, const char* fragment);
@@ -777,7 +838,8 @@ struct Ground::Words {
     std::uint32_t glint_lists = 0;
     std::uint32_t rings = 0; ///< the drizzle's tile and bands (ground.slang's RINGS_ layout), and how many bands
     std::uint32_t ring_bands = 0;
-    std::uint32_t slot = 0; ///< the frame slot whose buffer holds them
+    std::uint32_t ripple_offsets = 0; ///< the ripple's 256 displacement offsets (ripple.slang)
+    std::uint32_t slot = 0;           ///< the frame slot whose buffer holds them
     bool ready = false;
 };
 

@@ -976,6 +976,7 @@ void Ground::release() noexcept {
     pipelines_.reset();
     words_.reset();
     drew_soft_ = false;
+    drew_ripple_ = false;
 }
 
 gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
@@ -998,13 +999,18 @@ gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
         ATLAS_GPU_LET(set, gpu::allocate_set(d, p->pool, p->set_layout));
         s = std::move(set);
     }
-    // set 3: the soft shadows' grid, their blurred mask, and the grid as words for the compute stages (Shadows.cpp)
+    // set 3: the soft shadows' grid, their blurred mask, and the grid as words for the compute stages (Shadows.cpp);
+    // the ripple's two buffers, which its composite reads (Ripple.cpp)
     const std::array soft_bindings{
         gpu::Binding{.slot = 0, .type = vk::DescriptorType::eStorageBuffer, .stages = stages},
         gpu::Binding{
             .slot = 1, .type = vk::DescriptorType::eStorageBuffer, .stages = vk::ShaderStageFlagBits::eFragment},
         gpu::Binding{
-            .slot = 2, .type = vk::DescriptorType::eStorageBuffer, .stages = vk::ShaderStageFlagBits::eCompute}};
+            .slot = 2, .type = vk::DescriptorType::eStorageBuffer, .stages = vk::ShaderStageFlagBits::eCompute},
+        gpu::Binding{
+            .slot = 3, .type = vk::DescriptorType::eStorageBuffer, .stages = vk::ShaderStageFlagBits::eFragment},
+        gpu::Binding{
+            .slot = 4, .type = vk::DescriptorType::eStorageBuffer, .stages = vk::ShaderStageFlagBits::eFragment}};
     ATLAS_GPU_LET(soft_layout, gpu::make_set_layout(d, soft_bindings));
     p->soft_set_layout = std::move(soft_layout);
     const std::array<std::span<const gpu::Binding>, 1> soft_kinds{soft_bindings};
@@ -1020,6 +1026,14 @@ gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
     ATLAS_GPU_CHECK(make_sky_pipelines(context, *p));
     ATLAS_GPU_CHECK(make_line_pipelines(context, *p));
     ATLAS_GPU_CHECK(make_shadow_pipelines(context, *p));
+    // the ripple, but in the owner mode (its map draws no reflections' colours); where the device cannot make it, the
+    // reflections are drawn as they are
+    if (!context.owners) {
+        if (auto made = make_ripple(context, *p); !made) {
+            log::warn("vk ground: the ripple: {}; the reflections are drawn without it", made.error().text());
+            p->ripple.reset();
+        }
+    }
     pipelines_ = std::move(p);
     words_ = std::make_unique<Words>();
     return {};
@@ -1199,6 +1213,7 @@ void Ground::write_words(const frame::FrameState& state) {
     write_reflections(v);
     write_glitter(v);
     write_rings(v);
+    write_ripple(v, state);
     // into this frame slot's buffer (a frame slot's previous frame has finished: its buffer and set are free)
     const std::uint32_t slot = state.slot & 1U;
     Pipelines& p = *pipelines_;
@@ -1274,6 +1289,10 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
     if (phase == phase_shadow_mask) {
         // before the main pass: it binds every set it draws with
         record_shadow_mask(r);
+        return;
+    }
+    if (phase == phase_ripple) {
+        record_ripple_layer(r);
         return;
     }
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
