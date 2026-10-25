@@ -651,6 +651,15 @@ struct ItemFeature {
     std::optional<double> h;
     std::optional<double> rotor;
     const Tags* tags = nullptr;
+    /// A crane's form (rendertiles' Cranes): 1 ship-to-shore, 2 a yard gantry; its axes and half sizes (a ship-to-shore
+    /// crane's hu its distance to the water, its hv none).
+    std::uint8_t crane = 0;
+    double ux = 0.0;
+    double uz = 0.0;
+    double vx = 0.0;
+    double vz = 0.0;
+    double hu = 0.0;
+    std::optional<double> hv;
 };
 
 /// A variant: a building's or part's attributes in the scene loaded at another level of the ladder.
@@ -1061,6 +1070,7 @@ private:
             for (std::uint32_t i = 0; i < list->size(); ++i) {
                 const Item& d = (*list)[i];
                 item(source, i, d.x, d.z, d.id, d.h, d.rotor, d.poly, &d.tags);
+                if (source == 0) crane_form(d, items_.back());
             }
         }
         static const Tags none;
@@ -1068,6 +1078,129 @@ private:
             const Tower& t = s_.towers[i];
             item(3, i, t.at.x, t.at.z, t.id, t.h, std::nullopt, std::nullopt, &none);
         }
+    }
+
+    /// A crane's form as regions.py's draw_items derives it from the whole scene (rendertiles' Cranes): on a quay (a
+    /// crane node within 60 m of its nearest quay edge, the first of two as near) the ship-to-shore shape, its boom
+    /// along the edge's normal, turned where the other side's point dw + 25 m out lies on water and this side's does
+    /// not; in a yard a portal along its outline's longest edge (its projections' half extents, at least 4 and 3 m) or
+    /// its nearest crane rail's segment (by the segment's middle; 9 and 14 m), an outline over 2.5 times longer than
+    /// wide spanned by one portal 4 m deep. Every value the port's double, by its arithmetic.
+    void crane_form(const Item& cr, ItemFeature& out) const {
+        const double x = cr.x;
+        const double z = cr.z;
+        double dw = 1e9;
+        std::optional<V2> wn;
+        for (const Edge& e : edges_) {
+            const double ux = e.b.x - e.a.x;
+            const double uz = e.b.z - e.a.z;
+            double l2 = (ux * ux) + (uz * uz);
+            if (l2 == 0.0) l2 = 1.0;
+            const double t = pymath::max(0.0, pymath::min(1.0, (((x - e.a.x) * ux) + ((z - e.a.z) * uz)) / l2));
+            const double d = pymath::hypot(e.a.x + (ux * t) - x, e.a.z + (uz * t) - z);
+            if (d < dw) {
+                dw = d;
+                // water_edges' normal: (ez / Lg, -ex / Lg), into the water
+                const double lg = pymath::hypot(ux, uz);
+                const double sign = e.flip ? -1.0 : 1.0;
+                wn = V2(sign * (uz / lg), sign * (-ux / lg));
+            }
+        }
+        const auto on_water = [&](double px, double pz) {
+            return std::ranges::any_of(s_.water, [&](const std::vector<V2>& r) { return geometry::pip(px, pz, r); });
+        };
+        if (!cr.poly && dw < 60 && wn) {
+            V2 w = *wn;
+            if (!on_water(x + (w.x * (dw + 25)), z + (w.z * (dw + 25))) &&
+                on_water(x - (w.x * (dw + 25)), z - (w.z * (dw + 25)))) {
+                w = V2(-w.x, -w.z); // the boom reaches over the side where the water is
+            }
+            out.crane = 1;
+            out.ux = w.x;
+            out.uz = w.z;
+            out.vx = -w.z;
+            out.vz = w.x;
+            out.hu = dw;
+            return;
+        }
+        double ux = 1.0;
+        double uz = 0.0;
+        double hu = 9.0;
+        double hv = 14.0;
+        const auto dist = [](V2 a, V2 b) {
+            const std::array<double, 2> p{a.x, a.z};
+            const std::array<double, 2> q{b.x, b.z};
+            return pymath::dist(p, q);
+        };
+        if (cr.poly && cr.poly->size() >= 4) {
+            const std::vector<V2>& poly = *cr.poly;
+            const std::size_t n = poly.front() == poly.back() ? poly.size() - 1 : poly.size();
+            std::size_t e0 = 0;
+            double bd = dist(poly[0], poly[1 % n]);
+            for (std::size_t i = 0; i < n; ++i) {
+                const double d = dist(poly[i], poly[(i + 1) % n]);
+                if (d > bd) {
+                    bd = d;
+                    e0 = i;
+                }
+            }
+            const V2 a = poly[e0];
+            const V2 b = poly[(e0 + 1) % n];
+            ux = b.x - a.x;
+            uz = b.z - a.z;
+            double lg = pymath::hypot(ux, uz);
+            if (lg == 0.0) lg = 1.0;
+            ux /= lg;
+            uz /= lg;
+            // the first of the largest and of the smallest of the projections, as Python's max and min
+            double u0 = 0;
+            double u1 = 0;
+            double v0 = 0;
+            double v1 = 0;
+            for (std::size_t i = 0; i < n; ++i) {
+                const double pu = ((poly[i].x - x) * ux) + ((poly[i].z - z) * uz);
+                const double pv = (-(poly[i].x - x) * uz) + ((poly[i].z - z) * ux);
+                if (i == 0 || pu < u0) u0 = pu;
+                if (i == 0 || pu > u1) u1 = pu;
+                if (i == 0 || pv < v0) v0 = pv;
+                if (i == 0 || pv > v1) v1 = pv;
+            }
+            hu = pymath::max(4.0, (u1 - u0) / 2);
+            hv = pymath::max(3.0, (v1 - v0) / 2);
+        } else {
+            double best = 1e9;
+            for (const Railway& r : s_.rail) {
+                if (!r.crane) continue;
+                for (std::size_t i = 0; i + 1 < r.pts.size(); ++i) {
+                    const V2 p = r.pts[i];
+                    const V2 q = r.pts[i + 1];
+                    const double d = pymath::hypot(((p.x + q.x) / 2) - x, ((p.z + q.z) / 2) - z);
+                    if (d < best) {
+                        best = d;
+                        double l = dist(p, q);
+                        if (l == 0.0) l = 1.0;
+                        ux = (q.x - p.x) / l;
+                        uz = (q.z - p.z) / l;
+                    }
+                }
+            }
+        }
+        double vx = -uz;
+        double vz = ux;
+        if (hu > 2.5 * hv) {
+            // an outline much longer than wide is the crane's runway along its rails: one portal spans it, 4 m deep
+            std::swap(ux, vx);
+            std::swap(uz, vz);
+            hu = hv;
+            hv = 4.0;
+        }
+        out.crane = 2;
+        out.ux = ux;
+        out.uz = uz;
+        out.vx = vx;
+        out.vz = vz;
+        out.hu = hu;
+        out.hv = hv;
     }
 
     void place_roads() {
@@ -1520,6 +1653,15 @@ private:
         std::vector<std::pair<std::string_view, std::string_view>> all;
         for (const osm::Tag t : it.tags->all()) all.emplace_back(t.key, t.value);
         lf.tags(c::tags, f, all);
+        if (it.crane != 0) {
+            lf.integer(c::crane, f, it.crane);
+            lf.decimal(c::ux, f, it.ux);
+            lf.decimal(c::uz, f, it.uz);
+            lf.decimal(c::vx, f, it.vx);
+            lf.decimal(c::vz, f, it.vz);
+            lf.decimal(c::hu, f, it.hu);
+            lf.decimal(c::hv, f, it.hv);
+        }
     }
 
     void road(tl::LayerFill& lf, std::uint32_t f, const Pending& p) {

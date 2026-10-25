@@ -671,6 +671,7 @@ class SceneToTiles(
 
     private fun itemFeatures(): List<Pending> {
         val out = ArrayList<Pending>()
+        val cranes = Cranes.forms(S)
         fun item(source: Int, i: Int, d: Map<String, Any?>, what: () -> String) {
             val fields = LinkedHashMap<String, Any?>()
             fields["source"] = source
@@ -689,6 +690,17 @@ class SceneToTiles(
                 "h", "rotor" -> fields[k] = if (v == null) null else v as? Double ?: noColumn(Layer.ITEM, k, v, what)
                 "tags" -> fields["tags"] = allTags(tagMap(v))
                 else -> drop(Layer.ITEM, k, v, what)
+            }
+            if (source == 0) {
+                // a crane's form, as draw_items derives it from the whole scene
+                val f = cranes[i]
+                fields["crane"] = f.kind
+                fields["ux"] = f.ux
+                fields["uz"] = f.uz
+                fields["vx"] = f.vx
+                fields["vz"] = f.vz
+                fields["hu"] = f.hu
+                f.hv?.let { fields["hv"] = it }
             }
             val (reach, top) = Drawn.item(source, d)
             var box = pointBox(p)

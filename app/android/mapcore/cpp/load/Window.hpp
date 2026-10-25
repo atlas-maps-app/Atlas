@@ -43,8 +43,9 @@ inline constexpr std::uint8_t frame_cell_level = 10;
 inline constexpr double window_margin = 200.0;
 
 /// The engine version a window's head names: the core's stage P, bumped when a window's tiles change for the same
-/// data (the port's packs name EngineVersion.ID there): core-p2 carries gantries and conveyors, which core-p1 left out.
-inline constexpr std::string_view stage_p_version = "core-p2";
+/// data (the port's packs name EngineVersion.ID there): core-p2 carries gantries and conveyors, which core-p1 left out;
+/// core-p3 a crane's form.
+inline constexpr std::string_view stage_p_version = "core-p3";
 
 /// The version of a window built now: `<stage P's> <the style's>`, its manifest's engine_version and style_version. A
 /// window of another version is built again from the data it keeps before it is drawn (the app's Windows), so a frame

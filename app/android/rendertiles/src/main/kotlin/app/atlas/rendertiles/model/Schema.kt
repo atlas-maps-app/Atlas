@@ -244,6 +244,13 @@ object Schema {
         c("h", Codec.CENTI, "height, metres"),
         c("rotor", Codec.CENTI, "a turbine's rotor diameter, metres"),
         c("tags", Codec.TAGS, "every tag (items are few)"),
+        c("crane", Codec.U8, "a crane's form as draw_items derives it from the whole scene: 1 ship-to-shore (on a quay), 2 a yard gantry; 0 for every other item"),
+        c("ux", Codec.CENTI, "a crane's first axis: a ship-to-shore crane's boom toward the water, a yard gantry's u (frame metres, unit)"),
+        c("uz", Codec.CENTI, "its z"),
+        c("vx", Codec.CENTI, "a crane's second axis: a ship-to-shore crane's (-w[1], w[0]), a yard gantry's v"),
+        c("vz", Codec.CENTI, "its z"),
+        c("hu", Codec.CENTI, "a ship-to-shore crane's distance to its quay edge; a yard gantry's half length along u"),
+        c("hv", Codec.CENTI, "a yard gantry's half width along v"),
     )
 
     val LABEL: List<Column> = listOf(

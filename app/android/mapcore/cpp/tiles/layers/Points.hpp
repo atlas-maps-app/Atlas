@@ -86,7 +86,7 @@ inline constexpr std::uint8_t tag_barrier = slot_of(columns, "tag:barrier");
 
 namespace atlas::tiles::item {
 
-inline constexpr std::array<ColumnSpec, 10> columns = {{
+inline constexpr std::array<ColumnSpec, 17> columns = {{
     {"source", Codec::u8},   // 0 S['cranes'], 1 S['masts'], 2 S['mtowers'], 3 S['towers'] (pylons), 4 S['turbines']
     {"index", Codec::delta}, // source order in its list
     {"id", Codec::nvarz},    // the OSM id
@@ -97,6 +97,15 @@ inline constexpr std::array<ColumnSpec, 10> columns = {{
     {"h", Codec::centi},   // height, metres
     {"rotor", Codec::centi}, // a turbine's rotor diameter, metres
     {"tags", Codec::tags},   // every tag (items are few)
+    // a crane's form as draw_items derives it from the whole scene: 1 ship-to-shore (on a quay), 2 a yard gantry; 0
+    // for every other item
+    {"crane", Codec::u8},
+    {"ux", Codec::centi}, // its first axis: a ship-to-shore crane's boom toward the water, a yard gantry's u
+    {"uz", Codec::centi},
+    {"vx", Codec::centi}, // its second: a ship-to-shore crane's (-w[1], w[0]), a yard gantry's v
+    {"vz", Codec::centi},
+    {"hu", Codec::centi}, // a ship-to-shore crane's distance to its quay edge; a yard gantry's half length along u
+    {"hv", Codec::centi}, // a yard gantry's half width along v
 }};
 
 inline constexpr std::uint8_t source = slot_of(columns, "source");
@@ -109,5 +118,12 @@ inline constexpr std::uint8_t poly = slot_of(columns, "poly");
 inline constexpr std::uint8_t h = slot_of(columns, "h");
 inline constexpr std::uint8_t rotor = slot_of(columns, "rotor");
 inline constexpr std::uint8_t tags = slot_of(columns, "tags");
+inline constexpr std::uint8_t crane = slot_of(columns, "crane");
+inline constexpr std::uint8_t ux = slot_of(columns, "ux");
+inline constexpr std::uint8_t uz = slot_of(columns, "uz");
+inline constexpr std::uint8_t vx = slot_of(columns, "vx");
+inline constexpr std::uint8_t vz = slot_of(columns, "vz");
+inline constexpr std::uint8_t hu = slot_of(columns, "hu");
+inline constexpr std::uint8_t hv = slot_of(columns, "hv");
 
 } // namespace atlas::tiles::item
