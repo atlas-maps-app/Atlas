@@ -227,6 +227,7 @@ Result<Style> Style::of(const StyleTables& tables) {
     s.reflections.trees = r.day_night(mirrored, "reflections", "trees_day", "trees_night");
     s.reflections.streak = r.colours3(mirrored, "reflections", "streak");
     s.reflections.streak_opacity = r.numbers3(mirrored, "reflections", "streak_opacity");
+    s.reflections.glitter = r.colour(mirrored, "reflections", "glitter");
     const auto parks = r.table("park_edges");
     s.park_edges = r.day_night(parks, "park_edges", "day", "night");
     s.park_edges_width = r.number(parks, "park_edges", "width");

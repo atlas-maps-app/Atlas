@@ -123,8 +123,8 @@
 
     // amsterdam.py's reflections, the scene mirrored in the water: the group's opacity by day and at night, how much
     // darker a mirrored facade reads than the bright sky the water mirrors (by day, under cloud, at night), a
-    // building's window rows by day and at night and their opacity, a tree's crown by day and at night, and a night
-    // streak's radial gradient (its stops' colours and opacities at 0, .5 and 1)
+    // building's window rows by day and at night and their opacity, a tree's crown by day and at night, a night
+    // streak's radial gradient (its stops' colours and opacities at 0, .5 and 1), and the sun's glitter on the water
     "reflections": {
         "opacity_day": 0.92,
         "opacity_night": 0.95,
@@ -137,7 +137,8 @@
         "trees_day": "#3E5A36",
         "trees_night": "#0A0F0D",
         "streak": ["#FFE3AE", "#FFC27A", "#FFB060"],
-        "streak_opacity": [0.95, 0.45, 0.0]
+        "streak_opacity": [0.95, 0.45, 0.0],
+        "glitter": "#FFF7E2"
     },
 
     // amsterdam.py's tram tracks: by day, at night, and their width

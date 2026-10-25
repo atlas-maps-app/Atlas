@@ -215,6 +215,16 @@ struct ReflectionStreak {
     double opacity = 0;
 };
 
+/// A glint of the sun's glitter on the water (water_layer's, in `<g fill="#FFF7E2" style="mix-blend-mode:screen">`):
+/// its ellipse (CSS px) and opacity, as the SVG prints them at rest.
+struct Glint {
+    double cx = 0;
+    double cy = 0;
+    double rx = 0;
+    double ry = 0;
+    double opacity = 0;
+};
+
 /// A fill's decision byte: drawn (at the street's height for the water), drawn at its water level.
 namespace drawn_bit {
 inline constexpr std::uint8_t street = 1;
@@ -298,6 +308,8 @@ struct GroundFrame {
     std::vector<ReflectionFace> reflection_faces;
     std::vector<ReflectionCircle> reflection_circles;
     std::vector<ReflectionStreak> reflection_streaks;
+    /// The sun's glitter on the water this frame (by day under a clear sky, with weather, where the water is drawn).
+    std::vector<Glint> glints;
     /// Whether this frame's decisions are the last frame's, kept: the camera rests as it did, over the same tiles.
     bool kept = false;
     /// render's #sky and #wgrad rows (y1 and y2 as the SVG prints them), the horizon's row.
@@ -468,6 +480,8 @@ public:
     /// The tests' look at the water: from the next frame on, no reflections (or their light, which changes with the
     /// sun's).
     void draw_reflections(bool draw) noexcept { no_reflections_ = !draw; }
+    /// The tests' look at the sun's glitter: from the next frame on, none.
+    void draw_glitter(bool draw) noexcept { no_glitter_ = !draw; }
 
     /// The phases' ids.
     enum PhaseId : std::uint8_t {
@@ -480,6 +494,7 @@ public:
         phase_shadows = 6,
         phase_shadow_mask = 7,
         phase_water_reflections = 8,
+        phase_water_glitter = 9,
     };
 
     /// The pipelines, their layout and the pass's descriptor sets (Ground.cpp).
@@ -488,12 +503,13 @@ public:
     struct Words;
 
 private:
-    static constexpr std::array<frame::Phase, 9> phase_list{{
+    static constexpr std::array<frame::Phase, 10> phase_list{{
         {.slot = frame::Slot::offscreen, .order = 0, .id = phase_shadow_mask},
         {.slot = frame::Slot::ground, .order = 0, .id = phase_opaque},
         {.slot = frame::Slot::translucent, .order = ground_order::canopy, .id = phase_canopy},
         {.slot = frame::Slot::translucent, .order = ground_order::water_reflections, .id = phase_water_reflections},
         {.slot = frame::Slot::translucent, .order = ground_order::water_tint, .id = phase_water_tint},
+        {.slot = frame::Slot::translucent, .order = ground_order::water_glitter, .id = phase_water_glitter},
         {.slot = frame::Slot::translucent, .order = ground_order::water_end, .id = phase_water_end},
         {.slot = frame::Slot::translucent, .order = ground_order::over, .id = phase_over},
         {.slot = frame::Slot::translucent, .order = ground_order::marks_road, .id = phase_marks},
@@ -577,6 +593,15 @@ private:
     void record_reflections(const frame::Recording& r);
     /// The reflections' group (`<g filter="url(#ripple)" opacity=".92">`) in the water's clip group `water`.
     void emit_reflections(const frame::FrameState& state, twin::Stream& out, std::int32_t water) const;
+    // Glitter.cpp
+    /// water_layer's sun glitter at the frame: by day under a clear sky, 260 glints about the point of the water that
+    /// mirrors the sun to the eye, where it projects within reach of the picture (frame_.glints).
+    void decide_glitter(const view::Camera& cam, const frame::FrameState& state);
+    /// The glints' records into the frame's words, and each one's list of the glints whose boxes meet its.
+    void write_glitter(std::vector<std::uint32_t>& words);
+    void record_glitter(const frame::Recording& r);
+    /// The glitter's group (`<g fill="#FFF7E2" style="mix-blend-mode:screen">`) in the water's clip group `water`.
+    void emit_glitter(const frame::FrameState& state, twin::Stream& out, std::int32_t water) const;
     [[nodiscard]] gpu::Result<void> make_soft_shadows(const frame::PassContext& context, Pipelines& p) const;
     /// Whether this frame draws its shadows soft: some are drawn, the frame is in full mode, the moment blurs them,
     /// and prepare made the soft shadows' objects.
@@ -600,6 +625,7 @@ private:
     bool only_setts_ = false;
     bool no_quays_ = false;
     bool no_reflections_ = false;
+    bool no_glitter_ = false;
     double select_ms_ = 0;
     /// The tiles' decisions, kept while the camera rests (their grounds held), reused as scratch while it moves.
     std::vector<std::unique_ptr<TileDecisions>> decisions_;
@@ -652,6 +678,9 @@ struct Ground::Pipelines {
     vk::raii::Pipeline quay{nullptr};
     // Reflections.cpp
     vk::raii::Pipeline reflection{nullptr};
+    // Glitter.cpp: per sample where the device can (sample_shading)
+    vk::raii::Pipeline glitter{nullptr};
+    bool glitter_per_sample = false;
     // Shadows.cpp
     vk::raii::Pipeline shadow_union{nullptr};
     vk::raii::Pipeline shadow_composite{nullptr};
@@ -715,6 +744,9 @@ struct Ground::Words {
     std::uint32_t quay_count = 0;
     std::uint32_t reflections = 0; ///< the reflections' records (QUAY_WORDS each), and how many
     std::uint32_t reflection_count = 0;
+    std::uint32_t glints = 0; ///< the glints' records (GLINT_WORDS each), how many, and their lists of neighbours
+    std::uint32_t glint_count = 0;
+    std::uint32_t glint_lists = 0;
     std::uint32_t slot = 0; ///< the frame slot whose buffer holds them
     bool ready = false;
 };

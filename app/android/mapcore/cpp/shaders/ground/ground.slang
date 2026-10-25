@@ -17,7 +17,8 @@
 //     road's courses each line's share of the path's layer (ground/setts.slangh).
 //   - quay_vs and quay_fs: the quay walls' faces (passes/Quays.cpp); reflection_vs and reflection_fs: the water's
 //     reflections inside its clip, each sample composited as their group composites it over the water
-//     (passes/Reflections.cpp).
+//     (passes/Reflections.cpp); glitter_vs and glitter_fs: the sun's glitter, the glints' layer screened over the
+//     water once a sample (passes/Glitter.cpp).
 //   - shadow_vs: the ground shadows (passes/Shadows.cpp), moved by the moment's sun: a prism's footprint hull swept
 //     along its offset (each hull point twice, before and after its turn), a raised outline or a crown disc moved by
 //     it, their union set in the stencil and composited by flat_fs.
@@ -1189,6 +1190,83 @@ StrokeOutput reflection_fs(QuayOut q) {
     float3 rgb = lerp(water, colour, push.rows.z);
     StrokeOutput o;
     o.colour = float4(rgb * a, a);
+    o.coverage = mask;
+    return o;
+}
+
+// ---------------------------------------------------------------- the sun's glitter (passes/Glitter.cpp)
+//
+// A glint is an instance of GLINT_WORDS words: its ellipse's centre and radii in CSS px, its opacity, where its list
+// of neighbours (the glints whose boxes meet its) lies in `words` and how long it is. The vertex stage draws its box
+// at the glitter's slot (push.mode.y); the fragment, run per sample where the device can, takes the group's layer at
+// each of its samples inside the glint: the union of every glint over it (1 - Π(1 - opacity)), and screens the group's
+// colour (push.colour.x) at that alpha, the mean over its samples where it runs per pixel. The stencil lets the first
+// glint over a sample take it, so the layer is screened once.
+
+/// A glint's record in `words`: 8 words.
+static const uint GLINT_WORDS = 8u;
+
+struct GlintOut {
+    float4 position : SV_Position;
+    nointerpolation uint glint : TEXCOORD0;
+};
+
+/// Glint g's centre and radii in device px of the view.
+float4 glint_shape(uint g) {
+    uint at = push.mode.z + g * GLINT_WORDS;
+    float density = frame.camera.frame.z;
+    return float4(asfloat(words[at]), asfloat(words[at + 1u]), asfloat(words[at + 2u]), asfloat(words[at + 3u])) *
+           density;
+}
+
+/// Whether glint g holds device point x.
+bool in_glint(uint g, float2 x) {
+    float4 e = glint_shape(g);
+    float2 d = (x - e.xy) / e.zw;
+    return dot(d, d) <= 1.0f;
+}
+
+[shader("vertex")]
+GlintOut glitter_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInstanceID) {
+    float4 e = glint_shape(instance);
+    float density = frame.camera.frame.z;
+    float2 k = quad_corners[vertex];
+    float2 device = e.xy + float2(k.x < 0.0f ? -(e.z + 1.0f) : e.z + 1.0f, k.y < 0.0f ? -(e.w + 1.0f) : e.w + 1.0f);
+    GlintOut o;
+    o.position = clip_of(frame.camera, device / density, 1.0f, painter_depth(frame.camera, push.mode.y));
+    o.glint = instance;
+    return o;
+}
+
+/// A glint's pixel: on its samples (one where it runs per sample) inside it, the group's layer screened over the
+/// water, premultiplied (Blend::screen).
+[shader("fragment")]
+StrokeOutput glitter_fs(GlintOut v, uint given : SV_Coverage) {
+    float2 corner = floor(v.position.xy);
+    uint n = push.mode.w;
+    uint at = push.mode.z + v.glint * GLINT_WORDS;
+    uint first = words[at + 5u];
+    uint count = words[at + 6u];
+    uint mask = 0u;
+    float sum = 0.0f;
+    for (uint i = 0u; i < n; ++i) {
+        if ((given & (1u << i)) == 0u) continue;
+        float2 x = device_at(corner + (n == 4u ? samples4[i] : (n == 2u ? samples2[i] : float2(0.5f, 0.5f))));
+        if (!in_glint(v.glint, x)) continue;
+        // the group's layer here: every glint over the sample, its own first
+        float keep = 1.0f - asfloat(words[at + 4u]);
+        for (uint k = 0u; k < count; ++k) {
+            uint j = words[first + k];
+            if (in_glint(j, x)) keep = keep * (1.0f - asfloat(words[push.mode.z + j * GLINT_WORDS + 4u]));
+        }
+        sum = sum + (1.0f - keep);
+        mask |= 1u << i;
+    }
+    if (mask == 0u) discard;
+    float u = sum / float(countbits(mask));
+    float3 s = unpack(push.colour.x).rgb;
+    StrokeOutput o;
+    o.colour = float4(s * u, u);
     o.coverage = mask;
     return o;
 }

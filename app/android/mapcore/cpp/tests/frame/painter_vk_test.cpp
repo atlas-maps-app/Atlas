@@ -315,40 +315,44 @@ private:
 
 TEST_CASE("a pass with varyings has its owner and overdraw twins made without the layer's unread-output warning, which "
           "its own pipeline still gets when it leaves one unread") {
-    auto session = test::open_session();
-    if (!session) return;
-    const gpu::Device& device = *session->device;
-    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
-    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
-    const gpu::Messages& messages = session->instance->messages();
     auto unread = [](const std::vector<std::string>& list) {
         return std::ranges::count_if(list, [](const std::string& m) { return m.contains("OutputNotConsumed"); });
     };
-
-    // The pass's own pipeline reads its varying: nothing to say, nothing dropped.
-    std::size_t quieted = messages.quieted();
-    CHECK(make_varyings(device, *cache, "varying_fs", {}));
-    CHECK(messages.quieted() == quieted);
-    auto said = session->take_messages();
-    CHECK_MESSAGE(said.empty(), (said.empty() ? std::string() : said.front()));
-
-    // Its twins read nothing of it: the layer warns while each is made, and the warning is dropped there.
-    for (const frame::FrameOptions& options :
-         {frame::FrameOptions{.owners = true}, frame::FrameOptions{.overdraw = true}}) {
-        quieted = messages.quieted();
-        CHECK(make_varyings(device, *cache, "varying_fs", options));
-        CHECK(messages.quieted() > quieted);
-        said = session->take_messages();
-        CHECK_MESSAGE(said.empty(), (said.empty() ? std::string() : said.front()));
+    // Each check on an instance of its own: the layer reports a message ten times an instance at most, and the twins
+    // of the registry's pipelines with varyings each draw the warning.
+    struct Check {
+        const char* fragment = nullptr;
+        frame::FrameOptions options;
+        bool twins = false;
+    };
+    for (const Check& c : {Check{.fragment = "varying_fs", .options = {}, .twins = false},
+                           Check{.fragment = "varying_fs", .options = {.owners = true}, .twins = true},
+                           Check{.fragment = "varying_fs", .options = {.overdraw = true}, .twins = true},
+                           Check{.fragment = "shapes_fs", .options = {}, .twins = false}}) {
+        auto session = test::open_session();
+        if (!session) return;
+        const gpu::Device& device = *session->device;
+        auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+        ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+        const gpu::Messages& messages = session->instance->messages();
+        const std::size_t quieted = messages.quieted();
+        CHECK(make_varyings(device, *cache, c.fragment, c.options));
+        const auto said = session->take_messages();
+        if (c.twins) {
+            // its twins read nothing of it: the layer warns while each is made, and the warning is dropped there
+            CHECK(messages.quieted() > quieted);
+            CHECK_MESSAGE(said.empty(), (said.empty() ? std::string() : said.front()));
+        } else if (std::string_view(c.fragment) == "varying_fs") {
+            // the pass's own pipeline reads its varying: nothing to say, nothing dropped
+            CHECK(messages.quieted() == quieted);
+            CHECK_MESSAGE(said.empty(), (said.empty() ? std::string() : said.front()));
+        } else {
+            // a pass's own pipeline that leaves the varying unread is still reported
+            CHECK(messages.quieted() == quieted);
+            CHECK(unread(said) >= 1);
+            MESSAGE("the mismatched pipeline: " << (said.empty() ? std::string("(nothing)") : said.front()));
+        }
     }
-
-    // A pass's own pipeline that leaves the varying unread is still reported.
-    quieted = messages.quieted();
-    CHECK(make_varyings(device, *cache, "shapes_fs", {}));
-    CHECK(messages.quieted() == quieted);
-    said = session->take_messages();
-    CHECK(unread(said) >= 1);
-    MESSAGE("the mismatched pipeline: " << (said.empty() ? std::string("(nothing)") : said.front()));
 }
 
 TEST_CASE("the two-pass painter depth draws 2,000 random overlapping shapes as strict painter's order does") {

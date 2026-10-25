@@ -133,6 +133,7 @@ class EngineStyleTest {
                 """val col = if (!night) "${value("reflections.trees_day")}" else "${value("reflections.trees_night")}"""",
             ),
             Triple(listOf("reflections.streak", "reflections.streak_opacity"), amsterdam, streak()),
+            Triple(listOf("reflections.glitter"), amsterdam, """out.add("<g fill=\"${value("reflections.glitter")}\" style=\"mix-blend-mode:screen\">"""),
             Triple(listOf("marine"), regions, marine(0, "to %s")),
             Triple(listOf("marine"), regions, marine(1, "to \"%s\"")),
             Triple(

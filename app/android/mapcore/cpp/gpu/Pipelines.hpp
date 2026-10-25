@@ -183,6 +183,8 @@ struct GraphicsDesc {
     vk::CullModeFlags cull = vk::CullModeFlagBits::eNone;
     vk::FrontFace front = vk::FrontFace::eCounterClockwise;
     bool alpha_to_coverage = false;
+    /// Its fragment stage run per sample (minSampleShading 1): only where the device enables sample-rate shading.
+    bool sample_shading = false;
     bool depth_test = false;
     bool depth_write = false;
     /// GREATER: the map's depth is reversed (shaders/shared/painter.slang), a nearer sample has the greater depth.

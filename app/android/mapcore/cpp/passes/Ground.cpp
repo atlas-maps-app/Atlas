@@ -788,6 +788,7 @@ bool Ground::decide(const frame::FrameState& state) {
     for (std::uint32_t r = 0; r < nk; ++r) f.kind_rank[kinds[r]] = static_cast<std::int32_t>(r);
     decide_water(cam);
     decide_reflections(cam, state);
+    decide_glitter(cam, state);
     decide_sky(cam);
     // the plate: gp(rect(-GR, GR, -GR, GR), th['ground']) at 0, margin 900, its area over 0.2
     const double gr = f.ground_r;
@@ -1195,6 +1196,7 @@ void Ground::write_words(const frame::FrameState& state) {
     write_lines(state, v, w.runs, w.instances);
     write_quays(v);
     write_reflections(v);
+    write_glitter(v);
     // into this frame slot's buffer (a frame slot's previous frame has finished: its buffer and set are free)
     const std::uint32_t slot = state.slot & 1U;
     Pipelines& p = *pipelines_;
@@ -1288,6 +1290,7 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
         break;
     case phase_canopy: record_canopy(r); break;
     case phase_water_reflections: record_reflections(r); break;
+    case phase_water_glitter: record_glitter(r); break;
     case phase_water_tint: record_water_tint(r); break;
     case phase_water_end: record_water_end(r); break;
     case phase_over:

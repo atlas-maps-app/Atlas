@@ -50,6 +50,8 @@ struct Enabled {
     bool shader_fma = false;
     bool pipeline_statistics = false;
     bool independent_blend = false;
+    /// Sample-rate shading (a fragment run per sample where a pipeline asks: the water's glitter, K16).
+    bool sample_rate_shading = false;
 };
 
 /// The physical device the core would use, with its facts, before anything is created on it (the crash guard checks

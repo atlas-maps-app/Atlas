@@ -94,7 +94,10 @@ Result<vk::raii::Pipeline> make_graphics(const vk::raii::Device& device, const v
     const vk::PipelineRasterizationStateCreateInfo raster{
         .polygonMode = vk::PolygonMode::eFill, .cullMode = d.cull, .frontFace = d.front, .lineWidth = 1.0F};
     const vk::PipelineMultisampleStateCreateInfo multisample{
-        .rasterizationSamples = d.target.samples, .alphaToCoverageEnable = d.alpha_to_coverage ? vk::True : vk::False};
+        .rasterizationSamples = d.target.samples,
+        .sampleShadingEnable = d.sample_shading ? vk::True : vk::False,
+        .minSampleShading = d.sample_shading ? 1.0F : 0.0F,
+        .alphaToCoverageEnable = d.alpha_to_coverage ? vk::True : vk::False};
     const vk::PipelineDepthStencilStateCreateInfo depth = depth_stencil_of(d);
     std::array<vk::PipelineColorBlendAttachmentState, 4> attachments{};
     for (std::uint32_t i = 0; i < d.target.colour_count; ++i) {

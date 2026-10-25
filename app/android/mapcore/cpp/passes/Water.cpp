@@ -222,6 +222,23 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
     mirrored.stencil = inside;
     ATLAS_GPU_LET(rf, frame::make_pipeline(context, mirrored, frame::Overdraw::translucent));
     p.reflection = std::move(rf);
+    // the sun's glitter (Glitter.cpp): screened over the water, each sample once by the first glint to reach it
+    // (inside the clip, its w0 bit still set: then cleared), per sample where the device can
+    gpu::GraphicsDesc glitter = ground_desc(context, p, "ground water glitter", "glitter_vs", "glitter_fs");
+    translucent(glitter);
+    glitter.blends[0] = gpu::Blend::screen();
+    glitter.stencil_test = true;
+    glitter.stencil = {.failOp = vk::StencilOp::eKeep,
+                       .passOp = vk::StencilOp::eZero,
+                       .depthFailOp = vk::StencilOp::eKeep,
+                       .compareOp = vk::CompareOp::eLess,
+                       .compareMask = ground_stencil::water_count | ground_stencil::water_w0,
+                       .writeMask = ground_stencil::water_w0,
+                       .reference = ground_stencil::water_w0};
+    glitter.sample_shading = context.device.enabled().sample_rate_shading;
+    p.glitter_per_sample = glitter.sample_shading;
+    ATLAS_GPU_LET(gl, frame::make_pipeline(context, glitter, frame::Overdraw::translucent));
+    p.glitter = std::move(gl);
     // the clip's end: its bits cleared over the frame
     gpu::GraphicsDesc end = ground_desc(context, p, "ground water end", "screen_vs", "flat_fs");
     colour_off(end);
@@ -413,6 +430,7 @@ void Ground::emit_water(const frame::FrameState& state, twin::Stream& out) const
     grad.fill = twin::Paint::gradient(wgrad);
     out.rect(grad, 0.0F, 0.0F, w, h);
     emit_reflections(state, out, group);
+    emit_glitter(state, out, group);
     out.at(slot(geo::group::water_top, 0, geo::water_sub::tint), group);
     twin::Style tint;
     tint.fill = twin::Paint::colour(argb(th.water));
