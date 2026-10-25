@@ -141,6 +141,14 @@
         "glitter": "#FFF7E2"
     },
 
+    // amsterdam.py's drizzle on the canals (th['wet']): its rings' stroke and width in the pattern's units, and the
+    // opacity of the rect the pattern fills
+    "drizzle": {
+        "colour": "#A9B8D8",
+        "width": 0.4,
+        "opacity": 0.55
+    },
+
     // amsterdam.py's tram tracks: by day, at night, and their width
     "trams": {
         "day": "#6E6A66",

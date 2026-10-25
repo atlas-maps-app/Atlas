@@ -48,6 +48,13 @@ struct ReflectionsStyle {
     StyleRgb glitter = 0;
 };
 
+/// The drizzle on the canals (`drizzle`): its rings' stroke and width in the pattern's units, the rect's opacity.
+struct DrizzleStyle {
+    StyleRgb colour = 0;
+    double width = 0.0;
+    double opacity = 0.0;
+};
+
 /// The canal names on the water (`canal_names`): ground_text's fill and its opacity, the face's weight, the letters'
 /// size and spacing in metres.
 struct CanalNamesStyle {
@@ -216,6 +223,7 @@ struct Style {
     DayNight quay_waterline;
     StyleRgb quay_coping = 0;
     ReflectionsStyle reflections;
+    DrizzleStyle drizzle;
     /// `park_edges`: a national park's edge, its width, its dashes and gaps (CSS px) and the path's opacity.
     DayNight park_edges;
     double park_edges_width = 0.0;

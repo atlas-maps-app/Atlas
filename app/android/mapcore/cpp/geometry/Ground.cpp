@@ -187,6 +187,7 @@ public:
         streaks();
         out_.water_y = style_.water_y;
         out_.reflection_style = style_.reflections;
+        out_.drizzle_style = style_.drizzle;
     }
 
 private:

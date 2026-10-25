@@ -228,6 +228,10 @@ Result<Style> Style::of(const StyleTables& tables) {
     s.reflections.streak = r.colours3(mirrored, "reflections", "streak");
     s.reflections.streak_opacity = r.numbers3(mirrored, "reflections", "streak_opacity");
     s.reflections.glitter = r.colour(mirrored, "reflections", "glitter");
+    const auto drizzle = r.table("drizzle");
+    s.drizzle = {.colour = r.colour(drizzle, "drizzle", "colour"),
+                 .width = r.number(drizzle, "drizzle", "width"),
+                 .opacity = r.number(drizzle, "drizzle", "opacity")};
     const auto parks = r.table("park_edges");
     s.park_edges = r.day_night(parks, "park_edges", "day", "night");
     s.park_edges_width = r.number(parks, "park_edges", "width");

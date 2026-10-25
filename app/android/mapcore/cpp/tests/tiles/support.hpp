@@ -705,6 +705,7 @@ using Field = std::pair<std::string_view, ValueBytes>;
                                 {"streak", v::list({v::text("#FFE3AE"), v::text("#FFC27A"), v::text("#FFB060")})},
                                 {"streak_opacity", v::list({v::real(0.95), v::real(0.45), v::real(0.0)})},
                                 {"glitter", v::text("#FFF7E2")}})},
+        {"drizzle", v::map({{"colour", v::text("#A9B8D8")}, {"width", v::real(0.4)}, {"opacity", v::real(0.55)}})},
         {"park_edges", v::map({{"day", v::text("#2F6B3E")},
                                {"night", v::text("#4C8A5A")},
                                {"width", v::real(2.2)},

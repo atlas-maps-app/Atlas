@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "14",
+  "version": "15",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -260,6 +260,21 @@
           "board sunny": "509adad42f1ddb755a203121fa3b5bd671785a314c3844fd5611cfc9fb26c83f",
           "board grey": "5a68af408a5167ca161cdebddefee5eed7d49c3c57a8a6a4ab6371c845231625",
           "board wet": "7feddcffbbf57315b3c2d6a1136618255e80f7f934c12276063525af37e51ed4",
+          "board night": "bce3361497e02067e132e18b77a4990b1c2b7fc487160924df655ad1702d94ec"
+        }
+      }
+    },
+    "15": {
+      "note": "Step 4, the water: the drizzle's rings (amsterdam.py's water_layer with th['wet']), their pattern over the water at .55",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "023da58010d807d0ccbb3593c41985ba0a84f0f37959dcd9ffaba468790272cb",
+          "home grey": "b8dc046611c635545fa7fd3cfba6e638a3a90545afcaa74a6e0e90797d3997d5",
+          "home wet": "279494e8ea3f35bfc45dc2660483e3482326f405ed7ca95e9daaf27fd46dcf07",
+          "home night": "4dd778d1508c4f8672b89e9aeb92e7753436d2612a95031f5c1dfc36bfbfa3ef",
+          "board sunny": "509adad42f1ddb755a203121fa3b5bd671785a314c3844fd5611cfc9fb26c83f",
+          "board grey": "5a68af408a5167ca161cdebddefee5eed7d49c3c57a8a6a4ab6371c845231625",
+          "board wet": "c2293735571aa259e1194a17a3bcff92a6ccae087f980af412a24935121875b0",
           "board night": "bce3361497e02067e132e18b77a4990b1c2b7fc487160924df655ad1702d94ec"
         }
       }

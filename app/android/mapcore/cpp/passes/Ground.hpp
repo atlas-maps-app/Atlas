@@ -225,6 +225,17 @@ struct Glint {
     double opacity = 0;
 };
 
+/// A band of the drizzle's rings (water_layer's `<rect fill="url(#rings)">`, one per glint band at eye level): its rows
+/// (CSS px, as the SVG prints the rect at rest) and the pattern's transform there, translate(tx 0) scale(kx ky).
+struct RingBand {
+    double y0 = 0;
+    double y1 = 0;
+    double tx = 0;
+    double kx = 1;
+    double ky = 1;
+    std::int32_t index = -1; ///< its glint band's place (the pattern `rings%d`); -1: the whole frame's `rings`
+};
+
 /// A fill's decision byte: drawn (at the street's height for the water), drawn at its water level.
 namespace drawn_bit {
 inline constexpr std::uint8_t street = 1;
@@ -310,6 +321,8 @@ struct GroundFrame {
     std::vector<ReflectionStreak> reflection_streaks;
     /// The sun's glitter on the water this frame (by day under a clear sky, with weather, where the water is drawn).
     std::vector<Glint> glints;
+    /// The drizzle's rings on the water this frame (th['wet']): its bands.
+    std::vector<RingBand> ring_bands;
     /// Whether this frame's decisions are the last frame's, kept: the camera rests as it did, over the same tiles.
     bool kept = false;
     /// render's #sky and #wgrad rows (y1 and y2 as the SVG prints them), the horizon's row.
@@ -480,8 +493,9 @@ public:
     /// The tests' look at the water: from the next frame on, no reflections (or their light, which changes with the
     /// sun's).
     void draw_reflections(bool draw) noexcept { no_reflections_ = !draw; }
-    /// The tests' look at the sun's glitter: from the next frame on, none.
+    /// The tests' look at the sun's glitter and the drizzle's rings: from the next frame on, none.
     void draw_glitter(bool draw) noexcept { no_glitter_ = !draw; }
+    void draw_rings(bool draw) noexcept { no_rings_ = !draw; }
 
     /// The phases' ids.
     enum PhaseId : std::uint8_t {
@@ -495,6 +509,7 @@ public:
         phase_shadow_mask = 7,
         phase_water_reflections = 8,
         phase_water_glitter = 9,
+        phase_water_rings = 10,
     };
 
     /// The pipelines, their layout and the pass's descriptor sets (Ground.cpp).
@@ -503,13 +518,14 @@ public:
     struct Words;
 
 private:
-    static constexpr std::array<frame::Phase, 10> phase_list{{
+    static constexpr std::array<frame::Phase, 11> phase_list{{
         {.slot = frame::Slot::offscreen, .order = 0, .id = phase_shadow_mask},
         {.slot = frame::Slot::ground, .order = 0, .id = phase_opaque},
         {.slot = frame::Slot::translucent, .order = ground_order::canopy, .id = phase_canopy},
         {.slot = frame::Slot::translucent, .order = ground_order::water_reflections, .id = phase_water_reflections},
         {.slot = frame::Slot::translucent, .order = ground_order::water_tint, .id = phase_water_tint},
         {.slot = frame::Slot::translucent, .order = ground_order::water_glitter, .id = phase_water_glitter},
+        {.slot = frame::Slot::translucent, .order = ground_order::water_rings, .id = phase_water_rings},
         {.slot = frame::Slot::translucent, .order = ground_order::water_end, .id = phase_water_end},
         {.slot = frame::Slot::translucent, .order = ground_order::over, .id = phase_over},
         {.slot = frame::Slot::translucent, .order = ground_order::marks_road, .id = phase_marks},
@@ -602,6 +618,15 @@ private:
     void record_glitter(const frame::Recording& r);
     /// The glitter's group (`<g fill="#FFF7E2" style="mix-blend-mode:screen">`) in the water's clip group `water`.
     void emit_glitter(const frame::FrameState& state, twin::Stream& out, std::int32_t water) const;
+    // Rings.cpp
+    /// water_layer's drizzle on the canals at the frame: with th['wet'], the rings' pattern over the frame, or at eye
+    /// level a band of it per glint band, scaled by the band's distance (frame_.ring_bands).
+    void decide_rings(const view::Camera& cam, const frame::FrameState& state);
+    /// The rings' tile (its rings and their grid) and the bands into the frame's words.
+    void write_rings(std::vector<std::uint32_t>& words);
+    void record_rings(const frame::Recording& r);
+    /// The rings' rects (`<rect fill="url(#rings)" opacity=".55">`) in the water's clip group `water`.
+    void emit_rings(const frame::FrameState& state, twin::Stream& out, std::int32_t water) const;
     [[nodiscard]] gpu::Result<void> make_soft_shadows(const frame::PassContext& context, Pipelines& p) const;
     /// Whether this frame draws its shadows soft: some are drawn, the frame is in full mode, the moment blurs them,
     /// and prepare made the soft shadows' objects.
@@ -626,6 +651,7 @@ private:
     bool no_quays_ = false;
     bool no_reflections_ = false;
     bool no_glitter_ = false;
+    bool no_rings_ = false;
     double select_ms_ = 0;
     /// The tiles' decisions, kept while the camera rests (their grounds held), reused as scratch while it moves.
     std::vector<std::unique_ptr<TileDecisions>> decisions_;
@@ -681,6 +707,8 @@ struct Ground::Pipelines {
     // Glitter.cpp: per sample where the device can (sample_shading)
     vk::raii::Pipeline glitter{nullptr};
     bool glitter_per_sample = false;
+    // Rings.cpp
+    vk::raii::Pipeline rings{nullptr};
     // Shadows.cpp
     vk::raii::Pipeline shadow_union{nullptr};
     vk::raii::Pipeline shadow_composite{nullptr};
@@ -747,6 +775,8 @@ struct Ground::Words {
     std::uint32_t glints = 0; ///< the glints' records (GLINT_WORDS each), how many, and their lists of neighbours
     std::uint32_t glint_count = 0;
     std::uint32_t glint_lists = 0;
+    std::uint32_t rings = 0; ///< the drizzle's tile and bands (ground.slang's RINGS_ layout), and how many bands
+    std::uint32_t ring_bands = 0;
     std::uint32_t slot = 0; ///< the frame slot whose buffer holds them
     bool ready = false;
 };

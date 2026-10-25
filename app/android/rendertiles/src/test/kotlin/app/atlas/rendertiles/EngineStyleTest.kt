@@ -134,6 +134,11 @@ class EngineStyleTest {
             ),
             Triple(listOf("reflections.streak", "reflections.streak_opacity"), amsterdam, streak()),
             Triple(listOf("reflections.glitter"), amsterdam, """out.add("<g fill=\"${value("reflections.glitter")}\" style=\"mix-blend-mode:screen\">"""),
+            Triple(
+                listOf("drizzle.colour", "drizzle.width"), amsterdam,
+                """fill=\"none\" stroke=\"${value("drizzle.colour")}\" stroke-width=\"${css("drizzle.width")}\" opacity=\"%.2f\"/>""",
+            ),
+            Triple(listOf("drizzle.opacity"), amsterdam, """height=\"%d\" fill=\"url(#rings)\" opacity=\"${css("drizzle.opacity")}\"/>""""),
             Triple(listOf("marine"), regions, marine(0, "to %s")),
             Triple(listOf("marine"), regions, marine(1, "to \"%s\"")),
             Triple(

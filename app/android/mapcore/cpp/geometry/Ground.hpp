@@ -503,6 +503,7 @@ struct GroundTile {
     /// pack's style.
     double water_y = -1.5;
     tiles::ReflectionsStyle reflection_style;
+    tiles::DrizzleStyle drizzle_style;
     /// The night's streaks on the water: the tile's street lamps, its lit roads and their points.
     std::vector<Lamp> lamps;
     std::vector<LitRoad> lit_roads;

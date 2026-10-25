@@ -18,7 +18,8 @@
 //   - quay_vs and quay_fs: the quay walls' faces (passes/Quays.cpp); reflection_vs and reflection_fs: the water's
 //     reflections inside its clip, each sample composited as their group composites it over the water
 //     (passes/Reflections.cpp); glitter_vs and glitter_fs: the sun's glitter, the glints' layer screened over the
-//     water once a sample (passes/Glitter.cpp).
+//     water once a sample (passes/Glitter.cpp); screen_vs with rings_fs: the drizzle's rings, their pattern over the
+//     water (passes/Rings.cpp).
 //   - shadow_vs: the ground shadows (passes/Shadows.cpp), moved by the moment's sun: a prism's footprint hull swept
 //     along its offset (each hull point twice, before and after its turn), a raised outline or a crown disc moved by
 //     it, their union set in the stencil and composited by flat_fs.
@@ -1267,6 +1268,121 @@ StrokeOutput glitter_fs(GlintOut v, uint given : SV_Coverage) {
     float3 s = unpack(push.colour.x).rgb;
     StrokeOutput o;
     o.colour = float4(s * u, u);
+    o.coverage = mask;
+    return o;
+}
+
+// ---------------------------------------------------------------- the drizzle's rings (passes/Rings.cpp)
+//
+// The rings' words from push.mode.z: a header (the rings' count, the grid's columns and rows, the bands' count, and
+// where the rings, the cells, their lists and the bands lie), each ring's record (its centre and radii in the tile's
+// px, its opacity), each cell's list of the rings whose strokes reach it, and each band's rows and the pattern's
+// transform there (y0, y1, then translate(tx 0) scale(kx ky)). One triangle over the frame draws them in the water's
+// clip: at each sample in a band, its place in the 173 × 97 tile, the rings of its cell whose strokes hold it (within
+// push.rows.x of the ellipse), their layer 1 - Π(1 - opacity) in the rings' colour (push.colour.x) at the rect's
+// opacity (push.rows.y), the mean over the samples they reach.
+
+/// The distance from p (relative to an ellipse's centre) to the ellipse of semi-axes e (e.x >= e.y > 0): D. Eberly's
+/// bisection for the closest point.
+float ellipse_distance(float2 p, float2 e) {
+    float y0 = abs(p.x);
+    float y1 = abs(p.y);
+    if (y1 > 0.0f) {
+        if (y0 > 0.0f) {
+            float z0 = y0 / e.x;
+            float z1 = y1 / e.y;
+            float g = z0 * z0 + z1 * z1 - 1.0f;
+            if (g == 0.0f) return 0.0f;
+            float r0 = (e.x / e.y) * (e.x / e.y);
+            float n0 = r0 * z0;
+            float s0 = z1 - 1.0f;
+            float s1 = g < 0.0f ? 0.0f : length(float2(n0, z1)) - 1.0f;
+            float s = 0.0f;
+            for (uint i = 0u; i < 64u; ++i) {
+                s = 0.5f * (s0 + s1);
+                if (s == s0 || s == s1) break;
+                float a = n0 / (s + r0);
+                float b = z1 / (s + 1.0f);
+                float h = a * a + b * b - 1.0f;
+                if (h > 0.0f) {
+                    s0 = s;
+                } else if (h < 0.0f) {
+                    s1 = s;
+                } else {
+                    break;
+                }
+            }
+            float x0 = r0 * y0 / (s + r0);
+            float x1 = y1 / (s + 1.0f);
+            return length(float2(x0 - y0, x1 - y1));
+        }
+        return abs(y1 - e.y);
+    }
+    float numer = e.x * y0;
+    float denom = e.x * e.x - e.y * e.y;
+    if (numer < denom) {
+        float q = numer / denom;
+        return length(float2(e.x * q - y0, e.y * sqrt(1.0f - q * q)));
+    }
+    return abs(y0 - e.x);
+}
+
+/// The drizzle's pixel: the rings' layer at its samples in the pattern, at the rect's opacity, premultiplied.
+[shader("fragment")]
+StrokeOutput rings_fs(ScreenOut v, uint given : SV_Coverage) {
+    uint base = push.mode.z;
+    uint gx = words[base + 1u];
+    uint gy = words[base + 2u];
+    uint bands = words[base + 3u];
+    uint ring_at = words[base + 4u];
+    uint cell_at = words[base + 5u];
+    uint band_at = words[base + 7u];
+    float density = frame.camera.frame.z;
+    float hw = push.rows.x;
+    float2 tile = float2(173.0f, 97.0f);
+    float2 corner = floor(v.position.xy);
+    uint n = push.mode.w;
+    uint mask = 0u;
+    float sum = 0.0f;
+    for (uint i = 0u; i < n; ++i) {
+        if ((given & (1u << i)) == 0u) continue;
+        float2 css = device_at(corner + (n == 4u ? samples4[i] : (n == 2u ? samples2[i] : float2(0.5f, 0.5f)))) /
+                     density;
+        // its band, and its place in the tile there
+        uint at = 0xFFFFFFFFu;
+        for (uint b = 0u; b < bands; ++b) {
+            uint k = band_at + b * 8u;
+            if (css.y >= asfloat(words[k]) && css.y < asfloat(words[k + 1u])) {
+                at = k;
+                break;
+            }
+        }
+        if (at == 0xFFFFFFFFu) continue;
+        float2 q = float2((css.x - asfloat(words[at + 2u])) / asfloat(words[at + 3u]), css.y / asfloat(words[at + 4u]));
+        float2 t = q - tile * floor(q / tile);
+        uint cx = min(uint(t.x / (tile.x / float(gx))), gx - 1u);
+        uint cy = min(uint(t.y / (tile.y / float(gy))), gy - 1u);
+        uint cell = cell_at + (cy * gx + cx) * 2u;
+        uint first = words[cell];
+        uint count = words[cell + 1u];
+        float keep = 1.0f;
+        for (uint k = 0u; k < count; ++k) {
+            uint r = ring_at + words[first + k] * 8u;
+            float2 c = float2(asfloat(words[r]), asfloat(words[r + 1u]));
+            float2 e = float2(asfloat(words[r + 2u]), asfloat(words[r + 3u]));
+            float2 d = t - c;
+            if (abs(d.x) > e.x + hw || abs(d.y) > e.y + hw) continue;
+            if (ellipse_distance(d, e) <= hw) keep = keep * (1.0f - asfloat(words[r + 4u]));
+        }
+        if (keep < 1.0f) {
+            sum = sum + (1.0f - keep);
+            mask |= 1u << i;
+        }
+    }
+    if (mask == 0u) discard;
+    float a = (sum / float(countbits(mask))) * push.rows.y;
+    StrokeOutput o;
+    o.colour = float4(unpack(push.colour.x).rgb * a, a);
     o.coverage = mask;
     return o;
 }

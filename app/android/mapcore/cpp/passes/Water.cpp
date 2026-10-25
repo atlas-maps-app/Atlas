@@ -239,6 +239,13 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
     p.glitter_per_sample = glitter.sample_shading;
     ATLAS_GPU_LET(gl, frame::make_pipeline(context, glitter, frame::Overdraw::translucent));
     p.glitter = std::move(gl);
+    // the drizzle's rings (Rings.cpp): their pattern over the frame inside the clip, at the rings' slot
+    gpu::GraphicsDesc rings = ground_desc(context, p, "ground water rings", "screen_vs", "rings_fs");
+    translucent(rings);
+    rings.stencil_test = true;
+    rings.stencil = inside;
+    ATLAS_GPU_LET(rg, frame::make_pipeline(context, rings, frame::Overdraw::translucent));
+    p.rings = std::move(rg);
     // the clip's end: its bits cleared over the frame
     gpu::GraphicsDesc end = ground_desc(context, p, "ground water end", "screen_vs", "flat_fs");
     colour_off(end);
@@ -431,6 +438,7 @@ void Ground::emit_water(const frame::FrameState& state, twin::Stream& out) const
     out.rect(grad, 0.0F, 0.0F, w, h);
     emit_reflections(state, out, group);
     emit_glitter(state, out, group);
+    emit_rings(state, out, group);
     out.at(slot(geo::group::water_top, 0, geo::water_sub::tint), group);
     twin::Style tint;
     tint.fill = twin::Paint::colour(argb(th.water));
