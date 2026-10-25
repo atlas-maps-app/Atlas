@@ -121,6 +121,22 @@
         "coping": "#B8B0A2"
     },
 
+    // amsterdam.py's reflections, the scene mirrored in the water: the group's opacity by day and at night, how much
+    // darker a mirrored facade reads than the bright sky the water mirrors (by day, under cloud, at night), a
+    // building's window rows by day and at night and their opacity, a tree's crown by day and at night
+    "reflections": {
+        "opacity_day": 0.92,
+        "opacity_night": 0.95,
+        "dark_day": 0.74,
+        "dark_overcast": 0.62,
+        "dark_night": 0.5,
+        "windows_day": "#2B3440",
+        "windows_night": "#05070C",
+        "windows_opacity": 0.55,
+        "trees_day": "#3E5A36",
+        "trees_night": "#0A0F0D"
+    },
+
     // amsterdam.py's tram tracks: by day, at night, and their width
     "trams": {
         "day": "#6E6A66",

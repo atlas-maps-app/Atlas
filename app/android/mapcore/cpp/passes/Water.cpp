@@ -214,6 +214,14 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
     tint.stencil = inside;
     ATLAS_GPU_LET(ti, frame::make_pipeline(context, tint, frame::Overdraw::translucent));
     p.water_tint = std::move(ti);
+    // the reflections inside the clip (Reflections.cpp): in the renders' order, each written at its slot's depth
+    gpu::GraphicsDesc mirrored = ground_desc(context, p, "ground water reflections", "reflection_vs", "reflection_fs");
+    translucent(mirrored);
+    mirrored.depth_write = true;
+    mirrored.stencil_test = true;
+    mirrored.stencil = inside;
+    ATLAS_GPU_LET(rf, frame::make_pipeline(context, mirrored, frame::Overdraw::translucent));
+    p.reflection = std::move(rf);
     // the clip's end: its bits cleared over the frame
     gpu::GraphicsDesc end = ground_desc(context, p, "ground water end", "screen_vs", "flat_fs");
     colour_off(end);
@@ -235,7 +243,7 @@ void Ground::record_water_opaque(const frame::Recording& r) {
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     const Pipelines& p = *pipelines_;
     const Words& w = *words_;
-    const std::uint32_t surface = slot(geo::group::water, 0, geo::water_sub::surface);
+    const std::uint32_t surface = slot(geo::group::water, 0, 0);
     auto fans = [&](std::uint32_t flags) {
         push(r, flags, surface);
         for (std::size_t i = 0; i < frame_.tiles.size(); ++i) {
@@ -285,7 +293,7 @@ void Ground::record_water_tint(const frame::Recording& r) {
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->water_tint);
     layouts::ground_ground::PushConstants pc{};
     pc.at = {w.tiles, w.slots, w.theme, w.runs};
-    pc.mode = {0U, slot(geo::group::water, 0, geo::water_sub::tint), 0U, 0U};
+    pc.mode = {0U, slot(geo::group::water_top, 0, geo::water_sub::tint), 0U, 0U};
     pc.rows = {0.0F, 0.0F, frame_.night ? 0.04F : 0.12F, 0.0F};
     pc.colour = {0U, 0U, rgba(r.state.theme.water).packed(), 0U};
     cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0, pc);
@@ -361,7 +369,7 @@ void Ground::emit_water(const frame::FrameState& state, twin::Stream& out) const
     auto argb = [](const style::Rgb8& c) {
         return 0xFF00'0000U | (std::uint32_t{c.r} << 16U) | (std::uint32_t{c.g} << 8U) | c.b;
     };
-    const std::uint32_t surface = slot(geo::group::water, 0, geo::water_sub::surface);
+    const std::uint32_t surface = slot(geo::group::water, 0, 0);
     if (!frame_.weather) {
         // without weather: every drawn ring a path of th['water'], its pieces in one path (where a tile's edge cuts
         // it, the pieces' union is the ring: their nonzero fill draws its pixels, without a seam along the cut)
@@ -404,7 +412,8 @@ void Ground::emit_water(const frame::FrameState& state, twin::Stream& out) const
     twin::Style grad;
     grad.fill = twin::Paint::gradient(wgrad);
     out.rect(grad, 0.0F, 0.0F, w, h);
-    out.at(slot(geo::group::water, 0, geo::water_sub::tint), group);
+    emit_reflections(state, out, group);
+    out.at(slot(geo::group::water_top, 0, geo::water_sub::tint), group);
     twin::Style tint;
     tint.fill = twin::Paint::colour(argb(th.water));
     out.rect(tint, 0.0F, 0.0F, w, h, 0.0F, 0.0F, {.opacity = frame_.night ? 0.04F : 0.12F});

@@ -142,8 +142,29 @@ struct TileTrees {
     std::vector<double> x;
     std::vector<double> z;
     std::vector<double> h;
-    std::vector<double> crown; ///< the crown's diameter
-    std::vector<double> gy;    ///< the ground under it (terrain towns; 0 elsewhere)
+    std::vector<double> crown;    ///< the crown's diameter
+    std::vector<double> gy;       ///< the ground under it (terrain towns; 0 elsewhere)
+    std::vector<std::int64_t> id; ///< its OSM node id (its reflection's random.Random seed)
+};
+
+/// A building or part the water mirrors (Amsterdam.reflections: within 16 m of a quay edge, not hidden, with a
+/// height), as the reflections read it at the level: its solid (whose footprint it mirrors), its values, its roof's
+/// height where the reflections draw its roof's shape (else 0), and its footprint's longest edge (Python's max over
+/// (length, k): the last of the longest).
+struct Mirror {
+    std::uint32_t solid = 0;
+    Source source = Source::building;
+    std::uint32_t record = 0;
+    double h = 0.0;
+    double min = 0.0;
+    double rh = 0.0;
+    std::int64_t levels = 0;
+    std::uint32_t wall = 0; ///< surface_colour(b, None), 0xRRGGBB
+    std::uint32_t longest = 0;
+    bool gabled = false; ///< roof == 'gabled'
+    bool across = false; ///< orient == 'across'
+    bool boat = false;   ///< building == 'houseboat'
+    bool part = false;   ///< 'building:part' in its tags
 };
 
 /// A bridge's deck over the water (waterLayer's decks): a bridge road (its centreline, half width plus 0.8 m) or a
@@ -164,12 +185,14 @@ void collect_decks(const tiles::Tile& tile, const tiles::RenderHead& head, std::
 struct TileCasters {
     TileSolids solids;
     TileTrees trees;
+    std::vector<Mirror> mirrors;
 };
 
 /// The solids and trees of `tile` at ladder `level` (0 to 13): every building not hidden with a height and every part
 /// with a height, in the tile's order (buildings, then parts), each from its variant at the level where the tile
 /// carries one, its ring simplified at the level; then every tree. make_tile's own, without the samples: the ground's
-/// shadows (K9) read the solids the sun's march reads.
+/// shadows (K9) read the solids the sun's march reads, and the water's reflections (K16) the solids it mirrors, in the
+/// order of their reflection samples (SunTile::reflections).
 [[nodiscard]] TileCasters solids_of(const tiles::Tile& tile, const tiles::RenderHead& head, std::uint8_t level);
 
 /// A tile's part of the sun's scene at one level of the ladder.
@@ -181,6 +204,8 @@ struct SunTile {
     TileSamples samples;
     /// Its quay walls' pieces with their samples (null: none), which its published bits carry.
     std::shared_ptr<const std::vector<QuayPiece>> quays;
+    /// Each mirror's first reflection sample (TileCasters::mirrors' order; null: none), which its published bits carry.
+    std::shared_ptr<const std::vector<std::uint32_t>> reflections;
 };
 
 /// The sample points, solids and trees of `tile` at ladder `level` (0 to 13): the rings simplified at it, each

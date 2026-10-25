@@ -115,6 +115,23 @@ class EngineStyleTest {
                 """WY + 0.35, a[1])), if (!night) "${value("quays.waterline_day")}" else "${value("quays.waterline_night")}")""",
             ),
             Triple(listOf("quays.coping"), amsterdam, """tohex(light(th, hx("${value("quays.coping")}"), n3, lit))"""),
+            Triple(
+                listOf("reflections.opacity_day", "reflections.opacity_night"), amsterdam,
+                """opacity=\"%.2f\">%s</g>", if (night) ${value("reflections.opacity_night")} else ${value("reflections.opacity_day")}, reflections(""",
+            ),
+            Triple(
+                listOf("reflections.dark_day", "reflections.dark_overcast", "reflections.dark_night"), amsterdam,
+                """val dk = if (night) ${value("reflections.dark_night")} else (if (truthy(th["sky_k"])) ${value("reflections.dark_overcast")} else ${value("reflections.dark_day")})""",
+            ),
+            Triple(
+                listOf("reflections.windows_day", "reflections.windows_night", "reflections.windows_opacity"), amsterdam,
+                """fill=\"%s\" opacity=\"${css("reflections.windows_opacity")}\"/>", wins.joinToString(""), """ +
+                    """if (!night) "${value("reflections.windows_day")}" else "${value("reflections.windows_night")}")""",
+            ),
+            Triple(
+                listOf("reflections.trees_day", "reflections.trees_night"), amsterdam,
+                """val col = if (!night) "${value("reflections.trees_day")}" else "${value("reflections.trees_night")}"""",
+            ),
             Triple(listOf("marine"), regions, marine(0, "to %s")),
             Triple(listOf("marine"), regions, marine(1, "to \"%s\"")),
             Triple(

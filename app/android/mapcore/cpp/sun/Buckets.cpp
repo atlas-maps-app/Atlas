@@ -600,6 +600,7 @@ void Worker::loop(const std::stop_token& stop) {
                 const SunTile& t = r.scene->tiles()[j.tile];
                 if (auto b = cache_->load(*chunk, t.level, r.bucket, t.samples.size(), j.windows)) {
                     b->quays = t.quays;
+                    b->reflections = t.reflections;
                     bits_.publish(t.key, std::move(*b), clock_());
                     ++from_disk;
                     continue;
@@ -613,6 +614,7 @@ void Worker::loop(const std::stop_token& stop) {
                 if (const tiles::Sha256Digest* chunk = r.scene->chunk(tile)) (void)cache_->store(*chunk, t.level, bits);
             }
             bits.quays = t.quays;
+            bits.reflections = t.reflections;
             bits_.publish(t.key, std::move(bits), clock_());
         });
         lock.lock();

@@ -377,6 +377,7 @@ struct Slots {
     std::uint8_t roof;
     std::uint8_t orient;
     std::uint8_t mat_draw;
+    std::uint8_t wall_rgb;
     std::uint8_t hidden;
     std::uint8_t no_win;
     std::uint8_t flags;
@@ -394,6 +395,7 @@ consteval Slots slots_in(const Columns& c) {
             tl::slot_of(c, "roof"),
             tl::slot_of(c, "orient"),
             tl::slot_of(c, "mat_draw"),
+            tl::slot_of(c, "wall_rgb"),
             tl::slot_of(c, "hidden"),
             tl::slot_of(c, "no_win"),
             tl::slot_of(c, "flags"),
@@ -417,6 +419,7 @@ struct Values {
     std::optional<std::string_view> roof;
     std::optional<std::string_view> orient;
     std::optional<std::string_view> mat_draw;
+    std::uint32_t wall_rgb = 0; ///< surface_colour(b, None)
     std::optional<std::string_view> btype;
     bool part_tag = false;
     std::optional<std::string_view> direction;
@@ -438,6 +441,7 @@ struct Values {
     v.roof = l.string(s.roof, i);
     v.orient = l.string(s.orient, i);
     v.mat_draw = l.string(s.mat_draw, i);
+    v.wall_rgb = static_cast<std::uint32_t>(l.integer(s.wall_rgb, i)) & 0xFF'FFFFU;
     v.btype = l.string(s.tag_building, i);
     v.part_tag = l.string(s.tag_part, i).has_value();
     v.direction = l.string(s.tag_direction, i);
@@ -495,6 +499,12 @@ using Variants = std::unordered_map<std::uint64_t, std::uint32_t>;
     return (source == Source::part || !v.hidden) && v.h != 0.0 && !poly.empty();
 }
 
+/// Whether the water mirrors a record (Amsterdam.reflections): within 16 m of a quay edge, not hidden, with a height
+/// (`if b.get('hidden') or not b['h']: continue`). Every mirror is a solid.
+[[nodiscard]] bool is_mirror(const Values& v, std::span<const V2> poly) noexcept {
+    return (v.flags & tl::building::flag_near_water) != 0 && !v.hidden && v.h != 0.0 && !poly.empty();
+}
+
 /// The building and part layers, in the order the renders list their records (buildings, then parts).
 constexpr std::array<std::pair<tl::LayerId, Source>, 2> record_layers{
     std::pair{tl::LayerId::building, Source::building}, std::pair{tl::LayerId::part, Source::part}};
@@ -524,11 +534,16 @@ public:
         if (!v.has_h || poly.empty()) return; // draw_building reads h: a building without one is not drawn
         if ((v.flags & tl::building::flag_houseboat) != 0) houseboat(v, poly);
         building(v, poly);
-        if ((v.flags & tl::building::flag_near_water) != 0 && !v.hidden && v.h != 0.0) reflection(v, poly);
+        if (is_mirror(v, poly)) {
+            mirror = out_.size();
+            reflection(v, poly);
+        }
     }
 
     /// The window group's samples, written apart and appended after the tile's other samples.
     TileSamples windows;
+    /// Its reflection's first sample, where the water mirrors it (else no_face).
+    std::uint32_t mirror = no_face;
 
 private:
     void add(Kind k, std::uint32_t edge, std::uint32_t part, const V3& p, std::uint32_t face) {
@@ -1099,6 +1114,32 @@ TileCasters solids_of(const tiles::Tile& tile, const tiles::RenderHead& head, st
             c.solids.min.push_back(v.min);
             c.solids.source.push_back(source);
             c.solids.record.push_back(i);
+            if (!is_mirror(v, poly)) continue;
+            // the reflections' values: rh where the roof's shape is one they draw, the longest edge (the last of
+            // the longest, as max over (dist, k) picks it)
+            Mirror m{.solid = c.solids.size() - 1,
+                     .source = source,
+                     .record = i,
+                     .h = v.h,
+                     .min = v.min,
+                     .rh = in(v.roof, reflected) && v.roof_h != 0.0 ? v.roof_h : 0.0,
+                     .levels = v.levels,
+                     .wall = v.wall_rgb,
+                     .longest = 0,
+                     .gabled = is(v.roof, "gabled"),
+                     .across = is(v.orient, "across"),
+                     .boat = is(v.btype, "houseboat"),
+                     .part = v.part_tag};
+            double longest = -1.0;
+            const std::size_t n = poly.size();
+            for (std::size_t k = 0; k < n; ++k) {
+                const double d = dist(poly[k], poly[(k + 1) % n]);
+                if (d >= longest) {
+                    longest = d;
+                    m.longest = static_cast<std::uint32_t>(k);
+                }
+            }
+            c.mirrors.push_back(m);
         }
     }
     if (const tl::Layer* trees = tile.layer(tl::LayerId::tree)) {
@@ -1109,6 +1150,7 @@ TileCasters solids_of(const tiles::Tile& tile, const tiles::RenderHead& head, st
             c.trees.h.push_back(trees->decimal(tl::tree::h, i).value_or(0.0));
             c.trees.crown.push_back(trees->decimal(tl::tree::crown, i).value_or(0.0));
             c.trees.gy.push_back(trees->decimal(tl::tree::gy, i).value_or(0.0));
+            c.trees.id.push_back(trees->integer(tl::tree::id, i));
         }
     }
     return c;
@@ -1128,6 +1170,7 @@ SunTile make_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const 
     std::vector<std::uint32_t> kept;
     std::vector<V2> poly;
     TileSamples windows;
+    std::vector<std::uint32_t> reflections;
     std::uint32_t next_solid = 0;
     for (const auto [layer_id, source] : record_layers) {
         const tl::Layer* l = tile.layer(layer_id);
@@ -1144,8 +1187,11 @@ SunTile make_tile(const tiles::Tile& tile, const tiles::RenderHead& head, const 
             BuildingSamples b(st.samples, region, source, i, solid);
             b.all(v, poly);
             append(windows, b.windows);
+            if (b.mirror != no_face) reflections.push_back(b.mirror);
         }
     }
+    if (!reflections.empty())
+        st.reflections = std::make_shared<const std::vector<std::uint32_t>>(std::move(reflections));
     // the trees' crowns: 3/4 up, moved toward the sun by the crown's radius when the bucket is known
     st.samples.crowns_first = st.samples.size();
     for (std::uint32_t i = 0; i < st.trees.x.size(); ++i) {

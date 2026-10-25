@@ -52,6 +52,9 @@ struct TileBits {
     Sun sun;                        ///< the bucket's sun
     /// Its tile's quay walls' pieces, as its samples have them (null: none).
     std::shared_ptr<const std::vector<QuayPiece>> quays;
+    /// Its tile's mirrored buildings' first reflection samples, one per mirror in the tile's order (TileCasters::
+    /// mirrors; null: none).
+    std::shared_ptr<const std::vector<std::uint32_t>> reflections;
 
     [[nodiscard]] bool bit(std::uint32_t i) const noexcept { return ((words[i / 64] >> (i % 64)) & 1U) != 0; }
 };

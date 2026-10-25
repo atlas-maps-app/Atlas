@@ -787,6 +787,7 @@ bool Ground::decide(const frame::FrameState& state) {
               [&](std::uint32_t a, std::uint32_t b) { return first_ring[a] < first_ring[b]; });
     for (std::uint32_t r = 0; r < nk; ++r) f.kind_rank[kinds[r]] = static_cast<std::int32_t>(r);
     decide_water(cam);
+    decide_reflections(cam, state);
     decide_sky(cam);
     // the plate: gp(rect(-GR, GR, -GR, GR), th['ground']) at 0, margin 900, its area over 0.2
     const double gr = f.ground_r;
@@ -902,6 +903,11 @@ void Ground::lay_out() {
     use(geo::group::sky, 0);
     if (f.plate) use(geo::group::plate, 0);
     if (f.water) use(geo::group::water, 0);
+    if (!f.reflections.empty()) {
+        use(geo::group::reflection, 0);
+        use(geo::group::reflection, static_cast<std::uint32_t>(f.reflections.size() - 1));
+    }
+    if (f.water && f.weather) use(geo::group::water_top, 0);
     if (f.shadows) use(geo::group::shadow, 0);
     // the groups in the renders' order: each takes (greatest - least + 1) · stride slots
     std::int64_t cursor = 0;
@@ -934,6 +940,8 @@ void Ground::lay_out() {
         f.base[geo::group::canopy] = cursor++;
     }
     place(geo::group::water);
+    place(geo::group::reflection);
+    place(geo::group::water_top);
     place(geo::group::area);
     for (std::uint16_t c = 0; c < 16; ++c) place(static_cast<std::uint16_t>(geo::group::road + c));
     for (std::uint16_t c = 0; c < 8; ++c) place(static_cast<std::uint16_t>(geo::group::over + c));
@@ -1186,6 +1194,7 @@ void Ground::write_words(const frame::FrameState& state) {
     // the lines' runs and segments
     write_lines(state, v, w.runs, w.instances);
     write_quays(v);
+    write_reflections(v);
     // into this frame slot's buffer (a frame slot's previous frame has finished: its buffer and set are free)
     const std::uint32_t slot = state.slot & 1U;
     Pipelines& p = *pipelines_;
@@ -1278,6 +1287,7 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
         if (!only_setts_) record_sky(r);
         break;
     case phase_canopy: record_canopy(r); break;
+    case phase_water_reflections: record_reflections(r); break;
     case phase_water_tint: record_water_tint(r); break;
     case phase_water_end: record_water_end(r); break;
     case phase_over:

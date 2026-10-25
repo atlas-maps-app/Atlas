@@ -40,31 +40,33 @@ namespace atlas::geometry {
 /// A land kind is a group of its own (its rank among the kinds drawn is the frame's), each other group holds one
 /// stage and class of the packer's ground keys.
 namespace group {
-inline constexpr std::uint16_t sky = 0;     ///< the sky's gradient (sub 0), the sun's glow (1), the city's glow (2)
-inline constexpr std::uint16_t plate = 1;   ///< the ground plate
-inline constexpr std::uint16_t canopy = 2;  ///< the forests' canopy (structural: a black fill at .55, K17's in full)
-inline constexpr std::uint16_t water = 3;   ///< the water (sub: its group's elements, water_sub)
-inline constexpr std::uint16_t area = 4;    ///< S['areas'], data order
-inline constexpr std::uint16_t shadow = 5;  ///< the ground shadows' group
-inline constexpr std::uint16_t road = 8;    ///< + class (ROAD_ORDER, 12): S['roads'], data order within a class
-inline constexpr std::uint16_t over = 24;   ///< + class (rail 0, big 1, aero 2, marine 3, a park's tracks' and
-                                            ///< woods' shadows 4, park edges 5)
-inline constexpr std::uint16_t marks = 32;  ///< + class (road marks 0, trams 1, canal names 2)
-inline constexpr std::uint16_t quay = 40;   ///< the quay walls (K16), by their edge's order
-inline constexpr std::uint16_t land = 64;   ///< + the land kind's place in the pack's `land` table
-inline constexpr std::uint16_t count = 128; ///< groups the frame's table holds
+inline constexpr std::uint16_t sky = 0;        ///< the sky's gradient (sub 0), the sun's glow (1), the city's glow (2)
+inline constexpr std::uint16_t plate = 1;      ///< the ground plate
+inline constexpr std::uint16_t canopy = 2;     ///< the forests' canopy (structural: a black fill at .55, K17's in full)
+inline constexpr std::uint16_t water = 3;      ///< the water's surface: wgrad's rect (with weather), or every water
+                                               ///< ring's fill (without)
+inline constexpr std::uint16_t area = 4;       ///< S['areas'], data order
+inline constexpr std::uint16_t shadow = 5;     ///< the ground shadows' group
+inline constexpr std::uint16_t reflection = 6; ///< the water's reflections (K16), an element a slot in their order
+inline constexpr std::uint16_t water_top = 7;  ///< the water's elements over its reflections (sub: water_sub)
+inline constexpr std::uint16_t road = 8;       ///< + class (ROAD_ORDER, 12): S['roads'], data order within a class
+inline constexpr std::uint16_t over = 24;      ///< + class (rail 0, big 1, aero 2, marine 3, a park's tracks' and
+                                               ///< woods' shadows 4, park edges 5)
+inline constexpr std::uint16_t marks = 32;     ///< + class (road marks 0, trams 1, canal names 2)
+inline constexpr std::uint16_t quay = 40;      ///< the quay walls (K16), by their edge's order
+inline constexpr std::uint16_t land = 64;      ///< + the land kind's place in the pack's `land` table
+inline constexpr std::uint16_t count = 128;    ///< groups the frame's table holds
 inline constexpr std::uint16_t land_kinds = count - land;
 } // namespace group
 
-/// The water group's elements, in the renders' order inside `<g clip-path="url(#wclip)">` (amsterdam.py:457).
+/// The water's elements after its reflections, in the renders' order inside `<g clip-path="url(#wclip)">`
+/// (amsterdam.py:457: wgrad's rect, the reflections, then these): group::water_top's.
 namespace water_sub {
-inline constexpr std::uint8_t surface = 0;     ///< wgrad's rect (with weather), or every water ring's fill (without)
-inline constexpr std::uint8_t reflections = 1; ///< K16
-inline constexpr std::uint8_t tint = 2;        ///< the water colour's rect at .12 (.04 at night)
-inline constexpr std::uint8_t glints = 3;      ///< K17
-inline constexpr std::uint8_t glitter = 4;     ///< K16
-inline constexpr std::uint8_t rings = 5;       ///< K16
-inline constexpr std::uint8_t count = 8;
+inline constexpr std::uint8_t tint = 0;    ///< the water colour's rect at .12 (.04 at night)
+inline constexpr std::uint8_t glints = 1;  ///< K17
+inline constexpr std::uint8_t glitter = 2; ///< K16
+inline constexpr std::uint8_t rings = 3;   ///< K16
+inline constexpr std::uint8_t count = 4;
 } // namespace water_sub
 
 /// A runway's sub-elements in the over group's aero class (draw_over's order): its pavement (a taxiway's too), its
@@ -83,7 +85,7 @@ inline constexpr std::uint8_t count = 6;
 /// setts, K15).
 [[nodiscard]] constexpr std::uint32_t stride_of(std::uint16_t g) noexcept {
     if (g == group::sky) return 3;
-    if (g == group::water) return water_sub::count;
+    if (g == group::water_top) return water_sub::count;
     if (g == group::over + 0) return 2;
     if (g == group::over + 1) return 3;
     if (g == group::over + 2) return aero_sub::count;
@@ -481,6 +483,10 @@ struct GroundTile {
     /// Its quay layer's edges, row by row (the sun's quay pieces name them by row: sun::QuayPiece::record), and their
     /// look in its pack's style: the region's QUAY_COL, TONE, the waterline's band and the coping.
     std::vector<QuayEdge> quays;
+    /// WATER_Y, the region's water level below the street: the plane the reflections mirror in; their look in its
+    /// pack's style.
+    double water_y = -1.5;
+    tiles::ReflectionsStyle reflection_style;
     tiles::StyleRgb quay_colour = 0;
     tiles::StyleRgb quay_coping = 0;
     tiles::DayNight quay_waterline;

@@ -28,10 +28,7 @@ namespace atlas::passes {
 namespace geo = atlas::geometry;
 namespace pm = atlas::pymath;
 
-namespace {
-
-/// render's `far`: math.hypot(x - TX, z - TZ) > RAD, the squares deciding where they tell.
-[[nodiscard]] bool far(double x, double z, double tx, double tz, double radius) noexcept {
+bool beyond_radius(double x, double z, double tx, double tz, double radius) noexcept {
     const double dx = x - tx;
     const double dz = z - tz;
     const double d2 = (dx * dx) + (dz * dz);
@@ -41,11 +38,8 @@ namespace {
     return pm::hypot(dx, dz) > radius;
 }
 
-/// Camera.poly of a face's corners (camera coordinates clipped at the near plane, each edge as the port clips it) and
-/// whether face() keeps it: three points left, its box within `margin` of the frame, its shoelace area over `least`
-/// (`strictly` over it, else at least it).
-[[nodiscard]] bool keeps(const view::Camera& cam, std::span<const view::Vec3> q, double margin, double least,
-                         bool strictly, std::vector<view::Vec3>& cs) {
+bool face_kept(const view::Camera& cam, std::span<const view::Vec3> q, double margin, double least, bool strictly,
+               std::vector<view::Vec3>& cs) {
     cs.clear();
     const double near = cam.near();
     const view::Vec3 first = cam.cam(q[0]);
@@ -86,6 +80,13 @@ namespace {
     return strictly ? area > least : area >= least;
 }
 
+bool sun_bit(const DrawnTile& t, std::uint32_t i) noexcept {
+    if (!t.sun || t.sun->now == nullptr || i >= t.sun->now->count) return false;
+    return t.sun->now->bit(i);
+}
+
+namespace {
+
 /// The light of a quay's face (light.slang's light and tohex in binary64, the port's bits), 0xRRGGBB.
 [[nodiscard]] std::uint32_t lit_colour(const shaders::Theme& theme, tiles::StyleRgb base, double nx, double nz,
                                        bool lit) {
@@ -122,12 +123,6 @@ namespace {
         return {view::Vec3{f.ax, wy + 0.35, f.az}, view::Vec3{f.bx, wy + 0.35, f.bz}, view::Vec3{f.bx, 0.0, f.bz},
                 view::Vec3{f.ax, 0.0, f.az}};
     }
-}
-
-/// Whether sample `i` of a tile's bits is lit now.
-[[nodiscard]] bool sunlit(const DrawnTile& t, std::uint32_t i) noexcept {
-    if (!t.sun || t.sun->now == nullptr || i >= t.sun->now->count) return false;
-    return t.sun->now->bit(i);
 }
 
 } // namespace
@@ -206,14 +201,15 @@ void Ground::decide_quays(const view::Camera& cam, const frame::FrameState& stat
         const geo::GroundTile& g = *t.ground;
         const geo::QuayEdge& q = g.quays[p.edge];
         // `if far(mx, mz): continue`, at the edge's midpoint
-        if (f.engine && far((q.a.x + q.b.x) / 2, (q.a.z + q.b.z) / 2, f.target_x, f.target_z, f.radius)) continue;
+        if (f.engine && beyond_radius((q.a.x + q.b.x) / 2, (q.a.z + q.b.z) / 2, f.target_x, f.target_z, f.radius))
+            continue;
         const double wy = q.wy;
         const double mx = (p.ax + p.bx) / 2;
         const double mz = (p.az + p.bz) / 2;
         // the wall faces the camera: vdot(n3, vsub(cam.C, (mx, WY / 2, mz))) > 0
         if ((q.nx * (eye.x - mx)) + (q.nz * (eye.z - mz)) <= 0) continue;
         const bool toward = !f.night && ((q.nx * light[0]) + (q.nz * light[2])) > 0;
-        const bool lit = toward && p.sampled && sunlit(t, p.sample);
+        const bool lit = toward && p.sampled && sun_bit(t, p.sample);
         const std::uint32_t wall_lit = lit_colour(theme, g.quay_colour, q.nx, q.nz, toward);
         const std::uint32_t wall_unlit = lit_colour(theme, g.quay_colour, q.nx, q.nz, false);
         QuayFace face{.kind = QuayFace::Kind::wall,
@@ -231,7 +227,7 @@ void Ground::decide_quays(const view::Camera& cam, const frame::FrameState& stat
                       .sample = p.sample,
                       .sampled = toward && p.sampled};
         const auto wall = face_of(face, wy);
-        const bool f1 = keeps(cam, wall, 300, 0.12, false, cs);
+        const bool f1 = face_kept(cam, wall, 300, 0.12, false, cs);
         if (f1 && g.tone && toward && wy < -2 && p.sampled && p.columns > 0) {
             // a tall quay wall in sun: its lit bands' path, then its unlit ones'
             for (const bool want : {true, false}) {
@@ -244,8 +240,8 @@ void Ground::decide_quays(const view::Camera& cam, const frame::FrameState& stat
                 bool any = false;
                 for (std::uint32_t j = 0; j < p.columns && !any; ++j) {
                     for (std::uint32_t m = 0; m < 3 && !any; ++m) {
-                        if (sunlit(t, p.bands + (3 * j) + m) != want) continue;
-                        any = keeps(cam, band_of(b, wy, j, m), 300, 0.03, true, cs);
+                        if (sun_bit(t, p.bands + (3 * j) + m) != want) continue;
+                        any = face_kept(cam, band_of(b, wy, j, m), 300, 0.03, true, cs);
                     }
                 }
                 if (any) f.quays.push_back(b);
@@ -258,28 +254,24 @@ void Ground::decide_quays(const view::Camera& cam, const frame::FrameState& stat
         waterline.colour = f.night ? g.quay_waterline.night : g.quay_waterline.day;
         waterline.lit = waterline.unlit = waterline.colour;
         waterline.sampled = false;
-        if (keeps(cam, face_of(waterline, wy), 300, 0.12, false, cs)) f.quays.push_back(waterline);
+        if (face_kept(cam, face_of(waterline, wy), 300, 0.12, false, cs)) f.quays.push_back(waterline);
         QuayFace coping = face;
         coping.kind = QuayFace::Kind::coping;
         coping.lit = lit_colour(theme, g.quay_coping, q.nx, q.nz, toward);
         coping.unlit = lit_colour(theme, g.quay_coping, q.nx, q.nz, false);
         coping.colour = lit ? coping.lit : coping.unlit;
-        if (keeps(cam, face_of(coping, wy), 300, 0.12, false, cs)) f.quays.push_back(coping);
+        if (face_kept(cam, face_of(coping, wy), 300, 0.12, false, cs)) f.quays.push_back(coping);
     }
 }
 
-namespace {
-
-/// How lit sample `i` of a tile draws now (K8's lit_amount: its bits before and now, the tile's fade).
-[[nodiscard]] double amount(const DrawnTile& t, std::uint32_t i) noexcept {
+double sun_amount(const DrawnTile& t, std::uint32_t i) noexcept {
     if (!t.sun || t.sun->now == nullptr || i >= t.sun->now->count) return 0.0;
     const bool now = t.sun->now->bit(i);
     const bool before = t.sun->before != nullptr && i < t.sun->before->count ? t.sun->before->bit(i) : now;
     return sun::lit_amount(before, now, t.sun->weight);
 }
 
-/// A colour between unlit and lit by `k`, as building_colour mixes them, packed RGBA8 opaque (r in the low byte).
-[[nodiscard]] std::uint32_t mixed(std::uint32_t lit, std::uint32_t unlit, double k) noexcept {
+std::uint32_t lit_mix(std::uint32_t lit, std::uint32_t unlit, double k) noexcept {
     std::uint32_t out = 0xFF00'0000U;
     for (const std::uint32_t shift : {16U, 8U, 0U}) {
         const auto u = static_cast<double>((unlit >> shift) & 0xFFU);
@@ -289,6 +281,8 @@ namespace {
     }
     return out;
 }
+
+namespace {
 
 [[nodiscard]] std::uint32_t bits_of(float v) noexcept { return std::bit_cast<std::uint32_t>(v); }
 
@@ -327,16 +321,16 @@ void Ground::write_quays(std::vector<std::uint32_t>& words) {
             for (std::uint32_t c = 0; c < e.columns; ++c) {
                 for (std::uint32_t m = 0; m < 3; ++m) {
                     const std::uint32_t sample = e.bands + (3 * c) + m;
-                    if (sunlit(t, sample) != want) continue;
+                    if (sun_bit(t, sample) != want) continue;
                     const auto q = band_of(e, wy, c, m);
-                    put(e.tile, slot_value, mixed(e.lit, e.unlit, amount(t, sample)), true, q, g.origin);
+                    put(e.tile, slot_value, lit_mix(e.lit, e.unlit, sun_amount(t, sample)), true, q, g.origin);
                 }
             }
             continue;
         }
-        const double k = e.sampled ? amount(t, e.sample) : 0.0;
+        const double k = e.sampled ? sun_amount(t, e.sample) : 0.0;
         const std::uint32_t colour =
-            e.kind == QuayFace::Kind::waterline ? mixed(e.colour, e.colour, 0.0) : mixed(e.lit, e.unlit, k);
+            e.kind == QuayFace::Kind::waterline ? lit_mix(e.colour, e.colour, 0.0) : lit_mix(e.lit, e.unlit, k);
         put(e.tile, slot_value, colour, e.kind == QuayFace::Kind::wall, face_of(e, wy), g.origin);
     }
 }
@@ -374,9 +368,9 @@ void Ground::emit_quays(const frame::FrameState& state, twin::Stream& out) const
             const bool want = e.kind == QuayFace::Kind::lit_bands;
             for (std::uint32_t c = 0; c < e.columns; ++c) {
                 for (std::uint32_t m = 0; m < 3; ++m) {
-                    if (sunlit(t, e.bands + (3 * c) + m) != want) continue;
+                    if (sun_bit(t, e.bands + (3 * c) + m) != want) continue;
                     const auto q = band_of(e, wy, c, m);
-                    if (!keeps(cam, q, 300, 0.03, true, cs)) continue;
+                    if (!face_kept(cam, q, 300, 0.03, true, cs)) continue;
                     if (pr.poly(t, q, points) >= 3) ends.push_back(static_cast<std::uint32_t>(points.size()));
                 }
             }

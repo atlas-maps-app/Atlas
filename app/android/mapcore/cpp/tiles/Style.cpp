@@ -193,6 +193,15 @@ Result<Style> Style::of(const StyleTables& tables) {
     const auto quays = r.table("quays");
     s.quay_waterline = r.day_night(quays, "quays", "waterline_day", "waterline_night");
     s.quay_coping = r.colour(quays, "quays", "coping");
+    const auto mirrored = r.table("reflections");
+    s.reflections.opacity = {r.number(mirrored, "reflections", "opacity_day"),
+                             r.number(mirrored, "reflections", "opacity_night")};
+    s.reflections.dark = {r.number(mirrored, "reflections", "dark_day"),
+                          r.number(mirrored, "reflections", "dark_overcast"),
+                          r.number(mirrored, "reflections", "dark_night")};
+    s.reflections.windows = r.day_night(mirrored, "reflections", "windows_day", "windows_night");
+    s.reflections.windows_opacity = r.number(mirrored, "reflections", "windows_opacity");
+    s.reflections.trees = r.day_night(mirrored, "reflections", "trees_day", "trees_night");
     const auto parks = r.table("park_edges");
     s.park_edges = r.day_night(parks, "park_edges", "day", "night");
     s.park_edges_width = r.number(parks, "park_edges", "width");

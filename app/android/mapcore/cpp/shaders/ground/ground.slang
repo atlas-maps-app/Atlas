@@ -15,6 +15,9 @@
 //     weather), the water's tint, and the stencil's unions composited at their opacity (the shadows, the canopy).
 //   - stroke_vs and stroke_fs: the ground's lines (passes/Lines.cpp; their coverage in ground/lines.slangh), a sett
 //     road's courses each line's share of the path's layer (ground/setts.slangh).
+//   - quay_vs and quay_fs: the quay walls' faces (passes/Quays.cpp); reflection_vs and reflection_fs: the water's
+//     reflections inside its clip, each sample composited as their group composites it over the water
+//     (passes/Reflections.cpp).
 //   - shadow_vs: the ground shadows (passes/Shadows.cpp), moved by the moment's sun: a prism's footprint hull swept
 //     along its offset (each hull point twice, before and after its turn), a raised outline or a crown disc moved by
 //     it, their union set in the stencil and composited by flat_fs.
@@ -989,9 +992,8 @@ float3 quay_corner(uint at, uint i) {
     return float3(asfloat(words[at + 4u + 3u * i]), asfloat(words[at + 5u + 3u * i]), asfloat(words[at + 6u + 3u * i]));
 }
 
-[shader("vertex")]
-QuayOut quay_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInstanceID) {
-    uint at = push.mode.z + instance * QUAY_WORDS;
+/// The face of the record at word `at` (a quay wall's, a reflection's), its box's corner `vertex` at its slot's depth.
+QuayOut face_vs(uint at, uint vertex) {
     uint tile = words[at];
     uint slot = words[at + 1u];
     uint colour = words[at + 2u];
@@ -1045,6 +1047,11 @@ QuayOut quay_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInstan
     return o;
 }
 
+[shader("vertex")]
+QuayOut quay_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInstanceID) {
+    return face_vs(push.mode.z + instance * QUAY_WORDS, vertex);
+}
+
 /// Whether device point x lies in a convex polygon of m points (either way round) or within hw of it.
 bool in_quay(float2 pts[5], uint m, float hw, float2 x) {
     float twice = 0.0f;
@@ -1083,6 +1090,68 @@ StrokeOutput quay_fs(QuayOut q) {
     if (mask == 0u) discard;
     StrokeOutput o;
     o.colour = q.colour;
+    o.coverage = mask;
+    return o;
+}
+
+// ---------------------------------------------------------------- the water's reflections (passes/Reflections.cpp)
+//
+// A reflection's face is a record of the quay walls' layout (its corners mirrored in the water's plane), or a tree's
+// circle (REFLECTION_CIRCLE: its centre and radius in CSS px, words 4 to 6). Drawn in the renders' order inside the
+// water's clip, a sample takes what the reflections' group would composite there over the water: the face's colour at
+// the group's opacity over wgrad's at the pixel (push.rows: wgrad's rows, the group's opacity, the window rows'),
+// opaque, or a window row's (REFLECTION_SHEER) at its opacity over what lies under it, premultiplied; the pipeline
+// writes the slot's depth, so the faces of one path (a building's window rows) blend once.
+
+/// A reflection's flags besides QUAY_STROKE: a window row at its opacity, a tree's circle.
+static const uint REFLECTION_SHEER = 2u;
+static const uint REFLECTION_CIRCLE = 4u;
+
+[shader("vertex")]
+QuayOut reflection_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInstanceID) {
+    uint at = push.mode.z + instance * QUAY_WORDS;
+    uint flags = words[at + 3u];
+    if ((flags & REFLECTION_CIRCLE) == 0u) {
+        QuayOut f = face_vs(at, vertex);
+        f.colour.a = (flags & REFLECTION_SHEER) != 0u ? 0.0f : 1.0f;
+        return f;
+    }
+    // a circle: its box grown by a pixel, its centre and radius in device px (no points)
+    float density = frame.camera.frame.z;
+    float2 c = float2(asfloat(words[at + 4u]), asfloat(words[at + 5u])) * density;
+    float r = asfloat(words[at + 6u]) * density;
+    float2 k = quad_corners[vertex];
+    float2 device = c + float2(k.x < 0.0f ? -(r + 1.0f) : r + 1.0f, k.y < 0.0f ? -(r + 1.0f) : r + 1.0f);
+    QuayOut o;
+    o.position = clip_of(frame.camera, device / density, 1.0f, painter_depth(frame.camera, words[at + 1u]));
+    o.colour = float4(unpack(words[at + 2u]).rgb, 1.0f);
+    o.p01 = float4(c, r, 0.0f);
+    o.p23 = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    o.p4 = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    return o;
+}
+
+/// A reflection's pixel: on the samples inside it, its colour composited as the group composites it over the water.
+[shader("fragment")]
+StrokeOutput reflection_fs(QuayOut q) {
+    float2 pts[5] = {q.p01.xy, q.p01.zw, q.p23.xy, q.p23.zw, q.p4.xy};
+    uint m = uint(q.p4.w);
+    float2 corner = floor(q.position.xy);
+    uint n = push.mode.w;
+    uint mask = 0u;
+    for (uint i = 0u; i < n; ++i) {
+        float2 at = n == 4u ? samples4[i] : (n == 2u ? samples2[i] : float2(0.5f, 0.5f));
+        float2 x = device_at(corner + at);
+        bool inside = m == 0u ? length(x - q.p01.xy) <= q.p01.z : in_quay(pts, m, q.p4.z, x);
+        if (inside) mask |= 1u << i;
+    }
+    if (mask == 0u) discard;
+    float2 css = css_of_output(frame.camera, q.position.xy);
+    float3 water = gradient_at(css.y).rgb;
+    float a = q.colour.a > 0.5f ? 1.0f : push.rows.w;
+    float3 rgb = lerp(water, q.colour.rgb, push.rows.z);
+    StrokeOutput o;
+    o.colour = float4(rgb * a, a);
     o.coverage = mask;
     return o;
 }

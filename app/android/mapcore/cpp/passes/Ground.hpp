@@ -172,6 +172,38 @@ struct QuayFace {
     bool sampled = false;
 };
 
+/// One element of the water's reflections (Amsterdam.reflections, drawn far to near in `<g filter="url(#ripple)"
+/// opacity=".92">`, .95 at night), each its own path: a building's mirrored wall (its own .3 stroke edging it), a
+/// gable's mirrored triangle, a building's window rows (one path at .55), or a tree's five circles (`<g
+/// filter="url(#leaf)">`); its drawn tile, its faces or circles (GroundFrame::reflection_faces and
+/// reflection_circles: a wall's or a gable's one face, the rows' several), its colour as drawn now, and where its
+/// light follows a sample (a wall's, a gable's), its lit and unlit colours and that sample.
+struct Reflection {
+    enum class Kind : std::uint8_t { wall, gable, windows, tree };
+    Kind kind = Kind::wall;
+    std::uint32_t tile = 0;
+    std::uint32_t first = 0;
+    std::uint32_t count = 0;
+    std::uint32_t colour = 0; ///< 0xRRGGBB, as the twin draws it (its sample's bit now)
+    std::uint32_t lit = 0;
+    std::uint32_t unlit = 0;
+    std::uint32_t sample = 0;
+    bool sampled = false;
+};
+
+/// A face of a reflection: its corners in the frame's metres (a gable's three, else four).
+struct ReflectionFace {
+    std::array<view::Vec3, 4> q{};
+    std::uint32_t n = 4;
+};
+
+/// A circle of a tree's reflection, CSS px (as the SVG prints them at rest).
+struct ReflectionCircle {
+    double cx = 0;
+    double cy = 0;
+    double r = 0;
+};
+
 /// A fill's decision byte: drawn (at the street's height for the water), drawn at its water level.
 namespace drawn_bit {
 inline constexpr std::uint8_t street = 1;
@@ -249,6 +281,11 @@ struct GroundFrame {
     std::vector<TrackShadow> track_shadows;
     /// The quay walls' elements this frame (with weather alone).
     std::vector<QuayFace> quays;
+    /// The water's reflections this frame (with weather, where the water is drawn), far to near, and their faces and
+    /// circles.
+    std::vector<Reflection> reflections;
+    std::vector<ReflectionFace> reflection_faces;
+    std::vector<ReflectionCircle> reflection_circles;
     /// Whether this frame's decisions are the last frame's, kept: the camera rests as it did, over the same tiles.
     bool kept = false;
     /// render's #sky and #wgrad rows (y1 and y2 as the SVG prints them), the horizon's row.
@@ -328,6 +365,26 @@ private:
     std::vector<view::Vec3> cs_;
 };
 
+/// render's `far` in engine mode: math.hypot(x - TX, z - TZ) > RAD, the squares deciding where they tell.
+[[nodiscard]] bool beyond_radius(double x, double z, double tx, double tz, double radius) noexcept;
+
+/// face()'s test (amsterdam.py:610) of a face's corners: Camera.poly (camera coordinates clipped at the near plane,
+/// each edge as the port clips it) keeps three points or more, their box within `margin` of the frame, their shoelace
+/// area over `least` (`strictly` over it, else at least it). `cs` is scratch (the clipped camera coordinates stay in
+/// it).
+[[nodiscard]] bool face_kept(const view::Camera& cam, std::span<const view::Vec3> q, double margin, double least,
+                             bool strictly, std::vector<view::Vec3>& cs);
+
+/// Whether sample `i` of a drawn tile's bits is lit now (none before its bits come).
+[[nodiscard]] bool sun_bit(const DrawnTile& t, std::uint32_t i) noexcept;
+
+/// How lit sample `i` of a drawn tile draws now (K8's lit_amount: its bits before and now, the tile's fade).
+[[nodiscard]] double sun_amount(const DrawnTile& t, std::uint32_t i) noexcept;
+
+/// A colour between unlit and lit (0xRRGGBB) by `k`, as building_colour mixes them, packed RGBA8 opaque (r in the low
+/// byte).
+[[nodiscard]] std::uint32_t lit_mix(std::uint32_t lit, std::uint32_t unlit, double k) noexcept;
+
 /// A fill's or stroke's colour this frame as the SVG prints it (ARGB): its literal, or the theme's (a road's at night
 /// five times darker again).
 [[nodiscard]] std::uint32_t paint_argb(const geometry::Paint& paint, bool night, const style::ThemeBlock& th) noexcept;
@@ -396,6 +453,9 @@ public:
     /// The tests' look at the shadows: from the next frame on, no quay walls (their light changes with the sun's, as
     /// the shadows do).
     void draw_quays(bool draw) noexcept { no_quays_ = !draw; }
+    /// The tests' look at the water: from the next frame on, no reflections (or their light, which changes with the
+    /// sun's).
+    void draw_reflections(bool draw) noexcept { no_reflections_ = !draw; }
 
     /// The phases' ids.
     enum PhaseId : std::uint8_t {
@@ -407,6 +467,7 @@ public:
         phase_marks = 5,
         phase_shadows = 6,
         phase_shadow_mask = 7,
+        phase_water_reflections = 8,
     };
 
     /// The pipelines, their layout and the pass's descriptor sets (Ground.cpp).
@@ -415,10 +476,11 @@ public:
     struct Words;
 
 private:
-    static constexpr std::array<frame::Phase, 8> phase_list{{
+    static constexpr std::array<frame::Phase, 9> phase_list{{
         {.slot = frame::Slot::offscreen, .order = 0, .id = phase_shadow_mask},
         {.slot = frame::Slot::ground, .order = 0, .id = phase_opaque},
         {.slot = frame::Slot::translucent, .order = ground_order::canopy, .id = phase_canopy},
+        {.slot = frame::Slot::translucent, .order = ground_order::water_reflections, .id = phase_water_reflections},
         {.slot = frame::Slot::translucent, .order = ground_order::water_tint, .id = phase_water_tint},
         {.slot = frame::Slot::translucent, .order = ground_order::water_end, .id = phase_water_end},
         {.slot = frame::Slot::translucent, .order = ground_order::over, .id = phase_over},
@@ -489,6 +551,16 @@ private:
     /// and unlit mixed by their samples' bits and the tiles' fades.
     void write_quays(std::vector<std::uint32_t>& words);
     void record_quays(const frame::Recording& r);
+    // Reflections.cpp
+    /// Amsterdam.reflections at the frame: each mirrored building's walls facing the camera, their gables and window
+    /// rows, and the trees beside the water, as face() keeps them, far to near (frame_.reflections).
+    void decide_reflections(const view::Camera& cam, const frame::FrameState& state);
+    /// The reflections' records into the frame's words (each face its own, a tree's circles each), their colours lit
+    /// and unlit mixed by their samples' bits and the tiles' fades.
+    void write_reflections(std::vector<std::uint32_t>& words);
+    void record_reflections(const frame::Recording& r);
+    /// The reflections' group (`<g filter="url(#ripple)" opacity=".92">`) in the water's clip group `water`.
+    void emit_reflections(const frame::FrameState& state, twin::Stream& out, std::int32_t water) const;
     [[nodiscard]] gpu::Result<void> make_soft_shadows(const frame::PassContext& context, Pipelines& p) const;
     /// Whether this frame draws its shadows soft: some are drawn, the frame is in full mode, the moment blurs them,
     /// and prepare made the soft shadows' objects.
@@ -511,6 +583,7 @@ private:
     bool drew_soft_ = false;
     bool only_setts_ = false;
     bool no_quays_ = false;
+    bool no_reflections_ = false;
     double select_ms_ = 0;
     /// The tiles' decisions, kept while the camera rests (their grounds held), reused as scratch while it moves.
     std::vector<std::unique_ptr<TileDecisions>> decisions_;
@@ -561,6 +634,8 @@ struct Ground::Pipelines {
     vk::raii::Pipeline line{nullptr};
     // Quays.cpp
     vk::raii::Pipeline quay{nullptr};
+    // Reflections.cpp
+    vk::raii::Pipeline reflection{nullptr};
     // Shadows.cpp
     vk::raii::Pipeline shadow_union{nullptr};
     vk::raii::Pipeline shadow_composite{nullptr};
@@ -622,6 +697,8 @@ struct Ground::Words {
     std::uint32_t woods_split = 0; ///< the over phase's segments before the woods' shadows' slot
     std::uint32_t quays = 0;       ///< the quay walls' faces' records (QUAY_WORDS each), and how many
     std::uint32_t quay_count = 0;
+    std::uint32_t reflections = 0; ///< the reflections' records (QUAY_WORDS each), and how many
+    std::uint32_t reflection_count = 0;
     std::uint32_t slot = 0; ///< the frame slot whose buffer holds them
     bool ready = false;
 };

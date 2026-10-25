@@ -184,6 +184,8 @@ public:
         lines();
         water();
         quays();
+        out_.water_y = style_.water_y;
+        out_.reflection_style = style_.reflections;
     }
 
 private:
@@ -1249,7 +1251,8 @@ GroundTile build_ground(const tiles::Tile& tile, const tiles::RenderHead& head, 
         sizeof(sun::TileCasters) +
         ((s.x.capacity() + s.z.capacity() + s.h.capacity() + s.min.capacity()) * sizeof(double)) +
         ((s.first.capacity() + s.record.capacity()) * sizeof(std::uint32_t)) + s.source.capacity() +
-        ((t.x.capacity() + t.z.capacity() + t.h.capacity() + t.crown.capacity() + t.gy.capacity()) * sizeof(double));
+        ((t.x.capacity() + t.z.capacity() + t.h.capacity() + t.crown.capacity() + t.gy.capacity()) * sizeof(double)) +
+        (t.id.capacity() * sizeof(std::int64_t)) + (casters->mirrors.capacity() * sizeof(sun::Mirror));
     out.no_shadows = style.no_shadows;
     // each caster's place in the renders' loops: the solids (buildings, then parts) and the trees by source order
     for (std::uint32_t i = 0; i < s.size(); ++i) {
