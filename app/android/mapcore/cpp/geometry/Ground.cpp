@@ -150,6 +150,19 @@ private:
     return pm::min(pm::min(to(a, c, d), to(b, c, d)), pm::min(to(c, a, b), to(d, a, b)));
 }
 
+/// A style's colour by day and at night as an element's paint.
+[[nodiscard]] Paint paint_of(const tl::DayNight& c) noexcept { return {.day = rgba(c.day), .night = rgba(c.night)}; }
+
+/// draw_over's ORDER: the stable sort of S['aero'] by kind (the packer's GroundKeys.AERO_ORDER), or none for a kind the
+/// renders do not draw.
+[[nodiscard]] std::optional<int> aero_order(std::string_view kind) noexcept {
+    if (kind == "stopway") return 0;
+    if (kind == "taxiway" || kind == "taxilane") return 1;
+    if (kind == "runway") return 2;
+    if (kind == "parking_position") return 3;
+    return std::nullopt;
+}
+
 /// A double's bits in an order that compares as the double does (-0 as +0, as Python's sort takes them).
 [[nodiscard]] std::uint64_t orderable(double d) noexcept {
     if (d == 0.0) d = 0.0;
@@ -412,11 +425,13 @@ private:
                                 .count = 1,
                                 .width = {.css = style_.sett_marks_width},
                                 .paint = {.day = paint, .night = paint},
+                                .opacity = style_.sett_marks_opacity,
                                 .from = centre.front(),
                                 .key = key_});
     }
 
-    // ---- the line layer: tram tracks (S['rails']), and draw_over's rail, big roads and marine works
+    // ---- the line layer: tram tracks (S['rails']), and draw_over's rail, big roads, runways and taxiways, marine
+    // works and park edges
     void lines() {
         const tl::Layer* l = tile_.layer(tl::LayerId::line);
         if (l == nullptr) return;
@@ -425,6 +440,7 @@ private:
         const std::uint8_t closed = l->schema->slot("closed");
         const std::uint8_t lanes_tag = l->schema->slot("tag:lanes");
         const std::uint8_t width_tag = l->schema->slot("tag:width");
+        const std::uint8_t ref_tag = l->schema->slot("tag:ref");
         for (std::uint32_t i = 0; i < l->count; ++i) {
             const std::uint8_t cell = cell_of(i);
             const tl::RingView r = l->ring(tl::line::line, i);
@@ -450,15 +466,26 @@ private:
                         l->decimal(tl::line::layer, i).value_or(0.0), l->string(lanes_tag, i), l->string(width_tag, i));
                 }
                 break;
+            case 3:
+                if (g) {
+                    // draw_over's runways and taxiways: sorted by their kind (ORDER), data order within one
+                    const std::string_view kind = l->string(tl::line::kind, i).value_or("");
+                    const std::optional<int> rank = aero_order(kind);
+                    if (!rank) break;
+                    key_.sort = orderable(static_cast<double>(*rank));
+                    aero(cell, *g, order, c0, n, kind, l->string(width_tag, i), l->string(ref_tag, i));
+                }
+                break;
             case 5:
                 if (g) {
                     marine_of(cell, *g, order, c0, n, l->string(tl::line::kind, i).value_or(""),
                               l->boolean(closed, i).value_or(false));
                 }
                 break;
-            default:
-                break; // aeroways and a park's edge (no bundled pack holds them); power lines, gantries and
-                       // conveyors stand up (the region items)
+            case 6:
+                if (g) park_edge(cell, *g, order, c0, n);
+                break;
+            default: break; // power lines, gantries, conveyors and a park's coaster tracks stand up (the region items)
             }
         }
     }
@@ -586,6 +613,136 @@ private:
                                 .fill = asphalt,
                                 .line = c0,
                                 .line_count = n,
+                                .key = key_});
+    }
+
+    /// draw_over's runways and taxiways: a runway's pavement, centre line and threshold bars (its designators are the
+    /// frame's: passes/Ground.cpp), a taxiway's (a taxilane's, a stopway's) pavement and its line, a stand's lead-in
+    /// line. The line's points are centre_.
+    void aero(std::uint8_t cell, std::uint16_t g, std::uint32_t order, std::uint32_t c0, std::uint32_t n,
+              std::string_view kind, std::optional<std::string_view> width_tag, std::optional<std::string_view> ref) {
+        if (kind == "runway") {
+            runway(cell, g, order, c0, n, num(width_tag, 45.0), ref);
+            return;
+        }
+        if (kind == "taxiway" || kind == "taxilane" || kind == "stopway") {
+            const double w = num(width_tag, kind == "taxiway" ? 23.0 : 15.0);
+            ribbon_.clear();
+            ribbon(centre_, w / 2, ribbon_);
+            const std::uint32_t first = put(ribbon_);
+            Fill& f = fill(FillKind::taxiway, g, order, cell, first, static_cast<std::uint32_t>(ribbon_.size()), 0.065,
+                           600, 0.3, paint_of(style_.taxiway_pavement));
+            f.line = c0;
+            f.line_count = n;
+            // its line, whether or not its pavement is drawn
+            aero_line(StrokeKind::taxi, cell, g, order, aero_sub::centre, c0, n, style_.taxiway_lines_width,
+                      centre_[n / 2]);
+            return;
+        }
+        // a stand's lead-in line, px at its first point
+        aero_line(StrokeKind::lead_in, cell, g, order, aero_sub::pavement, c0, n, style_.lead_in_width, centre_[0]);
+    }
+
+    /// A taxiway's line or a stand's lead-in: line_d(pts, 0.08), px(cam, metres, at), in the taxiways' lines' colour.
+    void aero_line(StrokeKind kind, std::uint8_t cell, std::uint16_t g, std::uint32_t order, std::uint8_t sub,
+                   std::uint32_t c0, std::uint32_t n, double metres, P2 at) {
+        const std::uint32_t p = polyline(c0, n, 0.08);
+        out_.strokes.push_back({.kind = kind,
+                                .group = g,
+                                .sub = sub,
+                                .cell = cell,
+                                .order = order,
+                                .first = p,
+                                .count = 1,
+                                .width = {.css = 0, .metres = metres, .at = at},
+                                .paint = paint_of(style_.taxiway_lines),
+                                .line = c0,
+                                .line_count = n,
+                                .key = key_});
+    }
+
+    /// draw_over's runway (`if not d: continue`: what follows its pavement is drawn only with it): its pavement, the
+    /// dashes of its centre line, and runway_ends' threshold bars at each end, eight on each side of the centre line,
+    /// 1.8 m wide, from 6 to 36 m in, each its own fill (an end's drawn bars are one path).
+    void runway(std::uint8_t cell, std::uint16_t g, std::uint32_t order, std::uint32_t c0, std::uint32_t n, double w,
+                std::optional<std::string_view> ref) {
+        ribbon_.clear();
+        ribbon(centre_, w / 2, ribbon_);
+        const std::uint32_t first = put(ribbon_);
+        const auto pavement = static_cast<std::uint32_t>(out_.fills.size());
+        Fill& f = fill(FillKind::runway, g, order, cell, first, static_cast<std::uint32_t>(ribbon_.size()), 0.07, 600,
+                       0.3, paint_of(style_.runway_pavement));
+        f.line = c0;
+        f.line_count = n;
+        const Paint marks = paint_of(style_.runway_marks);
+        // dashes(cam, pts, 0.09, 30, 20), px(0.9) at the middle point: one path
+        const auto d0 = static_cast<std::uint32_t>(out_.polylines.size());
+        dashes_.clear();
+        dashes(centre_, style_.runway_centre_dash[0], style_.runway_centre_dash[1], dashes_);
+        for (const Dash& d : dashes_) {
+            const std::array<P2, 2> ab{d.a, d.b};
+            polyline(put(ab), 2, 0.09);
+        }
+        out_.strokes.push_back({.kind = StrokeKind::centre,
+                                .group = g,
+                                .sub = aero_sub::centre,
+                                .cell = cell,
+                                .order = order,
+                                .first = d0,
+                                .count = static_cast<std::uint32_t>(out_.polylines.size()) - d0,
+                                .width = {.css = 0, .metres = style_.runway_centre_width, .at = centre_[n / 2]},
+                                .paint = marks,
+                                .fill = pavement,
+                                .line = c0,
+                                .line_count = n,
+                                .key = key_});
+        constexpr int nb = 8;
+        constexpr double bw = 1.8;
+        const double span = w - 6;
+        for (std::uint8_t end = 0; end < 2; ++end) {
+            const P2 p0 = end == 0 ? centre_[0] : centre_[n - 1];
+            const P2 p1 = end == 0 ? centre_[1] : centre_[n - 2];
+            const double dx = p1.x - p0.x;
+            const double dz = p1.z - p0.z;
+            double length = pm::hypot(dx, dz);
+            if (length == 0.0) length = 1.0;
+            const double ux = dx / length;
+            const double uz = dz / length;
+            const double nx = -uz;
+            const double nz = ux;
+            auto at = [&](double along, double across) {
+                return P2{.x = (p0.x + (ux * along)) + (nx * across), .z = (p0.z + (uz * along)) + (nz * across)};
+            };
+            for (int i = 0; i < nb; ++i) {
+                for (const double sgn : {-1.0, 1.0}) {
+                    const double o = sgn * (3 + ((static_cast<double>(i) * ((span / 2) - 3)) / nb));
+                    const std::array<P2, 4> q{at(6, o - (bw / 2)), at(36, o - (bw / 2)), at(36, o + (bw / 2)),
+                                              at(6, o + (bw / 2))};
+                    Fill& b = fill(FillKind::bars, g, order, cell, put(q), 4, 0.09, 200, 0.3, marks);
+                    b.sub = static_cast<std::uint8_t>(aero_sub::bars + (2 * end));
+                    b.with = pavement;
+                }
+            }
+        }
+        out_.runways.push_back({.pavement = pavement, .ref = std::string(ref.value_or("")), .marks = marks});
+    }
+
+    /// draw_over's national park's edge: line_d(ring, 0.15), 2.2 wide, dashed 7 on 5 off, the path at .85; drawn
+    /// whatever the radius (its loop has no near()).
+    void park_edge(std::uint8_t cell, std::uint16_t g, std::uint32_t order, std::uint32_t c0, std::uint32_t n) {
+        Paint paint = paint_of(style_.park_edges);
+        paint.day.a = paint.night.a = static_cast<std::uint8_t>(std::lround(style_.park_edges_opacity * 255.0));
+        out_.strokes.push_back({.kind = StrokeKind::park,
+                                .group = g,
+                                .sub = 0,
+                                .cell = cell,
+                                .order = order,
+                                .first = polyline(c0, n, 0.15),
+                                .count = 1,
+                                .width = {.css = style_.park_edges_width},
+                                .paint = paint,
+                                .opacity = style_.park_edges_opacity,
+                                .dash = style_.park_edges_dash,
                                 .key = key_});
     }
 
@@ -737,6 +894,7 @@ namespace {
 /// Whether a fill's ring is a ribbon (city.py's ribbon: the left side, then the right side reversed), drawn as quads.
 [[nodiscard]] bool is_ribbon(const Fill& f) noexcept {
     return f.kind == FillKind::road || f.kind == FillKind::rail || f.kind == FillKind::big ||
+           f.kind == FillKind::runway || f.kind == FillKind::taxiway ||
            (f.kind == FillKind::marine && f.line != f.first);
 }
 

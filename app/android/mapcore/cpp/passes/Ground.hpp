@@ -66,6 +66,7 @@ inline constexpr std::int32_t water_glitter = 240; ///< K16
 inline constexpr std::int32_t water_rings = 250;   ///< K16
 inline constexpr std::int32_t water_end = 290;
 inline constexpr std::int32_t over = 500;
+inline constexpr std::int32_t designators = 510; ///< the runways' designators (passes/GroundText.cpp)
 inline constexpr std::int32_t marks_road = 600;
 inline constexpr std::int32_t marks_setts = 610; ///< K15
 inline constexpr std::int32_t marks_tram = 620;
@@ -259,6 +260,8 @@ public:
     /// one subpath of two points or more.
     void joined(const DrawnTile& t, std::span<const geometry::P2> line, double y, std::vector<twin::Point>& points,
                 std::vector<std::uint32_t>& ends);
+    /// Tile `t`'s point p at height y, as the vertex stage places it (none behind the near plane).
+    [[nodiscard]] std::optional<twin::Point> at(const DrawnTile& t, geometry::P2 p, double y) const;
 
 private:
     [[nodiscard]] bool exact(const DrawnTile& t) const noexcept;
@@ -368,6 +371,9 @@ private:
     }};
 
     // Ground.cpp
+    /// draw_over's runway_ends' designations at the drawn runways' ends, laid on the ground for the ground's text pass
+    /// (FrameState::ground_runs) at their slots.
+    void lay_designators(const frame::FrameState& state) const;
     /// The frame's decisions; false when they are the last frame's (kept at rest), so the slots stay as laid out.
     [[nodiscard]] bool decide(const frame::FrameState& state);
     void decide_tile(const view::Camera& cam, const DrawnTile& t, TileDecisions& d);

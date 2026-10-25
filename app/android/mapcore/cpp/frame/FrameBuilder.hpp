@@ -55,6 +55,8 @@ struct LabelSet; // labels/ (K13): the app's label sprites for a frame (MapCore.
 
 namespace atlas::frame {
 
+struct GroundRuns; // frame/GroundRuns.hpp
+
 /// How the frame is drawn (D16's modes).
 enum class Mode : std::uint8_t {
     structural, ///< the core's filters off (mat, grain, cloud shadows): the gates' primary mode until A4
@@ -102,6 +104,9 @@ struct FrameState {
     const labels::LabelSet* labels = nullptr;
     /// The frame slot (0 or 1): set 0's slice and the passes' own per-frame buffers.
     std::uint32_t slot = 0;
+    /// The text runs the passes lay on the ground this frame (the runways' designators) for the ground's text pass,
+    /// which updates after them: emptied before the passes update (frame/GroundRuns.hpp).
+    GroundRuns* ground_runs = nullptr;
 };
 
 /// The builder's choices, made once.
@@ -265,6 +270,7 @@ private:
     vk::raii::ShaderModule owner_module_{nullptr};
     FrameInputs inputs_;
     FrameState state_;
+    std::unique_ptr<GroundRuns> ground_runs_;
     std::uint32_t quarter_turns_ = 0;
     std::uint32_t levels_ = 255;
     bool depth24_ = false; ///< the main pass's depth is 24-bit fixed point (painter.slang's scale)

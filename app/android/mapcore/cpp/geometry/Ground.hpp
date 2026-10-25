@@ -47,7 +47,8 @@ inline constexpr std::uint16_t water = 3;   ///< the water (sub: its group's ele
 inline constexpr std::uint16_t area = 4;    ///< S['areas'], data order
 inline constexpr std::uint16_t shadow = 5;  ///< the ground shadows' group
 inline constexpr std::uint16_t road = 8;    ///< + class (ROAD_ORDER, 12): S['roads'], data order within a class
-inline constexpr std::uint16_t over = 24;   ///< + class (rail 0, big 1, aero 2, marine 3, K15 4, park 5)
+inline constexpr std::uint16_t over = 24;   ///< + class (rail 0, big 1, aero 2, marine 3, a park's tracks' and
+                                            ///< woods' shadows 4, park edges 5)
 inline constexpr std::uint16_t marks = 32;  ///< + class (road marks 0, trams 1, canal names 2)
 inline constexpr std::uint16_t quay = 40;   ///< the quay walls (K16), by their edge's order
 inline constexpr std::uint16_t land = 64;   ///< + the land kind's place in the pack's `land` table
@@ -66,14 +67,26 @@ inline constexpr std::uint8_t rings = 5;       ///< K16
 inline constexpr std::uint8_t count = 8;
 } // namespace water_sub
 
+/// A runway's sub-elements in the over group's aero class (draw_over's order): its pavement (a taxiway's too), its
+/// centre line (a taxiway's line; a stand's lead-in line is its only one, at 0), then at each end its threshold bars
+/// and its designator.
+namespace aero_sub {
+inline constexpr std::uint8_t pavement = 0;
+inline constexpr std::uint8_t centre = 1;
+inline constexpr std::uint8_t bars = 2;       ///< + 2 · end
+inline constexpr std::uint8_t designator = 3; ///< + 2 · end
+inline constexpr std::uint8_t count = 6;
+} // namespace aero_sub
+
 /// How many painter slots an element of a group's order takes (its sub-elements): a rail's ballast and its rails, a
-/// big road's asphalt, edge lines and lane lines, a runway's pavement, centre line and ends, a road's marks (its
-/// bridge's lines, then its setts, K15).
+/// big road's asphalt, edge lines and lane lines, a runway's (aero_sub), a road's marks (its bridge's lines, then its
+/// setts, K15).
 [[nodiscard]] constexpr std::uint32_t stride_of(std::uint16_t g) noexcept {
     if (g == group::sky) return 3;
     if (g == group::water) return water_sub::count;
     if (g == group::over + 0) return 2;
-    if (g == group::over + 1 || g == group::over + 2) return 3;
+    if (g == group::over + 1) return 3;
+    if (g == group::over + 2) return aero_sub::count;
     if (g == group::marks + 0) return 2;
     return 1;
 }
@@ -127,14 +140,18 @@ struct Paint {
 
 /// What a fill is, for the frame's decisions and the twin.
 enum class FillKind : std::uint8_t {
-    land,   ///< draw_under: gpoly(cam, poly, 0.01), margin 600, area over 0.3; grouped by kind
-    canopy, ///< draw_under's canopy: gpoly(cam, poly, 0.02) of forest, wood and scrub
-    area,   ///< S['areas']: gp(poly, colour, 0.02), margin 900, area over 0.2
-    road,   ///< S['roads']: gp(ribbon(pts, w / 2), colour, 0.05, 0.45 on a bridge)
-    rail,   ///< draw_over: a rail's ballast, gpoly(ribbon(pts, 1.6), 0.04) (crane rails: tested, not drawn)
-    big,    ///< draw_over: a big road's asphalt, gpoly(ribbon(pts, w / 2), 0.06 + 0.5 · layer)
-    marine, ///< draw_over: a breakwater, groyne, pier or quay, gpoly(closed ? pts : ribbon(pts, wdt / 2), 0.3)
-    water,  ///< a water ring's piece in this tile (S['water'] or an island of S['water_holes'])
+    land,    ///< draw_under: gpoly(cam, poly, 0.01), margin 600, area over 0.3; grouped by kind
+    canopy,  ///< draw_under's canopy: gpoly(cam, poly, 0.02) of forest, wood and scrub
+    area,    ///< S['areas']: gp(poly, colour, 0.02), margin 900, area over 0.2
+    road,    ///< S['roads']: gp(ribbon(pts, w / 2), colour, 0.05, 0.45 on a bridge)
+    rail,    ///< draw_over: a rail's ballast, gpoly(ribbon(pts, 1.6), 0.04) (crane rails: tested, not drawn)
+    big,     ///< draw_over: a big road's asphalt, gpoly(ribbon(pts, w / 2), 0.06 + 0.5 · layer)
+    marine,  ///< draw_over: a breakwater, groyne, pier or quay, gpoly(closed ? pts : ribbon(pts, wdt / 2), 0.3)
+    water,   ///< a water ring's piece in this tile (S['water'] or an island of S['water_holes'])
+    runway,  ///< draw_over: a runway's pavement, gpoly(ribbon(pts, w / 2), 0.07)
+    taxiway, ///< draw_over: a taxiway's, a taxilane's or a stopway's pavement, gpoly(ribbon(pts, w / 2), 0.065)
+    bars,    ///< draw_over's runway_ends: one of a runway's threshold bars, gpoly(q, 0.09, margin=200), with its
+             ///< pavement; an end's drawn bars are one path
 };
 
 /// An element's place in the renders' ground order across scenes (ENGINE.md step 3: the ground's order across windows):
@@ -177,6 +194,9 @@ struct Fill {
     /// Its paint (not drawn: crane rails, whose ballast is tested only).
     Paint paint;
     bool drawn = true;
+    /// Drawn only where the fill it belongs to is (a runway's threshold bars: their pavement's index in the tile's
+    /// fills).
+    std::optional<std::uint32_t> with;
     /// The water: its ring's place in S['water'] (or S['water_holes']), whether an island, its level (WATER_Y when the
     /// tile names none).
     std::uint32_t ring = 0;
@@ -205,6 +225,10 @@ enum class StrokeKind : std::uint8_t {
             ///< weather
     setts,  ///< the road loop: a sett road's courses across it every 0.6 m at y + 0.01, stroke .4 at opacity .6, by day
             ///< not at eye level, its first point within 500 m
+    centre, ///< draw_over: a runway's centre line (dashes 30 on 20 off at 0.09), px(0.9), with its pavement
+    taxi,   ///< draw_over: a taxiway's line (line_d at 0.08), px(0.3)
+    lead_in, ///< draw_over: a stand's lead-in line (line_d at 0.08), px(0.25) at its first point
+    park,    ///< draw_over: a national park's edge (line_d(ring, 0.15)), 2.2 dashed 7 on 5 off at .85, no radius cut
 };
 
 /// A tile cell's box over its fills (metres, at their heights) and the widest of their margins: the frame tests a
@@ -235,8 +259,13 @@ struct Stroke {
     std::uint32_t count = 0;
     Width width;
     Paint paint;
-    /// Drawn only where the fill it belongs to is (a big road's lines: their asphalt's index in the tile's fills).
+    /// Drawn only where the fill it belongs to is (a big road's lines: their asphalt's index in the tile's fills; a
+    /// runway's centre line: its pavement's).
     std::optional<std::uint32_t> fill;
+    /// The path's opacity (a sett road's courses', a park's edge's), and its dashes and gaps along the screen (CSS
+    /// px; none: 0), restarting at each of its runs as the SVG's stroke-dasharray does.
+    double opacity = 1.0;
+    std::array<double, 2> dash{};
     /// For draw_over's radius cut: its feature's line, as Fill::line.
     std::uint32_t line = 0;
     std::uint32_t line_count = 0;
@@ -245,6 +274,14 @@ struct Stroke {
     P2 from;
     /// Its place in the ground's order across scenes (its feature's).
     OrderKey key;
+};
+
+/// A runway the frame lays designators on: its pavement (its index in the tile's fills: the runway's line is the
+/// pavement's), its ref (draw_over's `t.get('ref') or ''`) and its marks' paint.
+struct RunwayRef {
+    std::uint32_t pavement = 0;
+    std::string ref;
+    Paint marks;
 };
 
 /// One polyline of a stroke: [first, first + count) of the tile's points at height y; a dash is a polyline of two.
@@ -396,6 +433,8 @@ struct GroundTile {
     std::vector<Shadow> shadows;
     std::vector<P2> shadow_points;
     std::array<double, 4> shadow_at{0, -1, 0, 0}; ///< x0, x1, z0, z1 of every Shadow::at (empty while x1 < x0)
+    /// The runways whose designators the frame lays on the ground (draw_over's runway_ends: passes/Ground.cpp).
+    std::vector<RunwayRef> runways;
     /// Each cell's box over its fills (the water's pieces aside, which every frame decides whole).
     std::array<CellBox, max_cells> cells{};
     /// Bytes it holds (the tile's native bytes).

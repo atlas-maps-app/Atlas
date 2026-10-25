@@ -233,8 +233,16 @@ std::optional<TextRun> ground_text(const view::Camera& camera, std::string_view 
 
 std::vector<TextRun> runway_designators(const view::Camera& camera, const Runway& runway, std::uint32_t mark) {
     std::vector<TextRun> out;
+    for (int end = 0; end < 2; ++end) {
+        if (auto run = runway_designator(camera, runway, mark, end)) out.push_back(std::move(*run));
+    }
+    return out;
+}
+
+std::optional<TextRun> runway_designator(const view::Camera& camera, const Runway& runway, std::uint32_t mark,
+                                         int end) {
     const auto& pts = runway.points;
-    if (pts.size() < 2) return out;
+    if (pts.size() < 2) return std::nullopt;
     // names = [s.strip() for s in ref.split('/')] if '/' in ref else [None, None]
     std::vector<std::string_view> names;
     const std::string_view ref = runway.ref;
@@ -248,33 +256,28 @@ std::vector<TextRun> runway_designators(const view::Camera& camera, const Runway
             start = slash + 1;
         }
     }
-    for (int end = 0; end < 2; ++end) {
-        const auto& p0 = end == 0 ? pts[0] : pts[pts.size() - 1];
-        const auto& p1 = end == 0 ? pts[1] : pts[pts.size() - 2];
-        const double dx = p1[0] - p0[0];
-        const double dz = p1[1] - p0[1];
-        double length = pymath::hypot(dx, dz);
-        if (length == 0.0) length = 1.0;
-        const double ux = dx / length;
-        const double uz = dz / length;
-        const double nx = -uz;
-        const double nz = ux;
-        // which name belongs to this end: the one whose heading matches the direction of travel from it
-        const double heading = pymath::mod(pymath::degrees(pymath::atan2(ux, -uz)) + 360, 360.0);
-        std::string_view name;
-        for (const std::string_view s : names) {
-            const std::string digits = leading_digits(s);
-            if (digits.empty()) continue;
-            const double number = number_of(digits);
-            if (pymath::fabs(pymath::mod(((number * 10) - heading) + 180, 360.0) - 180) < 30) name = s;
-        }
-        if (name.empty()) continue;
-        if (auto run = ground_text(camera, name, {p0[0] + (ux * 60), 0.09, p0[1] + (uz * 60)}, {nx, 0.0, nz},
-                                   {ux, 0.0, uz}, 18, mark, 1.0, 800, 0.05)) {
-            out.push_back(std::move(*run));
-        }
+    const auto& p0 = end == 0 ? pts[0] : pts[pts.size() - 1];
+    const auto& p1 = end == 0 ? pts[1] : pts[pts.size() - 2];
+    const double dx = p1[0] - p0[0];
+    const double dz = p1[1] - p0[1];
+    double length = pymath::hypot(dx, dz);
+    if (length == 0.0) length = 1.0;
+    const double ux = dx / length;
+    const double uz = dz / length;
+    const double nx = -uz;
+    const double nz = ux;
+    // which name belongs to this end: the one whose heading matches the direction of travel from it
+    const double heading = pymath::mod(pymath::degrees(pymath::atan2(ux, -uz)) + 360, 360.0);
+    std::string_view name;
+    for (const std::string_view s : names) {
+        const std::string digits = leading_digits(s);
+        if (digits.empty()) continue;
+        const double number = number_of(digits);
+        if (pymath::fabs(pymath::mod(((number * 10) - heading) + 180, 360.0) - 180) < 30) name = s;
     }
-    return out;
+    if (name.empty()) return std::nullopt;
+    return ground_text(camera, name, {p0[0] + (ux * 60), 0.09, p0[1] + (uz * 60)}, {nx, 0.0, nz}, {ux, 0.0, uz}, 18,
+                       mark, 1.0, 800, 0.05);
 }
 
 void lay_out(const TextRun& run, const std::array<double, 6>& matrix, const ShapedRun& shaped,

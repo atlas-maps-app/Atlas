@@ -183,10 +183,25 @@ struct Style {
     DayNight road_lines;
     double road_lines_width = 0.0;
     std::array<double, 2> lane_dash{};
-    /// `runways`: the designators' and threshold bars' colours.
+    /// `runways`: the pavement; the designators', threshold bars' and centre line's colour; the centre line's width
+    /// (metres) and its dashes and gaps (metres along it).
+    DayNight runway_pavement;
     DayNight runway_marks;
+    double runway_centre_width = 0.0;
+    std::array<double, 2> runway_centre_dash{};
+    /// `taxiways`: the pavement of a taxiway, a taxilane and a stopway; the line along it and a stand's lead-in line,
+    /// their widths (metres).
+    DayNight taxiway_pavement;
+    DayNight taxiway_lines;
+    double taxiway_lines_width = 0.0;
+    double lead_in_width = 0.0;
     /// `marine`, in the table's order.
     std::vector<MarineStyle> marine;
+    /// `park_edges`: a national park's edge, its width, its dashes and gaps (CSS px) and the path's opacity.
+    DayNight park_edges;
+    double park_edges_width = 0.0;
+    std::array<double, 2> park_edges_dash{};
+    double park_edges_opacity = 0.0;
     /// `trams`: the tracks' colours and width; `bridges`: the lines along a bridge's sides and their width.
     DayNight trams;
     double trams_width = 0.0;

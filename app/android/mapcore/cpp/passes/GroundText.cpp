@@ -186,11 +186,39 @@ const GroundText::Shaped& GroundText::shaped(const text::TextRun& run) {
     return shaped_.emplace(key, std::move(s)).first->second;
 }
 
+void GroundText::draw_run(const frame::FrameState& state, const text::TextRun& run, std::uint32_t slot, float alpha) {
+    const Shaped& s = shaped(run);
+    if (!s.ok) return;
+    // At rest the matrix the SVG prints, which the oracle draws; moving, the camera's own.
+    std::array<double, 6> m = run.matrix;
+    if (state.rest) {
+        const std::array<float, 6> snapped = run.snapped_matrix();
+        for (std::size_t i = 0; i < m.size(); ++i) m.at(i) = static_cast<double>(snapped.at(i));
+    }
+    laid_.clear();
+    text::lay_out(run, m, s.run, s.places, 1.0, laid_);
+    const auto face = text::resolve(run.family, run.weight, false);
+    const std::uint32_t table = face ? static_cast<std::uint32_t>(face->face) : 0U;
+    for (const text::GlyphInstance& g : laid_) {
+        if (draws_.size() >= max_draws) break;
+        const text::slug::Glyph& at = *g.glyph;
+        draws_.push_back(
+            {.row0 = {g.row0[0], g.row0[1], g.row0[2], 0.0F},
+             .row1 = {g.row1[0], g.row1[1], g.row1[2], 0.0F},
+             .box = {at.box.x0, at.box.y0, at.box.x1, at.box.y1},
+             .bands = {at.scale_x, at.scale_y, at.offset_x, at.offset_y},
+             .location = {at.band_x, at.band_y, at.vbands - 1, at.hbands - 1},
+             .colour = {g.colour[0] * alpha, g.colour[1] * alpha, g.colour[2] * alpha, g.colour[3] * alpha},
+             .info = {table, slot, 0, 0}});
+    }
+}
+
 void GroundText::update(const frame::FrameState& state) {
     const std::uint32_t slot = state.slot & 1U;
-    drawn_.at(slot) = 0;
+    drawn_.at(slot) = {0, 0};
     draws_.clear();
     placed_.clear();
+    designators_.clear();
     if (!state.view.has_value()) return;
     gather(state);
     const view::Camera& cam = state.view->camera();
@@ -211,36 +239,17 @@ void GroundText::update(const frame::FrameState& state) {
                                .seconds = state.seconds};
     const auto names = names_.update(view);
     placed_.assign(names.begin(), names.end());
-    for (const text::PlacedName& p : placed_) {
-        const Shaped& s = shaped(p.drawn);
-        if (!s.ok) continue;
-        // At rest the matrix the SVG prints, which the oracle draws; moving, the camera's own.
-        std::array<double, 6> m = p.drawn.matrix;
-        if (state.rest) {
-            const std::array<float, 6> snapped = p.drawn.snapped_matrix();
-            for (std::size_t i = 0; i < m.size(); ++i) m.at(i) = static_cast<double>(snapped.at(i));
-        }
-        laid_.clear();
-        text::lay_out(p.drawn, m, s.run, s.places, 1.0, laid_);
-        const auto face = text::resolve(p.drawn.family, p.drawn.weight, false);
-        const std::uint32_t table = face ? static_cast<std::uint32_t>(face->face) : 0U;
-        for (const text::GlyphInstance& g : laid_) {
-            if (draws_.size() >= max_draws) break;
-            const text::slug::Glyph& at = *g.glyph;
-            draws_.push_back(
-                {.row0 = {g.row0[0], g.row0[1], g.row0[2], 0.0F},
-                 .row1 = {g.row1[0], g.row1[1], g.row1[2], 0.0F},
-                 .box = {at.box.x0, at.box.y0, at.box.x1, at.box.y1},
-                 .bands = {at.scale_x, at.scale_y, at.offset_x, at.offset_y},
-                 .location = {at.band_x, at.band_y, at.vbands - 1, at.hbands - 1},
-                 .colour = {g.colour[0] * p.alpha, g.colour[1] * p.alpha, g.colour[2] * p.alpha, g.colour[3] * p.alpha},
-                 .info = {table, first_ground_slot(), 0, 0}});
-        }
+    for (const text::PlacedName& p : placed_) draw_run(state, p.drawn, first_ground_slot(), p.alpha);
+    const auto named = static_cast<std::uint32_t>(draws_.size());
+    // the runways' designators the ground laid, each at its runway's slot
+    if (state.ground_runs != nullptr) {
+        designators_ = state.ground_runs->runs;
+        for (const frame::GroundRun& r : designators_) draw_run(state, r.run, r.slot, 1.0F);
     }
     if (draw_buffer_ && !draws_.empty()) {
         std::memcpy(draw_buffer_.bytes().data() + (slot * slot_bytes), draws_.data(), draws_.size() * draw_bytes);
         draw_buffer_.flush();
-        drawn_.at(slot) = static_cast<std::uint32_t>(draws_.size());
+        drawn_.at(slot) = {named, static_cast<std::uint32_t>(draws_.size()) - named};
     }
 }
 
@@ -317,19 +326,47 @@ void GroundText::release() noexcept {
 }
 
 void GroundText::record(const frame::Recording& recording, std::uint32_t phase) {
-    (void)phase;
     const std::uint32_t slot = recording.state.slot & 1U;
-    const std::uint32_t count = drawn_.at(slot);
+    const std::array<std::uint32_t, 2>& drawn = drawn_.at(slot);
+    const bool names = phase == phase_names;
+    const std::uint32_t count = names ? drawn[0] : drawn[1];
     if (!*pipeline_ || count == 0) return;
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline_);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout_, 2, *sets_.at(slot), {});
-    cmd.draw(6, count, 0, 0);
-    recording.counters.draw("canal names", 2ULL * count, count);
+    cmd.draw(6, count, 0, names ? 0 : drawn[0]);
+    recording.counters.draw(names ? "canal names" : "runway designators", 2ULL * count, count);
 }
 
 void GroundText::emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const {
-    (void)phase;
+    if (phase == phase_designators) {
+        if (designators_.empty()) return;
+        out.layer(twin::Layer::ground);
+        // draw_over's group: render opens its `mat` group around the areas, the roads and draw_over with weather
+        const bool weather = state.theme.has(style::theme_flag::weather);
+        const std::int32_t parent =
+            weather ? out.group({.node = {.filter = out.filter("mat")}, .parent = out.root()}) : out.root();
+        for (const frame::GroundRun& r : designators_) {
+            const text::TextRun& run = r.run;
+            twin::Node node{.opacity = run.printed_opacity(), .transformed = true};
+            if (state.rest) {
+                node.transform = run.snapped_matrix();
+            } else {
+                for (std::size_t i = 0; i < node.transform.size(); ++i) {
+                    node.transform.at(i) = static_cast<float>(run.matrix.at(i));
+                }
+            }
+            const twin::Font font{.family = run.family,
+                                  .size = run.printed_size(),
+                                  .weight = run.weight,
+                                  .italic = false,
+                                  .letter_spacing = run.printed_spacing(),
+                                  .anchor = static_cast<twin::TextAnchor>(run.anchor)};
+            out.at(r.slot, parent);
+            out.text({.fill = twin::Paint::colour(0xFF00'0000U | run.fill)}, run.text, 0.0F, 0.0F, font, node);
+        }
+        return;
+    }
     if (placed_.empty()) return;
     out.layer(twin::Layer::ground);
     out.at(first_ground_slot(), out.root());

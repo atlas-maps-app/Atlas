@@ -12,6 +12,10 @@ static const uint LINE_JOIN_ROUND = 4u; // its joins (miter, limit 4, without)
 static const uint LINE_JOIN_BEVEL = 8u;
 static const uint LINE_PAIRS = 16u; // its points pairs, each pair a line of its own (a sett road's courses)
 static const uint LINE_LAYER = 32u; // its paint's alpha the path's opacity, its lines one layer (ground/setts.slangh)
+static const uint LINE_DASH = 64u;  // dashed along the screen, butt-ended (its dash table: passes/Lines.cpp)
+/// A dashed run's flags word holds its dash table's first word in the frame's words from this bit.
+static const uint LINE_DASH_SHIFT = 8u;
+static const uint LINE_FLAG_BITS = 0xFFu;
 
 /// The line stage's modes (StrokeOut.info.x's low bits), by the device width: a hairline, the exact area, the samples.
 static const uint LINE_HAIR = 0u;
@@ -195,6 +199,17 @@ inline float hair_coverage(Seg g, float2 pixel, float width) {
     if (span <= 0.0f) return 0.0f;
     float m = m0 + slope * (min(max(c, lo), hi) - lo);
     return max(0.0f, 1.0f - abs(v + 0.5f - m)) * span * width;
+}
+
+/// Whether point x (device px) of a dashed run's segment lies in a dash (the SVG's stroke-dasharray, as Skia dashes a
+/// path's contours): `dash` holds the segment's start's place in the pattern, the dash and the period (device px), and
+/// whether the run is dashed. The place along the run is the start's and then along the segment; a join's wedge
+/// beyond its end takes the end's (the join drawn where a dash runs through it).
+inline bool in_dash(Seg g, float4 dash, float2 x) {
+    if (dash.w == 0.0f) return true;
+    float al = clamp(dot(x - g.a, g.u), 0.0f, g.len);
+    float at = dash.x + al;
+    return at - dash.z * floor(at / dash.z) < dash.y;
 }
 
 /// A line of a pair run (a sett road's course): its ends in device px, and whether it is drawn (both ends ahead of the

@@ -13,6 +13,7 @@
 // painter slot) and the runs' segments instances, in the renders' order: draw_over's in the over phase, the marks in
 // theirs. One instanced draw each: every segment a quad whose coverage the line stage finds as RefRaster does
 // (shaders/ground/ground.slang).
+#include "base/assert.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
@@ -23,6 +24,9 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
+#include <optional>
+#include <utility>
 
 namespace atlas::passes {
 
@@ -40,6 +44,31 @@ namespace {
 
 [[nodiscard]] std::uint32_t rgba_of(const geo::Paint& paint, bool night) noexcept {
     return (night ? paint.night : paint.day).packed();
+}
+
+/// A dashed polyline's dash table (stroke_vs reads it): its dash and the pattern's period (CSS px), then each point's
+/// place in the pattern (its distance along the line's points on the screen from its run's first, as the vertex stage
+/// places them, modulo the period), each run of points ahead of the near plane starting the pattern again, as the
+/// SVG's dashes start again with each subpath.
+void dash_table(const TwinPlacer& placer, const DrawnTile& t, std::span<const geo::P2> line, double y,
+                const std::array<double, 2>& dash, std::vector<std::uint32_t>& out) {
+    const double period = dash[0] + dash[1];
+    out.push_back(std::bit_cast<std::uint32_t>(static_cast<float>(dash[0])));
+    out.push_back(std::bit_cast<std::uint32_t>(static_cast<float>(period)));
+    std::optional<twin::Point> before;
+    double along = 0.0;
+    for (const geo::P2& p : line) {
+        const std::optional<twin::Point> q = placer.at(t, p, y);
+        if (q && before) {
+            const double dx = static_cast<double>(q->x) - static_cast<double>(before->x);
+            const double dy = static_cast<double>(q->y) - static_cast<double>(before->y);
+            along = std::fmod(along + pm::hypot(dx, dy), period);
+        } else {
+            along = 0.0;
+        }
+        out.push_back(std::bit_cast<std::uint32_t>(static_cast<float>(along)));
+        before = q;
+    }
 }
 
 } // namespace
@@ -69,7 +98,8 @@ void Ground::decide_strokes(const view::Camera& cam, const DrawnTile& t, TileDec
             // regions.py's px(cam, w, p): max(0.25, w * focal / max(depth at the ground, 1))
             const view::Vec3 k = cam.cam({s.width.at.x, 0.0, s.width.at.z});
             width = pm::max(0.25, (s.width.metres * cam.focal()) / pm::max(k.z, 1.0));
-            if (!(width > 0.3)) continue; // `if sw > 0.3`
+            // a big road's lines: `if sw > 0.3`
+            if ((s.kind == geo::StrokeKind::edges || s.kind == geo::StrokeKind::lanes) && !(width > 0.3)) continue;
             if (f.exact) width = printed(width, 2);
         }
         d.stroke_drawn[i] = 1;
@@ -87,7 +117,6 @@ gpu::Result<void> Ground::make_line_pipelines(const frame::PassContext& context,
 
 void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32_t>& words, std::uint32_t& runs,
                          std::array<std::uint32_t, 2>& instances) {
-    (void)state;
     // the drawn strokes in the renders' order: their phase, then their painter slot (ties as emitted)
     struct Drawn {
         bool marks;
@@ -109,10 +138,14 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
     }
     std::ranges::stable_sort(
         drawn, [](const Drawn& a, const Drawn& b) { return a.marks != b.marks ? b.marks : a.slot < b.slot; });
-    // the runs: one per polyline, 8 words each
+    // the runs: one per polyline, 8 words each; a dashed one's table after the segments
     runs = static_cast<std::uint32_t>(words.size());
     std::array<std::vector<std::uint32_t>, 2> segments;
     std::uint32_t run = 0;
+    std::vector<std::uint32_t> tables;
+    std::vector<std::pair<std::size_t, std::size_t>> dashed; // a dashed run's flags word, its table's first word
+    const std::optional<TwinPlacer> placer =
+        state.view ? std::optional<TwinPlacer>(std::in_place, state, state.view->camera()) : std::nullopt;
     for (const Drawn& d : drawn) {
         const DrawnTile& tile = frame_.tiles[d.tile];
         const geo::GroundTile& g = *tile.ground;
@@ -132,8 +165,14 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
             words.push_back(rgba_of(s.paint, frame_.night));
             words.push_back(d.slot);
             // butt caps, miter joins (limit 4): the SVG's defaults; a sett road's courses: lines of their own, the
-            // path's opacity a layer (the paint's alpha)
-            words.push_back(pl.pairs ? shaders::LINE_PAIRS | shaders::LINE_LAYER : 0U);
+            // path's opacity a layer (the paint's alpha); a park's edge dashed along the screen
+            std::uint32_t flags = pl.pairs ? shaders::LINE_PAIRS | shaders::LINE_LAYER : 0U;
+            if (s.dash[0] > 0 && placer) {
+                flags |= shaders::LINE_DASH;
+                dashed.emplace_back(words.size(), tables.size());
+                dash_table(*placer, tile, std::span(g.points).subspan(pl.first, pl.count), pl.y, s.dash, tables);
+            }
+            words.push_back(flags);
             for (std::uint32_t k = 0; k < n; ++k) segments[d.marks ? 1U : 0U].push_back((run << 14U) | k);
             ++run;
         }
@@ -142,6 +181,13 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
         instances[phase] = static_cast<std::uint32_t>(words.size());
         words.insert(words.end(), segments[phase].begin(), segments[phase].end());
         words_->instance_count[phase] = static_cast<std::uint32_t>(segments[phase].size());
+    }
+    // the dash tables, each run's flags naming its own
+    const std::size_t base = words.size();
+    words.insert(words.end(), tables.begin(), tables.end());
+    for (const auto& [flags, first] : dashed) {
+        ATLAS_ASSERT((base + first) < (std::size_t{1} << (32U - shaders::LINE_DASH_SHIFT)));
+        words[flags] |= static_cast<std::uint32_t>(base + first) << shaders::LINE_DASH_SHIFT;
     }
 }
 
@@ -203,9 +249,12 @@ void Ground::emit_lines(const frame::FrameState& state, twin::Stream& out, std::
             st.stroke =
                 twin::Paint::colour(0xFF00'0000U | (std::uint32_t{c.r} << 16U) | (std::uint32_t{c.g} << 8U) | c.b);
             st.stroke_width = static_cast<float>(frame_.stroke_width[t.strokes + i]);
-            // a sett road's courses: the path at its opacity (the paint's alpha)
+            // a park's edge's stroke-dasharray
+            const std::array<float, 2> dash{static_cast<float>(s.dash[0]), static_cast<float>(s.dash[1])};
+            if (s.dash[0] > 0) st.dashes = dash;
+            // a sett road's courses, a park's edge: the path at its opacity
             twin::Node node;
-            if (s.kind == geo::StrokeKind::setts) node.opacity = static_cast<float>(c.a) / 255.0F;
+            node.opacity = static_cast<float>(s.opacity);
             out.path(st, subpaths, node);
         }
     }

@@ -4,6 +4,7 @@
 #include "base/assert.hpp"
 #include "base/log.hpp"
 #include "frame/FrameLayout.hpp"
+#include "frame/GroundRuns.hpp"
 #include "gen/spirv/frame/overdraw.hpp"
 #include "gen/spirv/frame/owner.hpp"
 #include "gpu/Instance.hpp"
@@ -448,6 +449,9 @@ void FrameBuilder::stage_f() {
         state_.block.info.y = ground;
         state_.block.info.z = 0;
     }
+    if (!ground_runs_) ground_runs_ = std::make_unique<GroundRuns>();
+    ground_runs_->runs.clear();
+    state_.ground_runs = ground_runs_.get();
     for (const std::unique_ptr<Pass>& p : passes_) p->update(state_);
 }
 

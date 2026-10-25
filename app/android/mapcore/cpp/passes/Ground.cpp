@@ -5,12 +5,14 @@
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
+#include "frame/GroundRuns.hpp"
 #include "gen/layouts.hpp"
 #include "gen/spirv/ground/ground.hpp"
 #include "gpu/Descriptors.hpp"
 #include "scene/Cover.hpp"
 #include "scene/Residency.hpp"
 #include "sun/Buckets.hpp"
+#include "text/GroundText.hpp"
 
 #include <algorithm>
 #include <array>
@@ -293,6 +295,17 @@ void TwinPlacer::runs(const DrawnTile& t, std::span<const geo::P2> line, double 
     }
     if (run == 1) points.pop_back();
     if (run > 1) ends.push_back(static_cast<std::uint32_t>(points.size()));
+}
+
+std::optional<twin::Point> TwinPlacer::at(const DrawnTile& t, geo::P2 p, double y) const {
+    if (exact(t)) {
+        const view::Vec3 k = cam_.cam({p.x, y, p.z});
+        if (k.z < cam_.near()) return std::nullopt;
+        return point(cam_.pc(k));
+    }
+    const hlsl::float3 local = {static_cast<float>(p.x - t.ground->origin.x), static_cast<float>(y),
+                                static_cast<float>(p.z - t.ground->origin.z)};
+    return projector_.css(t.place, local);
 }
 
 void TwinPlacer::joined(const DrawnTile& t, std::span<const geo::P2> line, double y, std::vector<twin::Point>& points,
@@ -766,6 +779,8 @@ void Ground::decide_tile(const view::Camera& cam, const DrawnTile& t, TileDecisi
                 project_poly(cam, std::span(g.points).subspan(fill.first, fill.count), fill.y, fill.margin, cam_, sp_);
             drawn = p.points >= 3 && p.inside && (std::abs(p.sum) / 2) > fill.min_area;
         }
+        // a runway's threshold bars only with its pavement (the fill they belong to comes before them)
+        if (drawn && fill.with && (d.drawn[*fill.with] & drawn_bit::street) == 0) drawn = false;
         if (drawn) d.drawn[i] = drawn_bit::street;
     }
     decide_strokes(cam, t, d);
@@ -1103,8 +1118,42 @@ void Ground::write_words(const frame::FrameState& state) {
 }
 
 void Ground::update(const frame::FrameState& state) {
-    if (!frame_.valid || pipelines_ == nullptr || words_ == nullptr) return;
+    if (!frame_.valid) return;
+    lay_designators(state);
+    if (pipelines_ == nullptr || words_ == nullptr) return;
     write_words(state);
+}
+
+void Ground::lay_designators(const frame::FrameState& state) const {
+    if (state.ground_runs == nullptr || !state.view) return;
+    const view::Camera& cam = state.view->camera();
+    text::Runway runway;
+    for (const DrawnTile& t : frame_.tiles) {
+        const geo::GroundTile& g = *t.ground;
+        // in the frame's own metres: a tile still in another frame while the frames blend lays none
+        if (g.runways.empty() || t.tile == nullptr || !state.ground_frame || t.tile->frame != *state.ground_frame) {
+            continue;
+        }
+        for (const geo::RunwayRef& r : g.runways) {
+            // `if not d: continue`: with its pavement
+            if ((frame_.drawn[t.decisions + r.pavement] & drawn_bit::street) == 0) continue;
+            const geo::Fill& f = g.fills[r.pavement];
+            runway.points.clear();
+            for (const geo::P2& p : std::span(g.points).subspan(f.line, f.line_count)) {
+                runway.points.push_back({p.x, p.z});
+            }
+            runway.ref = r.ref;
+            const geo::Rgba c = frame_.night ? r.marks.night : r.marks.day;
+            const std::uint32_t mark = (std::uint32_t{c.r} << 16U) | (std::uint32_t{c.g} << 8U) | c.b;
+            for (int end = 0; end < 2; ++end) {
+                if (auto run = text::runway_designator(cam, runway, mark, end)) {
+                    const auto sub = static_cast<std::uint32_t>(geo::aero_sub::designator + (2 * end));
+                    state.ground_runs->runs.push_back(
+                        {.run = std::move(*run), .slot = slot(f.group, fill_order(t, r.pavement), sub)});
+                }
+            }
+        }
+    }
 }
 
 void Ground::push(const frame::Recording& r, std::uint32_t flags, std::uint32_t slot_value) const {

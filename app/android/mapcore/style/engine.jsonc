@@ -73,10 +73,26 @@
         "lane_dash": [3.0, 9.0]
     },
 
-    // regions.py's draw_over: a runway's designators and threshold bars, by day and at night
+    // regions.py's draw_over: a runway's pavement, its designators' and threshold bars' colour (that of its centre line
+    // too), by day and at night, its centre line's width in metres and its dashes and gaps in metres along it
     "runways": {
+        "pavement_day": "#5F6064",
+        "pavement_night": "#1E2128",
         "marks_day": "#F4F3EE",
-        "marks_night": "#4A4F5C"
+        "marks_night": "#4A4F5C",
+        "centre_width": 0.9,
+        "centre_dash": [30.0, 20.0]
+    },
+
+    // regions.py's draw_over: a taxiway's, a taxilane's and a stopway's pavement, and the yellow line along it and a
+    // stand's lead-in line, by day and at night, the lines' widths in metres
+    "taxiways": {
+        "pavement_day": "#8C8C8D",
+        "pavement_night": "#20232A",
+        "lines_day": "#E2BC3C",
+        "lines_night": "#8A7A3A",
+        "lines_width": 0.3,
+        "lead_in_width": 0.25
     },
 
     // regions.py's draw_over: marine works, each a strip of this width in metres where its way is open, and its colour
@@ -85,6 +101,16 @@
         "groyne": [4.0, "#8E8A84"],
         "pier": [5.0, "#A89A86"],
         "quay": [3.0, "#B4AEA4"]
+    },
+
+    // regions.py's draw_over: a national park's edge, a dashed line on the ground (by day and at night, its width, its
+    // dashes and gaps in CSS px, and the path's opacity)
+    "park_edges": {
+        "day": "#2F6B3E",
+        "night": "#4C8A5A",
+        "width": 2.2,
+        "dash": [7.0, 5.0],
+        "opacity": 0.85
     },
 
     // amsterdam.py's tram tracks: by day, at night, and their width

@@ -80,8 +80,35 @@ class EngineStyleTest {
                 (value("big_roads.lane_dash") as List<*>).joinToString(", ", "y + 0.01, ", ")"),
             ),
             Triple(
+                listOf("runways.pavement_day", "runways.pavement_night"), regions,
+                """nightC(th, if (!night) "${value("runways.pavement_day")}" else "${value("runways.pavement_night")}", 1.0)""",
+            ),
+            Triple(
                 listOf("runways.marks_day", "runways.marks_night"), regions,
                 """val mk = if (!night) "${value("runways.marks_day")}" else "${value("runways.marks_night")}"""",
+            ),
+            Triple(listOf("runways.centre_width"), regions, """val sw = px(cam, ${value("runways.centre_width")}, ap[ap.size / 2])"""),
+            Triple(
+                listOf("runways.centre_dash"), regions,
+                (value("runways.centre_dash") as List<*>).joinToString(", ", "val cl = dashes(cam, ap, 0.09, ", ")"),
+            ),
+            Triple(
+                listOf("taxiways.pavement_day", "taxiways.pavement_night"), regions,
+                """nightC(th, if (!night) "${value("taxiways.pavement_day")}" else "${value("taxiways.pavement_night")}", 1.0)""",
+            ),
+            Triple(
+                listOf("taxiways.lines_day", "taxiways.lines_night", "taxiways.lines_width"), regions,
+                """if (!night) "${value("taxiways.lines_day")}" else "${value("taxiways.lines_night")}", px(cam, ${value("taxiways.lines_width")}, ap[ap.size / 2])""",
+            ),
+            Triple(
+                listOf("taxiways.lines_day", "taxiways.lines_night", "taxiways.lead_in_width"), regions,
+                """if (!night) "${value("taxiways.lines_day")}" else "${value("taxiways.lines_night")}", px(cam, ${value("taxiways.lead_in_width")}, ap[0])""",
+            ),
+            Triple(
+                listOf("park_edges.width", "park_edges.dash", "park_edges.opacity", "park_edges.day", "park_edges.night"), regions,
+                """stroke-width=\"${value("park_edges.width")}\" stroke-dasharray=\"""" +
+                    (value("park_edges.dash") as List<*>).joinToString(" ") { (it as Double).toInt().toString() } +
+                    """\" opacity=\"${css("park_edges.opacity")}\"/>", dd, if (!night) "${value("park_edges.day")}" else "${value("park_edges.night")}")""",
             ),
             Triple(listOf("marine"), regions, marine(0, "to %s")),
             Triple(listOf("marine"), regions, marine(1, "to \"%s\"")),

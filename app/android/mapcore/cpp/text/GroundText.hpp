@@ -83,6 +83,9 @@ struct Runway {
 /// each UTF-16 unit; Python's \d would take the other planes' too, which no ref holds).
 [[nodiscard]] std::vector<TextRun> runway_designators(const view::Camera& camera, const Runway& runway,
                                                       std::uint32_t mark);
+/// runway_ends' designation at one end (0 the line's first point, 1 its last), or none.
+[[nodiscard]] std::optional<TextRun> runway_designator(const view::Camera& camera, const Runway& runway,
+                                                       std::uint32_t mark, int end);
 
 /// A shaped run laid out as Slug glyph instances: each glyph's em-to-device-pixel map under the run's (snapped)
 /// matrix at `density` device px a CSS px, its place in the textures, its premultiplied colour.

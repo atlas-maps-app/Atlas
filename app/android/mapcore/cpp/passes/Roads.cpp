@@ -143,6 +143,35 @@ void Ground::emit_fills(const frame::FrameState& state, twin::Stream& out, std::
                 fill.kind == geo::FillKind::water || !fill.drawn) {
                 continue;
             }
+            if (fill.kind == geo::FillKind::bars) {
+                // runway_ends: an end's drawn bars, one path (the bars of an end follow each other)
+                const std::uint32_t at = slot(fill.group, fill_order(t, i), fill.sub);
+                points.clear();
+                std::vector<std::uint32_t> ends;
+                std::uint32_t j = i;
+                for (; j < g.fills.size() && g.fills[j].kind == geo::FillKind::bars && g.fills[j].with == fill.with &&
+                       g.fills[j].sub == fill.sub;
+                     ++j) {
+                    const geo::Fill& bar = g.fills[j];
+                    if ((frame_.drawn[t.decisions + j] & drawn_bit::street) == 0) continue;
+                    if (pr.ring(t, std::span(g.points).subspan(bar.first, bar.count), bar.y, points) >= 3) {
+                        ends.push_back(static_cast<std::uint32_t>(points.size()));
+                    }
+                }
+                i = j - 1;
+                if (ends.empty()) continue;
+                std::vector<twin::Subpath> subpaths;
+                std::uint32_t start = 0;
+                for (const std::uint32_t e : ends) {
+                    subpaths.push_back({.points = std::span<const twin::Point>(points).subspan(start, e - start)});
+                    start = e;
+                }
+                out.at(at, above);
+                twin::Style s;
+                s.fill = twin::Paint::colour(paint_argb(fill.paint, night, th));
+                out.path(s, subpaths);
+                continue;
+            }
             if ((frame_.drawn[t.decisions + i] & drawn_bit::street) == 0) continue;
             points.clear();
             if (pr.ring(t, std::span(g.points).subspan(fill.first, fill.count), fill.y, points) < 3) {

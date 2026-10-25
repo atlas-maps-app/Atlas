@@ -696,6 +696,8 @@ struct StrokeOut {
     nointerpolation uint4 info : TEXCOORD2; // x: mode and LINE_HAS_ bits; y: the half width (device px) as bits; z: the
                                             // run's LINE_ flags, and from bit 16 a layer run's line's reach (how many
                                             // lines before it it looks back at); w: its instance word (run << 14 | segment)
+    nointerpolation float4 dash : TEXCOORD3; // a dashed run's (in_dash): its start's place in the pattern, the dash and
+                                             // the period (device px), 1; else 0
 };
 
 /// A run's point k in its tile's metres, at height y.
@@ -736,12 +738,14 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     float width = asfloat(words[run + 4u]);
     uint colour = words[run + 5u];
     uint slot = words[run + 6u];
-    uint flags = words[run + 7u];
+    uint flags = words[run + 7u] & LINE_FLAG_BITS;
+    uint table = words[run + 7u] >> LINE_DASH_SHIFT;
     StrokeOut o;
     o.colour = float4(0.0f, 0.0f, 0.0f, 0.0f);
     o.ab = float4(0.0f, 0.0f, 0.0f, 0.0f);
     o.pn = float4(0.0f, 0.0f, 0.0f, 0.0f);
     o.info = uint4(0u, 0u, 0u, 0u);
+    o.dash = float4(0.0f, 0.0f, 0.0f, 0.0f);
     // a pair run's segment k is its line k, the points 2k and 2k + 1, without neighbours
     bool pairs = (flags & LINE_PAIRS) != 0u;
     uint ia = pairs ? 2u * seg : seg;
@@ -774,7 +778,14 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     float density = frame.camera.frame.z;
     float hw = width * density * 0.5f;
     float wide = 2.0f * hw;
-    info |= wide <= 1.0f ? LINE_HAIR : (wide < 2.0f ? LINE_AREA : LINE_SAMPLES);
+    // a dashed run by its samples whatever its width (a park's edge is wider than two pixels anyway)
+    bool dashed = (flags & LINE_DASH) != 0u;
+    info |= dashed ? LINE_SAMPLES : (wide <= 1.0f ? LINE_HAIR : (wide < 2.0f ? LINE_AREA : LINE_SAMPLES));
+    if (dashed) {
+        // the table: the dash and the period (CSS px), then each point's place in the pattern
+        o.dash = float4(asfloat(words[table + 2u + seg]), asfloat(words[table]), asfloat(words[table + 1u]), 1.0f);
+        o.dash.xyz *= density;
+    }
     // the quad: along the segment, its join's wedge and the coverage's reach beyond each end, across by half the
     // width and the reach
     float2 d = b - a;
@@ -904,7 +915,7 @@ StrokeOutput stroke_fs(StrokeOut s) {
         }
         if (g.len >= 1e-9f) {
             for (uint i = 0u; i < n; ++i) {
-                if (seg_inside(g, points[i])) mask |= 1u << i;
+                if (seg_inside(g, points[i]) && in_dash(g, s.dash, points[i])) mask |= 1u << i;
             }
         }
         if (layer && mask != 0u) {

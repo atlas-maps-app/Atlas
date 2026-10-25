@@ -1,6 +1,7 @@
-// The ground's text (plan-vector D13, K13): the canal names on the water, drawn from their glyphs' outlines by Slug's
-// method (shaders/text/slug.slang) in the scene subpass's translucent slot as part of the ground, so the composite
-// hazes them as the renders' are hazed.
+// The ground's text (plan-vector D13, K13): the canal names on the water, and the runways' designators the ground
+// lays (FrameState::ground_runs: passes/Ground.cpp), drawn from their glyphs' outlines by Slug's method
+// (shaders/text/slug.slang) in the scene subpass's translucent slot as part of the ground, so the composite hazes them
+// as the renders' are hazed.
 //   - Stage T (build, on the workers): each tile's canal name candidates (its label layer's, in source order) and the
 //     region's water level (the pack's style), kept with the tile (PassTile::cpu).
 //   - Stage F (update, on the render thread): the cover's tiles' candidates, each once; the names (text/CanalNames: the
@@ -10,13 +11,15 @@
 //     rest the matrix as the SVG prints it (which the oracle draws), into the frame slot's draws.
 //   - Record: one instanced draw, six vertices a glyph, at the pass's ground slot (one: the canal names are the last of
 //     the ground's marks), after the ground's translucent phases up to the tram tracks (K9's ground_order:
-//     canal_names), depth test on and writes off.
+//     canal_names), depth test on and writes off; the designators' glyphs, each at its runway's slot, in a draw of
+//     their own right after the ground's over lines (ground_order::designators), shaped and laid out as the names.
 // The glyphs' curves and bands are set 1's, filled by GlyphGlobals (below); the frame slot's glyphs and the coverage
 // tables are the pass's own set (2). The fonts are
 // text::shared_fonts() (a face not loaded draws nothing).
 #pragma once
 
 #include "frame/Globals.hpp"
+#include "frame/GroundRuns.hpp"
 #include "frame/Pass.hpp"
 #include "gen/layouts.hpp"
 #include "gpu/Memory.hpp"
@@ -37,6 +40,8 @@ namespace atlas::passes {
 /// The canal names' place among the translucent phases (K9's ground_order::canal_names: after the tram tracks, before
 /// the shadows, as amsterdam.py appends its marks).
 inline constexpr std::int32_t canal_names_order = 650;
+/// The designators' (ground_order::designators): right after the ground's over lines, whose slots theirs lie among.
+inline constexpr std::int32_t designators_order = 510;
 
 /// What stage T keeps of a tile for the canal names.
 struct CanalTile {
@@ -77,7 +82,8 @@ public:
     [[nodiscard]] std::vector<std::shared_ptr<frame::GlobalProvider>>
     providers(const gpu::Device& device, const frame::Resources& resources) const override;
     /// The twin (L1): the names the last update placed, each a `<text>` as the port writes it (its matrix as the
-    /// vertex stage draws it: printed at rest; its opacity times its fade), in the ground layer at the pass's slot.
+    /// vertex stage draws it: printed at rest; its opacity times its fade), in the ground layer at the pass's slot;
+    /// the designators alike at their slots, in draw_over's group (render's `mat` with weather).
     void emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const override;
 
     /// The active pack's canal names whole (the pack-level stage T's: text::pack_canals), which the renders' rule reads
@@ -92,14 +98,19 @@ public:
 
     /// The names of the last frame, as text/CanalNames placed them.
     [[nodiscard]] std::span<const text::PlacedName> names() const noexcept { return placed_; }
+    /// The designators of the last frame, as the ground laid them.
+    [[nodiscard]] std::span<const frame::GroundRun> designators() const noexcept { return designators_; }
     /// The glyphs the last frame drew, as the shader reads them.
     [[nodiscard]] std::span<const layouts::text_slug::GlyphDraw> draws() const noexcept { return draws_; }
     /// The candidates of the cover's tiles, as the names read them.
     [[nodiscard]] std::span<const text::CanalCandidate> candidates() const noexcept { return names_.candidates(); }
 
 private:
-    static constexpr std::array<frame::Phase, 1> phase_list{
-        frame::Phase{.slot = frame::Slot::translucent, .order = canal_names_order, .id = 0}};
+    /// The phases' ids: the names, the designators.
+    enum PhaseId : std::uint8_t { phase_names = 0, phase_designators = 1 };
+    static constexpr std::array<frame::Phase, 2> phase_list{
+        frame::Phase{.slot = frame::Slot::translucent, .order = canal_names_order, .id = phase_names},
+        frame::Phase{.slot = frame::Slot::translucent, .order = designators_order, .id = phase_designators}};
 
     /// A run shaped once, and its glyphs' places in the data (null for a glyph without contours).
     struct Shaped {
@@ -110,9 +121,12 @@ private:
 
     [[nodiscard]] const Shaped& shaped(const text::TextRun& run);
     void gather(const frame::FrameState& state);
+    /// A run's glyphs into the frame's draws at `slot`, its colour times `alpha`.
+    void draw_run(const frame::FrameState& state, const text::TextRun& run, std::uint32_t slot, float alpha);
 
     text::CanalNames names_;
     std::vector<text::PlacedName> placed_;
+    std::vector<frame::GroundRun> designators_;
     std::vector<std::uint32_t> tiles_; // the cover's tiles the candidates came from (keys and handles), sorted
     std::shared_ptr<const text::PackCanals> pack_;      // the active pack's names whole (use_pack, or the frame's)
     bool pack_from_frame_ = false;                      // pack_ is the frame's active pack's
@@ -122,7 +136,8 @@ private:
     std::unordered_map<std::string, Shaped> shaped_;
     std::vector<layouts::text_slug::GlyphDraw> draws_;
     std::vector<text::GlyphInstance> laid_;
-    std::array<std::uint32_t, 2> drawn_{}; // the draws of each frame slot
+    // the draws of each frame slot: the names', then the designators'
+    std::array<std::array<std::uint32_t, 2>, 2> drawn_{};
 
     // ---- What prepare makes.
     gpu::Buffer tables_;

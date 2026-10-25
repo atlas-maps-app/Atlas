@@ -61,6 +61,18 @@ public:
         return {.day = colour(t, table, day), .night = colour(t, table, night)};
     }
 
+    /// The value `key` of table `t` as a pair of numbers (a list of two).
+    [[nodiscard]] std::array<double, 2> pair(const std::optional<Value>& t, std::string_view table,
+                                             std::string_view key) {
+        const auto v = at(t, table, key);
+        if (!v) return {};
+        if (v->type() != ValueType::list || v->size() != 2) {
+            fail(Fault::bad_value, table, key);
+            return {};
+        }
+        return {number_of(v->child(0), table, key), number_of(v->child(1), table, key)};
+    }
+
     /// Each entry of map `t` (named `table`) as a colour, in its order.
     void colours(const std::optional<Value>& t, std::string_view table,
                  std::vector<std::pair<std::string, StyleRgb>>& out) {
@@ -161,21 +173,28 @@ Result<Style> Style::of(const StyleTables& tables) {
     s.asphalt = r.day_night(big, "big_roads", "asphalt_day", "asphalt_night");
     s.road_lines = r.day_night(big, "big_roads", "lines_day", "lines_night");
     s.road_lines_width = r.number(big, "big_roads", "lines_width");
-    if (const auto dash = r.at(big, "big_roads", "lane_dash")) {
-        if (dash->type() == ValueType::list && dash->size() == 2) {
-            s.lane_dash = {r.number_of(dash->child(0), "big_roads", "lane_dash"),
-                           r.number_of(dash->child(1), "big_roads", "lane_dash")};
-        } else {
-            r.fail(Fault::bad_value, "big_roads", "lane_dash");
-        }
-    }
-    s.runway_marks = r.day_night(r.table("runways"), "runways", "marks_day", "marks_night");
+    s.lane_dash = r.pair(big, "big_roads", "lane_dash");
+    const auto runways = r.table("runways");
+    s.runway_pavement = r.day_night(runways, "runways", "pavement_day", "pavement_night");
+    s.runway_marks = r.day_night(runways, "runways", "marks_day", "marks_night");
+    s.runway_centre_width = r.number(runways, "runways", "centre_width");
+    s.runway_centre_dash = r.pair(runways, "runways", "centre_dash");
+    const auto taxiways = r.table("taxiways");
+    s.taxiway_pavement = r.day_night(taxiways, "taxiways", "pavement_day", "pavement_night");
+    s.taxiway_lines = r.day_night(taxiways, "taxiways", "lines_day", "lines_night");
+    s.taxiway_lines_width = r.number(taxiways, "taxiways", "lines_width");
+    s.lead_in_width = r.number(taxiways, "taxiways", "lead_in_width");
     // kind -> [width, colour]
     r.lists(r.table("marine"), "marine", 2, [&](std::string_view kind, const Value& entry) {
         s.marine.push_back({.kind = std::string(kind),
                             .width = r.number_of(entry.child(0), "marine", kind),
                             .colour = r.colour_of(entry.child(1), "marine", kind)});
     });
+    const auto parks = r.table("park_edges");
+    s.park_edges = r.day_night(parks, "park_edges", "day", "night");
+    s.park_edges_width = r.number(parks, "park_edges", "width");
+    s.park_edges_dash = r.pair(parks, "park_edges", "dash");
+    s.park_edges_opacity = r.number(parks, "park_edges", "opacity");
     const auto trams = r.table("trams");
     s.trams = r.day_night(trams, "trams", "day", "night");
     s.trams_width = r.number(trams, "trams", "width");
