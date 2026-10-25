@@ -95,16 +95,25 @@ constexpr std::array<std::string_view, 2> bollards = {"bollard", "block"};
     return static_cast<std::int32_t>(std::clamp(c, -2147483648.0, 2147483647.0));
 }
 
-/// SceneToTiles' widen: `box` widened by `metres` on every side, outward on the grid.
+/// Kotlin's Long + and -: two's complement, wrapping where they overflow.
+[[nodiscard]] constexpr std::int64_t kt_plus(std::int64_t a, std::int64_t b) noexcept {
+    return static_cast<std::int64_t>(static_cast<std::uint64_t>(a) + static_cast<std::uint64_t>(b));
+}
+[[nodiscard]] constexpr std::int64_t kt_minus(std::int64_t a, std::int64_t b) noexcept {
+    return static_cast<std::int64_t>(static_cast<std::uint64_t>(a) - static_cast<std::uint64_t>(b));
+}
+
+/// SceneToTiles' widen: `box` widened by `metres` on every side, outward on the grid; its Long arithmetic wraps where a
+/// width beyond any grid's saturates the conversion (as the packer's does).
 [[nodiscard]] Box4 widen(const Box4& b, double metres, const tl::Frame& f) noexcept {
     if (!(metres > 0)) return b;
-    const std::int64_t d_lat = kt_long(std::ceil(metres / f.kz * 1e7)) + 1;
-    const std::int64_t d_lon = kt_long(std::ceil(metres / f.kx * 1e7)) + 1;
+    const std::int64_t d_lat = kt_plus(kt_long(std::ceil(metres / f.kz * 1e7)), 1);
+    const std::int64_t d_lon = kt_plus(kt_long(std::ceil(metres / f.kx * 1e7)), 1);
     const auto c = [](std::int64_t v) {
         return static_cast<std::int32_t>(std::clamp<std::int64_t>(v, std::numeric_limits<std::int32_t>::min(),
                                                                   std::numeric_limits<std::int32_t>::max()));
     };
-    return {c(b[0] - d_lat), c(b[1] - d_lon), c(b[2] + d_lat), c(b[3] + d_lon)};
+    return {c(kt_minus(b[0], d_lat)), c(kt_minus(b[1], d_lon)), c(kt_plus(b[2], d_lat)), c(kt_plus(b[3], d_lon))};
 }
 
 [[nodiscard]] Box4 point_box(tl::GridPoint p) noexcept { return {p.lat, p.lon, p.lat, p.lon}; }
