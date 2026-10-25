@@ -148,6 +148,18 @@ inline constexpr std::uint8_t street = 1;
 inline constexpr std::uint8_t level = 2;
 } // namespace drawn_bit
 
+/// One element of the coaster tracks' shadows (draw_over's, in coasters.draw's order), each its own path: a post's,
+/// from its foot along the ground (its track's point `first`), or a run of its track's points' shadows ahead of the
+/// near plane ([first, first + count)); its drawn tile and its track there, its width (CSS px, as printed at rest).
+struct TrackShadow {
+    std::uint32_t tile = 0;
+    std::uint32_t track = 0;
+    std::uint32_t first = 0;
+    std::uint32_t count = 0;
+    double width = 0;
+    bool post = false;
+};
+
 /// What the decisions of a frame at rest depend on besides the tiles: the double camera (its eye, axes, focal,
 /// principal point, size and near plane), the radius cut (its radius and target), the plate's half side, and the
 /// moment's switches; bit for bit.
@@ -199,6 +211,12 @@ struct GroundFrame {
     double sun_y = -1;
     double sun_z = 0;
     bool shadows = false;
+    /// draw_over's park shadows: by day with the moment's own sun (th['_L'], `light`) over 0.05; the woods' drawn
+    /// (their trees' bits among each tile's shadows'), a union of its own; the coaster tracks', element by element.
+    bool park_sun = false;
+    std::array<double, 3> light{};
+    bool woods = false;
+    std::vector<TrackShadow> track_shadows;
     /// Whether this frame's decisions are the last frame's, kept: the camera rests as it did, over the same tiles.
     bool kept = false;
     /// render's #sky and #wgrad rows (y1 and y2 as the SVG prints them), the horizon's row.
@@ -415,6 +433,15 @@ private:
     void emit_lines(const frame::FrameState& state, twin::Stream& out, std::int32_t above) const;
     // Shadows.cpp
     void decide_shadows(const DrawnTile& t, TileDecisions& d) const;
+    /// woods.draw's trees whose shadows are drawn: by the radius cut, from 4 m, their crowns' centres within 30 px of
+    /// the picture (their bits after the casters').
+    void decide_woods(const view::Camera& cam, const DrawnTile& t, TileDecisions& d) const;
+    /// coasters.draw's shadows: each track's walk (passes/CoasterWalk.hpp) for its posts', and its points' shadows by
+    /// runs, in S['coasters']'s order (frame_.track_shadows).
+    void decide_tracks(const view::Camera& cam);
+    /// The woods' shadows' union at their slot, composited at shadow_op, within the over lines' draw.
+    void record_woods(const frame::Recording& r);
+    void emit_park_shadows(const frame::FrameState& state, twin::Stream& out, std::int32_t above) const;
     [[nodiscard]] gpu::Result<void> make_soft_shadows(const frame::PassContext& context, Pipelines& p) const;
     /// Whether this frame draws its shadows soft: some are drawn, the frame is in full mode, the moment blurs them,
     /// and prepare made the soft shadows' objects.
@@ -540,7 +567,8 @@ struct Ground::Words {
     std::uint32_t runs = 0;                   ///< the lines' runs'
     std::array<std::uint32_t, 2> instances{}; ///< the over and marks phases' segments: first word and count, packed
     std::array<std::uint32_t, 2> instance_count{};
-    std::uint32_t slot = 0; ///< the frame slot whose buffer holds them
+    std::uint32_t woods_split = 0; ///< the over phase's segments before the woods' shadows' slot
+    std::uint32_t slot = 0;        ///< the frame slot whose buffer holds them
     bool ready = false;
 };
 

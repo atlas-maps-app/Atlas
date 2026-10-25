@@ -295,12 +295,39 @@ struct Polyline {
     double y = 0;
     bool pairs = false;
     std::uint32_t reach = 0;
+    /// A coaster track's shadow's: each point's height, [height, height + count) of the tile's heights, which the
+    /// line stage moves it by along the sun's offset; its points lie in the lines heap as (x, z, height) triples.
+    bool heights = false;
+    std::uint32_t height = 0;
 };
 
-/// The words a polyline takes in the lines heap: its points' two each, then a pair polyline's reaches.
+/// The words a polyline takes in the lines heap: its points' two each (three with their heights), then a pair
+/// polyline's reaches.
 [[nodiscard]] constexpr std::uint32_t polyline_words_of(const Polyline& p) noexcept {
-    return (2 * p.count) + (p.pairs ? p.count / 2 : 0);
+    return ((p.heights ? 3 : 2) * p.count) + (p.pairs ? p.count / 2 : 0);
 }
+
+/// A theme park's coaster track whose shadow the frame draws on the ground (draw_over's: coasters.draw's shadows): its
+/// subdivided points (coasters.py's subdivide, every 3 m) with their heights, a polyline of the tile's
+/// (Polyline::heights); whether it is a wooden coaster's (its posts every 2.6 m), the points its radius cut tests
+/// (`tr['pts'][::4] + [tr['pts'][-1]]`) and its place in S['coasters'].
+struct ShadowTrack {
+    std::uint32_t polyline = 0;
+    bool wooden = false;
+    std::vector<std::array<double, 2>> cut;
+    std::uint32_t index = 0;
+};
+
+/// A park's or a zoo's planted tree whose shadow the frame draws (draw_over's: woods.draw's): where it stands, its
+/// height and its crown's radius, and its place in S['woods']; its shadow (a 12-gon moved by the shadow of 0.72 of
+/// its height) is the tile's shadow woods_first() + its place in the tile's woods.
+struct ShadowTree {
+    double x = 0;
+    double z = 0;
+    double h = 0;
+    double r = 0;
+    std::uint32_t index = 0;
+};
 
 /// A sett road's courses (amsterdam.py's road loop): every setts_step metres along each segment, from its start.
 inline constexpr double setts_step = 0.6;
@@ -381,6 +408,8 @@ struct GroundGpu {
     Words shadow_points;
     Words shadows;
     Words shadow_draw;
+    /// The woods' shadows' triangles (their records after the casters'), a union of their own (draw_over's).
+    Words woods_draw;
 };
 
 /// The flags of a shadow's GPU record.
@@ -402,6 +431,7 @@ struct GroundLayout {
     Words shadow_points;
     Words shadows;
     Words shadow_draw;
+    Words woods_draw;
 };
 
 /// The ground of one tile.
@@ -435,6 +465,15 @@ struct GroundTile {
     std::array<double, 4> shadow_at{0, -1, 0, 0}; ///< x0, x1, z0, z1 of every Shadow::at (empty while x1 < x0)
     /// The runways whose designators the frame lays on the ground (draw_over's runway_ends: passes/Ground.cpp).
     std::vector<RunwayRef> runways;
+    /// draw_over's park shadows: the coaster tracks' (their polylines' points' heights in `heights`), and the woods'
+    /// trees', whose shadows are the last of `shadows`, after the casters'.
+    std::vector<ShadowTrack> tracks;
+    std::vector<double> heights;
+    std::vector<ShadowTree> woods;
+    /// The first of the woods' shadows (the casters' count).
+    [[nodiscard]] std::uint32_t woods_first() const noexcept {
+        return static_cast<std::uint32_t>(shadows.size() - woods.size());
+    }
     /// Each cell's box over its fills (the water's pieces aside, which every frame decides whole).
     std::array<CellBox, max_cells> cells{};
     /// Bytes it holds (the tile's native bytes).

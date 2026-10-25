@@ -4,6 +4,7 @@
 #include "geometry/Ground.hpp"
 
 #include "base/pymath/PyMath.hpp"
+#include "geometry/Items.hpp"
 #include "geometry/RoofShapes.hpp"
 #include "geometry/Water.hpp"
 #include "sun/Hulls.hpp"
@@ -829,7 +830,9 @@ std::size_t GroundTile::bytes() const noexcept {
     return sizeof(GroundTile) + (points.capacity() * sizeof(P2)) + (fills.capacity() * sizeof(Fill)) +
            (strokes.capacity() * sizeof(Stroke)) + (polylines.capacity() * sizeof(Polyline)) +
            (polyline_words.capacity() * sizeof(std::uint32_t)) + (reaches.capacity() * sizeof(std::uint32_t)) +
-           (shadows.capacity() * sizeof(Shadow)) + (shadow_points.capacity() * sizeof(P2)) + casters_bytes;
+           (shadows.capacity() * sizeof(Shadow)) + (shadow_points.capacity() * sizeof(P2)) + casters_bytes +
+           (runways.capacity() * sizeof(RunwayRef)) + (tracks.capacity() * sizeof(ShadowTrack)) +
+           (heights.capacity() * sizeof(double)) + (woods.capacity() * sizeof(ShadowTree));
 }
 
 void build_shadows(const sun::TileCasters& casters, GroundTile& out) {
@@ -1012,6 +1015,8 @@ GroundGpu pack(const GroundTile& g) {
             const P2& p = g.points[pl.first + k];
             l.push_back(bits(static_cast<float>(p.x - g.origin.x)));
             l.push_back(bits(static_cast<float>(p.z - g.origin.z)));
+            // a coaster track's shadow's: each point's height after it
+            if (pl.heights) l.push_back(bits(static_cast<float>(g.heights[pl.height + k])));
         }
         // a pair polyline's lines' reaches
         if (pl.pairs) l.insert(l.end(), g.reaches.begin() + pl.reach, g.reaches.begin() + pl.reach + (pl.count / 2));
@@ -1040,10 +1045,13 @@ GroundGpu pack(const GroundTile& g) {
         w.push_back((sh.move == ShadowMove::moved ? shadow_flag::moved : 0U) | (sh.tree ? shadow_flag::tree : 0U));
         w.push_back(bits(static_cast<float>(sh.y)));
     }
-    std::vector<std::uint32_t> draw;
+    std::vector<std::uint32_t> casters;
+    std::vector<std::uint32_t> woods;
     for (std::uint32_t s = 0; s < g.shadows.size(); ++s) {
         const Shadow& sh = g.shadows[s];
         const std::uint32_t v0 = s << 16U;
+        // the woods' shadows a union of their own (draw_over's), after the casters'
+        std::vector<std::uint32_t>& draw = s < g.woods_first() ? casters : woods;
         if (sh.move == ShadowMove::sweep) {
             // the swept hull: count + 2 corners (its points, its two turning points twice), a convex fan
             for (std::uint32_t k = 1; k <= sh.count; ++k) draw.insert(draw.end(), {v0, v0 + k, v0 + k + 1});
@@ -1058,7 +1066,8 @@ GroundGpu pack(const GroundTile& g) {
             for (const std::uint32_t i : mapbox::earcut<std::uint32_t>(polygon)) draw.push_back(v0 + i);
         }
     }
-    out.shadow_draw = put(draw);
+    out.shadow_draw = put(casters);
+    out.woods_draw = put(woods);
     return out;
 }
 
@@ -1123,6 +1132,55 @@ std::string ground_line(int fd, std::uint64_t offset, std::uint64_t length) {
     return ground_line(*pack);
 }
 
+namespace {
+
+/// draw_over's park shadows' sources (the region items'): each coaster track's subdivided points with their heights
+/// (its pieces end to end), a polyline at 0.12 whose points carry them; each planted tree's shadow, its 12-gon about
+/// its trunk (woods.draw's r · 0.95 at k · π / 6) moved by the shadow of 0.72 of its height, after the casters'.
+void park_shadows(const tl::Tile& tile, const tl::RenderHead& head, GroundTile& out) {
+    const TileRegionItems items = build_region_items({.tile = &tile, .head = &head, .kind = 0});
+    for (const CoasterTrackSpan& span : items.tracks) {
+        if (span.count == 0) continue;
+        const RegionItem& start = items.items[span.first];
+        const auto first = static_cast<std::uint32_t>(out.points.size());
+        const auto height = static_cast<std::uint32_t>(out.heights.size());
+        out.points.push_back({.x = start.x, .z = start.z});
+        out.heights.push_back(start.ya);
+        for (std::uint32_t k = 0; k < span.count; ++k) {
+            const RegionItem& piece = items.items[span.first + k];
+            out.points.push_back({.x = piece.bx, .z = piece.bz});
+            out.heights.push_back(piece.yb);
+        }
+        out.polylines.push_back(
+            {.first = first, .count = span.count + 1, .y = 0.12, .heights = true, .height = height});
+        out.tracks.push_back({.polyline = static_cast<std::uint32_t>(out.polylines.size() - 1),
+                              .wooden = span.kind == 1,
+                              .cut = span.cut,
+                              .index = start.index});
+    }
+    // a shadow's place in the tile is 16 bits on the GPU
+    constexpr std::size_t most = 0xFFFF;
+    for (const RegionItem& it : items.items) {
+        if (it.kind != RegionItemKind::wood || out.shadows.size() >= most) continue;
+        const double r = it.crown / 2;
+        out.shadows.push_back({.move = ShadowMove::moved,
+                               .tree = true,
+                               .first = static_cast<std::uint32_t>(out.shadow_points.size()),
+                               .count = 12,
+                               .h = it.h * 0.72,
+                               .y = 0.12,
+                               .at = {.x = it.x, .z = it.z},
+                               .owner = it.index});
+        for (int k = 0; k < 12; ++k) {
+            const double a = (k * pm::pi) / 6;
+            out.shadow_points.push_back({.x = it.x + (r * 0.95 * pm::cos(a)), .z = it.z + (r * 0.95 * pm::sin(a))});
+        }
+        out.woods.push_back({.x = it.x, .z = it.z, .h = it.h, .r = r, .index = it.index});
+    }
+}
+
+} // namespace
+
 GroundTile build_ground(const tiles::Tile& tile, const tiles::RenderHead& head, const tiles::Style& style,
                         std::uint8_t level, P2 origin) {
     GroundTile out;
@@ -1184,6 +1242,7 @@ GroundTile build_ground(const tiles::Tile& tile, const tiles::RenderHead& head, 
         }
         b = {pm::min(b[0], sh.at.x), pm::max(b[1], sh.at.x), pm::min(b[2], sh.at.z), pm::max(b[3], sh.at.z)};
     }
+    park_shadows(tile, head, out);
     return out;
 }
 

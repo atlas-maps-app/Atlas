@@ -717,6 +717,22 @@ float3 run_point(uint tile, uint first, uint k, float y) {
     return local_camera(tile, run_local(first, k, y));
 }
 
+/// A coaster track's shadow's point k (its (x, z, height) in the lines heap) at height y in its tile's metres, moved
+/// along the sun's offset −L.xz / L.y · height (push.rows.xyz: L) where `moved`.
+float3 shadow_local(uint first, uint k, float y, bool moved) {
+    float x = asfloat(lines_heap[first + 3u * k]);
+    float z = asfloat(lines_heap[first + 3u * k + 1u]);
+    if (!moved) return float3(x, y, z);
+    float h = asfloat(lines_heap[first + 3u * k + 2u]);
+    float3 sun = push.rows.xyz;
+    return float3(x - sun.x / sun.y * h, y, z - sun.z / sun.y * h);
+}
+
+/// A run's point k, projected: a shadow run's moved.
+float3 stroke_point(uint tile, uint first, uint k, float y, bool shadow) {
+    return shadow ? local_camera(tile, shadow_local(first, k, y, true)) : run_point(tile, first, k, y);
+}
+
 /// A point's device px in the view (unturned): its CSS point (snapped at rest) times the density.
 float2 device_of(float3 k) {
     return project_css(frame.camera, k) * frame.camera.frame.z;
@@ -746,11 +762,15 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     o.pn = float4(0.0f, 0.0f, 0.0f, 0.0f);
     o.info = uint4(0u, 0u, 0u, 0u);
     o.dash = float4(0.0f, 0.0f, 0.0f, 0.0f);
-    // a pair run's segment k is its line k, the points 2k and 2k + 1, without neighbours
+    // a pair run's segment k is its line k, the points 2k and 2k + 1, without neighbours; a post's shadow its point's
+    // foot to the point moved
     bool pairs = (flags & LINE_PAIRS) != 0u;
+    bool shadow = (flags & LINE_SHADOW) != 0u;
+    bool post = (flags & LINE_POST) != 0u;
     uint ia = pairs ? 2u * seg : seg;
-    float3 ka = run_point(tile, first, ia, y);
-    float3 kb = run_point(tile, first, ia + 1u, y);
+    float3 ka = post ? local_camera(tile, shadow_local(first, 0u, y, false)) : stroke_point(tile, first, ia, y, shadow);
+    float3 kb = post ? local_camera(tile, shadow_local(first, 0u, y, true))
+                     : stroke_point(tile, first, ia + 1u, y, shadow);
     // a segment with an end behind the near plane is no part of a run
     if (ka.z < frame.camera.frame.w || kb.z < frame.camera.frame.w) {
         o.position = FOLDED;
@@ -761,15 +781,15 @@ StrokeOut stroke_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanIn
     uint info = 0u;
     float2 p = a;
     float2 n = b;
-    if (!pairs && seg > 0u) {
-        float3 kp = run_point(tile, first, seg - 1u, y);
+    if (!pairs && !post && seg > 0u) {
+        float3 kp = stroke_point(tile, first, seg - 1u, y, shadow);
         if (kp.z >= frame.camera.frame.w) {
             p = device_of(kp);
             info |= LINE_HAS_PREV;
         }
     }
-    if (!pairs && seg + 2u < count) {
-        float3 kn = run_point(tile, first, seg + 2u, y);
+    if (!pairs && !post && seg + 2u < count) {
+        float3 kn = stroke_point(tile, first, seg + 2u, y, shadow);
         if (kn.z >= frame.camera.frame.w) {
             n = device_of(kn);
             info |= LINE_HAS_NEXT;

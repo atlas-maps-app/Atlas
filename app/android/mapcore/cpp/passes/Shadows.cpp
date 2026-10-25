@@ -42,6 +42,7 @@
 #include "gen/layouts.hpp"
 #include "gen/spirv/ground/shadow_blur.hpp"
 #include "gpu/Descriptors.hpp"
+#include "passes/CoasterWalk.hpp"
 #include "passes/Ground.hpp"
 #include "scene/Residency.hpp"
 #include "sun/Hulls.hpp"
@@ -114,6 +115,8 @@ void Ground::decide_shadows(const DrawnTile& t, TileDecisions& d) const {
     d.shadow_drawn.clear();
     if (!f.casting || g.no_shadows) return;
     d.shadow_drawn.assign(g.shadows.size(), 0);
+    // the casters' (the woods' are draw_over's: decide_woods)
+    const std::uint32_t casters = g.woods_first();
     if (f.engine && g.shadow_at[1] >= g.shadow_at[0]) {
         // the tile's casters wholly within the radius or wholly beyond it, by the box of their points
         const std::array<double, 4>& b = g.shadow_at;
@@ -123,17 +126,108 @@ void Ground::decide_shadows(const DrawnTile& t, TileDecisions& d) const {
         const double fz = pm::max(std::abs(b[2] - f.target_z), std::abs(b[3] - f.target_z));
         const double r2 = f.radius * f.radius;
         if ((fx * fx) + (fz * fz) < r2 * (1 - 1e-9)) {
-            std::ranges::fill(d.shadow_drawn, std::uint8_t{1});
+            std::fill_n(d.shadow_drawn.begin(), casters, std::uint8_t{1});
             return;
         }
         if ((nx * nx) + (nz * nz) > r2 * (1 + 1e-9)) return;
     }
-    for (std::uint32_t i = 0; i < g.shadows.size(); ++i) {
+    for (std::uint32_t i = 0; i < casters; ++i) {
         const geo::Shadow& sh = g.shadows[i];
         // the radius cut, in engine mode (a solid's centroid, a tree's trunk); every caster counts, in a visible cell
         // or not: its shadow may reach into one
         if (f.engine && far(sh.at.x, sh.at.z, f.target_x, f.target_z, f.radius)) continue;
         d.shadow_drawn[i] = 1;
+    }
+}
+
+void Ground::decide_woods(const view::Camera& cam, const DrawnTile& t, TileDecisions& d) const {
+    const GroundFrame& f = frame_;
+    const geo::GroundTile& g = *t.ground;
+    if (!f.park_sun || g.woods.empty()) return;
+    if (d.shadow_drawn.empty()) d.shadow_drawn.assign(g.shadows.size(), 0);
+    const std::uint32_t first = g.woods_first();
+    for (std::uint32_t i = 0; i < g.woods.size(); ++i) {
+        const geo::ShadowTree& n = g.woods[i];
+        // `if far(n['x'], n['z']): continue`; c = cam.cam((x, h * 0.7, z)), from 4 m; q0 within 30 px of the picture
+        if (f.engine && far(n.x, n.z, f.target_x, f.target_z, f.radius)) continue;
+        const view::Vec3 crown{n.x, n.h * 0.7, n.z};
+        if (cam.cam(crown).z < 4) continue;
+        const std::optional<view::Vec2> q0 = cam.proj(crown);
+        const auto within = [&](const view::Vec2& q) {
+            return -30 < q.x && q.x < cam.width() + 30 && -30 < q.y && q.y < cam.height() + 30;
+        };
+        if (!q0 || !within(*q0)) continue;
+        d.shadow_drawn[first + i] = 1;
+    }
+}
+
+void Ground::decide_tracks(const view::Camera& cam) {
+    GroundFrame& f = frame_;
+    f.track_shadows.clear();
+    if (!f.park_sun) return;
+    // the drawn tiles' tracks in S['coasters']'s order
+    struct Track {
+        std::uint32_t tile;
+        std::uint32_t track;
+        std::uint32_t index;
+    };
+    std::vector<Track> tracks;
+    for (std::uint32_t ti = 0; ti < f.tiles.size(); ++ti) {
+        const geo::GroundTile& g = *f.tiles[ti].ground;
+        for (std::uint32_t k = 0; k < g.tracks.size(); ++k) {
+            tracks.push_back({.tile = ti, .track = k, .index = g.tracks[k].index});
+        }
+    }
+    std::ranges::stable_sort(tracks, {}, &Track::index);
+    // off(y) = (-L[0] / L[1] * y, -L[2] / L[1] * y)
+    const double kx = -f.light[0] / f.light[1];
+    const double kz = -f.light[2] / f.light[1];
+    const auto width = [&](double w) { return f.exact ? printed(pm::max(0.5, w), 2) : pm::max(0.5, w); };
+    CoasterWalk walk;
+    for (const Track& tr : tracks) {
+        const geo::GroundTile& g = *f.tiles[tr.tile].ground;
+        const geo::ShadowTrack& st = g.tracks[tr.track];
+        // `if all(far(*p) for p in tr['pts'][::4] + [tr['pts'][-1]]): continue`
+        if (f.engine && std::ranges::all_of(st.cut, [&](const std::array<double, 2>& p) {
+                return far(p[0], p[1], f.target_x, f.target_z, f.radius);
+            })) {
+            continue;
+        }
+        const geo::Polyline& pl = g.polylines[st.polyline];
+        const std::span<const geo::P2> pts = std::span(g.points).subspan(pl.first, pl.count);
+        const std::span<const double> ys = std::span(g.heights).subspan(pl.height, pl.count);
+        // the walk: each post's shadow from its foot along the ground, where both its ends project
+        walk.start();
+        for (std::uint32_t i = 1; i < pl.count; ++i) {
+            const geo::P2 a = pts[i - 1];
+            const geo::P2 b = pts[i];
+            const double length = pm::dist(std::array<double, 2>{a.x, a.z}, std::array<double, 2>{b.x, b.z});
+            const CoasterWalk::Step step =
+                walk.step(cam, {a.x, 0.0, a.z}, {b.x, 0.0, b.z}, ys[i - 1], ys[i], length, st.wooden);
+            if (!step.post) continue;
+            if (!cam.proj({b.x, 0.12, b.z}) || !cam.proj({b.x + (kx * ys[i]), 0.12, b.z + (kz * ys[i])})) continue;
+            f.track_shadows.push_back({.tile = tr.tile,
+                                       .track = tr.track,
+                                       .first = i,
+                                       .count = 1,
+                                       .width = width(step.s * 0.5),
+                                       .post = true});
+        }
+        // its points' shadows, by runs ahead of the near plane, each a path 1.1 · focal / its middle's depth wide
+        const geo::P2 mid = pts[pl.count / 2];
+        const double w = width(1.1 * cam.focal() / pm::max(1.0, cam.cam({mid.x, 0.0, mid.z}).z));
+        std::uint32_t run = 0;
+        for (std::uint32_t k = 0; k <= pl.count; ++k) {
+            if (k < pl.count && !(cam.cam({pts[k].x + (kx * ys[k]), 0.12, pts[k].z + (kz * ys[k])}).z < cam.near())) {
+                ++run;
+                continue;
+            }
+            if (run > 1) {
+                f.track_shadows.push_back(
+                    {.tile = tr.tile, .track = tr.track, .first = k - run, .count = run, .width = w, .post = false});
+            }
+            run = 0;
+        }
     }
 }
 
@@ -414,7 +508,7 @@ void Ground::record_shadow_mask(const frame::Recording& r) {
     pc.colour = {s.extent.width, s.extent.height, 0U, s.stride};
     std::size_t most = 0;
     for (const DrawnTile& t : frame_.tiles) {
-        if (casts(t)) most = std::max(most, t.ground->shadows.size());
+        if (casts(t)) most = std::max<std::size_t>(most, t.ground->woods_first());
     }
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *p.shadow_box);
     cmd.pushConstants<Push>(*p.compute_layout, vk::ShaderStageFlagBits::eCompute, 0, pc);
@@ -589,6 +683,131 @@ void Ground::record_shadows(const frame::Recording& r) {
     cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0, pc);
     cmd.draw(3, 1, 0, 0);
     r.counters.draw("ground shadows", 1);
+}
+
+void Ground::record_woods(const frame::Recording& r) {
+    const vk::raii::CommandBuffer& cmd = r.frame.cmd;
+    const Words& w = *words_;
+    const style::ThemeBlock& th = r.state.theme;
+    layouts::ground_ground::PushConstants pc{};
+    pc.at = {w.tiles, w.slots, w.theme, w.runs};
+    pc.mode = {0U, slot(geo::group::over + 4, 0, 0), 0U, 0U};
+    pc.rows = {static_cast<float>(frame_.light[0]), static_cast<float>(frame_.light[1]),
+               static_cast<float>(frame_.light[2]), 0.0F};
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->shadow_union);
+    cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0, pc);
+    for (std::size_t i = 0; i < frame_.tiles.size(); ++i) {
+        const DrawnTile& t = frame_.tiles[i];
+        const geo::Words draw = t.ground->layout.woods_draw;
+        if (draw.count == 0 || !t.pass->ranges[0]) continue;
+        cmd.draw(draw.count, 1, (t.pass->ranges[0].offset / 4) + draw.first, static_cast<std::uint32_t>(i));
+        r.counters.draw("ground woods' shadows", draw.count / 3);
+    }
+    // th['shadow'] at shadow_op as the SVG prints it, where the union's bit is set, clearing it
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->shadow_composite);
+    pc.rows = {0.0F, 0.0F, static_cast<float>(printed(th.shadow_opacity, 2)), 0.0F};
+    pc.colour = {0U, 0U, geo::Rgba{.r = th.shadow.r, .g = th.shadow.g, .b = th.shadow.b, .a = 255}.packed(), 0U};
+    cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0, pc);
+    cmd.draw(3, 1, 0, 0);
+    r.counters.draw("ground woods' shadows", 1);
+}
+
+void Ground::emit_park_shadows(const frame::FrameState& state, twin::Stream& out, std::int32_t above) const {
+    const GroundFrame& f = frame_;
+    if (!state.view || (!f.woods && f.track_shadows.empty())) return;
+    const view::Camera& cam = state.view->camera();
+    const style::ThemeBlock& th = state.theme;
+    TwinPlacer pr(state, cam);
+    std::vector<twin::Point> points;
+    std::vector<twin::Subpath> subpaths;
+    std::vector<std::uint32_t> ends;
+    const double l0 = f.light[0];
+    const double l1 = f.light[1];
+    const double l2 = f.light[2];
+    if (f.woods) {
+        // woods.draw's shadows, one path: each drawn tree's 12-gon about its trunk moved by the shadow of 0.72 of its
+        // height, as Camera.poly keeps it, in S['woods']'s order
+        struct Tree {
+            std::uint32_t index;
+            std::uint32_t tile;
+            std::uint32_t tree;
+        };
+        std::vector<Tree> trees;
+        for (std::uint32_t ti = 0; ti < f.tiles.size(); ++ti) {
+            const DrawnTile& t = f.tiles[ti];
+            const geo::GroundTile& g = *t.ground;
+            for (std::uint32_t i = 0; i < g.woods.size(); ++i) {
+                if (f.shadow_drawn[t.shadows + g.woods_first() + i] != 0) {
+                    trees.push_back({.index = g.woods[i].index, .tile = ti, .tree = i});
+                }
+            }
+        }
+        std::ranges::stable_sort(trees, {}, &Tree::index);
+        std::array<geo::P2, 12> ring{};
+        std::vector<view::Vec3> cs;
+        std::vector<view::Vec2> sp;
+        for (const Tree& e : trees) {
+            const DrawnTile& t = f.tiles[e.tile];
+            const geo::ShadowTree& n = t.ground->woods[e.tree];
+            // ox = -L[0] / L[1] * n['h'] * 0.72; (n['x'] + ox + r * 0.95 * math.cos(a), 0.12, ...) for a = k · π / 6
+            const double ox = -l0 / l1 * n.h * 0.72;
+            const double oz = -l2 / l1 * n.h * 0.72;
+            for (std::size_t k = 0; k < ring.size(); ++k) {
+                const double a = (static_cast<double>(k) * pm::pi) / 6;
+                ring.at(k) = {.x = n.x + ox + (n.r * 0.95 * pm::cos(a)), .z = n.z + oz + (n.r * 0.95 * pm::sin(a))};
+            }
+            const ProjectedPoly p = project_poly(cam, ring, 0.12, 40, cs, sp);
+            if (p.points < 3 || !p.inside) continue;
+            if (pr.ring(t, ring, 0.12, points) >= 3) ends.push_back(static_cast<std::uint32_t>(points.size()));
+        }
+        std::uint32_t start = 0;
+        for (const std::uint32_t e : ends) {
+            subpaths.push_back({.points = std::span<const twin::Point>(points).subspan(start, e - start)});
+            start = e;
+        }
+        if (!subpaths.empty()) {
+            out.at(slot(geo::group::over + 4, 0, 0), above);
+            twin::Style s;
+            s.fill = twin::Paint::colour(argb(th.shadow));
+            out.path(s, subpaths, {.opacity = static_cast<float>(printed(th.shadow_opacity, 2))});
+        }
+    }
+    // coasters.draw's shadows, each its own path: round-capped, at shadow_op · .9
+    const auto opacity = static_cast<float>(printed(th.shadow_opacity * 0.9, 2));
+    const double kx = -l0 / l1;
+    const double kz = -l2 / l1;
+    for (std::size_t j = 0; j < f.track_shadows.size(); ++j) {
+        const TrackShadow& e = f.track_shadows[j];
+        const DrawnTile& t = f.tiles[e.tile];
+        const geo::GroundTile& g = *t.ground;
+        const geo::Polyline& pl = g.polylines[g.tracks[e.track].polyline];
+        points.clear();
+        if (e.post) {
+            // from its foot along the ground: (b, 0.12) to (b + off(yb), 0.12)
+            const geo::P2 b = g.points[pl.first + e.first];
+            const double y = g.heights[pl.height + e.first];
+            const auto q0 = pr.at(t, b, 0.12);
+            const auto q1 = pr.at(t, {.x = b.x + (kx * y), .z = b.z + (kz * y)}, 0.12);
+            if (!q0 || !q1) continue;
+            points.push_back(*q0);
+            points.push_back(*q1);
+        } else {
+            for (std::uint32_t k = e.first; k < e.first + e.count; ++k) {
+                const geo::P2 p = g.points[pl.first + k];
+                const double y = g.heights[pl.height + k];
+                if (const auto q = pr.at(t, {.x = p.x + (kx * y), .z = p.z + (kz * y)}, 0.12)) points.push_back(*q);
+            }
+            if (points.size() < 2) continue;
+        }
+        const std::array<twin::Subpath, 1> path{{{.points = points, .closed = false}}};
+        out.at(slot(geo::group::over + 4, static_cast<std::uint32_t>(1 + j), 0), above);
+        twin::Style s;
+        s.fill = twin::Paint{};
+        s.stroke = twin::Paint::colour(argb(th.shadow));
+        s.stroke_width = static_cast<float>(e.width);
+        s.cap = twin::Cap::round;
+        out.path(s, path, {.opacity = opacity});
+    }
 }
 
 void Ground::emit_shadows(const frame::FrameState& state, twin::Stream& out) const {

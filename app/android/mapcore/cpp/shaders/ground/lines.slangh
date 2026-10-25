@@ -13,9 +13,11 @@ static const uint LINE_JOIN_BEVEL = 8u;
 static const uint LINE_PAIRS = 16u; // its points pairs, each pair a line of its own (a sett road's courses)
 static const uint LINE_LAYER = 32u; // its paint's alpha the path's opacity, its lines one layer (ground/setts.slangh)
 static const uint LINE_DASH = 64u;  // dashed along the screen, butt-ended (its dash table: passes/Lines.cpp)
+static const uint LINE_SHADOW = 128u; // a coaster track's shadow: its points (x, z, height), moved along the sun's offset
+static const uint LINE_POST = 256u;   // a post's shadow: its one point's foot to the point moved
 /// A dashed run's flags word holds its dash table's first word in the frame's words from this bit.
-static const uint LINE_DASH_SHIFT = 8u;
-static const uint LINE_FLAG_BITS = 0xFFu;
+static const uint LINE_DASH_SHIFT = 10u;
+static const uint LINE_FLAG_BITS = 0x3FFu;
 
 /// The line stage's modes (StrokeOut.info.x's low bits), by the device width: a hairline, the exact area, the samples.
 static const uint LINE_HAIR = 0u;

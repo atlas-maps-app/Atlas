@@ -8,6 +8,7 @@
 #include "frame/Selectors.hpp"
 #include "gen/spirv/item/draw.hpp"
 #include "gpu/Descriptors.hpp"
+#include "passes/CoasterWalk.hpp"
 #include "scene/Cover.hpp"
 #include "scene/Packs.hpp"
 #include "scene/Residency.hpp"
@@ -585,13 +586,11 @@ void Items::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
         };
         const std::uint32_t first = first_region_item(*t.drawn, kind_);
         const std::span<const std::uint32_t> rows(t.drawn->rows);
-        // coasters.draw's walk along each track: its radius cut at every fourth of its points and its last; the pieces
-        // it draws (nearer than 3 m, an end nearer than the near plane, or both ends 40 px beyond the picture, not),
-        // and a post where the length drawn since the last reaches the gap and the piece's end stands over 2.2 m (a
-        // wooden coaster's braced back to the post before)
+        // coasters.draw's walk along each track (passes/CoasterWalk.hpp): its radius cut at every fourth of its points
+        // and its last; the pieces it draws and the posts it puts (a wooden coaster's braced back to the post before)
         std::uint32_t walk_track = std::numeric_limits<std::uint32_t>::max();
         bool walk_far = false;
-        double acc = 0.0;
+        CoasterWalk walk;
         std::optional<std::uint32_t> last_post;
         const auto in_picture = [&](const view::Vec2& q, double margin) {
             return -margin < q.x && q.x < camera.width() + margin && -margin < q.y && q.y < camera.height() + margin;
@@ -603,7 +602,7 @@ void Items::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
             if (it.kind == geometry::RegionItemKind::coaster) {
                 if (it.track != walk_track) {
                     walk_track = it.track;
-                    acc = 0.0;
+                    walk.start();
                     last_post.reset();
                     walk_far = false;
                     if (cut.on && it.track < items->tracks.size()) {
@@ -615,26 +614,18 @@ void Items::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
                     }
                 }
                 if (walk_far) continue;
-                const view::Vec3 ga = drawn_point(it.x, it.z);
-                const view::Vec3 gb = drawn_point(it.bx, it.bz);
-                const view::Vec3 m{(ga.x + gb.x) / 2, (it.ya + it.yb) / 2, (ga.z + gb.z) / 2};
-                if (camera.cam(m).z < 3) continue;
-                const std::optional<view::Vec2> pa = camera.proj({ga.x, it.ya, ga.z});
-                const std::optional<view::Vec2> pb = camera.proj({gb.x, it.yb, gb.z});
-                if (!pa || !pb || (!in_picture(*pa, 40) && !in_picture(*pb, 40))) continue;
                 const std::array<double, 2> a2{it.x, it.z};
                 const std::array<double, 2> b2{it.bx, it.bz};
-                acc += pymath::dist(a2, b2);
-                if (acc >= (it.coaster == 1 ? 2.6 : 7.5) && it.yb > 2.2) {
-                    acc = 0.0;
-                    if (camera.proj({gb.x, 0.0, gb.z})) {
-                        walked = shaders::ITEM_JOB_POST;
-                        if (it.coaster == 1 && last_post) {
-                            walked |= shaders::ITEM_JOB_BRACES;
-                            prev_post = *last_post;
-                        }
-                        last_post = i;
+                const CoasterWalk::Step step = walk.step(camera, drawn_point(it.x, it.z), drawn_point(it.bx, it.bz),
+                                                         it.ya, it.yb, pymath::dist(a2, b2), it.coaster == 1);
+                if (!step.drawn) continue;
+                if (step.post) {
+                    walked = shaders::ITEM_JOB_POST;
+                    if (it.coaster == 1 && last_post) {
+                        walked |= shaders::ITEM_JOB_BRACES;
+                        prev_post = *last_post;
                     }
+                    last_post = i;
                 }
             }
             const std::uint32_t row = rows[first + i];

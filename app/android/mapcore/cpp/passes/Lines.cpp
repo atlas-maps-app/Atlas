@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <utility>
 
@@ -117,12 +118,15 @@ gpu::Result<void> Ground::make_line_pipelines(const frame::PassContext& context,
 
 void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32_t>& words, std::uint32_t& runs,
                          std::array<std::uint32_t, 2>& instances) {
-    // the drawn strokes in the renders' order: their phase, then their painter slot (ties as emitted)
+    // the drawn strokes in the renders' order: their phase, then their painter slot (ties as emitted); the coaster
+    // tracks' shadows among draw_over's
+    constexpr std::uint32_t none = std::numeric_limits<std::uint32_t>::max();
     struct Drawn {
         bool marks;
         std::uint32_t slot;
         std::uint32_t tile;
         std::uint32_t stroke;
+        std::uint32_t shadow = none;
     };
     std::vector<Drawn> drawn;
     for (std::uint32_t t = 0; t < frame_.tiles.size(); ++t) {
@@ -136,6 +140,12 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
                 {.marks = !over_phase(s), .slot = slot(s.group, stroke_order(tile, i), s.sub), .tile = t, .stroke = i});
         }
     }
+    for (std::uint32_t j = 0; j < frame_.track_shadows.size(); ++j) {
+        const TrackShadow& e = frame_.track_shadows[j];
+        if (!frame_.tiles[e.tile].pass->ranges[1]) continue;
+        drawn.push_back(
+            {.marks = false, .slot = slot(geo::group::over + 4, 1 + j, 0), .tile = e.tile, .stroke = 0, .shadow = j});
+    }
     std::ranges::stable_sort(
         drawn, [](const Drawn& a, const Drawn& b) { return a.marks != b.marks ? b.marks : a.slot < b.slot; });
     // the runs: one per polyline, 8 words each; a dashed one's table after the segments
@@ -146,7 +156,41 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
     std::vector<std::pair<std::size_t, std::size_t>> dashed; // a dashed run's flags word, its table's first word
     const std::optional<TwinPlacer> placer =
         state.view ? std::optional<TwinPlacer>(std::in_place, state, state.view->camera()) : std::nullopt;
+    // the woods' shadows' union is drawn between the over lines before its slot and those after
+    const std::uint32_t woods_slot = slot(geo::group::over + 4, 0, 0);
+    std::optional<std::uint32_t> woods_split;
+    // the tracks' shadows in th['shadow'] at shadow_op · .9 as the SVG prints it
+    const style::ThemeBlock& th = state.theme;
+    const geo::Rgba shade{.r = th.shadow.r,
+                          .g = th.shadow.g,
+                          .b = th.shadow.b,
+                          .a = static_cast<std::uint8_t>(std::lround(printed(th.shadow_opacity * 0.9, 2) * 255.0))};
     for (const Drawn& d : drawn) {
+        if (!d.marks && !woods_split && d.slot > woods_slot) {
+            woods_split = static_cast<std::uint32_t>(segments[0].size());
+        }
+        if (d.shadow != none) {
+            // a coaster track's shadow: its points (x, z, height) moved by the sun's offset in the line stage; a post's
+            // from its point's foot to its point moved; round-capped
+            const TrackShadow& e = frame_.track_shadows[d.shadow];
+            const DrawnTile& tile = frame_.tiles[d.tile];
+            const geo::GroundTile& g = *tile.ground;
+            const std::uint32_t polyline = g.tracks[e.track].polyline;
+            const std::uint32_t n = e.post ? 1 : e.count - 1;
+            if (n == 0 || n > 0x4000) continue;
+            words.push_back(d.tile);
+            words.push_back((tile.pass->ranges[1].offset / 4) + g.layout.points.first + g.polyline_words[polyline] +
+                            (3 * e.first));
+            words.push_back(e.count);
+            words.push_back(std::bit_cast<std::uint32_t>(static_cast<float>(g.polylines[polyline].y)));
+            words.push_back(std::bit_cast<std::uint32_t>(static_cast<float>(e.width)));
+            words.push_back(shade.packed());
+            words.push_back(d.slot);
+            words.push_back(shaders::LINE_SHADOW | shaders::LINE_CAP_ROUND | (e.post ? shaders::LINE_POST : 0U));
+            for (std::uint32_t k = 0; k < n; ++k) segments[0].push_back((run << 14U) | k);
+            ++run;
+            continue;
+        }
         const DrawnTile& tile = frame_.tiles[d.tile];
         const geo::GroundTile& g = *tile.ground;
         const geo::Stroke& s = g.strokes[d.stroke];
@@ -177,6 +221,7 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
             ++run;
         }
     }
+    words_->woods_split = woods_split.value_or(static_cast<std::uint32_t>(segments[0].size()));
     for (std::size_t phase = 0; phase < 2; ++phase) {
         instances[phase] = static_cast<std::uint32_t>(words.size());
         words.insert(words.end(), segments[phase].begin(), segments[phase].end());
@@ -195,16 +240,28 @@ void Ground::record_lines(const frame::Recording& r, std::uint32_t phase) {
     const std::size_t k = phase == phase_over ? 0 : 1;
     const Words& w = *words_;
     const std::uint32_t count = w.instance_count[k];
-    if (count == 0) return;
+    // draw_over's woods' shadows lie among its lines (after the marine works, before the tracks' shadows)
+    const bool woods = k == 0 && frame_.woods;
+    if (count == 0 && !woods) return;
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->line);
     layouts::ground_ground::PushConstants pc{};
     pc.at = {w.tiles, w.slots, w.theme, w.runs};
     const auto samples = static_cast<std::uint32_t>(r.frame.pass.spec().config.samples());
     pc.mode = {frame_.night ? ground_flag::night : 0U, 0U, w.instances[k], samples};
-    cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0, pc);
-    cmd.draw(6, count, 0, 0);
-    r.counters.draw(k == 0 ? "ground over lines" : "ground marks", std::uint64_t{count} * 2, count);
+    // the moment's own sun, by which the tracks' shadows move
+    pc.rows = {static_cast<float>(frame_.light[0]), static_cast<float>(frame_.light[1]),
+               static_cast<float>(frame_.light[2]), 0.0F};
+    const auto lines = [&](std::uint32_t first, std::uint32_t n) {
+        if (n == 0) return;
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->line);
+        cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0, pc);
+        cmd.draw(6, n, 0, first);
+        r.counters.draw(k == 0 ? "ground over lines" : "ground marks", std::uint64_t{n} * 2, n);
+    };
+    const std::uint32_t split = woods ? std::min(w.woods_split, count) : count;
+    lines(0, split);
+    if (woods) record_woods(r);
+    lines(split, count - split);
 }
 
 void Ground::emit_lines(const frame::FrameState& state, twin::Stream& out, std::int32_t above) const {

@@ -475,7 +475,8 @@ gpu::Result<void> Ground::build(scene::TileBuild& b) const {
                       .lines_at = gpu.lines_at,
                       .shadow_points = gpu.shadow_points,
                       .shadows = gpu.shadows,
-                      .shadow_draw = gpu.shadow_draw};
+                      .shadow_draw = gpu.shadow_draw,
+                      .woods_draw = gpu.woods_draw};
     // the shadows' points are the GPU's now (the twin draws the port's own hulls from the casters)
     ground->shadow_points = {};
     // every range first, then the writes (Heaps' writer holds a lock)
@@ -531,7 +532,8 @@ namespace {
                            f.target_z, f.ground_r}) {
         put(v);
     }
-    k.bits[n++] = (f.weather ? 1U : 0U) | (f.night ? 2U : 0U) | (f.engine ? 4U : 0U) | (f.casting ? 8U : 0U);
+    k.bits[n++] = (f.weather ? 1U : 0U) | (f.night ? 2U : 0U) | (f.engine ? 4U : 0U) | (f.casting ? 8U : 0U) |
+                  (f.park_sun ? 16U : 0U);
     return k;
 }
 
@@ -573,6 +575,9 @@ bool Ground::decide(const frame::FrameState& state) {
     f.sun_y = light.y;
     f.sun_z = light.z;
     f.casting = !f.night && light.y > 0;
+    // draw_over's park shadows: `sun = not night and L[1] > 0.05`, toward the moment's own sun
+    f.light = state.theme.sun_vector;
+    f.park_sun = !f.night && f.light[1] > 0.05;
     // the tiles the cover draws, the visible cells of each together
     f.tiles.clear();
     if (state.cover != nullptr) {
@@ -673,14 +678,19 @@ bool Ground::decide(const frame::FrameState& state) {
     f.stroke_width.assign(strokes, 0.0);
     f.shadow_drawn.assign(shadows, 0);
     f.shadows = false;
+    f.woods = false;
     for (const DrawnTile& t : f.tiles) {
         std::ranges::copy(t.decided->drawn, f.drawn.begin() + t.decisions);
         std::ranges::copy(t.decided->stroke_drawn, f.stroke_drawn.begin() + t.strokes);
         std::ranges::copy(t.decided->stroke_width, f.stroke_width.begin() + t.strokes);
         std::ranges::copy(t.decided->shadow_drawn, f.shadow_drawn.begin() + t.shadows);
-        f.shadows =
-            f.shadows || std::ranges::find(t.decided->shadow_drawn, std::uint8_t{1}) != t.decided->shadow_drawn.end();
+        // the casters' shadows, then the woods' (a union of their own)
+        const std::span<const std::uint8_t> bits(t.decided->shadow_drawn);
+        const std::size_t casters = std::min<std::size_t>(bits.size(), t.ground->woods_first());
+        f.shadows = f.shadows || std::ranges::find(bits.first(casters), std::uint8_t{1}) != bits.first(casters).end();
+        f.woods = f.woods || std::ranges::find(bits.subspan(casters), std::uint8_t{1}) != bits.subspan(casters).end();
     }
+    decide_tracks(cam);
     // the land kinds in the order of their first drawn ring in S['land'] (draw_under's OrderedDict), across the
     // scenes drawn by their elements' order (regions.py's sort: the draw order, then the area, then data order); the
     // canopy
@@ -733,6 +743,8 @@ bool Ground::decide(const frame::FrameState& state) {
         f.water = false;
         f.canopy = false;
         f.shadows = false;
+        f.woods = false;
+        f.track_shadows.clear();
         for (const DrawnTile& t : f.tiles) {
             for (std::uint32_t i = 0; i < t.ground->strokes.size(); ++i) {
                 if (t.ground->strokes[i].kind != geo::StrokeKind::setts) f.stroke_drawn[t.strokes + i] = 0;
@@ -785,6 +797,7 @@ void Ground::decide_tile(const view::Camera& cam, const DrawnTile& t, TileDecisi
     }
     decide_strokes(cam, t, d);
     decide_shadows(t, d);
+    decide_woods(cam, t, d);
 }
 
 void Ground::lay_out() {
@@ -819,6 +832,12 @@ void Ground::lay_out() {
             if (f.stroke_drawn[t.strokes + i] == 0) continue;
             use(g.strokes[i].group, stroke_order(t, i));
         }
+    }
+    // draw_over's park shadows: the woods' union first, then each track's shadows' paths
+    if (f.woods) use(geo::group::over + 4, 0);
+    if (!f.track_shadows.empty()) {
+        use(geo::group::over + 4, 1);
+        use(geo::group::over + 4, static_cast<std::uint32_t>(f.track_shadows.size()));
     }
     use(geo::group::sky, 0);
     if (f.plate) use(geo::group::plate, 0);
@@ -1034,7 +1053,7 @@ void Ground::write_words(const frame::FrameState& state) {
         v.push_back(lay.shadows.first);
         // the shadows the soft shadows' box measures: none where the shadows' draw draws none
         const bool casts = lay.shadow_draw.count != 0 && static_cast<bool>(g) && !t.ground->no_shadows;
-        v.push_back(casts ? static_cast<std::uint32_t>(t.ground->shadows.size()) : 0U);
+        v.push_back(casts ? t.ground->woods_first() : 0U);
         v.push_back(0);
     }
     w.plate_tile = static_cast<std::uint32_t>(f.tiles.size());
@@ -1263,6 +1282,7 @@ void Ground::emit(const frame::FrameState& state, twin::Stream& out, std::uint32
     emit_fills(state, out, mat, above);
     emit_water(state, out);
     emit_lines(state, out, above);
+    emit_park_shadows(state, out, above);
     emit_shadows(state, out);
 }
 
