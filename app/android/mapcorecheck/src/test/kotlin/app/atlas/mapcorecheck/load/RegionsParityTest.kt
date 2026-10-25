@@ -2,6 +2,8 @@ package app.atlas.mapcorecheck.load
 
 import app.atlas.anchor.AnchorCases
 import app.atlas.render.Amsterdam
+import app.atlas.render.Regions
+import app.atlas.render.py.truthy
 import app.atlas.render.data.PackReader
 import app.atlas.render.live.LiveEngine
 import app.atlas.render.py.Dict
@@ -14,7 +16,9 @@ import java.io.File
  * field the port's `Regions.load` gives: the buildings and parts mapped as relations with generic.py's looks (a region's
  * tradition read from the same file as the port's, its details and party walls among them), land cover, runways, big
  * roads, railways, power lines and towers, marine works, cranes, masts, turbines, national parks, the water mapped as
- * relations and its islands, the sea from the coastline and the natural shores, in the port's order and to the bit.
+ * relations and its islands, the sea from the coastline and the natural shores, a theme park's coaster tracks (their
+ * rides' profiles as the element pack holds them) and a park's or a zoo's woods (as the engine plants them, once for the region:
+ * rendertiles' PlantedWoods, the port's own planting about the frame's origin), in the port's order and to the bit.
  *
  * Each region is loaded as the packer loads it ([LiveEngine.loadScene]: whole, at tolerance 0): the canal ring from its
  * bundled pack, and the element packs `-Datlas.load.packs` names (a list split by the path separator: the regions'
@@ -32,8 +36,12 @@ class RegionsParityTest {
         val lon0 = Amsterdam.LON0
         val kx = Amsterdam.KX
         val kz = Amsterdam.KZ
+        // a theme park's rides' profiles, the folder the port read them from (unpacked from the element pack); a park's
+        // or a zoo's woods
+        val rides = (R["park"] as String?)?.takeIf { it.isNotEmpty() }?.let { File(File(Regions.parkRoot, it), "pf").path }
+        val woods = truthy(R["park"]) || truthy(R["zoo"])
         SceneLines.compare(name, raw, S, portMs, region = true) { out ->
-            LoadHost.dumpRegion(raw.path, out, S["region"] as String, lat0, lon0, kx, kz, bbox[0], bbox[1], bbox[2], bbox[3], LoadHost.traditionBytes(S["tradition"] as String?), tolerance)
+            LoadHost.dumpRegion(raw.path, out, S["region"] as String, lat0, lon0, kx, kz, bbox[0], bbox[1], bbox[2], bbox[3], LoadHost.traditionBytes(S["tradition"] as String?), rides, woods, tolerance)
         }
     }
 

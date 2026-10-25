@@ -21,7 +21,7 @@ import java.io.File
  */
 internal object LoadHost {
     /** The layout version of these entry points; a library of another is refused. */
-    const val ABI = 4
+    const val ABI = 5
 
     init {
         val path = System.getProperty("atlas.mapcore.host") ?: error("atlas.mapcore.host names no host build of the core")
@@ -40,12 +40,14 @@ internal object LoadHost {
     @JvmStatic external fun dump(raw: String, out: String, looks: Int, region: String?, tradition: ByteArray?): String
 
     /**
-     * A region's load of [raw] at [tolerance] in the frame and box given (the port's after its configure), written to [out] as canonical
-     * lines: `lines=… buildings=… land=… load_ms=…`, or `error=…`.
+     * A region's load of [raw] at [tolerance] in the frame and box given (the port's after its configure), a theme park's rides'
+     * profiles from the folder [rides] (null for none), its woods planted where [woods], written to [out] as canonical lines:
+     * `lines=… buildings=… land=… load_ms=…`, or `error=…`.
      */
     @JvmStatic external fun dumpRegion(
         raw: String, out: String, name: String, lat0: Double, lon0: Double, kx: Double, kz: Double,
-        south: Double, west: Double, north: Double, east: Double, tradition: ByteArray?, tolerance: Double,
+        south: Double, west: Double, north: Double, east: Double, tradition: ByteArray?, rides: String?, woods: Boolean,
+        tolerance: Double,
     ): String
 
     /**

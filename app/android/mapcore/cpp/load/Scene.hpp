@@ -328,6 +328,27 @@ struct Tower {
     std::optional<double> h;
 };
 
+/// A theme park's coaster track (`S['coasters']`, render/coasters.py's load): its points and its height at each, which
+/// OSM does not map (the renders' guesses, load/Coasters.hpp), its kind (steel, wood or mono: a monorail's beam), its
+/// ride (the nearest ride's name, if any) and its role (track, lift_hill, station, brake_run or mono).
+struct CoasterTrack {
+    std::vector<V2> pts;
+    std::vector<double> ys;
+    std::string_view kind;
+    std::optional<std::string> ride;
+    std::string role;
+};
+
+/// A tree a park or a zoo plants in its woods (`S['woods']`, render/woods.py's plant; load/Woods.hpp): where it stands,
+/// its height, its crown's diameter, and its id, its clumps' random stream.
+struct WoodTree {
+    double x = 0.0;
+    double z = 0.0;
+    double h = 0.0;
+    double crown = 0.0;
+    std::int64_t id = 0;
+};
+
 /// A national park's (or the dunes' protected area's) ring (`S['park']`).
 struct ParkEdge {
     std::vector<V2> ring;
@@ -364,6 +385,8 @@ struct Scene {
     std::vector<Item> mtowers;
     std::vector<Tower> towers; ///< in the order their ids came
     std::vector<ParkEdge> park;
+    std::vector<CoasterTrack> coasters;       ///< a theme park's coaster tracks
+    std::vector<WoodTree> woods;              ///< the trees a park or a zoo plants in its woods
     std::vector<std::vector<V2>> water_holes; ///< islands: the inner rings of the water's relations
     std::vector<bool> natural_shore;          ///< per ring of `water`: a natural shore (no quay wall)
     /// The building tradition the looks came from (`S['tradition']`, read), or null. The buildings' tradition values
@@ -374,7 +397,8 @@ struct Scene {
 /// Why a document cannot be loaded, and the element that showed it.
 struct LoadError {
     enum class Fault : std::uint8_t {
-        off_earth, ///< a position that is not one (a latitude past ±90°, a longitude past ±180°, not a number)
+        off_earth,    ///< a position that is not one (a latitude past ±90°, a longitude past ±180°, not a number)
+        not_a_number, ///< a value whose int(float(v)) Python cannot take (a coaster track's layer)
     };
     Fault fault = Fault::off_earth;
     std::int64_t element = 0; ///< its id

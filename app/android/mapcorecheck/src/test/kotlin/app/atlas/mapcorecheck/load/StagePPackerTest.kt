@@ -22,7 +22,7 @@ import java.nio.file.Files
  * (`atlas_stagep`, `-Datlas.stagep`) making their content (the tiles, the head and the style) are the packer's own
  * bundled packs (`-Datlas.tiles`, made from the port's scene), byte for byte: the Westerkerk's living map and the canal
  * ring, every tile, the manifest, the head and the style. So a pack and a window the phone builds from the same data come
- * from the same code. The tool also refuses what the port's scene would refuse (a park's woods, a survey's heights).
+ * from the same code. The tool also refuses what the port's scene would refuse (a survey's heights).
  */
 class StagePPackerTest {
     private val tool = System.getProperty("atlas.stagep")?.let(::File)
@@ -59,9 +59,10 @@ class StagePPackerTest {
 
     /**
      * The port's and Schiphol's packs with their height survey left out (SceneToTiles.withoutSurvey: the tiles cannot
-     * carry a survey yet), cut by the core's stage P, are the packer's own cut of them byte for byte: what they hold
-     * that the bundled packs do not (gantries and conveyors, cranes, turbines, masts, runways, the sea) included. On the
-     * Mac, where their element packs are (CI has the canal ring's alone).
+     * carry a survey yet), and the Efteling's and ARTIS's, cut by the core's stage P, are the packer's own cut of them
+     * byte for byte: what they hold that the bundled packs do not (gantries and conveyors, cranes, turbines, masts,
+     * runways, the sea, a theme park's coaster tracks, a park's and a zoo's planted woods) included. On the Mac, where
+     * their element packs are (CI has the canal ring's alone).
      */
     @Test
     fun theRegionsWithoutTheirSurveyCutByTheCoresStagePAreThePackersOwn() {
@@ -69,7 +70,7 @@ class StagePPackerTest {
         val root = repo ?: error("atlas.repo names no repository")
         val work = Files.createTempDirectory("atlas-stagep-survey").toFile()
         try {
-            for (id in listOf("port", "schiphol")) {
+            for (id in listOf("port", "schiphol", "efteling", "artis")) {
                 val element = File(root, "cache/packs/regions/$id.atlas")
                 if (!element.isFile) {
                     println("stagep: no element pack ${element.path}: $id is not compared here")
@@ -77,10 +78,13 @@ class StagePPackerTest {
                 }
                 val mine = File(work, "$id-core.atlas")
                 val theirs = File(work, "$id-packer.atlas")
+                // the port's and Schiphol's surveys left out; the others have none (and their packs' own files, a park's
+                // rides' profiles among them, unpack only from the pack itself)
+                val survey = id !in listOf("port", "schiphol")
                 val t0 = System.nanoTime()
-                val c = SceneToTiles.pack(element, mine, File(work, "core-$id"), core = tool, survey = false) { println("stagep $it") }
+                val c = SceneToTiles.pack(element, mine, File(work, "core-$id"), core = tool, survey = survey) { println("stagep $it") }
                 val t1 = System.nanoTime()
-                val p = SceneToTiles.pack(element, theirs, File(work, "packer-$id"), survey = false) { println("packer $it") }
+                val p = SceneToTiles.pack(element, theirs, File(work, "packer-$id"), survey = survey) { println("packer $it") }
                 val t2 = System.nanoTime()
                 println("stagep $id without its survey: ${c.written.chunks.size} tiles, ${c.written.bytes} bytes in ${(t1 - t0) / 1_000_000} ms; the packer's ${p.written.chunks.size} tiles in ${(t2 - t1) / 1_000_000} ms")
                 assertEquals("$id: the pack cut by the core's stage P is not the packer's: ${difference(mine.readBytes(), theirs.readBytes())}", "the same", difference(mine.readBytes(), theirs.readBytes()))
@@ -121,7 +125,7 @@ class StagePPackerTest {
             val box = """"bbox": [52.36, 4.907, 52.3725, 4.9265], "origin": [52.3662, 4.9165]"""
             val views = """"views": {"": {"target": [0, 0, 0], "yaw": 95, "pitch": 42, "dist": 1600}, "close": {"target": [1, 0, 1], "yaw": 95, "pitch": 40, "dist": 430}}"""
             // the tool on a region folder with no data: its exit code and what it said
-            fun run(name: String, region: String, survey: Boolean = false): Pair<Int, String> {
+            fun run(name: String, region: String, survey: Boolean = false, parkRoot: File? = null): Pair<Int, String> {
                 val folder = File(dir, name).apply { mkdirs() }
                 File(folder, "raw.json").writeText("""{"elements": []}""")
                 File(folder, "region.json").writeText(region)
@@ -136,20 +140,23 @@ class StagePPackerTest {
                         put("engine_version", "a1-test")
                         put("source", "00ff")
                         put("region_json", File(folder, "region.json").path)
+                        if (parkRoot != null) put("park_root", parkRoot.path)
                     }.toString(),
                 )
                 val p = ProcessBuilder(tool!!.path, "tiles", File(folder, "raw.json").path, job.path, File(dir, "$name.tiles").path).redirectErrorStream(true).start()
                 val said = p.inputStream.bufferedReader().readText()
                 return p.waitFor() to said
             }
-            // a zoo's and a theme park's planted woods, a park's coasters, a survey's heights: what the port's scene
-            // holds and its tiles cannot carry yet (SceneToTiles.unsupported)
+            // a zoo plants its woods, a theme park its woods and its coaster tracks, their rides' profiles from the job's
+            // park_root (with no data: nothing); a park whose job names none is refused as an input error
             val zoo = run("zoo", """{$box, "zoo": "artis", $views}""")
-            assertEquals(zoo.second, CoreTiles.NOT_CARRIED, zoo.first)
-            assertTrue(zoo.second, "planted woods" in zoo.second)
-            val park = run("park", """{$box, "park": "efteling", $views}""")
-            assertEquals(park.second, CoreTiles.NOT_CARRIED, park.first)
-            assertTrue(park.second, "coaster tracks" in park.second && "planted woods" in park.second)
+            assertEquals(zoo.second, 0, zoo.first)
+            val park = run("park", """{$box, "park": "efteling", $views}""", parkRoot = File(repo ?: error("atlas.repo names no repository"), "data/park"))
+            assertEquals(park.second, 0, park.first)
+            val unpacked = run("unpacked", """{$box, "park": "efteling", $views}""")
+            assertEquals(unpacked.second, 2, unpacked.first)
+            assertTrue(unpacked.second, "park_root" in unpacked.second)
+            // a survey's heights: what the port's scene holds and its tiles cannot carry yet (SceneToTiles.unsupported)
             val survey = run("survey", """{$box, $views}""", survey = true)
             assertEquals(survey.second, CoreTiles.NOT_CARRIED, survey.first)
             assertTrue(survey.second, "a survey's heights" in survey.second)

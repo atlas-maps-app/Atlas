@@ -8,7 +8,8 @@
 // rules), the levels it holds, its frame's four doubles (lat0, lon0, kx, kz) as their IEEE-754 bits in hex (the port's
 // own doubles: kx from CrMath.cos), the port's engine version, the element pack's SHA-256, and for a region its
 // region.json as the packer unpacked it into the region's folder (its box, tradition, time zone and views, read as
-// Python's json reads them). The core takes the rest from there (load/PackHead.hpp): the views and the tolerances the
+// Python's json reads them) and the folder of the parks' ride profiles (`park_root`: a theme park's, R's park, are in
+// <park_root>/<park>/pf). The core takes the rest from there (load/PackHead.hpp): the views and the tolerances the
 // variants load at (the views' and the live map's bands'), the head and the style.
 //
 // `out` gets, by a file beside it renamed once whole, little-endian: `ATSP` and the format (2), the tiles' count, then
@@ -16,10 +17,10 @@
 // east and top in cm, i32), its layers that hold features (u16), each its label (u8 length, its bytes) and its features
 // (u32), and its encoded bytes (u32 length, the bytes); then the head's bytes and the style's before compression, each
 // a u32 length and the bytes. One line on stdout says what was cut and how long it took. The exit code: 0 done; 2 a
-// usage or input error; 3 a region the tiles cannot carry yet (the packer's render_gap, why on stderr: a theme park's
-// coaster tracks or a park's or zoo's planted woods (R's park or zoo), a survey's heights (a dem.json in the region's
-// folder), a tradition's details); 1 any other failure.
+// usage or input error; 3 a region the tiles cannot carry yet (the packer's render_gap, why on stderr: a survey's
+// heights (a dem.json in the region's folder), a tradition's details); 1 any other failure.
 #include "load/Amsterdam.hpp"
+#include "load/Coasters.hpp"
 #include "load/Cut.hpp"
 #include "load/PackHead.hpp"
 #include "load/Regions.hpp"
@@ -116,18 +117,10 @@ constexpr std::uint32_t format_version = 2;
     return false;
 }
 
-/// What a region holds that render tiles cannot carry yet, refused as the packer's SceneToTiles refuses its scene:
-/// the coaster tracks a theme park (R's park) loads and the woods it and a zoo (R's zoo) plant, and a survey's heights,
-/// which regions.py reads from a dem.json in the region's folder. Nothing where it holds none of them.
-[[nodiscard]] std::optional<Failure> uncarried(std::string_view name, const tl::Value& r,
-                                               const std::filesystem::path& folder) {
-    const auto has = [&](std::string_view key) {
-        const std::optional<tl::Value> v = r.find(key);
-        return v && truthy(*v);
-    };
+/// What a region holds that render tiles cannot carry yet, refused as the packer's SceneToTiles refuses its scene: a
+/// survey's heights, which regions.py reads from a dem.json in the region's folder. Nothing where it holds none.
+[[nodiscard]] std::optional<Failure> uncarried(std::string_view name, const std::filesystem::path& folder) {
     std::vector<std::string_view> found;
-    if (has("park")) found.emplace_back("a theme park's coaster tracks");
-    if (has("park") || has("zoo")) found.emplace_back("a park's planted woods");
     std::error_code e;
     if (std::filesystem::exists(folder / "dem.json", e)) found.emplace_back("a survey's heights");
     if (found.empty()) return std::nullopt;
@@ -290,6 +283,7 @@ private:
     std::unique_ptr<tl::MappedSource> region_file;
     std::optional<tl::JsonValue> region_json;
     std::optional<load::RegionConfig> config;
+    std::optional<load::RideProfiles> rides;
     if (!living) {
         const std::optional<std::string_view> region_path = j.find("region_json").value_or(tl::Value()).string();
         if (!region_path) return std::unexpected(input("the job names no region.json for a region"));
@@ -299,12 +293,26 @@ private:
         auto read = tl::read_json(region_file->view(0, region_file->size()));
         if (!read) return std::unexpected(input(std::format("{} is not JSON", *region_path)));
         region_json = std::move(*read);
-        if (auto refused = uncarried(*name, region_json->root(), std::filesystem::path(*region_path).parent_path())) {
+        if (auto refused = uncarried(*name, std::filesystem::path(*region_path).parent_path())) {
             return std::unexpected(*refused);
         }
         auto made = region_of(*name, frame, region_json->root());
         if (!made) return std::unexpected(made.error());
         config = std::move(*made);
+        // a theme park's rides' profiles, whose coaster tracks it loads; a park's or a zoo's woods
+        const std::optional<tl::Value> zoo = region_json->root().find("zoo");
+        const std::optional<tl::Value> park = region_json->root().find("park");
+        config->woods = (park && truthy(*park)) || (zoo && truthy(*zoo));
+        if (park && truthy(*park)) {
+            const std::optional<std::string_view> park_name = park->string();
+            const std::optional<std::string_view> root = j.find("park_root").value_or(tl::Value()).string();
+            if (!park_name) return std::unexpected(input("region.json's park is not a name"));
+            if (!root) return std::unexpected(input("the job names no park_root for a theme park"));
+            auto profiles = load::read_ride_profiles((std::filesystem::path(*root) / *park_name / "pf").string());
+            if (!profiles) return std::unexpected(input(profiles.error()));
+            rides = std::move(*profiles);
+            config->park = &*rides;
+        }
     }
     std::vector<std::uint8_t> level_list;
     for (const std::int64_t z : *levels) level_list.push_back(static_cast<std::uint8_t>(z));

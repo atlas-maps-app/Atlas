@@ -45,7 +45,8 @@ object CoreTiles {
      * The job the tool reads for [region]'s pack at [levels]: its profile, its id, the levels, its frame's doubles as
      * their bits (the port's own, kx from CrMath.cos), the port's engine version, [source] (the element pack's
      * SHA-256) and a region's region.json, as the port's region unpacked it (its views among it), which the core reads
-     * the rest from.
+     * the rest from, and the folder the parks' ride profiles are unpacked into, which the port reads (a theme park's
+     * coaster tracks' heights).
      */
     fun job(region: LiveRegion, levels: IntArray, source: String): String {
         val living = region.kind == LiveRegion.Kind.LIVING
@@ -58,6 +59,9 @@ object CoreTiles {
             put("engine_version", EngineVersion.ID)
             put("source", source)
             if (!living) put("region_json", File(region.dir, "region.json").path)
+            // a theme park's rides' profiles, which LiveEngine unpacks from the element pack beside the region's own
+            // folder (<work>/park/<park>/pf beside <work>/regions/<id>), where the port's load reads them
+            if (!living) put("park_root", File(region.dir.parentFile.parentFile, "park").absolutePath)
         }.toString()
     }
 

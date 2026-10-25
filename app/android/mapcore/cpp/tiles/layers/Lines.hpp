@@ -1,5 +1,6 @@
 // The road and line layers (rendertiles' Schema.ROAD and LINE): S['roads'] and the other lines the renders draw (tram
-// tracks, rail, big roads, runways, power lines, marine works, a park's edge), stored whole in the tile of their
+// tracks, rail, big roads, runways, power lines, marine works, a park's edge, gantries, conveyors, a theme park's
+// coaster tracks), stored whole in the tile of their
 // reference point, so decorations measured along a line stay exact.
 #pragma once
 
@@ -48,15 +49,15 @@ inline constexpr std::uint8_t marks_key = slot_of(columns, "marks_key");
 
 namespace atlas::tiles::line {
 
-inline constexpr std::array<ColumnSpec, 17> columns = {{
+inline constexpr std::array<ColumnSpec, 18> columns = {{
     {"source", Codec::u8},   // 0 S['rails'] (tram), 1 S['rail'], 2 S['big'], 3 S['aero'], 4 S['power'], 5 S['marine'],
-                             // 6 S['park'], 7 S['gantries'], 8 S['conveyors']
+                             // 6 S['park'], 7 S['gantries'], 8 S['conveyors'], 9 S['coasters']
     {"index", Codec::delta}, // source order in its list
     {"id", Codec::nvarz},    // the OSM id where the scene has one, or its tile carries the order across windows
     {"otype", Codec::str},   // relation for a multipolygon's ring, else null (a way): with id and part, its element
     {"part", Codec::varu},   // the ring's place among its element's rings (load/Scene.hpp's Origin)
     {"line", Codec::geom},   // the line, whole (a park's edge is its ring)
-    {"kind", Codec::str},    // aeroway or man_made kind
+    {"kind", Codec::str},    // aeroway or man_made kind; a coaster track's (steel, wood, or mono: a monorail's beam)
     {"hw", Codec::str},      // a big road's class
     {"layer", Codec::centi}, // a big road's layer (0 where none is mapped): drawn 0.5 m higher per layer
     {"crane", Codec::boolean},   // a crane rail
@@ -67,6 +68,9 @@ inline constexpr std::array<ColumnSpec, 17> columns = {{
     {"tag:width", Codec::str},
     {"tag:ref", Codec::str},
     {"tag:tower:type", Codec::str},
+    // a coaster track's height at each of its points, metres, which the scene guesses across its pieces: each double's
+    // IEEE-754 bits
+    {"ys", Codec::ids},
 }};
 
 inline constexpr std::uint8_t source = slot_of(columns, "source");
@@ -80,5 +84,6 @@ inline constexpr std::uint8_t hw = slot_of(columns, "hw");
 inline constexpr std::uint8_t layer = slot_of(columns, "layer");
 inline constexpr std::uint8_t h = slot_of(columns, "h");
 inline constexpr std::uint8_t ground_key = slot_of(columns, "ground_key");
+inline constexpr std::uint8_t ys = slot_of(columns, "ys");
 
 } // namespace atlas::tiles::line

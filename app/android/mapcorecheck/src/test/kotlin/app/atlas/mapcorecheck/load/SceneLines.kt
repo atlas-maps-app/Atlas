@@ -1,8 +1,11 @@
 package app.atlas.mapcorecheck.load
 
+import app.atlas.render.Amsterdam
+import app.atlas.render.Coasters
 import app.atlas.render.PoiStyle
 import app.atlas.render.V2
 import app.atlas.render.py.Dict
+import app.atlas.rendertiles.compile.PlantedWoods
 import org.junit.Assert.assertTrue
 import java.io.File
 import java.util.IdentityHashMap
@@ -29,6 +32,14 @@ internal object SceneLines {
                 val plain = u in '0'.code..'9'.code || u in 'A'.code..'Z'.code || u in 'a'.code..'z'.code || u == '_'.code ||
                     u == '.'.code || u == ':'.code || u == '#'.code || u == '-'.code
                 if (plain) sb.append(u.toChar()) else sb.append('%').append(HEX[u shr 4]).append(HEX[u and 15])
+            }
+            return this
+        }
+        fun reals(v: List<Double>): Line {
+            sb.append(v.size)
+            for (x in v) {
+                sb.append(',')
+                real(x)
             }
             return this
         }
@@ -259,6 +270,20 @@ internal object SceneLines {
             yield(Line("tower", i).field("id").integer(e.key).field("x").real(e.value.first.x).field("z").real(e.value.first.y).field("h").real(e.value.second).toString())
         }
         for ((i, p) in dicts(S["park"]).withIndex()) yield(Line("park", i).field("ring").points(p["ring"]).field("tags").tags(p["tags"]).toString())
+        @Suppress("UNCHECKED_CAST")
+        for ((i, tr) in ((S["coasters"] as List<Coasters.Track>?) ?: emptyList()).withIndex()) {
+            yield(
+                Line("coaster", i).field("kind").text(tr.kind).field("ride").text(tr.ride).field("role").text(tr.role)
+                    .field("pts").points(tr.pts).field("ys").reals(tr.ys).toString(),
+            )
+        }
+        // a park's or a zoo's woods as the engine plants them, once for the region (the port's own woods are the view's)
+        for ((i, t) in PlantedWoods.of(S, Amsterdam.LAT0, Amsterdam.LON0, Amsterdam.KX, Amsterdam.KZ).withIndex()) {
+            yield(
+                Line("wood", i).field("x").real(t["x"]).field("z").real(t["z"]).field("h").real(t["h"]).field("crown").real(t["crown"])
+                    .field("id").integer(t["id"]).toString(),
+            )
+        }
         for ((i, r) in rings(S["water_holes"]).withIndex()) yield(Line("hole", i).field("ring").points(r).toString())
         @Suppress("UNCHECKED_CAST")
         val shore = (S["natural_shore"] as Collection<Any?>?) ?: emptyList()

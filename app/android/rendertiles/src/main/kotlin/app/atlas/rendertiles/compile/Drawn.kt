@@ -44,6 +44,17 @@ object Drawn {
     const val CROWN_REACH = 0.8
     const val TREE_SYMBOL = 3.0
 
+    /**
+     * (widening, top) of a coaster track ([app.atlas.rendertiles.model.Schema.LINE]'s source 9) of heights [ys]: its
+     * strokes about a metre either side (`max(1.1, 1.7 * s)` px at s px a metre), its posts down to the ground, a metre
+     * above its highest point.
+     */
+    fun coaster(ys: List<Double>): Pair<Double, Double> {
+        var top = if (ys.isEmpty()) 0.0 else ys[0]
+        for (y in ys) if (y > top) top = y
+        return 1.0 to top + 1.0
+    }
+
     /** (widening, top) of a line of `source` [source] ([app.atlas.rendertiles.model.Schema.LINE]) and record [d]. */
     fun line(source: Int, d: Map<String, Any?>): Pair<Double, Double> = when (source) {
         // rail: the ballast 1.6 m either side
@@ -106,6 +117,11 @@ object Drawn {
             4 -> {
                 val r = ((d["rotor"] as Number?)?.toDouble()?.takeIf { it != 0.0 } ?: 100.0) / 2
                 (r + 3.0) to (h ?: 100.0) + r
+            }
+            // a wood's tree: its clumps within a crown of it, up to 0.7 of its height and a crown
+            5 -> {
+                val crown = (d["crown"] as Number?)?.toDouble() ?: 0.0
+                crown to ((d["h"] as Number?)?.toDouble() ?: 0.0) * 0.7 + crown
             }
             else -> 0.0 to (h ?: 0.0)
         }

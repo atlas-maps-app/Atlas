@@ -24,6 +24,11 @@ namespace atlas::load {
 /// float() makes it.
 [[nodiscard]] std::optional<double> num(std::optional<std::string_view> text) noexcept;
 
+/// Python's `float(text)` of a string: an optional sign and a decimal (digits that underscores may part, a point, an
+/// exponent), `inf`, `infinity` or `nan` in any case, white space about it; or nothing, where float() raises
+/// ValueError. The digits are any decimal digits of the Basic Multilingual Plane, as digit_of reads them.
+[[nodiscard]] std::optional<double> py_float(std::string_view text) noexcept;
+
 /// `re.match(r'\s*(\d{4})', text)` read as an int: the year a start_date begins with, or nothing.
 [[nodiscard]] std::optional<std::int64_t> leading_year(std::string_view text) noexcept;
 

@@ -49,7 +49,7 @@ namespace load = atlas::load;
 namespace osm = atlas::osm;
 
 /// The layout version of these entry points; LoadHost refuses another.
-constexpr jint test_load_abi = 4;
+constexpr jint test_load_abi = 5;
 
 std::string string_of(JNIEnv* env, jstring s) {
     const char* chars = env->GetStringUTFChars(s, nullptr);
@@ -113,6 +113,14 @@ public:
     }
     Line& maybe(const std::optional<std::string_view>& s) { return s ? text(*s) : raw("-"); }
     Line& maybe(const std::optional<std::string>& s) { return s ? text(*s) : raw("-"); }
+    Line& reals(std::span<const double> v) {
+        out_ += std::to_string(v.size());
+        for (const double x : v) {
+            out_ += ',';
+            real(x);
+        }
+        return *this;
+    }
     Line& points(std::span<const load::V2> p) {
         out_ += std::to_string(p.size());
         for (const load::V2& q : p) {
@@ -376,6 +384,20 @@ std::size_t write_region(std::ofstream& out, const load::Scene& s) {
         l.field("ring").points(s.park[i].ring).field("tags").tags(s.park[i].tags);
         out << l.str() << '\n';
     }
+    for (std::size_t i = 0; i < s.coasters.size(); ++i, ++lines) {
+        const load::CoasterTrack& tr = s.coasters[i];
+        Line l("coaster", i);
+        l.field("kind").text(tr.kind).field("ride").maybe(tr.ride).field("role").text(tr.role);
+        l.field("pts").points(tr.pts).field("ys").reals(tr.ys);
+        out << l.str() << '\n';
+    }
+    for (std::size_t i = 0; i < s.woods.size(); ++i, ++lines) {
+        const load::WoodTree& t = s.woods[i];
+        Line l("wood", i);
+        l.field("x").real(t.x).field("z").real(t.z).field("h").real(t.h).field("crown").real(t.crown);
+        l.field("id").integer(t.id);
+        out << l.str() << '\n';
+    }
     for (std::size_t i = 0; i < s.water_holes.size(); ++i, ++lines) {
         out << Line("hole", i).field("ring").points(s.water_holes[i]).str() << '\n';
     }
@@ -545,10 +567,12 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_dump(JNIEnv*
 }
 
 /// A region's load (regions.py's, in the frame and box given: the port's after its configure, with its tradition's file
-/// or null) of the raw.json at `raw`, at `tolerance`, written as canonical lines to `out`: as dump, with its own lists.
+/// or null, a theme park's rides' profiles from the folder `rides` or null, its woods planted where `woods`) of the
+/// raw.json at `raw`, at `tolerance`, written as canonical lines to `out`: as dump, with its own lists.
 JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_dumpRegion(
     JNIEnv* env, jclass, jstring raw, jstring out, jstring name, jdouble lat0, jdouble lon0, jdouble kx, jdouble kz,
-    jdouble south, jdouble west, jdouble north, jdouble east, jbyteArray tradition, jdouble tolerance) {
+    jdouble south, jdouble west, jdouble north, jdouble east, jbyteArray tradition, jstring rides, jboolean woods,
+    jdouble tolerance) {
     std::ifstream in(string_of(env, raw), std::ios::binary);
     if (!in) return env->NewStringUTF("error=io at=raw");
     const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -562,12 +586,20 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_dumpRegion(
     const std::string region = string_of(env, name);
     auto trad = tradition_of(env, tradition);
     if (!trad) return env->NewStringUTF(trad.error().c_str());
+    std::optional<load::RideProfiles> profiles;
+    if (rides != nullptr) {
+        auto read = load::read_ride_profiles(string_of(env, rides));
+        if (!read) return env->NewStringUTF(std::format("error=rides at={}", read.error()).c_str());
+        profiles = std::move(*read);
+    }
     const load::RegionConfig config{
         .name = region,
         .frame = {.lat0 = lat0, .lon0 = lon0, .kx = kx, .kz = kz},
         .bbox = {south, west, north, east},
         .tradition = *trad,
         .palette = load::region_palette(region),
+        .park = profiles ? &*profiles : nullptr,
+        .woods = woods == JNI_TRUE,
     };
     const auto scene = load::load_region(*doc, config, tolerance);
     const auto t2 = std::chrono::steady_clock::now();

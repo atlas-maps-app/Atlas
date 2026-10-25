@@ -187,20 +187,22 @@ object Schema {
     ) + tags(Layer.ROAD)
 
     val LINE: List<Column> = listOf(
-        c("source", Codec.U8, "0 S['rails'] (tram), 1 S['rail'], 2 S['big'], 3 S['aero'], 4 S['power'], 5 S['marine'], 6 S['park'], 7 S['gantries'], 8 S['conveyors']"),
+        c("source", Codec.U8, "0 S['rails'] (tram), 1 S['rail'], 2 S['big'], 3 S['aero'], 4 S['power'], 5 S['marine'], 6 S['park'], 7 S['gantries'], 8 S['conveyors'], 9 S['coasters']"),
         c("index", Codec.DELTA, "source order in its list"),
         c("id", Codec.NVARZ, "the OSM id where the scene has one, or the tile carries the ground's order across windows (the core's windows)"),
         c("otype", Codec.STR, "relation for a multipolygon's ring, else null (a way): with id and part, the element a window's line comes from"),
         c("part", Codec.VARU, "the ring's place among its element's rings: the ground's order across windows (the core's windows; the packer writes none)"),
         c("line", Codec.GEOM, "the line, whole (a park's edge is its ring)"),
-        c("kind", Codec.STR, "aeroway or man_made kind"),
+        c("kind", Codec.STR, "aeroway or man_made kind; a coaster track's (steel, wood, or mono for a monorail's beam)"),
         c("hw", Codec.STR, "a big road's class"),
         c("layer", Codec.CENTI, "a big road's layer (0 where none is mapped): it is drawn 0.5 m higher per layer"),
         c("crane", Codec.BOOL, "a crane rail"),
         c("closed", Codec.BOOL, "a marine work mapped as a closed way"),
         c("h", Codec.CENTI, "a gantry's or a conveyor's height, metres (null where none is mapped)"),
         c("ground_key", Codec.VARU, "the slot in the renders' ground order"),
-    ) + tags(Layer.LINE)
+    ) + tags(Layer.LINE) + listOf(
+        c("ys", Codec.IDS, "a coaster track's height at each of its points, metres, which the scene guesses across its pieces: each double's IEEE-754 bits"),
+    )
 
     val TREE: List<Column> = listOf(
         c("index", Codec.DELTA, "source order in S['trees']"),
@@ -234,7 +236,7 @@ object Schema {
     ) + tags(Layer.THING)
 
     val ITEM: List<Column> = listOf(
-        c("source", Codec.U8, "0 S['cranes'], 1 S['masts'], 2 S['mtowers'], 3 S['towers'] (pylons), 4 S['turbines']"),
+        c("source", Codec.U8, "0 S['cranes'], 1 S['masts'], 2 S['mtowers'], 3 S['towers'] (pylons), 4 S['turbines'], 5 the trees a park or a zoo plants in its woods (S['woods'], planted once for the region)"),
         c("index", Codec.DELTA, "source order in its list"),
         c("id", Codec.NVARZ, "the OSM id"),
         c("pos", Codec.POINT, "where it stands: the grid point itself for a mapped node, the nearest grid point otherwise"),
@@ -251,6 +253,7 @@ object Schema {
         c("vz", Codec.CENTI, "its z"),
         c("hu", Codec.CENTI, "a ship-to-shore crane's distance to its quay edge; a yard gantry's half length along u"),
         c("hv", Codec.CENTI, "a yard gantry's half width along v"),
+        c("crown", Codec.CENTI, "a wood's tree's crown diameter, metres"),
     )
 
     val LABEL: List<Column> = listOf(

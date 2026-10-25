@@ -348,6 +348,7 @@ std::string_view key_of(Guess guess) noexcept {
 std::string_view name_of(LoadError::Fault fault) noexcept {
     switch (fault) {
     case LoadError::Fault::off_earth: return "off_earth";
+    case LoadError::Fault::not_a_number: return "not_a_number";
     }
     return "?";
 }

@@ -762,6 +762,15 @@ std::expected<Scene, LoadError> load_region(const osm::Document& doc, const Regi
     // each building's look from its own tags, the land use it stands in and the region's tradition
     apply_looks(s, {.region = region.name, .tradition = region.tradition, .landuse = LandUseFrom::land});
     if (frame.error()) return std::unexpected(*frame.error());
+    if (region.park != nullptr) {
+        // a theme park: its coaster tracks standing up, each ride's top height from its published profile
+        auto coasters = load_coasters(doc, region.frame, s, *region.park);
+        if (!coasters) return std::unexpected(coasters.error());
+        s.coasters = std::move(*coasters);
+    }
+    // a park's or a zoo's woods: generic trees inside the mapped outlines, off everything mapped in them, planted once
+    // for the region
+    if (region.woods) s.woods = plant_woods(s, 0.0, 0.0, woods_radius(region.frame, region.bbox));
     return loaded;
 }
 

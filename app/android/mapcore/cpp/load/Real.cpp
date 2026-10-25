@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <iterator>
+#include <limits>
 #include <string>
 
 namespace atlas::load {
@@ -71,6 +72,75 @@ std::optional<double> num(std::optional<std::string_view> text) noexcept {
             ++i;
         }
     }
+    const double v = pymath::decimal_to_double(digits, e10);
+    return negative ? -v : v;
+}
+
+std::optional<double> py_float(std::string_view text) noexcept {
+    const std::u32string cps = text::code_points(text);
+    std::size_t i = 0;
+    std::size_t end = cps.size();
+    while (i < end && is_space(cps[i])) ++i;
+    while (end > i && is_space(cps[end - 1])) --end;
+    bool negative = false;
+    if (i < end && (cps[i] == U'+' || cps[i] == U'-')) {
+        negative = cps[i] == U'-';
+        ++i;
+    }
+    // inf, infinity and nan, in any case
+    std::string word;
+    for (std::size_t k = i; k < end; ++k) {
+        const char32_t c = cps[k];
+        if (c >= 0x80) {
+            word.clear();
+            break;
+        }
+        word += static_cast<char>(c >= U'A' && c <= U'Z' ? c - U'A' + U'a' : c);
+    }
+    if (word == "inf" || word == "infinity") {
+        return negative ? -std::numeric_limits<double>::infinity() : std::numeric_limits<double>::infinity();
+    }
+    if (word == "nan") return std::numeric_limits<double>::quiet_NaN();
+    // digitpart: digit (["_"] digit)*
+    const auto digitpart = [&](std::size_t& k, std::string& out) {
+        const std::size_t from = out.size();
+        while (k < end) {
+            if (const auto d = digit_of(cps[k])) {
+                out += static_cast<char>('0' + *d);
+                ++k;
+            } else if (cps[k] == U'_' && out.size() > from && k + 1 < end && digit_of(cps[k + 1])) {
+                ++k;
+            } else {
+                break;
+            }
+        }
+        return out.size() - from;
+    };
+    std::size_t k = i;
+    std::string digits;
+    std::int64_t e10 = 0;
+    bool any = digitpart(k, digits) > 0;
+    if (k < end && cps[k] == U'.') {
+        ++k;
+        const std::size_t fraction = digitpart(k, digits);
+        e10 -= static_cast<std::int64_t>(fraction);
+        any = any || fraction > 0;
+    }
+    if (!any) return std::nullopt;
+    if (k < end && (cps[k] == U'e' || cps[k] == U'E')) {
+        ++k;
+        bool below = false;
+        if (k < end && (cps[k] == U'+' || cps[k] == U'-')) {
+            below = cps[k] == U'-';
+            ++k;
+        }
+        std::string exponent;
+        if (digitpart(k, exponent) == 0) return std::nullopt;
+        std::int64_t e = 0;
+        for (const char c : exponent) e = std::min<std::int64_t>((e * 10) + (c - '0'), 1'000'000'000'000);
+        e10 += below ? -e : e;
+    }
+    if (k != end) return std::nullopt;
     const double v = pymath::decimal_to_double(digits, e10);
     return negative ? -v : v;
 }

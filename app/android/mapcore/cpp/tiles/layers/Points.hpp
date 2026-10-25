@@ -86,8 +86,9 @@ inline constexpr std::uint8_t tag_barrier = slot_of(columns, "tag:barrier");
 
 namespace atlas::tiles::item {
 
-inline constexpr std::array<ColumnSpec, 17> columns = {{
-    {"source", Codec::u8},   // 0 S['cranes'], 1 S['masts'], 2 S['mtowers'], 3 S['towers'] (pylons), 4 S['turbines']
+inline constexpr std::array<ColumnSpec, 18> columns = {{
+    {"source", Codec::u8},   // 0 S['cranes'], 1 S['masts'], 2 S['mtowers'], 3 S['towers'] (pylons), 4 S['turbines'],
+                             // 5 S['woods'] (the trees a park or a zoo plants in its woods)
     {"index", Codec::delta}, // source order in its list
     {"id", Codec::nvarz},    // the OSM id
     {"pos", Codec::point}, // where it stands: the grid point itself for a mapped node, the nearest grid point otherwise
@@ -104,8 +105,9 @@ inline constexpr std::array<ColumnSpec, 17> columns = {{
     {"uz", Codec::centi},
     {"vx", Codec::centi}, // its second: a ship-to-shore crane's (-w[1], w[0]), a yard gantry's v
     {"vz", Codec::centi},
-    {"hu", Codec::centi}, // a ship-to-shore crane's distance to its quay edge; a yard gantry's half length along u
-    {"hv", Codec::centi}, // a yard gantry's half width along v
+    {"hu", Codec::centi},    // a ship-to-shore crane's distance to its quay edge; a yard gantry's half length along u
+    {"hv", Codec::centi},    // a yard gantry's half width along v
+    {"crown", Codec::centi}, // a wood's tree's crown diameter, metres
 }};
 
 inline constexpr std::uint8_t source = slot_of(columns, "source");
@@ -125,5 +127,6 @@ inline constexpr std::uint8_t vx = slot_of(columns, "vx");
 inline constexpr std::uint8_t vz = slot_of(columns, "vz");
 inline constexpr std::uint8_t hu = slot_of(columns, "hu");
 inline constexpr std::uint8_t hv = slot_of(columns, "hv");
+inline constexpr std::uint8_t crown = slot_of(columns, "crown");
 
 } // namespace atlas::tiles::item

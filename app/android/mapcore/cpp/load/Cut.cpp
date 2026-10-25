@@ -650,6 +650,7 @@ struct ItemFeature {
     std::optional<GridLine> poly;
     std::optional<double> h;
     std::optional<double> rotor;
+    std::optional<double> crown; ///< a wood's tree's crown diameter
     const Tags* tags = nullptr;
     /// A crane's form (rendertiles' Cranes): 1 ship-to-shore, 2 a yard gantry; its axes and half sizes (a ship-to-shore
     /// crane's hu its distance to the water, its hv none).
@@ -1031,6 +1032,10 @@ private:
             const double r = (it.rotor && *it.rotor != 0.0 ? *it.rotor : 100.0) / 2;
             return {r + 3.0, h.value_or(100.0) + r};
         }
+        case 5: { // a wood's tree: its clumps within a crown of it, up to 0.7 of its height and a crown
+            const double crown = it.crown.value_or(0.0);
+            return {crown, (it.h.value_or(0.0) * 0.7) + crown};
+        }
         default: return {0.0, h.value_or(0.0)};
         }
     }
@@ -1039,10 +1044,18 @@ private:
         items_.clear();
         const auto item = [&](std::uint8_t source, std::uint32_t i, double x, double z, std::int64_t id,
                               std::optional<double> h, std::optional<double> rotor,
-                              const std::optional<std::vector<V2>>& poly, const Tags* tags) {
+                              const std::optional<std::vector<V2>>& poly, const Tags* tags,
+                              std::optional<double> crown) {
             const auto what = [&] { return std::format("item {} of source {}", i, source); };
-            ItemFeature it{
-                .source = source, .index = i, .id = id, .x = x, .z = z, .h = h, .rotor = rotor, .tags = tags};
+            ItemFeature it{.source = source,
+                           .index = i,
+                           .id = id,
+                           .x = x,
+                           .z = z,
+                           .h = h,
+                           .rotor = rotor,
+                           .crown = crown,
+                           .tags = tags};
             const auto qlat = tl::grid_lat(f_, z);
             const auto qlon = tl::grid_lon(f_, x);
             it.exact = qlat.has_value() && qlon.has_value();
@@ -1069,14 +1082,19 @@ private:
         for (const auto& [source, list] : lists) {
             for (std::uint32_t i = 0; i < list->size(); ++i) {
                 const Item& d = (*list)[i];
-                item(source, i, d.x, d.z, d.id, d.h, d.rotor, d.poly, &d.tags);
+                item(source, i, d.x, d.z, d.id, d.h, d.rotor, d.poly, &d.tags, std::nullopt);
                 if (source == 0) crane_form(d, items_.back());
             }
         }
         static const Tags none;
         for (std::uint32_t i = 0; i < s_.towers.size(); ++i) {
             const Tower& t = s_.towers[i];
-            item(3, i, t.at.x, t.at.z, t.id, t.h, std::nullopt, std::nullopt, &none);
+            item(3, i, t.at.x, t.at.z, t.id, t.h, std::nullopt, std::nullopt, &none, std::nullopt);
+        }
+        // the trees a park or a zoo plants in its woods
+        for (std::uint32_t i = 0; i < s_.woods.size(); ++i) {
+            const WoodTree& t = s_.woods[i];
+            item(5, i, t.x, t.z, t.id, t.h, std::nullopt, std::nullopt, &none, t.crown);
         }
     }
 
@@ -1320,6 +1338,14 @@ private:
         }
         for (std::uint32_t i = 0; i < s_.conveyors.size(); ++i) {
             line(8, i, s_.conveyors[i].pts, 0, 2.0, height(s_.conveyors[i], 6.0));
+        }
+        // a theme park's coaster tracks: their strokes about a metre either side, their posts down to the ground, a
+        // metre above their highest point
+        for (std::uint32_t i = 0; i < s_.coasters.size(); ++i) {
+            const CoasterTrack& tr = s_.coasters[i];
+            double top = tr.ys.empty() ? 0.0 : tr.ys.front();
+            for (const double y : tr.ys) top = std::max(top, y);
+            line(9, i, tr.pts, 0, 1.0, top + 1.0);
         }
     }
 
@@ -1650,6 +1676,7 @@ private:
         if (it.poly) lf.ring(c::poly, f, it.poly->lat, it.poly->lon);
         lf.decimal(c::h, f, it.h);
         lf.decimal(c::rotor, f, it.rotor);
+        lf.decimal(c::crown, f, it.crown);
         std::vector<std::pair<std::string_view, std::string_view>> all;
         for (const osm::Tag t : it.tags->all()) all.emplace_back(t.key, t.value);
         lf.tags(c::tags, f, all);
@@ -1746,6 +1773,15 @@ private:
             lf.nullable_integer(c::id, f, g.id);
             lf.decimal(c::h, f, g.h);
             t = &g.tags;
+            break;
+        }
+        case 9: {
+            // its kind, and its heights as their doubles' bits
+            const CoasterTrack& tr = s_.coasters[rl.index];
+            lf.string(c::kind, f, tr.kind);
+            std::vector<std::int64_t> bits(tr.ys.size());
+            std::ranges::transform(tr.ys, bits.begin(), [](double y) { return std::bit_cast<std::int64_t>(y); });
+            lf.ids(c::ys, f, bits);
             break;
         }
         default: break;

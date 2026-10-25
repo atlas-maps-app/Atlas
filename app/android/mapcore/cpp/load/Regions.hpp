@@ -10,16 +10,19 @@
 //     bay's ring where no coastline is), and which shores are natural (no quay wall);
 //   - the land cover in its drawing order, and each part's outline.
 //   - each building's look (load/Generic.hpp): its tradition's where the region has one, else the generic look.
-// Not yet: the terrain and the water levels from a survey, a theme park's coasters and woods (ENGINE.md step 3: they
-// follow).
+//   - a theme park's coaster tracks (load/Coasters.hpp), where its rides' profiles are given, and a park's or a zoo's
+//     planted woods (load/Woods.hpp), once for the region.
+// Not yet: the terrain and the water levels from a survey.
 //
 // As load_amsterdam, what the renders cannot load the core loads on: a coastline way without a geometry and a node
 // without a position are left out; a position off the Earth refuses the document.
 #pragma once
 
 #include "load/Amsterdam.hpp"
+#include "load/Coasters.hpp"
 #include "load/Scene.hpp"
 #include "load/Tradition.hpp"
+#include "load/Woods.hpp"
 #include "osm/Overpass.hpp"
 #include "tiles/Sections.hpp"
 
@@ -42,6 +45,11 @@ struct RegionConfig {
     /// region.json's `tradition`, read (render/traditions/<id>.json), or null for none.
     std::shared_ptr<const Tradition> tradition;
     Palette palette;
+    /// A theme park's rides' profiles (region.json's `park`: data/park/<park>/pf), whose coaster tracks it loads; null
+    /// for a region that is no theme park.
+    const RideProfiles* park = nullptr;
+    /// Whether it plants its woods: a theme park or a zoo (region.json's `park` or `zoo`).
+    bool woods = false;
 };
 
 /// regions.py's PALETTE for a region (Paris, Schiphol, the port), else Amsterdam's.

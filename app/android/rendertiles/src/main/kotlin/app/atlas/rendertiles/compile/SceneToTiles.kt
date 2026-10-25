@@ -1,6 +1,7 @@
 package app.atlas.rendertiles.compile
 
 import app.atlas.render.Amsterdam
+import app.atlas.render.Coasters
 import app.atlas.render.PoiStyle
 import app.atlas.render.PyRe
 import app.atlas.render.Real
@@ -53,8 +54,8 @@ import java.util.IdentityHashMap
  * exceptions) and the label candidates: blocks of buildings, roads by class and the rest of a coarse level's
  * generalisation come with K21.
  *
- * What a scene holds that the tiles cannot yet carry (a theme park's coasters and woods, terrain, the relief) fails the
- * build with its name, rather than being left out unnoticed.
+ * What a scene holds that the tiles cannot yet carry (terrain, the relief) fails the build with its name, rather than
+ * being left out unnoticed.
  */
 class SceneToTiles(
     private val scene: LiveScene,
@@ -100,9 +101,9 @@ class SceneToTiles(
     /** What a scene can hold that the tiles do not carry yet: the build fails rather than drop it. */
     private fun unsupported() {
         val later = mapOf(
-            "coasters" to "a theme park's coaster tracks (K15)", "woods" to "a park's planted woods (K15)", "dem" to "a survey's heights (K28)",
+            "dem" to "a survey's heights (K28)",
             "_terrain" to "a region drawn on its terrain (K28)", "_flat" to "the relief (K28)", "_lines" to "lines draped on terrain (K28)",
-            "_grid" to "a terrain grid (K28)", "_coaster_items" to "a theme park's coaster tracks (K15)",
+            "_grid" to "a terrain grid (K28)",
         )
         val found = later.filterKeys { k -> truthy(S[k]) }
         if (found.isNotEmpty()) throw UnsupportedOperationException("${region.id}: render tiles cannot carry ${found.values.joinToString()} yet")
@@ -555,6 +556,15 @@ class SceneToTiles(
                 out += linePending(Layer.LINE, fields, g, (source.toLong() shl 40) or i.toLong(), pad, top)
             }
         }
+        // a theme park's coaster tracks: their kind, and their heights as their doubles' bits
+        @Suppress("UNCHECKED_CAST")
+        val coasters = (S["coasters"] as List<Coasters.Track>?) ?: emptyList()
+        for ((i, tr) in coasters.withIndex()) {
+            val line = geom(tr.pts) { "coaster track $i" }
+            val fields = linkedMapOf<String, Any?>("source" to 9, "index" to i, "line" to line, "kind" to tr.kind, "ys" to tr.ys.map { it.toRawBits() })
+            val (pad, top) = Drawn.coaster(tr.ys)
+            out += linePending(Layer.LINE, fields, line, (9L shl 40) or i.toLong(), pad, top)
+        }
         return out
     }
 
@@ -575,6 +585,9 @@ class SceneToTiles(
                 "h", "crown", "gy" -> fields[k] = if (v == null) null else v as? Double ?: noColumn(Layer.TREE, k, v, what)
                 "guessed" -> tagMap(v).let { g -> if (g.values.all { it == true }) fields["guessed"] = g.keys.toList() else noColumn(Layer.TREE, k, v, what) }
                 "tags" -> fields.putAll(tagFields(Layer.TREE, tagMap(v)))
+                // a tree that is also a place (poi_style): the renders read a node's style only for the shopfront on
+                // its building's facade (facade_details), which a region does not draw
+                "style" -> if (facades) noColumn(Layer.TREE, k, v, what)
                 else -> drop(Layer.TREE, k, v, what)
             }
             val h = (n["h"] as? Double) ?: Drawn.TREE_H
@@ -687,7 +700,8 @@ class SceneToTiles(
                 "x", "z" -> {}
                 "id" -> fields["id"] = (v as Number).toLong()
                 "poly" -> if (v != null) { poly = geom(pointList(v), what); fields["poly"] = poly }
-                "h", "rotor" -> fields[k] = if (v == null) null else v as? Double ?: noColumn(Layer.ITEM, k, v, what)
+                "h", "rotor", "crown" -> fields[k] = if (v == null) null else v as? Double ?: noColumn(Layer.ITEM, k, v, what)
+                "generic" -> {} // a wood's tree: planted, not mapped (every one is)
                 "tags" -> fields["tags"] = allTags(tagMap(v))
                 else -> drop(Layer.ITEM, k, v, what)
             }
@@ -716,6 +730,8 @@ class SceneToTiles(
             val (pos, h) = e.value
             item(3, i, linkedMapOf("x" to pos.x, "z" to pos.y, "id" to e.key, "h" to h)) { "pylon $i" }
         }
+        // the trees a park or a zoo plants in its woods, planted once for the region
+        for ((i, t) in PlantedWoods.of(S, lat0, lon0, kx, kz).withIndex()) item(5, i, t) { "wood tree $i" }
         return out
     }
 
