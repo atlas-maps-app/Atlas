@@ -40,6 +40,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -175,11 +176,12 @@ struct QuayFace {
 /// One element of the water's reflections (Amsterdam.reflections, drawn far to near in `<g filter="url(#ripple)"
 /// opacity=".92">`, .95 at night), each its own path: a building's mirrored wall (its own .3 stroke edging it), a
 /// gable's mirrored triangle, a building's window rows (one path at .55), or a tree's five circles (`<g
-/// filter="url(#leaf)">`); its drawn tile, its faces or circles (GroundFrame::reflection_faces and
-/// reflection_circles: a wall's or a gable's one face, the rows' several), its colour as drawn now, and where its
-/// light follows a sample (a wall's, a gable's), its lit and unlit colours and that sample.
+/// filter="url(#leaf)">`); then at night the streaks, each an ellipse of the streak gradient; its drawn tile, its
+/// faces, circles or streak (GroundFrame::reflection_faces, reflection_circles and reflection_streaks: a wall's or a
+/// gable's one face, the rows' several), its colour as drawn now, and where its light follows a sample (a wall's, a
+/// gable's), its lit and unlit colours and that sample.
 struct Reflection {
-    enum class Kind : std::uint8_t { wall, gable, windows, tree };
+    enum class Kind : std::uint8_t { wall, gable, windows, tree, streak };
     Kind kind = Kind::wall;
     std::uint32_t tile = 0;
     std::uint32_t first = 0;
@@ -202,6 +204,15 @@ struct ReflectionCircle {
     double cx = 0;
     double cy = 0;
     double r = 0;
+};
+
+/// A night streak on the water: its ellipse (CSS px) and opacity, as the SVG prints them at rest.
+struct ReflectionStreak {
+    double cx = 0;
+    double cy = 0;
+    double rx = 0;
+    double ry = 0;
+    double opacity = 0;
 };
 
 /// A fill's decision byte: drawn (at the street's height for the water), drawn at its water level.
@@ -286,6 +297,7 @@ struct GroundFrame {
     std::vector<Reflection> reflections;
     std::vector<ReflectionFace> reflection_faces;
     std::vector<ReflectionCircle> reflection_circles;
+    std::vector<ReflectionStreak> reflection_streaks;
     /// Whether this frame's decisions are the last frame's, kept: the camera rests as it did, over the same tiles.
     bool kept = false;
     /// render's #sky and #wgrad rows (y1 and y2 as the SVG prints them), the horizon's row.
@@ -553,8 +565,12 @@ private:
     void record_quays(const frame::Recording& r);
     // Reflections.cpp
     /// Amsterdam.reflections at the frame: each mirrored building's walls facing the camera, their gables and window
-    /// rows, and the trees beside the water, as face() keeps them, far to near (frame_.reflections).
+    /// rows, and the trees beside the water, as face() keeps them, far to near; then at night the streaks of the street
+    /// lamps and the lit roads (frame_.reflections).
     void decide_reflections(const view::Camera& cam, const frame::FrameState& state);
+    /// The reflections' night streaks, after the sorted elements: the street lamps' and the lit roads' where the eye
+    /// sees their reflection through the water and on the picture; `near_water` tests the drawn tiles' quay edges.
+    void decide_streaks(const view::Camera& cam, const std::function<bool(double, double, double)>& near_water);
     /// The reflections' records into the frame's words (each face its own, a tree's circles each), their colours lit
     /// and unlit mixed by their samples' bits and the tiles' fades.
     void write_reflections(std::vector<std::uint32_t>& words);

@@ -10,8 +10,12 @@
 // level's on every wall over 2.2 m, one path at .55; and every tree within 9 m of a quay edge, from 30 m on, five
 // circles (random.Random(its id)) in `<g filter="url(#leaf)">`. Each as face() keeps it (Camera.poly at 300 px of
 // margin, 0.12 px² of area at least; a window row over 0.3), sorted far to near by its building's (its tree's)
-// mirrored middle, a gable 0.01 nearer and the rows 0.02. The night's streaks, the ripple and leaf filters are still to
-// come, and so is the air's haze at eye level (`_hz`), which the buildings do not take yet either.
+// mirrored middle, a gable 0.01 nearer and the rows 0.02. At night, after them, the streaks: each street lamp within
+// the radius cut (S['nodes']'s order) and each lit road's point within it and within 12 m of a quay edge (S['roads']'s,
+// every 13 m or so along each segment), where the eye sees its reflection (4.5 m up for a lamp, 5.5 for a road)
+// through the water and on the picture, an ellipse of the streak gradient below it, its size, place and opacity drawn
+// from one random.Random(5) in that order. The ripple and leaf filters are still to come, and so is the air's haze at
+// eye level (`_hz`), which the buildings do not take yet either.
 //
 // On the GPU each face is a record of the quay walls' layout at its element's painter slot (a tree's circle its
 // centre and radius in CSS px), drawn in the renders' order in the translucent phase at the reflections' order, inside
@@ -100,6 +104,31 @@ private:
     std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> cells_;
 };
 
+/// on_water(S, x, z): (x, z) within one of the drawn tiles' water rings (S['water']: its pieces there, the islands
+/// aside), each tested as real.py's pip tests a ring.
+[[nodiscard]] bool on_water(const GroundFrame& f, double x, double z) {
+    for (const DrawnTile& t : f.tiles) {
+        const geo::GroundTile& g = *t.ground;
+        for (const geo::Fill& fill : g.fills) {
+            if (fill.kind != geo::FillKind::water || fill.hole) continue;
+            if (x < fill.x0 || x > fill.x1 || z < fill.z0 || z > fill.z1) continue;
+            const std::span<const geo::P2> r = std::span(g.points).subspan(fill.first, fill.count);
+            bool ins = false;
+            std::size_t j = r.size() - 1;
+            for (std::size_t i = 0; i < r.size(); ++i) {
+                const geo::P2& a = r[i];
+                const geo::P2& b = r[j];
+                if (((a.z > z) != (b.z > z)) && x < (((b.x - a.x) * (z - a.z)) / ((b.z - a.z) + 1e-12)) + a.x) {
+                    ins = !ins;
+                }
+                j = i;
+            }
+            if (ins) return true;
+        }
+    }
+    return false;
+}
+
 /// A colour of the style (0xRRGGBB) as the port's hx reads it.
 [[nodiscard]] shaders::double3 rgb_of(std::uint32_t c) noexcept {
     return {static_cast<double>((c >> 16U) & 0xFFU), static_cast<double>((c >> 8U) & 0xFFU),
@@ -125,10 +154,16 @@ struct Ranked {
 [[nodiscard]] std::uint32_t bits_of(float v) noexcept { return std::bit_cast<std::uint32_t>(v); }
 
 /// A record's flags (ground.slang's REFLECTION_ flags): edged by its own .3 stroke (QUAY_STROKE's), a window row at its
-/// opacity, a tree's circle.
+/// opacity, a tree's circle, a night streak's ellipse.
 constexpr std::uint32_t reflection_stroke = 1;
 constexpr std::uint32_t reflection_sheer = 2;
 constexpr std::uint32_t reflection_circle = 4;
+constexpr std::uint32_t reflection_ellipse = 8;
+
+/// A streak gradient's stop as the twin carries it: its colour with its opacity in the alpha byte.
+[[nodiscard]] std::uint32_t stop_argb(std::uint32_t rgb, double opacity) noexcept {
+    return (static_cast<std::uint32_t>(std::lround(opacity * 255.0)) << 24U) | (rgb & 0xFF'FFFFU);
+}
 
 } // namespace
 
@@ -137,6 +172,7 @@ void Ground::decide_reflections(const view::Camera& cam, const frame::FrameState
     f.reflections.clear();
     f.reflection_faces.clear();
     f.reflection_circles.clear();
+    f.reflection_streaks.clear();
     // drawn inside the water's clip (`if not r1: return ''`), with weather alone
     if (!f.weather || !f.water || no_reflections_ || only_setts_) return;
     const shaders::Theme& theme = state.block.theme;
@@ -289,7 +325,12 @@ void Ground::decide_reflections(const view::Camera& cam, const frame::FrameState
         }
     }
     std::ranges::stable_sort(trees, {}, &Tree::order);
-    std::optional<EdgeCells> edges;
+    // the drawn tiles' quay edges, filed once for every near_water test (a tree's 9 m, a lit road's 12)
+    std::optional<EdgeCells> edge_cells;
+    const auto edges = [&]() -> const EdgeCells& {
+        if (!edge_cells) edge_cells.emplace(f, 12.0);
+        return *edge_cells;
+    };
     for (const Tree& tr : trees) {
         const geo::GroundTile& g = *f.tiles[tr.tile].ground;
         const sun::TileTrees& tt = g.casters->trees;
@@ -297,8 +338,7 @@ void Ground::decide_reflections(const view::Camera& cam, const frame::FrameState
         const double z = tt.z[tr.tree];
         const view::Vec3 k = cam.cam({x, (2 * g.water_y) - (tt.h[tr.tree] * 0.68), z});
         if (k.z < 30) continue; // from 30 m on (and so 2 m ahead)
-        if (!edges) edges.emplace(f, 9.0);
-        if (!edges->near(x, z, 9.0)) continue;
+        if (!edges().near(x, z, 9.0)) continue;
         const view::Vec2 p = cam.pc(k);
         const double rr = (((tt.crown[tr.tree] / 2) * 0.9) * cam.focal()) / k.z;
         pm::PyRandom rnd(tt.id[tr.tree]);
@@ -321,6 +361,80 @@ void Ground::decide_reflections(const view::Camera& cam, const frame::FrameState
     std::ranges::stable_sort(ranked, [](const Ranked& a, const Ranked& b) { return a.depth > b.depth; });
     f.reflections.reserve(ranked.size());
     for (const Ranked& r : ranked) f.reflections.push_back(r.element);
+    if (night) decide_streaks(cam, [&](double x, double z, double d) { return edges().near(x, z, d); });
+}
+
+void Ground::decide_streaks(const view::Camera& cam, const std::function<bool(double, double, double)>& near_water) {
+    GroundFrame& f = frame_;
+    // the street lamps (S['nodes']'s order), then the lit roads (S['roads']'s), across the drawn tiles
+    struct Source {
+        std::uint32_t order;
+        std::uint32_t tile;
+        std::uint32_t k;
+    };
+    std::vector<Source> lamps;
+    std::vector<Source> roads;
+    for (std::uint32_t ti = 0; ti < f.tiles.size(); ++ti) {
+        const geo::GroundTile& g = *f.tiles[ti].ground;
+        for (std::uint32_t k = 0; k < g.lamps.size(); ++k) {
+            lamps.push_back({.order = g.lamps[k].index, .tile = ti, .k = k});
+        }
+        for (std::uint32_t k = 0; k < g.lit_roads.size(); ++k) {
+            roads.push_back({.order = g.lit_roads[k].index, .tile = ti, .k = k});
+        }
+    }
+    if (lamps.empty() && roads.empty()) return;
+    std::ranges::stable_sort(lamps, {}, &Source::order);
+    std::ranges::stable_sort(roads, {}, &Source::order);
+    pm::PyRandom rnd(5);
+    const view::Vec3 eye = cam.eye();
+    // streak(x, yl, z, k): where the eye's ray to the mirrored light meets the water, on it, ahead and on the picture
+    const auto streak = [&](std::uint32_t tile, double x, double yl, double z, double k) {
+        const double wy = f.tiles[tile].ground->water_y;
+        const double my = (2 * wy) - yl;
+        const double dy = my - eye.y;
+        if (dy >= 0) return;
+        const double t = (wy - eye.y) / dy;
+        if (!on_water(f, eye.x + ((x - eye.x) * t), eye.z + ((z - eye.z) * t))) return;
+        const view::Vec3 c = cam.cam({x, my, z});
+        if (c.z < 2) return;
+        const view::Vec2 p = cam.pc(c);
+        const double s = cam.focal() / c.z;
+        const bool shown = -20 < p.x && p.x < cam.width() + 20 && -40 < p.y && p.y < cam.height() + 40;
+        if (!shown) return;
+        const double j = rnd.random();
+        const double cx = p.x + (rnd.uniform(-1, 1) * s);
+        const double cy = p.y + ((3 + (3 * j)) * s);
+        const double rx = pm::max(0.5, rnd.uniform(0.35, 0.8) * s);
+        const double ry = pm::max(2.5, (4 + (6 * j)) * s);
+        const double op = k * rnd.uniform(0.45, 1);
+        f.reflections.push_back({.kind = Reflection::Kind::streak,
+                                 .tile = tile,
+                                 .first = static_cast<std::uint32_t>(f.reflection_streaks.size()),
+                                 .count = 1});
+        f.reflection_streaks.push_back(f.exact
+                                           ? ReflectionStreak{.cx = printed(cx, 1),
+                                                              .cy = printed(cy, 1),
+                                                              .rx = printed(rx, 2),
+                                                              .ry = printed(ry, 1),
+                                                              .opacity = printed(op, 2)}
+                                           : ReflectionStreak{.cx = cx, .cy = cy, .rx = rx, .ry = ry, .opacity = op});
+    };
+    for (const Source& l : lamps) {
+        const geo::P2& at = f.tiles[l.tile].ground->lamps[l.k].at;
+        if (f.engine && beyond_radius(at.x, at.z, f.target_x, f.target_z, f.radius)) continue;
+        streak(l.tile, at.x, 4.5, at.z, 0.95);
+    }
+    for (const Source& r : roads) {
+        const geo::GroundTile& g = *f.tiles[r.tile].ground;
+        const geo::LitRoad& road = g.lit_roads[r.k];
+        for (std::uint32_t i = 0; i < road.count; ++i) {
+            const geo::P2& q = g.lit_points[road.first + i];
+            if (f.engine && beyond_radius(q.x, q.z, f.target_x, f.target_z, f.radius)) continue;
+            if (!near_water(q.x, q.z, 12.0)) continue;
+            streak(r.tile, q.x, 5.5, q.z, 0.7);
+        }
+    }
 }
 
 void Ground::write_reflections(std::vector<std::uint32_t>& words) {
@@ -340,6 +454,21 @@ void Ground::write_reflections(std::vector<std::uint32_t>& words) {
         if (!t.pass->ranges[1] && !t.pass->ranges[0]) continue;
         const geo::GroundTile& g = *t.ground;
         const std::uint32_t slot_value = slot(geo::group::reflection, static_cast<std::uint32_t>(j), 0);
+        if (e.kind == Reflection::Kind::streak) {
+            // its ellipse and opacity, and the gradient's three stops (colour and opacity, a byte each)
+            const ReflectionStreak& k = frame_.reflection_streaks[e.first];
+            const tiles::ReflectionsStyle& rs = g.reflection_style;
+            head(e.tile, slot_value, 0U, reflection_ellipse);
+            for (const double v : {k.cx, k.cy, k.rx, k.ry, k.opacity}) words.push_back(bits_of(static_cast<float>(v)));
+            for (std::size_t i = 0; i < 3; ++i) {
+                const std::uint32_t argb = stop_argb(rs.streak[i], rs.streak_opacity[i]);
+                // RGBA8, r in the low byte
+                words.push_back(((argb >> 16U) & 0xFFU) | (argb & 0xFF00U) | ((argb & 0xFFU) << 16U) |
+                                (argb & 0xFF00'0000U));
+            }
+            words.insert(words.end(), 4, 0U);
+            continue;
+        }
         if (e.kind == Reflection::Kind::tree) {
             const std::uint32_t colour = lit_mix(e.colour, e.colour, 0.0);
             for (std::uint32_t k = 0; k < e.count; ++k) {
@@ -402,6 +531,8 @@ void Ground::emit_reflections(const frame::FrameState& state, twin::Stream& out,
                             .filter = out.filter("ripple")},
                    .parent = water});
     const std::int32_t leaf = out.filter("leaf");
+    // the streaks' radialGradient (objectBoundingBox), once a frame where one is drawn
+    std::int32_t streak = twin::none;
     std::vector<twin::Point> points;
     std::vector<std::uint32_t> ends;
     std::vector<twin::Subpath> subpaths;
@@ -411,6 +542,26 @@ void Ground::emit_reflections(const frame::FrameState& state, twin::Stream& out,
         const std::uint32_t slot_value = slot(geo::group::reflection, static_cast<std::uint32_t>(j), 0);
         twin::Style s;
         s.fill = twin::Paint::colour(0xFF00'0000U | e.colour);
+        if (e.kind == Reflection::Kind::streak) {
+            if (streak == twin::none) {
+                const std::array<float, 3> offsets{0.0F, 0.5F, 1.0F};
+                const std::array<std::uint32_t, 3> colours{stop_argb(rs.streak[0], rs.streak_opacity[0]),
+                                                           stop_argb(rs.streak[1], rs.streak_opacity[1]),
+                                                           stop_argb(rs.streak[2], rs.streak_opacity[2])};
+                streak = out.gradient({.id = "streak",
+                                       .radial = true,
+                                       .coords = {0.5F, 0.5F, 0.5F, 0.5F, 0.5F},
+                                       .units = twin::Units::bounding_box,
+                                       .offsets = offsets,
+                                       .colours = colours});
+            }
+            const ReflectionStreak& k = f.reflection_streaks[e.first];
+            out.at(slot_value, ripple);
+            s.fill = twin::Paint::gradient(streak);
+            out.ellipse(s, static_cast<float>(k.cx), static_cast<float>(k.cy), static_cast<float>(k.rx),
+                        static_cast<float>(k.ry), {.opacity = static_cast<float>(k.opacity)});
+            continue;
+        }
         if (e.kind == Reflection::Kind::tree) {
             // `<g fill="…" filter="url(#leaf)">` and its five circles
             out.at(slot_value, out.group({.node = {.filter = leaf}, .parent = ripple}));

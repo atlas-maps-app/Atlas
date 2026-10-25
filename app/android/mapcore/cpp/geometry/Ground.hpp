@@ -278,6 +278,22 @@ struct Stroke {
     OrderKey key;
 };
 
+/// A street lamp the night's streaks on the water start from (S['nodes']'s highway=street_lamp): its place in
+/// S['nodes'] and where it stands.
+struct Lamp {
+    std::uint32_t index = 0;
+    P2 at;
+};
+
+/// A lit road the night's streaks start from (S['roads']'s lit=yes): its place in S['roads'] and its points' first and
+/// count in the tile's lit_points, along each of its segments as the streaks' loop walks it (from 4 m, then 13 m and
+/// (k · 7.3) mod 6 more each time).
+struct LitRoad {
+    std::uint32_t index = 0;
+    std::uint32_t first = 0;
+    std::uint32_t count = 0;
+};
+
 /// A water edge that carries a quay wall (the tile's quay layer, a row each: water_edges(S), each edge in the tile of
 /// its midpoint): its ends, its normal into the water (the wall's), its water's level and its place in water_edges; a
 /// row without two vertices has none (`drawn` false).
@@ -487,6 +503,10 @@ struct GroundTile {
     /// pack's style.
     double water_y = -1.5;
     tiles::ReflectionsStyle reflection_style;
+    /// The night's streaks on the water: the tile's street lamps, its lit roads and their points.
+    std::vector<Lamp> lamps;
+    std::vector<LitRoad> lit_roads;
+    std::vector<P2> lit_points;
     tiles::StyleRgb quay_colour = 0;
     tiles::StyleRgb quay_coping = 0;
     tiles::DayNight quay_waterline;

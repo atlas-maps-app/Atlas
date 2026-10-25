@@ -132,6 +132,7 @@ class EngineStyleTest {
                 listOf("reflections.trees_day", "reflections.trees_night"), amsterdam,
                 """val col = if (!night) "${value("reflections.trees_day")}" else "${value("reflections.trees_night")}"""",
             ),
+            Triple(listOf("reflections.streak", "reflections.streak_opacity"), amsterdam, streak()),
             Triple(listOf("marine"), regions, marine(0, "to %s")),
             Triple(listOf("marine"), regions, marine(1, "to \"%s\"")),
             Triple(
@@ -341,6 +342,15 @@ class EngineStyleTest {
     @Suppress("UNCHECKED_CAST")
     private fun marine(column: Int, format: String): String =
         (t["marine"] as Map<String, List<Any?>>).entries.joinToString(", ", "mapOf(", ")") { (kind, v) -> "\"$kind\" " + format.format(v[column]) }
+
+    /** The water layer's night streak gradient as the port defines it: its three stops at 0, .5 and 1, each opacity as the SVG prints it. */
+    private fun streak(): String {
+        val c = value("reflections.streak") as List<*>
+        val o = (value("reflections.streak_opacity") as List<*>).map { (it as Double).let { d -> if (d == 0.0) "0" else d.toString().removePrefix("0") } }
+        return """<radialGradient id=\"streak\"><stop offset=\"0\" stop-color=\"${c[0]}\" stop-opacity=\"${o[0]}\"/>""" +
+            """<stop offset=\".5\" stop-color=\"${c[1]}\" stop-opacity=\"${o[1]}\"/>""" +
+            """<stop offset=\"1\" stop-color=\"${c[2]}\" stop-opacity=\"${o[2]}\"/></radialGradient>"""
+    }
 
     @Test
     fun `the file names no table the packer writes itself`() {

@@ -149,4 +149,16 @@ namespace atlas::test {
     return b;
 }
 
+/// The live map's night (amsterdam.py's night with the hour's weather): the fixed night's colours, with weather and
+/// the water's gradient (th['water_top'] and th['water_bot'] of the live night).
+[[nodiscard]] inline style::ThemeBlock night_weather() {
+    style::ThemeBlock b = night();
+    b.flags = style::theme_flag::night | style::theme_flag::weather | style::theme_flag::water_gradient;
+    b.weather_code = 3;
+    b.water_top = {.r = 0x13, .g = 0x1B, .b = 0x2A, .a = 255};
+    b.water_bottom = {.r = 0x03, .g = 0x06, .b = 0x0B, .a = 255};
+    b.visibility = 24000.0;
+    return b;
+}
+
 } // namespace atlas::test

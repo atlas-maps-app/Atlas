@@ -985,6 +985,7 @@ struct QuayOut {
     nointerpolation float4 p01 : TEXCOORD0; // the polygon's points 0 and 1, device px of the view
     nointerpolation float4 p23 : TEXCOORD1; // points 2 and 3
     nointerpolation float4 p4 : TEXCOORD2;  // point 4, the half width (device px) and the point count
+    nointerpolation uint4 extra : TEXCOORD3; // a streak's opacity (its float's bits) and its gradient's three stops
 };
 
 /// Corner i of a quay face's record from word `at`, in its tile's metres.
@@ -1003,6 +1004,7 @@ QuayOut face_vs(uint at, uint vertex) {
     o.p01 = float4(0.0f, 0.0f, 0.0f, 0.0f);
     o.p23 = float4(0.0f, 0.0f, 0.0f, 0.0f);
     o.p4 = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    o.extra = uint4(0u, 0u, 0u, 0u);
     // Camera.poly's near clip: each corner ahead of the near plane, and where an edge crosses it
     float near = frame.camera.frame.w;
     float2 p[5] = {float2(0.0f, 0.0f), float2(0.0f, 0.0f), float2(0.0f, 0.0f), float2(0.0f, 0.0f), float2(0.0f, 0.0f)};
@@ -1096,38 +1098,56 @@ StrokeOutput quay_fs(QuayOut q) {
 
 // ---------------------------------------------------------------- the water's reflections (passes/Reflections.cpp)
 //
-// A reflection's face is a record of the quay walls' layout (its corners mirrored in the water's plane), or a tree's
-// circle (REFLECTION_CIRCLE: its centre and radius in CSS px, words 4 to 6). Drawn in the renders' order inside the
-// water's clip, a sample takes what the reflections' group would composite there over the water: the face's colour at
-// the group's opacity over wgrad's at the pixel (push.rows: wgrad's rows, the group's opacity, the window rows'),
-// opaque, or a window row's (REFLECTION_SHEER) at its opacity over what lies under it, premultiplied; the pipeline
+// A reflection's face is a record of the quay walls' layout (its corners mirrored in the water's plane), a tree's
+// circle (REFLECTION_CIRCLE: its centre and radius in CSS px, words 4 to 6), or a night streak (REFLECTION_ELLIPSE:
+// its centre and radii in CSS px, words 4 to 7, its opacity, word 8, and its radial gradient's stops at 0, .5 and 1,
+// words 9 to 11, RGBA8 with the stop's opacity in its alpha). Drawn in the renders' order inside the water's clip, a
+// sample takes what the reflections' group would composite there over the water: the face's colour at the group's
+// opacity over wgrad's at the pixel (push.rows: wgrad's rows, the group's opacity, the window rows'), opaque, or a
+// window row's (REFLECTION_SHEER) or a streak's at its opacity over what lies under it, premultiplied; the pipeline
 // writes the slot's depth, so the faces of one path (a building's window rows) blend once.
 
-/// A reflection's flags besides QUAY_STROKE: a window row at its opacity, a tree's circle.
+/// A reflection's flags besides QUAY_STROKE: a window row at its opacity, a tree's circle, a night streak.
 static const uint REFLECTION_SHEER = 2u;
 static const uint REFLECTION_CIRCLE = 4u;
+static const uint REFLECTION_ELLIPSE = 8u;
+
+/// A streak's radialGradient at distance t (0 to 1 of the ellipse): its stops at 0, .5 and 1, each channel and the
+/// opacity interpolated apart (as the mast glow's).
+float4 streak_at(float t, float4 s0, float4 s1, float4 s2) {
+    float u = saturate(t);
+    if (u <= 0.5f) {
+        float k = u / 0.5f;
+        return float4(lerp(s0.rgb, s1.rgb, k), lerp(s0.a, s1.a, k));
+    }
+    float k = (u - 0.5f) / 0.5f;
+    return float4(lerp(s1.rgb, s2.rgb, k), lerp(s1.a, s2.a, k));
+}
 
 [shader("vertex")]
 QuayOut reflection_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInstanceID) {
     uint at = push.mode.z + instance * QUAY_WORDS;
     uint flags = words[at + 3u];
-    if ((flags & REFLECTION_CIRCLE) == 0u) {
+    if ((flags & (REFLECTION_CIRCLE | REFLECTION_ELLIPSE)) == 0u) {
         QuayOut f = face_vs(at, vertex);
         f.colour.a = (flags & REFLECTION_SHEER) != 0u ? 0.0f : 1.0f;
         return f;
     }
-    // a circle: its box grown by a pixel, its centre and radius in device px (no points)
+    // a circle or an ellipse: its box grown by a pixel, its centre and radii in device px (no points; a circle's second
+    // radius 0); a streak's colour alpha 2, its opacity and stops beside
+    bool ellipse = (flags & REFLECTION_ELLIPSE) != 0u;
     float density = frame.camera.frame.z;
     float2 c = float2(asfloat(words[at + 4u]), asfloat(words[at + 5u])) * density;
-    float r = asfloat(words[at + 6u]) * density;
+    float2 r = float2(asfloat(words[at + 6u]), asfloat(words[at + (ellipse ? 7u : 6u)])) * density;
     float2 k = quad_corners[vertex];
-    float2 device = c + float2(k.x < 0.0f ? -(r + 1.0f) : r + 1.0f, k.y < 0.0f ? -(r + 1.0f) : r + 1.0f);
+    float2 device = c + float2(k.x < 0.0f ? -(r.x + 1.0f) : r.x + 1.0f, k.y < 0.0f ? -(r.y + 1.0f) : r.y + 1.0f);
     QuayOut o;
     o.position = clip_of(frame.camera, device / density, 1.0f, painter_depth(frame.camera, words[at + 1u]));
-    o.colour = float4(unpack(words[at + 2u]).rgb, 1.0f);
-    o.p01 = float4(c, r, 0.0f);
+    o.colour = float4(unpack(words[at + 2u]).rgb, ellipse ? 2.0f : 1.0f);
+    o.p01 = float4(c, r.x, ellipse ? r.y : 0.0f);
     o.p23 = float4(0.0f, 0.0f, 0.0f, 0.0f);
     o.p4 = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    o.extra = ellipse ? uint4(words[at + 8u], words[at + 9u], words[at + 10u], words[at + 11u]) : uint4(0u, 0u, 0u, 0u);
     return o;
 }
 
@@ -1139,17 +1159,34 @@ StrokeOutput reflection_fs(QuayOut q) {
     float2 corner = floor(q.position.xy);
     uint n = push.mode.w;
     uint mask = 0u;
+    bool ellipse = q.colour.a > 1.5f;
     for (uint i = 0u; i < n; ++i) {
         float2 at = n == 4u ? samples4[i] : (n == 2u ? samples2[i] : float2(0.5f, 0.5f));
         float2 x = device_at(corner + at);
-        bool inside = m == 0u ? length(x - q.p01.xy) <= q.p01.z : in_quay(pts, m, q.p4.z, x);
+        bool inside;
+        if (m != 0u) {
+            inside = in_quay(pts, m, q.p4.z, x);
+        } else if (ellipse) {
+            float2 d = (x - q.p01.xy) / q.p01.zw;
+            inside = dot(d, d) <= 1.0f;
+        } else {
+            inside = length(x - q.p01.xy) <= q.p01.z;
+        }
         if (inside) mask |= 1u << i;
     }
     if (mask == 0u) discard;
     float2 css = css_of_output(frame.camera, q.position.xy);
     float3 water = gradient_at(css.y).rgb;
+    float3 colour = q.colour.rgb;
     float a = q.colour.a > 0.5f ? 1.0f : push.rows.w;
-    float3 rgb = lerp(water, q.colour.rgb, push.rows.z);
+    if (ellipse) {
+        // the streak's gradient at the pixel's centre, at its opacity
+        float2 d = (device_at(corner + float2(0.5f, 0.5f)) - q.p01.xy) / q.p01.zw;
+        float4 g = streak_at(sqrt(dot(d, d)), unpack(q.extra.y), unpack(q.extra.z), unpack(q.extra.w));
+        colour = g.rgb;
+        a = g.a * asfloat(q.extra.x);
+    }
+    float3 rgb = lerp(water, colour, push.rows.z);
     StrokeOutput o;
     o.colour = float4(rgb * a, a);
     o.coverage = mask;

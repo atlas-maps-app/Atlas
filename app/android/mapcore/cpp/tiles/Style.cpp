@@ -73,6 +73,29 @@ public:
         return {number_of(v->child(0), table, key), number_of(v->child(1), table, key)};
     }
 
+    /// The value `key` of table `t` as three colours and as three numbers (a list of three).
+    [[nodiscard]] std::array<StyleRgb, 3> colours3(const std::optional<Value>& t, std::string_view table,
+                                                   std::string_view key) {
+        const auto v = list3(t, table, key);
+        if (!v) return {};
+        return {colour_of(v->child(0), table, key), colour_of(v->child(1), table, key),
+                colour_of(v->child(2), table, key)};
+    }
+    [[nodiscard]] std::array<double, 3> numbers3(const std::optional<Value>& t, std::string_view table,
+                                                 std::string_view key) {
+        const auto v = list3(t, table, key);
+        if (!v) return {};
+        return {number_of(v->child(0), table, key), number_of(v->child(1), table, key),
+                number_of(v->child(2), table, key)};
+    }
+    [[nodiscard]] std::optional<Value> list3(const std::optional<Value>& t, std::string_view table,
+                                             std::string_view key) {
+        const auto v = at(t, table, key);
+        if (!v) return std::nullopt;
+        if (v->type() != ValueType::list || v->size() != 3) return fail(Fault::bad_value, table, key);
+        return v;
+    }
+
     /// Each entry of map `t` (named `table`) as a colour, in its order.
     void colours(const std::optional<Value>& t, std::string_view table,
                  std::vector<std::pair<std::string, StyleRgb>>& out) {
@@ -202,6 +225,8 @@ Result<Style> Style::of(const StyleTables& tables) {
     s.reflections.windows = r.day_night(mirrored, "reflections", "windows_day", "windows_night");
     s.reflections.windows_opacity = r.number(mirrored, "reflections", "windows_opacity");
     s.reflections.trees = r.day_night(mirrored, "reflections", "trees_day", "trees_night");
+    s.reflections.streak = r.colours3(mirrored, "reflections", "streak");
+    s.reflections.streak_opacity = r.numbers3(mirrored, "reflections", "streak_opacity");
     const auto parks = r.table("park_edges");
     s.park_edges = r.day_night(parks, "park_edges", "day", "night");
     s.park_edges_width = r.number(parks, "park_edges", "width");

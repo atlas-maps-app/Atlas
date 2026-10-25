@@ -184,6 +184,7 @@ public:
         lines();
         water();
         quays();
+        streaks();
         out_.water_y = style_.water_y;
         out_.reflection_style = style_.reflections;
     }
@@ -821,6 +822,46 @@ private:
         out_.tone = style_.tone;
     }
 
+    /// The night's streaks' sources (amsterdam.py's reflections): the street lamps, and each lit road's points as the
+    /// streaks' loop walks each of its segments: from k = 4 m while k is short of the segment's length, then 13 m and
+    /// (k · 7.3) mod 6 more.
+    void streaks() {
+        const tl::Frame& f = head_.frame;
+        if (const tl::Layer* l = tile_.layer(tl::LayerId::thing)) {
+            for (std::uint32_t i = 0; i < l->count; ++i) {
+                const std::optional<std::string_view> hw = l->string(tl::thing::tag_highway, i);
+                if (!hw || *hw != "street_lamp") continue;
+                const tl::GridPoint p = l->point(tl::thing::pos, i);
+                out_.lamps.push_back({.index = static_cast<std::uint32_t>(l->integer(tl::thing::index, i)),
+                                      .at = {.x = f.x(p.lon), .z = f.z(p.lat)}});
+            }
+        }
+        const tl::Layer* l = tile_.layer(tl::LayerId::road);
+        if (l == nullptr) return;
+        const std::uint8_t lit = l->schema->slot("tag:lit");
+        for (std::uint32_t i = 0; i < l->count; ++i) {
+            const std::optional<std::string_view> on = l->string(lit, i);
+            if (!on || *on != "yes") continue;
+            const tl::RingView r = l->ring(tl::road::line, i);
+            LitRoad road{.index = static_cast<std::uint32_t>(l->integer(tl::road::index, i)),
+                         .first = static_cast<std::uint32_t>(out_.lit_points.size()),
+                         .count = 0};
+            for (std::size_t k = 0; k + 1 < r.size(); ++k) {
+                const std::array<double, 2> a{f.x(r.lon[k]), f.z(r.lat[k])};
+                const std::array<double, 2> b{f.x(r.lon[k + 1]), f.z(r.lat[k + 1])};
+                const double lg = pm::dist(a, b);
+                double d = 4.0;
+                while (d < lg) {
+                    out_.lit_points.push_back(
+                        {.x = a[0] + (((b[0] - a[0]) * d) / lg), .z = a[1] + (((b[1] - a[1]) * d) / lg)});
+                    d += 13.0 + pm::mod(d * 7.3, 6.0);
+                }
+            }
+            road.count = static_cast<std::uint32_t>(out_.lit_points.size()) - road.first;
+            if (road.count > 0) out_.lit_roads.push_back(road);
+        }
+    }
+
     const tl::Tile& tile_;
     const tl::RenderHead& head_;
     const tl::Style& style_;
@@ -866,7 +907,8 @@ std::size_t GroundTile::bytes() const noexcept {
            (shadows.capacity() * sizeof(Shadow)) + (shadow_points.capacity() * sizeof(P2)) + casters_bytes +
            (runways.capacity() * sizeof(RunwayRef)) + (quays.capacity() * sizeof(QuayEdge)) +
            (tracks.capacity() * sizeof(ShadowTrack)) + (heights.capacity() * sizeof(double)) +
-           (woods.capacity() * sizeof(ShadowTree));
+           (woods.capacity() * sizeof(ShadowTree)) + (lamps.capacity() * sizeof(Lamp)) +
+           (lit_roads.capacity() * sizeof(LitRoad)) + (lit_points.capacity() * sizeof(P2));
 }
 
 void build_shadows(const sun::TileCasters& casters, GroundTile& out) {

@@ -35,13 +35,16 @@ struct MarineStyle {
 
 /// The water's reflections (`reflections`): the group's opacity by day and at night, how much darker a mirrored facade
 /// reads than the bright sky the water mirrors (by day, under cloud, at night), a building's window rows and their
-/// opacity, a tree's crown.
+/// opacity, a tree's crown, and a night streak's radial gradient (its stops at 0, .5 and 1: their colours and
+/// opacities).
 struct ReflectionsStyle {
     std::array<double, 2> opacity{}; ///< by day, at night
     std::array<double, 3> dark{};    ///< by day, under cloud (th['sky_k']), at night
     DayNight windows;
     double windows_opacity = 0.0;
     DayNight trees;
+    std::array<StyleRgb, 3> streak{};
+    std::array<double, 3> streak_opacity{};
 };
 
 /// The canal names on the water (`canal_names`): ground_text's fill and its opacity, the face's weight, the letters'
