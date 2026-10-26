@@ -256,7 +256,8 @@ def analyse(D):
                        other=cov(lambda o: o['kind'] != 'home' and not o['landmark']), modelled_3d=cov(lambda o: o['parts'] > 0), outline_only=cov(lambda o: o['parts'] == 0))
     rep['held_out'] = held_out(D)
     rep['receivers'] = {key: dict(receivers(D, key)) for key in ('building:colour', 'roof:colour')}
-    rep['own_gaps'] = {key: sum(o['own_gaps'][key] for o in owners) for key in ('building:colour', 'roof:colour')}
+    readable = {key: {s[3] for s in D['samples'][key]} for key in ('building:colour', 'roof:colour')}      # its own value must be one the renderer reads
+    rep['own_gaps'] = {key: sum(o['own_gaps'][key] for o in owners if o['id'] in readable[key]) for key in ('building:colour', 'roof:colour')}
     return rep
 
 
@@ -426,8 +427,8 @@ def render_view(view, moment):
 
 
 def diff_png(before, after, path):
-    """What the learned palettes changed: the after picture where it differs from the before one, faded to a mid grey where it does not
-    (so a wall turned white stands out too)."""
+    """What the learned palettes changed: the after picture where it differs from the before one, faded to a steel blue where it does not
+    (so a wall turned white or grey stands out too)."""
     from png import read_png
     from mkref import write_png
     w, h, bb, pb = read_png(before); _, _, ba, pa = read_png(after); rows = []; changed = 0
@@ -437,7 +438,7 @@ def diff_png(before, after, path):
             i, j = (y * w + x) * bb, (y * w + x) * ba
             p, q = pb[i:i + 3], pa[j:j + 3]
             if max(abs(p[c] - q[c]) for c in range(3)) > 6: row += q; changed += 1
-            else: g = int(0.3 * p[0] + 0.59 * p[1] + 0.11 * p[2]); row += bytes([int(g * 0.3 + 120 * 0.7)] * 3)
+            else: g = 0.3 * p[0] + 0.59 * p[1] + 0.11 * p[2]; row += bytes(int(g * 0.3 + c * 0.7) for c in (96, 128, 172))
         rows.append(bytes(row))
     write_png(path, w, h, rows)
     return path, round(changed / (w * h), 4)
