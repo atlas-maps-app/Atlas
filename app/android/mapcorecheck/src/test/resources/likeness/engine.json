@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "17",
+  "version": "18",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -306,6 +306,21 @@
           "board grey": "5a68af408a5167ca161cdebddefee5eed7d49c3c57a8a6a4ab6371c845231625",
           "board wet": "e48be6851aae90d007cdb761bb5c5ed1d15bcdaaf6dc8078a9d88efd30e37fb5",
           "board night": "4a44854ce6798bbd05240be32f06bf385e20f87d9300291bc4db6262d426cf59"
+        }
+      }
+    },
+    "18": {
+      "note": "Step 4, the effects: the water's glints at map pitches (water_layer's glint0 rect: the glints' field through its colour matrix, after the tint)",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "6a194876abf7707820fdbb5601c5d1408d8451992f88a3450ecc833fea39da2e",
+          "home grey": "2ab0b5893219b04239dd4275323611baf41e05d0ed1840184200ebe23fcf3ec9",
+          "home wet": "765c89377cfa1548f8cff4efb104132b018a0d0ce3990aeb643705d9d84f3278",
+          "home night": "4dd778d1508c4f8672b89e9aeb92e7753436d2612a95031f5c1dfc36bfbfa3ef",
+          "board sunny": "fc1eb0b06dfb149253df516b880264621229e0ad9a309cbb049a67897de91137",
+          "board grey": "0c9fe15be0c216a523bf7e27a6796069c5b60fd147a36c5189af96fadeb86649",
+          "board wet": "40259e372098cfd33be3f387e624004f25273ff882c68ffed082f083cb54f58c",
+          "board night": "d1a2c4e475801835a8e5b86b89383d7038497eaca5fd3cf7a0614231d1fb46c3"
         }
       }
     }

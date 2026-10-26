@@ -790,6 +790,7 @@ bool Ground::decide(const frame::FrameState& state) {
     decide_reflections(cam, state);
     decide_glitter(cam, state);
     decide_rings(cam, state);
+    decide_wind_glints(cam, state);
     decide_sky(cam);
     // the plate: gp(rect(-GR, GR, -GR, GR), th['ground']) at 0, margin 900, its area over 0.2
     const double gr = f.ground_r;
@@ -1214,6 +1215,7 @@ void Ground::write_words(const frame::FrameState& state) {
     write_glitter(v);
     write_rings(v);
     write_ripple(v, state);
+    write_wind_glints(v, state);
     // into this frame slot's buffer (a frame slot's previous frame has finished: its buffer and set are free)
     const std::uint32_t slot = state.slot & 1U;
     Pipelines& p = *pipelines_;
@@ -1314,6 +1316,7 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
     case phase_water_glitter: record_glitter(r); break;
     case phase_water_rings: record_rings(r); break;
     case phase_water_tint: record_water_tint(r); break;
+    case phase_water_glints: record_wind_glints(r); break;
     case phase_water_end: record_water_end(r); break;
     case phase_over:
     case phase_marks: record_lines(r, phase); break;

@@ -156,7 +156,8 @@ Tally home(const test::Session& session, const std::string& dir, const style::Th
     double wgrad_y2 = 0;
     style::ThemeBlock th{};
     const auto a = test::draw_ground(
-        session, camera, theme, dir, "amsterdam", [&](passes::Ground& g, const frame::FrameState& state) {
+        session, camera, theme, dir, "amsterdam",
+        [&](passes::Ground& g, const frame::FrameState& state) {
             twin::Stream s;
             g.emit(state, s, passes::Ground::phase_opaque);
             const twin::Decoded d = twin::decode(s.bytes());
@@ -221,15 +222,18 @@ Tally home(const test::Session& session, const std::string& dir, const style::Th
                 }
                 faces.push_back(std::move(face));
             }
-        });
+        },
+        40, [](passes::Ground& g) { g.draw_wind_glints(false); });
     Tally out;
     if (!a) {
         CHECK_MESSAGE(false, "the home was not drawn with its reflections");
         return out;
     }
     for (const std::string& m : session.take_messages()) CHECK_MESSAGE(false, m);
-    const auto b = test::draw_ground(session, camera, theme, dir, "amsterdam", {}, 40,
-                                     [](passes::Ground& g) { g.draw_reflections(false); });
+    const auto b = test::draw_ground(session, camera, theme, dir, "amsterdam", {}, 40, [](passes::Ground& g) {
+        g.draw_reflections(false);
+        g.draw_wind_glints(false);
+    });
     if (!b) {
         CHECK_MESSAGE(false, "the home was not drawn without its reflections");
         return out;

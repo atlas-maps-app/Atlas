@@ -324,6 +324,10 @@ struct GroundFrame {
     std::vector<Glint> glints;
     /// The drizzle's rings on the water this frame (th['wet']): its bands.
     std::vector<RingBand> ring_bands;
+    /// The glints' rect this frame (with weather, where the water is drawn, at a map pitch, in full mode), and its
+    /// opacity.
+    bool wind_glints = false;
+    double wind_glints_opacity = 0;
     /// Whether this frame's decisions are the last frame's, kept: the camera rests as it did, over the same tiles.
     bool kept = false;
     /// render's #sky and #wgrad rows (y1 and y2 as the SVG prints them), the horizon's row.
@@ -501,6 +505,8 @@ public:
     /// The tests' look at the reflections' ripple: from the next frame on, the reflections drawn without it (as where
     /// the fields are not bound).
     void draw_ripple(bool draw) noexcept { no_ripple_ = !draw; }
+    /// The tests' look at the water: from the next frame on, no glints (K17's rect after the tint).
+    void draw_wind_glints(bool draw) noexcept { no_wind_glints_ = !draw; }
     /// The tests' look at the ripple: from the next prepare on, its buffers lie in memory the CPU reads, and each
     /// frame copies its resolved layer there too (RippleLayer::layer_copy).
     void keep_ripple(bool keep) noexcept { keep_ripple_ = keep; }
@@ -523,6 +529,7 @@ public:
         phase_water_glitter = 9,
         phase_water_rings = 10,
         phase_ripple = 11,
+        phase_water_glints = 12,
     };
 
     /// The pipelines, their layout and the pass's descriptor sets (Ground.cpp).
@@ -531,13 +538,14 @@ public:
     struct Words;
 
 private:
-    static constexpr std::array<frame::Phase, 12> phase_list{{
+    static constexpr std::array<frame::Phase, 13> phase_list{{
         {.slot = frame::Slot::offscreen, .order = 0, .id = phase_shadow_mask},
         {.slot = frame::Slot::offscreen, .order = 1, .id = phase_ripple},
         {.slot = frame::Slot::ground, .order = 0, .id = phase_opaque},
         {.slot = frame::Slot::translucent, .order = ground_order::canopy, .id = phase_canopy},
         {.slot = frame::Slot::translucent, .order = ground_order::water_reflections, .id = phase_water_reflections},
         {.slot = frame::Slot::translucent, .order = ground_order::water_tint, .id = phase_water_tint},
+        {.slot = frame::Slot::translucent, .order = ground_order::water_glints, .id = phase_water_glints},
         {.slot = frame::Slot::translucent, .order = ground_order::water_glitter, .id = phase_water_glitter},
         {.slot = frame::Slot::translucent, .order = ground_order::water_rings, .id = phase_water_rings},
         {.slot = frame::Slot::translucent, .order = ground_order::water_end, .id = phase_water_end},
@@ -634,6 +642,17 @@ private:
     void record_ripple_layer(const frame::Recording& r);
     /// The rippled reflections composited inside the water's clip at the group's opacity.
     void record_ripple(const frame::Recording& r);
+    // Glints.cpp
+    /// water_layer's wind glints at the frame: with weather where the water is drawn, at a map pitch, in full mode,
+    /// one rect over the frame at the wind's opacity (frame_.wind_glints).
+    void decide_wind_glints(const view::Camera& cam, const frame::FrameState& state);
+    /// Whether this frame draws the glints' filter: they are drawn, and the fields are bound in full mode.
+    [[nodiscard]] bool glints_filtered(const frame::FrameState& state) const noexcept;
+    /// The filter's 256 results at the moment (fx::glint_table) into the frame's words.
+    void write_wind_glints(std::vector<std::uint32_t>& words, const frame::FrameState& state);
+    void record_wind_glints(const frame::Recording& r);
+    /// The glints' rect (`<rect filter="url(#glint0)" opacity=rip/>`) in the water's clip group `water`.
+    void emit_wind_glints(const frame::FrameState& state, twin::Stream& out, std::int32_t water) const;
     // Glitter.cpp
     /// water_layer's sun glitter at the frame: by day under a clear sky, 260 glints about the point of the water that
     /// mirrors the sun to the eye, where it projects within reach of the picture (frame_.glints).
@@ -678,6 +697,7 @@ private:
     bool no_glitter_ = false;
     bool no_rings_ = false;
     bool no_ripple_ = false;
+    bool no_wind_glints_ = false;
     bool keep_ripple_ = false;
     bool drew_ripple_ = false;
     double select_ms_ = 0;
@@ -741,6 +761,8 @@ struct Ground::Pipelines {
     // draws none: the owner mode, or where the device could not make them)
     vk::raii::Pipeline ripple_composite{nullptr};
     std::unique_ptr<RippleLayer> ripple;
+    // Glints.cpp
+    vk::raii::Pipeline wind_glints{nullptr};
     // Shadows.cpp
     vk::raii::Pipeline shadow_union{nullptr};
     vk::raii::Pipeline shadow_composite{nullptr};
@@ -839,6 +861,7 @@ struct Ground::Words {
     std::uint32_t rings = 0; ///< the drizzle's tile and bands (ground.slang's RINGS_ layout), and how many bands
     std::uint32_t ring_bands = 0;
     std::uint32_t ripple_offsets = 0; ///< the ripple's 256 displacement offsets (ripple.slang)
+    std::uint32_t wind_glints = 0;    ///< the glints' filter's 256 results (glints_fs)
     std::uint32_t slot = 0;           ///< the frame slot whose buffer holds them
     bool ready = false;
 };

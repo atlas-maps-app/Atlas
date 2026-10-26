@@ -101,7 +101,11 @@ TEST_CASE("ground: the sun's glitter is its glints' layer screened over the wate
                                       .opacity = static_cast<double>(e.node.opacity)});
                 }
             },
-            40, [](passes::Ground& g) { g.draw_reflections(false); });
+            40,
+            [](passes::Ground& g) {
+                g.draw_reflections(false);
+                g.draw_wind_glints(false);
+            });
         if (!a || !glints.empty()) break;
     }
     ATLAS_REQUIRE(a.has_value(), "the view was not drawn with its glitter");
@@ -109,6 +113,7 @@ TEST_CASE("ground: the sun's glitter is its glints' layer screened over the wate
     const auto b = test::draw_ground(*session, camera, day, dir, "amsterdam", {}, 40, [](passes::Ground& g) {
         g.draw_reflections(false);
         g.draw_glitter(false);
+        g.draw_wind_glints(false);
     });
     ATLAS_REQUIRE(b.has_value(), "the view was not drawn without its glitter");
     REQUIRE(glints.size() == 260);

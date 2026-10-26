@@ -1,6 +1,6 @@
 // The drizzle's rings on the host's Vulkan (passes/Rings.cpp): the Westerkerk home on a wet day, the ground drawn alone
-// over bare water (no reflections, no glitter, the shadows at no opacity), with the rings and without. Where the frame
-// without them shows the bare water around a pixel, the pixel with them is the rings' pattern there at the rect's
+// over bare water (no reflections, glitter or glints, the shadows at no opacity), with the rings and without. Where the
+// frame without them shows the bare water around a pixel, the pixel with them is the rings' pattern there at the rect's
 // opacity over that water: the tile of water_layer's 28 rings (random.Random(9), as the port prints them) repeated
 // from the frame's corner, at each standard 4x sample the union of the rings whose strokes hold it (within .2 of the
 // ellipse, the distance measured exactly), the pixel their mean.
@@ -138,6 +138,7 @@ TEST_CASE("ground: the drizzle's rings are their pattern at its opacity over the
     const auto quiet = [](passes::Ground& g) {
         g.draw_reflections(false);
         g.draw_glitter(false);
+        g.draw_wind_glints(false);
     };
     const auto a = test::draw_ground(
         *session, camera, wet, dir, "amsterdam",

@@ -1219,6 +1219,18 @@ StrokeOutput reflection_fs(QuayOut q) {
     return o;
 }
 
+/// The water's glints inside its clip at their slot (screen_vs; passes/Glints.cpp): the glints' field's red at the
+/// pixel picks the filter's result (premultiplied sRGB, a r g b) from the moment's table of 256 in `words` (from
+/// push.mode.z), at the rect's opacity (push.rows.z), premultiplied.
+[shader("fragment")]
+ColourOut glints_fs(ScreenOut v) {
+    uint s = words[push.mode.z + fx_r(fx_pixel(frame.camera, v.position.xy))];
+    float4 c = {float((s >> 16u) & 0xFFu), float((s >> 8u) & 0xFFu), float(s & 0xFFu), float(s >> 24u)};
+    ColourOut o;
+    o.colour = (c * (1.0f / 255.0f)) * push.rows.z;
+    return o;
+}
+
 /// The rippled reflections inside the water's clip at their group's first slot (screen_vs; passes/Ripple.cpp): the
 /// filter's result at the pixel (push.mode.z: 0 ripple_a, 1 ripple_b; push.colour.x the upright view's width) written
 /// back as premultiplied sRGB, at the group's opacity (push.rows.z), premultiplied.

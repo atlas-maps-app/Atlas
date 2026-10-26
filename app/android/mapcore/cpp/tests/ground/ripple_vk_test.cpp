@@ -1,11 +1,11 @@
 // The water's ripple on the host's Vulkan (passes/Ripple.cpp): the Westerkerk home by day, the ground drawn alone in
-// full mode with the noise fields bound (no glitter, the shadows at no opacity). The reflections' layer as the pass
-// resolved it, through the CPU's filter (fx/Ripple.hpp: SvgFilterRaster's chain, the ripple's field from the CPU's
-// fields), is the pass's result, word for word. Over the bare water (where the frame drawn without the reflections
-// shows wgrad's rect under the tint), the frame is that result written back as sRGB at the group's opacity over wgrad,
-// under the tint at .12, within 2.5 levels: the frame stores the surface, the composite and the tint, each blended in
-// 8 bits (the bare water alone, two of them, lies within 1.6 levels of its model on lavapipe), where a result read at
-// the wrong pixel would be tens of levels off at the reflections' edges.
+// full mode with the noise fields bound (no glitter or glints, the shadows at no opacity). The reflections' layer as
+// the pass resolved it, through the CPU's filter (fx/Ripple.hpp: SvgFilterRaster's chain, the ripple's field from the
+// CPU's fields), is the pass's result, word for word. Over the bare water (where the frame drawn without the
+// reflections shows wgrad's rect under the tint), the frame is that result written back as sRGB at the group's opacity
+// over wgrad, under the tint at .12, within 2.5 levels: the frame stores the surface, the composite and the tint, each
+// blended in 8 bits (the bare water alone, two of them, lies within 1.6 levels of its model on lavapipe), where a
+// result read at the wrong pixel would be tens of levels off at the reflections' edges.
 #if !defined(__ANDROID__)
 
 #include "fx/FieldCache.hpp"
@@ -103,6 +103,7 @@ Chain chain_of(const RippleLook& look, const fx::ScreenFields& fields, float den
 void quiet(passes::Ground& g) {
     g.keep_ripple(true);
     g.draw_glitter(false);
+    g.draw_wind_glints(false);
 }
 
 } // namespace

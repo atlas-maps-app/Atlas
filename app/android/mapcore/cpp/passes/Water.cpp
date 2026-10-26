@@ -229,6 +229,13 @@ gpu::Result<void> Ground::make_water_pipelines(const frame::PassContext& context
     rippled.stencil = inside;
     ATLAS_GPU_LET(rc, frame::make_pipeline(context, rippled, frame::Overdraw::translucent));
     p.ripple_composite = std::move(rc);
+    // the glints inside the clip (Glints.cpp): the filter's result from the moment's table at the rect's opacity
+    gpu::GraphicsDesc glints = ground_desc(context, p, "ground water glints", "screen_vs", "glints_fs");
+    translucent(glints);
+    glints.stencil_test = true;
+    glints.stencil = inside;
+    ATLAS_GPU_LET(gn, frame::make_pipeline(context, glints, frame::Overdraw::translucent));
+    p.wind_glints = std::move(gn);
     // the sun's glitter (Glitter.cpp): screened over the water, each sample once by the first glint to reach it
     // (inside the clip, its w0 bit still set: then cleared), per sample where the device can
     gpu::GraphicsDesc glitter = ground_desc(context, p, "ground water glitter", "glitter_vs", "glitter_fs");
@@ -446,6 +453,7 @@ void Ground::emit_water(const frame::FrameState& state, twin::Stream& out) const
     emit_reflections(state, out, group);
     emit_glitter(state, out, group);
     emit_rings(state, out, group);
+    emit_wind_glints(state, out, group);
     out.at(slot(geo::group::water_top, 0, geo::water_sub::tint), group);
     twin::Style tint;
     tint.fill = twin::Paint::colour(argb(th.water));
