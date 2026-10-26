@@ -2,6 +2,7 @@
 #include "scene/Heaps.hpp"
 
 #include "base/assert.hpp"
+#include "base/trace.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -58,6 +59,8 @@ gpu::Result<std::unique_ptr<Heaps>> Heaps::create(const gpu::Device& device, con
     ATLAS_GPU_LET(buffer,
                   device.memory().buffer(std::min(budget.initial, budget.total), heap_usage, gpu::MemoryUse::upload));
     self->buffer_ = std::move(buffer);
+    self->current_ = self->buffer_.handle();
+    self->capacity_.store(self->buffer_.size(), std::memory_order_release);
     ATLAS_GPU_LET(block, make_block(budget.total));
     self->block_ = block;
     return self;
@@ -72,6 +75,7 @@ Heaps::~Heaps() {
 }
 
 gpu::Result<void> Heaps::grow(vk::DeviceSize end) {
+    const trace::Section traced("atlas heaps grow");
     const vk::DeviceSize old_size = buffer_.size();
     const vk::DeviceSize size = std::min(std::max(old_size * 2, end), budget_.total);
     ATLAS_GPU_LET(buffer, device_.memory().buffer(size, heap_usage, gpu::MemoryUse::upload));
@@ -79,10 +83,14 @@ gpu::Result<void> Heaps::grow(vk::DeviceSize end) {
     std::memcpy(buffer.bytes().data(), buffer_.bytes().data(), static_cast<std::size_t>(old_size));
     buffer.flush();
     {
+        // The swap alone under the render lock, after the copy: a frame binds the old buffer or the new one, never
+        // waits.
         const std::scoped_lock lock(render_lock_);
         old_.push_back(OldBuffer{.buffer = std::move(buffer_), .frame = ~std::uint64_t{0}});
+        buffer_ = std::move(buffer);
+        current_ = buffer_.handle();
+        capacity_.store(buffer_.size(), std::memory_order_release);
     }
-    buffer_ = std::move(buffer);
     version_.fetch_add(1, std::memory_order_release);
     growths_.fetch_add(1, std::memory_order_relaxed);
     return {};
@@ -125,12 +133,12 @@ gpu::Result<HeapRange> Heaps::allocate(HeapKind kind, std::uint32_t bytes, std::
         range = *placed;
     }
     // Beyond the buffer: it grows to hold the range, with no writer active (the exclusive lock), unless another
-    // thread grew it meanwhile.
+    // thread grew it meanwhile. The blocks' lock is not held through the copy, so the render thread's stats never wait.
     const std::unique_lock exclusive(lock_);
-    const std::scoped_lock lock(blocks_lock_);
     const vk::DeviceSize end = vk::DeviceSize{range.offset} + range.size;
     if (end > buffer_.size()) {
         if (auto grown = grow(end); !grown) {
+            const std::scoped_lock lock(blocks_lock_);
             unplace(range);
             return std::unexpected(std::move(grown.error()));
         }
@@ -157,11 +165,12 @@ void Heaps::retire(const HeapRange& range, std::uint64_t frame) {
     retired_.push_back({.range = range, .frame = frame});
 }
 
-void Heaps::bound(std::uint64_t frame) {
+vk::Buffer Heaps::bind(std::uint64_t frame) {
     const std::scoped_lock lock(render_lock_);
     for (OldBuffer& o : old_) {
         if (o.frame == ~std::uint64_t{0}) o.frame = frame == 0 ? 0 : frame - 1;
     }
+    return current_;
 }
 
 void Heaps::collect(std::uint64_t finished) {
@@ -184,14 +193,11 @@ void Heaps::collect(std::uint64_t finished) {
 }
 
 vk::Buffer Heaps::buffer() const {
-    const std::shared_lock lock(lock_);
-    return buffer_.handle();
+    const std::scoped_lock lock(render_lock_);
+    return current_;
 }
 
-vk::DeviceSize Heaps::capacity() const {
-    const std::shared_lock lock(lock_);
-    return buffer_.size();
-}
+vk::DeviceSize Heaps::capacity() const { return capacity_.load(std::memory_order_acquire); }
 
 std::uint64_t Heaps::version() const noexcept { return version_.load(std::memory_order_acquire); }
 
@@ -199,10 +205,9 @@ std::uint64_t Heaps::frees() const noexcept { return frees_.load(std::memory_ord
 
 HeapStats Heaps::stats() const {
     HeapStats s;
+    s.capacity = capacity_.load(std::memory_order_acquire);
     {
-        const std::shared_lock lock(lock_);
         const std::scoped_lock blocks(blocks_lock_);
-        s.capacity = buffer_.size();
         s.used = used_;
         s.ranges = ranges_;
     }
@@ -210,6 +215,7 @@ HeapStats Heaps::stats() const {
     {
         const std::scoped_lock lock(render_lock_);
         s.retired = retired_.size();
+        s.old_buffers = old_.size();
     }
     return s;
 }

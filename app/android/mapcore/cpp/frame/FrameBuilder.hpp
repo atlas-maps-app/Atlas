@@ -263,6 +263,13 @@ private:
     std::vector<Step> steps_; ///< every phase, sorted: slot, order, registry
     std::array<std::pair<std::uint32_t, std::uint32_t>, slot_count> slot_steps_{}; ///< each slot's [first, last)
     std::vector<PassCounters> counters_;
+    /// The trace sections' names (gain 21): each pass's select and update, and each slot's recording.
+    struct TraceNames {
+        std::string select;
+        std::string update;
+    };
+    std::vector<TraceNames> trace_names_;
+    std::array<std::string, slot_count> slot_trace_names_;
     Selectors selectors_;
     Ranks ranks_;
     std::string configuration_;

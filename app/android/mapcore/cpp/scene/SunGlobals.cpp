@@ -4,6 +4,7 @@
 #include "base/arena.hpp"
 #include "base/log.hpp"
 #include "base/pymath/PyMath.hpp"
+#include "base/trace.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "tiles/Error.hpp"
 
@@ -239,7 +240,10 @@ void SunGlobals::work(const std::stop_token& stop) {
         }
         if (!scene || b.pack->id != lane->built_pack || tiles != lane->built) {
             const auto started = std::chrono::steady_clock::now();
-            scene = build(b);
+            {
+                const trace::Section traced("atlas sun scene");
+                scene = build(b);
+            }
             const double ms = ms_since(started);
             const std::scoped_lock lock(mutex_);
             if (scene) {
@@ -256,7 +260,10 @@ void SunGlobals::work(const std::stop_token& stop) {
             lane->built = std::move(tiles);
             lane->built_pack = b.pack->id;
         }
-        if (scene) ask(*lane, scene, b);
+        if (scene) {
+            const trace::Section traced("atlas sun test");
+            ask(*lane, scene, b);
+        }
         {
             const std::scoped_lock lock(mutex_);
             lane->building = false;

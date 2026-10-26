@@ -191,6 +191,35 @@ TEST_CASE("the geometry heaps allocate, write in place, grow keeping every range
     (void)session->take_messages();
 }
 
+TEST_CASE("a frame binds the heaps' buffer with the marking of what a growth replaced (gain 16)") {
+    auto session = test::open_session();
+    if (!session) return;
+    scene::HeapBudget budget;
+    budget.initial = vk::DeviceSize{64} << 10U;
+    budget.total = vk::DeviceSize{1} << 20U;
+    auto heaps = scene::Heaps::create(*session->device, budget);
+    ATLAS_REQUIRE(heaps.has_value(), heaps.error().text());
+    scene::Heaps& h = **heaps;
+    // Frame 5 binds the first buffer; a worker's growth follows (100 KB in a 64 KB heap).
+    const vk::Buffer first = h.bind(5);
+    CHECK(first == h.buffer());
+    for (std::size_t i = 0; i < 100; ++i) {
+        auto r = h.allocate(scene::HeapKind::walls, 1000, 64);
+        ATLAS_REQUIRE(r.has_value(), r.error().text());
+    }
+    CHECK(h.buffer() != first);
+    CHECK(h.stats().old_buffers == 1);
+    CHECK(h.capacity() == h.stats().capacity);
+    CHECK(h.capacity() >= 100'000);
+    // Frame 6 binds the new buffer: frame 5, which bound the old one, is the last that may read it.
+    CHECK(h.bind(6) == h.buffer());
+    h.collect(4);
+    CHECK(h.stats().old_buffers == 1);
+    h.collect(5);
+    CHECK(h.stats().old_buffers == 0);
+    (void)session->take_messages();
+}
+
 TEST_CASE("a tile that finds no room in the heaps is not built again until a range has gone back to them") {
     auto session = test::open_session();
     if (!session) return;

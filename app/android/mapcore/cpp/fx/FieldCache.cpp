@@ -6,6 +6,7 @@
 #include "base/assert.hpp"
 #include "base/log.hpp"
 #include "base/pymath/PyMath.hpp"
+#include "base/trace.hpp"
 #include "frame/FrameBlock.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "fx/ByteTables.hpp"
@@ -490,7 +491,10 @@ void FieldWorker::loop(const std::stop_token& stop) {
         const auto started = clock::now();
         std::shared_ptr<const ScreenFields> fields = disk_ != nullptr ? disk_->read(size) : nullptr;
         const bool from_disk = fields != nullptr;
-        if (!from_disk) fields = make_fields(size, MakeOptions{.threads = threads_});
+        if (!from_disk) {
+            const trace::Section traced("atlas fields");
+            fields = make_fields(size, MakeOptions{.threads = threads_});
+        }
         const double ms = std::chrono::duration<double, std::milli>(clock::now() - started).count();
         // Published first, so the frame takes them while they are written to disk.
         std::function<void()> wake;

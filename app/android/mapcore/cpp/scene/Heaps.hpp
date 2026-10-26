@@ -11,10 +11,13 @@
 //
 // The buffer starts small and doubles when a range the block places lies beyond it, within the budget: the new buffer
 // takes the old one's bytes at the same offsets (so every range keeps its offset), and the old buffer goes once the
-// frames bound to it have finished (bound, collect). Writers hold the heap's shared lock while they write (Writer), a
-// growth its exclusive lock, so no write is lost to a growth.
+// frames bound to it have finished (bind, collect). Writers hold the heap's shared lock while they write (Writer), a
+// growth its exclusive lock, so no write is lost to a growth. The render thread never waits for a growth (ENGINE.md's
+// gain 16): it takes the buffer to bind and lets go of the replaced ones under the render lock alone, which a growth
+// takes only to swap the buffers, after its copy; its stats read the capacity from an atomic and the ranges under the
+// blocks' lock, which a growth does not hold.
 //
-// Thread-safe: allocate and write from any thread; retire, bound and collect on the render thread.
+// Thread-safe: allocate and write from any thread; retire, bind and collect on the render thread.
 #pragma once
 
 #include "gpu/Device.hpp"
@@ -67,7 +70,8 @@ struct HeapStats {
     std::array<vk::DeviceSize, heap_kinds> used{};
     std::array<std::uint32_t, heap_kinds> ranges{};
     std::uint64_t growths = 0;
-    std::uint64_t retired = 0; ///< ranges waiting for their frames to finish
+    std::uint64_t retired = 0;     ///< ranges waiting for their frames to finish
+    std::uint64_t old_buffers = 0; ///< buffers a growth replaced, kept until the frames bound to them finish
     [[nodiscard]] vk::DeviceSize total_used() const noexcept;
 };
 
@@ -114,9 +118,12 @@ public:
 
     /// Frees `range` once frame `frame` (the last that may read it) has finished on the GPU. Render thread.
     void retire(const HeapRange& range, std::uint64_t frame);
-    /// Frame `frame` binds the heap as it is now (its buffer, after any growth): what a growth replaced is let go of
-    /// once the frames before it have finished. Render thread.
-    void bound(std::uint64_t frame);
+    /// Frame `frame` binds the heap as it is now: the buffer it binds, taken with the marking of what a growth replaced
+    /// (let go of once the frames before `frame` have finished), so no growth falls between the two. Render thread; it
+    /// never waits for a growth's copy.
+    [[nodiscard]] vk::Buffer bind(std::uint64_t frame);
+    /// bind without the buffer.
+    void bound(std::uint64_t frame) { (void)bind(frame); }
     /// Frees the ranges and the old buffers whose frames have all finished (`finished`: the newest finished frame).
     void collect(std::uint64_t finished);
 
@@ -148,15 +155,17 @@ private:
 
     const gpu::Device& device_;
     HeapBudget budget_;
-    mutable std::shared_mutex lock_; // shared: writers; exclusive: a growth
-    mutable std::mutex blocks_lock_; // the virtual block (VMA's are not thread-safe), used_ and ranges_
-    gpu::Buffer buffer_;
+    mutable std::shared_mutex lock_;  // shared: writers; exclusive: a growth
+    mutable std::mutex blocks_lock_;  // the virtual block (VMA's are not thread-safe), used_ and ranges_
+    gpu::Buffer buffer_;              // under lock_; swapped by a growth under render_lock_ too
     VmaVirtualBlock block_ = nullptr; // the budget's offsets; the buffer covers those placed
     std::array<vk::DeviceSize, heap_kinds> used_{};
     std::array<std::uint32_t, heap_kinds> ranges_{};
-    mutable std::mutex render_lock_; // retired_ and old_
+    mutable std::mutex render_lock_; // retired_, old_ and current_
     std::vector<Retired> retired_;
     std::vector<OldBuffer> old_;
+    vk::Buffer current_;                      // buffer_'s handle, for the render thread
+    std::atomic<vk::DeviceSize> capacity_{0}; // buffer_'s size, for the stats
     std::atomic<std::uint64_t> version_{0};
     std::atomic<std::uint64_t> growths_{0};
     std::atomic<std::uint64_t> frees_{0};

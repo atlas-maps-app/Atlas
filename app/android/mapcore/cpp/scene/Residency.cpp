@@ -2,6 +2,7 @@
 #include "scene/Residency.hpp"
 
 #include "base/log.hpp"
+#include "base/trace.hpp"
 #include "sun/Buckets.hpp"
 
 #include <algorithm>
@@ -63,6 +64,8 @@ std::uint64_t Residency::key_of(tiles::TileKey key, std::string_view pack) noexc
 Residency::Residency(const tiles::Store& store, Heaps& heaps, std::span<const std::unique_ptr<frame::Pass>> passes,
                      unsigned workers, std::function<double()> clock)
     : store_(store), heaps_(heaps), passes_(passes), clock_(std::move(clock)) {
+    for (const std::unique_ptr<frame::Pass>& p : passes_)
+        stage_t_names_.push_back(std::format("atlas stage T {}", p->name()));
     workers = std::max(1U, workers);
     workers_.reserve(workers);
     for (unsigned i = 0; i < workers; ++i) {
@@ -157,7 +160,11 @@ void Residency::work(const std::stop_token& stop) {
         const auto started = std::chrono::steady_clock::now();
         const std::uint64_t frees = heaps_.frees();
         arena.reset();
-        std::shared_ptr<ResidentTile> tile = build(job, zstd, decoder, arena, raw);
+        std::shared_ptr<ResidentTile> tile;
+        {
+            const trace::Section traced("atlas tile build");
+            tile = build(job, zstd, decoder, arena, raw);
+        }
         const double ms = ms_since(started);
         std::function<void()> published;
         {
@@ -192,7 +199,10 @@ std::shared_ptr<ResidentTile> Residency::build(const Job& job, tiles::Zstd& zstd
         return nullptr;
     const tiles::ChunkRef* chunk = pack->pack.chunks().find(job.request.key);
     if (chunk == nullptr) return nullptr;
-    auto decoded = store_.decode({.pack = pack, .chunk = chunk}, zstd, decoder, arena, raw);
+    auto decoded = [&] {
+        const trace::Section traced("atlas tile decode");
+        return store_.decode({.pack = pack, .chunk = chunk}, zstd, decoder, arena, raw);
+    }();
     if (!decoded) {
         log::warn("vk tiles: {}/{}/{} of {}: {}", job.request.key.z, job.request.key.x, job.request.key.y, job.pack,
                   tiles::describe(decoded.error()));
@@ -215,6 +225,7 @@ std::shared_ptr<ResidentTile> Residency::build(const Job& job, tiles::Zstd& zstd
     for (std::uint32_t p = 0; p < passes_.size(); ++p) {
         TileBuild b(tile, head, *pack->pack.style(), job.request.level, out->origin, heaps_, out->passes[p], out->items,
                     p);
+        const trace::Section traced(stage_t_names_[p].c_str());
         if (auto built = passes_[p]->build(b); !built) {
             log::warn("vk tiles: {}/{}/{} of {}: the {} pass: {}", job.request.key.z, job.request.key.x,
                       job.request.key.y, job.pack, passes_[p]->name(), built.error().text());

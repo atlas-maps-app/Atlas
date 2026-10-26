@@ -1,6 +1,8 @@
 // Frames in flight (gpu/Frames.hpp).
 #include "gpu/Frames.hpp"
 
+#include "base/trace.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <format>
@@ -219,9 +221,16 @@ Result<FrameReport> Renderer::draw(std::uint64_t desired_ns) {
     const auto start = clock::now();
     FrameReport report;
     report.number = ++number_;
-    ATLAS_GPU_LET(slot, frames_->begin(report.number));
+    auto begun = [&] {
+        const trace::Section traced("atlas frame fence"); // the slot's frame from two frames ago, done on the GPU
+        return frames_->begin(report.number);
+    }();
+    ATLAS_GPU_LET(slot, std::move(begun));
     std::uint32_t image = 0;
-    report.status = output_->acquire(*slot->acquired, image);
+    {
+        const trace::Section traced("atlas acquire");
+        report.status = output_->acquire(*slot->acquired, image);
+    }
     if (report.status != Acquired::ok && report.status != Acquired::suboptimal) {
         report.gpu = frames_->last_times();
         return report;
@@ -237,8 +246,14 @@ Result<FrameReport> Renderer::draw(std::uint64_t desired_ns) {
                      .sync = sync_,
                      .frames = *frames_});
     report.record_ms = std::chrono::duration<double, std::milli>(clock::now() - recording).count();
-    ATLAS_GPU_CHECK(frames_->submit(*slot, output_->acquire_signals(), output_->rendered(image)));
-    const Acquired presented = output_->present(image, report.number, desired_ns);
+    {
+        const trace::Section traced("atlas submit");
+        ATLAS_GPU_CHECK(frames_->submit(*slot, output_->acquire_signals(), output_->rendered(image)));
+    }
+    const Acquired presented = [&] {
+        const trace::Section traced("atlas present");
+        return output_->present(image, report.number, desired_ns);
+    }();
     if (presented != Acquired::ok) report.status = presented;
     report.gpu = frames_->last_times();
     report.cpu_ms = std::chrono::duration<double, std::milli>(clock::now() - start).count();

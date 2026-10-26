@@ -3,6 +3,7 @@
 
 #include "base/assert.hpp"
 #include "base/log.hpp"
+#include "base/trace.hpp"
 #include "frame/FrameLayout.hpp"
 #include "frame/GroundRuns.hpp"
 #include "gen/spirv/frame/overdraw.hpp"
@@ -203,6 +204,14 @@ gpu::Result<std::unique_ptr<FrameBuilder>> FrameBuilder::create(const gpu::Devic
     // The passes' numbers (their PassTile and PassPack), and the item kinds, before the world can build a tile: their
     // rows are fixed from here on.
     for (std::uint32_t i = 0; i < self->passes_.size(); ++i) self->passes_[i]->index_ = i;
+    // The trace sections' names (gain 21): each pass's select and update, each slot's recording.
+    for (const std::unique_ptr<Pass>& p : self->passes_) {
+        self->trace_names_.push_back(
+            {.select = std::format("atlas select {}", p->name()), .update = std::format("atlas update {}", p->name())});
+    }
+    for (std::size_t s = 0; s < slot_count; ++s) {
+        self->slot_trace_names_[s] = std::format("atlas record {}", name_of(static_cast<Slot>(s)));
+    }
     for (const std::unique_ptr<Pass>& p : self->passes_) p->kinds(self->selectors_);
     // Every phase in the frame's order: by slot, then order, then the registry's (a stable sort).
     for (std::uint32_t p = 0; p < self->passes_.size(); ++p) {
@@ -367,6 +376,7 @@ void FrameBuilder::write_ring(std::uint32_t slot) {
 }
 
 void FrameBuilder::record_slot(const gpu::FrameContext& frame, Slot slot) {
+    const trace::Section traced(slot_trace_names_[static_cast<std::size_t>(slot)].c_str());
     const auto [first, last] = slot_steps_[static_cast<std::size_t>(slot)];
     for (std::uint32_t i = first; i < last; ++i) {
         const Step& step = steps_[i];
@@ -391,7 +401,10 @@ void FrameBuilder::stage_f() {
     ATLAS_ASSERT(state_.view.has_value(), "derive made the frame's view");
     const view::View& view = state_.view.value();
     FrameScene* scene = inputs_.scene;
-    if (scene != nullptr) scene->update(state_);
+    if (scene != nullptr) {
+        const trace::Section traced("atlas scene update");
+        scene->update(state_);
+    }
     // The scene's tiles and packs hold each pass's stage T at the place of the pass that built it: a builder of other
     // passes draws none of them.
     const bool ours = scene != nullptr && built_by(scene->pass_names());
@@ -407,6 +420,7 @@ void FrameBuilder::stage_f() {
     // Set 1's globals that no pass owns: each provider brings its bindings up to date (frame/Globals.hpp), and says
     // which effects its resources allow (FRAME_FIELDS: in full mode alone).
     if (scene != nullptr) {
+        const trace::Section traced("atlas globals");
         std::uint32_t allowed = 0;
         for (GlobalProvider* g : scene->globals()) {
             Globals globals(*layout_, *g);
@@ -417,7 +431,10 @@ void FrameBuilder::stage_f() {
         if ((state_.block.info.x & shaders::FRAME_FULL) == 0U) allowed &= ~shaders::FRAME_FIELDS;
         state_.block.info.x |= allowed;
     }
-    for (const std::unique_ptr<Pass>& p : passes_) p->select(state_, selectors_);
+    for (std::size_t p = 0; p < passes_.size(); ++p) {
+        const trace::Section traced(trace_names_[p].select.c_str());
+        passes_[p]->select(state_, selectors_);
+    }
     state_.selectors = &selectors_;
     // The ground's painter slots, every pass's in the registry's order from slot 0, then their tails over them (the
     // ground's shadows over the canal names); the items' come after them.
@@ -442,6 +459,7 @@ void FrameBuilder::stage_f() {
                 options.cut_z = target.z;
             }
         }
+        const trace::Section traced("atlas ranks");
         ranks_.update(*state_.items, view.camera(), selectors_, options);
         state_.ranks = &ranks_;
         state_.block.info.y = ranks_.slots();
@@ -454,7 +472,10 @@ void FrameBuilder::stage_f() {
     if (!ground_runs_) ground_runs_ = std::make_unique<GroundRuns>();
     ground_runs_->runs.clear();
     state_.ground_runs = ground_runs_.get();
-    for (const std::unique_ptr<Pass>& p : passes_) p->update(state_);
+    for (std::size_t p = 0; p < passes_.size(); ++p) {
+        const trace::Section traced(trace_names_[p].update.c_str());
+        passes_[p]->update(state_);
+    }
 }
 
 void FrameBuilder::record(const gpu::FrameContext& frame) {
@@ -471,7 +492,10 @@ void FrameBuilder::record(const gpu::FrameContext& frame) {
         frame.frames.mark(frame.slot, gpu::Mark::after);
         return;
     }
-    stage_f();
+    {
+        const trace::Section traced("atlas stage F");
+        stage_f();
+    }
     FrameScene* scene = inputs_.scene;
 
     // The frame's slice of set 0's ring.

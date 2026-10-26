@@ -227,6 +227,7 @@ private:
     const tiles::Store& store_;
     Heaps& heaps_;
     std::span<const std::unique_ptr<frame::Pass>> passes_;
+    std::vector<std::string> stage_t_names_; // each pass's stage T as its trace section names it (gain 21)
     std::function<double()> clock_;
 
     mutable std::mutex mutex_;
