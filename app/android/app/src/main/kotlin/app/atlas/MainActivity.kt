@@ -11,17 +11,18 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import app.atlas.nav.AtlasRoot
-import app.atlas.nav.BackStackNavigator
-import app.atlas.nav.CiScreens
-import app.atlas.nav.Dest
-import app.atlas.nav.Links
 import app.atlas.mapcore.CoreConfig
 import app.atlas.mapcore.MapCore
 import app.atlas.mapview.vk.VkBench
 import app.atlas.mapview.vk.VkBenchScreen
 import app.atlas.mapview.vk.VkFactsScreen
+import app.atlas.nav.AtlasRoot
+import app.atlas.nav.BackStackNavigator
+import app.atlas.nav.CiScreens
+import app.atlas.nav.Dest
+import app.atlas.nav.Links
 import java.io.File
+import kotlinx.coroutines.launch
 
 /**
  * The one activity: edge to edge, a splash screen until the saved map view is read, the app's navigation, and the ways
@@ -67,6 +68,7 @@ class MainActivity : ComponentActivity() {
         // the crash guard; it draws the maps where it has tiles, today's map elsewhere (the transitional rule until A5),
         // and a phone that cannot run it shows T2's honest state in the map's place.
         startCore(this, intent)
+        finishOsmSignIn(intent)
         app.atlas.mapview.MapEngine.online = { services.connectivity.online.value && !services.config.offline }
 
         val camera = services.startCamera
@@ -103,7 +105,23 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (showVulkanScreen(intent)) return
+        if (finishOsmSignIn(intent)) return
         stackFor(intent)?.let { navigator?.reset(it) }
+    }
+
+    /**
+     * The browser's redirect back from signing in to OpenStreetMap ([app.atlas.services.OsmAccount.REDIRECT]): its code is
+     * exchanged for the token off the main thread, and the user stays where they were. True when the intent was one.
+     */
+    private fun finishOsmSignIn(intent: Intent): Boolean {
+        val uri = intent.dataString ?: return false
+        if (intent.action != Intent.ACTION_VIEW || !uri.startsWith(app.atlas.services.OsmAccount.REDIRECT)) return false
+        val services = services
+        services.scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { services.osmAccount.finish(uri) }
+                .onFailure { android.util.Log.w("Atlas", "OpenStreetMap sign-in: ${it.message}") }
+        }
+        return true
     }
 
     override fun onTrimMemory(level: Int) {

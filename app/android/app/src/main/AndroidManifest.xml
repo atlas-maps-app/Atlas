@@ -76,6 +76,13 @@
                 <data android:host="openstreetmap.org" />
                 <data android:host="osm.org" />
             </intent-filter>
+            <!-- The redirect back from signing in to OpenStreetMap in the browser (OsmAccount.REDIRECT). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="app.atlas" android:path="/osm-signin" />
+            </intent-filter>
             <!-- Shared text that holds coordinates, a Plus Code or a map link. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />

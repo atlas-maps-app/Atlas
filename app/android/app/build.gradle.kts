@@ -18,6 +18,10 @@ android {
         // so every alpha installs over the one before.
         versionCode = System.getenv("ATLAS_VERSION_CODE")?.toIntOrNull() ?: 1
         versionName = System.getenv("ATLAS_VERSION") ?: "0.1"
+        // The OpenStreetMap OAuth 2.0 client the user registers on openstreetmap.org (a public client id, no secret):
+        // -Patlas.osmClientId=... or ATLAS_OSM_CLIENT_ID. Empty, signing in to OpenStreetMap is switched off.
+        val osmClientId = providers.gradleProperty("atlas.osmClientId").orElse(providers.environmentVariable("ATLAS_OSM_CLIENT_ID")).getOrElse("")
+        buildConfigField("String", "OSM_CLIENT_ID", "\"" + osmClientId.filter { it.isLetterOrDigit() || it == '-' || it == '_' } + "\"")
     }
 
     // Packs (.atlas) are compressed inside already, chunk by chunk: stored as they are, the core maps the bundled render

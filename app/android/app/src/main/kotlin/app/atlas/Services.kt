@@ -93,6 +93,8 @@ class Dirs(val files: File, val cache: File) {
     val segments = File(files, "routing/segments")
     val profiles = File(files, "routing/profiles")
     val http = File(cache, "http")
+    val edits = File(files, "edits/queue.json")
+    val osmAccount = File(files, "settings/osm.preferences_pb")
 }
 
 /**
@@ -224,6 +226,29 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
 
     /** Anonymous OpenStreetMap notes: "leave a note for mappers" and the place quests. */
     val osmNotes: app.atlas.providers.OsmNotes by lazy { app.atlas.providers.OsmNotes(http) }
+
+    /** The user's edits to OpenStreetMap, kept on this phone until they are sent (FillIn, the painter). */
+    val edits: app.atlas.services.EditQueue by lazy { app.atlas.services.EditQueue.open(dirs.edits) }
+
+    /** Edits sent with the user's own OpenStreetMap account, after their review. */
+    val osmEdits: app.atlas.providers.OsmEdits by lazy {
+        app.atlas.providers.OsmEdits(http, createdBy = "Atlas ${BuildConfig.VERSION_NAME}")
+    }
+
+    /**
+     * The user's OpenStreetMap account: signed in in the browser, the token sealed by the Android Keystore. Switched off
+     * while the app has no client id (BuildConfig.OSM_CLIENT_ID, the Gradle property atlas.osmClientId).
+     */
+    val osmAccount: app.atlas.services.OsmAccount by lazy {
+        val id = BuildConfig.OSM_CLIENT_ID
+        val redirect = app.atlas.services.OsmAccount.REDIRECT
+        app.atlas.services.OsmAccount(
+            PreferenceDataStoreFactory.create(scope = CoroutineScope(scope.coroutineContext + Dispatchers.IO)) { dirs.osmAccount },
+            app.atlas.services.KeystoreSealer(),
+            if (id.isBlank()) null else app.atlas.services.OsmAccount.Osm(app.atlas.providers.OsmAuth(http, id, redirect), redirect),
+            scope,
+        )
+    }
 
     // ---- Routing -------------------------------------------------------------------------------------------------
 
