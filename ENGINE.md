@@ -645,6 +645,11 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
   - `mat` and ripple on their surfaces, rescaled with the zoom so their density on screen stays the same;
   - cloud shadows moving with the ground.
 - **Night:** lamp pools, lit streets, wet cores, the glows of open places, lit shops and windows, and the city glow.
+  - Done (26 October): **the lamps' pools** (`passes/Pools.cpp`, `pool_vs` and `pool_fs` in `shaders/ground/ground.slang`), as render draws them at night after the quay walls (amsterdam.py:847): each street lamp's `<ellipse fill="url(#pool)">` of 10 m about its foot (rx 10 m at its depth, ry the picture's height of 10 m along z, at least .6), from 2 m ahead, within the radius cut, in S['nodes']'s order across the drawn tiles. The ground tiles' lamps (the water's streaks' already) give their places.
+    - One quad an ellipse at the night's group after the quays (geometry/Ground.hpp's `pools`: the lit streets' glow, their wet cores, then the lamps' pools), the `pool` gradient at each pixel's centre, translucent, so the buildings in front hide them.
+    - Held by `pools_vk_test`: the home at night, its 22 pools' 13,012 pixels inside one each within 1.6 levels of the gradient over the ground, no pixel outside them changed. L1 matches the port's ellipses (the home wet's 6, the canal sweep's 8), none differing or extra.
+    - The engine's references are at version 22: the four night frames (home and board, night and wet) show the pools, and with the pools masked all eight frames are version 21's.
+    - Still to come: the lit streets' glow (each lit road's runs stroked at its width in `#FFB866`, blurred by `litglow`'s σ 2.6 and screened at .3, .4 without weather; the tiles keep only the streaks' points of a lit road, so its centreline must come too), their wet cores, the open places' glows (opening hours, which the core does not read yet), the lamps' halos and the shops' glazing.
 - **The renderer's other ten regions** get their render packs as their features land, each with its own profile.
 - Tag an alpha after the water and another after the night. The water's is the nightly alpha of 26 October (the user, 25 October: no hand tag). By then the Westerkerk home is within about 2.5 levels of its render, apart from the renderer's named issues.
 
