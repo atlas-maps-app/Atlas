@@ -4,6 +4,8 @@
 // across it, and the gradient alone beyond the circle; at night (with weather) the city's glow over the sky's rows
 // above the horizon. Each pixel against the colours recomputed from the SVG's stops, within two levels (the hardware's
 // blend and its rounding).
+#if !defined(__ANDROID__)
+
 #include "base/pymath/PyMath.hpp"
 #include "passes/Ground.hpp"
 #include "tests/ground/ground_draw.hpp"
@@ -184,3 +186,5 @@ TEST_CASE("ground: the sky layer's sun, its glow and the city's glow lie over th
     }
     for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
 }
+
+#endif

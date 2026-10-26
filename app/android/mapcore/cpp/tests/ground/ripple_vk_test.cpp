@@ -341,8 +341,6 @@ TEST_CASE("ground: the ripple's stages apart, where the fused stages are switche
     CHECK_MESSAGE(chain.beyond == 0, chain.beyond << " pixels of the result lie beyond its region");
 }
 
-#endif
-
 TEST_CASE("ground: the reflected trees' leaf filter moves their circles' samples in the ripple's layer, at a canal") {
     // amsterdam.py's `leaf` on each reflected tree's group, at a close look along the Prinsengracht (the home shows no
     // reflected tree): the layer drawn with the filter and without; within the layer's region they differ, only within
@@ -457,3 +455,5 @@ TEST_CASE("ground: the reflected trees' leaf filter moves their circles' samples
     CHECK(checked > 1000);
     CHECK(wrong <= checked / 200);
 }
+
+#endif

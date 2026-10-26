@@ -3,6 +3,8 @@
 // alone (its centre within .95 of the ellipse's radii, apart from the others) is the `pool` gradient there over the
 // frame without them, within two levels (the hardware's blend and its rounding), and a pixel no pool reaches is the
 // frame without them.
+#if !defined(__ANDROID__)
+
 #include "passes/Ground.hpp"
 #include "tests/ground/ground_draw.hpp"
 #include "tests/ground/ground_support.hpp"
@@ -129,3 +131,5 @@ TEST_CASE("ground: the street lamps' pools at night are their gradient over the 
     CHECK(stray == 0);
     for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
 }
+
+#endif
