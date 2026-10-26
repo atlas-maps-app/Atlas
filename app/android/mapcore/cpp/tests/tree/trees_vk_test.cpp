@@ -118,6 +118,28 @@ namespace {
     return b;
 }
 
+/// The hour's weather after dark (the night's tones, the sun below the horizon): the lamps' halos.
+[[nodiscard]] style::ThemeBlock night() {
+    style::ThemeBlock b = sunny();
+    b.flags =
+        (b.flags | style::theme_flag::night) & ~(style::theme_flag::shadow_blur | style::theme_flag::cloud_shadows);
+    b.moment = style::MomentName::night;
+    b.sun_vector = {0.0, -1.0, 0.0};
+    b.sun_elevation = -21.4;
+    b.shadow_opacity = 0.0;
+    b.cloud_shadows = 0.0;
+    return b;
+}
+
+/// A lamp's halo's colour and opacity at `t` of its radius (tree_sides_fs's halo_at, in the same floats).
+[[nodiscard]] hlsl::float4 halo_at(float t) {
+    const hlsl::float4 s0 = shaders::tree_rgba(shaders::TREE_HALO_STOP0);
+    const hlsl::float4 s1 = shaders::tree_rgba(shaders::TREE_HALO_STOP1);
+    const hlsl::float4 s2 = shaders::tree_rgba(shaders::TREE_HALO_STOP2);
+    if (t <= 0.35F) return s0 + ((s1 - s0) * (t / 0.35F));
+    return s1 + ((s2 - s1) * std::clamp((t - 0.35F) / 0.65F, 0.0F, 1.0F));
+}
+
 /// A camera of the map (buildings_vk_test.cpp's).
 [[nodiscard]] style::CameraState camera(double lat, double lon, double bearing, double pitch, double distance,
                                         std::uint32_t w, std::uint32_t h, double d) {
@@ -506,9 +528,24 @@ struct Full {
         each(r, [&](std::size_t k, Hit hit) {
             if (hit.near) edge[k] = 1;
             if (!hit.inside || !(d > depth[k])) return;
-            const hlsl::float3 c = in_full(r, k, shaders::tree_rgb(r.a.y));
+            hlsl::float3 rgb = shaders::tree_rgb(r.a.y);
+            float alpha = opacity;
+            if ((r.a.x & shaders::TREE_HALO) != 0U) {
+                // a lamp's halo: its gradient at the pixel's centre
+                const std::size_t pixel = k / n; // the sample's pixel, its column and row
+                const std::size_t column = pixel % w;
+                const std::size_t row = pixel / w;
+                const hlsl::float2 centre{static_cast<float>(column) + 0.5F, static_cast<float>(row) + 0.5F};
+                const hlsl::float2 s = shaders::css_of_output(cam, centre);
+                const float dx = s.x - std::bit_cast<float>(r.b.x);
+                const float dy = s.y - std::bit_cast<float>(r.b.y);
+                const hlsl::float4 g = halo_at(std::sqrt((dx * dx) + (dy * dy)) / std::bit_cast<float>(r.b.z));
+                rgb = g.xyz;
+                alpha = g.w;
+            }
+            const hlsl::float3 c = in_full(r, k, rgb);
             const hlsl::float3 under = colour[k];
-            const hlsl::float3 over = (c * opacity) + (under * (1.0F - opacity));
+            const hlsl::float3 over = (c * alpha) + (under * (1.0F - alpha));
             colour[k] = {std::round(over.x * 255.0F) / 255.0F, std::round(over.y * 255.0F) / 255.0F,
                          std::round(over.z * 255.0F) / 255.0F};
             covered[k] = 1;
@@ -674,6 +711,8 @@ TEST_CASE("trees: the Westerkerk home drawn on the host's Vulkan, pixel for pixe
     }
     check_frames(home(1080, 2400, 1080.0 / 412.0), "home", packs, sunny(), 50);
     check_frames(home(1080, 2400, 1080.0 / 412.0), "home without weather", packs, dry(), 50);
+    // after dark: the night's tones, and the lamps' halos (translucent, each its gradient at a pixel's centre)
+    check_frames(home(1080, 2400, 1080.0 / 412.0), "home at night", packs, night(), 50);
 }
 
 TEST_CASE(

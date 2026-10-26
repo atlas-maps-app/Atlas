@@ -38,6 +38,7 @@ static const uint THING_VECTORS = 2u;
 static const uint THING_JOB_KIND = 15u;
 static const uint THING_JOB_NIGHT = 16u;
 static const uint THING_JOB_GLINT = 32u; // a lamp's glint (by day, s > 1.2)
+static const uint THING_JOB_HALO = 128u; // a lamp's halo (at night; its radius in d)
 static const uint THING_JOB_HEAD = 64u;  // a bollard's head (by day, s > 1)
 static const uint THING_JOB_POSTS_SHIFT = 8u; // a railing's piece's posts' gaps, bits 8 to 15
 static const uint THING_JOB_VECTORS = 5u;
@@ -84,7 +85,7 @@ inline uint thing_record_count(uint flags) {
 }
 
 inline uint thing_side_count(uint flags) {
-    return (flags & (THING_JOB_GLINT | THING_JOB_HEAD)) != 0u ? 1u : 0u;
+    return (flags & (THING_JOB_GLINT | THING_JOB_HEAD | THING_JOB_HALO)) != 0u ? 1u : 0u;
 }
 
 /// A thing as the points heap holds it: its foot, tile-local (a railing's piece: its first end at its foot's height).
@@ -109,7 +110,7 @@ struct ThingJob {
     float a;     // a lamp's mast's width, a bollard's post's (as printed)
     float b;     // a lamp's hw, a bollard's head's offset (0.03 s); a railing's width (as printed) in a
     float c;     // a lamp's hh, a bollard's head's radius (as printed)
-    float d;     // a lamp's glint's width (as printed)
+    float d;     // a lamp's glint's width by day, its halo's radius at night (as printed)
     uint side;   // its translucent record
 };
 

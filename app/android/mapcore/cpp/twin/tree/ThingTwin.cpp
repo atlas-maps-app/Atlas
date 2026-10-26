@@ -146,6 +146,25 @@ void ThingTwin::lamp(const shaders::ThingJob& j, hlsl::float3 foot, float kz, st
         out_.path({.fill = black, .stroke = paint(glint), .stroke_width = j.d, .cap = Cap::butt, .join = Join::round},
                   glint_line, false, {.opacity = opacity});
     }
+    // at night its halo: '<circle cx="%.1f" cy="%.1f" r="%.1f" fill="url(#halo)"/>' about p1 + 0.5 hh
+    if ((j.flags & shaders::THING_JOB_HALO) != 0U) {
+        const hlsl::float2 h = shaders::tree_printed(c, hlsl::float2{p1.x, p1.y + hh * 0.5F});
+        side_record_ = shaders::tree_halo(h, j.d, shaders::tree_depth(c, kz, j.slot, 4U));
+        const auto argb = [](std::uint32_t rgba) {
+            return (rgba & 0xFF00'FF00U) | ((rgba & 0xFFU) << 16U) | ((rgba >> 16U) & 0xFFU);
+        };
+        const std::array<std::uint32_t, 3> colours{argb(shaders::TREE_HALO_STOP0), argb(shaders::TREE_HALO_STOP1),
+                                                   argb(shaders::TREE_HALO_STOP2)};
+        const std::array<float, 3> offsets{0.0F, 0.35F, 1.0F};
+        const std::int32_t halo = out_.gradient({.id = "halo",
+                                                 .radial = true,
+                                                 .coords = {0.5F, 0.5F, 0.5F, 0.5F, 0.5F},
+                                                 .units = Units::bounding_box,
+                                                 .offsets = offsets,
+                                                 .colours = colours});
+        out_.at(j.slot + 4, objects_, item);
+        out_.circle({.fill = Paint::gradient(halo)}, h.x, h.y, j.d);
+    }
 }
 
 void ThingTwin::box(const shaders::ThingJob& j, hlsl::float3 foot, float dz, float w, float dd, float h,

@@ -395,6 +395,11 @@ void thing_lamp(FrameCamera c, ThingJob j, float3 foot, float kz) {
         put_side(j.side, tree_segment(g0, g1, 0.5f * j.d, 0u, tree_tones[THING_TONE_GLINT],
                                       asfloat(tree_tones[THING_TONE_GLINT_OPACITY]), tree_depth(c, kz, j.slot, 4u)));
     }
+    if ((j.flags & THING_JOB_HALO) != 0u) {
+        // at night its halo: '<circle cx="%.1f" cy="%.1f" r="%.1f" fill="url(#halo)"/>' about p1 + 0.5 hh
+        float2 h = {p1.x, p1.y + hh * 0.5f};
+        put_side(j.side, tree_halo(tree_printed(c, h), j.d, tree_depth(c, kz, j.slot, 4u)));
+    }
 }
 
 /// draw_bollard: its post, by day its head.
@@ -699,8 +704,20 @@ TreeTarget trees_fs(TreeOut v) {
     return o;
 }
 
-/// A translucent part (a trunk's sunlit side): its colour at its opacity (premultiplied), with mat's grain, on the
-/// samples its shape covers.
+/// A lamp's halo's colour and opacity at `t` of its radius: the `halo` gradient's stops at 0, .35 and 1 interpolated
+/// in their encoded values.
+float4 halo_at(float t) {
+    float4 s0 = tree_rgba(TREE_HALO_STOP0);
+    float4 s1 = tree_rgba(TREE_HALO_STOP1);
+    float4 s2 = tree_rgba(TREE_HALO_STOP2);
+    if (t <= 0.35f) {
+        return lerp(s0, s1, t / 0.35f);
+    }
+    return lerp(s1, s2, saturate((t - 0.35f) / 0.65f));
+}
+
+/// A translucent part (a trunk's sunlit side, a lamp's halo): its colour at its opacity (a halo's its gradient's at
+/// the pixel's centre), premultiplied, with mat's grain, on the samples its shape covers.
 [shader("fragment")]
 TreeTarget tree_sides_fs(TreeOut v) {
     uint mask = coverage_of(v);
@@ -708,8 +725,16 @@ TreeTarget tree_sides_fs(TreeOut v) {
         discard;
     }
     float alpha = v.kind.z;
+    float3 colour = v.colour;
+    if ((uint(v.kind.x) & TREE_HALO) != 0u) {
+        float2 css = css_of_output(frame.camera, v.position.xy);
+        float2 d = css - v.shape.xy;
+        float4 g = halo_at(sqrt(d.x * d.x + d.y * d.y) / v.shape.z);
+        colour = g.rgb;
+        alpha = g.a;
+    }
     TreeTarget o;
-    float3 c = mat_colour(frame.camera, v.colour, v.position.xy, mat_on(frame));
+    float3 c = mat_colour(frame.camera, colour, v.position.xy, mat_on(frame));
     o.colour = float4(c * alpha, alpha);
     o.coverage = mask;
     return o;

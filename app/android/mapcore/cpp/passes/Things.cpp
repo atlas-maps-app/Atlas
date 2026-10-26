@@ -101,6 +101,11 @@ ThingChoice thing_choice(geometry::ThingKind kind, std::uint32_t posts, double d
             c.flags |= shaders::THING_JOB_GLINT;
             c.d = printed(pymath::max(0.3, 0.05 * s));
         }
+        // at night its halo, r '%.1f' % max(4, 2.6 * s)
+        if (night) {
+            c.flags |= shaders::THING_JOB_HALO;
+            c.d = static_cast<float>(pymath::round(pymath::max(4.0, 2.6 * s), 1));
+        }
         break;
     case geometry::ThingKind::bollard:
         // draw_bollard: '%.2f' % max(0.7, 0.2 * s); by day where s > 1 its head at p1 - 0.03 * s, r '%.2f' % max(0.2,

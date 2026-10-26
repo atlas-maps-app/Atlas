@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "22",
+  "version": "23",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -377,6 +377,21 @@
           "home grey": "f59d115c7338acadb5b6ca5d62e9711c58f2a147cc1a69ea771b7dae48964901",
           "home wet": "5ab3b85ed42490bba9fb7ec932ac219e72c39887c784945d6e8327b4c35de3cc",
           "home night": "afda9cb332e09e212dea1b20e9c58d55c4c5ea83241cbcdd8bf044e4107154b1",
+          "board sunny": "fc1eb0b06dfb149253df516b880264621229e0ad9a309cbb049a67897de91137",
+          "board grey": "5b89ad30bc6755ed38e90a510e6c7aeb75336b62a1e78573b797e2329b01f764",
+          "board wet": "f2971a4d7eaa6012924ce7b6191ed218d31e7c2d4cb0d9857229a53f1381c0aa",
+          "board night": "92458182aa00818424fa5ffa7a00f417e694c1db9c9ce6096c879b3e7fe5c309"
+        }
+      }
+    },
+    "23": {
+      "note": "Step 4, the night: each street lamp's halo (render/amsterdam.py's draw_lamp: `<circle fill=\"url(#halo)\">` about its lantern, its last element at night): home wet and home night changed; the other six frames are version 22's (checked with the halos masked: 8 of 8 as version 22).",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "ae74836d79d2bf30708fe7470dff6ff6ed8b7b3233d583118bf344537ec964e3",
+          "home grey": "f59d115c7338acadb5b6ca5d62e9711c58f2a147cc1a69ea771b7dae48964901",
+          "home wet": "785458ab551a39d38bf1d8bb8c5fdfef2bd77f1b6b6b6b51996c1ffaa66a8323",
+          "home night": "28acb6772ec69fc6f71426ddfe83fa921ff3bfe898e0c035242472b7345fdb8d",
           "board sunny": "fc1eb0b06dfb149253df516b880264621229e0ad9a309cbb049a67897de91137",
           "board grey": "5b89ad30bc6755ed38e90a510e6c7aeb75336b62a1e78573b797e2329b01f764",
           "board wet": "f2971a4d7eaa6012924ce7b6191ed218d31e7c2d4cb0d9857229a53f1381c0aa",
