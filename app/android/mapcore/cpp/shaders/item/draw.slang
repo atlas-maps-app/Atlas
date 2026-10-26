@@ -4,7 +4,9 @@
 // its boxes' faces, a turbine's tower and blades), the opaque parts (a turbine's blades' strokes and hub, a crane's
 // stays, a mast's glow's core, a power line's tower) and the translucent ones (a turbine's night light, a mast's glow, a
 // power line's conductors and its tower while it fades). items_faces_vs draws each face as its fan and, stroked, its edges' quads,
-// whose fragments items_faces_fs keeps where they lie within the stroke, sample by sample; items_parts_vs draws a
+// whose fragments items_faces_fs keeps where they lie within the stroke, sample by sample; at true depth the fans draw
+// first, alone, through items_fills_fs, which keeps every sample the rasteriser covers and so keeps the early depth
+// test and a tiler's hidden-surface removal (ENGINE.md gain 18), then the edges alone; items_parts_vs draws a
 // segment or a circle as a box about it whose fragments items_parts_fs keeps where they lie in it; items_sides_fs blends
 // the translucent ones, premultiplied, a conductor's segment leaving the samples its path's earlier segments cover. Every
 // corner at its own depth, with mat's grain.
@@ -34,7 +36,8 @@
 [[vk::binding(7, 2)]] RWStructuredBuffer<uint4> item_sides_out;
 [[vk::binding(8, 2)]] StructuredBuffer<uint4> item_sides;
 
-/// The push constants: x the jobs (items_cs) or the samples a pixel (the fragment stages).
+/// The push constants: x the jobs (items_cs) or the samples a pixel (the fragment stages); y which of a face's
+/// triangles items_faces_vs places (0 all, 1 its fan, 2 its edges' quads).
 struct ItemPush {
     uint4 at;
 };
@@ -497,6 +500,10 @@ ItemOut place_face(ItemRecord r, uint index, uint vertex) {
     if (kind == ITEM_NONE) {
         return nowhere();
     }
+    // push.at.y: 1 the fans alone, 2 the edges alone, 0 both (under the painter switch)
+    if ((push.at.y == 1u && vertex >= 9u) || (push.at.y == 2u && vertex < 9u)) {
+        return nowhere();
+    }
     uint n = item_count(r);
     ItemOut o = nowhere();
     o.colour = tree_rgb(r.a.y);
@@ -646,6 +653,17 @@ uint coverage_of(ItemOut v) {
     return mask;
 }
 
+/// A face's colour at `v`: its own or its gradient's at the pixel's centre, with mat's grain.
+float4 face_colour(ItemOut v) {
+    float3 colour = v.colour;
+    if ((v.kind.x & ITEM_GRADIENT) != 0u) {
+        float2 centre = css_of_output(frame.camera, floor(v.position.xy) + float2(0.5f, 0.5f));
+        colour = item_gradient_at(v.colour, tree_rgb(v.stops.x), tree_rgb(v.stops.y), (v.kind.x & ITEM_HIGH) != 0u,
+                                  v.paint.x, v.paint.y, centre.x);
+    }
+    return float4(mat_colour(frame.camera, colour, v.position.xy, mat_on(frame)), 1.0f);
+}
+
 /// A face: its colour or its gradient at the pixel's centre, with mat's grain, on the samples it covers.
 [shader("fragment")]
 ItemTarget items_faces_fs(ItemOut v) {
@@ -653,15 +671,22 @@ ItemTarget items_faces_fs(ItemOut v) {
     if (mask == 0u) {
         discard;
     }
-    float3 colour = v.colour;
-    if ((v.kind.x & ITEM_GRADIENT) != 0u) {
-        float2 centre = css_of_output(frame.camera, floor(v.position.xy) + float2(0.5f, 0.5f));
-        colour = item_gradient_at(v.colour, tree_rgb(v.stops.x), tree_rgb(v.stops.y), (v.kind.x & ITEM_HIGH) != 0u,
-                                  v.paint.x, v.paint.y, centre.x);
-    }
     ItemTarget o;
-    o.colour = float4(mat_colour(frame.camera, colour, v.position.xy, mat_on(frame)), 1.0f);
+    o.colour = face_colour(v);
     o.coverage = mask;
+    return o;
+}
+
+struct ItemFill {
+    [[vk::location(0)]] float4 colour : SV_Target0;
+};
+
+/// A face's fan alone: its colour on every sample the rasteriser covers (coverage_of's own for a fan), with no mask
+/// written and nothing discarded.
+[shader("fragment")]
+ItemFill items_fills_fs(ItemOut v) {
+    ItemFill o;
+    o.colour = face_colour(v);
     return o;
 }
 

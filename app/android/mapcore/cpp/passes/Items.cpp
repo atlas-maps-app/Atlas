@@ -496,6 +496,8 @@ gpu::Result<void> Items::prepare(const frame::PassContext& context) {
     };
     ATLAS_GPU_LET(faces, opaque("item faces", "items_faces_vs", "items_faces_fs"));
     faces_pipeline_ = std::move(faces);
+    ATLAS_GPU_LET(fills, opaque("item fills", "items_faces_vs", "items_fills_fs"));
+    fills_pipeline_ = std::move(fills);
     ATLAS_GPU_LET(parts, opaque("item parts", "items_parts_vs", "items_parts_fs"));
     parts_pipeline_ = std::move(parts);
     // the translucent ones: in painter's order, the test on and writes off
@@ -519,6 +521,7 @@ gpu::Result<void> Items::prepare(const frame::PassContext& context) {
 void Items::release() noexcept {
     sides_pipeline_.clear();
     parts_pipeline_.clear();
+    fills_pipeline_.clear();
     faces_pipeline_.clear();
     decide_.clear();
     compute_layout_.clear();
@@ -822,12 +825,30 @@ void Items::record_draw(const frame::Recording& recording) {
     if (faces_pipeline_ == nullptr || counts_.jobs == 0) return;
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout_, 2, *sets_[slot_], {});
-    const hlsl::uint4 push{static_cast<std::uint32_t>(recording.frame.pass.spec().config.samples()), 0U, 0U, 0U};
+    const auto samples = static_cast<std::uint32_t>(recording.frame.pass.spec().config.samples());
+    const hlsl::uint4 push{samples, 0U, 0U, 0U};
     cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, push);
     if (counts_.faces > 0) {
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *faces_pipeline_);
-        cmd.draw(counts_.faces * shaders::ITEM_FACE_VERTICES, 1, 0, 0);
-        recording.counters.draw("item faces", std::uint64_t{counts_.faces} * 13);
+        const std::uint32_t vertices = counts_.faces * shaders::ITEM_FACE_VERTICES;
+        if ((recording.state.block.camera.flags.x & shaders::CAMERA_PAINTER) == 0U) {
+            // at true depth the fans first, alone, in a pipeline that neither writes a mask nor discards, so a tiler
+            // keeps its early depth test and hidden-surface removal for them (ENGINE.md gain 18); then the edges alone.
+            // A box's faces lead one another (items.slangh), so no edge of an earlier face ties a later face's fan in
+            // depth: the order of the two draws decides no sample.
+            cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, hlsl::uint4{samples, 1U, 0U, 0U});
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *fills_pipeline_);
+            cmd.draw(vertices, 1, 0, 0);
+            recording.counters.draw("item fills", std::uint64_t{counts_.faces} * 3);
+            cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, hlsl::uint4{samples, 2U, 0U, 0U});
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *faces_pipeline_);
+            cmd.draw(vertices, 1, 0, 0);
+            recording.counters.draw("item faces", std::uint64_t{counts_.faces} * 10);
+            cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, push);
+        } else {
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *faces_pipeline_);
+            cmd.draw(vertices, 1, 0, 0);
+            recording.counters.draw("item faces", std::uint64_t{counts_.faces} * 13);
+        }
     }
     if (counts_.parts > 0) {
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *parts_pipeline_);

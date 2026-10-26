@@ -172,6 +172,7 @@ private:
     vk::raii::PipelineLayout compute_layout_{nullptr};
     vk::raii::Pipeline decide_{nullptr};
     vk::raii::Pipeline faces_pipeline_{nullptr};
+    vk::raii::Pipeline fills_pipeline_{nullptr}; ///< the faces' fans alone at true depth (ENGINE.md gain 18)
     vk::raii::Pipeline parts_pipeline_{nullptr};
     vk::raii::Pipeline sides_pipeline_{nullptr};
 
