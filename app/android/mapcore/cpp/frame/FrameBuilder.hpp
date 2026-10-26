@@ -127,6 +127,9 @@ struct FrameOptions {
     /// The painter switch: what stands up draws in the renderer's painter's order (whole items by one point each, as
     /// the renders sort them) instead of at its true depth, to compare the two (painter.slang).
     bool painter = false;
+    /// The threads prepare runs the passes' own prepare on, the calling one among them, at most one a pass: 0 for one a
+    /// core (std::thread::hardware_concurrency), 1 for the calling thread alone, the passes one after another.
+    std::uint32_t threads = 0;
 };
 
 /// What the frame draws of the world (scene/World.hpp): asked once a frame, once the frame's view is known and before
@@ -177,7 +180,7 @@ struct FrameInputs {
 class FrameBuilder final : public gpu::Content {
 public:
     /// A builder of `passes` (the registry's, make_passes, or a test's), on `device`, its pipelines through `cache`,
-    /// each module and pipeline announced to `watch` (the crash guard; may be null).
+    /// each module and pipeline announced to `watch` (the crash guard; may be null) from the thread that makes it.
     [[nodiscard]] static gpu::Result<std::unique_ptr<FrameBuilder>>
     create(const gpu::Device& device, const gpu::PipelineCache& cache, std::vector<std::unique_ptr<Pass>> passes,
            FrameOptions options = {}, gpu::PipelineWatch* watch = nullptr);
@@ -195,6 +198,9 @@ public:
     /// The composite's steps the frame lets run from now on (FrameOptions::steps).
     void set_steps(std::uint32_t steps) noexcept { options_.steps = steps; }
 
+    /// Every pass's prepare (Pass::prepare) for `pass` and `output`, on several threads at once (FrameOptions::threads,
+    /// ENGINE.md gain 20): the first picture waits for the longest pass, not for their sum. On a failure the first
+    /// pass to fail in the registry's order says why, and everything the passes made goes.
     [[nodiscard]] gpu::Result<void> prepare(const gpu::MainPass& pass, const gpu::Output& output) override;
     void release() override;
     void record(const gpu::FrameContext& frame) override;
@@ -211,9 +217,13 @@ public:
     [[nodiscard]] std::span<const std::unique_ptr<Pass>> passes() const noexcept { return passes_; }
     [[nodiscard]] FrameLayout& layout() noexcept { return *layout_; }
     [[nodiscard]] const FrameOptions& options() const noexcept { return options_; }
-    /// Milliseconds the driver spent making the pipelines the last prepare made, and how many it made.
+    /// Milliseconds the driver spent making the pipelines the last prepare made (over every thread), and how many it
+    /// made.
     [[nodiscard]] double pipelines_ms() const noexcept { return pipelines_ms_; }
     [[nodiscard]] std::uint32_t pipeline_count() const noexcept { return pipeline_count_; }
+    /// Milliseconds the last prepare took from its call to its return, and the threads it ran the passes on.
+    [[nodiscard]] double prepare_ms() const noexcept { return prepare_ms_; }
+    [[nodiscard]] std::uint32_t prepare_threads() const noexcept { return prepare_threads_; }
     /// Whether it holds anything prepare made.
     [[nodiscard]] bool holds_prepared() const noexcept { return prepared_; }
 
@@ -263,8 +273,9 @@ private:
     std::vector<Step> steps_; ///< every phase, sorted: slot, order, registry
     std::array<std::pair<std::uint32_t, std::uint32_t>, slot_count> slot_steps_{}; ///< each slot's [first, last)
     std::vector<PassCounters> counters_;
-    /// The trace sections' names (gain 21): each pass's select and update, and each slot's recording.
+    /// The trace sections' names (gain 21): each pass's prepare, select and update, and each slot's recording.
     struct TraceNames {
+        std::string prepare;
         std::string select;
         std::string update;
     };
@@ -287,6 +298,8 @@ private:
     double record_ms_ = 0;
     double pipelines_ms_ = 0;
     std::uint32_t pipeline_count_ = 0;
+    double prepare_ms_ = 0;
+    std::uint32_t prepare_threads_ = 0;
 };
 
 } // namespace atlas::frame

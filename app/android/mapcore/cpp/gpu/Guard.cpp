@@ -11,7 +11,9 @@
 #include <fcntl.h>
 #include <format>
 #include <fstream>
+#include <span>
 #include <sstream>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -117,6 +119,19 @@ void write_synced(const std::filesystem::path& path, std::string_view text, bool
     }
 }
 
+/// The calls a marker names, its `pipeline`, `module` and `release` lines ("<key> <value>" each), in its order: one, or
+/// one a thread where several made a frame's pipelines at once.
+[[nodiscard]] std::vector<std::string> calls_in(std::string_view marker) {
+    constexpr std::array<std::string_view, 3> keys{"pipeline", "module", "release"};
+    std::vector<std::string> out;
+    for (const std::string_view line : split(marker, '\n')) {
+        for (const std::string_view key : keys) {
+            if (line.size() > key.size() && line.starts_with(key) && line[key.size()] == ' ') out.emplace_back(line);
+        }
+    }
+    return out;
+}
+
 /// The `vk guard` line (plan-vector Appendix C), with what the driver was making or destroying ("pipeline <…>",
 /// "module <…>", "release <…>") and the core's build.
 [[nodiscard]] std::string guard_line(std::string_view stage, std::string_view driver, std::string_view version,
@@ -192,11 +207,15 @@ void Guard::set_process_start(std::int64_t ms) noexcept {
     if (ms > 0) start_ms_ = ms;
 }
 
-void Guard::set_drawing(std::string_view frame) { drawing_ = clean(frame); }
+void Guard::set_drawing(std::string_view frame) {
+    const std::scoped_lock lock(mutex_);
+    drawing_ = clean(frame);
+}
 
 void Guard::set_pick(const Configuration& pick) { pick_ = pick; }
 
 void Guard::frame_of(const Configuration* configuration) {
+    const std::scoped_lock lock(mutex_);
     std::string cell;
     if (configuration != nullptr && pick_ && *configuration != *pick_) cell = clean(name_of(*configuration));
     if (cell == cell_) return;
@@ -231,16 +250,12 @@ bool Guard::read_marker(const std::string& marker, const ProcessExits& exits, Gu
     std::string stage = field(marker, "stage");
     std::string driver = field(marker, "driver");
     std::string version = field(marker, "version");
-    const std::string pipeline = field(marker, "pipeline");
-    const std::string module = field(marker, "module");
-    const std::string release = field(marker, "release");
     const std::string drawing = field(marker, "drawing"); // the frames stage's frame, when no call was named
     const std::string cell = field(marker, "cell");       // VK bench's cell whose work it was, if any
-    const std::string named = !pipeline.empty()  ? "pipeline " + pipeline
-                              : !module.empty()  ? "module " + module
-                              : !release.empty() ? "release " + release
-                              : !drawing.empty() ? "drawing " + drawing
-                                                 : std::string();
+    // Every call under way when it crashed (the file's head): one, or each thread's where several made pipelines.
+    std::string named;
+    for (const std::string& call : calls_in(marker)) named += named.empty() ? call : "; " + call;
+    if (named.empty() && !drawing.empty()) named = "drawing " + drawing;
     // A cell's crash names the cell before what the driver did in it.
     const std::string what = cell.empty()    ? named
                              : named.empty() ? "cell " + cell
@@ -408,7 +423,17 @@ std::string_view Guard::marked() const noexcept {
     return current_ ? name_of(*current_) : std::string_view();
 }
 
-std::string_view Guard::making() const noexcept { return notes_.empty() ? std::string_view() : notes_.back(); }
+std::vector<std::string> Guard::making() const {
+    // Each thread's innermost call: its last note, none of its own announced after it.
+    std::vector<std::string> out;
+    for (std::size_t i = 0; i < notes_.size(); ++i) {
+        const Note& n = notes_[i];
+        const bool innermost = std::ranges::none_of(std::span(notes_).subspan(i + 1),
+                                                    [&](const Note& later) { return later.thread == n.thread; });
+        if (innermost && !n.what.empty()) out.push_back(n.what);
+    }
+    return out;
+}
 
 std::string Guard::where() const {
     return cell_marked() ? std::format("{}, cell {}", marked(), cell_) : std::string(marked());
@@ -422,9 +447,9 @@ void Guard::write_marker(bool synced) const {
     // runs at every launch once a driver is off. A crash in them refuses the next start before its instance.
     const bool system_keyed = current_ == Stage::instance || current_ == Stage::facts || current_ == Stage::refused;
     std::string text = std::format("stage {}\n", marked());
-    if (const std::string_view what = making(); !what.empty()) {
-        text += std::format("{}\n", what);
-    } else if (current_ == Stage::frames && !drawing_.empty()) {
+    const std::vector<std::string> calls = making(); // a line each, every thread's under way
+    for (const std::string& what : calls) text += std::format("{}\n", what);
+    if (calls.empty() && current_ == Stage::frames && !drawing_.empty()) {
         text += std::format("drawing {}\n", drawing_); // the frame the frames stage draws, between named calls
     }
     if (cell_marked()) text += std::format("cell {}\n", cell_); // VK bench's cell whose work this is
@@ -467,6 +492,7 @@ void Guard::enter(Stage stage) {
         enter_colour();
         return;
     }
+    const std::scoped_lock lock(mutex_);
     current_ = stage;
     notes_.clear();
     write_marker();
@@ -477,13 +503,14 @@ void Guard::enter(Stage stage) {
 }
 
 void Guard::note(std::string what, bool planted) {
-    const bool changed = what != making();
-    notes_.push_back(std::move(what));
-    if (changed) write_marker();
-    if (planted) abort_planted(std::format("{}, {}", where(), notes_.back()));
+    const std::vector<std::string> was = making();
+    notes_.push_back({.thread = std::this_thread::get_id(), .what = std::move(what)});
+    if (making() != was) write_marker();
+    if (planted) abort_planted(std::format("{}, {}", where(), notes_.back().what));
 }
 
 void Guard::before(const PipelineLabel& label) {
+    const std::scoped_lock lock(mutex_);
     // Outside the pipelines and colour stages no stage names a pipeline: the call is the stage's alone, and its after
     // still comes.
     if (current_ != Stage::pipelines && !colour_) {
@@ -494,6 +521,7 @@ void Guard::before(const PipelineLabel& label) {
 }
 
 void Guard::before_module(std::string_view module) {
+    const std::scoped_lock lock(mutex_);
     if (current_ != Stage::pipelines && !colour_) {
         note({}, false);
         return;
@@ -502,6 +530,7 @@ void Guard::before_module(std::string_view module) {
 }
 
 void Guard::before_release(const Release& release) {
+    const std::scoped_lock lock(mutex_);
     if (!current_ && !colour_) {
         note({}, false); // no stage: no marker
         return;
@@ -510,15 +539,22 @@ void Guard::before_release(const Release& release) {
 }
 
 void Guard::after() {
-    if (notes_.empty()) return; // the stage changed inside the call, which cleared its name
-    std::string named = std::move(notes_.back());
-    notes_.pop_back();
-    // The call returned: the marker names the stage again (or the call this one ran inside), not synced (the file's
-    // head, gpu/Guard.hpp: the page cache keeps the rewrite through a crash of the process).
-    if (making() != named) write_marker(false);
+    const std::scoped_lock lock(mutex_);
+    // This thread's innermost call, its last note; none when the stage changed inside the call, which cleared its name.
+    const std::thread::id self = std::this_thread::get_id();
+    for (std::size_t i = notes_.size(); i-- > 0;) {
+        if (notes_[i].thread != self) continue;
+        const std::vector<std::string> was = making();
+        notes_.erase(notes_.begin() + static_cast<std::ptrdiff_t>(i));
+        // The call returned: the marker names the stage again (or the call this one ran inside, and other threads'),
+        // not synced (the file's head, gpu/Guard.hpp: the page cache keeps the rewrite through a crash of the process).
+        if (making() != was) write_marker(false);
+        return;
+    }
 }
 
 void Guard::leave() {
+    const std::scoped_lock lock(mutex_);
     if (!current_) return;
     current_.reset();
     notes_.clear();
@@ -532,6 +568,7 @@ void Guard::leave() {
 }
 
 void Guard::enter_colour() {
+    const std::scoped_lock lock(mutex_);
     if (colour_) return;
     colour_ = true;
     notes_.clear();
@@ -539,6 +576,7 @@ void Guard::enter_colour() {
 }
 
 void Guard::leave_colour() {
+    const std::scoped_lock lock(mutex_);
     if (!colour_) return;
     colour_ = false;
     notes_.clear();

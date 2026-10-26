@@ -15,7 +15,8 @@
 //
 // Everything a pass makes for a main pass and an output (pipelines, images, its descriptor sets) is made in prepare and
 // let go of in release; every shader module and pipeline is announced to the crash guard for its making alone
-// (make_module, make_pipeline: gpu/Pipelines.hpp's Announced), so a driver crashing in it is known by it (D5.10).
+// (make_module, make_pipeline: gpu/Pipelines.hpp's Announced), so a driver crashing in it is known by it (D5.10). The
+// passes prepare at once, each on a thread of its own (ENGINE.md gain 20): the guard then names every one under way.
 #pragma once
 
 #include "frame/Counters.hpp"
@@ -109,12 +110,15 @@ struct PipelineStats {
     std::uint32_t count = 0;
 };
 
-/// What a pass makes its pipelines and images for: the main pass of one configuration on one output.
+/// What a pass makes its pipelines and images for: the main pass of one configuration on one output. Every pass's
+/// prepare has one of its own, on its own thread; what they share takes several threads at once: the device and its
+/// allocator, the pipeline cache, the frame's layout (make_layout), the log, and the watch.
 struct PassContext {
     const gpu::Device& device;
     /// The pipeline cache its pipelines go through (make_pipeline notes each it makes, so the cache is written back).
     const gpu::PipelineCache& cache;
-    /// The crash guard, told about each module and pipeline as it is made (null in tests without a guard).
+    /// The crash guard, told about each module and pipeline as it is made, by the thread making it (null in tests
+    /// without a guard).
     gpu::PipelineWatch* watch;
     const gpu::MainPass& pass;
     const gpu::Output& output;
@@ -123,7 +127,7 @@ struct PassContext {
     std::string_view configuration;
     /// The overdraw mode: make_pipeline makes each scene pipeline's overdraw twin in its place.
     bool overdraw = false;
-    /// Where make_pipeline adds the driver's time and its count (may be null).
+    /// Where make_pipeline adds the driver's time and its count: the pass's own (may be null).
     PipelineStats* stats = nullptr;
     /// The frame's overdraw fragment module (the frame builder's; null outside the overdraw mode).
     vk::ShaderModule overdraw_module;
@@ -157,7 +161,8 @@ public:
     [[nodiscard]] virtual std::span<const Phase> phases() const noexcept = 0;
 
     /// Makes what depends on the main pass and the output (pipelines, images of the output's size, descriptor sets),
-    /// after the GPU has finished every frame that used the last ones; what an earlier prepare made goes first.
+    /// after the GPU has finished every frame that used the last ones; what an earlier prepare made goes first. The
+    /// passes prepare at once, each on a thread of its own: it must touch only the pass's own state and its context.
     [[nodiscard]] virtual gpu::Result<void> prepare(const PassContext& context) = 0;
     /// Lets go of everything prepare made (the GPU has finished every frame that used it).
     virtual void release() noexcept = 0;

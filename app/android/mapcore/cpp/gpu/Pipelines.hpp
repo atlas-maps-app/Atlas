@@ -61,7 +61,9 @@ struct Release {
 [[nodiscard]] std::string describe(const Release& release);
 
 /// Told about each pipeline and each shader module just before it is made, about what goes just before it is
-/// destroyed, and when that call has returned (the crash guard, D5.10).
+/// destroyed, and when that call has returned (the crash guard, D5.10), by the thread making the call: a frame's passes
+/// make theirs on several threads at once (frame/FrameBuilder.cpp), so a watch of a frame takes announcements from
+/// several threads at once.
 class PipelineWatch {
 public:
     PipelineWatch() = default;
@@ -74,8 +76,9 @@ public:
     /// `module` is an embedded module's symbol (standin_composite).
     virtual void before_module(std::string_view module) = 0;
     virtual void before_release(const Release& release) = 0;
-    /// The call announced last returned, made, refused or gone: what runs after it is not that call. Announcements
-    /// nest (an inner one's end gives the outer one back), so each before has exactly one after.
+    /// The call this thread announced last returned, made, refused or gone: what runs after it is not that call.
+    /// Announcements nest on a thread (an inner one's end gives the outer one back), so each before has exactly one
+    /// after, on its thread.
     virtual void after() = 0;
     /// The work that follows (made, drawn, let go of) is the frame of `configuration` (a renderer's, gpu/Frames.hpp),
     /// or no frame's (nullptr: its renderer gone). The crash guard tells VK bench's cells, the configurations the facts

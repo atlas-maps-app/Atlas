@@ -17,12 +17,14 @@
 #include "view/Snap.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <chrono>
 #include <cstring>
 #include <format>
 #include <span>
 #include <string_view>
+#include <thread>
 
 namespace atlas::frame {
 
@@ -204,10 +206,11 @@ gpu::Result<std::unique_ptr<FrameBuilder>> FrameBuilder::create(const gpu::Devic
     // The passes' numbers (their PassTile and PassPack), and the item kinds, before the world can build a tile: their
     // rows are fixed from here on.
     for (std::uint32_t i = 0; i < self->passes_.size(); ++i) self->passes_[i]->index_ = i;
-    // The trace sections' names (gain 21): each pass's select and update, each slot's recording.
+    // The trace sections' names (gain 21): each pass's prepare, select and update, each slot's recording.
     for (const std::unique_ptr<Pass>& p : self->passes_) {
-        self->trace_names_.push_back(
-            {.select = std::format("atlas select {}", p->name()), .update = std::format("atlas update {}", p->name())});
+        self->trace_names_.push_back({.prepare = std::format("atlas prepare {}", p->name()),
+                                      .select = std::format("atlas select {}", p->name()),
+                                      .update = std::format("atlas update {}", p->name())});
     }
     for (std::size_t s = 0; s < slot_count; ++s) {
         self->slot_trace_names_[s] = std::format("atlas record {}", name_of(static_cast<Slot>(s)));
@@ -251,6 +254,7 @@ gpu::Result<std::unique_ptr<FrameBuilder>> FrameBuilder::create(const gpu::Devic
 }
 
 gpu::Result<void> FrameBuilder::prepare(const gpu::MainPass& pass, const gpu::Output& output) {
+    const auto started = clock::now();
     release();
     if (!pass.composite()) {
         return gpu::fail("the map's frame is the composite form; the one-subpass form (ONEPASS) is not built (A0)");
@@ -260,30 +264,62 @@ gpu::Result<void> FrameBuilder::prepare(const gpu::MainPass& pass, const gpu::Ou
     depth24_ = pass.spec().depth_stencil == vk::Format::eD24UnormS8Uint;
     configuration_ =
         std::format("{} {}", gpu::name_of(pass.spec().config), gpu::colour_name(pass.spec().colour_format));
-    PipelineStats stats;
-    const PassContext context{.device = device_,
-                              .cache = cache_,
-                              .watch = watch_,
-                              .pass = pass,
-                              .output = output,
-                              .layout = *layout_,
-                              .configuration = configuration_,
-                              .overdraw = options_.overdraw,
-                              .stats = &stats,
-                              .overdraw_module = *overdraw_module_,
-                              .owners = options_.owners,
-                              .owner_module = *owner_module_};
-    for (const std::unique_ptr<Pass>& p : passes_) {
-        if (auto made = p->prepare(context); !made) {
-            const gpu::Error error{.code = made.error().code,
-                                   .what = std::format("the {} pass: {}", p->name(), made.error().what)};
+    // Every pass prepares on a thread of its own, the calling one among them, as many at once as there are threads
+    // (ENGINE.md gain 20): a pass's prepare touches only its own state and what the context gives it (frame/Pass.hpp),
+    // so the first picture waits for the longest pass instead of every pass's pipelines one after another. Each pass
+    // counts its pipelines apart; the passes start in the registry's order.
+    const std::size_t count = passes_.size();
+    std::vector<PipelineStats> stats(count);
+    std::vector<gpu::Result<void>> made(count);
+    std::atomic<std::size_t> next{0};
+    const auto work = [&] {
+        for (;;) {
+            const std::size_t p = next.fetch_add(1, std::memory_order_relaxed);
+            if (p >= count) return;
+            const trace::Section traced(trace_names_[p].prepare.c_str());
+            const PassContext context{.device = device_,
+                                      .cache = cache_,
+                                      .watch = watch_,
+                                      .pass = pass,
+                                      .output = output,
+                                      .layout = *layout_,
+                                      .configuration = configuration_,
+                                      .overdraw = options_.overdraw,
+                                      .stats = &stats[p],
+                                      .overdraw_module = *overdraw_module_,
+                                      .owners = options_.owners,
+                                      .owner_module = *owner_module_};
+            made[p] = passes_[p]->prepare(context);
+        }
+    };
+    const std::uint32_t cores = options_.threads != 0 ? options_.threads : std::thread::hardware_concurrency();
+    const auto threads = static_cast<std::uint32_t>(std::clamp<std::size_t>(cores, 1, std::max<std::size_t>(count, 1)));
+    {
+        std::vector<std::jthread> helpers;
+        helpers.reserve(threads - 1);
+        for (std::uint32_t k = 1; k < threads; ++k) helpers.emplace_back(work);
+        work();
+    } // the helpers join here
+    // The first pass that failed, in the registry's order, says why, whichever thread failed first.
+    PipelineStats total;
+    for (std::size_t p = 0; p < count; ++p) {
+        if (!made[p]) {
+            const gpu::Error error{.code = made[p].error().code,
+                                   .what = std::format("the {} pass: {}", passes_[p]->name(), made[p].error().what)};
             release();
             return std::unexpected(error);
         }
+        total.ms += stats[p].ms;
+        total.count += stats[p].count;
     }
-    pipelines_ms_ = stats.ms;
-    pipeline_count_ = stats.count;
+    pipelines_ms_ = total.ms;
+    pipeline_count_ = total.count;
+    prepare_ms_ = ms_since(started);
+    prepare_threads_ = threads;
     prepared_ = true;
+    // Not a `vk frame` line: smoke.sh counts those as frames drawn.
+    log::info("vk passes prepared {}: {} pipelines in {:.1f} ms on {} threads ({:.1f} ms in the driver)",
+              configuration_, pipeline_count_, prepare_ms_, threads, pipelines_ms_);
     return {};
 }
 

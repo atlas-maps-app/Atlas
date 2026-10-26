@@ -47,9 +47,12 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <functional>
+#include <latch>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -1149,6 +1152,68 @@ TEST_CASE("the crash guard's marker names an announced call for that call alone"
     CHECK(stage_in(dir) == "colour");
     guard.leave_colour();
     CHECK_FALSE(fs::exists(dir / "guard"));
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("the crash guard names every pipeline under way on the threads a frame's passes prepare on") {
+    // A frame's passes make their pipelines on several threads at once (frame/FrameBuilder.cpp): the marker names each
+    // thread's call under way, a line each in the order they were announced, each until its own call returns, and the
+    // next start's line names every one of them, since a crash in one thread's call ends the others' too.
+    const fs::path dir = fresh("threads");
+    gpu::Guard guard(dir, "host-test-system", "build-t", "");
+    const std::string configuration = "C renderpass composite resolve rgba8";
+    const gpu::PipelineLabel walls{.name = "walls", .module = "building_draw", .configuration = configuration};
+    const gpu::PipelineLabel items{.name = "items", .module = "item_draw", .configuration = configuration};
+    const std::string walls_named =
+        std::format("pipeline walls (module building_draw, configuration {})", configuration);
+    const std::string items_named = std::format("pipeline items (module item_draw, configuration {})", configuration);
+    guard.enter(gpu::Stage::pipelines);
+    std::string both; // the marker while both were under way
+    {
+        std::latch walls_open(1);
+        std::latch items_open(1);
+        std::latch walls_made(1);
+        std::latch walls_closed(1);
+        std::latch items_made(1);
+        const auto make = [&](const gpu::PipelineLabel& label, std::latch& open, std::latch& made, std::latch* closed) {
+            {
+                const gpu::Announced named = gpu::announce(label, &guard);
+                open.count_down();
+                made.wait();
+            }
+            if (closed != nullptr) closed->count_down();
+        };
+        std::jthread walls_thread(make, std::cref(walls), std::ref(walls_open), std::ref(walls_made), &walls_closed);
+        walls_open.wait();
+        CHECK(read(dir / "guard").starts_with(std::format("stage pipelines\n{}\ndriver ", walls_named)));
+        std::jthread items_thread(make, std::cref(items), std::ref(items_open), std::ref(items_made), nullptr);
+        items_open.wait();
+        both = read(dir / "guard");
+        MESSAGE("the marker with two pipelines under way:\n" << both);
+        CHECK(both.starts_with(std::format("stage pipelines\n{}\n{}\ndriver ", walls_named, items_named)));
+        // The walls made: the items' alone, until theirs are.
+        walls_made.count_down();
+        walls_closed.wait();
+        CHECK(read(dir / "guard").starts_with(std::format("stage pipelines\n{}\ndriver ", items_named)));
+        items_made.count_down();
+    } // the threads join here
+    CHECK(read(dir / "guard").starts_with("stage pipelines\ndriver "));
+    guard.leave();
+    CHECK_FALSE(fs::exists(dir / "guard"));
+    // The process crashed with both under way (the marker as it stood, of another process): the next start names both,
+    // and retries without the cache.
+    const std::size_t pid = both.find("\npid ");
+    REQUIRE(pid != std::string::npos);
+    std::ofstream(dir / "guard", std::ios::trunc)
+        << both.substr(0, pid) << "\npid 1" << both.substr(both.find('\n', pid + 1));
+    gpu::Guard next(dir, "host-test-system", "build-t", "");
+    const gpu::GuardVerdict verdict = next.check_start();
+    MESSAGE(verdict.line);
+    CHECK(verdict.line == std::format("vk guard pipelines unknown host-test-system attempt 1 {}; {} build build-t",
+                                      walls_named, items_named));
+    CHECK(verdict.retry_without_cache);
+    CHECK_FALSE(verdict.off);
     std::error_code ec;
     fs::remove_all(dir, ec);
 }

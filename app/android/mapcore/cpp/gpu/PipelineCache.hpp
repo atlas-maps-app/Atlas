@@ -9,6 +9,7 @@
 #include "gpu/Facts.hpp"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -53,10 +54,11 @@ public:
     [[nodiscard]] const std::string& status() const noexcept { return status_; }
     /// The file's size when it was read.
     [[nodiscard]] std::size_t loaded_bytes() const noexcept { return loaded_bytes_; }
-    /// A pipeline is about to be made through it (the driver may add to its data): the next save writes it back.
-    void note_made() const noexcept { changed_ = true; }
+    /// A pipeline is about to be made through it (the driver may add to its data): the next save writes it back. From
+    /// any thread: a frame's passes make their pipelines on several at once (frame/FrameBuilder.cpp).
+    void note_made() const noexcept { std::atomic_ref(changed_).store(true, std::memory_order_relaxed); }
     /// Whether a pipeline was made through it since it was opened or last written back.
-    [[nodiscard]] bool changed() const noexcept { return changed_; }
+    [[nodiscard]] bool changed() const noexcept { return std::atomic_ref(changed_).load(std::memory_order_relaxed); }
     /// Writes the cache's data behind its header, through a temporary file renamed into place and synced, when a
     /// pipeline was made through it since it was opened or last written back (changed); else nothing (0 bytes).
     [[nodiscard]] Result<std::size_t> save() const;
@@ -72,8 +74,8 @@ private:
     std::size_t loaded_bytes_ = 0;
     std::string status_ = "off";
     /// A pipeline was made through it since it was opened or last written back (through a const cache, as the driver's
-    /// data behind the handle changes).
-    mutable bool changed_ = false;
+    /// data behind the handle changes), read and written atomically.
+    alignas(std::atomic_ref<bool>::required_alignment) mutable bool changed_ = false;
 };
 
 /// The header the cache of `facts`' device carries.

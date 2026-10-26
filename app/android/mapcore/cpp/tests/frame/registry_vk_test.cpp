@@ -13,7 +13,11 @@
 
 #include <algorithm>
 #include <format>
+#include <map>
+#include <mutex>
 #include <string>
+#include <string_view>
+#include <thread>
 #include <vector>
 
 #if !defined(__ANDROID__)
@@ -190,3 +194,114 @@ TEST_CASE("the frame's twin hangs the passes from its root, the objects' shared 
     }
     (void)session->take_messages();
 }
+
+#if !defined(__ANDROID__)
+namespace {
+
+/// A watch double for a frame's passes (gpu/Pipelines.hpp), which announce from several threads at once: every name
+/// announced, the most calls open at once over the threads, and every end on a thread with nothing open on it.
+class Threads final : public gpu::PipelineWatch {
+public:
+    std::vector<std::string> names;
+    std::size_t most = 0;
+    std::size_t ended = 0;
+    std::vector<std::string> faults;
+
+    void before(const gpu::PipelineLabel& label) override { begin("pipeline " + gpu::describe(label)); }
+    void before_module(std::string_view module) override { begin("module " + std::string(module)); }
+    void before_release(const gpu::Release& release) override { begin("release " + gpu::describe(release)); }
+    void after() override {
+        const std::scoped_lock lock(mutex_);
+        std::vector<std::string>& mine = open_[std::this_thread::get_id()];
+        if (mine.empty()) {
+            faults.emplace_back("an end on a thread with nothing announced");
+            return;
+        }
+        mine.pop_back();
+        --now_;
+        ++ended;
+    }
+
+private:
+    void begin(std::string what) {
+        const std::scoped_lock lock(mutex_);
+        names.push_back(what);
+        open_[std::this_thread::get_id()].push_back(std::move(what));
+        most = std::max(most, ++now_);
+    }
+
+    std::mutex mutex_;
+    std::map<std::thread::id, std::vector<std::string>> open_;
+    std::size_t now_ = 0;
+};
+
+} // namespace
+
+TEST_CASE("the passes prepare on several threads at once: the pipelines and the frame they make one after another") {
+    // ENGINE.md gain 20: FrameBuilder::prepare runs every pass's prepare on a thread of its own, so an empty pipeline
+    // cache (an alpha's first launch, its shaders new) costs the longest pass, not the sum of them. The registry's
+    // passes, each prepared through an empty cache on one thread and then on one a core: the same modules and
+    // pipelines, each announced on its own thread and ended there, several under way at once, and the same frame.
+    auto session = test::open_session();
+    if (!session) return;
+    const gpu::Device& device = *session->device;
+    const gpu::Configuration config = device.facts().choice;
+    const vk::Extent2D extent{.width = 540, .height = 1200};
+    struct Run {
+        std::vector<std::string> names;
+        std::size_t most = 0;
+        std::uint32_t pipelines = 0;
+        std::uint32_t threads = 0;
+        double ms = 0;
+        double driver_ms = 0;
+        std::vector<std::uint32_t> frame;
+    };
+    const auto run = [&](std::uint32_t threads) {
+        Run r;
+        auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+        ATLAS_REQUIRE_OR_RETURN(r, cache.has_value(), cache.error().text());
+        Threads watch;
+        auto builder = frame::FrameBuilder::create(device, *cache, frame::make_passes(), {.threads = threads}, &watch);
+        ATLAS_REQUIRE_OR_RETURN(r, builder.has_value(), builder.error().text());
+        (*builder)->set_inputs({.camera = standin::board_view(extent.width, extent.height, 1.0)});
+        auto output = gpu::Offscreen::create(device, extent, 2);
+        ATLAS_REQUIRE_OR_RETURN(r, output.has_value(), output.error().text());
+        {
+            auto renderer = gpu::Renderer::create(device, **output, **builder, config, &watch);
+            ATLAS_REQUIRE_OR_RETURN(r, renderer.has_value(), renderer.error().text());
+            auto report = (*renderer)->draw(0);
+            ATLAS_REQUIRE_OR_RETURN(r, report.has_value(), report.error().text());
+            (*renderer)->drain();
+            auto packed = (*output)->read_packed((*output)->latest());
+            ATLAS_REQUIRE_OR_RETURN(r, packed.has_value(), packed.error().text());
+            r.frame = std::move(packed->words);
+        }
+        CHECK(watch.ended == watch.names.size());
+        CHECK_MESSAGE(watch.faults.empty(), (watch.faults.empty() ? std::string() : watch.faults.front()));
+        r.names = std::move(watch.names);
+        std::ranges::sort(r.names);
+        r.most = watch.most;
+        r.pipelines = (*builder)->pipeline_count();
+        r.threads = (*builder)->prepare_threads();
+        r.ms = (*builder)->prepare_ms();
+        r.driver_ms = (*builder)->pipelines_ms();
+        return r;
+    };
+    const Run one = run(1);
+    const Run all = run(0);
+    MESSAGE("prepare through an empty pipeline cache: "
+            << one.pipelines << " pipelines in " << one.ms << " ms on one thread, " << all.ms << " ms on "
+            << all.threads << " (" << one.driver_ms << " and " << all.driver_ms << " ms in the driver)");
+    CHECK(one.threads == 1);
+    CHECK(one.most == 1); // one after another: never two calls under way at once
+    CHECK(all.threads ==
+          std::clamp<std::size_t>(std::thread::hardware_concurrency(), 1, frame::registrations().size()));
+    if (all.threads > 1) CHECK(all.most > 1);
+    CHECK(all.pipelines == one.pipelines);
+    CHECK(all.names == one.names);
+    CHECK(!all.frame.empty());
+    CHECK(all.frame == one.frame);
+    const auto messages = session->take_messages();
+    CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
+}
+#endif

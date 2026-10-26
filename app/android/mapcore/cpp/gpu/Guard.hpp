@@ -30,9 +30,12 @@
 // the driver destroys something as a whole, in any stage, it names that (gpu/Pipelines.hpp's Release: a frame, a
 // swapchain, a pipeline cache, the stand-in, the device, the instance). Each name lasts its call alone: once the call
 // returns the marker names the stage again (rewritten without a sync, since a process's crash leaves the page cache
-// whole), so whatever the driver does next, unannounced, is the stage's and no one object's. Between named calls the
-// frames stage's marker names the frame it draws (`drawing frame (configuration <…> <colour>)`), so that a crash in a
-// renderer's first draws says which configuration it was.
+// whole), so whatever the driver does next, unannounced, is the stage's and no one object's. A frame's passes make
+// their modules and pipelines on several threads at once (frame/FrameBuilder.cpp, ENGINE.md gain 20): the marker then
+// names every call under way, a line each (each thread's innermost, in the order they were announced), and the next
+// start's `vk guard` line names them all, separated by "; ", since a crash in one thread's call ends the others' too.
+// Between named calls the frames stage's marker names the frame it draws (`drawing frame (configuration <…>
+// <colour>)`), so that a crash in a renderer's first draws says which configuration it was.
 //
 // VK bench draws configurations, routes, forms and targets the facts would not pick, to measure them: its cells. A
 // renderer tells the guard whose frame its work is (gpu/Pipelines.hpp's PipelineWatch::frame_of), and while that frame
@@ -100,10 +103,11 @@
 // what|attempt when the driver was not known yet or the start was refused; the stage `colour` turns off 10 bits,
 // `profiles` the profiles check, `checks` VK facts' drawing checks, `cell` the VK bench cell its what names
 // (driver|version|build|cell|<configuration>|attempt), any other Vulkan; what is "pipeline <…>", "module <…>" or
-// "release <…>" when the driver was making a pipeline or a module or destroying something, "drawing <…>" in a frame's
-// first draws), `facts` (the last facts read, shown when Vulkan is off). An off line from before build IDs
-// (driver|version|stage, alpha 6) names no build, so it turns off none; one from before attempts
-// (driver|version|build|stage|what, alpha 7's first) reads as attempt 2, or 1 for the colour stage.
+// "release <…>" when the driver was making a pipeline or a module or destroying something (several separated by "; "
+// where threads made them at once), "drawing <…>" in a frame's first draws), `facts` (the last facts read, shown when
+// Vulkan is off). An off line from before build IDs (driver|version|stage, alpha 6) names no build, so it turns off
+// none; one from before attempts (driver|version|build|stage|what, alpha 7's first) reads as attempt 2, or 1 for the
+// colour stage.
 #pragma once
 
 #include "gpu/Device.hpp"
@@ -115,9 +119,11 @@
 #include <expected>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace atlas::gpu {
@@ -201,8 +207,10 @@ struct GuardOff {
 };
 
 /// The guard of one process's core: told about each shader module and pipeline before it is made, about each thing
-/// before it goes, and as each of those calls returns. One thread at a time (the core's render thread, or the start
-/// before it).
+/// before it goes, and as each of those calls returns. Its announcements (before, before_module, before_release and
+/// their after) may come from several threads at once, a frame's passes prepared across the cores; everything else
+/// from one thread at a time (the core's render thread, or the start before it), never while another thread's
+/// announcement is open.
 class Guard final : public PipelineWatch {
 public:
     /// `dir` holds the guard's files; `system` names the system build (Android's build fingerprint), the driver's
@@ -255,16 +263,17 @@ public:
     /// Writes the marker for `stage` (synced), then aborts there if the stage is planted. Inside the colour stage the
     /// marker stays the colour stage's. `Stage::colour` opens the colour stage (enter_colour).
     void enter(Stage stage);
-    /// In the pipelines stage or the colour stage: writes the pipeline about to be made into the marker (synced), so
-    /// that a crash in the driver's compiler names it at the next start; then aborts there if it is planted.
-    /// Elsewhere, nothing (but after still pairs with it).
+    /// In the pipelines stage or the colour stage: writes the pipeline about to be made into the marker (synced), with
+    /// every call other threads have under way, so that a crash in the driver's compiler names it at the next start;
+    /// then aborts there if it is planted. Elsewhere, nothing (but after still pairs with it).
     void before(const PipelineLabel& label) override;
     /// The same for a shader module (vkCreateShaderModule).
     void before_module(std::string_view module) override;
     /// In any stage: the same for a thing about to go.
     void before_release(const Release& release) override;
-    /// The call last named returned: the marker names what it named before (the stage alone, unless announcements
-    /// nest), rewritten whole but not synced: a crash of the process leaves the page cache, and so the rewrite, whole.
+    /// The call this thread named last returned: the marker names what it named before (the stage alone, unless
+    /// announcements nest or other threads' are open), rewritten whole but not synced: a crash of the process leaves
+    /// the page cache, and so the rewrite, whole.
     void after() override;
     /// The stage entered passed: deletes the marker, or inside the colour stage writes the colour stage's again.
     void leave();
@@ -313,8 +322,8 @@ private:
     /// Reads the last start's `marker` into `v` and deletes it: true when it decided the start (a crash found), false
     /// when the off file still has its say (a marker discarded as not counted).
     bool read_marker(const std::string& marker, const ProcessExits& exits, GuardVerdict& v);
-    /// Writes the marker of the stage open now (if any) with what the driver is making or destroying; `synced` before
-    /// a stage or a named call, not as a named call returns (after).
+    /// Writes the marker of the stage open now (if any) with every call the driver is making or destroying; `synced`
+    /// before a stage or a named call, not as a named call returns (after).
     void write_marker(bool synced = true) const;
     /// The `vk guard` line of the off line of `stage` (colour, profiles) for this driver and build, or "".
     [[nodiscard]] std::string rung_off(std::string_view stage) const;
@@ -327,13 +336,15 @@ private:
     [[nodiscard]] bool cell_marked() const noexcept;
     /// Whether a plant may fire here: anywhere, or only in a cell's work (`cell:`).
     [[nodiscard]] bool plant_here() const noexcept { return !plant_cell_ || cell_marked(); }
-    /// Writes `what` into the marker ("" for a call this stage does not name), then aborts if `planted`.
+    /// Writes `what` into the marker as this thread's call ("" for a call this stage does not name), then aborts if
+    /// `planted`.
     void note(std::string what, bool planted);
     [[noreturn]] void abort_planted(std::string_view where) const;
     /// The name of the stage the marker names now ("" for none).
     [[nodiscard]] std::string_view marked() const noexcept;
-    /// What the marker names besides its stage: the innermost call named and not returned yet ("" for none).
-    [[nodiscard]] std::string_view making() const noexcept;
+    /// What the marker names besides its stage: each thread's innermost call named and not returned yet, in the order
+    /// they were announced (none: nothing named).
+    [[nodiscard]] std::vector<std::string> making() const;
     /// The stage the marker names, and the cell where it names one, as the planted crash's line says them.
     [[nodiscard]] std::string where() const;
 
@@ -345,9 +356,17 @@ private:
     std::string version_;
     std::optional<Stage> current_;
     bool colour_ = false; // the colour stage is open
-    /// The calls announced and not returned yet, innermost last: "pipeline <…>", "module <…>", "release <…>", or ""
-    /// for one this stage does not name. A stage's change clears them.
-    std::vector<std::string> notes_;
+    /// One call announced and not returned yet: its thread, and what it is ("pipeline <…>", "module <…>", "release
+    /// <…>", or "" for one this stage does not name).
+    struct Note {
+        std::thread::id thread;
+        std::string what;
+    };
+    /// The calls announced and not returned yet, in the order they were announced (a thread's innermost last among its
+    /// own). A stage's change clears them.
+    std::vector<Note> notes_;
+    /// Held by every call that reads or writes the notes or the marker: the announcements come from several threads.
+    mutable std::mutex mutex_;
     std::string drawing_;               // the frame the frames stage draws (set_drawing)
     std::optional<Configuration> pick_; // the facts' own pick (set_pick)
     std::string cell_;                  // the VK bench cell whose frame the renderer works on ("" for none, the pick)
