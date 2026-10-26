@@ -889,8 +889,11 @@ private:
         it->second.push_back(p);
     }
 
-    /// A line's feature: in the tile of its middle vertex, its box widened by `pad` metres, its top `top` metres up.
+    /// A line's feature: in the tile of its middle vertex, its box widened by `pad` metres, its top `top` metres up. A
+    /// line without a point has no middle vertex: it is filed in no tile (the packer, whose linePending indexes its
+    /// middle vertex, cannot cut one at all; fuzz_load gave a tram way of an empty geometry, 26 October).
     void put_line(Pending p, const GridLine& g, double pad, double top) {
+        if (g.lat.empty()) return;
         const std::size_t m = g.lat.size() / 2;
         p.box = widen(g.box(), pad, f_);
         p.top_cm = cm_up(top);
