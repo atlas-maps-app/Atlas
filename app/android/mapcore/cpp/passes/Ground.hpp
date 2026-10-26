@@ -334,6 +334,19 @@ struct GroundFrame {
     double horizon = 0;
     double sky_y1 = 0;
     double sky_y2 = 0;
+    /// sky_layer's sun (away from eye level, with weather and the horizon on the frame, by day, its point within the
+    /// margins): its point ('%.1f'), its glow's radius (170, 230 when overcast) and whether it is overcast (the grey
+    /// glow's opacities, and no disc).
+    bool glow = false;
+    double glow_x = 0;
+    double glow_y = 0;
+    double glow_r = 0;
+    bool overcast = false;
+    /// sky_layer's city glow at night: its gradient's rows (y1 and y2, '%.0f') and its rect's height (`hb`, '%.1f').
+    bool city_glow = false;
+    double city_y1 = 0;
+    double city_y2 = 0;
+    double sky_bottom = 0;
     double wgrad_y1 = 0;
     double wgrad_y2 = 0;
 };
@@ -626,8 +639,9 @@ private:
     void record_water_end(const frame::Recording& r);
     void emit_water(const frame::FrameState& state, twin::Stream& out) const;
     // Sky.cpp
-    void decide_sky(const view::Camera& cam);
+    void decide_sky(const view::Camera& cam, const frame::FrameState& state);
     void record_sky(const frame::Recording& r);
+    void record_sky_layer(const frame::Recording& r);
     void emit_sky(const frame::FrameState& state, twin::Stream& out) const;
     // Lines.cpp
     void decide_strokes(const view::Camera& cam, const DrawnTile& t, TileDecisions& d) const;
@@ -790,6 +804,9 @@ struct Ground::Pipelines {
     vk::raii::Pipeline water_end{nullptr};
     // Sky.cpp
     vk::raii::Pipeline sky{nullptr};
+    vk::raii::Pipeline sun_glow{nullptr};
+    vk::raii::Pipeline sun_disc{nullptr};
+    vk::raii::Pipeline city_glow{nullptr};
     // Lines.cpp
     vk::raii::Pipeline line{nullptr};
     // Quays.cpp

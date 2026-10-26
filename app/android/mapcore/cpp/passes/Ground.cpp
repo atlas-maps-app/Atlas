@@ -791,7 +791,7 @@ bool Ground::decide(const frame::FrameState& state) {
     decide_glitter(cam, state);
     decide_rings(cam, state);
     decide_wind_glints(cam, state);
-    decide_sky(cam);
+    decide_sky(cam, state);
     // the plate: gp(rect(-GR, GR, -GR, GR), th['ground']) at 0, margin 900, its area over 0.2
     const double gr = f.ground_r;
     const std::array<geo::P2, 4> rect{
@@ -1311,7 +1311,10 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
         record_water_opaque(r);
         record_fills(r, false);
         record_plate(r);
-        if (!only_setts_) record_sky(r);
+        if (!only_setts_) {
+            record_sky(r);
+            record_sky_layer(r);
+        }
         break;
     case phase_canopy: record_canopy(r); break;
     case phase_water_reflections: record_reflections(r); break;

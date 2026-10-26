@@ -40,7 +40,7 @@ namespace atlas::geometry {
 /// A land kind is a group of its own (its rank among the kinds drawn is the frame's), each other group holds one
 /// stage and class of the packer's ground keys.
 namespace group {
-inline constexpr std::uint16_t sky = 0;        ///< the sky's gradient (sub 0), the sun's glow (1), the city's glow (2)
+inline constexpr std::uint16_t sky = 0;        ///< the sky's gradient and its layer (sub: sky_sub)
 inline constexpr std::uint16_t plate = 1;      ///< the ground plate
 inline constexpr std::uint16_t canopy = 2;     ///< the forests' canopy (structural: a black fill at .55, K17's in full)
 inline constexpr std::uint16_t water = 3;      ///< the water's surface: wgrad's rect (with weather), or every water
@@ -58,6 +58,16 @@ inline constexpr std::uint16_t land = 64;      ///< + the land kind's place in t
 inline constexpr std::uint16_t count = 128;    ///< groups the frame's table holds
 inline constexpr std::uint16_t land_kinds = count - land;
 } // namespace group
+
+/// The sky's elements in the renders' order (amsterdam.py:644's #sky rect, then sky_layer's): the gradient; the sky
+/// layer's translucent elements, which write no depth, so several take one slot in their order: the clouds' shadows and
+/// the clouds (cloudsh2, cloudf; K17), then the sun's glow and its disc; and the city's glow at night (K18).
+namespace sky_sub {
+inline constexpr std::uint8_t gradient = 0;
+inline constexpr std::uint8_t sun = 1; ///< the clouds (K17), then the sun's glow and its disc
+inline constexpr std::uint8_t city = 2;
+inline constexpr std::uint8_t count = 3;
+} // namespace sky_sub
 
 /// The water's elements after its reflections, in the renders' order inside `<g clip-path="url(#wclip)">`
 /// (amsterdam.py:457: wgrad's rect, the reflections, then these): group::water_top's.
@@ -84,7 +94,7 @@ inline constexpr std::uint8_t count = 6;
 /// big road's asphalt, edge lines and lane lines, a runway's (aero_sub), a road's marks (its bridge's lines, then its
 /// setts, K15).
 [[nodiscard]] constexpr std::uint32_t stride_of(std::uint16_t g) noexcept {
-    if (g == group::sky) return 3;
+    if (g == group::sky) return sky_sub::count;
     if (g == group::water_top) return water_sub::count;
     if (g == group::over + 0) return 2;
     if (g == group::over + 1) return 3;

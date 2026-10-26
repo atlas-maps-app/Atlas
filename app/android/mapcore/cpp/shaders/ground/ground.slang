@@ -20,6 +20,8 @@
 //     (passes/Reflections.cpp); glitter_vs and glitter_fs: the sun's glitter, the glints' layer screened over the
 //     water once a sample (passes/Glitter.cpp); screen_vs with rings_fs: the drizzle's rings, their pattern over the
 //     water (passes/Rings.cpp).
+//   - disc_vs with sunglow_fs and sundisc_fs, screen_vs with cityglow_fs: the sky layer's sun (its glow and its disc)
+//     and the city's glow at night, translucent at their slots over the sky (passes/Sky.cpp).
 //   - shadow_vs: the ground shadows (passes/Shadows.cpp), moved by the moment's sun: a prism's footprint hull swept
 //     along its offset (each hull point twice, before and after its turn), a raised outline or a crown disc moved by
 //     it, their union set in the stencil and composited by flat_fs.
@@ -1326,6 +1328,91 @@ StrokeOutput glitter_fs(GlintOut v, uint given : SV_Coverage) {
     float3 s = unpack(push.colour.x).rgb;
     StrokeOutput o;
     o.colour = float4(s * u, u);
+    o.coverage = mask;
+    return o;
+}
+
+// ---------------------------------------------------------------- the sky layer (passes/Sky.cpp)
+//
+// sky_layer's sun and the city's glow at night, each at its slot over the sky's gradient (and under every nearer
+// ground, by depth): the sun's glow and its disc on a quad about their circle (push.rows: its centre and radius, CSS px),
+// the city's glow over the frame (screen_vs).
+
+/// A circle's quad: the circle of centre push.rows.xy and radius push.rows.z (CSS px), grown by a device px, at painter
+/// slot push.mode.y.
+[shader("vertex")]
+ScreenOut disc_vs(uint vertex : SV_VulkanVertexID) {
+    float density = frame.camera.frame.z;
+    float2 k = quad_corners[vertex];
+    float reach = push.rows.z + 1.0f / density;
+    float2 css = push.rows.xy + float2(k.x < 0.0f ? -reach : reach, k.y < 0.0f ? -reach : reach);
+    ScreenOut o;
+    o.position = clip_of(frame.camera, css, 1.0f, painter_depth(frame.camera, push.mode.y));
+    return o;
+}
+
+/// The sun's glow (`sunglow`, a radialGradient over the circle's box): at the pixel's centre, its stops at 0, .25 and 1
+/// (push.colour.x, .y and .z, each opacity folded into its alpha) interpolated in their encoded values, premultiplied;
+/// nothing beyond the circle, where the gradient has faded to nothing.
+[shader("fragment")]
+ColourOut sunglow_fs(ScreenOut v) {
+    float2 css = css_of_output(frame.camera, v.position.xy);
+    float t = length(css - push.rows.xy) / push.rows.z;
+    if (t > 1.0f) discard;
+    float4 a = unpack(push.colour.x);
+    float4 b = unpack(push.colour.y);
+    float4 c = unpack(push.colour.z);
+    float4 g = t <= 0.25f ? lerp(a, b, t * 4.0f) : lerp(b, c, (t - 0.25f) / 0.75f);
+    ColourOut o;
+    o.colour = float4(g.rgb * g.a, g.a);
+    return o;
+}
+
+/// The sun's disc: the circle filled with push.colour.x on the samples within it (exactly, as the trees' circles).
+[shader("fragment")]
+StrokeOutput sundisc_fs(ScreenOut v, uint given : SV_Coverage) {
+    float2 corner = floor(v.position.xy);
+    uint n = push.mode.w;
+    float density = frame.camera.frame.z;
+    float r2 = push.rows.z * push.rows.z;
+    uint mask = 0u;
+    for (uint i = 0u; i < n; ++i) {
+        if ((given & (1u << i)) == 0u) continue;
+        float2 css = device_at(corner + (n == 4u ? samples4[i] : (n == 2u ? samples2[i] : float2(0.5f, 0.5f)))) /
+                     density;
+        float2 d = css - push.rows.xy;
+        if (d.x * d.x + d.y * d.y <= r2) mask |= 1u << i;
+    }
+    if (mask == 0u) discard;
+    StrokeOutput o;
+    o.colour = float4(unpack(push.colour.x).rgb, 1.0f);
+    o.coverage = mask;
+    return o;
+}
+
+/// The city's glow at night (`cityglow`): the linearGradient from row push.rows.x down to push.rows.y between its
+/// stops (push.colour.x and .y) at the pixel's centre, padded, premultiplied, on the samples above the rect's bottom
+/// (push.rows.z, CSS px).
+[shader("fragment")]
+StrokeOutput cityglow_fs(ScreenOut v, uint given : SV_Coverage) {
+    float2 corner = floor(v.position.xy);
+    uint n = push.mode.w;
+    float density = frame.camera.frame.z;
+    uint mask = 0u;
+    for (uint i = 0u; i < n; ++i) {
+        if ((given & (1u << i)) == 0u) continue;
+        float2 css = device_at(corner + (n == 4u ? samples4[i] : (n == 2u ? samples2[i] : float2(0.5f, 0.5f)))) /
+                     density;
+        if (css.y < push.rows.z) mask |= 1u << i;
+    }
+    if (mask == 0u) discard;
+    float y = css_of_output(frame.camera, v.position.xy).y;
+    float y0 = push.rows.x;
+    float y1 = push.rows.y;
+    float t = y1 != y0 ? saturate((y - y0) / (y1 - y0)) : (y < y0 ? 0.0f : 1.0f);
+    float4 g = lerp(unpack(push.colour.x), unpack(push.colour.y), t);
+    StrokeOutput o;
+    o.colour = float4(g.rgb * g.a, g.a);
     o.coverage = mask;
     return o;
 }
