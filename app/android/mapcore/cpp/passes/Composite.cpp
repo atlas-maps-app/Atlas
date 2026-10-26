@@ -13,9 +13,12 @@
 #include "gen/spirv/frame/composite_x2.hpp"
 #include "gen/spirv/frame/composite_x2_glsl_composite_fs.hpp"
 #include "gpu/Descriptors.hpp"
+#include "gpu/Frames.hpp"
 #include "twin/Twin.hpp"
 
+#include <algorithm>
 #include <bit>
+#include <cstring>
 #include <format>
 #include <string>
 
@@ -97,13 +100,16 @@ gpu::Result<void> Composite::prepare(const frame::PassContext& context) {
         glsl_module_ = std::move(glsl);
     }
 
-    // Set 2: the samples and their stencil, as the subpass (or the local reads) give them.
+    // Set 2: the samples and their stencil, as the subpass (or the local reads) give them, and the frame's tables.
     const vk::raii::Device& d = context.device.handle();
     const std::array inputs{
         gpu::Binding{
             .slot = 0, .type = vk::DescriptorType::eInputAttachment, .stages = vk::ShaderStageFlagBits::eFragment},
         gpu::Binding{
-            .slot = 1, .type = vk::DescriptorType::eInputAttachment, .stages = vk::ShaderStageFlagBits::eFragment}};
+            .slot = 1, .type = vk::DescriptorType::eInputAttachment, .stages = vk::ShaderStageFlagBits::eFragment},
+        gpu::Binding{.slot = 2,
+                     .type = vk::DescriptorType::eStorageBufferDynamic,
+                     .stages = vk::ShaderStageFlagBits::eFragment}};
     ATLAS_GPU_LET(inputs_layout, gpu::make_set_layout(d, inputs));
     inputs_layout_ = std::move(inputs_layout);
     const std::array<std::span<const gpu::Binding>, 1> kinds{inputs};
@@ -111,9 +117,25 @@ gpu::Result<void> Composite::prepare(const frame::PassContext& context) {
     pool_ = std::move(pool);
     ATLAS_GPU_LET(set, gpu::allocate_set(d, pool_, inputs_layout_));
     inputs_ = std::move(set);
+    // The tables: a slice per frame slot of three tables, each as long as the output's longer side (upright or turned,
+    // its rows and columns are within it).
+    const vk::Extent2D extent = context.output.extent();
+    side_ = std::max({extent.width, extent.height, 1U});
+    const vk::DeviceSize table_bytes = vk::DeviceSize{side_} * 3 * sizeof(std::uint32_t);
+    const vk::DeviceSize align =
+        std::max<vk::DeviceSize>(context.device.facts().limits.minStorageBufferOffsetAlignment, 256);
+    slice_ = (table_bytes + align - 1) / align * align;
+    ATLAS_GPU_LET(tables, context.device.memory().buffer(slice_ * gpu::Frames::in_flight,
+                                                         vk::BufferUsageFlagBits::eStorageBuffer,
+                                                         gpu::MemoryUse::upload));
+    tables_ = std::move(tables);
+    std::ranges::fill(tables_.bytes(), std::byte{0});
+    tables_.flush();
+    words_.assign(std::size_t{side_} * 3, 0U);
     gpu::SetWriter(*inputs_)
         .image(0, vk::DescriptorType::eInputAttachment, pass.colour_input(), pass.colour_input_layout())
         .image(1, vk::DescriptorType::eInputAttachment, pass.stencil_input(), pass.stencil_input_layout())
+        .buffer(2, vk::DescriptorType::eStorageBufferDynamic, tables_.handle(), 0, table_bytes)
         .apply(d);
     const std::array<vk::DescriptorSetLayout, 1> extra{*inputs_layout_};
     ATLAS_GPU_LET(layout, context.layout.make_layout(extra));
@@ -138,6 +160,10 @@ gpu::Result<void> Composite::prepare(const frame::PassContext& context) {
 }
 
 void Composite::release() noexcept {
+    tables_ = {};
+    words_.clear();
+    side_ = 0;
+    slice_ = 0;
     pipeline_.clear();
     layout_.clear();
     inputs_.clear();
@@ -147,11 +173,38 @@ void Composite::release() noexcept {
     module_.clear();
 }
 
+void Composite::update(const frame::FrameState& state) {
+    if (!tables_ || side_ == 0) return;
+    const shaders::FrameLayers& l = state.block.layers;
+    const std::uint32_t steps = l.steps.x & shaders::COMPOSITE_DRAWN;
+    const float width = state.block.camera.frame.x;
+    const float height = state.block.camera.frame.y;
+    const float density = state.block.camera.frame.z;
+    // Where a step does not run its table is not read (composite_steps_alphas skips the step).
+    if ((steps & shaders::COMPOSITE_HAZE) != 0U && l.haze.w > 0.0F) {
+        for (std::uint32_t row = 0; row < side_; ++row) {
+            words_[row] = static_cast<std::uint32_t>(shaders::composite_haze_alpha12(l, row, density));
+        }
+    }
+    if ((steps & shaders::COMPOSITE_VIGNETTE) != 0U) {
+        const std::uint32_t w16 = shaders::composite_vignette_size16(width, density);
+        const std::uint32_t h16 = shaders::composite_vignette_size16(height, density);
+        for (std::uint32_t at = 0; at < side_; ++at) {
+            words_[side_ + at] = shaders::composite_vignette_square(at, w16, 32768);        // .5
+            words_[(2 * side_) + at] = shaders::composite_vignette_square(at, h16, 30147); // .46: 30146.56
+        }
+    }
+    const std::size_t at = static_cast<std::size_t>(slice_) * (state.slot % gpu::Frames::in_flight);
+    std::memcpy(tables_.bytes().subspan(at).data(), words_.data(), words_.size() * sizeof(std::uint32_t));
+    tables_.flush();
+}
+
 void Composite::record(const frame::Recording& recording, std::uint32_t phase) {
     (void)phase;
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline_);
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout_, 2, *inputs_, {});
+    const auto offset = static_cast<std::uint32_t>(slice_ * (recording.frame.slot.slot % gpu::Frames::in_flight));
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout_, 2, *inputs_, offset);
     cmd.draw(3, 1, 0, 0);
     recording.counters.draw("composite", 1);
 }

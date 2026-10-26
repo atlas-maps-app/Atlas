@@ -10,6 +10,11 @@
 // that may not take Slang's own SPIR-V for subpass loads (it declares StorageImageReadWithoutFormat, which Vulkan allows
 // from 1.3, with VK_KHR_format_feature_flags2, or with shaderStorageImageReadWithoutFormat).
 //
+// The haze's and the vignette's opacities come from the frame's tables (set 2 binding 2, ENGINE.md gain 2): the haze's
+// by upright row, the vignette's squared distances by upright column and row, made on the CPU once a frame with
+// shared/composite.slang's own arithmetic (passes/Composite.cpp), so each pixel takes the opacities that arithmetic
+// gives it, with a read where it took a loop over the haze's stops and two divisions.
+//
 // It reads its samples' colour only, never their alpha (the frame may be rgb10a2, with 2 bits of alpha; gpu/Facts.hpp).
 // The multisampled variants read each sample's stencil too (set 2 binding 1): its objects bit tells the objects
 // group's samples from the others for `mat`'s coverage rule at the group's silhouettes (K17a). The grain reads the
@@ -40,6 +45,9 @@
 // stencil in x.
 [[vk::input_attachment_index(1)]] [[vk::binding(1, 2)]] SubpassInputMS<uint4> scene_stencil;
 #endif
+// The frame's tables: S rows' haze opacities (1/4096), then S columns' and S rows' squared vignette distances
+// (COMPOSITE_BEYOND past the radius), S the output's longer side.
+[[vk::binding(2, 2)]] StructuredBuffer<uint> composite_tables;
 
 struct FullOut {
     float4 position : SV_Position;
@@ -109,8 +117,16 @@ CompositeOut composite_fs(FullOut v) {
     // The upright device pixel (the output's pre-rotation undone), where the haze and the vignette are taken.
     int2 at = fx_pixel(frame.camera, v.position.xy);
     uint2 pixel = {uint(at.x < 0 ? 0 : at.x), uint(at.y < 0 ? 0 : at.y)};
-    float3 box = {frame.camera.frame.x, frame.camera.frame.y, frame.camera.frame.z};
-    float3 finished = composite_steps_fx(frame.layers, mean, pixel, box, grain);
+    uint entries = 0u;
+    uint stride = 0u;
+    composite_tables.GetDimensions(entries, stride);
+    uint side = entries / 3u;
+    uint row = pixel.y < side ? pixel.y : side - 1u;
+    uint column = pixel.x < side ? pixel.x : side - 1u;
+    int haze = int(composite_tables[row]);
+    int vignette = composite_vignette_from_squares(frame.layers, composite_tables[side + column],
+                                                   composite_tables[(2u * side) + row]);
+    float3 finished = composite_steps_alphas(frame.layers, mean, haze, vignette, grain);
     CompositeOut o;
     o.colour = composite_output(finished, n);
     return o;

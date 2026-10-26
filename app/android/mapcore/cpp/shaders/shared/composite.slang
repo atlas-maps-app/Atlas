@@ -217,30 +217,31 @@ inline int composite_haze_alpha12(FrameLayers l, uint row, float density) {
     return before_alpha;
 }
 
-/// The vignette's opacity at the upright device pixel `pixel` of the W × H CSS frame (`frame`) at `density`, in
-/// 1/4096: fin's radialGradient (objectBoundingBox: centre (.5, .46), radius .75 of the box's width and height),
-/// transparent out to .55 of the radius, then linear to the corner opacity at the radius, and that beyond. In whole
-/// numbers: the pixel's centre as a fraction of the box (W and H times the density, in 1/16 px) in 1/65536, the
-/// distance from the centre in 1/65536 of the radius by an integer square root.
-inline int composite_vignette_alpha12(FrameLayers l, uint2 pixel, float3 frame) {
-    uint w16 = uint(composite_fixed(frame.x * frame.z, 16.0f));
-    uint h16 = uint(composite_fixed(frame.y * frame.z, 16.0f));
-    uint px = pixel.x < 4095u ? pixel.x : 4095u;
-    uint py = pixel.y < 4095u ? pixel.y : 4095u;
-    int fx = int(((2u * px + 1u) << 19u) / (w16 > 0u ? w16 : 1u));
-    int fy = int(((2u * py + 1u) << 19u) / (h16 > 0u ? h16 : 1u));
-    fx = fx > 131072 ? 131072 : fx;
-    fy = fy > 131072 ? 131072 : fy;
-    int u = ((fx - 32768) * 4) / 3; // (x / W − .5) / .75
-    int v = ((fy - 30147) * 4) / 3; // (y / H − .46) / .75; .46 · 65536 = 30146.56
-    uint au = uint(u < 0 ? -u : u);
-    uint av = uint(v < 0 ? -v : v);
+/// The vignette's distance along one axis, squared: the upright device column (or row) `at` of a box `size16` 1/16 px
+/// across, its centre's fraction of the box in 1/65536 less the gradient's centre (`centre`: .5 or .46 of 65536), over
+/// the radius (.75), squared; COMPOSITE_BEYOND where it reaches the radius or more on its own. A column's and a row's
+/// depend on their own place alone, so the composite takes them from tables made once a frame (gain 2).
+static const uint COMPOSITE_BEYOND = 4294967295u;
+inline uint composite_vignette_square(uint at, uint size16, int centre) {
+    uint a = at < 4095u ? at : 4095u;
+    int f = int(((2u * a + 1u) << 19u) / (size16 > 0u ? size16 : 1u));
+    f = f > 131072 ? 131072 : f;
+    int d = ((f - centre) * 4) / 3;
+    uint ad = uint(d < 0 ? -d : d);
+    return ad >= 65536u ? COMPOSITE_BEYOND : ad * ad;
+}
+
+/// The box's width (or height) in 1/16 px, as the vignette takes it: W (or H) times the density.
+inline uint composite_vignette_size16(float size, float density) {
+    return uint(composite_fixed(size * density, 16.0f));
+}
+
+/// The vignette's opacity in 1/4096 from the column's and the row's squares (composite_vignette_square).
+inline int composite_vignette_from_squares(FrameLayers l, uint uu, uint vv) {
     int corner = composite_twelfths(l.vignette.x);
-    if (au >= 65536u || av >= 65536u) {
+    if (uu == COMPOSITE_BEYOND || vv == COMPOSITE_BEYOND) {
         return corner;
     }
-    uint uu = au * au;
-    uint vv = av * av;
     if (uu > 4294967295u - vv) { // beyond the radius: the square passes 2^32
         return corner;
     }
@@ -252,6 +253,17 @@ inline int composite_vignette_alpha12(FrameLayers l, uint2 pixel, float3 frame) 
         return corner;
     }
     return (corner * (int(r) - 36045)) / (65536 - 36045);
+}
+
+/// The vignette's opacity at the upright device pixel `pixel` of the W × H CSS frame (`frame`) at `density`, in
+/// 1/4096: fin's radialGradient (objectBoundingBox: centre (.5, .46), radius .75 of the box's width and height),
+/// transparent out to .55 of the radius, then linear to the corner opacity at the radius, and that beyond. In whole
+/// numbers: the pixel's centre as a fraction of the box (W and H times the density, in 1/16 px) in 1/65536, the
+/// distance from the centre in 1/65536 of the radius by an integer square root.
+inline int composite_vignette_alpha12(FrameLayers l, uint2 pixel, float3 frame) {
+    uint uu = composite_vignette_square(pixel.x, composite_vignette_size16(frame.x, frame.z), 32768); // .5
+    uint vv = composite_vignette_square(pixel.y, composite_vignette_size16(frame.y, frame.z), 30147); // .46: 30146.56
+    return composite_vignette_from_squares(l, uu, vv);
 }
 
 /// A whole level `c` of an output of `n` levels under the haze of colour `h` (its 8-bit levels / 255) at opacity
@@ -276,12 +288,14 @@ inline float composite_vignette_level(float c, int alpha) {
 /// samples, or the rule's at a silhouette) at the upright device pixel `pixel` of the W × H CSS frame at the density
 /// (`frame`: W, H, density): the screen steps that run, each composited in whole numbers. `grain`: the grain field's
 /// grey and alpha at the pixel and fin's opacity byte, 0 where the grain does not run (the fields not bound).
-inline float3 composite_steps_fx(FrameLayers l, float3 levels, uint2 pixel, float3 frame, uint3 grain) {
+/// The finished colour from the haze's and the vignette's opacities at the pixel (1/4096), however they were found: the
+/// composite takes them from the frame's tables (gain 2), the twin from composite_steps_fx's own arithmetic.
+inline float3 composite_steps_alphas(FrameLayers l, float3 levels, int haze, int vignette, uint3 grain) {
     float n = float(l.steps.y);
     uint steps = l.steps.x & COMPOSITE_DRAWN;
     float3 c = levels;
     if ((steps & COMPOSITE_HAZE) != 0u && l.haze.w > 0.0f) {
-        int a = composite_haze_alpha12(l, pixel.y, frame.z);
+        int a = haze;
         float3 h = {composite_haze_level(c.x, l.haze_colour.x, a, n), composite_haze_level(c.y, l.haze_colour.y, a, n),
                     composite_haze_level(c.z, l.haze_colour.z, a, n)};
         c = h;
@@ -292,11 +306,18 @@ inline float3 composite_steps_fx(FrameLayers l, float3 levels, uint2 pixel, floa
         c = g;
     }
     if ((steps & COMPOSITE_VIGNETTE) != 0u) {
-        int a = composite_vignette_alpha12(l, pixel, frame);
+        int a = vignette;
         float3 v = {composite_vignette_level(c.x, a), composite_vignette_level(c.y, a), composite_vignette_level(c.z, a)};
         c = v;
     }
     return c;
+}
+
+inline float3 composite_steps_fx(FrameLayers l, float3 levels, uint2 pixel, float3 frame, uint3 grain) {
+    uint steps = l.steps.x & COMPOSITE_DRAWN;
+    int haze = (steps & COMPOSITE_HAZE) != 0u && l.haze.w > 0.0f ? composite_haze_alpha12(l, pixel.y, frame.z) : 0;
+    int vignette = (steps & COMPOSITE_VIGNETTE) != 0u ? composite_vignette_alpha12(l, pixel, frame) : 0;
+    return composite_steps_alphas(l, levels, haze, vignette, grain);
 }
 
 /// The colour to write for whole levels `levels` of the output: level / levels, which the UNORM attachment turns back

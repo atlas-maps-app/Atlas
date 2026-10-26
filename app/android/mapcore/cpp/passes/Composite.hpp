@@ -18,6 +18,7 @@
 #include <array>
 #include <cstdint>
 #include <span>
+#include <vector>
 
 namespace atlas::passes {
 
@@ -28,6 +29,10 @@ public:
     [[nodiscard]] std::span<const frame::Phase> phases() const noexcept override { return phase_list; }
     [[nodiscard]] gpu::Result<void> prepare(const frame::PassContext& context) override;
     void release() noexcept override;
+    /// The frame's tables (ENGINE.md gain 2), into the frame slot's slice: the haze's opacity by upright row and the
+    /// vignette's squared distances by upright column and row, by shared/composite.slang's own arithmetic, so the
+    /// shader reads what its arithmetic would give at each pixel.
+    void update(const frame::FrameState& state) override;
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     /// The twin: the screen steps it draws as the renders' SVG writes them (the haze's gradient and rect,
     /// ScreenLayers.hazeDef and hazeRect; fin's vignette, its `vig` gradient and rect), after every object.
@@ -45,6 +50,10 @@ private:
     vk::raii::ShaderModule module_{nullptr};
     vk::raii::ShaderModule glsl_module_{nullptr};
     vk::raii::Pipeline pipeline_{nullptr};
+    gpu::Buffer tables_;                // a slice per frame slot: 3 · side_ words (set 2 binding 2)
+    std::vector<std::uint32_t> words_; // the frame's tables before they are copied into its slice
+    std::uint32_t side_ = 0;            // each table's length: the output's longer side
+    vk::DeviceSize slice_ = 0;          // a slice's bytes, aligned for its dynamic offset
     bool glsl_ = false;
 };
 
