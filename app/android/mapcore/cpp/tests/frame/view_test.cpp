@@ -418,6 +418,14 @@ TEST_CASE("the screen layers of a camera and a theme: the 17 stops, the eye-leve
     CHECK(l.haze.y1 == 916);
     CHECK(l.haze.offsets[16] == 1.0);
     CHECK(l.rain_angle.value_or(-1) == 18); // int(23 · 0.8)
+    // the composite's rain runs where it rains, never in a render's "front" layer
+    CHECK((view::block_of(l, th, ~0U, 255).steps.x & shaders::COMPOSITE_RAIN) != 0U);
+    view::Layers front = l;
+    front.front = true;
+    CHECK((view::block_of(front, th, ~0U, 255).steps.x & shaders::COMPOSITE_RAIN) == 0U);
+    view::Layers dry = l;
+    dry.rain_angle.reset();
+    CHECK((view::block_of(dry, th, ~0U, 255).steps.x & shaders::COMPOSITE_RAIN) == 0U);
     CHECK(l.cloud_shadows());
     CHECK(l.cloud_shadow_cut == doctest::Approx(-7 * (0.62 - 0.6 * 0.3)));
     CHECK(l.draws_fin);

@@ -46,8 +46,9 @@
 [[vk::input_attachment_index(1)]] [[vk::binding(1, 2)]] SubpassInputMS<uint4> scene_stencil;
 #endif
 // The frame's tables: S, the output's longer side; the cloud shadows' first row (all ones: none) and their table (256
-// premultiplied a r g b pixels by the noise's red); then S rows' haze opacities (1/4096), S columns' and S rows' squared
-// vignette distances (COMPOSITE_BEYOND past the radius).
+// premultiplied a r g b pixels by the noise's red); the rain's block (COMPOSITE_RAIN_AT: its transform, streaks and
+// grid); then, from COMPOSITE_TABLE_HEAD, S rows' haze opacities (1/4096), S columns' and S rows' squared vignette
+// distances (COMPOSITE_BEYOND past the radius).
 [[vk::binding(2, 2)]] StructuredBuffer<uint> composite_tables;
 
 struct FullOut {
@@ -119,7 +120,7 @@ CompositeOut composite_fs(FullOut v) {
     int2 at = fx_pixel(frame.camera, v.position.xy);
     uint2 pixel = {uint(at.x < 0 ? 0 : at.x), uint(at.y < 0 ? 0 : at.y)};
     uint side = composite_tables[0];
-    uint head = 258u;
+    uint head = COMPOSITE_TABLE_HEAD;
     uint row = pixel.y < side ? pixel.y : side - 1u;
     uint column = pixel.x < side ? pixel.x : side - 1u;
     int haze = int(composite_tables[head + row]);
@@ -131,9 +132,13 @@ CompositeOut composite_fs(FullOut v) {
         pixel.y >= composite_tables[1]) {
         cloud = composite_tables[2u + fx_rgba(at).w];
     }
+    // wfx's rain on a wet moment: the streaks at the pixel's four points in the turned tile
+    int rain = (frame.layers.steps.x & COMPOSITE_RAIN) != 0u
+                   ? composite_rain_alpha12(composite_tables, COMPOSITE_RAIN_AT, pixel)
+                   : 0;
     // the wash (the golden moment's alone) by the pixel's own arithmetic: two divisions where it runs
     int wash = (frame.layers.steps.x & COMPOSITE_WASH) != 0u ? composite_wash_t(pixel, frame.camera.frame.xyz) : 0;
-    float3 finished = composite_steps_alphas(frame.layers, mean, cloud, haze, wash, vignette, grain);
+    float3 finished = composite_steps_alphas(frame.layers, mean, cloud, rain, haze, wash, vignette, grain);
     CompositeOut o;
     o.colour = composite_output(finished, n);
     return o;

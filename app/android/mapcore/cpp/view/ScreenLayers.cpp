@@ -142,6 +142,7 @@ shaders::FrameLayers block_of(const Layers& layers, const style::ThemeBlock& th,
     if (h.count == 0) on &= ~shaders::COMPOSITE_HAZE;
     if (!layers.wash) on &= ~shaders::COMPOSITE_WASH;
     if (!layers.cloud_shadows()) on &= ~shaders::COMPOSITE_CLOUD_SHADOWS;
+    if (!layers.rain_angle || layers.front) on &= ~shaders::COMPOSITE_RAIN;
     b.steps = {on, levels, 0U, 0U};
     return b;
 }

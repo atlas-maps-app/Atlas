@@ -1,6 +1,8 @@
 // The composite (passes/Composite.hpp).
 #include "passes/Composite.hpp"
 
+#include "base/pymath/PyMath.hpp"
+#include "base/pymath/PyRandom.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
 #include "fx/Glints.hpp"
@@ -20,6 +22,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstring>
 #include <format>
 #include <string>
@@ -28,8 +31,43 @@ namespace atlas::passes {
 
 namespace {
 
-/// The composite's tables' header: the side, the cloud shadows' first row and their 256 pixels.
-constexpr std::size_t table_head = 258;
+/// The composite's tables' head: the side, the cloud shadows' first row and their 256 pixels, and the rain's block.
+constexpr std::size_t table_head = shaders::COMPOSITE_TABLE_HEAD;
+static_assert(shaders::COMPOSITE_RAIN_AT == 258 &&
+              shaders::COMPOSITE_RAIN_AT + shaders::COMPOSITE_RAIN_WORDS == table_head);
+
+/// A streak of the rain's tile as the SVG prints it: `M x y v length` ('%.1f' each), stroked '%.2f' wide at opacity
+/// '%.2f'.
+struct Streak {
+    double x;
+    double y;
+    double length;
+    double width;
+    double opacity;
+};
+
+/// The rain's tile, once (render/amsterdam.py:948; ScreenLayers.kt rainStreaks): random.Random(4) gives each streak in
+/// turn its x (0 to 127), y (0 to 211), length (3 to 8), width (.3 to .55) and opacity (.35 to .9).
+[[nodiscard]] const std::array<Streak, shaders::COMPOSITE_RAIN_COUNT>& rain_streaks() {
+    static const std::array<Streak, shaders::COMPOSITE_RAIN_COUNT> streaks = [] {
+        pymath::PyRandom rnd(4);
+        std::array<Streak, shaders::COMPOSITE_RAIN_COUNT> out{};
+        for (Streak& s : out) {
+            const double x = rnd.uniform(0, 127);
+            const double y = rnd.uniform(0, 211);
+            const double length = rnd.uniform(3, 8);
+            const double width = rnd.uniform(0.3, 0.55);
+            const double opacity = rnd.uniform(0.35, 0.9);
+            s = {.x = view::decimals(x, 1),
+                 .y = view::decimals(y, 1),
+                 .length = view::decimals(length, 1),
+                 .width = view::decimals(width, 2),
+                 .opacity = view::decimals(opacity, 2)};
+        }
+        return out;
+    }();
+    return streaks;
+}
 
 /// An embedded module and its symbol.
 struct Spirv {
@@ -168,6 +206,7 @@ gpu::Result<void> Composite::prepare(const frame::PassContext& context) {
 void Composite::release() noexcept {
     tables_ = {};
     words_.clear();
+    rain_made_ = false;
     side_ = 0;
     slice_ = 0;
     pipeline_.clear();
@@ -199,6 +238,17 @@ void Composite::update(const frame::FrameState& state) {
             cloud_cut_ = cut;
         }
         std::ranges::copy(cloud_, words_.begin() + 2);
+    }
+    // wfx's rain: its block, made again when the moment's angle or the density changes
+    if ((steps & shaders::COMPOSITE_RAIN) != 0U && state.layers && state.layers->rain_angle) {
+        const std::int64_t angle = *state.layers->rain_angle;
+        const auto d = static_cast<double>(density);
+        if (!rain_made_ || angle != rain_angle_ || d != rain_density_) {
+            rain_block(angle, d, std::span(words_).subspan(shaders::COMPOSITE_RAIN_AT, shaders::COMPOSITE_RAIN_WORDS));
+            rain_angle_ = angle;
+            rain_density_ = d;
+            rain_made_ = true;
+        }
     }
     // Where a step does not run its table is not read (composite_steps_alphas skips the step).
     std::uint32_t* const t = words_.data() + table_head;
@@ -246,6 +296,12 @@ void Composite::emit(const frame::FrameState& state, twin::Stream& out, std::uin
         const auto top = static_cast<float>(std::max(0.0, state.layers->horizon));
         out.rect({.fill = twin::Paint::colour(0xFF00'0000U)}, 0.0F, top, width, height - top, 0.0F, 0.0F,
                  {.opacity = 0.42F, .blend = twin::Blend::multiply, .filter = clouds});
+    }
+    // render/amsterdam.py:947: wfx's rain over the frame after the cloud shadows (ScreenLayers.kt wfx): the `rain`
+    // pattern at .45
+    if ((on & shaders::COMPOSITE_RAIN) != 0U) {
+        const std::int32_t rain = out.pattern("rain");
+        out.rect({.fill = twin::Paint::pattern(rain)}, 0.0F, 0.0F, width, height, 0.0F, 0.0F, {.opacity = 0.45F});
     }
     // render/amsterdam.py:899: the haze by ground depth (ScreenLayers.hazeDef, hazeRect), as the composite applies it
     const auto stops = static_cast<std::size_t>(l.haze.w);
@@ -343,7 +399,67 @@ hlsl::float3 composite_pixel_fx(const shaders::FrameLayers& layers, std::span<co
     } else {
         mean = shaders::composite_mean(objects + others, count);
     }
-    return shaders::composite_steps_fx(layers, mean, pixel, frame, inputs.grain, inputs.cloud);
+    return shaders::composite_steps_fx(layers, mean, pixel, frame, inputs.grain, inputs.cloud, inputs.rain);
+}
+
+void rain_block(std::int64_t angle, double density, std::span<std::uint32_t> out) {
+    std::ranges::fill(out, 0U);
+    if (out.size() < shaders::COMPOSITE_RAIN_WORDS) return;
+    const auto word = [](std::int64_t v) { return static_cast<std::uint32_t>(static_cast<std::int32_t>(v)); };
+    // The transform: rotate(angle) undone over the density, in 1/65536 px a device px (at least .5 device px a CSS px,
+    // so every place the shader takes stays within its bias), and the four points' offsets from the pixel's corner (the
+    // 4x standard sample positions) turned likewise.
+    const double d = std::max(density, 0.5);
+    const double radians = pymath::radians(static_cast<double>(angle));
+    const double c = pymath::cos(radians) / d;
+    const double s = pymath::sin(radians) / d;
+    out[0] = word(std::llround(c * 65536.0));
+    out[1] = word(std::llround(s * 65536.0));
+    constexpr std::array<std::array<double, 2>, 4> points{
+        {{0.375, 0.125}, {0.875, 0.375}, {0.125, 0.625}, {0.625, 0.875}}};
+    for (std::size_t k = 0; k < points.size(); ++k) {
+        const double x = points[k][0];
+        const double y = points[k][1];
+        out[2 + (2 * k)] = word(std::llround(((c * x) + (s * y)) * 65536.0));
+        out[3 + (2 * k)] = word(std::llround(((c * y) - (s * x)) * 65536.0));
+    }
+    // The streaks in 1/256 px, and the cells each reaches within the tile: its segment grown by its half width (the
+    // whole number at least the root of r², so every point the shader finds within it lies in a cell that lists it).
+    constexpr std::uint32_t gx = shaders::COMPOSITE_RAIN_GRID_X;
+    constexpr std::uint32_t gy = shaders::COMPOSITE_RAIN_GRID_Y;
+    std::vector<std::vector<std::uint32_t>> cells(std::size_t{gx} * gy);
+    const std::array<Streak, shaders::COMPOSITE_RAIN_COUNT>& streaks = rain_streaks();
+    for (std::uint32_t i = 0; i < streaks.size(); ++i) {
+        const Streak& st = streaks[i];
+        const auto x = static_cast<std::int32_t>(std::lround(st.x * 256.0));
+        const auto y0 = static_cast<std::int32_t>(std::lround(st.y * 256.0));
+        const auto y1 = static_cast<std::int32_t>(std::lround((st.y + st.length) * 256.0));
+        const auto r2 = static_cast<std::uint32_t>(std::lround(st.width * st.width * 16384.0));
+        const auto opacity = static_cast<std::uint32_t>(std::lround(st.opacity * 100.0));
+        const std::size_t at = shaders::COMPOSITE_RAIN_STREAKS + (std::size_t{4} * i);
+        out[at] = static_cast<std::uint32_t>(x);
+        out[at + 1] = static_cast<std::uint32_t>(y0);
+        out[at + 2] = static_cast<std::uint32_t>(y1);
+        out[at + 3] = r2 | (opacity << 16U);
+        std::uint32_t root = 0;
+        while (root * root < r2) ++root;
+        const auto reach = static_cast<std::int32_t>(root);
+        const auto cell = [](std::int32_t v, std::uint32_t n) {
+            return static_cast<std::uint32_t>(std::clamp(v >> 11, 0, static_cast<std::int32_t>(n) - 1));
+        };
+        for (std::uint32_t cy = cell(y0 - reach, gy); cy <= cell(y1 + reach, gy); ++cy) {
+            for (std::uint32_t cx = cell(x - reach, gx); cx <= cell(x + reach, gx); ++cx) {
+                cells[(std::size_t{cy} * gx) + cx].push_back(i);
+            }
+        }
+    }
+    const std::size_t room = shaders::COMPOSITE_RAIN_WORDS - shaders::COMPOSITE_RAIN_LISTS;
+    std::uint32_t next = 0;
+    for (std::size_t k = 0; k < cells.size(); ++k) {
+        const auto count = static_cast<std::uint32_t>(std::min(cells[k].size(), room - next));
+        out[shaders::COMPOSITE_RAIN_CELLS + k] = next | (count << 16U);
+        for (std::uint32_t j = 0; j < count; ++j) out[shaders::COMPOSITE_RAIN_LISTS + next++] = cells[k][j];
+    }
 }
 
 hlsl::float3 composite_pixel(const shaders::FrameLayers& layers, std::span<const hlsl::float3> samples, hlsl::float2 p,

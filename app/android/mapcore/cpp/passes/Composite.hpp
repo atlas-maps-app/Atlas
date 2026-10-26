@@ -2,8 +2,8 @@
 // reads every sample of its pixel from tile memory, makes the pixel's colour from them and applies the screen steps
 // once, in the renders' order (shaders/shared/composite.slang, which the twin runs as C++: composite_pixel below). It
 // draws the haze and the vignette (K7), `mat`'s coverage rule at the objects group's silhouettes and the grain (K17a:
-// each sample's stencil and the grain field's bytes, CP/tests/fx/composite_fx_vk_test.cpp); the cloud shadows, the
-// rain and the wash (K17) are stubbed, and with every step off the composite passes the colours through bit for bit
+// each sample's stencil and the grain field's bytes, CP/tests/fx/composite_fx_vk_test.cpp), the cloud shadows, the rain
+// and the wash (K17); with every step off the composite passes the colours through bit for bit
 // (CP/tests/frame/composite_vk_test.cpp).
 //
 // In both frame routes (the render pass's second subpass, or the local reads inside one dynamic rendering scope) and
@@ -29,13 +29,13 @@ public:
     [[nodiscard]] std::span<const frame::Phase> phases() const noexcept override { return phase_list; }
     [[nodiscard]] gpu::Result<void> prepare(const frame::PassContext& context) override;
     void release() noexcept override;
-    /// The frame's tables (ENGINE.md gain 2), into the frame slot's slice: the haze's opacity by upright row and the
-    /// vignette's squared distances by upright column and row, by shared/composite.slang's own arithmetic, so the
-    /// shader reads what its arithmetic would give at each pixel.
+    /// The frame's tables (ENGINE.md gain 2), into the frame slot's slice: the cloud shadows' table, the rain's block
+    /// (rain_block), the haze's opacity by upright row and the vignette's squared distances by upright column and row,
+    /// by shared/composite.slang's own arithmetic, so the shader reads what its arithmetic would give at each pixel.
     void update(const frame::FrameState& state) override;
     void record(const frame::Recording& recording, std::uint32_t phase) override;
-    /// The twin: the screen steps it draws as the renders' SVG writes them (the haze's gradient and rect,
-    /// ScreenLayers.hazeDef and hazeRect; fin's vignette, its `vig` gradient and rect), after every object.
+    /// The twin: the screen steps it draws as the renders' SVG writes them (wfx's cloud shadows and rain, the haze's
+    /// gradient and rect, ScreenLayers.hazeDef and hazeRect; the wash; fin's grain and vignette), after every object.
     void emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const override;
 
     /// Whether the composite runs through Slang's GLSL route.
@@ -50,12 +50,15 @@ private:
     vk::raii::ShaderModule module_{nullptr};
     vk::raii::ShaderModule glsl_module_{nullptr};
     vk::raii::Pipeline pipeline_{nullptr};
-    gpu::Buffer tables_;                     // a slice per frame slot: 3 · side_ words (set 2 binding 2)
+    gpu::Buffer tables_;                     // a slice per frame slot: the head and 3 · side_ words (set 2 binding 2)
     std::vector<std::uint32_t> words_;       // the frame's tables before they are copied into its slice
     std::array<std::uint32_t, 256> cloud_{}; // the cloud shadows' table, for cloud_cut_
     float cloud_cut_ = 0.0F;                 // the matrix's last entry it was made for (0: none made)
-    std::uint32_t side_ = 0;                 // each table's length: the output's longer side
-    vk::DeviceSize slice_ = 0;               // a slice's bytes, aligned for its dynamic offset
+    std::int64_t rain_angle_ = 0;            // the angle and the density the rain's block in words_ was made for
+    double rain_density_ = 0;
+    bool rain_made_ = false;
+    std::uint32_t side_ = 0;   // each table's length: the output's longer side
+    vk::DeviceSize slice_ = 0; // a slice's bytes, aligned for its dynamic offset
     bool glsl_ = false;
 };
 
@@ -68,7 +71,14 @@ struct CompositeInputs {
     bool mat = false;
     hlsl::uint3 grain{0U, 0U, 0U};
     std::uint32_t cloud = 0; ///< wfx's cloud shadows' pixel here (fx::cloud_shadow_table's), 0 for none
+    std::int32_t rain = 0;   ///< wfx's rain's opacity here (1/4096, composite_rain_alpha12 over rain_block), 0 for none
 };
+
+/// The rain's block in the composite's tables (shared/composite.slang's COMPOSITE_RAIN_ words, `out`: as many) for the
+/// pattern turned by `angle` degrees at `density` device px a CSS px: the transform from an upright device pixel to its
+/// place in the tile, the tile's 26 streaks as the SVG prints them (random.Random(4); ScreenLayers.kt rainStreaks) and
+/// the grid of the streaks that reach each cell.
+void rain_block(std::int64_t angle, double density, std::span<std::uint32_t> out);
 
 /// The composite of one pixel as the GPU computes it (the shader's own text, as C++): the levels of its `n` samples'
 /// colours (`levels`: 255, or 1023 at 10 bits), the pixel's colour from them (the mean of their levels, or mat's rule

@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <span>
 
 namespace atlas::shaders {
 

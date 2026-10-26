@@ -19,6 +19,7 @@
 #include "passes/Composite.hpp"
 #include "standin/View.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
+#include "view/ScreenLayers.hpp"
 
 #include <doctest/doctest.h>
 
@@ -26,6 +27,7 @@
 #include <cstdint>
 #include <format>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -256,11 +258,13 @@ TEST_CASE("the frame builder refuses the one-subpass form, which A0 did not buil
     (void)session->take_messages();
 }
 
-TEST_CASE("the composite's haze, golden wash and vignette are the twin's, bit for bit off lavapipe's seam, at every "
-          "density and camera, in every configuration, route and target") {
+TEST_CASE("the composite's rain, haze, golden wash and vignette are the twin's, bit for bit off lavapipe's seam, at "
+          "every density and camera, in every configuration, route and target") {
     // K17a (the coordinator's: A2's exact haze): the haze and fin's vignette in whole numbers (shared/composite.slang),
     // checked on, not only stubbed, over the probe's known samples, at a moment with weather and a haze, at densities
     // 1 and 2.625 and three pitches (the horizon, and so the haze's stops, at three places); the seam counted apart.
+    // The golden wash where the screen's steps run, and the rain at densities 1 and 2.625 (a wet moment, the wind at
+    // 23 km/h: the streaks turned 18 degrees).
     auto session = test::open_session();
     if (!session) return;
     const gpu::Device& device = *session->device;
@@ -273,8 +277,9 @@ TEST_CASE("the composite's haze, golden wash and vignette are the twin's, bit fo
     for (const gpu::Configuration& config : composite_configurations(device)) {
         for (const gpu::Depth depth : {gpu::Depth::eight, gpu::Depth::deepest}) {
             // and once with the screen's haze and vignette off (the app's Look settings: MapFrame::set_screen)
-            for (const auto& [density, pitch, screen] : {std::tuple{1.0, 46.0, true}, std::tuple{2.625, 70.0, true},
-                                                         std::tuple{1.5, 30.0, true}, std::tuple{2.625, 70.0, false}}) {
+            for (const auto& [density, pitch, screen, wet] :
+                 {std::tuple{1.0, 46.0, true, true}, std::tuple{2.625, 70.0, true, true},
+                  std::tuple{1.5, 30.0, true, false}, std::tuple{2.625, 70.0, false, false}}) {
                 if (!screen && depth != gpu::Depth::eight) continue;
                 auto output = gpu::Offscreen::create(device, extent, 2, depth);
                 ATLAS_REQUIRE(output.has_value(), output.error().text());
@@ -287,7 +292,9 @@ TEST_CASE("the composite's haze, golden wash and vignette are the twin's, bit fo
                 ATLAS_REQUIRE(builder.has_value(), builder.error().text());
                 style::ThemeBlock theme{};
                 // the golden moment where the screen's steps run: its wash over the haze too
-                theme.flags = style::theme_flag::weather | (screen ? style::theme_flag::golden : 0U);
+                theme.flags = style::theme_flag::weather | (screen ? style::theme_flag::golden : 0U) |
+                              (wet ? style::theme_flag::wet : 0U);
+                theme.wind = 23.0;
                 theme.haze = {.r = 0xC8, .g = 0xCD, .b = 0xD7, .a = 0xFF};
                 theme.haze_max = 0.55;
                 (*builder)->set_inputs({.camera = standin::board_view(extent.width, extent.height, density, pitch),
@@ -309,6 +316,16 @@ TEST_CASE("the composite's haze, golden wash and vignette are the twin's, bit fo
                 CHECK(((steps & shaders::COMPOSITE_HAZE) != 0U) == screen);
                 CHECK(((steps & shaders::COMPOSITE_VIGNETTE) != 0U) == screen);
                 CHECK(((steps & shaders::COMPOSITE_WASH) != 0U) == screen);
+                CHECK(((steps & shaders::COMPOSITE_RAIN) != 0U) == wet);
+                // the rain's block as the composite made it for the frame (its angle and density)
+                std::vector<std::uint32_t> rain(shaders::COMPOSITE_RAIN_WORDS);
+                const std::optional<view::Layers>& screen_layers = (*builder)->state().layers;
+                if (wet) {
+                    REQUIRE((screen_layers && screen_layers->rain_angle));
+                    CHECK(*screen_layers->rain_angle == 18);
+                    passes::rain_block(*screen_layers->rain_angle, static_cast<double>(block.camera.frame.z), rain);
+                }
+                std::uint32_t rained = 0;
                 const std::uint32_t levels = gpu::ten_bit(packed->format) ? 1023U : 255U;
                 const auto samples = static_cast<std::uint32_t>(config.samples());
                 const auto n = static_cast<float>(levels);
@@ -334,8 +351,11 @@ TEST_CASE("the composite's haze, golden wash and vignette are the twin's, bit fo
                                 if ((mask >> s) & 1U) colour[s] = c;
                             }
                         }
+                        passes::CompositeInputs inputs{};
+                        if (wet) inputs.rain = shaders::composite_rain_alpha12(rain, 0, hlsl::uint2{x, y});
+                        if (inputs.rain > 0) ++rained;
                         const hlsl::float3 want = passes::composite_pixel_fx(
-                            block.layers, std::span(colour.data(), samples), {}, hlsl::uint2{x, y}, frame_box);
+                            block.layers, std::span(colour.data(), samples), inputs, hlsl::uint2{x, y}, frame_box);
                         const hlsl::float3 bare = passes::composite_pixel_fx(stubbed, std::span(colour.data(), samples),
                                                                              {}, hlsl::uint2{x, y}, frame_box);
                         if (want.x != bare.x || want.y != bare.y || want.z != bare.z) ++changed;
@@ -360,6 +380,7 @@ TEST_CASE("the composite's haze, golden wash and vignette are the twin's, bit fo
                                                      gpu::colour_name(packed->format), density, pitch);
                 CHECK_MESSAGE(wrong == 0,
                               name << ": " << wrong << " channels differ from the twin's; the first: " << first);
+                if (wet) CHECK_MESSAGE(rained > 20, name << ": the rain fell on " << rained << " pixels");
                 // The steps do something: the haze and the vignette change most pixels; off, none.
                 if (screen) {
                     CHECK_MESSAGE(changed > packed->width * packed->height / 4,

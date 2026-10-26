@@ -6,8 +6,8 @@
 // (render/amsterdam.py:615 render, R/Amsterdam.kt render). The composite takes a pixel's samples, makes the pixel's
 // colour from them, and applies those steps once, in that order, each rounded to the output's levels as the renders'
 // raster rounds it. It draws the haze and the vignette (K7), `mat`'s coverage rule at the objects group's silhouettes
-// and the grain (K17a); the cloud shadows, the rain and the wash (K17) are stubbed: a step whose bit is off in
-// FrameLayers.steps is skipped, so with every bit off the composite passes the colours through.
+// and the grain (K17a), the cloud shadows, the rain and the wash (K17): a step whose bit is off in FrameLayers.steps is
+// skipped, so with every bit off the composite passes the colours through.
 //
 // The pixel's colour from its samples is exact (the twin computes the GPU's bits): each sample is read as the output's
 // level it holds (round(c · levels): an n-bit UNORM sample decodes to within a hair of level / levels), the levels are
@@ -37,8 +37,8 @@
 // before the vignette. At 10 bits a channel, the change the 8-bit overlay makes to the nearest 8-bit level, scaled.
 //
 // It reads its samples' colour only, never their alpha: the frame may be rgb10a2, which keeps 2 bits of alpha
-// (gpu/Facts.hpp). Every step is integer arithmetic, exact by construction: the pass-through, the rule, the haze, the
-// grain and the vignette.
+// (gpu/Facts.hpp). Every step is integer arithmetic, exact by construction: the pass-through, the rule, the cloud
+// shadows, the rain, the haze, the wash, the grain and the vignette.
 #pragma once
 
 /// The screen layers the composite applies, for one frame: 288 bytes.
@@ -60,9 +60,8 @@ static const uint COMPOSITE_HAZE = 8u;          // the haze by ground depth (Scr
 static const uint COMPOSITE_WASH = 16u;         // the golden wash (K17)
 static const uint COMPOSITE_GRAIN = 32u;        // fin: the paper grain by overlay (K17a)
 static const uint COMPOSITE_VIGNETTE = 64u;     // fin: the vignette
-/// The steps the composite draws; the others are stubbed whatever their bit says.
-static const uint COMPOSITE_DRAWN = 123u; // COMPOSITE_MAT | COMPOSITE_CLOUD_SHADOWS | COMPOSITE_HAZE | COMPOSITE_WASH |
-                                          // COMPOSITE_GRAIN | COMPOSITE_VIGNETTE
+/// The steps the composite draws (every one).
+static const uint COMPOSITE_DRAWN = 127u;
 
 /// fin's grain opacity as the byte Skia's stages scale by (CP/fx/Grain.hpp's skia_byte of .09, and of .12 at night).
 static const uint COMPOSITE_GRAIN_DAY = 23u;
@@ -295,6 +294,100 @@ inline float composite_cloud_level(float c, uint cs, uint a12) {
     return float((b * (1044480u - (255u - cs) * a12) + 522240u) / 1044480u);
 }
 
+/// wfx's rain (render/amsterdam.py:947; ScreenLayers.kt wfx, rainStreaks): on a wet moment, after the cloud shadows and
+/// before the haze, a pattern of 26 short faint streaks over a rect across the frame at .45, source-over. The tile is
+/// 127 × 211 px; random.Random(4) gives each streak in turn its x and y in the tile, its length (3 to 8), its width (.3
+/// to .55) and its opacity (.35 to .9), as the SVG prints them; each is a vertical segment stroked in #C3CEE8 with
+/// round caps; the pattern turns with the wind (patternTransform rotate(int(wind · .8))). At four points of the pixel
+/// (the 4x standard sample positions, whatever samples the frame has) the composite takes the point's place in the tile
+/// (its CSS point turned back by the angle, the tile repeated), the streaks that reach it there (a streak is the points
+/// within half its width of its segment, measured exactly; the tile clips what lies beyond it, and its grid lists the
+/// streaks that reach each of its 8 px cells), their layer (1 − Π(1 − opacity): one colour, painted in order), and the
+/// four points' mean at .45. In whole numbers, from the frame's tables' rain block (passes/Composite.cpp's rain_block):
+/// the point's place in 1/65536 px by an integer transform (the angle's cosine and sine over the density in 1/65536,
+/// the points' offsets turned likewise), the tile's coordinates in 1/256 px (rounded; the transform's own rounding
+/// moves a point by at most 1/131072 px for each device px it lies across and down from the frame's corner), the
+/// squared distances in 1/65536 px², the opacities in 1/100 and the layer in 1/4096.
+static const uint COMPOSITE_RAIN_AT = 258u;            // the rain's block in the frame's tables, after the clouds'
+static const uint COMPOSITE_RAIN_STREAKS = 10u;        // its streaks, 4 words each: x, y0, y1 (1/256 px), r² | op << 16
+static const uint COMPOSITE_RAIN_CELLS = 114u;         // its grid's cells, a row of 16 at a time: first | count << 16
+static const uint COMPOSITE_RAIN_LISTS = 546u;         // the cells' streaks, cell after cell
+static const uint COMPOSITE_RAIN_WORDS = 704u;         // the block's length
+static const uint COMPOSITE_RAIN_COUNT = 26u;          // the tile's streaks
+static const uint COMPOSITE_RAIN_GRID_X = 16u;         // the grid's cells across (8 px, 2048 in 1/256: 127 px)
+static const uint COMPOSITE_RAIN_GRID_Y = 27u;         // and down (211 px)
+static const uint COMPOSITE_RAIN_SIDE_X = 8323072u;    // the tile's width in 1/65536 px: 127 · 65536
+static const uint COMPOSITE_RAIN_SIDE_Y = 13828096u;   // its height: 211 · 65536
+static const uint COMPOSITE_RAIN_BIAS_X = 1498152960u; // 180 widths, which lift every place the block allows above 0
+static const uint COMPOSITE_RAIN_BIAS_Y = 1493434368u; // 108 heights
+static const uint COMPOSITE_RAIN_R = 195u;             // #C3CEE8
+static const uint COMPOSITE_RAIN_G = 206u;
+static const uint COMPOSITE_RAIN_B = 232u;
+/// The frame's tables after their header and the rain's block: the haze's rows, then the vignette's squares.
+static const uint COMPOSITE_TABLE_HEAD = 962u;
+
+/// The words the rain reads: the frame's tables on the GPU, a span of them in the twin.
+#if defined(__cplusplus)
+using CompositeWords = std::span<const uint>;
+#else
+typedef StructuredBuffer<uint> CompositeWords;
+#endif
+
+/// A place `q` along one side of the tile (1/65536 px) as the tile's coordinate in 1/256 px, rounded: lifted by `bias`
+/// (whole tiles) above 0, so the remainder is the tile's whatever the place's sign.
+inline uint composite_rain_wrap(int q, uint side, uint bias) {
+    return (((uint(q) + bias) % side) + 128u) >> 8u;
+}
+
+/// The transparency `clear` (1/4096) of a point at tile coordinates `t` (1/256 px) once streak `s` (x, y0, y1,
+/// r² | opacity << 16) is painted: the streak's opacity over it where the point lies within its half width of the
+/// streak's segment (r², 1/65536 px²).
+inline uint composite_rain_over(uint2 t, uint4 s, uint clear) {
+    int dx = int(t.x) - int(s.x);
+    int dy = 0;
+    if (t.y < s.y) {
+        dy = int(s.y) - int(t.y);
+    } else if (t.y > s.z) {
+        dy = int(t.y) - int(s.z);
+    }
+    if (dx < -255 || dx > 255 || dy > 255) {
+        return clear;
+    }
+    if (uint(dx * dx + dy * dy) > (s.w & 0xFFFFu)) {
+        return clear;
+    }
+    return (clear * (100u - (s.w >> 16u)) + 50u) / 100u;
+}
+
+/// The rain's opacity at the upright device pixel `pixel`, in 1/4096 (0 to 1843): the mean of its four points' layers
+/// at .45, from the rain's block at word `at` of `t` (the block: [0] the cosine and [1] the sine of the angle over the
+/// density in 1/65536, [2..9] the four points' offsets from the pixel's corner turned likewise, x then y; then the
+/// streaks, the cells and their lists).
+inline int composite_rain_alpha12(CompositeWords t, uint at, uint2 pixel) {
+    int c = int(t[at]);
+    int s = int(t[at + 1u]);
+    int px = int(pixel.x < 4095u ? pixel.x : 4095u);
+    int py = int(pixel.y < 4095u ? pixel.y : 4095u);
+    int qx = c * px + s * py;
+    int qy = c * py - s * px;
+    uint sum = 0u;
+    for (uint k = 0u; k < 4u; ++k) {
+        uint2 p = {composite_rain_wrap(qx + int(t[at + 2u + (2u * k)]), COMPOSITE_RAIN_SIDE_X, COMPOSITE_RAIN_BIAS_X),
+                   composite_rain_wrap(qy + int(t[at + 3u + (2u * k)]), COMPOSITE_RAIN_SIDE_Y, COMPOSITE_RAIN_BIAS_Y)};
+        uint cell = t[at + COMPOSITE_RAIN_CELLS + ((p.y >> 11u) * COMPOSITE_RAIN_GRID_X) + (p.x >> 11u)];
+        uint first = at + COMPOSITE_RAIN_LISTS + (cell & 0xFFFFu);
+        uint count = cell >> 16u;
+        uint clear = 4096u;
+        for (uint i = 0u; i < count; ++i) {
+            uint w = at + COMPOSITE_RAIN_STREAKS + (4u * t[first + i]);
+            uint4 streak = {t[w], t[w + 1u], t[w + 2u], t[w + 3u]};
+            clear = composite_rain_over(p, streak, clear);
+        }
+        sum = sum + (4096u - clear);
+    }
+    return int((sum * 45u + 200u) / 400u);
+}
+
 /// The golden wash (render/amsterdam.py:921; ScreenLayers.kt washDef): at the golden moment, after the haze, a
 /// linearGradient over the frame's box (objectBoundingBox, from (0, 0) to (1, .35)) of #FFB25E at .14, #FFC98A at .05 at
 /// .45 and #FFC98A at 0 at its end, source-over. In whole numbers: the pixel's centre as a fraction of the box in
@@ -346,11 +439,12 @@ inline float composite_wash_level(float c, uint c0, uint c1, int t, float n) {
 /// The finished colour of a pixel, as levels of the output (whole numbers), from its colour (levels: the mean of its
 /// samples, or the rule's at a silhouette) at the upright device pixel `pixel` of the W × H CSS frame at the density
 /// (`frame`: W, H, density): the screen steps that run, each composited in whole numbers. `grain`: the grain field's
-/// grey and alpha at the pixel and fin's opacity byte, 0 where the grain does not run (the fields not bound).
-/// The finished colour from the haze's and the vignette's opacities at the pixel (1/4096), however they were found: the
-/// composite takes them from the frame's tables (gain 2), the twin from composite_steps_fx's own arithmetic.
-inline float3 composite_steps_alphas(FrameLayers l, float3 levels, uint cloud, int haze, int wash, int vignette,
-                                     uint3 grain) {
+/// grey and alpha at the pixel and fin's opacity byte, 0 where the grain does not run (the fields not bound); `cloud`:
+/// the cloud shadows' pixel there, 0 for none; `rain`: the rain's opacity there (1/4096, composite_rain_alpha12), 0 for
+/// none. The finished colour from the haze's and the vignette's opacities at the pixel (1/4096), however they were
+/// found: the composite takes them from the frame's tables (gain 2), the twin from composite_steps_fx's own arithmetic.
+inline float3 composite_steps_alphas(FrameLayers l, float3 levels, uint cloud, int rain, int haze, int wash,
+                                     int vignette, uint3 grain) {
     float n = float(l.steps.y);
     uint steps = l.steps.x & COMPOSITE_DRAWN;
     float3 c = levels;
@@ -364,6 +458,12 @@ inline float3 composite_steps_alphas(FrameLayers l, float3 levels, uint cloud, i
                     composite_cloud_level(c.y, g < 255u ? g : 255u, a12),
                     composite_cloud_level(c.z, b < 255u ? b : 255u, a12)};
         c = s;
+    }
+    if ((steps & COMPOSITE_RAIN) != 0u && rain > 0) {
+        float3 r = {composite_haze_level(c.x, float(COMPOSITE_RAIN_R) / 255.0f, rain, n),
+                    composite_haze_level(c.y, float(COMPOSITE_RAIN_G) / 255.0f, rain, n),
+                    composite_haze_level(c.z, float(COMPOSITE_RAIN_B) / 255.0f, rain, n)};
+        c = r;
     }
     if ((steps & COMPOSITE_HAZE) != 0u && l.haze.w > 0.0f) {
         int a = haze;
@@ -390,12 +490,13 @@ inline float3 composite_steps_alphas(FrameLayers l, float3 levels, uint cloud, i
     return c;
 }
 
-inline float3 composite_steps_fx(FrameLayers l, float3 levels, uint2 pixel, float3 frame, uint3 grain, uint cloud) {
+inline float3 composite_steps_fx(FrameLayers l, float3 levels, uint2 pixel, float3 frame, uint3 grain, uint cloud,
+                                 int rain) {
     uint steps = l.steps.x & COMPOSITE_DRAWN;
     int haze = (steps & COMPOSITE_HAZE) != 0u && l.haze.w > 0.0f ? composite_haze_alpha12(l, pixel.y, frame.z) : 0;
     int wash = (steps & COMPOSITE_WASH) != 0u ? composite_wash_t(pixel, frame) : 0;
     int vignette = (steps & COMPOSITE_VIGNETTE) != 0u ? composite_vignette_alpha12(l, pixel, frame) : 0;
-    return composite_steps_alphas(l, levels, cloud, haze, wash, vignette, grain);
+    return composite_steps_alphas(l, levels, cloud, rain, haze, wash, vignette, grain);
 }
 
 /// The colour to write for whole levels `levels` of the output: level / levels, which the UNORM attachment turns back
