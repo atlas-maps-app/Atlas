@@ -7,7 +7,8 @@
 //
 // The functions before the entry point are shared: tests/base/hlsl_test.cpp compiles them as C++ through
 // base/hlsl.hpp and holds them to std::fma, and tests/base/vulkan_vk_test.cpp runs the entry point on lavapipe against
-// std::fma: as Slang's own SPIR-V, through Slang's GLSL route, and with OpFmaKHR where the driver has it.
+// std::fma: as Slang's own SPIR-V, through Slang's GLSL route, and with OpFmaKHR where the driver has it. A module
+// takes the functions alone with `#define ATLAS_EXACT_FUNCTIONS` before it includes this file (fx/noise.slang).
 //
 // atlas: variant fmakhr ATLAS_FMA_KHR
 // atlas: glsl-route fma_probe:compute
@@ -65,7 +66,7 @@ inline float fma_emulated(float a, float b, float c) {
     return t.hi + add_round_to_odd(t.lo, p.lo);
 }
 
-#if !defined(__cplusplus)
+#if !defined(__cplusplus) && !defined(ATLAS_EXACT_FUNCTIONS)
 
 struct ExactPush {
     uint count;
