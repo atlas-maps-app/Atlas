@@ -1340,6 +1340,10 @@ StrokeOutput glitter_fs(GlintOut v, uint given : SV_Coverage) {
 // push.rows.x of the ellipse), their layer 1 - Π(1 - opacity) in the rings' colour (push.colour.x) at the rect's
 // opacity (push.rows.y), the mean over the samples they reach.
 
+/// The margin (in the tile's px) the ellipse's own bounds keep from the stroke's half width before they decide a
+/// sample, far beyond the float rounding of both them and ellipse_distance (each within a few 1e-6 px here).
+static const float RING_MARGIN = 0.001f;
+
 /// The distance from p (relative to an ellipse's centre) to the ellipse of semi-axes e (e.x >= e.y > 0): D. Eberly's
 /// bisection for the closest point.
 float ellipse_distance(float2 p, float2 e) {
@@ -1430,7 +1434,17 @@ StrokeOutput rings_fs(ScreenOut v, uint given : SV_Coverage) {
             float2 e = float2(asfloat(words[r + 2u]), asfloat(words[r + 3u]));
             float2 d = t - c;
             if (abs(d.x) > e.x + hw || abs(d.y) > e.y + hw) continue;
-            if (ellipse_distance(d, e) <= hw) keep = keep * (1.0f - asfloat(words[r + 4u]));
+            // The ellipse's own measure first (ENGINE.md gain 19): with g = |(d.x / e.x, d.y / e.y)| the point lies on
+            // the ellipse scaled by g, and its distance to the ellipse lies between e.y · |g − 1| and e.x · |g − 1|
+            // (the scaled ellipse's support lines, and the scaling's own move). That settles the samples clearly
+            // outside the stroke or clearly within it; the bisection runs where the bounds straddle the half width,
+            // so every sample is decided as the bisection alone decides it.
+            float2 z = d / e;
+            float gap = abs(sqrt(z.x * z.x + z.y * z.y) - 1.0f);
+            if (e.y * gap > hw + RING_MARGIN) continue;
+            if (e.x * gap < hw - RING_MARGIN || ellipse_distance(d, e) <= hw) {
+                keep = keep * (1.0f - asfloat(words[r + 4u]));
+            }
         }
         if (keep < 1.0f) {
             sum = sum + (1.0f - keep);
