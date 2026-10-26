@@ -98,6 +98,8 @@ class L1Test {
         val out = arrayListOf(
             Case("home sunny S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> AnchorCases.homeView(r, 916) }, "sunny"),
             Case("home wet S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> AnchorCases.homeView(r, 916) }, "wet"),
+            // the golden moment: its wash over the haze (ENGINE.md step 4, the composite's steps)
+            Case("home golden S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> AnchorCases.homeView(r, 916) }, "golden"),
         )
         if (g.isFile) {
             out += Case("board sunny S1", "grachten", { g }, { AnchorCases.grachten() }, { r -> knot(r, "grachten_home", 916) }, "sunny")

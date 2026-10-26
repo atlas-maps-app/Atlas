@@ -237,6 +237,27 @@ void Composite::emit(const frame::FrameState& state, twin::Stream& out, std::uin
                                                 .colours = std::span(colours).first(stops)});
         out.rect({.fill = twin::Paint::gradient(haze)}, 0.0F, l.haze.x, width, l.haze.y - l.haze.x);
     }
+    // render/amsterdam.py:921: the golden wash over the haze (ScreenLayers.kt washDef and washRect)
+    if ((on & shaders::COMPOSITE_WASH) != 0U) {
+        const auto rgb = [](std::uint32_t c) {
+            return hlsl::float4{static_cast<float>((c >> 16U) & 0xFFU) / 255.0F,
+                                static_cast<float>((c >> 8U) & 0xFFU) / 255.0F, static_cast<float>(c & 0xFFU) / 255.0F,
+                                0.0F};
+        };
+        const std::array<float, 3> offsets{0.0F, 0.45F, 1.0F};
+        const std::array<std::uint32_t, 3> colours{folded(rgb(0xFFB25EU), 0.14F), folded(rgb(0xFFC98AU), 0.05F),
+                                                   folded(rgb(0xFFC98AU), 0.0F)};
+        const std::int32_t wash = out.gradient({.id = "wash",
+                                                .radial = false,
+                                                .coords = {0.0F, 0.0F, 1.0F, 0.35F, 0.0F},
+                                                .units = twin::Units::bounding_box,
+                                                .transformed = false,
+                                                .transform = {1, 0, 0, 1, 0, 0},
+                                                .spread = twin::Spread::pad,
+                                                .offsets = offsets,
+                                                .colours = colours});
+        out.rect({.fill = twin::Paint::gradient(wash)}, 0.0F, 0.0F, width, height);
+    }
     // render/amsterdam.py:964: fin's grain over everything (its `grain` filter, overlaid at .09, .12 at night), once
     // the fields are bound
     if ((on & shaders::COMPOSITE_GRAIN) != 0U && (state.block.info.x & shaders::FRAME_FIELDS) != 0U) {

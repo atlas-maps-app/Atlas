@@ -256,8 +256,8 @@ TEST_CASE("the frame builder refuses the one-subpass form, which A0 did not buil
     (void)session->take_messages();
 }
 
-TEST_CASE("the composite's haze and vignette are the twin's, bit for bit off lavapipe's seam, at every density and "
-          "camera, in every configuration, route and target") {
+TEST_CASE("the composite's haze, golden wash and vignette are the twin's, bit for bit off lavapipe's seam, at every "
+          "density and camera, in every configuration, route and target") {
     // K17a (the coordinator's: A2's exact haze): the haze and fin's vignette in whole numbers (shared/composite.slang),
     // checked on, not only stubbed, over the probe's known samples, at a moment with weather and a haze, at densities
     // 1 and 2.625 and three pitches (the horizon, and so the haze's stops, at three places); the seam counted apart.
@@ -286,7 +286,8 @@ TEST_CASE("the composite's haze and vignette are the twin's, bit for bit off lav
                 if (!screen) (*builder)->set_steps(~(shaders::COMPOSITE_HAZE | shaders::COMPOSITE_VIGNETTE));
                 ATLAS_REQUIRE(builder.has_value(), builder.error().text());
                 style::ThemeBlock theme{};
-                theme.flags = style::theme_flag::weather;
+                // the golden moment where the screen's steps run: its wash over the haze too
+                theme.flags = style::theme_flag::weather | (screen ? style::theme_flag::golden : 0U);
                 theme.haze = {.r = 0xC8, .g = 0xCD, .b = 0xD7, .a = 0xFF};
                 theme.haze_max = 0.55;
                 (*builder)->set_inputs({.camera = standin::board_view(extent.width, extent.height, density, pitch),
@@ -307,6 +308,7 @@ TEST_CASE("the composite's haze and vignette are the twin's, bit for bit off lav
                 const std::uint32_t steps = block.layers.steps.x;
                 CHECK(((steps & shaders::COMPOSITE_HAZE) != 0U) == screen);
                 CHECK(((steps & shaders::COMPOSITE_VIGNETTE) != 0U) == screen);
+                CHECK(((steps & shaders::COMPOSITE_WASH) != 0U) == screen);
                 const std::uint32_t levels = gpu::ten_bit(packed->format) ? 1023U : 255U;
                 const auto samples = static_cast<std::uint32_t>(config.samples());
                 const auto n = static_cast<float>(levels);

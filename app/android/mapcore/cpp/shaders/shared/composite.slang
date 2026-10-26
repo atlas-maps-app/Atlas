@@ -61,7 +61,8 @@ static const uint COMPOSITE_WASH = 16u;         // the golden wash (K17)
 static const uint COMPOSITE_GRAIN = 32u;        // fin: the paper grain by overlay (K17a)
 static const uint COMPOSITE_VIGNETTE = 64u;     // fin: the vignette
 /// The steps the composite draws; the others are stubbed whatever their bit says.
-static const uint COMPOSITE_DRAWN = 105u; // COMPOSITE_MAT | COMPOSITE_HAZE | COMPOSITE_GRAIN | COMPOSITE_VIGNETTE
+static const uint COMPOSITE_DRAWN = 121u; // COMPOSITE_MAT | COMPOSITE_HAZE | COMPOSITE_WASH | COMPOSITE_GRAIN |
+                                          // COMPOSITE_VIGNETTE
 
 /// fin's grain opacity as the byte Skia's stages scale by (CP/fx/Grain.hpp's skia_byte of .09, and of .12 at night).
 static const uint COMPOSITE_GRAIN_DAY = 23u;
@@ -284,13 +285,61 @@ inline float composite_vignette_level(float c, int alpha) {
     return float((uint(c) * (4096u - a) + 2048u) / 4096u);
 }
 
+/// The golden wash (render/amsterdam.py:921; ScreenLayers.kt washDef): at the golden moment, after the haze, a
+/// linearGradient over the frame's box (objectBoundingBox, from (0, 0) to (1, .35)) of #FFB25E at .14, #FFC98A at .05 at
+/// .45 and #FFC98A at 0 at its end, source-over. In whole numbers: the pixel's centre as a fraction of the box in
+/// 1/65536 along each side (as the vignette takes it), its place along the gradient t = (u + .35 v) / (1 + .35²) =
+/// (400 u + 140 v) / 449 in 1/4096, the stops' offsets and opacities to the nearest 1/4096 (as the haze takes them), and
+/// each channel's level interpolated between the stops' and rounded half up.
+static const int COMPOSITE_WASH_MID = 1843; // .45 in 1/4096
+static const int COMPOSITE_WASH_A0 = 573;   // .14
+static const int COMPOSITE_WASH_A1 = 205;   // .05
+static const uint COMPOSITE_WASH_R0 = 255u; // #FFB25E
+static const uint COMPOSITE_WASH_G0 = 178u;
+static const uint COMPOSITE_WASH_B0 = 94u;
+static const uint COMPOSITE_WASH_R1 = 255u; // #FFC98A
+static const uint COMPOSITE_WASH_G1 = 201u;
+static const uint COMPOSITE_WASH_B1 = 138u;
+
+/// The pixel's place along the wash, t in 1/4096 (0 to 4096).
+inline int composite_wash_t(uint2 pixel, float3 frame) {
+    uint w16 = composite_vignette_size16(frame.x, frame.z);
+    uint h16 = composite_vignette_size16(frame.y, frame.z);
+    uint px = pixel.x < 4095u ? pixel.x : 4095u;
+    uint py = pixel.y < 4095u ? pixel.y : 4095u;
+    int fu = int(((2u * px + 1u) << 19u) / (w16 > 0u ? w16 : 1u));
+    int fv = int(((2u * py + 1u) << 19u) / (h16 > 0u ? h16 : 1u));
+    fu = fu > 131072 ? 131072 : fu;
+    fv = fv > 131072 ? 131072 : fv;
+    int t = ((400 * fu + 140 * fv) / 449) >> 4;
+    return t > 4096 ? 4096 : t;
+}
+
+/// The wash's opacity at `t`, in 1/4096.
+inline int composite_wash_alpha12(int t) {
+    if (t <= COMPOSITE_WASH_MID) {
+        return COMPOSITE_WASH_A0 + ((COMPOSITE_WASH_A1 - COMPOSITE_WASH_A0) * t) / COMPOSITE_WASH_MID;
+    }
+    return COMPOSITE_WASH_A1 - (COMPOSITE_WASH_A1 * (t - COMPOSITE_WASH_MID)) / (4096 - COMPOSITE_WASH_MID);
+}
+
+/// A whole level `c` under the wash at `t`: the channel's colour between its two stops' (`c0` to `c1` over the first
+/// part, `c1` after), at the wash's opacity.
+inline float composite_wash_level(float c, uint c0, uint c1, int t, float n) {
+    uint w = c1;
+    if (t <= COMPOSITE_WASH_MID) {
+        w = c0 + ((c1 - c0) * uint(t) + uint(COMPOSITE_WASH_MID / 2)) / uint(COMPOSITE_WASH_MID);
+    }
+    return composite_haze_level(c, float(w) / 255.0f, composite_wash_alpha12(t), n);
+}
+
 /// The finished colour of a pixel, as levels of the output (whole numbers), from its colour (levels: the mean of its
 /// samples, or the rule's at a silhouette) at the upright device pixel `pixel` of the W × H CSS frame at the density
 /// (`frame`: W, H, density): the screen steps that run, each composited in whole numbers. `grain`: the grain field's
 /// grey and alpha at the pixel and fin's opacity byte, 0 where the grain does not run (the fields not bound).
 /// The finished colour from the haze's and the vignette's opacities at the pixel (1/4096), however they were found: the
 /// composite takes them from the frame's tables (gain 2), the twin from composite_steps_fx's own arithmetic.
-inline float3 composite_steps_alphas(FrameLayers l, float3 levels, int haze, int vignette, uint3 grain) {
+inline float3 composite_steps_alphas(FrameLayers l, float3 levels, int haze, int wash, int vignette, uint3 grain) {
     float n = float(l.steps.y);
     uint steps = l.steps.x & COMPOSITE_DRAWN;
     float3 c = levels;
@@ -299,6 +348,12 @@ inline float3 composite_steps_alphas(FrameLayers l, float3 levels, int haze, int
         float3 h = {composite_haze_level(c.x, l.haze_colour.x, a, n), composite_haze_level(c.y, l.haze_colour.y, a, n),
                     composite_haze_level(c.z, l.haze_colour.z, a, n)};
         c = h;
+    }
+    if ((steps & COMPOSITE_WASH) != 0u) {
+        float3 w = {composite_wash_level(c.x, COMPOSITE_WASH_R0, COMPOSITE_WASH_R1, wash, n),
+                    composite_wash_level(c.y, COMPOSITE_WASH_G0, COMPOSITE_WASH_G1, wash, n),
+                    composite_wash_level(c.z, COMPOSITE_WASH_B0, COMPOSITE_WASH_B1, wash, n)};
+        c = w;
     }
     if ((steps & COMPOSITE_GRAIN) != 0u && grain.z != 0u) {
         float3 g = {composite_grain_level(c.x, grain, n), composite_grain_level(c.y, grain, n),
@@ -316,8 +371,9 @@ inline float3 composite_steps_alphas(FrameLayers l, float3 levels, int haze, int
 inline float3 composite_steps_fx(FrameLayers l, float3 levels, uint2 pixel, float3 frame, uint3 grain) {
     uint steps = l.steps.x & COMPOSITE_DRAWN;
     int haze = (steps & COMPOSITE_HAZE) != 0u && l.haze.w > 0.0f ? composite_haze_alpha12(l, pixel.y, frame.z) : 0;
+    int wash = (steps & COMPOSITE_WASH) != 0u ? composite_wash_t(pixel, frame) : 0;
     int vignette = (steps & COMPOSITE_VIGNETTE) != 0u ? composite_vignette_alpha12(l, pixel, frame) : 0;
-    return composite_steps_alphas(l, levels, haze, vignette, grain);
+    return composite_steps_alphas(l, levels, haze, wash, vignette, grain);
 }
 
 /// The colour to write for whole levels `levels` of the output: level / levels, which the UNORM attachment turns back

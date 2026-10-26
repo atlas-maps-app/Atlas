@@ -126,7 +126,9 @@ CompositeOut composite_fs(FullOut v) {
     int haze = int(composite_tables[row]);
     int vignette = composite_vignette_from_squares(frame.layers, composite_tables[side + column],
                                                    composite_tables[(2u * side) + row]);
-    float3 finished = composite_steps_alphas(frame.layers, mean, haze, vignette, grain);
+    // the wash (the golden moment's alone) by the pixel's own arithmetic: two divisions where it runs
+    int wash = (frame.layers.steps.x & COMPOSITE_WASH) != 0u ? composite_wash_t(pixel, frame.camera.frame.xyz) : 0;
+    float3 finished = composite_steps_alphas(frame.layers, mean, haze, wash, vignette, grain);
     CompositeOut o;
     o.colour = composite_output(finished, n);
     return o;
