@@ -662,11 +662,15 @@ uint coverage_of(TreeOut v) {
 /// The samples of a crown's circle's fragment at `v` under the crown filter (render/closeup.py's crown_filter;
 /// SvgFilterRaster's DisplacementNode): the crowns' field at the fragment's upright pixel (`k`: its red and green)
 /// moves the pixel by whole device px, and the moved pixel shows the crown's layer there, so each sample keeps where
-/// its moved place lies in the circle and the moved pixel in the tree's filter region.
+/// its moved place lies in the circle and the pixel and the moved pixel in the tree's filter region (the filter's
+/// result covers its region alone).
 uint crown_coverage(TreeOut v, uint3 k) {
     int2 p = fx_pixel(frame.camera, v.position.xy);
     int2 o = {asint(tree_tones[TREE_TONE_CROWN_OFFSETS + k.x]), asint(tree_tones[TREE_TONE_CROWN_OFFSETS + k.y])};
     int2 s = p + o;
+    if (p.x < v.region.x || p.y < v.region.y || p.x >= v.region.z || p.y >= v.region.w) {
+        return 0u;
+    }
     if (s.x < v.region.x || s.y < v.region.y || s.x >= v.region.z || s.y >= v.region.w) {
         return 0u;
     }

@@ -1,4 +1,4 @@
-// The screen-wide noise fields (plan-vector D10, D5.5, N16, N17, K17a): the renders' seven noises whose turbulence is
+// The screen-wide noise fields (plan-vector D10, D5.5, N16, N17, K17a): the renders' eight noises whose turbulence is
 // fixed to the screen and spans it, made once per surface size on the CPU, exactly, and kept on disk.
 //
 // The fields (render/amsterdam.py, all fractal noise anchored at the user-space origin, so the same at every camera):
@@ -9,6 +9,7 @@
 //   cloud shadows  seed 23, .0026 × .0058, 3 octaves: wfx's cloud shadows (K17)
 //   crown          seed 5, .15, 2 octaves: the crowns' displacement (render/closeup.py's crown_filter, `n`; K17)
 //   crown tone     seed 2, .42, 2 octaves: the crowns' mottled tone (crown_filter's `m`; K17)
+//   leaf           seed 3, .55, 2 octaves: the reflected trees' leaves (amsterdam.py's `leaf` filter; K17)
 // Each filter region is whole filter pixels from the user-space origin (SvgFilterRaster), so a tree's crown filter
 // reads the crowns' noise at its pixels as the screen's field holds it there.
 // A field's pixel (x, y) of a W × H px frame is fx/Noise.hpp's noise at the filter pixel (x, y), the filter scale
@@ -17,13 +18,14 @@
 // What the core keeps of a pixel is what the filter's next primitive reads of the noise, through SvgFilterRaster's own
 // steps, so nothing theme- or camera-dependent is baked in: `mat`'s grey as its colour matrix leaves it (linear RGB,
 // opaque), the grain's filter result (premultiplied sRGB grey and alpha, which fin overlays at its opacity), the
-// ripple's and the crowns' red and green as their displacements read them, and the glints', the cloud shadows' and the
-// crown tone's red as their colour matrices read it (the noise premultiplied, then unpremultiplied; the matrices' rows,
-// which depend on the moment, are tables of that byte for K17). Ten bytes a pixel, the GPU's three images (D5.5):
+// ripple's, the crowns' and the leaves' red and green as their displacements read them, and the glints', the cloud
+// shadows' and the crown tone's red as their colour matrices read it (the noise premultiplied, then unpremultiplied;
+// the matrices' rows, which depend on the moment, are tables of that byte for K17). Twelve bytes a pixel, the GPU's
+// three images (D5.5):
 //   rgba: mat's grey, the grain's grey, the grain's alpha, the cloud shadows' red
 //   rg:   the ripple's red and green, the crown's red and green (four bytes: the image is RGBA8)
-//   r:    the glints' red, the crown tone's red (two bytes: the image is RG8)
-// 25.9 MB at S1, 44.9 MB at S3 (N16).
+//   r:    the glints' red, the crown tone's red, the leaf's red and green (four bytes: the image is RGBA8)
+// 31.1 MB at S1, 53.9 MB at S3 (N16).
 //
 // The fields are made on worker threads at the first start on a size (bands of rows, fx/Noise.hpp's lanes) and kept
 // in cacheDir/fields, one file a size, so a warm start maps them. Mapped or made, a size's fields are immutable and
@@ -55,10 +57,10 @@ class MappedSource; // tiles/Source.hpp
 namespace atlas::fx {
 
 /// The renders' screen-wide fields.
-enum class Field : std::uint8_t { mat, grain, ripple, glints, cloud_shadows, crown, crown_tone };
+enum class Field : std::uint8_t { mat, grain, ripple, glints, cloud_shadows, crown, crown_tone, leaf };
 
 /// The number of screen-wide fields.
-inline constexpr std::size_t field_count = 7;
+inline constexpr std::size_t field_count = 8;
 
 /// A screen-wide field: its name, its turbulence, the channels its filter's next primitive reads, and how many bytes
 /// the core keeps of a pixel.
@@ -69,7 +71,7 @@ struct FieldSpec {
     std::uint8_t bytes = 1;
 };
 
-/// The seven, in Field's order (the parameters amsterdam.py and closeup.py write; mapview's ByteTablesExportTest holds
+/// The eight, in Field's order (the parameters amsterdam.py and closeup.py write; mapview's ByteTablesExportTest holds
 /// them to it).
 inline constexpr std::array<FieldSpec, field_count> screen_fields{{
     {.name = "mat", .noise = {.seed = 13.0F, .base_x = 0.16F, .base_y = 0.75F, .octaves = 2}, .bytes = 1},
@@ -85,6 +87,10 @@ inline constexpr std::array<FieldSpec, field_count> screen_fields{{
      .need = channel_red | channel_green,
      .bytes = 2},
     {.name = "crown_tone", .noise = {.seed = 2.0F, .base_x = 0.42F, .base_y = 0.42F, .octaves = 2}, .bytes = 1},
+    {.name = "leaf",
+     .noise = {.seed = 3.0F, .base_x = 0.55F, .base_y = 0.55F, .octaves = 2},
+     .need = channel_red | channel_green,
+     .bytes = 2},
 }};
 
 /// The spec of field `f`.
@@ -115,7 +121,7 @@ struct FieldSize {
 /// The bytes a pixel of each image holds.
 inline constexpr std::uint32_t rgba_bytes = 4;
 inline constexpr std::uint32_t rg_bytes = 4;
-inline constexpr std::uint32_t r_bytes = 2;
+inline constexpr std::uint32_t r_bytes = 4;
 
 /// Where field `f`'s bytes lie in the three images: the image (0 rgba, 1 rg, 2 r) and the first channel.
 struct Placement {
@@ -131,6 +137,7 @@ struct Placement {
     case Field::crown: return {.image = 1, .channel = 2};
     case Field::glints: return {.image = 2, .channel = 0};
     case Field::crown_tone: return {.image = 2, .channel = 1};
+    case Field::leaf: return {.image = 2, .channel = 2};
     }
     return {};
 }
@@ -210,7 +217,7 @@ private:
 
 /// The version of the fields' bytes: bump it whenever a kept byte could change (the turbulence, a step, the layout),
 /// so files made by older code are never read as this code's.
-inline constexpr std::uint32_t fields_algorithm = 2;
+inline constexpr std::uint32_t fields_algorithm = 3;
 
 /// The workers that make the fields: the latest size asked for, from the disk cache when it holds them, else made on
 /// `threads` threads, published for the frame to take, then kept there.
@@ -276,7 +283,7 @@ struct FieldReference {
 [[nodiscard]] const FieldReference* reference_of(FieldSize size) noexcept;
 
 /// `fields <w>x<h> cpu <ms> gpu off hash <h> ok` (plan-vector Appendix C), or `... FAIL <field> expected <h>` where
-/// a reference size's field differs from the port's, or `... unchecked` for a size fields.inc lacks: the seven fields
+/// a reference size's field differs from the port's, or `... unchecked` for a size fields.inc lacks: the eight fields
 /// of `size` made on `threads` threads, timed, for VK facts on the emulator and the phone.
 [[nodiscard]] std::string fields_line(FieldSize size, unsigned threads);
 

@@ -360,8 +360,8 @@ struct Compared {
 /// What full mode draws on top of the records' own shapes and colours (the screen's fields bound, with weather): `mat`
 /// on every part at its pixel's grey, and the crown filter on the crowns' circles (render/closeup.py's crown_filter):
 /// each sample's place moved by whole device px by the crowns' field at its pixel (`offsets`: the displacement's 256),
-/// kept where the moved place lies in the circle and the moved pixel in the tree's filter region, in the filter's
-/// colour at the crown tone's byte there (fx::crown_table).
+/// kept where the moved place lies in the circle and the pixel and the moved pixel in the tree's filter region, in the
+/// filter's colour at the crown tone's byte there (fx::crown_table).
 struct Full {
     const fx::ScreenFields* fields = nullptr;
     std::array<std::int32_t, 256> offsets{};
@@ -441,7 +441,7 @@ struct Full {
                     const hlsl::float2 a{std::bit_cast<float>(r.b.x), std::bit_cast<float>(r.b.y)};
                     const double tol = tolerance / static_cast<double>(cam.frame.z);
                     if (kind == shaders::TREE_CIRCLE && full != nullptr && (r.a.x & shaders::TREE_CROWN) != 0U) {
-                        // the crown filter: the pixel moved by the crowns' field there, within the tree's region
+                        // the crown filter: the pixel moved by the crowns' field there, both within the tree's region
                         const auto ux = static_cast<std::uint32_t>(x);
                         const auto uy = static_cast<std::uint32_t>(y);
                         const std::array<std::uint8_t, 2> rg = full->fields->at(fx::Field::crown, ux, uy);
@@ -450,12 +450,16 @@ struct Full {
                         const std::int64_t sx = x + ox;
                         const std::int64_t sy = y + oy;
                         const auto region = [&](std::uint32_t v) { return std::bit_cast<std::int32_t>(v); };
-                        const bool in =
-                            sx >= region(r.c.x) && sy >= region(r.c.y) && sx < region(r.c.z) && sy < region(r.c.w);
+                        const auto within = [&](std::int64_t u, std::int64_t v) {
+                            return u >= region(r.c.x) && v >= region(r.c.y) && u < region(r.c.z) && v < region(r.c.w);
+                        };
+                        const bool in = within(x, y) && within(sx, sy);
                         // the GPU's region may round a box's edge the other way (its float may fuse)
-                        const bool region_edge = std::abs(sx - region(r.c.x)) <= 1 ||
-                                                 std::abs(sy - region(r.c.y)) <= 1 ||
-                                                 std::abs(sx - region(r.c.z)) <= 1 || std::abs(sy - region(r.c.w)) <= 1;
+                        const auto edge = [&](std::int64_t u, std::int64_t v) {
+                            return std::abs(u - region(r.c.x)) <= 1 || std::abs(v - region(r.c.y)) <= 1 ||
+                                   std::abs(u - region(r.c.z)) <= 1 || std::abs(v - region(r.c.w)) <= 1;
+                        };
+                        const bool region_edge = edge(x, y) || edge(sx, sy);
                         const hlsl::float2 shift = {static_cast<float>(ox) / cam.frame.z,
                                                     static_cast<float>(oy) / cam.frame.z};
                         const hlsl::float2 m = s + shift;

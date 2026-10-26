@@ -1135,6 +1135,16 @@ StrokeOutput quay_fs(QuayOut q) {
 static const uint REFLECTION_SHEER = 2u;
 static const uint REFLECTION_CIRCLE = 4u;
 static const uint REFLECTION_ELLIPSE = 8u;
+/// A tree's circle under its group's leaf filter (amsterdam.py's `leaf`): words 7 to 10 its region in whole device px.
+/// Drawn into the ripple's layer (GROUND_LAYER, where push.colour.x places the filter's 256 offsets and its reach), each
+/// sample tests its place moved by the whole pixels the leaves' field gives its pixel, kept where the pixel and the
+/// moved pixel both lie in the region (SvgFilterRaster's DisplacementNode, over the region alone).
+static const uint REFLECTION_LEAF = 16u;
+
+/// Whether a record's flags draw under the leaf filter: a tree's circle, into the ripple's layer.
+bool leafed(uint flags) {
+    return (flags & REFLECTION_LEAF) != 0u && (push.mode.x & GROUND_LAYER) != 0u && push.colour.x != 0u;
+}
 
 /// A streak's radialGradient at distance t (0 to 1 of the ellipse): its stops at 0, .5 and 1, each channel and the
 /// opacity interpolated apart (as the mast glow's).
@@ -1164,7 +1174,10 @@ QuayOut reflection_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_Vulkan
     float2 c = float2(asfloat(words[at + 4u]), asfloat(words[at + 5u])) * density;
     float2 r = float2(asfloat(words[at + 6u]), asfloat(words[at + (ellipse ? 7u : 6u)])) * density;
     float2 k = quad_corners[vertex];
-    float2 device = c + float2(k.x < 0.0f ? -(r.x + 1.0f) : r.x + 1.0f, k.y < 0.0f ? -(r.y + 1.0f) : r.y + 1.0f);
+    bool leaf = !ellipse && leafed(flags);
+    // the leaf filter moves its pixels by whole device px, up to its reach
+    float e = 1.0f + (leaf ? float(words[push.colour.x + 256u]) : 0.0f);
+    float2 device = c + float2(k.x < 0.0f ? -(r.x + e) : r.x + e, k.y < 0.0f ? -(r.y + e) : r.y + e);
     QuayOut o;
     o.position = ground_clip(device / density, painter_depth(frame.camera, words[at + 1u]));
     o.colour = float4(unpack(words[at + 2u]).rgb, ellipse ? 2.0f : 1.0f);
@@ -1172,6 +1185,10 @@ QuayOut reflection_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_Vulkan
     o.p23 = float4(0.0f, 0.0f, 0.0f, 0.0f);
     o.p4 = float4(0.0f, 0.0f, 0.0f, 0.0f);
     o.extra = ellipse ? uint4(words[at + 8u], words[at + 9u], words[at + 10u], words[at + 11u]) : uint4(0u, 0u, 0u, 0u);
+    if (leaf) {
+        o.extra = uint4(words[at + 7u], words[at + 8u], words[at + 9u], words[at + 10u]);
+        o.p23.x = 1.0f;
+    }
     return o;
 }
 
@@ -1185,9 +1202,21 @@ StrokeOutput reflection_fs(QuayOut q) {
     uint n = push.mode.w;
     uint mask = 0u;
     bool ellipse = q.colour.a > 1.5f;
+    // a tree's circle under the leaf filter (its layer is the upright view): its pixel moved by the leaves' field
+    float2 shift = {0.0f, 0.0f};
+    if (m == 0u && !ellipse && q.p23.x > 0.5f) {
+        int2 p = {int(corner.x), int(corner.y)};
+        uint2 l = fx_leaf(p);
+        int2 o = {asint(words[push.colour.x + l.x]), asint(words[push.colour.x + l.y])};
+        int2 s = p + o;
+        int4 region = {asint(q.extra.x), asint(q.extra.y), asint(q.extra.z), asint(q.extra.w)};
+        if (p.x < region.x || p.y < region.y || p.x >= region.z || p.y >= region.w) discard;
+        if (s.x < region.x || s.y < region.y || s.x >= region.z || s.y >= region.w) discard;
+        shift = float2(float(o.x), float(o.y));
+    }
     for (uint i = 0u; i < n; ++i) {
         float2 at = n == 4u ? samples4[i] : (n == 2u ? samples2[i] : float2(0.5f, 0.5f));
-        float2 x = device_at(corner + at);
+        float2 x = device_at(corner + at) + shift;
         bool inside;
         if (m != 0u) {
             inside = in_quay(pts, m, q.p4.z, x);

@@ -72,13 +72,13 @@ struct KeepTables {
     return t;
 }
 
-/// The generators of the seven fields, made once.
+/// The generators of the eight fields, made once.
 [[nodiscard]] const std::array<Lattice, field_count>& lattices() noexcept {
     static const std::array<Lattice, field_count> l{
         Lattice(screen_fields[0].noise.seed), Lattice(screen_fields[1].noise.seed),
         Lattice(screen_fields[2].noise.seed), Lattice(screen_fields[3].noise.seed),
         Lattice(screen_fields[4].noise.seed), Lattice(screen_fields[5].noise.seed),
-        Lattice(screen_fields[6].noise.seed)};
+        Lattice(screen_fields[6].noise.seed), Lattice(screen_fields[7].noise.seed)};
     return l;
 }
 
@@ -137,12 +137,15 @@ void keep_band(Field f, std::span<const Argb> noise, std::uint32_t width, std::u
         break;
     }
     case Field::ripple:
-    case Field::crown: {
+    case Field::crown:
+    case Field::leaf: {
         // the displacements' red and green as they read them: the noise unpremultiplied, unconverted
-        std::uint8_t* dst = out.rg_mut().data() + (first * rg_bytes) + placement_of(f).channel;
+        const bool rg = placement_of(f).image == 1;
+        const std::size_t stride = rg ? rg_bytes : r_bytes;
+        std::uint8_t* dst = (rg ? out.rg_mut() : out.r_mut()).data() + (first * stride) + placement_of(f).channel;
         for (std::size_t i = 0; i < n; ++i) {
-            dst[i * rg_bytes] = static_cast<std::uint8_t>(bytes::channel(noise[i], 16));
-            dst[(i * rg_bytes) + 1] = static_cast<std::uint8_t>(bytes::channel(noise[i], 8));
+            dst[i * stride] = static_cast<std::uint8_t>(bytes::channel(noise[i], 16));
+            dst[(i * stride) + 1] = static_cast<std::uint8_t>(bytes::channel(noise[i], 8));
         }
         break;
     }
@@ -164,7 +167,7 @@ constexpr std::uint32_t file_magic = 0x44465441; // "ATFD"
 constexpr std::uint32_t file_format = 1;
 constexpr std::size_t head_bytes = 64;
 
-/// The seven specs, so a file of other parameters is never read as these (FNV-1a 64 over their numbers' bits).
+/// The eight specs, so a file of other parameters is never read as these (FNV-1a 64 over their numbers' bits).
 [[nodiscard]] std::uint64_t specs_hash() noexcept {
     std::uint64_t h = 0xCBF29CE484222325ULL;
     auto add = [&h](std::uint32_t v) {
@@ -244,6 +247,7 @@ void keep(Field f, Argb p, std::span<std::uint8_t> out) noexcept {
     }
     case Field::ripple:
     case Field::crown:
+    case Field::leaf:
         out[0] = static_cast<std::uint8_t>(bytes::channel(p, 16));
         out[1] = static_cast<std::uint8_t>(bytes::channel(p, 8));
         break;
@@ -621,10 +625,10 @@ std::string fields_line(FieldSize size, unsigned threads) {
 
 namespace {
 
-/// The images' formats and bytes a pixel: rgba, rg (four bytes since the crowns' field), r (two) (fx/Fields.hpp's
-/// placement_of).
+/// The images' formats and bytes a pixel: rgba, rg and r, four bytes each since the crowns' and the leaves' fields
+/// (fx/Fields.hpp's placement_of).
 constexpr std::array<vk::Format, 3> image_formats{vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm,
-                                                  vk::Format::eR8G8Unorm};
+                                                  vk::Format::eR8G8B8A8Unorm};
 constexpr std::array<std::uint32_t, 3> image_bytes{rgba_bytes, rg_bytes, r_bytes};
 constexpr std::array<frame::Global, 3> image_globals{frame::Global::noise_rgba, frame::Global::noise_rg,
                                                      frame::Global::noise_r};

@@ -1,4 +1,4 @@
 # SHA-256 of each compiled module (cmake/Shaders.cmake); update with the target atlas_spirv_lock.
-ground_ground d46e4170567bd2c525e4c14d85690ca5ef013e3f3dff9fb19d4839ebc4e2a2a7
+ground_ground e6e764fc4f83a9401cd37b45cfc8547cd23e8a861ef6fc25773ca4a28e807e1e
 ground_ripple 12802f75216d75f3d1ca70381f191ed74a6c01fad660be4936e283dfefcde0ed
 ground_shadow_blur 2b846dad3f1ac489849f5fa892b73dc3d90b41323b8d02b77d81d616e3d86d64

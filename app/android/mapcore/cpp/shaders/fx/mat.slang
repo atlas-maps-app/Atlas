@@ -2,7 +2,7 @@
 // CP/fx/Mat.hpp). Set 1 holds the fields and the byte tables (CP/frame/FrameLayout.hpp), which FieldCache provides:
 //   noise_rgba (binding 7): mat's grey, the grain's premultiplied sRGB grey and alpha, the cloud shadows' red;
 //   noise_rg (binding 8): the ripple's red and green, the crowns' red and green; noise_r (binding 9): the glints' red,
-//   the crown tone's red;
+//   the crown tone's red, the leaves' red and green;
 //   byte_tables (binding 10): bytes packed four to a uint, little-endian: the to-linear table at 0, the to-sRGB table
 //   at 65536, mat's opaque table at 131072, each indexed row · 256 + column.
 // The fields are the frame's upright device pixels; fx_pixel finds a fragment's. Every module that reads a field or a
@@ -137,6 +137,13 @@ uint3 fx_crown(int2 p) {
     uint3 b = {fx_byte(d.b), fx_byte(d.a), fx_byte(noise_r.Load(at).g)};
     return b;
 }
+/// The leaves' displacement's red and green at the upright pixel `p` (noise_r's last two).
+uint2 fx_leaf(int2 p) {
+    int3 at = {p.x, p.y, 0};
+    float4 d = noise_r.Load(at);
+    uint2 b = {fx_byte(d.b), fx_byte(d.a)};
+    return b;
+}
 
 /// The crown filter's colour of an opaque crown pixel (render/closeup.py's crown_filter; CP/fx/ByteTables.hpp's
 /// crown_table): each level of `colour` (0 to 1, at 8-bit levels) at the crown tone's byte `red` there.
@@ -190,7 +197,7 @@ struct FxProbe {
 [[vk::binding(0, 2)]] StructuredBuffer<FxProbe> fx_probes;
 [[vk::binding(1, 2)]] RWStructuredBuffer<uint4> fx_results;
 
-/// Per probe: the ten bytes the fields hold at its pixel (rgba's four in x, rg's four in y, r's two in z).
+/// Per probe: the twelve bytes the fields hold at its pixel (rgba's four in x, rg's four in y, r's four in z).
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void fields_check(uint3 id : SV_DispatchThreadID) {
@@ -205,8 +212,9 @@ void fields_check(uint3 id : SV_DispatchThreadID) {
     uint2 b = fx_rg(p);
     uint c = fx_r(p);
     uint3 k = fx_crown(p);
+    uint2 l = fx_leaf(p);
     uint4 out = {a.x | (a.y << 8u) | (a.z << 16u) | (a.w << 24u), b.x | (b.y << 8u) | (k.x << 16u) | (k.y << 24u),
-                 c | (k.z << 8u), 0u};
+                 c | (k.z << 8u) | (l.x << 16u) | (l.y << 24u), 0u};
     fx_results[id.x] = out;
 }
 

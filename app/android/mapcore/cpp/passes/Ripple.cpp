@@ -89,6 +89,7 @@ void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameS
     Words& w = *words_;
     w.ripple_offsets = static_cast<std::uint32_t>(words.size());
     w.ripple_plan = 0;
+    w.leaf_offsets = 0;
     if (!rippled(state)) {
         ripple_key_.clear();
         return;
@@ -100,6 +101,15 @@ void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameS
         const auto moved = static_cast<std::int32_t>(std::fma(d.factor, static_cast<float>(c), d.offset));
         words.push_back(std::bit_cast<std::uint32_t>(moved));
     }
+    // the reflected trees' leaf filter (amsterdam.py's `leaf`, scale 2.6) at the same filter scale: its 256 offsets,
+    // then its reach (reflection_vs and reflection_fs, into the layer)
+    w.leaf_offsets = static_cast<std::uint32_t>(words.size());
+    const fx::RippleDisplacement leaf = fx::ripple_displacement(2.6F, static_cast<float>(state.camera.density));
+    for (std::uint32_t c = 0; c < 256; ++c) {
+        const auto moved = static_cast<std::int32_t>(std::fma(leaf.factor, static_cast<float>(c), leaf.offset));
+        words.push_back(std::bit_cast<std::uint32_t>(moved));
+    }
+    words.push_back(static_cast<std::uint32_t>(leaf.reach));
     // The result is a function of what the layer's draw and the stages read: the camera (the frame's size and density
     // with it), the tiles' places, the reflections' records and the offsets (the fields and the byte tables are the
     // size's). Where they are the last result's, it stands (a map at rest draws frames for other passes' sake).
@@ -111,6 +121,7 @@ void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameS
     add(w.tiles, w.slots - w.tiles);
     add(w.reflections, std::size_t{w.reflection_count} * reflection_words);
     add(w.ripple_offsets, 256);
+    add(w.leaf_offsets, 257);
     ripple_stale_ = key != ripple_key_;
     ripple_key_ = std::move(key);
     // what the stages cover: the layer's content in the frame (each face as the vertex stage clips and projects it,
@@ -450,6 +461,7 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
     RippleLayer& s = *p.ripple;
     const RipplePlan& plan = ripple_plan_;
     s.out = plan.out;
+    s.drawn = plan.layer;
     if (plan.out.empty()) {
         // nothing of the layer in the frame: its result is transparent, and the composite draws nothing
         drew_ripple_ = true;
@@ -501,6 +513,8 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
     pc.mode = {ground_flag::layer | (frame_.night ? ground_flag::night : 0U), 0U, w.reflections, 4U};
     // the window rows' opacity (their path's, in the group)
     pc.rows = {0.0F, 0.0F, 1.0F, static_cast<float>(rs.windows_opacity)};
+    // the leaf filter's offsets and reach, for the trees' circles
+    pc.colour = {w.leaf_offsets, 0U, 0U, 0U};
     cmd.pushConstants<Push>(*p.layout, frame::push_stages, 0, pc);
     cmd.draw(6, w.reflection_count, 0, 0);
     r.counters.draw("ripple layer", std::uint64_t{w.reflection_count} * 2, w.reflection_count);

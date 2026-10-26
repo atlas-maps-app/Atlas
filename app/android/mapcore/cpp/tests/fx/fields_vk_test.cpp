@@ -151,7 +151,7 @@ std::vector<std::array<std::uint32_t, 4>> ask(const gpu::Device& device, const f
     return out;
 }
 
-/// The ten bytes the fields hold at pixel `at` (rows from the top), as fields_check packs them.
+/// The twelve bytes the fields hold at pixel `at` (rows from the top), as fields_check packs them.
 [[nodiscard]] std::array<std::uint32_t, 4> packed_at(const fx::ScreenFields& f, std::size_t at) {
     const auto word = [](std::span<const std::uint8_t> b) {
         std::uint32_t w = 0;
@@ -214,7 +214,7 @@ TEST_CASE("the fields and the byte tables reach the shaders byte for byte, and m
         // The staging buffer until this frame has finished, and the last size's images until the one before.
         CHECK((*images)->retired() == (resized ? 2U : 1U));
 
-        // Every pixel's ten bytes.
+        // Every pixel's twelve bytes.
         std::vector<Probe> every;
         every.reserve(static_cast<std::size_t>(size.width) * size.height);
         for (std::uint32_t y = 0; y < size.height; ++y) {

@@ -192,6 +192,9 @@ struct Reflection {
     std::uint32_t unlit = 0;
     std::uint32_t sample = 0;
     bool sampled = false;
+    /// A tree's leaf filter region in whole device px (x0, y0 in it; x1, y1 past it): `leaf`'s -15% and 130% of its
+    /// five circles' box, as SvgFilterRaster takes a region.
+    std::array<std::int32_t, 4> region{};
 };
 
 /// A face of a reflection: its corners in the frame's metres (a gable's three, else four).
@@ -563,6 +566,8 @@ public:
     void draw_glitter(bool draw) noexcept { no_glitter_ = !draw; }
     void draw_rings(bool draw) noexcept { no_rings_ = !draw; }
     void draw_pools(bool draw) noexcept { no_pools_ = !draw; }
+    /// Whether the reflected trees take their leaf filter (where the ripple draws their layer).
+    void draw_leaves(bool draw) noexcept { no_leaves_ = !draw; }
     /// The tests' look at the reflections' ripple: from the next frame on, the reflections drawn without it (as where
     /// the fields are not bound).
     void draw_ripple(bool draw) noexcept { no_ripple_ = !draw; }
@@ -769,6 +774,7 @@ private:
     bool no_glitter_ = false;
     bool no_rings_ = false;
     bool no_pools_ = false;
+    bool no_leaves_ = false;
     bool no_ripple_ = false;
     bool no_wind_glints_ = false;
     bool keep_ripple_ = false;
@@ -915,6 +921,7 @@ struct RippleLayer {
     std::uint32_t result = 0;          ///< the buffer the last frame's blur left its result in (0 a, 1 b)
     bool ran_fused = false;            ///< the last frame's stages ran fused (ripple_fused_cs)
     PixelBox out;                      ///< and the result's region (the buffers hold nothing of the frame beyond it)
+    PixelBox drawn;                    ///< and the layer's (its render area: the layer holds nothing beyond it)
 };
 
 /// A pipeline of the ground's module named `name`, with its entry points, opaque on the scene's colour (Ground.cpp).
@@ -950,9 +957,10 @@ struct Ground::Words {
     std::uint32_t rings = 0; ///< the drizzle's tile and bands (ground.slang's RINGS_ layout), and how many bands
     std::uint32_t ring_bands = 0;
     std::uint32_t ripple_offsets = 0; ///< the ripple's 256 displacement offsets (ripple.slang)
-    std::uint32_t ripple_plan = 0;    ///< the ripple's plan as ripple_fused_cs reads it (Ripple.cpp's write_ripple)
-    std::uint32_t wind_glints = 0;    ///< the glints' filter's 256 results (glints_fs)
-    std::uint32_t slot = 0;           ///< the frame slot whose buffer holds them
+    std::uint32_t leaf_offsets = 0; ///< the leaf filter's 256 offsets, then its reach (reflection_fs), with the ripple
+    std::uint32_t ripple_plan = 0;  ///< the ripple's plan as ripple_fused_cs reads it (Ripple.cpp's write_ripple)
+    std::uint32_t wind_glints = 0;  ///< the glints' filter's 256 results (glints_fs)
+    std::uint32_t slot = 0;         ///< the frame slot whose buffer holds them
     bool ready = false;
 };
 

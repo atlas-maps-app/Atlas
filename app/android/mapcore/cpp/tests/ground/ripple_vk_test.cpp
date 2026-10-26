@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -48,7 +49,8 @@ struct RippleLook {
     double wgrad_y2 = 0;
     double opacity = 0;
     style::ThemeBlock th{};
-    passes::PixelBox out; ///< the result's region (the buffers hold nothing beyond it)
+    passes::PixelBox out;   ///< the result's region (the buffers hold nothing beyond it)
+    passes::PixelBox drawn; ///< the layer's (the layer holds nothing beyond it)
 };
 
 void take(RippleLook& look, passes::Ground& g, const frame::FrameState& state) {
@@ -72,6 +74,7 @@ void take(RippleLook& look, passes::Ground& g, const frame::FrameState& state) {
     look.result.resize(n);
     std::memcpy(look.result.data(), out.bytes().data(), n * 4);
     look.out = s->out;
+    look.drawn = s->drawn;
     look.scale = fx::ripple_scale(state.theme.wind);
     const passes::GroundFrame& f = g.decided();
     look.wgrad_y1 = f.wgrad_y1;
@@ -339,3 +342,118 @@ TEST_CASE("ground: the ripple's stages apart, where the fused stages are switche
 }
 
 #endif
+
+TEST_CASE("ground: the reflected trees' leaf filter moves their circles' samples in the ripple's layer, at a canal") {
+    // amsterdam.py's `leaf` on each reflected tree's group, at a close look along the Prinsengracht (the home shows no
+    // reflected tree): the layer drawn with the filter and without; within the layer's region they differ, only within
+    // the trees' regions, and where the layer without it is empty, the layer with it holds the samples the CPU's own
+    // leaf-moved circles cover
+    const std::string dir = test::environment("ATLAS_TILES_DIR");
+    if (dir.empty()) return;
+    auto session = test::open_session();
+    if (!session) return;
+    auto made = fx::FieldCache::create(*session->device, {.threads = 3});
+    ATLAS_REQUIRE(made.has_value(), made.error().text());
+    const std::shared_ptr<fx::FieldCache> fields(std::move(*made));
+    const style::CameraState camera = test::s1_camera(52.3747, 4.8852, 52.0, 60.0, 120.0);
+    style::ThemeBlock day = test::sunny();
+    day.shadow_opacity = 0.0;
+    const auto settle = [&fields] { fields->worker().wait_idle(); };
+    RippleLook with;
+    RippleLook without;
+    const auto a = test::draw_ground(
+        *session, camera, day, dir, "amsterdam",
+        [&](passes::Ground& g, const frame::FrameState& state) { take(with, g, state); }, 160, quiet, frame::Mode::full,
+        fields, settle);
+    ATLAS_REQUIRE(a.has_value(), "the canal was not drawn with its leaves");
+    const auto b = test::draw_ground(
+        *session, camera, day, dir, "amsterdam",
+        [&](passes::Ground& g, const frame::FrameState& state) { take(without, g, state); }, 160,
+        [](passes::Ground& g) {
+            quiet(g);
+            g.draw_leaves(false);
+        },
+        frame::Mode::full, fields, settle);
+    ATLAS_REQUIRE(b.has_value(), "the canal was not drawn without its leaves");
+    for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
+    REQUIRE((with.drew && without.drew));
+    REQUIRE((with.w == without.w && with.h == without.h));
+    const std::shared_ptr<const fx::ScreenFields> latest = fields->worker().latest();
+    ATLAS_REQUIRE(latest != nullptr, "no fields");
+    const passes::GroundFrame& f = a->decided;
+    const auto density = static_cast<float>(camera.density);
+    const fx::RippleDisplacement d = fx::ripple_displacement(2.6F, density);
+    std::array<std::int32_t, 256> offsets{};
+    for (std::uint32_t c = 0; c < 256; ++c) {
+        offsets[c] = static_cast<std::int32_t>(std::fma(d.factor, static_cast<float>(c), d.offset));
+    }
+    // each pixel's samples the trees' leaf-moved circles cover (4x standard positions), within each tree's region
+    constexpr std::array<std::array<float, 2>, 4> positions{
+        {{0.375F, 0.125F}, {0.875F, 0.375F}, {0.125F, 0.625F}, {0.625F, 0.875F}}};
+    const auto w = static_cast<std::int32_t>(with.w);
+    const auto h = static_cast<std::int32_t>(with.h);
+    std::vector<std::uint8_t> mask(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
+    std::vector<std::uint8_t> reached(mask.size(), 0);
+    std::size_t trees = 0;
+    for (const passes::Reflection& e : f.reflections) {
+        if (e.kind != passes::Reflection::Kind::tree) continue;
+        ++trees;
+        const std::array<std::int32_t, 4>& r = e.region;
+        for (std::int32_t y = std::max(0, r[1]); y < std::min(h, r[3]); ++y) {
+            for (std::int32_t x = std::max(0, r[0]); x < std::min(w, r[2]); ++x) {
+                const std::size_t i =
+                    (static_cast<std::size_t>(y) * static_cast<std::size_t>(w)) + static_cast<std::size_t>(x);
+                reached[i] = 1;
+                const std::array<std::uint8_t, 2> rg =
+                    latest->at(fx::Field::leaf, static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
+                const std::int32_t ox = offsets[rg[0]];
+                const std::int32_t oy = offsets[rg[1]];
+                if (x + ox < r[0] || y + oy < r[1] || x + ox >= r[2] || y + oy >= r[3]) continue;
+                for (std::size_t k = 0; k < positions.size(); ++k) {
+                    const float sx = static_cast<float>(x + ox) + positions[k][0];
+                    const float sy = static_cast<float>(y + oy) + positions[k][1];
+                    for (std::uint32_t c = 0; c < e.count; ++c) {
+                        const passes::ReflectionCircle& q = f.reflection_circles[e.first + c];
+                        const float dx = sx - (static_cast<float>(q.cx) * density);
+                        const float dy = sy - (static_cast<float>(q.cy) * density);
+                        if (std::sqrt((dx * dx) + (dy * dy)) <= static_cast<float>(q.r) * density) {
+                            mask[i] |= static_cast<std::uint8_t>(1U << k);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    std::size_t differ = 0;
+    std::size_t astray = 0;
+    std::size_t checked = 0;
+    std::size_t wrong = 0;
+    // the layer's content lies within its render area (the copy holds nothing of the frame beyond it)
+    REQUIRE((with.drawn.x0 == without.drawn.x0 && with.drawn.y0 == without.drawn.y0 &&
+             with.drawn.x1 == without.drawn.x1 && with.drawn.y1 == without.drawn.y1));
+    for (std::size_t i = 0; i < mask.size(); ++i) {
+        const auto x = static_cast<std::int32_t>(i % static_cast<std::size_t>(w));
+        const auto y = static_cast<std::int32_t>(i / static_cast<std::size_t>(w));
+        if (!with.drawn.contains(x, y)) continue;
+        if (with.layer[i] != without.layer[i]) {
+            ++differ;
+            if (reached[i] == 0) ++astray;
+        }
+        if (reached[i] == 0 || (without.layer[i] >> 24U) != 0) continue;
+        // nothing of the layer here without the filter: the leaves' samples alone
+        const auto k = static_cast<std::uint32_t>(std::popcount(mask[i]));
+        const auto alpha = static_cast<std::int32_t>(with.layer[i] >> 24U);
+        const auto want = static_cast<std::int32_t>(std::lround(255.0 * k / 4.0));
+        if (std::abs(alpha - want) > 2) ++wrong;
+        ++checked;
+    }
+    MESSAGE("the canal: " << trees << " reflected trees, the leaf's reach " << d.reach << " px; " << differ
+                          << " pixels of the layer differ with the filter, " << astray << " beyond the trees' regions; "
+                          << checked << " empty without it held to the leaves' samples, " << wrong << " not");
+    CHECK(trees >= 3);
+    CHECK(differ > 200);
+    CHECK(astray == 0);
+    CHECK(checked > 1000);
+    CHECK(wrong <= checked / 200);
+}

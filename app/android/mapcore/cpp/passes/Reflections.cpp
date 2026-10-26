@@ -14,14 +14,16 @@
 // the radius cut (S['nodes']'s order) and each lit road's point within it and within 12 m of a quay edge (S['roads']'s,
 // every 13 m or so along each segment), where the eye sees its reflection (4.5 m up for a lamp, 5.5 for a road)
 // through the water and on the picture, an ellipse of the streak gradient below it, its size, place and opacity drawn
-// from one random.Random(5) in that order. The ripple and leaf filters are still to come, and so is the air's haze at
-// eye level (`_hz`), which the buildings do not take yet either.
+// from one random.Random(5) in that order. The air's haze at eye level (`_hz`) is still to come, which the buildings do
+// not take yet either.
 //
 // On the GPU each face is a record of the quay walls' layout at its element's painter slot (a tree's circle its
 // centre and radius in CSS px), drawn in the renders' order in the translucent phase at the reflections' order, inside
 // the water's clip: a sample takes what the group's layer would composite there, its colour at the group's opacity
 // over wgrad's at the pixel, opaque, a window row's at its opacity over what lies under it; written at its slot's
-// depth, so the faces of one path (a building's rows) blend once.
+// depth, so the faces of one path (a building's rows) blend once. In the ripple's layer a tree's circle carries its
+// group's leaf filter region (130% of the five circles' box, in whole device px): each pixel within it takes the
+// circle's samples at the pixel the leaves' field (fx's `leaf`) moves it to, where that lies within it too.
 #include "base/pymath/PyMath.hpp"
 #include "base/pymath/PyRandom.hpp"
 #include "frame/FrameBuilder.hpp"
@@ -159,6 +161,7 @@ constexpr std::uint32_t reflection_stroke = 1;
 constexpr std::uint32_t reflection_sheer = 2;
 constexpr std::uint32_t reflection_circle = 4;
 constexpr std::uint32_t reflection_ellipse = 8;
+constexpr std::uint32_t reflection_leaf = 16;
 
 /// A streak gradient's stop as the twin carries it: its colour with its opacity in the alpha byte.
 [[nodiscard]] std::uint32_t stop_argb(std::uint32_t rgb, double opacity) noexcept {
@@ -355,6 +358,23 @@ void Ground::decide_reflections(const view::Camera& cam, const frame::FrameState
                 f.exact ? ReflectionCircle{.cx = printed(cx, 1), .cy = printed(cy, 1), .r = printed(r, 1)}
                         : ReflectionCircle{.cx = cx, .cy = cy, .r = r});
         }
+        // the leaf filter's region (`<filter id="leaf" x="-15%" y="-15%" width="130%" height="130%">` over the group's
+        // box), in filter px at the frame's filter scale (its density as a float), floored and ceiled
+        std::array<double, 4> box{1e300, 1e300, -1e300, -1e300};
+        for (std::uint32_t c = 0; c < e.count; ++c) {
+            const ReflectionCircle& q = f.reflection_circles[e.first + c];
+            box = {pm::min(box[0], q.cx - q.r), pm::min(box[1], q.cy - q.r), pm::max(box[2], q.cx + q.r),
+                   pm::max(box[3], q.cy + q.r)};
+        }
+        const auto scale = static_cast<double>(static_cast<float>(state.camera.density));
+        const double bx = box[0] + (-0.15 * (box[2] - box[0]));
+        const double by = box[1] + (-0.15 * (box[3] - box[1]));
+        const double bw = 1.3 * (box[2] - box[0]);
+        const double bh = 1.3 * (box[3] - box[1]);
+        e.region = {static_cast<std::int32_t>(std::floor(bx * scale)),
+                    static_cast<std::int32_t>(std::floor(by * scale)),
+                    static_cast<std::int32_t>(std::ceil((bx + bw) * scale)),
+                    static_cast<std::int32_t>(std::ceil((by + bh) * scale))};
         ranked.push_back({.depth = k.z, .element = e});
     }
     // out.sort(key=lambda x: -x[0]): far to near, stable
@@ -473,11 +493,13 @@ void Ground::write_reflections(std::vector<std::uint32_t>& words) {
             const std::uint32_t colour = lit_mix(e.colour, e.colour, 0.0);
             for (std::uint32_t k = 0; k < e.count; ++k) {
                 const ReflectionCircle& c = frame_.reflection_circles[e.first + k];
-                head(e.tile, slot_value, colour, reflection_circle);
+                // a circle of its tree's group under the leaf filter: its centre and radius, then the group's region
+                head(e.tile, slot_value, colour, reflection_circle | (no_leaves_ ? 0U : reflection_leaf));
                 words.push_back(bits_of(static_cast<float>(c.cx)));
                 words.push_back(bits_of(static_cast<float>(c.cy)));
                 words.push_back(bits_of(static_cast<float>(c.r)));
-                words.insert(words.end(), 9, 0U);
+                for (const std::int32_t v : e.region) words.push_back(std::bit_cast<std::uint32_t>(v));
+                words.insert(words.end(), 5, 0U);
             }
             continue;
         }
