@@ -382,11 +382,10 @@ def party_walls(S, tol=0.8):
 # ------------------------------------------------------------------ learned palettes (a prototype, off unless ATLAS_PALETTES=1)
 # An unmapped wall or roof takes its colour from the colours mapped on buildings of its own kind around it: PAL_MIN or more within PAL_R
 # metres, else the region's, where PAL_REGION_MIN or more are spread over the region (PAL_REGION_SPREAD of the squares its kind stands in);
-# else the look above stands.
-# A part of a building whose other parts map the colour takes theirs first. A building whose material is mapped keeps to samples of that material. A mapped building gives each
-# of its values once, its parts counted with it (a landmark modelled in thirty parts is one building). The pick is the building's own random
-# stream, so the same data gives the same picks, and it is marked guessed with where it came from. The thresholds come from the survey
-# (render/palettes.py).
+# else the look above stands. A part of a building whose other parts map the colour takes theirs first. A building whose material is
+# mapped keeps to samples of that material. A mapped building gives each of its values once, its parts counted with it (a landmark
+# modelled in thirty parts is one building). The pick is the building's own random stream, so the same data gives the same picks, and it
+# is marked guessed with where it came from. The thresholds come from the survey (render/palettes.py).
 PALETTES = os.environ.get('ATLAS_PALETTES') == '1'
 PAL_R, PAL_MIN = 150.0, 5             # near: 5 or more within 150 m; from 5 on the learned colours beat today's look in every region surveyed
 PAL_REGION_MIN, PAL_REGION_SPREAD = 35, 0.1      # the region: 35 or more of its kind (37 to 73 beat today's look from beyond 150 m in Paris, New York
@@ -451,10 +450,10 @@ def learned(S, region, landuse_at=None, P=None):
     """The colours learned for every building and part whose wall or roof colour is not mapped, by id(): {'building:colour' or 'roof:colour':
     dict(value, material, n, where)}: n samples of its kind (and of its mapped material) on its own building's other parts ('own'), within PAL_R
     metres ('near') or in the region; material is the sample's, for a building whose own is not mapped. Kept in S['_pal'] with the samples."""
-    own = owners(S)
-    kind = {id(o): kind_at(o, region, landuse_at, P) for o in {id(o): o for o in own.values()}.values()}
+    own = owners(S); bs = list({id(o): o for o in own.values()}.values())        # the buildings, each once
+    kind = {id(o): kind_at(o, region, landuse_at, P) for o in bs}
     squares = collections.defaultdict(set)          # the squares each kind's buildings stand in
-    for o in {id(o): o for o in own.values()}.values(): squares[kind[id(o)]].add(square(*centroid(o['poly'])))
+    for o in bs: squares[kind[id(o)]].add(square(*centroid(o['poly'])))
     samples = {'building:colour': [], 'roof:colour': []}; seen = set()
     for b in S['buildings'] + S['parts']:
         t = b['tags']; o = own[id(b)]
