@@ -268,12 +268,15 @@ TEST_CASE("the app's map draws through the session: the pack the camera names, c
         std::string why;
         ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
         CHECK_FALSE(session.drawing()); // no moment yet
+        // the attach left the map's pipelines to its first frame: it waits on the app's main thread
+        CHECK_FALSE(session.renderer_made());
         map.set_theme(sunny());
         CHECK(session.drawing());
 
         // The Westerkerk home, the living map named: complete once its tiles are built and faded in.
         const int first = draw_until_complete(session, map, home(1));
         CHECK(first > 0);
+        CHECK(session.renderer_made());
         CHECK(map.drawn_pack() == "amsterdam");
         CHECK((drawn_flags(map) & flag::tone) == 0);
         CHECK(wakes.load() > 0);

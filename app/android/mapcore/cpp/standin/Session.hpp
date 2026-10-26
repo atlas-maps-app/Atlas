@@ -172,8 +172,11 @@ public:
     /// the map comes back with the next call here. "" or why not.
     [[nodiscard]] std::string map(SessionMap* map, bool texture = false);
 
-    /// Whether there is a frame to draw (a renderer, and the map on for the session).
+    /// Whether there is a frame to draw (a renderer, or the map's due at its first frame, and the map on for the
+    /// session).
     [[nodiscard]] bool drawing() const noexcept;
+    /// Whether the frame's renderer, its pipelines with it, is made (the map's at its first frame, renderer_due_).
+    [[nodiscard]] bool renderer_made() const noexcept { return renderer_ != nullptr; }
     /// Draws one frame at `camera`.
     [[nodiscard]] Drawn draw(const style::CameraState& camera, const FrameTimes& times);
     /// The frame loop came to rest (nothing changed, or the app's window went to the background): the frames stage
@@ -291,6 +294,11 @@ private:
     std::unique_ptr<StandIn> standin_;
     SessionMap* map_ = nullptr; // the app's map (mode 2), the façade's
     std::unique_ptr<gpu::Renderer> renderer_;
+    /// The map's renderer is made at its first frame (draw), not where its window is attached or the map switched
+    /// on: its pipelines take seconds on a slow device or with an empty cache, and the attach waits on the app's main
+    /// thread (an ANR on CI's emulator, 26 October). A renderer that cannot be made there turns the map off for the
+    /// session, which the frame loop tells the app (FrameSource.off).
+    bool renderer_due_ = false;
     std::unique_ptr<gpu::PipelineCache> colour_cache_; // the colour stage's, while it is open
     std::vector<gpu::PresentedTiming> timings_;
     vk::Extent2D wanted_{};

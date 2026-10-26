@@ -103,7 +103,9 @@ bool Session::attach(std::unique_ptr<SessionWindow> window, vk::Extent2D size, s
                   output_->extent().width, output_->extent().height, vk::to_string(output_->transform()),
                   output_->images().size(), output_->transfer_source() ? "yes" : "no",
                   frame_rate_ ? "60 asked" : "not available", gpu::colour_name(output_->format()));
-        if (mode_ != 0) why = make_renderer(); // VK bench's stand-in, or the app's map
+        // VK bench's stand-in at once; the app's map at its first frame (renderer_due_)
+        if (mode_ == 1) why = make_renderer();
+        renderer_due_ = mode_ == 2;
     }
     if (!why.empty()) {
         // Nothing of the window is held: a refused attach has no detach after it, and the colour stage must not stay
@@ -124,6 +126,7 @@ void Session::remake() { remake_output(); }
 void Session::detach() { release_window(); }
 
 void Session::release_window() {
+    renderer_due_ = false;
     drop_renderer();
     drop_output();
     close_colour(); // nothing of 10 bits is left: a window come back opens it again (make_output)
@@ -493,7 +496,9 @@ std::string Session::map(SessionMap* map, bool texture) {
     if (!output_) {
         if (std::string why = make_output(); !why.empty()) return why;
     }
-    return renderer_ ? std::string() : make_renderer();
+    // the renderer at the map's first frame, as after an attach (renderer_due_)
+    if (!renderer_) renderer_due_ = true;
+    return {};
 }
 
 void Session::release_map() {
@@ -592,12 +597,21 @@ void Session::log_configuration() const {
 
 bool Session::drawing() const noexcept {
     const bool content = mode_ == 2 ? map_ != nullptr && map_->ready() : standin_ != nullptr;
-    return !closed_ && renderer_ != nullptr && content && output_ != nullptr && lost_ < 3;
+    const bool renderer = renderer_ != nullptr || (renderer_due_ && mode_ == 2);
+    return !closed_ && renderer && content && output_ != nullptr && lost_ < 3;
 }
 
 Drawn Session::draw(const style::CameraState& camera, const FrameTimes& times) {
     Drawn d;
     if (!drawing()) return d;
+    if (!renderer_) {
+        // the map's first frame: its renderer now, on the frame's thread (renderer_due_)
+        renderer_due_ = false;
+        if (std::string why = make_renderer(); !why.empty()) {
+            turn_off_session("the map's frame could not be made: " + why);
+            return d;
+        }
+    }
     const std::int64_t start = now_ns();
     if (epoch_ns_ == 0) epoch_ns_ = start;
     if (presented_ < guarded_frames && !guarding_) {
