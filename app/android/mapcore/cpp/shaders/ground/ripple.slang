@@ -9,7 +9,9 @@
 //     once and rounded, (sum + side² / 2) / side² in whole numbers;
 //   - ripple_line_cs: one of WebKit's separable box passes along x or y, the texels past the frame transparent, each
 //     sum times the box's 1 / size in single precision and truncated.
-// Each stage reads `source` (the displacement: `layer`) and writes `target`; the pass binds the two buffers both ways.
+// Each stage reads `source` (the displacement: `layer`) and writes `target` over its region (push.region): the CPU
+// works them out back from the result's, each what the next stage reads, so no stage reads a pixel left unwritten,
+// and the layer is drawn over its content alone; the pass binds the two buffers both ways.
 //
 // atlas: exact
 
@@ -24,9 +26,11 @@
 [[vk::binding(2, 3)]] RWStructuredBuffer<uint> target;
 
 struct RipplePush {
-    uint4 size; // x, y: the frame's upright width and height (device px); z: the offsets' table's first word in `words`
-    uint4 box;  // ripple_square_cs: x the box's side (odd); ripple_line_cs: x the axis (0 x, 1 y), y its left, z right
-    float4 inv; // ripple_line_cs: x 1 / (left + right), as the CPU's float
+    uint4 size;  // x, y: the frame's upright width and height (device px); z: the offsets' table's first word in `words`
+    uint4 box;   // ripple_square_cs: x the box's side (odd); ripple_line_cs: x the axis (0 x, 1 y), y its left, z right
+    float4 inv;  // ripple_line_cs: x 1 / (left + right), as the CPU's float
+    int4 region; // the pixels the stage writes, [x0, x1) × [y0, y1): what the next stage reads of it
+    int4 layer;  // ripple_displace_cs: the layer's drawn box, its content (transparent beyond it)
 };
 
 [[vk::push_constant]] ConstantBuffer<RipplePush> push;
@@ -49,19 +53,19 @@ uint word_of(uint4 c) {
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void ripple_displace_cs(uint3 id : SV_DispatchThreadID) {
-    int w = int(push.size.x);
-    int h = int(push.size.y);
-    if (int(id.x) >= w || int(id.y) >= h) {
+    int2 at = push.region.xy + int2(id.xy);
+    if (at.x >= push.region.z || at.y >= push.region.w) {
         return;
     }
-    uint2 rg = fx_rg(int2(id.xy));
-    int sx = int(id.x) + asint(words[push.size.z + rg.x]);
-    int sy = int(id.y) + asint(words[push.size.z + rg.y]);
+    uint2 rg = fx_rg(at);
+    int sx = at.x + asint(words[push.size.z + rg.x]);
+    int sy = at.y + asint(words[push.size.z + rg.y]);
     uint p = 0u;
-    if (sx >= 0 && sy >= 0 && sx < w && sy < h) {
+    // the frame's layer is transparent beyond its drawn box
+    if (sx >= push.layer.x && sy >= push.layer.y && sx < push.layer.z && sy < push.layer.w) {
         p = fx_to_linear_premultiplied(layer_at(int2(sx, sy)));
     }
-    target[id.y * push.size.x + id.x] = p;
+    target[uint(at.y) * push.size.x + uint(at.x)] = p;
 }
 
 [shader("compute")]
@@ -69,21 +73,22 @@ void ripple_displace_cs(uint3 id : SV_DispatchThreadID) {
 void ripple_square_cs(uint3 id : SV_DispatchThreadID) {
     int w = int(push.size.x);
     int h = int(push.size.y);
-    if (int(id.x) >= w || int(id.y) >= h) {
+    int2 at = push.region.xy + int2(id.xy);
+    if (at.x >= push.region.z || at.y >= push.region.w) {
         return;
     }
     int half = int(push.box.x / 2u);
     uint4 sum = {0u, 0u, 0u, 0u};
     for (int dy = -half; dy <= half; ++dy) {
-        int y = clamp(int(id.y) + dy, 0, h - 1);
+        int y = clamp(at.y + dy, 0, h - 1);
         for (int dx = -half; dx <= half; ++dx) {
-            int x = clamp(int(id.x) + dx, 0, w - 1);
+            int x = clamp(at.x + dx, 0, w - 1);
             sum = sum + bytes_of(source[uint(y) * push.size.x + uint(x)]);
         }
     }
     uint area = push.box.x * push.box.x;
     uint4 m = (sum + area / 2u) / area;
-    target[id.y * push.size.x + id.x] = word_of(m);
+    target[uint(at.y) * push.size.x + uint(at.x)] = word_of(m);
 }
 
 [shader("compute")]
@@ -91,12 +96,13 @@ void ripple_square_cs(uint3 id : SV_DispatchThreadID) {
 void ripple_line_cs(uint3 id : SV_DispatchThreadID) {
     int w = int(push.size.x);
     int h = int(push.size.y);
-    if (int(id.x) >= w || int(id.y) >= h) {
+    int2 p = push.region.xy + int2(id.xy);
+    if (p.x >= push.region.z || p.y >= push.region.w) {
         return;
     }
     bool along_x = push.box.x == 0u;
     int length = along_x ? w : h;
-    int at = along_x ? int(id.x) : int(id.y);
+    int at = along_x ? p.x : p.y;
     int left = int(push.box.y);
     int right = int(push.box.z);
     uint4 sum = {0u, 0u, 0u, 0u};
@@ -104,11 +110,11 @@ void ripple_line_cs(uint3 id : SV_DispatchThreadID) {
         if (q < 0 || q >= length) {
             continue;
         }
-        uint x = along_x ? uint(q) : id.x;
-        uint y = along_x ? id.y : uint(q);
+        uint x = along_x ? uint(q) : uint(p.x);
+        uint y = along_x ? uint(p.y) : uint(q);
         sum = sum + bytes_of(source[y * push.size.x + x]);
     }
     float inv = push.inv.x;
     uint4 m = {uint(float(sum.x) * inv), uint(float(sum.y) * inv), uint(float(sum.z) * inv), uint(float(sum.w) * inv)};
-    target[id.y * push.size.x + id.x] = word_of(m);
+    target[uint(p.y) * push.size.x + uint(p.x)] = word_of(m);
 }

@@ -978,6 +978,8 @@ void Ground::release() noexcept {
     words_.reset();
     drew_soft_ = false;
     drew_ripple_ = false;
+    ripple_key_.clear();
+    ripple_stale_ = true;
 }
 
 gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {

@@ -448,6 +448,40 @@ enum class Box : std::uint8_t { outside, unknown, inside };
 /// inside the frame, or neither.
 [[nodiscard]] Box cell_test(const view::Camera& cam, const geometry::CellBox& c);
 
+/// A rectangle of the upright view's device px, [x0, x1) × [y0, y1).
+struct PixelBox {
+    std::int32_t x0 = 0;
+    std::int32_t y0 = 0;
+    std::int32_t x1 = 0;
+    std::int32_t y1 = 0;
+
+    [[nodiscard]] bool empty() const noexcept { return x0 >= x1 || y0 >= y1; }
+    [[nodiscard]] bool contains(std::int32_t x, std::int32_t y) const noexcept {
+        return x >= x0 && x < x1 && y >= y0 && y < y1;
+    }
+};
+
+/// One of the ripple's blur passes this frame: vImage's square box of `side`, or one of WebKit's separable boxes along
+/// `axis` (0 x, 1 y), over `region`.
+struct RipplePass {
+    bool square = false;
+    std::uint32_t side = 0;
+    std::uint32_t axis = 0;
+    std::uint32_t left = 0;
+    std::uint32_t right = 0;
+    PixelBox region;
+};
+
+/// What the ripple's stages cover this frame (Ripple.cpp): the layer's content (its draw's render area), the
+/// displacement's region, each blur pass's, and the result's (the composite's). Beyond the result's region the filter's
+/// result is transparent: the layer's content moved by the displacement's reach and spread by the boxes' reaches.
+struct RipplePlan {
+    PixelBox layer;
+    PixelBox displace;
+    std::vector<RipplePass> passes;
+    PixelBox out;
+};
+
 struct SoftShadows; // below
 struct RippleLayer; // below
 
@@ -700,6 +734,11 @@ private:
     bool no_wind_glints_ = false;
     bool keep_ripple_ = false;
     bool drew_ripple_ = false;
+    /// What the last ripple's result was made of (write_ripple), and whether this frame's differs; what its stages
+    /// cover this frame.
+    std::vector<std::uint32_t> ripple_key_;
+    bool ripple_stale_ = true;
+    RipplePlan ripple_plan_;
     double select_ms_ = 0;
     /// The tiles' decisions, kept while the camera rests (their grounds held), reused as scratch while it moves.
     std::vector<std::unique_ptr<TileDecisions>> decisions_;
@@ -828,6 +867,7 @@ struct RippleLayer {
     vk::raii::Pipeline line{nullptr};
     vk::raii::Pipeline draw{nullptr}; ///< the reflections into the samples
     std::uint32_t result = 0;         ///< the buffer the last frame's blur left its result in (0 a, 1 b)
+    PixelBox out;                     ///< and the result's region (the buffers hold nothing of the frame beyond it)
 };
 
 /// A pipeline of the ground's module named `name`, with its entry points, opaque on the scene's colour (Ground.cpp).

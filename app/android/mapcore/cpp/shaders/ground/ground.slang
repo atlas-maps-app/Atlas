@@ -1233,10 +1233,16 @@ ColourOut glints_fs(ScreenOut v) {
 
 /// The rippled reflections inside the water's clip at their group's first slot (screen_vs; passes/Ripple.cpp): the
 /// filter's result at the pixel (push.mode.z: 0 ripple_a, 1 ripple_b; push.colour.x the upright view's width) written
-/// back as premultiplied sRGB, at the group's opacity (push.rows.z), premultiplied.
+/// back as premultiplied sRGB, at the group's opacity (push.rows.z), premultiplied; nothing beyond the result's region
+/// (push.colour.y its x0 | y0 << 16, z its x1 | y1 << 16), where it is transparent.
 [shader("fragment")]
 ColourOut ripple_fs(ScreenOut v) {
     int2 p = fx_pixel(frame.camera, v.position.xy);
+    int2 lo = {int(push.colour.y & 0xFFFFu), int(push.colour.y >> 16u)};
+    int2 hi = {int(push.colour.z & 0xFFFFu), int(push.colour.z >> 16u)};
+    if (p.x < lo.x || p.y < lo.y || p.x >= hi.x || p.y >= hi.y) {
+        discard;
+    }
     uint at = uint(p.y) * push.colour.x + uint(p.x);
     uint linear = push.mode.z == 0u ? ripple_a[at] : ripple_b[at];
     uint s = fx_to_srgb_premultiplied(linear);

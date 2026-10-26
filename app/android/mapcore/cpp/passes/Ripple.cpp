@@ -30,8 +30,11 @@
 #include "passes/Ground.hpp"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
+#include <cstring>
+#include <limits>
 
 namespace atlas::passes {
 
@@ -44,6 +47,20 @@ using RipplePush = layouts::ground_ripple::RipplePush;
 
 /// The stages' workgroups: 8 × 8 pixels (ripple.slang's numthreads).
 constexpr std::uint32_t group_side = 8;
+
+/// A reflection's record in the words (ground.slang's QUAY_WORDS).
+constexpr std::size_t reflection_words = 16;
+
+/// `b` grown by `dx` and `dy` either side, within the `w` × `h` frame.
+[[nodiscard]] PixelBox grown(PixelBox b, std::int32_t dx, std::int32_t dy, std::int32_t w, std::int32_t h) noexcept {
+    return {.x0 = std::max(0, b.x0 - dx),
+            .y0 = std::max(0, b.y0 - dy),
+            .x1 = std::min(w, b.x1 + dx),
+            .y1 = std::min(h, b.y1 + dy)};
+}
+
+/// A box as the shaders take it: x0, y0, x1, y1.
+[[nodiscard]] std::array<std::int32_t, 4> corners(const PixelBox& b) noexcept { return {b.x0, b.y0, b.x1, b.y1}; }
 
 [[nodiscard]] bool turned(vk::SurfaceTransformFlagBitsKHR t) noexcept {
     using T = vk::SurfaceTransformFlagBitsKHR;
@@ -66,7 +83,10 @@ bool Ground::rippled(const frame::FrameState& state) const noexcept {
 void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameState& state) {
     Words& w = *words_;
     w.ripple_offsets = static_cast<std::uint32_t>(words.size());
-    if (!rippled(state)) return;
+    if (!rippled(state)) {
+        ripple_key_.clear();
+        return;
+    }
     // DisplacementNode's srcX = x + fma(scaleForColor, channel, offset).toInt(), for each of the map's 256 levels
     const fx::RippleDisplacement d =
         fx::ripple_displacement(fx::ripple_scale(state.theme.wind), static_cast<float>(state.camera.density));
@@ -74,6 +94,117 @@ void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameS
         const auto moved = static_cast<std::int32_t>(std::fma(d.factor, static_cast<float>(c), d.offset));
         words.push_back(std::bit_cast<std::uint32_t>(moved));
     }
+    // The result is a function of what the layer's draw and the stages read: the camera (the frame's size and density
+    // with it), the tiles' places, the reflections' records and the offsets (the fields and the byte tables are the
+    // size's). Where they are the last result's, it stands (a map at rest draws frames for other passes' sake).
+    std::vector<std::uint32_t> key(sizeof(shaders::FrameCamera) / sizeof(std::uint32_t));
+    std::memcpy(key.data(), &state.block.camera, sizeof(shaders::FrameCamera));
+    const auto add = [&](std::uint32_t first, std::size_t n) {
+        key.insert(key.end(), words.begin() + first, words.begin() + static_cast<std::ptrdiff_t>(first + n));
+    };
+    add(w.tiles, w.slots - w.tiles);
+    add(w.reflections, std::size_t{w.reflection_count} * reflection_words);
+    add(w.ripple_offsets, 256);
+    ripple_stale_ = key != ripple_key_;
+    ripple_key_ = std::move(key);
+    // what the stages cover: the layer's content in the frame (each face as the vertex stage clips and projects it,
+    // the trees' circles, the streaks' ellipses, grown by the faces' strokes and two pixels of slack), the result's
+    // region (that content moved by the displacement's reach and spread by the boxes'), and backwards from it each
+    // pass's and the displacement's region, each what the next one reads
+    RipplePlan& plan = ripple_plan_;
+    plan = {};
+    if (!state.view) return;
+    const view::Camera& cam = state.view->camera();
+    const double density = state.camera.density;
+    double min_x = std::numeric_limits<double>::infinity();
+    double min_y = min_x;
+    double max_x = -min_x;
+    double max_y = -min_x;
+    const auto take = [&](double x, double y) {
+        min_x = std::min(min_x, x);
+        min_y = std::min(min_y, y);
+        max_x = std::max(max_x, x);
+        max_y = std::max(max_y, y);
+    };
+    std::vector<view::Vec3> cs;
+    for (const Reflection& e : frame_.reflections) {
+        if (e.kind == Reflection::Kind::streak) {
+            const ReflectionStreak& k = frame_.reflection_streaks[e.first];
+            take(k.cx - k.rx, k.cy - k.ry);
+            take(k.cx + k.rx, k.cy + k.ry);
+            continue;
+        }
+        if (e.kind == Reflection::Kind::tree) {
+            for (std::uint32_t k = 0; k < e.count; ++k) {
+                const ReflectionCircle& c = frame_.reflection_circles[e.first + k];
+                take(c.cx - c.r, c.cy - c.r);
+                take(c.cx + c.r, c.cy + c.r);
+            }
+            continue;
+        }
+        for (std::uint32_t k = 0; k < e.count; ++k) {
+            const ReflectionFace& face = frame_.reflection_faces[e.first + k];
+            cs.clear();
+            const view::Vec3 first = cam.cam(face.q[0]);
+            view::Vec3 a = first;
+            for (std::uint32_t i = 1; i < face.n; ++i) {
+                const view::Vec3 b = cam.cam(face.q[i]);
+                ProjectedPoly::clip_edge(a, b, cam.near(), cs);
+                a = b;
+            }
+            ProjectedPoly::clip_edge(a, first, cam.near(), cs);
+            for (const view::Vec3& c : cs) {
+                const view::Vec2 q = cam.pc(c);
+                take(q.x, q.y);
+            }
+        }
+    }
+    const vk::Extent2D extent = pipelines_->ripple->extent;
+    const auto fw = static_cast<std::int32_t>(extent.width);
+    const auto fh = static_cast<std::int32_t>(extent.height);
+    if (min_x > max_x || min_y > max_y) return; // no content
+    const double pad = (0.15 * density) + 2;
+    const auto device = [&](double v, bool up) {
+        const double d = up ? std::ceil((v * density) + pad) : std::floor((v * density) - pad);
+        return static_cast<std::int32_t>(std::clamp(d, -1e9, 1e9));
+    };
+    plan.layer = grown(
+        {.x0 = device(min_x, false), .y0 = device(min_y, false), .x1 = device(max_x, true), .y1 = device(max_y, true)},
+        0, 0, fw, fh);
+    if (plan.layer.empty()) return;
+    const fx::RippleBlur blur = fx::ripple_blur(static_cast<float>(density));
+    std::vector<std::array<std::int32_t, 2>> reach;
+    if (blur.square()) {
+        const auto half = static_cast<std::int32_t>(blur.side() / 2);
+        for (int k = 0; k < 3; ++k) {
+            plan.passes.push_back({.square = true, .side = blur.side()});
+            reach.push_back({half, half});
+        }
+    } else {
+        const std::array<fx::Run, 2> runs{fx::webkit_boxes(blur.x), fx::webkit_boxes(blur.y)};
+        for (std::uint32_t k = 0; k < 3; ++k) {
+            for (std::uint32_t axis = 0; axis < 2; ++axis) {
+                if (k >= runs[axis].count) continue;
+                const fx::Box b = runs[axis].boxes[k];
+                plan.passes.push_back({.square = false, .axis = axis, .left = b.left, .right = b.right});
+                const auto r = static_cast<std::int32_t>(std::max(b.left, b.right - 1));
+                reach.push_back(axis == 0 ? std::array<std::int32_t, 2>{r, 0} : std::array<std::int32_t, 2>{0, r});
+            }
+        }
+    }
+    std::int32_t spread_x = d.reach;
+    std::int32_t spread_y = d.reach;
+    for (const auto& r : reach) {
+        spread_x += r[0];
+        spread_y += r[1];
+    }
+    plan.out = grown(plan.layer, spread_x, spread_y, fw, fh);
+    PixelBox region = plan.out;
+    for (std::size_t k = plan.passes.size(); k-- > 0;) {
+        plan.passes[k].region = region;
+        region = grown(region, reach[k][0], reach[k][1], fw, fh);
+    }
+    plan.displace = region;
 }
 
 gpu::Result<void> Ground::make_ripple(const frame::PassContext& context, Pipelines& p) const {
@@ -275,11 +406,24 @@ gpu::Result<void> Ground::make_ripple(const frame::PassContext& context, Pipelin
 }
 
 void Ground::record_ripple_layer(const frame::Recording& r) {
+    const bool drew = drew_ripple_;
     drew_ripple_ = false;
     const Words& w = *words_;
     if (!rippled(r.state) || w.reflection_count == 0) return;
+    if (drew && !ripple_stale_) {
+        // the last frame's result stands: the buffers hold it, and the composite reads them again
+        drew_ripple_ = true;
+        return;
+    }
     Pipelines& p = *pipelines_;
     RippleLayer& s = *p.ripple;
+    const RipplePlan& plan = ripple_plan_;
+    s.out = plan.out;
+    if (plan.out.empty()) {
+        // nothing of the layer in the frame: its result is transparent, and the composite draws nothing
+        drew_ripple_ = true;
+        return;
+    }
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     const gpu::Sync& sync = r.frame.sync;
     using S = vk::PipelineStageFlagBits2;
@@ -297,9 +441,13 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
     std::array<vk::ClearValue, 3> clear{};
     clear[0].color = vk::ClearColorValue{std::array<float, 4>{0.0F, 0.0F, 0.0F, 0.0F}};
     clear[1].depthStencil = vk::ClearDepthStencilValue{.depth = 0.0F, .stencil = 0};
+    // over the layer's content alone: the stages read nothing of it beyond
+    const vk::Rect2D area{.offset = {.x = plan.layer.x0, .y = plan.layer.y0},
+                          .extent = {.width = static_cast<std::uint32_t>(plan.layer.x1 - plan.layer.x0),
+                                     .height = static_cast<std::uint32_t>(plan.layer.y1 - plan.layer.y0)}};
     cmd.beginRenderPass({.renderPass = *s.pass,
                          .framebuffer = *s.framebuffer,
-                         .renderArea = {.offset = {.x = 0, .y = 0}, .extent = s.extent},
+                         .renderArea = area,
                          .clearValueCount = static_cast<std::uint32_t>(clear.size()),
                          .pClearValues = clear.data()},
                         vk::SubpassContents::eInline);
@@ -309,7 +457,7 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
                                     .height = static_cast<float>(s.extent.height),
                                     .minDepth = 0,
                                     .maxDepth = 1});
-    cmd.setScissor(0, vk::Rect2D{.offset = {.x = 0, .y = 0}, .extent = s.extent});
+    cmd.setScissor(0, area);
     const auto frame_sets = r.layout.sets();
     const auto offsets = r.layout.offsets(r.frame.slot.slot);
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *s.draw);
@@ -341,16 +489,22 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
                                             .dst_access = A::eShaderWrite});
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *s.compute_layout, 0, frame_sets, offsets);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *s.compute_layout, 2, *p.sets[w.slot], {});
-    const std::uint32_t groups_x = (s.extent.width + group_side - 1) / group_side;
-    const std::uint32_t groups_y = (s.extent.height + group_side - 1) / group_side;
     RipplePush rp{};
     rp.size = {s.extent.width, s.extent.height, w.ripple_offsets, 0U};
-    // a stage reading buffer `from`, writing the other (set [from] reads it)
-    auto stage = [&](const vk::raii::Pipeline& pipeline, std::uint32_t from, const char* counter) {
+    const std::array<std::int32_t, 4> layer_box = corners(plan.layer);
+    rp.layer = {layer_box[0], layer_box[1], layer_box[2], layer_box[3]};
+    // a stage over `region` reading buffer `from`, writing the other (set [from] reads it)
+    auto stage = [&](const vk::raii::Pipeline& pipeline, const PixelBox& region, std::uint32_t from,
+                     const char* counter) {
+        const std::array<std::int32_t, 4> c = corners(region);
+        rp.region = {c[0], c[1], c[2], c[3]};
         cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline);
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *s.compute_layout, 3, *s.sets[from], {});
         cmd.pushConstants<RipplePush>(*s.compute_layout, vk::ShaderStageFlagBits::eCompute, 0, rp);
-        cmd.dispatch(groups_x, groups_y, 1);
+        const auto groups = [](std::int32_t n) {
+            return (static_cast<std::uint32_t>(n) + group_side - 1) / group_side;
+        };
+        cmd.dispatch(groups(region.x1 - region.x0), groups(region.y1 - region.y0), 1);
         r.counters.dispatch(counter);
         sync.barrier(cmd, gpu::MemoryDependency{.src_stage = S::eComputeShader,
                                                 .src_access = A::eShaderWrite,
@@ -358,22 +512,16 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
                                                 .dst_access = A::eShaderRead | A::eShaderWrite});
         return 1U - from; // the buffer it wrote
     };
-    std::uint32_t result = stage(s.displace, 1, "ripple displace");
+    std::uint32_t result = stage(s.displace, plan.displace, 1, "ripple displace");
     // 3. the blur: vImage's square boxes where WebKit's two sizes are equal, else its separable passes, x then y
-    const fx::RippleBlur blur = fx::ripple_blur(static_cast<float>(r.state.camera.density));
-    if (blur.square()) {
-        rp.box = {blur.side(), 0U, 0U, 0U};
-        for (int k = 0; k < 3; ++k) result = stage(s.square, result, "ripple square");
-    } else {
-        const std::array<fx::Run, 2> runs{fx::webkit_boxes(blur.x), fx::webkit_boxes(blur.y)};
-        for (std::uint32_t k = 0; k < 3; ++k) {
-            for (std::uint32_t axis = 0; axis < 2; ++axis) {
-                if (k >= runs[axis].count) continue;
-                const fx::Box b = runs[axis].boxes[k];
-                rp.box = {axis, b.left, b.right, 0U};
-                rp.inv = {1.0F / static_cast<float>(b.size()), 0.0F, 0.0F, 0.0F};
-                result = stage(s.line, result, "ripple line");
-            }
+    for (const RipplePass& pass : plan.passes) {
+        if (pass.square) {
+            rp.box = {pass.side, 0U, 0U, 0U};
+            result = stage(s.square, pass.region, result, "ripple square");
+        } else {
+            rp.box = {pass.axis, pass.left, pass.right, 0U};
+            rp.inv = {1.0F / static_cast<float>(pass.left + pass.right), 0.0F, 0.0F, 0.0F};
+            result = stage(s.line, pass.region, result, "ripple line");
         }
     }
     s.result = result;
@@ -411,6 +559,7 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
 void Ground::record_ripple(const frame::Recording& r) {
     const Words& w = *words_;
     const RippleLayer& s = *pipelines_->ripple;
+    if (s.out.empty()) return;
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     const tiles::ReflectionsStyle& rs = frame_.tiles[frame_.reflections.front().tile].ground->reflection_style;
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->ripple_composite);
@@ -419,7 +568,11 @@ void Ground::record_ripple(const frame::Recording& r) {
     pc.at = {w.tiles, w.slots, w.theme, w.runs};
     pc.mode = {0U, slot(geo::group::reflection, 0, 0), s.result, 0U};
     pc.rows = {0.0F, 0.0F, static_cast<float>(frame_.night ? rs.opacity[1] : rs.opacity[0]), 0.0F};
-    pc.colour = {s.extent.width, 0U, 0U, 0U};
+    // the result's region: nothing beyond it
+    const auto pack = [](std::int32_t x, std::int32_t y) {
+        return static_cast<std::uint32_t>(x) | (static_cast<std::uint32_t>(y) << 16U);
+    };
+    pc.colour = {s.extent.width, pack(s.out.x0, s.out.y0), pack(s.out.x1, s.out.y1), 0U};
     cmd.pushConstants<Push>(*pipelines_->layout, frame::push_stages, 0, pc);
     cmd.draw(3, 1, 0, 0);
     r.counters.draw("ground ripple", 1);

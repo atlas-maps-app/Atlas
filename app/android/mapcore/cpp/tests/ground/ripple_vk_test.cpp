@@ -47,6 +47,7 @@ struct RippleLook {
     double wgrad_y2 = 0;
     double opacity = 0;
     style::ThemeBlock th{};
+    passes::PixelBox out; ///< the result's region (the buffers hold nothing beyond it)
 };
 
 void take(RippleLook& look, passes::Ground& g, const frame::FrameState& state) {
@@ -68,6 +69,7 @@ void take(RippleLook& look, passes::Ground& g, const frame::FrameState& state) {
     out.invalidate();
     look.result.resize(n);
     std::memcpy(look.result.data(), out.bytes().data(), n * 4);
+    look.out = s->out;
     look.scale = fx::ripple_scale(state.theme.wind);
     const passes::GroundFrame& f = g.decided();
     look.wgrad_y1 = f.wgrad_y1;
@@ -76,11 +78,13 @@ void take(RippleLook& look, passes::Ground& g, const frame::FrameState& state) {
     look.th = state.theme;
 }
 
-/// The pass's result against the CPU's chain over the pass's own layer (the ripple's field the CPU's).
+/// The pass's result against the CPU's chain over the pass's own layer (the ripple's field the CPU's): within the
+/// result's region word for word, and beyond it transparent (the region holds all of it).
 struct Chain {
     std::vector<fx::Argb> want;
     std::size_t covered = 0;
     std::size_t differ = 0;
+    std::size_t beyond = 0; ///< pixels the CPU's result covers beyond the region
     std::string first;
 };
 
@@ -89,8 +93,12 @@ Chain chain_of(const RippleLook& look, const fx::ScreenFields& fields, float den
     const std::vector<std::uint8_t> field = fields.bytes_of(fx::Field::ripple);
     c.want = fx::ripple_cpu(look.layer, field, look.w, look.h, look.scale, density);
     for (std::size_t i = 0; i < c.want.size(); ++i) {
-        if ((c.want[i] >> 24U) != 0) ++c.covered;
-        if (look.result[i] == c.want[i]) continue;
+        const bool in = look.out.contains(static_cast<std::int32_t>(i % look.w), static_cast<std::int32_t>(i / look.w));
+        if ((c.want[i] >> 24U) != 0) {
+            ++c.covered;
+            if (!in) ++c.beyond;
+        }
+        if (!in || look.result[i] == c.want[i]) continue;
         if (c.differ == 0) {
             c.first =
                 std::format("pixel {} {}: {:08x}, the CPU's {:08x}", i % look.w, i / look.w, look.result[i], c.want[i]);
@@ -142,9 +150,12 @@ TEST_CASE("ground: the reflections' ripple is SvgFilterRaster's chain over their
                         "differing from the CPU's",
                         look.scale, blur.x, blur.y, blur.square() ? "vImage's squares" : "WebKit's passes",
                         chain.covered, chain.differ));
+    MESSAGE(std::format("the result's region: {} × {} of the frame's {} × {} px", look.out.x1 - look.out.x0,
+                        look.out.y1 - look.out.y0, look.w, look.h));
     CHECK(blur.square());
     CHECK(chain.covered > 10000);
     CHECK_MESSAGE(chain.differ == 0, chain.first);
+    CHECK_MESSAGE(chain.beyond == 0, chain.beyond << " pixels of the result lie beyond its region");
     const std::uint32_t w = look.w;
     const std::uint32_t h = look.h;
     const std::vector<fx::Argb>& want = chain.want;
@@ -281,6 +292,7 @@ TEST_CASE("ground: the ripple's separable boxes, at a density whose two blur siz
     CHECK(!blur.square());
     CHECK(chain.covered > 10000);
     CHECK_MESSAGE(chain.differ == 0, chain.first);
+    CHECK_MESSAGE(chain.beyond == 0, chain.beyond << " pixels of the result lie beyond its region");
 }
 
 #endif
