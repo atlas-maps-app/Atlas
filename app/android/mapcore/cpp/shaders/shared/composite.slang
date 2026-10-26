@@ -61,8 +61,8 @@ static const uint COMPOSITE_WASH = 16u;         // the golden wash (K17)
 static const uint COMPOSITE_GRAIN = 32u;        // fin: the paper grain by overlay (K17a)
 static const uint COMPOSITE_VIGNETTE = 64u;     // fin: the vignette
 /// The steps the composite draws; the others are stubbed whatever their bit says.
-static const uint COMPOSITE_DRAWN = 121u; // COMPOSITE_MAT | COMPOSITE_HAZE | COMPOSITE_WASH | COMPOSITE_GRAIN |
-                                          // COMPOSITE_VIGNETTE
+static const uint COMPOSITE_DRAWN = 123u; // COMPOSITE_MAT | COMPOSITE_CLOUD_SHADOWS | COMPOSITE_HAZE | COMPOSITE_WASH |
+                                          // COMPOSITE_GRAIN | COMPOSITE_VIGNETTE
 
 /// fin's grain opacity as the byte Skia's stages scale by (CP/fx/Grain.hpp's skia_byte of .09, and of .12 at night).
 static const uint COMPOSITE_GRAIN_DAY = 23u;
@@ -285,6 +285,16 @@ inline float composite_vignette_level(float c, int alpha) {
     return float((uint(c) * (4096u - a) + 2048u) / 4096u);
 }
 
+/// wfx's cloud shadows (render/amsterdam.py:943): below the horizon, before the haze, the `cloudsh` filter's pixel (its
+/// table's entry by the noise's red: premultiplied sRGB, a r g b) multiplied over the pixel at the rect's opacity .42. In
+/// whole numbers: the source's opacity a = A · .42 in 1/4096, (A · 1720 + 127) / 255; its colour unpremultiplied,
+/// (C · 255 + A / 2) / A; and the W3C multiply over the opaque backdrop, b (1 − a) + a C b = b (1 − a (1 − C)), rounded
+/// half up: a whole level `c` under the source of colour `cs` (0 to 255) at opacity `a12`.
+inline float composite_cloud_level(float c, uint cs, uint a12) {
+    uint b = uint(c);
+    return float((b * (1044480u - (255u - cs) * a12) + 522240u) / 1044480u);
+}
+
 /// The golden wash (render/amsterdam.py:921; ScreenLayers.kt washDef): at the golden moment, after the haze, a
 /// linearGradient over the frame's box (objectBoundingBox, from (0, 0) to (1, .35)) of #FFB25E at .14, #FFC98A at .05 at
 /// .45 and #FFC98A at 0 at its end, source-over. In whole numbers: the pixel's centre as a fraction of the box in
@@ -339,10 +349,22 @@ inline float composite_wash_level(float c, uint c0, uint c1, int t, float n) {
 /// grey and alpha at the pixel and fin's opacity byte, 0 where the grain does not run (the fields not bound).
 /// The finished colour from the haze's and the vignette's opacities at the pixel (1/4096), however they were found: the
 /// composite takes them from the frame's tables (gain 2), the twin from composite_steps_fx's own arithmetic.
-inline float3 composite_steps_alphas(FrameLayers l, float3 levels, int haze, int wash, int vignette, uint3 grain) {
+inline float3 composite_steps_alphas(FrameLayers l, float3 levels, uint cloud, int haze, int wash, int vignette,
+                                     uint3 grain) {
     float n = float(l.steps.y);
     uint steps = l.steps.x & COMPOSITE_DRAWN;
     float3 c = levels;
+    if ((steps & COMPOSITE_CLOUD_SHADOWS) != 0u && cloud != 0u) {
+        uint a8 = cloud >> 24u;
+        uint a12 = (a8 * 1720u + 127u) / 255u;
+        uint r = ((((cloud >> 16u) & 0xFFu) * 255u) + (a8 / 2u)) / a8;
+        uint g = ((((cloud >> 8u) & 0xFFu) * 255u) + (a8 / 2u)) / a8;
+        uint b = (((cloud & 0xFFu) * 255u) + (a8 / 2u)) / a8;
+        float3 s = {composite_cloud_level(c.x, r < 255u ? r : 255u, a12),
+                    composite_cloud_level(c.y, g < 255u ? g : 255u, a12),
+                    composite_cloud_level(c.z, b < 255u ? b : 255u, a12)};
+        c = s;
+    }
     if ((steps & COMPOSITE_HAZE) != 0u && l.haze.w > 0.0f) {
         int a = haze;
         float3 h = {composite_haze_level(c.x, l.haze_colour.x, a, n), composite_haze_level(c.y, l.haze_colour.y, a, n),
@@ -368,12 +390,12 @@ inline float3 composite_steps_alphas(FrameLayers l, float3 levels, int haze, int
     return c;
 }
 
-inline float3 composite_steps_fx(FrameLayers l, float3 levels, uint2 pixel, float3 frame, uint3 grain) {
+inline float3 composite_steps_fx(FrameLayers l, float3 levels, uint2 pixel, float3 frame, uint3 grain, uint cloud) {
     uint steps = l.steps.x & COMPOSITE_DRAWN;
     int haze = (steps & COMPOSITE_HAZE) != 0u && l.haze.w > 0.0f ? composite_haze_alpha12(l, pixel.y, frame.z) : 0;
     int wash = (steps & COMPOSITE_WASH) != 0u ? composite_wash_t(pixel, frame) : 0;
     int vignette = (steps & COMPOSITE_VIGNETTE) != 0u ? composite_vignette_alpha12(l, pixel, frame) : 0;
-    return composite_steps_alphas(l, levels, haze, wash, vignette, grain);
+    return composite_steps_alphas(l, levels, cloud, haze, wash, vignette, grain);
 }
 
 /// The colour to write for whole levels `levels` of the output: level / levels, which the UNORM attachment turns back

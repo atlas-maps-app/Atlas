@@ -29,4 +29,15 @@ std::array<Argb, 256> glint_table(const std::array<float, 3>& gl) noexcept {
     return out;
 }
 
+std::array<Argb, 256> cloud_shadow_table(float cut) noexcept {
+    const bytes::ColourMatrix m({0.0F, 0.0F, 0.0F, 0.0F, 0.16F, 0.0F, 0.0F, 0.0F, 0.0F, 0.19F,
+                                 0.0F, 0.0F, 0.0F, 0.0F, 0.32F, 7.0F, 0.0F, 0.0F, 0.0F, cut});
+    std::array<Argb, 256> out{};
+    for (std::uint32_t r = 0; r < 256; ++r) {
+        const Argb linear = m.apply(bytes::pack(255, r, 0, 0));
+        out[r] = (linear >> 24U) == 0 ? 0 : bytes::premultiply(bytes::unpremultiply_exact(linear, false));
+    }
+    return out;
+}
+
 } // namespace atlas::fx

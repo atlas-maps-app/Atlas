@@ -50,10 +50,12 @@ private:
     vk::raii::ShaderModule module_{nullptr};
     vk::raii::ShaderModule glsl_module_{nullptr};
     vk::raii::Pipeline pipeline_{nullptr};
-    gpu::Buffer tables_;               // a slice per frame slot: 3 · side_ words (set 2 binding 2)
-    std::vector<std::uint32_t> words_; // the frame's tables before they are copied into its slice
-    std::uint32_t side_ = 0;           // each table's length: the output's longer side
-    vk::DeviceSize slice_ = 0;         // a slice's bytes, aligned for its dynamic offset
+    gpu::Buffer tables_;                     // a slice per frame slot: 3 · side_ words (set 2 binding 2)
+    std::vector<std::uint32_t> words_;       // the frame's tables before they are copied into its slice
+    std::array<std::uint32_t, 256> cloud_{}; // the cloud shadows' table, for cloud_cut_
+    float cloud_cut_ = 0.0F;                 // the matrix's last entry it was made for (0: none made)
+    std::uint32_t side_ = 0;                 // each table's length: the output's longer side
+    vk::DeviceSize slice_ = 0;               // a slice's bytes, aligned for its dynamic offset
     bool glsl_ = false;
 };
 
@@ -65,6 +67,7 @@ struct CompositeInputs {
     std::uint32_t objects = 0;
     bool mat = false;
     hlsl::uint3 grain{0U, 0U, 0U};
+    std::uint32_t cloud = 0; ///< wfx's cloud shadows' pixel here (fx::cloud_shadow_table's), 0 for none
 };
 
 /// The composite of one pixel as the GPU computes it (the shader's own text, as C++): the levels of its `n` samples'

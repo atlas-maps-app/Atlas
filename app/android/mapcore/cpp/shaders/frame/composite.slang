@@ -45,8 +45,9 @@
 // stencil in x.
 [[vk::input_attachment_index(1)]] [[vk::binding(1, 2)]] SubpassInputMS<uint4> scene_stencil;
 #endif
-// The frame's tables: S rows' haze opacities (1/4096), then S columns' and S rows' squared vignette distances
-// (COMPOSITE_BEYOND past the radius), S the output's longer side.
+// The frame's tables: S, the output's longer side; the cloud shadows' first row (all ones: none) and their table (256
+// premultiplied a r g b pixels by the noise's red); then S rows' haze opacities (1/4096), S columns' and S rows' squared
+// vignette distances (COMPOSITE_BEYOND past the radius).
 [[vk::binding(2, 2)]] StructuredBuffer<uint> composite_tables;
 
 struct FullOut {
@@ -117,18 +118,22 @@ CompositeOut composite_fs(FullOut v) {
     // The upright device pixel (the output's pre-rotation undone), where the haze and the vignette are taken.
     int2 at = fx_pixel(frame.camera, v.position.xy);
     uint2 pixel = {uint(at.x < 0 ? 0 : at.x), uint(at.y < 0 ? 0 : at.y)};
-    uint entries = 0u;
-    uint stride = 0u;
-    composite_tables.GetDimensions(entries, stride);
-    uint side = entries / 3u;
+    uint side = composite_tables[0];
+    uint head = 258u;
     uint row = pixel.y < side ? pixel.y : side - 1u;
     uint column = pixel.x < side ? pixel.x : side - 1u;
-    int haze = int(composite_tables[row]);
-    int vignette = composite_vignette_from_squares(frame.layers, composite_tables[side + column],
-                                                   composite_tables[(2u * side) + row]);
+    int haze = int(composite_tables[head + row]);
+    int vignette = composite_vignette_from_squares(frame.layers, composite_tables[head + side + column],
+                                                   composite_tables[head + (2u * side) + row]);
+    // wfx's cloud shadows, below their first row, once the fields are bound: the filter's pixel by the noise's red
+    uint cloud = 0u;
+    if ((frame.layers.steps.x & COMPOSITE_CLOUD_SHADOWS) != 0u && (frame.info.x & FRAME_FIELDS) != 0u &&
+        pixel.y >= composite_tables[1]) {
+        cloud = composite_tables[2u + fx_rgba(at).w];
+    }
     // the wash (the golden moment's alone) by the pixel's own arithmetic: two divisions where it runs
     int wash = (frame.layers.steps.x & COMPOSITE_WASH) != 0u ? composite_wash_t(pixel, frame.camera.frame.xyz) : 0;
-    float3 finished = composite_steps_alphas(frame.layers, mean, haze, wash, vignette, grain);
+    float3 finished = composite_steps_alphas(frame.layers, mean, cloud, haze, wash, vignette, grain);
     CompositeOut o;
     o.colour = composite_output(finished, n);
     return o;

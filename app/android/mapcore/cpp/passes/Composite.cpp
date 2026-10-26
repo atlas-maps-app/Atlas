@@ -3,6 +3,7 @@
 
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
+#include "fx/Glints.hpp"
 #include "fx/Mat.hpp"
 #include "gen/spirv/frame/composite.hpp"
 #include "gen/spirv/frame/composite_glsl_composite_fs.hpp"
@@ -15,6 +16,7 @@
 #include "gpu/Descriptors.hpp"
 #include "gpu/Frames.hpp"
 #include "twin/Twin.hpp"
+#include "view/Snap.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -25,6 +27,9 @@
 namespace atlas::passes {
 
 namespace {
+
+/// The composite's tables' header: the side, the cloud shadows' first row and their 256 pixels.
+constexpr std::size_t table_head = 258;
 
 /// An embedded module and its symbol.
 struct Spirv {
@@ -121,7 +126,8 @@ gpu::Result<void> Composite::prepare(const frame::PassContext& context) {
     // its rows and columns are within it).
     const vk::Extent2D extent = context.output.extent();
     side_ = std::max({extent.width, extent.height, 1U});
-    const vk::DeviceSize table_bytes = vk::DeviceSize{side_} * 3 * sizeof(std::uint32_t);
+    // the header (the side, the cloud shadows' first row and their 256 pixels), then the three tables
+    const vk::DeviceSize table_bytes = (table_head + (vk::DeviceSize{side_} * 3)) * sizeof(std::uint32_t);
     const vk::DeviceSize align =
         std::max<vk::DeviceSize>(context.device.facts().limits.minStorageBufferOffsetAlignment, 256);
     slice_ = (table_bytes + align - 1) / align * align;
@@ -131,7 +137,7 @@ gpu::Result<void> Composite::prepare(const frame::PassContext& context) {
     tables_ = std::move(tables);
     std::ranges::fill(tables_.bytes(), std::byte{0});
     tables_.flush();
-    words_.assign(std::size_t{side_} * 3, 0U);
+    words_.assign(table_head + (std::size_t{side_} * 3), 0U);
     gpu::SetWriter(*inputs_)
         .image(0, vk::DescriptorType::eInputAttachment, pass.colour_input(), pass.colour_input_layout())
         .image(1, vk::DescriptorType::eInputAttachment, pass.stencil_input(), pass.stencil_input_layout())
@@ -180,18 +186,33 @@ void Composite::update(const frame::FrameState& state) {
     const float width = state.block.camera.frame.x;
     const float height = state.block.camera.frame.y;
     const float density = state.block.camera.frame.z;
+    // The header: the tables' side; wfx's cloud shadows' first row (the first upright device row whose centre lies in
+    // their rect, from max(0, horizon) down) and their table, made again when the moment's matrix changes.
+    words_[0] = side_;
+    words_[1] = 0xFFFF'FFFFU;
+    if ((steps & shaders::COMPOSITE_CLOUD_SHADOWS) != 0U && state.layers && state.layers->cloud_shadows()) {
+        const double top = std::max(0.0, state.layers->horizon);
+        words_[1] = static_cast<std::uint32_t>(std::max(0.0, std::ceil((top * static_cast<double>(density)) - 0.5)));
+        const auto cut = static_cast<float>(view::decimals(state.layers->cloud_shadow_cut, 2));
+        if (cut != cloud_cut_) {
+            cloud_ = fx::cloud_shadow_table(cut);
+            cloud_cut_ = cut;
+        }
+        std::ranges::copy(cloud_, words_.begin() + 2);
+    }
     // Where a step does not run its table is not read (composite_steps_alphas skips the step).
+    std::uint32_t* const t = words_.data() + table_head;
     if ((steps & shaders::COMPOSITE_HAZE) != 0U && l.haze.w > 0.0F) {
         for (std::uint32_t row = 0; row < side_; ++row) {
-            words_[row] = static_cast<std::uint32_t>(shaders::composite_haze_alpha12(l, row, density));
+            t[row] = static_cast<std::uint32_t>(shaders::composite_haze_alpha12(l, row, density));
         }
     }
     if ((steps & shaders::COMPOSITE_VIGNETTE) != 0U) {
         const std::uint32_t w16 = shaders::composite_vignette_size16(width, density);
         const std::uint32_t h16 = shaders::composite_vignette_size16(height, density);
         for (std::uint32_t at = 0; at < side_; ++at) {
-            words_[side_ + at] = shaders::composite_vignette_square(at, w16, 32768);       // .5
-            words_[(2 * side_) + at] = shaders::composite_vignette_square(at, h16, 30147); // .46: 30146.56
+            t[side_ + at] = shaders::composite_vignette_square(at, w16, 32768);       // .5
+            t[(2 * side_) + at] = shaders::composite_vignette_square(at, h16, 30147); // .46: 30146.56
         }
     }
     const std::size_t at = static_cast<std::size_t>(slice_) * (state.slot % gpu::Frames::in_flight);
@@ -217,6 +238,15 @@ void Composite::emit(const frame::FrameState& state, twin::Stream& out, std::uin
     const float height = state.block.camera.frame.y;
     out.layer(twin::Layer::objects);
     out.at(twin::Stream::after, out.root());
+    // render/amsterdam.py:943: wfx's cloud shadows before the haze (ScreenLayers.kt wfx): the `cloudsh` filter over a
+    // rect from the horizon down, at .42 by multiply, once the fields are bound
+    if ((on & shaders::COMPOSITE_CLOUD_SHADOWS) != 0U && (state.block.info.x & shaders::FRAME_FIELDS) != 0U &&
+        state.layers) {
+        const std::int32_t clouds = out.filter("cloudsh");
+        const auto top = static_cast<float>(std::max(0.0, state.layers->horizon));
+        out.rect({.fill = twin::Paint::colour(0xFF00'0000U)}, 0.0F, top, width, height - top, 0.0F, 0.0F,
+                 {.opacity = 0.42F, .blend = twin::Blend::multiply, .filter = clouds});
+    }
     // render/amsterdam.py:899: the haze by ground depth (ScreenLayers.hazeDef, hazeRect), as the composite applies it
     const auto stops = static_cast<std::size_t>(l.haze.w);
     if ((on & shaders::COMPOSITE_HAZE) != 0U && stops > 0) {
@@ -313,7 +343,7 @@ hlsl::float3 composite_pixel_fx(const shaders::FrameLayers& layers, std::span<co
     } else {
         mean = shaders::composite_mean(objects + others, count);
     }
-    return shaders::composite_steps_fx(layers, mean, pixel, frame, inputs.grain);
+    return shaders::composite_steps_fx(layers, mean, pixel, frame, inputs.grain, inputs.cloud);
 }
 
 hlsl::float3 composite_pixel(const shaders::FrameLayers& layers, std::span<const hlsl::float3> samples, hlsl::float2 p,

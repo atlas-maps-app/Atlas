@@ -26,4 +26,10 @@ namespace atlas::fx {
 /// The filter's result for each of the 256 reds of the noise (premultiplied sRGB, a r g b), with glint colour `gl`.
 [[nodiscard]] std::array<Argb, 256> glint_table(const std::array<float, 3>& gl) noexcept;
 
+/// wfx's cloud shadows (render/amsterdam.py:943, `cloudsh`): feColorMatrix "0 0 0 0 .16  0 0 0 0 .19  0 0 0 0 .32  7 0
+/// 0 0 cut" over the noise's red (the cloud shadows' screen field), made as glint_table makes the glints': the filter's
+/// result for each of the 256 reds (premultiplied sRGB, a r g b), `cut` the matrix's last entry as the render prints
+/// it ('%.2f' of -7 t0).
+[[nodiscard]] std::array<Argb, 256> cloud_shadow_table(float cut) noexcept;
+
 } // namespace atlas::fx
