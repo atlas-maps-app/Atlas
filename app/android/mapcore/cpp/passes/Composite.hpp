@@ -50,10 +50,10 @@ private:
     vk::raii::ShaderModule module_{nullptr};
     vk::raii::ShaderModule glsl_module_{nullptr};
     vk::raii::Pipeline pipeline_{nullptr};
-    gpu::Buffer tables_;                // a slice per frame slot: 3 · side_ words (set 2 binding 2)
+    gpu::Buffer tables_;               // a slice per frame slot: 3 · side_ words (set 2 binding 2)
     std::vector<std::uint32_t> words_; // the frame's tables before they are copied into its slice
-    std::uint32_t side_ = 0;            // each table's length: the output's longer side
-    vk::DeviceSize slice_ = 0;          // a slice's bytes, aligned for its dynamic offset
+    std::uint32_t side_ = 0;           // each table's length: the output's longer side
+    vk::DeviceSize slice_ = 0;         // a slice's bytes, aligned for its dynamic offset
     bool glsl_ = false;
 };
 

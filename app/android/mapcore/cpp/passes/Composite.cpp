@@ -125,9 +125,9 @@ gpu::Result<void> Composite::prepare(const frame::PassContext& context) {
     const vk::DeviceSize align =
         std::max<vk::DeviceSize>(context.device.facts().limits.minStorageBufferOffsetAlignment, 256);
     slice_ = (table_bytes + align - 1) / align * align;
-    ATLAS_GPU_LET(tables, context.device.memory().buffer(slice_ * gpu::Frames::in_flight,
-                                                         vk::BufferUsageFlagBits::eStorageBuffer,
-                                                         gpu::MemoryUse::upload));
+    ATLAS_GPU_LET(tables,
+                  context.device.memory().buffer(slice_ * gpu::Frames::in_flight,
+                                                 vk::BufferUsageFlagBits::eStorageBuffer, gpu::MemoryUse::upload));
     tables_ = std::move(tables);
     std::ranges::fill(tables_.bytes(), std::byte{0});
     tables_.flush();
@@ -190,7 +190,7 @@ void Composite::update(const frame::FrameState& state) {
         const std::uint32_t w16 = shaders::composite_vignette_size16(width, density);
         const std::uint32_t h16 = shaders::composite_vignette_size16(height, density);
         for (std::uint32_t at = 0; at < side_; ++at) {
-            words_[side_ + at] = shaders::composite_vignette_square(at, w16, 32768);        // .5
+            words_[side_ + at] = shaders::composite_vignette_square(at, w16, 32768);       // .5
             words_[(2 * side_) + at] = shaders::composite_vignette_square(at, h16, 30147); // .46: 30146.56
         }
     }
