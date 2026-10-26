@@ -36,6 +36,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <memory>
@@ -467,6 +468,83 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     CHECK(w.residency().resident().empty());
     CHECK(w.residency().stats().native_bytes == 0);
     CHECK(one_kept.expired());
+    (void)session->take_messages();
+}
+
+TEST_CASE("a fling's landing asks for its tiles after the frame's own, in the prefetch lane (gain 26)") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    if (dir.empty() || !std::filesystem::exists(std::filesystem::path(dir) / "grachten.atlas")) {
+        MESSAGE("ATLAS_TILES_DIR has no canal ring: the landing is not checked over the bundled packs here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<BuildProbe>());
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    std::atomic<double> now{0};
+    auto world =
+        scene::World::create(*session->device, (*builder)->passes(),
+                             {.workers = 3, .sun = {.enabled = false}, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    auto added = w.store().add({.id = "grachten",
+                                .kind = tiles::PackKind::bundled,
+                                .path = (std::filesystem::path(dir) / "grachten.atlas").string()});
+    ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+    w.set_active("grachten");
+    style::CameraState camera = home();
+    camera.flags = 0; // moving: a fling under way
+    (*builder)->set_inputs({.camera = camera, .scene = &w});
+    const auto frame = [&](std::uint64_t n) {
+        now = static_cast<double>(n) * 0.016;
+        ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+        w.update((*builder)->state());
+    };
+    std::uint64_t n = 1;
+    for (; n <= 40 && w.cover()->tiles().empty(); ++n) {
+        frame(n);
+        w.residency().wait_idle();
+    }
+    ATLAS_REQUIRE(!w.cover()->tiles().empty(), "the canal ring drew nothing at the home");
+    const std::vector<scene::Request> own(w.asked().begin(), w.asked().end());
+    // The landing a tile's width east (an L14 tile is about 1.5 km across here), the same bearing, pitch and distance.
+    const double kx = 111320.0 * pymath::cos(pymath::radians(camera.latitude));
+    w.set_landing(scene::World::Landing{.latitude = camera.latitude,
+                                        .longitude = camera.longitude + (1600.0 / kx),
+                                        .bearing = camera.bearing,
+                                        .pitch = camera.pitch,
+                                        .distance = camera.distance});
+    frame(n++);
+    const std::span<const scene::Request> wanted = w.asked();
+    REQUIRE(wanted.size() >= own.size());
+    // the frame's own first, as before
+    bool same = true;
+    for (std::size_t i = 0; i < own.size(); ++i)
+        same = same && wanted[i].key == own[i].key && wanted[i].lane == own[i].lane;
+    CHECK(same);
+    std::vector<tiles::TileKey> landing;
+    for (std::size_t i = own.size(); i < wanted.size(); ++i) {
+        CHECK(wanted[i].lane == scene::Lane::prefetch);
+        CHECK(wanted[i].priority > 2.0);
+        landing.push_back(wanted[i].key);
+    }
+    MESSAGE(std::format("the home wants {} tiles; the landing adds {}", own.size(), landing.size()));
+    REQUIRE_MESSAGE(!landing.empty(), "the landing's view sees no tile the home's does not");
+    w.residency().wait_idle();
+    frame(n++);
+    std::size_t built = 0;
+    for (const std::shared_ptr<const scene::ResidentTile>& t : w.residency().resident()) {
+        if (std::ranges::find(landing, t->key) != landing.end()) ++built;
+    }
+    CHECK(built == landing.size()); // built ahead, though no frame has drawn them yet
+    // The fling over: no more landing, nothing more asked beyond the frame's own.
+    w.set_landing(std::nullopt);
+    frame(n++);
+    for (const scene::Request& r : w.asked()) CHECK_FALSE((r.lane == scene::Lane::prefetch && r.priority > 2.0));
     (void)session->take_messages();
 }
 

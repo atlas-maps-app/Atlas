@@ -44,7 +44,9 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.hypot
+import kotlin.math.ln
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /** Content padding in pixels: left, top, right, bottom. */
@@ -989,6 +991,18 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         val x = lastPanX
         val y = lastPanY
         val speed = hypot(vx, vy)
+        // Where it lands (ENGINE.md gain 26): the decay's whole path is known now, so the core builds the tiles there
+        // while the map is on its way.
+        val c = core
+        if (c != null && speed > FLING_STOP_DP * density) {
+            val tEnd = min(FLING_MAX_S, ln(speed / (FLING_STOP_DP * density)) / FLING_DECAY)
+            val fEnd = (1 - exp(-FLING_DECAY * tEnd)) / FLING_DECAY
+            val v = viewport()
+            if (!v.isEmpty) {
+                val end = liveView(CameraOps.pan(state.camera, v, x, y, (x + vx * fEnd).toFloat(), (y + vy * fEnd).toFloat()), v)
+                c.core.landing(end.lat, end.lon, end.bearing, end.pitch, end.distance)
+            }
+        }
         animation = scope.launch {
             var start = -1L
             var last = -1L
@@ -1016,7 +1030,12 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
                 doneY = dy
                 if (speed * exp(-FLING_DECAY * t) < FLING_STOP_DP * density || t > FLING_MAX_S) break
             }
-        }.also { it.invokeOnCompletion { main.post(settle) } }
+        }.also {
+            it.invokeOnCompletion {
+                c?.core?.noLanding()
+                main.post(settle)
+            }
+        }
     }
 
     private fun snapNorth() {

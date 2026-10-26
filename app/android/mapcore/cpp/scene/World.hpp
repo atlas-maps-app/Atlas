@@ -88,6 +88,19 @@ public:
     /// The pack the frame draws from now on (its store id, or a window's, whose frame cell's pack is drawn), or the
     /// automatic choice (empty).
     void set_active(std::string id) { forced_ = std::move(id); }
+    /// Where a fling lands (ENGINE.md gain 26): the camera's target, bearing, pitch and distance at its end, which the
+    /// app knows as the fling begins. From then on the landing's tiles are wanted after the frame's own (its visible
+    /// ones in the prefetch lane, ahead of any other prefetch), so the map lands whole. None: no fling under way.
+    struct Landing {
+        double latitude = 0;
+        double longitude = 0;
+        double bearing = 0;
+        double pitch = 0;
+        double distance = 0;
+    };
+    void set_landing(std::optional<Landing> landing) noexcept { landing_ = landing; }
+    /// The tiles last asked of the residency: the frame's and the landing's.
+    [[nodiscard]] std::span<const Request> asked() const noexcept { return asked_; }
     /// A coarser pack drawn around the active one (its store id: the canal ring around the Westerkerk; empty: none),
     /// and the box masking it (D3: the coarser pack's items whose reference points lie inside it are skipped, so a
     /// building is drawn once and whole, and its tiles wholly inside it are left out); without a box, the active pack's
@@ -222,6 +235,9 @@ private:
     std::optional<tiles::GridBox> placed_mask_;
     std::vector<std::shared_ptr<const ResidentTile>> taken_;
     std::optional<view::Ladder> ladder_;
+    std::optional<Landing> landing_;
+    Cover landing_cover_;        ///< the landing's cover, for its requests alone
+    std::vector<Request> asked_; ///< the frame's requests, then the landing's
     /// Per resident tile (its handle): when the cover last drew it.
     std::vector<std::pair<std::uint32_t, double>> last_drawn_;
     bool animating_ = false;

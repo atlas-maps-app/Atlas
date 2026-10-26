@@ -248,4 +248,10 @@ object Native {
 
     /** The screen's haze, vignette and paper grain for the map, each on or off (the app's Look settings). */
     @JvmStatic external fun screen(handle: Long, haze: Boolean, vignette: Boolean, grain: Boolean)
+
+    /**
+     * Where the fling under way lands ([has]: none when false): the camera's target, bearing, pitch and distance at its
+     * end. The core builds the tiles there after the frame's own (ENGINE.md gain 26). Returns at once.
+     */
+    @JvmStatic external fun landing(handle: Long, has: Boolean, latitude: Double, longitude: Double, bearing: Double, pitch: Double, distance: Double)
 }

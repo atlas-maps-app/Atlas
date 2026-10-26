@@ -269,6 +269,16 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
         core.call(Unit) { Native.screen(it, haze, vignette, grain) }
 
     /**
+     * Where the fling under way lands: the camera at its end, which the map knows as the fling begins. The core builds
+     * the tiles there after the frame's own, so the map lands whole (ENGINE.md gain 26). Any thread; it does not wait.
+     */
+    fun landing(latitude: Double, longitude: Double, bearing: Double, pitch: Double, distance: Double) =
+        core.call(Unit) { Native.landing(it, true, latitude, longitude, bearing, pitch, distance) }
+
+    /** The fling is over: no landing. */
+    fun noLanding() = core.call(Unit) { Native.landing(it, false, 0.0, 0.0, 0.0, 0.0, 0.0) }
+
+    /**
      * The painter switch from now on: [on], what stands up is drawn in the renderer's painter's order (whole buildings
      * by one point each, as the renders sort them, which makes some melt into each other), to compare with the core's
      * true depth; off, true depth (the default). Off the main thread.

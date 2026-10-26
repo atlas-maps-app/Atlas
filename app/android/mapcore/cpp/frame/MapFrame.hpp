@@ -87,6 +87,12 @@ public:
     /// The screen's haze, vignette and paper grain on or off from now on (the app's Look settings: FrameOptions::steps
     /// without their composite steps when off), kept for every frame builder made.
     void set_screen(bool haze, bool vignette, bool grain) noexcept;
+    /// Where the fling under way lands (scene::World::set_landing, ENGINE.md gain 26), or none; kept for a world made
+    /// later.
+    void set_landing(std::optional<scene::World::Landing> landing) noexcept {
+        landing_ = landing;
+        if (world_) world_->set_landing(landing);
+    }
 
     /// Whether the last frame's picture was complete.
     [[nodiscard]] bool complete() const noexcept;
@@ -131,6 +137,7 @@ private:
     std::shared_ptr<const labels::LabelSet> labels_;
     bool painter_ = false;
     std::uint32_t steps_ = ~0U;
+    std::optional<scene::World::Landing> landing_;
     std::uint64_t active_number_ = 0;
     std::string active_id_;
     std::unique_ptr<FrameBuilder> builder_;

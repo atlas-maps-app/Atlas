@@ -549,7 +549,35 @@ void World::update(const frame::FrameState& state) {
         sun_->prepare(state, active_, in.tolerance, cover_, coarser_, in.coarser_tolerance, neighbour_,
                       in.neighbour_tolerance);
     }
-    residency_->want(cover_.requests());
+    // The fling's landing (gain 26): its view as the frame would draw it there, and its visible tiles wanted after the
+    // frame's own, in the prefetch lane ahead of any other prefetch.
+    asked_.assign(cover_.requests().begin(), cover_.requests().end());
+    if (landing_ && ladder_) {
+        style::CameraState there = state.camera;
+        there.latitude = landing_->latitude;
+        there.longitude = landing_->longitude;
+        there.bearing = landing_->bearing;
+        there.pitch = landing_->pitch;
+        there.distance = landing_->distance;
+        const view::Placed placed = ladder_->place(view::live_view(there));
+        CoverInputs landing_in = in;
+        landing_in.pinned = placed.view().has_value();
+        landing_in.tolerance = head.tolerance_of(placed.view(), placed.dist()).value_or(0);
+        landing_cover_.update(view::View(placed.camera(), state.view->device()), frames_, landing_in, *residency_,
+                              seconds);
+        const std::size_t own = asked_.size();
+        for (Request r : landing_cover_.requests()) {
+            if (r.lane != Lane::visible) continue;
+            const auto first = asked_.begin();
+            const auto last = asked_.begin() + static_cast<std::ptrdiff_t>(own);
+            if (std::any_of(first, last, [&r](const Request& w) { return w.key == r.key && w.pack == r.pack; }))
+                continue;
+            r.lane = Lane::prefetch;
+            r.priority += 2.0; // above a frustum share (at most 1) and the cover's other terms
+            asked_.push_back(r);
+        }
+    }
+    residency_->want(asked_);
     for (const CoverTile& t : cover_.tiles()) {
         const std::uint32_t handle = t.drawn->handle;
         const auto it = std::ranges::find_if(last_drawn_, [handle](const auto& p) { return p.first == handle; });

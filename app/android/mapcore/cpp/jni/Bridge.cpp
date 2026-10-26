@@ -303,6 +303,20 @@ public:
         });
     }
 
+    /// Where the fling under way lands (ENGINE.md gain 26), or none: handed to the map's world without waiting for the
+    /// render thread, since a fling begins on the main thread.
+    void landing(std::optional<scene::World::Landing> l) {
+#if defined(__ANDROID__)
+        loop_->post([this, l] {
+            if (closing_.load()) return;
+            map_->set_landing(l);
+        });
+#else
+        const std::scoped_lock lock(session_mutex_);
+        map_->set_landing(l);
+#endif
+    }
+
     /// The screen's haze, vignette and paper grain for the map from now on, on or off.
     void screen(bool haze, bool vignette, bool grain) {
         on_session([this, haze, vignette, grain] {
@@ -977,6 +991,18 @@ void native_painter(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean on) 
     if (core != nullptr) core->painter(on == JNI_TRUE);
 }
 
+void native_landing(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean has, jdouble latitude, jdouble longitude,
+                    jdouble bearing, jdouble pitch, jdouble distance) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return;
+    if (has != JNI_TRUE) {
+        core->landing(std::nullopt);
+        return;
+    }
+    core->landing(scene::World::Landing{
+        .latitude = latitude, .longitude = longitude, .bearing = bearing, .pitch = pitch, .distance = distance});
+}
+
 void native_screen(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean haze, jboolean vignette, jboolean grain) {
     Core* core = core_of(handle);
     if (core != nullptr) core->screen(haze == JNI_TRUE, vignette == JNI_TRUE, grain == JNI_TRUE);
@@ -1125,8 +1151,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 39>& methods() {
-    static const std::array<JNINativeMethod, 39> table{{
+const std::array<JNINativeMethod, 40>& methods() {
+    static const std::array<JNINativeMethod, 40> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1173,6 +1199,7 @@ const std::array<JNINativeMethod, 39>& methods() {
         method("moment", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_moment)),
         method("labels", "(JLjava/nio/ByteBuffer;JF)Ljava/lang/String;", fn(&native_labels)),
         method("screen", "(JZZZ)V", fn(&native_screen)),
+        method("landing", "(JZDDDDD)V", fn(&native_landing)),
         method("painter", "(JZ)V", fn(&native_painter)),
         method("wantedWindows", "(J)[J", fn(&native_wanted_windows)),
         method("windowBox", "(III)[D", fn(&native_window_box)),

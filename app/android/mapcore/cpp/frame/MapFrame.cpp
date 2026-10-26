@@ -132,6 +132,7 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
     builder_ = std::move(*builder);
     world_ = std::move(*world);
     if (wake_) world_->set_wake(wake_);
+    world_->set_landing(landing_);
     // The coarser pack around the one drawn: the smallest listed pack that holds it (the canal ring around the
     // Westerkerk), D3.
     world_->set_coarser_enclosing(true);
