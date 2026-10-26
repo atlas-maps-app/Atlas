@@ -129,7 +129,10 @@ gpu::Result<HeapRange> Heaps::allocate(HeapKind kind, std::uint32_t bytes, std::
             return gpu::fail(std::format("the heaps cannot grow by {} bytes for {}: {} of their {} bytes are used",
                                          bytes, name_of(kind), used, budget_.total));
         }
-        if (vk::DeviceSize{placed->offset} + placed->size <= buffer_.size()) return *placed;
+        // The capacity from its atomic: buffer_ is a growth's to swap (under the exclusive lock, which this does not
+        // hold). Seen too small, the range takes the slow path below, which looks again under that lock; seen grown,
+        // the range is the new buffer's, which its writer reaches once the growth lets the lock go.
+        if (vk::DeviceSize{placed->offset} + placed->size <= capacity_.load(std::memory_order_acquire)) return *placed;
         range = *placed;
     }
     // Beyond the buffer: it grows to hold the range, with no writer active (the exclusive lock), unless another
