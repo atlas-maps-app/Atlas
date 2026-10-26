@@ -24,6 +24,7 @@ ThingTwin::ThingTwin(const frame::FrameState& state, const tiles::Style& style, 
       tones_(passes::thing_tones((state.block.theme.flags.x & shaders::THEME_NIGHT) != 0U, style.things)),
       night_((state.block.theme.flags.x & shaders::THEME_NIGHT) != 0U),
       weather_((state.block.theme.flags.x & shaders::THEME_WEATHER) != 0U),
+      wet_((state.block.theme.flags.x & shaders::THEME_WET) != 0U),
       focal_(state.view ? state.view->camera().focal() : 0.0) {
     // the objects group: the port's `<g stroke-linejoin="round">`, with its `mat` filter where the moment has weather
     const bool wx = (state.block.theme.flags.x & shaders::THEME_WEATHER) != 0U;
@@ -46,7 +47,7 @@ void ThingTwin::thing(const scene::CoverTile& tile, const passes::ThingTile& thi
     std::array<hlsl::uint4, shaders::THING_VECTORS> words{};
     std::memcpy(words.data(), heap.data() + at, sizeof words);
     const passes::ThingChoice choice =
-        passes::thing_choice(things.kinds[thing], things.posts[thing], depth, focal_, night_, weather_);
+        passes::thing_choice(things.kinds[thing], things.posts[thing], depth, focal_, night_, weather_, wet_);
     if (!choice.drawn) return;
     shaders::ThingJob j{};
     j.place = tile.place;
@@ -56,12 +57,15 @@ void ThingTwin::thing(const scene::CoverTile& tile, const passes::ThingTile& thi
     j.b = choice.b;
     j.c = choice.c;
     j.d = choice.d;
+    j.rx = choice.rx;
+    j.ry = choice.ry;
+    j.drop = choice.drop;
     const bool railing_piece = things.kinds[thing] == geometry::ThingKind::railing;
     const std::int32_t item = out_.item({.owner = railing_piece ? Owner::way : Owner::node,
                                          .id = things.ids[thing],
                                          .kind = std::string_view(railing_piece ? "railing" : "thing")});
     thing_records_.assign(shaders::thing_record_count(j.flags), shaders::tree_nothing());
-    side_record_ = shaders::tree_nothing();
+    side_records_.assign(shaders::thing_side_count(j.flags), shaders::tree_nothing());
     const shaders::FrameCamera& c = camera_;
     const hlsl::float3 foot = shaders::thing_foot(words[0]);
     const std::uint32_t kind = j.flags & shaders::THING_JOB_KIND;
@@ -92,7 +96,8 @@ void ThingTwin::thing(const scene::CoverTile& tile, const passes::ThingTile& thi
         rack(j, foot, kz, item);
     }
     if (records_ != nullptr) records_->insert(records_->end(), thing_records_.begin(), thing_records_.end());
-    if (sides_ != nullptr && shaders::thing_side_count(j.flags) > 0) sides_->push_back(side_record_);
+    // nearest first: a job's own the other way round too
+    if (sides_ != nullptr) sides_->insert(sides_->end(), side_records_.rbegin(), side_records_.rend());
 }
 
 void ThingTwin::lamp(const shaders::ThingJob& j, hlsl::float3 foot, float kz, std::int32_t item) {
@@ -104,6 +109,27 @@ void ThingTwin::lamp(const shaders::ThingJob& j, hlsl::float3 foot, float kz, st
     const hlsl::float2 p1 = shaders::css_of(c, k1);
     const float hw = j.b;
     const float hh = j.c;
+    const auto argb = [](std::uint32_t rgba) {
+        return (rgba & 0xFF00'FF00U) | ((rgba & 0xFFU) << 16U) | ((rgba >> 16U) & 0xFFU);
+    };
+    const std::uint32_t streak = (j.flags & shaders::THING_JOB_STREAK) != 0U ? 1U : 0U;
+    // on a wet night, first: '<ellipse cx="%.1f" cy="%.1f" rx="%.2f" ry="%.1f" fill="url(#streak)" opacity=".75"/>' at
+    // p0 + 2.6 s down
+    if (streak != 0U) {
+        const hlsl::float2 at = shaders::tree_printed(c, hlsl::float2{p0.x, p0.y + j.drop});
+        side_records_[0] = shaders::tree_streak(at, j.rx, j.ry, 0.75F, shaders::tree_depth(c, kz, j.slot, 0U));
+        const std::array<std::uint32_t, 3> colours{argb(shaders::TREE_STREAK_STOP0), argb(shaders::TREE_STREAK_STOP1),
+                                                   argb(shaders::TREE_STREAK_STOP2)};
+        const std::array<float, 3> offsets{0.0F, 0.5F, 1.0F};
+        const std::int32_t gradient = out_.gradient({.id = "streak",
+                                                     .radial = true,
+                                                     .coords = {0.5F, 0.5F, 0.5F, 0.5F, 0.5F},
+                                                     .units = Units::bounding_box,
+                                                     .offsets = offsets,
+                                                     .colours = colours});
+        out_.at(j.slot, objects_, item);
+        out_.ellipse({.fill = Paint::gradient(gradient)}, at.x, at.y, j.rx, j.ry, {.opacity = 0.75F});
+    }
     // the mast
     const hlsl::float2 m0 = shaders::tree_printed(c, p0);
     const hlsl::float2 m1 = shaders::tree_printed(c, p1);
@@ -139,7 +165,7 @@ void ThingTwin::lamp(const shaders::ThingJob& j, hlsl::float3 foot, float kz, st
         const hlsl::float2 g1{g0.x, g0.y + shaders::tree_print(c, hh * 0.6F)};
         const std::uint32_t glint = tones_[shaders::THING_TONE_GLINT];
         const auto opacity = std::bit_cast<float>(tones_[shaders::THING_TONE_GLINT_OPACITY]);
-        side_record_ =
+        side_records_[0] =
             shaders::tree_segment(g0, g1, 0.5F * j.d, 0U, glint, opacity, shaders::tree_depth(c, kz, j.slot, 4U));
         const std::array<Point, 2> glint_line{point(g0), point(g1)};
         out_.at(j.slot + 4, objects_, item);
@@ -149,10 +175,7 @@ void ThingTwin::lamp(const shaders::ThingJob& j, hlsl::float3 foot, float kz, st
     // at night its halo: '<circle cx="%.1f" cy="%.1f" r="%.1f" fill="url(#halo)"/>' about p1 + 0.5 hh
     if ((j.flags & shaders::THING_JOB_HALO) != 0U) {
         const hlsl::float2 h = shaders::tree_printed(c, hlsl::float2{p1.x, p1.y + hh * 0.5F});
-        side_record_ = shaders::tree_halo(h, j.d, shaders::tree_depth(c, kz, j.slot, 4U));
-        const auto argb = [](std::uint32_t rgba) {
-            return (rgba & 0xFF00'FF00U) | ((rgba & 0xFFU) << 16U) | ((rgba >> 16U) & 0xFFU);
-        };
+        side_records_[streak] = shaders::tree_halo(h, j.d, shaders::tree_depth(c, kz, j.slot, 4U));
         const std::array<std::uint32_t, 3> colours{argb(shaders::TREE_HALO_STOP0), argb(shaders::TREE_HALO_STOP1),
                                                    argb(shaders::TREE_HALO_STOP2)};
         const std::array<float, 3> offsets{0.0F, 0.35F, 1.0F};
@@ -220,7 +243,7 @@ void ThingTwin::bollard(const shaders::ThingJob& j, hlsl::float3 foot, float kz,
         const hlsl::float2 h{shaders::tree_print(c, p1.x - j.b), shaders::tree_print(c, p1.y)};
         const std::uint32_t head = tones_[shaders::THING_TONE_HEAD];
         const auto opacity = std::bit_cast<float>(tones_[shaders::THING_TONE_HEAD_OPACITY]);
-        side_record_ = shaders::tree_circle(h, j.c, head, opacity, shaders::tree_depth(c, kz, j.slot, 1U));
+        side_records_[0] = shaders::tree_circle(h, j.c, head, opacity, shaders::tree_depth(c, kz, j.slot, 1U));
         out_.at(j.slot + 1, objects_, item);
         out_.circle({.fill = paint(head)}, h.x, h.y, j.c, {.opacity = opacity});
     }

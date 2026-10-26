@@ -9,8 +9,8 @@
 // drawn thing; things_cs writes its records as the port draws it, every printed value snapped at rest:
 //   - a lamp: its mast from its foot to 4.2 m (round caps), its lantern (the quad from p1 ± hw down to p1 ± 0.7 hw at
 //     hh) and its cap (the triangle from p1 ± 1.2 hw up to 0.6 hh), by day its glint (0.4 hw left of p1, from 0.2 hh down
-//     0.6 hh, translucent; nothing where its mast's top or foot lies nearer than the near plane; its wet streak and its
-//     night halo come with the night);
+//     0.6 hh, translucent; nothing where its mast's top or foot lies nearer than the near plane), at night its halo,
+//     and on a wet night first its streak below its foot (both translucent);
 //   - a box (a bench's seat and back, a basket): its leg, the 1 px stroke from its foot to its height (where both
 //     project), and its top as face() draws it (Camera.poly's cut at the near plane, kept within 300 px of the frame,
 //     from 0.12 px² of area);
@@ -40,6 +40,7 @@ static const uint THING_JOB_NIGHT = 16u;
 static const uint THING_JOB_GLINT = 32u; // a lamp's glint (by day, s > 1.2)
 static const uint THING_JOB_HALO = 128u; // a lamp's halo (at night; its radius in d)
 static const uint THING_JOB_HEAD = 64u;  // a bollard's head (by day, s > 1)
+static const uint THING_JOB_STREAK = 65536u; // a lamp's wet streak (on a wet night; its radii and drop in rx, ry, drop)
 static const uint THING_JOB_POSTS_SHIFT = 8u; // a railing's piece's posts' gaps, bits 8 to 15
 static const uint THING_JOB_VECTORS = 5u;
 
@@ -84,8 +85,10 @@ inline uint thing_record_count(uint flags) {
     return 24u;
 }
 
+/// A thing's translucent records: a lamp's streak first, then its glint or its halo, a bollard's head.
 inline uint thing_side_count(uint flags) {
-    return (flags & (THING_JOB_GLINT | THING_JOB_HEAD | THING_JOB_HALO)) != 0u ? 1u : 0u;
+    uint n = (flags & (THING_JOB_GLINT | THING_JOB_HEAD | THING_JOB_HALO)) != 0u ? 1u : 0u;
+    return n + ((flags & THING_JOB_STREAK) != 0u ? 1u : 0u);
 }
 
 /// A thing as the points heap holds it: its foot, tile-local (a railing's piece: its first end at its foot's height).
@@ -111,7 +114,10 @@ struct ThingJob {
     float b;     // a lamp's hw, a bollard's head's offset (0.03 s); a railing's width (as printed) in a
     float c;     // a lamp's hh, a bollard's head's radius (as printed)
     float d;     // a lamp's glint's width by day, its halo's radius at night (as printed)
-    uint side;   // its translucent record
+    uint side;   // its first translucent record
+    float rx;    // a lamp's wet streak's radii (as printed) and its drop below the foot (2.6 s)
+    float ry;
+    float drop;
 };
 
 inline ThingJob thing_job(uint4 a, uint4 b, uint4 c, uint4 d, uint4 e) {
@@ -129,6 +135,9 @@ inline ThingJob thing_job(uint4 a, uint4 b, uint4 c, uint4 d, uint4 e) {
     j.c = asfloat(d.z);
     j.d = asfloat(d.w);
     j.side = e.x;
+    j.rx = asfloat(e.y);
+    j.ry = asfloat(e.z);
+    j.drop = asfloat(e.w);
     return j;
 }
 

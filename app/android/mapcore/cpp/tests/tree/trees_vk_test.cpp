@@ -131,6 +131,22 @@ namespace {
     return b;
 }
 
+/// The hour's weather on a wet night: the lamps' halos and their wet streaks.
+[[nodiscard]] style::ThemeBlock wet_night() {
+    style::ThemeBlock b = night();
+    b.flags |= style::theme_flag::wet | style::theme_flag::wet_set;
+    return b;
+}
+
+/// A lamp's wet streak's colour and opacity at `t` of its ellipse (tree_sides_fs's streak_at, in the same floats).
+[[nodiscard]] hlsl::float4 streak_at(float t) {
+    const hlsl::float4 s0 = shaders::tree_rgba(shaders::TREE_STREAK_STOP0);
+    const hlsl::float4 s1 = shaders::tree_rgba(shaders::TREE_STREAK_STOP1);
+    const hlsl::float4 s2 = shaders::tree_rgba(shaders::TREE_STREAK_STOP2);
+    if (t <= 0.5F) return s0 + ((s1 - s0) * (t / 0.5F));
+    return s1 + ((s2 - s1) * std::clamp((t - 0.5F) / 0.5F, 0.0F, 1.0F));
+}
+
 /// A lamp's halo's colour and opacity at `t` of its radius (tree_sides_fs's halo_at, in the same floats).
 [[nodiscard]] hlsl::float4 halo_at(float t) {
     const hlsl::float4 s0 = shaders::tree_rgba(shaders::TREE_HALO_STOP0);
@@ -411,7 +427,9 @@ struct Full {
         const std::uint32_t kind = r.a.x & shaders::TREE_KIND;
         if (kind == shaders::TREE_CIRCLE) {
             const bool crown = full != nullptr && (r.a.x & shaders::TREE_CROWN) != 0U;
-            add(f(r.b.x), f(r.b.y), f(r.b.z) + 1.0F + (crown ? static_cast<float>(full->reach) / cam.frame.z : 0.0F));
+            // a streak's ellipse: its larger radius
+            const float e = (r.a.x & shaders::TREE_STREAK) != 0U ? std::max(f(r.b.z), f(r.b.w)) : f(r.b.z);
+            add(f(r.b.x), f(r.b.y), e + 1.0F + (crown ? static_cast<float>(full->reach) / cam.frame.z : 0.0F));
         } else if (kind == shaders::TREE_SEGMENT) {
             add(f(r.b.x), f(r.b.y), f(r.c.x) + 1.0F);
             add(f(r.b.z), f(r.b.w), f(r.c.x) + 1.0F);
@@ -468,6 +486,14 @@ struct Full {
                                                        static_cast<double>(m.y) - static_cast<double>(a.y));
                         hit.near = (in && std::abs(d - static_cast<double>(std::bit_cast<float>(r.b.z))) <= tol) ||
                                    region_edge;
+                    } else if (kind == shaders::TREE_CIRCLE && (r.a.x & shaders::TREE_STREAK) != 0U) {
+                        // a lamp's wet streak: its ellipse
+                        const hlsl::float2 radii{std::bit_cast<float>(r.b.z), std::bit_cast<float>(r.b.w)};
+                        hit.inside = shaders::tree_ellipse_covers(s, a, radii);
+                        const double u = pymath::hypot(
+                            (static_cast<double>(s.x) - static_cast<double>(a.x)) / static_cast<double>(radii.x),
+                            (static_cast<double>(s.y) - static_cast<double>(a.y)) / static_cast<double>(radii.y));
+                        hit.near = std::abs(u - 1.0) * static_cast<double>(std::max(radii.x, radii.y)) <= tol;
                     } else if (kind == shaders::TREE_CIRCLE) {
                         hit.inside = shaders::tree_circle_covers(s, a, std::bit_cast<float>(r.b.z));
                         // within the tolerance of its boundary the GPU's float (which may fuse its multiply-adds)
@@ -546,6 +572,19 @@ struct Full {
                 const hlsl::float4 g = halo_at(std::sqrt((dx * dx) + (dy * dy)) / std::bit_cast<float>(r.b.z));
                 rgb = g.xyz;
                 alpha = g.w;
+            }
+            if ((r.a.x & shaders::TREE_STREAK) != 0U) {
+                // a lamp's wet streak: its gradient over its ellipse at the pixel's centre, at its opacity
+                const std::size_t pixel = k / n;
+                const std::size_t column = pixel % w;
+                const std::size_t row = pixel / w;
+                const hlsl::float2 centre{static_cast<float>(column) + 0.5F, static_cast<float>(row) + 0.5F};
+                const hlsl::float2 s = shaders::css_of_output(cam, centre);
+                const float dx = (s.x - std::bit_cast<float>(r.b.x)) / std::bit_cast<float>(r.b.z);
+                const float dy = (s.y - std::bit_cast<float>(r.b.y)) / std::bit_cast<float>(r.b.w);
+                const hlsl::float4 g = streak_at(std::sqrt((dx * dx) + (dy * dy)));
+                rgb = g.xyz;
+                alpha = g.w * opacity;
             }
             const hlsl::float3 c = in_full(r, k, rgb);
             const hlsl::float3 under = colour[k];
@@ -674,6 +713,16 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
                     MESSAGE(view << ": " << crowns << " crowns' circles under the crown filter");
                     CHECK(crowns > 100);
                 }
+                if ((th.flags & style::theme_flag::wet) != 0U && (th.flags & style::theme_flag::night) != 0U) {
+                    // a wet night: each drawn lamp's streak among the translucent ones, with its halo
+                    const auto streaks = std::ranges::count_if(
+                        glints, [](const shaders::TreeRecord& t) { return (t.a.x & shaders::TREE_STREAK) != 0U; });
+                    const auto halos = std::ranges::count_if(
+                        glints, [](const shaders::TreeRecord& t) { return (t.a.x & shaders::TREE_HALO) != 0U; });
+                    MESSAGE(view << ": " << streaks << " lamps' wet streaks");
+                    CHECK(streaks >= 5);
+                    CHECK(streaks == halos);
+                }
                 const std::string name = std::format("{} {} {}{}", view, gpu::name_of(config),
                                                      rest ? "at rest" : "moving", painter ? " (painter's order)" : "");
                 MESSAGE(name << ": " << stream.elements() << " elements of " << counts.jobs << " trees, "
@@ -717,6 +766,8 @@ TEST_CASE("trees: the Westerkerk home drawn on the host's Vulkan, pixel for pixe
     check_frames(home(1080, 2400, 1080.0 / 412.0), "home without weather", packs, dry(), 50);
     // after dark: the night's tones, and the lamps' halos (translucent, each its gradient at a pixel's centre)
     check_frames(home(1080, 2400, 1080.0 / 412.0), "home at night", packs, night(), 50);
+    // on a wet night each lamp's streak below its foot too (translucent, its gradient over its ellipse at .75)
+    check_frames(home(1080, 2400, 1080.0 / 412.0), "home on a wet night", packs, wet_night(), 50);
 }
 
 TEST_CASE(

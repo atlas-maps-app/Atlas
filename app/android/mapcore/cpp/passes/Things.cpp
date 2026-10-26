@@ -72,7 +72,7 @@ std::vector<hlsl::uint4> thing_words(const geometry::TileThings& things, double 
 }
 
 ThingChoice thing_choice(geometry::ThingKind kind, std::uint32_t posts, double depth, double focal, bool night,
-                         bool weather) {
+                         bool weather, bool wet) {
     ThingChoice c;
     const auto printed = [](double v) { return static_cast<float>(pymath::round(v, 2)); };
     if (kind == geometry::ThingKind::railing) {
@@ -105,6 +105,14 @@ ThingChoice thing_choice(geometry::ThingKind kind, std::uint32_t posts, double d
         if (night) {
             c.flags |= shaders::THING_JOB_HALO;
             c.d = static_cast<float>(pymath::round(pymath::max(4.0, 2.6 * s), 1));
+        }
+        // on a wet night first its streak: cy p0 + 2.6 * s, rx '%.2f' % max(0.5, 0.5 * s), ry '%.1f' % max(2.5, 3.4 *
+        // s)
+        if (night && wet) {
+            c.flags |= shaders::THING_JOB_STREAK;
+            c.rx = printed(pymath::max(0.5, 0.5 * s));
+            c.ry = static_cast<float>(pymath::round(pymath::max(2.5, 3.4 * s), 1));
+            c.drop = static_cast<float>(2.6 * s);
         }
         break;
     case geometry::ThingKind::bollard:
@@ -323,6 +331,7 @@ void Things::update(const frame::FrameState& state) {
     const std::uint32_t me = index();
     const bool night = (state.block.theme.flags.x & shaders::THEME_NIGHT) != 0U;
     const bool weather = (state.block.theme.flags.x & shaders::THEME_WEATHER) != 0U;
+    const bool wet = (state.block.theme.flags.x & shaders::THEME_WET) != 0U;
     const double focal = state.view->camera().focal();
     const std::span<const scene::CoverTile> tiles = state.cover->tiles();
     words_.clear();
@@ -333,7 +342,7 @@ void Things::update(const frame::FrameState& state) {
         const scene::PassTile& mine = t.drawn->passes[me];
         const ThingTile& things = *mine.cpu_as<ThingTile>();
         const ThingChoice choice =
-            thing_choice(things.kinds[d.thing], things.posts[d.thing], d.depth, focal, night, weather);
+            thing_choice(things.kinds[d.thing], things.posts[d.thing], d.depth, focal, night, weather, wet);
         if (!choice.drawn) continue;
         const std::uint32_t n = shaders::thing_record_count(choice.flags);
         if (records + n > max_records) continue;
@@ -355,17 +364,18 @@ void Things::update(const frame::FrameState& state) {
                                        bits(choice.c),
                                        bits(choice.d),
                                        side > 0 ? sides : 0U,
-                                       0U,
-                                       0U,
-                                       0U};
+                                       bits(choice.rx),
+                                       bits(choice.ry),
+                                       bits(choice.drop)};
         static_assert(std::size(words) == std::size_t{4} * shaders::THING_JOB_VECTORS);
         words_.insert(words_.end(), std::begin(words), std::end(words));
         records += n;
         sides += side;
     }
-    // the translucent ones far to near (painter's order): the jobs went nearest first
+    // the translucent ones far to near (painter's order): the jobs went nearest first, and a job's own keep their order
     for (std::size_t at = 0; at < words_.size(); at += std::size_t{4} * shaders::THING_JOB_VECTORS) {
-        if (shaders::thing_side_count(words_[at + 9]) > 0) words_[at + 16] = sides - 1 - words_[at + 16];
+        const std::uint32_t side = shaders::thing_side_count(words_[at + 9]);
+        if (side > 0) words_[at + 16] = sides - words_[at + 16] - side;
     }
     const auto jobs = static_cast<std::uint32_t>(words_.size() / (std::size_t{4} * shaders::THING_JOB_VECTORS));
     if (jobs == 0) return;

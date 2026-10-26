@@ -231,6 +231,21 @@ TEST_CASE("things: the gather's kinds, the render thread's choices and the momen
     CHECK(!thing_choice(ThingKind::railing, 6, 100, 700, false, false).drawn);
     CHECK(thing_choice(ThingKind::railing, 6, 600, 7000, false, true).drawn == false);
     CHECK(sh::thing_side_count(lamp.flags) == 1);
+    // on a wet night a lamp's streak first, then its halo: rx '%.2f' % 3.5, ry '%.1f' % 23.8, 2.6 s below its foot
+    const auto wet = thing_choice(ThingKind::lamp, 0, 100, 700, true, true, true);
+    CHECK((wet.flags & sh::THING_JOB_STREAK) != 0U);
+    CHECK((wet.flags & sh::THING_JOB_HALO) != 0U);
+    CHECK(sh::thing_side_count(wet.flags) == 2);
+    CHECK(wet.rx == static_cast<float>(3.5));
+    CHECK(wet.ry == static_cast<float>(23.8));
+    CHECK(wet.drop == static_cast<float>(2.6 * 7));
+    // at s = 2: rx 1, ry 6.8 (the radii's floors, .5 and 2.5, lie below furniture_px's 1.6)
+    const auto far = thing_choice(ThingKind::lamp, 0, 350, 700, true, true, true);
+    CHECK(far.rx == static_cast<float>(1.0));
+    CHECK(far.ry == static_cast<float>(6.8));
+    // by day, or dry, none
+    CHECK((thing_choice(ThingKind::lamp, 0, 100, 700, false, true, true).flags & sh::THING_JOB_STREAK) == 0U);
+    CHECK((thing_choice(ThingKind::lamp, 0, 100, 700, true, true, false).flags & sh::THING_JOB_STREAK) == 0U);
 }
 
 TEST_CASE("things: stage T of every bundled tile") {

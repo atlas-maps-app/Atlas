@@ -373,6 +373,13 @@ void thing_lamp(FrameCamera c, ThingJob j, float3 foot, float kz) {
     float2 p1 = css_of(c, k1);
     float hw = j.b;
     float hh = j.c;
+    uint streak = (j.flags & THING_JOB_STREAK) != 0u ? 1u : 0u;
+    if (streak != 0u) {
+        // on a wet night, first: '<ellipse cx="%.1f" cy="%.1f" rx="%.2f" ry="%.1f" fill="url(#streak)" opacity=".75"/>'
+        // at p0 + 2.6 s down
+        float2 at = {p0.x, p0.y + j.drop};
+        put_side(j.side, tree_streak(tree_printed(c, at), j.rx, j.ry, 0.75f, tree_depth(c, kz, j.slot, 0u)));
+    }
     put(j.first + 2u, tree_segment(tree_printed(c, p0), tree_printed(c, p1), 0.5f * j.a, TREE_ROUND,
                                    tree_tones[THING_TONE_MAST], 1.0f, tree_depth(c, kz, j.slot, 1u)));
     float2 l0 = {p1.x - hw, p1.y};
@@ -398,7 +405,7 @@ void thing_lamp(FrameCamera c, ThingJob j, float3 foot, float kz) {
     if ((j.flags & THING_JOB_HALO) != 0u) {
         // at night its halo: '<circle cx="%.1f" cy="%.1f" r="%.1f" fill="url(#halo)"/>' about p1 + 0.5 hh
         float2 h = {p1.x, p1.y + hh * 0.5f};
-        put_side(j.side, tree_halo(tree_printed(c, h), j.d, tree_depth(c, kz, j.slot, 4u)));
+        put_side(j.side + streak, tree_halo(tree_printed(c, h), j.d, tree_depth(c, kz, j.slot, 4u)));
     }
 }
 
@@ -489,8 +496,8 @@ void things_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     for (uint i = 0u; i < n; ++i) {
         put(j.first + i, tree_nothing());
     }
-    if (thing_side_count(j.flags) > 0u) {
-        put_side(j.side, tree_nothing());
+    for (uint i = 0u; i < thing_side_count(j.flags); ++i) {
+        put_side(j.side + i, tree_nothing());
     }
     FrameCamera c = frame.camera;
     float3 foot = thing_foot(points_heap[j.thing]);
@@ -557,7 +564,9 @@ float2 corner_of(TreeRecord r, uint i) {
             // the crown filter moves its pixels by whole device px, up to its reach
             e = e + float(tree_tones[TREE_TONE_CROWN_REACH]) / frame.camera.frame.z;
         }
-        float2 u = {(i == 1u || i == 2u) ? e : -e, i >= 2u ? e : -e};
+        // a streak's ellipse: its own radius along y
+        float ey = (r.a.x & TREE_STREAK) != 0u ? asfloat(r.b.w) + 1.0f : e;
+        float2 u = {(i == 1u || i == 2u) ? e : -e, i >= 2u ? ey : -ey};
         return at + u;
     }
     float2 a = {asfloat(r.b.x), asfloat(r.b.y)};
@@ -650,7 +659,8 @@ uint coverage_of(TreeOut v) {
     for (uint i = 0u; i < n; ++i) {
         float2 at = n == 4u ? tree_samples4[i] : (n == 2u ? tree_samples2[i] : float2(0.5f, 0.5f));
         float2 s = css_of_output(frame.camera, corner + at);
-        bool covered = kind == TREE_CIRCLE ? tree_circle_covers(s, v.shape.xy, v.shape.z)
+        bool covered = kind == TREE_CIRCLE ? ((word & TREE_STREAK) != 0u ? tree_ellipse_covers(s, v.shape.xy, v.shape.zw)
+                                                                         : tree_circle_covers(s, v.shape.xy, v.shape.z))
                                            : tree_segment_covers(s, v.shape.xy, v.shape.zw, v.kind.y, word);
         if (covered) {
             mask |= 1u << i;
@@ -720,8 +730,21 @@ float4 halo_at(float t) {
     return lerp(s1, s2, saturate((t - 0.35f) / 0.65f));
 }
 
-/// A translucent part (a trunk's sunlit side, a lamp's halo): its colour at its opacity (a halo's its gradient's at
-/// the pixel's centre), premultiplied, with mat's grain, on the samples its shape covers.
+/// A lamp's wet streak's colour and opacity at `t` of its ellipse: the `streak` gradient's stops at 0, .5 and 1
+/// interpolated in their encoded values.
+float4 streak_at(float t) {
+    float4 s0 = tree_rgba(TREE_STREAK_STOP0);
+    float4 s1 = tree_rgba(TREE_STREAK_STOP1);
+    float4 s2 = tree_rgba(TREE_STREAK_STOP2);
+    if (t <= 0.5f) {
+        return lerp(s0, s1, t / 0.5f);
+    }
+    return lerp(s1, s2, saturate((t - 0.5f) / 0.5f));
+}
+
+/// A translucent part (a trunk's sunlit side, a lamp's halo or its wet streak): its colour at its opacity (a halo's
+/// its gradient's at the pixel's centre, a streak's its gradient's at its opacity), premultiplied, with mat's grain, on
+/// the samples its shape covers.
 [shader("fragment")]
 TreeTarget tree_sides_fs(TreeOut v) {
     uint mask = coverage_of(v);
@@ -736,6 +759,13 @@ TreeTarget tree_sides_fs(TreeOut v) {
         float4 g = halo_at(sqrt(d.x * d.x + d.y * d.y) / v.shape.z);
         colour = g.rgb;
         alpha = g.a;
+    }
+    if ((uint(v.kind.x) & TREE_STREAK) != 0u) {
+        float2 css = css_of_output(frame.camera, v.position.xy);
+        float2 d = (css - v.shape.xy) / v.shape.zw;
+        float4 g = streak_at(sqrt(d.x * d.x + d.y * d.y));
+        colour = g.rgb;
+        alpha = g.a * v.kind.z;
     }
     TreeTarget o;
     float3 c = mat_colour(frame.camera, colour, v.position.xy, mat_on(frame));

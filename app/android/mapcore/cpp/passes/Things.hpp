@@ -61,9 +61,12 @@ struct ThingChoice {
     float b = 0;
     float c = 0;
     float d = 0;
+    float rx = 0; ///< a lamp's wet streak's radii (as printed) and its drop below the foot
+    float ry = 0;
+    float drop = 0;
 };
 [[nodiscard]] ThingChoice thing_choice(geometry::ThingKind kind, std::uint32_t posts, double depth, double focal,
-                                       bool night, bool weather);
+                                       bool night, bool weather, bool wet = false);
 
 /// The moment's colours (things.slangh's table, 0xBBGGRR; then the glint's and the head's opacities and the racks'
 /// width, their floats' bits; then the railings'): the port's by day or at night, a box's at night 0.3 of its colour,

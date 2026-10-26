@@ -69,12 +69,13 @@ private:
     std::array<std::uint32_t, 17> tones_{};
     bool night_ = false;
     bool weather_ = false;
+    bool wet_ = false;
     double focal_ = 0;
     std::int32_t objects_ = none;
     std::vector<shaders::TreeRecord>* records_ = nullptr;
     std::vector<shaders::TreeRecord>* sides_ = nullptr;
     std::vector<shaders::TreeRecord> thing_records_;
-    shaders::TreeRecord side_record_{};
+    std::vector<shaders::TreeRecord> side_records_; ///< the thing's translucent records, in the GPU's order
 };
 
 } // namespace atlas::twin

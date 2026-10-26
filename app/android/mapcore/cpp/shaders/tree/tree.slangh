@@ -106,6 +106,14 @@ static const uint TREE_HALO = 2048u;
 static const uint TREE_HALO_STOP0 = 0xB3C0E9FFu;
 static const uint TREE_HALO_STOP1 = 0x388AC9FFu;
 static const uint TREE_HALO_STOP2 = 0x0060B0FFu;
+/// A lamp's wet streak (draw_lamp on a wet night): a circle record whose b.z and b.w are its ellipse's rx and ry, its
+/// colour and opacity the `streak` radialGradient's over the ellipse's box at each pixel's centre (#FFE3AE at .95,
+/// #FFC27A at .45 at .5, #FFB060 at 0 at its edge: the weather's three stops, as wet comes only with the hour's
+/// weather), at the record's opacity.
+static const uint TREE_STREAK = 4096u;
+static const uint TREE_STREAK_STOP0 = 0xF2AEE3FFu;
+static const uint TREE_STREAK_STOP1 = 0x737AC2FFu;
+static const uint TREE_STREAK_STOP2 = 0x0060B0FFu;
 static const uint TREE_RECORD_VECTORS = 3u;
 /// The vertices a record draws: two triangles.
 static const uint TREE_RECORD_VERTICES = 6u;
@@ -298,6 +306,14 @@ inline TreeRecord tree_halo(float2 at, float radius, float depth) {
     return r;
 }
 
+/// A lamp's wet streak: the ellipse about `at` of radii `rx` and `ry`, in the `streak` gradient at `opacity`.
+inline TreeRecord tree_streak(float2 at, float rx, float ry, float opacity, float depth) {
+    TreeRecord r = tree_circle(at, rx, 0u, opacity, depth);
+    r.a.x = r.a.x | TREE_STREAK;
+    r.b.w = asuint(ry);
+    return r;
+}
+
 /// Circle record `r` under the crown filter of its tree's `region`.
 inline TreeRecord tree_crowned(TreeRecord r, int4 region) {
     TreeRecord o = r;
@@ -410,6 +426,13 @@ inline bool tree_circle_covers(float2 s, float2 at, float radius) {
     float dx = s.x - at.x;
     float dy = s.y - at.y;
     return (dx * dx) + (dy * dy) <= radius * radius;
+}
+
+/// Whether the ellipse about `at` of radii `radii` covers `s`.
+inline bool tree_ellipse_covers(float2 s, float2 at, float2 radii) {
+    float dx = (s.x - at.x) / radii.x;
+    float dy = (s.y - at.y) / radii.y;
+    return (dx * dx) + (dy * dy) <= 1.0f;
 }
 
 inline bool tree_segment_covers(float2 s, float2 a, float2 b, float half, uint caps) {
