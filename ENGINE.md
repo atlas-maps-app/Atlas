@@ -689,6 +689,10 @@ In this order. Each feature's derivation goes into the core's stage P, and each 
 ### 6. Finish the map
 - Markers, the route and the location dot, drawn by the core in the map's own frame.
 - Taps on buildings: a hit test against the tile's own buildings, giving the OSM id.
+- **The user's own edits, drawn at once** (FillIn and the painter after it: `cache/claude-session/scratchpad/briefs/app-fillin.md`; the app's EditQueue holds them until they are sent):
+  - An edit is data. The scene's elements take the pending edits' tags before the cut (`load/Scene`), and the affected tiles are cut again (`load/Cut.hpp`'s `WindowCut`) and swapped in, so a painted colour is drawn exactly as a mapped one (surface_colour). Once the next map update carries the edit, the overlay drops it.
+  - While a building is asked about, the frame draws it hatched, as the renders' truth lens hatches a guess, with the answer under consideration as a preview: the colour at once, the roof's shape with the next cut.
+  - Held by a scene test that applies an edit and finds the building's colour in the re-cut tile as a mapped one, and by the FillIn screen's shots.
 - **Power:** ADPF, and a short thermal ladder measured on the user's phone:
   - 2x MSAA while moving, where the GPU has it;
   - the offscreen passes at half resolution while moving;
