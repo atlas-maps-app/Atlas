@@ -166,8 +166,9 @@ gpu::Result<void> Things::prepare(const frame::PassContext& context) {
     using Stage = vk::ShaderStageFlagBits;
     const std::array bindings{
         gpu::Binding{.slot = 0, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eCompute},
-        gpu::Binding{
-            .slot = 1, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eCompute | Stage::eFragment},
+        gpu::Binding{.slot = 1,
+                     .type = vk::DescriptorType::eStorageBuffer,
+                     .stages = Stage::eCompute | Stage::eVertex | Stage::eFragment}, // trees_vs reads a crown's reach
         gpu::Binding{.slot = 2, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eCompute},
         gpu::Binding{.slot = 3, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eVertex},
         gpu::Binding{.slot = 4, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eCompute},

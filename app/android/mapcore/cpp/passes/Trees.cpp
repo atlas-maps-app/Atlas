@@ -6,6 +6,7 @@
 #include "frame/FrameLayout.hpp"
 #include "frame/Ranks.hpp"
 #include "frame/Selectors.hpp"
+#include "fx/Ripple.hpp"
 #include "gen/spirv/tree/draw.hpp"
 #include "gpu/Descriptors.hpp"
 #include "scene/Cover.hpp"
@@ -18,6 +19,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstring>
 
 namespace atlas::passes {
@@ -208,8 +210,9 @@ gpu::Result<void> Trees::prepare(const frame::PassContext& context) {
     using Stage = vk::ShaderStageFlagBits;
     const std::array bindings{
         gpu::Binding{.slot = 0, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eCompute},
-        gpu::Binding{
-            .slot = 1, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eCompute | Stage::eFragment},
+        gpu::Binding{.slot = 1,
+                     .type = vk::DescriptorType::eStorageBuffer,
+                     .stages = Stage::eCompute | Stage::eVertex | Stage::eFragment}, // the crowns' reach too
         gpu::Binding{.slot = 2, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eCompute},
         gpu::Binding{.slot = 3, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eVertex},
         gpu::Binding{.slot = 4, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eCompute},
@@ -412,7 +415,16 @@ void Trees::update(const frame::FrameState& state) {
     }
     const auto jobs = static_cast<std::uint32_t>(words_.size() / (std::size_t{4} * shaders::TREE_JOB_VECTORS));
     if (jobs == 0) return;
-    const std::array<std::uint32_t, 25> tones = tree_tones(state.block.theme, state.theme, style->trees);
+    // the tones, then the crown filter's displacement at the frame's filter scale (render/closeup.py's crown_filter,
+    // scale 10; DisplacementNode's srcX = x + fma(scaleForColor, channel, offset).toInt() for each of the 256 levels)
+    std::array<std::uint32_t, shaders::TREE_TONE_WORDS> tones{};
+    std::ranges::copy(tree_tones(state.block.theme, state.theme, style->trees), tones.begin());
+    const fx::RippleDisplacement crown = fx::ripple_displacement(10.0F, static_cast<float>(state.camera.density));
+    tones[shaders::TREE_TONE_CROWN_REACH] = static_cast<std::uint32_t>(crown.reach);
+    for (std::uint32_t c = 0; c < 256; ++c) {
+        const auto moved = static_cast<std::int32_t>(std::fma(crown.factor, static_cast<float>(c), crown.offset));
+        tones[shaders::TREE_TONE_CROWN_OFFSETS + c] = std::bit_cast<std::uint32_t>(moved);
+    }
     // into this frame slot's buffers (its previous frame has finished: its buffers and set are free)
     const std::uint32_t slot = state.slot % 2;
     using B = vk::BufferUsageFlagBits;

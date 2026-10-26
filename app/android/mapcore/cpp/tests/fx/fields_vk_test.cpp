@@ -87,10 +87,10 @@ void run_once(const gpu::Device& device, Record record) {
 
 /// The device's answers of `entry` (fields_check or mat_check) for `probes`, with the fields of `images` in set 1 as
 /// frame `frame` (every earlier one finished).
-std::vector<std::array<std::uint32_t, 2>> ask(const gpu::Device& device, const fx::FieldImages& images,
+std::vector<std::array<std::uint32_t, 4>> ask(const gpu::Device& device, const fx::FieldImages& images,
                                               frame::FrameLayout& layout, std::uint64_t frame, const char* entry,
                                               const std::vector<Probe>& probes) {
-    std::vector<std::array<std::uint32_t, 2>> out;
+    std::vector<std::array<std::uint32_t, 4>> out;
     const vk::raii::Device& d = device.handle();
     layout.set_image(frame::Global::noise_rgba, images.view(0), images.sampler());
     layout.set_image(frame::Global::noise_rg, images.view(1), images.sampler());
@@ -117,7 +117,7 @@ std::vector<std::array<std::uint32_t, 2>> ask(const gpu::Device& device, const f
     ATLAS_REQUIRE_OR_RETURN(out, pipeline.has_value(), pipeline.error().text());
 
     const vk::DeviceSize in_bytes = probes.size() * sizeof(Probe);
-    const vk::DeviceSize out_bytes = probes.size() * 8;
+    const vk::DeviceSize out_bytes = probes.size() * 16;
     auto in = device.memory().buffer(in_bytes, vk::BufferUsageFlagBits::eStorageBuffer, gpu::MemoryUse::upload);
     auto results = device.memory().buffer(out_bytes, vk::BufferUsageFlagBits::eStorageBuffer, gpu::MemoryUse::readback);
     ATLAS_REQUIRE_OR_RETURN(out, in.has_value() && results.has_value());
@@ -151,16 +151,16 @@ std::vector<std::array<std::uint32_t, 2>> ask(const gpu::Device& device, const f
     return out;
 }
 
-/// The seven bytes the fields hold at pixel `at` (rows from the top), as fields_check packs them.
-[[nodiscard]] std::array<std::uint32_t, 2> packed_at(const fx::ScreenFields& f, std::size_t at) {
-    const std::span<const std::uint8_t> rgba = f.rgba().subspan(at * 4, 4);
-    const std::span<const std::uint8_t> rg = f.rg().subspan(at * 2, 2);
-    const std::uint32_t first = static_cast<std::uint32_t>(rgba[0]) | (static_cast<std::uint32_t>(rgba[1]) << 8U) |
-                                (static_cast<std::uint32_t>(rgba[2]) << 16U) |
-                                (static_cast<std::uint32_t>(rgba[3]) << 24U);
-    const std::uint32_t second = static_cast<std::uint32_t>(rg[0]) | (static_cast<std::uint32_t>(rg[1]) << 8U) |
-                                 (static_cast<std::uint32_t>(f.r()[at]) << 16U);
-    return {first, second};
+/// The ten bytes the fields hold at pixel `at` (rows from the top), as fields_check packs them.
+[[nodiscard]] std::array<std::uint32_t, 4> packed_at(const fx::ScreenFields& f, std::size_t at) {
+    const auto word = [](std::span<const std::uint8_t> b) {
+        std::uint32_t w = 0;
+        for (std::size_t i = 0; i < b.size(); ++i) w |= static_cast<std::uint32_t>(b[i]) << (8U * i);
+        return w;
+    };
+    return {word(f.rgba().subspan(at * fx::rgba_bytes, fx::rgba_bytes)),
+            word(f.rg().subspan(at * fx::rg_bytes, fx::rg_bytes)), word(f.r().subspan(at * fx::r_bytes, fx::r_bytes)),
+            0U};
 }
 
 #if !defined(__ANDROID__)
@@ -214,7 +214,7 @@ TEST_CASE("the fields and the byte tables reach the shaders byte for byte, and m
         // The staging buffer until this frame has finished, and the last size's images until the one before.
         CHECK((*images)->retired() == (resized ? 2U : 1U));
 
-        // Every pixel's seven bytes.
+        // Every pixel's ten bytes.
         std::vector<Probe> every;
         every.reserve(static_cast<std::size_t>(size.width) * size.height);
         for (std::uint32_t y = 0; y < size.height; ++y) {

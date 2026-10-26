@@ -153,6 +153,33 @@ Argb ColourMatrix::apply(Argb p) const noexcept {
 
 namespace atlas::fx {
 
+std::span<const std::uint8_t, bytes::table_size> crown_table() noexcept {
+    static const std::array<std::uint8_t, bytes::table_size> table = [] {
+        // the tone: crown_filter's feColorMatrix over the tone's noise, of its red alone, opaque
+        const bytes::ColourMatrix tone({1.0F, 0.0F, 0.0F, 0.0F, 0.5F, 1.0F, 0.0F, 0.0F, 0.0F, 0.5F,
+                                        1.0F, 0.0F, 0.0F, 0.0F, 0.5F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F});
+        std::array<std::uint32_t, 256> t{};
+        for (std::uint32_t red = 0; red < 256; ++red) {
+            t[red] = bytes::channel(tone.apply(bytes::pack(255, red, red, red)), 16);
+        }
+        const std::span<const std::uint8_t, bytes::table_size> linear = bytes::to_linear();
+        const std::span<const std::uint8_t, bytes::table_size> srgb = bytes::to_srgb();
+        const float k1 = 1.0F / 255.0F;
+        std::array<std::uint8_t, bytes::table_size> out{};
+        for (std::uint32_t c = 0; c < 256; ++c) {
+            const auto i1 = static_cast<float>(linear[(std::size_t{255} << 8U) | c]);
+            for (std::uint32_t red = 0; red < 256; ++red) {
+                // the arithmetic composite as the port computes it: k2 i1 + k3 i2 + (i1 · i2) · k1, truncated
+                const float r = (i1 * static_cast<float>(t[red])) * k1;
+                const std::uint32_t v = !(r > 0.0F) ? 0U : std::min<std::uint32_t>(static_cast<std::uint32_t>(r), 255U);
+                out[(std::size_t{c} << 8U) | red] = srgb[(std::size_t{255} << 8U) | v];
+            }
+        }
+        return out;
+    }();
+    return table;
+}
+
 std::vector<std::uint8_t> gpu_tables() {
     std::vector<std::uint8_t> t(tables_bytes);
     std::ranges::copy(bytes::to_linear(), t.begin() + table_to_linear);
@@ -167,6 +194,7 @@ std::vector<std::uint8_t> gpu_tables() {
     };
     put(table_edge8, mat_edge_table(255));
     put(table_edge10, mat_edge_table(1023));
+    std::ranges::copy(crown_table(), t.begin() + table_crown);
     return t;
 }
 

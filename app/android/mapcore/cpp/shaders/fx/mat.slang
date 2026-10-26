@@ -1,7 +1,8 @@
 // The screen-wide fields and `mat` in the scene's shaders (plan-vector D5.4, D5.6, D10, K17a; CP/fx/FieldCache.hpp,
 // CP/fx/Mat.hpp). Set 1 holds the fields and the byte tables (CP/frame/FrameLayout.hpp), which FieldCache provides:
 //   noise_rgba (binding 7): mat's grey, the grain's premultiplied sRGB grey and alpha, the cloud shadows' red;
-//   noise_rg (binding 8): the ripple's red and green; noise_r (binding 9): the glints' red;
+//   noise_rg (binding 8): the ripple's red and green, the crowns' red and green; noise_r (binding 9): the glints' red,
+//   the crown tone's red;
 //   byte_tables (binding 10): bytes packed four to a uint, little-endian: the to-linear table at 0, the to-sRGB table
 //   at 65536, mat's opaque table at 131072, each indexed row · 256 + column.
 // The fields are the frame's upright device pixels; fx_pixel finds a fragment's. Every module that reads a field or a
@@ -28,6 +29,7 @@ static const uint FX_TABLE_TO_SRGB = 65536u;
 static const uint FX_TABLE_MAT = 131072u;
 static const uint FX_TABLE_EDGE8 = 196608u;
 static const uint FX_TABLE_EDGE10 = 197120u;
+static const uint FX_TABLE_CROWN = 199168u;
 
 [[vk::binding(7, 1)]] Sampler2D<float4> noise_rgba;
 [[vk::binding(8, 1)]] Sampler2D<float4> noise_rg;
@@ -110,7 +112,9 @@ uint fx_byte(float v) {
     return uint(v * 255.0f + 0.5f);
 }
 
-/// The fields' bytes at the upright pixel `p`: noise_rgba's four, noise_rg's two, noise_r's one.
+/// The fields' bytes at the upright pixel `p`: noise_rgba's four, the ripple's two (noise_rg's first), the glints' one
+/// (noise_r's first), and the crowns' three (noise_rg's last two and noise_r's second: the displacement's red and
+/// green, the tone's red).
 uint4 fx_rgba(int2 p) {
     int3 at = {p.x, p.y, 0};
     float4 t = noise_rgba.Load(at);
@@ -126,6 +130,24 @@ uint2 fx_rg(int2 p) {
 uint fx_r(int2 p) {
     int3 at = {p.x, p.y, 0};
     return fx_byte(noise_r.Load(at).r);
+}
+uint3 fx_crown(int2 p) {
+    int3 at = {p.x, p.y, 0};
+    float4 d = noise_rg.Load(at);
+    uint3 b = {fx_byte(d.b), fx_byte(d.a), fx_byte(noise_r.Load(at).g)};
+    return b;
+}
+
+/// The crown filter's colour of an opaque crown pixel (render/closeup.py's crown_filter; CP/fx/ByteTables.hpp's
+/// crown_table): each level of `colour` (0 to 1, at 8-bit levels) at the crown tone's byte `red` there.
+float3 crown_colour(float3 colour, uint red) {
+    uint r = uint(floor(colour.r * 255.0f + 0.5f));
+    uint g = uint(floor(colour.g * 255.0f + 0.5f));
+    uint b = uint(floor(colour.b * 255.0f + 0.5f));
+    float3 c = {float(fx_table_byte(FX_TABLE_CROWN + r * 256u + red)),
+                float(fx_table_byte(FX_TABLE_CROWN + g * 256u + red)),
+                float(fx_table_byte(FX_TABLE_CROWN + b * 256u + red))};
+    return c * (1.0f / 255.0f);
 }
 
 /// `mat`'s grey at the upright pixel `p`.
@@ -166,9 +188,9 @@ struct FxProbe {
 };
 
 [[vk::binding(0, 2)]] StructuredBuffer<FxProbe> fx_probes;
-[[vk::binding(1, 2)]] RWStructuredBuffer<uint2> fx_results;
+[[vk::binding(1, 2)]] RWStructuredBuffer<uint4> fx_results;
 
-/// Per probe: the seven bytes the fields hold at its pixel (rgba's four in x; rg's two and r's one in y).
+/// Per probe: the ten bytes the fields hold at its pixel (rgba's four in x, rg's four in y, r's two in z).
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void fields_check(uint3 id : SV_DispatchThreadID) {
@@ -182,7 +204,9 @@ void fields_check(uint3 id : SV_DispatchThreadID) {
     uint4 a = fx_rgba(p);
     uint2 b = fx_rg(p);
     uint c = fx_r(p);
-    uint2 out = {a.x | (a.y << 8u) | (a.z << 16u) | (a.w << 24u), b.x | (b.y << 8u) | (c << 16u)};
+    uint3 k = fx_crown(p);
+    uint4 out = {a.x | (a.y << 8u) | (a.z << 16u) | (a.w << 24u), b.x | (b.y << 8u) | (k.x << 16u) | (k.y << 24u),
+                 c | (k.z << 8u), 0u};
     fx_results[id.x] = out;
 }
 
@@ -201,7 +225,7 @@ void mat_check(uint3 id : SV_DispatchThreadID) {
     float3 levels = {float(probe.colour & 0xFFu), float((probe.colour >> 8u) & 0xFFu),
                      float((probe.colour >> 16u) & 0xFFu)};
     float3 m = mat_levels(levels, g);
-    uint2 out = {g | (uint(m.r) << 8u) | (uint(m.g) << 16u) | (uint(m.b) << 24u), 0u};
+    uint4 out = {g | (uint(m.r) << 8u) | (uint(m.g) << 16u) | (uint(m.b) << 24u), 0u, 0u, 0u};
     fx_results[id.x] = out;
 }
 

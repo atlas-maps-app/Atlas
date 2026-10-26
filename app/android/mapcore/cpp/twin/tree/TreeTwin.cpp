@@ -250,6 +250,21 @@ void TreeTwin::close_tree(const shaders::TreeJob& j, const shaders::TreeHeader& 
             }
         }
     }
+    // the crown under its filter (crown_filter), as trees_cs marks it: each circle with the region of the group's box
+    hlsl::float4 box = {1e30F, 1e30F, -1e30F, -1e30F};
+    bool any = false;
+    for (std::uint32_t i = 0; i < 3 * n && i < tree_records_.size(); ++i) {
+        if ((tree_records_[i].a.x & shaders::TREE_KIND) != shaders::TREE_CIRCLE) continue;
+        box = shaders::tree_crown_box(box, tree_records_[i]);
+        any = true;
+    }
+    if (any) {
+        const hlsl::int4 region = shaders::tree_crown_region(box, c.frame.z);
+        for (std::uint32_t i = 0; i < 3 * n && i < tree_records_.size(); ++i) {
+            if ((tree_records_[i].a.x & shaders::TREE_KIND) != shaders::TREE_CIRCLE) continue;
+            tree_records_[i] = shaders::tree_crowned(tree_records_[i], region);
+        }
+    }
     // the port's order: each slice's under or side tone's circles (groups 0 and 1), its lit tone's, its highlights'
     for (std::uint32_t slice = 0; slice < 3; ++slice) {
         const std::uint32_t from = slice == 0 ? 0U : (slice == 1 ? third : two_thirds);

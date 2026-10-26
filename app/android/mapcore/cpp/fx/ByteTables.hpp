@@ -122,16 +122,24 @@ namespace atlas::fx {
 
 /// Where each table begins in the byte tables' buffer, in bytes (shaders/fx/mat.slang's FX_TABLE_): the three 64 KB
 /// byte tables, then mat's edge levels (fx/Mat.hpp's mat_edge_table) for 8-bit outputs and for 10-bit ones, 16 bits an
-/// entry, little-endian.
+/// entry, little-endian, then the crowns' table (crown_table).
 inline constexpr std::uint32_t table_to_linear = 0;
 inline constexpr std::uint32_t table_to_srgb = 65536;
 inline constexpr std::uint32_t table_mat = 131072;
 inline constexpr std::uint32_t table_edge8 = 196608;
 inline constexpr std::uint32_t table_edge10 = table_edge8 + (256 * 2);
+inline constexpr std::uint32_t table_crown = table_edge10 + (1024 * 2);
 /// The byte tables' size in bytes.
-inline constexpr std::uint32_t tables_bytes = table_edge10 + (1024 * 2);
+inline constexpr std::uint32_t tables_bytes = table_crown + bytes::table_size;
 
-/// The byte tables as the GPU reads them: to_linear, to_srgb, mat's opaque table, then mat's edge levels.
+/// The crown filter's colour of an opaque pixel of a crown (render/closeup.py's crown_filter, SvgFilterRaster's steps):
+/// entry c · 256 + red for an sRGB level c of the crown's colour and the crown tone's field byte `red` there (the
+/// noise's red as the tone's colour matrix reads it). The colour in linear light (premultiplied, opaque), the tone the
+/// matrix's (1 0 0 0 .5 on each colour row: red + 127.5, and opaque), their arithmetic product (k1 = 1:
+/// float(c · t) · float(1 / 255), truncated), opaque (the `in` keeps it), written back as sRGB.
+[[nodiscard]] std::span<const std::uint8_t, bytes::table_size> crown_table() noexcept;
+
+/// The byte tables as the GPU reads them: to_linear, to_srgb, mat's opaque table, mat's edge levels, then the crowns'.
 [[nodiscard]] std::vector<std::uint8_t> gpu_tables();
 
 } // namespace atlas::fx

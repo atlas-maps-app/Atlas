@@ -16,6 +16,11 @@
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/PassRegistry.hpp"
+#include "fx/ByteTables.hpp"
+#include "fx/FieldCache.hpp"
+#include "fx/Fields.hpp"
+#include "fx/Mat.hpp"
+#include "fx/Ripple.hpp"
 #include "gpu/Frames.hpp"
 #include "gpu/Offscreen.hpp"
 #include "gpu/PipelineCache.hpp"
@@ -173,6 +178,7 @@ struct Scene {
     std::unique_ptr<gpu::Renderer> renderer;
     passes::Trees* trees = nullptr;
     passes::Things* things = nullptr;
+    std::shared_ptr<fx::FieldCache> fields; ///< the screen's fields, in full mode
     double now = 0;
     bool settled = false;
     bool lit = false;
@@ -180,7 +186,8 @@ struct Scene {
 
 [[nodiscard]] std::optional<Scene> make_scene(const test::Session& session, const gpu::PipelineCache& cache,
                                               const gpu::Configuration& config, std::uint32_t w, std::uint32_t h,
-                                              std::span<const PackFile> packs, std::uint32_t clear) {
+                                              std::span<const PackFile> packs, std::uint32_t clear,
+                                              std::shared_ptr<fx::FieldCache> fields = nullptr) {
     const gpu::Device& device = *session.device;
     Scene s;
     auto output = gpu::Offscreen::create(device, {.width = w, .height = h}, 2);
@@ -206,6 +213,10 @@ struct Scene {
     auto world = scene::World::create(device, s.builder->passes(), {.workers = 3, .clock = {}});
     ATLAS_REQUIRE_OR_RETURN(std::nullopt, world.has_value(), world.error().text());
     s.world = std::move(*world);
+    if (fields) {
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, s.world->add_globals(fields), "the fields' provider was not added");
+        s.fields = std::move(fields);
+    }
     for (const PackFile& pack : packs) {
         auto added = s.world->store().add({.id = pack.id, .kind = tiles::PackKind::bundled, .path = pack.path});
         ATLAS_REQUIRE_OR_RETURN(std::nullopt, added.has_value(), tiles::describe(added.error()));
@@ -216,14 +227,14 @@ struct Scene {
     return s;
 }
 
-/// Draws `cam` until the world has built every tile the cover wants, their fades and sun bits' fades over; the last
-/// frame's pixels.
-[[nodiscard]] std::optional<gpu::Pixels> draw(Scene& s, const style::CameraState& cam, const style::ThemeBlock& th) {
+/// Draws `cam` in `mode` until the world has built every tile the cover wants, their fades and sun bits' fades over
+/// (and the scene's fields bound, where it has them); the last frame's pixels.
+[[nodiscard]] std::optional<gpu::Pixels> draw(Scene& s, const style::CameraState& cam, const style::ThemeBlock& th,
+                                              frame::Mode mode = frame::Mode::structural) {
     int waited = 0;
     for (int n = 0; n < 81; ++n) {
         s.now += 0.25;
-        s.builder->set_inputs(
-            {.camera = cam, .theme = th, .seconds = s.now, .mode = frame::Mode::structural, .scene = s.world.get()});
+        s.builder->set_inputs({.camera = cam, .theme = th, .seconds = s.now, .mode = mode, .scene = s.world.get()});
         auto report = s.renderer->draw(0);
         if (!report) {
             FAIL("a frame failed: " << report.error().text());
@@ -233,8 +244,10 @@ struct Scene {
         if (s.settled && s.lit) break; // this frame drawn with every tile taken and lit
         s.world->residency().wait_idle();
         const scene::Cover& cover = *s.world->cover();
+        if (s.fields) s.fields->worker().wait_idle();
         s.settled = n > 4 && cover.missing() == 0 && !cover.tiles().empty() &&
-                    std::ranges::all_of(cover.tiles(), [](const scene::CoverTile& t) { return t.fade >= 1.0F; });
+                    std::ranges::all_of(cover.tiles(), [](const scene::CoverTile& t) { return t.fade >= 1.0F; }) &&
+                    (!s.fields || s.fields->bound_for(fx::size_of(cam.width_px, cam.height_px, cam.density)));
         s.lit = std::ranges::all_of(cover.tiles(), [](const scene::CoverTile& t) {
             return t.sun_base != scene::no_sun && t.sun.has_value() && t.sun_weight >= 1.0F;
         });
@@ -322,11 +335,31 @@ struct Compared {
     std::string first;
 };
 
+/// What full mode draws on top of the records' own shapes and colours (the screen's fields bound, with weather): `mat`
+/// on every part at its pixel's grey, and the crown filter on the crowns' circles (render/closeup.py's crown_filter):
+/// each sample's place moved by whole device px by the crowns' field at its pixel (`offsets`: the displacement's 256),
+/// kept where the moved place lies in the circle and the moved pixel in the tree's filter region, in the filter's
+/// colour at the crown tone's byte there (fx::crown_table).
+struct Full {
+    const fx::ScreenFields* fields = nullptr;
+    std::array<std::int32_t, 256> offsets{};
+    std::int32_t reach = 0;
+};
+
+/// A colour (0 to 1, at 8-bit levels) through a table of 256 rows by its level, at column `column`.
+[[nodiscard]] hlsl::float3 through(std::span<const std::uint8_t> table, hlsl::float3 c, std::uint32_t column) {
+    const auto at = [&](float v) {
+        const auto level = static_cast<std::uint32_t>(std::floor((v * 255.0F) + 0.5F));
+        return static_cast<float>(table[(std::size_t{level} << 8U) | column]) / 255.0F;
+    };
+    return {at(c.x), at(c.y), at(c.z)};
+}
+
 /// The GPU's frame `got` against the exact raster of the opaque `records` and then the `translucent` ones, each in the
-/// GPU's order.
+/// GPU's order; with `full`, in full mode.
 [[nodiscard]] Compared compare(const gpu::Pixels& got, std::span<const shaders::TreeRecord> records,
                                std::span<const shaders::TreeRecord> translucent, const shaders::FrameBlock& block,
-                               const gpu::Configuration& config, std::uint32_t clear) {
+                               const gpu::Configuration& config, std::uint32_t clear, const Full* full = nullptr) {
     const shaders::FrameCamera& cam = block.camera;
     const std::vector<hlsl::float2> samples = sample_positions(config.samples());
     const std::uint32_t w = got.width;
@@ -355,7 +388,8 @@ struct Compared {
         const auto f = [](std::uint32_t v) { return std::bit_cast<float>(v); };
         const std::uint32_t kind = r.a.x & shaders::TREE_KIND;
         if (kind == shaders::TREE_CIRCLE) {
-            add(f(r.b.x), f(r.b.y), f(r.b.z) + 1.0F);
+            const bool crown = full != nullptr && (r.a.x & shaders::TREE_CROWN) != 0U;
+            add(f(r.b.x), f(r.b.y), f(r.b.z) + 1.0F + (crown ? static_cast<float>(full->reach) / cam.frame.z : 0.0F));
         } else if (kind == shaders::TREE_SEGMENT) {
             add(f(r.b.x), f(r.b.y), f(r.c.x) + 1.0F);
             add(f(r.b.z), f(r.b.w), f(r.c.x) + 1.0F);
@@ -384,7 +418,31 @@ struct Compared {
                     Hit hit;
                     const hlsl::float2 a{std::bit_cast<float>(r.b.x), std::bit_cast<float>(r.b.y)};
                     const double tol = tolerance / static_cast<double>(cam.frame.z);
-                    if (kind == shaders::TREE_CIRCLE) {
+                    if (kind == shaders::TREE_CIRCLE && full != nullptr && (r.a.x & shaders::TREE_CROWN) != 0U) {
+                        // the crown filter: the pixel moved by the crowns' field there, within the tree's region
+                        const auto ux = static_cast<std::uint32_t>(x);
+                        const auto uy = static_cast<std::uint32_t>(y);
+                        const std::array<std::uint8_t, 2> rg = full->fields->at(fx::Field::crown, ux, uy);
+                        const std::int32_t ox = full->offsets[rg[0]];
+                        const std::int32_t oy = full->offsets[rg[1]];
+                        const std::int64_t sx = x + ox;
+                        const std::int64_t sy = y + oy;
+                        const auto region = [&](std::uint32_t v) { return std::bit_cast<std::int32_t>(v); };
+                        const bool in =
+                            sx >= region(r.c.x) && sy >= region(r.c.y) && sx < region(r.c.z) && sy < region(r.c.w);
+                        // the GPU's region may round a box's edge the other way (its float may fuse)
+                        const bool region_edge = std::abs(sx - region(r.c.x)) <= 1 ||
+                                                 std::abs(sy - region(r.c.y)) <= 1 ||
+                                                 std::abs(sx - region(r.c.z)) <= 1 || std::abs(sy - region(r.c.w)) <= 1;
+                        const hlsl::float2 shift = {static_cast<float>(ox) / cam.frame.z,
+                                                    static_cast<float>(oy) / cam.frame.z};
+                        const hlsl::float2 m = s + shift;
+                        hit.inside = in && shaders::tree_circle_covers(m, a, std::bit_cast<float>(r.b.z));
+                        const double d = pymath::hypot(static_cast<double>(m.x) - static_cast<double>(a.x),
+                                                       static_cast<double>(m.y) - static_cast<double>(a.y));
+                        hit.near = (in && std::abs(d - static_cast<double>(std::bit_cast<float>(r.b.z))) <= tol) ||
+                                   region_edge;
+                    } else if (kind == shaders::TREE_CIRCLE) {
                         hit.inside = shaders::tree_circle_covers(s, a, std::bit_cast<float>(r.b.z));
                         // within the tolerance of its boundary the GPU's float (which may fuse its multiply-adds)
                         // may decide otherwise
@@ -421,13 +479,23 @@ struct Compared {
             }
         }
     };
+    // full mode's colour of a sample of record `r` at sample index k: the crown filter's, then `mat`'s
+    const auto in_full = [&](const shaders::TreeRecord& r, std::size_t k, hlsl::float3 c) {
+        if (full == nullptr) return c;
+        const auto x = static_cast<std::uint32_t>((k / n) % w);
+        const auto y = static_cast<std::uint32_t>((k / n) / w);
+        if ((r.a.x & shaders::TREE_KIND) == shaders::TREE_CIRCLE && (r.a.x & shaders::TREE_CROWN) != 0U) {
+            c = through(fx::crown_table(), c, full->fields->at(fx::Field::crown_tone, x, y)[0]);
+        }
+        return through(fx::mat_table(), c, full->fields->at(fx::Field::mat, x, y)[0]);
+    };
     for (const shaders::TreeRecord& r : records) {
         const auto d = std::bit_cast<float>(r.a.w);
         each(r, [&](std::size_t k, Hit hit) {
             if (hit.near) edge[k] = 1;
             if (!hit.inside || !(d > depth[k])) return;
             depth[k] = d;
-            colour[k] = shaders::tree_rgb(r.a.y);
+            colour[k] = in_full(r, k, shaders::tree_rgb(r.a.y));
             covered[k] = 1;
         });
     }
@@ -435,10 +503,10 @@ struct Compared {
     for (const shaders::TreeRecord& r : translucent) {
         const auto d = std::bit_cast<float>(r.a.w);
         const auto opacity = std::bit_cast<float>(r.a.z);
-        const hlsl::float3 c = shaders::tree_rgb(r.a.y);
         each(r, [&](std::size_t k, Hit hit) {
             if (hit.near) edge[k] = 1;
             if (!hit.inside || !(d > depth[k])) return;
+            const hlsl::float3 c = in_full(r, k, shaders::tree_rgb(r.a.y));
             const hlsl::float3 under = colour[k];
             const hlsl::float3 over = (c * opacity) + (under * (1.0F - opacity));
             colour[k] = {std::round(over.x * 255.0F) / 255.0F, std::round(over.y * 255.0F) / 255.0F,
@@ -494,10 +562,23 @@ struct Compared {
 /// moment `th`, and holds every pixel to the exact raster of the twin's records; the twin emits at least `least`
 /// elements.
 void check_frames(const style::CameraState& cam, const std::string& view, std::span<const PackFile> packs,
-                  const style::ThemeBlock& th, std::size_t least) {
+                  const style::ThemeBlock& th, std::size_t least, frame::Mode mode = frame::Mode::structural) {
     auto session = test::open_session();
     if (!session) return;
     const gpu::Device& device = *session->device;
+    // full mode: the screen's fields bound (made here on the CPU too, for the raster), the crowns' displacement
+    const bool full = mode == frame::Mode::full;
+    std::shared_ptr<const fx::ScreenFields> cpu_fields;
+    Full filter;
+    if (full) {
+        cpu_fields = fx::make_fields(fx::size_of(cam.width_px, cam.height_px, cam.density), {.threads = 3});
+        filter.fields = cpu_fields.get();
+        const fx::RippleDisplacement d = fx::ripple_displacement(10.0F, static_cast<float>(cam.density));
+        filter.reach = d.reach;
+        for (std::uint32_t c = 0; c < 256; ++c) {
+            filter.offsets[c] = static_cast<std::int32_t>(std::fma(d.factor, static_cast<float>(c), d.offset));
+        }
+    }
     auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
     ATLAS_REQUIRE(cache.has_value(), cache.error().text());
     constexpr std::uint32_t clear = 0x808080;
@@ -512,13 +593,20 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
         if (!device.facts().supports(config.config)) continue;
         for (const bool painter : {false, true}) {
             for (const bool rest : {true, false}) {
+                if (full && (painter || !rest)) continue; // full mode at true depth, at rest
                 style::CameraState c = cam;
                 c.flags = rest ? (c.flags | style::camera_flag::rest) : (c.flags & ~style::camera_flag::rest);
-                auto made = make_scene(*session, *cache, config, c.width_px, c.height_px, packs, clear);
+                std::shared_ptr<fx::FieldCache> fields;
+                if (full) {
+                    auto f = fx::FieldCache::create(device, {.threads = 3});
+                    ATLAS_REQUIRE(f.has_value(), f.error().text());
+                    fields = std::move(*f);
+                }
+                auto made = make_scene(*session, *cache, config, c.width_px, c.height_px, packs, clear, fields);
                 ATLAS_REQUIRE(made.has_value());
                 Scene& s = *made;
                 s.builder->set_painter(painter);
-                const auto pixels = draw(s, c, th);
+                const auto pixels = draw(s, c, th, mode);
                 ATLAS_REQUIRE(pixels.has_value());
                 CHECK_MESSAGE(s.settled, view << ": the world did not settle");
                 twin::Stream stream;
@@ -535,7 +623,16 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
                 // the translucent lists as the GPU draws them, each far to near (the twins keep them nearest first)
                 std::vector<shaders::TreeRecord> translucent(sides.rbegin(), sides.rend());
                 translucent.insert(translucent.end(), glints.rbegin(), glints.rend());
-                const Compared r = compare(*pixels, records, translucent, s.builder->state().block, config, clear);
+                const Compared r = compare(*pixels, records, translucent, s.builder->state().block, config, clear,
+                                           full ? &filter : nullptr);
+                if (full) {
+                    // the frame drew its crowns under their filter: the fields bound, with weather
+                    CHECK((s.builder->state().block.info.x & shaders::FRAME_FIELDS) != 0U);
+                    const auto crowns = std::ranges::count_if(
+                        records, [](const shaders::TreeRecord& t) { return (t.a.x & shaders::TREE_CROWN) != 0U; });
+                    MESSAGE(view << ": " << crowns << " crowns' circles under the crown filter");
+                    CHECK(crowns > 100);
+                }
                 const std::string name = std::format("{} {} {}{}", view, gpu::name_of(config),
                                                      rest ? "at rest" : "moving", painter ? " (painter's order)" : "");
                 MESSAGE(name << ": " << stream.elements() << " elements of " << counts.jobs << " trees, "
@@ -577,6 +674,24 @@ TEST_CASE("trees: the Westerkerk home drawn on the host's Vulkan, pixel for pixe
     }
     check_frames(home(1080, 2400, 1080.0 / 412.0), "home", packs, sunny(), 50);
     check_frames(home(1080, 2400, 1080.0 / 412.0), "home without weather", packs, dry(), 50);
+}
+
+TEST_CASE(
+    "trees: the crowns under their filter in full mode at the Westerkerk home, pixel for pixel the exact raster's") {
+    // render/closeup.py's crown_filter where the fields are bound in full mode with weather: each crown's samples moved
+    // by the crowns' field, in its tone, and `mat` on every part, as the exact raster computes them from the CPU's
+    // fields
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the Westerkerk home is not drawn here");
+        return;
+    }
+    std::vector<PackFile> packs;
+    for (const char* name : {"amsterdam", "grachten"}) {
+        const std::filesystem::path path = std::filesystem::path(dir) / (std::string(name) + ".atlas");
+        if (std::filesystem::exists(path)) packs.push_back({.id = name, .path = path.string()});
+    }
+    check_frames(home(1080, 2400, 1080.0 / 412.0), "home in full mode", packs, sunny(), 50, frame::Mode::full);
 }
 
 TEST_CASE("trees: the Main board drawn on the host's Vulkan, pixel for pixel the exact shapes of its twin") {

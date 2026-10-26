@@ -43,6 +43,14 @@ void put(uint at, TreeRecord r) {
     tree_records_out[at * TREE_RECORD_VECTORS + 2u] = r.c;
 }
 
+TreeRecord written(uint at) {
+    TreeRecord r;
+    r.a = tree_records_out[at * TREE_RECORD_VECTORS];
+    r.b = tree_records_out[at * TREE_RECORD_VECTORS + 1u];
+    r.c = tree_records_out[at * TREE_RECORD_VECTORS + 2u];
+    return r;
+}
+
 void put_side(uint at, TreeRecord r) {
     tree_sides_out[at * TREE_RECORD_VECTORS] = r.a;
     tree_sides_out[at * TREE_RECORD_VECTORS + 1u] = r.b;
@@ -212,6 +220,25 @@ void close_tree(FrameCamera c, TreeJob j, TreeHeader t) {
             if (tree_ahead(c, m)) {
                 put(at, tree_circle(tree_printed(c, css_of(c, m)), tree_print(c, rr * 0.36f), high_tone, 1.0f,
                                          tree_depth(c, kz, j.slot, 3u + 4u * slice + 3u)));
+            }
+        }
+    }
+    // the crown under its filter (crown_filter): its circles marked, each with the region of the group's box
+    float4 box = {1e30f, 1e30f, -1e30f, -1e30f};
+    bool any = false;
+    for (uint i = j.first; i < j.first + 3u * n; ++i) {
+        TreeRecord r = written(i);
+        if ((r.a.x & TREE_KIND) == TREE_CIRCLE) {
+            box = tree_crown_box(box, r);
+            any = true;
+        }
+    }
+    if (any) {
+        int4 region = tree_crown_region(box, c.frame.z);
+        for (uint i = j.first; i < j.first + 3u * n; ++i) {
+            TreeRecord r = written(i);
+            if ((r.a.x & TREE_KIND) == TREE_CIRCLE) {
+                put(i, tree_crowned(r, region));
             }
         }
     }
@@ -493,7 +520,14 @@ struct TreeOut {
     nointerpolation float3 colour : COLOUR;
     nointerpolation float4 shape : TREE_SHAPE; // a circle's centre and radius; a limb's two ends
     nointerpolation float4 kind : TREE_KIND;   // its kind and caps, a segment's half width, its opacity
+    nointerpolation int4 region : TREE_REGION; // a crown's circle's filter region (device px)
 };
+
+/// Whether record word `word` draws under the crown filter this frame: a crown's circle, where `mat` runs (the fields
+/// bound in full mode, with weather: the renders' filters).
+bool crowned(uint word) {
+    return (word & TREE_KIND) == TREE_CIRCLE && (word & TREE_CROWN) != 0u && mat_on(frame);
+}
 
 /// Where a record that draws nothing puts its points: beyond the depth range, so its triangles are clipped away.
 static const float4 NOWHERE = {0.0f, 0.0f, 2.0f, 1.0f};
@@ -514,6 +548,10 @@ float2 corner_of(TreeRecord r, uint i) {
     if (kind == TREE_CIRCLE) {
         float2 at = {asfloat(r.b.x), asfloat(r.b.y)};
         float e = asfloat(r.b.z) + 1.0f;
+        if (crowned(r.a.x)) {
+            // the crown filter moves its pixels by whole device px, up to its reach
+            e = e + float(tree_tones[TREE_TONE_CROWN_REACH]) / frame.camera.frame.z;
+        }
         float2 u = {(i == 1u || i == 2u) ? e : -e, i >= 2u ? e : -e};
         return at + u;
     }
@@ -541,6 +579,7 @@ TreeOut place(TreeRecord r, uint vertex) {
     TreeOut o;
     o.shape = float4(0.0f);
     o.kind = float4(0.0f);
+    o.region = int4(0);
     if ((r.a.x & TREE_KIND) == TREE_NONE) {
         o.position = NOWHERE;
         o.colour = float3(0.0f);
@@ -554,6 +593,9 @@ TreeOut place(TreeRecord r, uint vertex) {
     o.colour = tree_rgb(r.a.y);
     o.shape = asfloat(r.b);
     o.kind = float4(float(r.a.x), asfloat(r.c.x), asfloat(r.a.z), 0.0f);
+    if (crowned(r.a.x)) {
+        o.region = int4(asint(r.c.x), asint(r.c.y), asint(r.c.z), asint(r.c.w));
+    }
     return o;
 }
 
@@ -612,15 +654,47 @@ uint coverage_of(TreeOut v) {
     return mask;
 }
 
-/// A tree's part: its colour with mat's grain, on the samples its shape covers.
+/// The samples of a crown's circle's fragment at `v` under the crown filter (render/closeup.py's crown_filter;
+/// SvgFilterRaster's DisplacementNode): the crowns' field at the fragment's upright pixel (`k`: its red and green)
+/// moves the pixel by whole device px, and the moved pixel shows the crown's layer there, so each sample keeps where
+/// its moved place lies in the circle and the moved pixel in the tree's filter region.
+uint crown_coverage(TreeOut v, uint3 k) {
+    int2 p = fx_pixel(frame.camera, v.position.xy);
+    int2 o = {asint(tree_tones[TREE_TONE_CROWN_OFFSETS + k.x]), asint(tree_tones[TREE_TONE_CROWN_OFFSETS + k.y])};
+    int2 s = p + o;
+    if (s.x < v.region.x || s.y < v.region.y || s.x >= v.region.z || s.y >= v.region.w) {
+        return 0u;
+    }
+    float2 shift = float2(float(o.x), float(o.y)) / frame.camera.frame.z;
+    float2 corner = floor(v.position.xy);
+    uint n = push.at.x;
+    uint mask = 0u;
+    for (uint i = 0u; i < n; ++i) {
+        float2 at = n == 4u ? tree_samples4[i] : (n == 2u ? tree_samples2[i] : float2(0.5f, 0.5f));
+        float2 m = css_of_output(frame.camera, corner + at) + shift;
+        if (tree_circle_covers(m, v.shape.xy, v.shape.z)) {
+            mask |= 1u << i;
+        }
+    }
+    return mask;
+}
+
+/// A tree's part: its colour with mat's grain, on the samples its shape covers; a crown's circle under the crown filter
+/// on the samples its moved places hold, in the filter's colour at the crown tone's byte there.
 [shader("fragment")]
 TreeTarget trees_fs(TreeOut v) {
-    uint mask = coverage_of(v);
+    bool crown = crowned(uint(v.kind.x));
+    uint3 k = uint3(0u);
+    if (crown) {
+        k = fx_crown(fx_pixel(frame.camera, v.position.xy));
+    }
+    uint mask = crown ? crown_coverage(v, k) : coverage_of(v);
     if (mask == 0u) {
         discard;
     }
+    float3 colour = crown ? crown_colour(v.colour, k.z) : v.colour;
     TreeTarget o;
-    o.colour = float4(mat_colour(frame.camera, v.colour, v.position.xy, mat_on(frame)), 1.0f);
+    o.colour = float4(mat_colour(frame.camera, colour, v.position.xy, mat_on(frame)), 1.0f);
     o.coverage = mask;
     return o;
 }

@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "20",
+  "version": "21",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -346,6 +346,21 @@
           "home sunny": "47fb0287f313b86f2fb14cfc29724208a98ef54dd83c76365826916b4528efc8",
           "home grey": "2ab0b5893219b04239dd4275323611baf41e05d0ed1840184200ebe23fcf3ec9",
           "home wet": "f44b8b2acc82d03de040522e25b651d809579484e6e94773110da710376249a4",
+          "home night": "4dd778d1508c4f8672b89e9aeb92e7753436d2612a95031f5c1dfc36bfbfa3ef",
+          "board sunny": "fc1eb0b06dfb149253df516b880264621229e0ad9a309cbb049a67897de91137",
+          "board grey": "5b89ad30bc6755ed38e90a510e6c7aeb75336b62a1e78573b797e2329b01f764",
+          "board wet": "83fdaa9c99d52de598c494bc9be492c809ad098a1a6c89e8409b2791503c3c00",
+          "board night": "d1a2c4e475801835a8e5b86b89383d7038497eaca5fd3cf7a0614231d1fb46c3"
+        }
+      }
+    },
+    "21": {
+      "note": "Step 4, the crowns' filter (render/closeup.py's crown_filter) where the fields are bound in full mode with weather: each crown's samples moved by whole device px by the crowns' field (seed 5, .15, 2 octaves) within the tree's filter region, in the filter's colour at the crown tone's field (seed 2, .42, 2 octaves): home sunny, home grey and home wet changed; the other five frames are version 20's (checked with the filter masked: 8 of 8 as version 20, the fields' new layout included).",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "ae74836d79d2bf30708fe7470dff6ff6ed8b7b3233d583118bf344537ec964e3",
+          "home grey": "f59d115c7338acadb5b6ca5d62e9711c58f2a147cc1a69ea771b7dae48964901",
+          "home wet": "ec77678ff00041706f060b072338c412e44a7d5c8c25e0d6f7d13b0060bf6f28",
           "home night": "4dd778d1508c4f8672b89e9aeb92e7753436d2612a95031f5c1dfc36bfbfa3ef",
           "board sunny": "fc1eb0b06dfb149253df516b880264621229e0ad9a309cbb049a67897de91137",
           "board grey": "5b89ad30bc6755ed38e90a510e6c7aeb75336b62a1e78573b797e2329b01f764",

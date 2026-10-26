@@ -79,6 +79,12 @@ static const uint TREE_TONE_GENERIC_MID = 21u; // unlit, then lit
 static const uint TREE_TONE_GENERIC_TRUNK = 23u;
 static const uint TREE_TONE_SIDE_OPACITY = 24u;
 static const uint TREE_TONES = 25u;
+/// After the tones the crown filter's displacement at the frame's filter scale (passes::Trees::update; render/
+/// closeup.py's crown_filter, scale 10): its reach in device px, then its offset in whole device px (int bits) for each
+/// of the crowns' field's 256 levels.
+static const uint TREE_TONE_CROWN_REACH = 25u;
+static const uint TREE_TONE_CROWN_OFFSETS = 26u;
+static const uint TREE_TONE_WORDS = 282u;
 
 /// A record's kind (its first word's low byte), and a segment's caps (its round ends; a butt end where the flag is
 /// clear).
@@ -90,6 +96,9 @@ static const uint TREE_KIND = 0xFFu;
 static const uint TREE_ROUND_START = 256u;
 static const uint TREE_ROUND_END = 512u;
 static const uint TREE_ROUND = 768u;
+/// A crown's circle under the crown filter (tree_close's clumps; not a small crown's): its record's c holds its tree's
+/// filter region (tree_crown_region).
+static const uint TREE_CROWN = 1024u;
 static const uint TREE_RECORD_VECTORS = 3u;
 /// The vertices a record draws: two triangles.
 static const uint TREE_RECORD_VERTICES = 6u;
@@ -250,6 +259,38 @@ inline TreeRecord tree_circle(float2 at, float radius, uint colour, float opacit
     r.b = b;
     r.c = uint4(0u);
     return r;
+}
+
+/// `box` (CSS px: x0, y0, x1, y1) grown by circle record `r`'s box (its centre less and plus its radius).
+inline float4 tree_crown_box(float4 box, TreeRecord r) {
+    float x = asfloat(r.b.x);
+    float y = asfloat(r.b.y);
+    float e = asfloat(r.b.z);
+    float4 b = {min(box.x, x - e), min(box.y, y - e), max(box.z, x + e), max(box.w, y + e)};
+    return b;
+}
+
+/// The crown filter's region of a tree whose crown's circles span `box` (CSS px), in whole device px at `density`
+/// (x0, y0 in it; x1, y1 past it): the filter's objectBoundingBox region (-12%, 124% of the box each way), floored and
+/// ceiled as SvgFilterRaster takes a region in filter pixels.
+inline int4 tree_crown_region(float4 box, float density) {
+    float w = box.z - box.x;
+    float h = box.w - box.y;
+    float x = box.x - (0.12f * w);
+    float y = box.y - (0.12f * h);
+    float x1 = x + (1.24f * w);
+    float y1 = y + (1.24f * h);
+    int4 r = {int(floor(x * density)), int(floor(y * density)), int(ceil(x1 * density)), int(ceil(y1 * density))};
+    return r;
+}
+
+/// Circle record `r` under the crown filter of its tree's `region`.
+inline TreeRecord tree_crowned(TreeRecord r, int4 region) {
+    TreeRecord o = r;
+    o.a.x = r.a.x | TREE_CROWN;
+    uint4 c = {uint(region.x), uint(region.y), uint(region.z), uint(region.w)};
+    o.c = c;
+    return o;
 }
 
 inline TreeRecord tree_quad(float2 p0, float2 p1, float2 p2, float2 p3, uint colour, float opacity, float depth) {
