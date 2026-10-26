@@ -31,6 +31,13 @@ class DestTest {
     }
 
     @Test
+    fun fillInRoundTripsAndNeedsItsBuilding() {
+        val d = Dest.FillIn("way", 266616341, 52.3756, 4.8845)
+        assertEquals(d, Dest.parse(d.route))
+        assertNull(Dest.parse("fillin?type=way&lat=52.0&lon=4.0"))
+    }
+
+    @Test
     fun aPlaceNeedsAPointOrAnId() {
         assertNull(Dest.parse("place?name=Nowhere"))
         assertEquals(Dest.Place(osmId = "n123"), Dest.parse("place?id=n123"))

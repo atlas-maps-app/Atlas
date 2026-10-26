@@ -331,4 +331,63 @@
     <string name="where_w_nature">Natuur</string>
     <string name="where_w_culture">Cultuur</string>
     <string name="where_w_odd">Apart</string>
+
+    <!-- Vul de gaten in (het FillIn-bord) -->
+    <string name="fillin_title">Vul de gaten in</string>
+    <string name="fillin_built">gebouwd %1$s</string>
+    <string name="fillin_height">%1$s m</string>
+    <string name="fillin_step">%1$d / %2$d</string>
+    <string name="fillin_step_done">klaar</string>
+    <string name="fillin_progress">Vraag %1$d van %2$d</string>
+    <string name="fillin_progress_done">Alle vragen beantwoord</string>
+    <string name="fillin_pin_colour">Kleur niet in de kaart</string>
+    <string name="fillin_pin_roof">Dakvorm niet in de kaart</string>
+    <string name="fillin_pin_answer">%1$s?</string>
+    <string name="fillin_pin_edit">Jouw wijziging</string>
+    <string name="fillin_question">VRAAG %1$d VAN %2$d</string>
+    <string name="fillin_guess">%1$s is een gok</string>
+    <string name="fillin_colour_question">Welke kleur heeft de gevel?</string>
+    <string name="fillin_colour_brown">Bruine baksteen</string>
+    <string name="fillin_colour_red">Rode baksteen</string>
+    <string name="fillin_colour_white">Wit geschilderd</string>
+    <string name="fillin_colour_sand">Zandsteen</string>
+    <string name="fillin_colour_black">Zwart geschilderd</string>
+    <string name="fillin_colour_hint">Antwoord alleen wat je vanaf de straat ziet. Een verkeerde kleur is erger dan geen.</string>
+    <string name="fillin_next">Volgende</string>
+    <string name="fillin_cant_tell">Weet ik niet</string>
+    <string name="fillin_back_colour">← kleur</string>
+    <string name="fillin_roof_question">Welke vorm heeft het dak, gezien vanaf de straat?</string>
+    <string name="fillin_roof_gabled">Puntgevel naar de straat</string>
+    <string name="fillin_roof_hipped">Schilddak</string>
+    <string name="fillin_roof_flat">Plat</string>
+    <string name="fillin_roof_hint">Trap-, hals- en tuitgevels tellen allemaal als puntgevel naar de straat.</string>
+    <string name="fillin_roof_word">dak: %1$s</string>
+    <string name="fillin_review">Nakijken</string>
+    <string name="fillin_edit_head">JOUW WIJZIGING VOOR OPENSTREETMAP</string>
+    <string name="fillin_change">wijzig</string>
+    <string name="fillin_nothing">nog niets toe te voegen</string>
+    <string name="fillin_still_guessed">Hierna nog gegokt: %1$s</string>
+    <string name="fillin_send_note">Verstuurd met je OpenStreetMap-account zodra je op wifi bent. Wijzigingen zijn openbaar en tonen je gebruikersnaam.</string>
+    <string name="fillin_send_note_local">Blijft op deze telefoon tot je inlogt bij OpenStreetMap. Wijzigingen zijn openbaar en tonen je gebruikersnaam.</string>
+    <plurals name="fillin_send">
+        <item quantity="one">Verstuur %d tag</item>
+        <item quantity="other">Verstuur %d tags</item>
+    </plurals>
+    <string name="fillin_leave">Laat het voor een ander</string>
+    <string name="fillin_done_sent">In de wachtrij · bedankt</string>
+    <string name="fillin_done_skipped">Overgeslagen, geen probleem</string>
+    <string name="fillin_done_sent_sub">Gaat op wifi naar OpenStreetMap: %1$s</string>
+    <string name="fillin_done_local_sub">Blijft op deze telefoon tot je inlogt: %1$s</string>
+    <string name="fillin_done_skipped_sub">Het blijft een vraag voor de volgende voorbijganger</string>
+    <string name="fillin_done_note">Na de volgende kaartupdate tekent ieders levende kaart het zo.</string>
+    <string name="fillin_back_map">Terug naar de levende kaart</string>
+    <string name="fillin_more">Meer vragen</string>
+    <string name="fillin_offline">Vul de gaten in leest het gebouw uit OpenStreetMap: ga online.</string>
+    <string name="fillin_gone">OpenStreetMap heeft dit gebouw niet meer.</string>
+    <string name="fillin_nothing_open">Niets aan dit gebouw is nog een gok.</string>
+    <string name="whatshere_fillin">Vul de gaten in</string>
+    <plurals name="fillin_more_tags">
+        <item quantity="one">… nog %d tag</item>
+        <item quantity="other">… nog %d tags</item>
+    </plurals>
 </resources>

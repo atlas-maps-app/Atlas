@@ -44,6 +44,7 @@ class RouteArgs(val values: Map<String, String>) {
     fun str(key: String, default: String): String = values[key] ?: default
     fun double(key: String): Double? = values[key]?.toDoubleOrNull()
     fun int(key: String): Int? = values[key]?.toIntOrNull()
+    fun long(key: String): Long? = values[key]?.toLongOrNull()
     fun bool(key: String, default: Boolean = false): Boolean = values[key]?.toBooleanStrictOrNull() ?: default
 
     /** A point from `<prefix>lat` and `<prefix>lon`, or null when either is missing. */

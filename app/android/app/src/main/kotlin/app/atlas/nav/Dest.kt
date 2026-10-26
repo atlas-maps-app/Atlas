@@ -649,6 +649,20 @@ sealed interface Dest {
         override fun Content(nav: Navigator) = app.atlas.ui.search.QuestsScreen(this, nav)
     }
 
+    /**
+     * Fill in the gaps (the FillIn board): one building's open questions, its front's colour and its roof's shape, asked
+     * over the living map at [lat] [lon], then the user's edit to OpenStreetMap to review and send. [type] and [id] name
+     * the building's element ("way" 266616341).
+     */
+    data class FillIn(val type: String, val id: Long, val lat: Double, val lon: Double) : Dest {
+        val at: LatLon get() = LatLon(lat, lon)
+        override val route get() = Routes.build("fillin", "type" to type, "id" to id, "lat" to lat, "lon" to lon)
+        override val tab get() = Tab.MINE
+
+        @Composable
+        override fun Content(nav: Navigator) = app.atlas.ui.search.FillInScreen(this, nav)
+    }
+
     /** Where to?: the wheel of ideas for what to do around here. */
     data object Where : Dest {
         override val route get() = "where"
@@ -723,6 +737,13 @@ sealed interface Dest {
             "lists" to { a -> Lists(a.int("id")) },
             "ask" to { a -> Ask(a.str("q", "")) },
             "quests" to { a -> Quests(a.double("lat"), a.double("lon")) },
+            "fillin" to { a ->
+                val type = a.str("type")
+                val id = a.long("id")
+                val lat = a.double("lat")
+                val lon = a.double("lon")
+                if (type == null || id == null || lat == null || lon == null) null else FillIn(type, id, lat, lon)
+            },
             "where" to { _ -> Where },
         )
 

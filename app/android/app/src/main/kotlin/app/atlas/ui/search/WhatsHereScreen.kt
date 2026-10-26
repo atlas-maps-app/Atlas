@@ -227,6 +227,15 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
                 }
                 Coordinates(p)
                 NoteCard(state.note, onWrite = { writing = true })
+                // a building whose colour or roof is still a guess: its questions over the living map (the FillIn board)
+                facts?.spot?.takeIf { it.tags["building"] != null && FillIn.asks(it.tags).isNotEmpty() }?.let { b ->
+                    b.id?.let { id ->
+                        app.atlas.ui.kit.Chip(
+                            stringResource(R.string.whatshere_fillin), symbol = "ui-building", symbolTint = c.caution,
+                            onClick = { nav.go(Dest.FillIn(id.type.name.lowercase(), id.id, b.location.lat, b.location.lon)) },
+                        )
+                    }
+                }
                 app.atlas.ui.kit.Chip(
                     stringResource(R.string.whatshere_quests), symbol = "ui-help", symbolTint = c.caution,
                     onClick = { nav.go(Dest.Quests(p.lat, p.lon)) },

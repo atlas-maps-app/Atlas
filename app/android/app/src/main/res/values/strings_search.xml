@@ -331,4 +331,63 @@
     <string name="where_w_nature">Nature</string>
     <string name="where_w_culture">Culture</string>
     <string name="where_w_odd">Odd</string>
+
+    <!-- Fill in the gaps (the FillIn board) -->
+    <string name="fillin_title">Fill in the gaps</string>
+    <string name="fillin_built">built %1$s</string>
+    <string name="fillin_height">%1$s m</string>
+    <string name="fillin_step">%1$d / %2$d</string>
+    <string name="fillin_step_done">done</string>
+    <string name="fillin_progress">Question %1$d of %2$d</string>
+    <string name="fillin_progress_done">Every question answered</string>
+    <string name="fillin_pin_colour">Colour not mapped</string>
+    <string name="fillin_pin_roof">Roof shape not mapped</string>
+    <string name="fillin_pin_answer">%1$s?</string>
+    <string name="fillin_pin_edit">Your edit</string>
+    <string name="fillin_question">QUESTION %1$d OF %2$d</string>
+    <string name="fillin_guess">%1$s is a guess</string>
+    <string name="fillin_colour_question">What colour is the front?</string>
+    <string name="fillin_colour_brown">Brown brick</string>
+    <string name="fillin_colour_red">Red brick</string>
+    <string name="fillin_colour_white">Painted white</string>
+    <string name="fillin_colour_sand">Sandstone</string>
+    <string name="fillin_colour_black">Painted black</string>
+    <string name="fillin_colour_hint">Only answer what you can see from the street. A wrong colour is worse than none.</string>
+    <string name="fillin_next">Next</string>
+    <string name="fillin_cant_tell">Can’t tell</string>
+    <string name="fillin_back_colour">← colour</string>
+    <string name="fillin_roof_question">What shape is the roof, seen from the street?</string>
+    <string name="fillin_roof_gabled">Gable to the street</string>
+    <string name="fillin_roof_hipped">Hipped</string>
+    <string name="fillin_roof_flat">Flat</string>
+    <string name="fillin_roof_hint">Step, neck and spout gables all count as a gable to the street.</string>
+    <string name="fillin_roof_word">%1$s roof</string>
+    <string name="fillin_review">Review</string>
+    <string name="fillin_edit_head">YOUR EDIT TO OPENSTREETMAP</string>
+    <string name="fillin_change">change</string>
+    <string name="fillin_nothing">nothing to add yet</string>
+    <string name="fillin_still_guessed">Still guessed after this: %1$s</string>
+    <string name="fillin_send_note">Sent with your OpenStreetMap account next time you are on Wi-Fi. Edits are public and show your user name.</string>
+    <string name="fillin_send_note_local">Kept on this phone until you sign in to OpenStreetMap. Edits are public and show your user name.</string>
+    <plurals name="fillin_send">
+        <item quantity="one">Send %d tag</item>
+        <item quantity="other">Send %d tags</item>
+    </plurals>
+    <string name="fillin_leave">Leave it for someone else</string>
+    <string name="fillin_done_sent">Queued · thank you</string>
+    <string name="fillin_done_skipped">Skipped, no problem</string>
+    <string name="fillin_done_sent_sub">Goes to OpenStreetMap on Wi-Fi: %1$s</string>
+    <string name="fillin_done_local_sub">Kept on this phone until you sign in: %1$s</string>
+    <string name="fillin_done_skipped_sub">It stays a question for the next person who passes</string>
+    <string name="fillin_done_note">After the next map update everyone’s living map draws it this way.</string>
+    <string name="fillin_back_map">Back to the living map</string>
+    <string name="fillin_more">More quests</string>
+    <string name="fillin_offline">Fill in the gaps reads the building from OpenStreetMap: go online.</string>
+    <string name="fillin_gone">OpenStreetMap no longer has this building.</string>
+    <string name="fillin_nothing_open">Nothing about this building is a guess any more.</string>
+    <string name="whatshere_fillin">Fill in the gaps</string>
+    <plurals name="fillin_more_tags">
+        <item quantity="one">… %d more tag</item>
+        <item quantity="other">… %d more tags</item>
+    </plurals>
 </resources>
