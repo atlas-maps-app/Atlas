@@ -227,6 +227,15 @@ struct Glint {
 };
 
 /// A band of the drizzle's rings (water_layer's `<rect fill="url(#rings)">`, one per glint band at eye level): its rows
+/// A street lamp's pool at night (amsterdam.py:847: `<ellipse fill="url(#pool)">` of 10 m about its foot): its centre
+/// and radii in CSS px, as the SVG prints them at rest.
+struct LampPool {
+    double cx = 0;
+    double cy = 0;
+    double rx = 0;
+    double ry = 0;
+};
+
 /// (CSS px, as the SVG prints the rect at rest) and the pattern's transform there, translate(tx 0) scale(kx ky).
 struct RingBand {
     double y0 = 0;
@@ -324,6 +333,8 @@ struct GroundFrame {
     std::vector<Glint> glints;
     /// The drizzle's rings on the water this frame (th['wet']): its bands.
     std::vector<RingBand> ring_bands;
+    /// The street lamps' pools at night (S['nodes']'s order across the drawn tiles): each ellipse (CSS px).
+    std::vector<LampPool> lamp_pools;
     /// The glints' rect this frame (with weather, where the water is drawn, at a map pitch, in full mode), and its
     /// opacity.
     bool wind_glints = false;
@@ -551,6 +562,7 @@ public:
     /// The tests' look at the sun's glitter and the drizzle's rings: from the next frame on, none.
     void draw_glitter(bool draw) noexcept { no_glitter_ = !draw; }
     void draw_rings(bool draw) noexcept { no_rings_ = !draw; }
+    void draw_pools(bool draw) noexcept { no_pools_ = !draw; }
     /// The tests' look at the reflections' ripple: from the next frame on, the reflections drawn without it (as where
     /// the fields are not bound).
     void draw_ripple(bool draw) noexcept { no_ripple_ = !draw; }
@@ -581,6 +593,7 @@ public:
         phase_water_rings = 10,
         phase_ripple = 11,
         phase_water_glints = 12,
+        phase_pools = 13,
     };
 
     /// The pipelines, their layout and the pass's descriptor sets (Ground.cpp).
@@ -589,7 +602,7 @@ public:
     struct Words;
 
 private:
-    static constexpr std::array<frame::Phase, 13> phase_list{{
+    static constexpr std::array<frame::Phase, 14> phase_list{{
         {.slot = frame::Slot::offscreen, .order = 0, .id = phase_shadow_mask},
         {.slot = frame::Slot::offscreen, .order = 1, .id = phase_ripple},
         {.slot = frame::Slot::ground, .order = 0, .id = phase_opaque},
@@ -603,6 +616,7 @@ private:
         {.slot = frame::Slot::translucent, .order = ground_order::over, .id = phase_over},
         {.slot = frame::Slot::translucent, .order = ground_order::marks_road, .id = phase_marks},
         {.slot = frame::Slot::translucent, .order = ground_order::shadows, .id = phase_shadows},
+        {.slot = frame::Slot::translucent, .order = ground_order::pools, .id = phase_pools},
     }};
 
     // Ground.cpp
@@ -720,6 +734,12 @@ private:
     void decide_rings(const view::Camera& cam, const frame::FrameState& state);
     /// The rings' tile (its rings and their grid) and the bands into the frame's words.
     void write_rings(std::vector<std::uint32_t>& words);
+    // Pools.cpp
+    void decide_pools(const view::Camera& cam);
+    void write_pools(std::vector<std::uint32_t>& words);
+    void record_pools(const frame::Recording& r);
+    void emit_pools(twin::Stream& out) const;
+    [[nodiscard]] gpu::Result<void> make_pool_pipelines(const frame::PassContext& context, Pipelines& p) const;
     void record_rings(const frame::Recording& r);
     /// The rings' rects (`<rect fill="url(#rings)" opacity=".55">`) in the water's clip group `water`.
     void emit_rings(const frame::FrameState& state, twin::Stream& out, std::int32_t water) const;
@@ -748,6 +768,7 @@ private:
     bool no_reflections_ = false;
     bool no_glitter_ = false;
     bool no_rings_ = false;
+    bool no_pools_ = false;
     bool no_ripple_ = false;
     bool no_wind_glints_ = false;
     bool keep_ripple_ = false;
@@ -818,6 +839,8 @@ struct Ground::Pipelines {
     bool glitter_per_sample = false;
     // Rings.cpp
     vk::raii::Pipeline rings{nullptr};
+    // Pools.cpp
+    vk::raii::Pipeline lamp_pool{nullptr};
     // Ripple.cpp: the composite of the rippled reflections; the layer, its buffers and stages (null where the pass
     // draws none: the owner mode, or where the device could not make them)
     vk::raii::Pipeline ripple_composite{nullptr};
@@ -922,6 +945,8 @@ struct Ground::Words {
     std::uint32_t glints = 0; ///< the glints' records (GLINT_WORDS each), how many, and their lists of neighbours
     std::uint32_t glint_count = 0;
     std::uint32_t glint_lists = 0;
+    std::uint32_t lamp_pools = 0; ///< the lamps' pools' ellipses (four floats each), and how many
+    std::uint32_t lamp_pool_count = 0;
     std::uint32_t rings = 0; ///< the drizzle's tile and bands (ground.slang's RINGS_ layout), and how many bands
     std::uint32_t ring_bands = 0;
     std::uint32_t ripple_offsets = 0; ///< the ripple's 256 displacement offsets (ripple.slang)

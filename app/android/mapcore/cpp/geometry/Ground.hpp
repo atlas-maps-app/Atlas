@@ -54,8 +54,9 @@ inline constexpr std::uint16_t over = 24;      ///< + class (rail 0, big 1, aero
                                                ///< woods' shadows 4, park edges 5)
 inline constexpr std::uint16_t marks = 32;     ///< + class (road marks 0, trams 1, canal names 2)
 inline constexpr std::uint16_t quay = 40;      ///< the quay walls (K16), by their edge's order
-inline constexpr std::uint16_t land = 64;      ///< + the land kind's place in the pack's `land` table
-inline constexpr std::uint16_t count = 128;    ///< groups the frame's table holds
+inline constexpr std::uint16_t pools = 41;  ///< the night's light on the ground after the quay walls (sub: pools_sub)
+inline constexpr std::uint16_t land = 64;   ///< + the land kind's place in the pack's `land` table
+inline constexpr std::uint16_t count = 128; ///< groups the frame's table holds
 inline constexpr std::uint16_t land_kinds = count - land;
 } // namespace group
 
@@ -68,6 +69,15 @@ inline constexpr std::uint8_t sun = 1; ///< the clouds (K17), then the sun's glo
 inline constexpr std::uint8_t city = 2;
 inline constexpr std::uint8_t count = 3;
 } // namespace sky_sub
+
+/// The night's light on the ground in the renders' order (amsterdam.py:812's `pools`, after the quay walls): the lit
+/// streets' glow, their cores when wet, then each street lamp's pool (K18).
+namespace pools_sub {
+inline constexpr std::uint8_t glow = 0;
+inline constexpr std::uint8_t cores = 1;
+inline constexpr std::uint8_t lamps = 2;
+inline constexpr std::uint8_t count = 3;
+} // namespace pools_sub
 
 /// The water's elements after its reflections, in the renders' order inside `<g clip-path="url(#wclip)">`
 /// (amsterdam.py:457: wgrad's rect, the reflections, then these): group::water_top's.
@@ -95,6 +105,7 @@ inline constexpr std::uint8_t count = 6;
 /// setts, K15).
 [[nodiscard]] constexpr std::uint32_t stride_of(std::uint16_t g) noexcept {
     if (g == group::sky) return sky_sub::count;
+    if (g == group::pools) return pools_sub::count;
     if (g == group::water_top) return water_sub::count;
     if (g == group::over + 0) return 2;
     if (g == group::over + 1) return 3;

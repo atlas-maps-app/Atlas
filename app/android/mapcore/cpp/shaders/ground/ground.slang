@@ -22,6 +22,7 @@
 //     water (passes/Rings.cpp).
 //   - disc_vs with sunglow_fs and sundisc_fs, screen_vs with cityglow_fs: the sky layer's sun (its glow and its disc)
 //     and the city's glow at night, translucent at their slots over the sky (passes/Sky.cpp).
+//   - pool_vs and pool_fs: the street lamps' pools at night, after the quay walls (passes/Pools.cpp).
 //   - shadow_vs: the ground shadows (passes/Shadows.cpp), moved by the moment's sun: a prism's footprint hull swept
 //     along its offset (each hull point twice, before and after its turn), a raised outline or a crown disc moved by
 //     it, their union set in the stencil and composited by flat_fs.
@@ -1414,6 +1415,46 @@ StrokeOutput cityglow_fs(ScreenOut v, uint given : SV_Coverage) {
     StrokeOutput o;
     o.colour = float4(g.rgb * g.a, g.a);
     o.coverage = mask;
+    return o;
+}
+
+// ---------------------------------------------------------------- the night's pools (passes/Pools.cpp)
+
+struct PoolOut {
+    float4 position : SV_Position;
+    nointerpolation float4 ellipse : POOL_ELLIPSE; // its centre and radii, CSS px
+};
+
+/// A street lamp's pool: instance i's ellipse (its centre and radii at push.mode.z + 4i, CSS px) on a quad grown by a
+/// device px, at painter slot push.mode.y.
+[shader("vertex")]
+PoolOut pool_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInstanceID) {
+    uint at = push.mode.z + instance * 4u;
+    float4 e = {asfloat(words[at]), asfloat(words[at + 1u]), asfloat(words[at + 2u]), asfloat(words[at + 3u])};
+    float px = 1.0f / frame.camera.frame.z;
+    float2 k = quad_corners[vertex];
+    float2 css = e.xy + float2(k.x < 0.0f ? -(e.z + px) : e.z + px, k.y < 0.0f ? -(e.w + px) : e.w + px);
+    PoolOut o;
+    o.position = clip_of(frame.camera, css, 1.0f, painter_depth(frame.camera, push.mode.y));
+    o.ellipse = e;
+    return o;
+}
+
+/// The pool's gradient (`pool`, a radialGradient over the ellipse's box) at the pixel's centre: its stops at 0, .5 and
+/// 1 (push.colour.x, .y and .z, each opacity folded into its alpha) interpolated in their encoded values, premultiplied;
+/// nothing beyond the ellipse, where the gradient has faded to nothing.
+[shader("fragment")]
+ColourOut pool_fs(PoolOut v) {
+    float2 css = css_of_output(frame.camera, v.position.xy);
+    float2 d = (css - v.ellipse.xy) / v.ellipse.zw;
+    float t = sqrt(d.x * d.x + d.y * d.y);
+    if (t > 1.0f) discard;
+    float4 a = unpack(push.colour.x);
+    float4 b = unpack(push.colour.y);
+    float4 c = unpack(push.colour.z);
+    float4 g = t <= 0.5f ? lerp(a, b, t * 2.0f) : lerp(b, c, (t - 0.5f) * 2.0f);
+    ColourOut o;
+    o.colour = float4(g.rgb * g.a, g.a);
     return o;
 }
 

@@ -792,6 +792,7 @@ bool Ground::decide(const frame::FrameState& state) {
     decide_rings(cam, state);
     decide_wind_glints(cam, state);
     decide_sky(cam, state);
+    decide_pools(cam);
     // the plate: gp(rect(-GR, GR, -GR, GR), th['ground']) at 0, margin 900, its area over 0.2
     const double gr = f.ground_r;
     const std::array<geo::P2, 4> rect{
@@ -962,6 +963,12 @@ void Ground::lay_out() {
         f.tail[geo::group::quay] = true;
         place(geo::group::quay);
     }
+    // then the night's light on the ground (render's pools, after the quay walls)
+    if (!f.lamp_pools.empty()) {
+        use(geo::group::pools, 0);
+        f.tail[geo::group::pools] = true;
+        place(geo::group::pools);
+    }
     f.slots = static_cast<std::uint32_t>(head);
     f.tail_slots = static_cast<std::uint32_t>(std::min<std::int64_t>(cursor, (shaders::PAINTER_SLOTS / 2) - head));
 }
@@ -1027,6 +1034,7 @@ gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
     ATLAS_GPU_CHECK(make_fill_pipelines(context, *p));
     ATLAS_GPU_CHECK(make_water_pipelines(context, *p));
     ATLAS_GPU_CHECK(make_sky_pipelines(context, *p));
+    ATLAS_GPU_CHECK(make_pool_pipelines(context, *p));
     ATLAS_GPU_CHECK(make_line_pipelines(context, *p));
     ATLAS_GPU_CHECK(make_shadow_pipelines(context, *p));
     // the ripple, but in the owner mode (its map draws no reflections' colours); where the device cannot make it, the
@@ -1216,6 +1224,7 @@ void Ground::write_words(const frame::FrameState& state) {
     write_reflections(v);
     write_glitter(v);
     write_rings(v);
+    write_pools(v);
     write_ripple(v, state);
     write_wind_glints(v, state);
     // into this frame slot's buffer (a frame slot's previous frame has finished: its buffer and set are free)
@@ -1326,6 +1335,7 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
     case phase_over:
     case phase_marks: record_lines(r, phase); break;
     case phase_shadows: record_shadows(r); break;
+    case phase_pools: record_pools(r); break;
     default: break;
     }
 }
@@ -1403,6 +1413,7 @@ void Ground::emit(const frame::FrameState& state, twin::Stream& out, std::uint32
     emit_park_shadows(state, out, above);
     emit_shadows(state, out);
     emit_quays(state, out);
+    emit_pools(out);
 }
 
 } // namespace atlas::passes
