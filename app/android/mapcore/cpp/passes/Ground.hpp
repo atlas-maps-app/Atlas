@@ -480,6 +480,8 @@ struct RipplePlan {
     PixelBox displace;
     std::vector<RipplePass> passes;
     PixelBox out;
+    std::int32_t rx = 0; ///< the blur passes' reaches summed along x
+    std::int32_t ry = 0; ///< and along y: the fused stages take them where neither passes ripple.slang's RIPPLE_REACH
 };
 
 struct SoftShadows; // below
@@ -544,6 +546,8 @@ public:
     /// The tests' look at the ripple: from the next prepare on, its buffers lie in memory the CPU reads, and each
     /// frame copies its resolved layer there too (RippleLayer::layer_copy).
     void keep_ripple(bool keep) noexcept { keep_ripple_ = keep; }
+    /// The tests' switch: the ripple's stages apart, even where the fused stages could take them (on by default).
+    void fuse_ripple(bool fuse) noexcept { fuse_ripple_ = fuse; }
     /// The ripple's objects (null where prepare made none).
     [[nodiscard]] const RippleLayer* ripple_layer() const noexcept;
     /// Whether the last frame drew its reflections rippled.
@@ -733,6 +737,7 @@ private:
     bool no_ripple_ = false;
     bool no_wind_glints_ = false;
     bool keep_ripple_ = false;
+    bool fuse_ripple_ = true;
     bool drew_ripple_ = false;
     /// What the last ripple's result was made of (write_ripple), and whether this frame's differs; what its stages
     /// cover this frame.
@@ -865,9 +870,11 @@ struct RippleLayer {
     vk::raii::Pipeline displace{nullptr};
     vk::raii::Pipeline square{nullptr};
     vk::raii::Pipeline line{nullptr};
-    vk::raii::Pipeline draw{nullptr}; ///< the reflections into the samples
-    std::uint32_t result = 0;         ///< the buffer the last frame's blur left its result in (0 a, 1 b)
-    PixelBox out;                     ///< and the result's region (the buffers hold nothing of the frame beyond it)
+    vk::raii::Pipeline fused{nullptr}; ///< the displacement and the boxes in one dispatch (ripple_fused_cs)
+    vk::raii::Pipeline draw{nullptr};  ///< the reflections into the samples
+    std::uint32_t result = 0;          ///< the buffer the last frame's blur left its result in (0 a, 1 b)
+    bool ran_fused = false;            ///< the last frame's stages ran fused (ripple_fused_cs)
+    PixelBox out;                      ///< and the result's region (the buffers hold nothing of the frame beyond it)
 };
 
 /// A pipeline of the ground's module named `name`, with its entry points, opaque on the scene's colour (Ground.cpp).
@@ -901,6 +908,7 @@ struct Ground::Words {
     std::uint32_t rings = 0; ///< the drizzle's tile and bands (ground.slang's RINGS_ layout), and how many bands
     std::uint32_t ring_bands = 0;
     std::uint32_t ripple_offsets = 0; ///< the ripple's 256 displacement offsets (ripple.slang)
+    std::uint32_t ripple_plan = 0;    ///< the ripple's plan as ripple_fused_cs reads it (Ripple.cpp's write_ripple)
     std::uint32_t wind_glints = 0;    ///< the glints' filter's 256 results (glints_fs)
     std::uint32_t slot = 0;           ///< the frame slot whose buffer holds them
     bool ready = false;

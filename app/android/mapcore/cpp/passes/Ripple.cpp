@@ -51,6 +51,11 @@ constexpr std::uint32_t group_side = 8;
 /// A reflection's record in the words (ground.slang's QUAY_WORDS).
 constexpr std::size_t reflection_words = 16;
 
+/// The fused stages' tile (ripple_fused_cs: a workgroup's result pixels a side) and the most the blur passes' reaches
+/// may sum to along an axis for them (ripple.slang's RIPPLE_TILE and RIPPLE_REACH).
+constexpr std::uint32_t ripple_tile = 16;
+constexpr std::int32_t ripple_reach = 8;
+
 /// `b` grown by `dx` and `dy` either side, within the `w` × `h` frame.
 [[nodiscard]] PixelBox grown(PixelBox b, std::int32_t dx, std::int32_t dy, std::int32_t w, std::int32_t h) noexcept {
     return {.x0 = std::max(0, b.x0 - dx),
@@ -83,6 +88,7 @@ bool Ground::rippled(const frame::FrameState& state) const noexcept {
 void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameState& state) {
     Words& w = *words_;
     w.ripple_offsets = static_cast<std::uint32_t>(words.size());
+    w.ripple_plan = 0;
     if (!rippled(state)) {
         ripple_key_.clear();
         return;
@@ -197,6 +203,8 @@ void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameS
     for (const auto& r : reach) {
         spread_x += r[0];
         spread_y += r[1];
+        plan.rx += r[0];
+        plan.ry += r[1];
     }
     plan.out = grown(plan.layer, spread_x, spread_y, fw, fh);
     PixelBox region = plan.out;
@@ -205,6 +213,27 @@ void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameS
         region = grown(region, reach[k][0], reach[k][1], fw, fh);
     }
     plan.displace = region;
+    // The plan as ripple_fused_cs reads it: the passes' count and their reaches summed, the displacement's and the
+    // result's regions, then each pass's kind (0 square, 1 line), side or axis, left, right, 1 / (left + right) as the
+    // stages apart take it, and region.
+    w.ripple_plan = static_cast<std::uint32_t>(words.size());
+    const auto box = [&](const PixelBox& b) {
+        for (const std::int32_t v : corners(b)) words.push_back(std::bit_cast<std::uint32_t>(v));
+    };
+    words.push_back(static_cast<std::uint32_t>(plan.passes.size()));
+    words.push_back(static_cast<std::uint32_t>(plan.rx));
+    words.push_back(static_cast<std::uint32_t>(plan.ry));
+    box(plan.displace);
+    box(plan.out);
+    for (const RipplePass& pass : plan.passes) {
+        words.push_back(pass.square ? 0U : 1U);
+        words.push_back(pass.square ? pass.side : pass.axis);
+        words.push_back(pass.left);
+        words.push_back(pass.right);
+        words.push_back(pass.square ? 0U
+                                    : std::bit_cast<std::uint32_t>(1.0F / static_cast<float>(pass.left + pass.right)));
+        box(pass.region);
+    }
 }
 
 gpu::Result<void> Ground::make_ripple(const frame::PassContext& context, Pipelines& p) const {
@@ -393,6 +422,8 @@ gpu::Result<void> Ground::make_ripple(const frame::PassContext& context, Pipelin
     s->square = std::move(square);
     ATLAS_GPU_LET(line, compute("ground ripple line", "ripple_line_cs"));
     s->line = std::move(line);
+    ATLAS_GPU_LET(fused, compute("ground ripple fused", "ripple_fused_cs"));
+    s->fused = std::move(fused);
     // the reflections into the samples: each its own colour, source over, at its slot's depth
     gpu::GraphicsDesc layer_draw = ground_desc(context, p, "ground ripple layer", "reflection_vs", "reflection_fs");
     layer_draw.target = {
@@ -482,49 +513,80 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
                                            .old_layout = L::eColorAttachmentOptimal,
                                            .new_layout = L::eShaderReadOnlyOptimal});
 
-    // 2. the displacement into the first buffer, which the last frame's composite read
-    sync.barrier(cmd, gpu::MemoryDependency{.src_stage = S::eFragmentShader | S::eComputeShader,
-                                            .src_access = {},
-                                            .dst_stage = S::eComputeShader,
-                                            .dst_access = A::eShaderWrite});
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *s.compute_layout, 0, frame_sets, offsets);
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *s.compute_layout, 2, *p.sets[w.slot], {});
-    RipplePush rp{};
-    rp.size = {s.extent.width, s.extent.height, w.ripple_offsets, 0U};
-    const std::array<std::int32_t, 4> layer_box = corners(plan.layer);
-    rp.layer = {layer_box[0], layer_box[1], layer_box[2], layer_box[3]};
-    // a stage over `region` reading buffer `from`, writing the other (set [from] reads it)
-    auto stage = [&](const vk::raii::Pipeline& pipeline, const PixelBox& region, std::uint32_t from,
-                     const char* counter) {
-        const std::array<std::int32_t, 4> c = corners(region);
-        rp.region = {c[0], c[1], c[2], c[3]};
-        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline);
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *s.compute_layout, 3, *s.sets[from], {});
+    if (fuse_ripple_ && plan.rx <= ripple_reach && plan.ry <= ripple_reach) {
+        // 2. the displacement and the boxes in one dispatch, a tile of the result a workgroup (ripple_fused_cs), into
+        // the buffer the last frame's composite did not read: the frame before it, which may have, has finished
+        const std::uint32_t t = 1U - s.result;
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *s.compute_layout, 0, frame_sets, offsets);
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *s.compute_layout, 2, *p.sets[w.slot], {});
+        // set [i] reads buffer i and writes the other: set [1 - t] writes buffer t
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *s.compute_layout, 3, *s.sets[1U - t], {});
+        RipplePush rp{};
+        rp.size = {s.extent.width, s.extent.height, w.ripple_offsets, w.ripple_plan};
+        const std::array<std::int32_t, 4> layer_box = corners(plan.layer);
+        rp.layer = {layer_box[0], layer_box[1], layer_box[2], layer_box[3]};
+        const std::array<std::int32_t, 4> out_box = corners(plan.out);
+        rp.region = {out_box[0], out_box[1], out_box[2], out_box[3]};
+        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *s.fused);
         cmd.pushConstants<RipplePush>(*s.compute_layout, vk::ShaderStageFlagBits::eCompute, 0, rp);
-        const auto groups = [](std::int32_t n) {
-            return (static_cast<std::uint32_t>(n) + group_side - 1) / group_side;
+        const auto tiles = [](std::int32_t n) {
+            return (static_cast<std::uint32_t>(n) + ripple_tile - 1) / ripple_tile;
         };
-        cmd.dispatch(groups(region.x1 - region.x0), groups(region.y1 - region.y0), 1);
-        r.counters.dispatch(counter);
+        cmd.dispatch(tiles(plan.out.x1 - plan.out.x0), tiles(plan.out.y1 - plan.out.y0), 1);
+        r.counters.dispatch("ripple fused");
         sync.barrier(cmd, gpu::MemoryDependency{.src_stage = S::eComputeShader,
                                                 .src_access = A::eShaderWrite,
                                                 .dst_stage = S::eComputeShader | S::eFragmentShader,
                                                 .dst_access = A::eShaderRead | A::eShaderWrite});
-        return 1U - from; // the buffer it wrote
-    };
-    std::uint32_t result = stage(s.displace, plan.displace, 1, "ripple displace");
-    // 3. the blur: vImage's square boxes where WebKit's two sizes are equal, else its separable passes, x then y
-    for (const RipplePass& pass : plan.passes) {
-        if (pass.square) {
-            rp.box = {pass.side, 0U, 0U, 0U};
-            result = stage(s.square, pass.region, result, "ripple square");
-        } else {
-            rp.box = {pass.axis, pass.left, pass.right, 0U};
-            rp.inv = {1.0F / static_cast<float>(pass.left + pass.right), 0.0F, 0.0F, 0.0F};
-            result = stage(s.line, pass.region, result, "ripple line");
+        s.result = t;
+        s.ran_fused = true;
+    } else {
+        s.ran_fused = false;
+        // the stages apart, where the boxes reach too far for the fused stages' shared memory
+        // 2. the displacement into the first buffer, which the last frame's composite read
+        sync.barrier(cmd, gpu::MemoryDependency{.src_stage = S::eFragmentShader | S::eComputeShader,
+                                                .src_access = {},
+                                                .dst_stage = S::eComputeShader,
+                                                .dst_access = A::eShaderWrite});
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *s.compute_layout, 0, frame_sets, offsets);
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *s.compute_layout, 2, *p.sets[w.slot], {});
+        RipplePush rp{};
+        rp.size = {s.extent.width, s.extent.height, w.ripple_offsets, 0U};
+        const std::array<std::int32_t, 4> layer_box = corners(plan.layer);
+        rp.layer = {layer_box[0], layer_box[1], layer_box[2], layer_box[3]};
+        // a stage over `region` reading buffer `from`, writing the other (set [from] reads it)
+        auto stage = [&](const vk::raii::Pipeline& pipeline, const PixelBox& region, std::uint32_t from,
+                         const char* counter) {
+            const std::array<std::int32_t, 4> c = corners(region);
+            rp.region = {c[0], c[1], c[2], c[3]};
+            cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *s.compute_layout, 3, *s.sets[from], {});
+            cmd.pushConstants<RipplePush>(*s.compute_layout, vk::ShaderStageFlagBits::eCompute, 0, rp);
+            const auto groups = [](std::int32_t n) {
+                return (static_cast<std::uint32_t>(n) + group_side - 1) / group_side;
+            };
+            cmd.dispatch(groups(region.x1 - region.x0), groups(region.y1 - region.y0), 1);
+            r.counters.dispatch(counter);
+            sync.barrier(cmd, gpu::MemoryDependency{.src_stage = S::eComputeShader,
+                                                    .src_access = A::eShaderWrite,
+                                                    .dst_stage = S::eComputeShader | S::eFragmentShader,
+                                                    .dst_access = A::eShaderRead | A::eShaderWrite});
+            return 1U - from; // the buffer it wrote
+        };
+        std::uint32_t result = stage(s.displace, plan.displace, 1, "ripple displace");
+        // 3. the blur: vImage's square boxes where WebKit's two sizes are equal, else its separable passes, x then y
+        for (const RipplePass& pass : plan.passes) {
+            if (pass.square) {
+                rp.box = {pass.side, 0U, 0U, 0U};
+                result = stage(s.square, pass.region, result, "ripple square");
+            } else {
+                rp.box = {pass.axis, pass.left, pass.right, 0U};
+                rp.inv = {1.0F / static_cast<float>(pass.left + pass.right), 0.0F, 0.0F, 0.0F};
+                result = stage(s.line, pass.region, result, "ripple line");
+            }
         }
+        s.result = result;
     }
-    s.result = result;
     if (s.kept) {
         // the tests' look: the layer, a row after another (after the last frame's copy), and the buffers readable by
         // the host

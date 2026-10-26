@@ -38,6 +38,7 @@ std::array<double, 3> channels(const style::Rgb8& c) {
 /// What a frame's ripple left: its layer and its result as the pass wrote them, and what the composite read.
 struct RippleLook {
     bool drew = false;
+    bool fused = false; ///< the stages ran fused (ripple_fused_cs)
     std::uint32_t w = 0;
     std::uint32_t h = 0;
     std::vector<fx::Argb> layer;
@@ -54,6 +55,7 @@ void take(RippleLook& look, passes::Ground& g, const frame::FrameState& state) {
     look.drew = g.drew_ripple();
     const passes::RippleLayer* s = g.ripple_layer();
     if (!look.drew || s == nullptr) return;
+    look.fused = s->ran_fused;
     look.w = s->extent.width;
     look.h = s->extent.height;
     const std::size_t n = std::size_t{look.w} * look.h;
@@ -153,6 +155,7 @@ TEST_CASE("ground: the reflections' ripple is SvgFilterRaster's chain over their
     MESSAGE(std::format("the result's region: {} × {} of the frame's {} × {} px", look.out.x1 - look.out.x0,
                         look.out.y1 - look.out.y0, look.w, look.h));
     CHECK(blur.square());
+    CHECK(look.fused); // the boxes' reaches fit the fused stages' shared memory
     CHECK(chain.covered > 10000);
     CHECK_MESSAGE(chain.differ == 0, chain.first);
     CHECK_MESSAGE(chain.beyond == 0, chain.beyond << " pixels of the result lie beyond its region");
@@ -290,6 +293,46 @@ TEST_CASE("ground: the ripple's separable boxes, at a density whose two blur siz
                         "the CPU's",
                         blur.x, blur.y, chain.covered, chain.differ));
     CHECK(!blur.square());
+    CHECK(look.fused);
+    CHECK(chain.covered > 10000);
+    CHECK_MESSAGE(chain.differ == 0, chain.first);
+    CHECK_MESSAGE(chain.beyond == 0, chain.beyond << " pixels of the result lie beyond its region");
+}
+
+TEST_CASE("ground: the ripple's stages apart, where the fused stages are switched off, are the same chain") {
+    const std::string dir = test::environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the ripple is not drawn over the bundled packs here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto made = fx::FieldCache::create(*session->device, {.threads = 3});
+    ATLAS_REQUIRE(made.has_value(), made.error().text());
+    const std::shared_ptr<fx::FieldCache> fields(std::move(*made));
+    const style::CameraState camera = test::home_camera();
+    style::ThemeBlock day = test::sunny();
+    day.shadow_opacity = 0.0;
+    RippleLook look;
+    const auto a = test::draw_ground(
+        *session, camera, day, dir, "amsterdam",
+        [&](passes::Ground& g, const frame::FrameState& state) { take(look, g, state); }, 40,
+        [](passes::Ground& g) {
+            quiet(g);
+            g.fuse_ripple(false);
+        },
+        frame::Mode::full, fields, [&fields] { fields->worker().wait_idle(); });
+    ATLAS_REQUIRE(a.has_value(), "the home was not drawn with its ripple");
+    for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
+    REQUIRE_MESSAGE(look.drew, "the frame drew its reflections without their ripple (the fields not bound?)");
+    const std::shared_ptr<const fx::ScreenFields> latest = fields->worker().latest();
+    ATLAS_REQUIRE(latest != nullptr, "no fields");
+    const auto density = static_cast<float>(camera.density);
+    const Chain chain = chain_of(look, *latest, density);
+    MESSAGE(std::format("the ripple's stages apart at the home: {} pixels of the result covered, {} differing from the "
+                        "CPU's",
+                        chain.covered, chain.differ));
+    CHECK(!look.fused);
     CHECK(chain.covered > 10000);
     CHECK_MESSAGE(chain.differ == 0, chain.first);
     CHECK_MESSAGE(chain.beyond == 0, chain.beyond << " pixels of the result lie beyond its region");
