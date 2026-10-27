@@ -159,6 +159,7 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     layout.window_faces.assign(ww, 0);
     layout.window_flags.assign(ww, 0);
     layout.window_styles.assign(ww, gm::WindowStyle::plain);
+    layout.window_churches.assign(ww, 0);
     for (std::uint32_t i = 0; i < ww; ++i) {
         const gm::WindowWall& w = g.window_walls[i];
         layout.window_at[i + 1] = layout.window_at[i] + (std::uint32_t{w.levels} * w.cols);
@@ -166,6 +167,12 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
         layout.window_faces[i] = g.edged[w.wall].face;
         layout.window_flags[i] = w.flags;
         layout.window_styles[i] = w.style;
+        // a church's windows' counts in a byte each (the jobs' church word): a wall over 1.5 km or 380 m tall keeps 255
+        constexpr std::uint32_t most = 0xFF;
+        if (w.church_windows > 0) {
+            layout.window_churches[i] = std::min<std::uint32_t>(w.church_windows, most) |
+                                        (std::min<std::uint32_t>(w.church_transoms, most) << 16U);
+        }
         out[layout.windows_at + i] = {
             heap_of[w.wall] | (static_cast<std::uint32_t>(w.style) << shaders::BUILDING_WINDOW_STYLE_SHIFT) |
                 (std::uint32_t{w.flags} << shaders::BUILDING_WINDOW_FLAGS_SHIFT),
@@ -264,6 +271,12 @@ WindowWidths window_widths(std::uint32_t detail, bool weather, double depth, dou
         w.sash = tenths(deep ? pymath::max(sash_least, 0.045 * focal / d) : pymath::max(sash_least, 9.0 / d));
     }
     return w;
+}
+
+std::uint16_t church_leading(double depth, double focal) {
+    // closeup.py: s = cam.focal / max(d, 1); stroke-width="%.2f" % max(0.4, 0.05 * s)
+    const double width = pymath::max(0.4, 0.05 * (focal / pymath::max(depth, 1.0)));
+    return static_cast<std::uint16_t>(std::llround(pymath::round(width, 2) * 100.0));
 }
 
 void building_runs(std::uint64_t cells, std::span<const std::uint32_t> first, std::vector<BuildingRun>& out) {

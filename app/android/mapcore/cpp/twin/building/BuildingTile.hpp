@@ -89,6 +89,9 @@ struct BuildingTile {
     /// (geometry::WindowStyle: a houseboat cabin's windows have a reach of their own).
     std::vector<std::uint8_t> window_flags;
     std::vector<geometry::WindowStyle> window_styles;
+    /// Each windowed wall's church windows (geometry::WindowWall's, each count at most 255, as the frame's jobs carry
+    /// them): how many, bits 0-15, each one's transoms, 16-31; 0 where it has none.
+    std::vector<std::uint32_t> window_churches;
     /// Each item's plinth's and cornice's slots (geometry::TileBuildings::item_facades).
     std::vector<std::uint32_t> item_facades;
     /// Each face's light inputs (the CPU's light, per tile and moment, and the twin's).
@@ -117,6 +120,10 @@ void building_reveals(const shaders::Theme& theme, std::span<const BuildingLight
 
 /// The sash bars' least width (CSS px).
 inline constexpr double sash_least = 0.7;
+
+/// The width of a church's windows' leading drawn at depth `depth` (the port's d) by a camera of focal length `focal`
+/// (CSS px, in double): max(0.4, 0.05 · focal / max(d, 1)), in hundredths of a CSS px as the port prints it ('%.2f').
+[[nodiscard]] std::uint16_t church_leading(double depth, double focal);
 
 /// A wall's windows' frames' width and their sash bars' (0: none), in tenths of a CSS px as the port prints them.
 struct WindowWidths {

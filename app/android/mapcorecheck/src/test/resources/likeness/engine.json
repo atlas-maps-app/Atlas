@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "24",
+  "version": "25",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -406,6 +406,21 @@
           "home sunny": "ae74836d79d2bf30708fe7470dff6ff6ed8b7b3233d583118bf344537ec964e3",
           "home grey": "f59d115c7338acadb5b6ca5d62e9711c58f2a147cc1a69ea771b7dae48964901",
           "home wet": "5d6dd2744659c92ca5dce65e03c4fc8852710424b2c74e4abe234b7534152e6c",
+          "home night": "28acb6772ec69fc6f71426ddfe83fa921ff3bfe898e0c035242472b7345fdb8d",
+          "board sunny": "fc1eb0b06dfb149253df516b880264621229e0ad9a309cbb049a67897de91137",
+          "board grey": "5b89ad30bc6755ed38e90a510e6c7aeb75336b62a1e78573b797e2329b01f764",
+          "board wet": "f2971a4d7eaa6012924ce7b6191ed218d31e7c2d4cb0d9857229a53f1381c0aa",
+          "board night": "92458182aa00818424fa5ffa7a00f417e694c1db9c9ce6096c879b3e7fe5c309"
+        }
+      }
+    },
+    "25": {
+      "note": "Step 4, the facades: a church's own windows (render/closeup.py's church_windows: with weather nearer than 520 m, a round-arched window a bay of about six metres on each wall of a church, its stone, reveal and glass, the glass under the day's veil, and its leading): home sunny, home grey and home wet changed (the Westerkerk's 62 windows); home night (the moment without weather) and the board's four frames are version 24's (the other frames held as version 24 stored them in the run before recording: only those three changed).",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "c2b562f2869fc1b19b483781538fb2bca0991428214bbcdf77f7e0cfdc7ac856",
+          "home grey": "1228875bfef72a268b8f299a77fc2a18d4b0599b7ff81552e07e1e30c41f671c",
+          "home wet": "55a17cdd9a3bd4a8a3b8f90d223fd2810064c0cf157f4cabbdce1f528b1eadf4",
           "home night": "28acb6772ec69fc6f71426ddfe83fa921ff3bfe898e0c035242472b7345fdb8d",
           "board sunny": "fc1eb0b06dfb149253df516b880264621229e0ad9a309cbb049a67897de91137",
           "board grey": "5b89ad30bc6755ed38e90a510e6c7aeb75336b62a1e78573b797e2329b01f764",

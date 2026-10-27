@@ -13,7 +13,10 @@
 // with its glass (the gradients `glass` and `glassLit` the pass defines by day with weather, else a flat colour) and
 // stroked in the frames' colour and width (wider deep); its sash bars, two open subpaths a window stroked in the
 // frames' colour; its deep windows' sills; before them its shop glazing, a path of its own; and each building's plinths
-// and cornices, a path each after its walls. Plain data in, no Vulkan: the pass's emit and the tests call it alike.
+// and cornices, a path each after its walls. A church's wall with weather nearer than 520 m has its church windows
+// there instead, closeup.py's five paths: their stones, their reveals, their glass, by day their glass again in the
+// veil at opacity .42, and their leading, each arch a closed subpath, each segment of leading an open one. Plain data
+// in, no Vulkan: the pass's emit and the tests call it alike.
 #pragma once
 
 #include "frame/FrameBlock.hpp"
@@ -63,6 +66,21 @@ struct PartsDepth {
     hlsl::float3 colour{};
 };
 
+/// A church wall's windows' part of one path as the frame draws it (church_window_vs), for the tests' raster: each arch
+/// (their stones, reveals or glass) or bar (their leading's segments as their quads) filled with the part's paint on
+/// its wall's plane at a lead, at the path's slot; the glass its gradient over the box from `top` to `bottom`, the
+/// day's veil folded in (a flat paint: its top).
+struct ArchesDepth {
+    std::vector<shaders::BuildingArch> arches;
+    std::vector<shaders::BuildingWindowShape> bars;
+    std::uint32_t slot = 0;
+    hlsl::float4 plane{};
+    float lead = 0.0F;
+    shaders::BuildingGlass paint{};
+    float top = 0.0F;
+    float bottom = 0.0F;
+};
+
 /// How the vertex stage gives an element its depth (the tests' depth raster; L1 reads none of it): the shape it draws
 /// (its corners and their reciprocal depths, its face's plane, its span and lead), and whether its depth is its face
 /// plane's (an edged outline: building_plane_recip) or its corners' over its fan (a plain polygon:
@@ -76,6 +94,8 @@ struct ElementDepth {
     std::uint32_t tile = 0;
     std::vector<WindowsDepth> windows; ///< one: the element is a wall's windows' path
     std::vector<PartsDepth> parts;     ///< one: the element is a wall's reveals', sash bars' or sills' path
+    std::vector<ArchesDepth> arches;   ///< one: the element is a church wall's windows' path
+    bool veil = false; ///< the element is the church windows' veil, which the frame folds into their glass
 };
 
 /// The glass's gradients the frame defines (by day with weather): the stream's `glass` and `glassLit`, or none.
@@ -123,6 +143,13 @@ private:
     /// The stream's item of a tile's item `item`, defined the first time.
     [[nodiscard]] std::int32_t item_of(const passes::BuildingTile& b, std::uint32_t item);
 
+    /// The paths of a church wall's windows the frame draws (its one-cell primitive `wall`, its face `f`, its plane
+    /// `plane` in camera coordinates; `church` its windows' word, BuildingTile::window_churches): at its windows' first
+    /// slot `slot` on, in item `item`, its reveals in `reveal` (0xBBGGRR), its item `depth` metres away.
+    void church_windows(const shaders::BuildingPrim& wall, const shaders::BuildingFace& f,
+                        const shaders::TilePlace& place, hlsl::float4 plane, std::uint32_t church, std::uint32_t slot,
+                        std::int32_t item, std::uint32_t reveal, double depth);
+
     const shaders::FrameBlock& block_;
     std::span<const std::uint32_t> ranks_;
     WindowDistances distances_;
@@ -142,6 +169,8 @@ private:
     std::vector<shaders::BuildingWindowShape> reveal_shapes_;          // its deep windows' reveals
     std::vector<shaders::BuildingWindowShape> sill_shapes_;            // and sills
     std::vector<shaders::BuildingSash> sashes_;                        // its windows' sash bars
+    std::array<std::vector<shaders::BuildingArch>, 3> arches_;         // a church wall's stones, reveals and glass
+    std::vector<shaders::BuildingSash> segments_;                      // and its leading's segments
     std::vector<std::uint32_t> reveals_; // the tile's windowed walls' reveals' colours at the frame's moment
     std::vector<PartsDepth> plinths_;    // a building's plinths and cornices, a wall's each, until its walls are done
     std::vector<PartsDepth> cornices_;

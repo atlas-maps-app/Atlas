@@ -48,8 +48,8 @@ inline float building_atan2(float y, float x) {
 [[vk::binding(1, 2)]] StructuredBuffer<uint4> stroke_records;
 [[vk::binding(2, 2)]] RWStructuredBuffer<uint4> stroke_records_out;
 // The windows' set (passes/Windows.cpp), set 2 of their own pipelines: this frame slot's jobs, its windows' records, its
-// facade walls' records, its near windows' records and its facades' records, as the compute stage writes them and as
-// the vertex stages read them (one buffer each).
+// facade walls' records, its near windows' records, its facades' records and its church windows' records, as the
+// compute stage writes them and as the vertex stages read them (one buffer each).
 [[vk::binding(3, 2)]] StructuredBuffer<uint4> window_jobs;
 [[vk::binding(4, 2)]] RWStructuredBuffer<uint4> window_records_out;
 [[vk::binding(5, 2)]] StructuredBuffer<uint4> window_records;
@@ -59,6 +59,8 @@ inline float building_atan2(float y, float x) {
 [[vk::binding(9, 2)]] StructuredBuffer<uint4> window_nears;
 [[vk::binding(10, 2)]] RWStructuredBuffer<uint4> window_facades_out;
 [[vk::binding(11, 2)]] StructuredBuffer<uint4> window_facades;
+[[vk::binding(17, 2)]] RWStructuredBuffer<uint4> church_records_out;
+[[vk::binding(18, 2)]] StructuredBuffer<uint4> church_records;
 // The kept primitives' set (passes/Kept.cpp), set 2 of the walls' and roofs' kept pipelines and of the cull's compute
 // stages: this frame slot's jobs (the header, then each job: a tile's push constants and a run of at most 64 of one
 // list's primitives), each job's candidates (their count, their mask and their first place in their list), the kept
@@ -438,12 +440,15 @@ StrokeVertex roof_strokes_vs(uint vertex : SV_VulkanVertexID) {
 /// how many, at most 64, its first wall record, its items' facade slots), each of its walls' first window record
 /// (building_window_records of them: its windows', then its shop glazing's), its first near record (WINDOW_NO_NEAR: its
 /// item lies 160 m or more away), its windows' widths (passes::window_widths: the frames' in tenths of a CSS px, bits
-/// 0-15, the sash bars', 16-31), and its facade record (WINDOW_NO_NEAR: none), four a uint4.
-static const uint WINDOW_JOB_VECTORS = 69u;
+/// 0-15, the sash bars', 16-31; where it draws church windows, their leading's in hundredths), its facade record
+/// (WINDOW_NO_NEAR: none), and its church windows (WINDOW_NO_NEAR: none drawn: its first church record, bits 0-15,
+/// how many, 16-23, each one's transoms, 24-31), four a uint4.
+static const uint WINDOW_JOB_VECTORS = 85u;
 static const uint WINDOW_JOB_RECORDS = 5u;
 static const uint WINDOW_JOB_NEARS = 21u;
 static const uint WINDOW_JOB_WIDTHS = 37u;
 static const uint WINDOW_JOB_FACADES = 53u;
+static const uint WINDOW_JOB_CHURCHES = 69u;
 static const uint WINDOW_NO_NEAR = 0xFFFFFFFFu;
 
 /// Word `i` (a wall's) of a job's list starting at vector `list`.
@@ -454,9 +459,10 @@ uint window_job_word(uint at, uint list, uint i) {
 
 /// Each facade wall of a job's run, decided once for the frame: each of its windows into its record (at the job's
 /// records, in the wall's order) and, nearer than 160 m, into its near record (its reveal, sill and sash bars); its
-/// shop glazing into the record after them; its plinth and cornice into its facade record; and the wall into its own
-/// (its plane, its dark and lit windows' boxes, its widths, its reveals' colour). A houseboat cabin's wall's panes are
-/// its windows, never lit, at its one slot.
+/// shop glazing into the record after them; its plinth and cornice into its facade record; a church's windows each
+/// into its church record; and the wall into its own (its plane, its dark and lit windows' boxes, its widths, its
+/// reveals' colour; a church's windows' glass's box as its dark windows', which it has none of then, and their
+/// leading's width). A houseboat cabin's wall's panes are its windows, never lit, at its one slot.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
@@ -631,11 +637,47 @@ void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
         window_facades_out[fat + 5u] = fr.v5;
         window_facades_out[fat + 6u] = fr.v6;
     }
+    // a church's own windows (with weather nearer than 520 m, its plain ones not drawn), each into its record at the
+    // job's church records in the wall's order; none where none of them has its glass
+    uint church = window_job_word(at, WINDOW_JOB_CHURCHES, thread.x);
+    float leading = 0.0f;
+    if (church != WINDOW_NO_NEAR) {
+        uint church_first = church & 0xFFFFu;
+        uint bays = (church >> 16u) & 0xFFu;
+        uint transoms = church >> 24u;
+        bool shown = building_church_drawn(theme_flags, p.place, w, f, rank);
+        BuildingChurchBay bay = building_church_bay(wall, bays);
+        bool glass = false;
+        for (uint k = 0u; k < bays; ++k) {
+            BuildingChurchRecord r = building_church_empty();
+            if (shown) {
+                r = building_church_record(frame.camera, p.place, wall, f.normal, plane, bay, k, transoms, wall_record,
+                                           slot);
+            }
+            BuildingArch g = building_church_arch(r, 2u);
+            for (uint i = 0u; i < g.count; ++i) {
+                dark.x = min(dark.x, g.p[i].y);
+                dark.y = max(dark.y, g.p[i].y);
+            }
+            glass = glass || g.count != 0u;
+            uint church_at = (church_first + k) * BUILDING_CHURCH_RECORD_VECTORS;
+            for (uint i = 0u; i < BUILDING_CHURCH_RECORD_VECTORS; ++i) {
+                church_records_out[church_at + i] = r.v[i];
+            }
+        }
+        if (!glass) {
+            uint4 none = {0u, 0u, 0u, 0u};
+            for (uint k = 0u; k < bays; ++k) {
+                church_records_out[(church_first + k) * BUILDING_CHURCH_RECORD_VECTORS] = none;
+            }
+        }
+        leading = building_hundredths(widths);
+    }
     uint4 plane_words = {asuint(plane.x), asuint(plane.y), asuint(plane.z), asuint(plane.w)};
     uint4 boxes = {asuint(dark.x), asuint(dark.y), asuint(lit.x), asuint(lit.y)};
     uint reveal_word = p.sun.w + span.x + thread.x;
     uint4 reveals = walls_heap[reveal_word / 4u];
-    uint4 more = {asuint(frame_half), asuint(sash_half), reveals[reveal_word % 4u], 0u};
+    uint4 more = {asuint(frame_half), asuint(sash_half), reveals[reveal_word % 4u], asuint(leading)};
     window_walls_out[wall_record * BUILDING_WALL_RECORD_VECTORS] = plane_words;
     window_walls_out[wall_record * BUILDING_WALL_RECORD_VECTORS + 1u] = boxes;
     window_walls_out[wall_record * BUILDING_WALL_RECORD_VECTORS + 2u] = more;
@@ -865,6 +907,87 @@ BuildingOut window_facade_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanI
     uint theme_flags = frame.theme.flags.x;
     o.colour = part == 0u ? building_plinth_colour(frame.windows, theme_flags)
                           : building_cornice_colour(frame.windows, theme_flags);
+    return o;
+}
+
+/// The frame's church window record `index`: its header and part `part`'s vectors alone (0 to 2 its arches, 3 its
+/// leading), the rest none.
+BuildingChurchRecord church_record_at(uint index, uint part) {
+    uint at = index * BUILDING_CHURCH_RECORD_VECTORS;
+    BuildingChurchRecord r = building_church_empty();
+    r.v[0] = church_records[at];
+    uint from = building_church_part_at(part);
+    uint n = part < 3u ? BUILDING_CHURCH_ARCH_VECTORS : BUILDING_CHURCH_RECORD_VECTORS - BUILDING_CHURCH_LEADING_AT;
+    for (uint i = 0u; i < n; ++i) {
+        r.v[from + i] = church_records[at + from + i];
+    }
+    return r;
+}
+
+/// Vertex `v` of church window record `index` (building_church_part's): its stone's, reveal's and glass's fans of 10
+/// triangles (BUILDING_ARCH_VERTICES each) at the reveals', glass's and frames' leads over its wall's cells, then each
+/// segment of its leading (its mullion, then its transoms; past its last none) a bar of two triangles at the sash bars'
+/// lead, at its path's slot under the painter switch: the stones' colour, its wall's reveals', its glass with the
+/// day's veil folded in (window_glass_fs: its gradient over its wall's church windows' glass's box), the leading's; an
+/// instance a record.
+[shader("vertex")]
+GlassOut church_window_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanInstanceID) {
+    uint part = building_church_part(v);
+    BuildingChurchRecord r = church_record_at(index, part);
+    GlassOut o;
+    o.top = float4(0.0f);
+    o.bottom = float4(0.0f);
+    if (r.v[0].x == 0u) {
+        o.position = NOWHERE;
+        return o;
+    }
+    BuildingWallRecord wall = window_wall_at(r.v[0].y);
+    uint theme_flags = frame.theme.flags.x;
+    BuildingShape shape = building_nothing();
+    float2 css = float2(0.0f);
+    float3 colour = building_church_stone(theme_flags);
+    if (part < 3u) {
+        BuildingArch a = building_church_arch(r, part);
+        if (a.count == 0u) {
+            o.position = NOWHERE;
+            return o;
+        }
+        float lead = part == 0u ? BUILDING_REVEAL_LEAD : (part == 1u ? BUILDING_GLASS_LEAD : BUILDING_WINDOW_LEAD);
+        shape = building_arch_as_shape(a, wall.plane, lead);
+        css = building_arch_fan_point(a, v - part * BUILDING_ARCH_VERTICES);
+        if (part == 1u) {
+            colour = building_bgr(wall.reveal);
+        }
+    } else {
+        uint i = v - BUILDING_CHURCH_ARCH_VERTICES;
+        uint j = i / BUILDING_CHURCH_SEGMENT_VERTICES;
+        if (!building_church_leading_drawn(r) || j > r.v[0].w) {
+            o.position = NOWHERE;
+            return o;
+        }
+        BuildingWindowShape bar = building_sash_bar(building_church_segment(frame.camera, wall.plane, r, j), 0u,
+                                                    0.5f * wall.leading);
+        if (bar.count == 0u) {
+            o.position = NOWHERE;
+            return o;
+        }
+        shape = building_window_as_shape(bar, wall.plane, BUILDING_SASH_LEAD);
+        css = building_window_corner(bar, building_bar_corner(i - j * BUILDING_CHURCH_SEGMENT_VERTICES));
+        colour = building_church_leading(theme_flags);
+    }
+    // the paths' slots: the stones', the reveals', the glass's, (the veil's), the leading's
+    shape.slot = r.v[0].z + (part < 3u ? part : 4u);
+    shape.depth = painter_depth(frame.camera, shape.slot);
+    float depth = building_depth(frame.camera, shape, building_plane_recip(frame.camera, shape, css));
+    o.position = clip_of(frame.camera, css, 1.0f, depth);
+    if (part == 2u) {
+        BuildingGlass g = building_church_veiled(frame.windows, theme_flags);
+        o.top = float4(g.top, wall.dark.x);
+        o.bottom = g.gradient ? float4(g.bottom, wall.dark.y) : float4(g.top, wall.dark.x);
+    } else {
+        o.top = float4(colour, 0.0f);
+        o.bottom = float4(colour, 0.0f);
+    }
     return o;
 }
 

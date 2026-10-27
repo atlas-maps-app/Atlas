@@ -1,7 +1,7 @@
 // The buildings pass's windows (passes/Walls.hpp; shaders/building/windows.slangh): this frame slot's jobs, the
 // compute stage that decides every window of them (draw.slang's windows_cs), and the draws of the near windows' parts,
 // their glass and their frames (window_near_vs with building_fs, window_glass_vs with window_glass_fs,
-// window_frames_vs with window_frames_fs).
+// window_frames_vs with window_frames_fs) and of the churches' own windows (church_window_vs with window_glass_fs).
 #include "base/log.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
@@ -18,13 +18,15 @@ namespace atlas::passes {
 namespace {
 
 /// A window job's words (draw.slang's WINDOW_JOB_VECTORS uint4): its tile's push constants, its run, then each of its
-/// walls' first window record, its first near record (no_near: none), its windows' widths and its facade record
-/// (no_near: none), from these words.
-constexpr std::uint32_t job_words = 276;
+/// walls' first window record, its first near record (no_near: none), its windows' widths (where it draws church
+/// windows, their leading's), its facade record (no_near: none) and its church windows (no_near: none drawn; its first
+/// church record, how many, each one's transoms), from these words.
+constexpr std::uint32_t job_words = 340;
 constexpr std::uint32_t job_records = 20;
 constexpr std::uint32_t job_nears = 84;
 constexpr std::uint32_t job_widths = 148;
 constexpr std::uint32_t job_facades = 212;
+constexpr std::uint32_t job_churches = 276;
 constexpr std::uint32_t no_near = 0xFFFF'FFFFU;
 /// The most windowed walls a job decides (windows_cs's workgroup), and the jobs a row of workgroups covers.
 constexpr std::uint32_t job_size = 64;
@@ -56,7 +58,9 @@ gpu::Result<void> Buildings::prepare_windows(const frame::PassContext& context) 
         gpu::Binding{.slot = 8, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eCompute},
         gpu::Binding{.slot = 9, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eVertex},
         gpu::Binding{.slot = 10, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eCompute},
-        gpu::Binding{.slot = 11, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eVertex}};
+        gpu::Binding{.slot = 11, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eVertex},
+        gpu::Binding{.slot = 17, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eCompute},
+        gpu::Binding{.slot = 18, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eVertex}};
     ATLAS_GPU_LET(set_layout, gpu::make_set_layout(d, bindings));
     w->set_layout = std::move(set_layout);
     const std::array<std::span<const gpu::Binding>, 1> kinds{bindings};
@@ -78,19 +82,21 @@ gpu::Result<void> Buildings::prepare_windows(const frame::PassContext& context) 
                       context, {.name = "windows", .module = "building_draw", .configuration = context.configuration},
                       *draw_module_, "windows_cs", *w->compute_layout));
     w->decide = std::move(decide);
-    // the near windows' parts, the glass and the frames: opaque, each on its wall's plane a lead of its own over its
-    // cells (the frames a lead over the glass), drawn nearest first (record_windows), the frames' test GREATER_OR_EQUAL
-    // (one window's frame over another's of the same path)
-    enum class Part : std::uint8_t { near, facades, glass, frames };
-    for (const Part part : {Part::near, Part::facades, Part::glass, Part::frames}) {
+    // the near windows' parts, the glass, the frames and the church windows: opaque, each on its wall's plane a lead of
+    // its own over its cells (the frames a lead over the glass), drawn nearest first (record_windows), the frames' test
+    // GREATER_OR_EQUAL (one window's frame over another's of the same path)
+    enum class Part : std::uint8_t { near, facades, glass, frames, church };
+    for (const Part part : {Part::near, Part::facades, Part::glass, Part::frames, Part::church}) {
         const bool frames = part == Part::frames;
         const bool filled = part == Part::near || part == Part::facades;
         const char* const name = part == Part::near      ? "window parts"
                                  : part == Part::facades ? "facades"
+                                 : part == Part::church  ? "church windows"
                                  : frames                ? "window frames"
                                                          : "window glass";
         const char* const vertex = part == Part::near      ? "window_near_vs"
                                    : part == Part::facades ? "window_facade_vs"
+                                   : part == Part::church  ? "church_window_vs"
                                    : frames                ? "window_frames_vs"
                                                            : "window_glass_vs";
         gpu::GraphicsDesc desc{
@@ -113,9 +119,12 @@ gpu::Result<void> Buildings::prepare_windows(const frame::PassContext& context) 
                         .reference = shaders::OBJECTS_BIT}};
         if (desc.target.colour_count == 2) desc.blends[1] = gpu::Blend::untouched();
         ATLAS_GPU_LET(pipeline, frame::make_pipeline(context, desc, frame::Overdraw::opaque));
-        (part == Part::near ? w->near
-                            : (part == Part::facades ? w->facades_pipeline : (frames ? w->frames : w->glass))) =
-            std::move(pipeline);
+        vk::raii::Pipeline& made = part == Part::near      ? w->near
+                                   : part == Part::facades ? w->facades_pipeline
+                                   : part == Part::church  ? w->church
+                                   : frames                ? w->frames
+                                                           : w->glass;
+        made = std::move(pipeline);
     }
     windows_ = std::move(w);
     return {};
@@ -128,6 +137,8 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     s.records_now = 0;
     s.nears_now = 0;
     s.facades_now = 0;
+    s.churches_now = 0;
+    s.segments_now = 0;
     std::vector<std::uint32_t>& w = s.words;
     w.clear();
     const std::span<const std::uint32_t> ranks = state.ranks->table();
@@ -141,6 +152,8 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     std::uint32_t records = 0;
     std::uint32_t nears = 0;
     std::uint32_t facades = 0;
+    std::uint32_t churches = 0;
+    std::uint32_t segments = 0;
     // the nearest tile first (the draws' order, so early depth testing rejects what the near windows hide); each run of
     // its facade walls whose items the frame draws with their windows (the rank's detail, building_windows_drawn's
     // first test: the other walls' windows would come out empty, though the drawn tiles' walls reach kilometres past
@@ -167,10 +180,18 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
             const std::uint32_t reach = cabin ? shaders::BUILDING_DETAIL_CHURCH : shaders::BUILDING_DETAIL_WINDOWS;
             return (detail & reach) != 0U ? b.window_at[wall + 1] - b.window_at[wall] : 0U;
         };
+        // a church's own windows, where it has any (building_church_drawn but its wall's turn): with weather, its item
+        // nearer than 520 m
+        const auto church_of = [&](std::uint32_t wall, std::uint32_t detail) {
+            return weather && (b.window_flags[wall] & geometry::window_flag::church) != 0U &&
+                   (detail & shaders::BUILDING_DETAIL_CHURCH) != 0U && wall < b.window_churches.size() &&
+                   b.window_churches[wall] != 0U;
+        };
         const auto decided = [&](std::uint32_t wall) {
             const std::uint32_t detail = detail_of(wall);
-            return count_of(wall, detail) > 0 || (weather && (detail & shaders::BUILDING_DETAIL_FACADES) != 0U &&
-                                                  (b.window_flags[wall] & detailed) != 0U);
+            return count_of(wall, detail) > 0 || church_of(wall, detail) ||
+                   (weather && (detail & shaders::BUILDING_DETAIL_FACADES) != 0U &&
+                    (b.window_flags[wall] & detailed) != 0U);
         };
         shaders::BuildingPush push{};
         std::memcpy(&push, d.push.data(), sizeof push);
@@ -228,6 +249,25 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
                         (detail & shaders::BUILDING_DETAIL_FACADES) != 0U) {
                         w[at + job_facades + k] = facades++;
                     }
+                    // its church windows (none of its plain ones then): their records, their leading's width
+                    w[at + job_churches + k] = no_near;
+                    if (church_of(wall, detail)) {
+                        const std::uint32_t bays = b.window_churches[wall] & 0xFFFFU;
+                        const std::uint32_t transoms = b.window_churches[wall] >> 16U;
+                        if (churches + bays > max_churches) {
+                            if (!churches_capped_) {
+                                log::warn("vk buildings: a frame's church windows pass {}: the farther ones are left "
+                                          "out",
+                                          max_churches);
+                                churches_capped_ = true;
+                            }
+                            continue;
+                        }
+                        w[at + job_churches + k] = churches | (bays << 16U) | (transoms << 24U);
+                        w[at + job_widths + k] = church_leading(row < depths.size() ? depths[row] : 0.0, focal);
+                        churches += bays;
+                        segments = std::max(segments, transoms + 1);
+                    }
                 }
                 walls += n;
             }
@@ -251,22 +291,27 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
                           B::eStorageBuffer, gpu::MemoryUse::gpu);
     auto facades_made = fit(device, s.facades[slot], vectors(facades, shaders::BUILDING_FACADE_RECORD_VECTORS),
                             B::eStorageBuffer, gpu::MemoryUse::gpu);
-    if (!jobs_made || !records_made || !walls_made || !nears_made || !facades_made) {
+    auto churches_made = fit(device, s.churches[slot], vectors(churches, shaders::BUILDING_CHURCH_RECORD_VECTORS),
+                             B::eStorageBuffer, gpu::MemoryUse::gpu);
+    if (!jobs_made || !records_made || !walls_made || !nears_made || !facades_made || !churches_made) {
         const gpu::Error& e = !jobs_made      ? jobs_made.error()
                               : !records_made ? records_made.error()
                               : !walls_made   ? walls_made.error()
                               : !nears_made   ? nears_made.error()
-                                              : facades_made.error();
-        log::error("vk buildings: the windows' {} jobs, {} walls, {} records, {} near ones and {} facades: {}", jobs,
-                   walls, records, nears, facades, e.text());
+                              : !facades_made ? facades_made.error()
+                                              : churches_made.error();
+        log::error("vk buildings: the windows' {} jobs, {} walls, {} records, {} near ones, {} facades and {} church "
+                   "windows: {}",
+                   jobs, walls, records, nears, facades, churches, e.text());
         s.jobs[slot] = {};
         s.records[slot] = {};
         s.walls[slot] = {};
         s.nears[slot] = {};
         s.facades[slot] = {};
+        s.churches[slot] = {};
         return;
     }
-    if (*jobs_made || *records_made || *walls_made || *nears_made || *facades_made) {
+    if (*jobs_made || *records_made || *walls_made || *nears_made || *facades_made || *churches_made) {
         gpu::SetWriter(*s.sets[slot])
             .buffer(3, vk::DescriptorType::eStorageBuffer, s.jobs[slot].handle())
             .buffer(4, vk::DescriptorType::eStorageBuffer, s.records[slot].handle())
@@ -277,6 +322,8 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
             .buffer(9, vk::DescriptorType::eStorageBuffer, s.nears[slot].handle())
             .buffer(10, vk::DescriptorType::eStorageBuffer, s.facades[slot].handle())
             .buffer(11, vk::DescriptorType::eStorageBuffer, s.facades[slot].handle())
+            .buffer(17, vk::DescriptorType::eStorageBuffer, s.churches[slot].handle())
+            .buffer(18, vk::DescriptorType::eStorageBuffer, s.churches[slot].handle())
             .apply(device.handle());
     }
     std::memcpy(s.jobs[slot].bytes().data(), w.data(), w.size() * sizeof(std::uint32_t));
@@ -287,7 +334,10 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     s.records_now = records;
     s.nears_now = nears;
     s.facades_now = facades;
-    window_counts_ = {.jobs = jobs, .walls = walls, .windows = records, .nears = nears, .facades = facades};
+    s.churches_now = churches;
+    s.segments_now = segments;
+    window_counts_ = {
+        .jobs = jobs, .walls = walls, .windows = records, .nears = nears, .facades = facades, .churches = churches};
 }
 
 void Buildings::record_window_decide(const frame::Recording& recording) {
@@ -314,7 +364,10 @@ void Buildings::record_window_decide(const frame::Recording& recording) {
 }
 
 void Buildings::record_windows(const frame::Recording& recording) {
-    if (windows_ == nullptr || (windows_->records_now == 0 && windows_->facades_now == 0)) return;
+    if (windows_ == nullptr ||
+        (windows_->records_now == 0 && windows_->facades_now == 0 && windows_->churches_now == 0)) {
+        return;
+    }
     const Windows& s = *windows_;
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
     // set 2 under the frame's sets, which the scene subpass keeps bound; the frames' fragments' samples a pixel
@@ -334,6 +387,14 @@ void Buildings::record_windows(const frame::Recording& recording) {
         cmd.draw(shaders::BUILDING_FACADE_VERTICES, s.facades_now, 0, 0);
         recording.counters.draw("facades", std::uint64_t{s.facades_now} * (shaders::BUILDING_FACADE_VERTICES / 3),
                                 s.facades_now);
+    }
+    // the church windows: an instance a record, its arches' fans and its leading's bars (as many as the frame's most)
+    if (s.churches_now > 0) {
+        const std::uint32_t vertices =
+            shaders::BUILDING_CHURCH_ARCH_VERTICES + (s.segments_now * shaders::BUILDING_CHURCH_SEGMENT_VERTICES);
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *s.church);
+        cmd.draw(vertices, s.churches_now, 0, 0);
+        recording.counters.draw("church windows", std::uint64_t{s.churches_now} * (vertices / 3), s.churches_now);
     }
     if (s.nears_now > 0) {
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *s.near);

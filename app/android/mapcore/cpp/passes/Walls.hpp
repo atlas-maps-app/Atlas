@@ -113,14 +113,15 @@ public:
     /// Whether the roofs' thin edges are drawn (the pass made their pipelines: not in the owner mode).
     [[nodiscard]] bool strokes() const noexcept { return strokes_ != nullptr; }
     /// What the last frame's windows were: their jobs, the facade walls and the windows they decided (a shop's
-    /// glazing among them), the windows of the walls nearer than 160 m (their reveals, sills and sash bars), and the
-    /// facades with a plinth or a cornice.
+    /// glazing among them), the windows of the walls nearer than 160 m (their reveals, sills and sash bars), the
+    /// facades with a plinth or a cornice, and the churches' own windows.
     struct WindowCounts {
         std::uint32_t jobs = 0;
         std::uint32_t walls = 0;
         std::uint32_t windows = 0;
         std::uint32_t nears = 0;
         std::uint32_t facades = 0;
+        std::uint32_t churches = 0;
     };
     [[nodiscard]] WindowCounts window_counts() const noexcept { return window_counts_; }
     /// The triangles the last frame submitted for its walls, near cells and roofs, and the ones the GPU's cull kept of
@@ -136,6 +137,9 @@ public:
     /// The most windows a frame decides (64 bytes a record, 160 more nearer than 160 m): the jobs beyond are left out,
     /// once logged.
     static constexpr std::uint32_t max_windows = 1U << 20U;
+    /// The most church windows a frame draws (416 bytes a record; the jobs' church words hold 16 bits of them): the
+    /// walls beyond go without, once logged.
+    static constexpr std::uint32_t max_churches = 0xFFFFU;
 
     /// The item kind the pass's items take (its Selectors row, from kinds()).
     [[nodiscard]] std::uint16_t kind() const noexcept { return kind_; }
@@ -251,7 +255,8 @@ private:
     StrokeCounts stroke_counts_;
     std::unique_ptr<Windows> windows_;
     WindowCounts window_counts_;
-    bool windows_capped_ = false; ///< a frame's windows passed max_windows (logged once)
+    bool windows_capped_ = false;  ///< a frame's windows passed max_windows (logged once)
+    bool churches_capped_ = false; ///< a frame's church windows passed max_churches (logged once)
     std::unique_ptr<Kept> kept_;
 
     // the render thread's, per frame
@@ -316,8 +321,9 @@ struct Buildings::Windows {
     std::array<gpu::Buffer, 2> walls;
     std::array<gpu::Buffer, 2> nears;
     std::array<gpu::Buffer, 2> facades;
+    std::array<gpu::Buffer, 2> churches;
     /// The draws' layout (the frame's sets, then set 2), the compute stage's, its pipeline, and the near windows'
-    /// parts', the facades', the glass's and the frames' pipelines.
+    /// parts', the facades', the glass's, the frames' and the church windows' pipelines.
     vk::raii::PipelineLayout layout{nullptr};
     vk::raii::PipelineLayout compute_layout{nullptr};
     vk::raii::Pipeline decide{nullptr};
@@ -325,7 +331,9 @@ struct Buildings::Windows {
     vk::raii::Pipeline facades_pipeline{nullptr};
     vk::raii::Pipeline glass{nullptr};
     vk::raii::Pipeline frames{nullptr};
-    // the render thread's, per frame: the jobs' words, the frame slot they went to, and what they hold
+    vk::raii::Pipeline church{nullptr};
+    // the render thread's, per frame: the jobs' words, the frame slot they went to, and what they hold (the church
+    // windows' records, and the most segments of leading one of them has)
     std::vector<std::uint32_t> words;
     std::uint32_t slot = 0;
     std::uint32_t jobs_now = 0;
@@ -333,6 +341,8 @@ struct Buildings::Windows {
     std::uint32_t records_now = 0;
     std::uint32_t nears_now = 0;
     std::uint32_t facades_now = 0;
+    std::uint32_t churches_now = 0;
+    std::uint32_t segments_now = 0;
 };
 
 struct Buildings::Kept {

@@ -6,6 +6,7 @@
 
 #include "base/assert.hpp"
 #include "base/pymath/PyMath.hpp"
+#include "geometry/ChurchWindows.hpp"
 #include "geometry/Houseboats.hpp"
 #include "geometry/Roofs.hpp"
 #include "tiles/Simplify.hpp"
@@ -383,7 +384,16 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
         const int lv = static_cast<int>(bl.v.levels); // Kotlin's Long.toInt()
         const bool windows = windowed && elen > 2.2 && lv > 0;
         const bool glazing = shop && elen > 2.4;
-        if (windows || glazing || facade_flags != 0) {
+        // a church's own windows (`if church and d < 520 ...: church_windows(...)`, whatever its levels), at its
+        // windows' slots
+        std::size_t bays = 0;
+        std::size_t transoms = 0;
+        if (church) {
+            const std::vector<ChurchWindow> arched = church_windows(a, bb, y0, wall_top, {nrm.x, nrm.z});
+            bays = arched.size();
+            transoms = arched.empty() ? 0 : arched.front().lead.size() - 1;
+        }
+        if (windows || glazing || facade_flags != 0 || bays > 0) {
             const int cols = windows ? window_cols(elen, style) : 0;
             b.out.window_walls.push_back({.wall = wall,
                                           .first = b.windows,
@@ -394,8 +404,10 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
                                           .cell = b.cell,
                                           .style = style,
                                           .flags = static_cast<std::uint8_t>(window_flags | facade_flags |
-                                                                             (glazing ? window_flag::glazing : 0U))});
-            const std::uint32_t taken = (glazing ? 1U : 0U) + (windows ? window_slots : 0U);
+                                                                             (glazing ? window_flag::glazing : 0U)),
+                                          .church_windows = u16(static_cast<int>(bays)),
+                                          .church_transoms = u16(static_cast<int>(transoms))});
+            const std::uint32_t taken = (glazing ? 1U : 0U) + (windows || bays > 0 ? window_slots : 0U);
             if (windows) b.windows += static_cast<std::uint32_t>(lv) * static_cast<std::uint32_t>(cols);
             b.near_slot += taken;
             b.far_slot += taken;

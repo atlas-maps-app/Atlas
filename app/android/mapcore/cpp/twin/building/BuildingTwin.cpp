@@ -397,6 +397,13 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
                     }
                 }
             }
+            // a church's own windows, with weather nearer than 520 m (none of its plain ones then)
+            const std::uint32_t church = i < b.window_churches.size() ? b.window_churches[i] : 0U;
+            if (church != 0U && shaders::building_church_drawn(theme_flags, place, w, f, rank)) {
+                church_windows(wall, f, place, wall_plane, church, window_slot, item_of(b, wall.item), reveals_[i],
+                               row < distances_.depth.size() ? distances_.depth[row] : 0.0);
+                continue;
+            }
             if (!windows_drawn) continue;
             // a houseboat cabin's panes: one path at its slot, in its own frames
             const bool cabin = w.style == shaders::BUILDING_WINDOW_CABIN;
@@ -589,6 +596,146 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
         }
         flush_facades();
     }
+}
+
+void BuildingTwin::church_windows(const shaders::BuildingPrim& wall, const shaders::BuildingFace& f,
+                                  const shaders::TilePlace& place, hlsl::float4 plane, std::uint32_t church,
+                                  std::uint32_t slot, std::int32_t item, std::uint32_t reveal, double depth) {
+    const shaders::FrameCamera& cam = block_.camera;
+    const std::uint32_t theme_flags = block_.theme.flags.x;
+    const bool night = (theme_flags & shaders::THEME_NIGHT) != 0U;
+    const std::uint32_t bays = church & 0xFFFFU;
+    const std::uint32_t transoms = church >> 16U;
+    const shaders::BuildingChurchBay bay = shaders::building_church_bay(wall, bays);
+    // each window as windows_cs decides it: its record's arches, and its leading's segments
+    for (std::vector<shaders::BuildingArch>& a : arches_) a.clear();
+    segments_.clear();
+    for (std::uint32_t k = 0; k < bays; ++k) {
+        const shaders::BuildingChurchRecord r =
+            shaders::building_church_record(cam, place, wall, f.normal, plane, bay, k, transoms, 0, slot);
+        if (r.v[0].x == 0U) continue;
+        for (std::uint32_t part = 0; part < 3; ++part) {
+            const shaders::BuildingArch a = shaders::building_church_arch(r, part);
+            if (a.count != 0) arches_[part].push_back(a);
+        }
+        if (!shaders::building_church_leading_drawn(r)) continue;
+        for (std::uint32_t j = 0; j <= transoms; ++j) {
+            const shaders::BuildingSash segment = shaders::building_church_segment(cam, plane, r, j);
+            if (segment.drawn) segments_.push_back(segment);
+        }
+    }
+    // closeup.py: `if not glass: return []`
+    if (arches_[2].empty()) return;
+    float top = 0.0F;
+    float bottom = 0.0F;
+    for (std::size_t n = 0; n < arches_[2].size(); ++n) {
+        for (std::uint32_t k = 0; k < arches_[2][n].count; ++k) {
+            const float y = arches_[2][n].p[k].y;
+            top = (n == 0 && k == 0) || y < top ? y : top;
+            bottom = (n == 0 && k == 0) || y > bottom ? y : bottom;
+        }
+    }
+    const shaders::BuildingGlass veiled = shaders::building_church_veiled(block_.windows, theme_flags);
+    const shaders::BuildingGlass flat{.top = {}, .bottom = {}, .gradient = false};
+    // the stones, the reveals, the glass and its veil (the glass's arches again): a closed subpath an arch, at the
+    // windows' slot `at` on
+    const auto arches = [&](std::uint32_t part, std::uint32_t at, const Style& style, float lead,
+                            const shaders::BuildingGlass& paint, const Node& node) {
+        const std::vector<shaders::BuildingArch>& drawn = arches_[part];
+        if (drawn.empty()) return;
+        points_.clear();
+        subpaths_.clear();
+        for (const shaders::BuildingArch& a : drawn) {
+            for (std::uint32_t k = 0; k < a.count; ++k) points_.push_back({.x = a.p[k].x, .y = a.p[k].y});
+        }
+        std::size_t first = 0;
+        for (const shaders::BuildingArch& a : drawn) {
+            subpaths_.push_back({.points = std::span<const Point>(points_).subspan(first, a.count), .closed = true});
+            first += a.count;
+        }
+        out_.at(slot + at, group_, item);
+        out_.path(style, subpaths_, node);
+        if (depths_ != nullptr) {
+            ElementDepth d{.edged = true, .tile = tile_};
+            if (node.opacity < 1.0F) {
+                d.veil = true;
+            } else {
+                d.arches.push_back({.arches = drawn,
+                                    .bars = {},
+                                    .slot = slot + at,
+                                    .plane = plane,
+                                    .lead = lead,
+                                    .paint = paint,
+                                    .top = top,
+                                    .bottom = bottom});
+            }
+            depths_->push_back(std::move(d));
+        }
+        ++elements_;
+    };
+    const auto filled = [](hlsl::float3 colour) {
+        Style style{};
+        style.fill = Paint::colour(argb_of(colour));
+        style.join = Join::round;
+        return style;
+    };
+    const auto flat_paint = [&](hlsl::float3 colour) {
+        shaders::BuildingGlass g = flat;
+        g.top = colour;
+        g.bottom = colour;
+        return g;
+    };
+    const hlsl::float3 stone = shaders::building_church_stone(theme_flags);
+    const hlsl::float3 reveals = shaders::building_bgr(reveal);
+    arches(0, 0, filled(stone), shaders::BUILDING_REVEAL_LEAD, flat_paint(stone), {});
+    arches(1, 1, filled(reveals), shaders::BUILDING_GLASS_LEAD, flat_paint(reveals), {});
+    Style glass{};
+    glass.fill = night ? Paint::colour(argb_of(shaders::building_rgb(shaders::BUILDING_CHURCH_GLASS_NIGHT)))
+                       : Paint::gradient(gradients_.glass);
+    glass.join = Join::round;
+    arches(2, 2, glass, shaders::BUILDING_WINDOW_LEAD, veiled, {});
+    // by day the glass again in the veil, at opacity .42 (the frame folds it into the glass)
+    if (!night) {
+        arches(2, 3, filled(shaders::building_rgb(shaders::BUILDING_CHURCH_VEIL_RGB)), shaders::BUILDING_WINDOW_LEAD,
+               veiled, {.opacity = shaders::BUILDING_CHURCH_VEIL});
+    }
+    if (segments_.empty()) return;
+    // the leading: two points an open subpath, stroked butt-capped in its colour and width
+    const auto width = static_cast<float>(passes::church_leading(depth, distances_.focal)) / 100.0F;
+    points_.clear();
+    subpaths_.clear();
+    for (const shaders::BuildingSash& segment : segments_) {
+        points_.push_back({.x = segment.m1.x, .y = segment.m1.y});
+        points_.push_back({.x = segment.m2.x, .y = segment.m2.y});
+    }
+    for (std::size_t k = 0; k < points_.size(); k += 2) {
+        subpaths_.push_back({.points = std::span<const Point>(points_).subspan(k, 2), .closed = false});
+    }
+    const hlsl::float3 leading = shaders::building_church_leading(theme_flags);
+    Style style{};
+    style.join = Join::round;
+    style.stroke = Paint::colour(argb_of(leading));
+    style.stroke_width = width;
+    out_.at(slot + 4, group_, item);
+    out_.path(style, subpaths_);
+    if (depths_ != nullptr) {
+        ElementDepth d{.edged = true, .tile = tile_};
+        ArchesDepth bars{.arches = {},
+                         .bars = {},
+                         .slot = slot + 4,
+                         .plane = plane,
+                         .lead = shaders::BUILDING_SASH_LEAD,
+                         .paint = flat_paint(leading),
+                         .top = 0.0F,
+                         .bottom = 0.0F};
+        for (const shaders::BuildingSash& segment : segments_) {
+            const shaders::BuildingWindowShape bar = shaders::building_sash_bar(segment, 0, width / 2);
+            if (bar.count != 0) bars.bars.push_back(bar);
+        }
+        d.arches.push_back(std::move(bars));
+        depths_->push_back(std::move(d));
+    }
+    ++elements_;
 }
 
 } // namespace atlas::twin

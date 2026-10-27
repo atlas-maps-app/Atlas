@@ -390,6 +390,54 @@ void add_parts(std::vector<Shape>& out, const twin::PartsDepth& pd, double densi
     }
 }
 
+/// A church wall's windows' part as the frame draws it (shaders/building/draw.slang's church_window_vs): each arch a
+/// fan of its corners from its first, each bar of its leading a quad, filled in the part's paint (the glass its
+/// gradient at each pixel's centre) on its wall's plane at its lead, each point its wall's plane's within the shape's
+/// span; at the path's painter slot under the switch.
+void add_arches(std::vector<Shape>& out, const twin::ArchesDepth& ad, double density, const shaders::FrameCamera& cam,
+                std::uint32_t tile) {
+    namespace sh = atlas::shaders;
+    const auto add = [&](std::span<const hlsl::float2> corners, float lo, float hi) {
+        Shape part;
+        for (const hlsl::float2 v : corners) {
+            part.poly.push_back({static_cast<double>(v.x) * density, static_cast<double>(v.y) * density});
+        }
+        part.colour = levels_of(ad.paint.top);
+        part.glass = ad.paint.gradient;
+        part.paint = ad.paint;
+        part.top = ad.top;
+        part.bottom = ad.bottom;
+        part.sliver = turns_both_ways(part.poly);
+        part.depth = {.edged = true, .tile = tile};
+        sh::BuildingWindowShape span = sh::building_window_nothing();
+        span.count = 3;
+        span.lo = lo;
+        span.hi = hi;
+        part.depth.shape = sh::building_window_as_shape(span, ad.plane, ad.lead);
+        part.depth.shape.slot = ad.slot;
+        part.depth.shape.depth = sh::painter_depth(cam, ad.slot);
+        std::vector<Vertex> fan;
+        for (const hlsl::float2 c : corners) {
+            const float r = sh::building_plane_recip(cam, part.depth.shape, c);
+            fan.push_back({static_cast<double>(c.x), static_cast<double>(c.y), static_cast<double>(r)});
+        }
+        for (std::size_t k = 0; k + 2 < fan.size(); ++k) part.triangles.push_back({fan[0], fan[k + 1], fan[k + 2]});
+        part.slack = slack_of(cam, part.depth, part.triangles);
+        out.push_back(std::move(part));
+    };
+    std::vector<hlsl::float2> corners;
+    for (const sh::BuildingArch& a : ad.arches) {
+        corners.clear();
+        for (std::uint32_t k = 0; k < a.count; ++k) corners.push_back(a.p[k]);
+        add(corners, a.lo, a.hi);
+    }
+    for (const sh::BuildingWindowShape& b : ad.bars) {
+        corners.clear();
+        for (std::uint32_t k = 0; k < b.count; ++k) corners.push_back(sh::building_window_corner(b, k));
+        add(corners, b.lo, b.hi);
+    }
+}
+
 /// The colour a sample of pixel (x, y) takes from shape `sh`: its colour, or a window's glass's at the pixel's centre
 /// (its CSS point as window_glass_fs finds it, css_of_output's).
 [[nodiscard]] std::uint32_t colour_at(const Shape& sh, std::int64_t x, std::int64_t y,
@@ -416,6 +464,14 @@ void add_parts(std::vector<Shape>& out, const twin::PartsDepth& pd, double densi
         if (e->sequence < depths.size() && !depths[e->sequence].parts.empty()) {
             for (const twin::PartsDepth& pd : depths[e->sequence].parts) {
                 add_parts(out, pd, density, cam, depths[e->sequence].tile);
+            }
+            continue;
+        }
+        // a church wall's windows' parts; their glass's veil is folded into their glass
+        if (e->sequence < depths.size() && depths[e->sequence].veil) continue;
+        if (e->sequence < depths.size() && !depths[e->sequence].arches.empty()) {
+            for (const twin::ArchesDepth& ad : depths[e->sequence].arches) {
+                add_arches(out, ad, density, cam, depths[e->sequence].tile);
             }
             continue;
         }
@@ -1189,6 +1245,10 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
             MESSAGE(name << ": kept walls " << kept.kept[0] << " of " << kept.submitted[0] << ", near cells "
                          << kept.kept[1] << " of " << kept.submitted[1] << ", roofs " << kept.kept[2] << " of "
                          << kept.submitted[2] << " triangles");
+            const passes::Buildings::WindowCounts windows = s.buildings->window_counts();
+            MESSAGE(name << ": " << windows.walls << " facade walls, " << windows.windows << " windows, "
+                         << windows.nears << " near ones, " << windows.facades << " facades, " << windows.churches
+                         << " church windows");
             CHECK(kept.kept[0] <= kept.submitted[0]);
             CHECK(kept.kept[1] <= kept.submitted[1]);
             CHECK(kept.kept[2] <= kept.submitted[2]);

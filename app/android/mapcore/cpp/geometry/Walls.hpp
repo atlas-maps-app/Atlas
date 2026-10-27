@@ -147,7 +147,7 @@ enum class WindowStyle : std::uint8_t { plain = 0, modern = 1, paris = 2, cabin 
 namespace window_flag {
 inline constexpr std::uint8_t shop_floor = 1; ///< shops, cafés or hotels: no windows on the ground floor with weather
 inline constexpr std::uint8_t warehouse = 2;  ///< green warehouse shutters, not glass, with weather
-inline constexpr std::uint8_t church = 4;     ///< church windows instead with weather within 520 m (later)
+inline constexpr std::uint8_t church = 4;     ///< church windows instead with weather within 520 m
 inline constexpr std::uint8_t plinth = 8;
 inline constexpr std::uint8_t cornice = 16;
 inline constexpr std::uint8_t glazing = 32;
@@ -160,7 +160,9 @@ inline constexpr std::uint8_t glazing = 32;
 /// in the same order (sun/Samples.hpp: the records, their edges, the rows, the bays), so a window's place among the
 /// tile's is its sample's in the group. A wall with flat detail and no windows has no rows. A houseboat cabin's wall
 /// (WindowStyle::cabin, drawn with the boat) has one row of panes, never lit: they have no samples and are not among
-/// the tile's windows.
+/// the tile's windows. A church's wall has its church windows besides (geometry/ChurchWindows.hpp: how many, and each
+/// one's transoms), which the frame draws instead of its windows with weather within 520 m, at its windows' slots; a
+/// church's wall with church windows and no windows of its own has its windows' slots for them.
 struct WindowWall {
     std::uint32_t wall = 0;      ///< its wall's one-cell primitive in the edged list (its corners, face and item)
     std::uint32_t first = 0;     ///< its windows among the tile's: [first, first + levels · cols) (a cabin's: none)
@@ -171,7 +173,9 @@ struct WindowWall {
                                  ///< boat slot)
     std::uint8_t cell = 0;       ///< its building's cell in the tile
     WindowStyle style = WindowStyle::plain;
-    std::uint8_t flags = 0; ///< window_flag
+    std::uint8_t flags = 0;            ///< window_flag
+    std::uint16_t church_windows = 0;  ///< a church's: its church windows
+    std::uint16_t church_transoms = 0; ///< and each one's transoms
 };
 
 /// A building without a plinth or a cornice (TileBuildings::item_facades).
