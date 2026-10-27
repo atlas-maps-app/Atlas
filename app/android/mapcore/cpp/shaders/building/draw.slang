@@ -74,6 +74,7 @@ inline float building_atan2(float y, float x) {
 struct BuildingOut {
     float4 position : SV_Position;
     nointerpolation float3 colour : COLOUR;
+    nointerpolation uint asked : ASKED; // a wall of the building the app asks about, before its answer: hatched
 };
 
 /// The primitive at record `index` of the draw's list, its face, its rank entry, and the shape the frame draws.
@@ -81,6 +82,7 @@ struct Drawn {
     BuildingPrim prim;
     BuildingFace face;
     BuildingShape shape;
+    uint rank;
 };
 
 /// The primitive at `at` (a uint4 index) of the walls heap.
@@ -122,6 +124,7 @@ Drawn drawn_at(BuildingPush p, uint index) {
     d.prim = f.prim;
     d.face = f.face;
     d.shape = building_shape(frame.camera, frame.theme.flags.x, p.place, d.prim, d.face, f.rank);
+    d.rank = f.rank;
     return d;
 }
 
@@ -150,6 +153,7 @@ BuildingOut wall_vertex(BuildingPush p, uint index, uint corner) {
     if (d.shape.count == 0u) {
         o.position = NOWHERE;
         o.colour = float3(0.0f);
+        o.asked = 0u;
         return o;
     }
     // the outline of the wall's same-colour stroke, half its width out (the style's)
@@ -157,6 +161,7 @@ BuildingOut wall_vertex(BuildingPush p, uint index, uint corner) {
     float depth = building_depth(frame.camera, d.shape, building_plane_recip(frame.camera, d.shape, css));
     o.position = clip_of(frame.camera, css, 1.0f, depth);
     o.colour = colour_at(p, d);
+    o.asked = (d.rank & RANK_ASKED) != 0u ? 1u : 0u;
     return o;
 }
 
@@ -167,12 +172,14 @@ BuildingOut roof_vertex(BuildingPush p, uint index, uint corner) {
     if (d.shape.count == 0u) {
         o.position = NOWHERE;
         o.colour = float3(0.0f);
+        o.asked = 0u;
         return o;
     }
     float3 point = building_plain_vertex(d.shape, corner);
     float2 css = {point.x, point.y};
     o.position = clip_of(frame.camera, css, 1.0f, building_depth(frame.camera, d.shape, point.z));
     o.colour = colour_at(p, d);
+    o.asked = 0u; // the board hatches the walls alone
     return o;
 }
 
@@ -879,11 +886,25 @@ BuildingTarget window_glass_fs(GlassOut v) {
     return o;
 }
 
+/// The FillIn board's hatch over the building the app asks about, before its answer (CP/frame/Asked.hpp): the pattern's
+/// #8C857A lines, 2.2 CSS px wide every 7 (its rotate(45) of vertical lines at x = 7k), over the face's colour at the
+/// output's pixel `position`, each pixel the part of it a line covers (its distance from the line's middle).
+float3 building_hatch(FrameCamera c, float3 colour, float2 position) {
+    float2 css = css_of_output(c, position);
+    float u = (css.x + css.y) * 0.70710678f; // the pattern's x
+    float d = abs(u - 7.0f * round(u / 7.0f)) * c.frame.z;
+    float cover = saturate(1.1f * c.frame.z - d + 0.5f);
+    return lerp(colour, float3(140.0f, 133.0f, 122.0f) / 255.0f, cover);
+}
+
 [shader("fragment")]
 BuildingTarget building_fs(BuildingOut v) {
     BuildingTarget o;
     // mat's grain on the walls and roofs, where the frame's fields are bound and the moment has weather
     float3 c = mat_colour(frame.camera, v.colour, v.position.xy, mat_on(frame));
+    if (v.asked != 0u) {
+        c = building_hatch(frame.camera, c, v.position.xy);
+    }
     o.colour = float4(c, 1.0f);
     return o;
 }

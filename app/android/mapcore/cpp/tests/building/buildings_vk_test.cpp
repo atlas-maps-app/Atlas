@@ -32,6 +32,7 @@
 #include "gpu/PipelineCache.hpp"
 #include "passes/Composite.hpp"
 #include "passes/Walls.hpp"
+#include "scene/Pick.hpp"
 #include "scene/SunGlobals.hpp"
 #include "scene/World.hpp"
 #include "style/Theme.hpp"
@@ -43,6 +44,7 @@
 #include "tiles/Container.hpp"
 #include "tiles/Source.hpp"
 #include "twin/Twin.hpp"
+#include "view/Camera.hpp"
 #include "view/Ladder.hpp"
 
 #include <doctest/doctest.h>
@@ -1280,6 +1282,124 @@ TEST_CASE("buildings: every roof shape and a houseboat drawn on the host's Vulka
     check_frames(camera(lat, lon, 200.0, 60.0, 260.0, 1080, 2400, d), "synthetic near dry", packs, dry_th, 15);
     check_frames(camera(lat, lon, 300.0, 45.0, 650.0, 1080, 2400, d), "synthetic far", packs, sunny(), 30);
     check_frames(camera(lat, lon, 0.0, 0.0, 220.0, 1080, 2400, d), "synthetic straight down", packs, sunny(), 20);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST_CASE("buildings: the building the app asks about drawn plain in its flat colour, hatched before its answer") {
+    // the synthetic tile's building under the view's middle asked about (FillIn's question, frame/Asked.hpp; picked as
+    // a long press picks it, scene/Pick.hpp): before the answer its walls in the board's grey under the board's hatch;
+    // after it in the answer's flat colour, unhatched; and once no question is open, the frame as it was, pixel for
+    // pixel
+    auto session = test::open_session();
+    if (!session) return;
+    const gpu::Device& device = *session->device;
+    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const std::string path = synthetic_pack();
+    const std::array<PackFile, 1> packs{PackFile{.id = "synthetic", .path = path}};
+    const double d = 1080.0 / 412.0;
+    style::CameraState cam = camera(52.37422, 4.88486, 20.0, 50.0, 260.0, 1080, 2400, d);
+    cam.flags |= style::camera_flag::rest;
+    const gpu::Configuration config{.config = gpu::FrameConfig::x1,
+                                    .route = gpu::Route::renderpass,
+                                    .form = gpu::FrameForm::composite,
+                                    .target = gpu::CompositeTarget::direct};
+    ATLAS_REQUIRE(device.facts().supports(config.config));
+    auto made = make_scene(*session, *cache, config, cam.width_px, cam.height_px, packs, 0x808080);
+    ATLAS_REQUIRE(made.has_value());
+    Scene& s = *made;
+    const auto before = draw(s, cam, sunny());
+    ATLAS_REQUIRE(before.has_value());
+    ATLAS_REQUIRE(s.settled);
+    // two frames with `asked` (both frame slots light again), then the last one's pixels
+    const auto frames = [&](std::optional<frame::AskedBuilding> asked) {
+        for (int n = 0; n < 2; ++n) {
+            s.now += 0.25;
+            s.builder->set_inputs({.camera = cam,
+                                   .theme = sunny(),
+                                   .seconds = s.now,
+                                   .mode = frame::Mode::structural,
+                                   .scene = s.world.get(),
+                                   .asked = asked});
+            auto report = s.renderer->draw(0);
+            ATLAS_REQUIRE_OR_RETURN(std::optional<gpu::Pixels>{}, report.has_value(), report.error().text());
+            s.renderer->drain();
+        }
+        auto pixels = s.output->read(s.output->latest());
+        ATLAS_REQUIRE_OR_RETURN(std::optional<gpu::Pixels>{}, pixels.has_value(), pixels.error().text());
+        return std::optional<gpu::Pixels>(std::move(*pixels));
+    };
+    // the pixels of one colour (within a level), and those that differ from `before`
+    const auto count = [](const gpu::Pixels& px, std::uint32_t rgb) {
+        std::size_t n = 0;
+        for (std::size_t i = 0; i + 3 < px.rgba.size(); i += 4) {
+            const int r = px.rgba[i] - static_cast<int>((rgb >> 16U) & 0xFFU);
+            const int g = px.rgba[i + 1] - static_cast<int>((rgb >> 8U) & 0xFFU);
+            const int b = px.rgba[i + 2] - static_cast<int>(rgb & 0xFFU);
+            if (std::abs(r) <= 1 && std::abs(g) <= 1 && std::abs(b) <= 1) ++n;
+        }
+        return n;
+    };
+    const auto changed = [&](const gpu::Pixels& px) {
+        std::size_t n = 0;
+        for (std::size_t i = 0; i < px.rgba.size() && i < before->rgba.size(); ++i)
+            n += px.rgba[i] != before->rgba[i] ? 1 : 0;
+        return n;
+    };
+    constexpr std::uint32_t grey = 0xA2A5A9;
+    constexpr std::uint32_t hatch = 0x8C857A;
+    constexpr std::uint32_t brown = 0x453433;
+    // the building under the view's middle (scene/Pick.hpp), the one asked about
+    const frame::FrameState& state = s.builder->state();
+    ATLAS_REQUIRE(state.view.has_value());
+    ATLAS_REQUIRE(state.ground_frame.has_value());
+    const view::View& view = *state.view;
+    const view::GroundFrame& ground = *state.ground_frame;
+    std::vector<scene::PickPack> drawn;
+    for (const auto& tile : s.world->residency().resident()) {
+        if (tile != nullptr) drawn.push_back({.id = tile->pack, .z = tile->key.z});
+    }
+    std::optional<scene::Picked> picked;
+    // a grid of points over the view, a row at a time from the top: tenths down, sixths across
+    for (int row = 1; row < 10 && !picked; ++row) {
+        for (int col = 1; col < 6 && !picked; ++col) {
+            const double x = static_cast<double>(cam.width_px) * col / 6.0;
+            const double y = static_cast<double>(cam.height_px) * row / 10.0;
+            picked =
+                scene::pick_building(s.world->store(), drawn, ground, view.camera().eye(), scene::ray_of(view, x, y));
+        }
+    }
+    ATLAS_REQUIRE(picked.has_value());
+    const std::int64_t id = picked->id;
+    MESSAGE(std::format("asked about building {}", id));
+    const auto open = frames(frame::AskedBuilding{.id = id, .wall = grey, .hatched = true});
+    ATLAS_REQUIRE(open.has_value());
+    const auto answered = frames(frame::AskedBuilding{.id = id, .wall = brown, .hatched = false});
+    ATLAS_REQUIRE(answered.has_value());
+    const auto closed = frames(std::nullopt);
+    ATLAS_REQUIRE(closed.has_value());
+    if (std::getenv("ATLAS_ASKED_PPM") != nullptr) {           // NOLINT: the frames, to look at
+        const std::string out(std::getenv("ATLAS_ASKED_PPM")); // NOLINT
+        CHECK(gpu::write_ppm(*before, out + "/asked-before.ppm"));
+        CHECK(gpu::write_ppm(*open, out + "/asked-open.ppm"));
+        CHECK(gpu::write_ppm(*answered, out + "/asked-answered.ppm"));
+    }
+    MESSAGE(std::format("asked, open: {} changed, {} grey, {} hatch; answered: {} changed, {} brown, {} hatch; "
+                        "closed: {} changed",
+                        changed(*open), count(*open, grey), count(*open, hatch), changed(*answered),
+                        count(*answered, brown), count(*answered, hatch), changed(*closed)));
+    // open: its walls grey between the hatch's lines (structural mode: no grain over them)
+    CHECK(changed(*open) > 1000);
+    CHECK(count(*open, grey) > 300);
+    CHECK(count(*open, hatch) > 300);
+    CHECK(count(*before, hatch) < 20);
+    // answered: its walls in the answer's flat colour, the hatch gone
+    CHECK(count(*answered, brown) > 1000);
+    CHECK(count(*answered, hatch) < 20);
+    // closed: the frame as it was
+    CHECK(changed(*closed) == 0);
+    s.renderer.reset();
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }

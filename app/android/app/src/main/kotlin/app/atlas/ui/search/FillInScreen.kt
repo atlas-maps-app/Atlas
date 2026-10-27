@@ -60,8 +60,10 @@ import androidx.compose.ui.unit.sp
 import app.atlas.R
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapEngine
+import app.atlas.mapview.MapOverlays
 import app.atlas.mapview.MapState
 import app.atlas.mapview.StageMap
+import app.atlas.model.OsmId
 import app.atlas.nav.Dest
 import app.atlas.nav.Navigator
 import app.atlas.providers.OsmElement
@@ -110,12 +112,15 @@ fun FillInScreen(args: Dest.FillIn, nav: Navigator) {
     var state by rememberSaveable(asks, stateSaver = stateSaver(asks)) { mutableStateOf(FillInState(asks)) }
     val map = remember(args) { MapState(CameraPosition(args.at, 18.2, bearing = 0.0, pitch = 55.0)) }
     var pin by remember { mutableStateOf<Offset?>(null) }
+    // the building asked about as the board draws it, where the core draws the map (ENGINE.md step 6)
+    val asked = buildingId(type, args.id)?.let { state.asked(it) }
+    val overlays = remember(asked) { MapOverlays(asked = asked) }
     LaunchedEffect(map) {
         snapshotFlow { map.camera to map.visibleBounds }.collect { pin = map.latLonToScreen(args.at)?.let { (x, y) -> Offset(x, y) } }
     }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(argb(0xFF0B0D14))) {
-        StageMap(state = map, modifier = Modifier.fillMaxSize(), background = argb(0xFF0B0D14))
+        StageMap(state = map, modifier = Modifier.fillMaxSize(), overlays = overlays, background = argb(0xFF0B0D14))
         // the board's px for the projected point: the board is the screen's width
         val boardPerPx = 412f / (constraints.maxWidth.toFloat().coerceAtLeast(1f))
         BoardScale {
@@ -157,6 +162,13 @@ fun FillInScreen(args: Dest.FillIn, nav: Navigator) {
             )
         }
     }
+}
+
+/** The building [type] [id] as the map names it: a way or a relation (a node is no building's outline). */
+private fun buildingId(type: OsmType, id: Long): OsmId? = when (type) {
+    OsmType.WAY -> OsmId(app.atlas.model.OsmType.WAY, id)
+    OsmType.RELATION -> OsmId(app.atlas.model.OsmType.RELATION, id)
+    OsmType.NODE -> null
 }
 
 /** What reading the building came to. */

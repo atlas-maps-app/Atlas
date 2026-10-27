@@ -11,6 +11,7 @@ import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.state.LabelBlock
 import app.atlas.mapcore.state.MarkerBlock
 import app.atlas.mapcore.state.ThemeBlock
+import app.atlas.mapview.AskedBuilding
 import app.atlas.mapview.EngineFrames
 import app.atlas.mapview.LabelPainter
 import app.atlas.mapview.LabelSprites
@@ -23,6 +24,7 @@ import app.atlas.mapview.MarkerPainter
 import app.atlas.mapview.MarkerSprites
 import app.atlas.mapview.OverlayPainter
 import app.atlas.mapview.RouteChips
+import app.atlas.model.OsmType
 import app.atlas.render.live.Moment
 import java.time.ZoneId
 import java.util.Locale
@@ -230,6 +232,25 @@ internal class CoreMap(
      * map). Off the main thread: it waits for the render thread.
      */
     fun pick(x: Float, y: Float): MapPick? = MapPick.parse(core.pick(x, y))
+
+    private val askLock = Any()
+    private var askedRevision = 0L
+
+    /**
+     * The building the core draws as asked from now on (none: no question open), unless a later hand-over ([revision],
+     * counted by the caller) went already. Off the main thread.
+     */
+    fun ask(asked: AskedBuilding?, revision: Long) {
+        synchronized(askLock) {
+            if (revision <= askedRevision) return
+            askedRevision = revision
+            if (asked == null) {
+                core.ask(false, 0L, 0, false)
+            } else {
+                core.ask(asked.id.type == OsmType.RELATION, asked.id.id, asked.wall, asked.hatched)
+            }
+        }
+    }
 
     /** This map leaves the screen: the core's map goes off if this map was the one drawing (off the main thread). */
     fun close() {

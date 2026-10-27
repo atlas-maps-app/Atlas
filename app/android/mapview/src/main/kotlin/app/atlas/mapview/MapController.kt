@@ -224,6 +224,11 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     private var coreMarkers = false
     private var markerPainter: MarkerPainter? = null
 
+    /** The building last asked about to the core (none: no question open). */
+    private var sentAsked: AskedBuilding? = null
+    private var askedSent = false
+    private var askedRevision = 0L
+
     /** The routes and areas last handed to the core: the lists, the density, whether the core draws them. */
     private class SentRoutes(val routes: List<RouteLine>, val areas: List<AreaOverlay>, val density: Float, val draws: Boolean)
     private var sentRoutes: SentRoutes? = null
@@ -422,6 +427,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
                 coreMarkers = false
                 sentRoutes = null
                 coreRoutes = false
+                sentAsked = null
+                askedSent = false
                 coreLocation = false
                 canvasTick.intValue++
                 closeCore(old)
@@ -444,6 +451,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         coreMarkers = false
         sentRoutes = null
         coreRoutes = false
+        sentAsked = null
+        askedSent = false
         coreLocation = false
         publishedCamera = null
         noteChrome()
@@ -739,6 +748,19 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         }
     }
 
+    /**
+     * The building the app asks about (FillIn's question), handed over off the main thread when it changed: the core
+     * draws it plain in its flat colour, hatched while the question is open.
+     */
+    private fun sendAsked(c: CoreMap) {
+        val asked = overlays.asked
+        if (askedSent && asked == sentAsked) return
+        sentAsked = asked
+        askedSent = true
+        val revision = ++askedRevision
+        scope.launch(Dispatchers.Default) { runCatching { c.ask(asked, revision) } }
+    }
+
     /** The moment the core lights the map by, handed over off the main thread when it changed. */
     private fun sendMoment(c: CoreMap, moment: Moment) {
         if (moment == sentMoment) return
@@ -953,6 +975,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         sendRoutes(c)
         sendLabels(c)
         sendMarkers(c)
+        sendAsked(c)
     }
 
     /**
@@ -992,6 +1015,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             labelTypeface?.let { pt.labels.typeface = it }
             c?.let(::sendLabels)
             c?.let(::sendMarkers)
+            c?.let(::sendAsked)
             if (!coreLabels) pt.drawLabels(canvas, g, ov)
             if (!coreMarkers) pt.drawMarkers(canvas)
             if (!coreLocation) ov.location?.let { pt.drawLocation(canvas, g, it) }

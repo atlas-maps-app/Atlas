@@ -43,6 +43,7 @@
 // passes/Windows.cpp.
 #pragma once
 
+#include "frame/Asked.hpp"
 #include "frame/FrameBlock.hpp"
 #include "frame/Pass.hpp"
 #include "geometry/Walls.hpp"
@@ -229,9 +230,10 @@ private:
     /// drawn).
     void write_rows(scene::Heaps& heaps, const scene::ResidentTile& tile, const scene::PassTile& mine,
                     const BuildingTile& b);
-    /// The tile's faces' colours for this frame's moment into frame slot `slot`'s colours, unless they are its already.
+    /// The tile's faces' colours for this frame's moment into frame slot `slot`'s colours, unless they are its already;
+    /// the walls of the building `asked` about, where the tile holds it, in its flat colour (lit and unlit alike).
     void light(scene::Heaps& heaps, const shaders::Theme& theme, std::uint32_t slot, const scene::ResidentTile& tile,
-               const scene::PassTile& mine, const BuildingTile& b);
+               const std::optional<frame::AskedBuilding>& asked, const scene::PassTile& mine, const BuildingTile& b);
 
     std::uint16_t kind_ = 0;
     mutable Emitted emitted_;
@@ -263,8 +265,20 @@ private:
     /// two frame slots' colours.
     std::array<std::byte, sizeof(shaders::Theme)> theme_{};
     std::uint64_t moment_ = 0;
-    std::unordered_map<std::uint32_t, std::array<std::uint64_t, 2>> lit_;
+    /// What a tile's colours in a frame slot were lit for: the moment, and the building asked about where the tile
+    /// holds it (its revision; 0 where it holds none), so a tile lights again when either changes for it.
+    struct Lit {
+        std::uint64_t moment = 0;
+        std::uint64_t asked = 0;
+
+        friend constexpr bool operator==(const Lit&, const Lit&) = default;
+    };
+    std::unordered_map<std::uint32_t, std::array<Lit, 2>> lit_;
+    /// The building asked about, and its revision (a count of its changes).
+    std::optional<frame::AskedBuilding> asked_;
+    std::uint64_t asked_revision_ = 0;
     std::vector<std::uint32_t> colours_;
+    std::vector<std::uint16_t> asked_items_; ///< light()'s: the asked building's items in the tile it lights
 };
 
 struct Buildings::Strokes {

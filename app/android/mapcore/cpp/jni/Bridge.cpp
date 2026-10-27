@@ -352,6 +352,14 @@ public:
         });
     }
 
+    /// The building the app asks about from now on (none: no question open).
+    void ask(std::optional<frame::AskedBuilding> asked) {
+        on_session([this, asked] {
+            map_->set_asked(asked);
+            ask_frame();
+        });
+    }
+
     /// The building under the view's device point (x, y) as the map's last frame drew it, or none (no map).
     [[nodiscard]] std::optional<scene::Picked> pick(double x, double y) {
         return on_session([this, x, y] { return map_->pick(x, y); });
@@ -1138,6 +1146,22 @@ jstring native_routes(JNIEnv* env, jclass /*cls*/, jlong handle, jobject block, 
     return java(env, "");
 }
 
+/// The building the app asks about (FillIn's question; frame/Asked.hpp): way or relation `id` (0: none, the question
+/// closed), its walls' flat colour `wall` (0xRRGGBB) and whether it is drawn hatched (the question still open).
+void native_ask(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean relation, jlong id, jint wall,
+                jboolean hatched) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return;
+    if (id == 0) {
+        core->ask(std::nullopt);
+        return;
+    }
+    core->ask(frame::AskedBuilding{.id = id,
+                                   .relation = relation == JNI_TRUE,
+                                   .wall = static_cast<std::uint32_t>(wall) & 0xFF'FFFFU,
+                                   .hatched = hatched == JNI_TRUE});
+}
+
 /// The building under the view's device point (`x`, `y`) as the map's last frame drew it (frame/MapFrame.hpp's pick):
 /// "way <id> <part> <latitude> <longitude>" (or "relation …"; the part 0 where the ray met the outline itself), where
 /// the ray met it; "" where it met none.
@@ -1269,8 +1293,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 44>& methods() {
-    static const std::array<JNINativeMethod, 44> table{{
+const std::array<JNINativeMethod, 45>& methods() {
+    static const std::array<JNINativeMethod, 45> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1319,6 +1343,7 @@ const std::array<JNINativeMethod, 44>& methods() {
         method("markers", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_markers)),
         method("routes", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_routes)),
         method("pick", "(JFF)Ljava/lang/String;", fn(&native_pick)),
+        method("ask", "(JZJIZ)V", fn(&native_ask)),
         method("screen", "(JZZZ)V", fn(&native_screen)),
         method("landing", "(JZDDDDD)V", fn(&native_landing)),
         method("painter", "(JZ)V", fn(&native_painter)),

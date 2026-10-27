@@ -203,7 +203,8 @@ void MapFrame::next(const style::CameraState& camera, double seconds) {
                           .scene = world_.get(),
                           .labels = labels_.get(),
                           .markers = markers_.get(),
-                          .routes = routes_.get()});
+                          .routes = routes_.get(),
+                          .asked = asked_});
 }
 
 std::optional<scene::Picked> MapFrame::pick(double x, double y) {

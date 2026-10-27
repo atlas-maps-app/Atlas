@@ -13,20 +13,26 @@ import app.atlas.providers.TagEdit
 object FillIn {
     enum class Ask { COLOUR, ROOF }
 
-    /** A colour of the front: its swatch, its tag value, and the material it implies. */
-    data class Colour(val id: String, val hex: String, val material: String)
+    /**
+     * A colour of the front: its swatch, its tag value, the material it implies, and [drawn], the one flat colour the
+     * board draws the building's walls in once it is the answer (0xRRGGBB).
+     */
+    data class Colour(val id: String, val hex: String, val material: String, val drawn: Int)
 
     /** A roof's shape as seen from the street, its `roof:shape` value. */
     data class Roof(val shape: String)
 
     /** The board's swatches, in its order: brown brick, red brick, painted white, sandstone, painted black. */
     val COLOURS = listOf(
-        Colour("brown", "#5C3A30", "brick"),
-        Colour("red", "#94503C", "brick"),
-        Colour("white", "#EAE5DA", "plaster"),
-        Colour("sand", "#CDB892", "stone"),
-        Colour("black", "#2C2C2E", "plaster"),
+        Colour("brown", "#5C3A30", "brick", 0x453433),
+        Colour("red", "#94503C", "brick", 0x65413A),
+        Colour("white", "#EAE5DA", "plaster", 0x969694),
+        Colour("sand", "#CDB892", "stone", 0x867C6B),
+        Colour("black", "#2C2C2E", "plaster", 0x2A2C32),
     )
+
+    /** The board's grey of the walls while the front's colour is open, drawn hatched (0xRRGGBB). */
+    const val OPEN_WALL = 0xA2A5A9
 
     /** The board's roofs: a gable to the street (step, neck and spout gables too), hipped, flat. */
     val ROOFS = listOf(Roof("gabled"), Roof("hipped"), Roof("flat"))

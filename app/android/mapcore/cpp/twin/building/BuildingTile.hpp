@@ -93,6 +93,10 @@ struct BuildingTile {
     std::vector<std::uint32_t> item_facades;
     /// Each face's light inputs (the CPU's light, per tile and moment, and the twin's).
     std::vector<BuildingLight> lights;
+    /// Each face's item (its primitives' building), and whether it is a wall's (a cell, a gable, a skillion's,
+    /// houseboat's or cabin's wall: in the wall's material, which a building asked about takes its flat colour on).
+    std::vector<std::uint16_t> face_items;
+    std::vector<std::uint8_t> face_walls;
     /// The n-gons, in their triangles' order, and their rings' points relative to the tile's corner (x, y, z each, the
     /// floats the heap holds of the triangles' corners).
     std::vector<BuildingRing> rings;

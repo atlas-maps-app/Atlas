@@ -48,8 +48,9 @@ public:
     /// Sets kind `kind`'s band thresholds for the frame (metres, ascending; `never` for the ones it lacks), as the port
     /// computes them.
     void set(std::uint16_t kind, double near, double middle = never, double far = never) noexcept;
-    /// The most detail thresholds a kind has (the rank entry's detail bits).
-    static constexpr std::size_t max_details = 12;
+    /// The most detail thresholds a kind has: the rank entry's detail bits but its last, which marks the building the
+    /// app asks about (painter.slang's RANK_ASKED).
+    static constexpr std::size_t max_details = 11;
     /// Sets kind `kind`'s detail thresholds for the frame (metres, in the kind's order: bit i is threshold i's).
     void set_details(std::uint16_t kind, std::span<const double> thresholds) noexcept;
     /// The detail of an item of kind `kind` at depth `depth`: bit i where it lies nearer than threshold i (not at or

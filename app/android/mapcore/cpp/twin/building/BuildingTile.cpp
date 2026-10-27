@@ -208,6 +208,19 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
         out[layout.faces_at + (i * 2) + 1] = {t[0], t[1], t[2], flags};
         layout.lights[i] = {.normal = {face.normal.x, face.normal.y, face.normal.z}, .base = face.base, .flags = flags};
     }
+    // each face's item and whether it is a wall's, from the primitives that draw it
+    layout.face_items.assign(f, 0);
+    layout.face_walls.assign(f, 0);
+    for (const auto* list : {&g.edged, &g.plain}) {
+        for (const gm::Prim& q : *list) {
+            if (q.face >= f) continue;
+            layout.face_items[q.face] = static_cast<std::uint16_t>(q.item); // below the 0x10000 items asserted
+            const bool wall = q.kind == gm::PrimKind::cell || q.kind == gm::PrimKind::skillion_wall ||
+                              q.kind == gm::PrimKind::hull_wall || q.kind == gm::PrimKind::cabin_wall ||
+                              q.kind == gm::PrimKind::gable;
+            if (wall) layout.face_walls[q.face] = 1;
+        }
+    }
     return out;
 }
 

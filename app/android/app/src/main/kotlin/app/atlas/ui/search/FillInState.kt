@@ -1,5 +1,7 @@
 package app.atlas.ui.search
 
+import app.atlas.mapview.AskedBuilding
+import app.atlas.model.OsmId
 import app.atlas.providers.OsmElement
 
 /**
@@ -23,6 +25,17 @@ internal data class FillInState(
 
     /** The tags the answers add, as the review lists them. */
     val adds: List<Pair<String, String>> get() = FillIn.adds(colour, roof)
+
+    /**
+     * The building [id] as the board draws it while its front's colour is asked: plain in the board's grey, hatched,
+     * until the colour is answered ("Can't tell" leaves it open), in the answer's colour after, through the end; null
+     * where the colour is mapped already, so the map draws the building as mapped.
+     */
+    fun asked(id: OsmId): AskedBuilding? = when {
+        FillIn.Ask.COLOUR !in asks -> null
+        colour != null -> AskedBuilding(id, colour.drawn, hatched = false)
+        else -> AskedBuilding(id, FillIn.OPEN_WALL, hatched = true)
+    }
 
     /** Whether the question asked now has its answer (the board's Next is dimmed until it has). */
     val canNext: Boolean get() = when (ask) {

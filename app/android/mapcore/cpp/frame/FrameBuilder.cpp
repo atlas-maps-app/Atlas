@@ -348,6 +348,7 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     state_.labels = inputs_.labels;
     state_.markers = inputs_.markers;
     state_.routes = inputs_.routes;
+    state_.asked = inputs_.asked;
     const view::Device device{.density = cam.density,
                               .width_px = cam.width_px,
                               .height_px = cam.height_px,
@@ -497,6 +498,11 @@ void FrameBuilder::stage_f() {
                 options.cut_x = target.x;
                 options.cut_z = target.z;
             }
+        }
+        // the building asked about: its items, keyed as the buildings' (an area's owner)
+        if (state_.asked) {
+            options.asked = scene::owner_key(scene::owner_kind_area, static_cast<std::uint64_t>(state_.asked->id));
+            options.hatched = state_.asked->hatched;
         }
         const trace::Section traced("atlas ranks");
         ranks_.update(*state_.items, view.camera(), selectors_, options);

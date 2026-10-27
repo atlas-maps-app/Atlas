@@ -287,6 +287,13 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     fun pick(x: Float, y: Float): String = core.call("") { Native.pick(it, x, y) }
 
     /**
+     * The building the app asks about from now on (FillIn's question): way or [relation] [id] (0: none), drawn plain in
+     * its walls' flat colour [wall] (0xRRGGBB, the board's), hatched while the question is open ([hatched]). Off the main
+     * thread.
+     */
+    fun ask(relation: Boolean, id: Long, wall: Int, hatched: Boolean) = core.call(Unit) { Native.ask(it, relation, id, wall, hatched) }
+
+    /**
      * The screen's haze, vignette and paper grain from now on, each on (the renders' look, the default) or off: off,
      * the map's picture keeps its own colours there, and the composite does less work a pixel. Off the main thread.
      */

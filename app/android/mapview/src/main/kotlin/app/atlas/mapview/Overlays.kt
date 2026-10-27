@@ -101,6 +101,15 @@ data class UserLocation(val at: LatLon, val accuracyM: Double, val heading: Doub
 @Immutable
 data class AreaOverlay(val id: String, val centre: LatLon, val radiusM: Double, val fill: Long = 0x332E5BFF, val stroke: Long = 0xFF2E5BFF)
 
+/**
+ * The building the app asks about (FillIn's question, the board's look), the way or relation [id]: drawn plain (no
+ * windows, no facade detail), its walls in one flat colour [wall] (0xRRGGBB: the board's grey before an answer, the
+ * answer's colour as the board draws it after), and [hatched] while the question is open. The core draws it so
+ * (MapCore.ask); today's map does not.
+ */
+@Immutable
+data class AskedBuilding(val id: app.atlas.model.OsmId, val wall: Int, val hatched: Boolean)
+
 @Immutable
 data class MapOverlays(
     val markers: List<Marker> = emptyList(),
@@ -113,6 +122,8 @@ data class MapOverlays(
     val areas: List<AreaOverlay> = emptyList(),
     /** Shows a two-finger measuring tape when two fingers rest on the map. */
     val measure: Boolean = true,
+    /** The building the app asks about, drawn as asked where the core draws the map. */
+    val asked: AskedBuilding? = null,
 ) {
     /** Whether something lies on the ground under the symbols (a route, an area), which the canvas draws over the map. */
     val onGround: Boolean get() = routes.isNotEmpty() || areas.isNotEmpty()

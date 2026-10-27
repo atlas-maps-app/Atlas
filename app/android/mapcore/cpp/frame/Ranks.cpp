@@ -128,13 +128,19 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
     // The slots: the ground's, then each item's in painter's order, as many as its detail band at its depth needs.
     std::uint64_t at = options.ground_slots;
     const auto kind = items.kind();
+    const auto owner = items.owner();
     for (const std::uint32_t row : order_) {
         const std::size_t band = selectors.band(kind[row], depth_[row]);
         // the last slot is never a first one, so no entry is RANK_NONE
         const auto first = static_cast<std::uint32_t>(std::min<std::uint64_t>(at, shaders::PAINTER_SLOTS - 2));
         first_[row] = first;
         band_[row] = static_cast<std::uint8_t>(band);
-        table_[row] = shaders::rank_entry(first, selectors.detail(kind[row], depth_[row]));
+        std::uint32_t detail = selectors.detail(kind[row], depth_[row]);
+        if (options.asked != 0 && owner[row] == options.asked) {
+            // the building asked about: plain (its near cells alone), hatched before its answer
+            detail = (detail & 1U) | (options.hatched ? (shaders::RANK_ASKED >> shaders::RANK_DETAIL_SHIFT) : 0U);
+        }
+        table_[row] = shaders::rank_entry(first, detail);
         at += items.slots(row, band);
     }
     slots_ = static_cast<std::uint32_t>(std::min<std::uint64_t>(at, shaders::PAINTER_SLOTS));

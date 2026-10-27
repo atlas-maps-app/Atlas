@@ -59,6 +59,7 @@ struct ItemSpec {
 
 /// An owner's key: its kind (AnchorItems' OwnerType: 1 node, 2 way, 3 relation, 4 an area of either, 5 none in OSM) in
 /// the top byte and its OSM id below; 0 for none.
+inline constexpr std::uint8_t owner_kind_area = 4;
 [[nodiscard]] constexpr std::uint64_t owner_key(std::uint8_t kind, std::uint64_t id) noexcept {
     return (std::uint64_t{kind} << 56U) | (id & ((std::uint64_t{1} << 56U) - 1));
 }

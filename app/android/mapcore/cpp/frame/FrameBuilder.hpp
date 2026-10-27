@@ -18,6 +18,7 @@
 // in the passes' and the ranks' reused buffers.
 #pragma once
 
+#include "frame/Asked.hpp"
 #include "frame/Counters.hpp"
 #include "frame/FrameBlock.hpp"
 #include "frame/FrameLayout.hpp"
@@ -115,6 +116,8 @@ struct FrameState {
     const markers::MarkerSet* markers = nullptr;
     /// The app's routes and areas for this frame (FrameInputs::routes; null: none).
     const routes::RouteSet* routes = nullptr;
+    /// The building the app asks about this frame (FrameInputs::asked), if any.
+    std::optional<AskedBuilding> asked;
     /// The frame slot (0 or 1): set 0's slice and the passes' own per-frame buffers.
     std::uint32_t slot = 0;
     /// The text runs the passes lay on the ground this frame (the runways' designators) for the ground's text pass,
@@ -194,6 +197,8 @@ struct FrameInputs {
     const markers::MarkerSet* markers = nullptr;
     /// The app's routes and areas (MapCore.routes; null: none), read by the routes pass.
     const routes::RouteSet* routes = nullptr;
+    /// The building the app asks about (MapCore.ask), if any: the ranks and the buildings pass draw it as asked.
+    std::optional<AskedBuilding> asked;
 };
 
 /// The map's frame.

@@ -35,6 +35,11 @@ struct RankOptions {
     double cut_z = 0;
     /// The renders' least cull margin, CSS px (polygons wholly beyond the frame and it are dropped).
     double margin = 40.0;
+    /// The building the app asks about (FrameState::asked): its items' owner key (scene::owner_key; 0 for none). Its
+    /// items keep only their first detail bit (a building's near cells: drawn plain, without windows or facade detail,
+    /// as the FillIn board draws it), and carry RANK_ASKED where `hatched`.
+    std::uint64_t asked = 0;
+    bool hatched = false;
 };
 
 /// The frame's painter ranks.

@@ -106,7 +106,8 @@ gpu::Result<void> Buildings::build(scene::TileBuild& b) const {
           layout->windows_first.size() + layout->window_at.size() + layout->near_items_first.size()) *
          4) +
         (layout->near_items.size() * 2) + (layout->ids.size() * 9) + (layout->lights.size() * sizeof(BuildingLight)) +
-        (layout->rings.size() * sizeof(BuildingRing)) + (layout->ring_points.size() * sizeof(float));
+        (layout->face_items.size() * 2) + layout->face_walls.size() + (layout->rings.size() * sizeof(BuildingRing)) +
+        (layout->ring_points.size() * sizeof(float));
     b.keep(std::shared_ptr<const BuildingTile>(std::move(layout)), bytes);
     return {};
 }
@@ -130,12 +131,35 @@ void Buildings::write_rows(scene::Heaps& heaps, const scene::ResidentTile& tile,
 }
 
 void Buildings::light(scene::Heaps& heaps, const shaders::Theme& theme, std::uint32_t slot,
-                      const scene::ResidentTile& tile, const scene::PassTile& mine, const BuildingTile& b) {
-    std::array<std::uint64_t, 2>& lit = lit_[tile.handle];
-    if (lit[slot] == moment_) return;
+                      const scene::ResidentTile& tile, const std::optional<frame::AskedBuilding>& asked,
+                      const scene::PassTile& mine, const BuildingTile& b) {
+    // the items of the building asked about, where this tile holds it
+    asked_items_.clear();
+    if (asked) {
+        for (std::size_t k = 0; k < b.ids.size() && k < b.owners.size(); ++k) {
+            const bool relation = (b.owners[k] & 2U) != 0;
+            if (b.ids[k] == asked->id && relation == asked->relation)
+                asked_items_.push_back(static_cast<std::uint16_t>(k));
+        }
+    }
+    const Lit now{.moment = moment_, .asked = asked_items_.empty() ? 0 : asked_revision_};
+    std::array<Lit, 2>& lit = lit_[tile.handle];
+    if (lit[slot] == now) return;
     const auto started = std::chrono::steady_clock::now();
     colours_.resize(std::size_t{b.faces} * 2);
     building_colours(theme, b.lights, colours_);
+    if (asked && !asked_items_.empty()) {
+        // its walls in its flat colour, lit and unlit alike (0xBBGGRR, as building_colours writes them)
+        const std::uint32_t c =
+            ((asked->wall & 0xFFU) << 16U) | (asked->wall & 0xFF00U) | ((asked->wall >> 16U) & 0xFFU);
+        for (std::size_t i = 0; i < b.face_items.size() && i < b.face_walls.size() && (2 * i) + 1 < colours_.size();
+             ++i) {
+            if (b.face_walls[i] == 0 || std::ranges::find(asked_items_, b.face_items[i]) == asked_items_.end())
+                continue;
+            colours_[2 * i] = c;
+            colours_[(2 * i) + 1] = c;
+        }
+    }
     heaps.write(mine.ranges[0], std::as_bytes(std::span(colours_)),
                 (b.colours_at * 16) + (slot * b.faces * 2 * static_cast<std::uint32_t>(sizeof(std::uint32_t))));
     // and its windowed walls' reveals' colours
@@ -146,7 +170,7 @@ void Buildings::light(scene::Heaps& heaps, const shaders::Theme& theme, std::uin
                     (b.reveals_at * 16) + (slot * b.window_walls * static_cast<std::uint32_t>(sizeof(std::uint32_t))));
     }
     heaps.flush();
-    lit[slot] = moment_;
+    lit[slot] = now;
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     ++lighting_.tiles;
     lighting_.faces += b.faces;
@@ -181,6 +205,11 @@ void Buildings::update(const frame::FrameState& state) {
         std::ranges::copy(theme, theme_.begin());
         ++moment_;
     }
+    // the building asked about changed: the tiles that hold it (now, or before) light again
+    if (state.asked != asked_) {
+        asked_ = state.asked;
+        ++asked_revision_;
+    }
     const std::uint32_t slot = state.slot % 2;
     // The tiles with a building nearer than the cells' reach (its rank draws the near variant): only theirs can draw
     // their near cells. The ranks' order is far to near, so those buildings are among its last rows.
@@ -210,7 +239,7 @@ void Buildings::update(const frame::FrameState& state) {
         if (std::ranges::find(drawn_handles_, tile.handle) == drawn_handles_.end()) {
             drawn_handles_.push_back(tile.handle);
             write_rows(*state.heaps, tile, mine, *b);
-            light(*state.heaps, state.block.theme, slot, tile, mine, *b);
+            light(*state.heaps, state.block.theme, slot, tile, state.asked, mine, *b);
         }
         TileDraw d;
         shaders::BuildingPush push{};

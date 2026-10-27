@@ -88,3 +88,7 @@ inline uint rank_slot(uint entry) {
 inline uint rank_detail(uint entry) {
     return entry >> RANK_DETAIL_SHIFT;
 }
+
+/// The detail's last bit, no kind's threshold (CP/frame/Selectors.hpp's max_details): the item belongs to the building
+/// the app asks about and draws it hatched (FillIn's question, before its answer; CP/frame/Ranks.cpp marks it).
+static const uint RANK_ASKED = 0x80000000u;

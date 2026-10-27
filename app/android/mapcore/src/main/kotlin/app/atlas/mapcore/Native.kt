@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 20
+    const val ABI = 21
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -271,6 +271,12 @@ object Native {
      * <lon>" (or "relation …"; the part 0 where the ray met the outline itself), where the ray met it; "" for none.
      */
     @JvmStatic external fun pick(handle: Long, x: Float, y: Float): String
+
+    /**
+     * The building the app asks about (FillIn's question): way or [relation] [id] (0: none, the question closed), its
+     * walls' flat colour [wall] (0xRRGGBB), drawn [hatched] while the question is open.
+     */
+    @JvmStatic external fun ask(handle: Long, relation: Boolean, id: Long, wall: Int, hatched: Boolean)
 
     /** The screen's haze, vignette and paper grain for the map, each on or off (the app's Look settings). */
     @JvmStatic external fun screen(handle: Long, haze: Boolean, vignette: Boolean, grain: Boolean)

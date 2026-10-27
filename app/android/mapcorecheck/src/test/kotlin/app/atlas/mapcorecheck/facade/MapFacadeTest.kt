@@ -29,7 +29,8 @@ import java.nio.file.Files
  * or large images at a scale below 1, refused for that: so its fields are read where they are written; a block in the
  * first layout, LBL1, refused), and so is the markers' block as `state.MarkerBlock` writes it (a look that is none of
  * the set's, or a density out of its range, or a look larger than may be, refused for that), and the routes' block as
- * `state.RouteBlock` writes it (a route of one point, a chip that is none of the set's, refused for that).
+ * `state.RouteBlock` writes it (a route of one point, a chip that is none of the set's, refused for that); a pick
+ * before any frame meets none, and the building the app asks about reaches the core, hatched, answered and closed.
  */
 class MapFacadeTest {
     companion object {
@@ -175,6 +176,11 @@ class MapFacadeTest {
 
                 // A pick before the map has drawn a frame (hosts have no window): none.
                 assertEquals("", Native.pick(handle, 100f, 200f))
+
+                // The building FillIn asks about: hatched in the board's grey, then in its answer's colour, then none.
+                Native.ask(handle, false, 4242L, 0xA2A5A9, true)
+                Native.ask(handle, true, 4242L, 0x453433, false)
+                Native.ask(handle, false, 0L, 0, false)
 
                 // The screen's haze and vignette off, then on again (the app's Look settings).
                 Native.screen(handle, false, false, false)
