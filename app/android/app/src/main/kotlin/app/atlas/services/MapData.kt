@@ -4,6 +4,7 @@ import app.atlas.Services
 import app.atlas.geo.BBox
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
+import app.atlas.mapcore.UserEdit
 import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapWeather
 import app.atlas.providers.Forecast
@@ -126,6 +127,11 @@ class MapData(private val services: Services) {
             overpass.windowDiff(app.atlas.geo.BBox(b[1], b[0], b[3], b[2]), since, java.time.Instant.parse(notBefore))
         }
         MapEngine.windowsAllowed = { !services.ciDemo }
+        // the user's own edits drawn as mapped until the map's data carries them (ENGINE.md step 6): pending or sent
+        MapEngine.windowEdits = {
+            services.edits.all.value.filter { it.state != EditQueue.State.CONFLICT }
+                .map { q -> UserEdit(q.edit.type.api, q.edit.id, q.edit.set, q.edit.seen) }
+        }
         // the screen's haze, vignette and paper grain as the Look settings have them, handed to the core as they change
         services.scope.launch {
             services.settings.data

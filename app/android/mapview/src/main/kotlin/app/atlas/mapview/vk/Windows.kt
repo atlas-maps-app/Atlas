@@ -2,11 +2,13 @@ package app.atlas.mapview.vk
 
 import android.util.Log
 import app.atlas.mapcore.MapCore
+import app.atlas.mapcore.UserEdit
 import app.atlas.mapview.EngineFrames
 import java.io.File
 import java.nio.ByteBuffer
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
@@ -46,6 +48,12 @@ import java.util.zip.GZIPOutputStream
  * folder is read once, on the first step, and [PackList] does not list such a window meanwhile, so a frame cell's
  * windows are of one version (the core refuses a window of another version than its cell's). One that keeps no data
  * that builds goes, and is fetched whole when the core wants its place.
+ *
+ * The user's own edits to OpenStreetMap waiting on the phone ([edits]: FillIn's, until the map's data carries them;
+ * ENGINE.md step 6) are drawn as mapped: every window is built from its data with them ([Core.edit]), and the data kept
+ * is the data as it came, so a window's next diff is asked from its own date. Where the user edits what stands at a
+ * place ([edited]), the windows whose data reaches it are built again from their kept data with the edits, before
+ * anything else and with no server asked.
  */
 class Windows(
     private val dir: File,
@@ -60,6 +68,8 @@ class Windows(
      */
     private val fetchDiff: ((DoubleArray, String, String) -> ByteArray)? = null,
     private val clock: () -> Long = System::currentTimeMillis,
+    /** The user's edits to draw: pending or sent, oldest first; the app's EditQueue. */
+    private val edits: () -> List<UserEdit> = { emptyList() },
 ) {
     /** What [step] asks of the core: [MapCore]'s, or a test's. */
     interface Core {
@@ -76,6 +86,12 @@ class Windows(
 
         /** The version of a window built now ([MapCore.Window.version]); null where it is not known. */
         fun version(): String? = null
+
+        /**
+         * The data [kept] with the user's [edits] ([UserEdit.json]) into [out]: true; false where none applies to it
+         * (nothing written); throws IllegalStateException where they do not read.
+         */
+        fun edit(w: MapCore.Window, kept: File, edits: ByteBuffer, out: File): Boolean = false
     }
 
     private class Of(private val core: MapCore) : Core {
@@ -85,6 +101,7 @@ class Windows(
         override fun build(w: MapCore.Window, json: File, file: File) = w.build(json, file)
         override fun merge(w: MapCore.Window, kept: File, diff: ByteBuffer, out: File) = w.merge(kept, diff, out)
         override fun version() = runCatching { MapCore.Window.version() }.getOrNull()
+        override fun edit(w: MapCore.Window, kept: File, edits: ByteBuffer, out: File) = w.edit(kept, edits, out)
     }
 
     /** A window that failed lately: when it last did, whether the core refused its data, and how often in a row. */
@@ -95,6 +112,20 @@ class Windows(
 
     /** The windows of another version than a window built now, still to be built again; read on the first step. */
     private var stale: ArrayDeque<MapCore.Window>? = null
+
+    /** The places the user edited lately ([edited]): latitude and longitude, their windows not yet looked up. */
+    private val touched = ConcurrentLinkedQueue<DoubleArray>()
+
+    /** The windows to build again with the user's edits, before anything else; found on a step from [touched]. */
+    private val toEdit = ArrayDeque<MapCore.Window>()
+
+    /**
+     * The user edited what stands at ([lat], [lon]), or took an edit back: the windows built here whose data reaches that
+     * place are built again from their kept data with [edits] on the next steps, one a step, before anything else.
+     */
+    fun edited(lat: Double, lon: Double) {
+        touched.add(doubleArrayOf(lat, lon))
+    }
 
     /** Whether window [w] may be tried at [now]: it has not failed lately, or it has waited long enough since. */
     private fun ready(w: MapCore.Window, now: Long): Boolean {
@@ -118,7 +149,8 @@ class Windows(
         runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND) }
         try {
             val now = clock()
-            nextStale(core)?.let { return rebuild(core, it) }
+            nextEdited(core)?.let { return rebuild(core, it, stale = false) }
+            nextStale(core)?.let { return rebuild(core, it, stale = true) }
             core.wanted().firstOrNull { ready(it, now) && !builtLately(it, now) }?.let { return whole(core, it, now, keptBase(it)) }
             val aged = core.inView().firstOrNull { ready(it, now) && aged(it, now) } ?: return false
             return refresh(core, aged, now)
@@ -173,26 +205,66 @@ class Windows(
     }
 
     /**
-     * Builds window [w], of another version, again from the data it keeps, on the phone: no server is asked, and its
-     * data keeps its date. Where it keeps no data that builds, its pack goes, and it is fetched whole once the core wants
-     * its place. True when it was built (the packs are to be handed again).
+     * The next window built here whose data reaches a place the user edited ([edited]), by its name; null when none is
+     * left. Each place's windows are looked up once, by the boxes [core] gives them.
      */
-    private fun rebuild(core: Core, w: MapCore.Window): Boolean {
+    private fun nextEdited(core: Core): MapCore.Window? {
+        while (true) {
+            val at = touched.poll() ?: break
+            for (f in dir.listFiles().orEmpty().sortedBy { it.name }) {
+                val w = windowOf(f) ?: continue
+                if (w in toEdit || !dataOf(w).exists()) continue
+                val b = runCatching { core.box(w) }.getOrNull() ?: continue
+                if (at[0] >= b[0] && at[0] <= b[2] && at[1] >= b[1] && at[1] <= b[3]) toEdit.addLast(w)
+            }
+        }
+        return toEdit.removeFirstOrNull()
+    }
+
+    /**
+     * Builds window [w] again from the data it keeps, on the phone, with the user's edits: no server is asked, and its
+     * data keeps its date. One of another version ([stale]) that keeps no data that builds loses its pack, and is
+     * fetched whole once the core wants its place; one built again for an edit keeps the pack it has. True when it was
+     * built (the packs are to be handed again).
+     */
+    private fun rebuild(core: Core, w: MapCore.Window, stale: Boolean): Boolean {
         val kept = workOf(w, "kept")
+        val edited = workOf(w, "edited")
+        val reason = if (stale) "of another version" else "for the user's edits"
         try {
             val data = dataOf(w)
             val read = data.exists() && runCatching { unzip(data, kept) }.isSuccess
             val t0 = clock()
-            val why = if (read) core.build(w, kept, fileOf(w)) else "it keeps no data that reads"
+            val why = if (read) core.build(w, withEdits(core, w, kept, edited), fileOf(w)) else "it keeps no data that reads"
             if (why.isEmpty()) {
-                Log.i(EngineFrames.TAG, "vk window ${w.id}: of another version, built again from its kept data in ${clock() - t0} ms")
+                Log.i(EngineFrames.TAG, "vk window ${w.id}: $reason, built again from its kept data in ${clock() - t0} ms")
                 return true
             }
+            if (!stale) {
+                Log.w(EngineFrames.TAG, "vk window ${w.id}: $reason, not built again ($why)")
+                return false
+            }
             fileOf(w).delete()
-            Log.w(EngineFrames.TAG, "vk window ${w.id}: of another version, not built again ($why): fetched once wanted")
+            Log.w(EngineFrames.TAG, "vk window ${w.id}: $reason, not built again ($why): fetched once wanted")
             return false
         } finally {
             kept.delete()
+            edited.delete()
+        }
+    }
+
+    /**
+     * What window [w] is built from: the data in [json] with the user's [edits] where any applies to it, written to
+     * [edited], else [json] itself. Edits that do not read leave the window as its data has it.
+     */
+    private fun withEdits(core: Core, w: MapCore.Window, json: File, edited: File): File {
+        val list = runCatching { edits() }.getOrDefault(emptyList())
+        if (list.isEmpty()) return json
+        return try {
+            if (core.edit(w, json, UserEdit.json(list), edited)) edited else json
+        } catch (e: IllegalStateException) {
+            Log.w(EngineFrames.TAG, "vk window ${w.id}: the user's edits are left out: ${e.message}")
+            json
         }
     }
 
@@ -221,10 +293,15 @@ class Windows(
         }
     }
 
-    /** Builds window [w] from the JSON in [json] and keeps the data beside it. */
+    /** Builds window [w] from the JSON in [json], with the user's edits, and keeps the data beside it, without them. */
     private fun build(core: Core, w: MapCore.Window, json: File, now: Long, how: String): Boolean {
         val t1 = clock()
-        val why = core.build(w, json, fileOf(w))
+        val edited = workOf(w, "edited")
+        val why = try {
+            core.build(w, withEdits(core, w, json, edited), fileOf(w))
+        } finally {
+            edited.delete()
+        }
         if (why.isNotEmpty()) {
             fail(w, now, refused = true)
             Log.w(EngineFrames.TAG, "vk window ${w.id}: $why; tried again in a day")

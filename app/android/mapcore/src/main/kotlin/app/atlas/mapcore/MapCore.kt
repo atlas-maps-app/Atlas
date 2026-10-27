@@ -309,6 +309,15 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
         fun merge(kept: java.io.File, diff: java.nio.ByteBuffer, out: java.io.File): Boolean =
             Native.mergeWindow(z, x, y, kept.path, diff, out.path)
 
+        /**
+         * Its data (the file [kept]: Overpass's JSON of its query, as kept) with the user's own edits waiting on the
+         * phone ([edits]: [UserEdit.json]) written to [out] to build it from, never to keep: true; false where no edit
+         * applies to its data. Throws IllegalStateException with why where they do not read (it is then built without
+         * them). Off the main thread.
+         */
+        fun edit(kept: java.io.File, edits: java.nio.ByteBuffer, out: java.io.File): Boolean =
+            Native.editWindow(z, x, y, kept.path, edits, out.path)
+
         companion object {
             /** The window of a key the core packed (`z shl 48 or x shl 24 or y`). */
             fun of(packed: Long): Window =

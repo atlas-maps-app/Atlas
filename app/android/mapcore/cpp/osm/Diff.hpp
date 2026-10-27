@@ -98,4 +98,8 @@ struct Merged {
 /// Whether `s` is a date as Overpass writes its data's: `YYYY-MM-DDTHH:MM:SSZ`.
 [[nodiscard]] bool is_osm_date(std::string_view s) noexcept;
 
+/// `s` appended to `out` as Overpass's JSON writes a string's characters (escape_cstr): a quote, a backslash, a line
+/// feed, a tab and a carriage return escaped, another control character printed `?`, every other byte as it is.
+void append_escaped(std::string& out, std::string_view s);
+
 } // namespace atlas::osm

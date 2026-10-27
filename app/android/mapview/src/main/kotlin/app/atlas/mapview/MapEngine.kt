@@ -9,6 +9,7 @@ import androidx.compose.runtime.setValue
 import app.atlas.geo.LatLon
 import app.atlas.mapcore.CoreConfig
 import app.atlas.mapcore.MapCore
+import app.atlas.mapcore.UserEdit
 import app.atlas.mapview.svg.SvgFonts
 import app.atlas.mapview.vk.PackList
 import app.atlas.mapview.vk.VkHost
@@ -212,6 +213,21 @@ object MapEngine {
     @Volatile
     var windowDiff: ((DoubleArray, String, String) -> ByteArray)? = null
 
+    /**
+     * The user's own edits to OpenStreetMap the windows draw until the map's data carries them (ENGINE.md step 6),
+     * pending or sent, oldest first; the app sets it with its EditQueue. Read on the windows' background thread.
+     */
+    @Volatile
+    var windowEdits: () -> List<UserEdit> = { emptyList() }
+
+    /**
+     * The user edited what stands at ([lat], [lon]), or took an edit back: the windows whose data reaches the place are
+     * built again with [windowEdits] before anything else, so the map draws the edit within seconds.
+     */
+    fun edited(lat: Double, lon: Double) {
+        windows()?.edited(lat, lon)
+    }
+
     /** Where the windows the phone built are kept: the engine's cache's `windows/`; null without a cache. */
     fun windowsDir(): File? = cacheDir?.let { File(it, "windows") }
 
@@ -228,7 +244,7 @@ object MapEngine {
         val dir = windowsDir() ?: return null
         val data = windowData ?: return null
         return windowsBuilder ?: synchronized(this) {
-            windowsBuilder ?: app.atlas.mapview.vk.Windows(dir, data, windowDiff).also { windowsBuilder = it }
+            windowsBuilder ?: app.atlas.mapview.vk.Windows(dir, data, windowDiff, edits = { windowEdits() }).also { windowsBuilder = it }
         }
     }
 

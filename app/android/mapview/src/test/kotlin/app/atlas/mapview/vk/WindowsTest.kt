@@ -1,6 +1,7 @@
 package app.atlas.mapview.vk
 
 import app.atlas.mapcore.MapCore
+import app.atlas.mapcore.UserEdit
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -19,7 +20,8 @@ import java.time.Instant
  * changes or data fetched whole a month ago fetch it whole; an answer older than the kept data is never built; a window
  * whose data does not come waits twice as long after each failure in a row, one whose data the core refuses a day; a
  * window built lately is not fetched again though the core still wants its place; one of another version is built
- * again from its kept data, with no server asked.
+ * again from its kept data, with no server asked. The user's edits are built into every window and never kept with its
+ * data; an edit builds the windows whose boxes hold its place again from their kept data, before anything else.
  */
 class WindowsTest {
     private val dir: File = Files.createTempDirectory("windows").toFile()
@@ -94,18 +96,38 @@ class WindowsTest {
             out.writeBytes(bytes)
             return true
         }
+
+        /** The edits' JSON of each edit asked. */
+        val edited = ArrayList<String>()
+
+        /** The data with the edits; null where none applies. */
+        var editWith: (File) -> ByteArray? = { null }
+        var editRefusal: String? = null
+
+        override fun edit(w: MapCore.Window, kept: File, edits: ByteBuffer, out: File): Boolean {
+            edited += text(edits)
+            editRefusal?.let { throw IllegalStateException(it) }
+            val bytes = editWith(kept) ?: return false
+            out.writeBytes(bytes)
+            return true
+        }
     }
 
     private val fetched = ArrayList<DoubleArray>()
     private val diffs = ArrayList<Pair<String, String>>()
     private var whole: () -> ByteArray = { answer("2026-10-22T11:59:00Z") }
     private var changes: (String, String) -> ByteArray = { _, _ -> "<osm/>".toByteArray() }
+    private var drawn = listOf<UserEdit>()
     private val windows = Windows(
         dir,
         fetch = { b, file -> fetched += b; file.writeBytes(whole()) },
         fetchDiff = { _, since, notBefore -> diffs += since to notBefore; changes(since, notBefore) },
         clock = { now },
+        edits = { drawn },
     )
+
+    /** FillIn's answer for a building whose colour is a guess. */
+    private val brown = UserEdit("way", 266556292L, mapOf("building:colour" to "#5c3a30"), mapOf("building:colour" to null))
 
     /** The window built once, whole, from data of 2026-10-22T11:59:00Z. */
     private fun built(core: Core) {
@@ -384,5 +406,71 @@ class WindowsTest {
         assertTrue(updated.step(core))
         assertEquals(2, fetched.size)
         assertEquals("core-p1 s1.1-bbbb", versionOf(updated.fileOf(w)))
+    }
+
+    @Test
+    fun theUsersEditsAreBuiltIntoTheWindowAndItsDataKeptWithoutThem() {
+        val core = Core()
+        core.editWith = { kept -> (kept.readText() + " edited").toByteArray() }
+        drawn = listOf(brown)
+        built(core)
+        assertEquals(listOf(String(answer("2026-10-22T11:59:00Z")) + " edited"), core.built)
+        assertEquals(1, core.edited.size)
+        assertEquals(
+            """[{"type":"way","id":266556292,"tags":[{"key":"building:colour","value":"#5c3a30","seen":null}]}]""",
+            core.edited[0],
+        )
+        assertEquals(String(answer("2026-10-22T11:59:00Z")), unzipped(windows.dataOf(w)))
+        assertEquals(setOf("14-8414-5383.atlas", "14-8414-5383.json.gz"), dir.list()!!.toSet())
+    }
+
+    @Test
+    fun whereNoEditAppliesOrTheyDoNotReadTheWindowIsBuiltFromItsData() {
+        val core = Core()
+        drawn = listOf(brown)
+        core.editRefusal = "the edits are refused: edit 0 is of a area"
+        built(core)
+        assertEquals(listOf(String(answer("2026-10-22T11:59:00Z"))), core.built)
+        core.editRefusal = null
+        windows.edited(52.37, 4.88)
+        assertTrue(windows.step(core))
+        assertEquals(2, core.edited.size)
+        assertEquals(String(answer("2026-10-22T11:59:00Z")), core.built.last())
+    }
+
+    @Test
+    fun anEditBuildsTheWindowsHoldingItsPlaceAgainFromTheirKeptDataFirst() {
+        val core = Core()
+        built(core)
+        assertTrue(core.edited.isEmpty()) // no edits: none asked
+        drawn = listOf(brown)
+        core.editWith = { kept -> (kept.readText() + " edited").toByteArray() }
+        // a place beyond its box: nothing to build
+        windows.edited(52.30, 4.80)
+        assertFalse(windows.step(core))
+        // within it: built again from its kept data with the edit, before the window the core wants, no server asked
+        core.wanted = listOf(MapCore.Window(14, 8415, 5383))
+        windows.edited(52.37, 4.88)
+        windows.edited(52.371, 4.881) // the same window once
+        val fetches = fetched.size
+        assertTrue(windows.step(core))
+        assertEquals(fetches, fetched.size)
+        assertEquals(String(answer("2026-10-22T11:59:00Z")) + " edited", core.built.last())
+        assertEquals(String(answer("2026-10-22T11:59:00Z")), unzipped(windows.dataOf(w)))
+        assertEquals(setOf("14-8414-5383.atlas", "14-8414-5383.json.gz"), dir.list()!!.toSet())
+        assertTrue(windows.step(core))
+        assertEquals(fetches + 1, fetched.size)
+    }
+
+    @Test
+    fun aWindowTheCoreRefusesToBuildAgainForAnEditKeepsItsPack() {
+        val core = Core()
+        built(core)
+        drawn = listOf(brown)
+        core.refusal = "the data does not read"
+        windows.edited(52.37, 4.88)
+        assertFalse(windows.step(core))
+        assertTrue(windows.fileOf(w).exists())
+        assertEquals("pack 1", windows.fileOf(w).readText())
     }
 }

@@ -241,6 +241,14 @@ object Native {
     @JvmStatic external fun mergeWindow(z: Int, x: Int, y: Int, kept: String, diff: ByteBuffer, out: String): Boolean
 
     /**
+     * Window ([z], [x], [y])'s data (Overpass's JSON of its query as kept, in the file at [kept], which the core maps)
+     * with the user's own edits waiting on the phone ([edits]: their JSON, UTF-8, direct; [UserEdit.json]), written
+     * to the file at [out] to build the window from: true; false where no edit applies to the data (no file written); an
+     * IllegalStateException says why where the data or the edits do not read. On a background thread.
+     */
+    @JvmStatic external fun editWindow(z: Int, x: Int, y: Int, kept: String, edits: ByteBuffer, out: String): Boolean
+
+    /**
      * The map's labels (`state.LabelBlock`'s block in a direct buffer; an empty block takes them away) at [revision],
      * drawn no smaller than [least] of their own size; "" or why they were refused.
      */

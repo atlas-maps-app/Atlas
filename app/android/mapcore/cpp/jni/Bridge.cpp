@@ -28,6 +28,7 @@
 #include "labels/Sprites.hpp"
 #include "load/Window.hpp"
 #include "osm/Diff.hpp"
+#include "osm/Edits.hpp"
 #include "standin/Session.hpp"
 #include "style/CameraState.hpp"
 #include "style/Theme.hpp"
@@ -970,6 +971,42 @@ jboolean native_merge_window(JNIEnv* env, jclass /*cls*/, jint z, jint x, jint y
     return JNI_TRUE;
 }
 
+/// Window (z, x, y)'s data (Overpass's JSON of its query, as kept, in the file at `kept`, mapped) with the user's own
+/// edits waiting on the phone (osm/Edits.hpp: their JSON in a direct buffer), written to `out` by a file beside it
+/// renamed once whole, for the window to be built from: true; false where no edit applies to its data (no file
+/// written). Where the data or the edits do not read, an IllegalStateException says why (the app then builds the
+/// window without them). On the caller's thread, a background one.
+jboolean native_edit_window(JNIEnv* env, jclass /*cls*/, jint z, jint x, jint y, jstring kept, jobject edits,
+                            jstring out) {
+    const auto refuse = [env](const std::string& why) -> jboolean {
+        env->ThrowNew(env->FindClass("java/lang/IllegalStateException"), why.c_str());
+        return JNI_FALSE;
+    };
+    void* address = edits == nullptr ? nullptr : env->GetDirectBufferAddress(edits);
+    const jlong capacity = edits == nullptr ? 0 : env->GetDirectBufferCapacity(edits);
+    if (address == nullptr || capacity <= 0) return refuse("the edits must be a direct buffer");
+    const auto read =
+        osm::read_edits(std::span(static_cast<const std::byte*>(address), static_cast<std::size_t>(capacity)));
+    if (!read) return refuse(std::format("the edits are refused: {}", read.error().what));
+    const std::string source = string_of(env, kept);
+    const auto data = tiles::MappedSource::open(source);
+    if (!data) return refuse(std::format("the kept data {} does not open: {}", source, tiles::describe(data.error())));
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto edited = osm::apply_edits((*data)->view(0, (*data)->size()), *read);
+    if (!edited) {
+        return refuse(std::format("the edits are refused: {} at byte {}: {}", osm::name_of(edited.error().fault),
+                                  edited.error().at, edited.error().what));
+    }
+    log::info("vk window {}/{}/{}: the user's {} edits: {} applied, {} carried by its data, {} stale, {} not in it; "
+              "in {:.0f} ms",
+              z, x, y, read->size(), edited->applied, edited->carried, edited->stale, edited->absent,
+              std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+    if (!edited->changed()) return JNI_FALSE;
+    const std::string why = write_whole(string_of(env, out), edited->json);
+    if (!why.empty()) return refuse(why);
+    return JNI_TRUE;
+}
+
 /// The moment's theme for the map (MK/state/ThemeBlock.kt's 256 bytes in a direct buffer); "" or why it was refused.
 jstring native_moment(JNIEnv* env, jclass /*cls*/, jlong handle, jobject theme) {
     Core* core = core_of(handle);
@@ -1151,8 +1188,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 40>& methods() {
-    static const std::array<JNINativeMethod, 40> table{{
+const std::array<JNINativeMethod, 41>& methods() {
+    static const std::array<JNINativeMethod, 41> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1208,6 +1245,8 @@ const std::array<JNINativeMethod, 40>& methods() {
         method("windowsInView", "(J)[J", fn(&native_windows_in_view)),
         method("mergeWindow", "(IIILjava/lang/String;Ljava/nio/ByteBuffer;Ljava/lang/String;)Z",
                fn(&native_merge_window)),
+        method("editWindow", "(IIILjava/lang/String;Ljava/nio/ByteBuffer;Ljava/lang/String;)Z",
+               fn(&native_edit_window)),
     }};
     return table;
 }

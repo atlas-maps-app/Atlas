@@ -2,6 +2,7 @@ package app.atlas.mapcorecheck.facade
 
 import app.atlas.anchor.AnchorCases
 import app.atlas.mapcore.Native
+import app.atlas.mapcore.UserEdit
 import app.atlas.mapcore.state.LabelBlock
 import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.render.Amsterdam
@@ -257,5 +258,54 @@ class MapFacadeTest {
             dir.deleteRecursively()
         }
     }
-}
 
+    @Test
+    fun theUsersEditsWrittenIntoAWindowsDataThroughTheFacadeBuildIt() {
+        // the Westerkerk's raw.json kept, and FillIn's answers for a building of it whose colour is a guess
+        val raw = generateSequence(File("").absoluteFile) { it.parentFile }.take(6).map { File(it, "data/ams/raw.json") }.firstOrNull { it.isFile }
+        assumeTrue("the repository's data/ams/raw.json", raw != null)
+        val source = raw!!
+        val kept = source.readText()
+        val at = kept.indexOf("{\n  \"type\": \"way\",\n  \"id\": 266556292,")
+        assumeTrue("the Westerkerk's raw.json as the tests know it", at > 0)
+        val element = kept.substring(at, kept.indexOf("\n}", at) + 2)
+        assumeTrue("its colour not mapped", !element.contains("building:colour") && !element.contains("building:material"))
+        val fillIn = UserEdit(
+            "way", 266556292L,
+            linkedMapOf("building:colour" to "#5c3a30", "building:material" to "brick"),
+            mapOf("building:colour" to null, "building:material" to null),
+        )
+        val x = ((4.8840 + 180.0) / 360.0 * 16384).toInt()
+        val lat = Math.toRadians(52.3746)
+        val y = ((1.0 - Math.log(Math.tan(lat) + 1.0 / Math.cos(lat)) / Math.PI) / 2.0 * 16384).toInt()
+        val dir = Files.createTempDirectory("atlas-window-edits").toFile()
+        try {
+            val out = File(dir, "edited.json")
+            assertTrue(Native.editWindow(14, x, y, source.path, UserEdit.json(listOf(fillIn)), out.path))
+            assertTrue(!File(out.path + ".part").exists())
+            val text = out.readText()
+            // the building's tags with the answers after them, every other byte the kept data's
+            val tagsEnd = "\n  }\n}"
+            assumeTrue("its tags its last member", element.endsWith(tagsEnd))
+            val mapped = element.removeSuffix(tagsEnd) +
+                ",\n    \"building:colour\": \"#5c3a30\",\n    \"building:material\": \"brick\"" + tagsEnd
+            assertEquals(kept.substring(0, at) + mapped + kept.substring(at + element.length), text)
+            // built from it, at the window's path
+            assertEquals("", Native.buildWindow(14, x, y, out.path, File(dir, "14-$x-$y.atlas").path))
+            // an edit the data carries, or of what changed since the user saw it: nothing written
+            val none = File(dir, "none.json")
+            val stale = fillIn.copy(seen = mapOf("building:colour" to "#ffffff", "building:material" to null))
+            assertTrue(!Native.editWindow(14, x, y, source.path, UserEdit.json(listOf(stale)), none.path))
+            assertTrue(!Native.editWindow(14, x, y, out.path, UserEdit.json(listOf(fillIn)), none.path))
+            assertTrue(!none.exists())
+            // edits that do not read, or not in a direct buffer: why
+            fun direct(s: String) = s.toByteArray().let { ByteBuffer.allocateDirect(it.size).put(it).flip() as ByteBuffer }
+            val junk = runCatching { Native.editWindow(14, x, y, source.path, direct("[{\"type\": \"area\"}]"), none.path) }
+            assertTrue(junk.exceptionOrNull()?.message.orEmpty(), junk.exceptionOrNull()?.message.orEmpty().startsWith("the edits are refused"))
+            val heap = runCatching { Native.editWindow(14, x, y, source.path, ByteBuffer.wrap("[]".toByteArray()), none.path) }
+            assertTrue(heap.exceptionOrNull()?.message.orEmpty().contains("direct buffer"))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+}

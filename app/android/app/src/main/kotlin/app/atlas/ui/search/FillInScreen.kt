@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import app.atlas.R
 import app.atlas.mapview.CameraPosition
+import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapState
 import app.atlas.mapview.StageMap
 import app.atlas.nav.Dest
@@ -145,6 +146,8 @@ fun FillInScreen(args: Dest.FillIn, nav: Navigator) {
                         val signedIn = user != null
                         scope.launch(Dispatchers.IO) {
                             services.edits.add(edit, label)
+                            // drawn at once: the windows that hold the building built again with it (ENGINE.md step 6)
+                            MapEngine.edited(args.lat, args.lon)
                             if (signedIn) EditSender.schedule(context, comment(edit.set.keys))
                         }
                     }

@@ -14,6 +14,27 @@
 
 namespace atlas::osm {
 
+void append_escaped(std::string& out, std::string_view s) {
+    for (const char ch : s) {
+        const auto c = static_cast<unsigned char>(ch);
+        if (c == '"') {
+            out += "\\\"";
+        } else if (c == '\\') {
+            out += "\\\\";
+        } else if (c == '\n') {
+            out += "\\n";
+        } else if (c == '\t') {
+            out += "\\t";
+        } else if (c == '\r') {
+            out += "\\r";
+        } else if (c < 0x20U) {
+            out += '?';
+        } else {
+            out += ch;
+        }
+    }
+}
+
 namespace {
 
 using Fault = DiffError::Fault;
@@ -45,29 +66,6 @@ using Key = std::pair<int, std::int64_t>;
     case Kind::other: return "other";
     }
     return "other";
-}
-
-/// JSON's string escapes as Overpass's escape_cstr writes them: a quote, a backslash, a line feed, a tab and a carriage
-/// return escaped, another control character printed `?`, every other byte as it is.
-void append_escaped(std::string& out, std::string_view s) {
-    for (const char ch : s) {
-        const auto c = static_cast<unsigned char>(ch);
-        if (c == '"') {
-            out += "\\\"";
-        } else if (c == '\\') {
-            out += "\\\\";
-        } else if (c == '\n') {
-            out += "\\n";
-        } else if (c == '\t') {
-            out += "\\t";
-        } else if (c == '\r') {
-            out += "\\r";
-        } else if (c < 0x20U) {
-            out += '?';
-        } else {
-            out += ch;
-        }
-    }
 }
 
 [[nodiscard]] bool digit(char c) noexcept { return c >= '0' && c <= '9'; }
