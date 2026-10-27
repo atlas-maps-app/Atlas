@@ -448,6 +448,14 @@ TileBuildings build_buildings(const BuildingInput& in) {
     b.paris = in.region.paris;
     std::vector<Made> spans;
     std::vector<std::uint32_t> kept;
+    // the tile's outlines, whether each is a relation's: the building a part names (its parent) is keyed by it
+    std::unordered_map<std::int64_t, bool> outlines;
+    if (const tl::Layer* l = tile.layer(tl::LayerId::building); l != nullptr) {
+        for (std::uint32_t i = 0; i < l->count; ++i) {
+            outlines[l->integer(tl::building::id, i)] =
+                l->string(tl::building::otype, i).value_or(std::string_view{}) == "relation";
+        }
+    }
     Building bl;
     for (const auto [layer_id, source] :
          {std::pair{tl::LayerId::building, Source::building}, std::pair{tl::LayerId::part, Source::part}}) {
@@ -543,6 +551,17 @@ TileBuildings build_buildings(const BuildingInput& in) {
             // its owner as the likeness harness keys the port's (AnchorCompiler.osmOwner: a dict with a footprint is an
             // area, by its id, whether a way's or a relation's)
             item.spec.owner = scene::owner_key(owner_area, static_cast<std::uint64_t>(item.id));
+            // the building it draws: a part's outline where it names one (FillIn asks about the outline)
+            item.outline = item.id;
+            item.outline_relation = item.relation;
+            if (source == Source::part) {
+                if (const auto parent = l->nullable_integer(tl::building::parent_id, i)) {
+                    item.outline = *parent;
+                    const auto outline = outlines.find(*parent);
+                    item.outline_relation = outline != outlines.end() && outline->second;
+                }
+            }
+            item.spec.building = scene::owner_key(owner_area, static_cast<std::uint64_t>(item.outline));
             m.edged_end = made.edged.size();
             m.plain_end = made.plain.size();
             m.windows_end = made.window_walls.size();

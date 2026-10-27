@@ -101,7 +101,8 @@ struct BuildingTile {
     /// floats the heap holds of the triangles' corners).
     std::vector<BuildingRing> rings;
     std::vector<float> ring_points;
-    /// Each item's OSM id, and its owner: bit 0 a part (else a building), bit 1 a relation's id (else a way's).
+    /// Each item's building (its own OSM id, or a part's outline's where the part names one), and its owner: bit 0 a
+    /// part (else a building), bit 1 that building is a relation (else a way).
     std::vector<std::int64_t> ids;
     std::vector<std::uint8_t> owners;
 };

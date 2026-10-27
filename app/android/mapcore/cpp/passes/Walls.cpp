@@ -96,9 +96,9 @@ gpu::Result<void> Buildings::build(scene::TileBuild& b) const {
     layout->owners.reserve(g.items.size());
     for (const geometry::BuildingItem& item : g.items) {
         b.add_item(item.spec);
-        layout->ids.push_back(item.id);
-        layout->owners.push_back(
-            static_cast<std::uint8_t>((item.relation ? 2U : 0U) | (item.source == geometry::Source::part ? 1U : 0U)));
+        layout->ids.push_back(item.outline);
+        layout->owners.push_back(static_cast<std::uint8_t>((item.outline_relation ? 2U : 0U) |
+                                                           (item.source == geometry::Source::part ? 1U : 0U)));
     }
     const std::size_t bytes =
         sizeof(BuildingTile) +

@@ -32,6 +32,7 @@
 #include "gpu/PipelineCache.hpp"
 #include "passes/Composite.hpp"
 #include "passes/Walls.hpp"
+#include "scene/ItemTable.hpp"
 #include "scene/Pick.hpp"
 #include "scene/SunGlobals.hpp"
 #include "scene/World.hpp"
@@ -1288,7 +1289,8 @@ TEST_CASE("buildings: every roof shape and a houseboat drawn on the host's Vulka
 
 TEST_CASE("buildings: the building the app asks about drawn plain in its flat colour, hatched before its answer") {
     // the synthetic tile's building under the view's middle asked about (FillIn's question, frame/Asked.hpp; picked as
-    // a long press picks it, scene/Pick.hpp): before the answer its walls in the board's grey under the board's hatch;
+    // a long press picks it, scene/Pick.hpp), with its parts (the flat house's raised part is keyed by it): before the
+    // answer its walls in the board's grey under the board's hatch;
     // after it in the answer's flat colour, unhatched; and once no question is open, the frame as it was, pixel for
     // pixel
     auto session = test::open_session();
@@ -1373,6 +1375,21 @@ TEST_CASE("buildings: the building the app asks about drawn plain in its flat co
     ATLAS_REQUIRE(picked.has_value());
     const std::int64_t id = picked->id;
     MESSAGE(std::format("asked about building {}", id));
+    // its items: the outline's own and, for the flat house, the raised part standing in it, keyed by its outline
+    const std::uint64_t key = scene::owner_key(scene::owner_kind_area, static_cast<std::uint64_t>(id));
+    const scene::ItemTable& items = *s.world->items();
+    std::size_t outline_rows = 0;
+    std::size_t part_rows = 0;
+    for (std::uint32_t row = 0; row < items.rows(); ++row) {
+        if (!items.alive(row) || items.building()[row] != key) continue;
+        if (items.owner()[row] == key) {
+            ++outline_rows;
+        } else {
+            ++part_rows;
+        }
+    }
+    CHECK(outline_rows >= 1);
+    if (id == 100) CHECK(part_rows >= 1);
     const auto open = frames(frame::AskedBuilding{.id = id, .wall = grey, .hatched = true});
     ATLAS_REQUIRE(open.has_value());
     const auto answered = frames(frame::AskedBuilding{.id = id, .wall = brown, .hatched = false});

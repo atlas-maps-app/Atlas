@@ -55,6 +55,10 @@ struct ItemSpec {
     std::uint32_t tile = 0;
     /// Its owner, as the likeness harness keys owners (owner_key): the OSM element it draws.
     std::uint64_t owner = 0;
+    /// The building it draws, keyed as `owner` is: an outline's own key, a part's outline's (where the part names one,
+    /// else its own); 0 for an item of no building. The building the app asks about is drawn by the items of its key
+    /// (frame/Ranks.hpp).
+    std::uint64_t building = 0;
 };
 
 /// An owner's key: its kind (AnchorItems' OwnerType: 1 node, 2 way, 3 relation, 4 an area of either, 5 none in OSM) in
@@ -109,6 +113,7 @@ public:
     [[nodiscard]] std::span<const float> radius() const noexcept { return radius_; }
     [[nodiscard]] std::span<const std::uint32_t> tile() const noexcept { return tile_; }
     [[nodiscard]] std::span<const std::uint64_t> owner() const noexcept { return owner_; }
+    [[nodiscard]] std::span<const std::uint64_t> building() const noexcept { return building_; }
     [[nodiscard]] std::span<const std::uint8_t> alive_rows() const noexcept { return alive_; }
     /// Row `row`'s slots in band `band`.
     [[nodiscard]] std::uint32_t slots(std::uint32_t row, std::size_t band) const noexcept {
@@ -122,6 +127,7 @@ private:
     std::vector<float> min_depth_, radius_;
     std::vector<std::uint32_t> tile_;
     std::vector<std::uint64_t> owner_;
+    std::vector<std::uint64_t> building_;
     std::vector<std::uint32_t> slots_; // bands per row
     std::vector<std::uint8_t> alive_;
     std::vector<std::uint32_t> free_;

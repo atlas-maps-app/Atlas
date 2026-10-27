@@ -30,7 +30,8 @@ inline constexpr std::int32_t w0 = 48'840'000;  // 4.884° E
 }
 
 /// The tile (14/8414/5384): a flat house, gabled, hipped, pyramidal, skillion (SW) and mansard roofs, a houseboat near
-/// the quay, and a raised part; and two trees, so the trees' samples begin after the buildings'.
+/// the quay, and a raised part standing in the flat house (its outline); and two trees, so the trees' samples begin
+/// after the buildings'.
 [[nodiscard]] inline TileBytes tile() {
     namespace tl = atlas::tiles;
     namespace col = atlas::test::columns;
@@ -78,6 +79,7 @@ inline constexpr std::int32_t w0 = 48'840'000;  // 4.884° E
         {"h", tl::Codec::centi, col::centi({30.0})},
         {"min", tl::Codec::centi, col::centi({12.0})},
         {"levels", tl::Codec::nvarz, col::nvarz({6})},
+        {"parent_id", tl::Codec::nvarz, col::nvarz({100})},
         {"tag:building:part", tl::Codec::str, col::str(t, {"yes"})},
     };
     LayerBytes tr;

@@ -200,10 +200,12 @@ enum class Source : std::uint8_t { building = 0, part = 1 };
 struct BuildingItem {
     scene::ItemSpec spec;
     Source source = Source::building;
-    std::uint32_t record = 0;     ///< its place in its layer of the tile
-    std::int64_t id = 0;          ///< the OSM id
-    bool relation = false;        ///< the id is a relation's
-    std::uint16_t near_slots = 0; ///< the painter slots its primitives take, near and far and as a boat
+    std::uint32_t record = 0; ///< its place in its layer of the tile
+    std::int64_t id = 0;      ///< the OSM id
+    bool relation = false;    ///< the id is a relation's
+    std::int64_t outline = 0; ///< the building it draws: its own id, or a part's outline's where the part names one
+    bool outline_relation = false; ///< that building is a relation
+    std::uint16_t near_slots = 0;  ///< the painter slots its primitives take, near and far and as a boat
     std::uint16_t far_slots = 0;
     std::uint16_t boat_slots = 0;
 };

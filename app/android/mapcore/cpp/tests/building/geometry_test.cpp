@@ -286,6 +286,12 @@ TEST_CASE("buildings: stage T of a synthetic tile, every roof shape and a houseb
     // 7 buildings and the part, each an item of the given kind with its sort point
     REQUIRE(g.items.size() == 8);
     CHECK(g.items[7].source == gm::Source::part);
+    // each draws a building: an outline its own, the part the flat house it stands in (its parent), keyed so
+    CHECK(g.items[0].outline == 100);
+    CHECK(g.items[7].id == 200);
+    CHECK(g.items[7].outline == 100);
+    CHECK(g.items[7].spec.building == g.items[0].spec.owner);
+    CHECK(g.items[7].spec.owner != g.items[0].spec.owner);
     CHECK(g.items[7].spec.y == (12.0 + 30.0) / 2);
     CHECK(g.items[7].spec.offset == -(0.01 * 12.0));
     CHECK(g.items[0].spec.kind == 7);
