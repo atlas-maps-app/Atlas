@@ -263,7 +263,7 @@ class MainActivity : ComponentActivity() {
                 intent.getStringExtra(EXTRA_VK_SCRIPT)?.let { engine.script = it }
             }
             val off = if (BuildConfig.TIMINGS && intent.getBooleanExtra(EXTRA_VK_OFF, false)) "the debug switch atlas.vk.off is on" else null
-            engine.startCore(config, off)
+            engine.startCore(config, off, context.applicationContext.assets)
             if (off == null) engine.warmPacks(context.applicationContext.assets)
         }
 

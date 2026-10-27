@@ -851,7 +851,7 @@ object Regions {
     // render/regions.py:487 draw_under
     /** Land cover below the water, the canopy of the woods, and (relief regions) the relief image. */
     fun drawUnder(S: Dict, cam: City.Camera, th: Dict, far: (Double, Double) -> Boolean, defs: MutableList<String>): String {
-        val out = arrayListOf("<g filter=\"url(#mat)\">")
+        val out = arrayListOf(if (th["_no_grain"] == true) "<g>" else "<g filter=\"url(#mat)\">")
         val groups = LinkedHashMap<String, MutableList<String>>()
         val land = dicts(S["land"])
         for (a in land) {

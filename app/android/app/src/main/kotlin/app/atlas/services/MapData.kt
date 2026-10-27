@@ -92,9 +92,13 @@ class MapData(private val services: Services) {
     /** Overpass for the map's builds: the same servers, in the same order, as the app's own client, so no build depends on one server. */
     private val overpass: OverpassClient by lazy { OverpassClient(post, hosts = OVERPASS_HOSTS) }
 
-    /** Which region a view draws, and getting it ready. */
+    /**
+     * Which region a view draws, and getting it ready. Today's map builds no area of its own from Overpass any more
+     * (null): the core's windows build every place (ENGINE.md step 3), and a second build of the same streets only
+     * asked the same busy servers twice and showed "building 0 of 0 KB" where it never came.
+     */
     val regions: LiveRegions by lazy {
-        LiveRegions(packs, worker, online = ::online, overpass = overpass, onChange = { MapEngine.invalidate() })
+        LiveRegions(packs, worker, online = ::online, overpass = null, onChange = { MapEngine.invalidate() })
     }
 
     /**
@@ -132,10 +136,11 @@ class MapData(private val services: Services) {
             services.edits.all.value.filter { it.state != EditQueue.State.CONFLICT }
                 .map { q -> UserEdit(q.edit.type.api, q.edit.id, q.edit.set, q.edit.seen) }
         }
-        // the screen's haze, vignette and paper grain as the Look settings have them, handed to the core as they change
+        // the screen's haze, vignette and grain as the Look settings have them (off when unset), handed to the maps as they
+        // change
         services.scope.launch {
             services.settings.data
-                .map { Triple(it[SettingsKeys.MAP_HAZE] ?: true, it[SettingsKeys.MAP_VIGNETTE] ?: true, it[SettingsKeys.MAP_GRAIN] ?: true) }
+                .map { Triple(it[SettingsKeys.MAP_HAZE] ?: false, it[SettingsKeys.MAP_VIGNETTE] ?: false, it[SettingsKeys.MAP_GRAIN] ?: false) }
                 .distinctUntilChanged()
                 .collect { (haze, vignette, grain) -> MapEngine.screenEffects(haze, vignette, grain) }
         }

@@ -234,7 +234,7 @@ struct StrokeOut {
 StrokeOut strokes_ground_fs(StrokeVertex v) {
     StrokeOut o;
     float a = stroke_coverage(v);
-    if (mat_on(frame) && a > 0.0f) {
+    if (mat_grain_on(frame) && a > 0.0f) {
         float3 c = {v.colour.r, v.colour.g, v.colour.b};
         o.colour = stroke_alone(c, a, mat_grey(fx_pixel(frame.camera, v.position.xy)));
     } else {
@@ -250,7 +250,7 @@ StrokeOut strokes_objects_fs(StrokeVertex v) {
     StrokeOut o;
     float a = stroke_coverage(v);
     float3 c = {v.colour.r, v.colour.g, v.colour.b};
-    float3 m = mat_colour(frame.camera, c, v.position.xy, mat_on(frame));
+    float3 m = mat_colour(frame.camera, c, v.position.xy, mat_grain_on(frame));
     float4 over = {m.r * a, m.g * a, m.b * a, a};
     o.colour = over;
     return o;

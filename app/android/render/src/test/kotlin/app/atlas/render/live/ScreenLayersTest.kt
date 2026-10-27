@@ -42,6 +42,8 @@ class ScreenLayersTest {
         private var amsRawBefore: File? = null
         private val cases = ArrayList<Case>()
         private val missing = ArrayList<String>()
+        /** The canal at wet drawn with the app's Look settings' grain off (RenderOptions.grain): its layers. */
+        private var grainOff: List<String> = emptyList()
 
         /** The moment's theme as the render takes it: the `THEMES` entry, with its sun vector. */
         private fun themeOf(key: String): Dict {
@@ -93,6 +95,8 @@ class ScreenLayersTest {
             @Suppress("UNCHECKED_CAST")
             val canal = LinkedHashMap(PyJson.loads(File(dirCfg, "canal_kit_cfg.json").readText()) as Dict)
             cases += Case("canal-wet-front", listOf(Amsterdam.render(S, "wet", canal, null, "front").svg), canal, "wet", themeOf("wet"), "front")
+            val plain = Amsterdam.render(S, "wet", canal, null, "split", app.atlas.render.RenderOptions(grain = false))
+            grainOff = listOf(plain.svg) + plain.objs!!
         }
 
         @AfterClass
@@ -170,6 +174,50 @@ class ScreenLayersTest {
         assertTrue("fin", frames.any { it.drawsFin })
         assertTrue("a moment without weather", frames.any { !it.weather })
         assertTrue("the front layer", frames.any { it.skyRect().isEmpty() })
+    }
+
+    @Test
+    fun theGrainOffLeavesTheMaterialsGrainOutOfTodaysMap() {
+        // the canal at wet: the ground's and the objects' mat groups; with the grain off neither, nor the paper's grain
+        val on = cases.first { it.name == "canal-wet" }.layers
+        assertTrue(on.any { "url(#mat)" in it })
+        assertTrue(grainOff.isNotEmpty())
+        assertTrue(grainOff.none { "url(#mat)" in it })
+        assertTrue(grainOff.none { "url(#grain)" in it })
+    }
+
+    @Test
+    fun theAppsLookSettingsLeaveOutTheGrainTheVignetteAndTheHaze() {
+        // a moment with weather at a map pitch draws fin (the grain and the vignette) and the haze
+        val cam = City.Camera(V3(0.0, 0.0, 0.0), 30.0, 60.0, 430.0, 36.0, 412.0, 915.0, cy = 440.0)
+        val th: Dict = LinkedHashMap(Amsterdam.THEMES.getValue("golden"))
+        th["wx"] = linkedMapOf("cloud" to 0.3, "wind" to 4.0)
+        val cfg: Dict = linkedMapOf("W" to 412, "H" to 915, "target" to listOf(0, 0, 0), "pitch" to 60.0)
+        fun frame(haze: Boolean = true, vignette: Boolean = true, grain: Boolean = true) =
+            ScreenLayers.of(cam, th, cfg, "golden", drawHaze = haze, drawVignette = vignette, drawGrain = grain)
+        val all = frame()
+        assertTrue(all.drawsFin)
+        // all on: the renders' own text, one rect after the other
+        assertEquals(
+            "<rect width=\"412\" height=\"915\" filter=\"url(#grain)\" opacity=\".09\" style=\"mix-blend-mode:overlay\"/><rect width=\"412\" height=\"915\" fill=\"url(#vig)\"/>",
+            all.fin(),
+        )
+        val defs = ArrayList<String>()
+        assertTrue(all.hazeAndWash(defs).contains("url(#haze)"))
+        assertTrue(defs.any { it.contains("id=\"haze\"") })
+        // each off alone leaves the others as the renders draw them
+        assertFalse(frame(grain = false).fin().contains("url(#grain)"))
+        assertTrue(frame(grain = false).fin().contains("url(#vig)"))
+        assertFalse(frame(vignette = false).fin().contains("url(#vig)"))
+        assertTrue(frame(vignette = false).fin().contains("url(#grain)"))
+        val none = ArrayList<String>()
+        val noHaze = frame(haze = false).hazeAndWash(none)
+        assertFalse(noHaze.contains("url(#haze)"))
+        assertTrue(none.none { it.contains("id=\"haze\"") })
+        // golden's wash stays without the haze
+        assertTrue(all.wash)
+        assertTrue(noHaze.contains("url(#wash)"))
+        assertEquals("", frame(grain = false, vignette = false).fin())
     }
 
     @Test

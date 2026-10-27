@@ -60,9 +60,12 @@ object MapEngine {
     @Volatile
     var weather: MapWeather? = null
 
-    /** The engine's flags (amsterdam.py's ATLAS_AO, ATLAS_DAYLIGHT, …): the renders' defaults. */
+    /**
+     * The engine's flags (amsterdam.py's ATLAS_AO, ATLAS_DAYLIGHT, …): the renders' defaults, but for the Look settings'
+     * haze, vignette and grain, off until the app's settings say otherwise ([screenEffects]).
+     */
     @Volatile
-    var options: RenderOptions = RenderOptions()
+    var options: RenderOptions = RenderOptions(haze = false, vignette = false, grain = false)
 
     /**
      * Largest raster scale (device pixels per dp) for exact frames; the screen's density when lower. The frames are drawn
@@ -101,21 +104,22 @@ object MapEngine {
     }
 
     /**
-     * The screen's haze, vignette and paper grain (the app's Look settings; on by default, the renders' look): off, the
-     * core draws the map without them, its own colours there and less work a pixel. Each map binding hands them to the
-     * core; [screenEffects] hands them to the core at once. Today's map (the renderer's port, where the core has no
-     * tiles) keeps them.
+     * The screen's haze, vignette and grain (the app's Look settings; off by default, as each costs frame time: the user,
+     * 27 October; on, the renders' look): off, the core draws the map without them, its own colours there and less work
+     * a pixel. Each map binding hands them to the
+     * core; [screenEffects] hands them to the core at once, and to today's map (the renderer's port, where the core has
+     * no tiles) through [options], whose frames are drawn again.
      */
     @Volatile
-    var haze: Boolean = true
+    var haze: Boolean = false
         private set
 
     @Volatile
-    var vignette: Boolean = true
+    var vignette: Boolean = false
         private set
 
     @Volatile
-    var grain: Boolean = true
+    var grain: Boolean = false
         private set
 
     /** Sets the screen's haze, vignette and paper grain, and hands them to the running core (off the main thread). */
@@ -124,6 +128,11 @@ object MapEngine {
         this.vignette = vignette
         this.grain = grain
         (core as? CoreState.Ready)?.core?.screenEffects(haze, vignette, grain)
+        val o = options
+        if (o.haze != haze || o.vignette != vignette || o.grain != grain) {
+            options = o.copy(haze = haze, vignette = vignette, grain = grain)
+            invalidate()
+        }
     }
 
     /** When the app's first screen began (SystemClock.uptimeMillis): the core's first-frame line counts from it. */
@@ -158,10 +167,11 @@ object MapEngine {
 
     /**
      * Starts the process's core with [config] on a thread of its own (T8: with the first map screen, behind the crash
-     * guard), once. [off] (the debug switch `atlas.vk.off`, or null) shows T2's honest state instead, as a phone that
-     * cannot run the core does.
+     * guard), once, and readies its text from [assets] there before the maps draw with it ([TextRounding.install]: the
+     * kerning rule and the bundled fonts the ground's text draws with). [off] (the debug switch `atlas.vk.off`, or null)
+     * shows T2's honest state instead, as a phone that cannot run the core does.
      */
-    fun startCore(config: CoreConfig, off: String? = null) {
+    fun startCore(config: CoreConfig, off: String? = null, assets: AssetManager? = null) {
         synchronized(this) {
             if (coreStarted) return
             coreStarted = true
@@ -175,6 +185,9 @@ object MapEngine {
         core = CoreState.Starting
         Thread({
             val made = MapCore.shared(config)
+            // The core's text, once, before the maps draw with it: the canal names and the runways' designators are
+            // drawn from these fonts. Until 27 October only VK facts loaded them, so the app's map drew none.
+            if (made != null && assets != null) runCatching { TextRounding.install(assets) }
             core = when {
                 made != null -> CoreState.Ready(made)
                 // No core's library in this process at all (the JVM's tests): today's map alone, as without a start.
@@ -233,6 +246,9 @@ object MapEngine {
 
     @Volatile
     private var windowsBuilder: app.atlas.mapview.vk.Windows? = null
+
+    /** The phone's windows as they are, without making them (null before the first was asked for): the map's status reads them. */
+    val windowsNow: app.atlas.mapview.vk.Windows? get() = windowsBuilder
 
     /** Whether the phone builds windows now (the app's: not in CI's demo run, which asks no Overpass server for them). */
     @Volatile

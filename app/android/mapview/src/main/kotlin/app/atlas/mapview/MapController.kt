@@ -28,6 +28,7 @@ import app.atlas.mapview.vk.CoreMap
 import app.atlas.mapview.vk.MapCameraSource
 import app.atlas.mapview.vk.PackList
 import app.atlas.mapview.vk.Transition
+import app.atlas.mapview.vk.Windows
 import app.atlas.render.live.LiveCamera
 import app.atlas.render.live.LiveView
 import app.atlas.render.live.Moment
@@ -1049,7 +1050,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
      */
     private fun drawStatus(canvas: Canvas) {
         if ((core == null && coreExpected) || (core != null && coreWanted != Transition.Path.CANVAS)) return
-        val text = when (val s = frames.status) {
+        val text = windowsText() ?: when (val s = frames.status) {
             is MapStatus.Ready -> return
             is MapStatus.Loading -> if (shown == null) loadingText() else return
             is MapStatus.Downloading -> if (s.building) "Fetching this area from OpenStreetMap…"
@@ -1066,6 +1067,40 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         canvas.drawRoundRect(debugRect, h / 2, h / 2, statusPanel)
         canvas.drawText(text, cx, top + h / 2 + statusText.textSize * 0.35f, statusText)
     }
+
+    /**
+     * Where the core has no tiles yet, what its windows are doing (ENGINE.md step 3), which says why the place is empty:
+     * today's map builds no area of its own there any more. Null where the windows rest.
+     */
+    private fun windowsText(): String? {
+        if (core == null) return null
+        if (!MapEngine.online()) return "Offline · this area is not on the phone yet"
+        val w = MapEngine.windowsNow ?: return null
+        val s = w.status
+        // while the windows work or wait, the canvas draws again now and then: the status stays true, and the windows'
+        // next step (asked from the draw) comes though the map lies still
+        if (s != Windows.Status.Idle && !windowsTickPosted) {
+            windowsTickPosted = true
+            main.postDelayed({
+                windowsTickPosted = false
+                canvasTick.intValue++
+            }, if (s is Windows.Status.Waiting) WINDOWS_WAIT_TICK_MS else WINDOWS_WORK_TICK_MS)
+        }
+        return when (s) {
+            Windows.Status.Idle -> null
+            is Windows.Status.Fetching -> "Getting this area from OpenStreetMap…"
+            is Windows.Status.Building -> "Building the map here…"
+            is Windows.Status.Waiting ->
+                if (s.refused) {
+                    "This area's data could not be built"
+                } else {
+                    val minutes = ((w.remaining(s) + 59_999L) / 60_000L).coerceAtLeast(1L)
+                    "OpenStreetMap's servers are busy · trying again in %d min".format(Locale.getDefault(), minutes)
+                }
+        }
+    }
+
+    private var windowsTickPosted = false
 
     private fun drawDebug(canvas: Canvas, f: EngineFrame?, p: OverlayPainter, canvasLines: Boolean = true, coreLines: Boolean = false) {
         val c = state.camera
@@ -1458,6 +1493,10 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
 
         /** How often the map asks for a published render pack where the core has no tiles, ms. */
         const val FETCH_CHECK_MS = 500L
+
+        /** How often the canvas draws again while the windows work (the status, and their next step), and while they wait. */
+        const val WINDOWS_WORK_TICK_MS = 1_000L
+        const val WINDOWS_WAIT_TICK_MS = 30_000L
 
         /** How long the core draws alone before today's map lets go of its frame and scenes (ms). */
         const val IDLE_MS = 10_000L

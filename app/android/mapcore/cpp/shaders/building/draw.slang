@@ -881,7 +881,7 @@ BuildingTarget window_glass_fs(GlassOut v) {
     g.bottom = v.bottom.xyz;
     g.gradient = v.bottom.w > v.top.w;
     float y = css_of_output(frame.camera, v.position.xy).y;
-    float3 c = mat_colour(frame.camera, building_glass_at(g, v.top.w, v.bottom.w, y), v.position.xy, mat_on(frame));
+    float3 c = mat_colour(frame.camera, building_glass_at(g, v.top.w, v.bottom.w, y), v.position.xy, mat_grain_on(frame));
     o.colour = float4(c, 1.0f);
     return o;
 }
@@ -901,7 +901,7 @@ float3 building_hatch(FrameCamera c, float3 colour, float2 position) {
 BuildingTarget building_fs(BuildingOut v) {
     BuildingTarget o;
     // mat's grain on the walls and roofs, where the frame's fields are bound and the moment has weather
-    float3 c = mat_colour(frame.camera, v.colour, v.position.xy, mat_on(frame));
+    float3 c = mat_colour(frame.camera, v.colour, v.position.xy, mat_grain_on(frame));
     if (v.asked != 0u) {
         c = building_hatch(frame.camera, c, v.position.xy);
     }
@@ -944,7 +944,7 @@ FrameTarget window_frames_fs(FrameOut v) {
         discard;
     }
     FrameTarget o;
-    o.colour = float4(mat_colour(frame.camera, v.colour, v.position.xy, mat_on(frame)), 1.0f);
+    o.colour = float4(mat_colour(frame.camera, v.colour, v.position.xy, mat_grain_on(frame)), 1.0f);
     o.coverage = mask;
     return o;
 }

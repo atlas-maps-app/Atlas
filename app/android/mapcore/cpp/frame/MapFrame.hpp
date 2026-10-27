@@ -93,8 +93,9 @@ public:
         painter_ = on;
         if (builder_) builder_->set_painter(on);
     }
-    /// The screen's haze, vignette and paper grain on or off from now on (the app's Look settings: FrameOptions::steps
-    /// without their composite steps when off), kept for every frame builder made.
+    /// The screen's haze, vignette and grain on or off from now on (the app's Look settings: FrameOptions::steps
+    /// without their composite steps when off; the grain off takes the materials' grain off the fills too,
+    /// FrameOptions::grain), kept for every frame builder made.
     void set_screen(bool haze, bool vignette, bool grain) noexcept;
     /// Where the fling under way lands (scene::World::set_landing, ENGINE.md gain 26), or none; kept for a world made
     /// later.
@@ -153,6 +154,7 @@ private:
     std::optional<AskedBuilding> asked_;
     bool painter_ = false;
     std::uint32_t steps_ = ~0U;
+    bool grain_ = true;
     std::optional<scene::World::Landing> landing_;
     std::uint64_t active_number_ = 0;
     std::string active_id_;

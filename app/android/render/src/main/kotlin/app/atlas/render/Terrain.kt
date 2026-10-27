@@ -363,7 +363,7 @@ object Terrain {
         val dem = S["dem"] as DEM; val night = th["night"] == true
         val target = v3(cfg["target"]); val TX = target[0]; val TZ = target[2]; val R = pyNum(cfg["radius"])
         val near: (List<V2>) -> Boolean = { pts -> Regions.every(pts, Math.max(1, pts.size / 12)).any { p -> PyMath.hypot(p[0] - TX, p[1] - TZ) < R * 1.1 } }
-        val out = arrayListOf("<g filter=\"url(#mat)\">")
+        val out = arrayListOf(if (th["_no_grain"] == true) "<g>" else "<g filter=\"url(#mat)\">")
         // land cover, in its draw order, each outline lifted onto the ground
         val groups = LinkedHashMap<String, MutableList<String>>()
         for (a in S["land"] as List<Dict>) {

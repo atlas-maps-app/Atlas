@@ -11,7 +11,7 @@
 //     objects bit), one behind an object (hidden there), one at the object's own slot (drawn over it), in structural
 //     mode (alpha a, the stroke's colour, through both pipelines) and in full mode with the fields bound, at a moment
 //     with weather (over the ground alpha min(1, 1.1·a)·a in mat's edge colour; over the objects alpha a in mat's
-//     colour from mat_table).
+//     colour from mat_table); and with the app's grain off there, as without weather (FRAME_NO_GRAIN).
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBlock.hpp"
 #include "frame/FrameBuilder.hpp"
@@ -447,7 +447,8 @@ struct Drawn {
     std::vector<std::string> messages;
 };
 
-[[nodiscard]] Drawn draw(test::Session& session, const Scene& scene, frame::Mode mode, bool weather = true) {
+[[nodiscard]] Drawn draw(test::Session& session, const Scene& scene, frame::Mode mode, bool weather = true,
+                         bool grain = true) {
     Drawn out;
     const gpu::Device& device = *session.device;
     auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
@@ -459,7 +460,7 @@ struct Drawn {
     std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes();
     passes.push_back(std::make_unique<StrokesPass>(scene, segments_of(scene)));
     auto builder = frame::FrameBuilder::create(device, *cache, std::move(passes),
-                                               {.overdraw = false, .clear = {0, 0, 0, 1}, .steps = 0});
+                                               {.overdraw = false, .clear = {0, 0, 0, 1}, .steps = 0, .grain = grain});
     ATLAS_REQUIRE_OR_RETURN(out, builder.has_value(), builder.error().text());
     auto output = gpu::Offscreen::create(device, {.width = frame_width, .height = frame_height}, 2);
     ATLAS_REQUIRE_OR_RETURN(out, output.has_value(), output.error().text());
@@ -634,22 +635,34 @@ TEST_CASE("thin strokes take the ground's variant and the objects' by the object
         return static_cast<double>(shader_area(s, x, y));
     };
 
-    // Structural mode, full mode at a moment with weather, and full mode at one without (no mat: the renders give the
-    // group no filter there).
-    for (const auto& [mode, weather] : {std::pair{frame::Mode::structural, true}, std::pair{frame::Mode::full, true},
-                                        std::pair{frame::Mode::full, false}}) {
+    // Structural mode, full mode at a moment with weather, full mode at one without (no mat: the renders give the
+    // group no filter there), and full mode at a moment with weather with the app's grain off (no mat either: the
+    // materials' grain leaves the strokes, FRAME_NO_GRAIN).
+    struct Run {
+        frame::Mode mode;
+        bool weather;
+        bool grain;
+    };
+    for (const Run& run : {Run{.mode = frame::Mode::structural, .weather = true, .grain = true},
+                           Run{.mode = frame::Mode::full, .weather = true, .grain = true},
+                           Run{.mode = frame::Mode::full, .weather = false, .grain = true},
+                           Run{.mode = frame::Mode::full, .weather = true, .grain = false}}) {
+        const frame::Mode mode = run.mode;
+        const bool weather = run.weather;
         const bool full = mode == frame::Mode::full;
-        const bool mat = full && weather;
+        const bool mat = full && weather && run.grain;
         CAPTURE(full);
         CAPTURE(weather);
-        const Drawn drawn = draw(*session, scene, mode, weather);
+        CAPTURE(run.grain);
+        const Drawn drawn = draw(*session, scene, mode, weather, run.grain);
         ATLAS_REQUIRE(drawn.rgb.size() == std::size_t{frame_width} * frame_height * 3);
         CHECK_MESSAGE(drawn.messages.empty(), (drawn.messages.empty() ? std::string() : drawn.messages.front()));
         CHECK(drawn.fields_on == full);
         if (mat) ATLAS_REQUIRE(drawn.fields != nullptr);
         const Expected e = expect(scene, segs, mat, mat ? drawn.fields.get() : nullptr, area);
         const Compared c = compare(drawn, e);
-        MESSAGE(std::string(mat ? "full" : (full ? "full without weather" : "structural"))
+        MESSAGE(std::string(mat ? "full"
+                                : (full ? (weather ? "full without grain" : "full without weather") : "structural"))
                 << ": " << c.stroked << " pixels stroked; the largest difference " << c.largest << " levels");
         CHECK_MESSAGE(c.beyond == 0, c.beyond << " pixels beyond a level a blend; the first " << c.first);
         if (mat) {

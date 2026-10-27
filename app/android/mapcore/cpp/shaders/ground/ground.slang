@@ -209,7 +209,7 @@ ColourOut colour_fs(FillOut v) {
     o.colour = v.colour;
 #if defined(ATLAS_GROUND_MAT)
     // mat's grain on a fill in the group, where mat_on says (the fields bound, full mode, the moment's weather)
-    o.colour = float4(mat_colour(frame.camera, v.colour.rgb, v.position.xy, mat_on(frame) && v.mat != 0u), v.colour.a);
+    o.colour = float4(mat_colour(frame.camera, v.colour.rgb, v.position.xy, mat_grain_on(frame) && v.mat != 0u), v.colour.a);
 #endif
     return o;
 }

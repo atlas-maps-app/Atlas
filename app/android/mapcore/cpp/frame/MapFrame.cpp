@@ -112,8 +112,8 @@ std::string MapFrame::set_packs(std::vector<MapPack> packs) {
 
 std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& cache, gpu::PipelineWatch* watch) {
     if (made()) return {};
-    auto builder =
-        FrameBuilder::create(device, cache, make_passes(), FrameOptions{.steps = steps_, .painter = painter_}, watch);
+    auto builder = FrameBuilder::create(device, cache, make_passes(),
+                                        FrameOptions{.steps = steps_, .painter = painter_, .grain = grain_}, watch);
     if (!builder) return std::format("the map's frame: {}", builder.error().text());
     // The world's clock is the map's own: its workers stamp each tile's publication with it, the cover fades by it.
     auto clock = [epoch = epoch_] {
@@ -165,7 +165,11 @@ void MapFrame::set_screen(bool haze, bool vignette, bool grain) noexcept {
     if (!haze) steps_ &= ~shaders::COMPOSITE_HAZE;
     if (!vignette) steps_ &= ~shaders::COMPOSITE_VIGNETTE;
     if (!grain) steps_ &= ~shaders::COMPOSITE_GRAIN;
-    if (builder_) builder_->set_steps(steps_);
+    grain_ = grain;
+    if (builder_) {
+        builder_->set_steps(steps_);
+        builder_->set_grain(grain_);
+    }
 }
 
 void MapFrame::release(gpu::PipelineWatch* watch) noexcept {

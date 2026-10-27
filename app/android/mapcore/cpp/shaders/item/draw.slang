@@ -661,7 +661,7 @@ float4 face_colour(ItemOut v) {
         colour = item_gradient_at(v.colour, tree_rgb(v.stops.x), tree_rgb(v.stops.y), (v.kind.x & ITEM_HIGH) != 0u,
                                   v.paint.x, v.paint.y, centre.x);
     }
-    return float4(mat_colour(frame.camera, colour, v.position.xy, mat_on(frame)), 1.0f);
+    return float4(mat_colour(frame.camera, colour, v.position.xy, mat_grain_on(frame)), 1.0f);
 }
 
 /// A face: its colour or its gradient at the pixel's centre, with mat's grain, on the samples it covers.
@@ -698,7 +698,7 @@ ItemTarget items_parts_fs(ItemOut v) {
         discard;
     }
     ItemTarget o;
-    o.colour = float4(mat_colour(frame.camera, v.colour, v.position.xy, mat_on(frame)), 1.0f);
+    o.colour = float4(mat_colour(frame.camera, v.colour, v.position.xy, mat_grain_on(frame)), 1.0f);
     o.coverage = mask;
     return o;
 }
@@ -741,7 +741,7 @@ ItemTarget items_sides_fs(ItemOut v) {
         alpha = g.w;
     }
     ItemTarget o;
-    float3 c = mat_colour(frame.camera, colour, v.position.xy, mat_on(frame));
+    float3 c = mat_colour(frame.camera, colour, v.position.xy, mat_grain_on(frame));
     o.colour = float4(c * alpha, alpha);
     o.coverage = mask;
     return o;

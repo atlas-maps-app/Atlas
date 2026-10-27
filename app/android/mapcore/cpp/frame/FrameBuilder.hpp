@@ -146,6 +146,9 @@ struct FrameOptions {
     /// The painter switch: what stands up draws in the renderer's painter's order (whole items by one point each, as
     /// the renders sort them) instead of at its true depth, to compare the two (painter.slang).
     bool painter = false;
+    /// The app's Look settings' grain: off, the materials' grain (`mat`) leaves the fills (FRAME_NO_GRAIN), as the
+    /// paper's grain leaves the composite where its step is off (MapFrame::set_screen clears both).
+    bool grain = true;
     /// The threads prepare runs the passes' own prepare on, the calling one among them, at most one a pass: 0 for one a
     /// core (std::thread::hardware_concurrency), 1 for the calling thread alone, the passes one after another.
     std::uint32_t threads = 0;
@@ -222,6 +225,8 @@ public:
     void set_painter(bool painter) noexcept { options_.painter = painter; }
     /// The composite's steps the frame lets run from now on (FrameOptions::steps).
     void set_steps(std::uint32_t steps) noexcept { options_.steps = steps; }
+    /// The materials' grain (FrameOptions::grain), from the next frame on.
+    void set_grain(bool grain) noexcept { options_.grain = grain; }
 
     /// Every pass's prepare (Pass::prepare) for `pass` and `output`, on several threads at once (FrameOptions::threads,
     /// ENGINE.md gain 20): the first picture waits for the longest pass, not for their sum. On a failure the first

@@ -713,7 +713,7 @@ TreeTarget trees_fs(TreeOut v) {
     }
     float3 colour = crown ? crown_colour(v.colour, k.z) : v.colour;
     TreeTarget o;
-    o.colour = float4(mat_colour(frame.camera, colour, v.position.xy, mat_on(frame)), 1.0f);
+    o.colour = float4(mat_colour(frame.camera, colour, v.position.xy, mat_grain_on(frame)), 1.0f);
     o.coverage = mask;
     return o;
 }
@@ -768,7 +768,7 @@ TreeTarget tree_sides_fs(TreeOut v) {
         alpha = g.a * v.kind.z;
     }
     TreeTarget o;
-    float3 c = mat_colour(frame.camera, colour, v.position.xy, mat_on(frame));
+    float3 c = mat_colour(frame.camera, colour, v.position.xy, mat_grain_on(frame));
     o.colour = float4(c * alpha, alpha);
     o.coverage = mask;
     return o;

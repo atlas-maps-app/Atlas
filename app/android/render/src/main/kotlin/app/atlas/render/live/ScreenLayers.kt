@@ -91,6 +91,10 @@ object ScreenLayers {
         val rainAngle: Long?,
         /** The grain and the vignette are drawn (`fin`). */
         val drawsFin: Boolean,
+        /** The app's Look settings (RenderOptions): the haze, the vignette and the grain, each drawn or not. */
+        val drawsHaze: Boolean = true,
+        val drawsVignette: Boolean = true,
+        val drawsGrain: Boolean = true,
     ) {
         /** The rows of the sky gradient: [SKY_RISE] px above the horizon, and the horizon. */
         val skyRows: Pair<Double, Double> get() = (horizon - SKY_RISE) to horizon
@@ -184,8 +188,11 @@ object ScreenLayers {
          * definitions to [defs] and returns their elements.
          */
         fun hazeAndWash(defs: MutableList<String>): String {
-            defs.add(hazeDef())
-            var s = hazeRect()
+            var s = ""
+            if (drawsHaze) {
+                defs.add(hazeDef())
+                s = hazeRect()
+            }
             if (wash) {
                 defs.add(washDef())
                 s += washRect()
@@ -215,9 +222,16 @@ object ScreenLayers {
         }
 
         // render/amsterdam.py:964 render: fin
-        /** `fin`: the paper grain (by `overlay`) and the vignette over everything, or "" where the render draws none. */
-        fun fin(): String = if (drawsFin) pf("<rect width=\"%d\" height=\"%d\" filter=\"url(#grain)\" opacity=\"%s\" style=\"mix-blend-mode:overlay\"/><rect width=\"%d\" height=\"%d\" fill=\"url(#vig)\"/>",
-            width, height, grainOpacity, width, height) else ""
+        /**
+         * `fin`: the paper grain (by `overlay`) and the vignette over everything, or "" where the render draws none; each
+         * left out where the app's Look settings turn it off.
+         */
+        fun fin(): String {
+            if (!drawsFin) return ""
+            val grain = if (drawsGrain) pf("<rect width=\"%d\" height=\"%d\" filter=\"url(#grain)\" opacity=\"%s\" style=\"mix-blend-mode:overlay\"/>", width, height, grainOpacity) else ""
+            val vignette = if (drawsVignette) pf("<rect width=\"%d\" height=\"%d\" fill=\"url(#vig)\"/>", width, height) else ""
+            return grain + vignette
+        }
     }
 
     /**
@@ -225,7 +239,10 @@ object ScreenLayers {
      * the camera's settings [cfg] (`W`, `H`, `target`, `pitch`, `haze0`, `haze1`, `no_fin`), the `THEMES` key [themeKey]
      * and the render's [layer]. Projects the sun's point with [cam] only where the sky layer needs it, as the render does.
      */
-    fun of(cam: Camera, th: Map<String, Any?>, cfg: Map<String, Any?>, themeKey: String, layer: String? = null): Frame {
+    fun of(
+        cam: Camera, th: Map<String, Any?>, cfg: Map<String, Any?>, themeKey: String, layer: String? = null,
+        drawHaze: Boolean = true, drawVignette: Boolean = true, drawGrain: Boolean = true,
+    ): Frame {
         val W = pyNum(cfg["W"]); val H = pyNum(cfg["H"])
         val weather = truthy(th["wx"])
         val night = th["night"] == true
@@ -258,6 +275,7 @@ object ScreenLayers {
         return Frame(
             W, H, hy, weather, night, overcast, eye, layer, th["sky_top"] as String, th["sky_hor"] as String, clouds, PyMath.min(H, hy + 2), sun,
             th["haze"] as String, haze, themeKey == "golden", cut, rain, fin,
+            drawsHaze = drawHaze, drawsVignette = drawVignette, drawsGrain = drawGrain,
         )
     }
 

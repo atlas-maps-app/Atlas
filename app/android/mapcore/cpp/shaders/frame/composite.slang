@@ -99,7 +99,7 @@ CompositeOut composite_fs(FullOut v) {
     }
     uint count = uint(SAMPLES);
     float3 mean;
-    if ((frame.layers.steps.x & COMPOSITE_MAT) != 0u && k > 0u && k < count && mat_on(frame)) {
+    if ((frame.layers.steps.x & COMPOSITE_MAT) != 0u && k > 0u && k < count && mat_grain_on(frame)) {
         // A silhouette of the objects group: mat's coverage rule (shared/composite.slang).
         uint3 o = composite_mean_of(objects, k);
         uint3 e = {mat_edge_level(o.x, levels), mat_edge_level(o.y, levels), mat_edge_level(o.z, levels)};

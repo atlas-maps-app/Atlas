@@ -473,4 +473,29 @@ class WindowsTest {
         assertTrue(windows.fileOf(w).exists())
         assertEquals("pack 1", windows.fileOf(w).readText())
     }
+
+    @Test
+    fun theStatusSaysWhatTheWindowsDoForTheMap() {
+        val core = Core()
+        assertEquals(Windows.Status.Idle, windows.status)
+        // no server answers: the window waits, and the map can say for how long
+        core.wanted = listOf(w)
+        whole = { throw java.io.IOException("at capacity") }
+        assertFalse(windows.step(core))
+        val waiting = windows.status as Windows.Status.Waiting
+        assertFalse(waiting.refused)
+        assertEquals(Windows.RETRY_MS, windows.remaining(waiting))
+        now += Windows.RETRY_MS / 2
+        assertEquals(Windows.RETRY_MS / 2, windows.remaining(waiting))
+        // the data comes on the next try: built, and the windows rest
+        now += Windows.RETRY_MS
+        whole = { answer("2026-10-22T11:59:00Z") }
+        assertTrue(windows.step(core))
+        assertEquals(Windows.Status.Idle, windows.status)
+        // the core refuses another window's data: it waits a day, refused
+        core.wanted = listOf(MapCore.Window(14, 8415, 5383))
+        core.refusal = "not a window"
+        assertFalse(windows.step(core))
+        assertTrue((windows.status as Windows.Status.Waiting).refused)
+    }
 }

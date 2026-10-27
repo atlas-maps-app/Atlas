@@ -107,6 +107,29 @@ class Windows(
     /** A window that failed lately: when it last did, whether the core refused its data, and how often in a row. */
     private class Failure(val at: Long, val refused: Boolean, val times: Int)
 
+    /**
+     * What the windows do now, for the map's status where the core has nothing to draw yet: fetching a window's data
+     * from OpenStreetMap's servers, building it, or waiting after its data did not come ([Waiting.until], on [clock]'s
+     * time) or the core refused it.
+     */
+    sealed interface Status {
+        data object Idle : Status
+
+        data class Fetching(val since: Long) : Status
+
+        data class Building(val since: Long) : Status
+
+        data class Waiting(val until: Long, val refused: Boolean) : Status
+    }
+
+    /** What the windows do now ([Status]); written on the windows' thread, read by the map's status. */
+    @Volatile
+    var status: Status = Status.Idle
+        private set
+
+    /** Milliseconds until [s]'s next try, 0 when it is due. */
+    fun remaining(s: Status.Waiting): Long = (s.until - clock()).coerceAtLeast(0L)
+
     private val failed = ConcurrentHashMap<MapCore.Window, Failure>()
     private val busy = AtomicBoolean(false)
 
@@ -135,7 +158,9 @@ class Windows(
 
     /** Window [w] failed at [now]: [refused], the core refused its data; else its data did not come. */
     private fun fail(w: MapCore.Window, now: Long, refused: Boolean) {
-        failed[w] = Failure(now, refused, (failed[w]?.times ?: 0) + 1)
+        val times = (failed[w]?.times ?: 0) + 1
+        failed[w] = Failure(now, refused, times)
+        status = Status.Waiting(now + waitAfter(refused, times), refused)
     }
 
     /** Builds the nearest window [core] wants, else refreshes the nearest aged one in view; true when one was built (the packs are to be handed again). */
@@ -151,7 +176,10 @@ class Windows(
             val now = clock()
             nextEdited(core)?.let { return rebuild(core, it, stale = false) }
             nextStale(core)?.let { return rebuild(core, it, stale = true) }
-            core.wanted().firstOrNull { ready(it, now) && !builtLately(it, now) }?.let { return whole(core, it, now, keptBase(it)) }
+            val wanted = core.wanted()
+            wanted.firstOrNull { ready(it, now) && !builtLately(it, now) }?.let { return whole(core, it, now, keptBase(it)) }
+            // nothing to fetch now: the windows wait on a failure where the core still wants one, else rest
+            if (wanted.none { !builtLately(it, now) }) status = Status.Idle
             val aged = core.inView().firstOrNull { ready(it, now) && aged(it, now) } ?: return false
             return refresh(core, aged, now)
         } finally {
@@ -274,6 +302,7 @@ class Windows(
         val answer = workOf(w, "answer")
         try {
             val t0 = clock()
+            status = Status.Fetching(t0)
             try {
                 fetch(core.box(w), answer)
             } catch (e: Exception) {
@@ -296,6 +325,7 @@ class Windows(
     /** Builds window [w] from the JSON in [json], with the user's edits, and keeps the data beside it, without them. */
     private fun build(core: Core, w: MapCore.Window, json: File, now: Long, how: String): Boolean {
         val t1 = clock()
+        status = Status.Building(t1)
         val edited = workOf(w, "edited")
         val why = try {
             core.build(w, withEdits(core, w, json, edited), fileOf(w))
@@ -313,6 +343,7 @@ class Windows(
             dataOf(w).setLastModified(now)
         }
         failed.remove(w)
+        status = Status.Idle
         Log.i(
             EngineFrames.TAG,
             "vk window ${w.id}: $how, built in $built ms" +

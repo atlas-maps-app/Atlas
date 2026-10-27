@@ -396,6 +396,7 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     if (state_.mode == Mode::full) mode |= shaders::FRAME_FULL;
     if (engine) mode |= shaders::FRAME_ENGINE;
     if (state_.theme.has(style::theme_flag::night)) mode |= shaders::FRAME_NIGHT;
+    if (!options_.grain) mode |= shaders::FRAME_NO_GRAIN;
     b.info = {mode, 0U, 0U, 0U};
     return true;
 }

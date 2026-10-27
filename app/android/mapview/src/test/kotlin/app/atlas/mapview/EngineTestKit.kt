@@ -46,11 +46,15 @@ object EngineTestKit {
         val inline = Executor { it.run() }
         val regions = LiveRegions(lib, inline, online = { false }, onChange = { MapEngine.invalidate() })
         MapEngine.useFonts(fonts)
+        // the renders' look, which the map's frames are held to: the haze, the vignette and the grain on (the app's Look
+        // settings have them off unless the user turns them on)
+        MapEngine.screenEffects(true, true, true)
         MapEngine.regions = regions
         return regions
     }
 
     fun unwire() {
+        MapEngine.screenEffects(false, false, false)
         MapEngine.regions = null
         LiveEngine.forget()
         dir?.deleteRecursively()

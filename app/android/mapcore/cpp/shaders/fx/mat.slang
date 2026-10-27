@@ -92,6 +92,13 @@ bool mat_on(FrameBlock block) {
     return (block.info.x & FRAME_FIELDS) != 0u && theme_has(block.theme, THEME_WEATHER);
 }
 
+/// Whether `mat`'s grain colours the fills this frame: where mat_on says, unless the app's Look settings turn the grain
+/// off (FRAME_NO_GRAIN). The `on` the mat groups' fragment stages give mat_colour, and the composite's rule at the
+/// silhouettes.
+bool mat_grain_on(FrameBlock block) {
+    return mat_on(block) && (block.info.x & FRAME_NO_GRAIN) == 0u;
+}
+
 /// `mat`'s edge level (CP/fx/Mat.hpp's mat_edge_table) for an interior level `v` of an output of `levels` levels (255
 /// or 1023): the colour the filter gives a pixel the objects group covers in part.
 uint mat_edge_level(uint v, uint levels) {
