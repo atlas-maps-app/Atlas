@@ -91,6 +91,25 @@ inline uint thing_side_count(uint flags) {
     return n + ((flags & THING_JOB_STREAK) != 0u ? 1u : 0u);
 }
 
+/// A thing's quads among its job's records, which the plain fills draw (ENGINE.md gain 18; tree.slangh's tree_fill): a
+/// lamp's cap and lantern (its first two: thing_lamp), each box's top (one quad, or two where the near plane cut it to
+/// five corners) after its leg (thing_box: a bench's seat's from its first record and its back's from its fourth, a
+/// basket's from its first); a bollard, a rack and a railing have none. How many, and the i-th's place.
+inline uint thing_quad_count(uint flags) {
+    uint kind = flags & THING_JOB_KIND;
+    if (kind == THING_BENCH) {
+        return 4u;
+    }
+    return kind == THING_LAMP || kind == THING_BASKET ? 2u : 0u;
+}
+
+inline uint thing_quad_record(uint flags, uint i) {
+    if ((flags & THING_JOB_KIND) == THING_LAMP) {
+        return i;
+    }
+    return 3u * (i / 2u) + 1u + (i & 1u);
+}
+
 /// A thing as the points heap holds it: its foot, tile-local (a railing's piece: its first end at its foot's height).
 inline float3 thing_foot(uint4 v) {
     float3 p = {asfloat(v.x), asfloat(v.y), asfloat(v.z)};

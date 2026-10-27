@@ -216,7 +216,9 @@ gpu::Result<void> Trees::prepare(const frame::PassContext& context) {
         gpu::Binding{.slot = 2, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eCompute},
         gpu::Binding{.slot = 3, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eVertex},
         gpu::Binding{.slot = 4, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eCompute},
-        gpu::Binding{.slot = 5, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eVertex}};
+        gpu::Binding{.slot = 5, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eVertex},
+        // the fills' list (ENGINE.md gain 18)
+        gpu::Binding{.slot = 6, .type = vk::DescriptorType::eStorageBuffer, .stages = Stage::eVertex}};
     ATLAS_GPU_LET(set_layout, gpu::make_set_layout(d, bindings));
     set_layout_ = std::move(set_layout);
     const std::array<std::span<const gpu::Binding>, 1> kinds{bindings};
@@ -258,6 +260,14 @@ gpu::Result<void> Trees::prepare(const frame::PassContext& context) {
     if (desc.target.colour_count == 2) desc.blends[1] = gpu::Blend::untouched();
     ATLAS_GPU_LET(draw, frame::make_pipeline(context, desc, frame::Overdraw::opaque));
     draw_ = std::move(draw);
+    // the trunks alone (ENGINE.md gain 18): the same tests and writes, a fragment stage that writes no mask and
+    // discards nothing
+    gpu::GraphicsDesc fill = desc;
+    fill.label.name = "tree fills";
+    fill.vertex = "trees_fills_vs";
+    fill.fragment = "trees_fills_fs";
+    ATLAS_GPU_LET(fill_pipeline, frame::make_pipeline(context, fill, frame::Overdraw::opaque));
+    fill_ = std::move(fill_pipeline);
     // the trunks' sunlit sides: translucent, in painter's order, the test on and writes off
     gpu::GraphicsDesc side{
         .label = {.name = "tree sides", .module = "tree_draw", .configuration = context.configuration},
@@ -278,6 +288,7 @@ gpu::Result<void> Trees::prepare(const frame::PassContext& context) {
 
 void Trees::release() noexcept {
     side_.clear();
+    fill_.clear();
     draw_.clear();
     decide_.clear();
     compute_layout_.clear();
@@ -290,6 +301,7 @@ void Trees::release() noexcept {
     tones_ = {};
     records_ = {};
     sides_ = {};
+    fills_ = {};
     counts_ = {};
 }
 
@@ -365,6 +377,7 @@ void Trees::update(const frame::FrameState& state) {
     const bool right = tree_side_right(state.block.theme, camera);
     const std::span<const scene::CoverTile> tiles = state.cover->tiles();
     words_.clear();
+    fill_words_.clear();
     std::uint32_t records = 0;
     std::uint32_t sides = 0;
     for (const Drawn& d : drawn_) {
@@ -379,6 +392,10 @@ void Trees::update(const frame::FrameState& state) {
                 capped_ = true;
             }
             continue;
+        }
+        // a close tree's trunk for the plain fills (ENGINE.md gain 18)
+        if ((choice.flags & (shaders::TREE_JOB_SMALL | shaders::TREE_JOB_GENERIC)) == 0U) {
+            fill_words_.push_back(records + shaders::tree_trunk_record(choice.flags));
         }
         const bool side = (choice.flags & shaders::TREE_JOB_SIDE) != 0U;
         const std::uint32_t crowns = t.sun && t.sun->now ? t.sun->now->crowns_from : 0U;
@@ -436,19 +453,24 @@ void Trees::update(const frame::FrameState& state) {
     auto tones_made = fit(*device_, tones_[slot], sizeof tones, B::eStorageBuffer, gpu::MemoryUse::upload);
     auto records_made = fit(*device_, records_[slot], vectors(records), B::eStorageBuffer, gpu::MemoryUse::gpu);
     auto sides_made = fit(*device_, sides_[slot], vectors(sides), B::eStorageBuffer, gpu::MemoryUse::gpu);
-    if (!jobs_made || !tones_made || !records_made || !sides_made) {
+    auto fills_made = fit(*device_, fills_[slot], std::max<std::size_t>(fill_words_.size(), 1) * sizeof(std::uint32_t),
+                          B::eStorageBuffer, gpu::MemoryUse::upload);
+    if (!jobs_made || !tones_made || !records_made || !sides_made || !fills_made) {
         const gpu::Error& e = !jobs_made      ? jobs_made.error()
                               : !tones_made   ? tones_made.error()
                               : !records_made ? records_made.error()
-                                              : sides_made.error();
-        log::error("vk trees: {} jobs, {} records and {} sides: {}", jobs, records, sides, e.text());
+                              : !sides_made   ? sides_made.error()
+                                              : fills_made.error();
+        log::error("vk trees: {} jobs, {} records, {} sides and {} fills: {}", jobs, records, sides, fill_words_.size(),
+                   e.text());
         jobs_[slot] = {};
         tones_[slot] = {};
         records_[slot] = {};
         sides_[slot] = {};
+        fills_[slot] = {};
         return;
     }
-    if (*jobs_made || *tones_made || *records_made || *sides_made) {
+    if (*jobs_made || *tones_made || *records_made || *sides_made || *fills_made) {
         gpu::SetWriter(*sets_[slot])
             .buffer(0, vk::DescriptorType::eStorageBuffer, jobs_[slot].handle())
             .buffer(1, vk::DescriptorType::eStorageBuffer, tones_[slot].handle())
@@ -456,14 +478,20 @@ void Trees::update(const frame::FrameState& state) {
             .buffer(3, vk::DescriptorType::eStorageBuffer, records_[slot].handle())
             .buffer(4, vk::DescriptorType::eStorageBuffer, sides_[slot].handle())
             .buffer(5, vk::DescriptorType::eStorageBuffer, sides_[slot].handle())
+            .buffer(6, vk::DescriptorType::eStorageBuffer, fills_[slot].handle())
             .apply(device_->handle());
     }
     std::memcpy(jobs_[slot].bytes().data(), words_.data(), words_.size() * sizeof(std::uint32_t));
     jobs_[slot].flush();
     std::memcpy(tones_[slot].bytes().data(), tones.data(), sizeof tones);
     tones_[slot].flush();
+    if (!fill_words_.empty()) {
+        std::memcpy(fills_[slot].bytes().data(), fill_words_.data(), fill_words_.size() * sizeof(std::uint32_t));
+        fills_[slot].flush();
+    }
     slot_ = slot;
-    counts_ = {.jobs = jobs, .records = records, .sides = sides};
+    counts_ = {
+        .jobs = jobs, .records = records, .sides = sides, .fills = static_cast<std::uint32_t>(fill_words_.size())};
 }
 
 void Trees::record(const frame::Recording& recording, std::uint32_t phase) {
@@ -502,11 +530,25 @@ void Trees::record_draw(const frame::Recording& recording) {
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
     // set 2 under the frame's sets, which the scene subpass keeps bound; the fragments' samples a pixel
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout_, 2, *sets_[slot_], {});
-    const hlsl::uint4 push{static_cast<std::uint32_t>(recording.frame.pass.spec().config.samples()), 0U, 0U, 0U};
+    // At true depth with float depth the close trees' trunks below depth 1 (tree_fill) draw after the rest, alone,
+    // through a pipeline that writes no mask and discards nothing, so a tiler keeps its early depth test and
+    // hidden-surface removal for them (ENGINE.md gain 18); behind their crowns and limbs (slot 0), they are shaded only
+    // where those leave them. A trunk is its tree's last record, so it passes none of its own tree's; another tree's
+    // record would tie it only with their planes' depths equal to the float's last bit (in a ratio of two leads). On
+    // 24-bit depth, whose step holds trees a few centimetres apart a few hundred metres out at one depth, and under the
+    // painter switch, one draw as before.
+    const bool fills = counts_.fills > 0 && (recording.state.block.camera.flags.x &
+                                             (shaders::CAMERA_PAINTER | shaders::CAMERA_DEPTH24)) == 0U;
+    const hlsl::uint4 push{static_cast<std::uint32_t>(recording.frame.pass.spec().config.samples()), fills ? 1U : 0U,
+                           0U, 0U};
     cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, push);
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *draw_);
     cmd.draw(counts_.records * shaders::TREE_RECORD_VERTICES, 1, 0, 0);
     recording.counters.draw("trees", std::uint64_t{counts_.records} * 2);
+    if (!fills) return;
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *fill_);
+    cmd.draw(counts_.fills * shaders::TREE_RECORD_VERTICES, 1, 0, 0);
+    recording.counters.draw("tree fills", std::uint64_t{counts_.fills} * 2);
 }
 
 void Trees::record_sides(const frame::Recording& recording) {

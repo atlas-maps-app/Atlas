@@ -104,11 +104,13 @@ public:
     static constexpr std::uint32_t sides_phase = 2;
     static constexpr std::int32_t sides_order = 1010;
 
-    /// What the last frame drew: its jobs (the trees the ranks drew), their records and sunlit sides.
+    /// What the last frame drew: its jobs (the trees the ranks drew), their records and sunlit sides, and the records
+    /// the plain fills' list names (the close trees' trunks).
     struct Counts {
         std::uint32_t jobs = 0;
         std::uint32_t records = 0;
         std::uint32_t sides = 0;
+        std::uint32_t fills = 0;
     };
     [[nodiscard]] Counts counts() const noexcept { return counts_; }
     /// The item kind the pass's items take.
@@ -154,15 +156,18 @@ private:
     std::array<gpu::Buffer, 2> tones_;
     std::array<gpu::Buffer, 2> records_;
     std::array<gpu::Buffer, 2> sides_;
+    std::array<gpu::Buffer, 2> fills_; ///< the fills' list: the trunks' records (ENGINE.md gain 18)
     vk::raii::PipelineLayout layout_{nullptr};
     vk::raii::PipelineLayout compute_layout_{nullptr};
     vk::raii::Pipeline decide_{nullptr};
     vk::raii::Pipeline draw_{nullptr};
+    vk::raii::Pipeline fill_{nullptr}; ///< the trunks alone at true depth with float depth (ENGINE.md gain 18)
     vk::raii::Pipeline side_{nullptr};
 
     // the render thread's, per frame
     std::vector<Drawn> drawn_;
     std::vector<std::uint32_t> words_;
+    std::vector<std::uint32_t> fill_words_;
     std::uint32_t slot_ = 0;
 };
 

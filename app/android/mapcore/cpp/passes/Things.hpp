@@ -102,11 +102,13 @@ public:
     static constexpr std::uint32_t sides_phase = 2;
     static constexpr std::int32_t sides_order = 1011;
 
-    /// What the last frame drew: its jobs (the things drawn), their records and translucent ones.
+    /// What the last frame drew: its jobs (the things drawn), their records and translucent ones, and the records the
+    /// plain fills' list names (the lamps' caps and lanterns, the boxes' tops).
     struct Counts {
         std::uint32_t jobs = 0;
         std::uint32_t records = 0;
         std::uint32_t sides = 0;
+        std::uint32_t fills = 0;
     };
     [[nodiscard]] Counts counts() const noexcept { return counts_; }
     [[nodiscard]] std::uint16_t kind() const noexcept { return kind_; }
@@ -144,15 +146,18 @@ private:
     std::array<gpu::Buffer, 2> tones_;
     std::array<gpu::Buffer, 2> records_;
     std::array<gpu::Buffer, 2> sides_;
+    std::array<gpu::Buffer, 2> fills_; ///< the fills' list: the quads' records (ENGINE.md gain 18)
     vk::raii::PipelineLayout layout_{nullptr};
     vk::raii::PipelineLayout compute_layout_{nullptr};
     vk::raii::Pipeline decide_{nullptr};
     vk::raii::Pipeline draw_{nullptr};
+    vk::raii::Pipeline fill_{nullptr}; ///< the quads alone at true depth with float depth (ENGINE.md gain 18)
     vk::raii::Pipeline side_{nullptr};
 
     // the render thread's, per frame
     std::vector<Drawn> drawn_;
     std::vector<std::uint32_t> words_;
+    std::vector<std::uint32_t> fill_words_;
     std::uint32_t slot_ = 0;
 };
 
