@@ -200,6 +200,15 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     /** Whether the core draws the labels now (the canvas does not); the painter its sprites are drawn with. */
     private var coreLabels = false
     private var spritePainter: LabelPainter? = null
+
+    /** The markers last handed to the core: the list, the density, whether the core draws them. */
+    private class SentMarkers(val markers: List<Marker>, val density: Float, val draws: Boolean)
+    private var sentMarkers: SentMarkers? = null
+    private var markersRevision = 0L
+
+    /** Whether the core draws the markers now (the canvas does not: from when the core has them); their painter. */
+    private var coreMarkers = false
+    private var markerPainter: MarkerPainter? = null
     private var movedAt = 0L
     private var panelLine = ""
     private var panelJob: Job? = null
@@ -383,6 +392,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
                 core = null
                 sentLabels = null
                 coreLabels = false
+                sentMarkers = null
+                coreMarkers = false
                 coreLocation = false
                 closeCore(old)
                 noteChrome()
@@ -399,6 +410,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         sentMoment = null
         sentLabels = null
         coreLabels = false
+        sentMarkers = null
+        coreMarkers = false
         coreLocation = false
         publishedCamera = null
         noteChrome()
@@ -465,8 +478,11 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         // the core holds its last picture until today's map has its own: a frame of nothing would be a blank one.
         val holds = coreWanted == Transition.Path.CANVAS && CameraOps.visibleBounds(cam, v)?.let { !c.packs.meets(it) } != false
         val draw = !c.transition.coreHidden && !holds
-        // the location's puck where the core draws the map with nothing of today's map over it, as its labels
-        val location = overlays.location.takeIf { draw && coreWanted == Transition.Path.CORE && c.transition.canvas == 0f }
+        // the location's puck where the core draws the map with nothing of today's map over it, as its labels, and nothing
+        // on the ground that the canvas draws over the core's picture (a route ribbon, an area) until the core draws them
+        val location = overlays.location.takeIf {
+            draw && coreWanted == Transition.Path.CORE && c.transition.canvas == 0f && !overlays.onGround
+        }
         if (!force && next == null && cam == publishedCamera && v == publishedViewport && rest == publishedRest && draw == publishedDraw &&
             location == publishedLocation
         ) {
@@ -594,6 +610,43 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         scope.launch(Dispatchers.Default) {
             val why = c.labels(labels, face, painter, least, revision)
             if (why.isNotEmpty()) Log.w(EngineFrames.TAG, "vk labels: $why")
+        }
+    }
+
+    /**
+     * The markers: the core draws them where it draws the map with nothing of today's map over it and nothing on the
+     * ground the canvas draws over its picture (a route, an area: the canvas draws those, and the markers over them,
+     * until the core draws them), so they move with the map in the same frame; today's map's canvas elsewhere. Handed
+     * over off the main thread when that, the markers or the density change; the canvas lets go of them once the core
+     * has them, so none are missing between.
+     */
+    private fun sendMarkers(c: CoreMap) {
+        val draws = coreWanted == Transition.Path.CORE && c.transition.canvas == 0f && !overlays.onGround
+        val markers = if (draws) overlays.markers else emptyList()
+        val sent = sentMarkers
+        if (sent != null && sent.draws == draws && sent.density == density) {
+            if (sent.markers === markers) return
+            // an equal list made anew (a recomposition): kept, so the next frames compare it by identity
+            if (sent.markers == markers) {
+                sentMarkers = SentMarkers(markers, density, draws)
+                return
+            }
+        }
+        sentMarkers = SentMarkers(markers, density, draws)
+        if (!draws) coreMarkers = false
+        val revision = ++markersRevision
+        val painter = markerPainter?.takeIf { it.density == density } ?: MarkerPainter(density).also {
+            it.sans = markerSans
+            markerPainter = it
+        }
+        scope.launch(Dispatchers.Default) {
+            val why = c.markers(markers, painter, revision)
+            if (why.isNotEmpty()) Log.w(EngineFrames.TAG, "vk markers: $why")
+            main.post {
+                if (core !== c || revision != markersRevision) return@post
+                coreMarkers = draws && why.isEmpty()
+                frameTick.intValue++
+            }
         }
     }
 
@@ -770,10 +823,12 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     // Drawing.
 
     private fun painter(): OverlayPainter = painter ?: OverlayPainter(density).also { p ->
-        // the markers' text in the boards' Geist, from the fonts the engine's frames use
-        p.markers.sans = { w -> (fonts ?: SvgFonts.system()).typeface("Geist", w, false) }
+        p.markers.sans = markerSans
         painter = p
     }
+
+    /** The markers' text in the boards' Geist, from the fonts the engine's frames use. */
+    private val markerSans: (Int) -> Typeface = { w -> (fonts ?: SvgFonts.system()).typeface("Geist", w, false) }
 
     /** The engine camera of the current view, in the frame of [f] and at its ground level, in CSS pixels. */
     private fun cameraFor(f: EngineFrame, v: Viewport): SvgCamera {
@@ -820,8 +875,9 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             pt.drawGround(canvas, g, ov)
             labelTypeface?.let { pt.labels.typeface = it }
             c?.let(::sendLabels)
+            c?.let(::sendMarkers)
             if (!coreLabels) pt.drawLabels(canvas, g, ov)
-            pt.drawMarkers(canvas)
+            if (!coreMarkers) pt.drawMarkers(canvas)
             if (!coreLocation) ov.location?.let { pt.drawLocation(canvas, g, it) }
             tape?.let { pt.drawTape(canvas, g, it, units, Locale.getDefault()) }
             drawStatus(canvas)

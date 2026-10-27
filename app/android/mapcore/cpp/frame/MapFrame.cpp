@@ -201,7 +201,8 @@ void MapFrame::next(const style::CameraState& camera, double seconds) {
                           .seconds = seconds,
                           .mode = map_mode,
                           .scene = world_.get(),
-                          .labels = labels_.get()});
+                          .labels = labels_.get(),
+                          .markers = markers_.get()});
 }
 
 standin::MapCounts MapFrame::counts() const noexcept {

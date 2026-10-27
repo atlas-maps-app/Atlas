@@ -9,12 +9,16 @@ import app.atlas.mapcore.CameraState
 import app.atlas.mapcore.FrameRecords
 import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.state.LabelBlock
+import app.atlas.mapcore.state.MarkerBlock
 import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.mapview.EngineFrames
 import app.atlas.mapview.LabelPainter
 import app.atlas.mapview.LabelSprites
 import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapLabel
+import app.atlas.mapview.Marker
+import app.atlas.mapview.MarkerPainter
+import app.atlas.mapview.MarkerSprites
 import app.atlas.render.live.Moment
 import java.time.ZoneId
 import java.util.Locale
@@ -176,6 +180,26 @@ internal class CoreMap(
                 LabelBlock.Sprite(s.id, s.priority, s.half, s.pad, s.textHeight, s.baseline, s.own, s.large, points)
             })
             core.labels(block, revision, least)
+        }
+
+    private val markerLock = Any()
+    private var markersRevision = 0L
+
+    /** The sprites' maker for the painter of the last hand-over, which keeps the looks it drew (under [markerLock]). */
+    private var markerSprites: MarkerSprites? = null
+
+    /**
+     * The markers the core draws for this map from now on: [markers] as sprites drawn by [painter] (none when empty),
+     * unless a later hand-over ([revision], counted by the caller) went already. Off the main thread. "" or why the
+     * core refused them.
+     */
+    fun markers(markers: List<Marker>, painter: MarkerPainter, revision: Long): String =
+        synchronized(markerLock) {
+            if (revision <= markersRevision) return ""
+            markersRevision = revision
+            val maker = markerSprites?.takeIf { it.painter === painter } ?: MarkerSprites(painter).also { markerSprites = it }
+            val block = if (markers.isEmpty()) MarkerBlock.write(painter.density, emptyList(), emptyList(), emptyList()) else maker.block(markers)
+            core.markers(block, revision)
         }
 
     /** This map leaves the screen: the core's map goes off if this map was the one drawing (off the main thread). */

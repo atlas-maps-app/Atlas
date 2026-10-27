@@ -4,6 +4,7 @@
 #include "base/log.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
+#include "frame/MarkerBoxes.hpp"
 #include "gen/spirv/text/sprite.hpp"
 #include "gen/spirv/text/sprite_loc1.hpp"
 #include "gpu/Descriptors.hpp"
@@ -60,7 +61,10 @@ void Labels::update(const frame::FrameState& state) {
     const labels::Frame frame{.width = static_cast<float>(state.camera.width_px),
                               .height = static_cast<float>(state.camera.height_px),
                               .keep_out = keep_out_,
-                              .markers = {},
+                              // the markers' boxes this frame (passes/Markers, which updates before the labels)
+                              .markers = state.marker_boxes != nullptr
+                                             ? std::span<const labels::Box>(state.marker_boxes->boxes)
+                                             : std::span<const labels::Box>(),
                               .least = set->least()};
     // The map's scale: the reciprocal of the camera's distance (a tilted view keeps the zoom's size).
     const double scale = state.camera.distance > 0.0 ? 1.0 / state.camera.distance : 0.0;

@@ -6,6 +6,7 @@
 #include "base/trace.hpp"
 #include "frame/FrameLayout.hpp"
 #include "frame/GroundRuns.hpp"
+#include "frame/MarkerBoxes.hpp"
 #include "gen/spirv/frame/overdraw.hpp"
 #include "gen/spirv/frame/owner.hpp"
 #include "gpu/Instance.hpp"
@@ -345,6 +346,7 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     state_.rest = cam.has(style::camera_flag::rest);
     state_.slot = slot;
     state_.labels = inputs_.labels;
+    state_.markers = inputs_.markers;
     const view::Device device{.density = cam.density,
                               .width_px = cam.width_px,
                               .height_px = cam.height_px,
@@ -508,6 +510,9 @@ void FrameBuilder::stage_f() {
     if (!ground_runs_) ground_runs_ = std::make_unique<GroundRuns>();
     ground_runs_->runs.clear();
     state_.ground_runs = ground_runs_.get();
+    if (!marker_boxes_) marker_boxes_ = std::make_unique<MarkerBoxes>();
+    marker_boxes_->boxes.clear();
+    state_.marker_boxes = marker_boxes_.get();
     for (std::size_t p = 0; p < passes_.size(); ++p) {
         const trace::Section traced(trace_names_[p].update.c_str());
         passes_[p]->update(state_);

@@ -1,10 +1,11 @@
 // The map's overlays drawn by the core (ENGINE.md step 6): for now where the user is, the location's puck, from the
 // camera state (style/CameraState.hpp's location, version 2), so it moves with the map in the same frame instead of
-// being drawn by the canvas over it a frame apart. Drawn in the composite subpass after the labels, as
-// mapview's OverlayPainter.drawLocation draws it (shaders/overlay/location.slang): where the fix lies in front of the
-// eye, its accuracy's circle on the street where it is wider than 20 dp at its depth and on screen, and the puck where
-// its box of 40 dp about the dot reaches the screen, with the heading's cone turned toward a point 15 m ahead of the
-// fix on screen (Geo.destination's, on a sphere of 6,371,008.8 m). The push constants carry it: no set of its own.
+// being drawn by the canvas over it a frame apart. Drawn in the composite subpass after the labels and the markers
+// (passes/Markers.hpp), as mapview's OverlayPainter.drawLocation draws it (shaders/overlay/location.slang): where the
+// fix lies in front of the eye, its accuracy's circle on the street where it is wider than 20 dp at its depth and on
+// screen, and the puck where its box of 40 dp about the dot reaches the screen, with the heading's cone turned toward a
+// point 15 m ahead of the fix on screen (Geo.destination's, on a sphere of 6,371,008.8 m). The push constants carry
+// it: no set of its own.
 #pragma once
 
 #include "frame/Pass.hpp"
@@ -48,7 +49,7 @@ public:
 
 private:
     static constexpr std::array<frame::Phase, 1> phase_list{
-        frame::Phase{.slot = frame::Slot::labels, .order = 1, .id = 0}};
+        frame::Phase{.slot = frame::Slot::labels, .order = 2, .id = 0}};
 
     /// A frame slot's location.
     struct Placed {

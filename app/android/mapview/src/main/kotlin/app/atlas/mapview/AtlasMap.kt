@@ -139,7 +139,7 @@ fun AtlasMap(
             snapshotFlow {
                 Inputs(
                     state.camera, state.time, controller.style, controller.size, controller.insets, controller.lookAhead,
-                    controller.overlays.location, controller.frame,
+                    controller.overlays.location, controller.frame, controller.overlays.onGround,
                 )
             }.collect { controller.update() }
         }
@@ -202,6 +202,8 @@ private data class Inputs(
     val location: UserLocation?,
     /** The region drawn changed: its frame is the gestures' and the overlays'. */
     val frame: app.atlas.render.live.RegionFrame?,
+    /** Routes or areas came or went: the core draws the location only where the canvas draws nothing over the map. */
+    val ground: Boolean,
 )
 
 /** Feeds the pointer events of the view to the controller's gesture machine, with its timeouts. */

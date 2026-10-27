@@ -20,7 +20,7 @@ import kotlin.math.min
  *   bold (`0 4px 12px rgba(20,22,27,0.2)`);
  * - a value under a pin is the board's "4′" chip: white at 92 %, radius 10, 12 px semibold.
  */
-class MarkerPainter(private val density: Float) {
+class MarkerPainter(val density: Float) {
     val metrics = MarkerMetrics(density)
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val border = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
@@ -89,6 +89,9 @@ class MarkerPainter(private val density: Float) {
         val left = x - gap - w
         return if (right + w + 2f * density <= viewWidth || left < 0f) right else left
     }
+
+    /** The width of pin [m]'s name in pixels, as it is written beside the pin; -1 for none. */
+    fun nameWidth(m: Marker): Float = m.label?.let { labelText.measureText(it) } ?: -1f
 
     /** The box of a pin's name beside it, into [out] at [o] (left, top, right, bottom). */
     fun labelBox(m: Marker, x: Float, y: Float, out: FloatArray, o: Int) {
@@ -217,8 +220,16 @@ class MarkerPainter(private val density: Float) {
         border.clearShadowLayer()
         fill.color = colour
         canvas.drawCircle(x, y, r - metrics.border, fill)
+        drawCount(canvas, count, x, y, onColour(colour))
+    }
+
+    /**
+     * A cluster's count centred on ([x], [y]) in [ink] (white on dark colours, ink on light ones): 14 px bold for two
+     * figures, 12 px for more. The core draws a cluster's bubble itself and this as its sprite over it.
+     */
+    fun drawCount(canvas: Canvas, count: Int, x: Float, y: Float, ink: Int) {
         val label = countLabel(count)
-        text.color = onColour(colour)
+        text.color = ink
         val old = text.textSize
         text.textSize = (if (label.length <= 2) 14f else 12f) * density
         text.textAlign = Paint.Align.CENTER

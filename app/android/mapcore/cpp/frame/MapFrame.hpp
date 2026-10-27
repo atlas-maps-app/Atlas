@@ -22,6 +22,7 @@
 
 #include "frame/FrameBuilder.hpp"
 #include "labels/Sprites.hpp"
+#include "markers/Markers.hpp"
 #include "scene/World.hpp"
 #include "standin/SessionMap.hpp"
 #include "style/Theme.hpp"
@@ -79,6 +80,8 @@ public:
     void set_theme(const style::ThemeBlock& theme) noexcept { theme_ = theme; }
     /// The app's labels from now on (MapCore.labels; null: none), drawn by the labels pass.
     void set_labels(std::shared_ptr<const labels::LabelSet> labels) noexcept { labels_ = std::move(labels); }
+    /// The app's markers from now on (MapCore.markers; null: none), drawn by the markers pass.
+    void set_markers(std::shared_ptr<const markers::MarkerSet> markers) noexcept { markers_ = std::move(markers); }
     /// The painter switch from now on (FrameOptions::painter), kept for every frame builder made.
     void set_painter(bool on) noexcept {
         painter_ = on;
@@ -135,6 +138,7 @@ private:
     std::vector<MapPack> packs_;
     std::optional<style::ThemeBlock> theme_;
     std::shared_ptr<const labels::LabelSet> labels_;
+    std::shared_ptr<const markers::MarkerSet> markers_;
     bool painter_ = false;
     std::uint32_t steps_ = ~0U;
     std::optional<scene::World::Landing> landing_;

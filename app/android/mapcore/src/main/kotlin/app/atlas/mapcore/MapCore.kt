@@ -262,6 +262,15 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
         core.call("the core is closed") { Native.labels(it, block, revision, least) }
 
     /**
+     * The map's markers from now on, as `state.MarkerBlock` writes them (each look the app drew once, the clusters'
+     * counts, and what the core places them by; an empty block, none), at [revision]: the core places them each frame
+     * where the board's MarkerLayout would, in the same frame as the map, and its labels keep clear of them. "" or why
+     * they were refused. Off the main thread.
+     */
+    fun markers(block: ByteBuffer, revision: Long): String =
+        core.call("the core is closed") { Native.markers(it, block, revision) }
+
+    /**
      * The screen's haze, vignette and paper grain from now on, each on (the renders' look, the default) or off: off,
      * the map's picture keeps its own colours there, and the composite does less work a pixel. Off the main thread.
      */

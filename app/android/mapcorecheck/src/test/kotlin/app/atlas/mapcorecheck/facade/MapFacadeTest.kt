@@ -4,6 +4,7 @@ import app.atlas.anchor.AnchorCases
 import app.atlas.mapcore.Native
 import app.atlas.mapcore.UserEdit
 import app.atlas.mapcore.state.LabelBlock
+import app.atlas.mapcore.state.MarkerBlock
 import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.render.Amsterdam
 import app.atlas.render.Regions
@@ -25,7 +26,8 @@ import java.nio.file.Files
  * none: it draws once one comes) and off, the moment's theme block is checked as the core reads it, and the labels'
  * block as `state.LabelBlock` writes it is read by the core (a sprite without points, or wider than a sprite may be,
  * or large images at a scale below 1, refused for that: so its fields are read where they are written; a block in the
- * first layout, LBL1, refused).
+ * first layout, LBL1, refused), and so is the markers' block as `state.MarkerBlock` writes it (a look that is none of
+ * the set's, or a density out of its range, or a look larger than may be, refused for that).
  */
 class MapFacadeTest {
     companion object {
@@ -118,6 +120,35 @@ class MapFacadeTest {
                 val first = ByteBuffer.allocateDirect(12).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(0x314C424C).putInt(0).putInt(0).flip() as ByteBuffer
                 assertEquals("the labels were refused: not a block of label sprites", Native.labels(handle, first, 8L, 0f))
                 assertEquals("the labels must be a direct buffer", Native.labels(handle, ByteBuffer.allocate(8), 6L, 0f))
+
+                // The markers: a chosen pin with its value and its name (its looks with the name right and left), a dot and a
+                // cluster of 12, as the app writes them, with a cluster's count in white; none; refused, and why.
+                fun look(width: Int, height: Int) = MarkerBlock.Image(width, height, width / 2, height / 2, IntArray(width * height) { it * 0x01010101 })
+                val blue = 0xFF2E5BFF.toInt()
+                val markers = listOf(
+                    MarkerBlock.Marker(52.37, 4.88, 5, MarkerBlock.PIN, true, true, 1, 21.5f, 80f, 0xFFE8612B.toInt(), -1, 0, 1),
+                    MarkerBlock.Marker(52.371, 4.881, 0, MarkerBlock.DOT, false, false, 1, 0f, -1f, blue, -1, 2, 2),
+                    MarkerBlock.Marker(52.372, 4.882, 0, MarkerBlock.CLUSTER, false, false, 12, 0f, -1f, blue, -1, MarkerBlock.NO_LOOK, MarkerBlock.NO_LOOK),
+                )
+                val looks = listOf(look(30, 30), look(130, 30), look(20, 20))
+                val counts = listOf(MarkerBlock.Count(-1, 12, look(9, 7)))
+                assertEquals(20 + 3 * 16 + 4 * (900 + 3900 + 400) + 3 * 52 + 8 + 16 + 4 * 63, MarkerBlock.size(looks, markers, counts))
+                assertEquals("", Native.markers(handle, MarkerBlock.write(2.625f, looks, markers, counts), 1L))
+                assertEquals("", Native.markers(handle, MarkerBlock.write(2.625f, emptyList(), emptyList(), emptyList()), 2L))
+                assertEquals(
+                    "the markers were refused: a marker's look is none of the set's",
+                    Native.markers(handle, MarkerBlock.write(2.625f, looks.take(2), markers, counts), 3L),
+                )
+                assertEquals(
+                    "the markers were refused: the density is not from 0.5 to 8",
+                    Native.markers(handle, MarkerBlock.write(0f, looks, markers, counts), 4L),
+                )
+                assertEquals(
+                    "the markers were refused: look 0 does not read",
+                    Native.markers(handle, MarkerBlock.write(2.625f, listOf(look(3000, 1)), markers, counts), 5L),
+                )
+                assertEquals("the markers were refused: not a block of markers", Native.markers(handle, notLabels.rewind() as ByteBuffer, 6L))
+                assertEquals("the markers must be a direct buffer", Native.markers(handle, ByteBuffer.allocate(8), 7L))
 
                 // The screen's haze and vignette off, then on again (the app's Look settings).
                 Native.screen(handle, false, false, false)

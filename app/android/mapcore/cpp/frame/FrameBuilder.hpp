@@ -53,9 +53,14 @@ namespace atlas::labels {
 struct LabelSet; // labels/ (K13): the app's label sprites for a frame (MapCore.labels, Appendix D)
 } // namespace atlas::labels
 
+namespace atlas::markers {
+class MarkerSet; // markers/Markers.hpp: the app's markers (MapCore.markers, ENGINE.md step 6)
+} // namespace atlas::markers
+
 namespace atlas::frame {
 
-struct GroundRuns; // frame/GroundRuns.hpp
+struct GroundRuns;  // frame/GroundRuns.hpp
+struct MarkerBoxes; // frame/MarkerBoxes.hpp
 
 /// How the frame is drawn (D16's modes).
 enum class Mode : std::uint8_t {
@@ -102,11 +107,16 @@ struct FrameState {
     const scene::ResidentPack* coarser_pack = nullptr;
     /// The app's label sprites for this frame (FrameInputs::labels; null: none).
     const labels::LabelSet* labels = nullptr;
+    /// The app's markers for this frame (FrameInputs::markers; null: none).
+    const markers::MarkerSet* markers = nullptr;
     /// The frame slot (0 or 1): set 0's slice and the passes' own per-frame buffers.
     std::uint32_t slot = 0;
     /// The text runs the passes lay on the ground this frame (the runways' designators) for the ground's text pass,
     /// which updates after them: emptied before the passes update (frame/GroundRuns.hpp).
     GroundRuns* ground_runs = nullptr;
+    /// The boxes the markers take this frame, for the labels, which update after the markers: emptied before the
+    /// passes update (frame/MarkerBoxes.hpp).
+    MarkerBoxes* marker_boxes = nullptr;
 };
 
 /// The builder's choices, made once.
@@ -174,6 +184,8 @@ struct FrameInputs {
     FrameScene* scene = nullptr;
     /// The app's label sprites (MapCore.labels; null: none), read by K13's labels pass.
     const labels::LabelSet* labels = nullptr;
+    /// The app's markers (MapCore.markers; null: none), read by the markers pass.
+    const markers::MarkerSet* markers = nullptr;
 };
 
 /// The map's frame.
@@ -289,6 +301,7 @@ private:
     FrameInputs inputs_;
     FrameState state_;
     std::unique_ptr<GroundRuns> ground_runs_;
+    std::unique_ptr<MarkerBoxes> marker_boxes_;
     std::uint32_t quarter_turns_ = 0;
     std::uint32_t levels_ = 255;
     bool depth24_ = false; ///< the main pass's depth is 24-bit fixed point (painter.slang's scale)

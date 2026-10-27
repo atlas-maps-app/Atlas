@@ -16,6 +16,7 @@
 // scene's colour (shaders/frame/composite_x1_loc1.slang).
 // atlas: variant loc1 OVERLAY_LOC1=1
 
+#include "shared/coverage.slang"
 #include "shared/frame.slang"
 
 #ifndef OVERLAY_LOC1
@@ -72,29 +73,8 @@ struct LocationColour {
 #endif
 };
 
-/// `top` over `under`, premultiplied.
-float4 location_over(float4 top, float4 under) { return top + under * (1.0f - top.a); }
-
 /// The blue at opacity `a`, premultiplied.
 float4 location_tint(float a) { return float4(location_blue * a, a); }
-
-/// The coverage of a pixel whose centre lies `d` px inside an edge (negative outside): Skia's antialiased edge.
-float location_edge(float d) { return saturate(d + 0.5f); }
-
-/// erf(x) within 1.5e-7 (Abramowitz and Stegun 7.1.26).
-float location_erf(float x) {
-    float a = abs(x);
-    float t = 1.0f / (1.0f + 0.3275911f * a);
-    float poly = ((((1.061405429f * t - 1.453152027f) * t + 1.421413741f) * t - 0.284496736f) * t + 0.254829592f) * t;
-    return sign(x) * (1.0f - poly * exp(-a * a));
-}
-
-/// A disc of radius `r` blurred by a Gaussian of sigma `s`, at `d` from its centre (all px): the disc's profile across
-/// its centre blurred, which the canvas's blurred circle comes within a few hundredths of.
-float location_blurred(float d, float r, float s) {
-    float k = 1.0f / (s * 1.41421356f);
-    return 0.5f * (location_erf((r - d) * k) + location_erf((r + d) * k));
-}
 
 /// The accuracy's circle at the output's pixel `position` (its view point `view`).
 float4 location_accuracy(FrameCamera c, float2 view) {
@@ -111,10 +91,10 @@ float4 location_accuracy(FrameCamera c, float2 view) {
     float distance = length(at);
     float px = max(fwidth(distance), 1e-6f); // frame metres a pixel, here
     float inside = (push.ground.w - distance) / px;
-    o = location_tint(0.13f * location_edge(inside));
+    o = location_tint(0.13f * coverage_edge(inside));
     // the edge's line, 1 dp wide about the circle
     float line = 0.5f * push.dot.z - abs(inside);
-    return location_over(location_tint(0.35f * location_edge(line)), o);
+    return premultiplied_over(location_tint(0.35f * coverage_edge(line)), o);
 }
 
 /// The heading's cone at `p` (px from the dot's centre), as OverlayPainter.cone draws it.
@@ -133,7 +113,7 @@ float4 location_cone(float2 p, float dp) {
     float sweep = degrees(atan2(q.y, q.x)) + 115.0f;
     sweep = sweep - 360.0f * floor(sweep / 360.0f);
     float a = sweep <= 50.0f ? 0.4f * (1.0f - sweep / 50.0f) : (sweep >= 310.0f ? 0.4f * (sweep - 310.0f) / 50.0f : 0.0f);
-    return location_tint(a * location_edge(inside));
+    return location_tint(a * coverage_edge(inside));
 }
 
 /// The puck at `p` (px from the dot's centre).
@@ -144,12 +124,12 @@ float4 location_puck(float2 p) {
     if ((push.flags.x & LOCATION_HEADING) != 0u) {
         o = location_cone(p, dp);
     }
-    o = location_over(location_tint(0.16f * location_edge(20.0f * dp - r)), o);
-    float glow = location_blurred(length(p - float2(0.0f, 2.0f * dp)), 10.0f * dp, 4.0f * dp);
-    o = location_over(location_tint(0.55f * glow), o);
-    float white = location_edge(10.0f * dp - r);
-    o = location_over(float4(white, white, white, white), o);
-    return location_over(location_tint(location_edge(7.0f * dp - r)), o);
+    o = premultiplied_over(location_tint(0.16f * coverage_edge(20.0f * dp - r)), o);
+    float glow = coverage_blurred_disc(length(p - float2(0.0f, 2.0f * dp)), 10.0f * dp, 4.0f * dp);
+    o = premultiplied_over(location_tint(0.55f * glow), o);
+    float white = coverage_edge(10.0f * dp - r);
+    o = premultiplied_over(float4(white, white, white, white), o);
+    return premultiplied_over(location_tint(coverage_edge(7.0f * dp - r)), o);
 }
 
 [shader("fragment")]

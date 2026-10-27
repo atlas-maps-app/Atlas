@@ -113,7 +113,10 @@ data class MapOverlays(
     val areas: List<AreaOverlay> = emptyList(),
     /** Shows a two-finger measuring tape when two fingers rest on the map. */
     val measure: Boolean = true,
-)
+) {
+    /** Whether something lies on the ground under the symbols (a route, an area), which the canvas draws over the map. */
+    val onGround: Boolean get() = routes.isNotEmpty() || areas.isNotEmpty()
+}
 
 /** What a tap found. */
 sealed interface MapHit {

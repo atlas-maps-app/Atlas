@@ -27,6 +27,7 @@
 #include "gpu/Swapchain.hpp"
 #include "labels/Sprites.hpp"
 #include "load/Window.hpp"
+#include "markers/Markers.hpp"
 #include "osm/Diff.hpp"
 #include "osm/Edits.hpp"
 #include "standin/Session.hpp"
@@ -330,6 +331,14 @@ public:
     void labels(std::shared_ptr<const labels::LabelSet> set) {
         on_session([this, &set] {
             map_->set_labels(std::move(set));
+            ask_frame();
+        });
+    }
+
+    /// The app's markers for the map from now on (null: none).
+    void markers(std::shared_ptr<const markers::MarkerSet> set) {
+        on_session([this, &set] {
+            map_->set_markers(std::move(set));
             ask_frame();
         });
     }
@@ -1069,6 +1078,29 @@ jstring native_labels(JNIEnv* env, jclass /*cls*/, jlong handle, jobject block, 
     return java(env, "");
 }
 
+/// The app's markers for the map (MK/state/MarkerBlock.kt's block in a direct buffer, markers/Markers.hpp's
+/// read_marker_block: each marker's look as the app drew it, the clusters' counts, and what the core places them by),
+/// at `revision`; an empty block takes them away. "" or why they were refused.
+jstring native_markers(JNIEnv* env, jclass /*cls*/, jlong handle, jobject block, jlong revision) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    void* address = block == nullptr ? nullptr : env->GetDirectBufferAddress(block);
+    const jlong capacity = block == nullptr ? 0 : env->GetDirectBufferCapacity(block);
+    if (address == nullptr || capacity < 0) return java(env, "the markers must be a direct buffer");
+    auto read = markers::read_marker_block(
+        std::span(static_cast<const std::byte*>(address), static_cast<std::size_t>(capacity)));
+    if (!read) return java(env, std::format("the markers were refused: {}", read.error()));
+    if (read->markers.empty()) {
+        core->markers(nullptr);
+        return java(env, "");
+    }
+    auto set = markers::MarkerSet::make(std::move(read->markers), std::move(read->looks), std::move(read->counts),
+                                        read->density, static_cast<std::uint64_t>(revision));
+    if (!set) return java(env, std::format("the markers were refused: {}", markers::describe(set.error())));
+    core->markers(std::move(*set));
+    return java(env, "");
+}
+
 template <class F>
 void* fn(F f) {
     return reinterpret_cast<void*>(f);
@@ -1188,8 +1220,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 41>& methods() {
-    static const std::array<JNINativeMethod, 41> table{{
+const std::array<JNINativeMethod, 42>& methods() {
+    static const std::array<JNINativeMethod, 42> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1235,6 +1267,7 @@ const std::array<JNINativeMethod, 41>& methods() {
         method("packs", "(J[Ljava/lang/String;[J[I[Ljava/lang/String;[I[J[J)Ljava/lang/String;", fn(&native_packs)),
         method("moment", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_moment)),
         method("labels", "(JLjava/nio/ByteBuffer;JF)Ljava/lang/String;", fn(&native_labels)),
+        method("markers", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_markers)),
         method("screen", "(JZZZ)V", fn(&native_screen)),
         method("landing", "(JZDDDDD)V", fn(&native_landing)),
         method("painter", "(JZ)V", fn(&native_painter)),
