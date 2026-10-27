@@ -65,12 +65,22 @@ object Native {
     // ---- K17a's natives: the noise fields' check (VK facts) ----
 
     /**
-     * The core's noise fields check (plan-vector K17a, `CP/fx/FieldCache.hpp`): the renders' five screen-wide fields at
-     * S1 (1080 × 2400 px at 1080/412 px a CSS px) made on four threads, each held to the port's hashes (fields.inc):
-     * `fields 1080x2400 cpu <ms> gpu off hash <h> ok`, or `… FAIL <field> <h> expected <h>`. About 0.3 s of four cores on
-     * a phone, seconds on the x86_64 emulator: only when VK facts asks, never on the main thread.
+     * The core's noise fields check without a core (plan-vector K17a, `CP/fx/FieldCache.hpp`): the renders' eight
+     * screen-wide fields at S1 (1080 × 2400 px at 1080/412 px a CSS px) made on four threads, each held to the port's
+     * hashes (fields.inc): `fields 1080x2400 cpu <ms> gpu off (no Vulkan) hash <h> ok`, or `… FAIL <field> <h> expected
+     * <h>`. About 0.4 s of four cores on a phone, seconds on the x86_64 emulator: only when VK facts asks, never on the
+     * main thread. With a core, [coreFieldsLine].
      */
     @JvmStatic external fun fieldsLine(): String
+
+    /**
+     * The core's noise fields check on the core's device (`CP/fx/GpuFields.hpp`): [fieldsLine]'s, and where the GPU's
+     * noise is on (a GPU, not lavapipe or SwiftShader, and the crash guard has not turned it off), the same fields made
+     * on the GPU after its byte check, behind the guard's noise stage, timed and held to the CPU's bytes: `fields
+     * 1080x2400 cpu <ms> gpu <ms> hash <h> ok`, `… gpu off (<why>) …`, or `… FAIL gpu <field> <h> expected <h>`. On the
+     * core's render thread: never on the main thread.
+     */
+    @JvmStatic external fun coreFieldsLine(handle: Long): String
 
     // ---- end of K17a's natives ----
 

@@ -19,6 +19,7 @@
 #include "frame/Pacing.hpp"
 #include "frame/TwinCheck.hpp"
 #include "fx/Fields.hpp"
+#include "fx/GpuFields.hpp"
 #include "gen/spirv/modules.hpp"
 #include "geometry/Ground.hpp"
 #include "gpu/Facts.hpp"
@@ -339,6 +340,20 @@ public:
         return on_session([this, &westerkerk] {
             if (!started_.device || !started_.cache) return std::string("twin unavailable: the session has no device");
             return frame::twin_line(*started_.device, *started_.cache, westerkerk);
+        });
+    }
+
+    /// VK facts' fields check on the session's device (fx/GpuFields.hpp), behind the guard's noise stage: the screen
+    /// fields at S1 made by the CPU on four threads and, where the GPU's noise is on, by the GPU after its byte check,
+    /// each timed and held to fields.inc's hashes: `fields 1080x2400 cpu <ms> gpu <ms> hash <h> ok`, `… gpu off (<why>)
+    /// …`, or `… FAIL …`.
+    [[nodiscard]] std::string fields_line() {
+        return on_session([this] {
+            return session_->noise([](const gpu::Started& s, std::string_view off) {
+                const fx::FieldSize s1 = fx::size_of(1080, 2400, 1080.0 / 412.0);
+                if (!off.empty()) return fx::fields_line(s1, 4, fx::GpuPart{.off = std::string(off)});
+                return fx::fields_line(s1, 4, *s.device, *s.cache, s.guard.get(), off);
+            });
         });
     }
 
@@ -1056,11 +1071,22 @@ jstring native_sun_line(JNIEnv* env, jclass /*cls*/, jint fd, jlong offset, jlon
 
 // ---- K17a's natives: the noise fields' check (VK facts) ----
 
-/// K17a's fields check: the renders' five screen-wide fields at S1 (1080 × 2400 at 1080/412, the CI emulator's size)
-/// made on four threads, timed, each held to fields.inc's hashes (the port's): `fields 1080x2400 cpu <ms> gpu off hash
-/// <h> ok`, or `… FAIL <field> <h> expected <h>`. Only when VK facts asks, never on the start's or the map's path.
+/// K17a's fields check without a core (VK facts' honest state): the renders' eight screen-wide fields at S1 (1080 ×
+/// 2400 at 1080/412, the CI emulator's size) made on four threads, timed, each held to fields.inc's hashes (the
+/// port's): `fields 1080x2400 cpu <ms> gpu off (no Vulkan) hash <h> ok`, or `… FAIL <field> <h> expected <h>`. Only
+/// when VK facts asks, never on the start's or the map's path; with a core, its own (native_core_fields_line) runs the
+/// GPU's too.
 jstring native_fields_line(JNIEnv* env, jclass /*cls*/) {
-    return java(env, fx::fields_line(fx::size_of(1080, 2400, 1080.0 / 412.0), 4));
+    return java(env, fx::fields_line(fx::size_of(1080, 2400, 1080.0 / 412.0), 4, fx::GpuPart{.off = "no Vulkan"}));
+}
+
+/// K17a's fields check on the core's device (Core::fields_line, on the render thread): the CPU's fields at S1 and,
+/// where the GPU's noise is on, the GPU's after its byte check, behind the guard's noise stage: `fields 1080x2400 cpu
+/// <ms> gpu <ms> hash <h> ok`, `… gpu off (<why>) …`, or `… FAIL …`.
+jstring native_core_fields_line(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return native_fields_line(env, nullptr);
+    return java(env, core->fields_line());
 }
 
 // ---- end of K17a's natives ----
@@ -1151,8 +1177,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 40>& methods() {
-    static const std::array<JNINativeMethod, 40> table{{
+const std::array<JNINativeMethod, 41>& methods() {
+    static const std::array<JNINativeMethod, 41> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1183,6 +1209,7 @@ const std::array<JNINativeMethod, 40>& methods() {
         // ---- end of K9's natives ----
         method("twinLine", "(JIJJ)Ljava/lang/String;", fn(&native_twin_line)),
         method("compositeLine", "(J)Ljava/lang/String;", fn(&native_composite_line)),
+        method("coreFieldsLine", "(J)Ljava/lang/String;", fn(&native_core_fields_line)),
         // ---- K13's natives ----
         method("textRounding", "(Ljava/lang/String;)Ljava/lang/String;", fn(&native_text_rounding)),
         method("textCheckRuns", "()Ljava/lang/String;", fn(&native_text_check_runs)),

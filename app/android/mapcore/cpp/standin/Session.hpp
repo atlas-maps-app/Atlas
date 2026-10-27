@@ -7,17 +7,19 @@
 // holds it: the window's surface, its queries and the swapchain at 8 bits in the surface stage; the stand-in and a
 // frame's pipelines, passes and images, made and destroyed, in the pipelines stage; a pipeline cache's making, loading
 // and writes in the cache stage; the first 120 frames of each renderer in the frames stage; Android's profiles in the
-// profiles stage; everything of 10 bits in the colour stage; a lost device's teardown and its rebuild in the device
-// stage (and the facts, cache and surface stages, as a start passes them); the close in the close stage. Each module,
-// pipeline and thing that goes is named for its call alone (gpu/Pipelines.hpp's Announced). The one exception is the
-// frame loop's own per-frame calls after a renderer's first 120 frames, which D5.10 leaves unguarded: the commands each
-// frame records and submits, its acquire and present, its fences, queries and memory flushes, and the display's
-// timings it reads back. No marker stays on disk while nothing is drawn: the frames stage ends when the frame loop
-// rests (rest; a trim from TRIM_MEMORY_UI_HIDDEN rests it too), the renderer goes or the frame it draws changes
-// (another configuration, an output made again), and opens again with the next draw within that renderer's first 120,
-// naming the frame it draws; a frame loop at rest inside VK bench's colour stage leaves that stage as well, as mode 0
-// does. The stand-in's shared objects are 8-bit work, made before anything of 10 bits and never inside the colour
-// stage, and written back to the pipeline cache before any frame's pipelines are.
+// profiles stage; the GPU's noise (the map's screen fields of a size the disk does not hold, made on the GPU before the
+// frame that wants them, which waits for them; VK facts' fields line) in the noise stage; everything of 10 bits in the
+// colour stage; a lost device's teardown and its rebuild in the device stage (and the facts, cache and surface stages,
+// as a start passes them); the close in the close stage. Each module, pipeline and thing that goes is named for its
+// call alone (gpu/Pipelines.hpp's Announced). The one exception is the frame loop's own per-frame calls after a
+// renderer's first 120 frames, which D5.10 leaves unguarded: the commands each frame records and submits, its acquire
+// and present, its fences, queries and memory flushes, and the display's timings it reads back. No marker stays on disk
+// while nothing is drawn: the frames stage ends when the frame loop rests (rest; a trim from TRIM_MEMORY_UI_HIDDEN
+// rests it too), the renderer goes or the frame it draws changes (another configuration, an output made again), and
+// opens again with the next draw within that renderer's first 120, naming the frame it draws; a frame loop at rest
+// inside VK bench's colour stage leaves that stage as well, as mode 0 does. The stand-in's shared objects are 8-bit
+// work, made before anything of 10 bits and never inside the colour stage, and written back to the pipeline cache
+// before any frame's pipelines are.
 //
 // VK bench's cells (gpu/Guard.hpp): a frame of a configuration other than the facts' own pick is work only VK bench
 // does, and the renderer tells the guard so (gpu/Pipelines.hpp's frame_of): a crash in its pipelines, its first 120
@@ -110,6 +112,9 @@ struct SessionOptions {
     bool ci_log = false;              // a "vk frame" line per frame (CI)
     /// The city the stand-in draws: VK bench's (City::generate()) unless a test gives a smaller one.
     std::shared_ptr<const City> city;
+    /// The GPU's noise on a CPU implementation too (lavapipe, SwiftShader), which runs it many times slower than the
+    /// CPU's own make: the hosts' tests of its stage, never the phone's.
+    bool noise_on_cpu = false;
 };
 
 /// One frame's times, as the frame loop has them.
@@ -198,6 +203,11 @@ public:
     /// alone, for this driver and build. Its line, or `<name>: off (…)` or `<name>: not run (…)`.
     [[nodiscard]] std::string check(std::string_view name,
                                     const std::function<std::string(const gpu::Started&)>& check);
+    /// Runs work of the GPU's noise (`work`, on the session's start: VK facts' fields line, fx/GpuFields.hpp) behind
+    /// the guard's noise stage, never inside VK bench's colour stage: a crash in it turns the GPU's noise off alone,
+    /// for this driver and build. Where the GPU's noise is off, `work` runs outside any stage with `off` saying why
+    /// (the guard's line, a CPU implementation, a device lost in it, no device) and must make nothing on the GPU.
+    [[nodiscard]] std::string noise(const std::function<std::string(const gpu::Started&, std::string_view off)>& work);
     /// Writes the pipeline cache back, behind the guard's cache stage, where a pipeline was made through it since its
     /// last write (else nothing, and no marker).
     void save_cache();
@@ -276,6 +286,10 @@ private:
     void read_profiles();
     /// The facts' colour as the output made it (`colour:`), or in the colour stage their deepest one.
     void note_colour();
+    /// Why the GPU's noise is off for this session ("" while it is on): the guard turned it off for this driver and
+    /// build, a device was lost in it, or the device is a CPU implementation (lavapipe, SwiftShader), where the CPU's
+    /// own make is many times faster. The map's worlds take the CPU's fields then.
+    [[nodiscard]] std::string noise_off() const;
     void log_configuration() const;
     void push_record(const FrameRecord& r);
     /// The map off for this session, saying why (VkFacts' `vulkan.session:` line, and every bench call after).
@@ -312,6 +326,7 @@ private:
     /// drop_renderer), so its marker never names a frame no longer drawn.
     bool guarding_ = false;
     bool profiles_read_ = false;
+    bool noise_lost_ = false; // a device was lost making the noise fields on the GPU: the CPU's this session
     bool frame_rate_ = false;
     bool first_frames_saved_ = false; // the cache written back after the session's first 120 frames
     double first_pipelines_ms_ = -1;  // this launch's first pipelines (-1 until the stand-in draws)

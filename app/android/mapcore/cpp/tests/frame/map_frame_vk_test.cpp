@@ -6,9 +6,11 @@
 // same camera after that; the world's wake called as tiles land; the map off and on again; VK bench taking the window
 // and giving it back; and after the close, no marker of the crash guard on disk.
 #include "base/pymath/PyMath.hpp"
+#include "frame/FrameBlock.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/MapFrame.hpp"
 #include "fx/FieldCache.hpp"
+#include "fx/GpuFields.hpp"
 #include "gpu/Guard.hpp"
 #include "standin/Session.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
@@ -28,6 +30,7 @@
 #include <span>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <unistd.h>
 #include <vector>
 
@@ -363,6 +366,64 @@ TEST_CASE("the app's map draws through the session: the pack the camera names, c
     }
     // The session's close let go of the map's world and frame behind the close stage: nothing on disk.
     CHECK(marked(dir).empty());
+    CHECK_FALSE(fs::exists(dir / "guard"));
+}
+
+TEST_CASE("the app's map makes a size the disk does not hold on the GPU before its first frame, which draws with its "
+          "fields, where the session has the GPU's noise on; on lavapipe the session takes the CPU's") {
+    if (!test::open_session()) return; // no Vulkan here
+    const Folder folder("noise");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    const style::CameraState camera = home(0); // no pack: the frame's fields alone
+    const fx::FieldSize s = fx::size_of(camera.width_px, camera.height_px, camera.density);
+    {
+        // On a CPU implementation only where the session is told to (the hosts' tests): the phone's GPU's path.
+        auto started = gpu::start_guarded(start_in(dir));
+        ATLAS_REQUIRE(started.has_value(), started.error().reason);
+        frame::MapFrame map(2, nullptr, {.cache_dir = dir});
+        standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42, .noise_on_cpu = true});
+        CHECK(session.map(&map).empty());
+        ATLAS_REQUIRE(map.fields() != nullptr, "the map's world has no noise fields");
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+        map.set_theme(sunny());
+        CHECK(map.noise_due(camera));
+        CHECK(session.draw(camera, {}).drawn);
+        // The first frame drew with them: made on the GPU, behind the noise stage, before it.
+        CHECK((map.builder()->state().block.info.x & shaders::FRAME_FIELDS) != 0U);
+        CHECK(map.fields()->bound_for(s));
+        CHECK(map.fields()->gpu_off().empty());
+        CHECK_FALSE(map.noise_due(camera));
+        map.fields()->worker().wait_idle();
+        CHECK(fx::FieldDisk(dir / "fields").holds(s));
+        // VK facts' fields line on the session's device, the GPU's fields among it.
+        const std::string line = session.noise([](const gpu::Started& st, std::string_view off) {
+            return off.empty()
+                       ? fx::fields_line(fx::size_of(96, 64, 2.0), 2, *st.device, *st.cache, st.guard.get(), off)
+                       : std::string(off);
+        });
+        CHECK(line.starts_with("fields 96x64 cpu "));
+        CHECK(line.ends_with(" unchecked"));
+        CHECK_FALSE(line.contains(" gpu off"));
+        session.close();
+    }
+    {
+        // As the emulator's lavapipe and SwiftShader: the CPU's, the GPU making nothing.
+        auto started = gpu::start_guarded(start_in(dir));
+        ATLAS_REQUIRE(started.has_value(), started.error().reason);
+        frame::MapFrame map(2, nullptr);
+        standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
+        CHECK(session.map(&map).empty());
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+        map.set_theme(sunny());
+        CHECK_FALSE(map.noise_due(camera));
+        CHECK(session.draw(camera, {}).drawn);
+        CHECK(session.noise([](const gpu::Started&, std::string_view off) { return std::string(off); }) ==
+              (started->device->facts().hardware ? "" : "a CPU implementation"));
+        session.close();
+    }
     CHECK_FALSE(fs::exists(dir / "guard"));
 }
 

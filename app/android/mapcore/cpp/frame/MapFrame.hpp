@@ -37,6 +37,10 @@
 #include <string_view>
 #include <vector>
 
+namespace atlas::fx {
+class FieldCache; // fx/FieldCache.hpp
+} // namespace atlas::fx
+
 namespace atlas::frame {
 
 /// One pack the app lists: its number (the camera state's pack_id), and where its bytes are: a file, or a range of an
@@ -121,6 +125,11 @@ public:
     [[nodiscard]] bool ready() const noexcept override { return made() && theme_.has_value(); }
     void next(const style::CameraState& camera, double seconds) override;
     [[nodiscard]] standin::MapCounts counts() const noexcept override;
+    void set_gpu_noise(bool on) noexcept override { gpu_noise_ = on; }
+    [[nodiscard]] bool noise_due(const style::CameraState& camera) const override;
+    bool make_noise(const style::CameraState& camera) override;
+    /// The world's noise fields, while made (tests).
+    [[nodiscard]] fx::FieldCache* fields() noexcept { return fields_; }
 
 private:
     /// Seconds on the world's clock (its workers read it too).
@@ -136,12 +145,14 @@ private:
     std::optional<style::ThemeBlock> theme_;
     std::shared_ptr<const labels::LabelSet> labels_;
     bool painter_ = false;
+    bool gpu_noise_ = false;
     std::uint32_t steps_ = ~0U;
     std::optional<scene::World::Landing> landing_;
     std::uint64_t active_number_ = 0;
     std::string active_id_;
     std::unique_ptr<FrameBuilder> builder_;
     std::unique_ptr<scene::World> world_; // after the builder: it goes first (its workers run the builder's passes)
+    fx::FieldCache* fields_ = nullptr;    // the world's noise fields (it holds them), while made
 };
 
 /// The theme `theme` with `profile`'s rules: TONE on for every profile but the living map's.

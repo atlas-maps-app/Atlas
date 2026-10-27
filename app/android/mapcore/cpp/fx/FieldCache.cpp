@@ -263,10 +263,10 @@ ScreenFields::ScreenFields(FieldSize size)
     : size_(size), owned_rgba_(pixels_of(size) * rgba_bytes), owned_rg_(pixels_of(size) * rg_bytes),
       owned_r_(pixels_of(size) * r_bytes), rgba_(owned_rgba_), rg_(owned_rg_), r_(owned_r_) {}
 
-ScreenFields::ScreenFields(FieldSize size, std::shared_ptr<const tiles::MappedSource> mapping,
+ScreenFields::ScreenFields(FieldSize size, std::shared_ptr<const void> owner, bool mapped,
                            std::span<const std::uint8_t> rgba, std::span<const std::uint8_t> rg,
                            std::span<const std::uint8_t> r)
-    : size_(size), mapping_(std::move(mapping)), rgba_(rgba), rg_(rg), r_(r) {}
+    : size_(size), owner_(std::move(owner)), mapped_(mapped), rgba_(rgba), rg_(rg), r_(r) {}
 
 std::array<std::uint8_t, 2> ScreenFields::at(Field f, std::uint32_t x, std::uint32_t y) const noexcept {
     const std::size_t i = (static_cast<std::size_t>(y) * size_.width) + x;
@@ -333,6 +333,30 @@ std::shared_ptr<const ScreenFields> make_fields(FieldSize size, const MakeOption
     return fields;
 }
 
+std::shared_ptr<const ScreenFields> make_block(Block block, float scale) {
+    ATLAS_ASSERT(block.width > 0 && block.height > 0 && block.width <= 16384 && block.height <= 16384,
+                 "a block of 1 to 16384 px a side");
+    const FieldSize size{.width = static_cast<std::uint32_t>(block.width),
+                         .height = static_cast<std::uint32_t>(block.height),
+                         .scale = scale};
+    auto fields = std::make_shared<ScreenFields>(size);
+    const Grid grid = grid_of(scale, scale);
+    std::vector<Argb> noise(static_cast<std::size_t>(size.width) * size.height);
+    for (std::size_t f = 0; f < field_count; ++f) {
+        const FieldSpec& s = screen_fields[f];
+        fill(lattices()[f], s.noise, grid, block, s.need, noise, size.width);
+        keep_band(static_cast<Field>(f), noise, size.width, 0, size.height, *fields);
+    }
+    return fields;
+}
+
+std::vector<std::uint8_t> keep_tables_bytes() {
+    const KeepTables& k = keep_tables();
+    std::vector<std::uint8_t> out(k.round_trip.begin(), k.round_trip.end());
+    out.insert(out.end(), k.grain_srgb.begin(), k.grain_srgb.end());
+    return out;
+}
+
 // ---- FieldDisk
 
 FieldDisk::FieldDisk(fs::path dir, std::uint64_t budget) : dir_(std::move(dir)), budget_(budget) {}
@@ -372,7 +396,12 @@ std::shared_ptr<const ScreenFields> FieldDisk::read(FieldSize size) const {
     const std::span<const std::uint8_t> r(bytes + (n * (rgba_bytes + rg_bytes)), n * r_bytes);
     // touch the file, so the budget's trim drops the least recently used
     fs::last_write_time(p, fs::file_time_type::clock::now(), ec);
-    return std::make_shared<const ScreenFields>(size, std::move(mapping), rgba, rg, r);
+    return std::make_shared<const ScreenFields>(size, std::move(mapping), true, rgba, rg, r);
+}
+
+bool FieldDisk::holds(FieldSize size) const {
+    std::error_code ec;
+    return fs::is_regular_file(path(size), ec);
 }
 
 bool FieldDisk::write(const ScreenFields& fields) const {
@@ -460,6 +489,19 @@ void FieldWorker::request(FieldSize size) {
     wake_.notify_all();
 }
 
+void FieldWorker::keep(std::shared_ptr<const ScreenFields> fields, double ms) {
+    {
+        const std::lock_guard lock(mutex_);
+        current_ = fields->size();
+        last_ms_ = ms;
+        last_from_disk_ = false;
+        latest_ = fields;
+        version_.fetch_add(1, std::memory_order_acq_rel);
+        if (disk_ != nullptr) keeping_ = std::move(fields);
+    }
+    wake_.notify_all();
+}
+
 std::shared_ptr<const ScreenFields> FieldWorker::latest() const {
     const std::lock_guard lock(mutex_);
     return latest_;
@@ -472,7 +514,7 @@ void FieldWorker::on_publish(std::function<void()> wake) {
 
 void FieldWorker::wait_idle() {
     std::unique_lock lock(mutex_);
-    idle_.wait(lock, [this] { return !busy_ && !next_; });
+    idle_.wait(lock, [this] { return !busy_ && !next_ && keeping_ == nullptr; });
 }
 
 double FieldWorker::last_ms() const {
@@ -488,15 +530,35 @@ bool FieldWorker::last_from_disk() const {
 void FieldWorker::loop(const std::stop_token& stop) {
     while (!stop.stop_requested()) {
         FieldSize size;
+        std::shared_ptr<const ScreenFields> keeping;
         {
             std::unique_lock lock(mutex_);
-            wake_.wait(lock, stop, [this] { return next_.has_value(); });
+            wake_.wait(lock, stop, [this] { return next_.has_value() || keeping_ != nullptr; });
             if (stop.stop_requested()) return;
-            if (!next_) continue;
-            size = *next_;
-            next_.reset();
-            current_ = size;
+            if (keeping_ != nullptr) {
+                keeping = std::move(keeping_);
+                keeping_.reset();
+            } else if (next_) {
+                size = *next_;
+                next_.reset();
+                current_ = size;
+            } else {
+                continue;
+            }
             busy_ = true;
+        }
+        if (keeping != nullptr) {
+            // Made elsewhere and published already: kept on disk, then let go of (the GPU's buffer with them).
+            if (!disk_->write(*keeping)) {
+                log::warn("fields {}x{}: not kept on disk", keeping->size().width, keeping->size().height);
+            }
+            keeping.reset();
+            {
+                const std::lock_guard lock(mutex_);
+                busy_ = false;
+            }
+            idle_.notify_all();
+            continue;
         }
         const auto started = clock::now();
         std::shared_ptr<const ScreenFields> fields = disk_ != nullptr ? disk_->read(size) : nullptr;
@@ -598,7 +660,7 @@ const FieldReference* reference_of(FieldSize size) noexcept {
     return nullptr;
 }
 
-std::string fields_line(FieldSize size, unsigned threads) {
+std::string fields_line(FieldSize size, unsigned threads, const GpuPart& gpu) {
     const auto started = clock::now();
     const std::shared_ptr<const ScreenFields> fields = make_fields(size, MakeOptions{.threads = threads});
     const double ms = std::chrono::duration<double, std::milli>(clock::now() - started).count();
@@ -608,8 +670,23 @@ std::string fields_line(FieldSize size, unsigned threads) {
         kept[f] = hash_of(fields->bytes_of(static_cast<Field>(f)));
         all = (all ^ kept[f]) * 0x100000001B3ULL;
     }
-    std::string line = std::format("fields {}x{} cpu {} gpu off hash {:016x}", size.width, size.height,
-                                   static_cast<long long>(pymath::round(ms)), all);
+    const std::string on_gpu = gpu.fields != nullptr ? std::to_string(static_cast<long long>(pymath::round(gpu.ms)))
+                               : gpu.off.empty()     ? std::string("off")
+                                                     : std::format("off ({})", gpu.off);
+    std::string line = std::format("fields {}x{} cpu {} gpu {} hash {:016x}", size.width, size.height,
+                                   static_cast<long long>(pymath::round(ms)), on_gpu, all);
+    if (gpu.fields != nullptr &&
+        (gpu.fields->size() != size || !std::ranges::equal(gpu.fields->rgba(), fields->rgba()) ||
+         !std::ranges::equal(gpu.fields->rg(), fields->rg()) || !std::ranges::equal(gpu.fields->r(), fields->r()))) {
+        // The GPU's bytes are not the CPU's: the first field that differs.
+        for (std::size_t f = 0; f < field_count; ++f) {
+            const std::uint64_t h =
+                gpu.fields->size() == size ? hash_of(gpu.fields->bytes_of(static_cast<Field>(f))) : 0;
+            if (h != kept[f]) {
+                return line + std::format(" FAIL gpu {} {:016x} expected {:016x}", screen_fields[f].name, h, kept[f]);
+            }
+        }
+    }
     const FieldReference* ref = reference_of(size);
     if (ref == nullptr) return line + " unchecked";
     for (std::size_t f = 0; f < field_count; ++f) {
@@ -669,8 +746,12 @@ vk::ImageView FieldImages::view(std::uint32_t image) const noexcept {
     return *current_.views[image];
 }
 
-gpu::Result<void> FieldImages::stage(const ScreenFields& fields) {
-    const FieldSize size = fields.size();
+vk::Image FieldImages::image(std::uint32_t image) const noexcept {
+    ATLAS_ASSERT(ready_ && image < 3, "the fields have three images once staged");
+    return current_.images[image].handle();
+}
+
+gpu::Result<void> FieldImages::images_for(FieldSize size) {
     if (!ready_ || current_.size != size) {
         Images next;
         next.size = size;
@@ -703,6 +784,12 @@ gpu::Result<void> FieldImages::stage(const ScreenFields& fields) {
         current_ = std::move(next);
         ready_ = true;
     }
+    return {};
+}
+
+gpu::Result<void> FieldImages::stage(const ScreenFields& fields) {
+    const FieldSize size = fields.size();
+    ATLAS_GPU_CHECK(images_for(size));
     const std::size_t pixels = static_cast<std::size_t>(size.width) * size.height;
     ATLAS_GPU_LET(staging, device_.memory().buffer(pixels * (rgba_bytes + rg_bytes + r_bytes),
                                                    vk::BufferUsageFlagBits::eTransferSrc, gpu::MemoryUse::upload));
@@ -715,12 +802,21 @@ gpu::Result<void> FieldImages::stage(const ScreenFields& fields) {
     }
     staging.flush();
     // Staged bytes no frame recorded are let go at once.
-    staging_ = std::move(staging);
+    staging_ = std::make_shared<const gpu::Buffer>(std::move(staging));
+    return {};
+}
+
+gpu::Result<void> FieldImages::stage(FieldSize size, std::shared_ptr<const gpu::Buffer> bytes) {
+    ATLAS_ASSERT(bytes != nullptr && bytes->size() == static_cast<vk::DeviceSize>(size.width) * size.height *
+                                                          (rgba_bytes + rg_bytes + r_bytes),
+                 "the GPU's fields hold the three images' bytes");
+    ATLAS_GPU_CHECK(images_for(size));
+    staging_ = std::move(bytes);
     return {};
 }
 
 void FieldImages::record_upload(const vk::raii::CommandBuffer& cmd, const gpu::Sync& sync, std::uint64_t frame) {
-    if (!staging_) return;
+    if (staging_ == nullptr) return;
     const FieldSize size = current_.size;
     const vk::DeviceSize pixels = static_cast<vk::DeviceSize>(size.width) * size.height;
     std::array<gpu::ImageDependency, 3> to_copy{};
@@ -749,7 +845,7 @@ void FieldImages::record_upload(const vk::raii::CommandBuffer& cmd, const gpu::S
             .bufferOffset = offset,
             .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .layerCount = 1},
             .imageExtent = {.width = size.width, .height = size.height, .depth = 1}};
-        cmd.copyBufferToImage(staging_.handle(), current_.images[i].handle(), vk::ImageLayout::eTransferDstOptimal,
+        cmd.copyBufferToImage(staging_->handle(), current_.images[i].handle(), vk::ImageLayout::eTransferDstOptimal,
                               region);
         offset += pixels * image_bytes[i];
     }
@@ -758,7 +854,7 @@ void FieldImages::record_upload(const vk::raii::CommandBuffer& cmd, const gpu::S
         retired_.push_back(Retired{.images = std::move(old), .last_frame = frame > 0 ? frame - 1 : 0});
     replaced_.clear();
     retired_.push_back(Retired{.staging = std::move(staging_), .last_frame = frame});
-    staging_ = gpu::Buffer();
+    staging_.reset();
 }
 
 void FieldImages::collect(std::uint64_t finished) noexcept {
@@ -766,13 +862,13 @@ void FieldImages::collect(std::uint64_t finished) noexcept {
 }
 
 vk::DeviceSize FieldImages::bytes() const noexcept {
-    vk::DeviceSize total = tables_.size() + staging_.size();
+    vk::DeviceSize total = tables_.size() + (staging_ != nullptr ? staging_->size() : 0);
     for (const gpu::Image& i : current_.images) total += i.bytes();
     for (const Images& r : replaced_) {
         for (const gpu::Image& i : r.images) total += i.bytes();
     }
     for (const Retired& r : retired_) {
-        total += r.staging.size();
+        total += r.staging != nullptr ? r.staging->size() : 0;
         for (const gpu::Image& i : r.images.images) total += i.bytes();
     }
     return total;
@@ -784,9 +880,12 @@ gpu::Result<std::unique_ptr<FieldCache>> FieldCache::create(const gpu::Device& d
     std::unique_ptr<FieldCache> self(new FieldCache()); // NOLINT(cppcoreguidelines-owning-memory)
     ATLAS_GPU_LET(images, FieldImages::create(device));
     self->images_ = std::move(images);
-    std::shared_ptr<const FieldDisk> disk =
-        options.dir.empty() ? nullptr : std::make_shared<const FieldDisk>(std::move(options.dir));
-    self->worker_ = std::make_unique<FieldWorker>(std::move(disk), options.threads);
+    self->disk_ = options.dir.empty() ? nullptr : std::make_shared<const FieldDisk>(std::move(options.dir));
+    self->worker_ = std::make_unique<FieldWorker>(self->disk_, options.threads);
+    self->device_ = &device;
+    self->gpu_ = options.gpu && options.pipelines != nullptr;
+    self->pipelines_ = options.pipelines;
+    self->watch_ = options.watch;
     return self;
 }
 
@@ -796,6 +895,54 @@ bool FieldCache::bound_for(FieldSize size) const noexcept {
     return uploaded_ && images_->ready() && images_->size() == size;
 }
 
+bool FieldCache::gpu_due(FieldSize size) const {
+    return gpu_ && gpu_off_.empty() && !bound_for(size) && (disk_ == nullptr || !disk_->holds(size));
+}
+
+bool FieldCache::gpu_failed(std::string_view what, const gpu::Error& error) {
+    gpu_off_ = std::format("{}: {}", what, error.text());
+    gpu_fields_.reset();
+    log::error("vk fields: the GPU's fields are off ({}): the CPU makes them", gpu_off_);
+    return error.code != vk::Result::eErrorDeviceLost;
+}
+
+bool FieldCache::make_on_gpu(FieldSize size) {
+    if (!gpu_due(size)) return true;
+    const trace::Section traced("atlas fields gpu");
+    const auto started = clock::now();
+    if (gpu_fields_ == nullptr) {
+        // Its pipeline, then the byte check, once: the GPU's fields only where every byte of it is the CPU's.
+        auto made = GpuFields::create(*device_, *pipelines_, watch_);
+        if (!made) return gpu_failed("their pipeline", made.error());
+        auto checked = (*made)->check();
+        if (!checked) return gpu_failed("the byte check", checked.error());
+        const double check_ms = std::chrono::duration<double, std::milli>(clock::now() - started).count();
+        if (!checked->exact) {
+            gpu_off_ = "the byte check: " + checked->first;
+            log::warn("vk fields: the GPU's noise is not the CPU's ({} of {} pixels differ; the first, {}): the CPU "
+                      "makes the fields",
+                      checked->differ, checked->pixels, checked->first);
+            return true;
+        }
+        log::info("vk fields: the GPU's noise passed the byte check ({} pixels, {} ms)", checked->pixels,
+                  static_cast<long long>(pymath::round(check_ms)));
+        gpu_fields_ = std::move(*made);
+    }
+    auto made = gpu_fields_->make(size);
+    if (!made) return gpu_failed(std::format("the fields of {}x{}", size.width, size.height), made.error());
+    if (auto staged = images_->stage(size, made->buffer); !staged) {
+        // No images for them: the worker makes them, staged as it publishes them (tried again each frame).
+        return gpu_failed(std::format("the images of {}x{}", size.width, size.height), staged.error());
+    }
+    uploaded_ = true;
+    const double ms = std::chrono::duration<double, std::milli>(clock::now() - started).count();
+    // Published as the worker's latest, so it asks no more for them, and kept on disk by it.
+    worker_->keep(made->fields, ms);
+    log::info("vk fields {}x{} made on the GPU in {} ms ({} ms its commands)", size.width, size.height,
+              static_cast<long long>(pymath::round(ms)), static_cast<long long>(pymath::round(made->ms)));
+    return true;
+}
+
 void FieldCache::update(const frame::FrameState& state, frame::Globals& globals) {
     // Every frame, each binding (an unchanged one costs a comparison): every frame builder drawing the world gets them.
     globals.buffer(frame::Global::byte_tables, images_->tables());
@@ -803,7 +950,8 @@ void FieldCache::update(const frame::FrameState& state, frame::Globals& globals)
     if (c.width_px > 0 && c.height_px > 0 && c.density > 0.0) {
         const FieldSize size = size_of(c.width_px, c.height_px, c.density);
         wanted_ = size;
-        worker_->request(size); // nothing to do when they are published or under way
+        // Nothing to do when they are published or under way; those the GPU makes (make_on_gpu) the worker leaves.
+        if (!gpu_ || !(bound_for(size) || gpu_due(size))) worker_->request(size);
         take(size);
     }
     if (!images_->ready()) return;

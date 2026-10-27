@@ -488,6 +488,7 @@ std::string Session::map(SessionMap* map, bool texture) {
     pills_ = false;
     texture_ = texture;
     if (!map_->made()) {
+        map_->set_gpu_noise(noise_off().empty());
         std::string why = behind(gpu::Stage::pipelines,
                                  [&] { return map_->make(*started_.device, *started_.cache, started_.guard.get()); });
         if (!why.empty()) return why;
@@ -625,6 +626,15 @@ Drawn Session::draw(const style::CameraState& camera, const FrameTimes& times) {
     const double seconds = static_cast<double>(start - epoch_ns_) / 1e9;
     if (mode_ == 2) {
         map_->next(camera, seconds);
+        if (map_->noise_due(camera) && !colour_open()) {
+            // The screen fields of a size the disk does not hold, on the GPU, behind the guard's noise stage: the
+            // frame waits for them, and draws with them. A device lost in it turns the GPU's noise off for the session
+            // (the frame below finds the loss, and the map made again on the new device takes the CPU's).
+            if (!behind(gpu::Stage::noise, [&] { return map_->make_noise(camera); })) {
+                noise_lost_ = true;
+                log::error("vk fields: the device was lost making them on the GPU: the CPU makes them this session");
+            }
+        }
     } else {
         standin_->set_camera(camera);
         standin_->set_time(seconds);
@@ -856,6 +866,7 @@ void Session::device_lost() {
         if (const std::string why = make_standin(); !why.empty()) log::error("vk rebuild: {}", why);
     }
     if (mode_ == 2 && map_ != nullptr) {
+        map_->set_gpu_noise(noise_off().empty());
         const std::string why = behind(
             gpu::Stage::pipelines, [&] { return map_->make(*started_.device, *started_.cache, started_.guard.get()); });
         if (!why.empty()) log::error("vk rebuild: {}", why);
@@ -905,6 +916,23 @@ std::string Session::check(std::string_view name, const std::function<std::strin
     // Never inside VK bench's colour stage, whose marker a crash here would take.
     if (colour_open()) return std::format("{}: not run (VK bench's colour stage is open)", name);
     return behind(gpu::Stage::checks, [&] { return check(started_); });
+}
+
+std::string Session::noise_off() const {
+    if (const std::string off = started_.guard->noise_off(); !off.empty()) return off;
+    if (noise_lost_) return "the device was lost making the fields on it this session";
+    if (started_.device && !started_.device->facts().hardware && !options_.noise_on_cpu) {
+        return "a CPU implementation";
+    }
+    return {};
+}
+
+std::string Session::noise(const std::function<std::string(const gpu::Started&, std::string_view off)>& work) {
+    if (closed_ || !started_.device || !started_.cache) return work(started_, "the session has no device");
+    if (const std::string off = noise_off(); !off.empty()) return work(started_, off);
+    // Never inside VK bench's colour stage, whose marker a crash here would take.
+    if (colour_open()) return work(started_, "VK bench's colour stage is open");
+    return behind(gpu::Stage::noise, [&] { return work(started_, {}); });
 }
 
 std::string Session::facts() {
