@@ -25,6 +25,11 @@ constexpr std::size_t arena_bytes = std::size_t{4} << 20U;
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
 }
 
+/// The steady clock's nanoseconds (CLOCK_MONOTONIC on Android: the hint session's clock).
+[[nodiscard]] std::int64_t nanoseconds_of(std::chrono::steady_clock::time_point t) {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(t.time_since_epoch()).count();
+}
+
 /// The store's pack of id `id`, or null.
 [[nodiscard]] std::shared_ptr<const tiles::StorePack> pack_of(const tiles::Store& store, std::string_view id) {
     for (std::shared_ptr<const tiles::StorePack>& p : store.packs()) {
@@ -66,7 +71,7 @@ Residency::Scratch::Scratch() : arena(arena_bytes, Growth::grows, "a tile under 
 
 Residency::Residency(const tiles::Store& store, Heaps& heaps, std::span<const std::unique_ptr<frame::Pass>> passes,
                      WorkerOptions workers, std::function<double()> clock)
-    : store_(store), heaps_(heaps), passes_(passes), clock_(std::move(clock)),
+    : store_(store), heaps_(heaps), passes_(passes), clock_(std::move(clock)), hints_(std::move(workers.hints)),
       workers_count_(std::max(1U, workers.count)), share_(workers.share) {
     for (const std::unique_ptr<frame::Pass>& p : passes_)
         stage_t_names_.push_back(std::format("atlas stage T {}", p->name()));
@@ -145,6 +150,27 @@ void Residency::want(std::span<const Request> requests) {
         for (Job& j : queue_) j.request.pack = j.pack; // the views follow the strings into the new vector
     }
     wake_.notify_all();
+    hint();
+}
+
+bool Residency::urgent_locked() const noexcept {
+    // What the frame shows waits: a tile in view queued or under way (an ancestor only stands in while one is).
+    return std::ranges::any_of(queue_, [](const Job& j) { return j.request.lane == Lane::visible; }) ||
+           std::ranges::any_of(building_,
+                               [](const std::unique_ptr<Underway>& u) { return u->job.request.lane == Lane::visible; });
+}
+
+void Residency::hint() {
+    if (!hints_) return;
+    const std::scoped_lock hinting(hint_mutex_);
+    bool urgent = false;
+    {
+        const std::scoped_lock lock(mutex_);
+        urgent = urgent_locked();
+    }
+    if (urgent == urgent_) return;
+    urgent_ = urgent;
+    hints_->urgent(urgent);
 }
 
 Residency::Piece Residency::take(std::unique_lock<std::mutex>& lock, const std::stop_token& stop, unsigned worker) {
@@ -208,9 +234,13 @@ Residency::Piece Residency::take(std::unique_lock<std::mutex>& lock, const std::
 }
 
 void Residency::work(const std::stop_token& stop, unsigned worker) {
+    if (hints_) {
+        hints_->joined();
+    } else {
 #if defined(__ANDROID__)
-    (void)setpriority(PRIO_PROCESS, 0, 10); // the workers' background priority (T8): this thread alone on Linux
+        (void)setpriority(PRIO_PROCESS, 0, 10); // the workers' background priority (T8): this thread alone on Linux
 #endif
+    }
     tiles::Zstd zstd;
     tiles::TileDecoder decoder;
     std::unique_lock lock(mutex_);
@@ -221,10 +251,13 @@ void Residency::work(const std::stop_token& stop, unsigned worker) {
             Split& split = *piece.split;
             ++busy_;
             lock.unlock();
+            const auto started = std::chrono::steady_clock::now();
             {
                 const trace::Section traced("atlas stage T piece");
                 (*split.piece)(piece.index);
             }
+            if (hints_ && split.lane != Lane::prefetch)
+                hints_->report(nanoseconds_of(started), static_cast<std::int64_t>(ms_since(started) * 1e6));
             lock.lock();
             if (++split.done == split.count) split_done_.notify_all();
             --busy_;
@@ -242,6 +275,9 @@ void Residency::work(const std::stop_token& stop, unsigned worker) {
             ok = piece.pass < 0 ? start(u, zstd, decoder) : run(u, static_cast<std::uint32_t>(piece.pass));
         }
         const double ms = ms_since(started);
+        // the frame's work, a tile in view or an ancestor standing in for one, told to the workers' session
+        if (hints_ && u.job.request.lane != Lane::prefetch)
+            hints_->report(nanoseconds_of(started), static_cast<std::int64_t>(ms * 1e6));
         lock.lock();
         u.ms += ms;
         bool last = false;
@@ -276,6 +312,7 @@ void Residency::work(const std::stop_token& stop, unsigned worker) {
         if (last) {
             lock.unlock();
             publish(u);
+            hint();
             lock.lock();
         }
         --busy_;

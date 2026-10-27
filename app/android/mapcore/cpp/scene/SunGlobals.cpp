@@ -12,6 +12,10 @@
 #include <cstddef>
 #include <cstring>
 
+#if defined(__ANDROID__)
+#include <sys/resource.h>
+#endif
+
 namespace atlas::scene {
 
 namespace {
@@ -212,6 +216,10 @@ void SunGlobals::update(const frame::FrameState& state, frame::Globals& globals)
 }
 
 void SunGlobals::work(const std::stop_token& stop) {
+#if defined(__ANDROID__)
+    // Background priority (ENGINE.md gain 8): made on the render thread, this thread would keep its display priority.
+    (void)setpriority(PRIO_PROCESS, 0, 10);
+#endif
     for (;;) {
         Lane* lane = nullptr;
         Build b;

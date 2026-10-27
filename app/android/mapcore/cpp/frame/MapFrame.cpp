@@ -120,9 +120,11 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - epoch).count();
     };
     // The passes' own providers of set 1's globals come with the world, made with the map's resources.
-    auto world =
-        scene::World::create(device, (*builder)->passes(),
-                             {.workers = workers_, .resources = options_.resources, .clock = std::move(clock)});
+    auto world = scene::World::create(device, (*builder)->passes(),
+                                      {.workers = workers_,
+                                       .resources = options_.resources,
+                                       .clock = std::move(clock),
+                                       .hints = options_.worker_hints ? options_.worker_hints() : nullptr});
     if (!world) {
         const gpu::Announced named =
             gpu::announce_release({.kind = "frame", .detail = "(the map's frame builder)"}, watch);

@@ -15,6 +15,10 @@
 // The render thread references only published tiles; a tile it lets go of (release) has its heap ranges retired, freed
 // two frames later after the fences. The render thread never waits on I/O, decoding or the sun.
 //
+// The workers wait at background priority; while a tile the frame wants in view is queued or under way they run at
+// normal priority, with a hint session of their own told how long each piece of that work takes (ENGINE.md gain 8:
+// WorkerHints, the platform's). Without hints, they stay at background priority (nice 10 on Android).
+//
 // The sun's hook (K8, plan-vector D8): the sun worker's scene is the resident tiles and their 220 m halo
 // (sun_tiles: sun::halo_of over the resident tiles of a pack), as K8's Worker asks for it.
 #pragma once
@@ -23,6 +27,7 @@
 #include "frame/Pass.hpp"
 #include "scene/Heaps.hpp"
 #include "scene/ItemTable.hpp"
+#include "scene/WorkerHints.hpp"
 #include "tiles/Store.hpp"
 #include "tiles/Style.hpp"
 #include "view/Camera.hpp"
@@ -216,6 +221,8 @@ struct WorkerOptions {
     /// Whether an idle worker takes a pass of a tile under way and a piece of a pass's work (ENGINE.md gain 9); else
     /// each tile is built by the worker that took it, pass after pass, as before the gain (its measure).
     bool share = true;
+    /// What they tell the platform (ENGINE.md gain 8), or none.
+    std::shared_ptr<WorkerHints> hints;
 };
 
 /// The resident tiles.
@@ -328,6 +335,10 @@ private:
     /// A tile whose last piece is done: its items joined and published, or what its passes made let go of when one
     /// failed, then forgotten as failed.
     void publish(Underway& u);
+    /// Whether a tile the frame wants in view is queued or under way (under mutex_).
+    [[nodiscard]] bool urgent_locked() const noexcept;
+    /// Tells the hints whether the frame waits on the workers, when that changed (outside mutex_).
+    void hint();
     [[nodiscard]] static std::uint64_t key_of(tiles::TileKey key, std::string_view pack) noexcept;
 
     const tiles::Store& store_;
@@ -335,6 +346,7 @@ private:
     std::span<const std::unique_ptr<frame::Pass>> passes_;
     std::vector<std::string> stage_t_names_; // each pass's stage T as its trace section names it (gain 21)
     std::function<double()> clock_;
+    std::shared_ptr<WorkerHints> hints_;
     unsigned workers_count_ = 0;
     bool share_ = true;
 
@@ -355,6 +367,8 @@ private:
     std::vector<std::shared_ptr<ResidentTile>> published_;
     std::uint64_t generation_ = 0;
     unsigned busy_ = 0;
+    std::mutex hint_mutex_; // the hints' changes one at a time; taken before mutex_, never after
+    bool urgent_ = false;   // urgent_locked as last told the hints (under hint_mutex_)
     std::function<void()> published_callback_;
     ResidencyStats stats_;
     std::atomic<std::uint32_t> next_handle_{1};

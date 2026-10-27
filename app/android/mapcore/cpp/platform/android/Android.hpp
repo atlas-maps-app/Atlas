@@ -1,11 +1,14 @@
 // The phone's platform services for the core (plan-vector T8, D5.1, D5.8, D17): the window a SurfaceView or a
-// TextureView hands over, the render thread's looper with Choreographer's vsync, the ADPF hint session, the thermal
-// headroom, systrace sections and the APK's assets. The app's minSdk is 29, so what later Android versions add
-// (vsync callbacks with frame timelines in 33, hint sessions in 33 and GPU durations in 35, thermal headroom in 31,
+// TextureView hands over, the render thread's looper with Choreographer's vsync, the ADPF hint sessions (the render
+// thread's, and the tile workers' with their priority), the thermal headroom, systrace sections and the APK's assets.
+// The app's minSdk is 29, so what later Android versions add (vsync callbacks with frame timelines in 33, hint sessions
+// in 33, their threads in 34, GPU durations and efficiency in 35 and workload increases in 36, thermal headroom in 31,
 // ANativeWindow_setFrameRate in 30) is looked up in libandroid.so at run time and used only where it exists.
 #pragma once
 
 #if defined(__ANDROID__)
+
+#include "scene/WorkerHints.hpp"
 
 #include <android/native_window.h>
 #include <jni.h>
@@ -141,6 +144,34 @@ public:
 private:
     void* session_ = nullptr;
     bool gpu_ = false;
+};
+
+/// The tile workers' hints (ENGINE.md gain 8, scene/WorkerHints.hpp): each worker named `atlas-tiles`, at background
+/// priority (nice 10) while the frame waits on nothing they do and at normal priority (nice 0) while it waits on a tile
+/// in view; and then a hint session of their own (API 33), opened with their threads at the first such piece of work
+/// and told each one's time against a frame, so the clocks rise for it; their threads told to prefer efficiency between
+/// such times (API 35) and of a workload's increase as one begins (API 36). The residency calls it one call at a time.
+class WorkerSession final : public scene::WorkerHints {
+public:
+    WorkerSession() = default;
+    WorkerSession(const WorkerSession&) = delete;
+    WorkerSession& operator=(const WorkerSession&) = delete;
+    WorkerSession(WorkerSession&&) = delete;
+    WorkerSession& operator=(WorkerSession&&) = delete;
+    ~WorkerSession() override;
+
+    void joined() override;
+    void urgent(bool on) override;
+    void report(std::int64_t start_ns, std::int64_t ns) override;
+
+private:
+    std::mutex mutex_;
+    std::vector<pid_t> tids_;
+    void* session_ = nullptr;
+    bool urgent_ = false;
+    bool opening_ = false; // a worker is asking for the session
+    bool refused_ = false; // the session was asked for and refused: not asked again
+    bool warned_ = false;  // a worker's normal priority was refused, and said so once
 };
 
 /// The thermal state (D17): headroom (API 31) and status (API 30).

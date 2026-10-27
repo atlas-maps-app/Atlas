@@ -1,9 +1,10 @@
-// The first picture (ENGINE.md gain 9): the app's world at the Westerkerk home over the bundled packs
+// The first picture (ENGINE.md gains 8 and 9): the app's world at the Westerkerk home over the bundled packs
 // (ATLAS_TILES_DIR), the canal ring around the Westerkerk as the app's map has it, its frame loop woken by each tile
 // published; how long until every tile the first frame wants in view is built, on 2 workers (CI's emulator) and on 8;
 // each pass's share of those tiles' stage T; the densest tile alone, as the camera reaches it while moving, on 1 to 8
 // workers; every tile the workers built, each pass's bytes as one thread builds them alone; a tile's passes shared by
-// the idle workers, its items joined in the passes' order; and a pass's work in pieces on them.
+// the idle workers, its items joined in the passes' order, and a pass's work in pieces on them; and the workers' hints,
+// the frame waiting on them while a tile in view is queued or under way, not for the prefetch.
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
@@ -519,6 +520,50 @@ private:
     mutable std::vector<std::thread::id> threads_;
 };
 
+/// What the workers told their hints: how many joined, each change of the frame's wait, the reports and whether any
+/// came while the frame waited on nothing.
+class Told final : public scene::WorkerHints {
+public:
+    void joined() override {
+        const std::scoped_lock lock(mutex_);
+        ++joined_;
+    }
+    void urgent(bool on) override {
+        const std::scoped_lock lock(mutex_);
+        changes_.push_back(on);
+        now_ = on;
+    }
+    void report(std::int64_t start_ns, std::int64_t ns) override {
+        const std::scoped_lock lock(mutex_);
+        ++reports_;
+        if (!now_ || start_ns <= 0 || ns < 0) ++stray_;
+    }
+    [[nodiscard]] int joins() const {
+        const std::scoped_lock lock(mutex_);
+        return joined_;
+    }
+    [[nodiscard]] std::vector<bool> changes() const {
+        const std::scoped_lock lock(mutex_);
+        return changes_;
+    }
+    [[nodiscard]] int reports() const {
+        const std::scoped_lock lock(mutex_);
+        return reports_;
+    }
+    [[nodiscard]] int stray() const {
+        const std::scoped_lock lock(mutex_);
+        return stray_;
+    }
+
+private:
+    mutable std::mutex mutex_;
+    int joined_ = 0;
+    std::vector<bool> changes_;
+    bool now_ = false;
+    int reports_ = 0;
+    int stray_ = 0;
+};
+
 /// The keys of the finest level's first `n` tiles of `pack` in `store`.
 [[nodiscard]] std::vector<tiles::TileKey> first_tiles(const tiles::Store& store, std::string_view pack, std::size_t n) {
     std::vector<tiles::TileKey> out;
@@ -633,5 +678,65 @@ TEST_CASE("a pass's work in pieces: one for its worker and one for each waiting,
     CHECK(w.residency().stats().pieces >= 1);
     CHECK(w.residency().stats().built == 1);
     MESSAGE(std::format("{} pieces on {} threads", ran.size(), distinct.size()));
+    (void)session->take_messages();
+}
+
+TEST_CASE("the workers' hints: the frame waits on them while a tile in view is queued or under way, not for the "
+          "prefetch (gain 8)") {
+    const std::string dir = test::environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the workers' hints are not checked over the bundled packs here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<Sleeper>("one", 1, 2, 20));
+    passes.push_back(std::make_unique<Sleeper>("two", 2, 2, 5));
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    auto told = std::make_shared<Told>();
+    auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                      {.workers = 2, .sun = {.enabled = false}, .hints = told});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    if (!add_bundled(w, dir)) return;
+    // Both workers joined, at background priority: nothing waits on them yet.
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (told->joins() < 2 && std::chrono::steady_clock::now() < until) std::this_thread::yield();
+    CHECK(told->joins() == 2);
+    CHECK(told->changes().empty());
+    const std::vector<tiles::TileKey> keys = first_tiles(w.store(), "amsterdam", 3);
+    ATLAS_REQUIRE(keys.size() == 3);
+    scene::ItemTable items;
+    // The prefetch alone: the frame waits on nothing, nothing is reported.
+    const std::array<scene::Request, 1> ahead{
+        scene::Request{.key = keys[0], .pack = "amsterdam", .lane = scene::Lane::prefetch}};
+    w.residency().want(ahead);
+    w.residency().wait_idle();
+    w.residency().take_published(items);
+    CHECK(w.residency().stats().built == 1);
+    CHECK(told->changes().empty());
+    CHECK(told->reports() == 0);
+    // Two tiles in view and one ahead: the frame waits from the wants on, until the last in view is published; each
+    // piece of theirs reported while it waits, none after.
+    const std::array<scene::Request, 3> mixed{
+        scene::Request{.key = keys[1], .pack = "amsterdam", .lane = scene::Lane::visible, .priority = 1.0},
+        scene::Request{.key = keys[2], .pack = "amsterdam", .lane = scene::Lane::visible, .priority = 0.5},
+        scene::Request{.key = keys[0], .pack = "amsterdam", .lane = scene::Lane::prefetch}};
+    w.residency().want(mixed);
+    w.residency().wait_idle();
+    w.residency().take_published(items);
+    CHECK(w.residency().stats().built == 3);
+    CHECK(told->changes() == std::vector<bool>{true, false});
+    // Each tile's decoding and its two passes at least.
+    CHECK(told->reports() >= 6);
+    CHECK(told->stray() == 0);
+    // Wanted in view and then no longer before it was taken: the frame stops waiting with the cancelled want.
+    w.residency().want({});
+    CHECK(told->changes() == std::vector<bool>{true, false});
+    MESSAGE(std::format("{} workers joined; {} reports while the frame waited", told->joins(), told->reports()));
     (void)session->take_messages();
 }

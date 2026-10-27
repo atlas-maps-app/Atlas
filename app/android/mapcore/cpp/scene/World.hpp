@@ -71,6 +71,9 @@ struct WorldOptions {
     std::function<double()> clock;
     /// Whether the workers share a tile's passes and their pieces (ENGINE.md gain 9: WorkerOptions::share).
     bool share = true;
+    /// What the residency's workers tell the platform (ENGINE.md gain 8: platform::WorkerSession on Android, their
+    /// priority and their hint session), or none: they stay at background priority.
+    std::shared_ptr<WorkerHints> hints;
 };
 
 /// The world.

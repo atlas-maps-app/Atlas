@@ -54,6 +54,9 @@ struct MapOptions {
     /// Where the passes' resources come from (their fonts: frame::files_under on a host, assets_of on Android); none
     /// by default.
     Resources resources;
+    /// The hints of each world's tile workers (ENGINE.md gain 8: platform::WorkerSession on Android, made anew for
+    /// each world, its workers' priority and their hint session); none by default.
+    std::function<std::shared_ptr<scene::WorkerHints>()> worker_hints;
 };
 
 /// The app's map.

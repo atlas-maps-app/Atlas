@@ -44,9 +44,10 @@ World::create(const gpu::Device& device, std::span<const std::unique_ptr<frame::
     ATLAS_GPU_LET(heaps, Heaps::create(device, w->options_.heaps));
     w->heaps_ = std::move(heaps);
     std::function<double()> clock = w->options_.clock ? w->options_.clock : std::function<double()>([] { return 0.0; });
-    w->residency_ = std::make_unique<Residency>(w->store_, *w->heaps_, passes,
-                                                WorkerOptions{.count = w->options_.workers, .share = w->options_.share},
-                                                std::move(clock));
+    w->residency_ = std::make_unique<Residency>(
+        w->store_, *w->heaps_, passes,
+        WorkerOptions{.count = w->options_.workers, .share = w->options_.share, .hints = w->options_.hints},
+        std::move(clock));
     w->heap_globals_ = std::make_unique<HeapGlobals>(*w->heaps_);
     w->globals_.push_back(w->heap_globals_.get());
     if (w->options_.sun.enabled) {
