@@ -12,9 +12,13 @@ import java.time.Instant
 /** One piece of a file published in parts (GitHub release assets must stay under 2 GiB). */
 data class PackPart(val url: String, val bytes: Long, val sha256: String?)
 
-/** One file of a pack: the region pack (`.atlas`: the map's and the features' OpenStreetMap elements) or its places (a gzipped place store). */
+/**
+ * One file of a pack: the region pack (`.atlas`: the map's and the features' OpenStreetMap elements), its places (a
+ * gzipped place store), or its windows' data and their index (the data the phone builds its windows from, read by HTTP
+ * range: [WindowsIndex]).
+ */
 data class PackFile(
-    /** [ATLAS] or [PLACES]. */
+    /** [ATLAS], [PLACES], [WINDOWS] or [WINDOWS_INDEX]. */
     val kind: String,
     val name: String,
     /** Bytes to download: the whole file, all parts together. */
@@ -40,10 +44,16 @@ data class PackFile(
     companion object {
         const val ATLAS = "atlas"
         const val PLACES = "places"
+
+        /** The windows' data: each window's Overpass answer, gzipped, one after another (published in parts over 2 GB). */
+        const val WINDOWS = "windows"
+
+        /** Where each window's data lies in the [WINDOWS] file ([WindowsIndex]), downloaded whole. */
+        const val WINDOWS_INDEX = "windows-index"
     }
 }
 
-/** A region Atlas offers as a ready-made offline pack: its region pack and places, built on GitHub from a Geofabrik extract. */
+/** A region Atlas offers as a ready-made offline pack: its region pack, places and windows' data, built on GitHub from a Geofabrik extract. */
 data class Pack(
     val id: String,
     val name: String,
@@ -59,6 +69,12 @@ data class Pack(
     val files: List<PackFile>,
 ) {
     val places: PackFile? get() = files.firstOrNull { it.kind == PackFile.PLACES }
+
+    /** The windows' data, when the pack has them with their index. */
+    val windows: PackFile? get() = files.firstOrNull { it.kind == PackFile.WINDOWS }?.takeIf { windowsIndex != null }
+
+    /** Where each window's data lies in [windows]. */
+    val windowsIndex: PackFile? get() = files.firstOrNull { it.kind == PackFile.WINDOWS_INDEX }
 
     /** Bytes to download for the whole pack. */
     val downloadBytes: Long get() = files.sumOf { it.bytes }
