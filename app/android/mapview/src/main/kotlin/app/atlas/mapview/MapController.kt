@@ -84,6 +84,13 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
 
     /** Bumped on the main thread whenever there is something new to draw; the view's draw reads it. */
     val frameTick = mutableIntStateOf(0)
+
+    /**
+     * The canvas's own state changed (ENGINE.md gain 12): whether it draws anything over the core's picture now, which
+     * every draw reads; only a draw that draws something reads [frameTick], so where the core draws the map alone (its
+     * labels, markers and puck, nothing on the ground) the window over it is not drawn again at each frame.
+     */
+    val canvasTick = mutableIntStateOf(0)
     var style by mutableStateOf(MapStyle())
     var overlays by mutableStateOf(MapOverlays())
     var debug by mutableStateOf(false)
@@ -160,6 +167,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             if (value == field) return
             field = value
             noteHonest()
+            canvasTick.intValue++
         }
 
     /** Why the core, though running, could not make this map's frame (its map refused): T2's honest state too. */
@@ -395,6 +403,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
                 sentMarkers = null
                 coreMarkers = false
                 coreLocation = false
+                canvasTick.intValue++
                 closeCore(old)
                 noteChrome()
                 lastRequest = null
@@ -406,6 +415,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         old?.let(::closeCore)
         val c = CoreMap(mapCore, packs, texture, coreChanged)
         core = c
+        canvasTick.intValue++
         coreWanted = null
         sentMoment = null
         sentLabels = null
@@ -508,7 +518,10 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         publishedRest = rest
         publishedDraw = draw
         publishedLocation = location
-        coreLocation = location != null
+        if (coreLocation != (location != null)) {
+            coreLocation = location != null
+            canvasTick.intValue++
+        }
         movedAt = SystemClock.uptimeMillis()
         c.core.requestFrame()
         if (debug) startPanel()
@@ -555,7 +568,9 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     private fun advanceTransition(c: CoreMap): Boolean {
         val wanted = coreWanted ?: return false
         val coreReady = c.complete && c.completeRevision >= wantRevision
+        val cover = c.transition.canvas
         val due = c.transition.update(SystemClock.uptimeMillis(), wanted, coreReady, canvasReady(), whereDrawn(wanted))
+        if (c.transition.canvas != cover) canvasTick.intValue++
         // Whether the core draws may change mid-way (no longer covered whole): it hears at once.
         if (publishedDraw != !c.transition.coreHidden) publishCamera()
         noteFrame()
@@ -603,7 +618,10 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         val sent = sentLabels
         if (sent != null && sent.labels === labels && sent.face === face && sent.density == density && sent.draws == draws) return
         sentLabels = SentLabels(labels, face, density, draws)
-        coreLabels = draws
+        if (coreLabels != draws) {
+            coreLabels = draws
+            canvasTick.intValue++
+        }
         val revision = ++labelsRevision
         val painter = spritePainter?.takeIf { sent?.density == density } ?: LabelPainter(density).also { spritePainter = it }
         val least = READABLE_SP * fontScale / painter.smallestSize
@@ -633,7 +651,10 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             }
         }
         sentMarkers = SentMarkers(markers, density, draws)
-        if (!draws) coreMarkers = false
+        if (!draws && coreMarkers) {
+            coreMarkers = false
+            canvasTick.intValue++
+        }
         val revision = ++markersRevision
         val painter = markerPainter?.takeIf { it.density == density } ?: MarkerPainter(density).also {
             it.sans = markerSans
@@ -646,6 +667,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
                 if (core !== c || revision != markersRevision) return@post
                 coreMarkers = draws && why.isEmpty()
                 frameTick.intValue++
+                canvasTick.intValue++
             }
         }
     }
@@ -730,6 +752,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             val wanted = if (c.packs.covers(view.lat, view.lon, view.distance)) Transition.Path.CORE else Transition.Path.CANVAS
             if (wanted != coreWanted) {
                 coreWanted = wanted
+                canvasTick.intValue++
                 if (wanted == Transition.Path.CANVAS) {
                     // Today's map makes a frame for this place, whatever it made before.
                     lastRequest = null
@@ -838,6 +861,27 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             r.x(lv.lat, lv.lon), f.camera.targetY, r.z(lv.lat, lv.lon), LiveCamera.bearing(lv.bearing), LiveCamera.enginePitch(lv.pitch),
             lv.distance, LiveCamera.FOV, lv.widthDp.toDouble(), lv.heightDp.toDouble(), cx = lv.widthDp / 2.0, cy = lv.cyDp,
         )
+    }
+
+    /**
+     * Whether the canvas draws nothing over the core's picture now (ENGINE.md gain 12, [CanvasWork.idle]). It reads
+     * [debug], [tape] and [overlays], whose changes draw the canvas again; what else it reads says it changed through
+     * [canvasTick].
+     */
+    fun canvasIdle(): Boolean {
+        val c = core ?: return false
+        return CanvasWork.idle(
+            debug = debug, tape = tape != null, honest = honestReason != null, core = coreWanted == Transition.Path.CORE,
+            cover = c.transition.canvas, overlays = overlays, coreLabels = coreLabels, coreMarkers = coreMarkers,
+            coreLocation = coreLocation,
+        )
+    }
+
+    /** What a draw hands the core even where the canvas draws nothing: the labels and the markers when they changed. */
+    fun handOver() {
+        val c = core ?: return
+        sendLabels(c)
+        sendMarkers(c)
     }
 
     /**
@@ -1231,6 +1275,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         }
         val v = viewport()
         if (v.isEmpty) return
+        // the markers laid out where the camera is now: a canvas that draws nothing has not laid them out since it moved
+        painter().layoutMarkers(GroundView(CameraOps.camera(state.camera, v)), overlays.markers)
         painter?.markerAt(x, y)?.let {
             onTap(MapHit.OnMarker(it, it.at))
             return

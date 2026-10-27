@@ -172,6 +172,14 @@ fun AtlasMap(
                 // overlays over it; in the honest state, no map at all.
                 drawContent()
                 if (honest != null) return@drawWithContent
+                // Where the canvas draws nothing over the core's picture (ENGINE.md gain 12) it hands the core what
+                // changed and leaves the window as it is: it reads neither the frames' tick nor the camera, so the
+                // window over the map is not drawn again at each frame. Its own state's tick draws it again.
+                controller.canvasTick.intValue
+                if (controller.canvasIdle()) {
+                    controller.handOver()
+                    return@drawWithContent
+                }
                 // Reading the tick subscribes this draw (and only the draw) to new frames.
                 controller.frameTick.intValue
                 drawIntoCanvas { controller.draw(it.nativeCanvas) }
