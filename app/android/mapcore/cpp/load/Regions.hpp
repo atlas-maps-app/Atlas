@@ -44,6 +44,8 @@ struct RegionConfig {
     std::array<double, 4> bbox{}; ///< south, west, north, east (region.json's `bbox`)
     /// region.json's `tradition`, read (render/traditions/<id>.json), or null for none.
     std::shared_ptr<const Tradition> tradition;
+    /// Amsterdam's homes keep their guessed brick and plaster (generic.py's `keep_homes`, the renders' New looks).
+    bool keep_homes = false;
     Palette palette;
     /// A theme park's rides' profiles (region.json's `park`: data/park/<park>/pf), whose coaster tracks it loads; null
     /// for a region that is no theme park.

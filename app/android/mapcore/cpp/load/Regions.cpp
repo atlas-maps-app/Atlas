@@ -760,7 +760,10 @@ std::expected<Scene, LoadError> load_region(const osm::Document& doc, const Regi
     });
     outlines(s);
     // each building's look from its own tags, the land use it stands in and the region's tradition
-    apply_looks(s, {.region = region.name, .tradition = region.tradition, .landuse = LandUseFrom::land});
+    apply_looks(s, {.region = region.name,
+                    .tradition = region.tradition,
+                    .landuse = LandUseFrom::land,
+                    .keep_homes = region.keep_homes});
     if (frame.error()) return std::unexpected(*frame.error());
     if (region.park != nullptr) {
         // a theme park: its coaster tracks standing up, each ride's top height from its published profile

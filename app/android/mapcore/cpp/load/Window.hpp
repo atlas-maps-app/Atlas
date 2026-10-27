@@ -47,7 +47,7 @@ inline constexpr double window_margin = 200.0;
 /// The engine version a window's head names: the core's stage P, bumped when a window's tiles change for the same
 /// data (the port's packs name EngineVersion.ID there): core-p2 carries gantries and conveyors, which core-p1 left out;
 /// core-p3 a crane's form.
-inline constexpr std::string_view stage_p_version = "core-p3";
+inline constexpr std::string_view stage_p_version = "core-p4";
 
 /// The version of a window built now: `<stage P's> <the style's>`, its manifest's engine_version and style_version. A
 /// window of another version is built again from the data it keeps before it is drawn (the app's Windows), so a frame
@@ -71,6 +71,10 @@ struct WindowPlace {
     std::string region;
     std::optional<std::string_view> country;
     std::optional<std::string_view> tradition; ///< render/traditions/<name>.json, compiled into the core
+    /// Amsterdam's own looks, from each building's tags with the canal houses' brick and plaster kept (the renders' New
+    /// looks, ATLAS_LOOKS), in place of a tradition's kit: a window in the Netherlands, as the bundled Westerkerk is
+    /// drawn.
+    bool new_looks = false;
     std::string_view zone = "UTC";
     std::int32_t tz_h = 0;
     /// A theme park's rides (its coaster tracks load) and whether it plants its woods, as a region with a park or a zoo

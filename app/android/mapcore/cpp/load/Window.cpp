@@ -114,7 +114,12 @@ WindowPlace place_of(const tiles::TileKey& tile) {
     p.frame = frame_of(tile);
     p.region = "window";
     p.country = country_of(lat, lon);
-    p.tradition = tradition_of(p.country);
+    // The Netherlands follow the renders' New looks, as the bundled Westerkerk does (the user, 27 October: "the new
+    // look is more subtle and more advanced", "We cant drop the tradition completely?"): the Dutch kit no more.
+    // Elsewhere the country's tradition still gives a city its materials, which the New looks would paint as
+    // Amsterdam's brick.
+    p.new_looks = p.country && *p.country == "NL";
+    if (!p.new_looks) p.tradition = tradition_of(p.country);
     p.zone = timezone_of(p.country, lat, lon);
     p.tz_h = tz_hours(p.zone);
     return p;
@@ -147,6 +152,7 @@ std::expected<BuiltWindow, WindowError> build_window(const osm::Document& doc, c
                               .frame = place.frame,
                               .bbox = box,
                               .tradition = tradition,
+                              .keep_homes = place.new_looks,
                               .palette = region_palette(place.region),
                               .park = place.park,
                               .woods = place.woods};

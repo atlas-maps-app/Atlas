@@ -419,7 +419,9 @@ TEST_CASE("load: a window's box, frame and place") {
     const load::WindowPlace p = load::place_of(tile);
     CHECK(p.name == std::to_string(tile.z) + "/" + std::to_string(tile.x) + "/" + std::to_string(tile.y));
     CHECK(p.country == "NL");
-    CHECK(p.tradition == "nl_amsterdam");
+    // the Netherlands draw the renders' New looks, as the bundled Westerkerk does, not the Dutch kit
+    CHECK(p.new_looks);
+    CHECK_FALSE(p.tradition.has_value());
     CHECK(p.zone == "Europe/Amsterdam");
     CHECK(p.tz_h == 2);
     CHECK(p.region == "window");
