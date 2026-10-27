@@ -137,21 +137,9 @@ class RouteRibbons {
         prepared[route]?.let { return it }
         val pts = route.points
         val m = pts.size
-        val lat = DoubleArray(m)
-        val lon = DoubleArray(m)
-        val s = DoubleArray(m)
-        for (i in 0 until m) {
-            lat[i] = pts[i].lat
-            lon[i] = pts[i].lon
-            if (i > 0) {
-                // True metres: unit Mercator scaled at the segment's own latitude.
-                val dx = Mercator.x(lon[i]) - Mercator.x(lon[i - 1])
-                val dy = Mercator.y(lat[i]) - Mercator.y(lat[i - 1])
-                val k = Mercator.metresPerUnit((pts[i].lat + pts[i - 1].lat) / 2)
-                s[i] = s[i - 1] + sqrt(dx * dx + dy * dy) * k
-            }
-        }
-        return Prepared(lat, lon, s, m).also { prepared[route] = it }
+        val lat = DoubleArray(m) { pts[it].lat }
+        val lon = DoubleArray(m) { pts[it].lon }
+        return Prepared(lat, lon, along(pts), m).also { prepared[route] = it }
     }
 
     /** Adds a point to the run, merging it into the last when they are under 1.5 px apart (unless [force]). */
@@ -372,12 +360,24 @@ class RouteRibbons {
         for (k in 0 until SEGMENTS) buf.triangle(c, c + 1 + k, c + 1 + (k + 1) % SEGMENTS)
     }
 
-    private companion object {
-        const val SEGMENTS = 12
+    companion object {
+        private const val SEGMENTS = 12
+
+        /** The distance along [points] to each of them, true metres: unit Mercator scaled at each segment's latitude. */
+        fun along(points: List<app.atlas.geo.LatLon>): DoubleArray {
+            val s = DoubleArray(points.size)
+            for (i in 1 until points.size) {
+                val dx = Mercator.x(points[i].lon) - Mercator.x(points[i - 1].lon)
+                val dy = Mercator.y(points[i].lat) - Mercator.y(points[i - 1].lat)
+                val k = Mercator.metresPerUnit((points[i].lat + points[i - 1].lat) / 2)
+                s[i] = s[i - 1] + sqrt(dx * dx + dy * dy) * k
+            }
+            return s
+        }
 
         /** Turns sharper than this (between the segments' normals, 50°) get a round join instead of a miter. */
-        val SHARP_COS = cos(50 * PI / 180)
-        val COS = DoubleArray(SEGMENTS) { cos(2 * PI * it / SEGMENTS) }
-        val SIN = DoubleArray(SEGMENTS) { sin(2 * PI * it / SEGMENTS) }
+        private val SHARP_COS = cos(50 * PI / 180)
+        private val COS = DoubleArray(SEGMENTS) { cos(2 * PI * it / SEGMENTS) }
+        private val SIN = DoubleArray(SEGMENTS) { sin(2 * PI * it / SEGMENTS) }
     }
 }

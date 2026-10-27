@@ -16,9 +16,12 @@ import app.atlas.mapview.LabelPainter
 import app.atlas.mapview.LabelSprites
 import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapLabel
+import app.atlas.mapview.MapOverlays
 import app.atlas.mapview.Marker
 import app.atlas.mapview.MarkerPainter
 import app.atlas.mapview.MarkerSprites
+import app.atlas.mapview.OverlayPainter
+import app.atlas.mapview.RouteChips
 import app.atlas.render.live.Moment
 import java.time.ZoneId
 import java.util.Locale
@@ -200,6 +203,25 @@ internal class CoreMap(
             val maker = markerSprites?.takeIf { it.painter === painter } ?: MarkerSprites(painter).also { markerSprites = it }
             val block = if (markers.isEmpty()) MarkerBlock.write(painter.density, emptyList(), emptyList(), emptyList()) else maker.block(markers)
             core.markers(block, revision)
+        }
+
+    private val routeLock = Any()
+    private var routesRevision = 0L
+
+    /** The chips' maker for the painter of the last hand-over, which keeps the chips it drew (under [routeLock]). */
+    private var routeChips: RouteChips? = null
+
+    /**
+     * The routes and areas the core draws for this map from now on: those of [overlays] (none when it has none), their
+     * chips drawn by [painter], unless a later hand-over ([revision], counted by the caller) went already. Off the main
+     * thread. "" or why the core refused them.
+     */
+    fun routes(overlays: MapOverlays, painter: OverlayPainter, revision: Long): String =
+        synchronized(routeLock) {
+            if (revision <= routesRevision) return ""
+            routesRevision = revision
+            val maker = routeChips?.takeIf { it.painter === painter } ?: RouteChips(painter).also { routeChips = it }
+            core.routes(maker.block(overlays), revision)
         }
 
     /** This map leaves the screen: the core's map goes off if this map was the one drawing (off the main thread). */

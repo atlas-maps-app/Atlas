@@ -117,33 +117,9 @@ internal class MarkerSprites(val painter: MarkerPainter) {
         }
     }
 
-    /**
-     * [bitmap]'s pixels cut to those drawn, with its anchor ([ax], [ay]) in them; null where a drawn pixel touches its
-     * edge (it needs more room). Recycles the bitmap.
-     */
-    private fun cut(bitmap: Bitmap, ax: Int, ay: Int): MarkerBlock.Image? {
-        val w = bitmap.width
-        val h = bitmap.height
-        val all = LabelSprites.pixelsOf(bitmap)
-        bitmap.recycle()
-        var x0 = w; var y0 = h; var x1 = -1; var y1 = -1
-        for (y in 0 until h) {
-            for (x in 0 until w) {
-                if (all[y * w + x] == 0) continue
-                if (x < x0) x0 = x
-                if (x > x1) x1 = x
-                if (y < y0) y0 = y
-                if (y > y1) y1 = y
-            }
-        }
-        if (x1 < 0) return MarkerBlock.Image(1, 1, 0, 0, IntArray(1))
-        if (x0 == 0 || y0 == 0 || x1 == w - 1 || y1 == h - 1) return null
-        val sw = x1 - x0 + 1
-        val sh = y1 - y0 + 1
-        val out = IntArray(sw * sh)
-        for (y in 0 until sh) System.arraycopy(all, (y0 + y) * w + x0, out, y * sw, sw)
-        return MarkerBlock.Image(sw, sh, ax - x0, ay - y0, out)
-    }
+    /** [bitmap]'s pixels cut to those drawn (SpriteCut), as a block's image; null where it needs more room. */
+    private fun cut(bitmap: Bitmap, ax: Int, ay: Int): MarkerBlock.Image? =
+        SpriteCut.of(bitmap, ax, ay)?.let { MarkerBlock.Image(it.width, it.height, it.anchorX, it.anchorY, it.pixels) }
 
     companion object {
         private val ORIGIN = LatLon(0.0, 0.0)

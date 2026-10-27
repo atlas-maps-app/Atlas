@@ -217,6 +217,18 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     /** Whether the core draws the markers now (the canvas does not: from when the core has them); their painter. */
     private var coreMarkers = false
     private var markerPainter: MarkerPainter? = null
+
+    /** The routes and areas last handed to the core: the lists, the density, whether the core draws them. */
+    private class SentRoutes(val routes: List<RouteLine>, val areas: List<AreaOverlay>, val density: Float, val draws: Boolean)
+    private var sentRoutes: SentRoutes? = null
+    private var routesRevision = 0L
+
+    /**
+     * Whether the core draws the routes and areas now (the canvas does not: from when the core has them), so what lies
+     * over them (the markers, the puck) is the core's too; the painter of their chips.
+     */
+    private var coreRoutes = false
+    private var routePainter: OverlayPainter? = null
     private var movedAt = 0L
     private var panelLine = ""
     private var panelJob: Job? = null
@@ -402,6 +414,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
                 coreLabels = false
                 sentMarkers = null
                 coreMarkers = false
+                sentRoutes = null
+                coreRoutes = false
                 coreLocation = false
                 canvasTick.intValue++
                 closeCore(old)
@@ -422,6 +436,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         coreLabels = false
         sentMarkers = null
         coreMarkers = false
+        sentRoutes = null
+        coreRoutes = false
         coreLocation = false
         publishedCamera = null
         noteChrome()
@@ -489,9 +505,9 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         val holds = coreWanted == Transition.Path.CANVAS && CameraOps.visibleBounds(cam, v)?.let { !c.packs.meets(it) } != false
         val draw = !c.transition.coreHidden && !holds
         // the location's puck where the core draws the map with nothing of today's map over it, as its labels, and nothing
-        // on the ground that the canvas draws over the core's picture (a route ribbon, an area) until the core draws them
+        // on the ground that the canvas draws over the core's picture (a route ribbon, an area: until the core has them)
         val location = overlays.location.takeIf {
-            draw && coreWanted == Transition.Path.CORE && c.transition.canvas == 0f && !overlays.onGround
+            draw && coreWanted == Transition.Path.CORE && c.transition.canvas == 0f && (!overlays.onGround || coreRoutes)
         }
         if (!force && next == null && cam == publishedCamera && v == publishedViewport && rest == publishedRest && draw == publishedDraw &&
             location == publishedLocation
@@ -639,7 +655,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
      * has them, so none are missing between.
      */
     private fun sendMarkers(c: CoreMap) {
-        val draws = coreWanted == Transition.Path.CORE && c.transition.canvas == 0f && !overlays.onGround
+        val draws = coreWanted == Transition.Path.CORE && c.transition.canvas == 0f && (!overlays.onGround || coreRoutes)
         val markers = if (draws) overlays.markers else emptyList()
         val sent = sentMarkers
         if (sent != null && sent.draws == draws && sent.density == density) {
@@ -668,6 +684,51 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
                 coreMarkers = draws && why.isEmpty()
                 frameTick.intValue++
                 canvasTick.intValue++
+            }
+        }
+    }
+
+    /**
+     * The routes and areas: the core draws them where it draws the map with nothing of today's map over it, on the
+     * street in the same frame as the map, under its labels, markers and puck; today's map's canvas elsewhere. Handed over
+     * off the main thread when that, the routes, the areas or the density change; the canvas lets go of them once the
+     * core has them, and the markers and the puck follow them into the core.
+     */
+    private fun sendRoutes(c: CoreMap) {
+        val draws = coreWanted == Transition.Path.CORE && c.transition.canvas == 0f
+        val ov = overlays
+        val routes = if (draws) ov.routes else emptyList()
+        val areas = if (draws) ov.areas else emptyList()
+        val sent = sentRoutes
+        if (sent != null && sent.draws == draws && sent.density == density) {
+            if (sent.routes === routes && sent.areas === areas) return
+            // equal lists made anew (a recomposition): kept, so the next frames compare them by identity
+            if (sent.routes == routes && sent.areas == areas) {
+                sentRoutes = SentRoutes(routes, areas, density, draws)
+                return
+            }
+        }
+        sentRoutes = SentRoutes(routes, areas, density, draws)
+        if (!draws && coreRoutes) {
+            coreRoutes = false
+            canvasTick.intValue++
+            publishCamera()
+        }
+        val revision = ++routesRevision
+        val painter = routePainter?.takeIf { it.density == density } ?: OverlayPainter(density).also { routePainter = it }
+        scope.launch(Dispatchers.Default) {
+            val why = c.routes(MapOverlays(routes = routes, areas = areas), painter, revision)
+            if (why.isNotEmpty()) Log.w(EngineFrames.TAG, "vk routes: $why")
+            main.post {
+                if (core !== c || revision != routesRevision) return@post
+                val now = draws && why.isEmpty()
+                if (now != coreRoutes) {
+                    coreRoutes = now
+                    canvasTick.intValue++
+                    // the puck follows the routes into the core, or back
+                    publishCamera()
+                }
+                frameTick.intValue++
             }
         }
     }
@@ -872,14 +933,18 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         val c = core ?: return false
         return CanvasWork.idle(
             debug = debug, tape = tape != null, honest = honestReason != null, core = coreWanted == Transition.Path.CORE,
-            cover = c.transition.canvas, overlays = overlays, coreLabels = coreLabels, coreMarkers = coreMarkers,
-            coreLocation = coreLocation,
+            cover = c.transition.canvas, overlays = overlays, coreRoutes = coreRoutes, coreLabels = coreLabels,
+            coreMarkers = coreMarkers, coreLocation = coreLocation,
         )
     }
 
-    /** What a draw hands the core even where the canvas draws nothing: the labels and the markers when they changed. */
+    /**
+     * What a draw hands the core even where the canvas draws nothing: the routes and areas, the labels and the markers
+     * when they changed.
+     */
     fun handOver() {
         val c = core ?: return
+        sendRoutes(c)
         sendLabels(c)
         sendMarkers(c)
     }
@@ -916,7 +981,8 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             val pt = painter()
             val ov = overlays
             pt.layoutMarkers(g, ov.markers)
-            pt.drawGround(canvas, g, ov)
+            c?.let(::sendRoutes)
+            if (!coreRoutes) pt.drawGround(canvas, g, ov)
             labelTypeface?.let { pt.labels.typeface = it }
             c?.let(::sendLabels)
             c?.let(::sendMarkers)

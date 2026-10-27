@@ -30,7 +30,7 @@ class Tape(val x0: Float, val y0: Float, val x1: Float, val y1: Float, val alpha
  * chip each), the markers collided by priority, the location puck (accuracy halo on the ground, heading cone, blue
  * dot) and the measuring tape. Everything is projected with the camera of the frame it is drawn over.
  */
-class OverlayPainter(private val density: Float) {
+class OverlayPainter(val density: Float) {
     val markers = MarkerPainter(density)
     val layout = MarkerLayout()
 
@@ -124,10 +124,9 @@ class OverlayPainter(private val density: Float) {
             val alt = pass == 0
             for (r in overlays.routes) {
                 if (r.alternative != alt) continue
-                val colour = r.colour.toInt() or (0xFF shl 24)
-                val fillColour = if (alt) Colours.mix(colour, QUIET, 0.72f) else colour
-                val faded = Colours.mix(fillColour, TRAVELLED, 0.7f)
-                val width = if (alt) r.widthDp * 0.82f else r.widthDp
+                val fillColour = fillOf(r)
+                val faded = fadedOf(fillColour)
+                val width = widthOf(r)
                 val hw = width / 2.0 * mpdp
                 val casing = (r.casing.toInt() or (0xFF shl 24))
                 val casingM = CASING_DP * mpdp
@@ -150,8 +149,7 @@ class OverlayPainter(private val density: Float) {
         // Chips over every ribbon.
         for (k in 0 until chipCount) {
             val r = chipRoutes[k] ?: continue
-            val colour = r.colour.toInt() or (0xFF shl 24)
-            routeChip(canvas, r.label!!, chipX[k], chipY[k], if (r.alternative) Colours.mix(colour, QUIET, 0.72f) else colour, r.alternative)
+            routeChip(canvas, r.label!!, chipX[k], chipY[k], fillOf(r), r.alternative)
         }
         java.util.Arrays.fill(chipRoutes, 0, chipCount, null)
         chipCount = 0
@@ -196,7 +194,14 @@ class OverlayPainter(private val density: Float) {
         canvas.drawPath(path, stroke)
     }
 
-    private fun routeChip(canvas: Canvas, label: String, x: Float, y: Float, colour: Int, quiet: Boolean) {
+    /** The width of a route chip's text [label], px. */
+    fun labelWidth(label: String): Float = text.measureText(label)
+
+    /**
+     * A route's chip ([label], "6′") centred on ([x], [y]): a 24 px pill of the route's [colour] (white for an
+     * alternative, [quiet]) under a soft shadow, its text 13 px medium. The core draws it from a sprite of this.
+     */
+    fun routeChip(canvas: Canvas, label: String, x: Float, y: Float, colour: Int, quiet: Boolean) {
         val tw = text.measureText(label)
         val h = 24f * density
         val w = tw + 20f * density
@@ -368,6 +373,18 @@ class OverlayPainter(private val density: Float) {
 
     companion object {
         const val CASING_DP = 1.6
+
+        /** A route's fill as the painter draws it: its colour, an alternative's quieter. */
+        fun fillOf(r: RouteLine): Int {
+            val colour = r.colour.toInt() or (0xFF shl 24)
+            return if (r.alternative) Colours.mix(colour, QUIET, 0.72f) else colour
+        }
+
+        /** The fill of a route's part already travelled. */
+        fun fadedOf(fill: Int): Int = Colours.mix(fill, TRAVELLED, 0.7f)
+
+        /** A route's width as the painter draws it, dp: an alternative's narrower. */
+        fun widthOf(r: RouteLine): Float = if (r.alternative) r.widthDp * 0.82f else r.widthDp
 
         /** The walking symbol of the tape's chip. */
         const val WALK = "ui-walk"

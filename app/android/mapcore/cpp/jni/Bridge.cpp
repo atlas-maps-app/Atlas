@@ -30,6 +30,7 @@
 #include "markers/Markers.hpp"
 #include "osm/Diff.hpp"
 #include "osm/Edits.hpp"
+#include "routes/Routes.hpp"
 #include "standin/Session.hpp"
 #include "style/CameraState.hpp"
 #include "style/Theme.hpp"
@@ -339,6 +340,14 @@ public:
     void markers(std::shared_ptr<const markers::MarkerSet> set) {
         on_session([this, &set] {
             map_->set_markers(std::move(set));
+            ask_frame();
+        });
+    }
+
+    /// The app's routes and areas for the map from now on (null: none).
+    void routes(std::shared_ptr<const routes::RouteSet> set) {
+        on_session([this, &set] {
+            map_->set_routes(std::move(set));
             ask_frame();
         });
     }
@@ -1101,6 +1110,29 @@ jstring native_markers(JNIEnv* env, jclass /*cls*/, jlong handle, jobject block,
     return java(env, "");
 }
 
+/// The app's routes and areas for the map (MK/state/RouteBlock.kt's block in a direct buffer, routes/Routes.hpp's
+/// read_route_block: each route's look, points and chip, and the areas), at `revision`; an empty block takes them
+/// away. "" or why they were refused.
+jstring native_routes(JNIEnv* env, jclass /*cls*/, jlong handle, jobject block, jlong revision) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    void* address = block == nullptr ? nullptr : env->GetDirectBufferAddress(block);
+    const jlong capacity = block == nullptr ? 0 : env->GetDirectBufferCapacity(block);
+    if (address == nullptr || capacity < 0) return java(env, "the routes must be a direct buffer");
+    auto read =
+        routes::read_route_block(std::span(static_cast<const std::byte*>(address), static_cast<std::size_t>(capacity)));
+    if (!read) return java(env, std::format("the routes were refused: {}", read.error()));
+    if (read->routes.empty() && read->areas.empty()) {
+        core->routes(nullptr);
+        return java(env, "");
+    }
+    auto set = routes::RouteSet::make(std::move(read->areas), std::move(read->routes), std::move(read->chips),
+                                      read->density, static_cast<std::uint64_t>(revision));
+    if (!set) return java(env, std::format("the routes were refused: {}", routes::describe(set.error())));
+    core->routes(std::move(*set));
+    return java(env, "");
+}
+
 template <class F>
 void* fn(F f) {
     return reinterpret_cast<void*>(f);
@@ -1220,8 +1252,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 42>& methods() {
-    static const std::array<JNINativeMethod, 42> table{{
+const std::array<JNINativeMethod, 43>& methods() {
+    static const std::array<JNINativeMethod, 43> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1268,6 +1300,7 @@ const std::array<JNINativeMethod, 42>& methods() {
         method("moment", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_moment)),
         method("labels", "(JLjava/nio/ByteBuffer;JF)Ljava/lang/String;", fn(&native_labels)),
         method("markers", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_markers)),
+        method("routes", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_routes)),
         method("screen", "(JZZZ)V", fn(&native_screen)),
         method("landing", "(JZDDDDD)V", fn(&native_landing)),
         method("painter", "(JZ)V", fn(&native_painter)),

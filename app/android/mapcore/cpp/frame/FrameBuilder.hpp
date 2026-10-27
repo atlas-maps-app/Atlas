@@ -57,6 +57,10 @@ namespace atlas::markers {
 class MarkerSet; // markers/Markers.hpp: the app's markers (MapCore.markers, ENGINE.md step 6)
 } // namespace atlas::markers
 
+namespace atlas::routes {
+class RouteSet; // routes/Routes.hpp: the app's routes and areas (MapCore.routes, ENGINE.md step 6)
+} // namespace atlas::routes
+
 namespace atlas::frame {
 
 struct GroundRuns;  // frame/GroundRuns.hpp
@@ -109,6 +113,8 @@ struct FrameState {
     const labels::LabelSet* labels = nullptr;
     /// The app's markers for this frame (FrameInputs::markers; null: none).
     const markers::MarkerSet* markers = nullptr;
+    /// The app's routes and areas for this frame (FrameInputs::routes; null: none).
+    const routes::RouteSet* routes = nullptr;
     /// The frame slot (0 or 1): set 0's slice and the passes' own per-frame buffers.
     std::uint32_t slot = 0;
     /// The text runs the passes lay on the ground this frame (the runways' designators) for the ground's text pass,
@@ -186,6 +192,8 @@ struct FrameInputs {
     const labels::LabelSet* labels = nullptr;
     /// The app's markers (MapCore.markers; null: none), read by the markers pass.
     const markers::MarkerSet* markers = nullptr;
+    /// The app's routes and areas (MapCore.routes; null: none), read by the routes pass.
+    const routes::RouteSet* routes = nullptr;
 };
 
 /// The map's frame.

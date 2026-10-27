@@ -347,6 +347,7 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     state_.slot = slot;
     state_.labels = inputs_.labels;
     state_.markers = inputs_.markers;
+    state_.routes = inputs_.routes;
     const view::Device device{.density = cam.density,
                               .width_px = cam.width_px,
                               .height_px = cam.height_px,

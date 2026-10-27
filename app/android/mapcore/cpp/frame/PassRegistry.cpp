@@ -10,6 +10,7 @@
 #include "passes/Labels.hpp"
 #include "passes/Markers.hpp"
 #include "passes/Overlays.hpp"
+#include "passes/Routes.hpp"
 #include "passes/Things.hpp"
 #include "passes/Trees.hpp"
 #include "passes/Walls.hpp"
@@ -36,6 +37,7 @@ constexpr std::array registry{
     Registration{.name = "things", .make = &make<passes::Things>},          // ENGINE.md step 4: the street furniture
     Registration{.name = "items", .make = &make<passes::Items>},            // ENGINE.md step 4: a region's items
     Registration{.name = "ground_text", .make = &make<passes::GroundText>}, // K13: the canal names, the ground's last
+    Registration{.name = "routes", .make = &make<passes::Routes>},          // ENGINE.md step 6: routes and areas
     Registration{.name = "markers", .make = &make<passes::Markers>},        // ENGINE.md step 6: updates before labels
     Registration{.name = "labels", .make = &make<passes::Labels>},          // K13: the board's labels (D13)
     Registration{.name = "overlays", .make = &make<passes::Overlays>},      // ENGINE.md step 6: the location's puck

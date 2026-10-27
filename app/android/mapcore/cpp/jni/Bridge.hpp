@@ -26,8 +26,9 @@ namespace atlas::jni {
 /// from its kept data). 15: Native.screen takes the paper grain as well (the app's Look settings). 16:
 /// Native.editWindow (the user's own edits written into a window's data, ENGINE.md step 6). 17: the camera state's
 /// version 2, 544 bytes, with the location the map shows (its puck drawn by the core, ENGINE.md step 6). 18:
-/// Native.markers (the map's markers drawn by the core, ENGINE.md step 6).
-inline constexpr jint abi = 18;
+/// Native.markers (the map's markers drawn by the core, ENGINE.md step 6). 19: Native.routes (the map's routes and
+/// areas drawn by the core).
+inline constexpr jint abi = 19;
 
 /// The Kotlin class whose static natives the library registers.
 inline constexpr const char* native_class = "app/atlas/mapcore/Native";

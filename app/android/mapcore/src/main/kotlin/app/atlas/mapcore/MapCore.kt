@@ -271,6 +271,15 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
         core.call("the core is closed") { Native.markers(it, block, revision) }
 
     /**
+     * The map's routes and areas from now on, as `state.RouteBlock` writes them (each route's look, points and chip, and
+     * the shaded circles; an empty block, none), at [revision]: the core draws them on the street each frame as the
+     * board's painter would, in the same frame as the map, under its labels and markers. "" or why they were refused.
+     * Off the main thread.
+     */
+    fun routes(block: ByteBuffer, revision: Long): String =
+        core.call("the core is closed") { Native.routes(it, block, revision) }
+
+    /**
      * The screen's haze, vignette and paper grain from now on, each on (the renders' look, the default) or off: off,
      * the map's picture keeps its own colours there, and the composite does less work a pixel. Off the main thread.
      */

@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 18
+    const val ABI = 19
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -259,6 +259,12 @@ object Native {
      * "" or why they were refused.
      */
     @JvmStatic external fun markers(handle: Long, block: ByteBuffer, revision: Long): String
+
+    /**
+     * The map's routes and areas (`state.RouteBlock`'s block in a direct buffer; an empty block takes them away) at
+     * [revision]; "" or why they were refused.
+     */
+    @JvmStatic external fun routes(handle: Long, block: ByteBuffer, revision: Long): String
 
     /** The screen's haze, vignette and paper grain for the map, each on or off (the app's Look settings). */
     @JvmStatic external fun screen(handle: Long, haze: Boolean, vignette: Boolean, grain: Boolean)

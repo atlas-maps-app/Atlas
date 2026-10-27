@@ -5,6 +5,7 @@ import app.atlas.mapcore.Native
 import app.atlas.mapcore.UserEdit
 import app.atlas.mapcore.state.LabelBlock
 import app.atlas.mapcore.state.MarkerBlock
+import app.atlas.mapcore.state.RouteBlock
 import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.render.Amsterdam
 import app.atlas.render.Regions
@@ -27,7 +28,8 @@ import java.nio.file.Files
  * block as `state.LabelBlock` writes it is read by the core (a sprite without points, or wider than a sprite may be,
  * or large images at a scale below 1, refused for that: so its fields are read where they are written; a block in the
  * first layout, LBL1, refused), and so is the markers' block as `state.MarkerBlock` writes it (a look that is none of
- * the set's, or a density out of its range, or a look larger than may be, refused for that).
+ * the set's, or a density out of its range, or a look larger than may be, refused for that), and the routes' block as
+ * `state.RouteBlock` writes it (a route of one point, a chip that is none of the set's, refused for that).
  */
 class MapFacadeTest {
     companion object {
@@ -149,6 +151,27 @@ class MapFacadeTest {
                 )
                 assertEquals("the markers were refused: not a block of markers", Native.markers(handle, notLabels.rewind() as ByteBuffer, 6L))
                 assertEquals("the markers must be a direct buffer", Native.markers(handle, ByteBuffer.allocate(8), 7L))
+
+                // The routes and areas: a dashed route with its chip and a main one, an area, as the app writes them; none;
+                // refused, and why.
+                val chip = RouteBlock.Image(9, 5, 4, 2, IntArray(45) { it * 0x01010101 })
+                val walk = RouteBlock.Route(doubleArrayOf(52.37, 4.88, 0.0, 52.371, 4.881, 131.0), 4.92f, blue, blue, -1, true, 0.0, 0)
+                val drive = RouteBlock.Route(doubleArrayOf(52.37, 4.88, 0.0, 52.38, 4.89, 1300.0, 52.39, 4.89, 2400.0), 6f, blue, -1, -1, false, 500.0, RouteBlock.NO_CHIP)
+                val area = RouteBlock.Area(52.37, 4.88, 200f, 0x332E5BFF, blue)
+                assertEquals(20 + 28 + (36 + 48) + (36 + 72) + (16 + 180), RouteBlock.size(listOf(area), listOf(walk, drive), listOf(chip)))
+                assertEquals("", Native.routes(handle, RouteBlock.write(2.625f, listOf(area), listOf(walk, drive), listOf(chip)), 1L))
+                assertEquals("", Native.routes(handle, RouteBlock.write(2.625f, emptyList(), emptyList(), emptyList()), 2L))
+                assertEquals(
+                    "the routes were refused: a route's chip is none of the set's",
+                    Native.routes(handle, RouteBlock.write(2.625f, listOf(area), listOf(walk), emptyList()), 3L),
+                )
+                val one = RouteBlock.Route(doubleArrayOf(52.37, 4.88, 0.0), 6f, blue, blue, -1, false, 0.0, RouteBlock.NO_CHIP)
+                assertEquals(
+                    "the routes were refused: a route's points are fewer than two, too many, not places, or go back along it",
+                    Native.routes(handle, RouteBlock.write(2.625f, emptyList(), listOf(one), emptyList()), 4L),
+                )
+                assertEquals("the routes were refused: not a block of routes", Native.routes(handle, notLabels.rewind() as ByteBuffer, 5L))
+                assertEquals("the routes must be a direct buffer", Native.routes(handle, ByteBuffer.allocate(8), 6L))
 
                 // The screen's haze and vignette off, then on again (the app's Look settings).
                 Native.screen(handle, false, false, false)
