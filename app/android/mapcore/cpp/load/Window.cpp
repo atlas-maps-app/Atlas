@@ -118,7 +118,7 @@ WindowPlace place_of(const tiles::TileKey& tile) {
     // look is more subtle and more advanced", "We cant drop the tradition completely?"): the Dutch kit no more.
     // Elsewhere the country's tradition still gives a city its materials, which the New looks would paint as
     // Amsterdam's brick.
-    p.new_looks = p.country && *p.country == "NL";
+    p.new_looks = draws_new_looks(p.country);
     if (!p.new_looks) p.tradition = tradition_of(p.country);
     p.zone = timezone_of(p.country, lat, lon);
     p.tz_h = tz_hours(p.zone);

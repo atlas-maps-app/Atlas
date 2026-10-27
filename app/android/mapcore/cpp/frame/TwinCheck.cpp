@@ -118,8 +118,7 @@ gpu::Result<TwinCheck> twin_check(const gpu::Device& device, const gpu::Pipeline
         inputs.seconds = t;
         (void)world->ladder(camera);
         const tiles::StorePack* pack = world->active();
-        inputs.theme =
-            pack != nullptr && pack->pack.head() != nullptr ? with_profile(theme, pack->pack.head()->profile) : theme;
+        inputs.theme = pack != nullptr ? with_pack(theme, *pack) : theme;
         builder->set_inputs(inputs);
         builder->emit(stream, ++number);
     };

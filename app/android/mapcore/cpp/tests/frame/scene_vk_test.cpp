@@ -7,6 +7,7 @@
 // tiles' native bytes); the sun's scene the resident tiles and their 220 m halo.
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
+#include "frame/MapFrame.hpp"
 #include "frame/PassRegistry.hpp"
 #include "frame/Ranks.hpp"
 #include "frame/Selectors.hpp"
@@ -821,6 +822,15 @@ TEST_CASE("a frame cell's windows are drawn beside the active pack, where it has
     CHECK(w.active()->kind == tiles::PackKind::window);
     ATLAS_REQUIRE(w.neighbour() != nullptr);
     CHECK(w.neighbour()->id == "amsterdam");
+    // The cell's windows, in the Netherlands, draw the New looks and light as the living map they stand around: no TONE
+    // (the Westerkerk's own pack has none either, a region's has it).
+    {
+        style::ThemeBlock toned{};
+        toned.flags = style::theme_flag::tone;
+        CHECK((frame::with_pack(toned, *w.active()).flags & style::theme_flag::tone) == 0U);
+        CHECK((frame::with_pack(toned, *w.neighbour()).flags & style::theme_flag::tone) == 0U);
+        CHECK((frame::with_profile(toned, tiles::Profile::region).flags & style::theme_flag::tone) != 0U);
+    }
     // Away from every pack (3 km east) nothing is drawn, but the places in view are the windows wanted, nearest first,
     // none where a pack has a tile.
     style::CameraState high = c;

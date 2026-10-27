@@ -422,6 +422,9 @@ TEST_CASE("load: a window's box, frame and place") {
     // the Netherlands draw the renders' New looks, as the bundled Westerkerk does, not the Dutch kit
     CHECK(p.new_looks);
     CHECK_FALSE(p.tradition.has_value());
+    CHECK(load::draws_new_looks("NL"));
+    CHECK_FALSE(load::draws_new_looks("FR"));
+    CHECK_FALSE(load::draws_new_looks(std::nullopt));
     CHECK(p.zone == "Europe/Amsterdam");
     CHECK(p.tz_h == 2);
     CHECK(p.region == "window");

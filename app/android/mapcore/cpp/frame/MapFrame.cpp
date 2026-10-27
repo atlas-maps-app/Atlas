@@ -4,6 +4,8 @@
 #include "base/log.hpp"
 #include "frame/PassRegistry.hpp"
 #include "fx/FieldCache.hpp"
+#include "load/Countries.hpp"
+#include "load/Window.hpp"
 
 #include <algorithm>
 #include <format>
@@ -39,6 +41,16 @@ style::ThemeBlock with_profile(style::ThemeBlock theme, tiles::Profile profile) 
         theme.flags |= style::theme_flag::tone;
     }
     return theme;
+}
+
+style::ThemeBlock with_pack(style::ThemeBlock theme, const tiles::StorePack& pack) noexcept {
+    const tiles::RenderHead* head = pack.pack.head();
+    if (head == nullptr) return theme;
+    if (pack.kind == tiles::PackKind::window &&
+        load::draws_new_looks(load::country_of(head->frame.lat0, head->frame.lon0))) {
+        return with_profile(theme, tiles::Profile::living);
+    }
+    return with_profile(theme, head->profile);
 }
 
 MapFrame::MapFrame(unsigned workers, std::function<void()> wake, MapOptions options)
@@ -197,9 +209,7 @@ void MapFrame::next(const style::CameraState& camera, double seconds) {
     // with the same answer).
     (void)world_->ladder(camera);
     style::ThemeBlock theme = *theme_;
-    if (const tiles::StorePack* pack = world_->active(); pack != nullptr && pack->pack.head() != nullptr) {
-        theme = with_profile(theme, pack->pack.head()->profile);
-    }
+    if (const tiles::StorePack* pack = world_->active(); pack != nullptr) theme = with_pack(theme, *pack);
     builder_->set_inputs({.camera = camera,
                           .theme = theme,
                           .seconds = seconds,

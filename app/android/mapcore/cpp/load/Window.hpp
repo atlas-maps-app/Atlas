@@ -49,6 +49,12 @@ inline constexpr double window_margin = 200.0;
 /// core-p3 a crane's form.
 inline constexpr std::string_view stage_p_version = "core-p4";
 
+/// Whether a window of `country` draws the renders' New looks instead of its tradition's kit, and the living map's
+/// light (no TONE: frame/MapFrame.hpp's with_pack): the Netherlands, as the bundled Westerkerk draws.
+[[nodiscard]] constexpr bool draws_new_looks(std::optional<std::string_view> country) noexcept {
+    return country.has_value() && *country == "NL";
+}
+
 /// The version of a window built now: `<stage P's> <the style's>`, its manifest's engine_version and style_version. A
 /// window of another version is built again from the data it keeps before it is drawn (the app's Windows), so a frame
 /// cell's windows are of one version, and an edit to the style file reaches every window.
