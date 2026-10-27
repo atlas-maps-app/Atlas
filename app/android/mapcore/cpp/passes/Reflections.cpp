@@ -170,6 +170,17 @@ constexpr std::uint32_t reflection_leaf = 16;
 
 } // namespace
 
+std::uint32_t leaf_anchor(std::int64_t id) noexcept {
+    // a mix of the id's two halves (the crowns' tree_crown_anchor's steps), 12 bits a coordinate
+    const auto bits = static_cast<std::uint64_t>(id);
+    std::uint32_t h =
+        (static_cast<std::uint32_t>(bits) * 0x9E37'79B1U) ^ (static_cast<std::uint32_t>(bits >> 32U) * 0x85EB'CA77U);
+    h ^= h >> 15U;
+    h *= 0x2C1B'3C6DU;
+    h ^= h >> 12U;
+    return (h & 0xFFFU) | (((h >> 16U) & 0xFFFU) << 16U);
+}
+
 void Ground::decide_reflections(const view::Camera& cam, const frame::FrameState& state) {
     GroundFrame& f = frame_;
     f.reflections.clear();
@@ -349,7 +360,8 @@ void Ground::decide_reflections(const view::Camera& cam, const frame::FrameState
                      .tile = tr.tile,
                      .first = static_cast<std::uint32_t>(f.reflection_circles.size()),
                      .count = 5,
-                     .colour = night ? g.reflection_style.trees.night : g.reflection_style.trees.day};
+                     .colour = night ? g.reflection_style.trees.night : g.reflection_style.trees.day,
+                     .anchor = leaf_anchor(tt.id[tr.tree])};
         for (int c = 0; c < 5; ++c) {
             const double cx = p.x + (rnd.uniform(-.5, .5) * rr);
             const double cy = p.y + (rnd.uniform(-.4, .4) * rr);
@@ -494,12 +506,14 @@ void Ground::write_reflections(std::vector<std::uint32_t>& words) {
             for (std::uint32_t k = 0; k < e.count; ++k) {
                 const ReflectionCircle& c = frame_.reflection_circles[e.first + k];
                 // a circle of its tree's group under the leaf filter: its centre and radius, then the group's region
+                // and its tree's place in the leaves' field
                 head(e.tile, slot_value, colour, reflection_circle | (no_leaves_ ? 0U : reflection_leaf));
                 words.push_back(bits_of(static_cast<float>(c.cx)));
                 words.push_back(bits_of(static_cast<float>(c.cy)));
                 words.push_back(bits_of(static_cast<float>(c.r)));
                 for (const std::int32_t v : e.region) words.push_back(std::bit_cast<std::uint32_t>(v));
-                words.insert(words.end(), 5, 0U);
+                words.push_back(e.anchor);
+                words.insert(words.end(), 4, 0U);
             }
             continue;
         }

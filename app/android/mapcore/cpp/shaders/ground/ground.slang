@@ -1135,10 +1135,12 @@ StrokeOutput quay_fs(QuayOut q) {
 static const uint REFLECTION_SHEER = 2u;
 static const uint REFLECTION_CIRCLE = 4u;
 static const uint REFLECTION_ELLIPSE = 8u;
-/// A tree's circle under its group's leaf filter (amsterdam.py's `leaf`): words 7 to 10 its region in whole device px.
-/// Drawn into the ripple's layer (GROUND_LAYER, where push.colour.x places the filter's 256 offsets and its reach), each
-/// sample tests its place moved by the whole pixels the leaves' field gives its pixel, kept where the pixel and the
-/// moved pixel both lie in the region (SvgFilterRaster's DisplacementNode, over the region alone).
+/// A tree's circle under its group's leaf filter (amsterdam.py's `leaf`): words 7 to 10 its region in whole device px,
+/// word 11 its tree's place in the leaves' field (passes::leaf_anchor). Drawn into the ripple's layer (GROUND_LAYER,
+/// where push.colour.x places the filter's 256 offsets and its reach), each sample tests its place moved by the whole
+/// pixels the leaves' field gives its pixel where its tree reads it (its anchor less its region's centre, fx_wrap), kept
+/// where the pixel and the moved pixel both lie in the region (SvgFilterRaster's DisplacementNode, over the region
+/// alone).
 static const uint REFLECTION_LEAF = 16u;
 
 /// Whether a record's flags draw under the leaf filter: a tree's circle, into the ripple's layer.
@@ -1187,7 +1189,11 @@ QuayOut reflection_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_Vulkan
     o.extra = ellipse ? uint4(words[at + 8u], words[at + 9u], words[at + 10u], words[at + 11u]) : uint4(0u, 0u, 0u, 0u);
     if (leaf) {
         o.extra = uint4(words[at + 7u], words[at + 8u], words[at + 9u], words[at + 10u]);
-        o.p23.x = 1.0f;
+        // the shift to where its tree reads the leaves' field: its anchor less its region's centre (whole px, exact)
+        uint anchor = words[at + 11u];
+        int2 centre = {(asint(o.extra.x) + asint(o.extra.z)) / 2, (asint(o.extra.y) + asint(o.extra.w)) / 2};
+        int2 shift = int2(int(anchor & 0xFFFFu), int(anchor >> 16u)) - centre;
+        o.p23 = float4(1.0f, float(shift.x), float(shift.y), 0.0f);
     }
     return o;
 }
@@ -1202,11 +1208,12 @@ StrokeOutput reflection_fs(QuayOut q) {
     uint n = push.mode.w;
     uint mask = 0u;
     bool ellipse = q.colour.a > 1.5f;
-    // a tree's circle under the leaf filter (its layer is the upright view): its pixel moved by the leaves' field
+    // a tree's circle under the leaf filter (its layer is the upright view): its pixel moved by the leaves' field where
+    // its tree reads it
     float2 shift = {0.0f, 0.0f};
     if (m == 0u && !ellipse && q.p23.x > 0.5f) {
         int2 p = {int(corner.x), int(corner.y)};
-        uint2 l = fx_leaf(p);
+        uint2 l = fx_leaf(fx_wrap(p + int2(int(q.p23.y), int(q.p23.z))));
         int2 o = {asint(words[push.colour.x + l.x]), asint(words[push.colour.x + l.y])};
         int2 s = p + o;
         int4 region = {asint(q.extra.x), asint(q.extra.y), asint(q.extra.z), asint(q.extra.w)};
@@ -1251,12 +1258,21 @@ StrokeOutput reflection_fs(QuayOut q) {
     return o;
 }
 
-/// The water's glints inside its clip at their slot (screen_vs; passes/Glints.cpp): the glints' field's red at the
-/// pixel picks the filter's result (premultiplied sRGB, a r g b) from the moment's table of 256 in `words` (from
-/// push.mode.z), at the rect's opacity (push.rows.z), premultiplied.
+/// The water's glints inside its clip at their slot (screen_vs; passes/Glints.cpp): the glints' field's red where the
+/// water under the pixel reads it (the water's map after the table: passes::water_map, fixed to the water; between its
+/// pixels, fx_glints_red) picks the filter's result (premultiplied sRGB, a r g b) from the moment's table of 256 in
+/// `words` (from push.mode.z), at the rect's opacity (push.rows.z), premultiplied; nothing where no water lies.
 [shader("fragment")]
 ColourOut glints_fs(ScreenOut v) {
-    uint s = words[push.mode.z + fx_r(fx_pixel(frame.camera, v.position.xy))];
+    uint m = push.mode.z + 256u;
+    float3 r0 = {asfloat(words[m]), asfloat(words[m + 1u]), asfloat(words[m + 2u])};
+    float3 r1 = {asfloat(words[m + 3u]), asfloat(words[m + 4u]), asfloat(words[m + 5u])};
+    float3 r2 = {asfloat(words[m + 6u]), asfloat(words[m + 7u]), asfloat(words[m + 8u])};
+    float3 q = fx_water_point(r0, r1, r2, css_of_output(frame.camera, v.position.xy) * frame.camera.frame.z);
+    if (q.z == 0.0f) {
+        discard;
+    }
+    uint s = words[push.mode.z + fx_glints_red(q.xy)];
     float4 c = {float((s >> 16u) & 0xFFu), float((s >> 8u) & 0xFFu), float(s & 0xFFu), float(s >> 24u)};
     ColourOut o;
     o.colour = (c * (1.0f / 255.0f)) * push.rows.z;

@@ -402,8 +402,16 @@ TEST_CASE("ground: the reflected trees' leaf filter moves their circles' samples
                 const std::size_t i =
                     (static_cast<std::size_t>(y) * static_cast<std::size_t>(w)) + static_cast<std::size_t>(x);
                 reached[i] = 1;
+                // where its tree reads the leaves' field: its anchor less its region's centre, mirrored (fx_wrap)
+                const auto mirror = [](std::int64_t v, std::int64_t size) {
+                    std::int64_t m = v % (2 * size);
+                    if (m < 0) m += 2 * size;
+                    return static_cast<std::uint32_t>(m < size ? m : (2 * size) - 1 - m);
+                };
+                const std::int64_t lx = x + static_cast<std::int64_t>(e.anchor & 0xFFFFU) - ((r[0] + r[2]) / 2);
+                const std::int64_t ly = y + static_cast<std::int64_t>(e.anchor >> 16U) - ((r[1] + r[3]) / 2);
                 const std::array<std::uint8_t, 2> rg =
-                    latest->at(fx::Field::leaf, static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
+                    latest->at(fx::Field::leaf, mirror(lx, latest->size().width), mirror(ly, latest->size().height));
                 const std::int32_t ox = offsets[rg[0]];
                 const std::int32_t oy = offsets[rg[1]];
                 if (x + ox < r[0] || y + oy < r[1] || x + ox >= r[2] || y + oy >= r[3]) continue;

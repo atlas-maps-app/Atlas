@@ -414,6 +414,18 @@ struct Full {
                                   static_cast<float>((clear >> 8U) & 0xFFU) / 255.0F,
                                   static_cast<float>(clear & 0xFFU) / 255.0F};
     std::ranges::fill(colour, background);
+    // where a crowned circle reads the crowns' fields for device pixel (x, y): its tree's shift (tree_crown_shift), the
+    // fields mirrored past their edges (mat.slang's fx_wrap)
+    const auto crown_pixel = [&](const shaders::TreeRecord& r, std::int64_t x, std::int64_t y) {
+        const hlsl::int2 shift = shaders::tree_crown_shift(r);
+        const auto mirror = [](std::int64_t v, std::int64_t size) {
+            std::int64_t m = v % (2 * size);
+            if (m < 0) m += 2 * size;
+            return static_cast<std::uint32_t>(m < size ? m : (2 * size) - 1 - m);
+        };
+        return std::array<std::uint32_t, 2>{mirror(x + shift.x, full->fields->size().width),
+                                            mirror(y + shift.y, full->fields->size().height)};
+    };
     // a record's box of device pixels (its corners, a CSS px and more beyond a circle or a limb)
     const auto box = [&](const shaders::TreeRecord& r) {
         std::array<float, 4> b{1e30F, 1e30F, -1e30F, -1e30F};
@@ -460,9 +472,9 @@ struct Full {
                     const double tol = tolerance / static_cast<double>(cam.frame.z);
                     if (kind == shaders::TREE_CIRCLE && full != nullptr && (r.a.x & shaders::TREE_CROWN) != 0U) {
                         // the crown filter: the pixel moved by the crowns' field there, both within the tree's region
-                        const auto ux = static_cast<std::uint32_t>(x);
-                        const auto uy = static_cast<std::uint32_t>(y);
-                        const std::array<std::uint8_t, 2> rg = full->fields->at(fx::Field::crown, ux, uy);
+                        const std::array<std::uint32_t, 2> at_field = crown_pixel(r, x, y);
+                        const std::array<std::uint8_t, 2> rg =
+                            full->fields->at(fx::Field::crown, at_field[0], at_field[1]);
                         const std::int32_t ox = full->offsets[rg[0]];
                         const std::int32_t oy = full->offsets[rg[1]];
                         const std::int64_t sx = x + ox;
@@ -537,7 +549,8 @@ struct Full {
         const auto x = static_cast<std::uint32_t>((k / n) % w);
         const auto y = static_cast<std::uint32_t>((k / n) / w);
         if ((r.a.x & shaders::TREE_KIND) == shaders::TREE_CIRCLE && (r.a.x & shaders::TREE_CROWN) != 0U) {
-            c = through(fx::crown_table(), c, full->fields->at(fx::Field::crown_tone, x, y)[0]);
+            const std::array<std::uint32_t, 2> at_field = crown_pixel(r, x, y);
+            c = through(fx::crown_table(), c, full->fields->at(fx::Field::crown_tone, at_field[0], at_field[1])[0]);
         }
         return through(fx::mat_table(), c, full->fields->at(fx::Field::mat, x, y)[0]);
     };

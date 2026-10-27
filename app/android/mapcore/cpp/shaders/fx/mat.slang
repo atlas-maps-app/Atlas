@@ -114,9 +114,43 @@ int2 fx_pixel(FrameCamera camera, float2 position) {
     return p;
 }
 
+/// Index `v` of an axis of `n` texels mirrored into it: past either end the axis reads on as its mirror image (0 to n
+/// - 1, then n - 1 back to 0, and so on), so a field read anywhere is continuous.
+int fx_mirror(int v, int n) {
+    int m = v % (2 * n);
+    if (m < 0) {
+        m = m + 2 * n;
+    }
+    return m < n ? m : (2 * n - 1) - m;
+}
+
+/// The fields' pixel `q` mirrored into them (fx_mirror on each axis): each field is a block of its noise the frame's
+/// size, which a lookup anchored to an object or to the ground (a tree's crown, the water's streaks) may leave.
+int2 fx_wrap(int2 q) {
+    uint w = 0u;
+    uint h = 0u;
+    noise_rgba.GetDimensions(w, h);
+    int2 m = {fx_mirror(q.x, int(w)), fx_mirror(q.y, int(h))};
+    return m;
+}
+
 /// The byte a UNORM8 channel holds.
 uint fx_byte(float v) {
     return uint(v * 255.0f + 0.5f);
+}
+
+/// The water's map (passes::water_map): the fields' point (device px) of the water's plane under upright device point
+/// `p`, by its rows r0, r1 and r2, each step rounded on its own; its z 0 where the plane does not lie there (at and
+/// above the horizon).
+float3 fx_water_point(float3 r0, float3 r1, float3 r2, float2 p) {
+    float w = ((r2.x * p.x) + (r2.y * p.y)) + r2.z;
+    if (!(w < 0.0f)) {
+        return float3(0.0f);
+    }
+    float u = ((r0.x * p.x) + (r0.y * p.y)) + r0.z;
+    float v = ((r1.x * p.x) + (r1.y * p.y)) + r1.z;
+    float3 q = {u / w, v / w, 1.0f};
+    return q;
 }
 
 /// The fields' bytes at the upright pixel `p`: noise_rgba's four, the ripple's two (noise_rg's first), the glints' one
@@ -137,6 +171,21 @@ uint2 fx_rg(int2 p) {
 uint fx_r(int2 p) {
     int3 at = {p.x, p.y, 0};
     return fx_byte(noise_r.Load(at).r);
+}
+/// The glints' red at the fields' point `q` (device px, anywhere: fx_wrap), between its four pixels' bytes as their
+/// bilinear blend, each step rounded on its own, to the nearest byte.
+uint fx_glints_red(float2 q) {
+    float2 f = floor(q);
+    int2 i = int2(f);
+    float2 t = q - f;
+    float a = float(fx_r(fx_wrap(i)));
+    float b = float(fx_r(fx_wrap(i + int2(1, 0))));
+    float c = float(fx_r(fx_wrap(i + int2(0, 1))));
+    float d = float(fx_r(fx_wrap(i + int2(1, 1))));
+    float top = a + ((b - a) * t.x);
+    float bottom = c + ((d - c) * t.x);
+    float r = top + ((bottom - top) * t.y);
+    return uint(r + 0.5f);
 }
 uint3 fx_crown(int2 p) {
     int3 at = {p.x, p.y, 0};

@@ -195,7 +195,42 @@ struct Reflection {
     /// A tree's leaf filter region in whole device px (x0, y0 in it; x1, y1 past it): `leaf`'s -15% and 130% of its
     /// five circles' box, as SvgFilterRaster takes a region.
     std::array<std::int32_t, 4> region{};
+    /// A tree's place in the leaves' field (x | y << 16, each under 4096: leaf_anchor), which its region's centre
+    /// reads, so its leaves move with it.
+    std::uint32_t anchor = 0;
 };
+
+/// Where a reflected tree reads the leaves' field: a hash of its id (x | y << 16, each under 4096). The renders read it
+/// at the screen's own pixels, which a moving map slides under the trees; the frame reads each tree's from its own
+/// place (the user, 27 October: "The leafs and water streaks should be drawn with the object like buildings are").
+[[nodiscard]] std::uint32_t leaf_anchor(std::int64_t id) noexcept;
+
+/// The water's streaks' map: where the glints and the ripple read their fields, fixed to the water as a building is
+/// fixed to its place (the user, 27 October: "The leafs and water streaks should be drawn with the object like
+/// buildings are"). The renders read them at the screen's own pixels, which a moving map slides under the water; the
+/// frame lays them on the water's plane (height `water_y`) as the Westerkerk home sees them at its target
+/// (amsterdam.py's main camera: yaw 52, pitch 38, dist 430, fov 36, H 915: 3.27 CSS px a metre across its view and
+/// that times sin 38 down it, a field's device px per CSS px), so panning, turning and zooming carry them with the
+/// water and the home shows them at the renders' scale. For an upright device point (x, y) of camera `cam`'s frame at
+/// `density` the fields' point is (r0 · (x, y, 1), r1 · (x, y, 1)) / (r2 · (x, y, 1)), the rows' nine floats returned
+/// (r2's negative below the horizon, where alone the plane lies), reduced by whole mirror periods of the fields (twice
+/// their `width` and `height`, device px: fx_wrap) about the frame's middle so that the floats keep their precision.
+[[nodiscard]] std::array<float, 9> water_map(const view::Camera& cam, double water_y, double density,
+                                             std::uint32_t width, std::uint32_t height);
+
+/// The fields' point (device px) of the water under upright device point (x, y) by map `m` (water_map's), in float as
+/// the shaders work it out (fx_water_point), and whether the water's plane lies there (below the horizon).
+struct WaterPoint {
+    float x = 0.0F;
+    float y = 0.0F;
+    bool on = false;
+};
+[[nodiscard]] WaterPoint water_point(const std::array<float, 9>& m, float x, float y) noexcept;
+
+struct GroundFrame;
+/// The water's height where frame `f` draws it (its first tile's water level; 0 without a tile), the streaks' map's
+/// plane.
+[[nodiscard]] double water_level(const GroundFrame& f) noexcept;
 
 /// A face of a reflection: its corners in the frame's metres (a gable's three, else four).
 struct ReflectionFace {

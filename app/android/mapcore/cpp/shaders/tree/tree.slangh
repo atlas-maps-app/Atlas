@@ -97,7 +97,7 @@ static const uint TREE_ROUND_START = 256u;
 static const uint TREE_ROUND_END = 512u;
 static const uint TREE_ROUND = 768u;
 /// A crown's circle under the crown filter (tree_close's clumps; not a small crown's): its record's c holds its tree's
-/// filter region (tree_crown_region).
+/// filter region (tree_crown_region), its b.w its tree's anchor in the crowns' fields (tree_crown_anchor).
 static const uint TREE_CROWN = 1024u;
 /// A street lamp's halo at night (draw_lamp's last element, `<circle fill="url(#halo)">`): a translucent circle whose
 /// colour and opacity are the `halo` gradient's at each pixel, its stops these (#FFE9C0 at .7, #FFC98A at .22 at .35,
@@ -314,13 +314,36 @@ inline TreeRecord tree_streak(float2 at, float rx, float ry, float opacity, floa
     return r;
 }
 
-/// Circle record `r` under the crown filter of its tree's `region`.
-inline TreeRecord tree_crowned(TreeRecord r, int4 region) {
+/// Where a tree's crown reads the crowns' fields (the crown, the crown tone): their pixel (x | y << 16, each under
+/// 4096) its filter region's centre reads, a hash of its trunk's place. The renders read the fields at the screen's own
+/// pixels, which a moving map slides under its trees; the frame reads each crown's from its tree's own place in them,
+/// so its leaves move with it (the user, 27 October: "The leafs and water streaks should be drawn with the object like
+/// buildings are"). The fields mirror past their edges (fx_wrap).
+inline uint tree_crown_anchor(TreeHeader t) {
+    uint h = (asuint(t.trunk.x) * 0x9E3779B1u) ^ (asuint(t.trunk.z) * 0x85EBCA77u);
+    h = h ^ (h >> 15u);
+    h = h * 0x2C1B3C6Du;
+    h = h ^ (h >> 12u);
+    return (h & 0xFFFu) | (((h >> 16u) & 0xFFFu) << 16u);
+}
+
+/// Circle record `r` under the crown filter of its tree's `region`, reading the crowns' fields from its tree's
+/// `anchor`.
+inline TreeRecord tree_crowned(TreeRecord r, int4 region, uint anchor) {
     TreeRecord o = r;
     o.a.x = r.a.x | TREE_CROWN;
+    o.b.w = anchor;
     uint4 c = {uint(region.x), uint(region.y), uint(region.z), uint(region.w)};
     o.c = c;
     return o;
+}
+
+/// The shift from a crowned circle's pixels to where they read the crowns' fields (device px): its tree's anchor less
+/// its filter region's centre.
+inline int2 tree_crown_shift(TreeRecord r) {
+    int2 centre = {(int(r.c.x) + int(r.c.z)) / 2, (int(r.c.y) + int(r.c.w)) / 2};
+    int2 anchor = {int(r.b.w & 0xFFFFu), int(r.b.w >> 16u)};
+    return anchor - centre;
 }
 
 inline TreeRecord tree_quad(float2 p0, float2 p1, float2 p2, float2 p3, uint colour, float opacity, float depth) {

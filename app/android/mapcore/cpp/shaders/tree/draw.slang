@@ -238,7 +238,7 @@ void close_tree(FrameCamera c, TreeJob j, TreeHeader t) {
         for (uint i = j.first; i < j.first + 3u * n; ++i) {
             TreeRecord r = written(i);
             if ((r.a.x & TREE_KIND) == TREE_CIRCLE) {
-                put(i, tree_crowned(r, region));
+                put(i, tree_crowned(r, region, tree_crown_anchor(t)));
             }
         }
     }
@@ -533,6 +533,7 @@ struct TreeOut {
     nointerpolation float4 shape : TREE_SHAPE; // a circle's centre and radius; a limb's two ends
     nointerpolation float4 kind : TREE_KIND;   // its kind and caps, a segment's half width, its opacity
     nointerpolation int4 region : TREE_REGION; // a crown's circle's filter region (device px)
+    nointerpolation int2 field : TREE_FIELD;   // and the shift to where it reads the crowns' fields (tree_crown_shift)
 };
 
 /// Whether record word `word` draws under the crown filter this frame: a crown's circle, where `mat` runs (the fields
@@ -594,6 +595,7 @@ TreeOut place(TreeRecord r, uint vertex) {
     o.shape = float4(0.0f);
     o.kind = float4(0.0f);
     o.region = int4(0);
+    o.field = int2(0);
     if ((r.a.x & TREE_KIND) == TREE_NONE) {
         o.position = NOWHERE;
         o.colour = float3(0.0f);
@@ -609,6 +611,7 @@ TreeOut place(TreeRecord r, uint vertex) {
     o.kind = float4(float(r.a.x), asfloat(r.c.x), asfloat(r.a.z), 0.0f);
     if (crowned(r.a.x)) {
         o.region = int4(asint(r.c.x), asint(r.c.y), asint(r.c.z), asint(r.c.w));
+        o.field = tree_crown_shift(r);
     }
     return o;
 }
@@ -670,10 +673,10 @@ uint coverage_of(TreeOut v) {
 }
 
 /// The samples of a crown's circle's fragment at `v` under the crown filter (render/closeup.py's crown_filter;
-/// SvgFilterRaster's DisplacementNode): the crowns' field at the fragment's upright pixel (`k`: its red and green)
-/// moves the pixel by whole device px, and the moved pixel shows the crown's layer there, so each sample keeps where
-/// its moved place lies in the circle and the pixel and the moved pixel in the tree's filter region (the filter's
-/// result covers its region alone).
+/// SvgFilterRaster's DisplacementNode): the crowns' field where its tree reads it for the fragment's upright pixel
+/// (`k`: its red and green; tree_crown_shift) moves the pixel by whole device px, and the moved pixel shows the crown's
+/// layer there, so each sample keeps where its moved place lies in the circle and the pixel and the moved pixel in the
+/// tree's filter region (the filter's result covers its region alone).
 uint crown_coverage(TreeOut v, uint3 k) {
     int2 p = fx_pixel(frame.camera, v.position.xy);
     int2 o = {asint(tree_tones[TREE_TONE_CROWN_OFFSETS + k.x]), asint(tree_tones[TREE_TONE_CROWN_OFFSETS + k.y])};
@@ -705,7 +708,7 @@ TreeTarget trees_fs(TreeOut v) {
     bool crown = crowned(uint(v.kind.x));
     uint3 k = uint3(0u);
     if (crown) {
-        k = fx_crown(fx_pixel(frame.camera, v.position.xy));
+        k = fx_crown(fx_wrap(fx_pixel(frame.camera, v.position.xy) + v.field));
     }
     uint mask = crown ? crown_coverage(v, k) : coverage_of(v);
     if (mask == 0u) {
