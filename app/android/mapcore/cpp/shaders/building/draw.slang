@@ -427,7 +427,7 @@ StrokeVertex roof_strokes_vs(uint vertex : SV_VulkanVertexID) {
 
 /// A window job (Buildings::update): a tile's push constants (4 uint4: its place; at x its facade walls, y its faces, z
 /// its edged primitives, w its rows; sun x its first sun texel, y its fade weight's bits, z its window group's first
-/// sample, w its reveals' colours' first word this frame slot), then its run (its first facade wall in the tile's list,
+/// sample, w its reveals' colours' first word at the moment), then its run (its first facade wall in the tile's list,
 /// how many, at most 64, its first wall record, its items' facade slots), each of its walls' first window record
 /// (building_window_records of them: its windows', then its shop glazing's), its first near record (WINDOW_NO_NEAR: its
 /// item lies 160 m or more away), its windows' widths (passes::window_widths: the frames' in tenths of a CSS px, bits

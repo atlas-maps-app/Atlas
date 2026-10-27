@@ -334,13 +334,41 @@ Count FrameBuilder::total() const noexcept {
     return c;
 }
 
+const style::ThemeBlock& FrameBuilder::take_moment(bool at_once) {
+    const auto same = [](const style::ThemeBlock& a, const style::ThemeBlock& b) {
+        return std::ranges::equal(std::as_bytes(std::span(&a, 1)), std::as_bytes(std::span(&b, 1)));
+    };
+    if (at_once || !shown_) {
+        asked_.reset();
+        return shown_.emplace(inputs_.theme);
+    }
+    if (same(*shown_, inputs_.theme)) {
+        asked_.reset(); // back to the moment shown: one asked about meanwhile is not shown
+        return *shown_;
+    }
+    // A new moment: every pass asked (each starts its work ahead for it), the frame showing the one before until every
+    // pass is ready. The passes see the frame before (state_, not derived yet).
+    const style::ThemeBlock& asked = asked_ ? *asked_ : asked_.emplace(inputs_.theme);
+    const shaders::Theme next = style::shader_theme(asked);
+    bool ready = true;
+    for (const std::unique_ptr<Pass>& p : passes_) ready = p->ready_for(state_, next, wake_) && ready;
+    if (!ready) return *shown_;
+    shown_ = asked;
+    asked_.reset();
+    // the inputs moved on while it was lit: the next frame asks about theirs, at rest too
+    if (!same(*shown_, inputs_.theme) && wake_) wake_();
+    return *shown_;
+}
+
 bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::Output* output) {
     const style::CameraState& cam = inputs_.camera;
     if (cam.width_px == 0 || cam.height_px == 0 || cam.width_dp == 0 || cam.height_dp == 0) return false;
+    // the moment: a frame drawn into an output waits for every pass's work ahead for a new one (Pass::ready_for); the
+    // twin's, which draws nothing, takes the inputs' at once
+    state_.theme = take_moment(output == nullptr);
     state_.number = number;
     state_.seconds = inputs_.seconds;
     state_.camera = cam;
-    state_.theme = inputs_.theme;
     state_.mode = inputs_.mode;
     state_.rest = cam.has(style::camera_flag::rest);
     state_.slot = slot;

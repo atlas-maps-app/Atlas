@@ -12,9 +12,10 @@
 // After a frame it tells whether the picture was complete (the pack drawn, every tile the cover wants resident and
 // drawn, every fade-in and the frame's blend done: the app's transitional rule and its first-frame line wait for one)
 // and whether more frames are due at the same camera (World::animating: a fade or the frame's blend under way); a tile
-// published wakes the frame loop at rest (World::set_wake, the wake given here), so the loop draws until the picture is
-// final and then rests (D1: at rest the map draws nothing). Render thread only, but the world's clock and the wake,
-// which its workers call.
+// published wakes the frame loop at rest (World::set_wake, the wake given here), and so does a new moment's light once
+// lit ahead (FrameBuilder::set_wake: the frame that takes the moment), so the loop draws until the picture is final and
+// then rests (D1: at rest the map draws nothing). Render thread only, but the world's clock and the wake, which its
+// workers and the buildings' light call.
 //
 // Every world made holds the passes' own providers of set 1's globals (frame::Pass::providers, made with the map's
 // resources: their fonts) and K17a's noise fields and byte tables (fx::FieldCache), kept under the app's cache.

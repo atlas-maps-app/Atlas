@@ -104,7 +104,7 @@ static const float BUILDING_FACING_SLACK = 1.52587890625e-5f;
 struct BuildingPush {
     TilePlace place;
     uint4 at;  // x: its first primitive of the draw's list (or near cell: two a uint4), y: its faces (uint4 indexes in
-               // the walls heap); z: this frame slot's colours (a u32 index); w: its rows (a uint4 index)
+               // the walls heap); z: its colours at the frame's moment (a u32 index); w: its rows (a uint4 index)
     uint4 sun; // x: the tile's first sun texel (BUILDING_NO_BITS: none yet); y: its fade weight's bits; z: its edged
                // list's first primitive (a near cell's wall); w: the draw's list is near cells (1) or primitives (0)
 };

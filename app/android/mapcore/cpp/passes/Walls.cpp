@@ -1,5 +1,6 @@
-// The buildings pass (passes/Walls.hpp): stage T into the walls heap, stage F's rows, light and draw lists, the walls'
-// pipeline and draws, and the twin. The roofs' pipeline, draws and the light's are passes/Roofs.cpp.
+// The buildings pass (passes/Walls.hpp): stage T into the walls heap, stage F's rows and draw lists, the walls'
+// pipeline and draws, and the twin. The roofs' pipeline, draws and thin edges are passes/Roofs.cpp; the faces' light on
+// the CPU, each tile's areas of colours and the light ahead, passes/Light.cpp.
 #include "passes/Walls.hpp"
 
 #include "base/assert.hpp"
@@ -18,7 +19,6 @@
 
 #include <algorithm>
 #include <bit>
-#include <chrono>
 #include <cstring>
 #include <span>
 
@@ -129,31 +129,6 @@ void Buildings::write_rows(scene::Heaps& heaps, const scene::ResidentTile& tile,
     rows_written_.insert(tile.handle);
 }
 
-void Buildings::light(scene::Heaps& heaps, const shaders::Theme& theme, std::uint32_t slot,
-                      const scene::ResidentTile& tile, const scene::PassTile& mine, const BuildingTile& b) {
-    std::array<std::uint64_t, 2>& lit = lit_[tile.handle];
-    if (lit[slot] == moment_) return;
-    const auto started = std::chrono::steady_clock::now();
-    colours_.resize(std::size_t{b.faces} * 2);
-    building_colours(theme, b.lights, colours_);
-    heaps.write(mine.ranges[0], std::as_bytes(std::span(colours_)),
-                (b.colours_at * 16) + (slot * b.faces * 2 * static_cast<std::uint32_t>(sizeof(std::uint32_t))));
-    // and its windowed walls' reveals' colours
-    if (b.window_walls > 0) {
-        colours_.assign(b.window_walls, 0U);
-        building_reveals(theme, b.lights, b.window_faces, colours_);
-        heaps.write(mine.ranges[0], std::as_bytes(std::span(colours_)),
-                    (b.reveals_at * 16) + (slot * b.window_walls * static_cast<std::uint32_t>(sizeof(std::uint32_t))));
-    }
-    heaps.flush();
-    lit[slot] = moment_;
-    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
-    ++lighting_.tiles;
-    lighting_.faces += b.faces;
-    lighting_.ms += ms;
-    lighting_.longest_ms = std::max(lighting_.longest_ms, ms);
-}
-
 void Buildings::update(const frame::FrameState& state) {
     draws_.clear();
     runs_.clear();
@@ -172,14 +147,18 @@ void Buildings::update(const frame::FrameState& state) {
         windows_->facades_now = 0;
     }
     if (kept_ != nullptr) kept_->jobs_now = 0;
+    // the light ahead of a moment no longer asked about let go of
+    forget_ahead();
     if (state.cover == nullptr || state.ranks == nullptr || state.heaps == nullptr) return;
     // the tiles' PassTile of this pass: the one at its place among the passes that built them (FrameState::cover)
     const std::uint32_t me = index();
-    // a new moment (the frame block's theme): every tile's colours again, slot by slot, as each is drawn
+    // a new moment (the frame block's theme): every tile's colours again as it is drawn, once, into the area of them no
+    // frame in flight reads; those the light ahead lit for it (ready_for) copied in
     const std::span<const std::byte> theme = std::as_bytes(std::span(&state.block.theme, 1));
     if (!std::ranges::equal(theme, theme_) || moment_ == 0) {
         std::ranges::copy(theme, theme_.begin());
         ++moment_;
+        take_ahead(state.block.theme);
     }
     const std::uint32_t slot = state.slot % 2;
     // The tiles with a building nearer than the cells' reach (its rank draws the near variant): only theirs can draw
@@ -198,6 +177,7 @@ void Buildings::update(const frame::FrameState& state) {
             if (std::ranges::find(near_tiles_, tiles[row]) == near_tiles_.end()) near_tiles_.push_back(tiles[row]);
         }
     }
+    bool lit = false;
     for (const scene::CoverTile& t : state.cover->tiles()) {
         if (t.drawn == nullptr || me >= t.drawn->passes.size()) continue;
         const scene::ResidentTile& tile = *t.drawn;
@@ -205,13 +185,16 @@ void Buildings::update(const frame::FrameState& state) {
         const auto* b = mine.cpu_as<BuildingTile>();
         if (b == nullptr || !mine.ranges[0]) continue;
         const std::uint32_t base = mine.ranges[0].offset / 16;
-        const std::uint32_t colours = ((base + b->colours_at) * 4) + (slot * 2 * b->faces);
         // a tile's rows and colours once, though it draws for several tiles (a stand-in ancestor, its cells over each)
+        std::uint32_t area = 0;
         if (std::ranges::find(drawn_handles_, tile.handle) == drawn_handles_.end()) {
             drawn_handles_.push_back(tile.handle);
             write_rows(*state.heaps, tile, mine, *b);
-            light(*state.heaps, state.block.theme, slot, tile, mine, *b);
+            area = light(*state.heaps, state.block.theme, slot, tile, mine, *b, lit);
+        } else {
+            area = lit_[tile.handle].read[slot];
         }
+        const std::uint32_t colours = ((base + b->colours_at) * 4) + (area * 2 * b->faces);
         TileDraw d;
         shaders::BuildingPush push{};
         push.place = t.place;
@@ -231,7 +214,7 @@ void Buildings::update(const frame::FrameState& state) {
         if (const std::uint32_t first = first_item(tile, kind_); first < tile.rows.size()) {
             d.rows = std::span(tile.rows).subspan(first, std::min<std::size_t>(b->items, tile.rows.size() - first));
         }
-        d.reveals = ((base + b->reveals_at) * 4) + (slot * b->window_walls);
+        d.reveals = ((base + b->reveals_at) * 4) + (area * b->window_walls);
         d.facades = base + b->facades_at;
         d.runs_first = static_cast<std::uint32_t>(runs_.size());
         building_runs(t.cells, b->edged_first, runs_);
@@ -248,6 +231,9 @@ void Buildings::update(const frame::FrameState& state) {
         d.distance = t.distance;
         if (d.edged_runs + d.cell_runs + d.plain_runs + d.window_runs > 0) draws_.push_back(d);
     }
+    // the colours written this frame reach the GPU, once for every tile; the tiles lit ahead, copied in, are let go of
+    if (lit) state.heaps->flush();
+    drop_ahead();
     // the nearest tiles first, so early depth testing rejects what they hide in the tiles behind
     std::ranges::stable_sort(draws_, {}, &TileDraw::distance);
     if (strokes_ != nullptr) write_jobs(slot);

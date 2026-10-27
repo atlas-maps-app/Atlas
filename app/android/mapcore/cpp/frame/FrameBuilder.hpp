@@ -3,7 +3,9 @@
 //   1. stage F's per-frame values from the gesture camera (Kotlin's CameraState for this vsync) and the moment: the
 //      engine camera on the device (view/Camera.hpp, through the active pack's ViewLadder when there is one,
 //      view/Ladder.hpp), the screen layers (view/ScreenLayers.hpp), the cover (scene/Cover.hpp) and the painter ranks
-//      (frame/Ranks.hpp), then every pass's own update (its draw lists);
+//      (frame/Ranks.hpp), then every pass's own update (its draw lists). A new moment is shown once every pass is ready
+//      for it (Pass::ready_for: the buildings' light, lit ahead on the pass's own thread), the frames showing the one
+//      before till then, so the frame that first shows it shows it whole and none of them does a moment's long work;
 //   2. the frame's slice of set 0's ring: the frame block (camera, theme, screen layers, counts), the rank table and
 //      the selector table, written once, flushed;
 //   3. the command buffer, in D5.12's order: the offscreen phases; the main pass's scene subpass (objects front to
@@ -35,11 +37,13 @@
 #include "view/ScreenLayers.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace atlas::scene {
@@ -76,7 +80,8 @@ struct FrameState {
     std::optional<view::Placed> placed;
     /// The screen layers' numbers (ScreenLayers.of).
     std::optional<view::Layers> layers;
-    /// The moment's theme block and the shaders' Theme of it.
+    /// The moment's theme block, the one the frame shows (the inputs' once every pass is ready for it), and the
+    /// shaders' Theme of it.
     style::ThemeBlock theme{};
     /// The camera rests (the camera state's rest flag): the vertex stage snaps.
     bool rest = false;
@@ -193,6 +198,10 @@ public:
     /// The next frame's inputs. The camera state must be read and checked (style::read_camera_state) and the theme
     /// block too (style::read_theme_block).
     void set_inputs(const FrameInputs& inputs) noexcept { inputs_ = inputs; }
+    /// The frame loop's frame request, called once a pass's work ahead for a new moment is done (Pass::ready_for: from
+    /// that pass's thread) and once a frame takes a moment the inputs have moved on from, so the frame that takes the
+    /// next comes at rest too. Cheap and never blocking (the world's wake); none by default.
+    void set_wake(std::function<void()> wake) { wake_ = std::move(wake); }
     /// The painter switch (FrameOptions::painter), from the next frame on.
     void set_painter(bool painter) noexcept { options_.painter = painter; }
     /// The composite's steps the frame lets run from now on (FrameOptions::steps).
@@ -229,6 +238,8 @@ public:
 
     /// Derives the frame's state from the inputs, as record does before it records (also the twin's entry, which draws
     /// nothing): the view, the placed camera, the layers, the block. False when the camera state names no frame size.
+    /// A frame drawn into an output shows a new moment once every pass is ready for it; the first frame, and one
+    /// derived without an output (the twin's, which has no frames to keep even), show the inputs' at once.
     bool derive(std::uint64_t number, std::uint32_t slot, const gpu::Output* output);
 
     /// The twin of frame `number` (D16's L1): stage F as record runs it (the world's update, set 1's globals, the
@@ -249,6 +260,11 @@ private:
     FrameBuilder(const gpu::Device& device, const gpu::PipelineCache& cache, FrameOptions options,
                  gpu::PipelineWatch* watch) noexcept;
     void record_slot(const gpu::FrameContext& frame, Slot slot);
+    /// The moment the frame shows (derive's): the inputs' at once when `at_once` or for the first frame, else the one
+    /// asked about once every pass is ready for it (Pass::ready_for). A moment asked about stays asked about until it
+    /// is shown, though the inputs move on meanwhile, so a moment that changes every frame is still shown, one light
+    /// ahead at a time.
+    [[nodiscard]] const style::ThemeBlock& take_moment(bool at_once);
     /// Stage F after derive: the world's update, set 1's globals, the selections, ground slots, ranks, the updates.
     void stage_f();
     /// Whether passes named `names`, in that order, are the frame's own (true for none: the scene does not say); says
@@ -287,6 +303,9 @@ private:
     vk::raii::ShaderModule overdraw_module_{nullptr};
     vk::raii::ShaderModule owner_module_{nullptr};
     FrameInputs inputs_;
+    std::optional<style::ThemeBlock> shown_; ///< the moment the frames show (FrameState::theme)
+    std::optional<style::ThemeBlock> asked_; ///< the moment the passes are asked about (Pass::ready_for)
+    std::function<void()> wake_;
     FrameState state_;
     std::unique_ptr<GroundRuns> ground_runs_;
     std::uint32_t quarter_turns_ = 0;

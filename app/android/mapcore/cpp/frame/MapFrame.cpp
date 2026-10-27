@@ -131,7 +131,11 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
     }
     builder_ = std::move(*builder);
     world_ = std::move(*world);
-    if (wake_) world_->set_wake(wake_);
+    if (wake_) {
+        world_->set_wake(wake_);
+        // a new moment's light, done ahead off the render thread, wakes the frame that takes it (gain 5)
+        builder_->set_wake(wake_);
+    }
     world_->set_landing(landing_);
     // The coarser pack around the one drawn: the smallest listed pack that holds it (the canal ring around the
     // Westerkerk), D3.
