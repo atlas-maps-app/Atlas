@@ -4,7 +4,7 @@ import app.atlas.mapcore.state.CameraWriter
 import java.nio.ByteBuffer
 
 /**
- * The gesture camera's buffer (plan-vector T9, Appendix D): CameraState version 1, 512 bytes, made once per surface and
+ * The gesture camera's buffer (plan-vector T9, Appendix D): CameraState version 2, 544 bytes, made once per surface and
  * handed to the core, which passes it back to [FrameSource.camera] at every paced vsync. The layout is defined once in
  * `CP/style/CameraState.hpp`; [CameraWriter] writes it with absolute puts, so a frame allocates nothing.
  */

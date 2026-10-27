@@ -23,9 +23,10 @@ namespace {
     return dp > 0U && std::abs(static_cast<double>(px) - (static_cast<double>(dp) * density)) <= density;
 }
 
-/// Every byte of an unused slot is zero, so a stale shape can never be read as one in use.
-[[nodiscard]] bool cleared(const KeepOut& k) noexcept {
-    std::array<std::byte, sizeof(KeepOut)> raw{};
+/// Every byte of an unused slot is zero, so a stale shape or location can never be read as one in use.
+template <class T>
+[[nodiscard]] bool cleared(const T& k) noexcept {
+    std::array<std::byte, sizeof(T)> raw{};
     std::memcpy(raw.data(), &k, sizeof k);
     for (const std::byte x : raw) {
         if (x != std::byte{0}) {
@@ -33,6 +34,24 @@ namespace {
         }
     }
     return true;
+}
+
+/// The location the map shows: within the globe, an accuracy of 0 to 100 km, a heading within ten turns of north (0
+/// without one), its reserved words 0.
+[[nodiscard]] std::expected<void, CameraError> check_location(const Location& l, bool heading) noexcept {
+    if (!std::isfinite(l.latitude) || !std::isfinite(l.longitude) || !std::isfinite(l.accuracy) ||
+        !std::isfinite(l.heading)) {
+        return std::unexpected(CameraError::not_finite);
+    }
+    if (l.reserved0 != 0U || l.reserved1 != 0U) {
+        return std::unexpected(CameraError::reserved);
+    }
+    if (!within(l.latitude, -90.0, 90.0) || !within(l.longitude, -180.0, 180.0) ||
+        !within(static_cast<double>(l.accuracy), 0.0, 1e5) ||
+        !within(static_cast<double>(l.heading), heading ? -3600.0 : 0.0, heading ? 3600.0 : 0.0)) {
+        return std::unexpected(CameraError::location);
+    }
+    return {};
 }
 
 /// A shape in use: finite, with area, within one frame's size of the frame, a radius at most half its shorter side
@@ -71,7 +90,7 @@ std::expected<CameraState, CameraError> read_camera_state(std::span<const std::b
     if (s.version != camera_state_version) {
         return std::unexpected(CameraError::version);
     }
-    if ((s.flags & ~camera_flag::known) != 0U) {
+    if ((s.flags & ~camera_flag::known) != 0U || (s.has(camera_flag::heading) && !s.has(camera_flag::location))) {
         return std::unexpected(CameraError::flags);
     }
     if (s.reserved != 0U) {
@@ -117,6 +136,13 @@ std::expected<CameraState, CameraError> read_camera_state(std::span<const std::b
             return std::unexpected(shape.error());
         }
     }
+    if (!s.has(camera_flag::location)) {
+        if (!cleared(s.location)) {
+            return std::unexpected(CameraError::reserved);
+        }
+    } else if (auto where = check_location(s.location, s.has(camera_flag::heading)); !where) {
+        return std::unexpected(where.error());
+    }
     return s;
 }
 
@@ -133,6 +159,7 @@ const char* name_of(CameraError error) noexcept {
     case CameraError::target: return "target";
     case CameraError::view: return "view";
     case CameraError::principal: return "principal";
+    case CameraError::location: return "location";
     }
     return "unknown";
 }

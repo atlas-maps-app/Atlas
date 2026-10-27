@@ -1,0 +1,3 @@
+# SHA-256 of each compiled module (cmake/Shaders.cmake); update with the target atlas_spirv_lock.
+overlay_location b793b96ef4cf6e0ff6708e8156c68ac737368832a7766d83181cbdeb97b9dca3
+overlay_location_loc1 75712b96af457504bab5f1fdc9ba7df114d796e5f218a36da5e6f2a6a1430051

@@ -24,7 +24,7 @@ namespace flag = atlas::style::camera_flag;
 /// The Main board's camera on a 1080 × 2400 phone, at rest, with the home's two frosted pills.
 CameraState home() {
     CameraState s{};
-    s.version = 1;
+    s.version = 2;
     s.flags = flag::rest;
     s.sequence = 41;
     s.latitude = 52.3746;
@@ -64,8 +64,8 @@ CameraState home() {
     return s;
 }
 
-std::array<std::byte, 512> bytes(const CameraState& s) {
-    std::array<std::byte, 512> out{};
+std::array<std::byte, 544> bytes(const CameraState& s) {
+    std::array<std::byte, 544> out{};
     std::memcpy(out.data(), &s, sizeof s);
     return out;
 }
@@ -129,13 +129,51 @@ TEST_CASE("a keep-out shape carries the chrome's fade beside its frosting") {
 }
 
 TEST_CASE("a camera state out of its ranges is refused, with the reason") {
-    std::array<std::byte, 511> short_state{};
+    std::array<std::byte, 512> short_state{}; // version 1's size
     CHECK(atlas::style::read_camera_state(short_state).error() == CameraError::size);
     const double nan = std::numeric_limits<double>::quiet_NaN();
     const float inf = std::numeric_limits<float>::infinity();
     const std::vector<Breakage> breakages = {
         {"version 0", [](CameraState& s) { s.version = 0; }, CameraError::version},
-        {"an unknown flag", [](CameraState& s) { s.flags = 16; }, CameraError::flags},
+        {"an unknown flag", [](CameraState& s) { s.flags = 64; }, CameraError::flags},
+        {"a heading without a location", [](CameraState& s) { s.flags |= flag::heading; }, CameraError::flags},
+        {"a stale location", [](CameraState& s) { s.location.latitude = 52.37; }, CameraError::reserved},
+        {"a location off the globe",
+         [](CameraState& s) {
+             s.flags |= flag::location;
+             s.location.latitude = 95.0;
+         },
+         CameraError::location},
+        {"an accuracy of -1 m",
+         [](CameraState& s) {
+             s.flags |= flag::location;
+             s.location.accuracy = -1.0F;
+         },
+         CameraError::location},
+        {"an accuracy of 200 km",
+         [](CameraState& s) {
+             s.flags |= flag::location;
+             s.location.accuracy = 2e5F;
+         },
+         CameraError::location},
+        {"a heading without its flag",
+         [](CameraState& s) {
+             s.flags |= flag::location;
+             s.location.heading = 90.0F;
+         },
+         CameraError::location},
+        {"a NaN heading",
+         [](CameraState& s) {
+             s.flags |= flag::location | flag::heading;
+             s.location.heading = std::numeric_limits<float>::quiet_NaN();
+         },
+         CameraError::not_finite},
+        {"a location's reserved word",
+         [](CameraState& s) {
+             s.flags |= flag::location;
+             s.location.reserved1 = 1;
+         },
+         CameraError::reserved},
         {"reserved", [](CameraState& s) { s.reserved = 7; }, CameraError::reserved},
         {"profile 5", [](CameraState& s) { s.profile = static_cast<Profile>(5); }, CameraError::profile},
         {"a NaN distance", [nan](CameraState& s) { s.distance = nan; }, CameraError::not_finite},
@@ -188,5 +226,13 @@ TEST_CASE("a camera state out of its ranges is refused, with the reason") {
     s.pitch = 0.0;
     s.keep_out_count = 0;
     s.keep_out = {};
+    CHECK(accepted(s));
+    // where the user is, with or without a heading (one past a turn, as a compass gives it)
+    s = home();
+    s.flags |= flag::location;
+    s.location = {.latitude = 52.37466, .longitude = 4.88405, .accuracy = 12.5F, .heading = 0.0F};
+    CHECK(accepted(s));
+    s.flags |= flag::heading;
+    s.location.heading = 371.5F;
     CHECK(accepted(s));
 }

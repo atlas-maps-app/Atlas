@@ -358,8 +358,8 @@ public:
 #if defined(__ANDROID__)
     bool attach(JNIEnv* env, jobject surface, int width, int height, jobject source, jobject camera, std::string& why) {
         if (camera == nullptr || env->GetDirectBufferAddress(camera) == nullptr ||
-            env->GetDirectBufferCapacity(camera) < 512) {
-            why = "the camera buffer must be a direct ByteBuffer of 512 bytes";
+            std::cmp_less(env->GetDirectBufferCapacity(camera), style::camera_state_size)) {
+            why = std::format("the camera buffer must be a direct ByteBuffer of {} bytes", style::camera_state_size);
             return false;
         }
         platform::Window window(env, surface);

@@ -182,6 +182,10 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     private var publishedViewport: Viewport? = null
     private var publishedRest = false
     private var publishedDraw = false
+    private var publishedLocation: UserLocation? = null
+
+    /** Whether the core draws the location's puck now (the canvas does not): its camera carries the location. */
+    private var coreLocation = false
     private var coreWanted: Transition.Path? = null
     private var wantRevision = 0L
     private var canvasFrameAtWant = 0L
@@ -379,6 +383,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
                 core = null
                 sentLabels = null
                 coreLabels = false
+                coreLocation = false
                 closeCore(old)
                 noteChrome()
                 lastRequest = null
@@ -394,6 +399,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         sentMoment = null
         sentLabels = null
         coreLabels = false
+        coreLocation = false
         publishedCamera = null
         noteChrome()
         scope.launch {
@@ -459,7 +465,13 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         // the core holds its last picture until today's map has its own: a frame of nothing would be a blank one.
         val holds = coreWanted == Transition.Path.CANVAS && CameraOps.visibleBounds(cam, v)?.let { !c.packs.meets(it) } != false
         val draw = !c.transition.coreHidden && !holds
-        if (!force && next == null && cam == publishedCamera && v == publishedViewport && rest == publishedRest && draw == publishedDraw) return
+        // the location's puck where the core draws the map with nothing of today's map over it, as its labels
+        val location = overlays.location.takeIf { draw && coreWanted == Transition.Path.CORE && c.transition.canvas == 0f }
+        if (!force && next == null && cam == publishedCamera && v == publishedViewport && rest == publishedRest && draw == publishedDraw &&
+            location == publishedLocation
+        ) {
+            return
+        }
         val lv = liveView(cam, v)
         val n = if (next != null && nextNs > nowNs) liveView(next, v) else null
         val pack = c.packs.choose(lv.lat, lv.lon, lv.distance)
@@ -472,12 +484,15 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
                 principalXDp = lv.widthDp / 2.0, widthPx = v.width, heightPx = v.height, widthDp = lv.widthDp, heightDp = lv.heightDp,
                 density = v.density.toDouble(), rest = rest, follow = state.follow != Follow.NONE,
                 pack = pack?.number ?: 0L, profile = pack?.profile ?: CameraWriter.PROFILE_NONE, draw = draw,
+                location = location?.let { MapCameraSource.Location(it.at.lat, it.at.lon, it.accuracyM.toFloat(), it.heading?.toFloat()) },
             ),
         )
         publishedCamera = cam
         publishedViewport = v
         publishedRest = rest
         publishedDraw = draw
+        publishedLocation = location
+        coreLocation = location != null
         movedAt = SystemClock.uptimeMillis()
         c.core.requestFrame()
         if (debug) startPanel()
@@ -807,7 +822,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
             c?.let(::sendLabels)
             if (!coreLabels) pt.drawLabels(canvas, g, ov)
             pt.drawMarkers(canvas)
-            ov.location?.let { pt.drawLocation(canvas, g, it) }
+            if (!coreLocation) ov.location?.let { pt.drawLocation(canvas, g, it) }
             tape?.let { pt.drawTape(canvas, g, it, units, Locale.getDefault()) }
             drawStatus(canvas)
             // the timings show while the map is loading or working; a finished map is the board's, with nothing over it

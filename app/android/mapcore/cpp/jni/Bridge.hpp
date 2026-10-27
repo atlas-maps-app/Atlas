@@ -23,8 +23,10 @@ namespace atlas::jni {
 /// and buildWindow (the windows the phone builds, ENGINE.md step 3). 12: Native.windowsInView and mergeWindow (a
 /// window built again from Overpass's diff since its data's date). 13: Native.buildWindow and mergeWindow take the
 /// window's data as files, which the core maps. 14: Native.windowVersion (a window of another version is built again
-/// from its kept data). 15: Native.screen takes the paper grain as well (the app's Look settings).
-inline constexpr jint abi = 15;
+/// from its kept data). 15: Native.screen takes the paper grain as well (the app's Look settings). 16:
+/// Native.editWindow (the user's own edits written into a window's data, ENGINE.md step 6). 17: the camera state's
+/// version 2, 544 bytes, with the location the map shows (its puck drawn by the core, ENGINE.md step 6).
+inline constexpr jint abi = 17;
 
 /// The Kotlin class whose static natives the library registers.
 inline constexpr const char* native_class = "app/atlas/mapcore/Native";

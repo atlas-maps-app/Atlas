@@ -30,7 +30,8 @@ class LayoutTest {
     @Test
     fun theCameraStateIsLaidOutAsTheCoreLaysItOut() {
         assertEquals(table("camera_state"), CameraWriter.FIELDS)
-        assertEquals(CameraWriter.SIZE, CameraWriter.KEEP_OUT_AT + CameraWriter.MAX_KEEP_OUTS * CameraWriter.KEEP_OUT_SIZE)
+        assertEquals(CameraWriter.LOCATION_AT, CameraWriter.KEEP_OUT_AT + CameraWriter.MAX_KEEP_OUTS * CameraWriter.KEEP_OUT_SIZE)
+        assertEquals(CameraWriter.SIZE, CameraWriter.LOCATION_AT + CameraWriter.LOCATION_SIZE)
     }
 
     @Test
@@ -65,6 +66,8 @@ class LayoutTest {
         put("CameraWriter.ENGINE_MODE", CameraWriter.ENGINE_MODE)
         put("CameraWriter.RADIUS_CUT", CameraWriter.RADIUS_CUT)
         put("CameraWriter.FOLLOW", CameraWriter.FOLLOW)
+        put("CameraWriter.LOCATION", CameraWriter.LOCATION)
+        put("CameraWriter.HEADING", CameraWriter.HEADING)
         put("CameraWriter.PROFILE_NONE", CameraWriter.PROFILE_NONE)
         put("CameraWriter.PROFILE_LIVING", CameraWriter.PROFILE_LIVING)
         put("CameraWriter.PROFILE_REGION", CameraWriter.PROFILE_REGION)
@@ -97,7 +100,7 @@ class LayoutTest {
         val got = parse(StyleHost.cameraDump(b))
         fun bits(d: Double) = "%016x".format(java.lang.Double.doubleToRawLongBits(d))
         val want = linkedMapOf(
-            "version" to "1", "flags" to "9", "sequence" to "9000000001", "latitude" to bits(52.374_6), "longitude" to bits(4.884),
+            "version" to "2", "flags" to "9", "sequence" to "9000000001", "latitude" to bits(52.374_6), "longitude" to bits(4.884),
             "bearing" to bits(52.0), "pitch" to bits(46.0), "distance" to bits(2300.0), "principal_x" to bits(206.0),
             "principal_y" to bits(440.0), "density" to bits(2.621_359_2), "width_px" to "1080", "height_px" to "2400", "width_dp" to "412",
             "height_dp" to "916", "pack_id" to java.lang.Long.toUnsignedString(-0x5a1f_00c3_e2d4_b6a7L), "profile" to "2",
@@ -121,6 +124,17 @@ class LayoutTest {
         CameraWriter.frame(b, 1080, 2400, 7, 916, 2.621_359_2)
         assertEquals("frame", parse(StyleHost.cameraDump(b))["error"])
         CameraWriter.frame(b, 1080, 2400, 412, 916, 2.621_359_2)
+        assertTrue("error" !in parse(StyleHost.cameraDump(b)))
+        // where the user is: read back as written, with its heading; a stale one without the flag is refused
+        CameraWriter.header(b, 9_000_000_002L, CameraWriter.REST or CameraWriter.locationFlags(271.5f))
+        CameraWriter.location(b, 52.374_66, 4.884_05, 12.5f, 271.5f)
+        assertEquals(
+            "%s %s %08x %08x".format(bits(52.374_66), bits(4.884_05), 12.5f.toRawBits(), 271.5f.toRawBits()),
+            parse(StyleHost.cameraDump(b))["location"],
+        )
+        CameraWriter.header(b, 9_000_000_003L, CameraWriter.REST)
+        assertEquals("reserved", parse(StyleHost.cameraDump(b))["error"])
+        CameraWriter.noLocation(b)
         assertTrue("error" !in parse(StyleHost.cameraDump(b)))
     }
 

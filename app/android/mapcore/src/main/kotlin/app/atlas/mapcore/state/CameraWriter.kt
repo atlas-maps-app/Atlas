@@ -6,21 +6,22 @@ import kotlin.math.roundToInt
 
 /**
  * The gesture camera of one frame (plan-vector T9, Appendix D), written into the reused direct buffer the core hands
- * `FrameSource.camera` at each paced vsync: CameraState, version 1, 512 bytes, little-endian (`CP/style/CameraState.hpp`
+ * `FrameSource.camera` at each paced vsync: CameraState, version 2, 544 bytes, little-endian (`CP/style/CameraState.hpp`
  * defines it; [FIELDS] and the flag and profile constants mirror its tables, and `MT/style/LayoutTest.kt` holds them
  * equal). The core refuses a state outside the ranges CameraState.hpp lists (a target off the globe, a pitch outside
  * 0-90 degrees, dp sizes that are not the px sizes over the density, shapes far off the frame).
  *
  * Only absolute puts of primitives on the caller's buffer: nothing here allocates, so the render thread's upcall stays
  * allocation-free (K7 counts it on the emulator). The parts can be written separately, each only when it changed:
- * [header] every frame, [view] and [frame] when the camera or the surface moved, the rest when they changed.
+ * [header] every frame, [view] and [frame] when the camera or the surface moved, the rest when they changed. Version 2
+ * carries where the user is ([location], with the [LOCATION] flag): the core draws its puck in the same frame.
  */
 object CameraWriter {
     /** The layout's version (`camera_state_version`). */
-    const val VERSION = 1
+    const val VERSION = 2
 
     /** The state's size in bytes. */
-    const val SIZE = 512
+    const val SIZE = 544
 
     /** The most keep-out shapes a frame carries. */
     const val MAX_KEEP_OUTS = 16
@@ -37,6 +38,12 @@ object CameraWriter {
 
     /** Follow mode: the camera follows the location. */
     const val FOLLOW = 8
+
+    /** The map shows where the user is ([location]): the core draws the location's puck. */
+    const val LOCATION = 16
+
+    /** The location has a heading: the puck's cone. */
+    const val HEADING = 32
 
     // The profiles (whose rules draw the frame): the active pack's rhead profile plus one, and none without a pack.
     const val PROFILE_NONE = 0
@@ -68,12 +75,16 @@ object CameraWriter {
     const val KEEP_OUT_COUNT_AT = 120
     const val RESERVED_AT = 124
     const val KEEP_OUT_AT = 128
+    const val LOCATION_AT = 512
 
     /**
      * One keep-out shape's bytes: its box and radius (floats, dp), blur (sixteenths of a dp), saturation (hundredths),
      * flags (bit 0 frosted, bits 1-7 the chrome's fade: 0 opaque to 127 gone).
      */
     const val KEEP_OUT_SIZE = 24
+
+    /** The location's bytes: latitude and longitude (doubles, degrees), accuracy (metres) and heading (floats), 8 reserved. */
+    const val LOCATION_SIZE = 32
 
     /** The layout as (name, offset, size), named as the core's table names its fields (`CP/style/Layouts.cpp`). */
     val FIELDS: List<Triple<String, Int, Int>> = listOf(
@@ -85,11 +96,14 @@ object CameraWriter {
         Triple("pack_id", PACK_ID_AT, 8), Triple("profile", PROFILE_AT, 4), Triple("theme_revision", THEME_REVISION_AT, 4),
         Triple("labels_revision", LABELS_REVISION_AT, 4), Triple("overlays_revision", OVERLAYS_REVISION_AT, 4),
         Triple("keep_out_count", KEEP_OUT_COUNT_AT, 4), Triple("reserved", RESERVED_AT, 4),
-        Triple("keep_out", KEEP_OUT_AT, KEEP_OUT_SIZE * MAX_KEEP_OUTS),
+        Triple("keep_out", KEEP_OUT_AT, KEEP_OUT_SIZE * MAX_KEEP_OUTS), Triple("location", LOCATION_AT, LOCATION_SIZE),
         Triple("keep_out.left", KEEP_OUT_AT, 4), Triple("keep_out.top", KEEP_OUT_AT + 4, 4), Triple("keep_out.right", KEEP_OUT_AT + 8, 4),
         Triple("keep_out.bottom", KEEP_OUT_AT + 12, 4), Triple("keep_out.radius", KEEP_OUT_AT + 16, 4),
         Triple("keep_out.blur16", KEEP_OUT_AT + 20, 2), Triple("keep_out.saturation", KEEP_OUT_AT + 22, 1),
         Triple("keep_out.flags", KEEP_OUT_AT + 23, 1), Triple("keep_out[1]", KEEP_OUT_AT + KEEP_OUT_SIZE, KEEP_OUT_SIZE),
+        Triple("location.latitude", LOCATION_AT, 8), Triple("location.longitude", LOCATION_AT + 8, 8),
+        Triple("location.accuracy", LOCATION_AT + 16, 4), Triple("location.heading", LOCATION_AT + 20, 4),
+        Triple("location.reserved0", LOCATION_AT + 24, 4), Triple("location.reserved1", LOCATION_AT + 28, 4),
     )
 
     /** A direct, little-endian buffer for one camera state, all zeros (made once, then reused for every frame). */
@@ -177,6 +191,36 @@ object CameraWriter {
         val fade = if (alpha.isNaN()) 0 else ((1f - alpha.coerceIn(0f, 1f)) * 127f).roundToInt()
         out.put(o + 23, ((if (frosted) 1 else 0) or (fade shl 1)).toByte())
     }
+
+    /**
+     * Where the user is, as the map shows it: [latitude] and [longitude] (degrees), the fix's [accuracyM] and its [heading]
+     * (degrees clockwise from north; null without one). The flags [header] writes carry [LOCATION], and [HEADING] with a
+     * heading ([locationFlags]); without a location, [noLocation].
+     */
+    fun location(out: ByteBuffer, latitude: Double, longitude: Double, accuracyM: Float, heading: Float?) {
+        check(out)
+        out.putDouble(LOCATION_AT, latitude)
+        out.putDouble(LOCATION_AT + 8, longitude)
+        out.putFloat(LOCATION_AT + 16, if (accuracyM.isNaN()) 0f else accuracyM.coerceIn(0f, MAX_ACCURACY_M))
+        out.putFloat(LOCATION_AT + 20, heading?.takeIf { it.isFinite() }?.let { it % 360f } ?: 0f)
+        out.putLong(LOCATION_AT + 24, 0L)
+    }
+
+    /** The flag bits of a location with or without a [heading] ([location]'s, for [header]). */
+    fun locationFlags(heading: Float?): Int = LOCATION or (if (heading != null && heading.isFinite()) HEADING else 0)
+
+    /** No location: its bytes cleared, so the core never reads a stale one. */
+    fun noLocation(out: ByteBuffer) {
+        check(out)
+        var o = LOCATION_AT
+        while (o < LOCATION_AT + LOCATION_SIZE) {
+            out.putLong(o, 0L)
+            o += 8
+        }
+    }
+
+    /** The largest accuracy the core takes, metres. */
+    const val MAX_ACCURACY_M = 100_000f
 
     private fun check(out: ByteBuffer) {
         require(out.capacity() >= SIZE && out.order() == ByteOrder.LITTLE_ENDIAN) { "a little-endian buffer of $SIZE bytes is needed" }

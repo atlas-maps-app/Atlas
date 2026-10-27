@@ -71,6 +71,7 @@ constexpr std::array theme_block_table = {
 };
 
 constexpr std::uint32_t keep_out_at = static_cast<std::uint32_t>(offsetof(CameraState, keep_out));
+constexpr std::uint32_t location_at = static_cast<std::uint32_t>(offsetof(CameraState, location));
 
 constexpr Field keep_out_field(std::string_view name, std::size_t offset, std::size_t size) noexcept {
     return Field{.name = name,
@@ -78,7 +79,14 @@ constexpr Field keep_out_field(std::string_view name, std::size_t offset, std::s
                  .size = static_cast<std::uint32_t>(size)};
 }
 
-// The camera state's fields; the keep-out shapes as the first one's fields, and the second one's start (the stride).
+constexpr Field location_field(std::string_view name, std::size_t offset, std::size_t size) noexcept {
+    return Field{.name = name,
+                 .offset = location_at + static_cast<std::uint32_t>(offset),
+                 .size = static_cast<std::uint32_t>(size)};
+}
+
+// The camera state's fields; then the keep-out shapes as the first one's fields and the second one's start (the
+// stride), and the location's.
 constexpr std::array camera_state_table = {
     ATLAS_FIELD("version", CameraState, version),
     ATLAS_FIELD("flags", CameraState, flags),
@@ -103,6 +111,7 @@ constexpr std::array camera_state_table = {
     ATLAS_FIELD("keep_out_count", CameraState, keep_out_count),
     ATLAS_FIELD("reserved", CameraState, reserved),
     ATLAS_FIELD("keep_out", CameraState, keep_out),
+    ATLAS_FIELD("location", CameraState, location),
     keep_out_field("keep_out.left", offsetof(KeepOut, left), sizeof(KeepOut::left)),
     keep_out_field("keep_out.top", offsetof(KeepOut, top), sizeof(KeepOut::top)),
     keep_out_field("keep_out.right", offsetof(KeepOut, right), sizeof(KeepOut::right)),
@@ -112,6 +121,12 @@ constexpr std::array camera_state_table = {
     keep_out_field("keep_out.saturation", offsetof(KeepOut, saturation), sizeof(KeepOut::saturation)),
     keep_out_field("keep_out.flags", offsetof(KeepOut, flags), sizeof(KeepOut::flags)),
     keep_out_field("keep_out[1]", sizeof(KeepOut), sizeof(KeepOut)),
+    location_field("location.latitude", offsetof(Location, latitude), sizeof(Location::latitude)),
+    location_field("location.longitude", offsetof(Location, longitude), sizeof(Location::longitude)),
+    location_field("location.accuracy", offsetof(Location, accuracy), sizeof(Location::accuracy)),
+    location_field("location.heading", offsetof(Location, heading), sizeof(Location::heading)),
+    location_field("location.reserved0", offsetof(Location, reserved0), sizeof(Location::reserved0)),
+    location_field("location.reserved1", offsetof(Location, reserved1), sizeof(Location::reserved1)),
 };
 
 // theme.slang's Theme as the twin lays it out.
@@ -172,6 +187,8 @@ constexpr std::array constants_table = {
     Constant{.name = "CameraWriter.ENGINE_MODE", .value = camera_flag::engine_mode},
     Constant{.name = "CameraWriter.RADIUS_CUT", .value = camera_flag::radius_cut},
     Constant{.name = "CameraWriter.FOLLOW", .value = camera_flag::follow},
+    Constant{.name = "CameraWriter.LOCATION", .value = camera_flag::location},
+    Constant{.name = "CameraWriter.HEADING", .value = camera_flag::heading},
     Constant{.name = "CameraWriter.PROFILE_NONE", .value = profile(Profile::none)},
     Constant{.name = "CameraWriter.PROFILE_LIVING", .value = profile(Profile::living)},
     Constant{.name = "CameraWriter.PROFILE_REGION", .value = profile(Profile::region)},
@@ -193,14 +210,14 @@ constexpr bool tiles(const std::array<Field, N>& fields, std::uint32_t size, std
 }
 
 static_assert(tiles(theme_block_table, size_of<ThemeBlock>(), theme_block_table.size()));
-static_assert(tiles(camera_state_table, size_of<CameraState>(), 23)); // up to keep_out, which spans the sixteen shapes
+static_assert(tiles(camera_state_table, size_of<CameraState>(), 24)); // up to the location, after the sixteen shapes
 static_assert(tiles(shader_theme_table, size_of<shaders::Theme>(), shader_theme_table.size()));
 // The flag bits are the known ones, each once.
 static_assert((theme_flag::night | theme_flag::wet | theme_flag::weather | theme_flag::overcast |
                theme_flag::shadow_blur | theme_flag::cloud_shadows | theme_flag::water_gradient | theme_flag::dusk |
                theme_flag::wet_set | theme_flag::golden | theme_flag::tone) == theme_flag::known);
-static_assert((camera_flag::rest | camera_flag::engine_mode | camera_flag::radius_cut | camera_flag::follow) ==
-              camera_flag::known);
+static_assert((camera_flag::rest | camera_flag::engine_mode | camera_flag::radius_cut | camera_flag::follow |
+               camera_flag::location | camera_flag::heading) == camera_flag::known);
 
 } // namespace
 

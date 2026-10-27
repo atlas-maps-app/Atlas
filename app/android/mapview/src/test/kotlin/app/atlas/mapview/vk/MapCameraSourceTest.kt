@@ -12,7 +12,8 @@ import java.nio.ByteOrder
 /**
  * The map's camera for the core (plan-vector T9, K11): the main thread's samples evaluated at the render thread's own
  * vsync (between the two, a frame beyond, never further), the rest flag once nothing moves, nothing written when
- * nothing changed, and no allocation on the render thread's side.
+ * nothing changed, and no allocation on the render thread's side; the location the core draws written with the camera,
+ * and cleared where it draws none.
  */
 class MapCameraSourceTest {
     private val out: ByteBuffer = ByteBuffer.allocateDirect(CameraWriter.SIZE).order(ByteOrder.LITTLE_ENDIAN)
@@ -29,12 +30,36 @@ class MapCameraSourceTest {
         distance1: Double = distance0,
         rest: Boolean = true,
         draw: Boolean = true,
+        location: MapCameraSource.Location? = null,
     ) = MapCameraSource.Samples(
         revision = revision, t0 = t0, lat0 = lat0, lon0 = 4.88, distance0 = distance0, bearing0 = bearing0, pitch0 = 52.0, principalY0 = 440.0,
         t1 = t1, lat1 = lat1, lon1 = 4.88, distance1 = distance1, bearing1 = bearing1, pitch1 = 52.0, principalY1 = 440.0,
         principalXDp = 206.0, widthPx = 1080, heightPx = 2400, widthDp = 412, heightDp = 916, density = 1080.0 / 412.0,
-        rest = rest, follow = false, pack = 2L, profile = CameraWriter.PROFILE_REGION, draw = draw,
+        rest = rest, follow = false, pack = 2L, profile = CameraWriter.PROFILE_REGION, draw = draw, location = location,
     )
+
+    @Test
+    fun theLocationTheCoreDrawsGoesWithTheCameraAndIsClearedWhereItDrawsNone() {
+        val s = MapCameraSource()
+        s.publish(samples(1, t0 = 1_000L, location = MapCameraSource.Location(52.3747, 4.8841, 12.5f, 370f)))
+        assertTrue(s.camera(2_000L, out))
+        val flags = out.getInt(CameraWriter.FLAGS_AT)
+        assertEquals(CameraWriter.LOCATION or CameraWriter.HEADING, flags and (CameraWriter.LOCATION or CameraWriter.HEADING))
+        assertEquals(52.3747, out.getDouble(CameraWriter.LOCATION_AT), 0.0)
+        assertEquals(4.8841, out.getDouble(CameraWriter.LOCATION_AT + 8), 0.0)
+        assertEquals(12.5f, out.getFloat(CameraWriter.LOCATION_AT + 16), 0f)
+        assertEquals(10f, out.getFloat(CameraWriter.LOCATION_AT + 20), 1e-4f) // within a turn
+        // without a heading: no cone
+        s.publish(samples(2, t0 = 3_000L, location = MapCameraSource.Location(52.3747, 4.8841, 12.5f, null)))
+        assertTrue(s.camera(4_000L, out))
+        assertEquals(CameraWriter.LOCATION, out.getInt(CameraWriter.FLAGS_AT) and (CameraWriter.LOCATION or CameraWriter.HEADING))
+        assertEquals(0f, out.getFloat(CameraWriter.LOCATION_AT + 20), 0f)
+        // none: the flag off and every byte of it 0, as the core requires
+        s.publish(samples(3, t0 = 5_000L))
+        assertTrue(s.camera(6_000L, out))
+        assertEquals(0, out.getInt(CameraWriter.FLAGS_AT) and (CameraWriter.LOCATION or CameraWriter.HEADING))
+        assertTrue((0 until CameraWriter.LOCATION_SIZE).all { out.get(CameraWriter.LOCATION_AT + it) == 0.toByte() })
+    }
 
     @Test
     fun aStillCameraIsWrittenOnceWithTheRestFlagThenNothing() {

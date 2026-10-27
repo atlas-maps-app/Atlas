@@ -20,7 +20,8 @@ import kotlin.math.ln
  * It answers false (nothing to draw, the core's frame loop rests) when nothing changed since the frame drawn last: no
  * new publication, no animation under way, the chrome's shapes still. The frame after the camera comes to rest carries
  * the rest flag, so the core snaps it (D4). The chrome's keep-out shapes ([chrome], K11b's ChromeShapes) are written
- * after the frame's size, as they read its density.
+ * after the frame's size, as they read its density. Where the core draws the location's puck ([Samples.location]), the
+ * location goes with the camera, so the puck moves with the map in the same frame (ENGINE.md step 6).
  */
 internal class MapCameraSource(
     /** Told on the render thread when a frame was presented, complete or not; it must allocate nothing. */
@@ -32,6 +33,9 @@ internal class MapCameraSource(
     fun interface Presented {
         fun presented(frame: Long, complete: Boolean, revision: Long)
     }
+
+    /** Where the user is, as the core draws it: degrees, the fix's accuracy in metres, its heading (null without one). */
+    class Location(val lat: Double, val lon: Double, val accuracyM: Float, val heading: Float?)
 
     /** One publication of the main thread, swapped whole: the camera at [t0] and, moving, at [t1] (ns, CLOCK_MONOTONIC). */
     class Samples(
@@ -65,6 +69,8 @@ internal class MapCameraSource(
         val profile: Int,
         /** Whether the core draws at all now (the transitional rule hides it under today's map otherwise). */
         val draw: Boolean,
+        /** Where the user is, where the core draws the location's puck; null where it draws none. */
+        val location: Location? = null,
     ) {
         /** Whether it carries motion beyond [t0]. */
         val moving: Boolean get() = t1 > t0
@@ -122,12 +128,15 @@ internal class MapCameraSource(
         var flags = 0
         if (s.rest && !moving) flags = flags or CameraWriter.REST
         if (s.follow) flags = flags or CameraWriter.FOLLOW
+        val where = s.location
+        if (where != null) flags = flags or CameraWriter.locationFlags(where.heading)
         CameraWriter.header(out, ++sequence, flags)
         CameraWriter.view(out, lat, lon, normalised(bearing), pitch, distance, s.principalXDp, principalY)
         CameraWriter.frame(out, s.widthPx, s.heightPx, s.widthDp, s.heightDp, s.density)
         CameraWriter.pack(out, s.pack, s.profile)
         val shapes = chrome
         if (shapes != null) shapes.write(out, vsyncNanos) else CameraWriter.keepOuts(out, 0)
+        if (where != null) CameraWriter.location(out, where.lat, where.lon, where.accuracyM, where.heading) else CameraWriter.noLocation(out)
         drawnRevision = s.revision
         drawnChrome = chromeNow
         drawnMoving = moving

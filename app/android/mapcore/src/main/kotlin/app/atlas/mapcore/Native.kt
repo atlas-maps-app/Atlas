@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 15
+    const val ABI = 17
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile

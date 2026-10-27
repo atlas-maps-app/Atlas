@@ -1,8 +1,8 @@
-// The gesture camera of one frame (plan-vector T9, Appendix D): the 512 bytes Kotlin writes on the render thread at
+// The gesture camera of one frame (plan-vector T9, Appendix D): the 544 bytes Kotlin writes on the render thread at
 // each paced vsync (MK/state/CameraWriter.kt, from FrameSource.camera), read and checked here. Everything derived from
 // the camera (the frame's metres, the basis, ViewLadder's values, ScreenLayers' stops) is the core's (D4).
 //
-// CameraState, version 1, little-endian, defined here once: jni/Layouts.cpp (the façade's tables) and every other unit
+// CameraState, version 2, little-endian, defined here once: jni/Layouts.cpp (the façade's tables) and every other unit
 // include this header, and MT/style/LayoutTest.kt holds Kotlin's offsets, flags and enum numbers to its tables
 // (style/Layouts.hpp).
 //
@@ -14,8 +14,12 @@
 //    40  f64  the map's pitch (degrees from down)   120  u32  keep-out shapes in use (0-16)
 //    48  f64  distance, eye to target (metres)      124  u32  reserved (0)
 //    56  f64  principal point x, y (dp)             128  KeepOut[16], 24 bytes each: the chrome's keep-out shapes
-//    72  f64  density (px per dp)
+//    72  f64  density (px per dp)                  512  Location: where the user is, as the map shows it
 //    80  u32  width, height in px; 88 u32 width, height in dp
+//
+// Version 2 adds the location (camera_flag::location): latitude and longitude (f64), the fix's accuracy in metres and
+// its heading in degrees from north (f32, with camera_flag::heading), and 8 reserved bytes (0). Written with the camera
+// at each vsync, the location's puck moves with the map in the same frame (ENGINE.md step 6).
 //
 // The reader accepts a state only within these ranges: latitude within ±90 and longitude within ±180 degrees; a
 // bearing within ten turns of north (the core reduces it); the map's pitch 0-90 degrees; a distance of 0.6 m (the
@@ -24,7 +28,9 @@
 // the principal point and every keep-out shape within one frame's size of the frame; a corner radius at most half the
 // shape's shorter side (and half a dp more for rounding), a blur up to 256 dp. A shape's flags hold whether it is
 // frosted (bit 0) and how far the chrome over it has faded (bits 1-7, 0 to 127: a screen's fade, a row fading out), so
-// that the core's glass fades with its tint whether or not the surface follows the views' alpha (K11b).
+// that the core's glass fades with its tint whether or not the surface follows the views' alpha (K11b). A location
+// within ±90 and ±180 degrees, an accuracy of 0 to 100 km, a heading within ten turns of north; without the location
+// flag, every byte of the location 0, and no heading flag.
 #pragma once
 
 #include <array>
@@ -36,15 +42,15 @@
 namespace atlas::style {
 
 /// CameraState's layout version (CameraWriter.VERSION in Kotlin).
-inline constexpr std::uint32_t camera_state_version = 1;
+inline constexpr std::uint32_t camera_state_version = 2;
 
 /// CameraState's size in bytes (CameraWriter.SIZE in Kotlin).
-inline constexpr std::size_t camera_state_size = 512;
+inline constexpr std::size_t camera_state_size = 544;
 
 /// The most keep-out shapes a frame carries (CameraWriter.MAX_KEEP_OUTS).
 inline constexpr std::size_t max_keep_outs = 16;
 
-/// The camera state's flag bits (CameraWriter.REST, ENGINE_MODE, RADIUS_CUT, FOLLOW).
+/// The camera state's flag bits (CameraWriter.REST, ENGINE_MODE, RADIUS_CUT, FOLLOW, LOCATION, HEADING).
 namespace camera_flag {
 /// The camera is at rest: the frame snaps to the SVG's precision (D4).
 inline constexpr std::uint32_t rest = 1U;
@@ -54,7 +60,11 @@ inline constexpr std::uint32_t engine_mode = 2U;
 inline constexpr std::uint32_t radius_cut = 4U;
 /// Follow mode: the camera follows the location (30 fps unless a finger is down, D5.8).
 inline constexpr std::uint32_t follow = 8U;
-inline constexpr std::uint32_t known = 0xFU;
+/// The map shows where the user is: the core draws the location's puck (passes/Overlays.hpp).
+inline constexpr std::uint32_t location = 16U;
+/// The location has a heading: its cone.
+inline constexpr std::uint32_t heading = 32U;
+inline constexpr std::uint32_t known = 0x3FU;
 } // namespace camera_flag
 
 /// Whose rules draw the frame (D2): the active pack's profile as its rhead names it (tiles::Profile, Appendix A) plus
@@ -83,7 +93,20 @@ struct KeepOut {
 
 static_assert(sizeof(KeepOut) == 24);
 
-/// The camera state, version 1 (the layout above).
+/// Where the user is, as the map shows it (camera_flag::location): degrees, the fix's accuracy in metres, and its
+/// heading in degrees clockwise from north (camera_flag::heading; 0 without).
+struct Location {
+    double latitude;
+    double longitude;
+    float accuracy;
+    float heading;
+    std::uint32_t reserved0;
+    std::uint32_t reserved1;
+};
+
+static_assert(sizeof(Location) == 32);
+
+/// The camera state, version 2 (the layout above).
 struct CameraState {
     std::uint32_t version;
     std::uint32_t flags;
@@ -108,6 +131,7 @@ struct CameraState {
     std::uint32_t keep_out_count;
     std::uint32_t reserved;
     std::array<KeepOut, max_keep_outs> keep_out;
+    Location location;
 
     [[nodiscard]] constexpr bool has(std::uint32_t flag) const noexcept { return (flags & flag) != 0U; }
     /// The keep-out shapes in use.
@@ -122,11 +146,11 @@ static_assert(offsetof(CameraState, latitude) == 16 && offsetof(CameraState, pri
 static_assert(offsetof(CameraState, width_px) == 80 && offsetof(CameraState, width_dp) == 88 &&
               offsetof(CameraState, pack_id) == 96);
 static_assert(offsetof(CameraState, profile) == 104 && offsetof(CameraState, keep_out_count) == 120 &&
-              offsetof(CameraState, keep_out) == 128);
+              offsetof(CameraState, keep_out) == 128 && offsetof(CameraState, location) == 512);
 
 /// Why a camera state was refused.
 enum class CameraError : std::uint8_t {
-    size,       // not 512 bytes
+    size,       // not 544 bytes
     version,    // another layout version
     flags,      // a flag bit version 1 does not know
     reserved,   // a reserved field or an unused keep-out slot that is not 0
@@ -137,6 +161,7 @@ enum class CameraError : std::uint8_t {
     target,     // a latitude or longitude out of range
     view,       // a bearing, pitch or distance out of range
     principal,  // the principal point far outside the frame
+    location,   // a location, accuracy or heading out of range
 };
 
 /// The state in `bytes`, checked: size, version, flags, the ranges above, the keep-out shapes in use and the unused

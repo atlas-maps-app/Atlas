@@ -179,6 +179,11 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_style_StyleHost_cameraDump
                            std::bit_cast<std::uint32_t>(k.radius), k.blur16, static_cast<unsigned>(k.saturation),
                            static_cast<unsigned>(k.flags));
     }
+    if (s->has(atlas::style::camera_flag::location)) {
+        const auto& l = s->location;
+        out += std::format("location={} {} {:08x} {:08x}\n", bits(l.latitude), bits(l.longitude),
+                           std::bit_cast<std::uint32_t>(l.accuracy), std::bit_cast<std::uint32_t>(l.heading));
+    }
     return env->NewStringUTF(out.c_str());
 }
 
