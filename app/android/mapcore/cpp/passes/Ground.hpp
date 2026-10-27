@@ -607,9 +607,13 @@ public:
     struct Words;
 
 private:
+    /// The shadows' mask and the ripple's layer go after every pass's decide phase (order 0): each hands a render
+    /// pass's colour to compute stages, and that barrier holds every later compute stage until all earlier colour
+    /// output is done, the last frame's main pass among it. A decide phase after them would carry that wait into the
+    /// main pass's vertex stage (its records' barrier), so the frame's binning would wait for the last frame's shading.
     static constexpr std::array<frame::Phase, 14> phase_list{{
-        {.slot = frame::Slot::offscreen, .order = 0, .id = phase_shadow_mask},
-        {.slot = frame::Slot::offscreen, .order = 1, .id = phase_ripple},
+        {.slot = frame::Slot::offscreen, .order = 1, .id = phase_shadow_mask},
+        {.slot = frame::Slot::offscreen, .order = 2, .id = phase_ripple},
         {.slot = frame::Slot::ground, .order = 0, .id = phase_opaque},
         {.slot = frame::Slot::translucent, .order = ground_order::canopy, .id = phase_canopy},
         {.slot = frame::Slot::translucent, .order = ground_order::water_reflections, .id = phase_water_reflections},
@@ -811,10 +815,12 @@ struct Ground::Pipelines {
     std::array<vk::raii::DescriptorSet, 2> sets{vk::raii::DescriptorSet{nullptr}, vk::raii::DescriptorSet{nullptr}};
     std::array<gpu::Buffer, 2> buffers;
     /// Set 3, the soft shadows' (Shadows.cpp): the grid, the blurred mask, and the grid as words for the compute
-    /// stages. Before the layouts made with it, so that it goes after them.
+    /// stages, a set a frame slot (each its slot's: SoftShadowSlot); the ripple's buffers, the same in both. Before the
+    /// layouts made with it, so that it goes after them.
     vk::raii::DescriptorSetLayout soft_set_layout{nullptr};
     vk::raii::DescriptorPool soft_pool{nullptr};
-    vk::raii::DescriptorSet soft_set{nullptr};
+    std::array<vk::raii::DescriptorSet, 2> soft_sets{vk::raii::DescriptorSet{nullptr},
+                                                     vk::raii::DescriptorSet{nullptr}};
     vk::raii::PipelineLayout layout{nullptr};
     // Ground.cpp
     vk::raii::Pipeline fill{nullptr};
@@ -866,6 +872,22 @@ struct Ground::Pipelines {
     std::unique_ptr<SoftShadows> soft;
 };
 
+/// A frame slot's soft shadows (ENGINE.md's gain 17): what a frame's mask, grid and blur write and its main pass reads,
+/// which only the frame before it in the slot read, and that frame has finished by the time the slot is recorded again
+/// (gpu::Frames::begin). So the frame's barriers order its own work alone: its box, grid and binning need not wait for
+/// the last frame's shading.
+struct SoftShadowSlot {
+    gpu::Image mask; ///< the union's resolve (R8), the blur's first source
+    vk::raii::ImageView mask_view{nullptr};
+    vk::raii::Framebuffer framebuffer{nullptr}; ///< the samples, resolved into this mask
+    gpu::Buffer grid;                           ///< one ShadowGrid (shared/shadow_grid.slang)
+    std::array<gpu::Buffer, 2> blurred;         ///< the blur's passes, back and forth; the last writes the first
+    gpu::Buffer mask_copy;                      ///< the kept mask, a row of extent.width bytes after another
+    /// The blur's passes' sets (from SoftShadows::blur_pool): the grid, the mask, a pass's two buffers.
+    std::array<vk::raii::DescriptorSet, 3> blur_sets{vk::raii::DescriptorSet{nullptr}, vk::raii::DescriptorSet{nullptr},
+                                                     vk::raii::DescriptorSet{nullptr}};
+};
+
 /// The soft shadows' images and buffers, made for an output, and their blur (Shadows.cpp; shaders/ground/
 /// shadow_blur.slang). The mask's texels are filter px from the grid's input corner: as many as the view's device px
 /// and a reach around them, the most the grid's input can cover.
@@ -873,19 +895,16 @@ struct SoftShadows {
     vk::Extent2D extent{};    ///< the mask's texels
     std::uint32_t stride = 0; ///< the blurred mask's words a row (four texels a word)
     bool kept = false;        ///< the tests' look: the grid and the blurred mask readable, the mask copied each frame
-    gpu::Image samples;       ///< the union's 4x samples (R8, transient)
-    gpu::Image mask;          ///< their resolve (R8), the blur's first source
+    /// The union's 4x samples (R8, transient), one for both slots: the mask's pass clears them and leaves them
+    /// undefined, and its colour output waits for all earlier colour output anyway (its dependency on what came before
+    /// it), so a copy a slot would let nothing start sooner.
+    gpu::Image samples;
     vk::raii::ImageView samples_view{nullptr};
-    vk::raii::ImageView mask_view{nullptr};
     vk::raii::RenderPass pass{nullptr};
-    vk::raii::Framebuffer framebuffer{nullptr};
-    gpu::Buffer grid;                   ///< one ShadowGrid (shared/shadow_grid.slang)
-    std::array<gpu::Buffer, 2> blurred; ///< the blur's passes, back and forth; the last writes the first
-    gpu::Buffer mask_copy;              ///< the kept mask, a row of extent.width bytes after another
     vk::raii::DescriptorSetLayout blur_set_layout{nullptr};
     vk::raii::DescriptorPool blur_pool{nullptr};
-    std::array<vk::raii::DescriptorSet, 3> blur_sets{vk::raii::DescriptorSet{nullptr}, vk::raii::DescriptorSet{nullptr},
-                                                     vk::raii::DescriptorSet{nullptr}};
+    std::array<SoftShadowSlot, 2> slots; ///< a frame slot's each
+    std::uint32_t last = 0;              ///< the slot of the last frame that drew them soft (the tests' look)
     vk::raii::PipelineLayout blur_layout{nullptr};
     vk::raii::ShaderModule blur_module{nullptr};
     vk::raii::Pipeline blur{nullptr};

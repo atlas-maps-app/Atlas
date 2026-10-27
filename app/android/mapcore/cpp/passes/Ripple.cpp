@@ -391,11 +391,13 @@ gpu::Result<void> Ground::make_ripple(const frame::PassContext& context, Pipelin
         ATLAS_GPU_LET(copy, device.memory().buffer(texels, B::eTransferDst, gpu::MemoryUse::readback));
         s->layer_copy = std::move(copy);
     }
-    // the composite reads both from the soft shadows' set (the ground's set 3)
-    gpu::SetWriter(*p.soft_set)
-        .buffer(3, vk::DescriptorType::eStorageBuffer, s->buffers[0].handle())
-        .buffer(4, vk::DescriptorType::eStorageBuffer, s->buffers[1].handle())
-        .apply(d);
+    // the composite reads both from the soft shadows' sets (the ground's set 3, the same two in each frame slot's)
+    for (const vk::raii::DescriptorSet& set : p.soft_sets) {
+        gpu::SetWriter(*set)
+            .buffer(3, vk::DescriptorType::eStorageBuffer, s->buffers[0].handle())
+            .buffer(4, vk::DescriptorType::eStorageBuffer, s->buffers[1].handle())
+            .apply(d);
+    }
     // the stages' set: the layer, a buffer to read and one to write, both ways
     constexpr auto in_compute = vk::ShaderStageFlagBits::eCompute;
     const std::array bindings{
@@ -505,7 +507,7 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
     const auto offsets = r.layout.offsets(r.frame.slot.slot);
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *s.draw);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *p.layout, 0, frame_sets, offsets);
-    const std::array<vk::DescriptorSet, 2> own{*p.sets[w.slot], *p.soft_set};
+    const std::array<vk::DescriptorSet, 2> own{*p.sets[w.slot], *p.soft_sets[w.slot]};
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *p.layout, 2, own, {});
     const tiles::ReflectionsStyle& rs = frame_.tiles[frame_.reflections.front().tile].ground->reflection_style;
     Push pc{};
@@ -639,7 +641,8 @@ void Ground::record_ripple(const frame::Recording& r) {
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     const tiles::ReflectionsStyle& rs = frame_.tiles[frame_.reflections.front().tile].ground->reflection_style;
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->ripple_composite);
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipelines_->layout, 3, *pipelines_->soft_set, {});
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipelines_->layout, 3, *pipelines_->soft_sets[w.slot],
+                           {});
     Push pc{};
     pc.at = {w.tiles, w.slots, w.theme, w.runs};
     pc.mode = {0U, slot(geo::group::reflection, 0, 0), s.result, 0U};
