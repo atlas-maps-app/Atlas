@@ -227,6 +227,13 @@ object MapEngine {
     var windowDiff: ((DoubleArray, String, String) -> ByteArray)? = null
 
     /**
+     * A window's data from Atlas's own packs, newer than the date given where one is (ENGINE.md step 3: the windows'
+     * first source, before Overpass); the app sets it with the published packs. Null: Overpass alone.
+     */
+    @Volatile
+    var windowPacks: ((app.atlas.mapcore.MapCore.Window, java.time.Instant?) -> app.atlas.mapview.vk.Windows.Packed?)? = null
+
+    /**
      * The user's own edits to OpenStreetMap the windows draw until the map's data carries them (ENGINE.md step 6),
      * pending or sent, oldest first; the app sets it with its EditQueue. Read on the windows' background thread.
      */
@@ -260,7 +267,8 @@ object MapEngine {
         val dir = windowsDir() ?: return null
         val data = windowData ?: return null
         return windowsBuilder ?: synchronized(this) {
-            windowsBuilder ?: app.atlas.mapview.vk.Windows(dir, data, windowDiff, edits = { windowEdits() }).also { windowsBuilder = it }
+            windowsBuilder ?: app.atlas.mapview.vk.Windows(dir, data, windowDiff, edits = { windowEdits() }, packs = windowPacks)
+                .also { windowsBuilder = it }
         }
     }
 

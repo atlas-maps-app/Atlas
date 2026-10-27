@@ -16,9 +16,12 @@ import app.atlas.render.live.LiveEngine
 import app.atlas.render.live.LiveRegions
 import app.atlas.render.live.PackLibrary
 import app.atlas.render.live.WxHour
+import app.atlas.tiles.PackCatalog
+import app.atlas.tiles.WindowPacks
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -89,6 +92,16 @@ class MapData(private val services: Services) {
 
     private fun online(): Boolean = !services.config.offline && services.connectivity.online.value
 
+    /**
+     * The windows' data in Atlas's own packs (packs-latest's packs.json, kept for offline beside their indexes), read on
+     * the windows' own thread.
+     */
+    private val windowPacks: WindowPacks by lazy {
+        val dir = File(services.dirs.cache, "engine/windows/index")
+        val catalog = PackCatalog(PackCatalog.DEFAULT_URL, services.http.client, File(dir, "packs-latest.json"))
+        WindowPacks({ runBlocking { catalog.packs() } }, dir, services.http.client)
+    }
+
     /** Overpass for the map's builds: the same servers, in the same order, as the app's own client, so no build depends on one server. */
     private val overpass: OverpassClient by lazy { OverpassClient(post, hosts = OVERPASS_HOSTS) }
 
@@ -129,6 +142,10 @@ class MapData(private val services: Services) {
         }
         MapEngine.windowDiff = { b, since, notBefore ->
             overpass.windowDiff(app.atlas.geo.BBox(b[1], b[0], b[3], b[2]), since, java.time.Instant.parse(notBefore))
+        }
+        // and before them, Atlas's own packs, built on GitHub from Geofabrik's extracts, where one holds the window
+        MapEngine.windowPacks = { w, after ->
+            windowPacks.window(w.z, w.x, w.y, after)?.let { app.atlas.mapview.vk.Windows.Packed(it.gz, it.date, it.pack) }
         }
         MapEngine.windowsAllowed = { !services.ciDemo }
         // the user's own edits drawn as mapped until the map's data carries them (ENGINE.md step 6): pending or sent

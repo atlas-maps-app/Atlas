@@ -49,6 +49,13 @@ import java.util.zip.GZIPOutputStream
  * windows are of one version (the core refuses a window of another version than its cell's). One that keeps no data
  * that builds goes, and is fetched whole when the core wants its place.
  *
+ * A window's data comes from Atlas's own packs first ([packs]: built on GitHub from Geofabrik's extracts, the answer
+ * Overpass gives the window's query as of the extract's date, gzipped), where one holds the window, and from Overpass
+ * only where none does or its data did not come (ENGINE.md: the sources for many users; on 27 October 2026 every public
+ * Overpass server failed, and the map had nothing to draw beyond the bundled packs). A window fetched whole again takes
+ * a pack's data only when it is newer than the data it keeps. Data from a pack counts as fetched when it came, so the
+ * window is asked for Overpass's changes since the pack's date a week later, as any other.
+ *
  * The user's own edits to OpenStreetMap waiting on the phone ([edits]: FillIn's, until the map's data carries them;
  * ENGINE.md step 6) are drawn as mapped: every window is built from its data with them ([Core.edit]), and the data kept
  * is the data as it came, so a window's next diff is asked from its own date. Where the user edits what stands at a
@@ -70,7 +77,15 @@ class Windows(
     private val clock: () -> Long = System::currentTimeMillis,
     /** The user's edits to draw: pending or sent, oldest first; the app's EditQueue. */
     private val edits: () -> List<UserEdit> = { emptyList() },
+    /**
+     * A window's data from Atlas's own packs, newer than the date given where one is ([Packed]); null where no pack
+     * holds it (or none newer); throws where a pack holds it but its data did not come whole. Null: Overpass alone.
+     */
+    private val packs: ((MapCore.Window, Instant?) -> Packed?)? = null,
 ) {
+    /** A window's data from one of Atlas's packs: Overpass's answer for its box as of [date], gzipped, from pack [from]. */
+    class Packed(val gz: ByteArray, val date: Instant, val from: String)
+
     /** What [step] asks of the core: [MapCore]'s, or a test's. */
     interface Core {
         fun wanted(): List<MapCore.Window>
@@ -296,13 +311,17 @@ class Windows(
         }
     }
 
-    /** Fetches window [w]'s data whole and builds it; with [kept] (the date of the data it holds), never from older data. */
+    /**
+     * Fetches window [w]'s data whole, from a pack where one holds it, else from Overpass, and builds it; with [kept] (the
+     * date of the data it holds), never from older data.
+     */
     private fun whole(core: Core, w: MapCore.Window, now: Long, kept: Instant?): Boolean {
         dir.mkdirs()
         val answer = workOf(w, "answer")
         try {
             val t0 = clock()
             status = Status.Fetching(t0)
+            packed(w, kept, answer)?.let { how -> return build(core, w, answer, now, how) }
             try {
                 fetch(core.box(w), answer)
             } catch (e: Exception) {
@@ -320,6 +339,30 @@ class Windows(
         } finally {
             answer.delete()
         }
+    }
+
+    /**
+     * Window [w]'s data from a pack into [answer], newer than [kept] where it keeps data: how it came; null where no pack
+     * gives it, or its data did not come whole (Overpass is asked then).
+     */
+    private fun packed(w: MapCore.Window, kept: Instant?, answer: File): String? {
+        val source = packs ?: return null
+        val t0 = clock()
+        val data = try {
+            source(w, kept) ?: return null
+        } catch (e: Exception) {
+            Log.w(EngineFrames.TAG, "vk window ${w.id}: no data from the packs: ${e.message}; asking Overpass")
+            return null
+        }
+        try {
+            GZIPInputStream(data.gz.inputStream(), 1 shl 16).use { input ->
+                answer.outputStream().buffered(1 shl 16).use { input.copyTo(it, 1 shl 16) }
+            }
+        } catch (e: java.io.IOException) {
+            Log.w(EngineFrames.TAG, "vk window ${w.id}: the data of pack ${data.from} does not read: ${e.message}; asking Overpass")
+            return null
+        }
+        return "${data.gz.size} bytes of the pack ${data.from} (its data of ${data.date}) in ${clock() - t0} ms"
     }
 
     /** Builds window [w] from the JSON in [json], with the user's edits, and keeps the data beside it, without them. */

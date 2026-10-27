@@ -31,7 +31,7 @@ private val Pack.atlasFile: PackFile? get() = files.firstOrNull { it.kind == Pac
  * GitHub releases on MockWebServer: `github` answers a release download with a 302 to `storage`, as GitHub does to
  * its asset host, and `storage` serves the bytes with Range support and an ETag.
  */
-private class FakeGitHub : AutoCloseable {
+internal class FakeGitHub : AutoCloseable {
     val github = MockWebServer()
     val storage = MockWebServer()
     val assets = HashMap<String, ByteArray>()

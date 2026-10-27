@@ -152,6 +152,92 @@ class WindowsTest {
         assertEquals(head.base, head.whole)
     }
 
+    /** Atlas's packs as a window's first source: what each asked got, and the windows and dates asked. */
+    private var packed: (MapCore.Window, Instant?) -> Windows.Packed? = { _, _ -> null }
+    private val packsAsked = ArrayList<Pair<MapCore.Window, Instant?>>()
+    private val withPacks = Windows(
+        dir,
+        fetch = { b, file -> fetched += b; file.writeBytes(whole()) },
+        fetchDiff = { _, since, notBefore -> diffs += since to notBefore; changes(since, notBefore) },
+        clock = { now },
+        packs = { w, after -> packsAsked += w to after; packed(w, after) },
+    )
+
+    private fun gzip(b: ByteArray): ByteArray =
+        java.io.ByteArrayOutputStream().also { o -> java.util.zip.GZIPOutputStream(o).use { it.write(b) } }.toByteArray()
+
+    /** The Netherlands' pack of 26 October: Overpass's answer for the window as of the extract's date. */
+    private val nl = answer("2026-10-26T20:21:24Z", id = 8)
+
+    @Test
+    fun aWindowAPackHoldsIsBuiltFromThePacksDataWithNoServerAsked() {
+        packed = { _, _ -> Windows.Packed(gzip(nl), Instant.parse("2026-10-26T20:21:24Z"), "netherlands") }
+        val core = Core()
+        core.wanted = listOf(w)
+        assertTrue(withPacks.step(core))
+        assertEquals(listOf(w to null), packsAsked)
+        assertTrue(fetched.isEmpty())
+        assertEquals(listOf(String(nl)), core.built)
+        // kept as any window's data: its date is the extract's, and it counts as fetched now
+        assertEquals(String(nl), unzipped(withPacks.dataOf(w)))
+        assertEquals(Instant.parse("2026-10-26T20:21:24Z"), Windows.headOf(withPacks.dataOf(w))!!.base)
+        assertEquals(now, withPacks.dataOf(w).lastModified())
+        // a week later Overpass is asked for the changes since the extract's date, as for any window
+        core.wanted = emptyList()
+        core.inView = listOf(w)
+        now += 8 * day
+        core.mergeWith = { _, _ -> answer("2026-10-30T11:58:00Z", whole = "2026-10-26T20:21:24Z", id = 9) }
+        assertTrue(withPacks.step(core))
+        assertEquals(listOf("2026-10-26T19:51:24Z" to "2026-10-26T20:21:24Z"), diffs)
+        assertTrue(fetched.isEmpty())
+    }
+
+    @Test
+    fun aWindowNoPackHoldsOrWhosePackFailsIsFetchedFromOverpass() {
+        val core = Core()
+        core.wanted = listOf(w)
+        // none holds it
+        assertTrue(withPacks.step(core))
+        assertEquals(1, fetched.size)
+        assertEquals(listOf(String(answer("2026-10-22T11:59:00Z"))), core.built)
+        // a pack holds it, but its bytes did not come, or do not read
+        for (failing in listOf<(MapCore.Window, Instant?) -> Windows.Packed?>(
+            { _, _ -> throw IOException("HTTP 503 for bytes 0 to 120 of netherlands.windows") },
+            { _, _ -> Windows.Packed(nl, Instant.parse("2026-10-26T20:21:24Z"), "netherlands") },
+        )) {
+            packed = failing
+            dir.listFiles().orEmpty().forEach { it.delete() }
+            assertTrue(withPacks.step(core))
+        }
+        assertEquals(3, fetched.size)
+        assertEquals(3, packsAsked.size)
+    }
+
+    @Test
+    fun aWindowFetchedWholeAgainTakesAPacksDataOnlyWhereItIsNewerThanItsOwn() {
+        packed = { _, after -> Windows.Packed(gzip(nl), Instant.parse("2026-10-26T20:21:24Z"), "netherlands").takeIf { after == null } }
+        val core = Core()
+        core.wanted = listOf(w)
+        assertTrue(withPacks.step(core))
+        core.wanted = emptyList()
+        core.inView = listOf(w)
+        // a week on, no server gives the changes: fetched whole, from Overpass, as the pack is no newer
+        now += 8 * day
+        changes = { _, _ -> throw IOException("no server answered") }
+        whole = { answer("2026-11-03T12:00:00Z", id = 10) }
+        assertTrue(withPacks.step(core))
+        assertEquals(w to Instant.parse("2026-10-26T20:21:24Z"), packsAsked.last())
+        assertEquals(1, fetched.size)
+        assertEquals(String(answer("2026-11-03T12:00:00Z", id = 10)), core.built.last())
+        // the month's new pack, newer than the data kept, is taken instead of Overpass
+        now += 8 * day
+        val next = answer("2026-11-09T20:21:00Z", id = 11)
+        packed = { _, after -> Windows.Packed(gzip(next), Instant.parse("2026-11-09T20:21:00Z"), "netherlands").takeIf { after!!.isBefore(Instant.parse("2026-11-09T20:21:00Z")) } }
+        assertTrue(withPacks.step(core))
+        assertEquals(1, fetched.size)
+        assertEquals(String(next), core.built.last())
+    }
+
     @Test
     fun aWindowInViewIsLeftAloneForAWeekThenAskedOnlyForTheChangesAndBuiltFromTheMerge() {
         val core = Core()
