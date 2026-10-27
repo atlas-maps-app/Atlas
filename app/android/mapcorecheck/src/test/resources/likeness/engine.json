@@ -441,6 +441,16 @@
           "board grey": "f52b48c77b54264ea2c9d76f31dd888793acd8728088aebf34a1b57ba2c587fe",
           "board wet": "82c41052da282d70c5669eeabf163b4d300a85c40e9d1f6db8b23cb05c9f0c0e",
           "board night": "548859db538473904bbc41e69aed8663d79fd144f31b1a64082cfe3a0b15edf1"
+        },
+        "lavapipe-x86_64": {
+          "home sunny": "129523e1b18f909b2693d722c8e10f3da3314cc015fc8790ab917459e61f450b",
+          "home grey": "ccbe6243d3bb60a26678511b591b85e2de8b61e715959ebadf1dd2bb04729c10",
+          "home wet": "0b06155e3c4a95c29a38d8b13d631744ad4f3072054b0ed5df6d8513c7fe2539",
+          "home night": "88fff4025f8ca5a4f15b1a02a8edff9004f2a44bfde00423290e02c85714e234",
+          "board sunny": "92a10772a3e6592adad611a3a6ac2e6f5e3a5baa4b75bbe593bbe735c61bf648",
+          "board grey": "95b4c94fafc538044044deac3f1669a038ce7e50d772bda045c06ce1876743f8",
+          "board wet": "7b8f9ab5d532e256969d0a6734c602e2b9828224493863caf7f896743499a8bb",
+          "board night": "eb3ab844e63b3a104f1464a7864983ce473dbabaa9db4b13451af9a8cc4b8174"
         }
       }
     }

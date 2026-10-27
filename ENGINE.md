@@ -114,7 +114,7 @@ Atlas draws its map with its own engine. This is the one document about it: what
 
 **Where the renderer is wrong, the engine does it right.** The difference is named in the case files (melting buildings is the first), so the yardstick never pulls the engine back to the renderer's issues.
 
-**The engine's own references, from step 1.** These are its frames at fixed views and moments: the boards' views first, then places around the world from step 4. They are stored per engine version, and every finished part is held to them. Every simplification is proven against them: Amsterdam and every other rendered place must turn out the same.
+**The engine's own references, from step 1.** These are its frames at fixed views and moments: the boards' views first, then places around the world from step 4. They are stored per engine version, and every finished part is held to them. Every simplification is proven against them: Amsterdam and every other rendered place must turn out the same. Each version holds the frames of the Mac's lavapipe, recorded with the version. From version 26 it also holds those of CI's lavapipe-x86_64, so CI holds the frames on Linux too. CI's first run of a new version leaves them in its likeness report (`engine/engine.json`), to paste in.
 
 **Always:**
 6. **CI:**
