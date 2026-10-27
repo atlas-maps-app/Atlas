@@ -3,7 +3,7 @@
 // of 10 m about its foot: its centre the foot's point on the picture, rx 10 m at its depth (10 · focal / z), ry the
 // picture's height of 10 m along z from it (at least .6), from 2 m ahead, within the radius cut, in S['nodes']'s order
 // across the drawn tiles; the `pool` gradient over its box (#FFB45E at .55, #FFA848 at .18 at .5, at 0 at its edge).
-// The lit streets' glow and their wet cores take the group's first two subs (still to come, K18).
+// The lit streets' glow and their wet cores take the group's first two subs (passes/LitGlow.cpp).
 //
 // On the GPU one quad an ellipse (pool_vs, instanced in their order at the lamps' slot), the gradient at each pixel's
 // centre (it fades to nothing at the ellipse's edge, so it needs no edge of its own), translucent: every nearer element
