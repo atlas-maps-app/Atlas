@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 19
+    const val ABI = 20
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -265,6 +265,12 @@ object Native {
      * [revision]; "" or why they were refused.
      */
     @JvmStatic external fun routes(handle: Long, block: ByteBuffer, revision: Long): String
+
+    /**
+     * The building under the view's device point ([x], [y]) as the map's last frame drew it: "way <id> <part> <lat>
+     * <lon>" (or "relation …"; the part 0 where the ray met the outline itself), where the ray met it; "" for none.
+     */
+    @JvmStatic external fun pick(handle: Long, x: Float, y: Float): String
 
     /** The screen's haze, vignette and paper grain for the map, each on or off (the app's Look settings). */
     @JvmStatic external fun screen(handle: Long, haze: Boolean, vignette: Boolean, grain: Boolean)

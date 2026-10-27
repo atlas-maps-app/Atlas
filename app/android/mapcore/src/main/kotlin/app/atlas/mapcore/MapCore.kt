@@ -280,6 +280,13 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
         core.call("the core is closed") { Native.routes(it, block, revision) }
 
     /**
+     * The building under the view's device point ([x], [y]) as the map's last frame drew it (the first one a ray from the
+     * eye through that point meets, among the tiles drawn): "way <id> <part> <lat> <lon>" or "relation …", where the ray
+     * met it; "" for none (or no map). Off the main thread: it waits for the render thread.
+     */
+    fun pick(x: Float, y: Float): String = core.call("") { Native.pick(it, x, y) }
+
+    /**
      * The screen's haze, vignette and paper grain from now on, each on (the renders' look, the default) or off: off,
      * the map's picture keeps its own colours there, and the composite does less work a pixel. Off the main thread.
      */

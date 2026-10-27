@@ -55,13 +55,14 @@ import app.atlas.Services
 import app.atlas.geo.CoordinateFormat
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
-import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapOverlays
 import app.atlas.mapview.MapState
 import app.atlas.mapview.Marker
 import app.atlas.mapview.MarkerStyle
+import app.atlas.mapview.StageMap
 import app.atlas.mapview.UserLocation
+import app.atlas.model.OsmId
 import app.atlas.model.Place
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
@@ -89,6 +90,9 @@ import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.rememberSheetState
 import app.atlas.ui.kit.shortDistance
 import app.atlas.ui.kit.walkMinutes
+import java.time.LocalDateTime
+import java.time.ZonedDateTime
+import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -97,15 +101,15 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.time.LocalDateTime
-import java.time.ZonedDateTime
-import java.util.Locale
 
 /** What "What's here" knows: the facts once found, and where a note for mappers stands. */
 data class WhatsHereState(val facts: HereFacts? = null, val note: Sending = Sending.Idle)
 
-/** Finds what is at [at] once, and leaves a note for mappers there when the user has confirmed its exact text. */
-class WhatsHereViewModel(private val services: Services, private val at: LatLon, private val lang: String) : ViewModel() {
+/**
+ * Finds what is at [at] once (the building [spot] when the press named one), and leaves a note for mappers there when
+ * the user has confirmed its exact text.
+ */
+class WhatsHereViewModel(private val services: Services, private val at: LatLon, private val lang: String, private val spot: OsmId? = null) : ViewModel() {
     private val mutable = MutableStateFlow(WhatsHereState())
     val state: StateFlow<WhatsHereState> = mutable.asStateFlow()
 
@@ -114,7 +118,7 @@ class WhatsHereViewModel(private val services: Services, private val at: LatLon,
     init {
         viewModelScope.launch {
             val facts = try {
-                HereFinder.find(services, at, lang, online)
+                HereFinder.find(services, at, lang, online, spot)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -151,7 +155,7 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
     val lang = remember { Locale.getDefault().language }
     val p = args.at
     val here = rememberHere()
-    val vm = viewModel(key = "whatshere:" + args.route) { WhatsHereViewModel(services, p, lang) }
+    val vm = viewModel(key = "whatshere:" + args.route) { WhatsHereViewModel(services, p, lang, args.osmId?.let(OsmId::parse)) }
     val state by vm.state.collectAsStateWithLifecycle()
     val c = Atlas.colors
     val map = remember { MapState(CameraPosition(p, 17.4, 0.0, 40.0)) }
@@ -175,6 +179,7 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
             ),
             contentPadding = PaddingValues(top = 80.dp, bottom = maxHeight * 0.55f),
             onLongPress = { at -> nav.replace(Dest.WhatsHere(at.lat, at.lon)) },
+            onLongPressBuilding = { b -> nav.replace(Dest.WhatsHere(b.at.lat, b.at.lon, b.id.toString())) },
         )
         Row(
             Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 16.dp, vertical = 12.dp),

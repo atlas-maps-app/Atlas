@@ -352,6 +352,11 @@ public:
         });
     }
 
+    /// The building under the view's device point (x, y) as the map's last frame drew it, or none (no map).
+    [[nodiscard]] std::optional<scene::Picked> pick(double x, double y) {
+        return on_session([this, x, y] { return map_->pick(x, y); });
+    }
+
     /// VK facts' twin check over the bundled Westerkerk (frame/TwinCheck.hpp) on the session's device, a world and a
     /// frame builder of its own that draw nothing: `twin <hash> ok`, `… FAIL expected <hash>`, or why it could not run.
     [[nodiscard]] std::string twin_line(const tiles::PackRef& westerkerk) {
@@ -1133,6 +1138,18 @@ jstring native_routes(JNIEnv* env, jclass /*cls*/, jlong handle, jobject block, 
     return java(env, "");
 }
 
+/// The building under the view's device point (`x`, `y`) as the map's last frame drew it (frame/MapFrame.hpp's pick):
+/// "way <id> <part> <latitude> <longitude>" (or "relation …"; the part 0 where the ray met the outline itself), where
+/// the ray met it; "" where it met none.
+jstring native_pick(JNIEnv* env, jclass /*cls*/, jlong handle, jfloat x, jfloat y) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "");
+    const auto picked = core->pick(static_cast<double>(x), static_cast<double>(y));
+    if (!picked) return java(env, "");
+    return java(env, std::format("{} {} {} {:.7f} {:.7f}", picked->relation ? "relation" : "way", picked->id,
+                                 picked->part, picked->latitude, picked->longitude));
+}
+
 template <class F>
 void* fn(F f) {
     return reinterpret_cast<void*>(f);
@@ -1252,8 +1269,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 43>& methods() {
-    static const std::array<JNINativeMethod, 43> table{{
+const std::array<JNINativeMethod, 44>& methods() {
+    static const std::array<JNINativeMethod, 44> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1301,6 +1318,7 @@ const std::array<JNINativeMethod, 43>& methods() {
         method("labels", "(JLjava/nio/ByteBuffer;JF)Ljava/lang/String;", fn(&native_labels)),
         method("markers", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_markers)),
         method("routes", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_routes)),
+        method("pick", "(JFF)Ljava/lang/String;", fn(&native_pick)),
         method("screen", "(JZZZ)V", fn(&native_screen)),
         method("landing", "(JZDDDDD)V", fn(&native_landing)),
         method("painter", "(JZ)V", fn(&native_painter)),

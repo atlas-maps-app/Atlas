@@ -121,6 +121,7 @@ private fun PlaceView(place: Place, state: PlaceState, vm: PlaceViewModel, nav: 
             ),
             contentPadding = PaddingValues(top = 80.dp, bottom = halfDp),
             onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
+            onLongPressBuilding = { b -> nav.go(Dest.WhatsHere(b.at.lat, b.at.lon, b.id.toString())) },
         )
 
         // Over the map, 16 px above the sheet: the level, as the board's dark glass pill (40 px, 12 px in).

@@ -63,6 +63,7 @@ internal data class StageArgs(
     val contentPadding: PaddingValues,
     val onTap: (MapHit) -> Unit,
     val onLongPress: (LatLon) -> Unit,
+    val onLongPressBuilding: ((MapPick) -> Unit)?,
     val onCameraMove: (camera: CameraPosition, byUser: Boolean) -> Unit,
     val debug: Boolean,
     val units: UnitSystem,
@@ -92,6 +93,7 @@ fun StageMap(
     contentPadding: PaddingValues = PaddingValues(),
     onTap: (MapHit) -> Unit = {},
     onLongPress: (LatLon) -> Unit = {},
+    onLongPressBuilding: ((MapPick) -> Unit)? = null,
     onCameraMove: (camera: CameraPosition, byUser: Boolean) -> Unit = { _, _ -> },
     debug: Boolean = false,
     units: UnitSystem = UnitSystem.forLocale(Locale.getDefault()),
@@ -106,8 +108,9 @@ fun StageMap(
         Box(modifier.under(background).then(hostModifier)) {
             AtlasMap(
                 state = state, modifier = Modifier.matchParentSize(), style = style, overlays = overlays,
-                contentPadding = contentPadding, onTap = onTap, onLongPress = onLongPress, onCameraMove = onCameraMove,
-                debug = debug, units = units, labelTypeface = labelTypeface,
+                contentPadding = contentPadding, onTap = onTap, onLongPress = onLongPress,
+                onLongPressBuilding = onLongPressBuilding, onCameraMove = onCameraMove, debug = debug, units = units,
+                labelTypeface = labelTypeface,
             )
             above?.invoke(this)
         }
@@ -116,8 +119,8 @@ fun StageMap(
     val request = remember { StageRequest() }
     SideEffect {
         request.args = StageArgs(
-            state, style, overlays, contentPadding, onTap, onLongPress, onCameraMove, debug, units, labelTypeface,
-            background, hostModifier, above,
+            state, style, overlays, contentPadding, onTap, onLongPress, onLongPressBuilding, onCameraMove, debug, units,
+            labelTypeface, background, hostModifier, above,
         )
     }
     DisposableEffect(stage, request) {
@@ -154,7 +157,8 @@ fun MapStageHost(stage: MapStage, cover: Color, modifier: Modifier = Modifier) {
             AtlasMap(
                 state = args.state, modifier = Modifier.matchParentSize(), style = args.style,
                 overlays = args.overlays, contentPadding = args.contentPadding, onTap = args.onTap,
-                onLongPress = args.onLongPress, onCameraMove = args.onCameraMove, debug = args.debug, units = args.units,
+                onLongPress = args.onLongPress, onLongPressBuilding = args.onLongPressBuilding,
+                onCameraMove = args.onCameraMove, debug = args.debug, units = args.units,
                 labelTypeface = args.labelTypeface,
             )
             args.above?.invoke(this)

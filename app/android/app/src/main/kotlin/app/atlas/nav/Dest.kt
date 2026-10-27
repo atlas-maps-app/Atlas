@@ -137,10 +137,13 @@ sealed interface Dest {
         override fun Content(nav: Navigator) = CategoryScreen(this, nav)
     }
 
-    /** What is at a point: the long press on the map. */
-    data class WhatsHere(val lat: Double, val lon: Double) : Dest {
+    /**
+     * What is at a point: the long press on the map; with the building under the finger ([osmId], "w123": the one the map
+     * drew there) where the press met one.
+     */
+    data class WhatsHere(val lat: Double, val lon: Double, val osmId: String? = null) : Dest {
         val at: LatLon get() = LatLon(lat, lon)
-        override val route get() = Routes.build("whatshere", "lat" to lat, "lon" to lon)
+        override val route get() = Routes.build("whatshere", "lat" to lat, "lon" to lon, "id" to osmId)
         override val tab get() = Tab.MAP
 
         @Composable
@@ -682,7 +685,7 @@ sealed interface Dest {
             "brands" to { a -> Brands(a.str("category")) },
             "brand" to { a -> a.str("id")?.let { Brand(it) } },
             "category" to { a -> a.str("id")?.let { Category(it) } },
-            "whatshere" to { a -> a.latLon()?.let { WhatsHere(it.lat, it.lon) } },
+            "whatshere" to { a -> a.latLon()?.let { WhatsHere(it.lat, it.lon, a.str("id")) } },
             "eat" to { a -> Eat(a.str("kind")) },
             "groceries" to { a -> Groceries(a.str("kind")) },
             "needs" to { a -> a.str("kind")?.let { Needs(it) } },

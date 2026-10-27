@@ -78,6 +78,7 @@ fun BrandScreen(args: Dest.Brand, nav: Navigator) {
         onBack = { nav.back() },
         onPlace = openPlace,
         onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
+        onLongPressBuilding = { b -> nav.go(Dest.WhatsHere(b.at.lat, b.at.lon, b.id.toString())) },
         title = {
             BrandLogo(brand, 36.dp, corner = 10.dp)
             TxLine(brandName(brand), txStyle(16f, 700, 20.5f), 0xFF14161B)

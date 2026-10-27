@@ -173,6 +173,9 @@ class MapFacadeTest {
                 assertEquals("the routes were refused: not a block of routes", Native.routes(handle, notLabels.rewind() as ByteBuffer, 5L))
                 assertEquals("the routes must be a direct buffer", Native.routes(handle, ByteBuffer.allocate(8), 6L))
 
+                // A pick before the map has drawn a frame (hosts have no window): none.
+                assertEquals("", Native.pick(handle, 100f, 200f))
+
                 // The screen's haze and vignette off, then on again (the app's Look settings).
                 Native.screen(handle, false, false, false)
                 Native.screen(handle, true, true, true)

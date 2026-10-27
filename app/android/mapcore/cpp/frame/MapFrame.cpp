@@ -206,6 +206,22 @@ void MapFrame::next(const style::CameraState& camera, double seconds) {
                           .routes = routes_.get()});
 }
 
+std::optional<scene::Picked> MapFrame::pick(double x, double y) {
+    if (!made() || !world_) return std::nullopt;
+    const FrameState& state = builder_->state();
+    if (!state.view.has_value() || !state.ground_frame.has_value()) return std::nullopt;
+    // the packs the frame drew from, at the zoom of their chunks it drew
+    std::vector<scene::PickPack> packs;
+    for (const auto& tile : world_->residency().resident()) {
+        if (tile == nullptr) continue;
+        const bool known = std::ranges::any_of(
+            packs, [&](const scene::PickPack& p) { return p.id == tile->pack && p.z == tile->key.z; });
+        if (!known) packs.push_back({.id = tile->pack, .z = tile->key.z});
+    }
+    return scene::pick_building(world_->store(), packs, *state.ground_frame, state.view->camera().eye(),
+                                scene::ray_of(*state.view, x, y));
+}
+
 standin::MapCounts MapFrame::counts() const noexcept {
     if (!made()) return {};
     const Count c = builder_->total();

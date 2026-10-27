@@ -3,14 +3,15 @@ package app.atlas.ui.search
 import app.atlas.Services
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
+import app.atlas.model.OsmId
 import app.atlas.model.Place
 import app.atlas.services.LocalAddress
 import app.atlas.services.LocalData
 import app.atlas.services.PlaceOrigin
+import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.IOException
 
 /** The address of a point: its street and number, the quarter and town, and where it was read. */
 data class HereAddress(
@@ -52,8 +53,9 @@ object HereFinder {
     const val NEARBY_M = LocalData.NEARBY_M
     private const val ADDRESS_M = 40.0
 
-    suspend fun find(services: Services, p: LatLon, lang: String, online: Boolean): HereFacts = withContext(Dispatchers.Default) {
-        val here = services.localData.whatsHere(p, NEARBY_M)
+    /** What is at [p]; [spot] the building a press on the map named there (the one drawn under the finger), if any. */
+    suspend fun find(services: Services, p: LatLon, lang: String, online: Boolean, spot: OsmId? = null): HereFacts = withContext(Dispatchers.Default) {
+        val here = services.localData.whatsHere(p, NEARBY_M, spot)
         val facts = HereFacts(here.address?.let(HereAddress::of), here.spot, here.nearby, here.origin)
         if (facts.address != null || !online) return@withContext facts
         val reverse = try {

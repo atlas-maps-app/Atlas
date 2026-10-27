@@ -17,6 +17,7 @@ import app.atlas.mapview.LabelSprites
 import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapLabel
 import app.atlas.mapview.MapOverlays
+import app.atlas.mapview.MapPick
 import app.atlas.mapview.Marker
 import app.atlas.mapview.MarkerPainter
 import app.atlas.mapview.MarkerSprites
@@ -223,6 +224,12 @@ internal class CoreMap(
             val maker = routeChips?.takeIf { it.painter === painter } ?: RouteChips(painter).also { routeChips = it }
             core.routes(maker.block(overlays), revision)
         }
+
+    /**
+     * The building under the view's device point ([x], [y]) as the core's last frame drew it, or null (none there, or no
+     * map). Off the main thread: it waits for the render thread.
+     */
+    fun pick(x: Float, y: Float): MapPick? = MapPick.parse(core.pick(x, y))
 
     /** This map leaves the screen: the core's map goes off if this map was the one drawing (off the main thread). */
     fun close() {

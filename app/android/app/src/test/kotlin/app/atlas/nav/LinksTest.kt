@@ -16,6 +16,13 @@ class LinksTest {
     }
 
     @Test
+    fun whatsHereKeepsTheBuildingAPressNamed() {
+        val pressed = Dest.WhatsHere(52.37452, 4.88377, "w266556292")
+        assertEquals(pressed, Dest.parse(pressed.route))
+        assertEquals(Dest.WhatsHere(52.37452, 4.88377), Dest.parse(Dest.WhatsHere(52.37452, 4.88377).route))
+    }
+
+    @Test
     fun geoLabelledPointOpensThePlace() {
         val s = Links.forUri("geo:0,0?q=52.37452,4.88377(Westerkerk)")!!
         assertEquals(Dest.Place(52.37452, 4.88377, name = "Westerkerk"), s.last())

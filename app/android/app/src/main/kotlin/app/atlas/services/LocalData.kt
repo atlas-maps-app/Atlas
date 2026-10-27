@@ -416,10 +416,11 @@ class LocalData(
     }
 
     /**
-     * What is at [at] for "What's here": its address, the place whose outline holds it (else a named place within
-     * [SPOT_POINT_M]), and the named places Atlas lists within [radiusM], measured to their outlines, nearest first.
+     * What is at [at] for "What's here": its address, the place it is in (the building [spotId] where a press on the map
+     * named one; else the place whose outline holds the point, else a named place within [SPOT_POINT_M]), and the named
+     * places Atlas lists within [radiusM], measured to their outlines, nearest first.
      */
-    suspend fun whatsHere(at: LatLon, radiusM: Double = NEARBY_M): LocalHere = withContext(Dispatchers.IO) {
+    suspend fun whatsHere(at: LatLon, radiusM: Double = NEARBY_M, spotId: OsmId? = null): LocalHere = withContext(Dispatchers.IO) {
         val address = address(at)
         val box = BBox.around(at, radiusM)
         val pack = packsCovering(at)
@@ -437,7 +438,14 @@ class LocalData(
             }
         }
         val near = around.filter { it.second <= radiusM }.sortedBy { it.second }
-        val spot = pack?.let { f ->
+        // the building a press on the map named (the one the map drew under the finger), by its own element near where
+        // the press met it; else the place whose outline holds the point
+        val named = spotId?.let { id ->
+            val box = BBox.around(at, NAMED_M)
+            store?.inBox(box)?.firstOrNull { it.place.id == id }?.place
+                ?: pack?.elements(box) { e -> e.id == id.id && e.type.json == id.type.name.lowercase() }?.firstOrNull()?.let { PackFeatures.place(it) }
+        }
+        val spot = named ?: pack?.let { f ->
             f.containing(at) { e -> e.tag("name") != null || e.tag("building") != null }
                 .firstOrNull { it.element.tag("place") == null && it.element.tag("boundary") == null }
                 ?.let { PackFeatures.place(it.element) }
@@ -611,6 +619,9 @@ class LocalData(
 
         /** How far the street may be when no house is near (metres). */
         const val STREET_M = 60.0
+
+        /** How far from where a press met a building its element is looked for (its box meets this much around it), m. */
+        const val NAMED_M = 30.0
 
         /** What's here: how far the places around reach, and how near a place's point must be to be the spot. */
         const val NEARBY_M = 150.0

@@ -65,6 +65,8 @@ fun AtlasMap(
     contentPadding: PaddingValues = PaddingValues(),
     onTap: (MapHit) -> Unit = {},
     onLongPress: (LatLon) -> Unit = {},
+    /** A long press on a building the core draws: the building under the finger (in place of [onLongPress]). */
+    onLongPressBuilding: ((MapPick) -> Unit)? = null,
     onCameraMove: (camera: CameraPosition, byUser: Boolean) -> Unit = { _, _ -> },
     debug: Boolean = false,
     units: UnitSystem = UnitSystem.forLocale(Locale.getDefault()),
@@ -78,6 +80,7 @@ fun AtlasMap(
     val controller = remember(state) { MapController(state, scope) }
     val tap by rememberUpdatedState(onTap)
     val longPress by rememberUpdatedState(onLongPress)
+    val longPressBuilding by rememberUpdatedState(onLongPressBuilding)
     val cameraMove by rememberUpdatedState(onCameraMove)
 
     val insets = with(density) {
@@ -100,6 +103,7 @@ fun AtlasMap(
         controller.insets = insets
         controller.onTap = { tap(it) }
         controller.onLongPress = { longPress(it) }
+        controller.onLongPressBuilding = if (longPressBuilding != null) { p -> longPressBuilding?.invoke(p) } else null
         controller.onCameraMove = { c, u -> cameraMove(c, u) }
         if (controller.fonts == null) controller.fonts = MapEngine.fonts(assets)
     }

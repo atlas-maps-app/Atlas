@@ -118,6 +118,12 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
 
     var onTap: (MapHit) -> Unit = {}
     var onLongPress: (LatLon) -> Unit = {}
+
+    /**
+     * A long press on a building where the core draws the map: the building under the finger as the core drew it (its
+     * pick, scene/Pick.hpp) in place of [onLongPress]; null to take [onLongPress] alone.
+     */
+    var onLongPressBuilding: ((MapPick) -> Unit)? = null
     var onCameraMove: (CameraPosition, Boolean) -> Unit = { _, _ -> }
 
     val gestures = GestureMachine(GestureConfig.forDensity(1f), this)
@@ -1354,7 +1360,20 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     override fun onLongPress(x: Float, y: Float) {
         val v = viewport()
         if (v.isEmpty) return
-        CameraOps.groundAt(state.camera, v, x, y)?.let { onLongPress(it) }
+        val at = CameraOps.groundAt(state.camera, v, x, y)
+        val c = core
+        val building = onLongPressBuilding
+        // the building under the finger as the core drew it, where it draws the map: the first one the ray meets, which
+        // may stand before the street point under the finger
+        if (c != null && building != null && coreWanted == Transition.Path.CORE && c.transition.canvas == 0f) {
+            scope.launch {
+                val picked = withContext(Dispatchers.Default) { runCatching { c.pick(x, y) }.getOrNull() }
+                if (core !== c || closed) return@launch
+                if (picked != null) building(picked) else at?.let { onLongPress(it) }
+            }
+            return
+        }
+        at?.let { onLongPress(it) }
     }
 
     override fun onMeasure(x0: Float, y0: Float, x1: Float, y1: Float) {

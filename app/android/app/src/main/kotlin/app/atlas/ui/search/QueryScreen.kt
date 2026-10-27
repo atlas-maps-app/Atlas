@@ -188,6 +188,7 @@ fun QueryScreen(args: Dest.Query, nav: Navigator) {
                 p?.let { services.remember(it); nav.go(Dest.Place.of(it)) }
             },
             onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
+            onLongPressBuilding = { b -> nav.go(Dest.WhatsHere(b.at.lat, b.at.lon, b.id.toString())) },
         )
 
         // The sentence and its chips, in the board's glass card over the map: 12 px from the sides at 44, 12 px in.

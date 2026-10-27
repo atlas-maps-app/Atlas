@@ -24,6 +24,7 @@
 #include "labels/Sprites.hpp"
 #include "markers/Markers.hpp"
 #include "routes/Routes.hpp"
+#include "scene/Pick.hpp"
 #include "scene/World.hpp"
 #include "standin/SessionMap.hpp"
 #include "style/Theme.hpp"
@@ -113,6 +114,10 @@ public:
     [[nodiscard]] std::vector<tiles::TileKey> wanted_windows() const;
     /// The places in view its world draws from windows, nearest first (scene::World::windows_in_view).
     [[nodiscard]] std::vector<tiles::TileKey> windows_in_view() const;
+    /// The building under the view's device point (`x`, `y`) as the last frame drew it (scene/Pick.hpp: the ray from
+    /// the last frame's eye through that point, among the buildings of the packs its resident tiles came from), or
+    /// none.
+    [[nodiscard]] std::optional<scene::Picked> pick(double x, double y);
     /// The world, while made (tests).
     [[nodiscard]] scene::World* world() noexcept { return world_.get(); }
     /// The frame builder, while made (tests: the last frame's state).

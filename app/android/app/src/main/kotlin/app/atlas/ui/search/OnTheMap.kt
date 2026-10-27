@@ -19,7 +19,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
-import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -28,12 +27,13 @@ import androidx.compose.ui.unit.dp
 import app.atlas.R
 import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
-import app.atlas.mapview.StageMap
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.MapHit
 import app.atlas.mapview.MapOverlays
+import app.atlas.mapview.MapPick
 import app.atlas.mapview.MapState
 import app.atlas.mapview.Marker
+import app.atlas.mapview.StageMap
 import app.atlas.mapview.UserLocation
 import app.atlas.model.Place
 import app.atlas.nav.LocalServices
@@ -43,6 +43,7 @@ import app.atlas.ui.kit.SheetStop
 import app.atlas.ui.kit.SymbolButton
 import app.atlas.ui.kit.rememberSheetState
 import app.atlas.ui.kit.softShadow
+import kotlinx.coroutines.flow.first
 
 /**
  * Places on the map with their list in a sheet, as "Every pharmacy on the map" and "All 8 on the map" show them: the
@@ -57,6 +58,7 @@ internal fun OnTheMap(
     onBack: () -> Unit,
     onPlace: (Place) -> Unit,
     onLongPress: (LatLon) -> Unit,
+    onLongPressBuilding: ((MapPick) -> Unit)?,
     title: @Composable RowScope.() -> Unit,
     sheet: @Composable ColumnScope.() -> Unit,
 ) {
@@ -84,6 +86,7 @@ internal fun OnTheMap(
                 }?.let(onPlace)
             },
             onLongPress = onLongPress,
+            onLongPressBuilding = onLongPressBuilding,
         )
         Row(
             Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 16.dp, vertical = 12.dp),

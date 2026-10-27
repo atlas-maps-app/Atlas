@@ -128,6 +128,7 @@ fun CategoryScreen(args: Dest.Category, nav: Navigator) {
         onBack = { nav.back() },
         onPlace = openPlace,
         onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
+        onLongPressBuilding = { b -> nav.go(Dest.WhatsHere(b.at.lat, b.at.lon, b.id.toString())) },
         title = {
             SymbolTile(category.symbol, Color(category.colour), size = 36.dp)
             Text(category.name(lang), style = Atlas.type.name, color = Atlas.colors.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)

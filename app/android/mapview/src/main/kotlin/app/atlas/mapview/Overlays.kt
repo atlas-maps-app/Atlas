@@ -118,6 +118,25 @@ data class MapOverlays(
     val onGround: Boolean get() = routes.isNotEmpty() || areas.isNotEmpty()
 }
 
+/**
+ * The building under a point of the map as the core drew it ([id]: the building, an outline or the one a part stands
+ * in; [part] the part met, 0 for the outline itself) and where the finger's ray met it ([at]).
+ */
+@Immutable
+data class MapPick(val id: app.atlas.model.OsmId, val part: Long, val at: LatLon) {
+    companion object {
+        /** The core's line of a pick (`MapCore.pick`: "way 123 0 52.3745 4.8838"), or null for none. */
+        fun parse(line: String): MapPick? {
+            val parts = line.split(' ')
+            if (parts.size != 5) return null
+            val id = app.atlas.model.OsmId.parse(parts[0] + " " + parts[1]) ?: return null
+            val lat = parts[3].toDoubleOrNull() ?: return null
+            val lon = parts[4].toDoubleOrNull() ?: return null
+            return MapPick(id, parts[2].toLongOrNull() ?: 0L, LatLon(lat, lon))
+        }
+    }
+}
+
 /** What a tap found. */
 sealed interface MapHit {
     val at: LatLon

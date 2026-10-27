@@ -186,6 +186,7 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
                 }
             },
             onLongPress = { at -> nav.go(Dest.WhatsHere(at.lat, at.lon)) },
+            onLongPressBuilding = { b -> nav.go(Dest.WhatsHere(b.at.lat, b.at.lon, b.id.toString())) },
             onCameraMove = vm::onCameraMove,
             // Debug and bench builds show each exact frame's timings, so a phone can be read without logcat.
             debug = BuildConfig.TIMINGS,
