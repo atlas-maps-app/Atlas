@@ -21,7 +21,9 @@
 #include "tiles/Sections.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string_view>
 #include <vector>
@@ -249,6 +251,12 @@ struct BuildingInput {
     std::uint8_t level = 0; ///< the ladder index the rings are simplified at and the variants loaded at
     BuildingRegion region;
     std::uint16_t kind = 0; ///< the items' kind (the frame's Selectors row)
+    /// Runs `pieces` pieces of the work, piece(0) to piece(pieces - 1), on several threads, returning once all are done
+    /// (scene::TileBuild::share: the residency's idle workers, ENGINE.md gain 9): a dense tile's records are walked in
+    /// as many blocks as `blocks` allows (at most 8, of about 192 records each), then joined in order. None, or one
+    /// block: one walk over them all.
+    std::function<void(std::size_t pieces, const std::function<void(std::size_t)>& piece)> share;
+    std::size_t blocks = 1;
 };
 
 /// The tile's buildings and parts at the input's level.

@@ -69,6 +69,8 @@ struct WorldOptions {
     frame::Resources resources;
     /// The frame's clock (seconds), from the workers' threads too; the frame state's time when absent.
     std::function<double()> clock;
+    /// Whether the workers share a tile's passes and their pieces (ENGINE.md gain 9: WorkerOptions::share).
+    bool share = true;
 };
 
 /// The world.

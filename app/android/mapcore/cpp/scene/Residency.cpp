@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <format>
+#include <limits>
 
 #if defined(__ANDROID__)
 #include <sys/resource.h>
@@ -17,7 +18,7 @@ namespace atlas::scene {
 
 namespace {
 
-/// A worker's arena for one tile's decoding (grown for a dense tile, reset per tile).
+/// A tile's arena for its decoding (grown for a dense tile, reset per tile).
 constexpr std::size_t arena_bytes = std::size_t{4} << 20U;
 
 [[nodiscard]] double ms_since(std::chrono::steady_clock::time_point t) {
@@ -61,23 +62,31 @@ std::uint64_t Residency::key_of(tiles::TileKey key, std::string_view pack) noexc
     return h ^ (key.packed() * 0x9E37'79B9'7F4A'7C15ULL);
 }
 
+Residency::Scratch::Scratch() : arena(arena_bytes, Growth::grows, "a tile under way") {}
+
 Residency::Residency(const tiles::Store& store, Heaps& heaps, std::span<const std::unique_ptr<frame::Pass>> passes,
-                     unsigned workers, std::function<double()> clock)
-    : store_(store), heaps_(heaps), passes_(passes), clock_(std::move(clock)) {
+                     WorkerOptions workers, std::function<double()> clock)
+    : store_(store), heaps_(heaps), passes_(passes), clock_(std::move(clock)),
+      workers_count_(std::max(1U, workers.count)), share_(workers.share) {
     for (const std::unique_ptr<frame::Pass>& p : passes_)
         stage_t_names_.push_back(std::format("atlas stage T {}", p->name()));
-    workers = std::max(1U, workers);
-    workers_.reserve(workers);
-    for (unsigned i = 0; i < workers; ++i) {
-        workers_.emplace_back([this](const std::stop_token& stop) { work(stop); });
+    pass_ms_.assign(passes_.size(), 0.0);
+    pass_runs_.assign(passes_.size(), 0);
+    workers_.reserve(workers_count_);
+    for (unsigned i = 0; i < workers_count_; ++i) {
+        workers_.emplace_back([this, i](const std::stop_token& stop) { work(stop, i); });
     }
 }
 
 Residency::~Residency() {
     stop(); // no worker touches the members below after this
-    // What was published and never taken goes back to the heaps (the GPU never saw it).
+    // What was published and never taken goes back to the heaps (the GPU never saw it), and what the passes of a tile
+    // the stop left under way made.
     for (const std::shared_ptr<ResidentTile>& t : published_) {
         each_range(*t, [this](const HeapRange& r) { heaps_.retire(r, 0); });
+    }
+    for (const std::unique_ptr<Underway>& u : building_) {
+        if (u->out) each_range(*u->out, [this](const HeapRange& r) { heaps_.retire(r, 0); });
     }
     for (const std::shared_ptr<const ResidentTile>& t : resident_) {
         each_range(*t, [this](const HeapRange& r) { heaps_.retire(r, 0); });
@@ -138,107 +147,296 @@ void Residency::want(std::span<const Request> requests) {
     wake_.notify_all();
 }
 
-void Residency::work(const std::stop_token& stop) {
+Residency::Piece Residency::take(std::unique_lock<std::mutex>& lock, const std::stop_token& stop, unsigned worker) {
+    for (;;) {
+        if (stop.stop_requested()) return {};
+        // Of the best lane: a pass of a tile this worker took (its chain goes on, as before the gain); then a piece of
+        // a pass's shared work; then the queue's next tile; then a pass of another worker's tile under way, the
+        // earliest taken. So every tile wanted starts as soon as a worker is free, and a tile's work is shared once
+        // nothing more waits to start.
+        Split* split = nullptr;
+        for (Split* s : splits_) {
+            if (s->handed >= s->count) continue;
+            if (split == nullptr || s->lane < split->lane) split = s;
+        }
+        // a tile under way with a pass for this worker: its own, or any where the workers share
+        const auto open = [this, worker](const Underway& u) {
+            return !u.failed && u.handed < u.order.size() && (share_ || u.worker == worker);
+        };
+        Underway* own = nullptr;
+        Underway* other = nullptr;
+        for (const std::unique_ptr<Underway>& u : building_) {
+            if (!open(*u)) continue;
+            Underway*& best = u->worker == worker ? own : other;
+            if (best == nullptr || u->job.request.lane < best->job.request.lane) best = u.get();
+        }
+        const auto lane_of = [](const Underway* u) { return u != nullptr ? u->job.request.lane : Lane::prefetch; };
+        const Lane queued = queue_.empty() ? Lane::prefetch : queue_.front().request.lane;
+        const bool waiting = !queue_.empty();
+        const auto pass_of = [this, worker](Underway& u) {
+            const std::uint32_t p = u.order[u.handed++];
+            if (u.worker != worker) ++stats_.shared;
+            return Piece{.tile = &u, .pass = static_cast<std::int32_t>(p)};
+        };
+        if (own != nullptr && (split == nullptr || own->job.request.lane <= split->lane) &&
+            (!waiting || own->job.request.lane <= queued) && own->job.request.lane <= lane_of(other)) {
+            return pass_of(*own);
+        }
+        if (split != nullptr && (!waiting || split->lane <= queued) && split->lane <= lane_of(other)) {
+            ++stats_.pieces;
+            return {.split = split, .index = split->handed++};
+        }
+        if (other != nullptr && (!waiting || other->job.request.lane < queued)) return pass_of(*other);
+        if (waiting) {
+            auto u = std::make_unique<Underway>();
+            u->job = std::move(queue_.front());
+            queue_.erase(queue_.begin());
+            u->job.request.pack = u->job.pack;
+            u->key = key_of(u->job.request.key, u->job.pack);
+            u->worker = worker;
+            underway_[u->key] = 2;
+            Underway* taken = u.get();
+            building_.push_back(std::move(u));
+            return {.tile = taken, .pass = -1};
+        }
+        wake_.wait(lock, stop, [&] {
+            return !queue_.empty() ||
+                   std::ranges::any_of(splits_, [](const Split* s) { return s->handed < s->count; }) ||
+                   std::ranges::any_of(building_, [&open](const std::unique_ptr<Underway>& u) { return open(*u); });
+        });
+    }
+}
+
+void Residency::work(const std::stop_token& stop, unsigned worker) {
 #if defined(__ANDROID__)
     (void)setpriority(PRIO_PROCESS, 0, 10); // the workers' background priority (T8): this thread alone on Linux
 #endif
     tiles::Zstd zstd;
     tiles::TileDecoder decoder;
-    Arena arena(arena_bytes, Growth::grows, "a residency worker's tile");
-    std::vector<std::byte> raw;
+    std::unique_lock lock(mutex_);
     for (;;) {
-        Job job;
-        {
-            std::unique_lock lock(mutex_);
-            if (!wake_.wait(lock, stop, [this] { return !queue_.empty(); })) return;
-            job = std::move(queue_.front());
-            queue_.erase(queue_.begin());
-            job.request.pack = job.pack;
-            underway_[key_of(job.request.key, job.pack)] = 2;
+        const Piece piece = take(lock, stop, worker);
+        if (piece.split != nullptr) {
+            // a piece of another worker's pass, which waits for it
+            Split& split = *piece.split;
             ++busy_;
+            lock.unlock();
+            {
+                const trace::Section traced("atlas stage T piece");
+                (*split.piece)(piece.index);
+            }
+            lock.lock();
+            if (++split.done == split.count) split_done_.notify_all();
+            --busy_;
+            idle_.notify_all();
+            continue;
         }
+        if (piece.tile == nullptr) return;
+        Underway& u = *piece.tile;
+        ++busy_;
+        lock.unlock();
         const auto started = std::chrono::steady_clock::now();
-        const std::uint64_t frees = heaps_.frees();
-        arena.reset();
-        std::shared_ptr<ResidentTile> tile;
+        bool ok = false;
         {
             const trace::Section traced("atlas tile build");
-            tile = build(job, zstd, decoder, arena, raw);
+            ok = piece.pass < 0 ? start(u, zstd, decoder) : run(u, static_cast<std::uint32_t>(piece.pass));
         }
         const double ms = ms_since(started);
-        std::function<void()> published;
-        {
-            const std::scoped_lock lock(mutex_);
-            const std::uint64_t k = key_of(job.request.key, job.pack);
-            if (tile) {
-                underway_[k] = 3;
-                published_.push_back(std::move(tile));
-                ++stats_.built;
-                stats_.build_ms += ms;
-                published = published_callback_;
+        lock.lock();
+        u.ms += ms;
+        bool last = false;
+        if (piece.pass < 0) {
+            if (ok) {
+                // its passes, the longest first (their mean so far; one not yet timed before them, in the registry's
+                // order), handed out from now on: this worker takes the first
+                u.order.resize(passes_.size());
+                for (std::uint32_t p = 0; p < u.order.size(); ++p) u.order[p] = p;
+                const auto mean = [this](std::uint32_t p) {
+                    return pass_runs_[p] == 0 ? std::numeric_limits<double>::infinity()
+                                              : pass_ms_[p] / static_cast<double>(pass_runs_[p]);
+                };
+                std::ranges::stable_sort(u.order, [&](std::uint32_t a, std::uint32_t b) { return mean(a) > mean(b); });
+                last = u.order.empty();
+                if (u.order.size() > 1) wake_.notify_all();
             } else {
-                underway_.erase(k);
-                failed_[k] = frees;
-                ++stats_.failed;
+                u.failed = true;
+                last = true;
             }
+        } else {
+            const auto p = static_cast<std::uint32_t>(piece.pass);
+            ++u.done;
+            if (ok) {
+                pass_ms_[p] += ms;
+                ++pass_runs_[p];
+            } else {
+                u.failed = true;
+            }
+            last = u.done == u.handed && (u.failed || u.handed == u.order.size());
         }
-        // The wake, outside the lock; the worker counts as busy until it has run, so wait_idle sees it done.
-        if (published) published();
-        {
-            const std::scoped_lock lock(mutex_);
-            --busy_;
+        if (last) {
+            lock.unlock();
+            publish(u);
+            lock.lock();
         }
+        --busy_;
         idle_.notify_all();
     }
 }
 
-std::shared_ptr<ResidentTile> Residency::build(const Job& job, tiles::Zstd& zstd, tiles::TileDecoder& decoder,
-                                               Arena& arena, std::vector<std::byte>& raw) {
-    const std::shared_ptr<const tiles::StorePack> pack = pack_of(store_, job.pack);
-    if (!pack || !pack->pack.is_render() || pack->pack.head() == nullptr || pack->pack.style() == nullptr)
-        return nullptr;
-    const tiles::ChunkRef* chunk = pack->pack.chunks().find(job.request.key);
-    if (chunk == nullptr) return nullptr;
+bool Residency::start(Underway& u, tiles::Zstd& zstd, tiles::TileDecoder& decoder) {
+    u.frees = heaps_.frees();
+    {
+        const std::scoped_lock lock(mutex_);
+        if (!scratch_.empty()) {
+            u.scratch = std::move(scratch_.back());
+            scratch_.pop_back();
+        }
+    }
+    if (!u.scratch) u.scratch = std::make_unique<Scratch>();
+    u.scratch->arena.reset();
+    const Job& job = u.job;
+    u.pack = pack_of(store_, job.pack);
+    if (!u.pack || !u.pack->pack.is_render() || u.pack->pack.head() == nullptr || u.pack->pack.style() == nullptr)
+        return false;
+    const tiles::ChunkRef* chunk = u.pack->pack.chunks().find(job.request.key);
+    if (chunk == nullptr) return false;
     auto decoded = [&] {
         const trace::Section traced("atlas tile decode");
-        return store_.decode({.pack = pack, .chunk = chunk}, zstd, decoder, arena, raw);
+        return store_.decode({.pack = u.pack, .chunk = chunk}, zstd, decoder, u.scratch->arena, u.scratch->raw);
     }();
     if (!decoded) {
         log::warn("vk tiles: {}/{}/{} of {}: {}", job.request.key.z, job.request.key.x, job.request.key.y, job.pack,
                   tiles::describe(decoded.error()));
-        return nullptr;
+        return false;
     }
-    const tiles::Tile& tile = *decoded;
-    const tiles::RenderHead& head = *pack->pack.head();
+    u.tile = *decoded;
+    const tiles::RenderHead& head = *u.pack->pack.head();
     auto out = std::make_shared<ResidentTile>();
     out->key = job.request.key;
     out->handle = next_handle_.fetch_add(1, std::memory_order_relaxed);
     out->pack = job.pack;
-    out->kind = pack->kind;
+    out->kind = u.pack->kind;
     out->frame = view::frame_of(head.frame);
-    out->origin = {head.frame.x(tile.header.west), 0.0, head.frame.z(tile.header.south)};
+    out->origin = {head.frame.x(u.tile.header.west), 0.0, head.frame.z(u.tile.header.south)};
     out->level = job.request.level;
-    out->cells_per_side = tile.header.cells_per_side;
-    out->cells.assign(tile.cells.begin(), tile.cells.end());
+    out->cells_per_side = u.tile.header.cells_per_side;
+    out->cells.assign(u.tile.cells.begin(), u.tile.cells.end());
     out->reach = chunk->reach;
     out->passes.resize(passes_.size());
-    for (std::uint32_t p = 0; p < passes_.size(); ++p) {
-        TileBuild b(tile, head, *pack->pack.style(), job.request.level, out->origin, heaps_, out->passes[p], out->items,
-                    p);
-        const trace::Section traced(stage_t_names_[p].c_str());
-        if (auto built = passes_[p]->build(b); !built) {
-            log::warn("vk tiles: {}/{}/{} of {}: the {} pass: {}", job.request.key.z, job.request.key.x,
-                      job.request.key.y, job.pack, passes_[p]->name(), built.error().text());
-            each_range(*out, [this](const HeapRange& r) { heaps_.retire(r, 0); });
-            return nullptr;
+    u.out = std::move(out);
+    u.items.resize(passes_.size());
+    return true;
+}
+
+/// The workers that may take pieces of one pass of a tile under way: its lane's.
+class Residency::Helpers final : public Sharer {
+public:
+    Helpers(Residency& residency, const Underway& tile) noexcept : residency_(residency), tile_(tile) {}
+    Helpers(const Helpers&) = delete;
+    Helpers& operator=(const Helpers&) = delete;
+    Helpers(Helpers&&) = delete;
+    Helpers& operator=(Helpers&&) = delete;
+    ~Helpers() override = default;
+
+    [[nodiscard]] unsigned idle() const override { return residency_.idle(); }
+    void share(std::size_t pieces, const std::function<void(std::size_t)>& piece) override {
+        residency_.share(tile_, pieces, piece);
+    }
+
+private:
+    Residency& residency_;
+    const Underway& tile_;
+};
+
+unsigned Residency::idle() const {
+    const std::scoped_lock lock(mutex_);
+    return workers_count_ > busy_ ? workers_count_ - busy_ : 0U;
+}
+
+bool Residency::run(Underway& u, std::uint32_t p) {
+    const tiles::StorePack& pack = *u.pack;
+    // the pass's own work in pieces on the idle workers too, where the workers share
+    Helpers helpers(*this, u);
+    TileBuild b(u.tile, *pack.pack.head(), *pack.pack.style(), u.job.request.level, u.out->origin, heaps_,
+                u.out->passes[p], u.items[p], p, share_ ? &helpers : nullptr);
+    const trace::Section traced(stage_t_names_[p].c_str());
+    if (auto built = passes_[p]->build(b); !built) {
+        const tiles::TileKey& k = u.job.request.key;
+        log::warn("vk tiles: {}/{}/{} of {}: the {} pass: {}", k.z, k.x, k.y, u.job.pack, passes_[p]->name(),
+                  built.error().text());
+        return false;
+    }
+    return true;
+}
+
+void Residency::share(const Underway& u, std::size_t count, const std::function<void(std::size_t)>& piece) {
+    // Handed out to the idle workers, this one running the rest; then it waits for those still under way elsewhere.
+    Split split{.piece = &piece, .count = count, .lane = u.job.request.lane};
+    std::unique_lock lock(mutex_);
+    splits_.push_back(&split);
+    wake_.notify_all();
+    while (split.handed < split.count) {
+        const std::size_t i = split.handed++;
+        lock.unlock();
+        piece(i);
+        lock.lock();
+        ++split.done;
+    }
+    split_done_.wait(lock, [&split] { return split.done == split.count; });
+    std::erase(splits_, &split);
+}
+
+void Residency::publish(Underway& u) {
+    // Every pass is done (or one failed and the others it was handed are): this worker alone sees the tile now.
+    const auto started = std::chrono::steady_clock::now();
+    if (u.failed) {
+        if (u.out) each_range(*u.out, [this](const HeapRange& r) { heaps_.retire(r, 0); });
+    } else {
+        const trace::Section traced("atlas tile publish");
+        ResidentTile& out = *u.out;
+        // The tile's writes, visible to the GPU before the render thread can see the tile.
+        heaps_.flush();
+        out.published = clock_ ? clock_() : 0.0;
+        // The items in the passes' order, as one thread building them in turn adds them.
+        std::size_t n = 0;
+        for (const std::vector<ItemSpec>& items : u.items) n += items.size();
+        out.items.reserve(n);
+        for (const std::vector<ItemSpec>& items : u.items)
+            out.items.insert(out.items.end(), items.begin(), items.end());
+        for (ItemSpec& item : out.items) item.tile = out.handle;
+        out.native_bytes = native_bytes_of(out);
+    }
+    const double ms = ms_since(started);
+    std::unique_ptr<Underway> gone;
+    std::unique_ptr<Scratch> spare;
+    std::function<void()> published;
+    {
+        const std::scoped_lock lock(mutex_);
+        const auto it =
+            std::ranges::find_if(building_, [&u](const std::unique_ptr<Underway>& b) { return b.get() == &u; });
+        gone = std::move(*it);
+        building_.erase(it);
+        if (u.scratch) {
+            if (scratch_.size() < workers_count_) {
+                scratch_.push_back(std::move(u.scratch));
+            } else {
+                spare = std::move(u.scratch);
+            }
+        }
+        if (!u.failed) {
+            underway_[u.key] = 3;
+            published_.push_back(std::move(u.out));
+            ++stats_.built;
+            stats_.build_ms += u.ms + ms;
+            published = published_callback_;
+        } else {
+            underway_.erase(u.key);
+            failed_[u.key] = u.frees;
+            ++stats_.failed;
         }
     }
-    // The tile's writes, visible to the GPU before the render thread can see the tile.
-    heaps_.flush();
-    out->published = clock_ ? clock_() : 0.0;
-    for (ItemSpec& item : out->items) item.tile = out->handle;
-    out->native_bytes = native_bytes_of(*out);
-    return out;
+    // The wake, outside the lock; the worker counts as busy until it has run, so wait_idle sees it done.
+    if (published) published();
 }
 
 void Residency::take_published(ItemTable& items, std::vector<std::shared_ptr<const ResidentTile>>* taken) {
@@ -308,7 +506,7 @@ void Residency::set_published(std::function<void()> callback) {
 
 void Residency::wait_idle() {
     std::unique_lock lock(mutex_);
-    idle_.wait(lock, [this] { return queue_.empty() && busy_ == 0; });
+    idle_.wait(lock, [this] { return queue_.empty() && building_.empty() && busy_ == 0; });
 }
 
 ResidencyStats Residency::stats() const {
@@ -316,7 +514,7 @@ ResidencyStats Residency::stats() const {
     ResidencyStats s = stats_;
     s.resident = resident_.size();
     s.native_bytes = native_.load(std::memory_order_relaxed);
-    s.pending = queue_.size() + busy_ + published_.size();
+    s.pending = queue_.size() + building_.size() + published_.size();
     s.waiting = failed_.size();
     return s;
 }

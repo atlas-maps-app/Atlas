@@ -21,9 +21,11 @@
 #include <chrono>
 #include <cmath>
 #include <format>
+#include <functional>
 #include <map>
 #include <span>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -455,4 +457,126 @@ TEST_CASE("buildings: a draw list's runs join its own cells' primitives, never a
     atlas::passes::building_runs(0, edged, runs);
     atlas::passes::building_runs(0b0010, edged, runs);
     CHECK(runs.size() == 3);
+}
+
+namespace {
+
+/// Where two stage T's of one tile differ first ("" where they do not): every primitive, face, n-gon, item and windowed
+/// wall, the cells' ranges, the counts, and the walls heap's words.
+[[nodiscard]] std::string first_difference(const gm::TileBuildings& a, const gm::TileBuildings& b) {
+    const auto same_prim = [](const gm::Prim& p, const gm::Prim& q) {
+        return p.p == q.p && p.kind == q.kind && p.cell == q.cell && p.flags == q.flags && p.face == q.face &&
+               p.sample == q.sample && p.item == q.item && p.polygon == q.polygon && p.near_slot == q.near_slot &&
+               p.far_slot == q.far_slot && p.edge == q.edge && p.part == q.part && p.ncol == q.ncol && p.nrow == q.nrow;
+    };
+    const auto same_list = [&](const std::vector<gm::Prim>& x, const std::vector<gm::Prim>& y) {
+        return x.size() == y.size() && std::ranges::equal(x, y, same_prim);
+    };
+    if (!same_list(a.edged, b.edged)) return "the edged primitives";
+    if (!same_list(a.plain, b.plain)) return "the plain primitives";
+    if (a.edged_first != b.edged_first || a.plain_first != b.plain_first) return "the cells' ranges";
+    if (!std::ranges::equal(a.faces, b.faces, [](const gm::Face& f, const gm::Face& g) {
+            return f.base == g.base && f.normal == g.normal && f.test == g.test && f.lit == g.lit &&
+                   f.facing == g.facing;
+        }))
+        return "the faces";
+    if (!std::ranges::equal(a.polygons, b.polygons, [](const gm::Polygon& f, const gm::Polygon& g) {
+            return f.ring == g.ring && f.area == g.area && f.face == g.face && f.first == g.first &&
+                   f.count == g.count && f.item == g.item && f.kind == g.kind && f.flags == g.flags;
+        }))
+        return "the n-gons";
+    if (!std::ranges::equal(a.items, b.items, [](const gm::BuildingItem& f, const gm::BuildingItem& g) {
+            const atlas::scene::ItemSpec& x = f.spec;
+            const atlas::scene::ItemSpec& y = g.spec;
+            return x.x == y.x && x.y == y.y && x.z == y.z && x.offset == y.offset && x.cut_x == y.cut_x &&
+                   x.cut_z == y.cut_z && x.order == y.order && x.kind == y.kind && x.flags == y.flags &&
+                   x.slots == y.slots && x.min_depth == y.min_depth && x.radius == y.radius && x.owner == y.owner &&
+                   f.source == g.source && f.record == g.record && f.id == g.id && f.relation == g.relation &&
+                   f.near_slots == g.near_slots && f.far_slots == g.far_slots && f.boat_slots == g.boat_slots;
+        }))
+        return "the items";
+    if (!std::ranges::equal(a.window_walls, b.window_walls, [](const gm::WindowWall& f, const gm::WindowWall& g) {
+            return f.wall == g.wall && f.first == g.first && f.levels == g.levels && f.cols == g.cols &&
+                   f.near_slot == g.near_slot && f.far_slot == g.far_slot && f.cell == g.cell && f.style == g.style &&
+                   f.flags == g.flags;
+        }))
+        return "the windowed walls";
+    if (a.window_walls_first != b.window_walls_first) return "the windowed walls' cells";
+    if (a.windows != b.windows || a.samples != b.samples) return "the windows' or the samples' count";
+    if (a.item_facades != b.item_facades) return "the items' facades";
+    atlas::passes::BuildingTile x;
+    atlas::passes::BuildingTile y;
+    if (atlas::passes::heap_words(a, 0.0, 0.0, x) != atlas::passes::heap_words(b, 0.0, 0.0, y))
+        return "the heap's words";
+    return {};
+}
+
+} // namespace
+
+TEST_CASE("buildings: a dense tile walked in blocks on several threads is the one walk, word for word (gain 9)") {
+    const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the bundled packs are not walked in blocks here");
+        return;
+    }
+    // The pieces on threads of their own, started last first (scene::TileBuild::share's contract: every one done when
+    // it returns, in any order).
+    const auto threads = [](std::size_t pieces, const std::function<void(std::size_t)>& piece) {
+        std::vector<std::jthread> running;
+        running.reserve(pieces);
+        for (std::size_t i = pieces; i > 0; --i) running.emplace_back([&piece, i] { piece(i - 1); });
+    };
+    std::size_t tiles = 0;
+    std::size_t split = 0;
+    std::size_t items = 0;
+    for (const char* name : {"amsterdam", "grachten"}) {
+        auto pack = atlas::test::open_pack(dir + "/" + name + ".atlas");
+        ATLAS_REQUIRE(pack.has_value(), tl::describe(pack.error()));
+        const tl::RenderHead* head = pack->head();
+        ATLAS_REQUIRE(head != nullptr);
+        ATLAS_REQUIRE(pack->style() != nullptr);
+        const tl::Style& style = *pack->style();
+        std::vector<std::uint8_t> levels{0};
+        for (const tl::HeadView& v : head->views()) levels.push_back(v.tolerance);
+        std::ranges::sort(levels);
+        levels.erase(std::ranges::unique(levels).begin(), levels.end());
+        tl::Zstd zstd;
+        tl::TileDecoder decoder;
+        std::vector<std::byte> raw;
+        std::vector<std::byte> scratch;
+        atlas::Arena arena(4U << 20U, atlas::Growth::grows, "buildings test");
+        for (const std::uint8_t level : levels) {
+            for (const tl::ChunkRef& chunk : pack->chunks().level(head->levels[0])) {
+                arena.reset();
+                auto tile = pack->decode(chunk, zstd, decoder, arena, raw, scratch);
+                ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+                gm::BuildingInput in{
+                    .tile = &*tile,
+                    .head = head,
+                    .level = level,
+                    .region = {.water_y = style.water_y, .hull = style.hull, .deck = style.deck, .paris = style.paris},
+                    .kind = 0,
+                    .share = {},
+                    .blocks = 1};
+                const gm::TileBuildings one = gm::build_buildings(in);
+                std::size_t pieces = 0;
+                in.share = [&](std::size_t n, const std::function<void(std::size_t)>& piece) {
+                    pieces = n;
+                    threads(n, piece);
+                };
+                in.blocks = 8;
+                const gm::TileBuildings blocks = gm::build_buildings(in);
+                const std::string differs = first_difference(one, blocks);
+                CHECK_MESSAGE(differs.empty(),
+                              std::format("{} {}/{}/{} at level {} in {} blocks: {}", name, chunk.tile.z, chunk.tile.x,
+                                          chunk.tile.y, int{level}, pieces, differs));
+                ++tiles;
+                if (pieces > 1) ++split;
+                items += one.items.size();
+            }
+        }
+    }
+    CHECK(split > 0);
+    MESSAGE(tiles << " tiles' buildings (" << items << " of them) walked in blocks as in one walk; " << split
+                  << " of the tiles dense enough to walk in blocks");
 }

@@ -78,12 +78,21 @@ void Buildings::select(const frame::FrameState& state, frame::Selectors& selecto
 
 gpu::Result<void> Buildings::build(scene::TileBuild& b) const {
     const tiles::Style& style = b.style();
-    const geometry::TileBuildings g = geometry::build_buildings(
-        {.tile = &b.tile(),
-         .head = &b.head(),
-         .level = b.level(),
-         .region = {.water_y = style.water_y, .hull = style.hull, .deck = style.deck, .paris = style.paris},
-         .kind = kind_});
+    geometry::BuildingInput in{
+        .tile = &b.tile(),
+        .head = &b.head(),
+        .level = b.level(),
+        .region = {.water_y = style.water_y, .hull = style.hull, .deck = style.deck, .paris = style.paris},
+        .kind = kind_,
+        .share = {},
+        .blocks = 1};
+    // a dense tile's records in blocks on the residency's idle workers (gain 9), joined as one walk makes them: a block
+    // for this worker and one for each worker waiting for work now
+    if (const unsigned helpers = b.helpers(); helpers > 0) {
+        in.share = [&b](std::size_t pieces, const std::function<void(std::size_t)>& piece) { b.share(pieces, piece); };
+        in.blocks = std::size_t{helpers} + 1;
+    }
+    const geometry::TileBuildings g = geometry::build_buildings(in);
     if (g.items.empty()) return {};
     auto layout = std::make_shared<BuildingTile>();
     const std::vector<Words> words = heap_words(g, b.origin().x, b.origin().z, *layout);
