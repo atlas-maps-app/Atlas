@@ -7,7 +7,6 @@
 #include <android/choreographer.h>
 #include <android/looper.h>
 
-#include <algorithm>
 #include <condition_variable>
 #include <pthread.h>
 #include <sys/eventfd.h>
@@ -31,7 +30,6 @@ struct Timelines {
     GetLength preferred = nullptr;
     GetTimeline present = nullptr;
     GetTimeline deadline = nullptr;
-    GetLength count = nullptr; // the timelines' number (frame/Pacing.hpp chooses among them)
 
     [[nodiscard]] bool complete() const noexcept { return post && frame_time && preferred && present && deadline; }
 };
@@ -49,8 +47,6 @@ const Timelines& timelines() {
             android_symbol("AChoreographerFrameCallbackData_getFrameTimelineExpectedPresentationTimeNanos"));
         s.deadline = reinterpret_cast<GetTimeline>(
             android_symbol("AChoreographerFrameCallbackData_getFrameTimelineDeadlineNanos")); // NOLINT
-        s.count = reinterpret_cast<GetLength>(
-            android_symbol("AChoreographerFrameCallbackData_getFrameTimelinesLength")); // NOLINT
         return s;
     }();
     return t;
@@ -177,15 +173,6 @@ void RenderLoop::on_vsync33(const AChoreographerFrameCallbackData* data, void* s
     const std::size_t preferred = t.preferred(data);
     v.present_ns = t.present(data, preferred);
     v.deadline_ns = t.deadline(data, preferred);
-    if (t.count != nullptr) {
-        const std::size_t n = std::min(t.count(data), max_timelines);
-        for (std::size_t i = 0; i < n; ++i) {
-            v.presents.at(i) = t.present(data, i);
-            v.deadlines.at(i) = t.deadline(data, i);
-        }
-        v.timelines = static_cast<std::uint32_t>(n);
-        v.preferred = static_cast<std::uint32_t>(preferred);
-    }
     if (self->vsync_ && !self->stopping_) self->vsync_(v);
 }
 

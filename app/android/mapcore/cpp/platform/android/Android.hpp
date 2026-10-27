@@ -10,7 +10,6 @@
 #include <android/native_window.h>
 #include <jni.h>
 
-#include <array>
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -60,20 +59,11 @@ private:
     ANativeWindow* window_ = nullptr;
 };
 
-/// The frame timelines a vsync can carry (API 33's; the platform offers a few).
-inline constexpr std::size_t max_timelines = 8;
-
 /// One vsync as Choreographer reports it.
 struct Vsync {
     std::int64_t frame_ns = 0;    // the frame's time (the vsync)
     std::int64_t present_ns = 0;  // the preferred timeline's expected presentation time (API 33; else 0)
     std::int64_t deadline_ns = 0; // its deadline (API 33; else 0)
-    /// Every timeline offered, earliest first: its expected presentation and its deadline (API 33; else none), and
-    /// which is the preferred one (frame/Pacing.hpp chooses among them, ENGINE.md gain 15).
-    std::array<std::int64_t, max_timelines> presents{};
-    std::array<std::int64_t, max_timelines> deadlines{};
-    std::uint32_t timelines = 0;
-    std::uint32_t preferred = 0;
 };
 
 /// The render thread: a thread with an ALooper, woken by posted tasks and by Choreographer's vsync callbacks.

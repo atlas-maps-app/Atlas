@@ -16,7 +16,6 @@
 #include "check/NumericsCheck.hpp"
 #include "frame/CompositeCheck.hpp"
 #include "frame/MapFrame.hpp"
-#include "frame/Pacing.hpp"
 #include "frame/TwinCheck.hpp"
 #include "fx/Fields.hpp"
 #include "gen/spirv/modules.hpp"
@@ -544,7 +543,6 @@ private:
     /// and VK bench's colour stage is left, so no marker is on disk while nothing is drawn).
     void rest() {
         requested_ = false;
-        pacer_.rest();
         session_->rest();
         // The map at rest: its tiles, once a rest (Appendix C's `vk tiles` line).
         if (map_on_ && drew_since_rest_) log::info("{}", map_->tiles_line());
@@ -594,22 +592,12 @@ private:
             return;
         }
         drawn_vsync_ns_ = v.frame_ns;
-        // The presentation asked for: the timeline this frame's work can make, on the frames' cadence (gain 15).
-        const std::int64_t cadence = period_ns_ == 0 ? 0 : (every_second ? 2 * period_ns_ : period_ns_);
-        draw(*camera, v, present_of(v, cadence));
+        // Shown as soon as it is ready: no presentation is asked for (0), so no frame waits for a later refresh than
+        // the first it makes. Pacing to a timeline the frame's work could make (gain 15) put a refresh or more between
+        // a touch and its frame where the phone is slow; the user (27 October): it "makes slow phones feel less
+        // responsive", and more frames despite more stutter is better there.
+        draw(*camera, v, 0);
         ask_vsync();
-    }
-
-    /// The presentation a frame asks for at vsync `v`: the pacer's timeline where Choreographer offers them (API 33),
-    /// else the preferred one's (0 where there is none: as soon as possible).
-    [[nodiscard]] std::int64_t present_of(const platform::Vsync& v, std::int64_t cadence_ns) {
-        if (v.timelines == 0) return v.present_ns;
-        std::array<frame::Timeline, platform::max_timelines> t{};
-        for (std::uint32_t i = 0; i < v.timelines; ++i)
-            t.at(i) = {.present_ns = v.presents.at(i), .deadline_ns = v.deadlines.at(i)};
-        const std::size_t pick =
-            pacer_.choose(std::span(t.data(), v.timelines), v.preferred, platform::now_ns(), cadence_ns, period_ns_);
-        return t.at(pick).present_ns;
     }
 
     void draw(const style::CameraState& camera, const platform::Vsync& v, std::int64_t present_ns) {
@@ -631,11 +619,6 @@ private:
         drew_since_rest_ = true;
         const FrameRecord& r = d.record;
         hint_.report(r.start_ns, r.end_ns - r.start_ns, static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
-        // The pacer's work: the frame's CPU time and its GPU time, where the GPU's clock measured it (an earlier
-        // frame's, read back after its fence: the percentile does not mind).
-        if ((r.flags & standin::frame_flag::gpu) != 0) {
-            pacer_.add_work((r.end_ns - r.start_ns) + static_cast<std::int64_t>(static_cast<double>(r.gpu_ms) * 1e6));
-        }
         // Complete: the map's picture final for this camera (every tile resident and drawn, every fade done).
         const bool complete = !map_on_ || map_->complete();
         render_env_->CallVoidMethod(source_, presented_mid_, static_cast<jlong>(r.frame), static_cast<jlong>(r.end_ns),
@@ -649,7 +632,6 @@ private:
     JNIEnv* render_env_ = nullptr;
     platform::HintSession hint_;
     platform::Thermal thermal_;
-    frame::Pacer pacer_; // the presentation each frame asks for (gain 15)
     jobject source_ = nullptr;
     jobject camera_ = nullptr;
     const std::byte* camera_bytes_ = nullptr;
