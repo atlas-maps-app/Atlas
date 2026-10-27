@@ -830,11 +830,13 @@ void Items::record_draw(const frame::Recording& recording) {
     cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, push);
     if (counts_.faces > 0) {
         const std::uint32_t vertices = counts_.faces * shaders::ITEM_FACE_VERTICES;
-        if ((recording.state.block.camera.flags.x & shaders::CAMERA_PAINTER) == 0U) {
-            // at true depth the fans first, alone, in a pipeline that neither writes a mask nor discards, so a tiler
-            // keeps its early depth test and hidden-surface removal for them (ENGINE.md gain 18); then the edges alone.
-            // A box's faces lead one another (items.slangh), so no edge of an earlier face ties a later face's fan in
-            // depth: the order of the two draws decides no sample.
+        if ((recording.state.block.camera.flags.x & (shaders::CAMERA_PAINTER | shaders::CAMERA_DEPTH24)) == 0U) {
+            // at true depth with float depth the fans first, alone, in a pipeline that neither writes a mask nor
+            // discards, so a tiler keeps its early depth test and hidden-surface removal for them (ENGINE.md gain 18);
+            // then the edges alone. A box's faces lead one another (items.slangh), so no edge of an earlier face ties a
+            // later face's fan in depth: the order of the two draws decides no sample. On 24-bit depth a lead falls
+            // under the depth's step a few dozen metres out (0.5 r 2^-16 under 2^-24 where r < 2^-7), and there the
+            // one draw's order (each face's fan, then its edges) decides where an edge meets the next face's fan.
             cmd.pushConstants<hlsl::uint4>(*layout_, frame::push_stages, 0, hlsl::uint4{samples, 1U, 0U, 0U});
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *fills_pipeline_);
             cmd.draw(vertices, 1, 0, 0);
