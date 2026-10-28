@@ -345,6 +345,13 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
     @Volatile
     var ciDemo: Boolean = false
 
+    /**
+     * CI's light (`atlas.ci.theme`): the home's map in this theme whatever the settings say, so two launches compared
+     * pixel for pixel draw the same moment instead of whichever the live forecast gave each by then.
+     */
+    @Volatile
+    var ciTheme: app.atlas.mapview.Theme? = null
+
     init {
         if (config.mapEngine) mapData.wire()
     }

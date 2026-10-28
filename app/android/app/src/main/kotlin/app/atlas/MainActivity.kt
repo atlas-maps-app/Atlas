@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
             services.ciDemo = true
             services.useDemoLocation(Services.WESTERKERK)
         }
+        intent.getStringExtra(EXTRA_CI_THEME)?.let { t -> services.ciTheme = app.atlas.mapview.Theme.entries.firstOrNull { it.name == t } }
         // The bench shortcut: CI's home frame (the bundled Westerkerk) on the phone, with the phone's own location
         if (intent.getBooleanExtra(EXTRA_BENCH, false)) services.ciDemo = true
         // CI's debug screen: the SVG filter probes through the GPU's AGSL path (the map view's FilterProbesScreen)
@@ -94,6 +95,7 @@ class MainActivity : ComponentActivity() {
             services.ciDemo = true
             services.useDemoLocation(Services.WESTERKERK)
         }
+        intent.getStringExtra(EXTRA_CI_THEME)?.let { t -> services.ciTheme = app.atlas.mapview.Theme.entries.firstOrNull { it.name == t } }
         if (intent.getBooleanExtra(EXTRA_BENCH, false)) services.ciDemo = true
         if (intent.getStringExtra(EXTRA_SCREEN) == SCREEN_FILTERS) {
             setContent { app.atlas.mapview.FilterProbesScreen() }
@@ -196,6 +198,9 @@ class MainActivity : ComponentActivity() {
 
         /** CI: true puts the app at the demo location (the Westerkerk) instead of the phone's GPS. */
         const val EXTRA_CI = "atlas.ci"
+
+        /** CI: the home's map in this theme (a [app.atlas.mapview.Theme] name, `DAY`), whatever the live forecast says. */
+        const val EXTRA_CI_THEME = "atlas.ci.theme"
         const val SCREEN_LIST = "list"
 
         /** CI: the map view's SVG filter probes through AGSL, the GPU path, against the CPU's. */

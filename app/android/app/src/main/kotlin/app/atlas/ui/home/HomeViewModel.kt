@@ -122,7 +122,7 @@ class HomeViewModel(
     val permitted: StateFlow<Boolean> get() = services.location.permitted
 
     val style: StateFlow<MapStyle> = services.settings.data.map { p ->
-        val theme = p[SettingsKeys.MAP_THEME]?.let { runCatching { Theme.valueOf(it) }.getOrNull() } ?: Theme.AUTO
+        val theme = services.ciTheme ?: p[SettingsKeys.MAP_THEME]?.let { runCatching { Theme.valueOf(it) }.getOrNull() } ?: Theme.AUTO
         // The board's map: the home's own markers stand for places, so the tiles' points of interest are off until asked for.
         val layers = p[SettingsKeys.MAP_LAYERS]?.mapNotNull { runCatching { MapLayer.valueOf(it) }.getOrNull() }?.toSet() ?: HomeView.style.layers
         val with3d = if (p[SettingsKeys.MAP_3D] ?: true) layers + MapLayer.BUILDINGS_3D else layers - MapLayer.BUILDINGS_3D
