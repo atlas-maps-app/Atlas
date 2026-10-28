@@ -488,6 +488,8 @@ struct Records {
     std::array<const tl::Layer*, 2> layers{};
     std::array<std::vector<std::uint8_t>, 2> cells;
     std::size_t count = 0; ///< both layers'
+    /// The tile's outlines, whether each is a relation's: the building a part names (its parent) is keyed by it.
+    std::unordered_map<std::int64_t, bool> outlines;
 };
 
 /// A dense tile's walk in blocks of about this many records, at most this many.
@@ -518,14 +520,6 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
     b.paris = in.region.paris;
     b.kit_eaves = in.region.kit_eaves;
     std::vector<std::uint32_t> kept;
-    // the tile's outlines, whether each is a relation's: the building a part names (its parent) is keyed by it
-    std::unordered_map<std::int64_t, bool> outlines;
-    if (const tl::Layer* l = tile.layer(tl::LayerId::building); l != nullptr) {
-        for (std::uint32_t i = 0; i < l->count; ++i) {
-            outlines[l->integer(tl::building::id, i)] =
-                l->string(tl::building::otype, i).value_or(std::string_view{}) == "relation";
-        }
-    }
     Building bl;
     std::size_t first = 0; // the walk's index of the layer's first record
     for (std::size_t w = 0; w < walked.size(); ++w) {
@@ -631,8 +625,8 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
             if (source == Source::part) {
                 if (const auto parent = l->nullable_integer(tl::building::parent_id, i)) {
                     item.outline = *parent;
-                    const auto outline = outlines.find(*parent);
-                    item.outline_relation = outline != outlines.end() && outline->second;
+                    const auto outline = records.outlines.find(*parent);
+                    item.outline_relation = outline != records.outlines.end() && outline->second;
                 }
             }
             item.spec.building = scene::owner_key(owner_area, static_cast<std::uint64_t>(item.outline));
@@ -693,6 +687,12 @@ TileBuildings build_buildings(const BuildingInput& in) {
         if (records.layers[w] == nullptr) continue;
         records.cells[w] = cells_of(*records.layers[w], cells);
         records.count += records.layers[w]->count;
+    }
+    if (const tl::Layer* l = tile.layer(tl::LayerId::building); l != nullptr) {
+        for (std::uint32_t i = 0; i < l->count; ++i) {
+            records.outlines[l->integer(tl::building::id, i)] =
+                l->string(tl::building::otype, i).value_or(std::string_view{}) == "relation";
+        }
     }
     // The walk in blocks of records where the work is shared (a dense tile's), each on a worker, else in one; then the
     // blocks in order, each one's numbers after those of the blocks before it: the primitives, faces, n-gons, items
