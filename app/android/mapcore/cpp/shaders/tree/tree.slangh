@@ -131,6 +131,12 @@ inline uint tree_record_count(uint flags) {
     return 6u + 3u * nb;
 }
 
+/// A close tree's trunk among its job's records: its last, after its clumps' three circles each and its five limbs
+/// (close_tree's limbs_at + 5).
+inline uint tree_trunk_record(uint flags) {
+    return 3u * ((flags >> TREE_JOB_NB_SHIFT) & 0xFFu) + 5u;
+}
+
 /// The lead of a tree's k-th slot over its plane, relative to its reciprocal depth (painter.slang's true depth): 2^-16.
 static const float TREE_LEAD = 1.52587890625e-5f;
 
@@ -355,6 +361,13 @@ inline TreeRecord tree_quad(float2 p0, float2 p1, float2 p2, float2 p3, uint col
     r.b = b;
     r.c = c;
     return r;
+}
+
+/// Whether the plain fills draw record `r` (ENGINE.md gain 18), where its pass draws them apart (at true depth with
+/// float depth): a quad, whose samples are all the rasteriser's (trees_fs's coverage_of), at a depth below 1. At 1,
+/// where the near plane's clamp puts every part of its tree or thing, its slot's lead no longer keeps it apart from them.
+inline bool tree_fill(TreeRecord r) {
+    return (r.a.x & TREE_KIND) == TREE_QUAD && asfloat(r.a.w) < 1.0f;
 }
 
 /// A stroke's segment from p0 to p1, `half` its half width, its ends round where `caps` says (TREE_ROUND_START,

@@ -3,7 +3,11 @@
 // binding 0) and the frame's tones (set 2), into its records: its trunk, sunlit side, limbs and circles, each at its
 // colour and depth. trees_vs draws each record as two triangles: a quad its own corners, a circle or a round-capped
 // limb a box about it whose fragments trees_fs keeps where they lie in it, sample by sample (Vulkan's standard
-// positions), opaque, with mat's grain; trees_side_fs draws the trunk's sunlit side translucent (premultiplied).
+// positions), opaque, with mat's grain; trees_side_fs draws the trunk's sunlit side translucent (premultiplied). At true
+// depth with float depth the quads below depth 1 (tree.slangh's tree_fill: a close tree's trunk, a lamp's cap and
+// lantern, a box's top) draw apart, from the fills' list through trees_fills_vs and trees_fills_fs, which writes no mask
+// and discards nothing, so a tiler keeps its early depth test and hidden-surface removal for them (ENGINE.md gain 18);
+// trees_vs leaves them out where the push says.
 
 #include "shared/frame.slang"
 #include "shared/painter.slang"
@@ -20,15 +24,18 @@
 [[vk::binding(6, 1)]] StructuredBuffer<uint2> sun_bits;
 
 // Set 2: the jobs (written by the CPU), the tones, the records as the compute stage writes them and as the vertex
-// stage reads them, the sunlit sides alike.
+// stage reads them, the sunlit sides alike, and the fills' list (written by the CPU: each a record's index, in the
+// records' order).
 [[vk::binding(0, 2)]] StructuredBuffer<uint4> tree_jobs;
 [[vk::binding(1, 2)]] StructuredBuffer<uint> tree_tones;
 [[vk::binding(2, 2)]] RWStructuredBuffer<uint4> tree_records_out;
 [[vk::binding(3, 2)]] StructuredBuffer<uint4> tree_records;
 [[vk::binding(4, 2)]] RWStructuredBuffer<uint4> tree_sides_out;
 [[vk::binding(5, 2)]] StructuredBuffer<uint4> tree_sides;
+[[vk::binding(6, 2)]] StructuredBuffer<uint> tree_fills;
 
-/// The push constants: x the jobs (trees_cs) or the samples a pixel (the fragment stages).
+/// The push constants: x the jobs (trees_cs) or the samples a pixel (the fragment stages); y 1 where trees_vs leaves
+/// out the records the plain fills draw (tree_fill), 0 where it draws them all.
 struct TreePush {
     uint4 at;
 };
@@ -624,6 +631,25 @@ TreeOut trees_vs(uint vertex : SV_VulkanVertexID) {
     r.a = tree_records[at];
     r.b = tree_records[at + 1u];
     r.c = tree_records[at + 2u];
+    if (push.at.y == 1u && tree_fill(r)) {
+        r = tree_nothing(); // the plain fills draw it
+    }
+    return place(r, vertex - index * TREE_RECORD_VERTICES);
+}
+
+/// The plain fills (ENGINE.md gain 18): the records the fills' list names (a close tree's trunk; a lamp's cap and
+/// lantern, a box's top), each two triangles where tree_fill takes it, else nowhere.
+[shader("vertex")]
+TreeOut trees_fills_vs(uint vertex : SV_VulkanVertexID) {
+    uint index = vertex / TREE_RECORD_VERTICES;
+    uint at = tree_fills[index] * TREE_RECORD_VECTORS;
+    TreeRecord r;
+    r.a = tree_records[at];
+    r.b = tree_records[at + 1u];
+    r.c = tree_records[at + 2u];
+    if (!tree_fill(r)) {
+        r = tree_nothing();
+    }
     return place(r, vertex - index * TREE_RECORD_VERTICES);
 }
 
@@ -718,6 +744,19 @@ TreeTarget trees_fs(TreeOut v) {
     TreeTarget o;
     o.colour = float4(mat_colour(frame.camera, colour, v.position.xy, mat_grain_on(frame)), 1.0f);
     o.coverage = mask;
+    return o;
+}
+
+struct TreeFill {
+    [[vk::location(0)]] float4 colour : SV_Target0;
+};
+
+/// A plain fill: a quad's colour with mat's grain on every sample the rasteriser covers (coverage_of's own for a quad),
+/// with no mask written and nothing discarded.
+[shader("fragment")]
+TreeFill trees_fills_fs(TreeOut v) {
+    TreeFill o;
+    o.colour = float4(mat_colour(frame.camera, v.colour, v.position.xy, mat_on(frame)), 1.0f);
     return o;
 }
 
