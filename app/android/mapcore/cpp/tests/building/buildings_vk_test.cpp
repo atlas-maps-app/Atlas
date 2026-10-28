@@ -1561,14 +1561,18 @@ struct PackFile {
     return s;
 }
 
+/// The windows' decide stages a frame runs (passes::Buildings::WindowStage's order).
+using Stages = std::array<bool, passes::Buildings::window_stages>;
+
 /// Draws `cam` in X1 and C, at rest and moving, at moment `th` over `packs`, and holds every pixel to the exact raster
 /// of the pass's twin; the twin emits at least `least` elements. With `then`, the first frame's moment changes to it
 /// (the CPU's light lights every drawn tile again) and that frame is held to the twin too. With `painter`, under the
 /// painter switch: the renders' order, held to the twin's painter order. The frame lays at least `least_kit` records of
-/// a kit's walls' lines and eaves' shadows.
+/// a kit's walls' lines and eaves' shadows. Each windows' decide stage runs where the frame has its part, over the
+/// walls that have it; with `stages`, the frame runs those alone.
 void check_frames(const style::CameraState& cam, const std::string& view, std::span<const PackFile> packs,
                   const style::ThemeBlock& th, std::size_t least, const style::ThemeBlock* then = nullptr,
-                  bool painter = false, std::uint32_t least_kit = 0) {
+                  bool painter = false, std::uint32_t least_kit = 0, const Stages* stages = nullptr) {
     auto session = test::open_session();
     if (!session) return;
     const gpu::Device& device = *session->device;
@@ -1638,6 +1642,38 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
                          << windows.roof_lines << " roof lines; a kit's walls' " << windows.kit_lines << " lines and "
                          << windows.kit_shadows << " eaves' shadows");
             CHECK(windows.kit_lines + windows.kit_shadows >= least_kit);
+            // each decide stage dispatched where it has walls (its lanes), and those its part's alone: the windows'
+            // where the frame decides windows, the churches' where church windows, the material faces' where their
+            // records; none past the frame's facade walls
+            using Stage = passes::Buildings::WindowStage;
+            const auto walls_of = [&](Stage stage) { return windows.stage_walls.at(static_cast<std::size_t>(stage)); };
+            const auto dispatched = [&](std::string_view kind) {
+                std::uint32_t n = 0;
+                for (const frame::PassCounters& p : s.builder->counters()) {
+                    for (const frame::KindCount& k : p.kinds()) {
+                        if (k.kind == kind) n += k.count.dispatches;
+                    }
+                }
+                return n;
+            };
+            MESSAGE(name << ": the decide stages' walls: windows " << walls_of(Stage::windows) << ", facades "
+                         << walls_of(Stage::facades) << ", church windows " << walls_of(Stage::churches)
+                         << ", material faces " << walls_of(Stage::materials));
+            CHECK(dispatched("windows") == (walls_of(Stage::windows) > 0 ? 1U : 0U));
+            CHECK(dispatched("window facades") == (walls_of(Stage::facades) > 0 ? 1U : 0U));
+            CHECK(dispatched("window churches") == (walls_of(Stage::churches) > 0 ? 1U : 0U));
+            CHECK(dispatched("window materials") == (walls_of(Stage::materials) > 0 ? 1U : 0U));
+            if (windows.windows == 0) CHECK(walls_of(Stage::windows) == 0);
+            if (windows.facades > 0) CHECK(walls_of(Stage::facades) > 0);
+            CHECK((walls_of(Stage::churches) > 0) == (windows.churches > 0));
+            CHECK((walls_of(Stage::materials) > 0) == (windows.material_fills + windows.material_lines > 0));
+            for (const std::uint32_t n : windows.stage_walls) CHECK(n <= windows.walls);
+            if (stages != nullptr) {
+                for (std::size_t i = 0; i < passes::Buildings::window_stages; ++i) {
+                    CAPTURE(i);
+                    CHECK((windows.stage_walls.at(i) > 0) == stages->at(i));
+                }
+            }
             CHECK(kept.kept[0] <= kept.submitted[0]);
             CHECK(kept.kept[1] <= kept.submitted[1]);
             CHECK(kept.kept[2] <= kept.submitted[2]);
@@ -1864,7 +1900,11 @@ TEST_CASE("buildings: every roof shape and a houseboat drawn on the host's Vulka
     check_frames(camera(lat, lon, 20.0, 50.0, 260.0, 1080, 2400, d), "synthetic near", packs, sunny(), 15, nullptr,
                  true);
     check_frames(camera(lat, lon, 200.0, 60.0, 260.0, 1080, 2400, d), "synthetic near dry", packs, dry_th, 15);
-    check_frames(camera(lat, lon, 300.0, 45.0, 650.0, 1080, 2400, d), "synthetic far", packs, sunny(), 30);
+    // its walls beyond the windows' reach, their flat detail within the facades' 760 m: the facades' stage alone, as
+    // the phone's frames at about z 17
+    const Stages facades_alone{false, true, false, false};
+    check_frames(camera(lat, lon, 300.0, 45.0, 650.0, 1080, 2400, d), "synthetic far", packs, sunny(), 30, nullptr,
+                 false, 0, &facades_alone);
     check_frames(camera(lat, lon, 0.0, 0.0, 220.0, 1080, 2400, d), "synthetic straight down", packs, sunny(), 20);
     std::error_code ignored;
     std::filesystem::remove(path, ignored);

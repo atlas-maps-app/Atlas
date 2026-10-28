@@ -1,5 +1,6 @@
 // The buildings pass's windows (passes/Walls.hpp; shaders/building/windows.slangh): this frame slot's jobs, the
-// compute stage that decides every window of them (draw.slang's windows_cs), and the draws of the near windows' parts,
+// compute stages that decide them, each part by its own over the walls that have it (draw.slang's windows_cs,
+// window_facades_cs, church_windows_cs and window_materials_cs), and the draws of the near windows' parts,
 // their glass and their frames (window_near_vs with building_fs, window_glass_vs with window_glass_fs,
 // window_frames_vs with window_frames_fs), of the churches' own windows (church_window_vs with window_glass_fs), of
 // the walls' material faces (material_fill_vs and material_line_vs with material_fs, translucent), and the records the
@@ -13,8 +14,10 @@
 #include "twin/building/BuildingShader.hpp"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstring>
+#include <utility>
 
 namespace atlas::passes {
 
@@ -36,9 +39,18 @@ constexpr std::uint32_t job_material_lines = 404;
 constexpr std::uint32_t job_materials = 468;
 constexpr std::uint32_t job_ribs = 532;
 constexpr std::uint32_t no_near = 0xFFFF'FFFFU;
-/// The most windowed walls a job decides (windows_cs's workgroup), and the jobs a row of workgroups covers.
+/// The most windowed walls a job decides, the lanes a decide stage's workgroup takes, and the workgroups a row covers.
 constexpr std::uint32_t job_size = 64;
 constexpr std::uint32_t job_row = 65535;
+/// A decide stage's lane (draw.slang's WINDOW_LANE_): its wall's turn in its job, bits 0-5; whether the stage writes
+/// the wall's record, bit 6; its job, bits 7-31.
+constexpr std::uint32_t lane_owner = 64;
+constexpr std::uint32_t lane_job_shift = 7;
+/// Each decide stage's entry point and its name (its pipeline's and its dispatches' kind), in WindowStage's order.
+constexpr std::array<const char*, Buildings::window_stages> stage_entries{"windows_cs", "window_facades_cs",
+                                                                          "church_windows_cs", "window_materials_cs"};
+constexpr std::array<const char*, Buildings::window_stages> stage_names{"windows", "window facades", "window churches",
+                                                                        "window materials"};
 
 /// `b`, or a buffer for `use` of at least `bytes` with room to grow by half again where `b` is smaller; whether it was
 /// made anew.
@@ -91,11 +103,14 @@ gpu::Result<void> Buildings::prepare_windows(const frame::PassContext& context) 
                                                       context.layout.global_set_layout(), *w->set_layout};
     ATLAS_GPU_LET(compute_layout, gpu::make_layout(d, sets, frame::push_bytes, Stage::eCompute));
     w->compute_layout = std::move(compute_layout);
-    ATLAS_GPU_LET(decide,
-                  frame::make_compute(
-                      context, {.name = "windows", .module = "building_draw", .configuration = context.configuration},
-                      *draw_module_, "windows_cs", *w->compute_layout));
-    w->decide = std::move(decide);
+    for (std::size_t i = 0; i < window_stages; ++i) {
+        ATLAS_GPU_LET(
+            decide,
+            frame::make_compute(
+                context, {.name = stage_names.at(i), .module = "building_draw", .configuration = context.configuration},
+                *draw_module_, stage_entries.at(i), *w->compute_layout));
+        w->decide.at(i) = std::move(decide);
+    }
     // the near windows' parts, the glass, the frames and the church windows: opaque, each on its wall's plane a lead of
     // its own over its cells (the frames a lead over the glass), drawn nearest first (record_windows), the frames' test
     // GREATER_OR_EQUAL (one window's frame over another's of the same path)
@@ -218,7 +233,9 @@ gpu::Result<void> Buildings::prepare_windows(const frame::PassContext& context) 
 
 void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& state) {
     Windows& s = *windows_;
+    window_counts_ = {};
     s.jobs_now = 0;
+    s.lanes_now = {};
     s.walls_now = 0;
     s.records_now = 0;
     s.nears_now = 0;
@@ -235,6 +252,7 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     std::uint32_t kit_shadows = 0;
     std::vector<std::uint32_t>& w = s.words;
     w.clear();
+    for (std::vector<std::uint32_t>& lanes : s.lanes) lanes.clear();
     const std::span<const std::uint32_t> ranks = state.ranks->table();
     const std::span<const double> depths = state.ranks->depth();
     const bool weather = (state.block.theme.flags.x & shaders::THEME_WEATHER) != 0U;
@@ -402,6 +420,28 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
                         material_lines += m.lines;
                     }
                 }
+                // each wall a lane of each decide stage whose part it has (its records laid above), the first of its
+                // church windows', windows', flat detail's and material face's writing its wall's record
+                const auto job = static_cast<std::uint32_t>(at / job_words);
+                for (std::uint32_t k = 0; k < n; ++k) {
+                    const std::uint32_t wall = first + k;
+                    const std::uint32_t detail = detail_of(wall);
+                    const bool glazing = (b.window_flags[wall] & geometry::window_flag::glazing) != 0U &&
+                                         (detail & shaders::BUILDING_DETAIL_FACADES) != 0U;
+                    std::array<bool, window_stages> parts{};
+                    parts[std::to_underlying(WindowStage::windows)] = count_of(wall, detail) > 0;
+                    parts[std::to_underlying(WindowStage::facades)] = glazing || w[at + job_facades + k] != no_near;
+                    parts[std::to_underlying(WindowStage::churches)] = w[at + job_churches + k] != no_near;
+                    parts[std::to_underlying(WindowStage::materials)] =
+                        w[at + job_material_fills + k] != no_near || w[at + job_material_lines + k] != no_near;
+                    std::uint32_t owner = lane_owner;
+                    for (const WindowStage stage :
+                         {WindowStage::churches, WindowStage::windows, WindowStage::facades, WindowStage::materials}) {
+                        if (!parts[std::to_underlying(stage)]) continue;
+                        s.lanes[std::to_underlying(stage)].push_back((job << lane_job_shift) | owner | k);
+                        owner = 0;
+                    }
+                }
                 walls += n;
             }
         }
@@ -531,6 +571,13 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     const auto line_count = static_cast<std::uint32_t>(lines.size() / shaders::BUILDING_ROOF_LINE_VECTORS);
     const auto jobs = static_cast<std::uint32_t>(w.size() / job_words);
     if (jobs == 0 && beam_count == 0 && line_count == 0) return;
+    // after the jobs, each decide stage's lanes, a word each, to a whole uint4 (the stages read the words as uint4s)
+    std::array<std::uint32_t, window_stages> lanes_at{};
+    for (std::size_t i = 0; i < window_stages; ++i) {
+        lanes_at.at(i) = static_cast<std::uint32_t>(w.size());
+        w.insert(w.end(), s.lanes.at(i).begin(), s.lanes.at(i).end());
+    }
+    w.resize((w.size() + 3) / 4 * 4, 0U);
     // into this frame slot's buffers (its previous frame has finished: its buffers and set are free)
     const gpu::Device& device = *s.device;
     using B = vk::BufferUsageFlagBits;
@@ -623,6 +670,10 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     }
     s.slot = slot;
     s.jobs_now = jobs;
+    for (std::size_t i = 0; i < window_stages; ++i) {
+        s.lanes_now.at(i) = static_cast<std::uint32_t>(s.lanes.at(i).size());
+    }
+    s.lanes_at = lanes_at;
     s.walls_now = walls;
     s.records_now = records;
     s.nears_now = nears;
@@ -646,23 +697,34 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
                       .beams = beam_count,
                       .roof_lines = s.roof_lines_now,
                       .kit_lines = s.kit_lines_now,
-                      .kit_shadows = s.kit_shadows_now};
+                      .kit_shadows = s.kit_shadows_now,
+                      .stage_walls = s.lanes_now};
 }
 
 void Buildings::record_window_decide(const frame::Recording& recording) {
     if (windows_ == nullptr || windows_->jobs_now == 0) return;
     const Windows& s = *windows_;
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
-    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *s.decide);
     const auto frame_sets = recording.layout.sets();
     const auto offsets = recording.layout.offsets(recording.frame.slot.slot);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *s.compute_layout, 0, frame_sets, offsets);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *s.compute_layout, 2, *s.sets[s.slot], {});
-    shaders::BuildingPush push{};
-    push.at = {s.jobs_now, 0U, 0U, 0U};
-    cmd.pushConstants<shaders::BuildingPush>(*s.compute_layout, vk::ShaderStageFlagBits::eCompute, 0, push);
-    cmd.dispatch(std::min(s.jobs_now, job_row), (s.jobs_now + job_row - 1) / job_row, 1);
-    recording.counters.dispatch("windows");
+    // each stage over its lanes alone (none: not run), a workgroup 64 of them; the stages write records of their own
+    // (each wall's record the one stage that owns it), so nothing orders them among themselves
+    bool ran = false;
+    for (std::size_t i = 0; i < window_stages; ++i) {
+        const std::uint32_t lanes = s.lanes_now.at(i);
+        if (lanes == 0) continue;
+        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *s.decide.at(i));
+        shaders::BuildingPush push{};
+        push.at = {lanes, s.lanes_at.at(i), 0U, 0U};
+        cmd.pushConstants<shaders::BuildingPush>(*s.compute_layout, vk::ShaderStageFlagBits::eCompute, 0, push);
+        const std::uint32_t groups = (lanes + job_size - 1) / job_size;
+        cmd.dispatch(std::min(groups, job_row), (groups + job_row - 1) / job_row, 1);
+        recording.counters.dispatch(stage_names.at(i));
+        ran = true;
+    }
+    if (!ran) return;
     // the records, for the windows' vertex stages
     using S = vk::PipelineStageFlagBits2;
     using A = vk::AccessFlagBits2;

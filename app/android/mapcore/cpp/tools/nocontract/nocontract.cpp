@@ -8,9 +8,13 @@
 //                                                each, say why the core refuses them (constants.hpp, by the pinned
 //                                                Slang's SPIR-V grammar: grammar.hpp) and exit 1; run on every module,
 //                                                before it is embedded
+//   nocontract budget <module.spv>               print the module's bytes, its local arrays and their bytes, its local
+//                                                variables and theirs (budget.hpp); run on each compute entry point
+//                                                compiled alone, for the test spirv_budget
 //
 // Slang 2026.19 emits NoContraction on every float operation under -fp-mode precise, so fix adds nothing today; it
 // stays in the build so a compiler that stops emitting it still yields exact modules, and check still proves them.
+#include "budget.hpp"
 #include "capabilities.hpp"
 #include "constants.hpp"
 #include "exactness.hpp"
@@ -60,7 +64,8 @@ bool write_file(const char* path, std::span<const std::uint32_t> words) {
 int usage() {
     (void)std::fputs(
         "usage: nocontract check <module.spv>\n       nocontract fix <in.spv> <out.spv>\n"
-        "       nocontract capabilities <in.spv> <out.spv>\n       nocontract constants <module.spv> <source>\n",
+        "       nocontract capabilities <in.spv> <out.spv>\n       nocontract constants <module.spv> <source>\n"
+        "       nocontract budget <module.spv>\n",
         stderr);
     return 2;
 }
@@ -106,6 +111,11 @@ int main(int argc, char** argv) {
             return 1;
         }
         if (removed > 0) (void)std::printf("nocontract: %s: removed %zu unneeded capabilities\n", input, removed);
+        return 0;
+    }
+    if (mode == "budget" && args.size() == 3) {
+        const atlas::spirv::Budget b = atlas::spirv::budget_of(module, *code);
+        (void)std::printf("%zu %zu %zu %zu %zu\n", b.bytes, b.arrays, b.array_bytes, b.locals, b.local_bytes);
         return 0;
     }
     if (mode == "constants" && args.size() == 4) {

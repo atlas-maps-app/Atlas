@@ -1,0 +1,15 @@
+# The most a compute entry point may hold, compiled alone as the build compiles its module: its SPIR-V's bytes, its
+# local arrays and their bytes a thread (tools/nocontract/budget.hpp). The test spirv_budget holds each to its own line,
+# else to the line "*" (cmake/Shaders.cmake); a stage that would pass it is split instead, as the windows' decide
+# stages are (shaders/building/draw.slang).
+#
+# <module>:<entry point>  <bytes>  <local arrays>  <their bytes>
+#
+# Every compute entry point: alpha 15's windows_cs (7e44abe), the last windows' decide stage the user's PowerVR phone
+# ran. From alpha 16 the map froze there at about z 17, the first frame that ran it, once it had grown to 333,400 bytes
+# with 53 local arrays of 5,088 bytes a thread over the same walls (the audit of 28 October 2026).
+*  211280  17  780
+# Stages alpha 15 already shipped larger, unchanged since, which the phone ran: held at their alpha 15 bytes until they
+# are split under the line above.
+item_draw:items_cs  418600  17  780
+tree_draw:things_cs  234116  17  780

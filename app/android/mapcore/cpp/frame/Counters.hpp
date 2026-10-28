@@ -38,8 +38,9 @@ struct KindCount {
     Count count;
 };
 
-/// The most feature kinds a pass counts apart.
-inline constexpr std::size_t max_kinds = 16;
+/// The most feature kinds a pass counts apart (the buildings pass's close frames count 22: its cull, its roofs' edges
+/// and its four windows' decide stages, its walls, roofs, windows' and facades' parts, its translucent lines).
+inline constexpr std::size_t max_kinds = 24;
 
 /// One pass's counts for a frame.
 class PassCounters {
