@@ -62,10 +62,11 @@ object MapEngine {
 
     /**
      * The engine's flags (amsterdam.py's ATLAS_AO, ATLAS_DAYLIGHT, …): the renders' defaults, but for the Look settings'
-     * haze, vignette and grain, off until the app's settings say otherwise ([screenEffects]).
+     * haze, vignette and grain, off until the app's settings say otherwise ([screenEffects]), and the cloud shadows, off:
+     * today's map warps its last frame under the finger, and they would ride on it ([RenderOptions.cloudShadows]).
      */
     @Volatile
-    var options: RenderOptions = RenderOptions(haze = false, vignette = false, grain = false)
+    var options: RenderOptions = RenderOptions(haze = false, vignette = false, grain = false, cloudShadows = false)
 
     /**
      * Largest raster scale (device pixels per dp) for exact frames; the screen's density when lower. The frames are drawn

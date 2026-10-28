@@ -47,14 +47,16 @@ object EngineTestKit {
         val regions = LiveRegions(lib, inline, online = { false }, onChange = { MapEngine.invalidate() })
         MapEngine.useFonts(fonts)
         // the renders' look, which the map's frames are held to: the haze, the vignette and the grain on (the app's Look
-        // settings have them off unless the user turns them on)
+        // settings have them off unless the user turns them on), and the cloud shadows (today's map leaves them out)
         MapEngine.screenEffects(true, true, true)
+        MapEngine.options = MapEngine.options.copy(cloudShadows = true)
         MapEngine.regions = regions
         return regions
     }
 
     fun unwire() {
         MapEngine.screenEffects(false, false, false)
+        MapEngine.options = MapEngine.options.copy(cloudShadows = false)
         MapEngine.regions = null
         LiveEngine.forget()
         dir?.deleteRecursively()

@@ -221,6 +221,29 @@ class ScreenLayersTest {
     }
 
     @Test
+    fun todaysMapLeavesTheCloudShadowsOut() {
+        // a moment with clouds at a map pitch: wfx's cloud shadows as the renders draw them, and none when left out
+        // (today's map warps its frame under the finger, where shadows fixed to the screen would ride on it)
+        val cam = City.Camera(V3(0.0, 0.0, 0.0), 30.0, 60.0, 430.0, 36.0, 412.0, 915.0, cy = 440.0)
+        val th: Dict = LinkedHashMap(Amsterdam.THEMES.getValue("sunny"))
+        th["wx"] = linkedMapOf("cloud" to 0.42, "wind" to 4.0)
+        th["cloud_shadows"] = 0.42
+        val cfg: Dict = linkedMapOf("W" to 412, "H" to 915, "target" to listOf(0, 0, 0), "pitch" to 60.0)
+        val drawn = ScreenLayers.of(cam, th, cfg, "sunny")
+        assertTrue(drawn.cloudShadows)
+        val defs = ArrayList<String>()
+        assertTrue(drawn.wfx(defs).contains("url(#cloudsh)"))
+        assertTrue(defs.any { it.contains("id=\"cloudsh\"") })
+        val left = ScreenLayers.of(cam, th, cfg, "sunny", drawCloudShadows = false)
+        assertFalse(left.cloudShadows)
+        val none = ArrayList<String>()
+        assertFalse(left.wfx(none).contains("url(#cloudsh)"))
+        assertTrue(none.none { it.contains("id=\"cloudsh\"") })
+        // the rest of the screen layers as the renders draw them
+        assertEquals(drawn.fin(), left.fin())
+    }
+
+    @Test
     fun theNumbersAreTheRendersRules() {
         // straight down from 430 m over flat ground: every row sees the ground, the horizon far above the frame
         val cam = City.Camera(V3(0.0, 0.0, 0.0), 30.0, 89.0, 430.0, 36.0, 412.0, 915.0, cy = 440.0)

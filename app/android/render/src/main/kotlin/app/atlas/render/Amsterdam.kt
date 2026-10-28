@@ -60,6 +60,13 @@ data class RenderOptions(
     val haze: Boolean = true,
     val vignette: Boolean = true,
     val grain: Boolean = true,
+    /**
+     * wfx's cloud shadows (in [Amsterdam.render]'s screen layers), which the renders draw. Today's map leaves them out
+     * (MapEngine.options): its frame is one bitmap a gesture warps until the next exact frame, so shadows fixed to the
+     * screen would ride on it under the finger and jump back (the user, 28 October: "Its wrong that you move the shadows
+     * with your finger"). The core draws them, fixed to the screen.
+     */
+    val cloudShadows: Boolean = true,
 )
 
 /** The living map of render/amsterdam.py. Buildings, roads, nodes and the scene `S` are Python-like dicts, as Generic and Closeup read them. */
@@ -1272,7 +1279,10 @@ object Amsterdam {
         val items = ArrayList<Item>(); val glow = ArrayList<String>()
         val hy = cam.horizonY()
         // the sky, the haze, wfx and fin: fixed to the screen, from the camera, the theme and cfg alone
-        val screen = ScreenLayers.of(cam, th, cfg, thn, layer, drawHaze = opts.haze, drawVignette = opts.vignette, drawGrain = opts.grain)
+        val screen = ScreenLayers.of(
+            cam, th, cfg, thn, layer, drawHaze = opts.haze, drawVignette = opts.vignette, drawGrain = opts.grain,
+            drawCloudShadows = opts.cloudShadows,
+        )
         if (wx) {
             defs.add("<filter id=\"foliage\" x=\"-25%\" y=\"-25%\" width=\"150%\" height=\"150%\"><feTurbulence type=\"fractalNoise\" baseFrequency=\".55\" numOctaves=\"2\" seed=\"4\" result=\"n\"/><feDisplacementMap in=\"SourceGraphic\" in2=\"n\" scale=\"7\" xChannelSelector=\"R\" yChannelSelector=\"G\" result=\"d\"/><feTurbulence type=\"fractalNoise\" baseFrequency=\"1.4\" numOctaves=\"2\" seed=\"9\" result=\"m\"/><feColorMatrix in=\"m\" type=\"matrix\" values=\"0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  -3.2 0 0 0 2.35\" result=\"mask\"/><feComposite in=\"d\" in2=\"mask\" operator=\"in\" result=\"leaves\"/><feColorMatrix in=\"m\" type=\"matrix\" values=\".6 .6 .6 0 0  .6 .6 .6 0 0  .6 .6 .6 0 0  0 0 0 0 1\" result=\"tone\"/><feComposite in=\"leaves\" in2=\"tone\" operator=\"arithmetic\" k1=\".9\" k2=\".55\" k3=\"0\" k4=\"0\" result=\"t\"/><feComposite in=\"t\" in2=\"leaves\" operator=\"in\"/></filter>")
             defs.add("<filter id=\"leaf\" x=\"-15%\" y=\"-15%\" width=\"130%\" height=\"130%\"><feTurbulence type=\"fractalNoise\" baseFrequency=\".55\" numOctaves=\"2\" seed=\"3\" result=\"n\"/><feDisplacementMap in=\"SourceGraphic\" in2=\"n\" scale=\"2.6\" xChannelSelector=\"R\" yChannelSelector=\"G\"/></filter>")

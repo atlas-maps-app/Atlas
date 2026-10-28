@@ -238,10 +238,11 @@ object ScreenLayers {
      * The screen layers of a render with camera [cam], theme snapshot [th] (a `THEMES` entry with its sun vector `_L`),
      * the camera's settings [cfg] (`W`, `H`, `target`, `pitch`, `haze0`, `haze1`, `no_fin`), the `THEMES` key [themeKey]
      * and the render's [layer]. Projects the sun's point with [cam] only where the sky layer needs it, as the render does.
+     * [drawCloudShadows] false leaves wfx's cloud shadows out, where the render draws them.
      */
     fun of(
         cam: Camera, th: Map<String, Any?>, cfg: Map<String, Any?>, themeKey: String, layer: String? = null,
-        drawHaze: Boolean = true, drawVignette: Boolean = true, drawGrain: Boolean = true,
+        drawHaze: Boolean = true, drawVignette: Boolean = true, drawGrain: Boolean = true, drawCloudShadows: Boolean = true,
     ): Frame {
         val W = pyNum(cfg["W"]); val H = pyNum(cfg["H"])
         val weather = truthy(th["wx"])
@@ -265,7 +266,7 @@ object ScreenLayers {
         }
         val haze = haze(cam, pyNum(th["haze_max"]), num(cfg, "haze0", HAZE0), num(cfg, "haze1", HAZE1), v3(cfg["target"])[1], eye, hy, H)
         var cut = Double.NaN
-        if (weather && truthy(th["cloud_shadows"]) && !eye) cut = -7 * (0.62 - pyNum(th["cloud_shadows"]) * 0.3)
+        if (weather && truthy(th["cloud_shadows"]) && !eye && drawCloudShadows) cut = -7 * (0.62 - pyNum(th["cloud_shadows"]) * 0.3)
         var rain: Long? = null
         if (weather && truthy(th["wet"])) {
             @Suppress("UNCHECKED_CAST")
