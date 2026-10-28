@@ -91,9 +91,10 @@ object SettingsKeys {
     val MAP_TRUE_DEPTH = booleanPreferencesKey("map.trueDepth")
 
     /**
-     * A debug build's switches of the core's parts (on when unset): the clouds' shadows, the water's light and the
-     * facades' detail. Off, the map leaves that part out, so its panel shows on the phone what the part costs
-     * (MapEngine.leaveOut); the trees and the soft shadows are the map's own layers.
+     * A debug build's switches of the core's parts: the clouds' shadows and the water's light (off when unset, until
+     * they are worked on: the user, 28 October 2026), and the facades' detail (on when unset). Off, the map leaves that
+     * part out, so its panel shows on the phone what the part costs (MapEngine.leaveOut); the trees and the soft shadows
+     * are the map's own layers.
      */
     val MAP_CLOUD_SHADOWS = booleanPreferencesKey("map.cloudShadows")
     val MAP_WATER_LIGHT = booleanPreferencesKey("map.waterLight")

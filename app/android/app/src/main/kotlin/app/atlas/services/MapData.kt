@@ -168,10 +168,14 @@ class MapData(private val services: Services) {
                 .distinctUntilChanged()
                 .collect { trueDepth -> MapEngine.painterOrder(!trueDepth) }
         }
-        // the core's parts a debug build's Look settings switch off (on when unset), so the map's panel shows their cost
+        // the core's parts a debug build's Look settings switch, so the map's panel shows their cost: the clouds' shadows
+        // and the water's light off when unset until they are worked on (the user, 28 October: "turn off cloud shadows and
+        // water light by default without them it runs pretty well"), the facades' detail on; set before the settings are
+        // read, so no first frame draws them
+        MapEngine.leaveOut(cloudShadows = false, waterLight = false, facades = true)
         services.scope.launch {
             services.settings.data
-                .map { Triple(it[SettingsKeys.MAP_CLOUD_SHADOWS] ?: true, it[SettingsKeys.MAP_WATER_LIGHT] ?: true, it[SettingsKeys.MAP_FACADES] ?: true) }
+                .map { Triple(it[SettingsKeys.MAP_CLOUD_SHADOWS] ?: false, it[SettingsKeys.MAP_WATER_LIGHT] ?: false, it[SettingsKeys.MAP_FACADES] ?: true) }
                 .distinctUntilChanged()
                 .collect { (cloudShadows, waterLight, facades) -> MapEngine.leaveOut(cloudShadows, waterLight, facades) }
         }
