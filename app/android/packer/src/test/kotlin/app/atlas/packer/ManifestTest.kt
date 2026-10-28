@@ -2,6 +2,7 @@ package app.atlas.packer
 
 import app.atlas.tiles.PackCatalog
 import app.atlas.tiles.PackFile
+import app.atlas.tiles.WindowsIndex
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -85,6 +86,8 @@ class ManifestTest {
             assertTrue(region.id, region.country!!.length == 2)
         }
         assertEquals(listOf("tuscany"), r.filter { it.clip }.map { it.id })
+        // Norway's polygon holds some 4.4 million L14 windows: an index too big for the phone to download whole
+        assertEquals(listOf("norway"), r.filter { !it.windows }.map { it.id })
     }
 
     @Test
@@ -221,6 +224,42 @@ class ManifestTest {
         assertTrue(atlasFile.isSplit)
         assertEquals(parts.map { it["url"]!!.jsonPrimitive.content }, atlasFile.parts.map { it.url })
         assertEquals(size, atlasFile.bytes)
+    }
+
+    @Test
+    fun theWindowsDataGoesUpInPartsBesideItsIndexWhole() {
+        val dir = tmp.newFolder("windows")
+        placesFiles(dir, "luxembourg")
+        // three windows' gzip members' worth of bytes, and their index as `packer windows` writes it
+        val data = File(dir, "luxembourg.windows").apply { writeBytes(ByteArray(3000) { (it * 7).toByte() }) }
+        val sha = ByteArray(32)
+        val entries = listOf(
+            WindowsIndex.Entry(8500, 5600, 0, 1000, sha), WindowsIndex.Entry(8500, 5601, 1000, 1200, sha), WindowsIndex.Entry(8501, 5600, 2200, 800, sha),
+        )
+        File(dir, "luxembourg.windows.idx").outputStream().use {
+            WindowsIndex.of(14, WindowsIndex.QUERY, Instant.parse("2026-10-26T21:24:46Z"), 3000, entries).write(it)
+        }
+        val whole = PackFiles.sha256(data)
+        val e = packs(Manifest.build(dir, base, null, splitBytes = 1024)).single()
+        val files = e["files"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(listOf("places", "windows", "windows-index"), files.map { it["kind"]!!.jsonPrimitive.content })
+        val (_, windows, index) = files
+        assertEquals(whole, windows["sha256"]!!.jsonPrimitive.content)
+        assertEquals(3000L, windows["bytes"]!!.jsonPrimitive.long)
+        assertNull(windows["url"])
+        assertEquals(listOf(1024L, 1024L, 952L), windows["parts"]!!.jsonArray.map { it.jsonObject["bytes"]!!.jsonPrimitive.long })
+        // the index whole, whatever its size, with what it says of itself
+        assertNull(index["parts"])
+        assertEquals("$base/luxembourg.windows.idx", index["url"]!!.jsonPrimitive.content)
+        assertEquals(WindowsIndex.HEAD_BYTES + 3L * WindowsIndex.ENTRY_BYTES, index["bytes"]!!.jsonPrimitive.long)
+        assertEquals(listOf(WindowsIndex.VERSION, 14, WindowsIndex.QUERY, 3), listOf("format", "level", "query", "windows").map { index[it]!!.jsonPrimitive.int })
+        // run again on the parts: the entry already written stands
+        assertEquals(e, packs(Manifest.build(dir, base, null)).single())
+        // and the app sees both
+        val pack = PackCatalog.parse(Manifest.pretty(Manifest.build(dir, base, null))).packs.single()
+        assertTrue(pack.windows!!.isSplit)
+        assertEquals(3000L, pack.windows!!.bytes)
+        assertEquals("$base/luxembourg.windows.idx", pack.windowsIndex!!.url)
     }
 
     @Test

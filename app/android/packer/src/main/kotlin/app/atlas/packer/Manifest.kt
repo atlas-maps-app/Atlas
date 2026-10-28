@@ -3,6 +3,8 @@ package app.atlas.packer
 import app.atlas.geo.BBox
 import app.atlas.render.data.PackManifest
 import app.atlas.render.data.PackReader
+import app.atlas.tiles.PackFile
+import app.atlas.tiles.WindowsIndex
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -27,7 +29,8 @@ import java.time.Instant
 
 /**
  * `packs.json`, the list of packs the app offers: per region its id, name, country, box, the OSM time its data is
- * current to, and its files (kind, URL, bytes, SHA-256): the region pack and the place store. A build job writes one
+ * current to, and its files (kind, URL, bytes, SHA-256): the region pack, the place store, and the windows' data with
+ * its index (`packer windows`: the data is cut into parts over the split size, the index stays whole). A build job writes one
  * `<id>.pack.json` per region it built; the publishing job merges those with the previous list. The vector tiles
  * (OpenMapTiles' schema) the list once carried are retired: an earlier entry's tiles are left out.
  */
@@ -37,8 +40,8 @@ object Manifest {
 
     const val ATTRIBUTION = "Map data © OpenStreetMap contributors, under the Open Database Licence (ODbL 1.0). Extracts by Geofabrik."
 
-    /** A region the workflow builds, from `packs/regions.json`. */
-    data class Region(val id: String, val name: String, val country: String?, val url: String?, val bbox: BBox?, val clip: Boolean)
+    /** A region the workflow builds, from `packs/regions.json`; [windows] false where it gets no windows' data. */
+    data class Region(val id: String, val name: String, val country: String?, val url: String?, val bbox: BBox?, val clip: Boolean, val windows: Boolean = true)
 
     private val pretty = Json { prettyPrint = true }
 
@@ -49,14 +52,17 @@ object Manifest {
 
     fun corners(b: BBox): List<Double> = listOf(round(b.west), round(b.south), round(b.east), round(b.north))
 
-    /** Reads `packs/regions.json`: `{"regions": [{"id", "name", "country", "url", "bbox": [w, s, e, n], "clip"}]}`. */
+    /** Reads `packs/regions.json`: `{"regions": [{"id", "name", "country", "url", "bbox": [w, s, e, n], "clip", "windows"}]}`. */
     fun readRegions(file: File): List<Region> {
         val root = Json.parseToJsonElement(file.readText()).jsonObject
         return root["regions"]!!.jsonArray.map { e ->
             val o = e.jsonObject
             val id = o.str("id") ?: error("a region without an id in ${file.name}")
             require(ID.matches(id)) { "region id '$id' must be lower-case letters, digits and dashes" }
-            Region(id, o.str("name") ?: id, o.str("country"), o.str("url"), o.box("bbox"), o["clip"]?.jsonPrimitive?.booleanOrNull ?: false)
+            Region(
+                id, o.str("name") ?: id, o.str("country"), o.str("url"), o.box("bbox"), o["clip"]?.jsonPrimitive?.booleanOrNull ?: false,
+                o["windows"]?.jsonPrimitive?.booleanOrNull ?: true,
+            )
         }.also { list ->
             val dup = list.groupBy { it.id }.filterValues { it.size > 1 }.keys
             require(dup.isEmpty()) { "regions listed twice: $dup" }
@@ -65,7 +71,8 @@ object Manifest {
 
     /**
      * Writes `<id>.pack.json` for every region with files in [dir] (region pack `<id>.atlas`, places `<id>.places.db.gz`
-     * with its `<id>.places.json` sidecar), their URLs under [urlBase], and returns the merged list: the [previous]
+     * with its `<id>.places.json` sidecar, windows' data `<id>.windows` with its index `<id>.windows.idx`), their URLs
+     * under [urlBase], and returns the merged list: the [previous]
      * list, then any `<id>.pack.json` already in [dir], then the fresh entries, each replacing the one before. With
      * [regions], only listed regions stay, in their order.
      */
@@ -92,6 +99,8 @@ object Manifest {
                 n.endsWith(ATLAS_SUFFIX) -> n.removeSuffix(ATLAS_SUFFIX)
                 n.endsWith(PLACES_GZ_SUFFIX) -> n.removeSuffix(PLACES_GZ_SUFFIX)
                 n.endsWith(PLACES_SUFFIX) -> n.removeSuffix(PLACES_SUFFIX)
+                n.endsWith(WINDOWS_SUFFIX) -> n.removeSuffix(WINDOWS_SUFFIX)
+                n.endsWith(WINDOWS_INDEX_SUFFIX) -> n.removeSuffix(WINDOWS_INDEX_SUFFIX)
                 else -> null
             }
         }.distinct()
@@ -117,12 +126,15 @@ object Manifest {
         val places = File(dir, id + PLACES_GZ_SUFFIX).takeIf { it.isFile } ?: File(dir, id + PLACES_SUFFIX).takeIf { it.isFile }
         val atlas = File(dir, id + ATLAS_SUFFIX).takeIf { it.isFile }
         val atlasHead = atlas?.let { runCatching { PackReader.open(it).use { r -> r.manifest } }.getOrNull() }
+        val windows = File(dir, id + WINDOWS_SUFFIX).takeIf { it.isFile }
+        val windowsIndex = File(dir, id + WINDOWS_INDEX_SUFFIX).takeIf { it.isFile }
+        val indexHead = windowsIndex?.let { WindowsIndex.read(it.readBytes()) }
         val earlier = before?.get("files")?.let { it as? JsonArray }?.mapNotNull { it as? JsonObject }.orEmpty()
         fun earlier(kind: String) = earlier.firstOrNull { it.str("kind") == kind }
-        require(places != null || atlas != null || earlier.isNotEmpty()) { "no files for region $id in $dir" }
+        require(places != null || atlas != null || windows != null || windowsIndex != null || earlier.isNotEmpty()) { "no files for region $id in $dir" }
         val sidecar = File(dir, "$id.places.json").takeIf { it.isFile }?.let { Json.parseToJsonElement(it.readText()).jsonObject }
         val bbox = region?.bbox ?: sidecar?.box("bbox") ?: atlasHead?.bbox ?: before?.box("bbox")
-        val osmTime = sidecar?.str("osm_timestamp") ?: atlasHead?.dataTime ?: before?.str("osm_timestamp")
+        val osmTime = sidecar?.str("osm_timestamp") ?: atlasHead?.dataTime ?: indexHead?.date?.toString() ?: before?.str("osm_timestamp")
         val atlasEntry = if (atlas != null) buildJsonObject {
             put("kind", "atlas")
             file(atlas, base, splitBytes)
@@ -141,6 +153,19 @@ object Manifest {
             sidecar?.long("addresses")?.let { put("addresses", it) }
             sidecar?.long("trees")?.let { put("trees", it) }
         } else earlier("places")
+        val windowsEntry = if (windows != null) buildJsonObject {
+            put("kind", PackFile.WINDOWS)
+            file(windows, base, splitBytes)
+        } else earlier(PackFile.WINDOWS)
+        // the index is downloaded whole, never in parts
+        val indexEntry = if (windowsIndex != null && indexHead != null) buildJsonObject {
+            put("kind", PackFile.WINDOWS_INDEX)
+            file(windowsIndex, base, Long.MAX_VALUE)
+            put("format", WindowsIndex.VERSION)
+            put("level", indexHead.level)
+            put("query", indexHead.query)
+            put("windows", indexHead.size)
+        } else earlier(PackFile.WINDOWS_INDEX)
         return buildJsonObject {
             put("id", id)
             put("name", region?.name ?: before?.str("name") ?: id)
@@ -148,7 +173,7 @@ object Manifest {
             bbox?.let { b -> putJsonArray("bbox") { for (v in corners(b)) add(v) } }
             osmTime?.let { put("osm_timestamp", it) }
             (releaseOf(base) ?: before?.str("release"))?.let { put("release", it) }
-            put("files", JsonArray(listOfNotNull(placesEntry, atlasEntry)))
+            put("files", JsonArray(listOfNotNull(placesEntry, atlasEntry, windowsEntry, indexEntry)))
         }
     }
 
@@ -203,5 +228,9 @@ object Manifest {
     const val PLACES_GZ_SUFFIX = ".places.db.gz"
     const val PLACES_SUFFIX = ".places.db"
     const val PACK_SUFFIX = ".pack.json"
+
+    /** The windows' data (`packer windows`) and its index. */
+    const val WINDOWS_SUFFIX = ".windows"
+    const val WINDOWS_INDEX_SUFFIX = ".windows.idx"
     private val ID = Regex("[a-z0-9][a-z0-9-]*")
 }

@@ -1,5 +1,5 @@
 {
-  "about": "The offline packs .github/workflows/packs.yml builds: per region a Geofabrik extract (url), the box the app shows it for (bbox: west, south, east, north), and clip when the extract is bigger than the region (tiles and places are then cut to the box). Ids are lower-case letters, digits and dashes, and name the release files.",
+  "about": "The offline packs .github/workflows/packs.yml builds: per region a Geofabrik extract (url), the box the app shows it for (bbox: west, south, east, north), and clip when the extract is bigger than the region (tiles, places and windows are then cut to the box). Each region gets the windows' data the phone builds its windows from (packer windows: every L14 window inside the extract's polygon), unless windows is false: Norway's polygon holds some 4.4 million L14 windows, most of them sea, whose index (52 bytes a window, 230 MB) the phone would download whole. Ids are lower-case letters, digits and dashes, and name the release files.",
   "regions": [
     {
       "id": "netherlands",
@@ -49,7 +49,8 @@
       "name": "Norway",
       "country": "NO",
       "url": "https://download.geofabrik.de/europe/norway-latest.osm.pbf",
-      "bbox": [-11.368, 57.5532, 35.5271, 81.052]
+      "bbox": [-11.368, 57.5532, 35.5271, 81.052],
+      "windows": false
     },
     {
       "id": "greater-london",
