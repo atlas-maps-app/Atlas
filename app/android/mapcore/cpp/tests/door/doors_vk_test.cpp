@@ -241,10 +241,10 @@ Blended blend_glyphs(test::items::Raster& r, std::span<const layouts::text_slug:
 }
 
 /// Draws `cam` at 1x and 4x, at rest and moving, at true depth and under the painter switch, at moment `th`, and holds
-/// every pixel to the exact raster of the pass's records and its numbers' glyphs; at least `least` doors drawn, some
-/// with their plates.
+/// every pixel to the exact raster of the pass's records and its numbers' glyphs; at least `least` doors drawn, and
+/// where `plates`, some with their plates.
 void check_frames(const style::CameraState& cam, const std::string& view, const std::string& pack,
-                  const style::ThemeBlock& th, std::uint32_t least) {
+                  const style::ThemeBlock& th, std::uint32_t least, bool plates = true) {
     auto session = test::open_session();
     if (!session) return;
     const gpu::Device& device = *session->device;
@@ -297,10 +297,12 @@ void check_frames(const style::CameraState& cam, const std::string& view, const 
                              << got.tied << " where two colours tie in depth, " << got.seam
                              << " on the composite's seam, " << got.wrong << " otherwise");
                 CHECK(counts.doors >= least);
-                CHECK(rects > 0);
                 CHECK(rects == texts);
-                CHECK(counts.glyphs > 0);
-                CHECK(b.pixels > 0);
+                if (plates) {
+                    CHECK(rects > 0);
+                    CHECK(counts.glyphs > 0);
+                    CHECK(b.pixels > 0);
+                }
                 CHECK_MESSAGE(got.wrong == 0, name << ": " << got.first);
                 CHECK(static_cast<double>(got.boundary + got.tied) <= 0.01 * static_cast<double>(got.pixels));
                 for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, name << ": " << m);
@@ -325,6 +327,10 @@ TEST_CASE("doors: a row of doors, stoops, plates and numbers on the host's Vulka
     const style::CameraState near = door_row(82.21656426574002, -192.11612399270084, 60.0, 50.0);
     check_frames(near, "the row of doors by day", pack, test::sunny(), 10);
     check_frames(near, "the row of doors on the wet night", pack, test::night_weather(), 10);
+    // at the map's nearest zoom and the gestures' steepest tilt: the doors in the frame's lower part, their plates
+    // (within 45 m) at its foot if at all
+    check_frames(door_row(98.86787550282801, -182.6922473097533, 70.0, 91.0), "the row of doors from the map's nearest",
+                 pack, test::sunny(), 5, false);
 }
 
 #endif
