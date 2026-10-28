@@ -146,6 +146,31 @@ class RenderTilesTest {
     }
 
     /**
+     * The app's set (ENGINE.md step 3, one Netherlands): the index lists the canal ring alone, which the map draws, the
+     * Westerkerk's place among it; the Westerkerk's pack is written beside it for VK facts' hash lines; a pack the set
+     * does not hold is refused before anything is made.
+     */
+    @Test
+    fun `the app's set lists the packs the map draws, the Westerkerk beside them for the checks`() {
+        assumeTrue(File(repo, "cache/packs/regions/grachten.atlas").isFile)
+        val out = tmp.newFolder("tiles")
+        val args = listOf("render-tiles", "--bundled", out.path, "--repo", repo.path, "--work", tmp.newFolder("work").path, "--quiet")
+        try {
+            RenderTiles.run(args + listOf("--draw", "grachten,rotterdam")) {}
+            fail("a pack the set does not hold was listed")
+        } catch (e: UsageException) {
+            assertTrue(e.message!!.contains("rotterdam"))
+        }
+        assertEquals(0, RenderTiles.run(args + listOf("--draw", "grachten")) {})
+        val index = Json.parseToJsonElement(File(out, RenderTiles.INDEX).readText()) as JsonObject
+        val packs = (index["packs"] as JsonArray).map { it as JsonObject }
+        assertEquals(listOf("grachten"), packs.map { it["id"]!!.jsonPrimitive.content })
+        assertEquals(RenderTiles.sha256(File(out, "grachten.atlas")), packs.single()["sha256"]!!.jsonPrimitive.content)
+        assertEquals(setOf("amsterdam.atlas", "grachten.atlas", RenderTiles.INDEX), out.list()!!.toSet())
+        assertEquals("ATLASPCK", String(File(out, "amsterdam.atlas").readBytes().copyOf(8), Charsets.US_ASCII))
+    }
+
+    /**
      * The renders' list as packs.yml's step runs it: every region gets its render pack or SceneToTiles' own reason; the
      * render packs are the bundled set's bytes where both are made, within 35 % of their element packs (grachten's
      * measured 35.5 % excepted); a second run over its own list changes nothing; and the library reads the list, fetches

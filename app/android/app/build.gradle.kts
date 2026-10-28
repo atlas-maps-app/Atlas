@@ -203,7 +203,9 @@ tasks.withType<Test>().configureEach {
 // The bundled render tiles (plan-vector K2): the vector engine's first look on a first launch. The Westerkerk's living map
 // (from the app's bundled pack) and the canal ring (from packs-renders' grachten.atlas, fetched once into the repo's
 // cache and checked against its published SHA-256) as format-3 render packs, made at build time by the packer through the
-// same engine port the renders come from, into the assets' tiles/ folder with their index bundled.json. They are built,
+// same engine port the renders come from, into the assets' tiles/ folder with their index bundled.json, which lists the
+// canal ring alone: it draws the Westerkerk's place in the cut and looks of the windows around it, so zooming in there
+// switches nothing (ENGINE.md step 3, one Netherlands); the Westerkerk's pack stays for VK facts' hash lines. They are built,
 // not committed: the task runs again when the Westerkerk's pack or the packer's classpath (the engine port, the
 // render-tile compiler, the packer and their libraries; the canal ring's published hash is in the packer) changes, and
 // is up to date, or taken from the build cache, otherwise.
@@ -268,7 +270,7 @@ abstract class BundledTiles @Inject constructor(private val exec: ExecOperations
                 maxHeapSize = "2g"
                 args(
                     "--bundled", File(out, "tiles").absolutePath, "--repo", root.absolutePath, "--packs", File(root, "cache/packs/regions").absolutePath,
-                    "--work", work.absolutePath, "--quiet",
+                    "--work", work.absolutePath, "--draw", "grachten", "--quiet",
                 )
                 // with the core's tool, the canal ring in the renders' New looks, as the windows the phone builds around
                 // it in the Netherlands draw (the user, 28 October: "that orange buildings look when zoomed out")

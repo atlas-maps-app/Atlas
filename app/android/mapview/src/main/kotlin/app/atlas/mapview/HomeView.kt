@@ -42,7 +42,7 @@ object HomeView {
 
     /**
      * The Westerkerk's living map (amsterdam.py's main camera: target 10 m west and 30 m north of 52.3746 N 4.8840 E,
-     * yaw 52°, 38° below the horizon, 430 m away), the view the app's bundled region draws at once.
+     * yaw 52°, 38° below the horizon, 430 m away), the view the app's bundled canal ring draws at once.
      */
     val westerkerk: CameraPosition by lazy {
         val f = RegionFrame.living()

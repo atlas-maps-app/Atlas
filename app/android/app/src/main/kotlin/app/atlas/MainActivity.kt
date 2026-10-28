@@ -50,7 +50,7 @@ class MainActivity : ComponentActivity() {
             services.useDemoLocation(Services.WESTERKERK)
         }
         intent.getStringExtra(EXTRA_CI_THEME)?.let { t -> services.ciTheme = app.atlas.mapview.Theme.entries.firstOrNull { it.name == t } }
-        // The bench shortcut: CI's home frame (the bundled Westerkerk) on the phone, with the phone's own location
+        // The bench shortcut: CI's home frame (the Westerkerk, from the bundled canal ring) on the phone, with the phone's own location
         if (intent.getBooleanExtra(EXTRA_BENCH, false)) services.ciDemo = true
         // CI's debug screen: the SVG filter probes through the GPU's AGSL path (the map view's FilterProbesScreen)
         if (intent.getStringExtra(EXTRA_SCREEN) == SCREEN_FILTERS) {
