@@ -212,10 +212,264 @@ TEST_CASE("looks: the canal ring's windows in the Dutch kit and in the New looks
             ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
             CHECK(gpu::write_ppm(*pixels,
                                  (fs::path(out) / std::format("{}_{}.ppm", name, kit ? "kit" : "new")).string()));
+            // ATLAS_LOOK_COST: each look's frame at rest from 700 m in to 90 m (draws, triangles, fragments, the GPU's
+            // time), what the phone's GPU is asked as the map zooms in; the nearest written as <name>_<look>_near.ppm
+            if (!environment("ATLAS_LOOK_COST").empty()) {
+                for (const double d : {700.0, 450.0, 300.0, 200.0, 130.0, 90.0}) {
+                    const style::CameraState at = camera(lat, lon, 22.0, 48.0, d);
+                    const auto by = std::chrono::steady_clock::now() + std::chrono::seconds(240);
+                    int n = 0;
+                    while (std::chrono::steady_clock::now() < by) {
+                        const standin::Drawn s = session.draw(at, {});
+                        if (s.stale) session.remake();
+                        n += s.drawn ? 1 : 0;
+                        if (map.complete() && n > 4) break;
+                        if (!map.animating() && map.world() != nullptr) map.world()->residency().wait_idle();
+                    }
+                    // the GPU's times are an earlier frame's: three more at rest, the last one's read
+                    standin::FrameRecord r{};
+                    for (int k = 0; k < 3; ++k) {
+                        const standin::Drawn s = session.draw(at, {});
+                        if (s.drawn) r = s.record;
+                    }
+                    MESSAGE(std::format("cost {} {:>4.0f} m: {} draws, {}k triangles, {}k fragments, gpu {:.1f} ms "
+                                        "(main {:.1f}, offscreen {:.1f}, after {:.1f}), record {:.1f} ms",
+                                        kit ? "kit" : "new", d, r.draws, r.triangles_k, r.fragments_k, r.gpu_ms,
+                                        r.gpu_main_ms, r.gpu_offscreen_ms, r.gpu_after_ms, r.record_ms));
+                }
+                auto near = kept->kept->read(kept->kept->latest());
+                ATLAS_REQUIRE(near.has_value(), near.error().text());
+                CHECK(gpu::write_ppm(
+                    *near, (fs::path(out) / std::format("{}_{}_near.ppm", name, kit ? "kit" : "new")).string()));
+            }
         }
         std::error_code ec;
         fs::remove_all(guard, ec);
     }
+}
+
+TEST_CASE("looks: the canal ring zoomed out, as the app draws its bundled pack") {
+    // the bundled canal ring (ATLAS_TILES_DIR's grachten, named as the app names it) from 1.5, 3 and 6 km, written as
+    // <out>/ring_<distance>.ppm with the frame's light in the log: what the map shows zoomed out over Amsterdam
+    const std::string out = environment("ATLAS_LOOK_OUT");
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (out.empty() || tiles_dir.empty()) {
+        MESSAGE("ATLAS_LOOK_OUT or ATLAS_TILES_DIR is not set: the canal ring is not drawn here");
+        return;
+    }
+    if (!test::open_session()) return;
+    std::vector<frame::MapPack> packs;
+    std::uint64_t number = 0;
+    for (const char* id : {"amsterdam", "grachten"}) {
+        frame::MapPack p;
+        p.number = ++number;
+        p.ref.id = id;
+        p.ref.kind = tiles::PackKind::bundled;
+        p.ref.path = (fs::path(tiles_dir) / (std::string(id) + ".atlas")).string();
+        packs.push_back(std::move(p));
+    }
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-ring-{}", ::getpid());
+    fs::create_directories(guard);
+    auto started = gpu::start_guarded({.guard_dir = guard,
+                                       .cache_file = guard / "pipelines.bin",
+                                       .system = "host-test-system",
+                                       .build = "look-test",
+                                       .present = true,
+                                       .spirv = 42});
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        (void)map.set_packs(packs);
+        CHECK(session.map(&map).empty());
+        auto window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        map.set_theme(sunny());
+        for (const double d : {1500.0, 3000.0, 6000.0}) {
+            style::CameraState cam = camera(52.3760, 4.8920, 22.0, 40.0, d);
+            cam.pack_id = 2;
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(240);
+            int frames = 0;
+            while (std::chrono::steady_clock::now() < until) {
+                const standin::Drawn s = session.draw(cam, {});
+                if (s.stale) session.remake();
+                frames += s.drawn ? 1 : 0;
+                if (map.complete() && frames > 4) break;
+                if (!map.animating() && map.world() != nullptr) map.world()->residency().wait_idle();
+            }
+            MESSAGE(std::format("ring {:.0f} m: {} frames, complete {}, pack {}, tone {}", d, frames, map.complete(),
+                                map.drawn_pack(), (map.builder()->state().theme.flags & style::theme_flag::tone) != 0));
+            ATLAS_REQUIRE(kept->kept != nullptr);
+            auto pixels = kept->kept->read(kept->kept->latest());
+            ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+            CHECK(gpu::write_ppm(*pixels, (fs::path(out) / std::format("ring_{:.0f}.ppm", d)).string()));
+        }
+        // ATLAS_LOOK_COST: the bundled Westerkerk (pack 1) at the camera the windows' table takes, from 700 m in to
+        // 90 m, each frame at rest as that table prints it
+        if (!environment("ATLAS_LOOK_COST").empty()) {
+            for (const double d : {700.0, 450.0, 300.0, 200.0, 130.0, 90.0}) {
+                style::CameraState at = camera(52.3746, 4.8840, 22.0, 48.0, d);
+                at.pack_id = 1;
+                const auto by = std::chrono::steady_clock::now() + std::chrono::seconds(240);
+                int n = 0;
+                while (std::chrono::steady_clock::now() < by) {
+                    const standin::Drawn s = session.draw(at, {});
+                    if (s.stale) session.remake();
+                    n += s.drawn ? 1 : 0;
+                    if (map.complete() && n > 4) break;
+                    if (!map.animating() && map.world() != nullptr) map.world()->residency().wait_idle();
+                }
+                standin::FrameRecord r{};
+                for (int k = 0; k < 3; ++k) {
+                    const standin::Drawn s = session.draw(at, {});
+                    if (s.drawn) r = s.record;
+                }
+                MESSAGE(std::format("cost {} {:>4.0f} m: {} draws, {}k triangles, {}k fragments, gpu {:.1f} ms "
+                                    "(main {:.1f}, offscreen {:.1f}, after {:.1f}), record {:.1f} ms",
+                                    map.drawn_pack(), d, r.draws, r.triangles_k, r.fragments_k, r.gpu_ms, r.gpu_main_ms,
+                                    r.gpu_offscreen_ms, r.gpu_after_ms, r.record_ms));
+            }
+            auto near = kept->kept->read(kept->kept->latest());
+            ATLAS_REQUIRE(near.has_value(), near.error().text());
+            CHECK(gpu::write_ppm(*near, (fs::path(out) / "westerkerk_bundled_near.ppm").string()));
+        }
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
+TEST_CASE("looks: a pinch in from the canal ring to the street, as the app names each frame's pack") {
+    // ATLAS_LOOK_ZOOM: the bundled packs (ATLAS_TILES_DIR) and the New looks' windows the first case built (in
+    // ATLAS_LOOK_OUT/windows-new), the camera going from 3 km in to 100 m over 90 frames without rest, as a pinch does,
+    // each frame's pack named as the app's PackList names it (of the packs whose box holds the target, the one whose
+    // views fit the distance best, the smaller box on a tie), then at rest; each frame's pack, completeness and cost
+    // logged, and every sixth frame written as zoom_<n>.ppm
+    const std::string out = environment("ATLAS_LOOK_OUT");
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (out.empty() || tiles_dir.empty() || environment("ATLAS_LOOK_ZOOM").empty()) {
+        MESSAGE("ATLAS_LOOK_ZOOM, ATLAS_LOOK_OUT or ATLAS_TILES_DIR is not set: no pinch drawn here");
+        return;
+    }
+    if (!test::open_session()) return;
+    struct Listed {
+        frame::MapPack pack;
+        double south, west, north, east;
+        std::vector<double> distances;
+    };
+    std::vector<Listed> listed;
+    std::uint64_t number = 0;
+    // amsterdam: the living map (its view 430 m); grachten: its views' distances; a window: no views, the living one's
+    const auto add = [&](std::string id, tiles::PackKind kind, const fs::path& file, std::array<double, 4> box,
+                         std::vector<double> distances) {
+        frame::MapPack p;
+        p.number = ++number;
+        p.ref.id = std::move(id);
+        p.ref.kind = kind;
+        p.ref.path = file.string();
+        listed.push_back({.pack = std::move(p),
+                          .south = box[0],
+                          .west = box[1],
+                          .north = box[2],
+                          .east = box[3],
+                          .distances = std::move(distances)});
+    };
+    add("amsterdam", tiles::PackKind::bundled, fs::path(tiles_dir) / "amsterdam.atlas", {52.371, 4.878, 52.378, 4.891},
+        {430.0});
+    add("grachten", tiles::PackKind::bundled, fs::path(tiles_dir) / "grachten.atlas", {52.36, 4.872, 52.393, 4.922},
+        {2700.0, 2300.0, 1600.0});
+    for (const auto& e : fs::directory_iterator(fs::path(out) / "windows-new")) {
+        if (e.path().extension() != ".atlas") continue;
+        const auto [x, y] = [&] {
+            const std::string stem = e.path().stem().string();
+            const auto dash = stem.find('-');
+            return std::pair{static_cast<std::uint32_t>(std::stoul(stem.substr(0, dash))),
+                             static_cast<std::uint32_t>(std::stoul(stem.substr(dash + 1)))};
+        }();
+        const std::array<std::int32_t, 4> b = tiles::tile_box(tiles::TileKey(14, x, y));
+        add("window/" + e.path().stem().string(), tiles::PackKind::window, e.path(),
+            {b[0] / 1e7, b[1] / 1e7, b[2] / 1e7, b[3] / 1e7}, {430.0});
+    }
+    const auto choose = [&](double lat, double lon, double distance) -> std::uint64_t {
+        const Listed* best = nullptr;
+        double best_fit = 1e300;
+        for (const Listed& l : listed) {
+            if (lat < l.south || lat > l.north || lon < l.west || lon > l.east) continue;
+            double fit = 1e300;
+            for (const double v : l.distances) {
+                fit = std::min(fit, std::fabs(pymath::strict::log(std::max(distance, 1.0) / v)));
+            }
+            const bool tie = std::fabs(fit - best_fit) <= 1e-9;
+            const auto area = [](const Listed& a) { return (a.north - a.south) * (a.east - a.west); };
+            if (best == nullptr || (!tie && fit < best_fit) || (tie && area(l) < area(*best))) {
+                best = &l;
+                best_fit = std::min(fit, best_fit);
+            }
+        }
+        return best == nullptr ? 0 : best->pack.number;
+    };
+    std::vector<frame::MapPack> packs;
+    packs.reserve(listed.size());
+    for (const Listed& l : listed) packs.push_back(l.pack);
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-zoom-{}", ::getpid());
+    fs::create_directories(guard);
+    auto started = gpu::start_guarded({.guard_dir = guard,
+                                       .cache_file = guard / "pipelines.bin",
+                                       .system = "host-test-system",
+                                       .build = "look-test",
+                                       .present = true,
+                                       .spirv = 42});
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        MESSAGE(map.set_packs(packs));
+        CHECK(session.map(&map).empty());
+        auto window = std::make_unique<KeptWindow>();
+        KeptWindow* kept = window.get();
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+        map.set_theme(sunny());
+        // west of the bundled Westerkerk, among the windows: 52.3735 N, 4.8755 E
+        const double lat = 52.3735;
+        const double lon = 4.8755;
+        // the start at rest, complete
+        {
+            style::CameraState c = camera(lat, lon, 22.0, 48.0, 3000.0);
+            c.pack_id = choose(lat, lon, 3000.0);
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(240);
+            int n = 0;
+            while (std::chrono::steady_clock::now() < until) {
+                const standin::Drawn s = session.draw(c, {});
+                if (s.stale) session.remake();
+                n += s.drawn ? 1 : 0;
+                if (map.complete() && n > 4) break;
+                if (!map.animating() && map.world() != nullptr) map.world()->residency().wait_idle();
+            }
+        }
+        constexpr int steps = 90;
+        for (int i = 0; i <= steps + 30; ++i) {
+            const double t = std::min(1.0, static_cast<double>(i) / steps);
+            const double d = 3000.0 * pymath::strict::pow(100.0 / 3000.0, t);
+            style::CameraState c = camera(lat, lon, 22.0, 48.0, d);
+            c.pack_id = choose(lat, lon, d);
+            if (i < steps) c.flags &= ~style::camera_flag::rest;
+            const auto at = std::chrono::steady_clock::now();
+            const standin::Drawn s = session.draw(c, {});
+            if (s.stale) session.remake();
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - at).count();
+            MESSAGE(std::format("zoom {:3d} {:6.0f} m: named {} drew {}, complete {}, {}k triangles, frame {:.0f} ms",
+                                i, d, c.pack_id, map.drawn_pack(), map.complete(), s.record.triangles_k, ms));
+            if (i % 6 == 0 || i == steps + 30) {
+                auto pixels = kept->kept->read(kept->kept->latest());
+                ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+                CHECK(gpu::write_ppm(*pixels, (fs::path(out) / std::format("zoom_{:03d}.ppm", i)).string()));
+            }
+        }
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
 }
 
 #endif

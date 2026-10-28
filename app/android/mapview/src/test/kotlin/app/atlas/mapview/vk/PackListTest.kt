@@ -97,6 +97,29 @@ class PackListTest {
     }
 
     @Test
+    fun thePackDrawnStaysUntilAnotherFitsClearlyBetterAndWhileTheCameraMoves() {
+        val list = PackList(Assets(bundledTiles()), library = null)
+        list.load()
+        val (lat, lon) = westerkerk.lat to westerkerk.lon
+        // the living map's 430 m and the canal ring's close view of 900 m fit alike at 622 m: past it the plain choice
+        // is the canal ring
+        assertEquals("grachten", list.choose(lat, lon, 650.0)?.id)
+        assertEquals("amsterdam", list.choose(lat, lon, 600.0)?.id)
+        // the pack drawn now stays within the margin either way, and gives way beyond it (723 m out, 535 m in)
+        assertEquals("amsterdam", list.choose(lat, lon, 650.0, held = "amsterdam")?.id)
+        assertEquals("amsterdam", list.choose(lat, lon, 715.0, held = "amsterdam")?.id)
+        assertEquals("grachten", list.choose(lat, lon, 735.0, held = "amsterdam")?.id)
+        assertEquals("grachten", list.choose(lat, lon, 545.0, held = "grachten")?.id)
+        assertEquals("amsterdam", list.choose(lat, lon, 525.0, held = "grachten")?.id)
+        // while the camera moves, whatever the distance, as long as its box holds the target
+        assertEquals("grachten", list.choose(lat, lon, 100.0, held = "grachten", holdFit = Double.POSITIVE_INFINITY)?.id)
+        assertEquals("amsterdam", list.choose(lat, lon, 5_000.0, held = "amsterdam", holdFit = Double.POSITIVE_INFINITY)?.id)
+        // a pack whose box no longer holds the target, or one not listed, holds nothing
+        assertEquals("grachten", list.choose(52.36, 4.90, 430.0, held = "amsterdam", holdFit = Double.POSITIVE_INFINITY)?.id)
+        assertEquals("grachten", list.choose(lat, lon, 650.0, held = "gone")?.id)
+    }
+
+    @Test
     fun thePackDrawnIsTheOneWhoseViewsFitTheDistanceAsTheLiveMapChooses() {
         val list = PackList(Assets(bundledTiles()), library = null)
         list.load()

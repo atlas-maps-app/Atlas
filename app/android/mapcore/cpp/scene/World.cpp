@@ -135,6 +135,21 @@ void World::choose(const style::CameraState& camera) {
             }
         }
     }
+    // A switch from a pack that still holds the target waits for the named one's tiles in view (update: the incoming
+    // pack's cover), so the map never draws a frame of nothing in between: the first frames of a pack whose tiles are
+    // not resident yet drew none, and the canal ring's switch to the windows' around 830 m showed as the map bouncing
+    // (the user, 28 October).
+    if (pick != nullptr && pick != active_ && active_ && std::ranges::find(open, active_) != open.end() &&
+        holds(*active_)) {
+        if (pick != incoming_) {
+            incoming_ = pick;
+            incoming_since_ = -1.0;
+            incoming_ready_ = false;
+        }
+        if (!incoming_ready_) return;
+    }
+    incoming_.reset();
+    incoming_ready_ = false;
     if (pick != active_) {
         active_ = pick;
         ladder_.reset();
@@ -467,6 +482,7 @@ void World::take_packs() {
     pack_stage_->want(active_);
     if (coarser_) pack_stage_->want(coarser_);
     if (neighbour_) pack_stage_->want(neighbour_);
+    if (incoming_) pack_stage_->want(incoming_);
     pack_stage_->take(arrived_);
     if (arrived_.empty() && active_ == last_active_ && coarser_ == last_coarser_ && neighbour_ == last_neighbour_) {
         return;
@@ -549,9 +565,35 @@ void World::update(const frame::FrameState& state) {
         sun_->prepare(state, active_, in.tolerance, cover_, coarser_, in.coarser_tolerance, neighbour_,
                       in.neighbour_tolerance);
     }
+    asked_.assign(cover_.requests().begin(), cover_.requests().end());
+    // A switch waiting (choose): the named pack's tiles in view wanted after the frame's own; once they are resident
+    // and its own stage T is built, or after incoming_hold seconds, the next frame draws it.
+    if (incoming_) {
+        if (incoming_since_ < 0) incoming_since_ = seconds;
+        const tiles::RenderHead* incoming_head = incoming_->pack.head();
+        if (incoming_head != nullptr) {
+            const CoverInputs incoming_in{.pack = incoming_.get(),
+                                          .tolerance =
+                                              incoming_head->tolerance_of(std::nullopt, dist).value_or(std::uint8_t{0}),
+                                          .fine_reach = options_.fine_reach,
+                                          .far = options_.far,
+                                          .margin_px = in.margin_px,
+                                          .fade_seconds = in.fade_seconds};
+            incoming_cover_.update(*state.view, frames_, incoming_in, *residency_, seconds);
+            const std::size_t own = asked_.size();
+            for (const Request& r : incoming_cover_.requests()) {
+                const auto first = asked_.begin();
+                const auto last = asked_.begin() + static_cast<std::ptrdiff_t>(own);
+                if (std::any_of(first, last, [&r](const Request& w) { return w.key == r.key && w.pack == r.pack; }))
+                    continue;
+                asked_.push_back(r);
+            }
+        }
+        incoming_ready_ = incoming_head == nullptr || (incoming_cover_.missing() == 0 && built(incoming_) != nullptr) ||
+                          seconds - incoming_since_ >= incoming_hold;
+    }
     // The fling's landing (gain 26): its view as the frame would draw it there, and its visible tiles wanted after the
     // frame's own, in the prefetch lane ahead of any other prefetch.
-    asked_.assign(cover_.requests().begin(), cover_.requests().end());
     if (landing_ && ladder_) {
         style::CameraState there = state.camera;
         there.latitude = landing_->latitude;
@@ -578,7 +620,8 @@ void World::update(const frame::FrameState& state) {
         }
     }
     residency_->want(asked_);
-    for (const CoverTile& t : cover_.tiles()) {
+    // the tiles drawn, and a waiting switch's resident ones, are not idle
+    const auto touch = [this, seconds](const CoverTile& t) {
         const std::uint32_t handle = t.drawn->handle;
         const auto it = std::ranges::find_if(last_drawn_, [handle](const auto& p) { return p.first == handle; });
         if (it != last_drawn_.end()) {
@@ -586,9 +629,14 @@ void World::update(const frame::FrameState& state) {
         } else {
             last_drawn_.emplace_back(handle, seconds);
         }
+    };
+    for (const CoverTile& t : cover_.tiles()) touch(t);
+    if (incoming_) {
+        for (const CoverTile& t : incoming_cover_.tiles()) touch(t);
     }
     release_idle(seconds, state.number);
-    animating_ = cover_.fading() || frames_.weight(seconds) < 1.0 || (sun_ && sun_->fading());
+    // a waiting switch keeps the frames coming until it is drawn (at most incoming_hold seconds)
+    animating_ = cover_.fading() || frames_.weight(seconds) < 1.0 || (sun_ && sun_->fading()) || incoming_ != nullptr;
 }
 
 std::string World::tiles_line() const {

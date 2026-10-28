@@ -247,7 +247,8 @@ standin::MapCounts MapFrame::counts() const noexcept {
 }
 
 bool MapFrame::complete() const noexcept {
-    if (!made() || world_->active() == nullptr) return false;
+    // a switch waiting for the named pack's tiles (scene::World::incoming) is not the camera's final picture yet
+    if (!made() || world_->active() == nullptr || world_->incoming() != nullptr) return false;
     const scene::Cover& cover = *world_->cover();
     if (cover.tiles().empty() || cover.missing() > 0 || cover.fading()) return false;
     return world_->frames().weight(now()) >= 1.0;

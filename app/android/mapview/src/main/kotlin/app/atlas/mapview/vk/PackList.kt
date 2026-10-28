@@ -212,21 +212,33 @@ class PackList(
     /**
      * The pack the frame draws at a camera on [lat], [lon], [distance] metres from it: of the packs whose box holds
      * the target, the one whose views best fit the distance, the smaller box on a tie; null where none holds it.
+     *
+     * The pack drawn now ([held], its id) stays while its box holds the target and no other fits the distance better
+     * by more than [holdFit]. Each switch has the core build the new pack's tiles and show its looks, so without the
+     * margin a pinch about the distance where two packs fit alike (the canal ring's views and the windows' around
+     * 830 m) flipped the map between them, and between their pictures (the user, 28 October: "it bounces back and
+     * forth").
      */
-    fun choose(lat: Double, lon: Double, distance: Double): Pack? {
+    fun choose(lat: Double, lon: Double, distance: Double, held: String? = null, holdFit: Double = HOLD_FIT): Pack? {
         var best: Pack? = null
         var bestFit = Double.MAX_VALUE
+        var kept: Pack? = null
+        var keptFit = Double.MAX_VALUE
         for (p in packs) {
             val b = p.box
             if (lat < b.south || lat > b.north || lon < b.west || lon > b.east) continue
             val fit = fit(p.distances, distance)
+            if (held != null && p.id == held) {
+                kept = p
+                keptFit = fit
+            }
             val tie = abs(fit - bestFit) <= FIT_EPSILON
             if (best == null || (!tie && fit < bestFit) || (tie && area(b) < area(best.box))) {
                 best = p
                 bestFit = min(fit, bestFit)
             }
         }
-        return best
+        return if (kept != null && keptFit <= bestFit + holdFit) kept else best
     }
 
     /**
@@ -279,6 +291,13 @@ class PackList(
 
         /** How far from the eye the core's cover reaches its target, metres: three quarters of the world's far plane. */
         const val CORE_REACH = 9_000.0
+
+        /**
+         * How much better another pack must fit the distance than the pack drawn now ([choose]'s |ln| of the
+         * distances) to take its place: about a third, so the canal ring gives way to the windows at about 710 m and
+         * takes the map again at about 960 m, where without it both switched at 830 m.
+         */
+        const val HOLD_FIT = 0.3
 
         private const val AMSTERDAM = "Europe/Amsterdam"
         private const val FIT_EPSILON = 1e-9

@@ -86,8 +86,14 @@ public:
     /// The packs: add and remove them as the app lists them (MapCore.packs).
     [[nodiscard]] tiles::Store& store() noexcept { return store_; }
     /// The pack the frame draws from now on (its store id, or a window's, whose frame cell's pack is drawn), or the
-    /// automatic choice (empty).
+    /// automatic choice (empty). Where the pack drawn still holds the camera's target, it stays drawn while the named
+    /// one's tiles in view come in (incoming()), so a switch never draws a frame of nothing in between.
     void set_active(std::string id) { forced_ = std::move(id); }
+    /// The pack named next, drawn once its tiles in view are resident (its own stage T built) or after
+    /// `incoming_hold` seconds, whichever comes first; null when no switch is pending.
+    [[nodiscard]] const tiles::StorePack* incoming() const noexcept { return incoming_.get(); }
+    /// How long a switch waits at most for the named pack's tiles, seconds.
+    static constexpr double incoming_hold = 3.0;
     /// Where a fling lands (ENGINE.md gain 26): the camera's target, bearing, pitch and distance at its end, which the
     /// app knows as the fling begins. From then on the landing's tiles are wanted after the frame's own (its visible
     /// ones in the prefetch lane, ahead of any other prefetch), so the map lands whole. None: no fling under way.
@@ -236,8 +242,14 @@ private:
     std::vector<std::shared_ptr<const ResidentTile>> taken_;
     std::optional<view::Ladder> ladder_;
     std::optional<Landing> landing_;
-    Cover landing_cover_;        ///< the landing's cover, for its requests alone
-    std::vector<Request> asked_; ///< the frame's requests, then the landing's
+    Cover landing_cover_; ///< the landing's cover, for its requests alone
+    /// The pack named next while the pack drawn stays (incoming()), when it was named (-1: this frame's update sets
+    /// it), whether its tiles in view are in, and its cover, for its requests alone.
+    std::shared_ptr<const tiles::StorePack> incoming_;
+    double incoming_since_ = -1.0;
+    bool incoming_ready_ = false;
+    Cover incoming_cover_;
+    std::vector<Request> asked_; ///< the frame's requests, then the incoming pack's, then the landing's
     /// Per resident tile (its handle): when the cover last drew it.
     std::vector<std::pair<std::uint32_t, double>> last_drawn_;
     bool animating_ = false;

@@ -199,6 +199,9 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     private var publishedDraw = false
     private var publishedLocation: UserLocation? = null
 
+    /** The pack the core was last told to draw (its id), which [choosePack] holds on to. */
+    private var publishedPack: String? = null
+
     /** Whether the core draws the location's puck now (the canvas does not): its camera carries the location. */
     private var coreLocation = false
     private var coreWanted: Transition.Path? = null
@@ -333,8 +336,16 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         val v = viewport()
         if (v.isEmpty) return null
         val lv = liveView(state.camera, v)
-        return c.packs.choose(lv.lat, lv.lon, lv.distance)
+        return choosePack(c, lv, publishedRest)
     }
+
+    /**
+     * The pack for [lv]: PackList's choice, holding on to the pack drawn now ([PackList.HOLD_FIT]); while the camera
+     * moves (a pinch, a fling, an animation) on to it whatever the distance, as long as it holds the target, so the
+     * switch (the new pack's tiles built, its looks shown) comes once the camera rests, not under the fingers.
+     */
+    private fun choosePack(c: CoreMap, lv: LiveView, rest: Boolean): PackList.Pack? =
+        c.packs.choose(lv.lat, lv.lon, lv.distance, held = publishedPack, holdFit = if (rest) PackList.HOLD_FIT else Double.POSITIVE_INFINITY)
 
     /** What the map says of its picture: the core's (complete and shown) where it draws, else today's map's. */
     private fun noteStatus() {
@@ -456,6 +467,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         askedSent = false
         coreLocation = false
         publishedCamera = null
+        publishedPack = null
         noteChrome()
         scope.launch {
             val refused = withContext(Dispatchers.Default) { c.bind() }
@@ -532,7 +544,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         }
         val lv = liveView(cam, v)
         val n = if (next != null && nextNs > nowNs) liveView(next, v) else null
-        val pack = c.packs.choose(lv.lat, lv.lon, lv.distance)
+        val pack = choosePack(c, lv, rest)
         c.source.publish(
             MapCameraSource.Samples(
                 revision = ++cameraRevision,
@@ -550,6 +562,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         publishedRest = rest
         publishedDraw = draw
         publishedLocation = location
+        publishedPack = pack?.id
         if (coreLocation != (location != null)) {
             coreLocation = location != null
             canvasTick.intValue++
