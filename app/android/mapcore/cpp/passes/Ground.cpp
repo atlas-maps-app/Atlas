@@ -1009,8 +1009,8 @@ gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
         ATLAS_GPU_LET(set, gpu::allocate_set(d, p->pool, p->set_layout));
         s = std::move(set);
     }
-    // set 3: the soft shadows' grid, their blurred mask, and the grid as words for the compute stages (Shadows.cpp);
-    // the ripple's two buffers, which its composite reads (Ripple.cpp)
+    // set 3, a set a frame slot: the soft shadows' grid, their blurred mask, and the grid as words for the compute
+    // stages, the slot's own (Shadows.cpp); the ripple's two buffers, which its composite reads (Ripple.cpp)
     const std::array soft_bindings{
         gpu::Binding{.slot = 0, .type = vk::DescriptorType::eStorageBuffer, .stages = stages},
         gpu::Binding{
@@ -1024,10 +1024,12 @@ gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {
     ATLAS_GPU_LET(soft_layout, gpu::make_set_layout(d, soft_bindings));
     p->soft_set_layout = std::move(soft_layout);
     const std::array<std::span<const gpu::Binding>, 1> soft_kinds{soft_bindings};
-    ATLAS_GPU_LET(soft_pool, gpu::make_pool(d, soft_kinds, 1));
+    ATLAS_GPU_LET(soft_pool, gpu::make_pool(d, soft_kinds, static_cast<std::uint32_t>(p->soft_sets.size())));
     p->soft_pool = std::move(soft_pool);
-    ATLAS_GPU_LET(soft_set, gpu::allocate_set(d, p->soft_pool, p->soft_set_layout));
-    p->soft_set = std::move(soft_set);
+    for (vk::raii::DescriptorSet& s : p->soft_sets) {
+        ATLAS_GPU_LET(set, gpu::allocate_set(d, p->soft_pool, p->soft_set_layout));
+        s = std::move(set);
+    }
     const std::array<vk::DescriptorSetLayout, 2> extra{*p->set_layout, *p->soft_set_layout};
     ATLAS_GPU_LET(layout, context.layout.make_layout(extra));
     p->layout = std::move(layout);

@@ -34,6 +34,10 @@
 // each pixel's centre on the grid, the mask there, bilinear where the grid is coarser. What differs from the port is
 // the coverage of the union's edges (4x samples, the port's analytic coverage of each path, composited) and the
 // bilinear filter's rounding; the grid, the boxes and the fade are the port's.
+//
+// The grid, the mask and the blur's buffers are the frame slot's own (SoftShadowSlot, ENGINE.md's gain 17): only the
+// frame before in the same slot read them, finished by then, so none of the steps waits for an earlier frame's work,
+// and the frame's compute and binning can run while the last frame is still shading.
 #include "base/log.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
@@ -49,7 +53,11 @@
 #include "sun/Samples.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <tuple>
 
 namespace atlas::passes {
 
@@ -83,6 +91,8 @@ constexpr float widest_sigma = 2.6F * 8.0F;
 constexpr vk::DeviceSize grid_bytes = 96;
 /// The texels a workgroup of shadow_blur.slang writes along each side.
 constexpr std::uint32_t blur_tile = 32;
+/// The blur's passes (vImage's three boxes), a set each in a frame slot's.
+constexpr std::uint32_t blur_passes = std::tuple_size_v<decltype(SoftShadowSlot::blur_sets)>;
 
 /// Whether a surface transform turns the view a quarter or three quarters (the output's size is the view's turned).
 [[nodiscard]] bool turned(vk::SurfaceTransformFlagBitsKHR transform) noexcept {
@@ -303,10 +313,6 @@ gpu::Result<void> Ground::make_soft_shadows(const frame::PassContext& context, P
     if (!samples && lazy) samples = image(vk::SampleCountFlagBits::e4, transient, gpu::MemoryUse::gpu);
     if (!samples) return std::unexpected(samples.error());
     s->samples = std::move(*samples);
-    ATLAS_GPU_LET(mask, image(vk::SampleCountFlagBits::e1,
-                              U::eColorAttachment | U::eSampled | (s->kept ? U::eTransferSrc : vk::ImageUsageFlags{}),
-                              gpu::MemoryUse::gpu));
-    s->mask = std::move(mask);
     auto view_of = [&](const gpu::Image& i) -> gpu::Result<vk::raii::ImageView> {
         ATLAS_VK_LET(v,
                      d.createImageView({.image = i.handle(),
@@ -320,10 +326,8 @@ gpu::Result<void> Ground::make_soft_shadows(const frame::PassContext& context, P
     };
     ATLAS_GPU_LET(samples_view, view_of(s->samples));
     s->samples_view = std::move(samples_view);
-    ATLAS_GPU_LET(mask_view, view_of(s->mask));
-    s->mask_view = std::move(mask_view);
-    // the mask's pass: the 4x samples cleared and drawn, resolved into the mask; record moves both into the colour
-    // layout before it and the mask out after it
+    // the mask's pass: the 4x samples cleared and drawn, resolved into the frame slot's mask; record moves both into
+    // the colour layout before it and the mask out after it
     const std::array<vk::AttachmentDescription, 2> attachments{{
         {.format = vk::Format::eR8Unorm,
          .samples = vk::SampleCountFlagBits::e4,
@@ -371,36 +375,48 @@ gpu::Result<void> Ground::make_soft_shadows(const frame::PassContext& context, P
                                      .pDependencies = dependencies.data()}),
                  "the soft shadows' mask's render pass");
     s->pass = std::move(pass);
-    const std::array<vk::ImageView, 2> views{*s->samples_view, *s->mask_view};
-    ATLAS_VK_LET(framebuffer,
-                 d.createFramebuffer({.renderPass = *s->pass,
-                                      .attachmentCount = static_cast<std::uint32_t>(views.size()),
-                                      .pAttachments = views.data(),
-                                      .width = s->extent.width,
-                                      .height = s->extent.height,
-                                      .layers = 1}),
-                 "the soft shadows' mask's framebuffer");
-    s->framebuffer = std::move(framebuffer);
-    // the grid and the blur's texels (readable where the tests keep them), and the kept mask's copy
+    // each frame slot's mask (its framebuffer with the samples), grid (mapped: the CPU starts its box) and blur's
+    // texels (readable where the tests keep them), the kept mask's copy, and the slot's set 3
     using B = vk::BufferUsageFlagBits;
     const gpu::MemoryUse look = s->kept ? gpu::MemoryUse::readback : gpu::MemoryUse::gpu;
-    ATLAS_GPU_LET(grid, device.memory().buffer(grid_bytes, B::eStorageBuffer | B::eTransferDst, look));
-    s->grid = std::move(grid);
+    const gpu::MemoryUse mapped = s->kept ? gpu::MemoryUse::readback : gpu::MemoryUse::upload;
     const vk::DeviceSize texels = vk::DeviceSize{s->stride} * 4 * s->extent.height;
-    ATLAS_GPU_LET(first, device.memory().buffer(texels, B::eStorageBuffer, look));
-    s->blurred[0] = std::move(first);
-    ATLAS_GPU_LET(second, device.memory().buffer(texels, B::eStorageBuffer, gpu::MemoryUse::gpu));
-    s->blurred[1] = std::move(second);
-    if (s->kept) {
-        ATLAS_GPU_LET(copy, device.memory().buffer(vk::DeviceSize{s->extent.width} * s->extent.height, B::eTransferDst,
-                                                   gpu::MemoryUse::readback));
-        s->mask_copy = std::move(copy);
+    for (std::size_t slot = 0; slot < s->slots.size(); ++slot) {
+        SoftShadowSlot& t = s->slots[slot];
+        ATLAS_GPU_LET(mask,
+                      image(vk::SampleCountFlagBits::e1,
+                            U::eColorAttachment | U::eSampled | (s->kept ? U::eTransferSrc : vk::ImageUsageFlags{}),
+                            gpu::MemoryUse::gpu));
+        t.mask = std::move(mask);
+        ATLAS_GPU_LET(mask_view, view_of(t.mask));
+        t.mask_view = std::move(mask_view);
+        const std::array<vk::ImageView, 2> views{*s->samples_view, *t.mask_view};
+        ATLAS_VK_LET(framebuffer,
+                     d.createFramebuffer({.renderPass = *s->pass,
+                                          .attachmentCount = static_cast<std::uint32_t>(views.size()),
+                                          .pAttachments = views.data(),
+                                          .width = s->extent.width,
+                                          .height = s->extent.height,
+                                          .layers = 1}),
+                     "the soft shadows' mask's framebuffer");
+        t.framebuffer = std::move(framebuffer);
+        ATLAS_GPU_LET(grid, device.memory().buffer(grid_bytes, B::eStorageBuffer, mapped));
+        t.grid = std::move(grid);
+        ATLAS_GPU_LET(first, device.memory().buffer(texels, B::eStorageBuffer, look));
+        t.blurred[0] = std::move(first);
+        ATLAS_GPU_LET(second, device.memory().buffer(texels, B::eStorageBuffer, gpu::MemoryUse::gpu));
+        t.blurred[1] = std::move(second);
+        if (s->kept) {
+            ATLAS_GPU_LET(copy, device.memory().buffer(vk::DeviceSize{s->extent.width} * s->extent.height,
+                                                       B::eTransferDst, gpu::MemoryUse::readback));
+            t.mask_copy = std::move(copy);
+        }
+        gpu::SetWriter(*p.soft_sets[slot])
+            .buffer(0, vk::DescriptorType::eStorageBuffer, t.grid.handle())
+            .buffer(1, vk::DescriptorType::eStorageBuffer, t.blurred[0].handle())
+            .buffer(2, vk::DescriptorType::eStorageBuffer, t.grid.handle())
+            .apply(d);
     }
-    gpu::SetWriter(*p.soft_set)
-        .buffer(0, vk::DescriptorType::eStorageBuffer, s->grid.handle())
-        .buffer(1, vk::DescriptorType::eStorageBuffer, s->blurred[0].handle())
-        .buffer(2, vk::DescriptorType::eStorageBuffer, s->grid.handle())
-        .apply(d);
 
     // the compute stages of the ground's module: its sets, its push constants for them
     const std::array<vk::DescriptorSetLayout, 4> sets{
@@ -446,19 +462,21 @@ gpu::Result<void> Ground::make_soft_shadows(const frame::PassContext& context, P
     ATLAS_GPU_LET(blur_set_layout, gpu::make_set_layout(d, blur_bindings));
     s->blur_set_layout = std::move(blur_set_layout);
     const std::array<std::span<const gpu::Binding>, 1> blur_kinds{blur_bindings};
-    ATLAS_GPU_LET(blur_pool, gpu::make_pool(d, blur_kinds, 3));
+    ATLAS_GPU_LET(blur_pool, gpu::make_pool(d, blur_kinds, static_cast<std::uint32_t>(s->slots.size()) * blur_passes));
     s->blur_pool = std::move(blur_pool);
-    for (std::size_t i = 0; i < s->blur_sets.size(); ++i) {
-        ATLAS_GPU_LET(set, gpu::allocate_set(d, s->blur_pool, s->blur_set_layout));
-        s->blur_sets[i] = std::move(set);
-        // the first pass writes the first buffer, the second the other, the third the first again
-        const std::size_t target = i % 2 == 0 ? 0 : 1;
-        gpu::SetWriter(*s->blur_sets[i])
-            .buffer(0, vk::DescriptorType::eStorageBuffer, s->grid.handle())
-            .image(1, vk::DescriptorType::eSampledImage, *s->mask_view, vk::ImageLayout::eShaderReadOnlyOptimal)
-            .buffer(2, vk::DescriptorType::eStorageBuffer, s->blurred[1 - target].handle())
-            .buffer(3, vk::DescriptorType::eStorageBuffer, s->blurred[target].handle())
-            .apply(d);
+    for (SoftShadowSlot& t : s->slots) {
+        for (std::size_t i = 0; i < blur_passes; ++i) {
+            ATLAS_GPU_LET(set, gpu::allocate_set(d, s->blur_pool, s->blur_set_layout));
+            t.blur_sets[i] = std::move(set);
+            // the first pass writes the first buffer, the second the other, the third the first again
+            const std::size_t target = i % 2 == 0 ? 0 : 1;
+            gpu::SetWriter(*t.blur_sets[i])
+                .buffer(0, vk::DescriptorType::eStorageBuffer, t.grid.handle())
+                .image(1, vk::DescriptorType::eSampledImage, *t.mask_view, vk::ImageLayout::eShaderReadOnlyOptimal)
+                .buffer(2, vk::DescriptorType::eStorageBuffer, t.blurred[1 - target].handle())
+                .buffer(3, vk::DescriptorType::eStorageBuffer, t.blurred[target].handle())
+                .apply(d);
+        }
     }
     const std::array<vk::DescriptorSetLayout, 1> blur_sets{*s->blur_set_layout};
     ATLAS_GPU_LET(blur_layout, gpu::make_layout(d, blur_sets, sizeof(BlurPush), in_compute));
@@ -479,24 +497,22 @@ void Ground::record_shadow_mask(const frame::Recording& r) {
     const gpu::Sync& sync = r.frame.sync;
     const Words& w = *words_;
     const style::ThemeBlock& th = r.state.theme;
+    // the frame slot's grid, mask and blur: the frame before it in the slot read them, and has finished
+    // (gpu::Frames::begin), so no barrier below waits for an earlier frame's work
+    SoftShadowSlot& mine = s.slots[w.slot];
     using S = vk::PipelineStageFlagBits2;
     using A = vk::AccessFlagBits2;
     using L = vk::ImageLayout;
     constexpr vk::PipelineStageFlags2 shaders = S::eVertexShader | S::eFragmentShader | S::eComputeShader;
 
-    // the box anew, once the last frame has read the grid
-    sync.barrier(
-        cmd, gpu::MemoryDependency{
-                 .src_stage = shaders, .src_access = {}, .dst_stage = S::eTransfer, .dst_access = A::eTransferWrite});
-    cmd.fillBuffer(s.grid.handle(), 0, 8, 0xFFFF'FFFFU);
-    cmd.fillBuffer(s.grid.handle(), 8, 8, 0U);
-    sync.barrier(cmd, gpu::MemoryDependency{.src_stage = S::eTransfer,
-                                            .src_access = A::eTransferWrite,
-                                            .dst_stage = S::eComputeShader,
-                                            .dst_access = A::eShaderRead | A::eShaderWrite});
+    // the box anew, written by the CPU (the submission makes it visible): a transfer would wait for the last frame's
+    // main pass, whose dependency on what follows it takes in every later transfer
+    constexpr std::array<std::uint32_t, 4> no_box{0xFFFF'FFFFU, 0xFFFF'FFFFU, 0U, 0U};
+    std::memcpy(mine.grid.bytes().data(), no_box.data(), sizeof no_box);
+    mine.grid.flush();
     const auto frame_sets = r.layout.sets();
     const auto offsets = r.layout.offsets(r.frame.slot.slot);
-    const std::array<vk::DescriptorSet, 2> own{*p.sets[w.slot], *p.soft_set};
+    const std::array<vk::DescriptorSet, 2> own{*p.sets[w.slot], *p.soft_sets[w.slot]};
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *p.compute_layout, 0, frame_sets, offsets);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *p.compute_layout, 2, own, {});
 
@@ -532,7 +548,7 @@ void Ground::record_shadow_mask(const frame::Recording& r) {
                                             .dst_stage = shaders,
                                             .dst_access = A::eShaderRead});
 
-    // 3. the shadows' union on the grid, its samples resolved into the mask (which the last frame's blur read)
+    // 3. the shadows' union on the grid, its samples (which the last frame's union drew) resolved into the slot's mask
     const std::array<gpu::ImageDependency, 2> to_draw{{
         {.image = s.samples.handle(),
          .src_stage = S::eColorAttachmentOutput,
@@ -541,8 +557,8 @@ void Ground::record_shadow_mask(const frame::Recording& r) {
          .dst_access = A::eColorAttachmentWrite,
          .old_layout = L::eUndefined,
          .new_layout = L::eColorAttachmentOptimal},
-        {.image = s.mask.handle(),
-         .src_stage = S::eComputeShader | S::eTransfer,
+        {.image = mine.mask.handle(),
+         .src_stage = S::eTopOfPipe,
          .src_access = {},
          .dst_stage = S::eColorAttachmentOutput,
          .dst_access = A::eColorAttachmentWrite,
@@ -552,7 +568,7 @@ void Ground::record_shadow_mask(const frame::Recording& r) {
     sync.barrier(cmd, {}, to_draw);
     const vk::ClearValue clear{.color = vk::ClearColorValue{std::array<float, 4>{0.0F, 0.0F, 0.0F, 0.0F}}};
     cmd.beginRenderPass({.renderPass = *s.pass,
-                         .framebuffer = *s.framebuffer,
+                         .framebuffer = *mine.framebuffer,
                          .renderArea = {.offset = {.x = 0, .y = 0}, .extent = s.extent},
                          .clearValueCount = 1,
                          .pClearValues = &clear},
@@ -578,7 +594,9 @@ void Ground::record_shadow_mask(const frame::Recording& r) {
         r.counters.draw("shadow mask", draw.count / 3);
     }
     cmd.endRenderPass();
-    sync.barrier(cmd, gpu::ImageDependency{.image = s.mask.handle(),
+    // (the mask's colour handed to the blur: every later compute stage waits for all colour output before it, the last
+    // frame's main pass among it, which is why the ground's offscreen phases follow every decide phase)
+    sync.barrier(cmd, gpu::ImageDependency{.image = mine.mask.handle(),
                                            .src_stage = S::eColorAttachmentOutput,
                                            .src_access = A::eColorAttachmentWrite,
                                            .dst_stage = S::eComputeShader,
@@ -586,24 +604,20 @@ void Ground::record_shadow_mask(const frame::Recording& r) {
                                            .old_layout = L::eColorAttachmentOptimal,
                                            .new_layout = L::eShaderReadOnlyOptimal});
 
-    // 4. vImage's three boxes over the grid's input, the last faded; the composite of the last frame read the first
-    // buffer, which the first pass writes
-    sync.barrier(cmd, gpu::MemoryDependency{.src_stage = S::eFragmentShader | S::eComputeShader,
-                                            .src_access = {},
-                                            .dst_stage = S::eComputeShader,
-                                            .dst_access = A::eShaderWrite});
+    // 4. vImage's three boxes over the grid's input, the last faded, back and forth between the slot's buffers
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *s.blur);
     const std::uint32_t groups_x = (s.extent.width + blur_tile - 1) / blur_tile;
     const std::uint32_t groups_y = (s.extent.height + blur_tile - 1) / blur_tile;
-    for (std::uint32_t pass = 0; pass < 3; ++pass) {
+    for (std::uint32_t pass = 0; pass < blur_passes; ++pass) {
         if (pass > 0) {
             sync.barrier(cmd, gpu::MemoryDependency{.src_stage = S::eComputeShader,
                                                     .src_access = A::eShaderWrite,
                                                     .dst_stage = S::eComputeShader,
                                                     .dst_access = A::eShaderRead | A::eShaderWrite});
         }
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *s.blur_layout, 0, *s.blur_sets[pass], {});
-        const BlurPush bp{.first = pass == 0 ? 1U : 0U, .last = pass == 2 ? 1U : 0U, .stride = s.stride, .pad = 0U};
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *s.blur_layout, 0, *mine.blur_sets[pass], {});
+        const BlurPush bp{
+            .first = pass == 0 ? 1U : 0U, .last = pass + 1 == blur_passes ? 1U : 0U, .stride = s.stride, .pad = 0U};
         cmd.pushConstants<BlurPush>(*s.blur_layout, vk::ShaderStageFlagBits::eCompute, 0, bp);
         cmd.dispatch(groups_x, groups_y, 1);
         r.counters.dispatch("shadow blur");
@@ -614,18 +628,13 @@ void Ground::record_shadow_mask(const frame::Recording& r) {
                                             .dst_access = A::eShaderRead});
     if (s.kept) {
         // the tests' look: the resolved mask, a row after another, and the grid and the blur readable by the host
-        const gpu::MemoryDependency copied{.src_stage = S::eTransfer,
-                                           .src_access = A::eTransferWrite,
-                                           .dst_stage = S::eTransfer,
-                                           .dst_access = A::eTransferWrite};
-        const gpu::ImageDependency from{.image = s.mask.handle(),
-                                        .src_stage = S::eComputeShader,
-                                        .src_access = {},
-                                        .dst_stage = S::eTransfer,
-                                        .dst_access = A::eTransferRead,
-                                        .old_layout = L::eShaderReadOnlyOptimal,
-                                        .new_layout = L::eTransferSrcOptimal};
-        sync.barrier(cmd, std::span(&copied, 1), std::span(&from, 1));
+        sync.barrier(cmd, gpu::ImageDependency{.image = mine.mask.handle(),
+                                               .src_stage = S::eComputeShader,
+                                               .src_access = {},
+                                               .dst_stage = S::eTransfer,
+                                               .dst_access = A::eTransferRead,
+                                               .old_layout = L::eShaderReadOnlyOptimal,
+                                               .new_layout = L::eTransferSrcOptimal});
         const vk::BufferImageCopy region{
             .bufferOffset = 0,
             .bufferRowLength = 0,
@@ -633,12 +642,13 @@ void Ground::record_shadow_mask(const frame::Recording& r) {
             .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .layerCount = 1},
             .imageOffset = {.x = 0, .y = 0, .z = 0},
             .imageExtent = {.width = s.extent.width, .height = s.extent.height, .depth = 1}};
-        cmd.copyImageToBuffer(s.mask.handle(), L::eTransferSrcOptimal, s.mask_copy.handle(), region);
+        cmd.copyImageToBuffer(mine.mask.handle(), L::eTransferSrcOptimal, mine.mask_copy.handle(), region);
         sync.barrier(cmd, gpu::MemoryDependency{.src_stage = S::eTransfer | S::eComputeShader,
                                                 .src_access = A::eTransferWrite | A::eShaderWrite,
                                                 .dst_stage = S::eHost,
                                                 .dst_access = A::eHostRead});
     }
+    s.last = w.slot;
     drew_soft_ = true;
 }
 
@@ -647,7 +657,7 @@ void Ground::record_shadows(const frame::Recording& r) {
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     const Words& w = *words_;
     if (drew_soft_) {
-        // the blurred mask drawn back over the frame at the shadows' slot
+        // the frame slot's blurred mask drawn back over the frame at the shadows' slot
         const SoftShadows& s = *pipelines_->soft;
         const style::ThemeBlock& th = r.state.theme;
         Push pc{};
@@ -656,7 +666,8 @@ void Ground::record_shadows(const frame::Recording& r) {
         pc.colour = {0U, 0U, geo::Rgba{.r = th.shadow.r, .g = th.shadow.g, .b = th.shadow.b, .a = 255}.packed(),
                      s.stride};
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->shadow_soft);
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipelines_->layout, 3, *pipelines_->soft_set, {});
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipelines_->layout, 3, *pipelines_->soft_sets[w.slot],
+                               {});
         cmd.pushConstants<Push>(*pipelines_->layout, frame::push_stages, 0, pc);
         cmd.draw(3, 1, 0, 0);
         r.counters.draw("ground shadows", 1);

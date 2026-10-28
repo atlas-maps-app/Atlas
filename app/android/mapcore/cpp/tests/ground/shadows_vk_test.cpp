@@ -225,13 +225,20 @@ TEST_CASE("ground: the soft shadows are the port's grid, its three boxes and its
     set.sun_vector = {0.0, -1.0, 0.0};
     set.sun_elevation = -5.0;
     // the frame with the sun up: the twin's paths, and the soft shadows' grid, mask and blurred mask as the GPU left
-    // them
+    // them in the last frame's slot, and in the other slot, the frame before it (at rest, the same frame)
     std::vector<std::vector<std::array<float, 2>>> paths;
     layouts::ground_ground::ShadowGrid grid{};
+    using GridBytes = std::array<std::uint8_t, sizeof grid>;
+    GridBytes grid_bytes{};
+    GridBytes other_grid_bytes{};
     std::vector<std::uint8_t> mask;
+    std::vector<std::uint8_t> other_mask;
     std::vector<std::uint32_t> blurred;
+    std::vector<std::uint32_t> other_blurred;
     vk::Extent2D extent{};
     std::uint32_t stride = 0;
+    vk::DeviceSize slot_bytes = 0;
+    vk::DeviceSize samples_bytes = 0;
     bool soft = false;
     float density = 0;
     std::int32_t clip_w = 0;
@@ -247,16 +254,26 @@ TEST_CASE("ground: the soft shadows are the port's grid, its three boxes and its
             const passes::SoftShadows* s = g.soft_shadows();
             REQUIRE(s != nullptr);
             REQUIRE(s->kept);
+            CHECK(s->last == state.slot);
             extent = s->extent;
             stride = s->stride;
-            s->grid.invalidate();
-            std::memcpy(&grid, s->grid.bytes().data(), sizeof grid);
-            s->mask_copy.invalidate();
-            mask.resize(std::size_t{extent.width} * extent.height);
-            std::memcpy(mask.data(), s->mask_copy.bytes().data(), mask.size());
-            s->blurred[0].invalidate();
-            blurred.resize(std::size_t{stride} * extent.height);
-            std::memcpy(blurred.data(), s->blurred[0].bytes().data(), blurred.size() * 4);
+            const auto look = [&](const passes::SoftShadowSlot& t, GridBytes& g_out, std::vector<std::uint8_t>& m_out,
+                                  std::vector<std::uint32_t>& b_out) {
+                t.grid.invalidate();
+                std::memcpy(g_out.data(), t.grid.bytes().data(), g_out.size());
+                t.mask_copy.invalidate();
+                m_out.resize(std::size_t{extent.width} * extent.height);
+                std::memcpy(m_out.data(), t.mask_copy.bytes().data(), m_out.size());
+                t.blurred[0].invalidate();
+                b_out.resize(std::size_t{stride} * extent.height);
+                std::memcpy(b_out.data(), t.blurred[0].bytes().data(), b_out.size() * 4);
+            };
+            look(s->slots[s->last], grid_bytes, mask, blurred);
+            look(s->slots[1 - s->last], other_grid_bytes, other_mask, other_blurred);
+            std::memcpy(&grid, grid_bytes.data(), sizeof grid);
+            const passes::SoftShadowSlot& first = s->slots[0];
+            slot_bytes = first.mask.bytes() + first.grid.size() + first.blurred[0].size() + first.blurred[1].size();
+            samples_bytes = s->samples.bytes();
         },
         40,
         [](passes::Ground& g) {
@@ -270,6 +287,15 @@ TEST_CASE("ground: the soft shadows are the port's grid, its three boxes and its
     for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
     REQUIRE(soft);
     REQUIRE(paths.size() > 100);
+    // each frame slot its own grid, mask and blur, and the last two frames, at rest, the same in both
+    MESSAGE("a frame slot's soft shadows at " << a->pixels.width << " x " << a->pixels.height << ": " << slot_bytes
+                                              << " bytes (the " << extent.width << " x " << extent.height
+                                              << " mask, the grid, the blur's two buffers); the 4x samples, one "
+                                                 "for both slots: "
+                                              << samples_bytes << " bytes");
+    CHECK(grid_bytes == other_grid_bytes);
+    CHECK(mask == other_mask);
+    CHECK(blurred == other_blurred);
 
     // 1. the box: the twin's paths' (SvgBounds over their printed points), within a print step of the GPU's
     std::array<float, 4> box{std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity(),
