@@ -3,6 +3,7 @@
 #include "frame/PassRegistry.hpp"
 
 #include "passes/Composite.hpp"
+#include "passes/Doors.hpp"
 #include "passes/Frosted.hpp"
 #include "passes/Ground.hpp"
 #include "passes/GroundText.hpp"
@@ -36,6 +37,7 @@ constexpr std::array registry{
     Registration{.name = "trees", .make = &make<passes::Trees>},            // ENGINE.md step 4: the trees, true depth
     Registration{.name = "things", .make = &make<passes::Things>},          // ENGINE.md step 4: the street furniture
     Registration{.name = "items", .make = &make<passes::Items>},            // ENGINE.md step 4: a region's items
+    Registration{.name = "doors", .make = &make<passes::Doors>},            // ENGINE.md step 4: doors and numbers
     Registration{.name = "ground_text", .make = &make<passes::GroundText>}, // K13: the canal names, the ground's last
     Registration{.name = "routes", .make = &make<passes::Routes>},          // ENGINE.md step 6: routes and areas
     Registration{.name = "markers", .make = &make<passes::Markers>},        // ENGINE.md step 6: updates before labels
