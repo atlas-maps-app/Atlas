@@ -454,6 +454,7 @@ void FrameBuilder::record_slot(const gpu::FrameContext& frame, Slot slot) {
     const auto [first, last] = slot_steps_[static_cast<std::size_t>(slot)];
     for (std::uint32_t i = first; i < last; ++i) {
         const Step& step = steps_[i];
+        if (step.pass < 64 && ((options_.passes >> step.pass) & 1U) == 0) continue; // left out (FrameOptions::passes)
         const Recording r{.frame = frame, .state = state_, .layout = *layout_, .counters = counters_[step.pass]};
         passes_[step.pass]->record(r, step.phase);
     }
@@ -475,10 +476,14 @@ void FrameBuilder::stage_f() {
     ATLAS_ASSERT(state_.view.has_value(), "derive made the frame's view");
     const view::View& view = state_.view.value();
     FrameScene* scene = inputs_.scene;
+    StageFParts& parts = stage_f_parts_;
+    parts.pass_ms.assign(passes_.size(), 0.0);
+    auto part = clock::now();
     if (scene != nullptr) {
         const trace::Section traced("atlas scene update");
         scene->update(state_);
     }
+    parts.scene_ms = ms_since(part);
     // The scene's tiles and packs hold each pass's stage T at the place of the pass that built it: a builder of other
     // passes draws none of them.
     const bool ours = scene != nullptr && built_by(scene->pass_names());
@@ -493,6 +498,7 @@ void FrameBuilder::stage_f() {
     state_.block.windows = windows_of(state_.active_pack);
     // Set 1's globals that no pass owns: each provider brings its bindings up to date (frame/Globals.hpp), and says
     // which effects its resources allow (FRAME_FIELDS: in full mode alone).
+    part = clock::now();
     if (scene != nullptr) {
         const trace::Section traced("atlas globals");
         std::uint32_t allowed = 0;
@@ -505,9 +511,12 @@ void FrameBuilder::stage_f() {
         if ((state_.block.info.x & shaders::FRAME_FULL) == 0U) allowed &= ~shaders::FRAME_FIELDS;
         state_.block.info.x |= allowed;
     }
+    parts.globals_ms = ms_since(part);
     for (std::size_t p = 0; p < passes_.size(); ++p) {
         const trace::Section traced(trace_names_[p].select.c_str());
+        part = clock::now();
         passes_[p]->select(state_, selectors_);
+        parts.pass_ms[p] += ms_since(part);
     }
     state_.selectors = &selectors_;
     // The ground's painter slots, every pass's in the registry's order from slot 0, then their tails over them (the
@@ -539,7 +548,9 @@ void FrameBuilder::stage_f() {
             options.hatched = state_.asked->hatched;
         }
         const trace::Section traced("atlas ranks");
+        part = clock::now();
         ranks_.update(*state_.items, view.camera(), selectors_, options);
+        parts.ranks_ms = ms_since(part);
         state_.ranks = &ranks_;
         state_.block.info.y = ranks_.slots();
         state_.block.info.z = static_cast<std::uint32_t>(state_.items->rows());
@@ -547,6 +558,7 @@ void FrameBuilder::stage_f() {
         state_.ranks = nullptr;
         state_.block.info.y = ground;
         state_.block.info.z = 0;
+        parts.ranks_ms = 0;
     }
     if (!ground_runs_) ground_runs_ = std::make_unique<GroundRuns>();
     ground_runs_->runs.clear();
@@ -556,7 +568,9 @@ void FrameBuilder::stage_f() {
     state_.marker_boxes = marker_boxes_.get();
     for (std::size_t p = 0; p < passes_.size(); ++p) {
         const trace::Section traced(trace_names_[p].update.c_str());
+        part = clock::now();
         passes_[p]->update(state_);
+        parts.pass_ms[p] += ms_since(part);
     }
 }
 

@@ -128,7 +128,8 @@ std::string MapFrame::make(const gpu::Device& device, const gpu::PipelineCache& 
     if (made()) return {};
     auto builder = FrameBuilder::create(
         device, cache, make_passes(),
-        FrameOptions{.steps = steps_, .painter = painter_, .grain = grain_, .grounded = true}, watch);
+        FrameOptions{.steps = steps_, .painter = painter_, .grain = grain_, .grounded = true, .passes = passes_},
+        watch);
     if (!builder) return std::format("the map's frame: {}", builder.error().text());
     // The world's clock is the map's own: its workers stamp each tile's publication with it, the cover fades by it.
     auto clock = [epoch = epoch_] {
