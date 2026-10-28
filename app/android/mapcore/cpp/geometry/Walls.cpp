@@ -560,6 +560,7 @@ TileBuildings build_buildings(const BuildingInput& in) {
                 bl.span = 1.0;
             }
             const std::uint16_t variant = boat ? prim_flag::dry : 0;
+            const std::size_t beams_first = made.beams.size();
             walls(b, bl, variant);
             roofs(b, bl, variant);
             // the reflection's samples (K16 draws it): one per wall of 0.3 m or more of a building near the water
@@ -630,6 +631,11 @@ TileBuildings build_buildings(const BuildingInput& in) {
             };
             for (std::size_t k = m.edged_first; k < m.edged_end; ++k) reach(made.edged[k]);
             for (std::size_t k = m.plain_first; k < m.plain_end; ++k) reach(made.plain[k]);
+            for (std::size_t k = beams_first; k < made.beams.size(); ++k) {
+                Prim beam{};
+                beam.p = {made.beams[k].from, made.beams[k].to, made.beams[k].to, made.beams[k].to};
+                reach(beam);
+            }
             item.spec.radius = static_cast<float>(std::sqrt(r2) * 1.0001 + 0.01);
             made.items.push_back(item);
             made.item_facades.push_back(b.facade);
@@ -641,6 +647,7 @@ TileBuildings build_buildings(const BuildingInput& in) {
     out.faces = std::move(made.faces);
     out.items = std::move(made.items);
     out.item_facades = std::move(made.item_facades);
+    out.beams = std::move(made.beams);
     // the primitives by cell: each cell's buildings, then its parts, in the layers' order (the layers are sorted so);
     // the windowed walls with them, each naming its wall's new place
     std::vector<std::size_t> order(spans.size());

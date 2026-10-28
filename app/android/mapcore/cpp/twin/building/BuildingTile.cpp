@@ -223,6 +223,23 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
         out[layout.faces_at + (i * 2) + 1] = {t[0], t[1], t[2], flags};
         layout.lights[i] = {.normal = {face.normal.x, face.normal.y, face.normal.z}, .base = face.base, .flags = flags};
     }
+    // the hoist beams, their ends and their gables' faces in the heap's floats
+    layout.beams.clear();
+    layout.beams.reserve(g.beams.size());
+    const auto floats = [&](const gm::V3& v) {
+        return std::array<float, 3>{f32(v.x - origin_x), f32(v.y), f32(v.z - origin_z)};
+    };
+    for (const gm::RoofBeam& beam : g.beams) {
+        if (beam.face >= f) continue;
+        const gm::Face& face = g.faces[beam.face];
+        layout.beams.push_back({.item = beam.item,
+                                .from = floats(beam.from),
+                                .to = floats(beam.to),
+                                .normal = {f32(face.normal.x), f32(face.normal.y), f32(face.normal.z)},
+                                .test = floats(face.test),
+                                .near_slot = beam.near_slot,
+                                .far_slot = beam.far_slot});
+    }
     // each face's item and whether it is a wall's, from the primitives that draw it
     layout.face_items.assign(f, 0);
     layout.face_walls.assign(f, 0);
@@ -330,6 +347,12 @@ MaterialChoice material_choice(const BuildingTile::MaterialWall& m, bool night, 
     case M::none: break;
     }
     return c;
+}
+
+std::uint32_t beam_width(double depth, double focal) {
+    // amsterdam.py: stroke-width="%.2f" % max(0.5, 0.12 * cam.focal / d)
+    const double width = pymath::max(0.5, 0.12 * focal / depth);
+    return static_cast<std::uint32_t>(std::llround(pymath::round(width, 2) * 100.0));
 }
 
 std::uint16_t church_leading(double depth, double focal) {

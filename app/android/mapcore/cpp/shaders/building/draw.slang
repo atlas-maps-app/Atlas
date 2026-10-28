@@ -65,6 +65,7 @@ inline float building_atan2(float y, float x) {
 [[vk::binding(20, 2)]] StructuredBuffer<uint4> material_fills;
 [[vk::binding(21, 2)]] RWStructuredBuffer<uint4> material_lines_out;
 [[vk::binding(22, 2)]] StructuredBuffer<uint4> material_lines;
+[[vk::binding(23, 2)]] StructuredBuffer<uint4> beams;
 // The kept primitives' set (passes/Kept.cpp), set 2 of the walls' and roofs' kept pipelines and of the cull's compute
 // stages: this frame slot's jobs (the header, then each job: a tile's push constants and a run of at most 64 of one
 // list's primitives), each job's candidates (their count, their mask and their first place in their list), the kept
@@ -1249,5 +1250,70 @@ BuildingTarget material_fs(MaterialOut v) {
     float y = css_of_output(frame.camera, v.position.xy).y;
     float3 c = mat_colour(frame.camera, building_glass_at(g, v.top.w, v.bottom.w, y), v.position.xy, mat_grain_on(frame));
     o.colour = float4(c * v.opacity, v.opacity);
+    return o;
+}
+
+/// A hoist beam's fragments: its segment's ends (CSS px) and half its width, with which beam_fs keeps the samples it
+/// covers.
+struct BeamOut {
+    float4 position : SV_Position;
+    nointerpolation float4 ends : BEAM_ENDS;
+    nointerpolation float half : BEAM_HALF;
+};
+
+/// Vertex `v` of beam record `index`: its quad (two triangles over building_beam_corner's), at its true depth along it
+/// with the sills' lead, or at its slot's painter depth under the painter switch; an instance a record.
+[shader("vertex")]
+BeamOut beam_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanInstanceID) {
+    uint at = index * BUILDING_BEAM_VECTORS;
+    BuildingBeam b = building_beam(frame.camera, beams[at], beams[at + 1u], beams[at + 2u], beams[at + 3u],
+                                   beams[at + 4u], beams[at + 5u]);
+    BeamOut o;
+    o.ends = float4(0.0f);
+    o.half = 0.0f;
+    if (!b.drawn) {
+        o.position = NOWHERE;
+        return o;
+    }
+    uint corner = v < 3u ? v : (v == 3u ? 0u : v - 2u);
+    float2 css = building_beam_corner(b, corner);
+    float recip = building_beam_recip(b, css);
+    float depth = (frame.camera.flags.x & CAMERA_PAINTER) != 0u
+                      ? painter_depth(frame.camera, b.slot)
+                      : true_depth(frame.camera, recip + recip * BUILDING_SILL_LEAD);
+    o.position = clip_of(frame.camera, css, 1.0f, depth);
+    o.ends = float4(b.p0, b.p1);
+    o.half = b.half;
+    return o;
+}
+
+/// A hoist beam's fragments: the samples within half its width of its segment (its round caps), in its colour with
+/// mat's grain as the objects take it.
+[shader("fragment")]
+FrameTarget beam_fs(BeamOut v) {
+    BuildingBeam b;
+    b.drawn = true;
+    b.p0 = v.ends.xy;
+    b.p1 = v.ends.zw;
+    b.r0 = 0.0f;
+    b.r1 = 0.0f;
+    b.half = v.half;
+    b.slot = 0u;
+    float2 corner = floor(v.position.xy);
+    uint n = push.at.x;
+    uint mask = 0u;
+    for (uint i = 0u; i < n; ++i) {
+        float2 at = n == 4u ? window_samples4[i] : (n == 2u ? window_samples2[i] : float2(0.5f, 0.5f));
+        if (building_beam_covers(b, css_of_output(frame.camera, corner + at))) {
+            mask |= 1u << i;
+        }
+    }
+    if (mask == 0u) {
+        discard;
+    }
+    FrameTarget o;
+    o.colour = float4(mat_colour(frame.camera, building_rgb(BUILDING_BEAM_RGB), v.position.xy, mat_grain_on(frame)),
+                      1.0f);
+    o.coverage = mask;
     return o;
 }

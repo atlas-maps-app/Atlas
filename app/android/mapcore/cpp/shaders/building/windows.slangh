@@ -2136,3 +2136,124 @@ inline BuildingMaterialLine building_material_line_of(BuildingMaterialLineRecord
     l.hi = asfloat(r.v2.y);
     return l;
 }
+
+// ---------------------------------------------------------------------------------------------- hoist beams
+
+// A hoist beam under an old gable (geometry/Walls.hpp's RoofBeam; render/amsterdam.py's _draw_building): with weather,
+// its building's item nearer than 260 m and its gable turned to the eye, its ends projected as Camera.proj projects them
+// (a beam with an end behind the near plane is not drawn) and snapped at rest, stroked its width (max(0.5, 0.12 · focal
+// / d) as printed: the CPU's, passes::beam_width) in #2A221C with round caps: a capsule whose fragments keep the samples
+// within half its width of its segment, at its slot among its roof's slopes under the painter switch, else at its true
+// depth along it (its ends' reciprocal depths, the nearer end's past its round cap) with the sills' lead, over its gable
+// where it leaves it. The CPU writes each record the frame draws (6 uint4): v0 its start (tile-local float bits) and
+// its painter slot; v1 its end and its width in hundredths; v2 and v3 its gable's normal and test point (its turn); v4
+// and v5 its tile's place.
+static const uint BUILDING_BEAM_RGB = 0x2A221Cu;
+static const uint BUILDING_BEAM_VECTORS = 6u;
+static const uint BUILDING_BEAM_VERTICES = 6u;
+
+/// A hoist beam as the frame draws it: nothing, or its ends (CSS px, snapped at rest), their reciprocal depths, half its
+/// width (CSS px) and its painter slot.
+struct BuildingBeam {
+    bool drawn;
+    float2 p0;
+    float2 p1;
+    float r0;
+    float r1;
+    float half;
+    uint slot;
+};
+
+/// The beam of record v0 to v5 at the frame's camera.
+inline BuildingBeam building_beam(FrameCamera cam, uint4 v0, uint4 v1, uint4 v2, uint4 v3, uint4 v4, uint4 v5) {
+    BuildingBeam b;
+    float2 zero = {0.0f, 0.0f};
+    b.drawn = false;
+    b.p0 = zero;
+    b.p1 = zero;
+    b.r0 = 0.0f;
+    b.r1 = 0.0f;
+    b.half = 0.5f * building_hundredths(v1.w);
+    b.slot = v0.w;
+    TilePlace place;
+    float4 offset = {asfloat(v4.x), asfloat(v4.y), asfloat(v4.z), asfloat(v4.w)};
+    float4 scale = {asfloat(v5.x), asfloat(v5.y), asfloat(v5.z), asfloat(v5.w)};
+    place.offset = offset;
+    place.scale = scale;
+    // its gable turned to the eye (building_wall_turned's `vdot(nrm, vsub(cam.C, centre)) > 0`)
+    float3 n = {asfloat(v2.x), asfloat(v2.y), asfloat(v2.z)};
+    float3 test = {asfloat(v3.x), asfloat(v3.y), asfloat(v3.z)};
+    float3 t = eye_relative(place, test);
+    float toward = -(((n.x * t.x) + (n.y * t.y)) + (n.z * t.z));
+    if (!(toward > 0.0f)) {
+        return b;
+    }
+    float near_z = cam.frame.w;
+    float3 from = {asfloat(v0.x), asfloat(v0.y), asfloat(v0.z)};
+    float3 to = {asfloat(v1.x), asfloat(v1.y), asfloat(v1.z)};
+    float3 k0 = camera_of(cam, eye_relative(place, from));
+    float3 k1 = camera_of(cam, eye_relative(place, to));
+    if (k0.z < near_z || k1.z < near_z) {
+        return b;
+    }
+    float2 p0 = css_of(cam, k0);
+    float2 p1 = css_of(cam, k1);
+    if (camera_rests(cam)) {
+        float2 s0 = {snap_tenth(p0.x), snap_tenth(p0.y)};
+        float2 s1 = {snap_tenth(p1.x), snap_tenth(p1.y)};
+        p0 = s0;
+        p1 = s1;
+    }
+    b.drawn = true;
+    b.p0 = p0;
+    b.p1 = p1;
+    b.r0 = near_z / k0.z;
+    b.r1 = near_z / k1.z;
+    return b;
+}
+
+/// A beam's direction along it (from its start; along x where its ends meet), and its length (CSS px).
+inline float3 building_beam_along(BuildingBeam b) {
+    float2 e = b.p1 - b.p0;
+    float len = sqrt(e.x * e.x + e.y * e.y);
+    float3 u = {1.0f, 0.0f, 0.0f};
+    if (len > 0.0f) {
+        u.x = e.x / len;
+        u.y = e.y / len;
+    }
+    u.z = len;
+    return u;
+}
+
+/// Corner c of the quad a beam draws (0 and 3 past its start, 1 and 2 past its end, 0 and 1 on its right): its segment
+/// grown by half its width and a pixel's margin either way.
+inline float2 building_beam_corner(BuildingBeam b, uint c) {
+    float3 u = building_beam_along(b);
+    float reach = b.half + 1.0f;
+    float2 along = {u.x * reach, u.y * reach};
+    float2 across = {-u.y * reach, u.x * reach};
+    float2 p = c == 0u || c == 3u ? b.p0 - along : b.p1 + along;
+    return c < 2u ? p - across : p + across;
+}
+
+/// A beam's reciprocal depth at CSS point `p`: its ends' interpolated along it (affine on the screen along a line in
+/// space), each end's held past its round cap.
+inline float building_beam_recip(BuildingBeam b, float2 p) {
+    float3 u = building_beam_along(b);
+    if (!(u.z > 0.0f)) {
+        return b.r0;
+    }
+    float s = ((p.x - b.p0.x) * u.x + (p.y - b.p0.y) * u.y) / u.z;
+    s = s < 0.0f ? 0.0f : (s > 1.0f ? 1.0f : s);
+    return b.r0 + (b.r1 - b.r0) * s;
+}
+
+/// Whether CSS point `p` lies within half a beam's width of its segment (its round caps included).
+inline bool building_beam_covers(BuildingBeam b, float2 p) {
+    float3 u = building_beam_along(b);
+    float s = u.z > 0.0f ? ((p.x - b.p0.x) * u.x + (p.y - b.p0.y) * u.y) : 0.0f;
+    s = s < 0.0f ? 0.0f : (s > u.z ? u.z : s);
+    float dx = p.x - (b.p0.x + u.x * s);
+    float dy = p.y - (b.p0.y + u.y * s);
+    return dx * dx + dy * dy <= b.half * b.half;
+}

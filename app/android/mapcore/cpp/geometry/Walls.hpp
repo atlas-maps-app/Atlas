@@ -53,6 +53,9 @@ inline constexpr double facades_reach = 760.0;
 inline constexpr double low_plinth_reach = 300.0;
 inline constexpr double cornices_reach = 520.0;
 
+/// The renders' distance for a hoist beam under an old gable (`d < 260`, with weather).
+inline constexpr double beams_reach = 260.0;
+
 /// A building's (or part's) owner kind in scene::owner_key: an area (AnchorItems' OwnerType.AREA).
 inline constexpr std::uint8_t owner_area = 4;
 
@@ -197,6 +200,19 @@ struct WindowWall {
     std::uint32_t ribs = 0; ///< a metal wall's ribs: tohex(mulc(base, 0.62)), 0xRRGGBB
 };
 
+/// A hoist beam under an old gable (render/amsterdam.py's _draw_building: a gabled roof's gable end on a building
+/// before 1850, without a tradition's roof): a stroke 0.7 m out from the gable along its normal, a quarter of the
+/// roof's height under its top, drawn with weather within 260 m where the gable turns to the eye, at its slot among its
+/// roof's slopes (the port appends it to `slopes` as it meets the gable, after the slopes of the edges before).
+struct RoofBeam {
+    std::uint32_t item = 0;      ///< its building's item
+    std::uint32_t face = 0;      ///< its gable's face, whose turn it takes
+    V3 from;                     ///< (apex.x, h - rh · 0.25, apex.z)
+    V3 to;                       ///< from + nr · 0.7, nr the gable's normal
+    std::uint16_t near_slot = 0; ///< its painter slot within the item, near and far
+    std::uint16_t far_slot = 0;
+};
+
 /// The most rows a facade wall's record holds (windows.slangh's BUILDING_WINDOW_LEVELS).
 inline constexpr std::uint16_t max_window_levels = 0x0FFF;
 
@@ -258,6 +274,8 @@ struct TileBuildings {
     /// Each item's plinth's and cornice's painter slots (the plinth's near | far << 16, the cornice's the next), after
     /// all its walls; no_facade where it has neither.
     std::vector<std::uint32_t> item_facades;
+    /// The hoist beams under old gables, in the items' order.
+    std::vector<RoofBeam> beams;
     /// The tile's sun samples the buildings take (K8's count before the tile's trees, quays and windows).
     std::uint32_t samples = 0;
 };

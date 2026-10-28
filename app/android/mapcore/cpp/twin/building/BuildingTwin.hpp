@@ -109,10 +109,11 @@ struct ElementDepth {
     bool edged = false;
     std::vector<shaders::BuildingShape> triangles;
     std::uint32_t tile = 0;
-    std::vector<WindowsDepth> windows;    ///< one: the element is a wall's windows' path
-    std::vector<PartsDepth> parts;        ///< one: the element is a wall's reveals', sash bars' or sills' path
-    std::vector<ArchesDepth> arches;      ///< one: the element is a church wall's windows' path
-    std::vector<MaterialDepth> materials; ///< one: the element is a wall's material face's path
+    std::vector<WindowsDepth> windows;        ///< one: the element is a wall's windows' path
+    std::vector<PartsDepth> parts;            ///< one: the element is a wall's reveals', sash bars' or sills' path
+    std::vector<ArchesDepth> arches;          ///< one: the element is a church wall's windows' path
+    std::vector<MaterialDepth> materials;     ///< one: the element is a wall's material face's path
+    std::vector<shaders::BuildingBeam> beams; ///< one: the element is a hoist beam (its segment, its depth along it)
     bool veil = false; ///< the element is the church windows' veil, which the frame folds into their glass
 };
 
@@ -167,6 +168,10 @@ private:
     void church_windows(const shaders::BuildingPrim& wall, const shaders::BuildingFace& f,
                         const shaders::TilePlace& place, hlsl::float4 plane, std::uint32_t church, std::uint32_t slot,
                         std::int32_t item, std::uint32_t reveal, double depth);
+
+    /// The hoist beams under old gables the frame draws of a tile (its items' rows `rows`, its place), each at its slot
+    /// among its roof's slopes (beam_vs's).
+    void beams(const passes::BuildingTile& b, std::span<const std::uint32_t> rows, const shaders::TilePlace& place);
 
     /// The paths of a wall's material face the frame draws (its one-cell primitive `wall`, its face `f`, its plane
     /// `plane`, its record `w`, `m` its BuildingTile::window_materials entry): at its material slot `slot` on, in item

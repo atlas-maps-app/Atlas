@@ -102,6 +102,19 @@ struct BuildingTile {
         std::uint32_t ribs = 0;
     };
     std::vector<MaterialWall> window_materials;
+    /// Each hoist beam under an old gable (geometry::RoofBeam's): its ends relative to the tile's corner and its
+    /// gable's face's normal and test point (its turn), in the floats the heap holds of the primitives, its item and
+    /// its slots, for the frame's beam records and the twin.
+    struct Beam {
+        std::uint32_t item = 0;
+        std::array<float, 3> from{};
+        std::array<float, 3> to{};
+        std::array<float, 3> normal{};
+        std::array<float, 3> test{};
+        std::uint16_t near_slot = 0;
+        std::uint16_t far_slot = 0;
+    };
+    std::vector<Beam> beams;
     /// Each item's plinth's and cornice's slots (geometry::TileBuildings::item_facades).
     std::vector<std::uint32_t> item_facades;
     /// Each face's light inputs (the CPU's light, per tile and moment, and the twin's).
@@ -149,6 +162,10 @@ struct MaterialChoice {
 };
 [[nodiscard]] MaterialChoice material_choice(const BuildingTile::MaterialWall& m, bool night, double depth,
                                              double focal);
+
+/// The width of a hoist beam drawn at depth `depth` (the port's d) by a camera of focal length `focal` (CSS px, in
+/// double): max(0.5, 0.12 · focal / d), in hundredths of a CSS px as the port prints it ('%.2f').
+[[nodiscard]] std::uint32_t beam_width(double depth, double focal);
 
 /// A wall's windows' frames' width and their sash bars' (0: none), in tenths of a CSS px as the port prints them.
 struct WindowWidths {

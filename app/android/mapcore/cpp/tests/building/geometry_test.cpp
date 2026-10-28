@@ -424,6 +424,7 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
         std::size_t windows = 0;
         std::size_t walls = 0;
         std::array<std::size_t, 5> faced{}; // the facade walls by their material face (gm::Material)
+        std::size_t beams = 0;              // the hoist beams under old gables
         double ms = 0;
         for (const std::uint8_t level : levels) {
             for (const tl::ChunkRef& chunk : pack->chunks().level(head->levels[0])) {
@@ -459,6 +460,20 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
                 windows += g.windows;
                 walls += g.window_walls.size();
                 for (const gm::WindowWall& ww : g.window_walls) ++faced[static_cast<std::size_t>(ww.material)];
+                // each hoist beam names its item and its gable's face, at a slot within the item's, 0.7 m long
+                for (const gm::RoofBeam& beam : g.beams) {
+                    CHECK(beam.item < g.items.size());
+                    CHECK(beam.face < g.faces.size());
+                    if (beam.item < g.items.size()) {
+                        CHECK(beam.near_slot < g.items[beam.item].near_slots);
+                        CHECK(beam.far_slot < g.items[beam.item].far_slots);
+                    }
+                    const double dx = beam.to.x - beam.from.x;
+                    const double dz = beam.to.z - beam.from.z;
+                    CHECK(std::abs(std::sqrt((dx * dx) + (dz * dz)) - 0.7) < 1e-9);
+                    CHECK(beam.to.y == beam.from.y);
+                }
+                beams += g.beams.size();
                 wrong += c.wrong;
                 ++tiles;
             }
@@ -467,7 +482,7 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
                 sampled, " with a sun sample, ", windows, " windows on ", walls, " walls, ", wrong,
                 " not K8's; stage T ", ms / static_cast<double>(tiles), " ms a tile");
         MESSAGE(std::string(name), ": material faces on ", faced[1], " glass walls, ", faced[2], " metal, ", faced[3],
-                " with balconies, ", faced[4], " of parking garages");
+                " with balconies, ", faced[4], " of parking garages; ", beams, " hoist beams under old gables");
         MESSAGE(std::string(name), ": a tile's range of the walls heap ",
                 static_cast<double>(all_bytes) / static_cast<double>(tiles) / (1 << 20), " MB on average, the densest ",
                 static_cast<double>(most_bytes) / (1 << 20), " MB: ", densest);

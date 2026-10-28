@@ -67,18 +67,19 @@ void Buildings::select(const frame::FrameState& state, frame::Selectors& selecto
     // view's win_d (cfg's, 390 m where it names none); a church's own windows where d < 520 (with weather: no others
     // then); deep windows where d < 160, sash bars where d < 140; the facades' flat detail where d < 760, the low
     // plinth where d < 300, cornices where d < 520; the material faces where d < win_d * 1.35 (in double, as the port
-    // multiplies)
+    // multiplies); an old gable's hoist beam where d < 260
     const double win_d =
         state.placed ? state.placed->number("win_d").value_or(geometry::windows_reach) : geometry::windows_reach;
-    const std::array<double, 9> details{geometry::cells_reach,
-                                        win_d,
-                                        geometry::church_windows_reach,
-                                        geometry::deep_windows_reach,
-                                        geometry::sash_reach,
-                                        geometry::facades_reach,
-                                        geometry::low_plinth_reach,
-                                        geometry::cornices_reach,
-                                        win_d * 1.35};
+    const std::array<double, 10> details{geometry::cells_reach,
+                                         win_d,
+                                         geometry::church_windows_reach,
+                                         geometry::deep_windows_reach,
+                                         geometry::sash_reach,
+                                         geometry::facades_reach,
+                                         geometry::low_plinth_reach,
+                                         geometry::cornices_reach,
+                                         win_d * 1.35,
+                                         geometry::beams_reach};
     selectors.set_details(kind_, details);
 }
 

@@ -471,6 +471,31 @@ void add_arches(std::vector<Shape>& out, const twin::ArchesDepth& ad, double den
         if (e->sequence < depths.size() && depths[e->sequence].veil) continue;
         // a wall's material face, blended over the raster (materials_of)
         if (e->sequence < depths.size() && !depths[e->sequence].materials.empty()) continue;
+        // a hoist beam: its segment grown by half its width (its round caps), its quad's depths along it as beam_vs
+        // gives them
+        if (e->sequence < depths.size() && !depths[e->sequence].beams.empty()) {
+            const shaders::BuildingBeam& bb = depths[e->sequence].beams.front();
+            Shape sh;
+            sh.poly = {{static_cast<double>(bb.p0.x) * density, static_cast<double>(bb.p0.y) * density},
+                       {static_cast<double>(bb.p1.x) * density, static_cast<double>(bb.p1.y) * density}};
+            sh.stroke = static_cast<double>(bb.half) * density;
+            sh.colour = levels_of(shaders::building_rgb(shaders::BUILDING_BEAM_RGB));
+            // no face plane: its depth is its ends' along it, with the rasteriser's plain slack
+            sh.depth = twin::ElementDepth{.edged = false, .tile = depths[e->sequence].tile};
+            sh.depth.shape.lead = shaders::BUILDING_SILL_LEAD;
+            sh.depth.shape.slot = bb.slot;
+            sh.depth.shape.depth = shaders::painter_depth(cam, bb.slot);
+            std::array<Vertex, 4> quad{};
+            for (std::uint32_t k = 0; k < 4; ++k) {
+                const hlsl::float2 c = shaders::building_beam_corner(bb, k);
+                quad[k] = {static_cast<double>(c.x), static_cast<double>(c.y),
+                           static_cast<double>(shaders::building_beam_recip(bb, c))};
+            }
+            sh.triangles = {{quad[0], quad[1], quad[2]}, {quad[0], quad[2], quad[3]}};
+            sh.slack = slack_of(cam, sh.depth, sh.triangles);
+            out.push_back(std::move(sh));
+            continue;
+        }
         if (e->sequence < depths.size() && !depths[e->sequence].arches.empty()) {
             for (const twin::ArchesDepth& ad : depths[e->sequence].arches) {
                 add_arches(out, ad, density, cam, depths[e->sequence].tile);
@@ -1384,7 +1409,7 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
             MESSAGE(name << ": " << windows.walls << " facade walls, " << windows.windows << " windows, "
                          << windows.nears << " near ones, " << windows.facades << " facades, " << windows.churches
                          << " church windows, " << windows.material_fills << " material fills and "
-                         << windows.material_lines << " material lines");
+                         << windows.material_lines << " material lines; " << windows.beams << " hoist beams");
             CHECK(kept.kept[0] <= kept.submitted[0]);
             CHECK(kept.kept[1] <= kept.submitted[1]);
             CHECK(kept.kept[2] <= kept.submitted[2]);
@@ -1486,8 +1511,8 @@ TEST_CASE("buildings: every roof shape and a houseboat drawn on the host's Vulka
 TEST_CASE("buildings: the walls' material faces drawn on the host's Vulkan over what lies under them, pixel for pixel "
           "their twin's") {
     // fixture.hpp's materials tile in a render pack of its own: a glass office's glass over its shop glazing, then its
-    // floors and mullions; a metal shed's ribs; a stone home's balconies; a parking garage's decks; near with weather
-    // by day, under the painter switch, and at night (no ribs then) from the other side
+    // floors and mullions; a metal shed's ribs; a stone home's balconies; a parking garage's decks; a canal house's
+    // hoist beam; near with weather by day, under the painter switch, and at night (no ribs then) from the other side
     const std::string path =
         synthetic_pack(test::building::materials_tile(), test::building::materials_features, "materials");
     const std::array<PackFile, 1> packs{PackFile{.id = "materials", .path = path}};
@@ -1500,8 +1525,11 @@ TEST_CASE("buildings: the walls' material faces drawn on the host's Vulkan over 
     check_frames(camera(lat, lon, 20.0, 50.0, 260.0, 1080, 2400, d), "materials near", packs, sunny(), 8, nullptr,
                  true);
     check_frames(camera(lat, lon, 200.0, 50.0, 260.0, 1080, 2400, d), "materials at night", packs, night_th, 8);
-    // the garage's decks, the stone home's balconies, the office and the shed's ribs, from the south
+    // the garage's decks, the stone home's balconies, the office and the shed's ribs, from the south; the canal house's
+    // hoist beam under its near gable, at true depth and at its slot among the slopes
     check_frames(camera(52.37400, 4.88380, 0.0, 60.0, 260.0, 1080, 2400, d), "materials west", packs, sunny(), 8);
+    check_frames(camera(52.37400, 4.88380, 0.0, 60.0, 260.0, 1080, 2400, d), "materials west", packs, sunny(), 8,
+                 nullptr, true);
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }

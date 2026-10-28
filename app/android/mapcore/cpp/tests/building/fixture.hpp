@@ -29,6 +29,14 @@ inline constexpr std::int32_t w0 = 48'840'000;  // 4.884° E
             .keep = {}};
 }
 
+/// The same rectangle walked clockwise, as the loader leaves every building's ring (load/Amsterdam.cpp's clean: a
+/// positive area in x east, z south): the renders' gable normals (an edge's right hand) then face out of it.
+[[nodiscard]] inline Ring rect_cw(std::int32_t dx, std::int32_t dy, std::int32_t w, std::int32_t d) {
+    return {.lat = {s0 + dy, s0 + dy + d, s0 + dy + d, s0 + dy},
+            .lon = {w0 + dx, w0 + dx, w0 + dx + w, w0 + dx + w},
+            .keep = {}};
+}
+
 /// The tile (14/8414/5384): a flat house, gabled, hipped, pyramidal, skillion (SW) and mansard roofs, a houseboat near
 /// the quay, and a raised part standing in the flat house (its outline); and two trees, so the trees' samples begin
 /// after the buildings'.
@@ -140,43 +148,46 @@ inline constexpr std::uint32_t tile_features = 10;
 inline constexpr std::uint32_t melt_features = 2;
 
 /// A tile of the material faces (render/amsterdam.py's material_face): a glass office with a shop floor (its glazing
-/// under its glass), a metal shed, a stone home of 7 storeys (its balconies) and a parking garage of 4 decks.
+/// under its glass), a metal shed, a stone home of 7 storeys (its balconies) and a parking garage of 4 decks; and a
+/// canal house of 1680, gabled, walked clockwise, so the hoist beam of the gable turned to the eye stands out of it.
 [[nodiscard]] inline TileBytes materials_tile() {
     namespace tl = atlas::tiles;
     namespace col = atlas::test::columns;
     TileBytes t;
     const std::vector<Ring> rings{
-        rect(0, 0, 1470, 1800),     // 0: a glass office, 10 × 20 m
-        rect(3000, 0, 2940, 1800),  // 1: a metal shed east of it, 20 × 20 m
-        rect(-3500, 0, 2205, 1080), // 2: a stone home west of it, 15 × 12 m
-        rect(-7500, 0, 2940, 1800), // 3: a parking garage farther west, 20 × 20 m
+        rect(0, 0, 1470, 1800),          // 0: a glass office, 10 × 20 m
+        rect(3000, 0, 2940, 1800),       // 1: a metal shed east of it, 20 × 20 m
+        rect(-3500, 0, 2205, 1080),      // 2: a stone home west of it, 15 × 12 m
+        rect(-7500, 0, 2940, 1800),      // 3: a parking garage farther west, 20 × 20 m
+        rect_cw(1650, -2000, 882, 1260), // 4: a canal house of 1680 south of the office, 6 × 14 m, gabled
     };
     LayerBytes b;
     b.id = static_cast<std::uint8_t>(tl::LayerId::building);
-    b.cells = {0, 0, 0, 0};
+    b.cells = {0, 0, 0, 0, 0};
     b.columns = {
-        {"index", tl::Codec::delta, col::delta({0, 1, 2, 3})},
-        {"id", tl::Codec::delta, col::delta({400, 401, 402, 403})},
+        {"index", tl::Codec::delta, col::delta({0, 1, 2, 3, 4})},
+        {"id", tl::Codec::delta, col::delta({400, 401, 402, 403, 404})},
         {"ring", tl::Codec::geom, col::geom(rings)},
-        {"h", tl::Codec::centi, col::centi({30.0, 9.0, 21.0, 12.0})},
-        {"min", tl::Codec::centi, col::centi({0.0, 0.0, 0.0, 0.0})},
-        {"roof_h", tl::Codec::centi, col::centi({std::nullopt, std::nullopt, std::nullopt, std::nullopt})},
-        {"levels", tl::Codec::nvarz, col::nvarz({8, 2, 7, 4})},
-        {"roof", tl::Codec::str, col::str(t, {std::nullopt, std::nullopt, std::nullopt, std::nullopt})},
-        {"wall_rgb", tl::Codec::varu, col::varu({0x9AA6AE, 0x8A9096, 0xD8CCB2, 0xA49C90})},
-        {"roof_rgb", tl::Codec::varu, col::varu({0x56585C, 0x737E88, 0x8C969E, 0x56585C})},
-        {"mat_draw", tl::Codec::str, col::str(t, {"glass", "metal", "stone", "concrete"})},
-        {"kind", tl::Codec::str, col::str(t, {"office", "industrial", "home", "parking"})},
-        {"no_win", tl::Codec::boolean, col::boolean({true, false, false, false})},
-        {"flags", tl::Codec::varu, col::varu({tl::building::flag_shop_floor, 0, 0, 0})},
-        {"tag:building", tl::Codec::str, col::str(t, {"office", "industrial", "apartments", "parking"})},
+        {"h", tl::Codec::centi, col::centi({30.0, 9.0, 21.0, 12.0, 16.0})},
+        {"min", tl::Codec::centi, col::centi({0.0, 0.0, 0.0, 0.0, 0.0})},
+        {"roof_h", tl::Codec::centi, col::centi({std::nullopt, std::nullopt, std::nullopt, std::nullopt, 5.0})},
+        {"year", tl::Codec::nvarz, col::nvarz({std::nullopt, std::nullopt, std::nullopt, std::nullopt, 1680})},
+        {"levels", tl::Codec::nvarz, col::nvarz({8, 2, 7, 4, 4})},
+        {"roof", tl::Codec::str, col::str(t, {std::nullopt, std::nullopt, std::nullopt, std::nullopt, "gabled"})},
+        {"wall_rgb", tl::Codec::varu, col::varu({0x9AA6AE, 0x8A9096, 0xD8CCB2, 0xA49C90, 0x7A4A3A})},
+        {"roof_rgb", tl::Codec::varu, col::varu({0x56585C, 0x737E88, 0x8C969E, 0x56585C, 0x4E4E52})},
+        {"mat_draw", tl::Codec::str, col::str(t, {"glass", "metal", "stone", "concrete", "brick"})},
+        {"kind", tl::Codec::str, col::str(t, {"office", "industrial", "home", "parking", "home"})},
+        {"no_win", tl::Codec::boolean, col::boolean({true, false, false, false, false})},
+        {"flags", tl::Codec::varu, col::varu({tl::building::flag_shop_floor, 0, 0, 0, 0})},
+        {"tag:building", tl::Codec::str, col::str(t, {"office", "industrial", "apartments", "parking", "house"})},
     };
     t.layers = {b};
     return t;
 }
 
-/// The material faces' tile's features.
-inline constexpr std::uint32_t materials_features = 4;
+/// The material faces' tile's features, with an old canal house's gables and their hoist beams.
+inline constexpr std::uint32_t materials_features = 5;
 
 /// Writes tile `t` (its `features`) as a render pack of 14/8414/5384 (the tile reader's tests' head: the Westerkerk's
 /// frame) to a file of its own in the tests' scratch folder, named for `name`; its path.

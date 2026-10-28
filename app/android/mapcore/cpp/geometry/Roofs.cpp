@@ -64,7 +64,11 @@ void gable_roof(Builder& b, const Building& bl, bool hipped, std::uint16_t varia
         std::uint32_t face;
         std::uint32_t sample;
         std::uint32_t edge;
+        bool beam = false; ///< a hoist beam from p[0] to p[1] (no primitive), under the gable of face `face`
     };
+    // an old house's gables have their hoist beam (`yr and yr < 1850`; with weather within 260 m, the frame's to
+    // decide)
+    const bool old = bl.v.year != 0 && bl.v.year < 1850;
     std::vector<Pending> gables;
     std::vector<Pending> slopes;
     for (std::size_t i = 0; i < n; ++i) {
@@ -100,6 +104,19 @@ void gable_roof(Builder& b, const Building& bl, bool hipped, std::uint16_t varia
                               .face = face,
                               .sample = sample,
                               .edge = static_cast<std::uint32_t>(i)});
+            if (old) {
+                // the hoist beam: from (ap.x, h - rh * 0.25, ap.z) to (ap.x + nr.x * 0.7, ..., ap.z + nr.z * 0.7), into
+                // the slopes as the port appends it
+                const V3 from{tri[2].x, h - (bl.rh * 0.25), tri[2].z};
+                const V3 to{tri[2].x + (nr.x * 0.7), h - (bl.rh * 0.25), tri[2].z + (nr.z * 0.7)};
+                slopes.push_back({.p = {from, to, to, to},
+                                  .corners = 0,
+                                  .kind = PrimKind::gable,
+                                  .face = face,
+                                  .sample = 0,
+                                  .edge = static_cast<std::uint32_t>(i),
+                                  .beam = true});
+            }
             continue;
         }
         const std::array<V3, 4> q{pa, pb, qb, qa};
@@ -113,9 +130,18 @@ void gable_roof(Builder& b, const Building& bl, bool hipped, std::uint16_t varia
                           .sample = sample,
                           .edge = static_cast<std::uint32_t>(i)});
     }
-    // gable walls first, so the roof covers any hidden notch
+    // gable walls first, so the roof covers any hidden notch; a hoist beam at its slot among the slopes
     for (const std::vector<Pending>* list : {&gables, &slopes}) {
         for (const Pending& p : *list) {
+            if (p.beam) {
+                b.out.beams.push_back({.item = b.item,
+                                       .face = p.face,
+                                       .from = p.p[0],
+                                       .to = p.p[1],
+                                       .near_slot = Builder::slot(b.near_slot++),
+                                       .far_slot = Builder::slot(b.far_slot++)});
+                continue;
+            }
             b.plain(p.p, p.corners, p.kind, static_cast<std::uint16_t>(variant | prim_flag::any), p.face, p.sample,
                     Builder::slot(b.near_slot++), Builder::slot(b.far_slot++), {.edge = p.edge, .part = 0});
         }

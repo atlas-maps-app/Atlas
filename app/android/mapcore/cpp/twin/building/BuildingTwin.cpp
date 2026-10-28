@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <iterator>
@@ -212,6 +213,7 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
     emit_list(List::cells, b.cells_at, b.cells_first);
     emit_list(List::plain, b.prims_at + (b.edged * shaders::BUILDING_PRIM_VECTORS), b.plain_first);
     windows(b, rows, words, place, cells, sun);
+    beams(b, rows, place);
 }
 
 std::int32_t BuildingTwin::item_of(const passes::BuildingTile& b, std::uint32_t item) {
@@ -846,6 +848,57 @@ void BuildingTwin::material_face(const shaders::BuildingPrim& wall, const shader
         depths_->push_back(std::move(d));
     }
     ++elements_;
+}
+
+void BuildingTwin::beams(const passes::BuildingTile& b, std::span<const std::uint32_t> rows,
+                         const shaders::TilePlace& place) {
+    const shaders::FrameCamera& cam = block_.camera;
+    const std::uint32_t theme_flags = block_.theme.flags.x;
+    if ((theme_flags & shaders::THEME_WEATHER) == 0U) return;
+    const auto bits = [](float v) { return std::bit_cast<std::uint32_t>(v); };
+    const auto offset = std::bit_cast<hlsl::uint4>(place.offset);
+    const auto scale = std::bit_cast<hlsl::uint4>(place.scale);
+    for (const passes::BuildingTile::Beam& beam : b.beams) {
+        // as the frame's records give it (Buildings::write_window_jobs's): its item nearer than 260 m, its slot by its
+        // item's band, its width as printed
+        if (beam.item >= rows.size()) continue;
+        const std::uint32_t row = rows[beam.item];
+        const std::uint32_t rank = row < ranks_.size() ? ranks_[row] : shaders::RANK_NONE;
+        if (rank == shaders::RANK_NONE) continue;
+        const std::uint32_t detail = shaders::rank_detail(rank);
+        if ((detail & shaders::BUILDING_DETAIL_BEAMS) == 0U) continue;
+        const bool near_band = (detail & shaders::BUILDING_DETAIL_NEAR) != 0U;
+        const std::uint32_t slot = shaders::rank_slot(rank) + (near_band ? beam.near_slot : beam.far_slot);
+        const std::uint32_t width =
+            passes::beam_width(row < distances_.depth.size() ? distances_.depth[row] : 0.0, distances_.focal);
+        const hlsl::uint4 from = {bits(beam.from[0]), bits(beam.from[1]), bits(beam.from[2]), slot};
+        const hlsl::uint4 to = {bits(beam.to[0]), bits(beam.to[1]), bits(beam.to[2]), width};
+        const hlsl::uint4 normal = {bits(beam.normal[0]), bits(beam.normal[1]), bits(beam.normal[2]), 0U};
+        const hlsl::uint4 test = {bits(beam.test[0]), bits(beam.test[1]), bits(beam.test[2]), 0U};
+        const shaders::BuildingBeam bb = shaders::building_beam(cam, from, to, normal, test, offset, scale);
+        if (!bb.drawn) continue;
+        // `<path d="M%.1f %.1fL%.1f %.1f" stroke="#2A221C" stroke-width="%.2f" stroke-linecap="round"/>`: its fill
+        // SVG's black, which a line leaves unpainted; the buildings' group's round joins
+        points_.clear();
+        subpaths_.clear();
+        points_.push_back({.x = bb.p0.x, .y = bb.p0.y});
+        points_.push_back({.x = bb.p1.x, .y = bb.p1.y});
+        subpaths_.push_back({.points = points_, .closed = false});
+        Style style{};
+        style.join = Join::round;
+        style.fill = Paint::colour(0xFF00'0000U);
+        style.stroke = Paint::colour(argb_of(shaders::building_rgb(shaders::BUILDING_BEAM_RGB)));
+        style.stroke_width = static_cast<float>(width) / 100.0F;
+        style.cap = Cap::round;
+        out_.at(slot, group_, item_of(b, beam.item));
+        out_.path(style, subpaths_);
+        if (depths_ != nullptr) {
+            ElementDepth d{.edged = true, .tile = tile_};
+            d.beams.push_back(bb);
+            depths_->push_back(std::move(d));
+        }
+        ++elements_;
+    }
 }
 
 } // namespace atlas::twin

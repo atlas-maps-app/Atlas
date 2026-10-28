@@ -128,6 +128,7 @@ public:
         std::uint32_t churches = 0;
         std::uint32_t material_fills = 0;
         std::uint32_t material_lines = 0;
+        std::uint32_t beams = 0; ///< the hoist beams under old gables
     };
     [[nodiscard]] WindowCounts window_counts() const noexcept { return window_counts_; }
     /// The triangles the last frame submitted for its walls, near cells and roofs, and the ones the GPU's cull kept of
@@ -336,6 +337,7 @@ struct Buildings::Windows {
     std::array<gpu::Buffer, 2> churches;
     std::array<gpu::Buffer, 2> material_fills;
     std::array<gpu::Buffer, 2> material_lines;
+    std::array<gpu::Buffer, 2> beams; ///< the hoist beams' records, which the CPU writes each frame
     /// The draws' layout (the frame's sets, then set 2), the compute stage's, its pipeline, and the near windows'
     /// parts', the facades', the glass's, the frames' and the church windows' pipelines; the material faces' fills' and
     /// lines' (translucent).
@@ -349,6 +351,7 @@ struct Buildings::Windows {
     vk::raii::Pipeline church{nullptr};
     vk::raii::Pipeline material_fills_pipeline{nullptr};
     vk::raii::Pipeline material_lines_pipeline{nullptr};
+    vk::raii::Pipeline beams_pipeline{nullptr};
     // the render thread's, per frame: the jobs' words, the frame slot they went to, and what they hold (the church
     // windows' records, and the most segments of leading one of them has; the material faces' records)
     std::vector<std::uint32_t> words;
@@ -362,6 +365,8 @@ struct Buildings::Windows {
     std::uint32_t segments_now = 0;
     std::uint32_t material_fills_now = 0;
     std::uint32_t material_lines_now = 0;
+    std::uint32_t beams_now = 0;
+    std::vector<hlsl::uint4> beam_words; ///< this frame's beam records, as the CPU writes them
 };
 
 struct Buildings::Kept {

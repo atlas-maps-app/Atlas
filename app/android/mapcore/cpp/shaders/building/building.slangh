@@ -113,7 +113,7 @@ struct BuildingPush {
 /// nearer than the cells' 460 m (their near variant), than the view's win_d (windows), than 520 m (a church's own
 /// windows, a houseboat cabin's), than 160 m (deep windows: a reveal, the glass set back, a sill), than 140 m (sash
 /// bars), than 760 m (the facades' flat detail: plinths, cornices, shop glazing), than 300 m (the low plinth), than 520
-/// m (cornices), than 1.35 times win_d (material faces).
+/// m (cornices), than 1.35 times win_d (material faces), than 260 m (an old gable's hoist beam).
 static const uint BUILDING_DETAIL_NEAR = 1u;
 static const uint BUILDING_DETAIL_WINDOWS = 2u;
 static const uint BUILDING_DETAIL_CHURCH = 4u;
@@ -123,6 +123,7 @@ static const uint BUILDING_DETAIL_FACADES = 32u;
 static const uint BUILDING_DETAIL_LOW_PLINTH = 64u;
 static const uint BUILDING_DETAIL_CORNICES = 128u;
 static const uint BUILDING_DETAIL_MATERIALS = 256u;
+static const uint BUILDING_DETAIL_BEAMS = 512u;
 
 /// A primitive as the walls heap holds it.
 struct BuildingPrim {
