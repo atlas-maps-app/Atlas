@@ -312,6 +312,16 @@ Result<Style> Style::of(const StyleTables& tables) {
     th.rack = r.day_night(things, "things", "rack_day", "rack_night");
     th.rack_width = static_cast<float>(r.number(things, "things", "rack_width"));
     th.railing = r.day_night(things, "things", "railing_day", "railing_night");
+    const auto doors = r.table("doors");
+    DoorsStyle& ds = s.doors;
+    for (std::size_t k = 0; k < ds.doors.size(); ++k) {
+        ds.doors.at(k) = r.colour(doors, "doors", std::format("door_{}", k + 1));
+    }
+    ds.outline = r.colour(doors, "doors", "outline");
+    ds.outline_width = static_cast<float>(r.number(doors, "doors", "outline_width"));
+    ds.stoop = r.day_night(doors, "doors", "stoop_day", "stoop_night");
+    ds.plate = r.day_night(doors, "doors", "plate_day", "plate_night");
+    ds.number = r.day_night(doors, "doors", "number_day", "number_night");
     const auto items = r.table("items");
     ItemsStyle& it = s.items;
     const auto number = [&](const char* key) { return static_cast<float>(r.number(items, "items", key)); };
