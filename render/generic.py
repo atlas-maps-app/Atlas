@@ -3,7 +3,7 @@ roof:colour), chosen from what is mapped about the building itself (its building
 it stands in, for the country it is in. Every value set here is marked guessed, with the reason, and can be filled in.
 The tag value is one plain colour per kind of wall or roof; the drawing varies it slightly per building, as weathering would."""
 import random, re, math, collections, json, os
-from real import num, signed_area, centroid
+from real import num, signed_area, centroid, pip
 
 HOME = {'house', 'detached', 'semidetached_house', 'terrace', 'bungalow', 'residential', 'apartments', 'dormitory', 'farm'}
 KINDS = [  # (kind, building values, extra tag tests)
@@ -252,8 +252,9 @@ def fits(when, b, kind, md, short):
     return True
 
 
-def trad_look(b, P, kind, why, g, region):
-    """The tradition's look for one building whose walls or roof are not mapped. False where the tradition says nothing about its kind."""
+def trad_look(b, P, kind, why, g, region, lw=None):
+    """The tradition's look for one building whose walls or roof are not mapped. False where the tradition says nothing about its kind.
+    lw: the colours learned for it from its mapped neighbours (learned()), drawn in place of the tradition's."""
     t = b['tags']; bt = t.get('building') or t.get('building:part') or 'yes'; yr = b.get('year')
     modern = bool(yr and yr >= P.get('modern_from', 1950))
     seed = b.get('parent_id', b['id'])
@@ -272,8 +273,9 @@ def trad_look(b, P, kind, why, g, region):
             b['levels'] = lv; b['h'] = lv * P['floor_h'] + (b.get('roof_h') or 0); g['building:levels'] = True; b['lv_why'] = 'its tradition'
     mat, col = t.get('building:material'), t.get('building:colour')
     rmat, rcol = t.get('roof:material'), t.get('roof:colour')
+    lwall, lroof = (lw or {}).get('building:colour'), (lw or {}).get('roof:colour')      # learned palettes: stand-ins for the unmapped colours
     wm, wc = pick(walls, seed * 13 + 3)
-    md = mat or wm
+    md = mat or (lwall or {}).get('material') or wm
     # roof: a rule of the tradition (a Paris mansard, a canal house's gable), else a shape from its roofs, with its pitch
     rf = trad_entry(P['roof'], bt, kind, modern, yr) or era(P['roof']['default'], yr)
     rule = None
@@ -305,14 +307,18 @@ def trad_look(b, P, kind, why, g, region):
     if not mat: g['building:material'] = True
     if col:
         b['col'] = col; ch = paint(col); b['col_draw'] = ch or (MAT_DRAW.get(mat) or MAT_COL.get(mat or wm, wc))
+    elif lwall:
+        b['col'] = lwall['value']; b['col_draw'] = jitter(paint(lwall['value']), b['id'], 0.035); g['building:colour'] = True
     elif mat:
         b['col'] = MAT_DRAW.get(mat) or MAT_COL.get(mat, wc); b['col_draw'] = b['col']; g['building:colour'] = True
     else:
         b['col'] = wc; b['col_draw'] = jitter(wc, b['id'], 0.035); g['building:colour'] = True
-    b['rmat_draw'] = rmat or rm
+    b['rmat_draw'] = rmat or (lroof or {}).get('material') or rm
     if not rmat: g['roof:material'] = True
     if rcol:
         b['rcol'] = rcol; ch = colour_hex(rcol); b['rcol_draw'] = ch or (MAT_DRAW.get(rmat) or RMAT_COL.get(rmat or rm, rc))
+    elif lroof:
+        b['rcol'] = lroof['value']; b['rcol_draw'] = jitter(colour_hex(lroof['value']), b['id'] + 7, 0.05); g['roof:colour'] = True
     elif rmat:
         b['rcol'] = MAT_DRAW.get(rmat) or RMAT_COL.get(rmat, rc); b['rcol_draw'] = b['rcol']; g['roof:colour'] = True
     else:
@@ -338,6 +344,7 @@ def trad_look(b, P, kind, why, g, region):
     b['no_win'] = kind in NO_WIN or md == 'glass'
     label = P.get('says_by', {}).get(md, P['says']) if homeish else '%s in the %s tradition' % (kind_label(kind), P['name'])
     b['look_why'] = '%s · %s' % (label, why) if any(g.get(k) for k in ('building:material', 'building:colour', 'roof:material', 'roof:colour', 'roof:shape')) else None
+    if lw: b['look_why'] += ' · ' + pal_why(lw)
     if rule and b.get('roof') == 'mansard': b['roof_why'] = 'mansard'
     return True
 
@@ -372,14 +379,124 @@ def party_walls(S, tol=0.8):
         b['party'] = out
 
 
+# ------------------------------------------------------------------ learned palettes (a prototype, off unless ATLAS_PALETTES=1)
+# An unmapped wall or roof takes its colour from the colours mapped on buildings of its own kind around it: PAL_MIN or more within PAL_R
+# metres, else the region's, where PAL_REGION_MIN or more are spread over the region (PAL_REGION_SPREAD of the squares its kind stands in);
+# else the look above stands. A part of a building whose other parts map the colour takes theirs first. A building whose material is
+# mapped keeps to samples of that material. A mapped building gives each of its values once, its parts counted with it (a landmark
+# modelled in thirty parts is one building). The pick is the building's own random stream, so the same data gives the same picks, and it
+# is marked guessed with where it came from. The thresholds come from the survey (render/palettes.py).
+PALETTES = os.environ.get('ATLAS_PALETTES') == '1'
+PAL_R, PAL_MIN = 150.0, 5             # near: 5 or more within 150 m; from 5 on the learned colours beat today's look in every region surveyed
+PAL_REGION_MIN, PAL_REGION_SPREAD = 35, 0.1      # the region: 35 or more of its kind (37 to 73 beat today's look from beyond 150 m in Paris, New York
+                                                  # and Notting Hill; Bergen's 17 to 31 lost), standing in a tenth or more of the PAL_R squares its kind
+                                                  # stands in (those 13 to 48%; the canal ring's 67 home roofs, 58 of them one sweep of red tiles, 2%)
+WALL_MATS = set(MAT_COL) | set(MAT_DRAW); ROOF_MATS = set(RMAT_COL) | set(MAT_DRAW)       # materials the drawing knows
+
+
+def mapped_colour(v):
+    """A mapped colour as the renderer reads it (colour_hex): the value, or the first value of a list (white;red) that reads; else None."""
+    for x in (v or '').split(';'):
+        if colour_hex(x): return x.strip().lower()
+    return None
+
+
+def owners(S):
+    """Each building and part's building, by id(): a part belongs to the outline holding its centroid (regions.py has it as parent_id)."""
+    cell = 50.0; grid = collections.defaultdict(list); by_id = {}
+    for b in S['buildings']:
+        by_id.setdefault(b['id'], b)
+        xs = [p[0] for p in b['poly']]; zs = [p[1] for p in b['poly']]; bb = (min(xs), max(xs), min(zs), max(zs))
+        for i in range(int(bb[0] // cell), int(bb[1] // cell) + 1):
+            for j in range(int(bb[2] // cell), int(bb[3] // cell) + 1): grid[(i, j)].append((b, bb))
+    own = {id(b): b for b in S['buildings']}
+    for p in S['parts']:
+        o = by_id.get(p.get('parent_id'))
+        if o is None:
+            cx, cz = centroid(p['poly'])
+            o = next((b for b, bb in grid.get((int(cx // cell), int(cz // cell)), ()) if bb[0] <= cx <= bb[1] and bb[2] <= cz <= bb[3] and pip(cx, cz, b['poly'])), p)
+        own[id(p)] = o
+    return own
+
+
+def kind_at(b, region, landuse_at, P):
+    """The kind apply settles on for a building (kind_of's, as a tradition reads it, else look()'s, where an old tower counts as a church or a
+    monument), with a '?' where nothing about the building said it, only the region's default: those learn only from each other (a theme
+    park's mapped building=yes pavilions are not the village's houses)."""
+    lu = landuse_at(b) if landuse_at else None
+    kind, why = kind_of(b['tags'], lu, region, abs(signed_area(b['poly'])), b['h']) if P else look(b, region, lu)[2:]
+    return kind + '?' if why == 'what most buildings here are' else kind
+
+
+def pal_why(lw):
+    src = {'own': "its own building's mapped colours", 'near': '%d mapped neighbours of its kind', 'region': '%d mapped buildings of its kind in the region'}
+    return ' · '.join('%s from %s' % ('walls' if k == 'building:colour' else 'roof', src[v['where']].replace('%d', str(v['n']))) for k, v in sorted(lw.items()))
+
+
+def square(x, z): return (int(x // PAL_R), int(z // PAL_R))
+
+
+def pal_pool(own_, near, region, squares):
+    """The samples a colour is learned from, and where they stood: its own building's other parts ('own'), else PAL_MIN or more within PAL_R
+    ('near'), else the region's where PAL_REGION_MIN or more stand in PAL_REGION_SPREAD of the squares its buildings of that kind stand in
+    (squares, PAL_R across): a region mapped all over, not one street's sweep; else (None, None)."""
+    if own_: return own_, 'own'
+    if len(near) >= PAL_MIN: return near, 'near'
+    if len(region) >= PAL_REGION_MIN and len({square(s[1], s[2]) for s in region}) >= PAL_REGION_SPREAD * squares: return region, 'region'
+    return None, None
+
+
+def learned(S, region, landuse_at=None, P=None):
+    """The colours learned for every building and part whose wall or roof colour is not mapped, by id(): {'building:colour' or 'roof:colour':
+    dict(value, material, n, where)}: n samples of its kind (and of its mapped material) on its own building's other parts ('own'), within PAL_R
+    metres ('near') or in the region; material is the sample's, for a building whose own is not mapped. Kept in S['_pal'] with the samples."""
+    own = owners(S); bs = list({id(o): o for o in own.values()}.values())        # the buildings, each once
+    kind = {id(o): kind_at(o, region, landuse_at, P) for o in bs}
+    squares = collections.defaultdict(set)          # the squares each kind's buildings stand in
+    for o in bs: squares[kind[id(o)]].add(square(*centroid(o['poly'])))
+    samples = {'building:colour': [], 'roof:colour': []}; seen = set()
+    for b in S['buildings'] + S['parts']:
+        t = b['tags']; o = own[id(b)]
+        if t.get('building') == 'houseboat': continue
+        for key, mkey in (('building:colour', 'building:material'), ('roof:colour', 'roof:material')):
+            v = mapped_colour(t.get(key))
+            if not v or (id(o), key, v, t.get(mkey)) in seen: continue
+            seen.add((id(o), key, v, t.get(mkey)))
+            x, z = centroid(o['poly']); samples[key].append((kind[id(o)], x, z, o['id'], t.get(mkey), v))
+    grid = {key: collections.defaultdict(list) for key in samples}; mine = collections.defaultdict(list)
+    for key, ss in samples.items():
+        for s in ss: grid[key][square(s[1], s[2])].append(s); mine[(s[3], key)].append(s)
+    memo = {}; out = {}
+    for b in S['buildings'] + S['parts']:
+        t = b['tags']; o = own[id(b)]; k = kind[id(o)]
+        if t.get('building') == 'houseboat': continue
+        for key, mkey, salt, mats in (('building:colour', 'building:material', 19, WALL_MATS), ('roof:colour', 'roof:material', 23, ROOF_MATS)):
+            if t.get(key): continue
+            m = t.get(mkey); ck = (id(o), key, m)
+            if ck not in memo:
+                cx, cz = centroid(o['poly']); i, j = square(cx, cz)
+                def fit(s): return s[0] == k and s[3] != o['id'] and (m is None or s[4] == m)
+                own_ = [s for s in mine[(o['id'], key)] if m is None or s[4] == m]        # a part of a building whose other parts map it: theirs
+                near = [s for di in (-1, 0, 1) for dj in (-1, 0, 1) for s in grid[key].get((i + di, j + dj), ()) if fit(s) and math.hypot(s[1] - cx, s[2] - cz) <= PAL_R]
+                pool, where = pal_pool(own_, near, [s for s in samples[key] if fit(s)] if len(near) < PAL_MIN and not own_ else [], len(squares[k]))
+                if pool is None: memo[ck] = None
+                else:
+                    s = random.Random(o['id'] * salt + 7).choice(sorted(pool, key=lambda s: (s[3], s[5], s[4] or '')))
+                    memo[ck] = dict(value=s[5], material=s[4] if m is None and s[4] in mats else None, n=len(pool), where=where)
+            if memo[ck]: out.setdefault(id(b), {})[key] = memo[ck]
+    S['_pal'] = dict(own=own, kind=kind, samples=samples, picks=out)
+    return out
+
+
 def apply(S, region, landuse_at=None, keep_homes=False):
     """Fill every building's missing look from its own tags; what was guessed, and why, is kept for the tap panel.
     keep_homes: homes keep the varied brick and plaster already guessed for them (Amsterdam's canal houses) and only gain a roof material."""
     P = tradition(S.get('tradition'))
     if region == 'paris' or P: neighbour_levels(S)
     if P and P.get('chimneys') and P['chimneys'].get('kind') == 'party': party_walls(S)
+    L = learned(S, region, landuse_at, P) if PALETTES else {}
     for b in S['buildings'] + S['parts']:
-        t = b['tags']; g = b.setdefault('guessed', {})
+        t = b['tags']; g = b.setdefault('guessed', {}); lw = L.get(id(b))
         if P and t.get('building') == 'houseboat': continue          # a houseboat keeps its own generic look (drawn as a boat)
         if keep_homes and not any(t.get(k) for k in ('building:material', 'building:colour')):
             lu = landuse_at(b) if landuse_at else None
@@ -392,12 +509,19 @@ def apply(S, region, landuse_at=None, keep_homes=False):
                     b['rmat_draw'] = 'roof_tiles' if (b.get('roof') in SLOPED) else 'tar_paper'; g['roof:material'] = True
                 else: b['rmat_draw'] = t['roof:material']
                 b['look_why'] = '%s · %s' % (kind_label(kind), why)
+                if lw:          # learned palettes: its mapped neighbours' colours over the varied brick guessed for it
+                    lwall, lroof = lw.get('building:colour'), lw.get('roof:colour')
+                    if lwall: b['col'] = lwall['value']; b['col_draw'] = jitter(colour_hex(lwall['value']), b['id']); b['mat_draw'] = lwall['material'] or b.get('mat_draw')
+                    if lroof:
+                        b['rcol'] = lroof['value']; b['rcol_draw'] = jitter(colour_hex(lroof['value']), b['id'] + 7, 0.06); g['roof:colour'] = True
+                        if g.get('roof:material') and lroof['material']: b['rmat_draw'] = lroof['material']
+                    b['look_why'] += ' · ' + pal_why(lw)
                 continue
         for k in ('building:colour', 'building:material', 'roof:colour'): g.pop(k, None)     # this replaces the region-wide palette guess
         lu = landuse_at(b) if landuse_at else None
         if P:
             kind, why = kind_of(t, lu, region, abs(signed_area(b['poly'])), b['h'])
-            if trad_look(b, P, kind, why, g, region): continue
+            if trad_look(b, P, kind, why, g, region, lw): continue
         wall, roof, kind, why = look(b, region, lu)
         wm, wc = WALL[wall]; rm, rc = ROOF[roof]
         if region == 'paris':
@@ -405,27 +529,33 @@ def apply(S, region, landuse_at=None, keep_homes=False):
             if paris_roof(b, kind, wall, g): roof = 'zinc'; rm, rc = ROOF[roof]
         mat, col = t.get('building:material'), t.get('building:colour')
         rmat, rcol = t.get('roof:material'), t.get('roof:colour')
+        lwall, lroof = (lw or {}).get('building:colour'), (lw or {}).get('roof:colour')      # learned palettes: stand-ins for the unmapped colours
         b['kind'] = kind
-        b['mat_draw'] = mat or wm
+        b['mat_draw'] = mat or (lwall or {}).get('material') or wm
         if not mat: g['building:material'] = True
         if col:                     # a mapped colour is drawn exactly as mapped
             b['col'] = col; ch = colour_hex(col)
             b['col_draw'] = ch or (MAT_DRAW.get(mat) or MAT_COL.get(mat or wm, wc))
+        elif lwall:                 # a colour learned from its mapped neighbours: drawn as a mapped one, weathered as a guess
+            b['col'] = lwall['value']; b['col_draw'] = jitter(colour_hex(lwall['value']), b['id']); g['building:colour'] = True
         elif mat:                   # a mapped material, colour not mapped: drawn as the renderer always drew that material
             b['col'] = MAT_DRAW.get(mat) or MAT_COL.get(mat, wc); b['col_draw'] = b['col']; g['building:colour'] = True
         else:
             b['col'] = wc; b['col_draw'] = jitter(b['col'], b['id']); g['building:colour'] = True
-        b['rmat_draw'] = rmat or rm
+        b['rmat_draw'] = rmat or (lroof or {}).get('material') or rm
         if not rmat: g['roof:material'] = True
         if rcol:
             b['rcol'] = rcol; ch = colour_hex(rcol)
             b['rcol_draw'] = ch or (MAT_DRAW.get(rmat) or RMAT_COL.get(rmat or rm, rc))
+        elif lroof:
+            b['rcol'] = lroof['value']; b['rcol_draw'] = jitter(colour_hex(lroof['value']), b['id'] + 7, 0.06); g['roof:colour'] = True
         elif rmat:
             b['rcol'] = MAT_DRAW.get(rmat) or RMAT_COL.get(rmat, rc); b['rcol_draw'] = b['rcol']; g['roof:colour'] = True
         else:
             b['rcol'] = rc; b['rcol_draw'] = jitter(b['rcol'], b['id'] + 7, 0.06); g['roof:colour'] = True
         b['no_win'] = kind in NO_WIN or b['mat_draw'] == 'glass'      # halls, tanks and sheds show no window rows; glass walls are drawn as curtain walls
         b['look_why'] = '%s · %s' % (kind_label(kind), why) if (g.get('building:material') or g.get('building:colour') or g.get('roof:material') or g.get('roof:colour')) else None
+        if lw: b['look_why'] += ' · ' + pal_why(lw)
 
 
 def kind_label(k):
