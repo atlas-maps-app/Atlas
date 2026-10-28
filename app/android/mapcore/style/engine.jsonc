@@ -266,6 +266,24 @@
         "railing_night": "#0A0B0E"
     },
 
+    // amsterdam.py's facade_details, its doors: a door in one of five colours by its node's id (id % 5), outlined; its
+    // stoop by day and at night; its number's plate and the number by day and at night
+    "doors": {
+        "door_1": "#1F3A30",
+        "door_2": "#23262C",
+        "door_3": "#3B2220",
+        "door_4": "#1E2C3E",
+        "door_5": "#2E3B2A",
+        "outline": "#E8E2D6",
+        "outline_width": 0.5,
+        "stoop_day": "#9C9488",
+        "stoop_night": "#22232A",
+        "plate_day": "#F2EEE4",
+        "plate_night": "#3A3A40",
+        "number_day": "#1E2A44",
+        "number_night": "#B9C0D0"
+    },
+
     // regions.py's draw_items: a tower's shaft (lit as a face toward the south), its cab's glass by day and at night,
     // its gallery (lit as a face up) and its antenna, the shadow its gradients mix toward at night (by day the
     // moment's); the steel of cranes, masts, gantries and conveyors (lit by each face's normal; a crane's stays

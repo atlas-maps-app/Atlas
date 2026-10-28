@@ -46,7 +46,7 @@ inline constexpr std::uint8_t tag_taxon = slot_of(columns, "tag:taxon");
 
 namespace atlas::tiles::thing {
 
-inline constexpr std::array<ColumnSpec, 20> columns = {{
+inline constexpr std::array<ColumnSpec, 21> columns = {{
     {"index", Codec::delta},        // source order in S['nodes']
     {"id", Codec::delta},           // the OSM node id
     {"pos", Codec::point},          // where it stands
@@ -61,7 +61,9 @@ inline constexpr std::array<ColumnSpec, 20> columns = {{
     {"door", Codec::boolean},       // it has a house number: a door where facades are drawn
     {"door_number", Codec::ndelta}, // the number on its door: the house number's leading digits
     {"building", Codec::nvarz},     // where facades are drawn: the building whose facade carries its door or shopfront,
-                                    // as its index in S['buildings'] (maybe in another tile); null for none
+                                    // as its index in S['buildings'], in whose tile it is filed; null for none
+    {"wall", Codec::nvarz},         // that building's street wall it opens onto (amsterdam.py's street_wall): the
+                                    // wall's first corner, its index in the building's ring; null for none
     {"tag:natural", Codec::str},
     {"tag:highway", Codec::str},
     {"tag:amenity", Codec::str},
@@ -77,7 +79,9 @@ inline constexpr std::uint8_t poi = slot_of(columns, "poi");
 inline constexpr std::uint8_t door = slot_of(columns, "door");
 inline constexpr std::uint8_t door_number = slot_of(columns, "door_number");
 inline constexpr std::uint8_t building = slot_of(columns, "building");
+inline constexpr std::uint8_t wall = slot_of(columns, "wall");
 inline constexpr std::uint8_t gy = slot_of(columns, "gy");
+inline constexpr std::uint8_t style_cat = slot_of(columns, "style.cat");
 inline constexpr std::uint8_t tag_highway = slot_of(columns, "tag:highway");
 inline constexpr std::uint8_t tag_amenity = slot_of(columns, "tag:amenity");
 inline constexpr std::uint8_t tag_barrier = slot_of(columns, "tag:barrier");

@@ -114,6 +114,7 @@ static const uint ITEM_ROUND = 768u;
 static const uint ITEM_STROKED = 1024u;   // a face stroked in its own colour: its half width in a.w
 static const uint ITEM_GRADIENT = 2048u;  // a face filled with a gradient across its box: its stops' colours a.y, a.w, e.w
 static const uint ITEM_HIGH = 4096u;      // its middle stop at .65 (.35 otherwise)
+static const uint ITEM_PLANE = 8192u;     // a segment on a plane (a door's outline): its depth's gradient in c.xy
 static const uint ITEM_COUNT_SHIFT = 16u; // a face's corners, 3 to 5
 static const uint ITEM_BACK_SHIFT = 24u;  // a translucent segment's look back: its path's segments before it
 
@@ -578,6 +579,27 @@ inline ItemCorner item_segment_corner(float2 a, float2 b, float d0, float d1, fl
     float slope = len > 0.0f ? (d1 - d0) / len : 0.0f;
     k.depth = at_end ? d1 + slope * e : d0 - slope * e;
     return k;
+}
+
+/// Segment `r` on a plane: its quad's corners at the plane's depth there, from its first end's along the depth's gradient
+/// over CSS px `gradient` (passes/Doors.cpp: a door's outline, so its whole width keeps to its door's plane at true
+/// depth, where the depth is affine in the screen).
+inline ItemRecord item_on_plane(ItemRecord r, float2 gradient) {
+    ItemRecord o = r;
+    o.a.x = o.a.x | ITEM_PLANE;
+    uint4 c = {asuint(gradient.x), asuint(gradient.y), 0u, 0u};
+    o.c = c;
+    return o;
+}
+
+/// The depth of corner `k` of segment `r`'s quad: its plane's there (ITEM_PLANE), else as item_segment_corner carries it.
+inline float item_part_depth(ItemRecord r, ItemCorner k) {
+    if ((r.a.x & ITEM_PLANE) == 0u) {
+        return k.depth;
+    }
+    float2 a = item_point(r, 0u);
+    float2 gradient = {asfloat(r.c.x), asfloat(r.c.y)};
+    return asfloat(r.d.z) + gradient.x * (k.p.x - a.x) + gradient.y * (k.p.y - a.y);
 }
 
 /// A gradient face's colour at CSS abscissa `x` across its box from x0 to x1 (objectBoundingBox from 0 to 1, padded):

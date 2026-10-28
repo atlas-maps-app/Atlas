@@ -103,6 +103,12 @@ class L1Test {
             Case("home wet S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> AnchorCases.homeView(r, 916) }, "wet"),
             // the golden moment: its wash over the haze (ENGINE.md step 4, the composite's steps)
             Case("home golden S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> AnchorCases.homeView(r, 916) }, "golden"),
+            // the doors and their numbers (ENGINE.md step 4, the facades), which draw with weather within 75 m, their plates
+            // within 45 m: a row of facades faced squarely from 50 m (25 m up) by day and on the wet night, and from the map's
+            // nearest zoom at the gestures' steepest tilt, where the doors show and their plates lie below the frame
+            Case("doors sunny S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> doorsView(r, 82.21656426574002, -192.11612399270084, 60.0, 50.0) }, "sunny"),
+            Case("doors wet S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> doorsView(r, 82.21656426574002, -192.11612399270084, 60.0, 50.0) }, "wet"),
+            Case("doors far sunny S1", "bundled", { w }, { AnchorCases.westerkerk() }, { r -> doorsView(r, 98.86787550282801, -182.6922473097533, 70.0, 91.0) }, "sunny"),
         )
         if (g.isFile) {
             out += Case("board sunny S1", "grachten", { g }, { AnchorCases.grachten() }, { r -> knot(r, "grachten_home", 916) }, "sunny")
@@ -121,6 +127,23 @@ class L1Test {
         }
         return out
     }
+
+    /**
+     * The Westerkerk's densest row of doors (115 within 40 m about its door at (70.16, -198.94), the walls facing west-north-west),
+     * looked at squarely: the target ([x], [z]) behind it, the map's [pitch], [dist] metres back.
+     */
+    private fun doorsView(r: LiveRegion, x: Double, z: Double, pitch: Double, dist: Double, height: Int = 916): LiveView {
+        val lat = r.frame.lat(x, z)
+        val lon = r.frame.lon(x, z)
+        return LiveView(lat, lon, LiveCamera.zoom(lat, dist, height.toDouble()), LiveCamera.bearing(119.50786615381202), pitch, 412, height, 440.0)
+    }
+
+    /**
+     * Whether an element of [key] is a door's (amsterdam.py's facade_details): its path, stroked in the outline's colour, its
+     * stoop's, its plate's rect or its number's text, by day or at night.
+     */
+    private fun doorKey(key: String): Boolean = "#ffe8e2d6" in key || "Georgia" in key ||
+        listOf("path; fill #ff9c9488 ", "path; fill #ff22232a ", "rect; fill #fff2eee4 ", "rect; fill #ff3a3a40 ").any { key.startsWith(it) }
 
     private fun knot(r: LiveRegion, name: String, height: Int): LiveView {
         val k = r.ladder.knots.firstOrNull { it.name == name } ?: error("region ${r.id} has no view $name")
@@ -194,6 +217,14 @@ class L1Test {
                 // in a thousand
                 val r = L1Diff.diff("${case.name} $name", portElements, twinElements, view, slivers = layer == TwinCodec.OBJECTS)
                 println(r.summary())
+                if (layer == TwinCodec.OBJECTS) {
+                    // the doors: every one of the port's in the view the twin's, and the door cases show some
+                    val inView = portElements.count { doorKey(it.key) } - r.outsideByKey.filterKeys { doorKey(it) }.values.sum()
+                    val missingDoors = r.missing.filterKeys { doorKey(it) }
+                    println("  doors: $inView of the port's door elements in the view, ${missingDoors.values.sum()} missing")
+                    if (missingDoors.isNotEmpty()) failed += "${case.name}: door elements the twin does not draw: $missingDoors"
+                    if (case.name.startsWith("doors") && inView == 0) failed += "${case.name}: the port draws no door in the view"
+                }
                 for ((k, n) in r.missing.entries.sortedByDescending { it.value }.take(8)) println("  missing $n × $k")
                 for ((k, n) in r.extra.entries.sortedByDescending { it.value }.take(8)) println("  extra $n × $k")
                 for ((k, n) in r.piecesByKey.entries.sortedByDescending { it.value }.take(8)) println("  in pieces $n × $k")

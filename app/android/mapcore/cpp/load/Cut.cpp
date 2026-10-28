@@ -2,6 +2,7 @@
 
 #include "base/pymath/PyMath.hpp"
 #include "geometry/RoofShapes.hpp"
+#include "geometry/StreetWall.hpp"
 #include "load/Keep.hpp"
 #include "load/Real.hpp"
 #include "load/Tables.hpp"
@@ -1007,19 +1008,103 @@ private:
         return std::nullopt;
     }
 
+    /// A cell of road_grid.
+    [[nodiscard]] static std::uint64_t road_cell(std::int64_t gx, std::int64_t gz) noexcept {
+        return (static_cast<std::uint64_t>(gx) << 32U) ^ (static_cast<std::uint64_t>(gz) & 0xFFFF'FFFFU);
+    }
+
+    /// render/amsterdam.py:1709 road_grid: every segment of S['roads'] in each 20 m cell of its box and the cells
+    /// around it, in the roads' order; made once.
+    [[nodiscard]] const std::unordered_map<std::uint64_t, std::vector<std::array<V2, 2>>>& road_grid() {
+        if (road_grid_made_) return road_grid_;
+        road_grid_made_ = true;
+        const auto cell = [](double v) { return pymath::to_int(pymath::floor_div(v, 20.0)); };
+        for (const Road& r : s_.roads) {
+            for (std::size_t i = 0; i + 1 < r.pts.size(); ++i) {
+                const V2 a = r.pts[i];
+                const V2 b = r.pts[i + 1];
+                const std::int64_t gx1 = cell(pymath::max(a.x, b.x)) + 2;
+                const std::int64_t gz1 = cell(pymath::max(a.z, b.z)) + 2;
+                for (std::int64_t gx = cell(pymath::min(a.x, b.x)) - 1; gx < gx1; ++gx) {
+                    for (std::int64_t gz = cell(pymath::min(a.z, b.z)) - 1; gz < gz1; ++gz) {
+                        road_grid_[road_cell(gx, gz)].push_back({a, b});
+                    }
+                }
+            }
+        }
+        return road_grid_;
+    }
+
+    /// render/amsterdam.py:1719 road_dist: how far (x, z) lies from the nearest road segment its 20 m cell lists (99
+    /// where it lists none).
+    [[nodiscard]] double road_dist(double x, double z) {
+        double best = 99.0;
+        const auto& grid = road_grid();
+        const auto it = grid.find(
+            road_cell(pymath::to_int(pymath::floor_div(x, 20.0)), pymath::to_int(pymath::floor_div(z, 20.0))));
+        if (it == grid.end()) return best;
+        for (const auto& [a, b] : it->second) {
+            const double ux = b.x - a.x;
+            const double uz = b.z - a.z;
+            double l2 = (ux * ux) + (uz * uz);
+            if (l2 == 0.0) l2 = 1.0; // `or 1`
+            const double t = pymath::max(0.0, pymath::min(1.0, (((x - a.x) * ux) + ((z - a.z) * uz)) / l2));
+            best = pymath::min(best, pymath::hypot(a.x + (ux * t) - x, a.z + (uz * t) - z));
+        }
+        return best;
+    }
+
+    /// render/amsterdam.py:1727 street_wall: the wall of building `b` a door or shopfront at (x, z) opens onto, near
+    /// the point and with a mapped street just outside it (the party wall to a neighbour is often the nearest), as its
+    /// first corner's index in the ring; the first of the least score.
+    [[nodiscard]] std::optional<std::uint32_t> street_wall(const Building& b, double x, double z) {
+        const std::vector<V2>& poly = b.poly;
+        const V2 centre = geometry::centroid(poly);
+        std::optional<std::uint32_t> best;
+        double least = 0.0;
+        const std::size_t n = poly.size();
+        for (std::size_t i = 0; i < n; ++i) {
+            const V2 a = poly[i];
+            const V2 c = poly[(i + 1) % n];
+            const std::optional<geometry::StreetWall> w = geometry::street_wall_at(a, c, x, z);
+            if (!w) continue;
+            // its normal outward, by the centroid
+            double nx = w->uz / w->length;
+            double nz = -w->ux / w->length;
+            const double mx = (a.x + c.x) / 2;
+            const double mz = (a.z + c.z) / 2;
+            if ((nx * (mx - centre.x)) + (nz * (mz - centre.z)) < 0) {
+                nx = -nx;
+                nz = -nz;
+            }
+            const double out_d = road_dist(w->qx + (nx * 3.5), w->qz + (nz * 3.5));
+            const double score =
+                pymath::hypot(w->qx - x, w->qz - z) + (1.5 * pymath::min(out_d, 25.0)) + (w->length < 2.5 ? 40.0 : 0.0);
+            if (!best || score < least) {
+                best = static_cast<std::uint32_t>(i);
+                least = score;
+            }
+        }
+        return best;
+    }
+
     /// A street lamp, a bench, a rack or a basket, a bollard, a place; and where facades are drawn (the living map;
-    /// regions set no_facades), every door and shopfront on one.
+    /// regions set no_facades), every door and shopfront on one, with its street wall, filed in its building's tile
+    /// (where stage T finds the building's ring, from which the frame takes the wall and the door's order).
     void place_things() {
         if (plan_.facades) facade_buildings();
         poi_.assign(s_.nodes.size(), false);
         for (const std::uint32_t p : s_.pois) poi_[p] = true;
         doors_.assign(s_.nodes.size(), std::nullopt);
+        walls_.assign(s_.nodes.size(), std::nullopt);
         for (std::uint32_t i = 0; i < s_.nodes.size(); ++i) {
             if (tree_nodes_[i]) continue;
             const Node& n = s_.nodes[i];
-            if (plan_.facades) doors_[i] = door_building(n);
+            const std::optional<std::uint32_t> door = plan_.facades ? door_building(n) : std::nullopt;
+            doors_[i] = door;
+            if (door) walls_[i] = street_wall(s_.buildings[*door], n.x, n.z);
             const bool thing = n.tags.is("highway", "street_lamp") || in(n.tags.get("amenity"), furniture) ||
-                               in(n.tags.get("barrier"), bollards) || poi_[i] || doors_[i].has_value();
+                               in(n.tags.get("barrier"), bollards) || poi_[i] || door.has_value();
             if (!thing) continue;
             const tl::GridPoint p = point({n.x, n.z}, [&] { return std::format("node {} ({})", i, n.id); });
             put({.layer = tl::LayerId::thing,
@@ -1028,7 +1113,7 @@ private:
                  .box = widen(point_box(p), thing_reach, f_),
                  .top_cm = cm_up(thing_reach),
                  .order = i},
-                p);
+                door ? building_refs_[*door] : p);
         }
     }
 
@@ -1681,6 +1766,7 @@ private:
             lf.nullable_integer(c::door_number, f, leading_number(*number));
         }
         if (const auto door = doors_[p.index]) lf.nullable_integer(c::building, f, *door);
+        if (const auto wall = walls_[p.index]) lf.nullable_integer(c::wall, f, *wall);
         tags(lf, f, n.tags);
     }
 
@@ -1964,7 +2050,10 @@ private:
     std::vector<bool> tree_nodes_;
     std::vector<bool> poi_;
     std::vector<std::optional<std::uint32_t>> doors_;
+    std::vector<std::optional<std::uint32_t>> walls_; ///< per node: its street wall's first corner (doors_' building)
     std::vector<std::pair<std::uint32_t, Box>> facades_;
+    std::unordered_map<std::uint64_t, std::vector<std::array<V2, 2>>> road_grid_; ///< by road_cell
+    bool road_grid_made_ = false;
     std::vector<std::int64_t> marks_;
     std::unordered_map<std::uint64_t, std::vector<Pending>> tiles_; ///< by TileKey::packed
     std::vector<tl::TileKey> order_;

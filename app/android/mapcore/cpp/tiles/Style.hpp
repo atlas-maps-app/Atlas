@@ -142,6 +142,17 @@ struct ThingsStyle {
     DayNight railing;
 };
 
+/// The doors (`doors`): a door's five colours (by its node's id % 5), its outline and the outline's width (CSS px); its
+/// stoop, its number's plate and the number by day and at night.
+struct DoorsStyle {
+    std::array<StyleRgb, 5> doors{};
+    StyleRgb outline = 0;
+    float outline_width = 0.0F;
+    DayNight stoop;
+    DayNight plate;
+    DayNight number;
+};
+
 /// A region's items (`items`): a tower's shaft, its cab's glass by day and at night, its gallery and its antenna, the
 /// night's shadow its gradients mix toward; the steel of cranes, masts, gantries and conveyors, a crane's machinery, a
 /// lighting mast's floodlights and a conveyor's gallery by day and at night; a lighting mast's glow at night, its
@@ -253,6 +264,7 @@ struct Style {
     WindowsStyle windows;
     TreesStyle trees;
     ThingsStyle things;
+    DoorsStyle doors;
     ItemsStyle items;
     /// `houseboats`: the hull's and the deck's colours (the cabin roof's edge is in `edges`).
     StyleRgb hull = 0;

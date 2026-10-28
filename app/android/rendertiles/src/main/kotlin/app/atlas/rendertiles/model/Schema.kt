@@ -262,7 +262,11 @@ object Schema {
         c("door_number", Codec.NDELTA, "the number on its door: the house number's leading digits (`re.match(r'\\d+')`)"),
         c(
             "building", Codec.NVARZ,
-            "where facades are drawn: the building whose facade carries its door or shopfront (facade_details: the first shown building with a height, not a houseboat, whose box and ring hold it), as its index in S['buildings'] (that building's `index`, maybe in another tile); null for none",
+            "where facades are drawn: the building whose facade carries its door or shopfront (facade_details: the first shown building with a height, not a houseboat, whose box and ring hold it), as its index in S['buildings'] (that building's `index`), in whose tile the thing is filed; null for none",
+        ),
+        c(
+            "wall", Codec.NVARZ,
+            "the street wall of that building its door or shopfront opens onto (amsterdam.py's street_wall: near the node, with a mapped street 3.5 m outside it): the wall's first corner, as its index in the building's ring, from which the frame takes the point on it and its direction again; null where the building has no wall of 1.5 m² or more",
         ),
     ) + tags(Layer.THING)
 

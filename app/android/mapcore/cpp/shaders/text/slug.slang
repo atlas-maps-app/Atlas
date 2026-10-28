@@ -17,9 +17,19 @@
 // The glyphs' data are set 1's (frame/FrameLayout.hpp's glyph_curves and glyph_bands, which passes/GroundText.hpp's
 // GlyphGlobals fills): the curves (two points a texel, em units, rows of 4096 texels) and the bands (a texel's two 16-bit
 // values packed low first, the same rows). The frame slot's glyphs and the coverage tables are the pass's own set (2).
+//
+// The doors' numbers (passes/Doors.cpp, the scene subpass's translucent slot, before every object's translucent part):
+// a glyph as the ground's, among the objects, at its plate's depth at true depth (the nearest its wall's plane has under
+// the plate) and at its slot's under the painter switch, so what stands in front of the plate covers it; its colour
+// through `mat`, the objects group's.
 
 #include "shared/frame.slang"
 #include "shared/painter.slang"
+
+// K17a's mat: the doors' numbers are in the renders' objects group (`<g filter="url(#mat)">` where the moment has
+// weather).
+#define ATLAS_FX_FUNCTIONS
+#include "fx/mat.slang"
 
 /// One glyph to draw: its em-to-CSS map, its box and bands, its colour, its table and slot.
 struct GlyphDraw {
@@ -29,7 +39,7 @@ struct GlyphDraw {
     float4 bands;   // a sample's band indices: em · (x, y) + (z, w), truncated and clamped
     uint4 location; // the glyph's first band texel (x, y); its vertical and horizontal bands minus one
     float4 colour;  // premultiplied: the fill at its opacity and its fade
-    uint4 info;     // x: the face's coverage table; y: its painter slot
+    uint4 info;     // x: the face's coverage table; y: its painter slot; z: a door's number's depth (bits)
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<FrameBlock> frame;
@@ -48,9 +58,9 @@ struct GlyphOut {
 
 static const float2 slug_corners[6] = { float2(0, 0), float2(1, 0), float2(0, 1), float2(0, 1), float2(1, 0), float2(1, 1) };
 
-[shader("vertex")]
-GlyphOut ground_text_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInstanceID) {
-    GlyphDraw g = glyph_draws[instance];
+/// Glyph `instance`'s corner `vertex`: its em coordinate and CSS point, the quad over its em box dilated by
+/// half a device pixel each way (through the inverse of the glyph's em-to-pixel map, so it holds under any affine map).
+GlyphOut glyph_corner(GlyphDraw g, uint vertex, uint instance, out float2 css) {
     // Half a device pixel each way, in em units: the inverse map's rows bound how far half a pixel reaches along em x
     // and y; the map to device px is the density times the CSS one.
     float density = frame.camera.frame.z;
@@ -58,11 +68,31 @@ GlyphOut ground_text_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_Vulk
     float2 margin = 0.5f * float2(abs(g.row1.y) + abs(g.row0.y), abs(g.row1.x) + abs(g.row0.x)) / (abs(det) * density);
     float2 c = slug_corners[vertex];
     float2 em = lerp(g.box.xy - margin, g.box.zw + margin, c);
-    float2 css = float2(dot(g.row0.xy, em) + g.row0.z, dot(g.row1.xy, em) + g.row1.z);
+    css = float2(dot(g.row0.xy, em) + g.row0.z, dot(g.row1.xy, em) + g.row1.z);
     GlyphOut o;
-    o.position = clip_of(frame.camera, css, 1.0f, painter_depth(frame.camera, g.info.y));
+    o.position = float4(0.0f, 0.0f, 0.0f, 1.0f);
     o.em = em;
     o.glyph = instance;
+    return o;
+}
+
+[shader("vertex")]
+GlyphOut ground_text_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInstanceID) {
+    GlyphDraw g = glyph_draws[instance];
+    float2 css;
+    GlyphOut o = glyph_corner(g, vertex, instance, css);
+    o.position = clip_of(frame.camera, css, 1.0f, painter_depth(frame.camera, g.info.y));
+    return o;
+}
+
+/// A door's number's glyph: at the depth the CPU gives it (info.z's bits, items.slangh's item_depth: its plate's
+/// reciprocal depth with its lead over the plate at true depth, its slot's under the painter switch).
+[shader("vertex")]
+GlyphOut wall_text_vs(uint vertex : SV_VulkanVertexID, uint instance : SV_VulkanInstanceID) {
+    GlyphDraw g = glyph_draws[instance];
+    float2 css;
+    GlyphOut o = glyph_corner(g, vertex, instance, css);
+    o.position = clip_of(frame.camera, css, 1.0f, asfloat(g.info.z));
     return o;
 }
 
@@ -192,6 +222,17 @@ float4 ground_text_fs(GlyphOut v) : SV_Target0 {
     float2 pixels_per_em = 1.0f / fwidth(v.em);
     float coverage = slug_table(g.info.x, slug_coverage(g, v.em, pixels_per_em));
     return g.colour * coverage;
+}
+
+/// A door's number's glyph: its colour (opaque: rgb, then its opacity in a) through `mat` at the pixel, the objects
+/// group's grain where the moment has weather, then its coverage, premultiplied.
+[shader("fragment")]
+float4 wall_text_fs(GlyphOut v) : SV_Target0 {
+    GlyphDraw g = glyph_draws[v.glyph];
+    float2 pixels_per_em = 1.0f / fwidth(v.em);
+    float coverage = slug_table(g.info.x, slug_coverage(g, v.em, pixels_per_em));
+    float3 colour = mat_colour(frame.camera, g.colour.rgb, v.position.xy, mat_grain_on(frame));
+    return float4(colour, 1.0f) * (g.colour.a * coverage);
 }
 
 /// The coverage alone at the samples of a probe (tests/text/slug_vk_test.cpp): per probe its glyph, its em sample and

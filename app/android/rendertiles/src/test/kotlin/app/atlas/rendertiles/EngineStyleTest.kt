@@ -265,6 +265,20 @@ class EngineStyleTest {
                 listOf("things.railing_day", "things.railing_night"), amsterdam,
                 """val col = if (!night) "${value("things.railing_day")}" else "${value("things.railing_night")}"""",
             ),
+            Triple(
+                listOf("doors.door_1", "doors.door_2", "doors.door_3", "doors.door_4", "doors.door_5", "doors.outline", "doors.outline_width"), amsterdam,
+                """listOf("${value("doors.door_1")}", "${value("doors.door_2")}", "${value("doors.door_3")}", "${value("doors.door_4")}", "${value("doors.door_5")}")""" +
+                    """[Math.floorMod((n["id"] as Number).toLong(), 5L).toInt()], " stroke=\"${value("doors.outline")}\" stroke-width=\"${css("doors.outline_width")}\"")""",
+            ),
+            Triple(
+                listOf("doors.stoop_day", "doors.stoop_night"), amsterdam,
+                """sv += face(cam, quad(1.5, 0.0, 0.32, 0.6), if (!night) "${value("doors.stoop_day")}" else "${value("doors.stoop_night")}") // the stoop""",
+            ),
+            Triple(
+                listOf("doors.plate_day", "doors.plate_night"), amsterdam,
+                """fs * 0.15, if (!night) "${value("doors.plate_day")}" else "${value("doors.plate_night")}", p[0], p[1] + fs * 0.08, fs,""",
+            ),
+            Triple(listOf("doors.number_day", "doors.number_night"), amsterdam, """if (!night) "${value("doors.number_day")}" else "${value("doors.number_night")}", num)"""),
             Triple(listOf("trees.crown"), amsterdam, """hx(if (truthy(th["wx"])) "#4F6E37" else "${value("trees.crown")}")"""),
             Triple(listOf("items.shaft"), regions, """val shaft = tohex(Amsterdam.light(th, hx("${value("items.shaft")}"), V3(0.0, 0.0, 1.0), !night))"""),
             Triple(

@@ -564,7 +564,7 @@ ItemOut place_part(ItemRecord r, uint index, uint vertex) {
     if (kind == ITEM_SEGMENT) {
         float2 b = item_point(r, 1u);
         ItemCorner k = item_segment_corner(a, b, d0, asfloat(r.d.w), extent, corner);
-        o.position = clip_of(frame.camera, k.p, 1.0f, k.depth);
+        o.position = clip_of(frame.camera, k.p, 1.0f, item_part_depth(r, k));
         float4 shape = {a.x, a.y, b.x, b.y};
         o.shape = shape;
     } else {
