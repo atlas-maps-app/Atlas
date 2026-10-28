@@ -42,7 +42,7 @@
 # phase never uses it: the screen list comes from the debug run and the timings from logcat (tag AtlasMap).
 #
 # Fails (exit 1) on a crash (a native one symbolised with ndk-stack from the APK's own unstripped libraries), "a frame
-# failed", "out of memory", "device lost", a `vk guard` line outside the planted-crash case (a marker the guard
+# failed", "out of memory", "device lost", the emulator gone for 5 minutes ("DEVICE GONE"), a `vk guard` line outside the planted-crash case (a marker the guard
 # discarded because its process was stopped, not crashed, `vk guard: … not counted`, is reported, not failed), a guest
 # without a Vulkan device, a VK bench that does not finish within 900 s, exceeds configuration C's graphics ceiling,
 # loses its window in the colour stage for good, leaves the guard's marker behind, has a colour stage that ended early
@@ -80,6 +80,28 @@ IDLE=${ATLAS_IDLE:-20}
 # `timeout` is coreutils (the CI runner has it); a Mac may not.
 LIMIT=""; command -v timeout >/dev/null 2>&1 && LIMIT="timeout 900"
 FAIL=0
+
+# The device's watchdog. An emulator that dies leaves every later adb call waiting for it ("- waiting for device -") until
+# the job's own timeout: on 28 Oct (7f28e5d) it went offline at the walk screen and the job waited 110 minutes. Gone for
+# 5 minutes (adbd's own restarts take seconds), the run ends here, failed. Where `timeout` is missing, there is none.
+if [ -n "$LIMIT" ]; then
+  (
+    nap=""; trap 'kill $nap 2>/dev/null; exit 0' TERM
+    seen=$SECONDS
+    while :; do
+      sleep 30 & nap=$!; wait $nap
+      # into a file, not a pipe: a process an adb that timed out left behind would hold the pipe open
+      timeout 20 adb get-state > "$OUT/.device" 2>/dev/null
+      [ "$(cat "$OUT/.device")" = device ] && seen=$SECONDS
+      if [ $((SECONDS - seen)) -ge 300 ]; then
+        echo "DEVICE GONE: no device for $((SECONDS - seen)) s"; timeout 20 adb devices -l > "$OUT/.device" 2>&1; sed 's/^/  /' "$OUT/.device"
+        kill -TERM $$; exit 0
+      fi
+    done
+  ) &
+  WATCHDOG=$!
+  trap 'kill $WATCHDOG 2>/dev/null' EXIT
+fi
 
 # --- helpers ---------------------------------------------------------------------------------------------------------
 
