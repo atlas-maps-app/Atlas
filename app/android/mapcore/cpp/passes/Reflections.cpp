@@ -188,7 +188,7 @@ void Ground::decide_reflections(const view::Camera& cam, const frame::FrameState
     f.reflection_circles.clear();
     f.reflection_streaks.clear();
     // drawn inside the water's clip (`if not r1: return ''`), with weather alone
-    if (!f.weather || !f.water || no_reflections_ || only_setts_) return;
+    if (!f.weather || !f.water || !f.water_light || no_reflections_ || only_setts_) return;
     const shaders::Theme& theme = state.block.theme;
     const geo::V3 light{f.light[0], f.light[1], f.light[2]};
     const geo::V3 eye{cam.eye().x, cam.eye().y, cam.eye().z};
