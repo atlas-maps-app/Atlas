@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "26",
+  "version": "27",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -451,6 +451,21 @@
           "board grey": "95b4c94fafc538044044deac3f1669a038ce7e50d772bda045c06ce1876743f8",
           "board wet": "7b8f9ab5d532e256969d0a6734c602e2b9828224493863caf7f896743499a8bb",
           "board night": "eb3ab844e63b3a104f1464a7864983ce473dbabaa9db4b13451af9a8cc4b8174"
+        }
+      }
+    },
+    "27": {
+      "note": "Step 4, the night: the lit streets, their glow and their wet cores (litglow, landed on 28 October with the other side branches: the user, \"windowpacks and doors are ready, along with the eight older side branches\"). The home's and the board's wet and night frames changed; their sunny and grey frames are version 26's, as every other landed branch draws pixel for pixel as before.",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "7ce15ff3cb2fe6d1729f76a9ebe9f8dcf91e64387e6d6e99138d37485fc8745f",
+          "home grey": "00c72710ca75683d19d9af5af8625c0758b39a9fdc0b20df7d9535502d7d9156",
+          "home wet": "bb4be0344c277466c3aa785a3641787b7371d9c2761e7a402c40df06860ad12e",
+          "home night": "5d6604f83c6cb57e67bf52f462fa47c1ae6d41e75a341178a043ee340549d5b2",
+          "board sunny": "33da19676e1d0be4d463db0b675c3c196b28e6635dc95d978b3a8ee605d1e1df",
+          "board grey": "f52b48c77b54264ea2c9d76f31dd888793acd8728088aebf34a1b57ba2c587fe",
+          "board wet": "fa926207bfbca7741efaecd70884f31447faaabb542a1b5cee8226698ff42a66",
+          "board night": "16e4a90494d8521fe24f560ccdeea2241a1c3a8ffe4ac32d363266eb79895e19"
         }
       }
     }
