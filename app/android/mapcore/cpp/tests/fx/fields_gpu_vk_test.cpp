@@ -214,7 +214,7 @@ TEST_CASE("the GPU's byte check holds its noises and its fields' kept bytes to t
     ATLAS_REQUIRE(check.has_value(), check.error().text());
     CHECK_MESSAGE(check->exact, check->first);
     // The eleven noises over two blocks of 64 × 64, then the eight fields over the same blocks.
-    CHECK(check->pixels == (11U * 2 * 64 * 64) + (fx::field_count * 2 * 64 * 64));
+    CHECK(check->pixels == (std::size_t{11} * 2 * 64 * 64) + (fx::field_count * 2 * 64 * 64));
     CHECK(check->differ == 0);
     MESSAGE("the byte check: " << check->pixels << " pixels in " << ms_since(started) << " ms");
     const auto messages = session->take_messages();

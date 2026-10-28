@@ -743,11 +743,18 @@ void Doors::update(const frame::FrameState& state) {
             .buffer(6, vk::DescriptorType::eStorageBuffer, parts_buffer_.at(slot).handle())
             .apply(device_->handle());
     }
-    std::memcpy(faces_buffer_.at(slot).bytes().data(), faces_.data(), faces_.size() * sizeof(sh::ItemRecord));
+    // each list where it has any: an empty vector's data may be null, which memcpy may not take even for no bytes
+    if (!faces_.empty()) {
+        std::memcpy(faces_buffer_.at(slot).bytes().data(), faces_.data(), faces_.size() * sizeof(sh::ItemRecord));
+    }
     faces_buffer_.at(slot).flush();
-    std::memcpy(parts_buffer_.at(slot).bytes().data(), parts_.data(), parts_.size() * sizeof(sh::ItemRecord));
+    if (!parts_.empty()) {
+        std::memcpy(parts_buffer_.at(slot).bytes().data(), parts_.data(), parts_.size() * sizeof(sh::ItemRecord));
+    }
     parts_buffer_.at(slot).flush();
-    std::memcpy(glyphs_buffer_.at(slot).bytes().data(), glyphs_.data(), glyphs_.size() * sizeof(sl::GlyphDraw));
+    if (!glyphs_.empty()) {
+        std::memcpy(glyphs_buffer_.at(slot).bytes().data(), glyphs_.data(), glyphs_.size() * sizeof(sl::GlyphDraw));
+    }
     glyphs_buffer_.at(slot).flush();
     slot_ = slot;
     counts_ = {.doors = static_cast<std::uint32_t>(doors.size()),
