@@ -60,6 +60,9 @@ namespace atlas::passes {
 /// A tile's doors as the pass keeps them (PassTile::cpu).
 struct DoorTile {
     std::vector<geometry::Door> doors;
+    /// The box of the doors' nodes (frame metres: x0, z0, x1, z1): a frame none of whose nodes can lie 2 to 75 m deep
+    /// draws none of them.
+    std::array<double, 4> box{};
 };
 
 /// A face as facade_details' face() keeps it: Camera.poly's corners (cut at the near plane, the face dropped where it

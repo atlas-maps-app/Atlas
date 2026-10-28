@@ -280,13 +280,18 @@ std::vector<DoorShape> door_shapes(const frame::FrameState& state, std::uint32_t
             cut = std::array{*radius, target.x, target.z};
         }
     }
-    // the cover's doors, each tile's once, in S['nodes'] order
+    // the cover's doors, each tile's once: those the port's tests keep (`far`, the node 2 to 75 m deep, the wall facing
+    // the eye), which alone take spots, in S['nodes'] order
     struct At {
         geometry::Door door;
         std::uint32_t row = 0;
+        double d0 = 0;
+        view::Vec3 nrm;
     };
-    std::vector<At> all;
+    std::vector<At> kept;
     const std::span<const scene::CoverTile> tiles = state.cover->tiles();
+    const std::span<const std::uint16_t> flags = state.items->flags();
+    const view::Vec3 eye = cam.eye();
     for (std::size_t c = 0; c < tiles.size(); ++c) {
         const scene::CoverTile& t = tiles[c];
         if (t.drawn == nullptr || pass >= t.drawn->passes.size()) continue;
@@ -296,15 +301,37 @@ std::vector<DoorShape> door_shapes(const frame::FrameState& state, std::uint32_t
         bool seen = false;
         for (std::size_t e = 0; e < c && !seen; ++e) seen = tiles[e].drawn == t.drawn;
         if (seen) continue;
-        const std::uint32_t first = first_door(*t.drawn, kind);
         const bool convert = state.ground_frame && *state.ground_frame != t.drawn->frame;
+        // none of its nodes 2 to 75 m deep: the depth is linear, so its box's corners bound it
+        double least = 1e300;
+        double most = -1e300;
+        for (const auto& [x, z] : std::array<std::array<double, 2>, 4>{{{doors->box[0], doors->box[1]},
+                                                                        {doors->box[2], doors->box[1]},
+                                                                        {doors->box[0], doors->box[3]},
+                                                                        {doors->box[2], doors->box[3]}}}) {
+            const view::Vec3 p =
+                convert ? view::convert(t.drawn->frame, *state.ground_frame, {x, 1.0, z}) : view::Vec3{x, 1.0, z};
+            const double d = cam.depth(p);
+            least = std::min(least, d);
+            most = std::max(most, d);
+        }
+        if (least > 75 + 1 || most < 2 - 1) continue;
+        const std::uint32_t first = first_door(*t.drawn, kind);
         for (std::size_t i = 0; i < doors->doors.size() && first + i < t.drawn->rows.size(); ++i) {
-            const geometry::Door& d = doors->doors[i];
-            all.push_back({.door = convert ? placed(d, t.drawn->frame, *state.ground_frame) : d,
-                           .row = t.drawn->rows[first + i]});
+            const std::uint32_t row = t.drawn->rows[first + i];
+            // a coarser pack's door within the active pack's box is the active pack's to draw (none)
+            if (row >= flags.size() || (flags[row] & scene::item_flag::masked) != 0) continue;
+            const geometry::Door d =
+                convert ? placed(doors->doors[i], t.drawn->frame, *state.ground_frame) : doors->doors[i];
+            if (cut && view::java_hypot(d.x - (*cut)[1], d.z - (*cut)[2]) > (*cut)[0]) continue;
+            const double d0 = cam.depth({d.x, 1.0, d.z});
+            if (d0 < 2 || d0 > 75) continue;
+            const view::Vec3 nrm = vnorm({d.uz, 0.0, -d.ux});
+            if (vdot(nrm, vsub(eye, {d.qx, 1.2, d.qz})) <= 0) continue; // that wall faces away
+            kept.push_back({.door = d, .row = row, .d0 = d0, .nrm = nrm});
         }
     }
-    std::ranges::stable_sort(all, {}, [](const At& a) { return a.door.node; });
+    std::ranges::stable_sort(kept, {}, [](const At& a) { return a.door.node; });
 
     // one door a spot on a wall: doors = {}, keyed (b['id'], round(qx), round(qz)), the first address's
     struct Spot {
@@ -321,17 +348,11 @@ std::vector<DoorShape> door_shapes(const frame::FrameState& state, std::uint32_t
     std::map<std::tuple<std::int64_t, std::int64_t, std::int64_t>, std::size_t> keys;
     const std::span<const std::uint32_t> table = state.ranks->table();
     const std::span<const double> depth = state.ranks->depth();
-    const std::span<const std::uint16_t> flags = state.items->flags();
-    const view::Vec3 eye = cam.eye();
-    for (const At& a : all) {
+    for (const At& a : kept) {
         const geometry::Door& d = a.door;
-        // a coarser pack's door within the active pack's box is the active pack's to draw (none)
-        if (a.row >= flags.size() || a.row >= table.size() || (flags[a.row] & scene::item_flag::masked) != 0) continue;
-        if (cut && view::java_hypot(d.x - (*cut)[1], d.z - (*cut)[2]) > (*cut)[0]) continue;
-        const double d0 = cam.depth({d.x, 1.0, d.z});
-        if (d0 < 2 || d0 > 75) continue;
-        const view::Vec3 nrm = vnorm({d.uz, 0.0, -d.ux});
-        if (vdot(nrm, vsub(eye, {d.qx, 1.2, d.qz})) <= 0) continue; // that wall faces away
+        const view::Vec3 nrm = a.nrm;
+        const double d0 = a.d0;
+        if (a.row >= table.size()) continue;
         const auto key = std::tuple{d.building, pymath::round(d.qx), pymath::round(d.qz)};
         if (const auto it = keys.find(key); it != keys.end()) {
             if (d.number) spots[it->second].numbers.insert(*d.number);
@@ -624,6 +645,11 @@ gpu::Result<void> Doors::build(scene::TileBuild& b) const {
     for (const scene::ItemSpec& item : g.items) b.add_item(item);
     auto kept = std::make_shared<DoorTile>();
     kept->doors = std::move(g.doors);
+    kept->box = {kept->doors[0].x, kept->doors[0].z, kept->doors[0].x, kept->doors[0].z};
+    for (const geometry::Door& d : kept->doors) {
+        kept->box = {std::min(kept->box[0], d.x), std::min(kept->box[1], d.z), std::max(kept->box[2], d.x),
+                     std::max(kept->box[3], d.z)};
+    }
     const std::size_t bytes = sizeof(DoorTile) + (kept->doors.capacity() * sizeof(geometry::Door));
     b.keep(std::shared_ptr<const DoorTile>(std::move(kept)), bytes);
     return {};
