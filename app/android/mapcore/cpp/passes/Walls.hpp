@@ -4,13 +4,15 @@
 //   - Stage T (build, on a worker): geometry/Walls.hpp's primitives, faces and items of the tile at its level, written
 //     into one range of the walls heap (twin/building/BuildingTile.hpp): the primitives (4 × uint4: a wall as one cell,
 //     a skillion's or a houseboat's wall, a roof's face, an n-gon's triangle), the near cells (two words each, cut from
-//     their wall in the vertex stage), each face's geometry (2 × uint4), its colours for each of the two frame slots,
-//     and the tile's rows (one per item, written once the tile is taken). The items join the item table; the pass keeps
-//     each tile's counts, its cells' ranges and its faces' light inputs (PassTile::cpu).
+//     their wall in the vertex stage), each face's geometry (2 × uint4), two areas of its colours, and the tile's rows
+//     (one per item, written once the tile is taken). The items join the item table; the pass keeps each tile's counts,
+//     its cells' ranges and its faces' light inputs (PassTile::cpu).
 //   - Stage F (update, on the render thread): for each tile the cover draws, its rows once; its faces' colours for the
-//     frame's moment, lit and unlit, on the CPU in binary64 (the port's bits on every device) into this frame slot's
-//     colours whenever that slot's are of another moment; and its draws over its visible cells, with its sun bits'
-//     first texel in set 1's sun_bits and their fade (scene::CoverTile's, K8's bits: no bits yet, every face unlit).
+//     frame's moment, lit and unlit, on the CPU in binary64 (the port's bits on every device), once a tile and moment
+//     into the area of them that no frame in flight reads, which both frame slots then read (passes/Light.cpp: a new
+//     moment is lit ahead on a thread of the pass's own while the frames show the one before, ready_for, and the frame
+//     that takes it copies its tiles' colours in); and its draws over its visible cells, with its sun bits' first texel
+//     in set 1's sun_bits and their fade (scene::CoverTile's, K8's bits: no bits yet, every face unlit).
 //     Its near cells are drawn only in the cells where one of their buildings lies nearer than the cells' reach (its
 //     rank's near bit; BuildingTile::near_items): anywhere else they would draw nothing.
 //   - The objects phase draws the walls and the near cells (shaders/building/draw.slang's walls_vs, 16 points of each
@@ -40,7 +42,7 @@
 //   - The twin (emit): every primitive the vertex stage draws, as the port's SVG element, its stroke in its style, and
 //   each windowed wall's dark and lit windows' paths (twin/building/BuildingTwin.hpp).
 // The roofs' half of the pass (its pipelines and draws, the strokes') is passes/Roofs.cpp; the windows' GPU half is
-// passes/Windows.cpp.
+// passes/Windows.cpp; the light, passes/Light.cpp.
 #pragma once
 
 #include "frame/Asked.hpp"
@@ -57,6 +59,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -84,7 +87,14 @@ namespace atlas::passes {
 /// The buildings pass.
 class Buildings final : public frame::Pass {
 public:
-    Buildings() = default;
+    /// Made and let go of where its light ahead's type is known (passes/Light.cpp), the latter once its thread has
+    /// stopped.
+    Buildings();
+    ~Buildings() override;
+    Buildings(const Buildings&) = delete;
+    Buildings& operator=(const Buildings&) = delete;
+    Buildings(Buildings&&) = delete;
+    Buildings& operator=(Buildings&&) = delete;
 
     [[nodiscard]] std::string_view name() const noexcept override { return "buildings"; }
     [[nodiscard]] std::span<const frame::Phase> phases() const noexcept override { return phase_list; }
@@ -93,6 +103,11 @@ public:
     void kinds(frame::Selectors& selectors) override;
     void select(const frame::FrameState& state, frame::Selectors& selectors) override;
     void update(const frame::FrameState& state) override;
+    /// A new moment's light ahead (passes/Light.cpp): every tile the frame before drew (`last`'s cover) lit for `next`
+    /// on the pass's own thread, the tiles of each frame drawn meanwhile added; ready once every one is lit, and at
+    /// once for a moment of the light the frames show.
+    [[nodiscard]] bool ready_for(const frame::FrameState& last, const shaders::Theme& next,
+                                 const std::function<void()>& wake) override;
     void record(const frame::Recording& recording, std::uint32_t phase) override;
     [[nodiscard]] gpu::Result<void> build(scene::TileBuild& build) const override;
     void emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const override;
@@ -165,16 +180,25 @@ public:
     /// Each element the last emit wrote, its depth as the vertex stage gives it, in the stream's order (the tests'
     /// depth raster).
     [[nodiscard]] std::span<const twin::ElementDepth> depths() const noexcept { return depths_; }
-    /// The CPU's light so far: the tiles whose colours it wrote for a moment (a frame slot each), their faces, the
-    /// time it took, and the longest a tile took.
+    /// The CPU's light so far. On the render thread: the tiles it lit for a moment (into an area of their colours,
+    /// which both frame slots then read), their faces, the time it took and the longest a tile took; and the tiles
+    /// whose colours it copied in from the light ahead, and the time the copies took. Ahead, on the pass's own thread:
+    /// the tiles it lit, their faces and the time it took, counted as the frame that takes their moment takes them.
     struct Lighting {
         std::uint64_t tiles = 0;
         std::uint64_t faces = 0;
         double ms = 0.0;
         double longest_ms = 0.0;
+        std::uint64_t copied = 0;
+        double copy_ms = 0.0;
+        std::uint64_t ahead_tiles = 0;
+        std::uint64_t ahead_faces = 0;
+        double ahead_ms = 0.0;
     };
     [[nodiscard]] Lighting lighting() const noexcept { return lighting_; }
     void reset_lighting() noexcept { lighting_ = {}; }
+    /// Waits until the light ahead has lit every tile asked for (tests).
+    void wait_ahead();
 
     /// The primitives per index buffer chunk (65,536 points of u16 indexes), and each one's indexes.
     static constexpr std::uint32_t edged_chunk = 4096;
@@ -208,7 +232,7 @@ private:
         std::uint32_t windows_from = 0; ///< its window group's first sun sample
         const BuildingTile* tile = nullptr;  ///< its layout (the windowed walls' windows, for the jobs)
         std::span<const std::uint32_t> rows; ///< its items' rows (their ranks say whose windows the frame draws)
-        std::uint32_t reveals = 0;           ///< the walls heap's word of its reveals' colours in this frame slot
+        std::uint32_t reveals = 0;           ///< the walls heap's word of its reveals' colours at the frame's moment
         std::uint32_t facades = 0;           ///< the walls heap's uint4 of its items' plinths' and cornices' slots
         double distance = 0;                 ///< the tile's distance from the eye (the draws go nearest first)
     };
@@ -219,6 +243,8 @@ private:
     struct Windows;
     /// The kept primitives' (below; made in passes/Kept.cpp).
     struct Kept;
+    /// The light of a new moment ahead, on a thread of the pass's own (passes/Light.cpp).
+    struct Ahead;
 
     [[nodiscard]] gpu::Result<void> prepare_roofs(const frame::PassContext& context);
     [[nodiscard]] gpu::Result<void> prepare_strokes(const frame::PassContext& context);
@@ -251,10 +277,21 @@ private:
     /// drawn).
     void write_rows(scene::Heaps& heaps, const scene::ResidentTile& tile, const scene::PassTile& mine,
                     const BuildingTile& b);
-    /// The tile's faces' colours for this frame's moment into frame slot `slot`'s colours, unless they are its already;
-    /// the walls of the building `asked` about, where the tile holds it, in its flat colour (lit and unlit alike).
-    void light(scene::Heaps& heaps, const shaders::Theme& theme, std::uint32_t slot, const scene::ResidentTile& tile,
-               const std::optional<frame::AskedBuilding>& asked, const scene::PassTile& mine, const BuildingTile& b);
+    /// The area of the tile's colours (0 or 1) that frame slot `slot` reads at this frame's moment (passes/Light.cpp),
+    /// with the walls of the building `asked` about, where the tile holds it, in its flat colour (lit and unlit alike):
+    /// where neither area holds the moment and that building's revision, lit first into the one the other slot's frame,
+    /// which may be in flight, does not read (copied in from the light ahead where it lit the tile, else lit now), and
+    /// `wrote` set: the heaps' flush is the caller's.
+    [[nodiscard]] std::uint32_t light(scene::Heaps& heaps, const shaders::Theme& theme, std::uint32_t slot,
+                                      const scene::ResidentTile& tile, const std::optional<frame::AskedBuilding>& asked,
+                                      const scene::PassTile& mine, const BuildingTile& b, bool& wrote);
+    /// The tiles the light ahead lit for the frame's new moment `theme`, taken by the frame that takes it, and let go
+    /// of once that frame's tiles have their colours.
+    void take_ahead(const shaders::Theme& theme);
+    void drop_ahead() noexcept;
+    /// The light ahead of a moment the frame builder no longer asks about (ready_for not asked since the last frame:
+    /// its inputs back at the moment shown) let go of, with the tiles it holds.
+    void forget_ahead();
 
     std::uint16_t kind_ = 0;
     mutable Emitted emitted_;
@@ -284,24 +321,26 @@ private:
     std::vector<std::uint32_t> drawn_handles_;
     /// The tiles (their handles) with a building nearer than the cells' reach this frame: no other's near cells draw.
     std::vector<std::uint32_t> near_tiles_;
-    /// The moments the CPU's light has seen (a moment: the frame block's theme), and each tile's moment in each of the
-    /// two frame slots' colours.
+    /// A tile's two areas of colours (BuildingTile::colours_at, reveals_at): the moment each holds (0: none), the
+    /// revision of the building asked about it was lit with where the tile holds that building (0 where it holds none),
+    /// and the one each frame slot reads.
+    struct Lit {
+        std::array<std::uint64_t, 2> moment{};
+        std::array<std::uint64_t, 2> asked{};
+        std::array<std::uint8_t, 2> read{0, 1};
+    };
+    /// The moments the CPU's light has seen (a moment: the frame block's theme), and each tile's areas.
     std::array<std::byte, sizeof(shaders::Theme)> theme_{};
     std::uint64_t moment_ = 0;
-    /// What a tile's colours in a frame slot were lit for: the moment, and the building asked about where the tile
-    /// holds it (its revision; 0 where it holds none), so a tile lights again when either changes for it.
-    struct Lit {
-        std::uint64_t moment = 0;
-        std::uint64_t asked = 0;
-
-        friend constexpr bool operator==(const Lit&, const Lit&) = default;
-    };
-    std::unordered_map<std::uint32_t, std::array<Lit, 2>> lit_;
+    std::unordered_map<std::uint32_t, Lit> lit_;
     /// The building asked about, and its revision (a count of its changes).
     std::optional<frame::AskedBuilding> asked_;
     std::uint64_t asked_revision_ = 0;
     std::vector<std::uint32_t> colours_;
+    std::vector<std::uint32_t> reveals_;
     std::vector<std::uint16_t> asked_items_; ///< light()'s: the asked building's items in the tile it lights
+    std::unique_ptr<Ahead> ahead_;           ///< made as the first new moment is asked about
+    bool asked_ahead_ = false;               ///< ready_for was asked since the last frame
 };
 
 struct Buildings::Strokes {

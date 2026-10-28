@@ -20,8 +20,10 @@
 // lobes), or within 0.25 px of an n-gon's
 // boundary (whose triangles, cut in the plan, can stray from its snapped ring at rest), are counted apart and bounded.
 // A synthetic pair of buildings the renders melt (a tall one whose sort point lies nearer the eye than a long low one
-// in front of it) is drawn by true depth as its geometry says and by the painter switch as the renders paint it. The
-// validation layer stays silent.
+// in front of it) is drawn by true depth as its geometry says and by the painter switch as the renders paint it. A new
+// moment, lit ahead on the pass's own thread (ENGINE.md gain 5), is held frame by frame to the frames drawn from
+// scratch at each moment: every frame one moment whole, the new one from the frame that takes it on, in both frame
+// slots, its light copied in and none of it lit on the render thread. The validation layer stays silent.
 #if !defined(__ANDROID__)
 
 #include "base/pymath/PyMath.hpp"
@@ -53,10 +55,13 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <format>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -1181,9 +1186,17 @@ struct Scene {
     return std::move(*pixels);
 }
 
-/// Draws `cam` at moment `th` for two frames (both frame slots) once the world has settled; the last frame's pixels.
+/// Whether the last frame of `s` showed moment `th`.
+[[nodiscard]] bool shows(const Scene& s, const style::ThemeBlock& th) {
+    return std::ranges::equal(std::as_bytes(std::span(&s.builder->state().theme, 1)), std::as_bytes(std::span(&th, 1)));
+}
+
+/// Draws `cam` at moment `th` once the world has settled, until a frame shows it (the pass lights a new moment ahead on
+/// a thread of its own, and the frame builder shows it once lit), then once more, in the other frame slot; the last
+/// frame's pixels.
 [[nodiscard]] std::optional<gpu::Pixels> redraw(Scene& s, const style::CameraState& cam, const style::ThemeBlock& th) {
-    for (int n = 0; n < 2; ++n) {
+    bool shown = false;
+    for (int n = 0; n < 40; ++n) {
         s.now += 0.25;
         s.builder->set_inputs(
             {.camera = cam, .theme = th, .seconds = s.now, .mode = frame::Mode::structural, .scene = s.world.get()});
@@ -1193,6 +1206,13 @@ struct Scene {
             return std::nullopt;
         }
         s.renderer->drain();
+        if (shown) break;
+        shown = shows(s, th);
+        if (!shown) s.buildings->wait_ahead();
+    }
+    if (!shown) {
+        FAIL("no frame showed the moment");
+        return std::nullopt;
     }
     auto pixels = s.output->read(s.output->latest());
     if (!pixels) {
@@ -1547,7 +1567,8 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
                 CHECK(gpu::write_ppm(*pixels, std::format("{}/{}.ppm", out, name)));
             }
             if (then != nullptr && rest && config.config == gpu::FrameConfig::x1) {
-                // another moment: every drawn tile's colours again, on the CPU, frame slot by frame slot
+                // another moment: every drawn tile's colours again, lit ahead on the pass's own thread and copied in
+                // by the frame that takes it, both frame slots reading them
                 s.buildings->reset_lighting();
                 const auto again = redraw(s, c, *then);
                 ATLAS_REQUIRE(again.has_value());
@@ -1558,11 +1579,13 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
                 ATLAS_REQUIRE(d2.error.empty(), d2.error);
                 const Compared r2 = compare(*again, d2.document, s.buildings->depths(), distances(s),
                                             s.builder->state().block, config, c.density, clear);
-                MESSAGE(name << ", the moment changed: the CPU lit " << l.tiles << " tiles' slots, " << l.faces
-                             << " faces, in " << l.ms << " ms ("
-                             << (l.tiles > 0 ? l.ms / static_cast<double>(l.tiles) : 0.0) << " ms a tile, the longest "
-                             << l.longest_ms << " ms); " << r2.pixels << " pixels, " << r2.wrong << " wrong");
-                CHECK(l.tiles > 0);
+                MESSAGE(name << ", the moment changed: lit ahead " << l.ahead_tiles << " tiles, " << l.ahead_faces
+                             << " faces, in " << l.ahead_ms << " ms; the render thread copied " << l.copied
+                             << " tiles in " << l.copy_ms << " ms and lit " << l.tiles << " tiles, " << l.faces
+                             << " faces, in " << l.ms << " ms (the longest " << l.longest_ms << " ms); " << r2.pixels
+                             << " pixels, " << r2.wrong << " wrong");
+                CHECK(l.copied > 0);
+                CHECK(l.tiles == 0);
                 CHECK_MESSAGE(r2.wrong == 0, name << ", the moment changed: " << r2.first);
             }
             s.renderer.reset();
@@ -1598,6 +1621,137 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
         return c;
     }
     return std::nullopt;
+}
+
+/// How many pixels' colours differ between `a` and `b` (all of them when their sizes do).
+[[nodiscard]] std::size_t differing(const gpu::Pixels& a, const gpu::Pixels& b) {
+    if (a.rgba.size() != b.rgba.size()) return std::max(a.rgba.size(), b.rgba.size()) / 4;
+    std::size_t out = 0;
+    for (std::size_t i = 0; i + 3 < a.rgba.size(); i += 4) {
+        if (a.rgba[i] != b.rgba[i] || a.rgba[i + 1] != b.rgba[i + 1] || a.rgba[i + 2] != b.rgba[i + 2]) ++out;
+    }
+    return out;
+}
+
+/// The calling thread's CPU time so far (ms): what it worked, whatever else the machine runs.
+[[nodiscard]] double thread_ms() {
+    timespec t{};
+    (void)clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
+    return (static_cast<double>(t.tv_sec) * 1e3) + (static_cast<double>(t.tv_nsec) / 1e6);
+}
+
+/// Draws `cam` at rest in X1 over `packs` at moment `from` until it settles, then at `to`, then at `from` again, frame
+/// by frame. Every frame shows one moment whole, pixel for pixel the frame a scene drawn from scratch at it draws (the
+/// settled frame at `from`; a scene of its own at `to`): the old one until the pass's light ahead is done (the first
+/// frame after a change at least), and from the frame that takes the new one on, in both frame slots, the new one.
+/// That frame copies in every drawn tile's colours, lit ahead; no frame lights a tile on the render thread, and no
+/// other copies one. A new moment given up a frame after it is asked for leaves the frames at the moment shown, with
+/// nothing copied or lit. Says each frame's time on the render thread (its CPU time, and from its start to its present
+/// returning), its stage F and recording, and what the light did.
+void check_moments(const style::CameraState& cam, const std::string& view, std::span<const PackFile> packs,
+                   const style::ThemeBlock& from, const style::ThemeBlock& to) {
+    auto session = test::open_session();
+    if (!session) return;
+    const gpu::Device& device = *session->device;
+    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const gpu::Configuration x1{.config = gpu::FrameConfig::x1,
+                                .route = gpu::Route::renderpass,
+                                .form = gpu::FrameForm::composite,
+                                .target = gpu::CompositeTarget::direct};
+    style::CameraState c = cam;
+    c.flags |= style::camera_flag::rest;
+    // the new moment drawn from scratch, by a scene of its own
+    std::optional<gpu::Pixels> fresh;
+    {
+        auto made = make_scene(*session, *cache, x1, c.width_px, c.height_px, packs, 0x808080);
+        ATLAS_REQUIRE(made.has_value());
+        fresh = draw(*made, c, to);
+        ATLAS_REQUIRE(fresh.has_value());
+        made->renderer.reset();
+    }
+    auto made = make_scene(*session, *cache, x1, c.width_px, c.height_px, packs, 0x808080);
+    ATLAS_REQUIRE(made.has_value());
+    Scene& s = *made;
+    const std::optional<gpu::Pixels> settled = draw(s, c, from);
+    ATLAS_REQUIRE(settled.has_value());
+    CHECK_MESSAGE(s.settled, view << ": the world did not settle");
+    struct Change {
+        const style::ThemeBlock* th;
+        const gpu::Pixels* want;
+        const gpu::Pixels* before;
+        const char* name;
+    };
+    for (const Change& change : {Change{.th = &to, .want = &*fresh, .before = &*settled, .name = "the new moment"},
+                                 Change{.th = &from, .want = &*settled, .before = &*fresh, .name = "back again"}}) {
+        int taken = -1;
+        for (int n = 0; n < 40 && (taken < 0 || n <= taken + 2); ++n) {
+            s.now += 0.25;
+            s.builder->set_inputs({.camera = c,
+                                   .theme = *change.th,
+                                   .seconds = s.now,
+                                   .mode = frame::Mode::structural,
+                                   .scene = s.world.get()});
+            s.buildings->reset_lighting();
+            const double cpu = thread_ms();
+            auto report = s.renderer->draw(0);
+            const double worked = thread_ms() - cpu;
+            ATLAS_REQUIRE(report.has_value(), report.error().text());
+            s.renderer->drain();
+            auto pixels = s.output->read(s.output->latest());
+            ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+            const bool now = shows(s, *change.th);
+            if (now && taken < 0) taken = n;
+            const passes::Buildings::Lighting l = s.buildings->lighting();
+            const std::size_t wrong = differing(*pixels, now ? *change.want : *change.before);
+            MESSAGE(std::format("{}, {}: frame {} (slot {}) shows the {} moment: the render thread worked {:.2f} ms "
+                                "({:.2f} ms to its present), stage F {:.2f} ms, recording {:.2f} ms; lit {} tiles, {} "
+                                "faces, in {:.2f} ms, copied {} in {:.2f} ms; lit ahead {} tiles, {} faces, in {:.2f} "
+                                "ms; {} pixels unlike that moment's frame drawn from scratch",
+                                view, change.name, n, s.builder->state().slot, now ? "new" : "old", worked,
+                                report->cpu_ms, s.builder->stage_f_ms(), s.builder->record_ms(), l.tiles, l.faces, l.ms,
+                                l.copied, l.copy_ms, l.ahead_tiles, l.ahead_faces, l.ahead_ms, wrong));
+            CHECK_MESSAGE(wrong == 0, view << ", " << change.name << ": frame " << n << " shows the "
+                                           << (now ? "new" : "old") << " moment with " << wrong << " pixels unlike it");
+            CHECK(l.tiles == 0);
+            if (n == taken) {
+                CHECK(l.copied > 0);
+                CHECK(l.ahead_tiles == l.copied);
+            } else {
+                CHECK(l.copied == 0);
+            }
+            if (taken >= 0) CHECK(now); // once shown, the new moment stays
+            // the light ahead given its time once two frames have gone without waiting for it
+            if (!now && n >= 1) s.buildings->wait_ahead();
+        }
+        CHECK_MESSAGE(taken >= 1, view << ", " << change.name << ": the new moment shown at frame " << taken
+                                       << " (the first after the change shows the old one, its light under way)");
+    }
+    // a new moment asked for and given up a frame later (the inputs back at the moment shown): the frames show the
+    // moment shown, whole, and its light ahead is let go of, nothing copied in or lit
+    for (int n = 0; n < 3; ++n) {
+        s.now += 0.25;
+        s.builder->set_inputs({.camera = c,
+                               .theme = n == 0 ? to : from,
+                               .seconds = s.now,
+                               .mode = frame::Mode::structural,
+                               .scene = s.world.get()});
+        s.buildings->reset_lighting();
+        auto report = s.renderer->draw(0);
+        ATLAS_REQUIRE(report.has_value(), report.error().text());
+        s.renderer->drain();
+        auto pixels = s.output->read(s.output->latest());
+        ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+        const passes::Buildings::Lighting l = s.buildings->lighting();
+        const std::size_t wrong = differing(*pixels, *settled);
+        CHECK(shows(s, from));
+        CHECK_MESSAGE(wrong == 0, view << ", the moment given up: frame " << n << " has " << wrong
+                                       << " pixels unlike the moment shown");
+        CHECK(l.tiles + l.copied + l.ahead_tiles == 0);
+    }
+    s.buildings->wait_ahead(); // nothing asked for: at once
+    for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, view << ": " << m);
+    s.renderer.reset();
 }
 
 } // namespace
@@ -1881,6 +2035,41 @@ TEST_CASE("buildings: a pair the renders melt drawn by true depth as their geome
     }
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
+}
+
+TEST_CASE("buildings: a new moment lit ahead on the pass's own thread: every frame shows one moment whole, the new one "
+          "from the frame that takes it on, both frame slots, as a frame drawn from scratch at it") {
+    // the synthetic tile in a render pack of its own (so CI draws it without the bundled packs), at the Main board's
+    // change of moment: the sun's colour and strength of five o'clock, its place the same (so are the sun bits)
+    const std::string path = synthetic_pack();
+    const std::array<PackFile, 1> packs{PackFile{.id = "synthetic", .path = path}};
+    style::ThemeBlock later = sunny();
+    later.hour = 17;
+    later.sun = {.r = 0xFF, .g = 0xD9, .b = 0xA8, .a = 255};
+    later.sun_k = 0.9;
+    check_moments(camera(52.37422, 4.88486, 20.0, 50.0, 260.0, 1080, 2400, 1080.0 / 412.0), "synthetic near", packs,
+                  sunny(), later);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST_CASE(
+    "buildings: a new moment at the Main board lit ahead on the pass's own thread, and the render thread's frames "
+    "around it") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the Main board is not drawn here");
+        return;
+    }
+    const auto cam = region_view(dir, "grachten_home", 1080, 2400, 1080.0 / 412.0);
+    ATLAS_REQUIRE(cam.has_value(), "the grachten pack has no grachten_home view");
+    // the canal ring's pack alone, as the board draws it, and its moment change above
+    const std::array<PackFile, 1> packs{PackFile{.id = "grachten", .path = dir + "/grachten.atlas"}};
+    style::ThemeBlock later = sunny();
+    later.hour = 17;
+    later.sun = {.r = 0xFF, .g = 0xD9, .b = 0xA8, .a = 255};
+    later.sun_k = 0.9;
+    check_moments(*cam, "board", packs, sunny(), later);
 }
 
 #endif

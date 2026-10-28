@@ -127,8 +127,8 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     layout.windows_at = layout.cells_at + ((n + 1) / 2);
     layout.faces_at = layout.windows_at + ww;
     layout.colours_at = layout.faces_at + (f * shaders::BUILDING_FACE_VECTORS);
-    layout.reveals_at = layout.colours_at + f;                  // two slots of two words a face: f uint4
-    layout.facades_at = layout.reveals_at + ((2 * ww) + 3) / 4; // two slots of a word a windowed wall
+    layout.reveals_at = layout.colours_at + f;                  // two areas of two words a face: f uint4
+    layout.facades_at = layout.reveals_at + ((2 * ww) + 3) / 4; // two areas of a word a windowed wall
     layout.rows_at = layout.facades_at + ((k + 3) / 4);         // a word an item
     layout.vectors = layout.rows_at + ((k + 3) / 4);
     std::vector<Words> out(layout.vectors, Words{0, 0, 0, 0});

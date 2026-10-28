@@ -9,9 +9,10 @@
 //     the edged list with its style and flags, its first window, its rows and bays, its slots), by cell (a houseboat
 //     cabin's walls among them);
 //   - each face's geometry, 2 uint4 (its normal and area as floats, its test point and flags);
-//   - each frame slot's colours, 2 words a face (lit, unlit, 0xBBGGRR), which the CPU's light writes per tile and
-//     moment (its inputs stay on the CPU: BuildingTile::lights);
-//   - each frame slot's reveals' colours, a word a windowed wall (its face's colour times 0.55, unlit), lit alike;
+//   - two areas of colours, 2 words a face (lit, unlit, 0xBBGGRR), which the CPU's light writes per tile and moment
+//     (its inputs stay on the CPU: BuildingTile::lights): the frames read the area of the moment they show, and a new
+//     moment goes into the other (passes/Light.cpp);
+//   - two areas of reveals' colours, a word a windowed wall (its face's colour times 0.55, unlit), lit alike;
 //   - each item's plinth's and cornice's painter slots (geometry::TileBuildings::item_facades), a word each;
 //   - the items' rows in the item table, one word each, written once the tile is taken.
 // Plain data: no Vulkan, so the twin and its tests read it as the GPU does.
@@ -62,8 +63,8 @@ struct BuildingTile {
     std::uint32_t cells_at = 0;   ///< the near cells, two words each
     std::uint32_t windows_at = 0; ///< the windowed walls, a uint4 each
     std::uint32_t faces_at = 0;   ///< each face's geometry, 2 uint4
-    std::uint32_t colours_at = 0; ///< each frame slot's colours: slot s from word colours_at · 4 + s · 2 · faces
-    std::uint32_t reveals_at = 0; ///< each frame slot's reveals' colours: slot s from word reveals_at · 4 + s · walls
+    std::uint32_t colours_at = 0; ///< the two areas of colours: area a from word colours_at · 4 + a · 2 · faces
+    std::uint32_t reveals_at = 0; ///< the two areas of reveals' colours: area a from word reveals_at · 4 + a · walls
     std::uint32_t facades_at = 0; ///< each item's plinth's and cornice's slots, four a uint4
     std::uint32_t rows_at = 0;    ///< the items' rows, four a uint4
     std::uint32_t vectors = 0;    ///< the range's size in uint4

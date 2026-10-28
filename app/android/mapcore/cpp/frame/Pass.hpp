@@ -48,6 +48,10 @@ namespace atlas::twin {
 class Stream; // twin/Twin.hpp
 } // namespace atlas::twin
 
+namespace atlas::shaders {
+struct Theme; // shaders/shared/theme.slang, through frame/FrameBlock.hpp
+} // namespace atlas::shaders
+
 namespace atlas::frame {
 
 class FrameBuilder;   // frame/FrameBuilder.hpp
@@ -195,6 +199,22 @@ public:
     /// Stage F of the pass, on the render thread, before the frame records: its draw lists for the frame's cover and
     /// ranks, written into its own per-frame buffers.
     virtual void update(const FrameState& state) { (void)state; }
+    /// Whether the pass can draw the moment `next` (the shaders' Theme of a moment the frame's inputs bring) without
+    /// long work in its stage F. Asked on the render thread before a frame drawn into an output derives its state, of
+    /// every pass, while a moment is asked about that the frames do not show yet; the frames show the moment they show
+    /// until every pass says yes, so the frame that first shows a new moment shows it whole and the frames before it
+    /// stay even (ENGINE.md gain 5). A pass whose stage F would do long work for a new moment (the buildings' light of
+    /// every drawn face) does it ahead, off the render thread, for what `last` (the frame builder's state of the frame
+    /// before) drew, says no until it is done, and then calls `wake` (the frame loop's frame request; may be empty)
+    /// from its own thread. A moment asked about may never be shown: the inputs may go back to the one shown. Yes by
+    /// default.
+    [[nodiscard]] virtual bool ready_for(const FrameState& last, const shaders::Theme& next,
+                                         const std::function<void()>& wake) {
+        (void)last;
+        (void)next;
+        (void)wake;
+        return true;
+    }
     /// Records phase `phase` of the frame.
     virtual void record(const Recording& recording, std::uint32_t phase) = 0;
 
