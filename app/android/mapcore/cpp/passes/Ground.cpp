@@ -1319,13 +1319,16 @@ void Ground::push(const frame::Recording& r, std::uint32_t flags, std::uint32_t 
 
 void Ground::record(const frame::Recording& r, std::uint32_t phase) {
     if (!frame_.valid || pipelines_ == nullptr || words_ == nullptr || !words_->ready) return;
+    // the soft shadows and the water's light, unless the map leaves them out (each one's draws, offscreen and on)
+    const bool shadows = !r.state.camera.has(style::camera_flag::no_shadows);
+    const bool water = !r.state.camera.has(style::camera_flag::no_water);
     if (phase == phase_shadow_mask) {
         // before the main pass: it binds every set it draws with
-        record_shadow_mask(r);
+        if (shadows) record_shadow_mask(r);
         return;
     }
     if (phase == phase_ripple) {
-        record_ripple_layer(r);
+        if (water) record_ripple_layer(r);
         return;
     }
     if (phase == phase_lit) {
@@ -1350,15 +1353,25 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
         }
         break;
     case phase_canopy: record_canopy(r); break;
-    case phase_water_reflections: record_reflections(r); break;
-    case phase_water_glitter: record_glitter(r); break;
-    case phase_water_rings: record_rings(r); break;
+    case phase_water_reflections:
+        if (water) record_reflections(r);
+        break;
+    case phase_water_glitter:
+        if (water) record_glitter(r);
+        break;
+    case phase_water_rings:
+        if (water) record_rings(r);
+        break;
     case phase_water_tint: record_water_tint(r); break;
-    case phase_water_glints: record_wind_glints(r); break;
+    case phase_water_glints:
+        if (water) record_wind_glints(r);
+        break;
     case phase_water_end: record_water_end(r); break;
     case phase_over:
     case phase_marks: record_lines(r, phase); break;
-    case phase_shadows: record_shadows(r); break;
+    case phase_shadows:
+        if (shadows) record_shadows(r);
+        break;
     case phase_pools:
         record_lit(r);
         record_pools(r);

@@ -168,6 +168,13 @@ class MapData(private val services: Services) {
                 .distinctUntilChanged()
                 .collect { trueDepth -> MapEngine.painterOrder(!trueDepth) }
         }
+        // the core's parts a debug build's Look settings switch off (on when unset), so the map's panel shows their cost
+        services.scope.launch {
+            services.settings.data
+                .map { Triple(it[SettingsKeys.MAP_CLOUD_SHADOWS] ?: true, it[SettingsKeys.MAP_WATER_LIGHT] ?: true, it[SettingsKeys.MAP_FACADES] ?: true) }
+                .distinctUntilChanged()
+                .collect { (cloudShadows, waterLight, facades) -> MapEngine.leaveOut(cloudShadows, waterLight, facades) }
+        }
     }
 
     private fun open(asset: String): InputStream = services.context.assets.open(asset)

@@ -358,21 +358,25 @@ void Buildings::release() noexcept {
 }
 
 void Buildings::record(const frame::Recording& recording, std::uint32_t phase) {
+    // the facades' detail (windows, material faces), unless the map leaves it out
+    const bool facades = !recording.state.camera.has(style::camera_flag::no_facades);
     switch (phase) {
     case draw_phase:
         // the windows before their walls: nearer on the wall's plane, they hide what early depth testing then rejects
         // of the walls (under the painter switch their slots' depths lie past the walls' alike)
-        record_windows(recording);
+        if (facades) record_windows(recording);
         record_walls(recording);
         record_roofs(recording);
         break;
     case decide_phase:
         record_kept_cull(recording);
         record_decide(recording);
-        record_window_decide(recording);
+        if (facades) record_window_decide(recording);
         break;
     case strokes_phase: record_strokes(recording); break;
-    case materials_phase: record_materials(recording); break;
+    case materials_phase:
+        if (facades) record_materials(recording);
+        break;
     case roof_lines_phase: record_roof_lines(recording); break;
     default: break;
     }

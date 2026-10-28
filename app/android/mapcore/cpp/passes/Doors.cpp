@@ -757,6 +757,7 @@ void Doors::update(const frame::FrameState& state) {
 }
 
 void Doors::record(const frame::Recording& recording, std::uint32_t phase) {
+    if (recording.state.camera.has(style::camera_flag::no_facades)) return; // the map leaves the facades' detail out
     switch (phase) {
     case draw_phase: record_draw(recording); break;
     case numbers_phase: record_numbers(recording); break;

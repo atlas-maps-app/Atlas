@@ -10,6 +10,7 @@ import app.atlas.geo.LatLon
 import app.atlas.mapcore.CoreConfig
 import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.UserEdit
+import app.atlas.mapcore.state.CameraWriter
 import app.atlas.mapview.svg.SvgFonts
 import app.atlas.mapview.vk.PackList
 import app.atlas.mapview.vk.VkHost
@@ -122,6 +123,25 @@ object MapEngine {
     @Volatile
     var grain: Boolean = false
         private set
+
+    /**
+     * The parts of the picture the app's diagnostics leave out of the core's frames (CameraWriter.NO_CLOUD_SHADOWS,
+     * NO_WATER, NO_FACADES): switched one at a time in a debug build's Look settings, so the map's panel shows on the
+     * phone what each one costs (ENGINE.md, "On the user's phone first"). Each map's frames carry them with its own
+     * layers' (MapController.publishCamera); [leaveOut] draws the maps again.
+     */
+    @Volatile
+    var leftOut: Int = 0
+        private set
+
+    /** Sets [leftOut] from the parts kept (each true: drawn) and draws every map again with it. */
+    fun leaveOut(cloudShadows: Boolean, waterLight: Boolean, facades: Boolean) {
+        val off = (if (cloudShadows) 0 else CameraWriter.NO_CLOUD_SHADOWS) or (if (waterLight) 0 else CameraWriter.NO_WATER) or
+            (if (facades) 0 else CameraWriter.NO_FACADES)
+        if (off == leftOut) return
+        leftOut = off
+        invalidate()
+    }
 
     /** Sets the screen's haze, vignette and paper grain, and hands them to the running core (off the main thread). */
     fun screenEffects(haze: Boolean, vignette: Boolean, grain: Boolean) {

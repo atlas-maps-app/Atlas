@@ -189,6 +189,11 @@ constexpr std::array constants_table = {
     Constant{.name = "CameraWriter.FOLLOW", .value = camera_flag::follow},
     Constant{.name = "CameraWriter.LOCATION", .value = camera_flag::location},
     Constant{.name = "CameraWriter.HEADING", .value = camera_flag::heading},
+    Constant{.name = "CameraWriter.NO_TREES", .value = camera_flag::no_trees},
+    Constant{.name = "CameraWriter.NO_SHADOWS", .value = camera_flag::no_shadows},
+    Constant{.name = "CameraWriter.NO_CLOUD_SHADOWS", .value = camera_flag::no_cloud_shadows},
+    Constant{.name = "CameraWriter.NO_WATER", .value = camera_flag::no_water},
+    Constant{.name = "CameraWriter.NO_FACADES", .value = camera_flag::no_facades},
     Constant{.name = "CameraWriter.PROFILE_NONE", .value = profile(Profile::none)},
     Constant{.name = "CameraWriter.PROFILE_LIVING", .value = profile(Profile::living)},
     Constant{.name = "CameraWriter.PROFILE_REGION", .value = profile(Profile::region)},
@@ -217,7 +222,8 @@ static_assert((theme_flag::night | theme_flag::wet | theme_flag::weather | theme
                theme_flag::shadow_blur | theme_flag::cloud_shadows | theme_flag::water_gradient | theme_flag::dusk |
                theme_flag::wet_set | theme_flag::golden | theme_flag::tone) == theme_flag::known);
 static_assert((camera_flag::rest | camera_flag::engine_mode | camera_flag::radius_cut | camera_flag::follow |
-               camera_flag::location | camera_flag::heading) == camera_flag::known);
+               camera_flag::location | camera_flag::heading | camera_flag::no_trees | camera_flag::no_shadows |
+               camera_flag::no_cloud_shadows | camera_flag::no_water | camera_flag::no_facades) == camera_flag::known);
 
 } // namespace
 

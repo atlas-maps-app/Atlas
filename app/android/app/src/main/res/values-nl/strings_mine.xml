@@ -344,6 +344,10 @@
     <string name="mine_layers_vignette">Vignet</string>
     <string name="mine_layers_grain">Korrel</string>
     <string name="mine_layers_true_depth">Echte diepte</string>
+    <string name="mine_layers_parts">Engine-onderdelen (debug)</string>
+    <string name="mine_layers_cloud_shadows">Wolkschaduwen</string>
+    <string name="mine_layers_water_light">Waterlicht</string>
+    <string name="mine_layers_facades">Geveldetails</string>
     <string name="mine_layers_light_cd">Tijd van het licht %1$s</string>
     <string name="mine_layers_sunrise">Zonsopgang</string>
     <string name="mine_layers_noon">Middag</string>

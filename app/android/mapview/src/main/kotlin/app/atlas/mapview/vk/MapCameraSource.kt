@@ -71,6 +71,8 @@ internal class MapCameraSource(
         val draw: Boolean,
         /** Where the user is, where the core draws the location's puck; null where it draws none. */
         val location: Location? = null,
+        /** The parts of the picture the map leaves out (CameraWriter.NO_TREES, …), as flags of the frame. */
+        val off: Int = 0,
     ) {
         /** Whether it carries motion beyond [t0]. */
         val moving: Boolean get() = t1 > t0
@@ -130,6 +132,7 @@ internal class MapCameraSource(
         if (s.follow) flags = flags or CameraWriter.FOLLOW
         val where = s.location
         if (where != null) flags = flags or CameraWriter.locationFlags(where.heading)
+        flags = flags or s.off
         CameraWriter.header(out, ++sequence, flags)
         CameraWriter.view(out, lat, lon, normalised(bearing), pitch, distance, s.principalXDp, principalY)
         CameraWriter.frame(out, s.widthPx, s.heightPx, s.widthDp, s.heightDp, s.density)

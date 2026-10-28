@@ -428,4 +428,87 @@ TEST_CASE("the app's map makes a size the disk does not hold on the GPU before i
     CHECK_FALSE(fs::exists(dir / "guard"));
 }
 
+TEST_CASE("the map leaves out the parts its camera's flags name, and draws them again: the trees, the soft shadows, "
+          "the clouds' shadows, the water's light and the facades' detail") {
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (tiles_dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the map is not drawn over the bundled packs here");
+        return;
+    }
+    if (!test::open_session()) return; // no Vulkan here
+    const Folder folder("parts");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    frame::MapFrame map(2, nullptr, {.cache_dir = dir});
+    standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
+    CHECK(map.set_packs(bundled(tiles_dir)) == "amsterdam listed\ngrachten listed\n");
+    CHECK(session.map(&map).empty());
+    std::string why;
+    ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+    map.set_theme(sunny());
+    ATLAS_REQUIRE(draw_until_complete(session, map, home(1)) > 0, "the Westerkerk home never completed");
+
+    // A part's draws and dispatches in the last frame: its kinds' counts, over every pass.
+    struct Part {
+        const char* name;
+        std::uint32_t flag;
+        std::vector<std::string_view> kinds;
+    };
+    const std::vector<Part> parts{
+        {"the trees", style::camera_flag::no_trees, {"trees", "tree fills", "tree sides"}},
+        {"the soft shadows",
+         style::camera_flag::no_shadows,
+         {"shadow mask", "shadow grid", "shadow box", "shadow blur", "ground shadows"}},
+        {"the water's light",
+         style::camera_flag::no_water,
+         {"ripple layer", "ripple fused", "ground ripple", "ground reflections", "ground glitter", "ground rings",
+          "ground glints"}},
+        {"the facades' detail",
+         style::camera_flag::no_facades,
+         {"windows", "window parts", "window glass", "window frames", "facades", "material fills", "material lines",
+          "church windows", "door faces", "door fills", "door outlines", "door numbers"}},
+    };
+    const auto counted = [&](const Part& part) {
+        std::uint64_t n = 0;
+        for (const frame::PassCounters& c : map.builder()->counters()) {
+            for (const frame::KindCount& k : c.kinds()) {
+                if (std::ranges::find(part.kinds, k.kind) != part.kinds.end()) n += k.count.draws + k.count.dispatches;
+            }
+        }
+        return n;
+    };
+    const auto clouds = [&] {
+        return (map.builder()->state().block.layers.steps.x & shaders::COMPOSITE_CLOUD_SHADOWS) != 0U;
+    };
+    // Each switch leaves its part out of the next frame and nothing else; the frame after it draws them all again.
+    const auto draw = [&](std::uint32_t off) {
+        style::CameraState c = home(1);
+        c.flags |= off;
+        return session.draw(c, {}).drawn;
+    };
+    for (const Part& part : parts) {
+        CAPTURE(part.name);
+        CHECK(draw(0));
+        const std::uint64_t on = counted(part);
+        CHECK(on > 0);
+        CHECK(draw(part.flag));
+        CHECK(counted(part) == 0);
+        for (const Part& other : parts) {
+            if (&other != &part) CHECK(counted(other) > 0);
+        }
+        MESSAGE(std::format("{}: {} draws and dispatches, none with its switch", part.name, on));
+    }
+    CHECK(draw(0));
+    const bool clouded = clouds();
+    CHECK(draw(style::camera_flag::no_cloud_shadows));
+    CHECK_FALSE(clouds());
+    CHECK(draw(0));
+    CHECK(clouds() == clouded);
+    MESSAGE(std::format("the clouds' shadows: the composite's step {} at the sunny home, off with its switch",
+                        clouded ? "on" : "off"));
+    session.close();
+}
+
 #endif

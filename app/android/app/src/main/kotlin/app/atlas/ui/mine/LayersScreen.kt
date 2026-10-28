@@ -98,6 +98,9 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val vignette by settings.flow(SettingsKeys.MAP_VIGNETTE, false).collectAsStateWithLifecycle(false)
     val grain by settings.flow(SettingsKeys.MAP_GRAIN, false).collectAsStateWithLifecycle(false)
     val trueDepth by settings.flow(SettingsKeys.MAP_TRUE_DEPTH, true).collectAsStateWithLifecycle(true)
+    val cloudShadows by settings.flow(SettingsKeys.MAP_CLOUD_SHADOWS, true).collectAsStateWithLifecycle(true)
+    val waterLight by settings.flow(SettingsKeys.MAP_WATER_LIGHT, true).collectAsStateWithLifecycle(true)
+    val facades by settings.flow(SettingsKeys.MAP_FACADES, true).collectAsStateWithLifecycle(true)
     val language by settings.flow(SettingsKeys.NAME_LANGUAGE).collectAsStateWithLifecycle(null)
     val twelve by settings.flow(MineKeys.CLOCK_12, false).collectAsStateWithLifecycle(false)
     val theme = runCatching { Theme.valueOf(themeName) }.getOrDefault(Theme.AUTO)
@@ -163,6 +166,24 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
                     onGrain = { on -> scope.launch { settings.set(SettingsKeys.MAP_GRAIN, on) } },
                     onTrueDepth = { on -> scope.launch { settings.set(SettingsKeys.MAP_TRUE_DEPTH, on) } },
                 )
+                if (app.atlas.BuildConfig.TIMINGS) {
+                    PartChips(
+                        listOf(
+                            Triple(stringResource(R.string.mine_layers_cloud_shadows), cloudShadows) { on: Boolean ->
+                                scope.launch { settings.set(SettingsKeys.MAP_CLOUD_SHADOWS, on) }
+                                Unit
+                            },
+                            Triple(stringResource(R.string.mine_layers_water_light), waterLight) { on: Boolean ->
+                                scope.launch { settings.set(SettingsKeys.MAP_WATER_LIGHT, on) }
+                                Unit
+                            },
+                            Triple(stringResource(R.string.mine_layers_facades), facades) { on: Boolean ->
+                                scope.launch { settings.set(SettingsKeys.MAP_FACADES, on) }
+                                Unit
+                            },
+                        ),
+                    )
+                }
                 LightScrubber(minutes, sun, twelve, onChange = { minutes = it }, onNow = { minutes = LayersModel.minuteOf(clock.instant(), zone) })
                 NamesRow(language) { code -> scope.launch { settings.set(SettingsKeys.NAME_LANGUAGE, code) } }
                 CoverageCard(coverage, coverageDone, onQuests = { nav.go(Dest.Quests(here.lat, here.lon)) })
@@ -238,6 +259,28 @@ private fun ScreenChips(
                 Triple(stringResource(R.string.mine_layers_grain), grain, onGrain),
                 Triple(stringResource(R.string.mine_layers_true_depth), trueDepth, onTrueDepth),
             )) {
+                TextPill(
+                    name, bt(12f, 700, 15.5f), if (on) INK else 0xFFF4F5F7, if (on) WHITE else INK,
+                    Modifier.semantics { contentDescription = name },
+                    h = 36f, padH = 12f, onClick = { toggle(!on) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * A debug build's switches of the core's parts, each a chip as the screen's effects are (dark when drawn): off, the map
+ * leaves that part out, so the map's panel (its frame intervals and GPU time) shows on the phone what the part costs.
+ * The trees and the soft shadows are the map's own layers, above.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun PartChips(parts: List<Triple<String, Boolean, (Boolean) -> Unit>>) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        CardLabel(stringResource(R.string.mine_layers_parts))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            for ((name, on, toggle) in parts) {
                 TextPill(
                     name, bt(12f, 700, 15.5f), if (on) INK else 0xFFF4F5F7, if (on) WHITE else INK,
                     Modifier.semantics { contentDescription = name },

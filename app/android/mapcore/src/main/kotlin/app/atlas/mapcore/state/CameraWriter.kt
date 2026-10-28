@@ -45,6 +45,18 @@ object CameraWriter {
     /** The location has a heading: the puck's cone. */
     const val HEADING = 32
 
+    /**
+     * The map leaves a part of its picture out (style::camera_flag's no_* bits): its own layers' trees and soft shadows
+     * ([NO_TREES], [NO_SHADOWS]: MapLayer.TREES and SHADOWS off), and the app's switches that show on the phone what
+     * each part costs: the clouds' shadows, the water's light (reflections, ripple, glitter, rings, glints), the facades'
+     * detail (windows, material faces, doors).
+     */
+    const val NO_TREES = 64
+    const val NO_SHADOWS = 128
+    const val NO_CLOUD_SHADOWS = 256
+    const val NO_WATER = 512
+    const val NO_FACADES = 1024
+
     // The profiles (whose rules draw the frame): the active pack's rhead profile plus one, and none without a pack.
     const val PROFILE_NONE = 0
     const val PROFILE_LIVING = 1

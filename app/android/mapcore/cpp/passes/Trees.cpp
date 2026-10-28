@@ -495,6 +495,7 @@ void Trees::update(const frame::FrameState& state) {
 }
 
 void Trees::record(const frame::Recording& recording, std::uint32_t phase) {
+    if (recording.state.camera.has(style::camera_flag::no_trees)) return; // the map leaves its trees out
     switch (phase) {
     case draw_phase: record_draw(recording); break;
     case decide_phase: record_decide(recording); break;

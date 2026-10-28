@@ -198,6 +198,7 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     private var publishedRest = false
     private var publishedDraw = false
     private var publishedLocation: UserLocation? = null
+    private var publishedOff = 0
 
     /** The pack the core was last told to draw (its id), which [choosePack] holds on to. */
     private var publishedPack: String? = null
@@ -537,8 +538,12 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
         val location = overlays.location.takeIf {
             draw && coreWanted == Transition.Path.CORE && c.transition.canvas == 0f && (!overlays.onGround || coreRoutes)
         }
+        // the parts the core leaves out: the style's trees and soft shadows where its layers have none, and what the app's
+        // diagnostics switch off (MapEngine.leftOut)
+        val off = (if (MapLayer.TREES in style.layers) 0 else CameraWriter.NO_TREES) or
+            (if (MapLayer.SHADOWS in style.layers) 0 else CameraWriter.NO_SHADOWS) or MapEngine.leftOut
         if (!force && next == null && cam == publishedCamera && v == publishedViewport && rest == publishedRest && draw == publishedDraw &&
-            location == publishedLocation
+            location == publishedLocation && off == publishedOff
         ) {
             return
         }
@@ -555,9 +560,11 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
                 density = v.density.toDouble(), rest = rest, follow = state.follow != Follow.NONE,
                 pack = pack?.number ?: 0L, profile = pack?.profile ?: CameraWriter.PROFILE_NONE, draw = draw,
                 location = location?.let { MapCameraSource.Location(it.at.lat, it.at.lon, it.accuracyM.toFloat(), it.heading?.toFloat()) },
+                off = off,
             ),
         )
         publishedCamera = cam
+        publishedOff = off
         publishedViewport = v
         publishedRest = rest
         publishedDraw = draw

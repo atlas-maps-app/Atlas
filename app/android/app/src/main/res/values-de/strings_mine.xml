@@ -344,6 +344,10 @@
     <string name="mine_layers_vignette">Vignette</string>
     <string name="mine_layers_grain">Körnung</string>
     <string name="mine_layers_true_depth">Echte Tiefe</string>
+    <string name="mine_layers_parts">Engine-Teile (Debug)</string>
+    <string name="mine_layers_cloud_shadows">Wolkenschatten</string>
+    <string name="mine_layers_water_light">Wasserlicht</string>
+    <string name="mine_layers_facades">Fassadendetails</string>
     <string name="mine_layers_light_cd">Tageslicht %1$s</string>
     <string name="mine_layers_sunrise">Sonnenaufgang</string>
     <string name="mine_layers_noon">Mittag</string>

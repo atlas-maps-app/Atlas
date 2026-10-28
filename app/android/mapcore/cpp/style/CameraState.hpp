@@ -50,7 +50,8 @@ inline constexpr std::size_t camera_state_size = 544;
 /// The most keep-out shapes a frame carries (CameraWriter.MAX_KEEP_OUTS).
 inline constexpr std::size_t max_keep_outs = 16;
 
-/// The camera state's flag bits (CameraWriter.REST, ENGINE_MODE, RADIUS_CUT, FOLLOW, LOCATION, HEADING).
+/// The camera state's flag bits (CameraWriter.REST, ENGINE_MODE, RADIUS_CUT, FOLLOW, LOCATION, HEADING, NO_TREES,
+/// NO_SHADOWS, NO_CLOUD_SHADOWS, NO_WATER, NO_FACADES).
 namespace camera_flag {
 /// The camera is at rest: the frame snaps to the SVG's precision (D4).
 inline constexpr std::uint32_t rest = 1U;
@@ -64,7 +65,17 @@ inline constexpr std::uint32_t follow = 8U;
 inline constexpr std::uint32_t location = 16U;
 /// The location has a heading: its cone.
 inline constexpr std::uint32_t heading = 32U;
-inline constexpr std::uint32_t known = 0x3FU;
+/// The map leaves a part of its picture out: its own layers (MapLayer.TREES and SHADOWS off), and the app's switches
+/// that show on the phone what each part costs (ENGINE.md, "On the user's phone first"). The frame skips those draws;
+/// what it decides for them is unchanged. The trees (passes/Trees.hpp); the soft shadows (their mask and their fill);
+/// the clouds' shadows (the composite's step); the water's light (its reflections and ripple, glitter, rings and
+/// glints); the facades' detail (their windows, material faces and doors).
+inline constexpr std::uint32_t no_trees = 64U;
+inline constexpr std::uint32_t no_shadows = 128U;
+inline constexpr std::uint32_t no_cloud_shadows = 256U;
+inline constexpr std::uint32_t no_water = 512U;
+inline constexpr std::uint32_t no_facades = 1024U;
+inline constexpr std::uint32_t known = 0x7FFU;
 } // namespace camera_flag
 
 /// Whose rules draw the frame (D2): the active pack's profile as its rhead names it (tiles::Profile, Appendix A) plus

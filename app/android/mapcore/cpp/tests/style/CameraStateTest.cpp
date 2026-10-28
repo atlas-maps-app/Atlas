@@ -135,7 +135,7 @@ TEST_CASE("a camera state out of its ranges is refused, with the reason") {
     const float inf = std::numeric_limits<float>::infinity();
     const std::vector<Breakage> breakages = {
         {"version 0", [](CameraState& s) { s.version = 0; }, CameraError::version},
-        {"an unknown flag", [](CameraState& s) { s.flags = 64; }, CameraError::flags},
+        {"an unknown flag", [](CameraState& s) { s.flags = 2048; }, CameraError::flags},
         {"a heading without a location", [](CameraState& s) { s.flags |= flag::heading; }, CameraError::flags},
         {"a stale location", [](CameraState& s) { s.location.latitude = 52.37; }, CameraError::reserved},
         {"a location off the globe",

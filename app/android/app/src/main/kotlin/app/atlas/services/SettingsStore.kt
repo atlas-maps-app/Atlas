@@ -89,6 +89,15 @@ object SettingsKeys {
      * order (whole buildings by one point each, which melts some into each other: a drawing's look).
      */
     val MAP_TRUE_DEPTH = booleanPreferencesKey("map.trueDepth")
+
+    /**
+     * A debug build's switches of the core's parts (on when unset): the clouds' shadows, the water's light and the
+     * facades' detail. Off, the map leaves that part out, so its panel shows on the phone what the part costs
+     * (MapEngine.leaveOut); the trees and the soft shadows are the map's own layers.
+     */
+    val MAP_CLOUD_SHADOWS = booleanPreferencesKey("map.cloudShadows")
+    val MAP_WATER_LIGHT = booleanPreferencesKey("map.waterLight")
+    val MAP_FACADES = booleanPreferencesKey("map.facades")
     val UNITS = stringPreferencesKey("units")
 
     /** The language for place names, null for local names. */
