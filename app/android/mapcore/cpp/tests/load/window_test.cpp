@@ -30,6 +30,7 @@
 #include "tiles/Payload.hpp"
 #include "tiles/Source.hpp"
 #include "tiles/Store.hpp"
+#include "tiles/layers/Buildings.hpp"
 #include "tiles/layers/Lines.hpp"
 
 #include <doctest/doctest.h>
@@ -122,6 +123,46 @@ std::vector<std::string> masked(const std::string& dump, int skip) {
         out.push_back(line);
     }
     return out;
+}
+
+/// What a window's buildings carry of their tradition's kit: how many took it, and with which of its details; its
+/// party walls, each held to be its ring's corner and in the ring's order.
+struct KitCounts {
+    std::size_t kit = 0;
+    std::size_t windows = 0;
+    std::size_t chimneys = 0;
+    std::size_t boards = 0;
+    std::size_t with_party = 0;
+    std::size_t party_walls = 0;
+};
+
+void count_kit(const tl::Pack& window, KitCounts& c) {
+    tl::Zstd zstd;
+    tl::TileDecoder decoder;
+    atlas::Arena arena(8U << 20U, atlas::Growth::grows, "window test, a kit's buildings");
+    std::vector<std::byte> raw;
+    std::vector<std::byte> scratch;
+    const auto t = window.decode(window.chunks().chunks()[0], zstd, decoder, arena, raw, scratch);
+    ATLAS_REQUIRE(t.has_value(), tl::describe(t.error()));
+    const tl::Layer* b = t->layer(tl::LayerId::building);
+    ATLAS_REQUIRE(b != nullptr);
+    for (std::uint32_t i = 0; i < b->count; ++i) {
+        const auto f = static_cast<std::uint64_t>(b->integer(tl::building::flags, i));
+        if ((f & tl::building::flag_kit) != 0U) ++c.kit;
+        if ((f & tl::building::flag_kit_windows) != 0U) ++c.windows;
+        if ((f & tl::building::flag_kit_chimney) != 0U) ++c.chimneys;
+        if ((f & tl::building::flag_kit_boards) != 0U) ++c.boards;
+        const std::span<const std::int64_t> corners = b->ids(tl::building::party, i);
+        if (corners.empty()) continue;
+        ++c.with_party;
+        c.party_walls += corners.size();
+        const auto n = static_cast<std::int64_t>(b->ring(tl::building::ring, i).size());
+        for (std::size_t k = 0; k < corners.size(); ++k) {
+            CHECK(corners[k] >= 0);
+            CHECK(corners[k] < n);
+            if (k > 0) CHECK(corners[k] > corners[k - 1]);
+        }
+    }
 }
 
 } // namespace
@@ -362,7 +403,6 @@ TEST_CASE("load: a water ring that reaches far: a region's cut refuses it, a win
     ATLAS_REQUIRE(!refused.has_value());
     CHECK(refused.error().what.starts_with("water 0 reaches "));
     CHECK(refused.error().what.ends_with(" tiles of L14, more than a ring may (4096)"));
-    CHECK(!refused.error().uncarried);
 }
 
 TEST_CASE("load: where a window is, by the port's Countries") {
@@ -558,6 +598,13 @@ TEST_CASE("load: a window anywhere: Paris, with its country's tradition (ATLAS_R
     ATLAS_REQUIRE(window->chunks().chunks().size() == 1);
     CHECK(window->chunks().chunks()[0].tile.packed() == tile.packed());
     CHECK(built->features > 1000);
+    // its buildings in fr_paris's kit, with its details: its windows, party chimneys on the walls neighbours share
+    KitCounts kit;
+    count_kit(*window, kit);
+    CHECK(kit.kit > 0);
+    CHECK(kit.windows > 0);
+    CHECK(kit.chimneys > 0);
+    CHECK(kit.with_party > 0);
     // the manifest the app reads a render pack by: its box (the tile's), its origin (the frame's), profile, time zone
     const std::span<const std::byte> bytes(built->pack);
     const auto manifest_bytes =
@@ -579,7 +626,39 @@ TEST_CASE("load: a window anywhere: Paris, with its country's tradition (ATLAS_R
     CHECK(m.find("config").value_or(tl::Value()).find("views").value_or(tl::Value()).size() == 0);
     MESSAGE("Paris's window ", place.name, ": ", mine.elements().size(), " elements, ", built->features, " features, ",
             built->pack.size(), " bytes; loaded at five tolerances in ", built->load_ms, " ms, cut in ", built->cut_ms,
-            " ms, written in ", built->write_ms, " ms");
+            " ms, written in ", built->write_ms, " ms; ", kit.kit, " buildings in its kit (", kit.windows,
+            " with its windows, ", kit.chimneys, " with chimneys), ", kit.with_party, " with ", kit.party_walls,
+            " party walls");
+}
+
+TEST_CASE("load: a window in Bergen carries its kit's timber boards (ATLAS_REGIONS_DIR)") {
+    // a region's pack of Bergen is not built (its sea reaches beyond its frame's grid); a window has a frame of its own
+    const std::string regions = atlas::test::environment("ATLAS_REGIONS_DIR");
+    if (regions.empty()) {
+        MESSAGE("ATLAS_REGIONS_DIR is not set: no window is built in Bergen here");
+        return;
+    }
+    const std::string text = read_text(std::filesystem::path(regions) / "bergen" / "raw.json");
+    ATLAS_REQUIRE(!text.empty());
+    const auto doc = osm::read_overpass(std::as_bytes(std::span(text.data(), text.size())));
+    ATLAS_REQUIRE(doc.has_value());
+    // the window around Bryggen's wharf
+    const tl::TileKey tile = tl::tile_of(14, 603'975'000, 53'245'000);
+    const load::WindowPlace place = load::place_of(tile);
+    CHECK(place.country == "NO");
+    CHECK(place.tradition == "no_timber");
+    const osm::Document mine = query(*doc, load::window_box(tile));
+    const auto built = load::build_window(mine, tl::Sha256Digest{}, tile, place);
+    ATLAS_REQUIRE(built.has_value(), built.error().what);
+    auto window = tl::Pack::open(std::make_unique<tl::MemorySource>(built->pack));
+    ATLAS_REQUIRE(window.has_value(), tl::describe(window.error()));
+    ATLAS_REQUIRE(window->chunks().chunks().size() == 1);
+    KitCounts kit;
+    count_kit(*window, kit);
+    CHECK(kit.kit > 0);
+    CHECK(kit.boards > 0);
+    MESSAGE("Bergen's window ", place.name, ": ", built->features, " features; ", kit.kit, " buildings in its kit, ",
+            kit.boards, " with timber boards, ", kit.chimneys, " with chimneys");
 }
 
 TEST_CASE(

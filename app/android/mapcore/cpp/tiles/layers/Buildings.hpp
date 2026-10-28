@@ -14,7 +14,7 @@ namespace atlas::tiles {
 
 namespace building_attributes {
 /// What buildings and parts carry besides their ring, and a variant besides its key; then the tags the renders read.
-inline constexpr std::array<ColumnSpec, 24> columns = {{
+inline constexpr std::array<ColumnSpec, 26> columns = {{
     {"h", Codec::centi},           // height above the ground, metres (guessed or mapped)
     {"min", Codec::centi},         // the walls' base, metres (min_height, or terrain)
     {"roof_h", Codec::centi},      // the roof's height, metres
@@ -36,6 +36,8 @@ inline constexpr std::array<ColumnSpec, 24> columns = {{
     {"places", Codec::ids},        // the ids of the nodes (shops, cafés) inside it, in the scene's order
     {"place_hours", Codec::strs},  // opening_hours of each place, "" where none (null without places)
     {"flags", Codec::varu},        // derived flags (building::flag_*)
+    {"shutter", Codec::str},       // a tradition's shutter colour, as the loader chose it from its kit's
+    {"party", Codec::ids},         // the ring's corners whose walls a neighbour shares (a kit's party chimneys)
     {"tag:building", Codec::str},  {"tag:building:part", Codec::str}, {"tag:roof:direction", Codec::str},
 }};
 } // namespace building_attributes
@@ -74,6 +76,8 @@ inline constexpr std::uint8_t no_win = slot_of(columns, "no_win");
 inline constexpr std::uint8_t places = slot_of(columns, "places");
 inline constexpr std::uint8_t place_hours = slot_of(columns, "place_hours");
 inline constexpr std::uint8_t flags = slot_of(columns, "flags");
+inline constexpr std::uint8_t shutter = slot_of(columns, "shutter");
+inline constexpr std::uint8_t party = slot_of(columns, "party");
 inline constexpr std::uint8_t tag_building = slot_of(columns, "tag:building");
 inline constexpr std::uint8_t tag_building_part = slot_of(columns, "tag:building:part");
 inline constexpr std::uint8_t tag_roof_direction = slot_of(columns, "tag:roof:direction");
@@ -87,6 +91,16 @@ inline constexpr std::uint64_t flag_near_water = 16;  // within 16 m of a quay e
 inline constexpr std::uint64_t flag_houseboat = 32;
 inline constexpr std::uint64_t flag_modern = 64;      // built in 1960 or later and not a church
 inline constexpr std::uint64_t flag_wall_drawn = 128; // the loader drew the wall's colour: board lines take wall_rgb
+// A tradition's kit (generic.py's `trad`, the pack's style carrying the tradition whole): the looks came from it, so
+// its roof and walls are the kit's; then each of its details the loader gave the building.
+inline constexpr std::uint64_t flag_kit = 256;           // b['trad'] is set
+inline constexpr std::uint64_t flag_kit_windows = 512;   // trad['win']: the kit's windows
+inline constexpr std::uint64_t flag_kit_band = 1024;     // trad['band']: a stucco ground floor
+inline constexpr std::uint64_t flag_kit_boards = 2048;   // trad['boards']: timber boards and corner boards
+inline constexpr std::uint64_t flag_kit_cornice = 4096;  // trad['cornice']
+inline constexpr std::uint64_t flag_kit_hoist = 8192;    // trad['hoist']: a hoist beam under each gable
+inline constexpr std::uint64_t flag_kit_chimney = 16384; // trad['chimney']: the kit's chimney stacks
+inline constexpr std::uint64_t flag_kit_crenel = 32768;  // trad['crenel']: a tower's crenellations
 } // namespace building
 
 /// Buildings and parts whose loaded values differ at another tolerance of the ladder: each holds every attribute of

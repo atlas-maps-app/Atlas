@@ -20,7 +20,7 @@
 // (u32), and its encoded bytes (u32 length, the bytes); then the head's bytes and the style's before compression, each
 // a u32 length and the bytes. One line on stdout says what was cut and how long it took. The exit code: 0 done; 2 a
 // usage or input error; 3 a region the tiles cannot carry yet (the packer's render_gap, why on stderr: a survey's
-// heights (a dem.json in the region's folder), a tradition's details); 1 any other failure.
+// heights, a dem.json in the region's folder); 1 any other failure.
 #include "load/Amsterdam.hpp"
 #include "load/Coasters.hpp"
 #include "load/Cut.hpp"
@@ -381,8 +381,7 @@ private:
         cut = load::cut_region(*base, frame, cut_variants);
     }
     if (!cut) {
-        return std::unexpected(Failure{.code = cut.error().uncarried ? not_carried : 1,
-                                       .why = std::string(*name) + ": " + cut.error().what});
+        return std::unexpected(Failure{.code = 1, .why = std::string(*name) + ": " + cut.error().what});
     }
     const auto sections = load::pack_sections(facts, *views);
     if (!sections) return std::unexpected(Failure{.why = std::string(*name) + ": " + sections.error()});

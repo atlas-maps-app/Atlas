@@ -92,6 +92,22 @@ class L0aTest {
                     val hours = ps.map { ((it["tags"] as Map<String, Any?>)["opening_hours"] as String?) ?: "" }
                     if (f["place_hours"] != hours) out += "place_hours"
                 }
+                // a tradition's kit: its details are flags (below), its shutters' colour a column
+                "trad" -> {
+                    handled += k; handled += "shutter"
+                    @Suppress("UNCHECKED_CAST")
+                    val t = v as Map<String, Any?>
+                    if (t["shutter"] != f["shutter"]) out += "shutter ${f["shutter"]} != ${t["shutter"]}"
+                }
+                // the party walls, each the ring's corner it starts at
+                "party" -> {
+                    handled += k
+                    @Suppress("UNCHECKED_CAST")
+                    val walls = v as List<Pair<V2, V2>>
+                    val poly = pointsOf(b)
+                    val corners = walls.map { (a, c) -> poly.indices.first { poly[it] == a && poly[(it + 1) % poly.size] == c }.toLong() }
+                    if (((f["party"] as List<*>?) ?: emptyList<Long>()) != corners) out += "party ${f["party"]} != $corners"
+                }
                 else -> {
                     val col = cols[k]
                     val fits = col != null && when (col.codec) {
@@ -141,6 +157,18 @@ class L0aTest {
         if (btype == "houseboat") flags = flags or 32
         if (((b["year"] as Number?)?.toInt() ?: 0) >= 1960 && btype !in setOf("church", "cathedral", "chapel")) flags = flags or 64
         if (truthy(b["col_draw"])) flags = flags or 128
+        @Suppress("UNCHECKED_CAST")
+        val trad = b["trad"] as Map<String, Any?>?
+        if (trad != null) {
+            flags = flags or 256
+            if (trad["win"] != null) flags = flags or 512
+            if (trad["band"] != null) flags = flags or 1024
+            if (trad["boards"] != null) flags = flags or 2048
+            if (trad["cornice"] == true) flags = flags or 4096
+            if (trad["hoist"] == true) flags = flags or 8192
+            if (trad["chimney"] != null) flags = flags or 16384
+            if (trad["crenel"] == true) flags = flags or 32768
+        }
         if (flags != ((f["flags"] as Long?) ?: 0L)) out += "flags ${f["flags"]} != $flags"
         return out
     }
@@ -192,6 +220,34 @@ class L0aTest {
         val scene = Packs.scene(Packs.region(Packs.grachtenPack))
         checkScene("grachten", b, scene)
     }
+
+    /**
+     * The regions with a building tradition, their kit's details and party walls among the fields (the Mac's packs; a
+     * height survey left out where the region has one, as the tiles cannot carry it): Notting Hill's terraces (gb_terrace:
+     * a stucco ground floor, cornices, party chimneys), Paris (fr_paris: its windows, party chimneys) and San Gimignano
+     * (it_tuscan: shutters, capped chimneys, crenellated towers). Bergen's sea reaches beyond its frame's grid, so its pack
+     * is not built (its kit's timber boards are window_test's, in a window of its own frame).
+     */
+    private fun checkKit(id: String, survey: Boolean) {
+        val element = Packs.regionPack(id)
+        assumeTrue("$id's element pack is kept in the repo's cache", element.isFile)
+        val b = Packs.build(element, id, survey)
+        val scene = Packs.scene(Packs.region(element, survey))
+        @Suppress("UNCHECKED_CAST")
+        val kits = (scene.S["buildings"] as List<Dict>).count { it["trad"] != null }
+        println("L0A $id: $kits buildings in its tradition's kit")
+        assertTrue("$id: no building took its tradition's kit", kits > 0)
+        checkScene(id, b, scene)
+    }
+
+    @Test
+    fun `Notting Hill's buildings equal its scene with its kit's details`() = checkKit("nottinghill", survey = true)
+
+    @Test
+    fun `Paris's buildings equal its scene with its kit's details`() = checkKit("paris", survey = false)
+
+    @Test
+    fun `San Gimignano's buildings equal its scene with its kit's details`() = checkKit("sangimignano", survey = false)
 
     /**
      * Each of the canal ring's views (the Main board's `grachten_home` at 0.7 m, `grachten` at 0.8, `grachten_eat` at

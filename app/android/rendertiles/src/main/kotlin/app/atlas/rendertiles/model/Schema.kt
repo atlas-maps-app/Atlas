@@ -54,6 +54,8 @@ object Schema {
             "_bb" to "the box of the tolerance-0 ring: the ring's own, derived again by a reader",
             "src" to "where the height came from (height, levels): the loader's note, never drawn",
             "look_why" to "why the generic look is what it is: the loader's note, never drawn",
+            "lv_why" to "why the levels are what they are (the buildings around it, its tradition): the loader's note, never drawn",
+            "roof_why" to "why the roof is a mansard (a tradition's rule): the loader's note, never drawn",
             "col" to "the wall's colour: drawn only through surface_colour, carried as wall_rgb",
             "mat" to "the wall's material as mapped: drawn only through surface_colour (wall_rgb); mat_draw is carried",
             "col_draw" to "the wall colour drawn: through surface_colour (wall_rgb) and the board lines (Flags.WALL_DRAWN)",
@@ -104,6 +106,33 @@ object Schema {
          * without it they take #888888 (`hx(b.get('col_draw') or '#888888')`).
          */
         const val WALL_DRAWN = 128
+
+        /**
+         * The looks came from a tradition's kit (`b['trad']` is set: generic.py's trad_look); the pack's style carries the
+         * tradition whole, so the kit's own values (its windows, boards, band, chimneys and eaves) are read from there.
+         */
+        const val KIT = 256
+
+        /** `trad['win']`: the kit's windows. */
+        const val KIT_WINDOWS = 512
+
+        /** `trad['band']`: a stucco ground floor. */
+        const val KIT_BAND = 1024
+
+        /** `trad['boards']`: timber boards and white corner boards. */
+        const val KIT_BOARDS = 2048
+
+        /** `trad['cornice']`. */
+        const val KIT_CORNICE = 4096
+
+        /** `trad['hoist']`: a hoist beam under each gable. */
+        const val KIT_HOIST = 8192
+
+        /** `trad['chimney']`: the kit's chimney stacks. */
+        const val KIT_CHIMNEY = 16384
+
+        /** `trad['crenel']`: a tower's crenellations. */
+        const val KIT_CRENEL = 32768
     }
 
     /** What buildings and parts carry besides their ring (also the attributes of a [Layer.VARIANT]). */
@@ -129,6 +158,8 @@ object Schema {
         c("places", Codec.IDS, "the ids of the nodes (shops, cafés) inside it, in the scene's order"),
         c("place_hours", Codec.STRS, "opening_hours of each place, \"\" where none (null without places)"),
         c("flags", Codec.VARU, "derived flags (Flags)"),
+        c("shutter", Codec.STR, "a tradition's shutter colour (trad['shutter']), as the loader chose it from its kit's"),
+        c("party", Codec.IDS, "the ring's corners whose walls a neighbour shares (party_walls: a kit's party chimneys stand on them)"),
     ) + tags(Layer.BUILDING)
 
     val BUILDING: List<Column> = listOf(

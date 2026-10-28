@@ -279,6 +279,16 @@ class SceneToTiles(
                     @Suppress("UNCHECKED_CAST")
                     out["place_hours"] = ps.map { (((it["tags"] as Map<String, Any?>?)?.get("opening_hours")) as String?) ?: "" }
                 }
+                // a tradition's kit: its details are flags (the kit's own values are the tradition's, in the style), its
+                // shutters' colour the loader's choice
+                "trad" -> {
+                    @Suppress("UNCHECKED_CAST")
+                    out["shutter"] = (v as Map<String, Any?>)["shutter"] as String?
+                }
+                "party" -> {
+                    @Suppress("UNCHECKED_CAST")
+                    out["party"] = partyCorners(points(b), v as List<Pair<V2, V2>>)
+                }
                 else -> {
                     val col = cols[k]
                     if (col != null && fits(col, v)) out[k] = v else drop(layer, k, v, what)
@@ -317,7 +327,31 @@ class SceneToTiles(
         val yr = (b["year"] as Number?)?.toInt() ?: 0
         if (yr >= 1960 && btype !in CHURCHES) f = f or Schema.Flags.MODERN.toLong()
         if (truthy(b["col_draw"])) f = f or Schema.Flags.WALL_DRAWN.toLong()
+        @Suppress("UNCHECKED_CAST")
+        val trad = b["trad"] as Map<String, Any?>?
+        if (trad != null) {
+            f = f or Schema.Flags.KIT.toLong()
+            if (trad["win"] != null) f = f or Schema.Flags.KIT_WINDOWS.toLong()
+            if (trad["band"] != null) f = f or Schema.Flags.KIT_BAND.toLong()
+            if (trad["boards"] != null) f = f or Schema.Flags.KIT_BOARDS.toLong()
+            if (trad["cornice"] == true) f = f or Schema.Flags.KIT_CORNICE.toLong()
+            if (trad["hoist"] == true) f = f or Schema.Flags.KIT_HOIST.toLong()
+            if (trad["chimney"] != null) f = f or Schema.Flags.KIT_CHIMNEY.toLong()
+            if (trad["crenel"] == true) f = f or Schema.Flags.KIT_CRENEL.toLong()
+        }
         return f
+    }
+
+    /** The corners of [poly] that start its party walls ([party]: party_walls' edges, in the ring's order). */
+    private fun partyCorners(poly: List<V2>, party: List<Pair<V2, V2>>): List<Long> {
+        val out = ArrayList<Long>()
+        val n = poly.size
+        var at = 0
+        for ((a, c) in party) {
+            while (at < n && !(poly[at] == a && poly[(at + 1) % n] == c)) at++
+            if (at < n) out += (at++).toLong()
+        }
+        return out
     }
 
     /** The [variants], placed where their base feature is, after it. */

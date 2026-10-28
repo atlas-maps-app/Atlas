@@ -562,6 +562,8 @@ struct Attributes {
     std::vector<std::int64_t> places;
     std::vector<std::string_view> hours;
     std::uint64_t flags = 0;
+    std::optional<std::string_view> shutter;             ///< trad['shutter']
+    std::vector<std::int64_t> party;                     ///< the ring's corners that start a party wall, in its order
     std::array<std::optional<std::string_view>, 3> tags; ///< tag:building, tag:building:part, tag:roof:direction
 };
 
@@ -580,7 +582,7 @@ struct Attributes {
            a.wall_rgb == b.wall_rgb && a.roof_rgb == b.roof_rgb && a.mat_draw == b.mat_draw &&
            a.rmat_draw == b.rmat_draw && a.kind == b.kind && a.relation == b.relation && a.hidden == b.hidden &&
            a.no_win == b.no_win && a.in_church == b.in_church && a.guessed == b.guessed && a.places == b.places &&
-           a.hours == b.hours && a.flags == b.flags && a.tags == b.tags;
+           a.hours == b.hours && a.flags == b.flags && a.shutter == b.shutter && a.party == b.party && a.tags == b.tags;
 }
 
 // ---------------------------------------------------------------- the cut
@@ -688,7 +690,6 @@ struct CutPlan {
     bool keep = false;
     bool facades = true;
     std::optional<tl::TileKey> only;
-    bool uncarried_refused = true;
     /// Whether the ground's and the lines' features carry their element (id, otype, part: load/Scene.hpp's Origin), by
     /// which the frame orders the ground across windows; the packer's tiles do not.
     bool identity = false;
@@ -733,6 +734,28 @@ struct CutPlan {
     if (b.tags.is("building", "houseboat")) a.flags |= c::flag_houseboat;
     if (b.year.value_or(0) >= 1960 && !in(btype, churches)) a.flags |= c::flag_modern;
     if (b.col_draw && !b.col_draw->empty()) a.flags |= c::flag_wall_drawn;
+    // a tradition's kit and the details it gave the building (its values are the tradition's, which the pack's style
+    // carries whole), its shutters' colour, and the corners its party walls start at
+    if (b.look == LookPath::tradition) {
+        const TradDetails& d = b.trad;
+        a.flags |= c::flag_kit;
+        if (!d.win.is_null()) a.flags |= c::flag_kit_windows;
+        if (!d.band.is_null()) a.flags |= c::flag_kit_band;
+        if (!d.boards.is_null()) a.flags |= c::flag_kit_boards;
+        if (d.cornice) a.flags |= c::flag_kit_cornice;
+        if (d.hoist) a.flags |= c::flag_kit_hoist;
+        if (!d.chimney.is_null()) a.flags |= c::flag_kit_chimney;
+        if (d.crenel) a.flags |= c::flag_kit_crenel;
+        a.shutter = d.shutter;
+    }
+    if (b.party) {
+        const std::size_t n = b.poly.size();
+        std::size_t at = 0;
+        for (const std::array<V2, 2>& e : *b.party) {
+            while (at < n && !(b.poly[at] == e[0] && b.poly[(at + 1) % n] == e[1])) ++at;
+            if (at < n) a.party.push_back(static_cast<std::int64_t>(at++));
+        }
+    }
     a.tags = {b.tags.get("building"), b.tags.get("building:part"), b.tags.get("roof:direction")};
     return a;
 }
@@ -747,7 +770,6 @@ public:
     void add_variant(VariantFeature v) { variants_.push_back(std::move(v)); }
 
     [[nodiscard]] std::expected<std::vector<tl::TileFill>, CutError> run() {
-        unsupported();
         rings_of(s_.buildings, buildings_, "building");
         rings_of(s_.parts, parts_, "part");
         for (const std::vector<V2>& r : s_.water) water_.push_back(water_line(r));
@@ -786,24 +808,6 @@ public:
     }
 
 private:
-    /// What a scene can hold that the tiles do not carry yet: a tradition's details (step 4's facades). The packer's
-    /// cut refuses it, as the packer's build fails; a window's leaves it out, so a window of a place with a tradition
-    /// still builds.
-    void unsupported() {
-        if (!plan_.uncarried_refused) return;
-        for (const auto* list : {&s_.buildings, &s_.parts}) {
-            for (const Building& b : *list) {
-                if (b.lv_why || b.roof_why || b.look == LookPath::tradition || b.party) {
-                    fail(std::format("building {}: a tradition's details (trad, party, lv_why, roof_why) have no "
-                                     "column yet (ENGINE.md step 4)",
-                                     b.id),
-                         true);
-                    return;
-                }
-            }
-        }
-    }
-
     // ------------------------------------------------ the grid
 
     template <class What>
@@ -856,9 +860,9 @@ private:
         return g;
     }
 
-    /// The cut's first failure: `uncarried` where the scene holds what the tiles cannot carry yet (unsupported()).
-    void fail(std::string what, bool uncarried = false) {
-        if (!error_) error_ = CutError{.what = std::move(what), .uncarried = uncarried};
+    /// The cut's first failure.
+    void fail(std::string what) {
+        if (!error_) error_ = CutError{.what = std::move(what)};
     }
 
     void rings_of(const std::vector<Building>& list, std::vector<GridLine>& out, std::string_view label) {
@@ -1531,6 +1535,8 @@ private:
         std::uint8_t places;
         std::uint8_t place_hours;
         std::uint8_t flags;
+        std::uint8_t shutter;
+        std::uint8_t party;
         std::uint8_t tag_building;
         std::uint8_t tag_building_part;
         std::uint8_t tag_roof_direction;
@@ -1557,6 +1563,8 @@ private:
         .places = tl::slot_of(tl::building_attributes::columns, "places"),
         .place_hours = tl::slot_of(tl::building_attributes::columns, "place_hours"),
         .flags = tl::slot_of(tl::building_attributes::columns, "flags"),
+        .shutter = tl::slot_of(tl::building_attributes::columns, "shutter"),
+        .party = tl::slot_of(tl::building_attributes::columns, "party"),
         .tag_building = tl::slot_of(tl::building_attributes::columns, "tag:building"),
         .tag_building_part = tl::slot_of(tl::building_attributes::columns, "tag:building:part"),
         .tag_roof_direction = tl::slot_of(tl::building_attributes::columns, "tag:roof:direction"),
@@ -1589,6 +1597,8 @@ private:
             lf.string_list(slot(o.place_hours), f, std::span<const std::string_view>(a.hours));
         }
         lf.integer(slot(o.flags), f, static_cast<std::int64_t>(a.flags));
+        lf.string(slot(o.shutter), f, a.shutter);
+        if (!a.party.empty()) lf.ids(slot(o.party), f, a.party);
         lf.string(slot(o.tag_building), f, a.tags[0]);
         lf.string(slot(o.tag_building_part), f, a.tags[1]);
         lf.string(slot(o.tag_roof_direction), f, a.tags[2]);
@@ -2075,15 +2085,9 @@ cut_with(const CutPlan& plan, const Scene& scene, const tiles::Frame& frame, std
 
 constexpr std::array<std::uint8_t, 1> window_levels{14};
 
-/// A window's cut: L14 alone, the features in its tile, keep codes, no facades, what the tiles cannot carry yet left
-/// out, the ground's elements carried.
+/// A window's cut: L14 alone, the features in its tile, keep codes, no facades, the ground's elements carried.
 [[nodiscard]] CutPlan window_plan(const tiles::TileKey& tile) {
-    return {.levels = window_levels,
-            .keep = true,
-            .facades = false,
-            .only = tile,
-            .uncarried_refused = false,
-            .identity = true};
+    return {.levels = window_levels, .keep = true, .facades = false, .only = tile, .identity = true};
 }
 
 } // namespace

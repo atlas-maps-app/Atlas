@@ -61,8 +61,9 @@ class StagePPackerTest {
      * The port's and Schiphol's packs with their height survey left out (SceneToTiles.withoutSurvey: the tiles cannot
      * carry a survey yet), and the Efteling's and ARTIS's, cut by the core's stage P, are the packer's own cut of them
      * byte for byte: what they hold that the bundled packs do not (gantries and conveyors, cranes, turbines, masts,
-     * runways, the sea, a theme park's coaster tracks, a park's and a zoo's planted woods) included. On the Mac, where
-     * their element packs are (CI has the canal ring's alone).
+     * runways, the sea, a theme park's coaster tracks, a park's and a zoo's planted woods) included. So are the regions
+     * with a building tradition (Notting Hill; Paris and San Gimignano without their surveys): each kit's details,
+     * shutters and party walls. On the Mac, where their element packs are (CI has the canal ring's alone).
      */
     @Test
     fun theRegionsWithoutTheirSurveyCutByTheCoresStagePAreThePackersOwn() {
@@ -70,7 +71,7 @@ class StagePPackerTest {
         val root = repo ?: error("atlas.repo names no repository")
         val work = Files.createTempDirectory("atlas-stagep-survey").toFile()
         try {
-            for (id in listOf("port", "schiphol", "efteling", "artis")) {
+            for (id in listOf("port", "schiphol", "efteling", "artis", "nottinghill", "paris", "sangimignano")) {
                 val element = File(root, "cache/packs/regions/$id.atlas")
                 if (!element.isFile) {
                     println("stagep: no element pack ${element.path}: $id is not compared here")
@@ -78,9 +79,9 @@ class StagePPackerTest {
                 }
                 val mine = File(work, "$id-core.atlas")
                 val theirs = File(work, "$id-packer.atlas")
-                // the port's and Schiphol's surveys left out; the others have none (and their packs' own files, a park's
-                // rides' profiles among them, unpack only from the pack itself)
-                val survey = id !in listOf("port", "schiphol")
+                // the surveys left out (the port's, Schiphol's, Paris's, San Gimignano's); the others have none (and their
+                // packs' own files, a park's rides' profiles among them, unpack only from the pack itself)
+                val survey = id !in listOf("port", "schiphol", "paris", "sangimignano")
                 val t0 = System.nanoTime()
                 val c = SceneToTiles.pack(element, mine, File(work, "core-$id"), core = tool, survey = survey) { println("stagep $it") }
                 val t1 = System.nanoTime()
