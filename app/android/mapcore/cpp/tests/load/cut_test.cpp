@@ -28,6 +28,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <memory>
@@ -346,4 +347,28 @@ TEST_CASE("load: the canal ring's tiles cut from its raw.json are the packer's (
             ms(t1, t2), " ms");
     CHECK(cut->size() == c.tiles);
     CHECK(c.wrong == 0);
+}
+
+TEST_CASE("load: the input whose road grid ran CI's fuzz_load out of memory cuts the living map, its long roads kept "
+          "out of the grid (fuzz/corpus/fuzz_load/oom-road-grid)") {
+    const std::filesystem::path file =
+        std::filesystem::path(ATLAS_TESTS_DIR).parent_path() / "fuzz" / "corpus" / "fuzz_load" / "oom-road-grid";
+    std::ifstream in(file, std::ios::binary);
+    ATLAS_REQUIRE(in.good(), file.string());
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const auto doc = atlas::osm::read_overpass(std::as_bytes(std::span(text.data(), text.size())));
+    ATLAS_REQUIRE(doc.has_value(), "the input reads");
+    // fuzz_load's two ways: the New looks, and the region's own (the input's size chose the second)
+    const load::Looks looks{
+        .region = "ams", .tradition = nullptr, .landuse = load::LandUseFrom::areas, .keep_homes = true};
+    for (const load::Looks* l : {&looks, static_cast<const load::Looks*>(nullptr)}) {
+        const auto scene = load::load_amsterdam(*doc, load::westerkerk_frame(), load::amsterdam_palette(), l);
+        if (!scene) continue;
+        const auto started = std::chrono::steady_clock::now();
+        const auto tiles = load::cut_living(*scene, load::westerkerk_frame());
+        const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        MESSAGE(std::format("{}: cut in {:.2f} s, {}", l != nullptr ? "the New looks" : "the region's looks", seconds,
+                            tiles ? std::format("{} tiles", tiles->size()) : tiles.error().what));
+        CHECK(seconds < 30.0);
+    }
 }

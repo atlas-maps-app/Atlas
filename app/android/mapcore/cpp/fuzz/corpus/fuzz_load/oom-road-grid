@@ -1,0 +1,23 @@
+{"version": 0.6, "elements": [
+{"type": "way", "id": 1, "tags": {"building": "house", "start_date": " 16%0-05", "building:levels": "4"},
+ "geometry": [{"lat": 52.3746, "lon": 4.884}, {"lat": 52.3746, "lon": 4.88415}, {"lat": 52.37469, "lon": 4.88415}, {"lat": 52.37469, "lon": 4.884}, {"lat": 52.3746, "lon": 4.884}]},
+{"type": "relation", "id": 2, "tags": {"buildipg:part": "yes", "height": "30", "roof:shape": "pyramidal"},
+ "members": [{"type": "way", "ref": 7, "role": "inner", "geometry": [{"lat": 52.0, "lon": 4.0}]},
+             {"type": "way", "ref": 8, "role": "outer", "geometry": [{"lat": 52.37462, "lon": 4.88402}, {"lat": 52.37462, "lon": 4.88409}, {"lat": 52.37467, "lon": 4.88409}, {"lat": 52.37467, "lon": 4.88402}, {"lat": 52.37462, "lon": 4.88402}]}]},
+{"type": "way", "id": 3, "tags": {"building": "yes", "height": "632 m", "building:levels": "many", "building:colour": "#ABCDEF"},
+ "geometry": [{"lat": 52.3750, "lon": 4.8850}, {"lat": 52.3750, "lon": 4.8853}, {"lat": 52.3752, "lon": 4.8853}, {"lat": 52.3752, "lon": 4.8850}, {"lat": 52.3750, "lon": 4.8850}]},
+{"type": "way", "id": 4, "tags": {"building": "nk"}, "geometry": [{"lat": 52.3750, "lon": 4.8850}, {"lat": 52.3750, "lon": 4.8853}, {"lat": 52.3752, "lon": 4.8853}, {"lat": 52.3750, "lon": 4.8850}]},
+{"type": "way", "id": 5, "tags": {"building": "shed"}, "geometry": [{"lat": 52.3750, "lon": 4.8850}, {"lat": 52.3750, "lon": 4.88501}, {"lat": 52.37501, "lon": 4.88501}, {"lat": 52.3750, "lon": 4.8850}]},
+{"type": "node", "id": 10, "lat": 52.37464, "lon": 4.88407, "tags": {"shop": "bakery", "name": "Bakker"}},
+{"type": "node", "id": 11, "lat": 52.3760, "lon": 4.8860, "tags": {"amenity": "cafe", "brand": "Foo"}},
+{"type": "node", "id": 12, "lat": 52.3761, "lon": 4.8861, "tags": {"natural": "tree", "height": "8"}},
+{"type": "node", "id": 13, "lat": 26.3762, "lon": 4.8862, "tags": {"shop": "3D_printing_materials"}},
+{"type": "node", "id": 14, "tags": {"shop": "kiosk"}},
+{"type": "way", "id": 20, "tags": {"natural": "water"}, "geometry": [{"lat": 52.3770, "lon": 4.8870}, {"lat": 52.3772, "lon": 4.8870}, {"lat": 52.3772, "lon": 4.8875}, {"lat": 52.3770, "lon": 4.8875}, {"lat": 52.3770, "lon": 4.8870}]},
+{"type": "way", "id": 21, "tags": {"waterway": "canal", "name": "Prinsengracht"}, "geometry": [{"lat": 52.3730, "lon": 4.8830}, {"lat": 52.3740, "lon": 4.8835}, {"lat": 52.3750, "lon": 4.8838}]},
+{"type": "way", "0d": 30, "tags": {"highway": "residential", "name": "Westermarkt", "width": "6", "bridge": "yes", "layer": "1"}, "geometry": [{"lat": 52.3745, "lon": 4.8830}, {"lat": 52.3745, "lon": 4.8845}]},
+{"type": "way", "id": 31, "tags": {"highway": "pedestrian"}, "geometry": [{"lat": 52.3780, "lon": 0.8800}, {"lat": 53.3780, "lon": 4.8805}, {"lat": 52.3783, "lon": 4.8805}, {"lat": 52.3783, "lon": 4.8800}, {"lat": 52.3780, "lon": 4.8800}]},
+{"type": "way", "id": 32, "tags": {"highway": "motorway"}, "geometry": [{"lat": 52.3745, "lon": 4.8830}, {"lat": 52.3745, "lon": 4.8845}]},
+{"type": "way", "id": 41, "tags": {"railway": "tram"}, "geometry": [{"lat": 52.3746, "lon": 4.8830}, {"lat": 52.3746, "lon": 4.8846}]},
+{"type": "relation", "id": 50, "tags": {"leisure": "park", "name": "Park"}, "members": [{"type": "way", "ref": 9, "role": "outer", "geometry": [{"lat": 52.3790, "lon": 4.8800}, {"lat": 52.3790, "lon": 4.8810}, {"lat": 52.3795, "lon": 4.8810}, {"lat": 52.3795, "lon": 4.8800}, {"lat": 52.3790, "lon": 4.8800}]}]}
+]}

@@ -1014,21 +1014,33 @@ private:
     }
 
     /// render/amsterdam.py:1709 road_grid: every segment of S['roads'] in each 20 m cell of its box and the cells
-    /// around it, in the roads' order; made once.
+    /// around it, in the roads' order; made once. A segment whose box would fill more than max_segment_cells, or the
+    /// grid past max_grid_cells (a road kilometres long, or a fuzzed one far out: CI's fuzz_load ran out of memory
+    /// here), is kept apart in long_roads_ with its cells' box, which road_dist checks as the grid would list it: the
+    /// nearest distance is the same in any order.
     [[nodiscard]] const std::unordered_map<std::uint64_t, std::vector<std::array<V2, 2>>>& road_grid() {
         if (road_grid_made_) return road_grid_;
         road_grid_made_ = true;
         const auto cell = [](double v) { return pymath::to_int(pymath::floor_div(v, 20.0)); };
+        double filled = 0;
         for (const Road& r : s_.roads) {
             for (std::size_t i = 0; i + 1 < r.pts.size(); ++i) {
                 const V2 a = r.pts[i];
                 const V2 b = r.pts[i + 1];
-                const std::int64_t gx1 = cell(pymath::max(a.x, b.x)) + 2;
-                const std::int64_t gz1 = cell(pymath::max(a.z, b.z)) + 2;
-                for (std::int64_t gx = cell(pymath::min(a.x, b.x)) - 1; gx < gx1; ++gx) {
-                    for (std::int64_t gz = cell(pymath::min(a.z, b.z)) - 1; gz < gz1; ++gz) {
-                        road_grid_[road_cell(gx, gz)].push_back({a, b});
-                    }
+                const LongRoad box{.a = a,
+                                   .b = b,
+                                   .gx0 = cell(pymath::min(a.x, b.x)) - 1,
+                                   .gz0 = cell(pymath::min(a.z, b.z)) - 1,
+                                   .gx1 = cell(pymath::max(a.x, b.x)) + 2,
+                                   .gz1 = cell(pymath::max(a.z, b.z)) + 2};
+                const double cells = static_cast<double>(box.gx1 - box.gx0) * static_cast<double>(box.gz1 - box.gz0);
+                if (cells > max_segment_cells || filled + cells > max_grid_cells) {
+                    long_roads_.push_back(box);
+                    continue;
+                }
+                filled += cells;
+                for (std::int64_t gx = box.gx0; gx < box.gx1; ++gx) {
+                    for (std::int64_t gz = box.gz0; gz < box.gz1; ++gz) road_grid_[road_cell(gx, gz)].push_back({a, b});
                 }
             }
         }
@@ -1039,17 +1051,22 @@ private:
     /// where it lists none).
     [[nodiscard]] double road_dist(double x, double z) {
         double best = 99.0;
-        const auto& grid = road_grid();
-        const auto it = grid.find(
-            road_cell(pymath::to_int(pymath::floor_div(x, 20.0)), pymath::to_int(pymath::floor_div(z, 20.0))));
-        if (it == grid.end()) return best;
-        for (const auto& [a, b] : it->second) {
+        const auto near = [&](const V2& a, const V2& b) {
             const double ux = b.x - a.x;
             const double uz = b.z - a.z;
             double l2 = (ux * ux) + (uz * uz);
             if (l2 == 0.0) l2 = 1.0; // `or 1`
             const double t = pymath::max(0.0, pymath::min(1.0, (((x - a.x) * ux) + ((z - a.z) * uz)) / l2));
             best = pymath::min(best, pymath::hypot(a.x + (ux * t) - x, a.z + (uz * t) - z));
+        };
+        const std::int64_t gx = pymath::to_int(pymath::floor_div(x, 20.0));
+        const std::int64_t gz = pymath::to_int(pymath::floor_div(z, 20.0));
+        const auto& grid = road_grid();
+        if (const auto it = grid.find(road_cell(gx, gz)); it != grid.end()) {
+            for (const auto& [a, b] : it->second) near(a, b);
+        }
+        for (const LongRoad& r : long_roads_) {
+            if (gx >= r.gx0 && gx < r.gx1 && gz >= r.gz0 && gz < r.gz1) near(r.a, r.b);
         }
         return best;
     }
@@ -2053,6 +2070,19 @@ private:
     std::vector<std::optional<std::uint32_t>> walls_; ///< per node: its street wall's first corner (doors_' building)
     std::vector<std::pair<std::uint32_t, Box>> facades_;
     std::unordered_map<std::uint64_t, std::vector<std::array<V2, 2>>> road_grid_; ///< by road_cell
+    /// A road segment kept out of road_grid_, with the cells it would fill there: [gx0, gx1) by [gz0, gz1).
+    struct LongRoad {
+        V2 a;
+        V2 b;
+        std::int64_t gx0 = 0;
+        std::int64_t gz0 = 0;
+        std::int64_t gx1 = 0;
+        std::int64_t gz1 = 0;
+    };
+    std::vector<LongRoad> long_roads_;
+    /// The most cells one segment fills in road_grid_ (a box of 1.28 km), and the most all of them do.
+    static constexpr double max_segment_cells = 4096;
+    static constexpr double max_grid_cells = 4'000'000;
     bool road_grid_made_ = false;
     std::vector<std::int64_t> marks_;
     std::unordered_map<std::uint64_t, std::vector<Pending>> tiles_; ///< by TileKey::packed
