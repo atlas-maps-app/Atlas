@@ -62,6 +62,10 @@ static const uint COMPOSITE_GRAIN = 32u;        // fin: the paper grain by overl
 static const uint COMPOSITE_VIGNETTE = 64u;     // fin: the vignette
 /// The steps the composite draws (every one).
 static const uint COMPOSITE_DRAWN = 127u;
+/// How the clouds' shadows are read, not a step: on the ground (the app's map, FrameOptions::ground_clouds), their field
+/// where the ground under the pixel lies in it (the tables' COMPOSITE_CLOUD_MAP_AT), so a cloud's shadow keeps its place
+/// while the map moves under the finger; without it at the screen's own pixels, as the renders read them.
+static const uint COMPOSITE_CLOUD_GROUND = 128u;
 
 /// fin's grain opacity as the byte Skia's stages scale by (CP/fx/Grain.hpp's skia_byte of .09, and of .12 at night).
 static const uint COMPOSITE_GRAIN_DAY = 23u;
@@ -323,8 +327,13 @@ static const uint COMPOSITE_RAIN_BIAS_Y = 1493434368u; // 108 heights
 static const uint COMPOSITE_RAIN_R = 195u;             // #C3CEE8
 static const uint COMPOSITE_RAIN_G = 206u;
 static const uint COMPOSITE_RAIN_B = 232u;
-/// The frame's tables after their header and the rain's block: the haze's rows, then the vignette's squares.
-static const uint COMPOSITE_TABLE_HEAD = 962u;
+/// The ground's map for the clouds' shadows on the ground (COMPOSITE_CLOUD_GROUND; passes::water_map at the ground's
+/// height): its nine floats' bits, after the rain's block.
+static const uint COMPOSITE_CLOUD_MAP_AT = 962u;
+static const uint COMPOSITE_CLOUD_MAP_WORDS = 9u;
+/// The frame's tables after their header, the rain's block and the ground's map: the haze's rows, then the vignette's
+/// squares.
+static const uint COMPOSITE_TABLE_HEAD = 971u;
 
 /// The words the rain reads: the frame's tables on the GPU, a span of them in the twin.
 #if defined(__cplusplus)

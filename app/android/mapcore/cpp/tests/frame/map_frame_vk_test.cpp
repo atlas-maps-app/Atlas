@@ -12,9 +12,11 @@
 #include "fx/FieldCache.hpp"
 #include "fx/GpuFields.hpp"
 #include "gpu/Guard.hpp"
+#include "gpu/Offscreen.hpp"
 #include "standin/Session.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/gpu/session_fixture.hpp"
+#include "view/Camera.hpp"
 
 #include <doctest/doctest.h>
 
@@ -27,6 +29,7 @@
 #include <format>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <span>
 #include <sstream>
 #include <string>
@@ -508,6 +511,152 @@ TEST_CASE("the map leaves out the parts its camera's flags name, and draws them 
     CHECK(clouds() == clouded);
     MESSAGE(std::format("the clouds' shadows: the composite's step {} at the sunny home, off with its switch",
                         clouded ? "on" : "off"));
+    session.close();
+}
+
+namespace {
+
+/// A window whose frames the test reads back (the look tool's KeptWindow): offscreen images it keeps hold of.
+class KeptWindow final : public standin::SessionWindow {
+public:
+    [[nodiscard]] gpu::Result<vk::raii::SurfaceKHR> surface(const gpu::Instance& /*instance*/) override {
+        return vk::raii::SurfaceKHR{nullptr};
+    }
+    [[nodiscard]] gpu::Result<std::unique_ptr<gpu::Output>> output(const gpu::Device& device,
+                                                                   vk::SurfaceKHR /*surface*/, vk::Extent2D wanted,
+                                                                   const gpu::Output* /*old*/,
+                                                                   gpu::Depth depth) override {
+        auto images = gpu::Offscreen::create(device, wanted, 3, depth);
+        if (!images) return std::unexpected(images.error());
+        kept = images->get();
+        return std::unique_ptr<gpu::Output>(std::move(*images));
+    }
+    gpu::Offscreen* kept = nullptr;
+};
+
+/// The ground (y 0) under upright device point (x, y) of camera `c` at `density`, as passes::water_map's ray finds it;
+/// none at the horizon or above.
+[[nodiscard]] std::optional<view::Vec3> ground_under(const view::Camera& c, double density, double x, double y) {
+    const double u = ((x / density) - c.cx()) / c.focal();
+    const double v = ((y / density) - c.cy()) / c.focal();
+    const view::Vec3& f = c.forward();
+    const view::Vec3& r = c.right();
+    const view::Vec3& up = c.up();
+    const view::Vec3 d{f.x + (r.x * u) - (up.x * v), f.y + (r.y * u) - (up.y * v), f.z + (r.z * u) - (up.z * v)};
+    if (!(d.y < 0)) return std::nullopt;
+    const double t = -c.eye().y / d.y;
+    return view::Vec3{c.eye().x + (t * d.x), 0.0, c.eye().z + (t * d.z)};
+}
+
+/// The upright device point where camera `c` at `density` sees `p`; none behind it.
+[[nodiscard]] std::optional<std::array<double, 2>> device_point(const view::Camera& c, double density,
+                                                                const view::Vec3& p) {
+    const view::Vec3 w{p.x - c.eye().x, p.y - c.eye().y, p.z - c.eye().z};
+    const auto dot = [&w](const view::Vec3& a) { return (w.x * a.x) + (w.y * a.y) + (w.z * a.z); };
+    const double z = dot(c.forward());
+    if (!(z > 0)) return std::nullopt;
+    return std::array<double, 2>{(c.cx() + (c.focal() * dot(c.right()) / z)) * density,
+                                 (c.cy() - (c.focal() * dot(c.up()) / z)) * density};
+}
+
+} // namespace
+
+TEST_CASE("the clouds' shadows of the app's map keep their places on the ground while it pans: where the panned frame "
+          "shows a point of the ground, the same shadow lies over it") {
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (tiles_dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the map is not drawn over the bundled packs here");
+        return;
+    }
+    if (!test::open_session()) return; // no Vulkan here
+    const Folder folder("clouds");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    frame::MapFrame map(2, nullptr, {.cache_dir = dir});
+    standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
+    CHECK(map.set_packs(bundled(tiles_dir)) == "amsterdam listed\ngrachten listed\n");
+    // the clouds' step alone over the scene: no haze, vignette or grain after it
+    map.set_screen(false, false, false);
+    CHECK(session.map(&map).empty());
+    auto window = std::make_unique<KeptWindow>();
+    KeptWindow* kept = window.get();
+    std::string why;
+    ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+    map.set_theme(sunny());
+
+    // A camera's frame with its clouds' shadows and without them, the camera the frame was drawn with.
+    struct Shot {
+        gpu::Pixels with;
+        gpu::Pixels without;
+        std::optional<view::Camera> camera;
+    };
+    const auto shot = [&](const style::CameraState& c) -> Shot {
+        Shot out;
+        CHECK(draw_until_complete(session, map, c) >= 0);
+        for (const bool clouds : {true, false}) {
+            style::CameraState k = c;
+            if (!clouds) k.flags |= style::camera_flag::no_cloud_shadows;
+            CHECK(session.draw(k, {}).drawn);
+            // the app's map reads its clouds on the ground, where it draws them
+            CHECK(((map.builder()->state().block.layers.steps.x & shaders::COMPOSITE_CLOUD_GROUND) != 0U) == clouds);
+            if (kept->kept == nullptr) return out;
+            auto pixels = kept->kept->read(kept->kept->latest());
+            CHECK(pixels.has_value());
+            if (!pixels) return out;
+            (clouds ? out.with : out.without) = std::move(*pixels);
+        }
+        out.camera = map.builder()->state().view->camera();
+        return out;
+    };
+    const style::CameraState a = home(1);
+    style::CameraState b = a;
+    // 40 m north and 25 m east of the home's target, as a pan carries the map
+    b.latitude += 40.0 / 110540.0;
+    b.longitude += 25.0 / (111320 * pymath::cos(pymath::radians(52.3746)));
+    const Shot sa = shot(a);
+    const Shot sb = shot(b);
+    ATLAS_REQUIRE(sa.camera && sb.camera && !sa.without.rgba.empty() && !sb.without.rgba.empty(),
+                  "a frame was not read back");
+    // the shadow over a pixel: what the clouds' step left of its brightest channel
+    const auto shadow = [](const Shot& s, std::uint32_t x, std::uint32_t y) -> std::optional<double> {
+        const std::size_t at = ((std::size_t{y} * s.with.width) + x) * 4;
+        double lit = 0;
+        double shaded = 0;
+        for (std::size_t k = 0; k < 3; ++k) {
+            if (s.without.rgba[at + k] > lit) {
+                lit = s.without.rgba[at + k];
+                shaded = s.with.rgba[at + k];
+            }
+        }
+        if (lit < 60) return std::nullopt; // too dark to tell
+        return shaded / lit;
+    };
+    const double density = 1.0;
+    std::size_t compared = 0;
+    std::size_t kept_place = 0;
+    std::size_t shaded = 0;
+    for (std::uint32_t y = 0; y < size.height; y += 5) {
+        for (std::uint32_t x = 0; x < size.width; x += 5) {
+            const auto g = ground_under(*sa.camera, density, x + 0.5, y + 0.5);
+            if (!g) continue;
+            const auto p = device_point(*sb.camera, density, *g);
+            if (!p || (*p)[0] < 0 || (*p)[1] < 0 || (*p)[0] >= size.width || (*p)[1] >= size.height) continue;
+            const auto there = shadow(sb, static_cast<std::uint32_t>((*p)[0]), static_cast<std::uint32_t>((*p)[1]));
+            const auto here = shadow(sa, x, y);
+            if (!here || !there) continue;
+            ++compared;
+            if (*here < 0.9) ++shaded;
+            if (std::abs(*here - *there) < 0.06) ++kept_place;
+        }
+    }
+    MESSAGE(std::format("{} points of the ground in both frames, {} under a shadow; {} with the same shadow after the "
+                        "pan",
+                        compared, shaded, kept_place));
+    CHECK(compared > 400);
+    CHECK(shaded > compared / 20); // the clouds do shade the home
+    CHECK(kept_place >= compared * 9 / 10);
     session.close();
 }
 

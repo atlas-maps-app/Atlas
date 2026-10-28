@@ -420,6 +420,9 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     b.theme = style::shader_theme(state_.theme);
     std::uint32_t steps = options_.overdraw || options_.owners ? 0U : steps_of(state_.mode) & options_.steps;
     if (cam.has(style::camera_flag::no_cloud_shadows)) steps &= ~shaders::COMPOSITE_CLOUD_SHADOWS;
+    if (options_.ground_clouds && !engine && (steps & shaders::COMPOSITE_CLOUD_SHADOWS) != 0U) {
+        steps |= shaders::COMPOSITE_CLOUD_GROUND;
+    }
     b.layers = view::block_of(*state_.layers, state_.theme, steps, levels_);
     std::uint32_t mode = 0;
     if (state_.mode == Mode::full) mode |= shaders::FRAME_FULL;

@@ -187,6 +187,22 @@ uint fx_glints_red(float2 q) {
     float r = top + ((bottom - top) * t.y);
     return uint(r + 0.5f);
 }
+/// The cloud shadows' alpha at the fields' point `q` (device px, anywhere: fx_wrap), between its four pixels' bytes as
+/// fx_glints_red reads the glints' red: where the ground under a pixel lies in the fields (the composite's clouds on the
+/// ground).
+uint fx_cloud_alpha(float2 q) {
+    float2 f = floor(q);
+    int2 i = int2(f);
+    float2 t = q - f;
+    float a = float(fx_rgba(fx_wrap(i)).w);
+    float b = float(fx_rgba(fx_wrap(i + int2(1, 0))).w);
+    float c = float(fx_rgba(fx_wrap(i + int2(0, 1))).w);
+    float d = float(fx_rgba(fx_wrap(i + int2(1, 1))).w);
+    float top = a + ((b - a) * t.x);
+    float bottom = c + ((d - c) * t.x);
+    float r = top + ((bottom - top) * t.y);
+    return uint(r + 0.5f);
+}
 uint3 fx_crown(int2 p) {
     int3 at = {p.x, p.y, 0};
     float4 d = noise_rg.Load(at);

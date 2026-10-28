@@ -126,11 +126,26 @@ CompositeOut composite_fs(FullOut v) {
     int haze = int(composite_tables[head + row]);
     int vignette = composite_vignette_from_squares(frame.layers, composite_tables[head + side + column],
                                                    composite_tables[head + (2u * side) + row]);
-    // wfx's cloud shadows, below their first row, once the fields are bound: the filter's pixel by the noise's red
+    // wfx's cloud shadows once the fields are bound: the filter's pixel by the noise's alpha, below their first row; on
+    // the ground (the app's map), the alpha where the ground under the pixel lies in the fields (the tables' map, as the
+    // glints read the water's), so the shadows keep their places while the map moves, and none at the horizon or above
     uint cloud = 0u;
-    if ((frame.layers.steps.x & COMPOSITE_CLOUD_SHADOWS) != 0u && (frame.info.x & FRAME_FIELDS) != 0u &&
-        pixel.y >= composite_tables[1]) {
-        cloud = composite_tables[2u + fx_rgba(at).w];
+    if ((frame.layers.steps.x & COMPOSITE_CLOUD_SHADOWS) != 0u && (frame.info.x & FRAME_FIELDS) != 0u) {
+        if ((frame.layers.steps.x & COMPOSITE_CLOUD_GROUND) != 0u) {
+            uint m = COMPOSITE_CLOUD_MAP_AT;
+            float3 r0 = {asfloat(composite_tables[m]), asfloat(composite_tables[m + 1u]),
+                         asfloat(composite_tables[m + 2u])};
+            float3 r1 = {asfloat(composite_tables[m + 3u]), asfloat(composite_tables[m + 4u]),
+                         asfloat(composite_tables[m + 5u])};
+            float3 r2 = {asfloat(composite_tables[m + 6u]), asfloat(composite_tables[m + 7u]),
+                         asfloat(composite_tables[m + 8u])};
+            float3 q = fx_water_point(r0, r1, r2, css_of_output(frame.camera, v.position.xy) * frame.camera.frame.z);
+            if (q.z != 0.0f) {
+                cloud = composite_tables[2u + fx_cloud_alpha(q.xy)];
+            }
+        } else if (pixel.y >= composite_tables[1]) {
+            cloud = composite_tables[2u + fx_rgba(at).w];
+        }
     }
     // wfx's rain on a wet moment: the streaks at the pixel's four points in the turned tile
     int rain = (frame.layers.steps.x & COMPOSITE_RAIN) != 0u

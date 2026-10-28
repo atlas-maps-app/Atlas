@@ -17,6 +17,7 @@
 #include "gen/spirv/frame/composite_x2_glsl_composite_fs.hpp"
 #include "gpu/Descriptors.hpp"
 #include "gpu/Frames.hpp"
+#include "passes/Ground.hpp"
 #include "twin/Twin.hpp"
 #include "view/Snap.hpp"
 
@@ -31,10 +32,12 @@ namespace atlas::passes {
 
 namespace {
 
-/// The composite's tables' head: the side, the cloud shadows' first row and their 256 pixels, and the rain's block.
+/// The composite's tables' head: the side, the cloud shadows' first row and their 256 pixels, the rain's block and
+/// the ground's map.
 constexpr std::size_t table_head = shaders::COMPOSITE_TABLE_HEAD;
 static_assert(shaders::COMPOSITE_RAIN_AT == 258 &&
-              shaders::COMPOSITE_RAIN_AT + shaders::COMPOSITE_RAIN_WORDS == table_head);
+              shaders::COMPOSITE_RAIN_AT + shaders::COMPOSITE_RAIN_WORDS == shaders::COMPOSITE_CLOUD_MAP_AT &&
+              shaders::COMPOSITE_CLOUD_MAP_AT + shaders::COMPOSITE_CLOUD_MAP_WORDS == table_head);
 
 /// A streak of the rain's tile as the SVG prints it: `M x y v length` ('%.1f' each), stroked '%.2f' wide at opacity
 /// '%.2f'.
@@ -238,6 +241,14 @@ void Composite::update(const frame::FrameState& state) {
             cloud_cut_ = cut;
         }
         std::ranges::copy(cloud_, words_.begin() + 2);
+        // on the ground (the app's map): where the ground under each pixel lies in the fields, as the glints read the
+        // water's (passes::water_map, at the ground's height)
+        if ((l.steps.x & shaders::COMPOSITE_CLOUD_GROUND) != 0U && state.view) {
+            const std::array<float, 9> map = water_map(state.view->camera(), 0.0, state.camera.density,
+                                                       state.camera.width_px, state.camera.height_px);
+            std::ranges::transform(map, words_.begin() + shaders::COMPOSITE_CLOUD_MAP_AT,
+                                   [](float v) { return std::bit_cast<std::uint32_t>(v); });
+        }
     }
     // wfx's rain: its block, made again when the moment's angle or the density changes
     if ((steps & shaders::COMPOSITE_RAIN) != 0U && state.layers && state.layers->rain_angle) {

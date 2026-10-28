@@ -157,6 +157,10 @@ struct FrameOptions {
     /// The threads prepare runs the passes' own prepare on, the calling one among them, at most one a pass: 0 for one a
     /// core (std::thread::hardware_concurrency), 1 for the calling thread alone, the passes one after another.
     std::uint32_t threads = 0;
+    /// The clouds' shadows on the ground (the app's map: COMPOSITE_CLOUD_GROUND), where they keep their places while
+    /// the map moves, instead of at the screen's own pixels as the renders read them (the user, 28 October: "The clouds
+    /// cast their shadows in their places again?"). Never in engine mode: the renders' own frames.
+    bool ground_clouds = false;
 };
 
 /// What the frame draws of the world (scene/World.hpp): asked once a frame, once the frame's view is known and before
