@@ -235,6 +235,8 @@ tasks.named("compileTestKotlin") { dependsOn(mapcoreAndroidFree) }
 dependencies {
     packerTool(project(":packer"))
     testImplementation(project(":core"))
+    // the phone's reader of a region's windows' index (WindowPackBuildTest)
+    testImplementation(project(":tiles"))
     testImplementation(project(":render"))
     testImplementation(project(":rendertiles"))
     testImplementation(testFixtures(project(":rendertiles")))
@@ -290,6 +292,8 @@ tasks.test {
     providers.systemProperty("atlas.load.raws").orNull?.let { systemProperty("atlas.load.raws", it) }
     // and the regions' element packs load/RegionsParityTest holds to the port's Regions.load (a list of .atlas files)
     providers.systemProperty("atlas.load.packs").orNull?.let { systemProperty("atlas.load.packs", it) }
+    // a region's windows' data (`packer windows`: <id>.windows, its index beside it) load/WindowPackBuildTest builds from
+    providers.systemProperty("atlas.windows").orNull?.let { systemProperty("atlas.windows", it) }
 
     // K4's likeness harness: the references are inputs (they live outside the build folder), the report goes to
     // atlas.likeness.report, and the harness's settings pass through.
