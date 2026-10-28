@@ -10,9 +10,10 @@
 // region.json as the packer unpacked it into the region's folder (its box, tradition, time zone and views, read as
 // Python's json reads them), the folder of the parks' ride profiles (`park_root`: a theme park's, R's park, are in
 // <park_root>/<park>/pf) and where a park or a zoo plants its woods about (`woods`: the centre of the region's box and
-// its half-diagonal, three doubles' bits, as the packer's PlantedWoods computes them). The core takes the rest from
-// there (load/PackHead.hpp): the views and the tolerances the variants load at (the views' and the live map's bands'),
-// the head and the style.
+// its half-diagonal, three doubles' bits, as the packer's PlantedWoods computes them), and `new_looks` (true: a
+// region's homes keep their brick and plaster, the renders' New looks, without its tradition, as a window in the
+// Netherlands; the app's bundled canal ring). The core takes the rest from there (load/PackHead.hpp): the views and the
+// tolerances the variants load at (the views' and the live map's bands'), the head and the style.
 //
 // `out` gets, by a file beside it renamed once whole, little-endian: `ATSP` and the format (2), the tiles' count, then
 // per tile in the cut's order its level (u8), column and row (u32), its features (u32), its reach (south, west, north,
@@ -301,6 +302,13 @@ private:
         auto made = region_of(*name, frame, region_json->root());
         if (!made) return std::unexpected(made.error());
         config = std::move(*made);
+        // the renders' New looks where the job asks for them (`new_looks`: the app's own canal ring, drawn as the
+        // windows the phone builds around it in the Netherlands are, its homes keeping their brick and plaster and no
+        // tradition's kit); the packs the likeness compares keep the region's own looks
+        if (const std::optional<tl::Value> new_looks = j.find("new_looks"); new_looks && truthy(*new_looks)) {
+            config->keep_homes = true;
+            config->tradition.reset();
+        }
         // a theme park's rides' profiles, whose coaster tracks it loads; a park's or a zoo's woods
         const std::optional<tl::Value> zoo = region_json->root().find("zoo");
         const std::optional<tl::Value> park = region_json->root().find("park");

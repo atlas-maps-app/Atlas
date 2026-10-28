@@ -166,8 +166,10 @@ private:
 [[nodiscard]] style::ThemeBlock with_profile(style::ThemeBlock theme, tiles::Profile profile) noexcept;
 
 /// The theme for `pack` drawn as the active pack: its profile's (with_profile), but the living map's light (no TONE)
-/// for a cell of windows that draws the renders' New looks (load::draws_new_looks: the Netherlands), so the map does
-/// not turn warmer as the camera leaves the bundled Westerkerk for the windows around it.
+/// for every pack whose frame lies where the windows draw the renders' New looks (load::draws_new_looks: the
+/// Netherlands), the windows and the bundled canal ring alike, so the map does not turn warmer as the camera leaves the
+/// bundled Westerkerk for the windows around it or zooms out over the canal ring. The likeness's twin takes the
+/// renders' own light from its theme (jni/TestTwin.cpp), not this.
 [[nodiscard]] style::ThemeBlock with_pack(style::ThemeBlock theme, const tiles::StorePack& pack) noexcept;
 
 } // namespace atlas::frame

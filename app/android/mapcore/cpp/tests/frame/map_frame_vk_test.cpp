@@ -296,11 +296,12 @@ TEST_CASE("the app's map draws through the session: the pack the camera names, c
         MESSAGE("the Westerkerk complete after " << first << " frames, " << wakes.load() << " wakes; "
                                                  << map.tiles_line());
 
-        // The canal ring named for the same camera: its tiles, its profile's TONE.
+        // The canal ring named for the same camera: its tiles, lit as the living map around it (frame::with_pack: in
+        // the Netherlands, where the windows draw the New looks, no pack takes its profile's TONE).
         const int ring = draw_until_complete(session, map, home(2));
         CHECK(ring > 0);
         CHECK(map.drawn_pack() == "grachten");
-        CHECK((drawn_flags(map) & flag::tone) != 0);
+        CHECK((drawn_flags(map) & flag::tone) == 0);
 
         // Past the first 120 frames the frames stage is closed; nothing is named between calls.
         for (int i = 0; i < 130; ++i) (void)session.draw(home(2), {});

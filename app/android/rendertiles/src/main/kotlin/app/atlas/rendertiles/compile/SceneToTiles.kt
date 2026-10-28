@@ -849,8 +849,12 @@ class SceneToTiles(
          *
          * Without [survey], the region's height survey is left out ([withoutSurvey]): a test pack of a region the tiles
          * cannot carry with it (the port's, Schiphol's), drawn as the port draws the region without it.
+         *
+         * With [newLooks] and [core], a region's homes keep their brick and plaster without its tradition (the renders'
+         * New looks, as the windows the phone builds in the Netherlands: the app's bundled canal ring); the port's own
+         * cut cannot make them, and draws the region's looks.
          */
-        fun pack(elementPack: File, out: File, work: File, levels: IntArray? = null, core: File? = null, survey: Boolean = true, log: (String) -> Unit = {}): Packed {
+        fun pack(elementPack: File, out: File, work: File, levels: IntArray? = null, core: File? = null, survey: Boolean = true, newLooks: Boolean = false, log: (String) -> Unit = {}): Packed {
             val t0 = System.nanoTime()
             val source = sha256(elementPack)
             val before = LiveEngine.workDir
@@ -866,7 +870,7 @@ class SceneToTiles(
                 }
                 if (core != null) {
                     val lv = levels ?: levelsOf(region)
-                    val made = CoreTiles.pack(core, region, lv, source, File(work, "stagep"), log)
+                    val made = CoreTiles.pack(core, region, lv, source, File(work, "stagep"), log, newLooks)
                     val written = Format3Writer.writeEncoded(made.tiles, made.head, made.style, info, out)
                     log("${region.id}: ${made.tiles.size} tiles, the head and the style from the core's stage P, ${written.bytes} bytes in ${(System.nanoTime() - t0) / 1_000_000} ms")
                     return Packed(written, emptyList(), made.head, made.style, emptyList())

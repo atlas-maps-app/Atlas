@@ -45,13 +45,15 @@ import kotlin.system.exitProcess
  * named with SceneToTiles' own reason, so the region builds as soon as the format carries what it holds.
  */
 object RenderTiles {
-    const val USAGE = """packer render-tiles --bundled <out-dir> [--repo DIR] [--packs DIR] [--work DIR] [--core FILE] [--quiet]
+    const val USAGE = """packer render-tiles --bundled <out-dir> [--repo DIR] [--packs DIR] [--work DIR] [--core FILE] [--new-looks] [--quiet]
       The app's bundled render tiles: amsterdam.atlas (the Westerkerk's living map, from the app's bundled pack) and
       grachten.atlas (the canal ring, from packs-renders' grachten.atlas in --packs, by default <repo>/cache/packs/regions,
       downloaded from the release when it is not there and checked against its SHA-256), and bundled.json, their index.
       --repo is the repo root (default: the current directory); --work is where the engine unpacks the packs (default: a
       temporary folder, deleted after). --core names the core's stage P tool (atlas_stagep), which then loads and cuts
-      the tiles, the code the phone builds its windows with (the same tiles, byte for byte). --quiet prints warnings only.
+      the tiles, the code the phone builds its windows with (the same tiles, byte for byte). With --core, --new-looks cuts
+      the canal ring in the renders' New looks, as the windows the phone builds around it draw (the app's set; the
+      packs the tests hold keep its own looks). --quiet prints warnings only.
   packer render-tiles --renders <region.atlas> <out.atlas> [--work DIR] [--core FILE] [--quiet]
       One region's render pack from its element pack.
   packer render-tiles --renders <packs.json> <out-dir> [--packs DIR] [--only a,b] [--work DIR] [--core FILE] [--quiet]
@@ -138,7 +140,7 @@ object RenderTiles {
             } else positional += s
             i++
         }
-        val unknown = options.keys - setOf("--bundled", "--renders", "--repo", "--packs", "--work", "--only", "--core", "--quiet")
+        val unknown = options.keys - setOf("--bundled", "--renders", "--repo", "--packs", "--work", "--only", "--core", "--new-looks", "--quiet")
         if (unknown.isNotEmpty()) throw UsageException("unknown option ${unknown.joinToString()}; usage: $USAGE")
         val quiet = "--quiet" in options
         val log: (String) -> Unit = if (quiet) { _ -> } else out
@@ -151,7 +153,7 @@ object RenderTiles {
                 val repo = File(options["--repo"] ?: ".").absoluteFile
                 if (!File(repo, WESTERKERK).isFile) throw UsageException("$repo is not the repo root (no $WESTERKERK)")
                 val packs = options["--packs"]?.let(::File) ?: File(repo, "cache/packs/regions")
-                val made = bundled(repo, packs, File(positional[0]), work, core, log)
+                val made = bundled(repo, packs, File(positional[0]), work, core, newLooks = "--new-looks" in options, log = log)
                 log("${made.size} render packs, ${made.sumOf { it.bytes }} bytes; engine ${EngineVersion.ID}, style ${StyleVersion.ID}")
             }
             "--renders" in options && "--bundled" !in options -> {
@@ -178,28 +180,34 @@ object RenderTiles {
 
     /**
      * The bundled set from the repo's Westerkerk pack and the canal ring's (fetched into [packs]), into [out] with its
-     * index; with [core], their tiles cut by the core's stage P ([SceneToTiles.pack]).
+     * index; with [core], their tiles cut by the core's stage P ([SceneToTiles.pack]), and the canal ring in the
+     * renders' New looks with [newLooks], as the windows the phone builds around it draw (the app's set: the user, 28
+     * October, "that orange buildings look when zoomed out"). Without it, or without [core], the canal ring's own looks,
+     * the packs the likeness and the core's parity tests hold.
      */
-    fun bundled(repo: File, packs: File, out: File, work: File? = null, core: File? = null, log: (String) -> Unit = {}): List<Made> {
+    fun bundled(repo: File, packs: File, out: File, work: File? = null, core: File? = null, newLooks: Boolean = false, log: (String) -> Unit = {}): List<Made> {
         out.mkdirs()
         out.listFiles { f -> f.name.endsWith(".atlas") || f.name == INDEX }?.forEach { it.delete() }
         val sources = listOf(File(repo, WESTERKERK), fetch(CANAL_RING, packs, log))
         val made = sources.map { src ->
             val id = PackReader.open(src).use { it.manifest.id }
-            one(src, File(out, "$id.atlas"), work, core, log)
+            one(src, File(out, "$id.atlas"), work, core, log, newLooks = newLooks && id == CANAL_RING.id)
         }
         File(out, INDEX).writeText(Manifest.pretty(index(made)) + "\n")
         return made
     }
 
-    /** One render pack of [pack] into [file]; with [core], its tiles cut by the core's stage P ([SceneToTiles.pack]). */
-    fun one(pack: File, file: File, work: File? = null, core: File? = null, log: (String) -> Unit = {}): Made {
+    /**
+     * One render pack of [pack] into [file]; with [core], its tiles cut by the core's stage P ([SceneToTiles.pack]), in
+     * the renders' New looks with [newLooks].
+     */
+    fun one(pack: File, file: File, work: File? = null, core: File? = null, log: (String) -> Unit = {}, newLooks: Boolean = false): Made {
         val dir = work ?: Files.createTempDirectory("atlas-rtiles").toFile()
         val minorBefore = PyCompat.minor
         // the port as the phone's renders ran it: CPython 3.9's last bits
         PyCompat.minor = 9
         try {
-            val p = SceneToTiles.pack(pack, file, dir, core = core, log = log)
+            val p = SceneToTiles.pack(pack, file, dir, core = core, newLooks = newLooks, log = log)
             return Made(
                 p.head.region, file, file.length(), sha256(file), pack, p.head.source, p.head.profile.label, p.head.levels.toList(),
                 p.written.chunks.size, p.head.engineVersion, p.head.styleVersion,

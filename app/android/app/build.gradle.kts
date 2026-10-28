@@ -270,7 +270,9 @@ abstract class BundledTiles @Inject constructor(private val exec: ExecOperations
                     "--bundled", File(out, "tiles").absolutePath, "--repo", root.absolutePath, "--packs", File(root, "cache/packs/regions").absolutePath,
                     "--work", work.absolutePath, "--quiet",
                 )
-                core.orNull?.let { args("--core", it.asFile.absolutePath) }
+                // with the core's tool, the canal ring in the renders' New looks, as the windows the phone builds around
+                // it in the Netherlands draw (the user, 28 October: "that orange buildings look when zoomed out")
+                core.orNull?.let { args("--core", it.asFile.absolutePath, "--new-looks") }
             }
         } finally {
             work.deleteRecursively()

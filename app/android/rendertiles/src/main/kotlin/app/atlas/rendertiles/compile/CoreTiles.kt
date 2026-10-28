@@ -46,9 +46,11 @@ object CoreTiles {
      * their bits (the port's own, kx from CrMath.cos), the port's engine version, [source] (the element pack's
      * SHA-256) and a region's region.json, as the port's region unpacked it (its views among it), which the core reads
      * the rest from, and the folder the parks' ride profiles are unpacked into, which the port reads (a theme park's
-     * coaster tracks' heights).
+     * coaster tracks' heights). [newLooks]: a region's homes keep their brick and plaster, without its tradition (the
+     * renders' New looks, as the windows in the Netherlands draw; the app's bundled canal ring), which the port's own
+     * cut has no way to make.
      */
-    fun job(region: LiveRegion, levels: IntArray, source: String): String {
+    fun job(region: LiveRegion, levels: IntArray, source: String, newLooks: Boolean = false): String {
         val living = region.kind == LiveRegion.Kind.LIVING
         val f = region.frame
         return buildJsonObject {
@@ -66,6 +68,7 @@ object CoreTiles {
             if (!living && region.bbox != null) {
                 putJsonArray("woods") { for (d in PlantedWoods.anchor(region)) add(JsonPrimitive("%016x".format(d.toRawBits()))) }
             }
+            if (!living && newLooks) put("new_looks", true)
         }.toString()
     }
 
@@ -74,14 +77,14 @@ object CoreTiles {
      * tiles file in [work] (deleted after). A region whose data holds what the tiles cannot carry yet throws the
      * UnsupportedOperationException the packer's own cut throws for it (render_gap); any other failure, an
      * IllegalStateException with the tool's reason. The head and the style are written as the core wrote them: each
-     * must read back to its own bytes.
+     * must read back to its own bytes. [newLooks]: the job's (see [job]).
      */
-    fun pack(tool: File, region: LiveRegion, levels: IntArray, source: String, work: File, log: (String) -> Unit = {}): Made {
+    fun pack(tool: File, region: LiveRegion, levels: IntArray, source: String, work: File, log: (String) -> Unit = {}, newLooks: Boolean = false): Made {
         work.mkdirs()
         val job = File.createTempFile("stagep-", ".json", work)
         val out = File(work, "${job.nameWithoutExtension}.tiles")
         try {
-            job.writeText(job(region, levels, source))
+            job.writeText(job(region, levels, source, newLooks))
             val process = ProcessBuilder(tool.path, "tiles", File(region.dir, "raw.json").path, job.path, out.path)
                 .redirectErrorStream(true)
                 .start()

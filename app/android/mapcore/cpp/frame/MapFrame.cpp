@@ -46,8 +46,10 @@ style::ThemeBlock with_profile(style::ThemeBlock theme, tiles::Profile profile) 
 style::ThemeBlock with_pack(style::ThemeBlock theme, const tiles::StorePack& pack) noexcept {
     const tiles::RenderHead* head = pack.pack.head();
     if (head == nullptr) return theme;
-    if (pack.kind == tiles::PackKind::window &&
-        load::draws_new_looks(load::country_of(head->frame.lat0, head->frame.lon0))) {
+    // Where the windows draw the New looks, every pack there lights as the living map: the bundled canal ring's too, so
+    // the city does not turn warmer as the map zooms out from the Westerkerk (the user, 28 October: "The new alpha
+    // still has that orange buildings look when zoomed out").
+    if (load::draws_new_looks(load::country_of(head->frame.lat0, head->frame.lon0))) {
         return with_profile(theme, tiles::Profile::living);
     }
     return with_profile(theme, head->profile);
