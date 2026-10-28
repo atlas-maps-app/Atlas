@@ -118,7 +118,7 @@ Atlas draws its map with its own engine. This is the one document about it: what
 
 **Always:**
 6. **CI:**
-   - `core.yml`: host builds and tests on x86_64 and arm64 under the validation layer, sanitizers, fuzzing, clang-tidy and the rule table. A host job may take an hour: by 24 October a build and its two runs of the tests took up to 45 minutes on x86_64 under ASan and TSan. Its clang-tidy step runs only after clang-format passes, so a format failure leaves the push unchecked by clang-tidy.
+   - `core.yml`: host builds and tests on x86_64 and arm64 under the validation layer, sanitizers, fuzzing, clang-tidy and the rule table. A host job may take an hour: on 28 October a build and its two runs of the tests took 51 to 62 minutes, and over 80 on x86_64 runners at a slow hour, so the core jobs' limit is 100 minutes. clang-tidy is two jobs, `tidy` with the host build's database and `tidy-android` with the Android build's: every file with both reached 80 minutes in one job. The tidy job's clang-tidy runs only after clang-format passes, so a format failure leaves the push unchecked with the host's database.
    - `android.yml`: the APK, every module's tests, and the emulator run of every screen through `ci/smoke.sh`, whose hash lines must read the host build's hashes as `ci/hashes.env` holds them (kept outside the workflows: the nightly alpha's token may not tag a commit whose workflow files differ from the default branch's). Its nightly has a concurrency group of its own, so a push while it runs leaves it to finish.
 7. **The user's phone at each alpha:**
    - VK facts;

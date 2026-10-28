@@ -162,11 +162,12 @@ jobs:
     needs: [core-changes, tiles]
     if: ${{ !cancelled() && needs.core-changes.outputs.core != 'false' }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
-    # The nightly fuzz runs every target for up to 30 minutes, at most 120 minutes in all (see its step); tidy over every
-    # file (a header changed, ~380 of them) takes some 45 minutes on its own; a host build and its two test runs took up
-    # to some 62 minutes on x86_64 by 25 October (host-debug: the build 11, the tests 43 with step 4's GPU cases under
-    # ASan, 35 the day before, the run without Vulkan 7; the runners' own pace).
-    timeout-minutes: ${{ (matrix.task == 'fuzz' && github.event_name == 'schedule') && 150 || 80 }}
+    # The nightly fuzz runs every target for up to 30 minutes, at most 120 minutes in all (see its step). Tidy over every
+    # file (nightly, or a header changed: ~400 of them) with both builds' databases reached 80 minutes on 28 October, so
+    # the host's and Android's are two jobs (tidy, tidy-android). A host build and its two test runs took 51 to 62
+    # minutes on 28 October (host-debug x86_64: 58), and over 80 on x86_64 runners at a slow hour (the same commit's
+    # push run timed out where its nightly did not: the runners' own pace).
+    timeout-minutes: ${{ (matrix.task == 'fuzz' && github.event_name == 'schedule') && 150 || 100 }}
     # A newer push cancels this ref's older core jobs; the image job (below) is never cancelled by one.
     concurrency:
       group: core-${{ github.ref }}-${{ github.event_name }}-${{ matrix.task }}-${{ matrix.arch }}
@@ -186,6 +187,7 @@ jobs:
           - { task: host-release, arch: arm64 }
           - { task: fuzz, arch: x86_64 }
           - { task: tidy, arch: x86_64 }
+          - { task: tidy-android, arch: x86_64 }
           - { task: canaries, arch: x86_64 }
           - { task: android, arch: x86_64 }
     env:
@@ -511,16 +513,17 @@ jobs:
       # here. clang-tidy runs each source with every build that compiles it: the host build's compile database and NDK
       # r30's for Android, so code that only Android compiles (platform/android, the __ANDROID__ parts) is checked too,
       # and a source neither compiles fails. Every file is checked nightly, when a header or the checks' or the build's
-      # configuration changes, and when the base commit is not in the clone.
+      # configuration changes, and when the base commit is not in the clone. The tidy job formats and checks with the
+      # host build's database (and fails a source neither build compiles), tidy-android checks with the Android build's.
       - name: NDK r30 and the SDK's CMake
-        if: matrix.task == 'tidy' || matrix.task == 'android' || matrix.task == 'canaries'
+        if: matrix.task == 'tidy' || matrix.task == 'tidy-android' || matrix.task == 'android' || matrix.task == 'canaries'
         run: |
           { yes || true; } | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" "cmake;$CMAKE_VERSION" > /dev/null
           bin="$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
           "$bin/clang-tidy" --version | sed -n 2p
           echo "NDK_BIN=$bin" >> "$GITHUB_ENV"
       - name: clang-tidy and clang-format
-        if: matrix.task == 'tidy'
+        if: matrix.task == 'tidy' || matrix.task == 'tidy-android'
         working-directory: ${{ env.CP }}
         run: |
           base="${{ github.event.pull_request.base.sha || github.event.before }}"
@@ -551,25 +554,30 @@ jobs:
           fi
           echo "files to check: $(wc -w <<< "$changed")"
           [ -n "$changed" ] || exit 0
-          "$NDK_BIN/clang-format" --dry-run --Werror $changed
+          if [ "$TASK" = tidy ]; then "$NDK_BIN/clang-format" --dry-run --Werror $changed; fi
 
           # The compile databases, without precompiled headers (clang-tidy parses every unit from its sources), with the
-          # generated headers the units include. clang-tidy finds the C++ library beside the compiler a command names,
-          # and its per-target headers by the target's triple, so the host build names LLVM's clang where it lives
-          # (/usr/lib/llvm-N/bin, not /usr/bin's links) and clang-tidy gets that clang's triple, not its own default.
-          host_bin=$(dirname "$(readlink -f "$(command -v "$CXX")")")
-          host_triple=$("$CXX" -print-target-triple)
-          [ -x "$host_bin/clang++" ] || { echo "::error::no clang++ beside LLVM's clang in $host_bin"; exit 1; }
-          CC="$host_bin/clang" CXX="$host_bin/clang++" cmake --preset host-debug -B build/tidy -DATLAS_TOOLS_DIR="$TOOLS" \
-            -DATLAS_FUZZ=ON -DATLAS_BENCH=ON -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
-          cmake --build build/tidy --target atlas_core_shaders
+          # generated headers the units include: the tidy job's the host build's (and the Android build's list of
+          # sources, configured alone), tidy-android's the Android build's. clang-tidy finds the C++ library beside the
+          # compiler a command names, and its per-target headers by the target's triple, so the host build names
+          # LLVM's clang where it lives (/usr/lib/llvm-N/bin, not /usr/bin's links) and clang-tidy gets that clang's
+          # triple, not its own default.
+          if [ "$TASK" = tidy ]; then
+            host_bin=$(dirname "$(readlink -f "$(command -v "$CXX")")")
+            host_triple=$("$CXX" -print-target-triple)
+            [ -x "$host_bin/clang++" ] || { echo "::error::no clang++ beside LLVM's clang in $host_bin"; exit 1; }
+            CC="$host_bin/clang" CXX="$host_bin/clang++" cmake --preset host-debug -B build/tidy -DATLAS_TOOLS_DIR="$TOOLS" \
+              -DATLAS_FUZZ=ON -DATLAS_BENCH=ON -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
+            cmake --build build/tidy --target atlas_core_shaders
+          fi
           (
             unset CC CXX CXXFLAGS LDFLAGS
             cmake --preset android-arm64 -B build/tidy-android -DATLAS_TOOLS_DIR="$TOOLS" -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
-            cmake --build build/tidy-android --target atlas_core_shaders
+            if [ "$TASK" = tidy-android ]; then cmake --build build/tidy-android --target atlas_core_shaders; fi
           )
           compiled() { jq -r '.[].file' "$1/compile_commands.json" | sed "s#^$PWD/##" | sort -u; }
-          host=$(compiled build/tidy)
+          host=
+          if [ "$TASK" = tidy ]; then host=$(compiled build/tidy); fi
           android=$(compiled build/tidy-android)
           host_sources=()
           android_sources=()
@@ -579,22 +587,26 @@ jobs:
             in_android=no
             if grep -q -x -F "$f" <<< "$host"; then host_sources+=("$f"); in_host=yes; fi
             if grep -q -x -F "$f" <<< "$android"; then android_sources+=("$f"); in_android=yes; fi
-            if [ "$in_host" = no ] && [ "$in_android" = no ]; then
+            if [ "$TASK" = tidy ] && [ "$in_host" = no ] && [ "$in_android" = no ]; then
               echo "::error file=$CP/$f::compiled by neither the host build nor the Android build, so clang-tidy cannot check it"
               status=1
             fi
           done
-          echo "clang-tidy: ${#host_sources[@]} sources with the host build, ${#android_sources[@]} with the Android build"
           tidy() { # <database> <sources...>, with the clang-tidy options in tidy_options
             local database=$1
             shift
             [ "$#" -gt 0 ] || return 0
             printf '%s\n' "$@" | xargs -P "$(nproc)" -n 4 "$NDK_BIN/clang-tidy" -p "$database" --quiet "${tidy_options[@]}"
           }
-          tidy_options=("--extra-arg-before=--target=$host_triple")
-          tidy build/tidy "${host_sources[@]}" || status=1
-          tidy_options=()
-          tidy build/tidy-android "${android_sources[@]}" || status=1
+          if [ "$TASK" = tidy ]; then
+            echo "clang-tidy: ${#host_sources[@]} sources with the host build"
+            tidy_options=("--extra-arg-before=--target=$host_triple")
+            tidy build/tidy "${host_sources[@]}" || status=1
+          else
+            echo "clang-tidy: ${#android_sources[@]} sources with the Android build"
+            tidy_options=()
+            tidy build/tidy-android "${android_sources[@]}" || status=1
+          fi
           exit "$status"
 
       # ---- canaries: each guard must catch its planted failure (tests/planted/, never in a normal build).
