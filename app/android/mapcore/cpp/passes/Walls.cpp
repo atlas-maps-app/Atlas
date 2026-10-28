@@ -67,10 +67,12 @@ void Buildings::select(const frame::FrameState& state, frame::Selectors& selecto
     // view's win_d (cfg's, 390 m where it names none); a church's own windows where d < 520 (with weather: no others
     // then); deep windows where d < 160, sash bars where d < 140; the facades' flat detail where d < 760, the low
     // plinth where d < 300, cornices where d < 520; the material faces where d < win_d * 1.35 (in double, as the port
-    // multiplies); an old gable's hoist beam where d < 260
+    // multiplies); an old gable's hoist beam where d < 260; a kit's corner boards where focal / max(d, 1) * 0.16 > 0.5
+    // (the least d that fails it: the same test for every d)
     const double win_d =
         state.placed ? state.placed->number("win_d").value_or(geometry::windows_reach) : geometry::windows_reach;
-    const std::array<double, 10> details{geometry::cells_reach,
+    const double focal = state.view ? state.view->camera().focal() : 0.0;
+    const std::array<double, 11> details{geometry::cells_reach,
                                          win_d,
                                          geometry::church_windows_reach,
                                          geometry::deep_windows_reach,
@@ -79,7 +81,8 @@ void Buildings::select(const frame::FrameState& state, frame::Selectors& selecto
                                          geometry::low_plinth_reach,
                                          geometry::cornices_reach,
                                          win_d * 1.35,
-                                         geometry::beams_reach};
+                                         geometry::beams_reach,
+                                         corner_boards_reach(focal)};
     selectors.set_details(kind_, details);
 }
 
@@ -93,7 +96,9 @@ gpu::Result<void> Buildings::build(scene::TileBuild& b) const {
                    .hull = style.hull,
                    .deck = style.deck,
                    .paris = style.paris,
-                   .kit_eaves = style.kit ? std::optional<double>(style.kit->eaves) : std::nullopt},
+                   .kit_eaves = style.kit ? std::optional<double>(style.kit->eaves) : std::nullopt,
+                   .kit_band = style.kit ? style.kit->band : std::nullopt,
+                   .kit_boards = style.kit ? style.kit->boards : std::nullopt},
         .kind = kind_,
         .share = {},
         .blocks = 1};
@@ -166,6 +171,10 @@ void Buildings::update(const frame::FrameState& state) {
         windows_->records_now = 0;
         windows_->nears_now = 0;
         windows_->facades_now = 0;
+        // the lines' records (a kit's walls', then its roofs'), whose draws find each other's by these counts
+        windows_->roof_lines_now = 0;
+        windows_->kit_lines_now = 0;
+        windows_->kit_shadows_now = 0;
     }
     if (kept_ != nullptr) kept_->jobs_now = 0;
     // the light ahead of a moment no longer asked about let go of
@@ -358,7 +367,8 @@ void Buildings::release() noexcept {
 }
 
 void Buildings::record(const frame::Recording& recording, std::uint32_t phase) {
-    // the facades' detail (windows, material faces), unless the map leaves it out
+    // the facades' detail (windows, material faces, a kit's walls' lines and eaves' shadows), unless the map leaves it
+    // out
     const bool facades = !recording.state.camera.has(style::camera_flag::no_facades);
     switch (phase) {
     case draw_phase:
@@ -378,6 +388,9 @@ void Buildings::record(const frame::Recording& recording, std::uint32_t phase) {
         if (facades) record_materials(recording);
         break;
     case roof_lines_phase: record_roof_lines(recording); break;
+    case kit_walls_phase:
+        if (facades) record_kit_walls(recording);
+        break;
     default: break;
     }
 }

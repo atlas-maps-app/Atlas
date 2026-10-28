@@ -35,9 +35,10 @@ import kotlin.concurrent.withLock
  *
  * Cases: the Westerkerk home and the Main board at S1 (sunny and wet), and the smoke tier's eight sweep cameras; on the
  * Mac, where their element packs are (CI has the canal ring's alone), the port's and Schiphol's close views by day and
- * at night and their overviews by day, the Efteling's, ARTIS's and San Gimignano's (a tradition's kit), the surveyed
- * regions' without their height survey, which the tiles cannot carry yet (SceneToTiles.withoutSurvey: the port draws
- * them with the generic water levels, no tides and no relief), from render packs the core's stage P cuts here.
+ * at night and their overviews by day, the Efteling's, ARTIS's, and the tradition kits' San Gimignano's and Notting
+ * Hill's, the surveyed regions' without their height survey, which the tiles cannot carry yet
+ * (SceneToTiles.withoutSurvey: the port draws them with the generic water levels, no tides and no relief), from render
+ * packs the core's stage P cuts here.
  */
 class L1Test {
     private val tiles = File(System.getProperty("atlas.tiles") ?: error("atlas.tiles names no folder of bundled packs"))
@@ -45,10 +46,17 @@ class L1Test {
     /**
      * Differences found and not yet resolved, each named with where it is followed (ENGINE.md): by case and layer, the
      * twin's extra elements' keys as L1Diff reports them, which pass as known (and are printed) while nothing else
-     * differs there. None today: the one there was (OUDEZIJDS VOORBURGWAL at the canal ring's first sweep camera) was
-     * the key's, a matrix entry the port prints as -0.000 (L1Diff's transform keys drop a printed zero's sign now).
+     * differs there. Notting Hill's close view: its terraces' windows, drawn plain where the port draws its kit's
+     * (gb_terrace's bays, sizes and frames: ENGINE.md step 4, the kit's windows). The one there was before
+     * (OUDEZIJDS VOORBURGWAL at the canal ring's first sweep camera) was the key's, a matrix entry the port prints as
+     * -0.000 (L1Diff's transform keys drop a printed zero's sign now).
      */
-    private val known: Map<String, Set<String>> = mapOf()
+    private val known: Map<String, Set<String>> = mapOf(
+        "nottinghill_close sunny S1 objects" to setOf(
+            "path; fill url(#glass) 1.000; stroke #fff2eee6 1.000 w 0.700 cap 0 join 1 miter 4.000",
+            "path; fill url(#glassLit) 1.000; stroke #fff2eee6 1.000 w 0.700 cap 0 join 1 miter 4.000",
+        ),
+    )
 
     /**
      * Matches out of the port's order that are known, named in ENGINE.md: by case and layer, `<key> passes <key>` as
@@ -70,9 +78,12 @@ class L1Test {
         "schiphol" to listOf("schiphol_close" to "sunny", "schiphol_close" to "night", "schiphol" to "sunny"),
         "efteling" to listOf("efteling" to "sunny", "efteling" to "night", "efteling_joris" to "sunny"),
         "artis" to listOf("artis" to "sunny", "artis_gorilla" to "sunny", "artis_gorilla" to "night"),
-        // a tradition's kit (it_tuscan): its roofs over their eaves, tile courses and lit ridges; Notting Hill's terraces
-        // (gb_terrace) join once the kits' windows are drawn, which their windows' places and sizes differ by
+        // a tradition's kit (it_tuscan): its roofs over their eaves, tile courses and lit ridges, the shadows of its
+        // eaves on the walls; Notting Hill's terraces (gb_terrace: stucco ground floors under brick, cornices), whose
+        // kit's windows are to come (known above). Bergen's wharf (no_timber: timber boards and corner boards) joins once
+        // the core's stage P cuts its pack (its quay edges reach beyond its frame's grid)
         "sangimignano" to listOf("sangimignano_close" to "sunny"),
+        "nottinghill" to listOf("nottinghill_close" to "sunny"),
     )
 
     /** The regions whose survey the tiles cannot carry yet: drawn without it, by both sides. */
@@ -215,7 +226,10 @@ class L1Test {
                 val twinElements = L1Diff.twinElements(twin, layer, spread)
                 // what stands up: its slivers (faces at the renders' area floor, or seen edge-on) counted apart, at most two
                 // in a thousand
-                val r = L1Diff.diff("${case.name} $name", portElements, twinElements, view, slivers = layer == TwinCodec.OBJECTS)
+                val allowed = known["${case.name} $name"].orEmpty()
+                val r = L1Diff.diff(
+                    "${case.name} $name", portElements, twinElements, view, slivers = layer == TwinCodec.OBJECTS, known = allowed,
+                )
                 println(r.summary())
                 if (layer == TwinCodec.OBJECTS) {
                     // the doors: every one of the port's in the view the twin's, and the door cases show some
@@ -235,8 +249,7 @@ class L1Test {
                 for (d in r.firstOutOfOrder) println("  out of order: $d")
                 // Every element the twin draws in the view is the port's, in its order where it overlaps another; vertices
                 // exact or one print step apart.
-                val allowed = known["${case.name} $name"].orEmpty()
-                for (k in r.extra.keys.filter { it in allowed }) println("  known: $k (ENGINE.md, step 2)")
+                for (k in r.extra.keys.filter { it in allowed }) println("  known: $k (ENGINE.md)")
                 val extra = r.extra.filterKeys { it !in allowed }
                 if (extra.isNotEmpty()) failed += "${case.name} $name: elements the twin draws that the port does not: $extra"
                 if (r.differs > 0) failed += "${case.name} $name: matched elements whose vertices differ: ${r.firstDiffering}"

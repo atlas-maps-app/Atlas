@@ -163,18 +163,9 @@ void kit_roof(Builder& b, const Building& bl, bool hipped, std::uint16_t variant
     const double rh = bl.rh;
     const double wall_top = bl.wall_top;
     // trad_ridge: along the first longest side, across it where roof:orientation says
-    const std::size_t i0 = longest_first(poly);
-    double ux = poly[(i0 + 1) % n].x - poly[i0].x;
-    double uz = poly[(i0 + 1) % n].z - poly[i0].z;
-    double lg = pm::hypot(ux, uz);
-    if (lg == 0.0) lg = 1.0;
-    ux /= lg;
-    uz /= lg;
-    if (is(bl.v.orient, "across")) {
-        const double t = ux;
-        ux = -uz;
-        uz = t;
-    }
+    const V2 u = kit_ridge(poly, is(bl.v.orient, "across"));
+    const double ux = u.x;
+    const double uz = u.z;
     const V2 ce = centroid(poly);
     // hd: the farthest corner from the ridge's line (City.pyMaxOf), at least 1 m; the roof's slope over it
     double far = std::abs((-(poly[0].x - ce.x) * uz) + ((poly[0].z - ce.z) * ux));
@@ -382,7 +373,7 @@ void roofs(Builder& b, const Building& bl, std::uint16_t variant) {
         gable_roof(b, bl, is(bl.roof, "hipped"), kit ? static_cast<std::uint16_t>(variant | prim_flag::dry) : variant);
         if (kit) {
             kit_roof(b, bl, is(bl.roof, "hipped"), static_cast<std::uint16_t>(variant | prim_flag::weather),
-                     b.kit_eaves.value_or(0.0));
+                     kit_eaves_of(bl.v, b.kit_eaves));
         }
     } else if (bl.skillion) {
         // s_ = rh / span; nr = vnorm((dirv[0] * s_, 1, dirv[1] * s_)); tested at (cx, h - rh / 2, cz)

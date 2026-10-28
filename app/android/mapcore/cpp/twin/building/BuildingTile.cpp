@@ -9,6 +9,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 namespace atlas::passes {
 
@@ -25,6 +26,7 @@ static_assert(geometry::prim_flag::near == shaders::BUILDING_NEAR &&
                   geometry::prim_flag::weather == shaders::BUILDING_WEATHER &&
                   geometry::prim_flag::dry == shaders::BUILDING_DRY &&
                   geometry::prim_flag::eaves == shaders::BUILDING_EAVES &&
+                  geometry::prim_flag::kit == shaders::BUILDING_KIT &&
                   geometry::prim_flag::edge == shaders::BUILDING_EDGE &&
                   geometry::prim_flag::triangle == shaders::BUILDING_TRIANGLE &&
                   geometry::prim_flag::polygon == shaders::BUILDING_POLYGON &&
@@ -218,6 +220,8 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
         std::uint32_t flags = 0;
         if (face.lit == gm::Lit::day) flags |= shaders::BUILDING_FACE_DAY;
         if (!face.facing) flags |= shaders::BUILDING_FACE_BOTH;
+        if (face.kit == gm::KitPart::band) flags |= shaders::BUILDING_FACE_BAND;
+        if (face.kit == gm::KitPart::corner) flags |= shaders::BUILDING_FACE_CORNER;
         const auto t = local(face.test);
         out[layout.faces_at + (i * 2)] = {bits(f32(face.normal.x)), bits(f32(face.normal.y)), bits(f32(face.normal.z)),
                                           bits(f32(areas[i]))};
@@ -270,6 +274,35 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
                                  .to = floats(r.to),
                                  .near_slot = r.near_slot,
                                  .far_slot = r.far_slot});
+    }
+    // a kit's walls' boards' lines (their walls in frame metres) and eaves' shadows (their corners in the heap's
+    // floats)
+    layout.kit_walls.clear();
+    layout.kit_walls.reserve(g.kit_walls.size());
+    for (const gm::KitWall& w : g.kit_walls) {
+        if (w.face >= f) continue;
+        const gm::Face& face = g.faces[w.face];
+        layout.kit_walls.push_back(
+            {.item = w.item,
+             .a = {w.a.x, w.a.z},
+             .ex = w.ex,
+             .ez = w.ez,
+             .nrm = {w.nrm.x, w.nrm.y, w.nrm.z},
+             .y0 = w.y0,
+             .top = w.top,
+             .origin_x = origin_x,
+             .origin_z = origin_z,
+             .normal = {f32(face.normal.x), f32(face.normal.y), f32(face.normal.z)},
+             .test = floats(face.test),
+             .boards = w.boards,
+             .spacing = w.spacing,
+             .rgb = w.rgb,
+             .shadow = w.shadow,
+             .shade = {floats(w.shade[0]), floats(w.shade[1]), floats(w.shade[2]), floats(w.shade[3])},
+             .lines_near = w.lines_near,
+             .lines_far = w.lines_far,
+             .shadow_near = w.shadow_near,
+             .shadow_far = w.shadow_far});
     }
     // each face's item and whether it is a wall's, from the primitives that draw it
     layout.face_items.assign(f, 0);
@@ -418,6 +451,45 @@ std::array<std::array<float, 3>, 2> course_ends(const BuildingTile::Courses& c, 
                                     static_cast<float>(p[2] - c.origin_z)};
     };
     return {local(a), local(b)};
+}
+
+bool kit_lines_shown(double depth, double focal, double spacing) {
+    // trad_wall: ppm = cam.focal / max(d, 1); `if ppm * bo['spacing'] > 2.2 and not night`
+    const double ppm = focal / pymath::max(depth, 1.0);
+    return ppm * spacing > 2.2;
+}
+
+std::array<std::array<float, 3>, 2> kit_line_ends(const BuildingTile::KitWall& w, std::uint32_t k) {
+    // u = k / nb; (a[0] + ex * u + nrm[0] * .02, y0 + 0.25, a[1] + ez * u + nrm[2] * .02), its top's wall_top - 0.05
+    const double u = static_cast<double>(k) / static_cast<double>(w.boards);
+    const double x = (w.a[0] + (w.ex * u)) + (w.nrm[0] * .02);
+    const double z = (w.a[1] + (w.ez * u)) + (w.nrm[2] * .02);
+    const auto fx = static_cast<float>(x - w.origin_x);
+    const auto fz = static_cast<float>(z - w.origin_z);
+    return {std::array<float, 3>{fx, static_cast<float>(w.y0 + 0.25), fz},
+            std::array<float, 3>{fx, static_cast<float>(w.top - 0.05), fz}};
+}
+
+double corner_boards_reach(double focal) {
+    // trad_wall: ppm = cam.focal / max(d, 1); `if ppm * 0.16 > 0.5`, which falls as d grows (each operation
+    // correctly rounded, so monotone): the least d it fails at, found among the doubles between two that bound it
+    const auto shown = [focal](double d) { return (focal / pymath::max(d, 1.0)) * 0.16 > 0.5; };
+    if (!shown(1.0)) return -std::numeric_limits<double>::infinity();
+    double hi = 2.0;
+    while (shown(hi) && hi < std::numeric_limits<double>::max()) hi *= 2.0;
+    if (shown(hi)) return std::numeric_limits<double>::infinity();
+    // positive doubles order as their bits: bisect the bits from lo (shown) to hi (not)
+    auto lo_bits = std::bit_cast<std::uint64_t>(1.0);
+    auto hi_bits = std::bit_cast<std::uint64_t>(hi);
+    while (hi_bits - lo_bits > 1) {
+        const std::uint64_t mid = lo_bits + ((hi_bits - lo_bits) / 2);
+        if (shown(std::bit_cast<double>(mid))) {
+            lo_bits = mid;
+        } else {
+            hi_bits = mid;
+        }
+    }
+    return std::bit_cast<double>(hi_bits);
 }
 
 std::uint16_t church_leading(double depth, double focal) {

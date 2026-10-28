@@ -145,6 +145,34 @@ struct BuildingTile {
         std::uint16_t far_slot = 0;
     };
     std::vector<Ridge> ridges;
+    /// Each kit wall's boards' lines and eaves' shadow (geometry::KitWall): its wall's start, edge and normal in frame
+    /// metres (the port's doubles, from which each frame lays its lines as the port does) and the tile's corner, its
+    /// base and top; its wall's face's normal and test point in the heap's floats (its turn, and the plane its details
+    /// draw on); its boards and their spacing, its lines' colour; its eaves' shadow's corners in the heap's floats;
+    /// its item and slots.
+    struct KitWall {
+        std::uint32_t item = 0;
+        std::array<double, 2> a{};
+        double ex = 0.0;
+        double ez = 0.0;
+        std::array<double, 3> nrm{};
+        double y0 = 0.0;
+        double top = 0.0;
+        double origin_x = 0.0;
+        double origin_z = 0.0;
+        std::array<float, 3> normal{};
+        std::array<float, 3> test{};
+        std::uint32_t boards = 0;
+        double spacing = 0.0;
+        std::uint32_t rgb = 0;
+        bool shadow = false;
+        std::array<std::array<float, 3>, 4> shade{};
+        std::uint16_t lines_near = 0;
+        std::uint16_t lines_far = 0;
+        std::uint16_t shadow_near = 0;
+        std::uint16_t shadow_far = 0;
+    };
+    std::vector<KitWall> kit_walls;
     /// Each item's plinth's and cornice's slots (geometry::TileBuildings::item_facades).
     std::vector<std::uint32_t> item_facades;
     /// Each face's light inputs (the CPU's light, per tile and moment, and the twin's).
@@ -209,6 +237,23 @@ struct MaterialChoice {
 /// The ends of course `j` (1 to k - 1) of a slope's courses, in the heap's floats: at t = j / k from pa to qa and from
 /// pb to qe, as trad_roof lays them (in frame metres, then relative to the tile's corner).
 [[nodiscard]] std::array<std::array<float, 3>, 2> course_ends(const BuildingTile::Courses& c, std::uint32_t j);
+
+/// Whether a kit wall at depth `depth` shows its boards' lines of spacing `spacing` (trad_wall's `ppm *
+/// bo['spacing'] > 2.2`, ppm = focal / max(d, 1)).
+[[nodiscard]] bool kit_lines_shown(double depth, double focal, double spacing);
+
+/// The ends of line `k` (1 to nb - 1) of a kit wall's boards, in the heap's floats: at u = k / nb along it, 0.02 m out,
+/// from 0.25 m over its foot to 0.05 m under its top, as trad_wall lays them (in frame metres, then relative to the
+/// tile's corner).
+[[nodiscard]] std::array<std::array<float, 3>, 2> kit_line_ends(const BuildingTile::KitWall& w, std::uint32_t k);
+
+/// The width of a kit wall's boards' lines (`stroke-width=".45"`), in hundredths of a CSS px.
+inline constexpr std::uint32_t kit_lines_width = 45;
+
+/// The depth from which a camera of focal length `focal` (CSS px) no longer resolves a kit's corner boards: the least
+/// d at which trad_wall's `ppm * 0.16 > 0.5` (ppm = focal / max(d, 1)) fails, in double, so that `d < reach` is the
+/// port's test for every d (the frame's detail threshold, compared as the others are); -inf where no d passes.
+[[nodiscard]] double corner_boards_reach(double focal);
 
 /// A wall's windows' frames' width and their sash bars' (0: none), in tenths of a CSS px as the port prints them.
 struct WindowWidths {

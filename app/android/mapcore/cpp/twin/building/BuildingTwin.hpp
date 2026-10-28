@@ -15,8 +15,10 @@
 // frames' colour; its deep windows' sills; before them its shop glazing, a path of its own; and each building's plinths
 // and cornices, a path each after its walls. A church's wall with weather nearer than 520 m has its church windows
 // there instead, closeup.py's five paths: their stones, their reveals, their glass, by day their glass again in the
-// veil at opacity .42, and their leading, each arch a closed subpath, each segment of leading an open one. Plain data
-// in, no Vulkan: the pass's emit and the tests call it alike.
+// veil at opacity .42, and their leading, each arch a closed subpath, each segment of leading an open one. A kit's
+// wall (with weather by day) has its boards' lines, a path of open subpaths, and its eaves' shadow, at their slots
+// after its band's and its corner boards' (trad_wall's). Plain data in, no Vulkan: the pass's emit and the tests call
+// it alike.
 #pragma once
 
 #include "frame/FrameBlock.hpp"
@@ -82,6 +84,19 @@ struct RoofLinesDepth {
     float opacity = 1.0F;
 };
 
+/// A kit wall's path as the frame draws it (roof_line_vs's boards' lines, kit_shadow_vs's eaves' shadow), for the
+/// tests' raster: its boards' lines (each line's segment on its wall's plane within its span, butt-capped, blended over
+/// what lies under it on its own), or its eaves' shadow (its shape on its wall's plane), at the path's slot, in its
+/// colour at its opacity.
+struct KitWallDepth {
+    std::vector<shaders::BuildingRoofLine> lines;
+    std::vector<shaders::BuildingWindowShape> shadow; ///< one: the element is the shadow
+    hlsl::float4 plane{};
+    std::uint32_t slot = 0;
+    std::uint32_t rgb = 0;
+    float opacity = 1.0F;
+};
+
 /// A wall's windows' part of one path (its deep windows' reveals or sills, or its sash bars as their quads) as the
 /// frame draws it, for the tests' raster: each shape, filled in one colour on its wall's plane at a lead, at the path's
 /// slot.
@@ -125,6 +140,7 @@ struct ElementDepth {
     std::vector<MaterialDepth> materials;     ///< one: the element is a wall's material face's path
     std::vector<shaders::BuildingBeam> beams; ///< one: the element is a hoist beam (its segment, its depth along it)
     std::vector<RoofLinesDepth> roof_lines;   ///< one: the element is a kit roof's courses or its lit ridge
+    std::vector<KitWallDepth> kit_walls;      ///< one: the element is a kit wall's boards' lines or eaves' shadow
     bool veil = false; ///< the element is the church windows' veil, which the frame folds into their glass
 };
 
@@ -188,6 +204,10 @@ private:
     /// tile, with weather by day, each at its slot after its roof's slopes (roof_line_vs's).
     void roof_lines(const passes::BuildingTile& b, std::span<const std::uint32_t> rows,
                     const shaders::TilePlace& place);
+
+    /// A kit's walls' boards' lines (a path a wall, where the view resolves them) and eaves' shadows the frame draws of
+    /// a tile, with weather by day, each at its slot (roof_line_vs's and kit_shadow_vs's).
+    void kit_walls(const passes::BuildingTile& b, std::span<const std::uint32_t> rows, const shaders::TilePlace& place);
 
     /// The paths of a wall's material face the frame draws (its one-cell primitive `wall`, its face `f`, its plane
     /// `plane`, its record `w`, `m` its BuildingTile::window_materials entry): at its material slot `slot` on, in item

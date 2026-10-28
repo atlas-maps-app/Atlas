@@ -36,9 +36,15 @@
 //     draws every window's frame (its outline dilated by the frames' half width, round joins) and another its glass,
 //     opaque, on its wall's plane a lead over the wall's cells. None in the owner mode (a window is its wall's
 //     owner's).
+//   - A tradition's kit's walls (trad_wall's, with weather): its stucco ground floor's band and its corner boards are
+//     the walls' and roofs' primitives (the plain list's, drawn on their wall's plane at leads of their own over its
+//     cells); stage F lays each frame's boards' lines (a record a line, where the view resolves them) and eaves'
+//     shadows (a record a wall) by day, which the kit walls' phase draws over what lies under them on their walls'
+//     planes (translucent, before the material faces).
 //   - The detail (frame/Selectors.hpp): the cells' 460 m is the kind's band (its slots near and far); its detail
 //     thresholds, each a bit of the rank entry's detail (building.slangh's BUILDING_DETAIL_), are the cells' 460 m, the
-//     view's win_d, a church's own windows' 520 m, deep windows' 160 m and sash bars' 140 m.
+//     view's win_d, a church's own windows' 520 m, deep windows' 160 m and sash bars' 140 m, and the rest
+//     (building.slangh's list, a kit's corner boards' reach the last).
 //   - The twin (emit): every primitive the vertex stage draws, as the port's SVG element, its stroke in its style, and
 //   each windowed wall's dark and lit windows' paths (twin/building/BuildingTwin.hpp).
 // The roofs' half of the pass (its pipelines and draws, the strokes') is passes/Roofs.cpp; the windows' GPU half is
@@ -115,15 +121,18 @@ public:
     /// The phases: the drawing (objects); the roofs' thin edges, decided before the main pass (offscreen) and drawn
     /// after every element of the ground (translucent, at ground_order::objects: passes/Ground.hpp); the walls'
     /// material faces, decided with the windows and drawn over what lies under them just before the roofs' edges
-    /// (translucent); a kit roof's tile courses and lit ridge, over its slopes and their edges just after them.
+    /// (translucent); a kit roof's tile courses and lit ridge, over its slopes and their edges just after them; a kit
+    /// wall's boards' lines and eaves' shadow, over what lies under them just before the material faces.
     static constexpr std::uint32_t draw_phase = 0;
     static constexpr std::uint32_t decide_phase = 1;
     static constexpr std::uint32_t strokes_phase = 2;
     static constexpr std::uint32_t materials_phase = 3;
     static constexpr std::uint32_t roof_lines_phase = 4;
+    static constexpr std::uint32_t kit_walls_phase = 5;
     static constexpr std::int32_t strokes_order = 1000;
     static constexpr std::int32_t materials_order = strokes_order - 1;
     static constexpr std::int32_t roof_lines_order = strokes_order + 1;
+    static constexpr std::int32_t kit_walls_order = materials_order - 1;
 
     /// What the last frame's strokes were: their jobs and records (one a plain primitive of the drawn runs).
     struct StrokeCounts {
@@ -145,8 +154,10 @@ public:
         std::uint32_t churches = 0;
         std::uint32_t material_fills = 0;
         std::uint32_t material_lines = 0;
-        std::uint32_t beams = 0;      ///< the hoist beams under old gables and on a kit's gables
-        std::uint32_t roof_lines = 0; ///< a kit roof's tile courses (a record a course) and lit ridges
+        std::uint32_t beams = 0;       ///< the hoist beams under old gables and on a kit's gables
+        std::uint32_t roof_lines = 0;  ///< a kit roof's tile courses (a record a course) and lit ridges
+        std::uint32_t kit_lines = 0;   ///< a kit wall's boards' lines (a record a line)
+        std::uint32_t kit_shadows = 0; ///< and its eaves' shadows (a record a wall)
     };
     [[nodiscard]] WindowCounts window_counts() const noexcept { return window_counts_; }
     /// The triangles the last frame submitted for its walls, near cells and roofs, and the ones the GPU's cull kept of
@@ -207,12 +218,13 @@ public:
     static constexpr std::uint32_t plain_indices = 9; // a fan of 3 triangles over 5 points
 
 private:
-    static constexpr std::array<frame::Phase, 5> phase_list{{
+    static constexpr std::array<frame::Phase, 6> phase_list{{
         {.slot = frame::Slot::objects, .order = 0, .id = draw_phase},
         {.slot = frame::Slot::offscreen, .order = 0, .id = decide_phase},
         {.slot = frame::Slot::translucent, .order = strokes_order, .id = strokes_phase},
         {.slot = frame::Slot::translucent, .order = materials_order, .id = materials_phase},
         {.slot = frame::Slot::translucent, .order = roof_lines_order, .id = roof_lines_phase},
+        {.slot = frame::Slot::translucent, .order = kit_walls_order, .id = kit_walls_phase},
     }};
 
     using Run = BuildingRun;
@@ -272,6 +284,7 @@ private:
     void record_windows(const frame::Recording& recording);
     void record_materials(const frame::Recording& recording);
     void record_roof_lines(const frame::Recording& recording);
+    void record_kit_walls(const frame::Recording& recording);
 
     /// The rows of a tile's items, written once into its range in `heaps` (the render thread, the first frame it is
     /// drawn).
@@ -381,8 +394,10 @@ struct Buildings::Windows {
     std::array<gpu::Buffer, 2> churches;
     std::array<gpu::Buffer, 2> material_fills;
     std::array<gpu::Buffer, 2> material_lines;
-    std::array<gpu::Buffer, 2> beams;      ///< the hoist beams' records, which the CPU writes each frame
-    std::array<gpu::Buffer, 2> roof_lines; ///< a kit roof's lines' records, which the CPU writes each frame
+    std::array<gpu::Buffer, 2> beams; ///< the hoist beams' records, which the CPU writes each frame
+    /// The lines' records, which the CPU writes each frame: a kit's walls' boards' lines and eaves' shadows, then its
+    /// roofs' lines (each record six uint4).
+    std::array<gpu::Buffer, 2> roof_lines;
     /// The draws' layout (the frame's sets, then set 2), the compute stage's, its pipeline, and the near windows'
     /// parts', the facades', the glass's, the frames' and the church windows' pipelines; the material faces' fills' and
     /// lines' (translucent).
@@ -398,6 +413,7 @@ struct Buildings::Windows {
     vk::raii::Pipeline material_lines_pipeline{nullptr};
     vk::raii::Pipeline beams_pipeline{nullptr};
     vk::raii::Pipeline roof_lines_pipeline{nullptr};
+    vk::raii::Pipeline kit_shadows_pipeline{nullptr};
     // the render thread's, per frame: the jobs' words, the frame slot they went to, and what they hold (the church
     // windows' records, and the most segments of leading one of them has; the material faces' records)
     std::vector<std::uint32_t> words;
@@ -413,8 +429,10 @@ struct Buildings::Windows {
     std::uint32_t material_lines_now = 0;
     std::uint32_t beams_now = 0;
     std::uint32_t roof_lines_now = 0;
+    std::uint32_t kit_lines_now = 0; ///< the lines' first records: the kit walls' lines, then their shadows
+    std::uint32_t kit_shadows_now = 0;
     std::vector<hlsl::uint4> beam_words;      ///< this frame's beam records, as the CPU writes them
-    std::vector<hlsl::uint4> roof_line_words; ///< and its roof lines'
+    std::vector<hlsl::uint4> roof_line_words; ///< and its lines'
 };
 
 struct Buildings::Kept {

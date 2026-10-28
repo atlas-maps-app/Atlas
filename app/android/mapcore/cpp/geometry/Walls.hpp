@@ -8,7 +8,9 @@
 //   - the roofs (geometry/Roofs.cpp): by shape after CLOSEST (and quadruple_saltbox as hipped): a gable roof's ridge,
 //     gable ends and slopes, a hip's ends, a pyramid's faces, a skillion's slope, a mansard's brisis faces and top, and
 //     a flat top (drawn when the eye is above it);
-//   - a houseboat drawn as a boat when the moment has weather (geometry/Houseboats.cpp), as a building when not.
+//   - a houseboat drawn as a boat when the moment has weather (geometry/Houseboats.cpp), as a building when not;
+//   - a tradition's kit's walls (trad_wall, with weather): a stucco ground floor's band and timber boards' corner
+//     boards on each wall, its boards' lines and the shadow of its eaves (KitWall, which the frame lays each frame).
 // Every primitive keeps what the frame needs to draw it as the port does: its face (base colour and normal, the light
 // inputs), its sun sample (K8's index in the tile's samples, sun/Samples.hpp's order), its building's item, its painter
 // slot within the item in each variant, and the conditions it is drawn under. Facing, the area test, the near plane and
@@ -19,6 +21,7 @@
 #include "scene/ItemTable.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Sections.hpp"
+#include "tiles/Style.hpp"
 
 #include <array>
 #include <cstddef>
@@ -62,8 +65,14 @@ inline constexpr double beams_reach = 260.0;
 inline constexpr std::uint8_t owner_area = 4;
 
 /// How a face is lit, besides the theme: by its sample's sun bit (which K8 sets only where the face turns to the sun),
-/// or whenever the sun is up (a houseboat's deck and cabin roof: `not night`).
+/// or whenever the sun is up (a houseboat's deck and cabin roof: `not night`; a kit's corner boards, whose
+/// `light(..., facing and not night)` is light(..., True)'s wherever the sun is: lam = max(0, n · L) either way).
 enum class Lit : std::uint8_t { sun = 0, day = 1 };
+
+/// A face that is a detail of a tradition's kit on its wall (trad_wall's): its stucco ground floor's band, or a corner
+/// board; drawn on its wall's plane (its face's: the wall's normal through the wall's test point) at a lead of its own
+/// over the wall's cells, a corner board only where the view resolves it (focal / d · 0.16 > 0.5).
+enum class KitPart : std::uint8_t { none = 0, band = 1, corner = 2 };
 
 /// What lights a face (light.slang's light(): the base colour and the normal), and the point its facing is tested at.
 struct Face {
@@ -72,6 +81,7 @@ struct Face {
     V3 test;                ///< the point the port tests `vdot(n, C - p) > 0` at (its plane's, but a skillion roof's)
     Lit lit = Lit::sun;
     bool facing = true; ///< tested for facing (a deck and a cabin roof are drawn from either side)
+    KitPart kit = KitPart::none;
 };
 
 /// What a primitive is, as the port draws it.
@@ -90,6 +100,8 @@ enum class PrimKind : std::uint8_t {
     mansard_top,   ///< a mansard's top, when the eye is above it
     deck,          ///< a houseboat's deck
     cabin_roof,    ///< a houseboat's cabin roof
+    band,          ///< a kit's stucco ground floor on a wall (trad_wall's band)
+    corner_board,  ///< a kit's corner board at either end of a wall
 };
 
 /// The kind's name, for tests and logs.
@@ -116,6 +128,9 @@ inline constexpr std::uint16_t stroke_cabin = 512;
 inline constexpr std::uint16_t outline = 1024;
 /// A kit roof's slope or hip that overhangs its walls (its eaves): its depth leads them where it passes their top.
 inline constexpr std::uint16_t eaves = 8192;
+/// A wall with a kit's details on it (its band, its boards, its eaves' shadow): its near cells' depth leads count
+/// modulo 8, under the details' leads.
+inline constexpr std::uint16_t kit = 16384;
 /// Every variant: drawn at any distance.
 inline constexpr std::uint16_t any = near | far;
 } // namespace prim_flag
@@ -149,8 +164,8 @@ enum class WindowStyle : std::uint8_t { plain = 0, modern = 1, paris = 2, cabin 
 
 /// A facade wall's flags: what the frame decides by its moment and distance. The last three are its flat detail with
 /// weather within 760 m (_draw_building's, not a part's): a dark plinth along its foot (its walls on the street), a
-/// white cornice along its top (an old house's, under a mansard; a wall over 5 m, within 520 m), its shop glazing (a
-/// shop floor's wall over 2.4 m).
+/// white cornice along its top (an old house's, under a mansard, where a kit gives the building one: a London
+/// terrace's; a wall over 5 m, within 520 m), its shop glazing (a shop floor's wall over 2.4 m).
 namespace window_flag {
 inline constexpr std::uint8_t shop_floor = 1; ///< shops, cafés or hotels: no windows on the ground floor with weather
 inline constexpr std::uint8_t warehouse = 2;  ///< green warehouse shutters, not glass, with weather
@@ -247,6 +262,36 @@ struct RoofRidge {
     std::uint16_t far_slot = 0;
 };
 
+/// A wall's translucent details in a tradition's kit (render/amsterdam.py's trad_wall, with weather by day, where its
+/// wall turns to the eye), which the frame lays each frame on its wall's plane:
+///   - its timber boards' lines, where the kit gives the building boards: nb = int(elen / spacing) boards, a line at
+///     u = k / nb (k = 1 .. nb - 1) from 0.25 m over its foot to 0.05 m under its top, 0.02 m out, where the view
+///     resolves them (focal / d · spacing > 2.2), .45 px wide at .32 in its wall's drawn colour darkened
+///     (tohex(mulc(col_draw or #888888, 0.62))), butt-capped, the lines whose both ends project; at its slot after its
+///     band's;
+///   - the shadow of its eaves, where the kit's roof overhangs it (the kit's eaves on a hipped roof, or on a gabled one
+///     along its ridge: |e · u| / elen > 0.7): quad_at(a, b, top - min(1.1, eaves · 1.7), top, 0, 1, 0.025, n) in
+///     #141822 at .26, at its slot after its corner boards'.
+struct KitWall {
+    std::uint32_t item = 0;
+    std::uint32_t face = 0; ///< its wall's face: its turn, and the plane its details draw on
+    V2 a;                   ///< its footprint edge's start, and the edge to its end (bb - a)
+    double ex = 0.0;
+    double ez = 0.0;
+    V3 nrm;
+    double y0 = 0.0;
+    double top = 0.0;         ///< wall_top
+    std::uint32_t boards = 0; ///< nb: no lines below 2
+    double spacing = 0.0;
+    std::uint32_t rgb = 0; ///< its lines' colour, 0xRRGGBB
+    bool shadow = false;
+    std::array<V3, 4> shade{};    ///< its eaves' shadow's corners
+    std::uint16_t lines_near = 0; ///< its lines' painter slot within the item, near and far; its shadow's
+    std::uint16_t lines_far = 0;
+    std::uint16_t shadow_near = 0;
+    std::uint16_t shadow_far = 0;
+};
+
 /// The most rows a facade wall's record holds (windows.slangh's BUILDING_WINDOW_LEVELS).
 inline constexpr std::uint16_t max_window_levels = 0x0FFF;
 
@@ -313,6 +358,8 @@ struct TileBuildings {
     /// A kit roof's tile courses, a record a slope, and its lit ridges, in the items' order.
     std::vector<RoofCourses> courses;
     std::vector<RoofRidge> ridges;
+    /// A kit's walls' boards' lines and eaves' shadows, a record a wall, in the items' order.
+    std::vector<KitWall> kit_walls;
     /// The tile's sun samples the buildings take (K8's count before the tile's trees, quays and windows).
     std::uint32_t samples = 0;
 };
@@ -323,8 +370,11 @@ struct BuildingRegion {
     std::uint32_t hull = 0; ///< the style's houseboats' hull (0xRRGGBB)
     std::uint32_t deck = 0; ///< and deck
     bool paris = false;     ///< WIN_STYLE == "paris": tall French windows in stone fronts
-    /// The building tradition's kit, where the pack has one (its style's `tradition`): its eaves' overhang.
+    /// The building tradition's kit, where the pack has one (its style's `tradition`): its eaves' overhang, and its
+    /// stucco ground floor and timber boards where it has them.
     std::optional<double> kit_eaves;
+    std::optional<tiles::KitBand> kit_band;
+    std::optional<tiles::KitBoards> kit_boards;
 };
 
 /// What stage T is given.
@@ -375,6 +425,10 @@ struct Values {
     std::int64_t year = 0;                     ///< the year start_date begins with (0: none)
     std::optional<std::string_view> rmat_draw; ///< the roof material drawn (a kit roof's tile courses)
 };
+
+/// trad['eaves'] of a building with values `v` in a kit of eaves `eaves`: the kit's where the loader's roof (the
+/// tile's, before a quadruple_saltbox is drawn as hipped) is gabled or hipped, else 0.
+[[nodiscard]] double kit_eaves_of(const Values& v, std::optional<double> eaves) noexcept;
 
 /// The material face a building's walls show (material_face's chain without its view's conditions, which never pass
 /// a building from one kind to another): glass where its material drawn is glass; metal where it is metal and its kind
@@ -435,9 +489,11 @@ public:
     std::uint32_t near_slot = 0;
     std::uint32_t far_slot = 0;
     std::uint32_t boat_slot = 0;
-    std::uint32_t windows = 0;       ///< the next window, in the order of the tile's window group of sun samples
-    bool paris = false;              ///< the region's WIN_STYLE is Paris's
-    std::optional<double> kit_eaves; ///< the region's tradition's eaves, where it has a kit (BuildingRegion's)
+    std::uint32_t windows = 0;              ///< the next window, in the order of the tile's window group of sun samples
+    bool paris = false;                     ///< the region's WIN_STYLE is Paris's
+    std::optional<double> kit_eaves;        ///< the region's tradition's eaves, where it has a kit (BuildingRegion's)
+    std::optional<tiles::KitBand> kit_band; ///< and its band and boards, where it has them
+    std::optional<tiles::KitBoards> kit_boards;
     std::uint32_t facade = 0; ///< the current building's plinth's and cornice's slots (TileBuildings::item_facades)
 
 private:

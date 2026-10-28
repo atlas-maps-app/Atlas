@@ -1,8 +1,10 @@
 // The buildings pass's windows (passes/Walls.hpp; shaders/building/windows.slangh): this frame slot's jobs, the
 // compute stage that decides every window of them (draw.slang's windows_cs), and the draws of the near windows' parts,
 // their glass and their frames (window_near_vs with building_fs, window_glass_vs with window_glass_fs,
-// window_frames_vs with window_frames_fs), of the churches' own windows (church_window_vs with window_glass_fs) and of
-// the walls' material faces (material_fill_vs and material_line_vs with material_fs, translucent).
+// window_frames_vs with window_frames_fs), of the churches' own windows (church_window_vs with window_glass_fs), of
+// the walls' material faces (material_fill_vs and material_line_vs with material_fs, translucent), and the records the
+// CPU lays each frame: the hoist beams, a kit's walls' boards' lines and eaves' shadows (roof_line_vs with
+// roof_line_fs, kit_shadow_vs with material_fs) and its roofs' lines.
 #include "base/log.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
@@ -192,6 +194,24 @@ gpu::Result<void> Buildings::prepare_windows(const frame::PassContext& context) 
         ATLAS_GPU_LET(pipeline, frame::make_pipeline(context, desc, frame::Overdraw::translucent));
         w->roof_lines_pipeline = std::move(pipeline);
     }
+    // a kit wall's eaves' shadow: translucent on its wall's plane a lead over its corner boards, the test on and writes
+    // off, over what lies under it (its boards' lines, drawn just before it with the roof lines' pipeline, among them)
+    {
+        gpu::GraphicsDesc desc{
+            .label = {.name = "kit shadows", .module = "building_draw", .configuration = context.configuration},
+            .module = *draw_module_,
+            .vertex = "kit_shadow_vs",
+            .fragment = "material_fs",
+            .layout = *w->layout,
+            .target = context.pass.scene_target(),
+            .depth_test = true,
+            .depth_write = false,
+            .depth_op = vk::CompareOp::eGreater};
+        desc.blends[0] = gpu::Blend::over();
+        if (desc.target.colour_count == 2) desc.blends[1] = gpu::Blend::untouched();
+        ATLAS_GPU_LET(pipeline, frame::make_pipeline(context, desc, frame::Overdraw::translucent));
+        w->kit_shadows_pipeline = std::move(pipeline);
+    }
     windows_ = std::move(w);
     return {};
 }
@@ -209,6 +229,10 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     s.material_lines_now = 0;
     s.beams_now = 0;
     s.roof_lines_now = 0;
+    s.kit_lines_now = 0;
+    s.kit_shadows_now = 0;
+    std::uint32_t kit_lines = 0;
+    std::uint32_t kit_shadows = 0;
     std::vector<std::uint32_t>& w = s.words;
     w.clear();
     const std::span<const std::uint32_t> ranks = state.ranks->table();
@@ -410,27 +434,72 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
         }
     }
     const auto beam_count = static_cast<std::uint32_t>(beams.size() / shaders::BUILDING_BEAM_VECTORS);
+    // the lines' records, with weather by day: a kit's walls' boards' lines (where the view resolves them: a record a
+    // line, its wall's turn and plane), then their eaves' shadows (a record a wall), then its roofs' lines
+    std::vector<hlsl::uint4>& lines = s.roof_line_words;
+    lines.clear();
+    const auto bits = [](float v) { return std::bit_cast<std::uint32_t>(v); };
+    // a tile's item's painter slot and its depth, or none where the frame does not draw it
+    const auto placed_in = [&](const TileDraw& d, std::uint32_t item, std::uint16_t near_slot,
+                               std::uint16_t far_slot) -> std::optional<std::pair<std::uint32_t, double>> {
+        const std::uint32_t row = item < d.rows.size() ? d.rows[item] : shaders::RANK_NONE;
+        const std::uint32_t rank = row < ranks.size() ? ranks[row] : shaders::RANK_NONE;
+        if (rank == shaders::RANK_NONE) return std::nullopt;
+        const bool near = (shaders::rank_detail(rank) & shaders::BUILDING_DETAIL_NEAR) != 0U;
+        return std::pair{shaders::rank_slot(rank) + (near ? near_slot : far_slot),
+                         row < depths.size() ? depths[row] : 0.0};
+    };
+    for (const bool shadows : {false, true}) {
+        for (const TileDraw& d : draws_) {
+            if (!weather || night || d.tile == nullptr || d.tile->kit_walls.empty()) continue;
+            shaders::BuildingPush push{};
+            std::memcpy(&push, d.push.data(), sizeof push);
+            const auto offset = std::bit_cast<hlsl::uint4>(push.place.offset);
+            const auto scale = std::bit_cast<hlsl::uint4>(push.place.scale);
+            for (const BuildingTile::KitWall& k : d.tile->kit_walls) {
+                const hlsl::uint4 test = {bits(k.test[0]), bits(k.test[1]), bits(k.test[2]), k.rgb};
+                if (shadows) {
+                    if (!k.shadow) continue;
+                    const auto at = placed_in(d, k.item, k.shadow_near, k.shadow_far);
+                    if (!at) continue;
+                    const std::array<std::array<float, 3>, 4>& q = k.shade;
+                    const hlsl::uint4 foot = {bits(q[0][0]), bits(q[0][2]), bits(q[1][0]), bits(q[1][2])};
+                    const hlsl::uint4 heights = {bits(q[0][1]), bits(q[2][1]), at->first,
+                                                 shaders::BUILDING_KIT_SHADOW_RGB};
+                    const hlsl::uint4 normal = {bits(k.normal[0]), bits(k.normal[1]), bits(k.normal[2]),
+                                                shaders::BUILDING_KIT_SHADOW_OPACITY};
+                    const hlsl::uint4 on = {test.x, test.y, test.z, 0U};
+                    for (const hlsl::uint4& v : {foot, heights, normal, on, offset, scale}) lines.push_back(v);
+                    ++kit_shadows;
+                    continue;
+                }
+                if (k.boards < 2) continue;
+                const auto at = placed_in(d, k.item, k.lines_near, k.lines_far);
+                if (!at || !kit_lines_shown(at->second, focal, k.spacing)) continue;
+                const std::uint32_t flags =
+                    shaders::BUILDING_ROOF_LINE_ON_WALL | (32U << shaders::BUILDING_ROOF_LINE_OPACITY_SHIFT);
+                const hlsl::uint4 normal = {bits(k.normal[0]), bits(k.normal[1]), bits(k.normal[2]), flags};
+                for (std::uint32_t j = 1; j < k.boards; ++j) {
+                    const auto [a, b] = kit_line_ends(k, j);
+                    const hlsl::uint4 from = {bits(a[0]), bits(a[1]), bits(a[2]), at->first};
+                    const hlsl::uint4 to = {bits(b[0]), bits(b[1]), bits(b[2]), kit_lines_width};
+                    for (const hlsl::uint4& v : {from, to, normal, test, offset, scale}) lines.push_back(v);
+                    ++kit_lines;
+                }
+            }
+        }
+    }
     // a kit roof's lines (each tile's, with weather by day): each slope's tile courses where the view resolves them, a
     // record a course with its slope's turn, and the lit ridges whichever way they turn (windows.slangh's
     // BuildingRoofLine)
-    std::vector<hlsl::uint4>& lines = s.roof_line_words;
-    lines.clear();
     for (const TileDraw& d : draws_) {
         if (!weather || night || d.tile == nullptr || (d.tile->courses.empty() && d.tile->ridges.empty())) continue;
         shaders::BuildingPush push{};
         std::memcpy(&push, d.push.data(), sizeof push);
         const auto offset = std::bit_cast<hlsl::uint4>(push.place.offset);
         const auto scale = std::bit_cast<hlsl::uint4>(push.place.scale);
-        const auto bits = [](float v) { return std::bit_cast<std::uint32_t>(v); };
-        // an item's painter slot and its depth, or none where the frame does not draw it
-        const auto placed = [&](std::uint32_t item, std::uint16_t near_slot,
-                                std::uint16_t far_slot) -> std::optional<std::pair<std::uint32_t, double>> {
-            const std::uint32_t row = item < d.rows.size() ? d.rows[item] : shaders::RANK_NONE;
-            const std::uint32_t rank = row < ranks.size() ? ranks[row] : shaders::RANK_NONE;
-            if (rank == shaders::RANK_NONE) return std::nullopt;
-            const bool near = (shaders::rank_detail(rank) & shaders::BUILDING_DETAIL_NEAR) != 0U;
-            return std::pair{shaders::rank_slot(rank) + (near ? near_slot : far_slot),
-                             row < depths.size() ? depths[row] : 0.0};
+        const auto placed = [&](std::uint32_t item, std::uint16_t near_slot, std::uint16_t far_slot) {
+            return placed_in(d, item, near_slot, far_slot);
         };
         for (const BuildingTile::Courses& c : d.tile->courses) {
             const auto at = placed(c.item, c.near_slot, c.far_slot);
@@ -458,6 +527,7 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
             for (const hlsl::uint4& v : {from, to, normal, test, offset, scale}) lines.push_back(v);
         }
     }
+    static_assert(shaders::BUILDING_KIT_SHADOW_VECTORS == shaders::BUILDING_ROOF_LINE_VECTORS);
     const auto line_count = static_cast<std::uint32_t>(lines.size() / shaders::BUILDING_ROOF_LINE_VECTORS);
     const auto jobs = static_cast<std::uint32_t>(w.size() / job_words);
     if (jobs == 0 && beam_count == 0 && line_count == 0) return;
@@ -562,7 +632,9 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
     s.material_fills_now = material_fills;
     s.material_lines_now = material_lines;
     s.beams_now = beam_count;
-    s.roof_lines_now = line_count;
+    s.roof_lines_now = line_count - kit_lines - kit_shadows;
+    s.kit_lines_now = kit_lines;
+    s.kit_shadows_now = kit_shadows;
     window_counts_ = {.jobs = jobs,
                       .walls = walls,
                       .windows = records,
@@ -572,7 +644,9 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
                       .material_fills = material_fills,
                       .material_lines = material_lines,
                       .beams = beam_count,
-                      .roof_lines = line_count};
+                      .roof_lines = s.roof_lines_now,
+                      .kit_lines = s.kit_lines_now,
+                      .kit_shadows = s.kit_shadows_now};
 }
 
 void Buildings::record_window_decide(const frame::Recording& recording) {
@@ -696,10 +770,31 @@ void Buildings::record_roof_lines(const frame::Recording& recording) {
     shaders::BuildingPush push{};
     push.at = {static_cast<std::uint32_t>(recording.frame.pass.spec().config.samples()), 0U, 0U, 0U};
     cmd.pushConstants<shaders::BuildingPush>(*s.layout, frame::push_stages, 0, push);
-    // a kit roof's tile courses and lit ridges: an instance a record, its quad
+    // a kit roof's tile courses and lit ridges: an instance a record, its quad (after the kit walls' records)
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *s.roof_lines_pipeline);
-    cmd.draw(shaders::BUILDING_ROOF_LINE_VERTICES, s.roof_lines_now, 0, 0);
+    cmd.draw(shaders::BUILDING_ROOF_LINE_VERTICES, s.roof_lines_now, 0, s.kit_lines_now + s.kit_shadows_now);
     recording.counters.draw("roof lines", std::uint64_t{s.roof_lines_now} * 2, s.roof_lines_now);
+}
+
+void Buildings::record_kit_walls(const frame::Recording& recording) {
+    if (windows_ == nullptr || (windows_->kit_lines_now == 0 && windows_->kit_shadows_now == 0)) return;
+    const Windows& s = *windows_;
+    const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *s.layout, 2, *s.sets[s.slot], {});
+    shaders::BuildingPush push{};
+    push.at = {static_cast<std::uint32_t>(recording.frame.pass.spec().config.samples()), 0U, 0U, 0U};
+    cmd.pushConstants<shaders::BuildingPush>(*s.layout, frame::push_stages, 0, push);
+    // a kit wall's boards' lines (an instance a record, its quad), then its eaves' shadows over them (a fan each)
+    if (s.kit_lines_now > 0) {
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *s.roof_lines_pipeline);
+        cmd.draw(shaders::BUILDING_ROOF_LINE_VERTICES, s.kit_lines_now, 0, 0);
+        recording.counters.draw("kit lines", std::uint64_t{s.kit_lines_now} * 2, s.kit_lines_now);
+    }
+    if (s.kit_shadows_now > 0) {
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *s.kit_shadows_pipeline);
+        cmd.draw(shaders::BUILDING_KIT_SHADOW_VERTICES, s.kit_shadows_now, 0, s.kit_lines_now);
+        recording.counters.draw("kit shadows", std::uint64_t{s.kit_shadows_now} * 3, s.kit_shadows_now);
+    }
 }
 
 } // namespace atlas::passes

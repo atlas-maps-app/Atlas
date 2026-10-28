@@ -330,6 +330,19 @@ Ridge ridge_of(std::span<const V2> poly, bool across) noexcept {
     return r;
 }
 
+V2 kit_ridge(std::span<const V2> poly, bool across) noexcept {
+    // trad_ridge: ux, uz = c - a over the first longest side, over Lg = math.hypot(ux, uz) or 1; (-uz, ux) across
+    const std::size_t n = poly.size();
+    const std::size_t i0 = longest_first(poly);
+    double ux = poly[(i0 + 1) % n].x - poly[i0].x;
+    double uz = poly[(i0 + 1) % n].z - poly[i0].z;
+    double lg = pm::hypot(ux, uz);
+    if (lg == 0.0) lg = 1.0;
+    ux /= lg;
+    uz /= lg;
+    return across ? V2{-uz, ux} : V2{ux, uz};
+}
+
 V3 on_ridge(const Ridge& r, double inset, double h, const V3& p) noexcept {
     const double sv = pm::min(r.s1 - inset, pm::max(r.s0 + inset, ((p.x - r.cx) * r.ux) + ((p.z - r.cz) * r.uz)));
     return {r.cx + (r.ux * sv), h, r.cz + (r.uz * sv)};

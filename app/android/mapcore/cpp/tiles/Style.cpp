@@ -400,7 +400,8 @@ Result<Style> Style::of(const StyleTables& tables) {
             s.no_shadows = ns->boolean().value_or(false) || ns->number().value_or(0.0) != 0.0;
         }
     }
-    // the building tradition, whole, where the pack has one: what its kit's details read of it (P.get('eaves', 0))
+    // the building tradition, whole, where the pack has one: what its kit's details read of it (P.get('eaves', 0), its
+    // base_band's h and colour, its boards' spacing and corner)
     if (const std::optional<Value> trad = tables.table("tradition")) {
         if (trad->type() != ValueType::map) {
             r.fail(Fault::bad_value, "tradition");
@@ -408,6 +409,24 @@ Result<Style> Style::of(const StyleTables& tables) {
             KitStyle kit;
             if (const auto eaves = trad->find("eaves"); eaves && !eaves->is_null()) {
                 kit.eaves = r.number_of(eaves, "tradition", "eaves");
+            }
+            // a detail's table, where the tradition has one (P.get(...) truthy: a map)
+            const auto detail = [&](std::string_view key) -> std::optional<Value> {
+                std::optional<Value> v = trad->find(key);
+                if (!v || v->is_null()) return std::nullopt;
+                if (v->type() != ValueType::map) {
+                    r.fail(Fault::bad_value, "tradition", key);
+                    return std::nullopt;
+                }
+                return v;
+            };
+            if (const std::optional<Value> band = detail("base_band")) {
+                kit.band = KitBand{.h = r.number(band, "tradition.base_band", "h"),
+                                   .colour = r.colour(band, "tradition.base_band", "colour")};
+            }
+            if (const std::optional<Value> boards = detail("boards")) {
+                kit.boards = KitBoards{.spacing = r.number(boards, "tradition.boards", "spacing"),
+                                       .corner = r.colour(boards, "tradition.boards", "corner")};
             }
             s.kit = kit;
         }

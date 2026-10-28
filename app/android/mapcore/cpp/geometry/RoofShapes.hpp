@@ -101,6 +101,10 @@ struct Ridge {
 /// The ridge of `poly`, its direction turned a quarter where `across` (roof:orientation=across).
 [[nodiscard]] Ridge ridge_of(std::span<const V2> poly, bool across) noexcept;
 
+/// Amsterdam.tradRidge: a kit roof's ridge, a unit vector of the ground along the first longest side, turned a quarter
+/// where `across` (roof:orientation=across).
+[[nodiscard]] V2 kit_ridge(std::span<const V2> poly, bool across) noexcept;
+
 /// `onRidge(p)`: the eave point p projected onto the ridge's line at height h, clamped `inset` within its ends.
 [[nodiscard]] V3 on_ridge(const Ridge& r, double inset, double h, const V3& p) noexcept;
 
