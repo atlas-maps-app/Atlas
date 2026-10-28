@@ -45,6 +45,9 @@ ROOF = {
     'lead': ('metal', '#7A8187'), 'metal_light': ('metal', '#A4A9AD'), 'metal_grey': ('metal', '#8F969B'), 'bitumen': ('tar_paper', '#56585C'),
     'gravel': ('gravel', '#9C988F'), 'concrete': ('concrete', '#A7A49E'), 'glass': ('glass', '#C3D3DA'),
 }
+# New looks: the share of homes' guessed gabled roofs in the canal ring pack's red tiles (tiles_red, as its generic looks drew
+# them): about one canal house in four has red tiles in the summer aerial photo (PDOK, cleaned, 119 houses counted, 28 Oct 2026)
+RED_TILES = 0.25
 # Paris stone is not one tone: the guessed building:colour of an unmapped limestone front is one of these, per building
 STONE_FR = ['#DCD0B6', '#D3C4A6', '#E2D8C3', '#CDC1A8', '#D8C8AA', '#C8BCA3', '#E0D2B5', '#D6CCB9']
 NO_WIN = {'industrial', 'hangar', 'tank', 'canopy', 'shed', 'parking', 'greenhouse', 'bunker', 'caravan', 'kiosk', 'terminal'}
@@ -509,6 +512,8 @@ def apply(S, region, landuse_at=None, keep_homes=False):
                     b['rmat_draw'] = 'roof_tiles' if (b.get('roof') in SLOPED) else 'tar_paper'; g['roof:material'] = True
                 else: b['rmat_draw'] = t['roof:material']
                 b['look_why'] = '%s · %s' % (kind_label(kind), why)
+                if b.get('roof') == 'gabled' and g.get('roof:colour') and random.Random(b['id'] * 31 + 5).random() < RED_TILES:
+                    b['rcol'] = ROOF['tiles_red'][1]; b['rcol_draw'] = jitter(b['rcol'], b['id'] + 7, 0.06)      # the canal ring pack's red
                 if lw:          # learned palettes: its mapped neighbours' colours over the varied brick guessed for it
                     lwall, lroof = lw.get('building:colour'), lw.get('roof:colour')
                     if lwall: b['col'] = lwall['value']; b['col_draw'] = jitter(colour_hex(lwall['value']), b['id']); b['mat_draw'] = lwall['material'] or b.get('mat_draw')

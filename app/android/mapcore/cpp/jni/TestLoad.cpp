@@ -178,7 +178,7 @@ void looks(Line& l, const load::Building& b) {
     l.field("col_draw");
     if (there(full)) l.maybe(b.col_draw);
     l.field("rcol_draw");
-    if (there(full)) l.maybe(b.rcol_draw);
+    if (there(full || b.rcol_draw.has_value())) l.maybe(b.rcol_draw); // a New-looks home in the red tiles has one too
     l.field("no_win");
     if (there(full)) l.flag(b.no_win);
     l.field("look_why");

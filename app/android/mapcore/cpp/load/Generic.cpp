@@ -66,6 +66,9 @@ constexpr std::array<Keyed, 11> roofs = {{
     {.key = "concrete", .material = "concrete", .colour = "#A7A49E"},
     {.key = "glass", .material = "glass", .colour = "#C3D3DA"},
 }};
+/// New looks: the share of homes' guessed gabled roofs in the canal ring pack's red tiles (tiles_red, as its generic
+/// looks drew them): about one canal house in four has red tiles in the summer aerial photo (28 October 2026).
+constexpr double red_tiles = 0.25;
 constexpr std::array<Pair, 11> mat_draw = {{
     {.key = "brick", .value = "#9C5A45"},
     {.key = "stone", .value = "#CFC6B4"},
@@ -1039,6 +1042,11 @@ void apply_looks(Scene& s, const Looks& looks) {
                         b.rmat_draw = t.get("roof:material");
                     }
                     b.look_why = std::format("{} · {}", kind_label(kind), why);
+                    if (b.roof == "gabled" && g.has(Guess::roof_colour) &&
+                        pymath::PyRandom((b.id * 31) + 5).random() < red_tiles) {
+                        b.rcol = keyed(roofs, "tiles_red").colour; // the canal ring pack's red
+                        b.rcol_draw = jitter(*b.rcol, b.id + 7, 0.06);
+                    }
                     continue;
                 }
             }

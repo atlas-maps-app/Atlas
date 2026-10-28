@@ -48,8 +48,9 @@ inline constexpr double window_margin = 200.0;
 /// data (the port's packs name EngineVersion.ID there): core-p2 carries gantries and conveyors, which core-p1 left out;
 /// core-p3 a crane's form; core-p4 the New looks in the Netherlands; core-p5 a tradition's kit and its details (the
 /// building flags, the shutters' colour and the party walls), which core-p4 left out; core-p6 the street wall each door
-/// and shopfront opens onto (the doors and their house numbers), which core-p5 left out.
-inline constexpr std::string_view stage_p_version = "core-p6";
+/// and shopfront opens onto (the doors and their house numbers), which core-p5 left out; core-p7 the New looks' red
+/// tiles on about one canal house in four (the canal ring pack's tiles_red), which core-p6 drew all dark.
+inline constexpr std::string_view stage_p_version = "core-p7";
 
 /// Whether a window of `country` draws the renders' New looks instead of its tradition's kit, and the living map's
 /// light (no TONE: frame/MapFrame.hpp's with_pack): the Netherlands, as the bundled Westerkerk draws.
