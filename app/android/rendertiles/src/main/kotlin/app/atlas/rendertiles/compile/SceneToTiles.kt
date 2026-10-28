@@ -638,6 +638,28 @@ class SceneToTiles(
         return null
     }
 
+    /**
+     * The street wall of building [b] a door or shopfront at ([x], [z]) opens onto, as the port's `streetWall` chooses
+     * it (amsterdam.py's street_wall), named by its first corner's index in the building's ring: the first wall whose
+     * point and direction are the port's to the bit (a later wall the same would score the same, and street_wall keeps
+     * the first of the least score). Null where the port finds none.
+     */
+    private fun wallCorner(b: Dict, x: Double, z: Double): Int? {
+        val w = Amsterdam.streetWall(S, b, x, z) ?: return null
+        val poly = points(b)
+        for (i in poly.indices) {
+            val a = poly[i]; val c = poly[(i + 1) % poly.size]
+            // street_wall's arithmetic for this wall
+            val ux = c.x - a.x; val uz = c.y - a.y; val l2 = ux * ux + uz * uz
+            if (l2 < 1.5) continue
+            val l = PyMath.sqrt(l2)
+            val tt = PyMath.max(0.15, PyMath.min(0.85, ((x - a.x) * ux + (z - a.y) * uz) / l2))
+            val q = doubleArrayOf(a.x + ux * tt, a.y + uz * tt, ux / l, uz / l)
+            if ((0 until 4).all { q[it].toRawBits() == w[it].toRawBits() }) return i
+        }
+        throw IllegalStateException("building ${b["id"]}: no wall of its ring is the port's street wall for ($x, $z)")
+    }
+
     /** `re.match(r'\d+', s)` read as an int, as `amsterdam.py`'s doors read a house number: null without leading digits. */
     private fun leadingNumber(s: String): Long? {
         var i = 0
@@ -676,8 +698,16 @@ class SceneToTiles(
                 }
                 else -> drop(Layer.THING, k, v, what)
             }
-            if (facades) doorBuilding(n)?.let { fields["building"] = it.toLong() }
-            out += Pending(Layer.THING, fields, p, widen(pointBox(p), Drawn.THING), cmUp(Drawn.THING), i.toLong())
+            // a door or a shopfront goes with its building, in whose tile the frame finds the building's ring
+            var ref = p
+            if (facades) doorBuilding(n)?.let { bi ->
+                fields["building"] = bi.toLong()
+                val b = buildings[bi]
+                wallCorner(b, n["x"] as Double, n["z"] as Double)?.let { fields["wall"] = it.toLong() }
+                val c = Real.centroid(points(b))
+                ref = nearest(c.x, c.y)
+            }
+            out += Pending(Layer.THING, fields, ref, widen(pointBox(p), Drawn.THING), cmUp(Drawn.THING), i.toLong())
         }
         return out
     }

@@ -180,6 +180,7 @@ class LayersTest {
             fun facadeOf(x: Double, z: Double): Int? = blds.firstOrNull { b -> val poly = b["poly"] as List<V2>; poly.minOf { it.x } <= x && x <= poly.maxOf { it.x } && poly.minOf { it.y } <= z && z <= poly.maxOf { it.y } && app.atlas.render.Real.pip(x, z, poly) }?.let { bIndex[it] }
             var drawn = 0
             var doors = 0
+            var walls = 0
             for ((i, n) in dicts(S, "nodes").withIndex()) {
                 if (n in trees) continue
                 val t = tags(n)
@@ -204,9 +205,30 @@ class LayersTest {
                 assertEquals("${p.name} node $i door number of $num", lead, f["door_number"])
                 assertEquals("${p.name} node $i's facade", building?.toLong(), f["building"])
                 if (building != null) doors++
+                // the street wall it opens onto: from its corner `wall` the building's ring gives the port's point on it
+                // and its direction, to the bit (street_wall's arithmetic for that wall)
+                val x = n["x"] as Double
+                val z = n["z"] as Double
+                val wall = building?.let { Amsterdam.streetWall(S, dicts(S, "buildings")[it], x, z) }
+                assertEquals("${p.name} node $i's street wall", wall != null, f["wall"] != null)
+                if (wall != null) {
+                    @Suppress("UNCHECKED_CAST")
+                    val poly = dicts(S, "buildings")[building!!]["poly"] as List<V2>
+                    val k = (f["wall"] as Long).toInt()
+                    val a = poly[k]
+                    val c = poly[(k + 1) % poly.size]
+                    val ux = c.x - a.x
+                    val uz = c.y - a.y
+                    val l2 = ux * ux + uz * uz
+                    val tt = PyMath.max(0.15, PyMath.min(0.85, ((x - a.x) * ux + (z - a.y) * uz) / l2))
+                    val l = PyMath.sqrt(l2)
+                    val got = doubleArrayOf(a.x + ux * tt, a.y + uz * tt, ux / l, uz / l)
+                    assertTrue("${p.name} node $i's street wall from corner $k", (0 until 4).all { got[it].toRawBits() == wall[it].toRawBits() })
+                    walls++
+                }
             }
             assertEquals(drawn, things.size)
-            println("LAYERS ${p.name}: $drawn things are exactly the nodes the renders draw (facades ${if (facades) "on" else "off"}), $doors on the facade of their building")
+            println("LAYERS ${p.name}: $drawn things are exactly the nodes the renders draw (facades ${if (facades) "on" else "off"}), $doors on the facade of their building, $walls with its street wall")
         }
     }
 
