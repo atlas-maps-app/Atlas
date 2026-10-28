@@ -18,10 +18,12 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <format>
 #include <map>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -127,12 +129,24 @@ Checked check_tile(const gm::TileBuildings& g, const atlas::sun::SunTile& st) {
         CHECK((wall.flags & gm::prim_flag::far) != 0);
         CHECK(wall.cell == w.cell);
         const gm::BuildingItem& item = g.items[wall.item];
-        // its slots: its shop glazing's, then its windows', and its building's plinth's and cornice's after its walls
-        const std::uint32_t taken =
-            ((w.flags & gm::window_flag::glazing) != 0 ? 1U : 0U) + (w.levels > 0 ? gm::window_slots : 0U);
+        // its slots: its shop glazing's, its material face's, then its windows' (or a church's own), and its
+        // building's plinth's and cornice's after its walls
+        const std::uint32_t taken = ((w.flags & gm::window_flag::glazing) != 0 ? 1U : 0U) +
+                                    gm::material_slots(w.material) +
+                                    (w.cols > 0 || w.church_windows > 0 ? gm::window_slots : 0U);
         CHECK(w.near_slot + taken <= item.near_slots);
         CHECK(w.far_slot + taken <= item.far_slots);
-        CHECK((w.levels > 0) == (w.cols > 0));
+        // rows with its bays, its windows'; without bays only its material face's storeys
+        if (w.cols > 0) {
+            CHECK(w.levels > 0);
+        } else {
+            CHECK((w.levels > 0) == (w.material != gm::Material::none));
+        }
+        if (w.material != gm::Material::none) {
+            CHECK(w.elen > 2.0);
+            CHECK(w.fh > 0.0);
+            CHECK(w.levels >= 1);
+        }
         if ((w.flags & (gm::window_flag::plinth | gm::window_flag::cornice)) != 0) {
             REQUIRE(wall.item < g.item_facades.size());
             const std::uint32_t slots = g.item_facades[wall.item];
@@ -341,6 +355,39 @@ TEST_CASE("buildings: stage T of a synthetic tile, every roof shape and a houseb
     }
 }
 
+TEST_CASE("buildings: a building's material face, as material_face's chain takes its material drawn and its kind") {
+    const auto of = [](std::optional<std::string_view> mat, std::optional<std::string_view> kind, std::int64_t levels) {
+        gm::Values v;
+        v.mat_draw = mat;
+        v.kind = kind;
+        v.has_levels = true;
+        v.levels = levels;
+        return gm::material_of(v);
+    };
+    // glass, whatever its kind; metal with no kind or an industrial one
+    CHECK(of("glass", "home", 3) == gm::Material::glass);
+    CHECK(of("glass", "parking", 3) == gm::Material::glass);
+    CHECK(of("metal", std::nullopt, 1) == gm::Material::metal);
+    CHECK(of("metal", "hangar", 1) == gm::Material::metal);
+    CHECK(of("metal", "home", 1) == gm::Material::none);
+    // a stone, limestone or plaster front of 5 storeys or more of a home, an office or a hotel; levels 0 counts as 1
+    CHECK(of("stone", "home", 5) == gm::Material::balconies);
+    CHECK(of("limestone", "office", 9) == gm::Material::balconies);
+    CHECK(of("plaster", "hotel", 6) == gm::Material::balconies);
+    CHECK(of("plaster", "hotel", 4) == gm::Material::none);
+    CHECK(of("brick", "home", 9) == gm::Material::none);
+    CHECK(of("stone", "church", 9) == gm::Material::none);
+    // a parking garage of any other material (metal's industrial kinds are not its)
+    CHECK(of("brick", "parking", 0) == gm::Material::parking);
+    CHECK(of("metal", "parking", 4) == gm::Material::parking);
+    CHECK(of(std::nullopt, "parking", 2) == gm::Material::parking);
+    CHECK(of(std::nullopt, std::nullopt, 2) == gm::Material::none);
+    // the slots: a glass wall's fill and lines, any other one's path
+    CHECK(gm::material_slots(gm::Material::glass) == 2);
+    CHECK(gm::material_slots(gm::Material::parking) == 1);
+    CHECK(gm::material_slots(gm::Material::none) == 0);
+}
+
 TEST_CASE("buildings: stage T of every bundled tile, at the levels its views load at, held to K8's samples") {
     const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
     if (dir.empty()) {
@@ -376,6 +423,7 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
         std::size_t tiles = 0;
         std::size_t windows = 0;
         std::size_t walls = 0;
+        std::array<std::size_t, 5> faced{}; // the facade walls by their material face (gm::Material)
         double ms = 0;
         for (const std::uint8_t level : levels) {
             for (const tl::ChunkRef& chunk : pack->chunks().level(head->levels[0])) {
@@ -410,6 +458,7 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
                 sampled += c.sampled;
                 windows += g.windows;
                 walls += g.window_walls.size();
+                for (const gm::WindowWall& ww : g.window_walls) ++faced[static_cast<std::size_t>(ww.material)];
                 wrong += c.wrong;
                 ++tiles;
             }
@@ -417,6 +466,8 @@ TEST_CASE("buildings: stage T of every bundled tile, at the levels its views loa
         MESSAGE(std::string(name), ": ", tiles, " tiles over ", levels.size(), " levels, ", prims, " primitives, ",
                 sampled, " with a sun sample, ", windows, " windows on ", walls, " walls, ", wrong,
                 " not K8's; stage T ", ms / static_cast<double>(tiles), " ms a tile");
+        MESSAGE(std::string(name), ": material faces on ", faced[1], " glass walls, ", faced[2], " metal, ", faced[3],
+                " with balconies, ", faced[4], " of parking garages");
         MESSAGE(std::string(name), ": a tile's range of the walls heap ",
                 static_cast<double>(all_bytes) / static_cast<double>(tiles) / (1 << 20), " MB on average, the densest ",
                 static_cast<double>(most_bytes) / (1 << 20), " MB: ", densest);

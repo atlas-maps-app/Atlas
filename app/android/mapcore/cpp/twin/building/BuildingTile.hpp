@@ -92,6 +92,16 @@ struct BuildingTile {
     /// Each windowed wall's church windows (geometry::WindowWall's, each count at most 255, as the frame's jobs carry
     /// them): how many, bits 0-15, each one's transoms, 16-31; 0 where it has none.
     std::vector<std::uint32_t> window_churches;
+    /// Each windowed wall's material face (geometry::WindowWall's), as the frame's jobs decide it each frame in double:
+    /// its kind, its storeys, their height and its length, and a metal wall's ribs' colour.
+    struct MaterialWall {
+        geometry::Material kind = geometry::Material::none;
+        std::uint16_t levels = 0;
+        double fh = 0.0;
+        double elen = 0.0;
+        std::uint32_t ribs = 0;
+    };
+    std::vector<MaterialWall> window_materials;
     /// Each item's plinth's and cornice's slots (geometry::TileBuildings::item_facades).
     std::vector<std::uint32_t> item_facades;
     /// Each face's light inputs (the CPU's light, per tile and moment, and the twin's).
@@ -124,6 +134,21 @@ inline constexpr double sash_least = 0.7;
 /// The width of a church's windows' leading drawn at depth `depth` (the port's d) by a camera of focal length `focal`
 /// (CSS px, in double): max(0.4, 0.05 · focal / max(d, 1)), in hundredths of a CSS px as the port prints it ('%.2f').
 [[nodiscard]] std::uint16_t church_leading(double depth, double focal);
+
+/// What a wall's material face draws at depth `depth` (the port's d) by a camera of focal length `focal` (CSS px), at
+/// night or by day, in double as render/amsterdam.py's material_face compares (ppm = focal / max(d, 1)): its fill
+/// records (a glass wall's glass; a parking garage's decks where fh · ppm > 2.0), its line records (a glass wall's
+/// floors where fh · ppm > 2.4, then its mullions; a metal wall's ribs by day; a stone front's balconies where fh · ppm
+/// > 2.2), the jobs' word of them (how many floors, decks or balconies, bits 0-11; the mullions' or ribs' n, or the
+/// balconies' width in hundredths of a CSS px as the port prints it, bits 12-31) and its ribs' colour (0xRRGGBB).
+struct MaterialChoice {
+    std::uint32_t fills = 0;
+    std::uint32_t lines = 0;
+    std::uint32_t counts = 0;
+    std::uint32_t ribs = 0;
+};
+[[nodiscard]] MaterialChoice material_choice(const BuildingTile::MaterialWall& m, bool night, double depth,
+                                             double focal);
 
 /// A wall's windows' frames' width and their sash bars' (0: none), in tenths of a CSS px as the port prints them.
 struct WindowWidths {

@@ -307,13 +307,16 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
             const std::uint32_t rank = row < ranks_.size() ? ranks_[row] : shaders::RANK_NONE;
             const bool windows_drawn = shaders::building_windows_drawn(theme_flags, place, w, f, rank);
             const bool facades = shaders::building_facades_drawn(theme_flags, place, f, rank);
-            if (!windows_drawn && !facades) continue;
+            const bool materials = w.material != shaders::BUILDING_MATERIAL_NONE &&
+                                   shaders::building_materials_drawn(theme_flags, place, f, rank);
+            if (!windows_drawn && !facades && !materials) continue;
             const std::uint32_t detail = shaders::rank_detail(rank);
             const bool near_band = (detail & shaders::BUILDING_DETAIL_NEAR) != 0U;
-            // the wall's first slot (its shop glazing's where it has one), then its windows'
+            // the wall's first slot (its shop glazing's where it has one), then its material face's, then its windows'
             const std::uint32_t first_slot = shaders::rank_slot(rank) + (near_band ? w.near_slot : w.far_slot);
-            const std::uint32_t window_slot =
+            const std::uint32_t material_slot =
                 first_slot + ((w.flags & shaders::BUILDING_WINDOW_GLAZING) != 0U ? 1U : 0U);
+            const std::uint32_t window_slot = material_slot + shaders::building_material_slots(w.material);
             const hlsl::float4 wall_plane = shaders::building_window_plane(cam, place, f);
             if (facades) {
                 // its shop glazing by day (its own path, after its cells), its plinth and cornice for its building's
@@ -352,7 +355,8 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
                                                  .frame = shop_frame,
                                                  .glass = glass,
                                                  .top = top,
-                                                 .bottom = bottom});
+                                                 .bottom = bottom,
+                                                 .shop = true});
                             depths_->push_back(std::move(d));
                         }
                         ++elements_;
@@ -396,6 +400,11 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
                         }
                     }
                 }
+            }
+            // its material face, with weather nearer than 1.35 times win_d: after its shop glazing, before its windows
+            if (materials && i < b.window_materials.size()) {
+                material_face(wall, f, place, wall_plane, w, b.window_materials[i], material_slot,
+                              item_of(b, wall.item), row < distances_.depth.size() ? distances_.depth[row] : 0.0);
             }
             // a church's own windows, with weather nearer than 520 m (none of its plain ones then)
             const std::uint32_t church = i < b.window_churches.size() ? b.window_churches[i] : 0U;
@@ -733,6 +742,107 @@ void BuildingTwin::church_windows(const shaders::BuildingPrim& wall, const shade
             if (bar.count != 0) bars.bars.push_back(bar);
         }
         d.arches.push_back(std::move(bars));
+        depths_->push_back(std::move(d));
+    }
+    ++elements_;
+}
+
+void BuildingTwin::material_face(const shaders::BuildingPrim& wall, const shaders::BuildingFace& f,
+                                 const shaders::TilePlace& place, hlsl::float4 plane,
+                                 const shaders::BuildingWindowWall& w, const passes::BuildingTile::MaterialWall& m,
+                                 std::uint32_t slot, std::int32_t item, double depth) {
+    const shaders::FrameCamera& cam = block_.camera;
+    const std::uint32_t theme_flags = block_.theme.flags.x;
+    const bool night = (theme_flags & shaders::THEME_NIGHT) != 0U;
+    // as the jobs carry it (windows_cs's): its fills and lines, how many floors, decks or balconies, n or the width
+    const passes::MaterialChoice c = passes::material_choice(m, night, depth, distances_.focal);
+    const std::uint32_t count = c.counts & 0xFFFU;
+    const std::uint32_t n = c.counts >> 12U;
+    const bool glass = w.material == shaders::BUILDING_MATERIAL_GLASS;
+    // the fills, each a path of its own: a glass wall's glass (the gradient `glass` by day), a parking garage's decks
+    const shaders::BuildingMaterialPaint fill =
+        shaders::building_material_fill(block_.windows, theme_flags, w.material);
+    for (std::uint32_t k = 0; k < c.fills; ++k) {
+        const shaders::BuildingPrim q = glass ? shaders::building_material_glass(wall, f.normal)
+                                              : shaders::building_material_deck(wall, f.normal, w.levels, k);
+        const shaders::BuildingWindowShape s = shaders::building_window_on_plane(
+            cam, plane,
+            shaders::building_window_over(shaders::building_window_cut(cam, place, q),
+                                          glass ? shaders::BUILDING_MATERIAL_GLASS_AREA
+                                                : shaders::BUILDING_MATERIAL_DECK_AREA));
+        if (s.count == 0) continue;
+        points_.clear();
+        subpaths_.clear();
+        float top = 0.0F;
+        float bottom = 0.0F;
+        for (std::uint32_t i = 0; i < s.count; ++i) {
+            const hlsl::float2 v = shaders::building_window_corner(s, i);
+            top = i == 0 || v.y < top ? v.y : top;
+            bottom = i == 0 || v.y > bottom ? v.y : bottom;
+            points_.push_back({.x = v.x, .y = v.y});
+        }
+        subpaths_.push_back({.points = points_, .closed = true});
+        Style style{};
+        style.fill = fill.paint.gradient ? Paint::gradient(gradients_.glass) : Paint::colour(argb_of(fill.paint.top));
+        style.join = Join::round;
+        out_.at(slot, group_, item);
+        out_.path(style, subpaths_, {.opacity = fill.opacity});
+        if (depths_ != nullptr) {
+            ElementDepth d{.edged = true, .tile = tile_};
+            d.materials.push_back({.shapes = {s},
+                                   .lines = false,
+                                   .slot = slot,
+                                   .plane = plane,
+                                   .lead = shaders::building_material_lead(w.material),
+                                   .paint = fill.paint,
+                                   .top = top,
+                                   .bottom = fill.paint.gradient ? bottom : top,
+                                   .opacity = fill.opacity});
+            depths_->push_back(std::move(d));
+        }
+        ++elements_;
+    }
+    if (c.lines == 0) return;
+    // the lines, one path (the port's even where none of them projects): a glass wall's floors and mullions, a metal
+    // one's ribs, a stone front's balconies, an open subpath each, after a glass wall's fill
+    const std::uint32_t floors = glass ? count : 0U;
+    const std::uint32_t line_slot = slot + (glass ? 1U : 0U);
+    const std::uint32_t style_word = w.material == shaders::BUILDING_MATERIAL_BALCONIES ? n : c.ribs;
+    const float width = shaders::building_material_width(w.material, style_word);
+    const shaders::BuildingMaterialPaint lines = shaders::building_material_lines(theme_flags, w.material, style_word);
+    std::vector<shaders::BuildingWindowShape> bars;
+    points_.clear();
+    subpaths_.clear();
+    for (std::uint32_t k = 0; k < c.lines; ++k) {
+        const shaders::BuildingMaterialLine l = shaders::building_material_line(
+            cam, place, wall, f.normal, shaders::building_material_ends(wall, w.material, w.levels, floors, n, k));
+        if (!l.drawn) continue;
+        points_.push_back({.x = l.p0.x, .y = l.p0.y});
+        points_.push_back({.x = l.p1.x, .y = l.p1.y});
+        const shaders::BuildingWindowShape bar =
+            shaders::building_material_bar(shaders::building_material_line_on_plane(cam, plane, l), width / 2);
+        if (bar.count != 0) bars.push_back(bar);
+    }
+    for (std::size_t k = 0; k < points_.size(); k += 2) {
+        subpaths_.push_back({.points = std::span<const Point>(points_).subspan(k, 2), .closed = false});
+    }
+    Style style{};
+    style.join = Join::round;
+    style.stroke = Paint::colour(argb_of(lines.paint.top));
+    style.stroke_width = width;
+    out_.at(line_slot, group_, item);
+    out_.path(style, subpaths_, {.opacity = lines.opacity});
+    if (depths_ != nullptr) {
+        ElementDepth d{.edged = true, .tile = tile_};
+        d.materials.push_back({.shapes = std::move(bars),
+                               .lines = true,
+                               .slot = line_slot,
+                               .plane = plane,
+                               .lead = shaders::building_material_lead(w.material),
+                               .paint = lines.paint,
+                               .top = 0.0F,
+                               .bottom = 0.0F,
+                               .opacity = lines.opacity});
         depths_->push_back(std::move(d));
     }
     ++elements_;

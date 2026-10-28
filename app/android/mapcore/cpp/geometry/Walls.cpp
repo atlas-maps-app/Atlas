@@ -7,6 +7,7 @@
 #include "base/assert.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "geometry/ChurchWindows.hpp"
+#include "geometry/Ground.hpp"
 #include "geometry/Houseboats.hpp"
 #include "geometry/Roofs.hpp"
 #include "tiles/Simplify.hpp"
@@ -63,6 +64,7 @@ struct Slots {
     std::uint8_t tag_direction;
     std::uint8_t levels;
     std::uint8_t mat_draw;
+    std::uint8_t kind;
     std::uint8_t no_win;
     std::uint8_t year;
 };
@@ -84,6 +86,7 @@ consteval Slots slots_in(const Columns& c) {
             tl::slot_of(c, "tag:roof:direction"),
             tl::slot_of(c, "levels"),
             tl::slot_of(c, "mat_draw"),
+            tl::slot_of(c, "kind"),
             tl::slot_of(c, "no_win"),
             tl::slot_of(c, "year")};
 }
@@ -112,6 +115,7 @@ constexpr Slots variant_slots = slots_in(tl::variant::columns);
     v.has_levels = levels.has_value();
     v.levels = levels.value_or(0);
     v.mat_draw = l.string(s.mat_draw, i);
+    v.kind = l.string(s.kind, i);
     v.no_win = l.boolean(s.no_win, i).value_or(false);
     v.year = l.nullable_integer(s.year, i).value_or(0); // amsterdam.py: yr = b['year'] or 0
     return v;
@@ -164,6 +168,24 @@ struct Made {
 } // namespace
 
 bool is(const std::optional<std::string_view>& v, std::string_view s) noexcept { return v.has_value() && *v == s; }
+
+Material material_of(const Values& v) noexcept {
+    // material_face: `md == 'glass'`; `md == 'metal' and kind in ('industrial', 'hangar', 'sports', 'shed',
+    // 'terminal', 'canopy', None)`; `md in ('limestone', 'stone', 'plaster') and lv >= 5 and kind in ('home', 'office',
+    // 'hotel') and fh * ppm > 2.2`; `kind == 'parking' and fh * ppm > 2.0`, lv = max(1, levels); a building of the
+    // third kind whose storeys are too small on the screen draws none, as the fourth asks a parking garage
+    static constexpr std::array<std::string_view, 6> industrial = {"industrial", "hangar",   "sports",
+                                                                   "shed",       "terminal", "canopy"};
+    static constexpr std::array<std::string_view, 3> fronts = {"limestone", "stone", "plaster"};
+    static constexpr std::array<std::string_view, 3> tall = {"home", "office", "hotel"};
+    if (is(v.mat_draw, "glass")) return Material::glass;
+    if (is(v.mat_draw, "metal") && (!v.kind.has_value() || in_set(v.kind, industrial))) return Material::metal;
+    if (in_set(v.mat_draw, fronts) && std::max<std::int64_t>(1, v.levels) >= 5 && in_set(v.kind, tall)) {
+        return Material::balconies;
+    }
+    if (is(v.kind, "parking")) return Material::parking;
+    return Material::none;
+}
 
 std::uint16_t stroke_of(PrimKind kind) noexcept {
     switch (kind) {
@@ -322,6 +344,15 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
     const bool shop = facades && (flags & tl::building::flag_shop_floor) != 0 && y0 <= 0.5;
     const auto facade_flags =
         static_cast<std::uint8_t>((plinth ? window_flag::plinth : 0U) | (cornice ? window_flag::cornice : 0U));
+    // its material face (`if wx and lens is None and not part and elen > 2.0 and d < win_d * 1.35`): its storeys
+    // (lv = max(1, levels)) and their height, and a metal wall's ribs' colour (tohex(mulc(base, 0.62)))
+    const Material material = facades ? material_of(bl.v) : Material::none;
+    const std::int64_t storeys = std::max<std::int64_t>(1, bl.v.levels);
+    const double fh = (wall_top - y0) / static_cast<double>(storeys);
+    const std::uint32_t ribs = [&] {
+        const Rgba c = darken(rgba(bl.v.wall_rgb), 0.62);
+        return (std::uint32_t{c.r} << 16U) | (std::uint32_t{c.g} << 8U) | std::uint32_t{c.b};
+    }();
     for (std::size_t i = 0; i < n; ++i) {
         const V2 a = poly[i];
         const V2 bb = poly[(i + 1) % n];
@@ -378,9 +409,9 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
                         {.edge = edge, .part = 0});
             }
         }
-        // its facade: its shop glazing (its own path, after its cells), then its windows (a row per level, the shop
-        // floor's too, bays by its length), their slots after its cells in both variants (a view's win_d can reach
-        // past the cells' 460 m); its plinth and cornice, whose slots follow all its building's walls
+        // its facade: its shop glazing (its own path, after its cells), its material face, then its windows (a row per
+        // level, the shop floor's too, bays by its length), their slots after its cells in both variants (a view's
+        // win_d can reach past the cells' 460 m); its plinth and cornice, whose slots follow all its building's walls
         const int lv = static_cast<int>(bl.v.levels); // Kotlin's Long.toInt()
         const bool windows = windowed && elen > 2.2 && lv > 0;
         const bool glazing = shop && elen > 2.4;
@@ -393,11 +424,16 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
             bays = arched.size();
             transoms = arched.empty() ? 0 : arched.front().lead.size() - 1;
         }
-        if (windows || glazing || facade_flags != 0 || bays > 0) {
+        const Material faced = elen > 2.0 ? material : Material::none;
+        if (windows || glazing || facade_flags != 0 || bays > 0 || faced != Material::none) {
             const int cols = windows ? window_cols(elen, style) : 0;
+            // its rows: its windows', else its storeys where it has a material face (its floors and decks); a
+            // building:levels past what the record holds (no building has 4095) keeps that many
+            const std::int64_t rows =
+                std::min<std::int64_t>(windows ? lv : (faced != Material::none ? storeys : 0), max_window_levels);
             b.out.window_walls.push_back({.wall = wall,
                                           .first = b.windows,
-                                          .levels = u16(windows ? lv : 0),
+                                          .levels = u16(static_cast<int>(rows)),
                                           .cols = u16(cols),
                                           .near_slot = Builder::slot(b.near_slot),
                                           .far_slot = Builder::slot(b.far_slot),
@@ -406,8 +442,13 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
                                           .flags = static_cast<std::uint8_t>(window_flags | facade_flags |
                                                                              (glazing ? window_flag::glazing : 0U)),
                                           .church_windows = u16(static_cast<int>(bays)),
-                                          .church_transoms = u16(static_cast<int>(transoms))});
-            const std::uint32_t taken = (glazing ? 1U : 0U) + (windows || bays > 0 ? window_slots : 0U);
+                                          .church_transoms = u16(static_cast<int>(transoms)),
+                                          .material = faced,
+                                          .fh = fh,
+                                          .elen = elen,
+                                          .ribs = faced == Material::metal ? ribs : 0U});
+            const std::uint32_t taken =
+                (glazing ? 1U : 0U) + material_slots(faced) + (windows || bays > 0 ? window_slots : 0U);
             if (windows) b.windows += static_cast<std::uint32_t>(lv) * static_cast<std::uint32_t>(cols);
             b.near_slot += taken;
             b.far_slot += taken;

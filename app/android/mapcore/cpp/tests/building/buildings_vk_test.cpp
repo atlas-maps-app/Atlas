@@ -317,7 +317,7 @@ void add_windows(std::vector<Shape>& out, const twin::WindowsDepth& wd, double d
         frame.stroke = static_cast<double>(wd.half) * density;
         frame.colour = levels_of(wd.frame);
         frame.sliver = turns_both_ways(frame.poly);
-        frame.depth = depth_of(sh::BUILDING_WINDOW_LEAD);
+        frame.depth = depth_of(wd.shop ? sh::BUILDING_GLAZING_FRAME_LEAD : sh::BUILDING_WINDOW_LEAD);
         // the frame's triangles as window_frames_vs draws them (its band's, or its box's), each point at
         // its wall's plane's reciprocal depth within the window's span: where that plane is ill-conditioned (a wall
         // seen edge-on) the clamped depths are not affine, so only the vertex stage's own triangles give its depths
@@ -337,7 +337,7 @@ void add_windows(std::vector<Shape>& out, const twin::WindowsDepth& wd, double d
             continue;
         }
         Shape glass;
-        glass.depth = depth_of(sh::BUILDING_GLASS_LEAD);
+        glass.depth = depth_of(wd.shop ? sh::BUILDING_GLAZING_GLASS_LEAD : sh::BUILDING_GLASS_LEAD);
         std::vector<Vertex> fan;
         for (std::uint32_t v = 0; v < sh::BUILDING_WINDOW_GLASS_VERTICES; ++v) {
             const hlsl::float2 c = sh::building_glass_corner(s, v < s.count ? v : s.count - 1, wd.half);
@@ -469,6 +469,8 @@ void add_arches(std::vector<Shape>& out, const twin::ArchesDepth& ad, double den
         }
         // a church wall's windows' parts; their glass's veil is folded into their glass
         if (e->sequence < depths.size() && depths[e->sequence].veil) continue;
+        // a wall's material face, blended over the raster (materials_of)
+        if (e->sequence < depths.size() && !depths[e->sequence].materials.empty()) continue;
         if (e->sequence < depths.size() && !depths[e->sequence].arches.empty()) {
             for (const twin::ArchesDepth& ad : depths[e->sequence].arches) {
                 add_arches(out, ad, density, cam, depths[e->sequence].tile);
@@ -754,6 +756,65 @@ struct StrokeSeg {
     return out;
 }
 
+/// A wall's material face's path as the frame draws it (twin::MaterialDepth): its shapes (device px) each with its
+/// depth as the vertex stage gives it, its paint (a glass wall's gradient over its fill's box) and opacity; a path of
+/// lines blends each sample once.
+struct MaterialPath {
+    std::vector<Shape> shapes;
+    bool lines = false;
+    std::uint32_t slot = 0;
+    shaders::BuildingGlass paint{};
+    float top = 0.0F;
+    float bottom = 0.0F;
+    float opacity = 1.0F;
+};
+
+/// The document's material faces' paths as the frame draws them: every fill, then every line (material_fills, then
+/// material_lines), each in the stream's order.
+[[nodiscard]] std::vector<MaterialPath> materials_of(const twin::Document& doc, double density,
+                                                     std::span<const twin::ElementDepth> depths,
+                                                     const shaders::FrameCamera& cam) {
+    namespace sh = atlas::shaders;
+    std::vector<MaterialPath> fills;
+    std::vector<MaterialPath> lines;
+    for (const twin::Element* e : doc.order(twin::Layer::objects)) {
+        if (e->kind != twin::Op::path || e->sequence >= depths.size()) continue;
+        for (const twin::MaterialDepth& md : depths[e->sequence].materials) {
+            MaterialPath path{.shapes = {},
+                              .lines = md.lines,
+                              .slot = md.slot,
+                              .paint = md.paint,
+                              .top = md.top,
+                              .bottom = md.bottom,
+                              .opacity = md.opacity};
+            for (const sh::BuildingWindowShape& s : md.shapes) {
+                Shape shape;
+                shape.depth = twin::ElementDepth{.edged = true, .tile = depths[e->sequence].tile};
+                shape.depth.shape = sh::building_window_as_shape(s, md.plane, md.lead);
+                shape.depth.shape.slot = md.slot;
+                shape.depth.shape.depth = sh::painter_depth(cam, md.slot);
+                // its fan from its first corner (a line's bar: its quad), each point at its wall's plane's reciprocal
+                // depth within its span, as the vertex stage gives them
+                std::vector<Vertex> fan;
+                for (std::uint32_t k = 0; k < s.count; ++k) {
+                    const hlsl::float2 c = sh::building_window_corner(s, k);
+                    shape.poly.push_back({static_cast<double>(c.x) * density, static_cast<double>(c.y) * density});
+                    const float r = sh::building_plane_recip(cam, shape.depth.shape, c);
+                    fan.push_back({static_cast<double>(c.x), static_cast<double>(c.y), static_cast<double>(r)});
+                }
+                for (std::size_t k = 0; k + 2 < fan.size(); ++k) {
+                    shape.triangles.push_back({fan[0], fan[k + 1], fan[k + 2]});
+                }
+                shape.slack = slack_of(cam, shape.depth, shape.triangles);
+                path.shapes.push_back(std::move(shape));
+            }
+            (md.lines ? lines : fills).push_back(std::move(path));
+        }
+    }
+    for (MaterialPath& path : lines) fills.push_back(std::move(path));
+    return fills;
+}
+
 /// What the strokes leave each sample of a raster: its colour (levels, rounded after each blend as the attachment
 /// keeps them), how many strokes blended over it (at most 255), and whether a stroke's depth there was tied with the
 /// sample's shape's.
@@ -763,14 +824,18 @@ struct Stroked {
     std::vector<std::uint8_t> tie;
 };
 
-/// The raster `r` of `shapes` (its samples at `samples` of each pixel of w × h) with the strokes `segs` blended over it
-/// in their order, as the frame's two pipelines of them blend (structural mode: alpha a, the stroke's colour, over the
-/// ground and over the objects alike): each pixel's coverage (the shader's, in float) at each of its samples where the
-/// stroke's depth passes GREATER_OR_EQUAL against the sample's shape's (by true depth, or under the painter switch by
-/// their slots), premultiplied source over, then 8 bits.
-[[nodiscard]] Stroked stroke(const Raster& r, std::span<const Shape> shapes, std::span<const StrokeSeg> segs,
-                             std::uint32_t w, std::uint32_t h, std::span<const Pt> samples,
-                             const shaders::FrameCamera& cam, std::uint32_t clear) {
+/// The raster `r` of `shapes` (its samples at `samples` of each pixel of w × h) with the material faces' paths
+/// `materials` blended over it first, each at its samples where one of its shapes (grown by `grow` device px) covers
+/// it and its depth passes GREATER against the sample's shape's (by true depth, or under the painter switch by their
+/// slots), at its opacity in its paint at the pixel's centre, a path of lines each sample once (the frame's stencil
+/// bit); then the strokes `segs` blended over it in their order, as the frame's two pipelines of them blend
+/// (structural mode: alpha a, the stroke's colour, over the ground and over the objects alike): each pixel's coverage
+/// (the shader's, in float) at each of its samples where the stroke's depth passes GREATER_OR_EQUAL against the
+/// sample's shape's, premultiplied source over, then 8 bits.
+[[nodiscard]] Stroked stroke(const Raster& r, std::span<const Shape> shapes, std::span<const MaterialPath> materials,
+                             std::span<const StrokeSeg> segs, std::uint32_t w, std::uint32_t h,
+                             std::span<const Pt> samples, const shaders::FrameCamera& cam, std::uint32_t clear,
+                             double density, double grow) {
     const bool painter = (cam.flags.x & shaders::CAMERA_PAINTER) != 0U;
     const std::size_t n = std::size_t{w} * h * samples.size();
     Stroked out;
@@ -787,6 +852,70 @@ struct Stroked {
                          static_cast<std::uint8_t>(c & 0xFFU)};
     }
     constexpr double rounding = 3.814697265625e-6; // 2^-18: the rasteriser's rounding of the stroke's quad
+    // the material faces: each path's samples once (a fill's shapes never meet; a sample takes one line of all)
+    std::vector<std::uint8_t> lined(n, 0);
+    std::vector<std::uint8_t> taken;
+    for (const MaterialPath& path : materials) {
+        taken.assign(n, 0);
+        for (const Shape& sh : path.shapes) {
+            double x0 = 1e300;
+            double y0 = 1e300;
+            double x1 = -1e300;
+            double y1 = -1e300;
+            for (const Pt& q : sh.poly) {
+                x0 = std::min(x0, q.x);
+                y0 = std::min(y0, q.y);
+                x1 = std::max(x1, q.x);
+                y1 = std::max(y1, q.y);
+            }
+            const auto lo_x = static_cast<std::int64_t>(std::floor(x0 - std::abs(grow) - 1));
+            const auto hi_x = static_cast<std::int64_t>(std::ceil(x1 + std::abs(grow) + 1));
+            const auto lo_y = static_cast<std::int64_t>(std::floor(y0 - std::abs(grow) - 1));
+            const auto hi_y = static_cast<std::int64_t>(std::ceil(y1 + std::abs(grow) + 1));
+            for (std::int64_t y = std::max<std::int64_t>(0, lo_y); y < std::min<std::int64_t>(h, hi_y); ++y) {
+                for (std::int64_t x = std::max<std::int64_t>(0, lo_x); x < std::min<std::int64_t>(w, hi_x); ++x) {
+                    for (std::size_t s = 0; s < samples.size(); ++s) {
+                        const Pt p{.x = static_cast<double>(x) + samples[s].x,
+                                   .y = static_cast<double>(y) + samples[s].y};
+                        if (!(signed_distance(p, sh.poly) <= grow)) continue;
+                        const std::size_t i =
+                            (((static_cast<std::size_t>(y) * w) + static_cast<std::size_t>(x)) * samples.size()) + s;
+                        if (taken[i] != 0 || (path.lines && lined[i] != 0)) continue;
+                        const std::int32_t k = r.shape[i];
+                        bool pass = k == uncovered;
+                        if (!pass && painter) {
+                            pass = path.slot > shapes[static_cast<std::size_t>(k)].depth.shape.slot;
+                        } else if (!pass) {
+                            const auto z = static_cast<float>(depth_at(cam, sh, p.x / density, p.y / density));
+                            const float under = r.depth[i];
+                            pass = z > under;
+                            const double slack = shapes[static_cast<std::size_t>(k)].slack + sh.slack + rounding;
+                            if (std::abs(static_cast<double>(z) - static_cast<double>(under)) <=
+                                static_cast<double>(under) * slack) {
+                                out.tie[i] = 1;
+                            }
+                        }
+                        if (!pass) continue;
+                        taken[i] = 1;
+                        if (path.lines) lined[i] = 1;
+                        if (out.blends[i] < 255) ++out.blends[i];
+                        const hlsl::float2 centre = {static_cast<float>(x) + 0.5F, static_cast<float>(y) + 0.5F};
+                        const std::uint32_t c = levels_of(shaders::building_glass_at(
+                            path.paint, path.top, path.bottom, shaders::css_of_output(cam, centre).y));
+                        const std::array<double, 3> level{static_cast<double>((c >> 16U) & 0xFFU),
+                                                          static_cast<double>((c >> 8U) & 0xFFU),
+                                                          static_cast<double>(c & 0xFFU)};
+                        const auto a = static_cast<double>(path.opacity);
+                        std::array<std::uint8_t, 3>& dst = out.colour[i];
+                        for (std::size_t q = 0; q < 3; ++q) {
+                            const double v = (level[q] * a) + (static_cast<double>(dst[q]) * (1.0 - a));
+                            dst[q] = static_cast<std::uint8_t>(std::clamp(std::round(v), 0.0, 255.0));
+                        }
+                    }
+                }
+            }
+        }
+    }
     for (const StrokeSeg& g : segs) {
         const float reach = g.hw + 1.0F;
         const auto x0 = static_cast<std::int64_t>(std::floor(std::min(g.ax, g.bx) - reach));
@@ -993,11 +1122,15 @@ struct Compared {
     const std::vector<std::int32_t>& grown = grown_raster.shape;
     const std::vector<std::int32_t>& shrunk = shrunk_raster.shape;
     const std::vector<std::int32_t> near_sliver = raster(shapes, w, h, samples, 0.0, cam, density, false, true).shape;
-    // the roofs' thin strokes over each of them
+    // the material faces, then the roofs' thin strokes, over each of them
+    const std::vector<MaterialPath> materials = materials_of(doc, density, depths, cam);
     const std::vector<StrokeSeg> segs = strokes_of(doc, depths, distances, cam);
-    const Stroked exact_stroked = stroke(exact_raster, shapes, segs, w, h, samples, cam, clear);
-    const Stroked grown_stroked = stroke(grown_raster, shapes, segs, w, h, samples, cam, clear);
-    const Stroked shrunk_stroked = stroke(shrunk_raster, shapes, segs, w, h, samples, cam, clear);
+    const Stroked exact_stroked =
+        stroke(exact_raster, shapes, materials, segs, w, h, samples, cam, clear, density, 0.0);
+    const Stroked grown_stroked =
+        stroke(grown_raster, shapes, materials, segs, w, h, samples, cam, clear, density, tolerance);
+    const Stroked shrunk_stroked =
+        stroke(shrunk_raster, shapes, materials, segs, w, h, samples, cam, clear, density, -tolerance);
     const std::size_t n = samples.size();
     const auto resolved = [&](const Stroked& r, std::size_t i) {
         // the composite's mean of the samples' levels, rounded half to even (passes/Composite.hpp's composite_pixel)
@@ -1063,13 +1196,15 @@ struct Compared {
             continue;
         }
         // a sample within the tolerance of a boundary ends with another shape (however alike their colours) when the
-        // shapes grow or shrink by it
+        // shapes grow or shrink by it, or takes another blend of a material face's when its shapes do
         bool ambiguous = false;
         bool sliver = false;
         bool tie = false;
         for (std::size_t s = 0; s < n; ++s) {
             const std::size_t k = (i * n) + s;
-            ambiguous = ambiguous || exact[k] != grown[k] || exact[k] != shrunk[k];
+            ambiguous = ambiguous || exact[k] != grown[k] || exact[k] != shrunk[k] ||
+                        exact_stroked.colour[k] != grown_stroked.colour[k] ||
+                        exact_stroked.colour[k] != shrunk_stroked.colour[k];
             sliver = sliver || near_sliver[k] != uncovered;
             tie = tie || exact_raster.tie[k] != 0 || exact_stroked.tie[k] != 0;
         }
@@ -1248,7 +1383,8 @@ void check_frames(const style::CameraState& cam, const std::string& view, std::s
             const passes::Buildings::WindowCounts windows = s.buildings->window_counts();
             MESSAGE(name << ": " << windows.walls << " facade walls, " << windows.windows << " windows, "
                          << windows.nears << " near ones, " << windows.facades << " facades, " << windows.churches
-                         << " church windows");
+                         << " church windows, " << windows.material_fills << " material fills and "
+                         << windows.material_lines << " material lines");
             CHECK(kept.kept[0] <= kept.submitted[0]);
             CHECK(kept.kept[1] <= kept.submitted[1]);
             CHECK(kept.kept[2] <= kept.submitted[2]);
@@ -1343,6 +1479,29 @@ TEST_CASE("buildings: every roof shape and a houseboat drawn on the host's Vulka
     check_frames(camera(lat, lon, 200.0, 60.0, 260.0, 1080, 2400, d), "synthetic near dry", packs, dry_th, 15);
     check_frames(camera(lat, lon, 300.0, 45.0, 650.0, 1080, 2400, d), "synthetic far", packs, sunny(), 30);
     check_frames(camera(lat, lon, 0.0, 0.0, 220.0, 1080, 2400, d), "synthetic straight down", packs, sunny(), 20);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST_CASE("buildings: the walls' material faces drawn on the host's Vulkan over what lies under them, pixel for pixel "
+          "their twin's") {
+    // fixture.hpp's materials tile in a render pack of its own: a glass office's glass over its shop glazing, then its
+    // floors and mullions; a metal shed's ribs; a stone home's balconies; a parking garage's decks; near with weather
+    // by day, under the painter switch, and at night (no ribs then) from the other side
+    const std::string path =
+        synthetic_pack(test::building::materials_tile(), test::building::materials_features, "materials");
+    const std::array<PackFile, 1> packs{PackFile{.id = "materials", .path = path}};
+    const double d = 1080.0 / 412.0;
+    const double lat = 52.37422;
+    const double lon = 4.88486;
+    style::ThemeBlock night_th = sunny();
+    night_th.flags |= style::theme_flag::night;
+    check_frames(camera(lat, lon, 20.0, 50.0, 260.0, 1080, 2400, d), "materials near", packs, sunny(), 8);
+    check_frames(camera(lat, lon, 20.0, 50.0, 260.0, 1080, 2400, d), "materials near", packs, sunny(), 8, nullptr,
+                 true);
+    check_frames(camera(lat, lon, 200.0, 50.0, 260.0, 1080, 2400, d), "materials at night", packs, night_th, 8);
+    // the garage's decks, the stone home's balconies, the office and the shed's ribs, from the south
+    check_frames(camera(52.37400, 4.88380, 0.0, 60.0, 260.0, 1080, 2400, d), "materials west", packs, sunny(), 8);
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }

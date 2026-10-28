@@ -61,6 +61,10 @@ inline float building_atan2(float y, float x) {
 [[vk::binding(11, 2)]] StructuredBuffer<uint4> window_facades;
 [[vk::binding(17, 2)]] RWStructuredBuffer<uint4> church_records_out;
 [[vk::binding(18, 2)]] StructuredBuffer<uint4> church_records;
+[[vk::binding(19, 2)]] RWStructuredBuffer<uint4> material_fills_out;
+[[vk::binding(20, 2)]] StructuredBuffer<uint4> material_fills;
+[[vk::binding(21, 2)]] RWStructuredBuffer<uint4> material_lines_out;
+[[vk::binding(22, 2)]] StructuredBuffer<uint4> material_lines;
 // The kept primitives' set (passes/Kept.cpp), set 2 of the walls' and roofs' kept pipelines and of the cull's compute
 // stages: this frame slot's jobs (the header, then each job: a tile's push constants and a run of at most 64 of one
 // list's primitives), each job's candidates (their count, their mask and their first place in their list), the kept
@@ -441,14 +445,21 @@ StrokeVertex roof_strokes_vs(uint vertex : SV_VulkanVertexID) {
 /// (building_window_records of them: its windows', then its shop glazing's), its first near record (WINDOW_NO_NEAR: its
 /// item lies 160 m or more away), its windows' widths (passes::window_widths: the frames' in tenths of a CSS px, bits
 /// 0-15, the sash bars', 16-31; where it draws church windows, their leading's in hundredths), its facade record
-/// (WINDOW_NO_NEAR: none), and its church windows (WINDOW_NO_NEAR: none drawn: its first church record, bits 0-15,
-/// how many, 16-23, each one's transoms, 24-31), four a uint4.
-static const uint WINDOW_JOB_VECTORS = 85u;
+/// (WINDOW_NO_NEAR: none), its church windows (WINDOW_NO_NEAR: none drawn: its first church record, bits 0-15,
+/// how many, 16-23, each one's transoms, 24-31), its material face's first fill record and first line record
+/// (WINDOW_NO_NEAR: none), how many lines its glass's floors take or its decks or balconies how many records, bits
+/// 0-11, and its mullions' or ribs' n or its balconies' width in hundredths, 12-31 (passes::material_choice), and its
+/// ribs' colour, four a uint4.
+static const uint WINDOW_JOB_VECTORS = 149u;
 static const uint WINDOW_JOB_RECORDS = 5u;
 static const uint WINDOW_JOB_NEARS = 21u;
 static const uint WINDOW_JOB_WIDTHS = 37u;
 static const uint WINDOW_JOB_FACADES = 53u;
 static const uint WINDOW_JOB_CHURCHES = 69u;
+static const uint WINDOW_JOB_MATERIAL_FILLS = 85u;
+static const uint WINDOW_JOB_MATERIAL_LINES = 101u;
+static const uint WINDOW_JOB_MATERIALS = 117u;
+static const uint WINDOW_JOB_RIBS = 133u;
 static const uint WINDOW_NO_NEAR = 0xFFFFFFFFu;
 
 /// Word `i` (a wall's) of a job's list starting at vector `list`.
@@ -496,9 +507,10 @@ void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     bool cabin = w.style == BUILDING_WINDOW_CABIN;
     bool near = (detail & BUILDING_DETAIL_NEAR) != 0u;
     uint item_slot = rank != RANK_NONE ? rank_slot(rank) : 0u;
-    // the wall's first slot (its shop glazing's where it has one), then its windows'
+    // the wall's first slot (its shop glazing's where it has one), then its material face's, then its windows'
     uint first_slot = item_slot + (near ? w.near_slot : w.far_slot);
-    uint slot = first_slot + ((w.flags & BUILDING_WINDOW_GLAZING) != 0u ? 1u : 0u);
+    uint material_slot = first_slot + ((w.flags & BUILDING_WINDOW_GLAZING) != 0u ? 1u : 0u);
+    uint slot = material_slot + building_material_slots(w.material);
     bool sun = p.sun.x != BUILDING_NO_BITS && (theme_flags & THEME_NIGHT) == 0u;
     float4 plane = building_window_plane(frame.camera, p.place, f);
     float infinity = asfloat(0x7F800000u);
@@ -673,6 +685,62 @@ void windows_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
         }
         leading = building_hundredths(widths);
     }
+    // its material face (with weather nearer than 1.35 times win_d), its fills and lines each into its record at the
+    // job's, in the wall's order: a glass wall's glass, then its floors and mullions; a metal one's ribs; a stone front's
+    // balconies; a parking garage's decks
+    uint fills_first = window_job_word(at, WINDOW_JOB_MATERIAL_FILLS, thread.x);
+    uint lines_first = window_job_word(at, WINDOW_JOB_MATERIAL_LINES, thread.x);
+    if (fills_first != WINDOW_NO_NEAR || lines_first != WINDOW_NO_NEAR) {
+        uint counts = window_job_word(at, WINDOW_JOB_MATERIALS, thread.x);
+        uint ribs = window_job_word(at, WINDOW_JOB_RIBS, thread.x);
+        uint count = counts & 0xFFFu;
+        uint n = counts >> 12u;
+        bool shown = building_materials_drawn(theme_flags, p.place, f, rank);
+        uint m = w.material;
+        if (fills_first != WINDOW_NO_NEAR) {
+            uint fills = m == BUILDING_MATERIAL_GLASS ? 1u : count;
+            for (uint k = 0u; k < fills; ++k) {
+                BuildingWindowShape s = building_window_nothing();
+                if (shown) {
+                    bool glass = m == BUILDING_MATERIAL_GLASS;
+                    BuildingPrim q = glass ? building_material_glass(wall, f.normal)
+                                           : building_material_deck(wall, f.normal, w.levels, k);
+                    s = building_window_on_plane(
+                        frame.camera, plane,
+                        building_window_over(building_window_cut(frame.camera, p.place, q),
+                                             glass ? BUILDING_MATERIAL_GLASS_AREA : BUILDING_MATERIAL_DECK_AREA));
+                }
+                BuildingMaterialFillRecord r = building_material_fill_record(s, m, wall_record, material_slot);
+                uint fat = (fills_first + k) * BUILDING_MATERIAL_FILL_VECTORS;
+                material_fills_out[fat] = r.v0;
+                material_fills_out[fat + 1u] = r.v1;
+                material_fills_out[fat + 2u] = r.v2;
+                material_fills_out[fat + 3u] = r.v3;
+            }
+        }
+        if (lines_first != WINDOW_NO_NEAR) {
+            // a glass wall's floors (count of them) and its mullions (n - 1 where n > 1), a metal wall's ribs (n - 1), a
+            // stone front's balconies (count of them); the lines' slot after a glass wall's fill's
+            uint floors = m == BUILDING_MATERIAL_GLASS ? count : 0u;
+            uint across = m == BUILDING_MATERIAL_BALCONIES ? 0u : (n > 1u ? n - 1u : 0u);
+            uint lines = m == BUILDING_MATERIAL_BALCONIES ? count : floors + across;
+            uint line_slot = material_slot + (m == BUILDING_MATERIAL_GLASS ? 1u : 0u);
+            uint style = m == BUILDING_MATERIAL_BALCONIES ? n : ribs;
+            for (uint k = 0u; k < lines; ++k) {
+                BuildingMaterialLine l = building_material_line(frame.camera, p.place, wall, f.normal,
+                                                                building_material_ends(wall, m, w.levels, floors, n, k));
+                if (!shown) {
+                    l.drawn = false;
+                }
+                BuildingMaterialLineRecord r = building_material_line_record(
+                    building_material_line_on_plane(frame.camera, plane, l), m, wall_record, line_slot, style);
+                uint lat = (lines_first + k) * BUILDING_MATERIAL_LINE_VECTORS;
+                material_lines_out[lat] = r.v0;
+                material_lines_out[lat + 1u] = r.v1;
+                material_lines_out[lat + 2u] = r.v2;
+            }
+        }
+    }
     uint4 plane_words = {asuint(plane.x), asuint(plane.y), asuint(plane.z), asuint(plane.w)};
     uint4 boxes = {asuint(dark.x), asuint(dark.y), asuint(lit.x), asuint(lit.y)};
     uint reveal_word = p.sun.w + span.x + thread.x;
@@ -737,8 +805,8 @@ FrameOut window_frames_vs(uint vertex : SV_VulkanVertexID) {
         return o;
     }
     BuildingWallRecord wall = window_wall_at(r.v0.y);
-    BuildingShape shape = window_shape_on(wall, s, BUILDING_WINDOW_LEAD, r.v0.z);
     bool shop = (r.v0.x & BUILDING_WINDOW_RECORD_SHOP) != 0u;
+    BuildingShape shape = window_shape_on(wall, s, shop ? BUILDING_GLAZING_FRAME_LEAD : BUILDING_WINDOW_LEAD, r.v0.z);
     float half = shop ? 0.5f * building_shop_frame_width(frame.windows) : wall.frame_half;
     bool glass = (r.v0.x & BUILDING_WINDOW_RECORD_GLASS) != 0u;
     float2 css = building_window_frame_point(s, vertex - index * BUILDING_WINDOW_FRAME_VERTICES, half, glass);
@@ -784,7 +852,7 @@ GlassOut window_glass_vs(uint vertex : SV_VulkanVertexID) {
     float half = shop ? 0.5f * building_shop_frame_width(frame.windows) : wall.frame_half;
     uint v = vertex - index * BUILDING_WINDOW_GLASS_VERTICES;
     float2 css = building_glass_corner(s, v < s.count ? v : s.count - 1u, half);
-    BuildingShape shape = window_shape_on(wall, s, BUILDING_GLASS_LEAD, r.v0.z);
+    BuildingShape shape = window_shape_on(wall, s, shop ? BUILDING_GLAZING_GLASS_LEAD : BUILDING_GLASS_LEAD, r.v0.z);
     float depth = building_depth(frame.camera, shape, building_plane_recip(frame.camera, shape, css));
     o.position = clip_of(frame.camera, css, 1.0f, depth);
     bool lit = (r.v0.x & BUILDING_WINDOW_LIT) != 0u;
@@ -1069,5 +1137,117 @@ FrameTarget window_frames_fs(FrameOut v) {
     FrameTarget o;
     o.colour = float4(mat_colour(frame.camera, v.colour, v.position.xy, mat_grain_on(frame)), 1.0f);
     o.coverage = mask;
+    return o;
+}
+
+/// The frame's material fill record `index`.
+BuildingMaterialFillRecord material_fill_at(uint index) {
+    uint at = index * BUILDING_MATERIAL_FILL_VECTORS;
+    BuildingMaterialFillRecord r;
+    r.v0 = material_fills[at];
+    r.v1 = material_fills[at + 1u];
+    r.v2 = material_fills[at + 2u];
+    r.v3 = material_fills[at + 3u];
+    return r;
+}
+
+/// The frame's material line record `index`.
+BuildingMaterialLineRecord material_line_at(uint index) {
+    uint at = index * BUILDING_MATERIAL_LINE_VECTORS;
+    BuildingMaterialLineRecord r;
+    r.v0 = material_lines[at];
+    r.v1 = material_lines[at + 1u];
+    r.v2 = material_lines[at + 2u];
+    return r;
+}
+
+/// A material face's fragments: its paint at its box's top and bottom (as the glass's: rgb, then the CSS y), and its
+/// opacity.
+struct MaterialOut {
+    float4 position : SV_Position;
+    nointerpolation float4 top : GLASS_TOP;
+    nointerpolation float4 bottom : GLASS_BOTTOM;
+    nointerpolation float opacity : MATERIAL_OPACITY;
+};
+
+/// Vertex `v` of material fill record `index`: its shape's fan of 3 triangles from its first corner (its last corner
+/// repeated past its count), on its wall's plane at its material's lead, at its path's slot under the painter switch,
+/// in its paint (by day a glass wall's the gradient `glass` over its own box) at its opacity; an instance a record.
+[shader("vertex")]
+MaterialOut material_fill_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanInstanceID) {
+    BuildingMaterialFillRecord r = material_fill_at(index);
+    MaterialOut o;
+    o.top = float4(0.0f);
+    o.bottom = float4(0.0f);
+    o.opacity = 0.0f;
+    BuildingWindowShape s = building_material_fill_shape(r);
+    if (s.count == 0u) {
+        o.position = NOWHERE;
+        return o;
+    }
+    BuildingWallRecord wall = window_wall_at(r.v0.y);
+    BuildingShape shape = window_shape_on(wall, s, building_material_lead((r.v0.x >> 4u) & 7u), r.v0.z);
+    uint t = v / 3u;
+    uint c = v - t * 3u;
+    uint corner = c == 0u ? 0u : t + c;
+    float2 css = building_window_corner(s, corner < s.count ? corner : s.count - 1u);
+    float depth = building_depth(frame.camera, shape, building_plane_recip(frame.camera, shape, css));
+    o.position = clip_of(frame.camera, css, 1.0f, depth);
+    BuildingMaterialPaint p = building_material_fill(frame.windows, frame.theme.flags.x, (r.v0.x >> 4u) & 7u);
+    float top = s.p0.y;
+    float bottom = s.p0.y;
+    for (uint i = 1u; i < s.count; ++i) {
+        float y = building_window_corner(s, i).y;
+        top = min(top, y);
+        bottom = max(bottom, y);
+    }
+    o.top = float4(p.paint.top, top);
+    o.bottom = p.paint.gradient ? float4(p.paint.bottom, bottom) : o.top;
+    o.opacity = p.opacity;
+    return o;
+}
+
+/// Vertex `v` of material line record `index`: its line stroked its width either side, butt-capped (a quad: two
+/// triangles), on its wall's plane at its material's lead, at its path's slot under the painter switch, in its colour at
+/// its opacity; an instance a record.
+[shader("vertex")]
+MaterialOut material_line_vs(uint v : SV_VulkanVertexID, uint index : SV_VulkanInstanceID) {
+    BuildingMaterialLineRecord r = material_line_at(index);
+    MaterialOut o;
+    o.top = float4(0.0f);
+    o.bottom = float4(0.0f);
+    o.opacity = 0.0f;
+    uint material = (r.v0.x >> 4u) & 7u;
+    BuildingWindowShape bar =
+        building_material_bar(building_material_line_of(r), 0.5f * building_material_width(material, r.v0.w));
+    if (bar.count == 0u) {
+        o.position = NOWHERE;
+        return o;
+    }
+    BuildingWallRecord wall = window_wall_at(r.v0.y);
+    BuildingShape shape = window_shape_on(wall, bar, building_material_lead(material), r.v0.z);
+    uint corner = v < 3u ? v : (v == 3u ? 0u : v - 2u);
+    float2 css = building_window_corner(bar, corner);
+    float depth = building_depth(frame.camera, shape, building_plane_recip(frame.camera, shape, css));
+    o.position = clip_of(frame.camera, css, 1.0f, depth);
+    BuildingMaterialPaint p = building_material_lines(frame.theme.flags.x, material, r.v0.w);
+    o.top = float4(p.paint.top, 0.0f);
+    o.bottom = o.top;
+    o.opacity = p.opacity;
+    return o;
+}
+
+/// A material face's fragments: its paint at the pixel (a gradient's from its box's top to its bottom, as the glass's),
+/// with mat's grain as the objects take it, at its opacity over what lies under it (premultiplied, source over).
+[shader("fragment")]
+BuildingTarget material_fs(MaterialOut v) {
+    BuildingTarget o;
+    BuildingGlass g;
+    g.top = v.top.xyz;
+    g.bottom = v.bottom.xyz;
+    g.gradient = v.bottom.w > v.top.w;
+    float y = css_of_output(frame.camera, v.position.xy).y;
+    float3 c = mat_colour(frame.camera, building_glass_at(g, v.top.w, v.bottom.w, y), v.position.xy, mat_grain_on(frame));
+    o.colour = float4(c * v.opacity, v.opacity);
     return o;
 }

@@ -98,11 +98,15 @@ public:
     void emit(const frame::FrameState& state, twin::Stream& out, std::uint32_t phase) const override;
 
     /// The phases: the drawing (objects); the roofs' thin edges, decided before the main pass (offscreen) and drawn
-    /// after every element of the ground (translucent, at ground_order::objects: passes/Ground.hpp).
+    /// after every element of the ground (translucent, at ground_order::objects: passes/Ground.hpp); the walls'
+    /// material faces, decided with the windows and drawn over what lies under them just before the roofs' edges
+    /// (translucent).
     static constexpr std::uint32_t draw_phase = 0;
     static constexpr std::uint32_t decide_phase = 1;
     static constexpr std::uint32_t strokes_phase = 2;
+    static constexpr std::uint32_t materials_phase = 3;
     static constexpr std::int32_t strokes_order = 1000;
+    static constexpr std::int32_t materials_order = strokes_order - 1;
 
     /// What the last frame's strokes were: their jobs and records (one a plain primitive of the drawn runs).
     struct StrokeCounts {
@@ -114,7 +118,7 @@ public:
     [[nodiscard]] bool strokes() const noexcept { return strokes_ != nullptr; }
     /// What the last frame's windows were: their jobs, the facade walls and the windows they decided (a shop's
     /// glazing among them), the windows of the walls nearer than 160 m (their reveals, sills and sash bars), the
-    /// facades with a plinth or a cornice, and the churches' own windows.
+    /// facades with a plinth or a cornice, the churches' own windows, and the material faces' fills and lines.
     struct WindowCounts {
         std::uint32_t jobs = 0;
         std::uint32_t walls = 0;
@@ -122,6 +126,8 @@ public:
         std::uint32_t nears = 0;
         std::uint32_t facades = 0;
         std::uint32_t churches = 0;
+        std::uint32_t material_fills = 0;
+        std::uint32_t material_lines = 0;
     };
     [[nodiscard]] WindowCounts window_counts() const noexcept { return window_counts_; }
     /// The triangles the last frame submitted for its walls, near cells and roofs, and the ones the GPU's cull kept of
@@ -140,6 +146,9 @@ public:
     /// The most church windows a frame draws (416 bytes a record; the jobs' church words hold 16 bits of them): the
     /// walls beyond go without, once logged.
     static constexpr std::uint32_t max_churches = 0xFFFFU;
+    /// The most material fills and lines a frame draws (64 and 48 bytes a record): the walls beyond go without, once
+    /// logged.
+    static constexpr std::uint32_t max_materials = 1U << 20U;
 
     /// The item kind the pass's items take (its Selectors row, from kinds()).
     [[nodiscard]] std::uint16_t kind() const noexcept { return kind_; }
@@ -170,10 +179,11 @@ public:
     static constexpr std::uint32_t plain_indices = 9; // a fan of 3 triangles over 5 points
 
 private:
-    static constexpr std::array<frame::Phase, 3> phase_list{{
+    static constexpr std::array<frame::Phase, 4> phase_list{{
         {.slot = frame::Slot::objects, .order = 0, .id = draw_phase},
         {.slot = frame::Slot::offscreen, .order = 0, .id = decide_phase},
         {.slot = frame::Slot::translucent, .order = strokes_order, .id = strokes_phase},
+        {.slot = frame::Slot::translucent, .order = materials_order, .id = materials_phase},
     }};
 
     using Run = BuildingRun;
@@ -229,6 +239,7 @@ private:
     void record_window_decide(const frame::Recording& recording);
     void record_strokes(const frame::Recording& recording);
     void record_windows(const frame::Recording& recording);
+    void record_materials(const frame::Recording& recording);
 
     /// The rows of a tile's items, written once into its range in `heaps` (the render thread, the first frame it is
     /// drawn).
@@ -255,8 +266,9 @@ private:
     StrokeCounts stroke_counts_;
     std::unique_ptr<Windows> windows_;
     WindowCounts window_counts_;
-    bool windows_capped_ = false;  ///< a frame's windows passed max_windows (logged once)
-    bool churches_capped_ = false; ///< a frame's church windows passed max_churches (logged once)
+    bool windows_capped_ = false;   ///< a frame's windows passed max_windows (logged once)
+    bool churches_capped_ = false;  ///< a frame's church windows passed max_churches (logged once)
+    bool materials_capped_ = false; ///< a frame's material fills or lines passed max_materials (logged once)
     std::unique_ptr<Kept> kept_;
 
     // the render thread's, per frame
@@ -322,8 +334,11 @@ struct Buildings::Windows {
     std::array<gpu::Buffer, 2> nears;
     std::array<gpu::Buffer, 2> facades;
     std::array<gpu::Buffer, 2> churches;
+    std::array<gpu::Buffer, 2> material_fills;
+    std::array<gpu::Buffer, 2> material_lines;
     /// The draws' layout (the frame's sets, then set 2), the compute stage's, its pipeline, and the near windows'
-    /// parts', the facades', the glass's, the frames' and the church windows' pipelines.
+    /// parts', the facades', the glass's, the frames' and the church windows' pipelines; the material faces' fills' and
+    /// lines' (translucent).
     vk::raii::PipelineLayout layout{nullptr};
     vk::raii::PipelineLayout compute_layout{nullptr};
     vk::raii::Pipeline decide{nullptr};
@@ -332,8 +347,10 @@ struct Buildings::Windows {
     vk::raii::Pipeline glass{nullptr};
     vk::raii::Pipeline frames{nullptr};
     vk::raii::Pipeline church{nullptr};
+    vk::raii::Pipeline material_fills_pipeline{nullptr};
+    vk::raii::Pipeline material_lines_pipeline{nullptr};
     // the render thread's, per frame: the jobs' words, the frame slot they went to, and what they hold (the church
-    // windows' records, and the most segments of leading one of them has)
+    // windows' records, and the most segments of leading one of them has; the material faces' records)
     std::vector<std::uint32_t> words;
     std::uint32_t slot = 0;
     std::uint32_t jobs_now = 0;
@@ -343,6 +360,8 @@ struct Buildings::Windows {
     std::uint32_t facades_now = 0;
     std::uint32_t churches_now = 0;
     std::uint32_t segments_now = 0;
+    std::uint32_t material_fills_now = 0;
+    std::uint32_t material_lines_now = 0;
 };
 
 struct Buildings::Kept {

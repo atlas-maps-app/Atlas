@@ -66,13 +66,19 @@ void Buildings::select(const frame::FrameState& state, frame::Selectors& selecto
     // the detail, in building.slangh's BUILDING_DETAIL_ order: the cells' near variant; the windows where d < the
     // view's win_d (cfg's, 390 m where it names none); a church's own windows where d < 520 (with weather: no others
     // then); deep windows where d < 160, sash bars where d < 140; the facades' flat detail where d < 760, the low
-    // plinth where d < 300, cornices where d < 520
+    // plinth where d < 300, cornices where d < 520; the material faces where d < win_d * 1.35 (in double, as the port
+    // multiplies)
     const double win_d =
         state.placed ? state.placed->number("win_d").value_or(geometry::windows_reach) : geometry::windows_reach;
-    const std::array<double, 8> details{geometry::cells_reach,          win_d,
-                                        geometry::church_windows_reach, geometry::deep_windows_reach,
-                                        geometry::sash_reach,           geometry::facades_reach,
-                                        geometry::low_plinth_reach,     geometry::cornices_reach};
+    const std::array<double, 9> details{geometry::cells_reach,
+                                        win_d,
+                                        geometry::church_windows_reach,
+                                        geometry::deep_windows_reach,
+                                        geometry::sash_reach,
+                                        geometry::facades_reach,
+                                        geometry::low_plinth_reach,
+                                        geometry::cornices_reach,
+                                        win_d * 1.35};
     selectors.set_details(kind_, details);
 }
 
@@ -389,6 +395,7 @@ void Buildings::record(const frame::Recording& recording, std::uint32_t phase) {
         record_window_decide(recording);
         break;
     case strokes_phase: record_strokes(recording); break;
+    case materials_phase: record_materials(recording); break;
     default: break;
     }
 }

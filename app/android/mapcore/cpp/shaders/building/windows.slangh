@@ -50,12 +50,16 @@
 #pragma once
 
 // A facade wall's record (a uint4): x its wall's one-cell primitive in the tile's edged list (a cabin's wall, for a
-// houseboat's cabin: bits 0-23), its style (24-25) and flags (26-31); y its first window among the tile's (its first sample in the window group); z its rows
-// (bits 0-15) and bays (16-31), none where it has no windows; w its first painter slot within the item, near (bits
-// 0-15) and far (16-31): its shop glazing's where it has one, then its windows': its reveals', its dark windows', its
-// lit ones', its sash bars' and its sills'. Its building's plinth's and cornice's slots follow all its walls (each
-// item's word in the tile's facades: BUILDING_NO_FACADE where it has neither).
+// houseboat's cabin: bits 0-23), its style (24-25) and flags (26-31); y its first window among the tile's (its first
+// sample in the window group); z its rows (bits 0-11: its windows', or where it has none its storeys for its material
+// face), its material face (12-14: BUILDING_MATERIAL_) and its bays (16-31), no bays where it has no windows; w its
+// first painter slot within the item, near (bits 0-15) and far (16-31): its shop glazing's where it has one, then its
+// material face's (building_material_slots), then its windows': its reveals', its dark windows', its lit ones', its
+// sash bars' and its sills'. Its building's plinth's and cornice's slots follow all its walls (each item's word in the
+// tile's facades: BUILDING_NO_FACADE where it has neither).
 static const uint BUILDING_WINDOW_WALL_BITS = 0x00FFFFFFu;
+static const uint BUILDING_WINDOW_LEVELS = 0x0FFFu;
+static const uint BUILDING_WINDOW_MATERIAL_SHIFT = 12u;
 static const uint BUILDING_WINDOW_STYLE_SHIFT = 24u;
 static const uint BUILDING_WINDOW_FLAGS_SHIFT = 26u;
 // Its style (geometry/Walls.hpp's WindowStyle) and flags (window_flag).
@@ -70,6 +74,12 @@ static const uint BUILDING_WINDOW_PLINTH = 8u;
 static const uint BUILDING_WINDOW_CORNICE = 16u;
 static const uint BUILDING_WINDOW_GLAZING = 32u;
 static const uint BUILDING_NO_FACADE = 0xFFFFFFFFu;
+// A wall's material face (geometry/Walls.hpp's Material).
+static const uint BUILDING_MATERIAL_NONE = 0u;
+static const uint BUILDING_MATERIAL_GLASS = 1u;
+static const uint BUILDING_MATERIAL_METAL = 2u;
+static const uint BUILDING_MATERIAL_BALCONIES = 3u;
+static const uint BUILDING_MATERIAL_PARKING = 4u;
 // A windowed wall's painter slots within the item, from its first (geometry/Walls.hpp's window_slots): its reveals,
 // dark windows, lit ones, sash bars and sills.
 static const uint BUILDING_WINDOW_REVEALS = 0u;
@@ -121,12 +131,14 @@ static const float BUILDING_CABIN_AREA = 0.2f;
 // The windows' leads on their wall's plane (relative to its reciprocal depth, as the cells' and the roofs'), in the
 // paths' order from one step past the cells' most (15 steps of 2^-16): the reveals, the glass, the frames, the sash
 // bars, the sills; a shop's glazing takes the windows' glass's and frames', a plinth and a cornice the sills' (none of
-// them meets another on its wall).
+// them meets another on its wall: with weather the shop floor has no row of windows).
 static const float BUILDING_REVEAL_LEAD = 2.44140625e-4f;
 static const float BUILDING_GLASS_LEAD = 2.593994140625e-4f;
 static const float BUILDING_WINDOW_LEAD = 2.74658203125e-4f;
 static const float BUILDING_SASH_LEAD = 2.899169921875e-4f;
 static const float BUILDING_SILL_LEAD = 3.0517578125e-4f;
+static const float BUILDING_GLAZING_GLASS_LEAD = BUILDING_GLASS_LEAD;
+static const float BUILDING_GLAZING_FRAME_LEAD = BUILDING_WINDOW_LEAD;
 
 // The vertices each window draws: its frame (10 triangles at most, a polygon holding its band, which the fragments trim
 // to the band: building_window_frame_point) and its glass (as a plain polygon's, through the roofs' fans); each near
@@ -146,6 +158,7 @@ struct BuildingWindowWall {
     uint cols;
     uint near_slot;
     uint far_slot;
+    uint material; // BUILDING_MATERIAL_
 };
 
 inline BuildingWindowWall building_window_wall(uint4 v) {
@@ -154,7 +167,8 @@ inline BuildingWindowWall building_window_wall(uint4 v) {
     w.style = (v.x >> BUILDING_WINDOW_STYLE_SHIFT) & 3u;
     w.flags = (v.x >> BUILDING_WINDOW_FLAGS_SHIFT) & 0x3Fu;
     w.first = v.y;
-    w.levels = v.z & 0xFFFFu;
+    w.levels = v.z & BUILDING_WINDOW_LEVELS;
+    w.material = (v.z >> BUILDING_WINDOW_MATERIAL_SHIFT) & 7u;
     w.cols = v.z >> 16u;
     w.near_slot = v.w & 0xFFFFu;
     w.far_slot = v.w >> 16u;
@@ -1725,4 +1739,400 @@ inline BuildingGlass building_church_veiled(FrameWindows w, uint theme_flags) {
         g.bottom = g.bottom + (veil - g.bottom) * BUILDING_CHURCH_VEIL;
     }
     return g;
+}
+
+// ---------------------------------------------------------------------------------------------- material faces
+
+// A wall's material face (geometry/Walls.hpp's Material; render/amsterdam.py's material_face): with weather, on a
+// turned wall over 2 m (not a part's but a church's) whose item lies nearer than 1.35 times the view's win_d, after its
+// shop glazing and before its windows, with fh = (top - y0) / lv, lv = max(1, levels), and ppm = focal / max(d, 1) at
+// its item's depth d:
+//   - glass: the wall's glass, quad_at(a, b, y0 + (0 if y0 > 0.5 else 0.4), top, 0, 1, 0.02, n) as Camera.poly gives
+//     it (margin 300 px, its area over 1 px²), the gradient `glass` at .55 by day, #0E1420 at .8 at night; then one
+//     path of its floors (r = 1 to lv - 1 at y0 + r·fh along the whole wall, where fh·ppm > 2.4) and its mullions (k = 1
+//     to n - 1 at k / n from y0 to top, n = int(elen / step), the step 1.5 m where 1.5·ppm >= 3.2, else 3 m where
+//     3·ppm >= 3.2, else none), 0.03 m out, stroked .55 px in #E4ECF0 (#2A3240 at night) at .7;
+//   - metal, by day: its ribs every 1 m where ppm >= 2.6, else every 2 m where ppm >= 1.4 (k = 1 to n - 1 at k / n,
+//     from y0 + 0.3 to top - 0.15), 0.03 m out, stroked .5 px in its wall's colour times .62 at .38;
+//   - balconies, where fh·ppm > 2.2: the rows 2 and (from 6 storeys) lv - 1 at y0 + r·fh + 0.12, from 0.02 to 0.98
+//     along the wall, 0.25 m out, stroked max(.6, .14·ppm) px (as printed) in #2E3036 (#0C0D10 at night) at .7;
+//   - parking, where fh·ppm > 2.0: each deck r = 0 to lv - 1, quad_at(a, b, y0 + r·fh + 0.95, y0 + (r + 1)·fh - 0.1,
+//     0.03, 0.97, 0.03, n) as Camera.poly gives it (margin 300 px, its area over 0.4 px²), #2C2F35 (#090A0D at night)
+//     at .62.
+// A line's ends are projected as Camera.proj projects them: one behind the near plane leaves the line out of its path.
+// What the view decides the CPU decides in double (passes::material_choice), and the jobs carry it: each wall's fills
+// and lines, how many, its mullions' or ribs' n or its balconies' width, its ribs' colour; windows_cs writes each fill
+// and line record, drawn or not.
+//
+// The frame draws them after every opaque fragment (the translucent phase), at their path's slot under the painter
+// switch, over what lies under them as SVG's opacity paints it (source over): the fills each once (one path's never
+// meet), the lines once a sample a path (stencil bit BUILDING_MATERIAL_STENCIL: a sample takes the lines of the wall
+// nearest it alone, so the first of them to reach it marks it), as SVG strokes a path. They write no depth, so their
+// leads on their wall's plane place them only against what is drawn opaque there, in the port's order where it can: a
+// glass wall's (which has no windows) past its shop glazing's and short of its plinth's and cornice's; any other one's
+// past every cell's and short of every window part's, and so under a shop's glazing where they meet (a metal shop floor,
+// a parking garage's ground deck behind its shops), which the port paints over the glazing.
+
+/// The painter slots a wall's material face takes (geometry/Walls.hpp's material_slots): a glass wall's fill and its
+/// lines, any other one's path.
+inline uint building_material_slots(uint material) {
+    return material == BUILDING_MATERIAL_NONE ? 0u : (material == BUILDING_MATERIAL_GLASS ? 2u : 1u);
+}
+
+/// A wall's material face's lead on its wall's plane: a glass wall's the sash bars' (past the shop glazing's glass and
+/// frame, short of the plinth's and cornice's), any other one's the reveals' (past every cell's, short of every window
+/// part's beside the reveals, which it ties).
+inline float building_material_lead(uint material) {
+    return material == BUILDING_MATERIAL_GLASS ? BUILDING_SASH_LEAD : BUILDING_REVEAL_LEAD;
+}
+
+// The port's constants (m; CSS px²): the glass's foot over a wall on the street (its foot at most 0.5 m up), how far
+// it stands out, its least area (exclusive); the lines' distance out; the ribs' foot over the wall's and head under its
+// top; the balconies' height over their floor, their span along the wall and how far they stand out; a deck's foot
+// over its floor and head under the next one's, its span, how far it stands out, its least area (exclusive).
+static const float BUILDING_MATERIAL_GLASS_FOOT = 0.4f;
+static const float BUILDING_MATERIAL_STREET = 0.5f;
+static const float BUILDING_MATERIAL_GLASS_OUT = 0.02f;
+static const float BUILDING_MATERIAL_GLASS_AREA = 1.0f;
+static const float BUILDING_MATERIAL_LINE_OUT = 0.03f;
+static const float BUILDING_MATERIAL_RIB_FOOT = 0.3f;
+static const float BUILDING_MATERIAL_RIB_HEAD = 0.15f;
+static const float BUILDING_MATERIAL_BALCONY_UP = 0.12f;
+static const float BUILDING_MATERIAL_BALCONY_U0 = 0.02f;
+static const float BUILDING_MATERIAL_BALCONY_U1 = 0.98f;
+static const float BUILDING_MATERIAL_BALCONY_OUT = 0.25f;
+static const float BUILDING_MATERIAL_DECK_FOOT = 0.95f;
+static const float BUILDING_MATERIAL_DECK_HEAD = 0.1f;
+static const float BUILDING_MATERIAL_DECK_U0 = 0.03f;
+static const float BUILDING_MATERIAL_DECK_U1 = 0.97f;
+static const float BUILDING_MATERIAL_DECK_OUT = 0.03f;
+static const float BUILDING_MATERIAL_DECK_AREA = 0.4f;
+// Their paints (0xRRGGBB) and opacities: the glass's at night and its opacity by day and at night (by day it is the
+// gradient `glass`); its lines' by day and at night, their width and opacity; the metal ribs' width and opacity (their
+// colour is each wall's: the jobs carry it); the balconies' by day and at night and their opacity (their width is the
+// view's); the decks' by day and at night and their opacity.
+static const uint BUILDING_MATERIAL_GLASS_NIGHT = 0x0E1420u;
+static const float BUILDING_MATERIAL_GLASS_DAY_OPACITY = 0.55f;
+static const float BUILDING_MATERIAL_GLASS_NIGHT_OPACITY = 0.8f;
+static const uint BUILDING_MATERIAL_LINES_DAY = 0xE4ECF0u;
+static const uint BUILDING_MATERIAL_LINES_NIGHT = 0x2A3240u;
+static const float BUILDING_MATERIAL_LINES_WIDTH = 0.55f;
+static const float BUILDING_MATERIAL_LINES_OPACITY = 0.7f;
+static const float BUILDING_MATERIAL_RIBS_WIDTH = 0.5f;
+static const float BUILDING_MATERIAL_RIBS_OPACITY = 0.38f;
+static const uint BUILDING_MATERIAL_BALCONIES_DAY = 0x2E3036u;
+static const uint BUILDING_MATERIAL_BALCONIES_NIGHT = 0x0C0D10u;
+static const float BUILDING_MATERIAL_BALCONIES_OPACITY = 0.7f;
+static const uint BUILDING_MATERIAL_DECKS_DAY = 0x2C2F35u;
+static const uint BUILDING_MATERIAL_DECKS_NIGHT = 0x090A0Du;
+static const float BUILDING_MATERIAL_DECKS_OPACITY = 0.62f;
+/// The stencil bit the material lines mark the samples they paint with (one no other pass writes:
+/// passes/Ground.hpp's ground_stencil holds the others, painter.slang's OBJECTS_BIT the objects').
+static const uint BUILDING_MATERIAL_STENCIL = 0x20u;
+// The vertices a fill record draws (a fan of 3 triangles over its 5 corners at most) and a line record (a quad).
+static const uint BUILDING_MATERIAL_FILL_VERTICES = 9u;
+static const uint BUILDING_MATERIAL_LINE_VERTICES = 6u;
+
+/// Whether a wall's material face is drawn at the frame (its face `f` and its item's rank entry `rank`): with weather,
+/// its item nearer than 1.35 times win_d, its wall turned to the eye.
+inline bool building_materials_drawn(uint theme_flags, TilePlace place, BuildingFace f, uint rank) {
+    return rank != RANK_NONE && (theme_flags & THEME_WEATHER) != 0u &&
+           (rank_detail(rank) & BUILDING_DETAIL_MATERIALS) != 0u && building_wall_turned(place, f);
+}
+
+/// A wall's glass (material_face's): quad_at(a, b, y0 + (0 if y0 > 0.5 else 0.4), top, 0, 1, 0.02, n).
+inline BuildingPrim building_material_glass(BuildingPrim wall, float3 n) {
+    BuildingWindowBox b;
+    b.ya = wall.c0.y + (wall.c0.y > BUILDING_MATERIAL_STREET ? 0.0f : BUILDING_MATERIAL_GLASS_FOOT);
+    b.yb = wall.c3.y;
+    b.u0 = 0.0f;
+    b.u1 = 1.0f;
+    return building_window_quad(wall, n, b, BUILDING_MATERIAL_GLASS_OUT);
+}
+
+/// A parking garage's deck r of `levels` (material_face's): quad_at(a, b, y0 + r·fh + 0.95, y0 + (r + 1)·fh - 0.1,
+/// 0.03, 0.97, 0.03, n).
+inline BuildingPrim building_material_deck(BuildingPrim wall, float3 n, uint levels, uint r) {
+    float y0 = wall.c0.y;
+    float fh = (wall.c3.y - y0) / float(levels > 1u ? levels : 1u);
+    BuildingWindowBox b;
+    b.ya = y0 + float(r) * fh + BUILDING_MATERIAL_DECK_FOOT;
+    b.yb = y0 + float(r + 1u) * fh - BUILDING_MATERIAL_DECK_HEAD;
+    b.u0 = BUILDING_MATERIAL_DECK_U0;
+    b.u1 = BUILDING_MATERIAL_DECK_U1;
+    return building_window_quad(wall, n, b, BUILDING_MATERIAL_DECK_OUT);
+}
+
+/// A material line's ends on its wall (u along it from a to b, y up, `out` metres along its face's normal `n`).
+struct BuildingMaterialEnds {
+    float u0;
+    float y0;
+    float u1;
+    float y1;
+    float out;
+};
+
+/// Line k of a wall's material face `material` (its storeys `levels`; `floors` floor lines first on a glass wall; the
+/// mullions' or ribs' n): a glass wall's floors (r = k + 1 at y0 + r·fh, u 0 to 1), then its mullions (k - floors + 1
+/// over n, from y0 to top); a metal wall's ribs ((k + 1) / n, from y0 + 0.3 to top - 0.15); a stone front's balconies
+/// (the rows 2, then lv - 1, at y0 + r·fh + 0.12, u 0.02 to 0.98, 0.25 m out).
+inline BuildingMaterialEnds building_material_ends(BuildingPrim wall, uint material, uint levels, uint floors, uint n,
+                                                   uint k) {
+    float y0 = wall.c0.y;
+    float top = wall.c3.y;
+    float fh = (top - y0) / float(levels > 1u ? levels : 1u);
+    BuildingMaterialEnds e;
+    e.out = BUILDING_MATERIAL_LINE_OUT;
+    if (material == BUILDING_MATERIAL_BALCONIES) {
+        uint r = k == 0u ? 2u : levels - 1u;
+        float y = y0 + float(r) * fh + BUILDING_MATERIAL_BALCONY_UP;
+        e.u0 = BUILDING_MATERIAL_BALCONY_U0;
+        e.u1 = BUILDING_MATERIAL_BALCONY_U1;
+        e.y0 = y;
+        e.y1 = y;
+        e.out = BUILDING_MATERIAL_BALCONY_OUT;
+        return e;
+    }
+    if (material == BUILDING_MATERIAL_GLASS && k < floors) {
+        float y = y0 + float(k + 1u) * fh;
+        e.u0 = 0.0f;
+        e.u1 = 1.0f;
+        e.y0 = y;
+        e.y1 = y;
+        return e;
+    }
+    uint j = material == BUILDING_MATERIAL_GLASS ? k - floors + 1u : k + 1u;
+    float u = float(j) / float(n);
+    bool ribs = material == BUILDING_MATERIAL_METAL;
+    e.u0 = u;
+    e.u1 = u;
+    e.y0 = ribs ? y0 + BUILDING_MATERIAL_RIB_FOOT : y0;
+    e.y1 = ribs ? top - BUILDING_MATERIAL_RIB_HEAD : top;
+    return e;
+}
+
+/// A material line as the frame draws it: nothing, or its ends (CSS px, snapped at rest), with the span of their
+/// reciprocal depths (widened as a shape's).
+struct BuildingMaterialLine {
+    bool drawn;
+    float2 p0;
+    float2 p1;
+    float lo;
+    float hi;
+};
+
+/// Line `e` of wall `wall` (its face's normal `n`) at the frame's camera: each end at a + (b - a)·u + n·out, y, projected
+/// as Camera.proj does (none behind the near plane: then no line), snapped at rest.
+inline BuildingMaterialLine building_material_line(FrameCamera cam, TilePlace place, BuildingPrim wall, float3 n,
+                                                   BuildingMaterialEnds e) {
+    BuildingMaterialLine l;
+    float2 zero = {0.0f, 0.0f};
+    l.drawn = false;
+    l.p0 = zero;
+    l.p1 = zero;
+    l.lo = 0.0f;
+    l.hi = 0.0f;
+    float ex = wall.c1.x - wall.c0.x;
+    float ez = wall.c1.z - wall.c0.z;
+    float3 a = {(wall.c0.x + ex * e.u0) + n.x * e.out, e.y0, (wall.c0.z + ez * e.u0) + n.z * e.out};
+    float3 b = {(wall.c0.x + ex * e.u1) + n.x * e.out, e.y1, (wall.c0.z + ez * e.u1) + n.z * e.out};
+    float near_z = cam.frame.w;
+    float3 k0 = camera_of(cam, eye_relative(place, a));
+    float3 k1 = camera_of(cam, eye_relative(place, b));
+    if (k0.z < near_z || k1.z < near_z) {
+        return l;
+    }
+    float2 p0 = css_of(cam, k0);
+    float2 p1 = css_of(cam, k1);
+    if (camera_rests(cam)) {
+        float2 s0 = {snap_tenth(p0.x), snap_tenth(p0.y)};
+        float2 s1 = {snap_tenth(p1.x), snap_tenth(p1.y)};
+        p0 = s0;
+        p1 = s1;
+    }
+    float r0 = near_z / k0.z;
+    float r1 = near_z / k1.z;
+    float lo = r0 < r1 ? r0 : r1;
+    float hi = r0 < r1 ? r1 : r0;
+    l.drawn = true;
+    l.p0 = p0;
+    l.p1 = p1;
+    l.lo = lo - lo * BUILDING_PLANE_SPAN;
+    l.hi = hi + hi * BUILDING_PLANE_SPAN;
+    return l;
+}
+
+/// Line `l` with its span widened to its wall's plane's at its ends (building_window_on_plane's).
+inline BuildingMaterialLine building_material_line_on_plane(FrameCamera cam, float4 plane, BuildingMaterialLine l) {
+    if (!l.drawn) {
+        return l;
+    }
+    float2 p[2] = {l.p0, l.p1};
+    for (uint i = 0u; i < 2u; ++i) {
+        float r = building_window_plane_recip(cam, plane, p[i]);
+        float r_lo = r - r * BUILDING_PLANE_SPAN;
+        float r_hi = r + r * BUILDING_PLANE_SPAN;
+        l.lo = r_lo < l.lo ? r_lo : l.lo;
+        l.hi = r_hi > l.hi ? r_hi : l.hi;
+    }
+    return l;
+}
+
+/// Line `l` stroked `half` CSS px either side, butt-capped: a quad (no area where its ends meet), with its span
+/// (building_sash_bar's).
+inline BuildingWindowShape building_material_bar(BuildingMaterialLine l, float half) {
+    BuildingWindowShape b = building_window_nothing();
+    if (!l.drawn) {
+        return b;
+    }
+    float2 e = l.p1 - l.p0;
+    float len = sqrt(e.x * e.x + e.y * e.y);
+    if (!(len > 0.0f)) {
+        return b;
+    }
+    float2 m = {-e.y * half / len, e.x * half / len};
+    b.count = 4u;
+    b.p0 = l.p0 + m;
+    b.p1 = l.p0 + e + m;
+    b.p2 = l.p0 + e - m;
+    b.p3 = l.p0 - m;
+    b.p4 = b.p3;
+    b.lo = l.lo;
+    b.hi = l.hi;
+    b.area = 2.0f * half * len;
+    return b;
+}
+
+/// The paint and opacity of a wall's material face `material`'s fills (the glass, a deck) at the moment, and of its
+/// lines (its ribs' colour `ribs`, 0xRRGGBB): by day a glass wall's fill is the gradient `glass` (BuildingGlass's).
+struct BuildingMaterialPaint {
+    BuildingGlass paint;
+    float opacity;
+};
+
+inline BuildingMaterialPaint building_material_fill(FrameWindows w, uint theme_flags, uint material) {
+    BuildingMaterialPaint p;
+    bool night = (theme_flags & THEME_NIGHT) != 0u;
+    if (material == BUILDING_MATERIAL_GLASS && !night) {
+        p.paint = building_glass(w, theme_flags, BUILDING_WINDOW_PLAIN, 0u, false);
+        p.opacity = BUILDING_MATERIAL_GLASS_DAY_OPACITY;
+        return p;
+    }
+    uint c = material == BUILDING_MATERIAL_GLASS
+                 ? BUILDING_MATERIAL_GLASS_NIGHT
+                 : (night ? BUILDING_MATERIAL_DECKS_NIGHT : BUILDING_MATERIAL_DECKS_DAY);
+    p.paint.top = building_rgb(c);
+    p.paint.bottom = p.paint.top;
+    p.paint.gradient = false;
+    p.opacity = material == BUILDING_MATERIAL_GLASS ? BUILDING_MATERIAL_GLASS_NIGHT_OPACITY
+                                                    : BUILDING_MATERIAL_DECKS_OPACITY;
+    return p;
+}
+
+inline BuildingMaterialPaint building_material_lines(uint theme_flags, uint material, uint ribs) {
+    BuildingMaterialPaint p;
+    bool night = (theme_flags & THEME_NIGHT) != 0u;
+    uint c = ribs;
+    p.opacity = BUILDING_MATERIAL_RIBS_OPACITY;
+    if (material == BUILDING_MATERIAL_GLASS) {
+        c = night ? BUILDING_MATERIAL_LINES_NIGHT : BUILDING_MATERIAL_LINES_DAY;
+        p.opacity = BUILDING_MATERIAL_LINES_OPACITY;
+    } else if (material == BUILDING_MATERIAL_BALCONIES) {
+        c = night ? BUILDING_MATERIAL_BALCONIES_NIGHT : BUILDING_MATERIAL_BALCONIES_DAY;
+        p.opacity = BUILDING_MATERIAL_BALCONIES_OPACITY;
+    }
+    p.paint.top = building_rgb(c);
+    p.paint.bottom = p.paint.top;
+    p.paint.gradient = false;
+    return p;
+}
+
+/// A wall's material lines' width (CSS px): a glass wall's .55, a metal one's .5, a stone front's balconies' as the
+/// jobs give it (`width`, hundredths as the port prints it).
+inline float building_material_width(uint material, uint width) {
+    if (material == BUILDING_MATERIAL_GLASS) {
+        return BUILDING_MATERIAL_LINES_WIDTH;
+    }
+    if (material == BUILDING_MATERIAL_METAL) {
+        return BUILDING_MATERIAL_RIBS_WIDTH;
+    }
+    return building_hundredths(width);
+}
+
+// A material fill's record (4 uint4), which windows_cs writes and material_fill_vs reads: v0 its corners' count (bits
+// 0-2: none drawn where 0) and its wall's material face (4-6), its wall's record among the frame's walls, its path's
+// painter slot; then its span and its five corners. A line's (3 uint4), which material_line_vs reads: v0 its wall's
+// material face (bits 4-6; bit 0 set where it is drawn), its wall's record, its path's slot, its ribs' colour or its
+// width in hundredths (a balcony's); v1 its ends; v2 its span.
+static const uint BUILDING_MATERIAL_FILL_VECTORS = 4u;
+static const uint BUILDING_MATERIAL_LINE_VECTORS = 3u;
+
+struct BuildingMaterialFillRecord {
+    uint4 v0;
+    uint4 v1;
+    uint4 v2;
+    uint4 v3;
+};
+
+inline BuildingMaterialFillRecord building_material_fill_record(BuildingWindowShape s, uint material, uint wall,
+                                                                uint slot) {
+    BuildingMaterialFillRecord r;
+    uint4 v0 = {s.count | (material << 4u), wall, slot, 0u};
+    uint4 v1 = {asuint(s.lo), asuint(s.hi), asuint(s.p0.x), asuint(s.p0.y)};
+    uint4 v2 = {asuint(s.p1.x), asuint(s.p1.y), asuint(s.p2.x), asuint(s.p2.y)};
+    uint4 v3 = {asuint(s.p3.x), asuint(s.p3.y), asuint(s.p4.x), asuint(s.p4.y)};
+    r.v0 = v0;
+    r.v1 = v1;
+    r.v2 = v2;
+    r.v3 = v3;
+    return r;
+}
+
+/// A fill record's shape (its area not kept).
+inline BuildingWindowShape building_material_fill_shape(BuildingMaterialFillRecord r) {
+    BuildingWindowShape s = building_window_nothing();
+    s.count = r.v0.x & 7u;
+    s.lo = asfloat(r.v1.x);
+    s.hi = asfloat(r.v1.y);
+    float2 p0 = {asfloat(r.v1.z), asfloat(r.v1.w)};
+    float2 p1 = {asfloat(r.v2.x), asfloat(r.v2.y)};
+    float2 p2 = {asfloat(r.v2.z), asfloat(r.v2.w)};
+    float2 p3 = {asfloat(r.v3.x), asfloat(r.v3.y)};
+    float2 p4 = {asfloat(r.v3.z), asfloat(r.v3.w)};
+    s.p0 = p0;
+    s.p1 = p1;
+    s.p2 = p2;
+    s.p3 = p3;
+    s.p4 = p4;
+    return s;
+}
+
+struct BuildingMaterialLineRecord {
+    uint4 v0;
+    uint4 v1;
+    uint4 v2;
+};
+
+inline BuildingMaterialLineRecord building_material_line_record(BuildingMaterialLine l, uint material, uint wall,
+                                                                uint slot, uint style) {
+    BuildingMaterialLineRecord r;
+    uint4 v0 = {(l.drawn ? 1u : 0u) | (material << 4u), wall, slot, style};
+    uint4 v1 = {asuint(l.p0.x), asuint(l.p0.y), asuint(l.p1.x), asuint(l.p1.y)};
+    uint4 v2 = {asuint(l.lo), asuint(l.hi), 0u, 0u};
+    r.v0 = v0;
+    r.v1 = v1;
+    r.v2 = v2;
+    return r;
+}
+
+inline BuildingMaterialLine building_material_line_of(BuildingMaterialLineRecord r) {
+    BuildingMaterialLine l;
+    l.drawn = (r.v0.x & 1u) != 0u;
+    float2 p0 = {asfloat(r.v1.x), asfloat(r.v1.y)};
+    float2 p1 = {asfloat(r.v1.z), asfloat(r.v1.w)};
+    l.p0 = p0;
+    l.p1 = p1;
+    l.lo = asfloat(r.v2.x);
+    l.hi = asfloat(r.v2.y);
+    return l;
 }

@@ -160,6 +160,7 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     layout.window_flags.assign(ww, 0);
     layout.window_styles.assign(ww, gm::WindowStyle::plain);
     layout.window_churches.assign(ww, 0);
+    layout.window_materials.assign(ww, {});
     for (std::uint32_t i = 0; i < ww; ++i) {
         const gm::WindowWall& w = g.window_walls[i];
         layout.window_at[i + 1] = layout.window_at[i] + (std::uint32_t{w.levels} * w.cols);
@@ -173,10 +174,17 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
             layout.window_churches[i] = std::min<std::uint32_t>(w.church_windows, most) |
                                         (std::min<std::uint32_t>(w.church_transoms, most) << 16U);
         }
+        if (w.material != gm::Material::none) {
+            layout.window_materials[i] = {
+                .kind = w.material, .levels = w.levels, .fh = w.fh, .elen = w.elen, .ribs = w.ribs};
+        }
         out[layout.windows_at + i] = {
             heap_of[w.wall] | (static_cast<std::uint32_t>(w.style) << shaders::BUILDING_WINDOW_STYLE_SHIFT) |
                 (std::uint32_t{w.flags} << shaders::BUILDING_WINDOW_FLAGS_SHIFT),
-            w.first, std::uint32_t{w.levels} | (std::uint32_t{w.cols} << 16U),
+            w.first,
+            std::uint32_t{w.levels} |
+                (static_cast<std::uint32_t>(w.material) << shaders::BUILDING_WINDOW_MATERIAL_SHIFT) |
+                (std::uint32_t{w.cols} << 16U),
             std::uint32_t{w.near_slot} | (std::uint32_t{w.far_slot} << 16U)};
     }
     // each item's plinth's and cornice's slots (the CPU keeps them for the twin)
@@ -271,6 +279,57 @@ WindowWidths window_widths(std::uint32_t detail, bool weather, double depth, dou
         w.sash = tenths(deep ? pymath::max(sash_least, 0.045 * focal / d) : pymath::max(sash_least, 9.0 / d));
     }
     return w;
+}
+
+MaterialChoice material_choice(const BuildingTile::MaterialWall& m, bool night, double depth, double focal) {
+    // amsterdam.py's material_face: ppm = cam.focal / max(d, 1); lv = max(1, b['levels']); fh = (top - y0) / lv
+    using M = geometry::Material;
+    constexpr std::int64_t most = 0xF'FFFF; // n's 20 bits: a wall of 1,500 km
+    const double ppm = focal / pymath::max(depth, 1.0);
+    const std::uint32_t lv = std::max<std::uint32_t>(1, m.levels);
+    MaterialChoice c;
+    switch (m.kind) {
+    case M::glass: {
+        // its glass; its floors `for r in range(1, lv)` where fh * ppm > 2.4; its mullions: step = 1.5 if 1.5 * ppm >=
+        // 3.2 else (3.0 if 3.0 * ppm >= 3.2 else None), n = int(elen / step), `for k in range(1, n)` where n > 1
+        c.fills = 1;
+        const std::uint32_t floors = m.fh * ppm > 2.4 ? lv - 1 : 0;
+        const double step = 1.5 * ppm >= 3.2 ? 1.5 : (3.0 * ppm >= 3.2 ? 3.0 : 0.0);
+        const std::int64_t n = step != 0.0 ? std::min(static_cast<std::int64_t>(m.elen / step), most) : 0;
+        c.lines = floors + (n > 1 ? static_cast<std::uint32_t>(n - 1) : 0U);
+        c.counts = floors | (static_cast<std::uint32_t>(n) << 12U);
+        break;
+    }
+    case M::metal: {
+        // by day: step = 1.0 if ppm >= 2.6 else (2.0 if ppm >= 1.4 else None), n = int(elen / step), `for k in
+        // range(1, n)`, the path where any
+        const double step = ppm >= 2.6 ? 1.0 : (ppm >= 1.4 ? 2.0 : 0.0);
+        if (night || step == 0.0) break;
+        const std::int64_t n = std::min(static_cast<std::int64_t>(m.elen / step), most);
+        if (n <= 1) break;
+        c.lines = static_cast<std::uint32_t>(n - 1);
+        c.counts = static_cast<std::uint32_t>(n) << 12U;
+        c.ribs = m.ribs;
+        break;
+    }
+    case M::balconies: {
+        // where fh * ppm > 2.2: rows = [2] + ([lv - 1] if lv >= 6 else []), stroke-width "%.2f" % max(0.6, 0.14 * ppm)
+        if (!(m.fh * ppm > 2.2)) break;
+        c.lines = lv >= 6 ? 2U : 1U;
+        const auto width = static_cast<std::uint32_t>(
+            std::min<std::int64_t>(std::llround(pymath::round(pymath::max(0.6, 0.14 * ppm), 2) * 100.0), most));
+        c.counts = c.lines | (width << 12U);
+        break;
+    }
+    case M::parking:
+        // where fh * ppm > 2.0: a deck `for r in range(lv)`
+        if (!(m.fh * ppm > 2.0)) break;
+        c.fills = lv;
+        c.counts = lv;
+        break;
+    case M::none: break;
+    }
+    return c;
 }
 
 std::uint16_t church_leading(double depth, double focal) {

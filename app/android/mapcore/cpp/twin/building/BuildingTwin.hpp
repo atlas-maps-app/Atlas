@@ -53,6 +53,23 @@ struct WindowsDepth {
     shaders::BuildingGlass glass{};
     float top = 0.0F;
     float bottom = 0.0F;
+    bool shop = false; ///< a shop's glazing: its glass and frame at the glazing's leads
+};
+
+/// A wall's material face's path as the frame draws it (material_fill_vs, material_line_vs), for the tests' raster: its
+/// fills, each shape once, or its lines, each bar (a line stroked its width either side) and each sample once for the
+/// path, in its paint (a glass wall's gradient over the fill's own box from `top` to `bottom`) at its opacity over what
+/// lies under it, on its wall's plane at a lead, at the path's slot.
+struct MaterialDepth {
+    std::vector<shaders::BuildingWindowShape> shapes;
+    bool lines = false;
+    std::uint32_t slot = 0;
+    hlsl::float4 plane{};
+    float lead = 0.0F;
+    shaders::BuildingGlass paint{};
+    float top = 0.0F;
+    float bottom = 0.0F;
+    float opacity = 1.0F;
 };
 
 /// A wall's windows' part of one path (its deep windows' reveals or sills, or its sash bars as their quads) as the
@@ -92,9 +109,10 @@ struct ElementDepth {
     bool edged = false;
     std::vector<shaders::BuildingShape> triangles;
     std::uint32_t tile = 0;
-    std::vector<WindowsDepth> windows; ///< one: the element is a wall's windows' path
-    std::vector<PartsDepth> parts;     ///< one: the element is a wall's reveals', sash bars' or sills' path
-    std::vector<ArchesDepth> arches;   ///< one: the element is a church wall's windows' path
+    std::vector<WindowsDepth> windows;    ///< one: the element is a wall's windows' path
+    std::vector<PartsDepth> parts;        ///< one: the element is a wall's reveals', sash bars' or sills' path
+    std::vector<ArchesDepth> arches;      ///< one: the element is a church wall's windows' path
+    std::vector<MaterialDepth> materials; ///< one: the element is a wall's material face's path
     bool veil = false; ///< the element is the church windows' veil, which the frame folds into their glass
 };
 
@@ -149,6 +167,14 @@ private:
     void church_windows(const shaders::BuildingPrim& wall, const shaders::BuildingFace& f,
                         const shaders::TilePlace& place, hlsl::float4 plane, std::uint32_t church, std::uint32_t slot,
                         std::int32_t item, std::uint32_t reveal, double depth);
+
+    /// The paths of a wall's material face the frame draws (its one-cell primitive `wall`, its face `f`, its plane
+    /// `plane`, its record `w`, `m` its BuildingTile::window_materials entry): at its material slot `slot` on, in item
+    /// `item`, its item `depth` metres away.
+    void material_face(const shaders::BuildingPrim& wall, const shaders::BuildingFace& f,
+                       const shaders::TilePlace& place, hlsl::float4 plane, const shaders::BuildingWindowWall& w,
+                       const passes::BuildingTile::MaterialWall& m, std::uint32_t slot, std::int32_t item,
+                       double depth);
 
     const shaders::FrameBlock& block_;
     std::span<const std::uint32_t> ranks_;

@@ -139,6 +139,45 @@ inline constexpr std::uint32_t tile_features = 10;
 /// The melting pair's features.
 inline constexpr std::uint32_t melt_features = 2;
 
+/// A tile of the material faces (render/amsterdam.py's material_face): a glass office with a shop floor (its glazing
+/// under its glass), a metal shed, a stone home of 7 storeys (its balconies) and a parking garage of 4 decks.
+[[nodiscard]] inline TileBytes materials_tile() {
+    namespace tl = atlas::tiles;
+    namespace col = atlas::test::columns;
+    TileBytes t;
+    const std::vector<Ring> rings{
+        rect(0, 0, 1470, 1800),     // 0: a glass office, 10 × 20 m
+        rect(3000, 0, 2940, 1800),  // 1: a metal shed east of it, 20 × 20 m
+        rect(-3500, 0, 2205, 1080), // 2: a stone home west of it, 15 × 12 m
+        rect(-7500, 0, 2940, 1800), // 3: a parking garage farther west, 20 × 20 m
+    };
+    LayerBytes b;
+    b.id = static_cast<std::uint8_t>(tl::LayerId::building);
+    b.cells = {0, 0, 0, 0};
+    b.columns = {
+        {"index", tl::Codec::delta, col::delta({0, 1, 2, 3})},
+        {"id", tl::Codec::delta, col::delta({400, 401, 402, 403})},
+        {"ring", tl::Codec::geom, col::geom(rings)},
+        {"h", tl::Codec::centi, col::centi({30.0, 9.0, 21.0, 12.0})},
+        {"min", tl::Codec::centi, col::centi({0.0, 0.0, 0.0, 0.0})},
+        {"roof_h", tl::Codec::centi, col::centi({std::nullopt, std::nullopt, std::nullopt, std::nullopt})},
+        {"levels", tl::Codec::nvarz, col::nvarz({8, 2, 7, 4})},
+        {"roof", tl::Codec::str, col::str(t, {std::nullopt, std::nullopt, std::nullopt, std::nullopt})},
+        {"wall_rgb", tl::Codec::varu, col::varu({0x9AA6AE, 0x8A9096, 0xD8CCB2, 0xA49C90})},
+        {"roof_rgb", tl::Codec::varu, col::varu({0x56585C, 0x737E88, 0x8C969E, 0x56585C})},
+        {"mat_draw", tl::Codec::str, col::str(t, {"glass", "metal", "stone", "concrete"})},
+        {"kind", tl::Codec::str, col::str(t, {"office", "industrial", "home", "parking"})},
+        {"no_win", tl::Codec::boolean, col::boolean({true, false, false, false})},
+        {"flags", tl::Codec::varu, col::varu({tl::building::flag_shop_floor, 0, 0, 0})},
+        {"tag:building", tl::Codec::str, col::str(t, {"office", "industrial", "apartments", "parking"})},
+    };
+    t.layers = {b};
+    return t;
+}
+
+/// The material faces' tile's features.
+inline constexpr std::uint32_t materials_features = 4;
+
 /// Writes tile `t` (its `features`) as a render pack of 14/8414/5384 (the tile reader's tests' head: the Westerkerk's
 /// frame) to a file of its own in the tests' scratch folder, named for `name`; its path.
 [[nodiscard]] inline std::string write_pack(TileBytes t, std::uint32_t features, std::string_view name) {

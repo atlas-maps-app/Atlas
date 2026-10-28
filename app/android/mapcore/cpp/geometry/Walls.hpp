@@ -153,6 +153,19 @@ inline constexpr std::uint8_t cornice = 16;
 inline constexpr std::uint8_t glazing = 32;
 } // namespace window_flag
 
+/// What a building's walls show of their material from a distance (render/amsterdam.py's material_face, with weather,
+/// on each wall over 2 m within 1.35 times the view's win_d, after its shop glazing and before its windows): a glass
+/// curtain wall's glass, floors and mullions, the ribs of metal cladding, the iron balconies of a tall stone front, the
+/// open decks of a parking garage. Which one is the building's (material_of: its material drawn and its look's kind);
+/// how much of it is drawn is the view's (its storeys' height and its spacing in pixels).
+enum class Material : std::uint8_t { none = 0, glass = 1, metal = 2, balconies = 3, parking = 4 };
+
+/// The painter slots a wall's material face takes: a glass wall's glass, then its lines; any other one's path (a
+/// parking garage's decks, which never meet, in one).
+[[nodiscard]] constexpr std::uint32_t material_slots(Material m) noexcept {
+    return m == Material::none ? 0U : (m == Material::glass ? 2U : 1U);
+}
+
 /// A wall's facade: its windows (render/amsterdam.py's _draw_building: a row per level, bays by the wall's length),
 /// drawn within the view's win_d, and its flat detail (window_flag's last three). Window k = r · cols + c is the glass
 /// of its row r and bay c, lit or dark by its own sun sample. The rows are every level's, the shop floor's too, as K8's
@@ -162,21 +175,30 @@ inline constexpr std::uint8_t glazing = 32;
 /// (WindowStyle::cabin, drawn with the boat) has one row of panes, never lit: they have no samples and are not among
 /// the tile's windows. A church's wall has its church windows besides (geometry/ChurchWindows.hpp: how many, and each
 /// one's transoms), which the frame draws instead of its windows with weather within 520 m, at its windows' slots; a
-/// church's wall with church windows and no windows of its own has its windows' slots for them.
+/// church's wall with church windows and no windows of its own has its windows' slots for them. A wall with a material
+/// face (Material) has its slots between its shop glazing's and its windows', and its rows are its storeys where it has
+/// no windows (max(1, levels): its floors and decks), with no bays.
 struct WindowWall {
     std::uint32_t wall = 0;      ///< its wall's one-cell primitive in the edged list (its corners, face and item)
     std::uint32_t first = 0;     ///< its windows among the tile's: [first, first + levels · cols) (a cabin's: none)
-    std::uint16_t levels = 0;    ///< its rows (building:levels, mapped or guessed)
+    std::uint16_t levels = 0;    ///< its rows (building:levels, mapped or guessed; at most max_window_levels)
     std::uint16_t cols = 0;      ///< its bays
     std::uint16_t near_slot = 0; ///< its first painter slot within the item, near and far: its shop glazing's, then
-    std::uint16_t far_slot = 0;  ///< its windows' (window_slots); a slot only for what it has (a cabin's: one, its
-                                 ///< boat slot)
+    std::uint16_t far_slot = 0;  ///< its material face's (material_slots), then its windows' (window_slots); a slot
+                                 ///< only for what it has (a cabin's: one, its boat slot)
     std::uint8_t cell = 0;       ///< its building's cell in the tile
     WindowStyle style = WindowStyle::plain;
-    std::uint8_t flags = 0;            ///< window_flag
-    std::uint16_t church_windows = 0;  ///< a church's: its church windows
-    std::uint16_t church_transoms = 0; ///< and each one's transoms
+    std::uint8_t flags = 0;             ///< window_flag
+    std::uint16_t church_windows = 0;   ///< a church's: its church windows
+    std::uint16_t church_transoms = 0;  ///< and each one's transoms
+    Material material = Material::none; ///< its material face (a wall over 2 m of a building with one)
+    double fh = 0.0;        ///< its storeys' height, (wall_top - y0) / max(1, levels), in double as the port
+    double elen = 0.0;      ///< its length, in double as the port divides it
+    std::uint32_t ribs = 0; ///< a metal wall's ribs: tohex(mulc(base, 0.62)), 0xRRGGBB
 };
+
+/// The most rows a facade wall's record holds (windows.slangh's BUILDING_WINDOW_LEVELS).
+inline constexpr std::uint16_t max_window_levels = 0x0FFF;
 
 /// A building without a plinth or a cornice (TileBuildings::item_facades).
 inline constexpr std::uint32_t no_facade = 0xFFFF'FFFFU;
@@ -285,9 +307,16 @@ struct Values {
     bool has_levels = false; ///< building:levels, mapped or guessed (a building without has no window rows)
     std::int64_t levels = 0;
     std::optional<std::string_view> mat_draw; ///< the wall material drawn (a Paris stone front's French windows)
+    std::optional<std::string_view> kind;     ///< the generic look's kind (home, office, parking, ...)
     bool no_win = false;                      ///< no window rows (halls, tanks, glass walls)
     std::int64_t year = 0;                    ///< the year start_date begins with (0: none)
 };
+
+/// The material face a building's walls show (material_face's chain without its view's conditions, which never pass
+/// a building from one kind to another): glass where its material drawn is glass; metal where it is metal and its kind
+/// none or an industrial one; balconies on a stone, limestone or plaster front of 5 storeys or more of a home, an
+/// office or a hotel; a parking garage's decks.
+[[nodiscard]] Material material_of(const Values& v) noexcept;
 
 /// One building as _draw_building draws it: its values, its footprint at the level, and what the walls and the roof
 /// share (the walls' base and top, the roof's shape and height, a skillion's slope).
