@@ -147,8 +147,6 @@
     <string name="mine_pick_close">Close</string>
     <string name="mine_names_local">Local names</string>
     <string name="mine_names_title">Names on the map</string>
-    <string name="mine_theme_chart">Chart</string>
-    <string name="mine_theme_calm">Calm</string>
     <string name="mine_privacy_kept">Kept here</string>
     <string name="mine_privacy_online">What goes online, and why</string>
     <string name="mine_privacy_online_none">Nothing: every online source is off.</string>

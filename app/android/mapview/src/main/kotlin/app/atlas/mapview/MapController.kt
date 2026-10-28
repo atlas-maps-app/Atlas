@@ -840,7 +840,6 @@ internal class MapController(val state: MapState, private val scope: CoroutineSc
     private fun momentOf(s: MapStyle, time: Instant?, at: LatLon): Moment = when (s.theme) {
         Theme.DAY -> Moment.Named("sunny")
         Theme.NIGHT -> Moment.Named("night")
-        Theme.GRAY -> Moment.Named("grey")
         Theme.AUTO, Theme.CHART -> Moment.Live(quantise(time ?: Instant.now()), MapEngine.weather?.hours(at))
     }
 

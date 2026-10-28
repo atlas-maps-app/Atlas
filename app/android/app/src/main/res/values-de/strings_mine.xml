@@ -147,8 +147,6 @@
     <string name="mine_pick_close">Schließen</string>
     <string name="mine_names_local">Lokale Namen</string>
     <string name="mine_names_title">Namen auf der Karte</string>
-    <string name="mine_theme_chart">Seekarte</string>
-    <string name="mine_theme_calm">Ruhig</string>
     <string name="mine_privacy_kept">Hier gespeichert</string>
     <string name="mine_privacy_online">Was ins Netz geht, und warum</string>
     <string name="mine_privacy_online_none">Nichts: alle Online-Quellen sind aus.</string>

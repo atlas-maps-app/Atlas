@@ -79,7 +79,7 @@ import java.time.LocalDate
 
 /**
  * The map's look: the real map behind a sheet, so every switch shows at once. Theme chips along the top (auto day and
- * night, day, night, chart, calm); in the sheet the layers (3D buildings, shadows, trees, places, labels, hillshade,
+ * night, day, night); in the sheet the layers (3D buildings, shadows, trees, places, labels, hillshade,
  * contours, transit, cycle routes, hiking, sea marks), the time of light with a scrubber that moves the sun and its
  * shadows, the language of names, and how much of the streets here OpenStreetMap knows (lighting, surfaces, pavements,
  * parking), with the way to fill in the gaps. Choices are the Map's own settings, kept on the phone.
@@ -206,7 +206,7 @@ private suspend fun streetsAround(services: app.atlas.Services, at: app.atlas.ge
 @Composable
 private fun ThemeChip(theme: Theme, selected: Boolean, onClick: () -> Unit) {
     val label = stringResource(
-        when (theme) { Theme.AUTO -> R.string.mine_theme_auto; Theme.DAY -> R.string.mine_theme_day; Theme.NIGHT -> R.string.mine_theme_night; Theme.CHART -> R.string.mine_theme_chart; Theme.GRAY -> R.string.mine_theme_calm },
+        when (theme) { Theme.DAY -> R.string.mine_theme_day; Theme.NIGHT -> R.string.mine_theme_night; else -> R.string.mine_theme_auto },
     )
     TextPill(
         label, bt(12f, 800, 15.5f), if (selected) INK else 0xF2FFFFFF, if (selected) WHITE else INK, h = 34f, padH = 12f,

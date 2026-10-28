@@ -4,8 +4,11 @@ import androidx.compose.runtime.Immutable
 import app.atlas.geo.LatLon
 import app.atlas.model.Place
 
-/** The engine's looks. AUTO follows the real daylight at the camera's place. */
-enum class Theme { AUTO, DAY, NIGHT, CHART, GRAY }
+/**
+ * The engine's looks. AUTO follows the real daylight at the camera's place; CHART is the boats' guidance (the live light
+ * with the sea marks), not a look the map offers.
+ */
+enum class Theme { AUTO, DAY, NIGHT, CHART }
 
 /** Optional layers on the one look. */
 enum class MapLayer { HILLSHADE, CONTOURS, TRANSIT, CYCLE_NETWORK, HIKING, SEAMARKS, TREES, POIS, LABELS, BUILDINGS_3D, SHADOWS }

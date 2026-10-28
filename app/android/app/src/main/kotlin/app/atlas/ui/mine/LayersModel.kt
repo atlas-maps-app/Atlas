@@ -31,8 +31,8 @@ object LayersModel {
         LayerInfo(MapLayer.SEAMARKS, "cat.water", "seamarks"),
     )
 
-    /** The themes in the order of the chips; "calm" is the engine's grey look. */
-    val THEMES = listOf(Theme.AUTO, Theme.DAY, Theme.NIGHT, Theme.CHART, Theme.GRAY)
+    /** The themes in the order of the chips (chart and calm left them on 28 October: the user, "I think they should go"). */
+    val THEMES = listOf(Theme.AUTO, Theme.DAY, Theme.NIGHT)
 
     /** The layers kept in settings: the saved set (names) or, until one is saved, the map's own default. */
     fun layers(saved: Set<String>?, threeD: Boolean, default: Set<MapLayer>): Set<MapLayer> {

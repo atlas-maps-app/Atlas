@@ -116,8 +116,6 @@ fun SettingsScreen(args: Dest.Settings, nav: Navigator) {
     val look = when (theme) {
         "DAY" -> stringResource(R.string.mine_theme_day)
         "NIGHT" -> stringResource(R.string.mine_theme_night)
-        "CHART" -> stringResource(R.string.mine_theme_chart)
-        "GRAY" -> stringResource(R.string.mine_theme_calm)
         else -> stringResource(R.string.mine_settings_look_auto)
     }
     BoardPage(stringResource(R.string.mine_settings_title), onBack = { nav.back() }, scrollState = scroll) {

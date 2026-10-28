@@ -14,7 +14,7 @@ import kotlin.concurrent.withLock
 /**
  * The light the core draws the map in (plan-vector D14, K11): the moment the map's style names, as today's map has
  * always mapped MapStyle's themes to the port's moments (MapController's momentOf: DAY → sunny, NIGHT → night,
- * GRAY → grey, AUTO and CHART → the live moment, the clock in five-minute steps lit by the forecast), written as the
+ * AUTO and CHART → the live moment, the clock in five-minute steps lit by the forecast), written as the
  * theme block the core reads (`MK/state/ThemeBlock.kt`) from the port's own theme dict and its sun (Amsterdam.sunOf).
  *
  * The port keeps its moments in module state shared with today's map, so the block is made under the engine's lock
